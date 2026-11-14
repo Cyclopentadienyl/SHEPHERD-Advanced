@@ -574,10 +574,20 @@ def touch_mark(record: Any, key: str) -> str:
     return f"{TOUCH_CLASS}:{record.elem_id}:{key}"
 
 
-#: **The longest the page holds an operator's click for an edit's record**
-#: (`TOUCH_HEAD`), in milliseconds: the bound of a defect (an acknowledgement
-#: that never comes), never the guarantee, which is the acknowledgement.
-TOUCH_HOLD_MS = 2000
+#: **How long the page holds an operator's click with no progress**
+#: (`TOUCH_HEAD`), in animation frames run while a click is held (about 2 s
+#: at 60 frames a second): the bound of a defect (an acknowledgement that
+#: never comes), never the guarantee, which is the acknowledgement. Counted
+#: again from each acknowledgement, so a slow page reaches it only when none
+#: comes, and in frames, which a stalled page does not run, so a stall never
+#: uses it up before the edit's ticks can run.
+TOUCH_HOLD_FRAMES = 120
+
+#: **What the page says when a click was not sent** (`TOUCH_HEAD`, under the
+#: field; ``{field}`` is the field's title): an acknowledgement never came,
+#: which only a defect explains, and the page holds every click until it is
+#: loaded again.
+TOUCH_LOST_WORDS = "Not sent: the edit of {field} did not reach the form. Reload the page."
 
 #: **A field's input has reached its form's record** (`record_touches`;
 #: ``{mark}`` is the field's `touch_mark` as a JSON string): the js-only
@@ -634,7 +644,10 @@ LANDED_JS = "() => { if (window.ShepTouch) { window.ShepTouch.landed({mark}); } 
 #:   default prevented. Once nothing is counted they are replayed on the same
 #:   element, in their order, each as one untrusted event of the same kind,
 #:   position, buttons and keys, which this script lets through; a replay
-#:   that makes an edit (a click on a checkbox) is waited for in turn. So
+#:   that makes an edit (a click on a checkbox) is waited for in turn. They
+#:   are replayed in a task of their own after the last acknowledgement, so
+#:   what the edit's dispatch still sends (its line) leaves first; that is a
+#:   yield, not the guarantee, which is the acknowledgement. So
 #:   Start, Check, Start branch, Reset to reference and a change of the
 #:   Fine-tune tasks each go out after the edits made before them, and
 #:   Reset's and the tasks' writes of the record come after the edits', in
@@ -642,10 +655,14 @@ LANDED_JS = "() => { if (window.ShepTouch) { window.ShepTouch.landed({mark}); } 
 #:   control's event may read or write a record, and the hold lasts until the
 #:   edits' writes. A dropdown's option is chosen by a press, not a click, and
 #:   is not held.
-#: - **Bounded.** An acknowledgement that never comes is a defect: after
-#:   `TOUCH_HOLD_MS` the held clicks are dropped, never sent, and the console
-#:   names the fields still counted; they stay counted, so a later click
-#:   waits the same way until the page is loaded again.
+#: - **Bounded.** An acknowledgement that never comes is a defect: once
+#:   `TOUCH_HOLD_FRAMES` animation frames have run with a click held and no
+#:   acknowledgement, the held clicks are dropped, never sent with the record
+#:   as it was. The page says so under each field still counted, as an alert
+#:   in the error's mark and words (`TOUCH_LOST_WORDS`, the field named by
+#:   its title, as the help script finds it), and the console names them.
+#:   They stay counted, so a later click waits the same way, and is dropped
+#:   the same way, until the page is loaded again.
 #:
 #: A page's write of a value (the first fill, Reset, a task change, a check's
 #: or a Refresh's fills) fires no keypress and no input event, and a focus or
@@ -654,13 +671,18 @@ LANDED_JS = "() => { if (window.ShepTouch) { window.ShepTouch.landed({mark}); } 
 TOUCH_HEAD = "<script>" + r"""
 (function () {
   if (window.ShepTouch) { return; }
-  var FIELD = '.__CLASS__', MARK = '__CLASS__:', HOLD_MS = __HOLD_MS__;
+  var FIELD = '.__CLASS__', MARK = '__CLASS__:', HOLD_FRAMES = __HOLD_FRAMES__;
+  var LOST = __LOST__;
   // The element a key's own keypress reached, until that key's input or keyup.
   var keyed = null;
   // By field (its mark): the causes of its input not yet acknowledged.
   var counted = new Map();
-  // The operator's clicks held, in their order, and the bound's timer.
-  var held = [], bound = null;
+  // The operator's clicks held, in their order; the animation frames run
+  // since the last progress (the first click held, an acknowledgement, a
+  // replay), and whether the next frame is asked for.
+  var held = [], quiet = 0, framing = false;
+  // By field (its mark): the line saying a click was not sent for it.
+  var lost = new Map();
   function markOf(el) {
     var field = el && el.closest ? el.closest(FIELD) : null;
     if (!field) { return null; }
@@ -681,8 +703,18 @@ TOUCH_HEAD = "<script>" + r"""
   function hold(e) {
     e.preventDefault();
     e.stopImmediatePropagation();
+    if (!held.length) { quiet = 0; }
     held.push({target: e.target, event: e});
-    if (bound === null) { bound = setTimeout(expire, HOLD_MS); }
+    watch();
+  }
+  function watch() {
+    if (!framing && held.length) { framing = true; requestAnimationFrame(frame); }
+  }
+  function frame() {
+    framing = false;
+    if (!held.length) { return; }
+    quiet += 1;
+    if (quiet >= HOLD_FRAMES) { expire(); } else { watch(); }
   }
   function replay(h) {
     var e = h.event, init = {bubbles: true, cancelable: true, composed: true, view: window,
@@ -701,21 +733,48 @@ TOUCH_HEAD = "<script>" + r"""
     h.target.dispatchEvent(new Kind('click', init));
   }
   function release() {
-    while (!counted.size && held.length) { replay(held.shift()); }
-    if (bound !== null) { clearTimeout(bound); bound = null; }
-    if (held.length) { bound = setTimeout(expire, HOLD_MS); }
+    var sent = false;
+    while (!counted.size && held.length) { replay(held.shift()); sent = true; }
+    if (sent) { quiet = 0; }
   }
+  // An acknowledgement never came (a defect): the held clicks are dropped, never sent, and said so.
   function expire() {
-    bound = null;
-    if (!held.length) { return; }
-    console.error('SHEPHERD: ' + held.length + ' click(s) not sent: an edit of '
-      + Array.from(counted.keys()).join(', ') + ' has not reached its record in ' + HOLD_MS + ' ms.');
+    if (!counted.size) { release(); return; }
+    var marks = Array.from(counted.keys());
+    console.error('SHEPHERD: ' + held.length + ' click(s) not sent: an edit of ' + marks.join(', ')
+      + ' has not reached its record in ' + HOLD_FRAMES + ' animation frames.');
     held = [];
+    quiet = 0;
+    marks.forEach(tell);
+  }
+  function tell(mark) {
+    var line = lost.get(mark);
+    if (line && line.isConnected) { return; }
+    var field = document.getElementsByClassName(mark)[0];
+    var title = field && window.ShepHelp && window.ShepHelp.title ? window.ShepHelp.title(field) : null;
+    var name = (title && title.textContent.trim()) || mark.slice(mark.lastIndexOf(':') + 1);
+    line = document.createElement('div');
+    line.className = 'shep-notice shep-notice-red shep-touch-lost';
+    line.setAttribute('role', 'alert');
+    var said = document.createElement('span'), shape = document.createElement('span');
+    var words = document.createElement('span');
+    said.className = 'shep-st shep-st-error';
+    shape.className = 'shep-st-shape';
+    shape.setAttribute('aria-hidden', 'true');
+    shape.textContent = '\u2715';
+    words.className = 'shep-st-w';
+    words.textContent = LOST.replace('{field}', function () { return name; });
+    said.appendChild(shape);
+    said.appendChild(words);
+    line.appendChild(said);
+    (field || document.body).appendChild(line);
+    lost.set(mark, line);
   }
   function landed(mark) {
     var left = (counted.get(mark) || 0) - 1;
     if (left > 0) { counted.set(mark, left); } else { counted.delete(mark); }
-    if (!counted.size && held.length) { Promise.resolve().then(release); }
+    quiet = 0;
+    if (!counted.size && held.length) { setTimeout(release, 0); }
   }
   window.addEventListener('keydown', function (e) {
     keyed = null;
@@ -747,7 +806,8 @@ TOUCH_HEAD = "<script>" + r"""
     state: function () { return {counted: Object.fromEntries(counted), held: held.length}; }
   };
 })();
-""".replace("__CLASS__", TOUCH_CLASS).replace("__HOLD_MS__", str(TOUCH_HOLD_MS)) + "</script>"
+""".replace("__CLASS__", TOUCH_CLASS).replace("__HOLD_FRAMES__", str(TOUCH_HOLD_FRAMES)).replace(
+    "__LOST__", json.dumps(TOUCH_LOST_WORDS)) + "</script>"
 
 #: The field kinds whose every edit is one input of theirs (`TOUCH_HEAD`):
 #: `value_field`'s text box, number box, checkbox and radio.

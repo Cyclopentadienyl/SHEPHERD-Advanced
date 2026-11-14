@@ -45,7 +45,15 @@ What these pin:
   event, so nothing waits for it; on the Training page itself, the emptied
   Neighbours per hop is refused in the shared check's words, '9, 8, 7' and
   the reference retyped are sent as the operator's, and Reset clicked while
-  the edit is pending leaves nothing set;
+  the edit is pending leaves nothing set, its request leaving after the
+  edit's line (released in a task of its own; on 9a6895f Reset left first);
+- **the hold is bounded, and says when it drops a click** (the page's clock
+  run by hand): an acknowledgement that never comes (a defect, made by a
+  no-op) drops the held click after `TOUCH_HOLD_FRAMES` frames, never sending
+  it, says so under the field as an alert naming it, and holds and drops a
+  later click the same way; acknowledgements that keep coming, each sooner
+  than the bound, keep the click held however long in all, and it is then
+  sent once with the key and the value;
 - **in a real browser** (Node with Playwright; skipped without), on a page
   of fields of each kind the record covers, wired by `record_touches` and
   served with the dashboard's head: emptying a text box (Backspace, Delete, a
@@ -127,7 +135,8 @@ def test_a_recorded_field_is_marked_for_the_touch_script_the_dashboard_loads():
     assert hops.elem_classes == [tc.TOUCH_CLASS, "shep-touch:rec:num_neighbors"]
     assert own.elem_classes == ["mine", tc.TOUCH_CLASS, "shep-touch:rec:num_epochs"]
     assert f"FIELD = '.{tc.TOUCH_CLASS}', MARK = '{tc.TOUCH_CLASS}:'" in tc.TOUCH_HEAD
-    assert f"HOLD_MS = {tc.TOUCH_HOLD_MS};" in tc.TOUCH_HEAD and "__" not in tc.TOUCH_HEAD
+    assert f"HOLD_FRAMES = {tc.TOUCH_HOLD_FRAMES};" in tc.TOUCH_HEAD and "__" not in tc.TOUCH_HEAD
+    assert f"var LOST = {json.dumps(tc.TOUCH_LOST_WORDS)};" in tc.TOUCH_HEAD
     assert "e.isTrusted" in tc.TOUCH_HEAD and "key: 'Unidentified'" in tc.TOUCH_HEAD
     head = dashboard_head()
     assert head.count(tc.TOUCH_HEAD) == 1 and head.endswith(tc.TOUCH_HEAD)
@@ -399,7 +408,8 @@ def _sent_record(record, *values):
 def _held_page():
     with gr.Blocks() as demo:
         record = tc.touched_record("rec")
-        fields = {"hops": gr.Textbox(value=HELD_FIELDS["hops"], max_lines=1, elem_id="hops"),
+        fields = {"hops": gr.Textbox(value=HELD_FIELDS["hops"], max_lines=1, elem_id="hops",
+                                     label="Neighbours per hop"),
                   "whole": gr.Number(value=HELD_FIELDS["whole"], precision=0, elem_id="whole"),
                   "sched": gr.Radio(choices=["none", "cosine"], value=HELD_FIELDS["sched"],
                                     elem_id="sched")}
@@ -685,6 +695,150 @@ def test_a_switch_toggled_with_enter_is_the_operators_edit(tmp_path):
     assert seen["enter while pending"] == {"record": ["amp", "hops"], "values": ["", True]}, seen
 
 
+#: The bound, on the page of `_held_page`, the page's clock paused and run
+#: on by hand (Playwright's: its animation frames and timeouts run only as
+#: the clock is run): (a) the acknowledgement made a no-op (a defect), '9'
+#: typed in the hop list, Start pressed, the clock run for fewer frames than
+#: the bound and then past it, then Reset pressed and the clock run past it
+#: again: the touch script's state each time, the requests that left, the
+#: lines the page shows and the console's errors; (b) each acknowledgement
+#: put off by 1.5 s more than the one before (about 94 frames apart, each
+#: sooner than the bound, about 10 s in all), '9, 8, 7' typed and Start
+#: pressed: the state after 5 s, then what Start's one request carried.
+_BOUND_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const fns = JSON.parse(process.argv[3]);
+  const browser = await chromium.launch();
+  const context = await browser.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 });
+  const open = async () => {
+    const page = await context.newPage();
+    const errors = [], joins = [];
+    page.on('console', (m) => { if (m.type() === 'error') { errors.push(m.text()); } });
+    await page.clock.install();
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#start', { timeout: 60000 });
+    await page.waitForFunction(() => window.ShepTouch && window.ShepHelp);
+    page.on('request', (r) => { if (r.url().includes('/queue/join')) { joins.push(JSON.parse(r.postData()).fn_index); } });
+    return { page, errors, joins };
+  };
+  const count = (joins, fn) => joins.filter((i) => i === fn).length;
+  const state = (page) => page.evaluate(() => window.ShepTouch.state());
+  const centre = async (page, sel) => { const b = await page.locator(sel).boundingBox(); return [b.x + b.width / 2, b.y + b.height / 2]; };
+  const press = async (page, [x, y]) => { await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.up(); };
+  const settle = () => new Promise((r) => setTimeout(r, 300));
+  // The page's clock paused, and seen to stand still (a target already passed under load would not pause it).
+  const pause = async (page) => {
+    for (let i = 0; i < 5; i++) {
+      await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 60000);
+      const at = await page.evaluate(() => Date.now());
+      await new Promise((r) => setTimeout(r, 50));
+      if (await page.evaluate(() => Date.now()) === at) { return; }
+    }
+    throw new Error('the page clock did not pause');
+  };
+  const lines = (page) => page.evaluate(() => [...document.querySelectorAll('.shep-touch-lost')].map((el) => ({
+    role: el.getAttribute('role'), words: el.querySelector('.shep-st-w').textContent,
+    mark: el.querySelector('.shep-st-shape').textContent, under: el.parentElement.id })));
+  const out = {};
+  {
+    const { page, errors, joins } = await open();
+    await page.evaluate(() => { window.ShepTouch.landed = () => {}; });
+    const start = await centre(page, '#start'), reset = await centre(page, '#reset');
+    await page.locator('#hops input').click();
+    await page.keyboard.press('Control+A');
+    await pause(page);
+    await page.keyboard.type('9');
+    await press(page, start);
+    await page.clock.runFor(1000);
+    const before = await state(page);
+    await page.clock.runFor(1500);
+    const after = await state(page);
+    const first = await lines(page);
+    await press(page, reset);
+    const again = await state(page);
+    await page.clock.runFor(2500);
+    await settle();
+    out.lost = { before, after, again, end: await state(page), first, lines: await lines(page),
+                 start: count(joins, fns.start), reset: count(joins, fns.reset), errors };
+    await page.close();
+  }
+  {
+    const { page, errors, joins } = await open();
+    await page.evaluate(() => {
+      const own = window.ShepTouch.landed;
+      let n = 0;
+      window.ShepTouch.landed = (mark) => { n += 1; setTimeout(() => own(mark), n * 1500); };
+    });
+    const start = await centre(page, '#start');
+    await page.locator('#hops input').click();
+    await page.keyboard.press('Control+A');
+    await pause(page);
+    await page.keyboard.type('9, 8, 7');
+    await press(page, start);
+    await page.clock.runFor(5000);
+    await settle();
+    const mid = { state: await state(page), start: count(joins, fns.start) };
+    await page.clock.runFor(7000);
+    await page.clock.resume();
+    await page.waitForFunction(() => document.querySelector('#sent textarea, #sent input').value !== '', null, { timeout: 15000 });
+    await settle();
+    out.slow = { mid, sent: JSON.parse(await page.locator('#sent textarea, #sent input').first().inputValue()),
+                 start: count(joins, fns.start), lines: await lines(page), errors };
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_click_held_for_an_acknowledgement_that_never_comes_is_dropped_and_said(tmp_path):
+    """The liveness of the hold (the review of 9a6895f), with the page's clock
+    run by hand. (a) An acknowledgement that never comes can only be a
+    defect, made here by a no-op: Start pressed after an edit is held while
+    fewer than `TOUCH_HOLD_FRAMES` frames run, then dropped, never sent with
+    the record as it was; the page says so under the field, once, as an
+    alert in the error's mark and words, naming the field by its title
+    (`TOUCH_LOST_WORDS`), and the console says it too; the edit stays
+    counted, so Reset pressed after it is held and dropped the same way, and
+    neither request ever leaves (on 9a6895f the drop was said in the console
+    alone). (b) Acknowledgements that keep coming, each sooner than the
+    bound, about 10 s in all: the bound counts again from each, so Start is
+    held while they come (three of seven in, after 5 s) and then sent once,
+    with the key and the value typed (on 9a6895f the bound ran from the
+    click, and Start was dropped after 2 s)."""
+    from src.webui.app import mount_options
+    from tests.fixtures.served_page import served
+
+    _browser()
+    demo, record, start, reset = _held_page()
+    fns = {"start": next(fn._id for fn in demo.fns.values() if fn.name == "_sent_record"),
+           "reset": next(fn._id for fn in demo.fns.values()
+                         if fn.targets == [(reset._id, "click")])}
+    with served(demo, **mount_options()) as base:
+        seen = _run(_BOUND_JS, tmp_path, base[:-len("gradio_api")], json.dumps(fns))
+
+    mark = tc.touch_mark(record, "hops")
+    lost = seen["lost"]
+    assert lost["before"] == {"counted": {mark: 1}, "held": 1}, lost
+    assert lost["after"] == {"counted": {mark: 1}, "held": 0}, lost
+    assert lost["again"] == {"counted": {mark: 1}, "held": 1}, lost
+    assert lost["end"] == {"counted": {mark: 1}, "held": 0}, lost
+    said = {"role": "alert", "mark": "✕", "under": "hops",
+            "words": tc.TOUCH_LOST_WORDS.replace("{field}", "Neighbours per hop")}
+    assert lost["first"] == [said] and lost["lines"] == [said], lost
+    assert (lost["start"], lost["reset"]) == (0, 0), lost
+    said = [error for error in lost["errors"] if error.startswith("SHEPHERD")]
+    assert [error.startswith(f"SHEPHERD: 1 click(s) not sent: an edit of {mark} ")
+            for error in said] == [True, True], lost["errors"]
+    slow = seen["slow"]
+    assert slow["mid"] == {"state": {"counted": {mark: 4}, "held": 1}, "start": 0}, slow
+    assert slow["start"] == 1, slow
+    assert slow["sent"] == {"record": ["hops"], "values": ["9, 8, 7", 200, "none"]}, slow
+    assert slow["lines"] == [], slow
+    assert not [error for error in slow["errors"] if error.startswith("SHEPHERD")], slow
+
+
 # --------------------------------------------------------------------------- the Training page
 @pytest.fixture
 def workspace_root(tmp_path_factory, monkeypatch):
@@ -842,19 +996,24 @@ def test_the_training_form_refuses_a_hop_list_emptied_first_and_records_no_page_
 #: the edit, then a raw press and release on Start (or Reset to reference);
 #: after 300 ms of real time, Start's requests that left and the touch
 #: script's state; then the clock runs and Start's answer is read (after
-#: Reset, the form's line, then Start clicked with the clock running).
+#: Reset, the order in which the edit's line and Reset left, the form's
+#: line, then Start clicked with the clock running).
 _HELD_TRAINING_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
   const start = Number(process.argv[3]);
+  const [line, resetFn, hop] = JSON.parse(process.argv[4]);
   const browser = await chromium.launch();
   const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 })).newPage();
   await page.clock.install();
   await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
   await page.click('#shep-tab-research-button', { timeout: 60000 });
   await page.waitForSelector('#shep-train-start:not([disabled])', { timeout: 60000 });
-  const joins = [];
-  page.on('request', (r) => { if (r.url().includes('/queue/join')) { joins.push(JSON.parse(r.postData()).fn_index); } });
+  const joins = [], predicts = [];
+  page.on('request', (r) => {
+    if (r.url().includes('/queue/join')) { joins.push(JSON.parse(r.postData()).fn_index); }
+    if (r.url().includes('/run/predict')) { const body = JSON.parse(r.postData()); predicts.push([body.fn_index, body.data]); }
+  });
   const starts = () => joins.filter((i) => i === start).length;
   // Every Start request made so far seen (a request's event can reach this script after the page's answer).
   let expected = 0;
@@ -919,9 +1078,15 @@ const { chromium } = require('playwright');
   await reset();
   out.reference = await held(() => page.keyboard.type('15, 10, 5'), '#shep-train-start');
   Object.assign(out.reference, await answered('Neighbours per hop 15, 10, 5'));
+  const sent = predicts.length;
   out.reset = await held(() => page.keyboard.press('Backspace'), '#shep-train-reset');
   await page.waitForFunction(() => document.querySelector('#num_neighbors input').value === '15, 10, 5',
                              null, { timeout: 30000 });
+  // The emptied list's line (its request carries the list empty) and Reset, in the order they left.
+  const ordered = () => predicts.slice(sent).filter(([i, data]) => (i === line && data[hop] === '') || i === resetFn)
+    .map(([i]) => (i === line ? 'line' : 'reset'));
+  await until(() => ordered().length >= 2);
+  out.reset.order = ordered();
   await soft(page.waitForFunction(() => document.querySelector('#shep-train-setby').innerText.includes('Set by you: nothing'),
                                   null, { timeout: 15000 }));
   out.reset.after = await state();
@@ -947,8 +1112,10 @@ def test_a_start_clicked_while_the_hop_list_edit_is_pending_carries_it(
     in the shared check's words and nothing starts; '9, 8, 7' and the
     reference's own value retyped reach the job runner as the operator's.
     Reset to reference clicked while the edit is pending goes after it: the
-    record is empty, the line says nothing is set, and Start then sends no
-    setting."""
+    record is empty and Start then sends no setting; Reset's request leaves
+    after the edit's line request (released in a task of its own after the
+    acknowledgement, so the edit's dispatch sends first; the line shown is
+    then the last answer, which the requests' order does not bind)."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.served_page import served
 
@@ -956,8 +1123,15 @@ def test_a_start_clicked_while_the_hop_list_edit_is_pending_carries_it(
     asked, carried = _recorded_starts(monkeypatch)
     demo = create_gradio_app()
     start = next(fn._id for fn in demo.fns.values() if fn.name == "_on_start")
+    field = next(block for block in demo.blocks.values()
+                 if getattr(block, "elem_id", None) == "num_neighbors")
+    touch = next(fn for fn in demo.fns.values() if (field._id, "input") in fn.targets)
+    line = next(fn._id for fn in demo.fns.values()
+                if fn.trigger_after == touch._id and fn.fn is not None)
+    reset = next(fn._id for fn in demo.fns.values() if fn.fn is tc._on_base_reset)
     with served(demo, **mount_options()) as base:
-        seen = _run(_HELD_TRAINING_JS, tmp_path, base[:-len("gradio_api")], str(start))
+        seen = _run(_HELD_TRAINING_JS, tmp_path, base[:-len("gradio_api")], str(start),
+                    json.dumps([line, reset, 1 + tc.base_form_keys().index("num_neighbors")]))
 
     # Nothing left while the edit was pending: Start (and Reset) was held.
     assert [(case, seen[case]["starts"]) for case in ("emptied", "typed", "reference", "reset")] == [
@@ -979,7 +1153,7 @@ def test_a_start_clicked_while_the_hop_list_edit_is_pending_carries_it(
     assert "Neighbours per hop 9, 8, 7 (reference 15, 10, 5)" in seen["typed"]["line"]
     assert "Neighbours per hop 15, 10, 5 (reference 15, 10, 5)" in seen["reference"]["line"]
     assert seen["reset"]["after"] == {"counted": {}, "held": 0}
-    assert "Set by you: nothing" in seen["reset"]["line"]
+    assert seen["reset"]["order"] == ["line", "reset"], seen["reset"]
 
 
 #: The Training page, one field's line held on the server (`gate`): two keys

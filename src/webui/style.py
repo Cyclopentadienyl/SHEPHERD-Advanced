@@ -290,6 +290,8 @@ body { color: var(--shep-text); }
 .shep-reason-grey { border: 1px solid var(--shep-grey-200); background: var(--shep-grey-50); border-radius: 8px; padding: 10px 12px; color: var(--shep-grey-800); }
 .shep-notice { border-radius: 6px; padding: 8px 10px; font-size: 14px; }
 .shep-notice-amber { border: 1px solid var(--shep-amber-300); border-left: 4px solid var(--shep-amber-600); background: var(--shep-amber-50); color: var(--shep-amber-800); }
+.shep-notice-red { border: 1px solid var(--shep-red-200); border-left: 4px solid var(--shep-red-700); background: var(--shep-red-50); color: var(--shep-red-700); }
+.shep-touch-lost { margin-top: 4px; }
 .shep-warn { color: var(--shep-amber-800); margin: 0 0 6px; }
 .shep-mark { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 14px; line-height: 1.4; margin: 1px 4px 1px 0; }
 .shep-mark-serve { background: var(--shep-accent-50); border: 1px solid var(--shep-accent-100); color: var(--shep-accent-text); font-weight: 500; }

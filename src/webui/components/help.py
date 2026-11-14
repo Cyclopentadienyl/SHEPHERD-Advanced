@@ -520,7 +520,8 @@ _HELP_JS = r"""
     }
   });
 
-  window.ShepHelp = {open: open, close: close, enhance: enhance};
+  // `title`: a field's title as the ⓘ finds it, which the touch script names a field by.
+  window.ShepHelp = {open: open, close: close, enhance: enhance, title: titleIn};
 })();
 """
 
