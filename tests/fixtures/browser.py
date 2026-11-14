@@ -16,10 +16,9 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from typing import Dict, Optional, Tuple
 
 
-def node_with_playwright() -> Optional[Tuple[str, Dict[str, str]]]:
+def node_with_playwright() -> tuple[str, dict[str, str]] | None:
     """Node and a NODE_PATH under which it resolves Playwright, or None."""
     node = shutil.which("node")
     if node is None:
