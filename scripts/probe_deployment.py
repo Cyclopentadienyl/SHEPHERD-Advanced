@@ -418,10 +418,15 @@ def _apply_allocator() -> Dict[str, Any]:
     """
     import os
 
-    from src.config.runtime_presets import ALLOC_SOURCE_ENV, allocator_env, load_runtime_settings
+    from src.config.runtime_presets import (
+        ALLOC_SOURCE_ENV,
+        allocator_env,
+        allocator_variable,
+        load_runtime_settings,
+    )
 
     torch_first = "torch" in sys.modules
-    inherited = "PYTORCH_ALLOC_CONF" in os.environ or "PYTORCH_CUDA_ALLOC_CONF" in os.environ
+    inherited = allocator_variable(os.environ) is not None
     resolved = allocator_env(os.environ, load_runtime_settings(), inherit=True)
     for key in ("PYTORCH_ALLOC_CONF", ALLOC_SOURCE_ENV):
         if key in resolved:
@@ -439,9 +444,9 @@ def _allocator_variables() -> Tuple[str, ...]:
     """The allocator variables a report records, by name: for the probe's own
     process (`_allocator_record`) and for the served readings' server process
     (`_process_allocator`), one list for both."""
-    from src.config.runtime_presets import ALLOC_SOURCE_ENV
+    from src.config.runtime_presets import ALLOC_SOURCE_ENV, ALLOCATOR_VARIABLES
 
-    return ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF", ALLOC_SOURCE_ENV)
+    return (*ALLOCATOR_VARIABLES, ALLOC_SOURCE_ENV)
 
 
 def _allocator_record(backend: Optional[str]) -> Dict[str, Any]:

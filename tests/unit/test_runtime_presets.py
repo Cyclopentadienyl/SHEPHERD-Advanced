@@ -202,3 +202,15 @@ def test_what_runs_is_read_back_by_the_rule_that_wrote_it():
                               ALLOC_SOURCE_ENV: "env"})["preset"] is None
     assert running_allocator({ALLOC_SOURCE_ENV: "preset"}) == {
         "variable": None, "conf": None, "preset": None, "source": None}
+    # B5 review: an allocator variable present with an empty value is an
+    # explicit setting, kept by the start and by every restart; it is read
+    # back as one, never as "no allocator was set" with a restart to apply
+    # the preset (the two rules share one presence test).
+    empty = {"PYTORCH_ALLOC_CONF": ""}
+    for _restart in range(2):
+        empty = allocator_env(empty, {"allocator_preset": "expandable"})
+        assert empty["PYTORCH_ALLOC_CONF"] == "" and ALLOC_SOURCE_ENV not in empty
+    assert running_allocator(empty) == {
+        "variable": "PYTORCH_ALLOC_CONF", "conf": "", "preset": None, "source": "env"}
+    assert running_allocator({"PYTORCH_CUDA_ALLOC_CONF": ""})["variable"] == (
+        "PYTORCH_CUDA_ALLOC_CONF")

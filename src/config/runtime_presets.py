@@ -39,6 +39,18 @@ DEFAULT_ALLOCATOR = "cuda_async"
 #   "env"    -> an explicit override the launcher saw; preserve it.
 ALLOC_SOURCE_ENV = "SHEPHERD_ALLOC_SOURCE"
 
+#: The variables CUDA's allocator is configured by, in the order PyTorch
+#: reads them: the first one present wins, an empty value included.
+ALLOCATOR_VARIABLES = ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF")
+
+
+def allocator_variable(env: Mapping[str, str]) -> str | None:
+    """**Whether `env` sets CUDA's allocator, and by which variable**: the
+    first of `ALLOCATOR_VARIABLES` that is present, its value empty or not
+    (an empty value is still a setting PyTorch reads), or None. The one test
+    `allocator_env` writes by and `running_allocator` reads by."""
+    return next((name for name in ALLOCATOR_VARIABLES if name in env), None)
+
 
 def load_runtime_settings(path: Path | None = None) -> dict:
     """Load persisted runtime settings.
@@ -103,9 +115,7 @@ def allocator_env(
     """
     new_env = dict(env)
     marker = new_env.get(ALLOC_SOURCE_ENV)
-    has_env_alloc = (
-        "PYTORCH_ALLOC_CONF" in new_env or "PYTORCH_CUDA_ALLOC_CONF" in new_env
-    )
+    has_env_alloc = allocator_variable(new_env) is not None
     if not has_env_alloc or (marker == "preset" and not inherit):
         _preset, conf = resolve_allocator(settings.get("allocator_preset"))
         new_env["PYTORCH_ALLOC_CONF"] = conf
@@ -118,17 +128,18 @@ def running_allocator(env: Mapping[str, str]) -> dict:
     read side of `allocator_env`, which wrote `env` when the process started.
 
     Returns ``{"variable", "conf", "preset", "source"}``: the allocator
-    variable that is set (``PYTORCH_ALLOC_CONF`` first, as PyTorch reads it)
-    and its value; the preset whose value it is (None for a value no preset
-    gives); and where it came from, by `allocator_env`'s own rule: ``"preset"``
-    (marked so: the saved preset at the process's start), ``"env"`` (any other
-    allocator variable: an explicit setting in the launch environment) or None
-    (no allocator variable: PyTorch's default backend). A saved preset changed
+    variable that is set (`allocator_variable`, the test `allocator_env`
+    writes by: ``PYTORCH_ALLOC_CONF`` first, as PyTorch reads it, present
+    even when empty) and its value; the preset whose value it is (None for a
+    value no preset gives, an empty one included); and where it came from, by
+    `allocator_env`'s own rule: ``"preset"`` (marked so: the saved preset at
+    the process's start), ``"env"`` (any other allocator variable: an explicit
+    setting in the launch environment, which a restart keeps) or None (no
+    allocator variable: PyTorch's default backend). A saved preset changed
     since then is not what runs until the process starts again.
     """
-    variable = next((name for name in ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF")
-                     if env.get(name)), None)
-    conf = env.get(variable) if variable else None
+    variable = allocator_variable(env)
+    conf = env[variable] if variable else None
     preset = next((name for name, value in ALLOCATOR_PRESETS.items() if value == conf), None)
     source = None if conf is None else (
         "preset" if env.get(ALLOC_SOURCE_ENV) == "preset" else "env")
@@ -144,6 +155,8 @@ __all__ = [
     "save_runtime_settings",
     "resolve_allocator",
     "ALLOC_SOURCE_ENV",
+    "ALLOCATOR_VARIABLES",
     "allocator_env",
+    "allocator_variable",
     "running_allocator",
 ]

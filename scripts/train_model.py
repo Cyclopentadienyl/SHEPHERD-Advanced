@@ -94,6 +94,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.config.runtime_presets import (
     ALLOC_SOURCE_ENV,
     allocator_env,
+    allocator_variable,
     load_runtime_settings,
 )
 
@@ -109,7 +110,7 @@ def _apply_allocator() -> str:
     already in the environment -- the backend's, or an explicit override -- and
     applies the saved preset only where there is none.
     """
-    inherited = "PYTORCH_ALLOC_CONF" in os.environ or "PYTORCH_CUDA_ALLOC_CONF" in os.environ
+    inherited = allocator_variable(os.environ) is not None
     resolved = allocator_env(os.environ, load_runtime_settings(), inherit=True)
     for key in ("PYTORCH_ALLOC_CONF", ALLOC_SOURCE_ENV):
         if key in resolved:
