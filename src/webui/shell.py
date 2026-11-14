@@ -520,7 +520,10 @@ _SHELL_JS = r"""
     }
   }
   // Row 1 holds the brand, the stage switch, the chips and Settings. When they
-  // do not fit on one row, the chips and Settings move onto a second line.
+  // do not fit on one row, the chips and Settings move onto a line of their
+  // own, under the stage switch however many lines it takes (at 480 px its
+  // two tabs take two): the chips sit where that line starts, measured, so
+  // they never cover a tab.
   function layout() {
     var shell = document.getElementById('shep-shell');
     var row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
@@ -538,6 +541,8 @@ _SHELL_JS = r"""
     shell.style.setProperty('--shep-settings-w', settings + 'px');
     shell.classList.toggle('shep-nav-wrapped', need > shell.clientWidth);
     shell.style.setProperty('--shep-chips-h', chips.offsetHeight + 'px');
+    var line = Math.round(right.getBoundingClientRect().top - shell.getBoundingClientRect().top);
+    shell.style.setProperty('--shep-chips-top', line + 'px');
   }
   // The layout rule's titled ellipsis, on every page: a select's value or a
   // segmented control's label cut to an ellipsis has its whole text as its

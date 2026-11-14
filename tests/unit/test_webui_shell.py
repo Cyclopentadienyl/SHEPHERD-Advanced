@@ -499,3 +499,21 @@ def test_a_panels_header_sticks_to_the_top_of_the_region_that_scrolls():
     # never at a narrow size, where the page scrolls
     narrow = SHELL_CSS[SHELL_CSS.index("@media (max-width: 1399px), (max-height: 759px) {"):]
     assert "position: sticky" not in narrow
+
+
+def test_the_wrapped_chips_sit_on_their_own_line_under_the_stage_switch():
+    """B5 (leftover b): at 480 px the stage switch's two tabs take two lines,
+    and the chips, placed one header row down, covered the Research tab
+    (measured with ``document.elementsFromPoint``). The header script now
+    measures where the chips' and Settings' own line starts (the right tab
+    group's top) and the wrapped chips sit there, however many lines the
+    switch takes; at 480, 760, 1100 and 1850 px no tab's centre or corner is
+    under another element (the stage's browser check)."""
+    from src.webui.style import SHELL_CSS
+
+    head = shell.SHELL_HEAD
+    assert "right.getBoundingClientRect().top - shell.getBoundingClientRect().top" in head
+    assert "shell.style.setProperty('--shep-chips-top', line + 'px')" in head
+    wrapped = SHELL_CSS[SHELL_CSS.index("#shep-shell.shep-nav-wrapped #shep-chips {"):]
+    wrapped = wrapped[:wrapped.index("}")]
+    assert "top: var(--shep-chips-top, var(--shep-row1-h));" in wrapped

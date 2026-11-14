@@ -132,7 +132,7 @@ body { color: var(--shep-text); }
   flex-basis: 100%; justify-content: flex-end; min-height: max(44px, calc(var(--shep-chips-h, 28px) + 12px));
 }
 #shep-shell.shep-nav-wrapped #shep-chips {
-  top: var(--shep-row1-h); height: max(44px, calc(var(--shep-chips-h, 28px) + 12px));
+  top: var(--shep-chips-top, var(--shep-row1-h)); height: max(44px, calc(var(--shep-chips-h, 28px) + 12px));
 }
 
 /* ---------------------------------------------------------------- row 2: the research pages */
