@@ -359,4 +359,3 @@ def _base_fields():
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     return [by_id[key] if key in by_id else by_id[f"spec-{key.replace('.', '-')}"]
             for key in tc.base_form_keys()]
-
