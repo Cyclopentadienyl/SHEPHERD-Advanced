@@ -743,8 +743,8 @@ def _dashboard_calls():
         # what continuing takes, the Branch fields' record and values.
         (tc._on_check_continue, [tc.CONTINUE, path, None, "/srv/x.pt", "cpu", None, None,
                                  {"name": "ws"}, {}, {}, [], *branch], None),
-        (tc._on_resume, [tc.CONTINUE, {}, "cpu", path, None, "/srv/x.pt", None, None, {}, {}, [],
-                         *branch], None),
+        (tc._on_resume, [tc.CONTINUE, {}, "", "cpu", path, None, "/srv/x.pt", None, None, {}, {},
+                         [], *branch], None),
         # Fine-tune: a fresh session has no dataset, so the base list and
         # Start stop before their service when allowed.
         (fp._on_finetune_bases, [{}, None], None),
