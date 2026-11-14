@@ -240,11 +240,12 @@ narrow to wide. Operator and read-only. Page refresh, a model switch, a job's st
 loaded, and a bad candidate. The full key or digest chosen is never replaced by a short label; a result stays with
 its run; no error shows a patient's or a server's path.
 
-**GB10, on a candidate slot after the review.** A small base, a branch, a full and a frozen disease fine-tune, saved
-and continued once. LP and disease measurement of the two children, kept apart. Load a disease model, infer, stop,
-run a research job, load again; a concurrent attempt is refused with the shared reason; a bad candidate leaves the
-serving model as it was. Gene and patients-like-me through the UI on the small functional data, marked as not ground
-truth. No accuracy gain is required.
+**GB10, on a candidate slot after the review.** A small base, a branch, a full and a frozen disease fine-tune, saved and
+continued once. LP and disease measurement of the two children, kept apart. Load a disease model, infer, stop, run a
+research job, load again; a concurrent attempt is refused with the shared reason; a bad candidate leaves the serving
+model as it was. Gene and patients-like-me through the UI on the small functional data, marked as not ground truth. No
+accuracy gain is required. The field contract of the round's new probes, and how each item maps onto a probe or a UI
+step the owner runs: [`GB10_ACCEPTANCE.md`](GB10_ACCEPTANCE.md).
 
 ## 9. Stop conditions
 
