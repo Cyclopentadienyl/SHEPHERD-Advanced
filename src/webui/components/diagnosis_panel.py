@@ -95,7 +95,7 @@ import logging
 import re
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import gradio as gr
 import requests
@@ -576,7 +576,9 @@ def _format_full_explanation(candidate: Dict) -> str:
 # reason, never left blank and never "unknown".
 
 #: The plan's claim boundary for the UI (PLAN_PROVENANCE_CONTRACT.md §6), verbatim.
-#: Verified states carry ✓ in the identity table, so the sentence refers to them.
+#: Verified states carry ✓ in the report's identity table, so the sentence
+#: refers to them; the identity drawer draws its ✓ as the page's verified mark
+#: (`_boundary_html`).
 IDENTITY_CLAIM_BOUNDARY = (
     "Checked: these files are the ones their records name, and the records agree "
     "on the relations marked ✓. Not checked: who changed them, or anything a "
@@ -614,7 +616,7 @@ IDENTITY_NO_MODEL = "no_model"
 _SERVED = "served"
 
 #: The report's mark of a verified part (Markdown); the page draws the
-#: shared status mark for it (`_part_html`).
+#: shared status mark for it (`_part_html`, `_boundary_html`).
 _VERIFIED_MARK = "✓"
 #: A key the response did not carry, as distinct from one it carried as null.
 _MISSING = object()
@@ -2044,10 +2046,20 @@ def result_identity_html(result: Optional[Mapping[str, Any]], state: Mapping[str
     parts.append('<p class="shep-dx-sub-h"><b>What produced this result</b></p>')
     parts.append(_summary_list((_part_key(part), _part_html(state_, value))
                               for part, state_, value in mine))
-    boundary = "".join(f"<p>{_e(sentence)}</p>" for sentence in _claim_boundary_lines(kind, identity))
     return ('<div class="shep-dx-result-id">' + "".join(parts)
-            + f'<div class="shep-dx-boundary">{boundary}<p><b>{_e(NOT_A_MEDICAL_DEVICE)}</b></p>'
-              '</div></div>')
+            + _boundary_html(_claim_boundary_lines(kind, identity)) + '</div>')
+
+
+def _boundary_html(sentences: Iterable[str]) -> str:
+    """The claim boundary as the identity drawer shows it, then the
+    medical-device line. Each sentence is the report's, word for word, except
+    that its ✓ is drawn as the mark the drawer shows a verified part by
+    (`_part_html`, the card's served facts): the sentence names the mark the
+    reader sees."""
+    mark = _status_mark("ok", "verified")
+    shown = "".join(f"<p>{_e(sentence).replace(_VERIFIED_MARK, mark)}</p>"
+                    for sentence in sentences)
+    return f'<div class="shep-dx-boundary">{shown}<p><b>{_e(NOT_A_MEDICAL_DEVICE)}</b></p></div>'
 
 
 def result_digests_html(result: Optional[Mapping[str, Any]]) -> str:
@@ -2088,16 +2100,13 @@ def model_identity_html(state: Mapping[str, Any], section: str = "identity") -> 
     (`diagnosis_card.served_facts_html`), then the claim boundary for what is
     loaded and the medical-device line."""
     status = state.get("status")
-    boundary = ""
+    sentences: list[str] = []
     if isinstance(status, Mapping) and status.get("initialized"):
         identity = status.get("served_identity")
         kind = _SERVED if isinstance(identity, dict) else IDENTITY_NOT_REPORTED
         sentences = _claim_boundary_lines(kind, identity if isinstance(identity, dict) else None,
                                           IDENTITY_NOTHING_CHECKED_LOADED)
-        boundary = "".join(f"<p>{_e(s)}</p>" for s in sentences)
-    return (card.served_facts_html(state, open_section=section)
-            + f'<div class="shep-dx-boundary">{boundary}<p><b>{_e(NOT_A_MEDICAL_DEVICE)}</b></p>'
-              '</div>')
+    return card.served_facts_html(state, open_section=section) + _boundary_html(sentences)
 
 
 def identity_outputs(view: Mapping[str, Any], state: Mapping[str, Any],

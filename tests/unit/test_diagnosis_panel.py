@@ -878,6 +878,12 @@ _NOTHING_CHECKED_LOADED = (
 _CHECKS_NOT_REPORTED = "The response did not say what produced it or what was checked."
 
 
+def _on_page(sentence: str) -> str:
+    """A boundary sentence as the identity drawer shows it: the report's words,
+    its ✓ drawn as the page's verified mark (the mark the drawer shows)."""
+    return dp._e(sentence).replace("✓", r.status_mark("ok", "verified"))
+
+
 _IDENTITIES = {
     "verified_synthetic": _served_identity,
     "verified_files": lambda: _served_identity(origin="files"),
@@ -1148,8 +1154,9 @@ def test_the_page_shows_what_produced_the_result(monkeypatch, status_read):
         assert (f'<dt class="shep-k">{dp._e(dp._part_key(part))}</dt>'
                 f'<dd class="shep-v">{dp._part_html(state, value)}</dd>') in shown
     assert f'title="{CHECKPOINT_SHA}">{CHECKPOINT_SHA[:12]}</code>' in shown
-    assert r.status_mark("ok", "verified") in shown and "✓" not in shown.split("shep-dx-boundary")[0]
-    assert _CLAIM_BOUNDARY in shown and _NOT_A_DEVICE in shown
+    # No ✓ anywhere on the page: the boundary names the mark the drawer shows.
+    assert r.status_mark("ok", "verified") in shown and "✓" not in shown
+    assert _on_page(_CLAIM_BOUNDARY) in shown and _NOT_A_DEVICE in shown
     # This fixture's status serves nothing: compared with nothing, never as
     # ten parts that differ (B4), the result keeping its own identity.
     assert "<b>Not compared:</b> Nothing is served now" in shown and "<table" not in shown
@@ -1168,7 +1175,7 @@ def test_the_page_does_not_say_nothing_was_checked_without_an_identity(monkeypat
     shown = dp.result_identity_html(out["results_state"], out["card_state"])
 
     assert "nothing in it was checked" not in shown
-    assert shown.index(_CLAIM_BOUNDARY) < shown.index(_CHECKS_NOT_REPORTED)
+    assert shown.index(_on_page(_CLAIM_BOUNDARY)) < shown.index(_CHECKS_NOT_REPORTED)
     assert "did not say what produced it" in out["badge"]
 
 
@@ -1180,8 +1187,8 @@ def test_a_result_with_nothing_marked_says_nothing_was_checked(monkeypatch, stat
     shown = dp.result_identity_html(out["results_state"], out["card_state"])
 
     assert dp.IDENTITY_NOTHING_CHECKED == _NOTHING_CHECKED
-    for text in (report, shown):
-        assert text.index(_CLAIM_BOUNDARY) < text.index(_NOTHING_CHECKED)
+    for text, said in ((report, str), (shown, _on_page)):
+        assert text.index(said(_CLAIM_BOUNDARY)) < text.index(said(_NOTHING_CHECKED))
         assert _CHECKS_NOT_REPORTED not in text
 
 
@@ -1650,14 +1657,16 @@ def test_the_views_start_as_their_first_update_leaves_them(monkeypatch):
 # -------------------------------------------------- the model in use (identity drawer)
 def test_the_model_in_use_shows_the_boundary_for_what_is_loaded():
     html = dp.model_identity_html(_card(_status_serving(_served_identity())))
-    assert _CLAIM_BOUNDARY in html and _NOT_A_DEVICE in html
-    assert _NOTHING_CHECKED_LOADED not in html and "SYNTHETIC WORKSPACE" in html
+    assert _on_page(_CLAIM_BOUNDARY) in html and _NOT_A_DEVICE in html
+    assert _on_page(_NOTHING_CHECKED_LOADED) not in html and "SYNTHETIC WORKSPACE" in html
+    # The sentence names the mark the served facts show a verified part by.
+    assert "✓" not in html and r.status_mark("ok", "verified") in html.split("shep-dx-boundary")[0]
 
 
 def test_a_model_in_use_with_nothing_marked_says_nothing_was_checked():
     html = dp.model_identity_html(_card(_status_serving(_parts_left_out())))
-    assert html.index(_CLAIM_BOUNDARY) < html.index(_NOTHING_CHECKED_LOADED)
-    assert _NOTHING_CHECKED not in html and _CHECKS_NOT_REPORTED not in html
+    assert html.index(_on_page(_CLAIM_BOUNDARY)) < html.index(_on_page(_NOTHING_CHECKED_LOADED))
+    assert _on_page(_NOTHING_CHECKED) not in html and _CHECKS_NOT_REPORTED not in html
 
 
 _STATUS_IDENTITIES = {**_IDENTITIES, "parts_left_out": _parts_left_out}
@@ -1673,8 +1682,8 @@ def test_the_model_in_use_and_the_report_agree_on_whether_anything_was_checked(n
     nothing_marked = "✓" not in "".join(row[1] for row in _table_rows(section))
 
     assert (_NOTHING_CHECKED in section) is nothing_marked
-    assert (_NOTHING_CHECKED_LOADED in html) is nothing_marked
-    assert _CLAIM_BOUNDARY in html and _CLAIM_BOUNDARY in section
+    assert (_on_page(_NOTHING_CHECKED_LOADED) in html) is nothing_marked
+    assert _on_page(_CLAIM_BOUNDARY) in html and _CLAIM_BOUNDARY in section
 
 
 def test_a_status_without_an_identity_says_so():

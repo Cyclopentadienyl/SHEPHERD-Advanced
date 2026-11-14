@@ -164,6 +164,7 @@ def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(trained_disease_
     from src.api.routes.pipeline import _status_of
     from src.webui.components import diagnosis_card as card
     from src.webui.components import diagnosis_panel as panel
+    from src.webui.components import renderers as r
 
     logs = torch.load(trained_disease_child["disease"], map_location="cpu",
                       weights_only=False)["logs"]
@@ -198,7 +199,8 @@ def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(trained_disease_
     body = card.body_html(state)
     assert f">{served.checkpoint.sha256[:12]}</code>" in body and "synthetic data" in body
     assert "SYNTHETIC WORKSPACE: not a clinical result." in details
-    assert panel.IDENTITY_CLAIM_BOUNDARY in details
+    assert panel.IDENTITY_CLAIM_BOUNDARY.replace(
+        "✓", r.status_mark("ok", "verified")) in details
 
 
 def _no_listing(status, **kwargs):
