@@ -12,7 +12,7 @@
 
 ## 這是什麼
 
-一個**可選的 `torch.compile` 開關**(CLI `--compile` / WebUI 的勾選框:最初在訓練分頁的「🧪 Experimental Features」,現在是 Runtime Settings 分頁的「Enable torch.compile」),**預設關閉**。實作前做過聚焦調查;設計細節見 commit `85f9a1a` / `90f70eb` / `19cd97f` 的訊息(重點:用就地 `nn.Module.compile()` 保 checkpoint 相容、`dynamic=None`、`mode=default`、`suppress_errors=True` 規避 sm_121 Triton 崩潰)。
+一個**可選的 `torch.compile` 開關**(CLI `--compile` / WebUI 的勾選框:最初在訓練分頁的「🧪 Experimental Features」,現在是 ⚙ Settings 的 Runtime Settings 頁面上的「Compile the model (torch.compile)」,由 Training 頁面啟動、接續或分支 run 時讀取,Fine-tune 不讀取),**預設關閉**。實作前做過聚焦調查;設計細節見 commit `85f9a1a` / `90f70eb` / `19cd97f` 的訊息(重點:用就地 `nn.Module.compile()` 保 checkpoint 相容、`dynamic=None`、`mode=default`、`suppress_errors=True` 規避 sm_121 Triton 崩潰)。
 
 ---
 

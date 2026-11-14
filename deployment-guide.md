@@ -2643,7 +2643,8 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
   說明留下了什麼；遭 SIGTERM 或 SIGKILL 結束時，還會指出暫存檔（`*.tmp`）可能留在哪裡：執行目錄，
   以及正在登錄報告的執行所屬 checkpoint 的目錄（其 ledger 所在處）。
 - **Runtime Settings 的 Restart Backend** 在任何工作執行中時都會被拒絕，不論是訓練或測試執行
-  （提示文字現在是 "A GPU job (training or a test run) is in progress"），模型載入或推論停止進行中
+  （自 ops-wiring 這一輪的 B5 起，按鈕旁的提示文字是 "Restart is off while a GPU job (training or a
+  test run) runs."），模型載入或推論停止進行中
   時也會被拒絕。在短暫延遲之後，它只在沒有工作占用時、並在與這個檢查同一步中關閉 job runner 的 GPU
   槽位，並保持關閉直到行程被替換；**接著停止服務推論**（自 ops-wiring 輪起）：已接受的診斷跑完，模型
   與 GPU 鎖在行程被替換之前交還，重啟失敗時也不會載入任何模型。延遲期間啟動的工作會讓重啟中止，之後才要求的啟動會被拒絕，絕不會因重啟而成為孤兒（自
@@ -3841,13 +3842,14 @@ build; start a new run.」）。Load 不會寫入任何使用紀錄。頁面在�
 now**，這個後端啟動時使用的 CUDA 記憶體配置器，從它自己的環境讀出（啟動時已儲存的 preset、啟動
 環境中設定的配置器（附上變數名稱），或沒有設定：PyTorch 的預設）；**Allocator saved**，下次啟動
 會套用的 preset，兩者不同時寫「▲ Not running yet: Restart Backend applies it」，啟動環境中設定的
-配置器優先時寫「▲ The launch environment's setting overrides it …」；**torch.compile saved**，從頁面
-啟動的訓練 run 會讀取它；以及 **Acceleration**，「○ Not implemented yet」：新的加速工作暫緩，沒有
-任何開關，每個 run 的紀錄保留它實際使用的內容。下方是兩個欄位：**Memory allocator**（每個 preset
+配置器優先時寫「▲ The launch environment's setting overrides it …」（在那裡設為空值的配置器變數
+也算這樣的設定）；**torch.compile saved**，Training 頁面啟動、接續或分支一個 run 時會讀取它
+（Fine-tune 不讀取）；以及 **Acceleration**，「○ Not implemented yet」（新的加速工作暫緩，沒有
+任何開關，每個 run 的紀錄保留它實際使用的內容）。下方是兩個欄位，每次開啟頁面都顯示已儲存的值：**Memory allocator**（每個 preset
 以文字說明、名稱寫在旁邊：Driver memory pool（`cuda_async`，預設）、Expandable segments、Native
 rounded、Native no tuning；後端啟動時讀取一次）與 **Compile the model (torch.compile)**（實驗性；
 尚未以目前唯一建置的架構 GATv2 量測過）。接著是 **Apply Settings**（儲存兩者；尚未儲存的變更會寫在
-它們下方）與 **Restart Backend**（GPU 工作執行時停用，原因寫在旁邊；重啟會先停止服務，如 §4.13）。
+它們下方）與 **Restart Backend**（GPU 工作執行時停用，原因寫在旁邊；重啟會先停止服務，如 §4.11）。
 對唯讀的瀏覽器，這兩個欄位不能更改，兩個按鈕會顯示鎖，"Operator controls only: <原因>" 寫在旁邊。
 
 **執行環境那一行**在每個頁面的底部，先寫問題的後果，再寫原因：「▲ No CUDA device visible: GPU

@@ -2482,7 +2482,8 @@ cohort version, the same CLI an operator runs). One job at a time:
   staged files (`*.tmp`) may be left: the run directory and, for a run that was registering its
   report, the checkpoint's directory, where its ledger is.
 - **Runtime Settings' Restart Backend** is refused while any job runs, training or a test run
-  (its note now says "A GPU job (training or a test run) is in progress"), and while a model
+  (the note beside it now says "Restart is off while a GPU job (training or a test run)
+  runs.", since the ops-wiring round's B5), and while a model
   load or a stop of inference runs. After its short delay it closes the job runner's GPU slot,
   only if no job holds it and in the same step as that check, and keeps it closed until the
   process is replaced; **then it stops serving** (since the ops-wiring round): the accepted
@@ -3955,16 +3956,18 @@ saved: **Allocator now**, the CUDA memory allocator this backend started with, r
 own environment (the saved preset at its start, an allocator set in the launch environment,
 named with its variable, or none: PyTorch's default); **Allocator saved**, the preset the next
 start applies, with "▲ Not running yet: Restart Backend applies it" while the two differ, or
-"▲ The launch environment's setting overrides it …" when an allocator set there wins; **torch.compile
-saved**, which a training run started from a page reads; and **Acceleration**, "○ Not
-implemented yet": new acceleration work is deferred, with no switch, and each run's record keeps
-what it ran with. Under them the two fields: **Memory allocator** (each preset in words, its name
+"▲ The launch environment's setting overrides it …" when an allocator set there wins (an
+allocator variable set empty there is such a setting); **torch.compile saved**, which the
+Training page reads when it starts, continues or branches a run (Fine-tune does not read it);
+and **Acceleration**, "○ Not implemented yet" (new acceleration work is deferred, with no
+switch, and each run's record keeps what it ran with). Under them the two fields, showing the
+saved values each time the page is opened: **Memory allocator** (each preset in words, its name
 beside: Driver memory pool (`cuda_async`, the default), Expandable segments, Native rounded,
 Native with no tuning; read once when the backend starts) and **Compile the model
 (torch.compile)** (experimental; not yet measured with GATv2, the one architecture built today).
 Then **Apply Settings** (saves both; a change not yet saved is said under them) and **Restart
 Backend** (off while a GPU job runs, said beside it; a restart stops serving first, as in
-§4.13). For a read-only browser the fields cannot be changed and both buttons show the lock,
+§4.11). For a read-only browser the fields cannot be changed and both buttons show the lock,
 with "Operator controls only: <reason>" beside them.
 
 **The runtime line** at the foot of every page leads with what a problem costs, then its cause:
