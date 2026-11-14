@@ -905,8 +905,8 @@ def test_the_value_words_say_each_setting_by_its_meaning_never_by_repr():
     assert (words("use_amp", True), words("use_amp", False)) == ("on", "off")
     assert words("early_stopping_patience", None) == "off"
     assert words("seed", None) == r.NOT_SET == "not set"
-    assert words("task_loss_weight", None, stage="finetune", task="disease") == (
-        "the task's reference")
+    # A task's loss weight takes no null (OPS-R2): a None is no reference.
+    assert words("task_loss_weight", None, stage="finetune", task="disease") == r.NOT_SET
     for name in ("task_loss_weight", "candidate_sample_size", "task"):
         assert words(name, None, stage="base") == r.NOT_TAKEN_BY_A_BASE, name
     assert words("candidate_sample_size", None, stage="finetune", task="gene") == (
@@ -929,24 +929,31 @@ def test_the_value_words_say_each_setting_by_its_meaning_never_by_repr():
 
 
 def test_a_nones_words_are_what_the_field_spec_says_it_means():
-    """The words of an unset setting (`SETTING_UNSET_WORDS`) are the field
-    spec's, never a page's own: each setting whose spec says "Unset is the
-    task's reference" reads so, the one whose spec says unset "is no early
-    stopping" reads "off", and so does the one model spec field whose None
-    is a state the form says "off" under the field (the relation edge
+    """The words of a None (`SETTING_UNSET_WORDS`) are the field spec's, never
+    a page's own: a setting has words of its own only where a null is one of
+    its values (`FieldSpec.null_means`: early stopping's patience, "off: no
+    early stopping", reads "off"), and so does the one model spec field whose
+    None is a state the form says "off" under the field (the relation edge
     dimension: edges carry no relation), so a record view and the form say
-    one word; no other has words of its own (an unset seed is "not set")."""
-    from src.config.training_fields import FIELDS
+    one word. A setting that takes no null has none (an unset seed is "not
+    set"): a task's loss weights and sample sizes no longer read "the task's
+    reference" for a None, which the child would fail on (OPS-R2)."""
+    from src.config.training_fields import FIELDS, by_name
     from src.webui.components import training_console as tc
 
-    reference = {f.name for f in FIELDS if "Unset is the task's reference" in f.divergence_note}
-    no_stopping = {f.name for f in FIELDS if "is no early stopping" in f.description}
-    assert reference and no_stopping == {"early_stopping_patience"}
+    names = {f.name for f in FIELDS}
     off = {key for key, words in tc.FIELD_FORMATS.items() if '"off"' in words}
     assert off == {"early_stopping_patience", "encoder.relation_edge_dim"}
-    assert r.SETTING_UNSET_WORDS == {**{name: "the task's reference" for name in reference},
-                                     **{key: r.OFF.lower() for key in off}}
+    assert r.SETTING_UNSET_WORDS == {key: r.OFF.lower() for key in off}
+    for name in set(r.SETTING_UNSET_WORDS) & names:
+        assert by_name(name).null_means.startswith(r.SETTING_UNSET_WORDS[name]), name
     assert r.setting_words("encoder.relation_edge_dim", None) == "off"
+    for name in ("task_loss_weight", "lp_loss_weight", "candidate_sample_size",
+                 "sparse_sample_size"):
+        assert not by_name(name).null_means
+        assert r.setting_words(name, None, stage="finetune", task="disease") == r.NOT_SET
+    assert r.setting_words("candidate_upsample_size", None, stage="finetune",
+                           task="gene") == r.NOT_SET
 
 
 def _spec(stage="base", task=None, **changes):

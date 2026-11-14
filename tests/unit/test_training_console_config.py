@@ -646,13 +646,12 @@ def test_the_freeze_field_shows_plain_words_and_sends_the_field_specs_values():
     assert "provisional" not in text
     assert tc.setting_help("num_epochs", FINETUNE, FINETUNE_SOURCES)[1].endswith(
         "\n\nA provisional default from the source, not tuned on this data.")
-    reference = {"frozen_parts": FINETUNE["frozen_parts"]}
-    assert tc.sent_settings({"frozen_parts": "graph_side"}, ["frozen_parts"], reference) == (
+    assert tc.sent_settings({"frozen_parts": "graph_side"}, ["frozen_parts"]) == (
         {"frozen_parts": "graph_side"}, [])
-    assert tc.sent_settings({"frozen_parts": "none"}, ["frozen_parts"], reference) == (
+    assert tc.sent_settings({"frozen_parts": "none"}, ["frozen_parts"]) == (
         {"frozen_parts": "none"}, [])
-    assert tc.sent_settings({"frozen_parts": "graph_side"}, [], reference) == ({}, [])
-    assert tc.sent_settings({"frozen_parts": "all"}, ["frozen_parts"], reference) == (
+    assert tc.sent_settings({"frozen_parts": "graph_side"}, []) == ({}, [])
+    assert tc.sent_settings({"frozen_parts": "all"}, ["frozen_parts"]) == (
         {}, ["Graph backbone must be one of ['none', 'graph_side'], not 'all'."])
 
 

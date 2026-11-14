@@ -493,17 +493,20 @@ def labelled_problem(problem: Any) -> str:
                                 str(problem or ""))
 
 
-def setting_problem(name: str, value: Any, reference: Any) -> Tuple[Any, Optional[str]]:
+def setting_problem(name: str, value: Any) -> Tuple[Any, Optional[str]]:
     """A field's value parsed (`parse_value`) and checked by its field spec
     (`value_problem`, the one check the start makes again): ``(value,
     problem)``, the problem named by the field's label (`r.SETTING_LABELS`).
-    Empty is taken only where the reference value is (early stopping's
-    patience)."""
+    Empty is taken only where the field says what a null means
+    (`FieldSpec.null_means`: early stopping's patience, off); an emptied task
+    loss weight or sample size is refused ("Task loss weight must be set, not
+    null."), never read as its reference (OPS-R2)."""
     label = r.SETTING_LABELS[name]
-    parsed, why = parse_value(by_name(name).kind, value, optional=reference is None)
+    spec = by_name(name)
+    parsed, why = parse_value(spec.kind, value, optional=bool(spec.null_means))
     if why:
         return None, f"{label} {why}"
-    problem = value_problem(name, parsed, allow_none=reference is None)
+    problem = value_problem(name, parsed)
     return parsed, (_named(name, problem, label) if problem else None)
 
 
@@ -642,23 +645,24 @@ def record_drops(control: Any, keys: Collection[str], record: Any) -> None:
                   trigger_mode="multiple", show_progress="hidden")
 
 
-def sent_settings(values: Mapping[str, Any], touched: Collection[str],
-                  references: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+def sent_settings(values: Mapping[str, Any], touched: Collection[str]
+                  ) -> Tuple[Dict[str, Any], List[str]]:
     """**What a start sends of a form's settings** (decisions S2, S3):
     ``(settings, problems)``. A setting is sent **when the operator touched
     its field** (`touched`, the form's record of its fields' input,
     `record_touches`), whatever its value: the reference's own value typed is
     sent, and recorded as the operator's; a field emptied is sent empty, so
     it is refused where the run needs a value ("Neighbours per hop needs at
-    least 1 item(s).") and means off where empty does (early stopping's
-    patience); an untouched one is not sent, and the run fills it (the
+    least 1 item(s).", "Task loss weight must be set, not null.") and means
+    off where empty does (early stopping's patience, by its field spec's
+    `null_means`); an untouched one is not sent, and the run fills it (the
     reference's, or this build's default) and records it so. A touched
     setting the run would not read on the form's values (a rule across
     settings, `training_fields.not_read_by_rules`: warmup without cosine) is
     hidden and not sent. Each one sent is parsed and checked by its field
-    spec (`setting_problem`; `references`, the run's values without it, say
-    where empty is taken), every problem named by its label. The base form
-    and the Fine-tune page send their settings by it."""
+    spec (`setting_problem`), every problem named by its label. The base
+    form, the Fine-tune page and the Branch fields send their settings by
+    it."""
     unread = not_read_by_rules({name: parse_value(by_name(name).kind, value)[0]
                                 for name, value in values.items()})
     settings: Dict[str, Any] = {}
@@ -666,7 +670,7 @@ def sent_settings(values: Mapping[str, Any], touched: Collection[str],
     for name, value in values.items():
         if name not in touched or name in unread:
             continue
-        parsed, problem = setting_problem(name, value, references.get(name))
+        parsed, problem = setting_problem(name, value)
         if problem:
             problems.append(problem)
         else:
@@ -841,9 +845,7 @@ def _base_reading(values: Mapping[str, Any], touched: Collection[str]
     list the run would sample (`run_plan.new_run_hops`) against
     the encoder it would build (`hops_problem`), so a changed encoder is
     checked with the hops."""
-    references, _ = base_references()
-    settings, problems = sent_settings({name: values[name] for name in BASE_FIELDS},
-                                       touched, references)
+    settings, problems = sent_settings({name: values[name] for name in BASE_FIELDS}, touched)
     problems.extend(labelled_problem(problem) for problem in
                     cross_field_problems(new_run_values("base", None, settings), settings))
     spec, problem = edited_spec(values, touched)
@@ -897,12 +899,17 @@ def set_by_line_html(rows: Sequence[Tuple[str, str, str]], problems: Sequence[st
     `SET_BY_SHOWN` are named and the rest counted ("and 4 more";
     `renderers.named_words`), every one a row of its "Details ›"
     (`renderers.details_list`). With none: "Set by you: nothing; " and
-    `nothing`, what the run then takes. Then "Not valid: …", `problems`, what
-    Start would refuse, each by its label. Escaped. Beside it, Reset to
-    reference (`reset_outputs`) brings the form back to "nothing"."""
+    `nothing`, what the run then takes; but "Set by you: nothing valid."
+    while Start would refuse, since no run then takes anything (OPS-R2: the
+    line never says a reference is taken for a value refused). Then "Not
+    valid: …", `problems`, what Start would refuse, each by its label.
+    Escaped. Beside it, Reset to reference (`reset_outputs`) brings the form
+    back to "nothing"."""
     if rows:
         text = "Set by you: " + r.named_words([f"{key} {value} ({without})"
                                                for key, value, without in rows], SET_BY_SHOWN)
+    elif problems:
+        text = "Set by you: nothing valid."
     else:
         text = f"Set by you: nothing; {nothing}"
     details = (r.details_list([(key, r.e(f"{value} ({without})")) for key, value, without in rows],
@@ -3129,27 +3136,19 @@ def branch_setting_help(name: str) -> Tuple[str, str]:
             "its record keeps it.")
 
 
-def branch_sent(item: Optional[Mapping[str, Any]], touched: Any, values: Sequence[Any]
-                ) -> Tuple[Dict[str, Any], List[str]]:
+def branch_sent(touched: Any, values: Sequence[Any]) -> Tuple[Dict[str, Any], List[str]]:
     """**What a branch sends of the drawer's fields** (decisions S2, B1):
     ``(settings, problems)``, by the one rule a form's settings are sent by
     (`sent_settings`): each field the operator touched (`touched`, the
     drawer's record of its fields' input), whatever its value, parsed and
-    checked by its field spec, None taken where the parent's stage and task
-    take it without the operator (`run_plan.new_run_values`: early stopping
-    off); a touched field the run would not read on the form's values is
-    hidden and not sent (a rule across settings). None touched is a
-    same-settings branch (decision B1). `item` is the chosen parent as the
-    run list has it (its stage and task), `values` the fields', in
-    `BRANCH_FIELDS` order. The plan judges what is sent again, by name and
-    by value, at the check and at the start."""
-    item = item or {}
-    try:
-        references = new_run_values(item.get("learning_stage"), item.get("task"), {})
-    except ValueError:
-        references = {}
-    return sent_settings(dict(zip(BRANCH_FIELDS, values, strict=True)), touched_keys(touched),
-                         references)
+    checked by its field spec, None taken where the field says what a null
+    means (`FieldSpec.null_means`: early stopping's patience, off); a touched
+    field the run would not read on the form's values is hidden and not sent
+    (a rule across settings). None touched is a same-settings branch
+    (decision B1). `values` are the fields', in `BRANCH_FIELDS` order. The
+    plan judges what is sent again, by name and by value, at the check and
+    at the start."""
+    return sent_settings(dict(zip(BRANCH_FIELDS, values, strict=True)), touched_keys(touched))
 
 
 def _run_label(item: Mapping[str, Any]) -> str:
@@ -3798,7 +3797,7 @@ def _checked(operation: str, source, listed, manual, device, ws, parents, mode, 
         shown = (item or {}).get("sha256")
     settings: Dict[str, Any] = {}
     if operation == BRANCH:
-        settings, problems = branch_sent(item, touched, values)
+        settings, problems = branch_sent(touched, values)
         if problems:
             preview = {"ok": False, "invalid_settings": True, "parent": path,
                        "reason": " ".join(problems)}

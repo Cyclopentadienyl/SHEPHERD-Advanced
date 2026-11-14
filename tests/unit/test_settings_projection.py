@@ -466,6 +466,125 @@ def test_an_explicit_null_patience_on_a_resume_is_a_change_refused(client, patie
     assert "early_stopping_patience" not in _written(resp), "inherited, not written"
 
 
+#: A disease child's own numbers, which the recipe fills for the task and
+#: this build stores no default of (OPS-R2, the external review of 46a5c2b).
+TASK_NUMBERS = ("task_loss_weight", "lp_loss_weight", "candidate_sample_size",
+                "sparse_sample_size")
+
+
+def _never_built(*args, **kwargs):
+    raise AssertionError("the task was built for a refused run")
+
+
+def _null_finetune_yaml(trained, run, path, **stated):
+    """A disease finetune of `trained`'s base at the demo's sizes, as a
+    configuration file states it (every key the operator's), into `run`."""
+    from scripts.setup_demo import demo_task_training
+
+    path.write_text(yaml.safe_dump({
+        "data_dir": str(trained["data_dir"]), "run_dir": str(run), "learning_stage": "finetune",
+        "task": "disease", "finetune_from": str(trained["base"]), "device": "cpu",
+        "num_epochs": 1, **demo_task_training()["disease"], **stated}))
+    return path
+
+
+@pytest.mark.parametrize("name", TASK_NUMBERS)
+def test_a_null_task_number_is_refused_in_one_sentence_on_the_cli_the_runner_and_http(
+        name, client, base, trained_disease_child, tmp_path, monkeypatch, caplog):
+    """OPS-R2: a disease child's loss weight or sample size stated null passed
+    every check (its field's stored default is None) and the child failed
+    with a TypeError in ``float()`` or ``int()``. The field takes no null
+    (`FieldSpec.null_means`), so the one check of a new run's settings
+    refuses it in one sentence: the command line before the base is read or
+    the task built, nothing written; the job runner's Fine-tune start and
+    POST /training/finetune before any child (422), no run directory made; a
+    continuation over POST /training/start as a value, never as a change from
+    its parent. Left out, the task's reference fills it."""
+    train_model = _train_model()
+    from src.api.services.training_manager import FinetuneInputs, TrainingManager
+    from src.training import finetune_task
+
+    said = f"{name} must be set, not null."
+    assert new_run_problem("finetune", ("disease",), {name: None}) == said
+    assert new_run_problem("finetune", ("disease",), {}) is None
+    assert new_run_values("finetune", "disease", {})[name] == (
+        recipe.FINETUNE_TASKS["disease"][name])
+    # The command line (a configuration file's key is the operator's).
+    monkeypatch.setattr(finetune_task.DiseaseTask, "__init__", _never_built)
+    run = tmp_path / "cli-run"
+    config = _null_finetune_yaml(trained_disease_child, run, tmp_path / "null.yaml",
+                                 **{name: None})
+    monkeypatch.setattr(sys, "argv", ["train_model.py", "--config", str(config)])
+    with caplog.at_level("ERROR"):
+        assert train_model._train_main(train_model.parse_args()) == 1
+    assert f"train_model: refused: {said} Nothing was written." in caplog.text
+    assert "TypeError" not in caplog.text and not run.exists()
+    # The job runner's Fine-tune start and the HTTP route, before any child.
+    workspace, parent = base
+    runs = sorted(path.name for path in (workspace / "runs" / "gatv2").iterdir())
+    inputs = dict(data_dir=str(workspace), finetune_from=str(parent), tasks=("disease",),
+                  device="cpu", settings={"num_neighbors": [3], name: None})
+    refused = TrainingManager().start_finetune(FinetuneInputs(**inputs))
+    assert refused["success"] is False and refused["invalid_settings"] is True
+    assert refused["error"] == f"{said} Nothing was started."
+    http, popen, manager = client
+    resp = http.post("/api/v1/training/finetune", json={**inputs, "tasks": ["disease"]})
+    assert resp.status_code == 422 and resp.json()["detail"] == f"{said} Nothing was started."
+    popen.assert_not_called()
+    assert manager.active_job() is None and manager.run_dir is None
+    assert sorted(path.name for path in (workspace / "runs" / "gatv2").iterdir()) == runs
+    # A continuation of a disease child states it null: refused as a value.
+    resp = http.post("/api/v1/training/start", json={
+        "data_dir": str(trained_disease_child["data_dir"]), "device": "cpu",
+        "resume_from": str(trained_disease_child["disease"]), "extend_epochs": 1, name: None})
+    assert resp.status_code == 422 and resp.json()["detail"] == said
+    popen.assert_not_called()
+
+
+def test_a_null_that_is_a_settings_value_still_trains_on_the_command_line(
+        trained_disease_child, tmp_path, monkeypatch):
+    """The legal nulls stay legal (OPS-R2's guardrail: no blanket ban): a
+    disease child stating early stopping's patience null (off), no pause, no
+    parent to resume or branch, no extension and the reference spec, every
+    one a key of its configuration, trains to its end on the command line."""
+    train_model = _train_model()
+    from src.models.bundle.record import read_model_record
+
+    legal = {"early_stopping_patience": None, "pause_after_epoch": None, "resume_from": None,
+             "branch_from": None, "extend_epochs": None, "extend_lr": None, "model_spec": None}
+    for name, value in legal.items():
+        assert tf.value_problem(name, value) is None, name
+    assert new_run_problem("finetune", ("disease",), {"early_stopping_patience": None,
+                                                       "model_spec": None}) is None
+    run = tmp_path / "legal"
+    config = _null_finetune_yaml(trained_disease_child, run, tmp_path / "legal.yaml", **legal)
+    monkeypatch.setattr(sys, "argv", ["train_model.py", "--config", str(config)])
+    assert train_model._train_main(train_model.parse_args()) == 0
+    checkpoint = torch_load(run / "checkpoints" / "last.pt")
+    record = read_model_record(checkpoint)
+    assert record.learning_stage == "finetune" and record.task == "disease"
+    assert checkpoint["progress"]["completed_epochs"] == 1
+
+
+def test_a_null_extend_lr_on_an_extension_is_no_rate_replaced(client, trained_disease_child):
+    """Decisions S2, S6 keep an explicit null ``extend_lr``: on an extension
+    over HTTP it is accepted and means no zero rate replaced (not given)."""
+    http, popen, _manager = client
+    resp = http.post("/api/v1/training/start", json={
+        "data_dir": str(trained_disease_child["data_dir"]), "device": "cpu",
+        "resume_from": str(trained_disease_child["disease"]), "extend_epochs": 1,
+        "extend_lr": None})
+    assert resp.status_code == 200, resp.text
+    assert "extend_lr" not in _written(resp), "a null extend_lr is not given"
+    popen.assert_called_once()
+
+
+def torch_load(path):
+    import torch
+
+    return torch.load(path, map_location="cpu", weights_only=True)
+
+
 def test_a_resume_restating_a_setting_its_run_never_read_is_accepted(client, patient_base):
     """The parent's scheduler is none, so it never read its warmup_steps (0);
     restated at that value, the resume changes nothing, and no rule across

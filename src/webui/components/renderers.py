@@ -1535,21 +1535,17 @@ SETTING_LABELS: Dict[str, str] = {
 SETTING_CHOICE_WORDS: Dict[str, Dict[str, str]] = {
     "frozen_parts": {"none": "Trained", "graph_side": "Frozen"},
 }
-#: **What a setting or a model spec field left unset (None) means**, as its
-#: field spec says (`training_fields.FIELDS`: early stopping's patience "off
-#: (unset) is no early stopping"; a task setting "unset is the task's
-#: reference") or its spec field does (`spec.EncoderSpec.relation_edge_dim`:
-#: None, edges carry no relation, the form's "off"). Any other None reads "not
-#: set" (an unset seed); one the run's stage or task does not read reads so
-#: first (`setting_words`).
+#: **What a setting or a model spec field that holds None means**, where None
+#: is one of its values: as its field spec says (`training_fields.FieldSpec.
+#: null_means`: early stopping's patience, "off: no early stopping") or its
+#: spec field does (`spec.EncoderSpec.relation_edge_dim`: None, edges carry no
+#: relation, the form's "off"). Any other None reads "not set" (an unset seed;
+#: a task's loss weight, which takes no null: a value left out is the task's
+#: reference, never a None shown as one, OPS-R2); one the run's stage or task
+#: does not read reads so first (`setting_words`).
 SETTING_UNSET_WORDS: Dict[str, str] = {
     "early_stopping_patience": OFF.lower(),
     "encoder.relation_edge_dim": OFF.lower(),
-    "task_loss_weight": "the task's reference",
-    "lp_loss_weight": "the task's reference",
-    "candidate_sample_size": "the task's reference",
-    "sparse_sample_size": "the task's reference",
-    "candidate_upsample_size": "the task's reference",
 }
 #: A None nothing else gives a meaning to: the value was not set.
 NOT_SET = "not set"

@@ -372,6 +372,40 @@ def test_start_refuses_what_it_cannot_send_and_starts_nothing(root, operator, st
     assert said.startswith('<span class="shep-notice-t"><span class="shep-st shep-st-error">')
 
 
+@pytest.mark.parametrize("name", ["task_loss_weight", "lp_loss_weight", "candidate_sample_size",
+                                  "sparse_sample_size"])
+@pytest.mark.parametrize("emptied", [None, ""])
+def test_an_emptied_task_number_is_refused_before_start_and_never_said_to_be_the_reference(
+        root, operator, started, name, emptied):
+    """OPS-R2 (the external review of 46a5c2b): a Disease setting the
+    operator emptied (a number box sends None, a text box "") was sent as a
+    null, which every check passed and the child failed on with a TypeError,
+    while the line said "Task loss weight the task's reference (reference
+    0.1)". Its field spec takes no null, so the form's check refuses it in
+    the shared words (`setting_problem`), the line never says the reference
+    is taken for it, and Start starts nothing; untouched, the task's
+    reference fills it and nothing is sent; a number typed is sent."""
+    from src.config.training_fields import by_name
+
+    label = r.SETTING_LABELS[name]
+    sentence = f"{label} must be set, not null."
+    values = dict(zip(fp.FINETUNE_FIELDS, _fields(["disease"], **{name: emptied}), strict=True))
+    assert fp.sent_settings(["disease"], values, [name]) == ({}, [sentence])
+    line = fp.set_by_html(["disease"], values, [name])
+    assert f"Set by you: nothing valid.</p><p class=\"shep-amber-t\">Not valid: {sentence}" in line
+    assert "reference" not in line and f"{label} (" not in line
+    ws = tc.workspace_state("demo")
+    parents = fp._on_finetune_bases(operator, ws, None)[0]
+    key = f"gatv2/{BASE_RUN}/last.pt"
+    said, _stop = fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu", "",
+                                        [name], *_fields(["disease"], **{name: emptied}))
+    assert started == [] and "Not started" in said and sentence in said
+    # Untouched, nothing is sent: each child takes its task's reference.
+    assert fp.sent_settings(["disease"], values, []) == ({}, [])
+    typed = 0.5 if by_name(name).kind == "float" else 7
+    assert fp.sent_settings(["disease"], {**values, name: typed}, [name]) == ({name: typed}, [])
+
+
 def test_a_parent_listed_for_another_workspace_is_not_started(root, operator, started):
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]

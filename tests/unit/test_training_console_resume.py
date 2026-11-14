@@ -1207,10 +1207,14 @@ def test_a_task_models_branch_offers_its_own_settings_at_its_values(trained_dise
         by_id[f"branch_{name}"].postprocess(fields[name]["value"])      # raises if not taken
     # One task setting edited: sent alone, the one change, in words.
     new = 0.5 if inherited["task_loss_weight"] != 0.5 else 0.25
-    item = {"learning_stage": "finetune", "task": "disease"}
-    settings, problems = tc.branch_sent(item, ["task_loss_weight"],
-                                        _values(task_loss_weight=new))
+    settings, problems = tc.branch_sent(["task_loss_weight"], _values(task_loss_weight=new))
     assert (settings, problems) == ({"task_loss_weight": new}, [])
+    # Emptied, it is refused by its field spec in the shared words, never sent
+    # as a null the child would fail on (OPS-R2); an emptied patience is off.
+    assert tc.branch_sent(["task_loss_weight"], _values(task_loss_weight=None)) == (
+        {}, ["Task loss weight must be set, not null."])
+    assert tc.branch_sent(["early_stopping_patience"], _values(early_stopping_patience="")) == (
+        {"early_stopping_patience": None}, [])
     changed = training_manager.preview_branch(child, device="cpu", requested=settings)
     assert changed["ok"] and changed["changes"] == {
         "task_loss_weight": {"parent": inherited["task_loss_weight"], "new": new}}

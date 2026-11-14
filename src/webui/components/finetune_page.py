@@ -316,14 +316,17 @@ def sent_settings(tasks: Any, values: Mapping[str, Any], touched: Any
     problems)``, of the settings the chosen `tasks` take (`offered_settings`)
     those whose field the operator touched (`touched`, the form's record),
     whatever their value, each checked by its field spec, as the base form
-    sends its own (`training_console.sent_settings`). `values` are the
-    fields', by name. Nothing for no task. Start (`_start`) and the line on
-    what the operator set (`set_by_html`) read it alike."""
+    sends its own (`training_console.sent_settings`): an emptied task
+    setting is refused ("Task loss weight must be set, not null."), never
+    sent as a null nor said to take the task's reference (OPS-R2); untouched,
+    the task's reference fills it. `values` are the fields', by name.
+    Nothing for no task. Start (`_start`) and the line on what the operator
+    set (`set_by_html`) read it alike."""
     chosen = chosen_tasks(tasks)
     if not chosen:
         return {}, []
     return tc.sent_settings({name: values[name] for name in offered_settings(chosen)},
-                            tc.touched_keys(touched), new_run_values("finetune", chosen[0], {}))
+                            tc.touched_keys(touched))
 
 
 #: The value the run takes without a setting whose reference is each chosen
@@ -381,8 +384,7 @@ def hops_problems(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any = 
     spec, _unread = listed_spec((item or {}).get("spec"))
     if spec is None or not chosen:
         return []
-    settings, refused = tc.sent_settings({"num_neighbors": value}, tc.touched_keys(touched),
-                                         new_run_values("finetune", chosen[0], {}))
+    settings, refused = tc.sent_settings({"num_neighbors": value}, tc.touched_keys(touched))
     if refused:
         return []
     out: List[str] = []

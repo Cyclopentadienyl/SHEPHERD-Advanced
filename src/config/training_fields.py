@@ -22,6 +22,13 @@ the API's start checks each value by `value_problem` too and takes its bounds fr
 field's ``valid``, and the WebUI's base form and Fine-tune page check values with
 `value_problem` before the runner checks them again.
 
+**A null is a value of a field only where the field says what it means** (``null_means``:
+early stopping's patience, off; no parent; no extension; a base's task, none), and
+`value_problem` refuses it everywhere else, in one sentence on every entry. A field's
+``default`` is apart: None there says only that this build stores no value of its own (a task's
+loss weights and sample sizes, which the recipe fills for each task), so such a field is left
+out for its reference, never stated null (OPS-R2, the external review of 46a5c2b).
+
 Constraint representation
 -------------------------
 All bounds are structured dicts using the Pydantic/annotated-types vocabulary
@@ -335,6 +342,16 @@ class FieldSpec:
     effective: bool = True
     description: str = ""
 
+    #: **What an explicit null of this field means, where a null is one of its values**
+    #: (decision S2: a null the operator states is theirs, judged as stated): the words
+    #: of that meaning, such as early stopping's patience, off; or empty where it is
+    #: not, and a null stated is refused (`value_problem`). Apart from `default`, the
+    #: value this build stores for a field left out: a default of None says only that
+    #: this build has none of its own (the recipe, the task or a parent fills it), never
+    #: that a null may be stated (OPS-R2, the external review of 46a5c2b: a task's loss
+    #: weight stated null passed every check and failed in the child process).
+    null_means: str = ""
+
     def __post_init__(self) -> None:
         if self.kind not in KINDS:
             raise ValueError(f"{self.name}: unknown kind {self.kind!r}")
@@ -385,7 +402,8 @@ FIELDS: Tuple[FieldSpec, ...] = (
               current_api={},
               known_divergence=True,
               divergence_note="WebUI resume uses a checkpoint dropdown, not this field.",
-              description="Checkpoint path to resume from."),
+              description="Checkpoint path to resume from.",
+              null_means="no parent: the run is not continued"),
 
     # ---- the model bundle path (docs/working/scorer-retraining/README.md §3-§4) -------------
     # Each field's divergence note says which surface takes it: the CLI, the WebUI (K6), and
@@ -401,7 +419,8 @@ FIELDS: Tuple[FieldSpec, ...] = (
                               "when given, so a finetune child continues over HTTP); the "
                               "Fine-tune page and POST /training/finetune start finetunes.",
               description="Model bundle stage: base (KG link prediction) or finetune; "
-                          "required, a run without one is refused before anything is read."),
+                          "required, a run without one is refused before anything is read.",
+              null_means="not stated: a run from a parent is of its parent's stage"),
     FieldSpec("model_spec", "dict", None, "model", projects_to="TrainConfig.model_spec",
               current_api={},
               known_divergence=True,
@@ -410,7 +429,8 @@ FIELDS: Tuple[FieldSpec, ...] = (
                               "reference spec (a finetune's: its base's graph side). The "
                               "WebUI's Training base form sends it whole when a field of its "
                               "Model accordion was touched.",
-              description="The model spec as plain data, read strictly."),
+              description="The model spec as plain data, read strictly.",
+              null_means="the stage's reference spec (a finetune's: its base's graph side)"),
     FieldSpec("split_seed", "int", 0, "dataloader", projects_to="TrainConfig.split_seed",
               valid={"ge": 0}, current_api={"ge": 0},
               known_divergence=True,
@@ -427,13 +447,15 @@ FIELDS: Tuple[FieldSpec, ...] = (
                               "Fine-tune page (its Tasks); POST /training/start with "
                               "resume_from, compared with the parent's (a new base is refused "
                               "one).",
-              description="A finetune's task."),
+              description="A finetune's task.",
+              null_means="no task: a base"),
     FieldSpec("finetune_from", "str", None, "path", projects_to="TrainConfig.finetune_from",
               current_api=None,
               known_divergence=True,
               divergence_note="CLI (--finetune-from), POST /training/finetune and the WebUI's "
                               "Fine-tune page (a listed base).",
-              description="The base checkpoint a finetune starts from."),
+              description="The base checkpoint a finetune starts from.",
+              null_means="no base: the run is not a finetune of one"),
     FieldSpec("branch_from", "str", None, "path", projects_to="TrainConfig.branch_from",
               current_api=None,
               known_divergence=True,
@@ -442,34 +464,35 @@ FIELDS: Tuple[FieldSpec, ...] = (
                               "page's Continue drawer (its operation Branch, a listed "
                               "checkpoint).",
               description="The checkpoint a branch starts from: its stage, task, weights "
-                          "and settings, none or some changed on the stage's list."),
+                          "and settings, none or some changed on the stage's list.",
+              null_means="no parent: the run is not a branch"),
     FieldSpec("task_loss_weight", "float", None, "loss", projects_to="TrainConfig.task_loss_weight",
               valid={"ge": 0}, current_api={"ge": 0},
               known_divergence=True,
-              divergence_note="Unset is the task's reference (README C3). POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
+              divergence_note="Left out, it is the task's reference (README C3); a null is no value of it. POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
               description="Weight of the task loss in a finetune."),
     FieldSpec("lp_loss_weight", "float", None, "loss", projects_to="TrainConfig.lp_loss_weight",
               valid={"ge": 0}, current_api={"ge": 0},
               known_divergence=True,
-              divergence_note="Unset is the task's reference (README C3). POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
+              divergence_note="Left out, it is the task's reference (README C3); a null is no value of it. POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
               description="Weight of the LP loss in a finetune."),
     FieldSpec("candidate_sample_size", "int", None, "dataloader",
               projects_to="TrainConfig.candidate_sample_size", valid={"ge": 1},
               current_api={"ge": 1},
               known_divergence=True,
-              divergence_note="Unset is the task's reference (U9). POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
+              divergence_note="Left out, it is the task's reference (U9); a null is no value of it. POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
               description="Random candidate diseases per finetune batch, plus the truths."),
     FieldSpec("sparse_sample_size", "int", None, "dataloader",
               projects_to="TrainConfig.sparse_sample_size", valid={"ge": 0},
               current_api={"ge": 0},
               known_divergence=True,
-              divergence_note="Unset is the task's reference (U9). POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
+              divergence_note="Left out, it is the task's reference (U9); a null is no value of it. POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
               description="Random gene, phenotype and disease seeds per finetune batch."),
     FieldSpec("candidate_upsample_size", "int", None, "dataloader",
               projects_to="TrainConfig.candidate_upsample_size", valid={"ge": 0},
               current_api={"ge": 0},
               known_divergence=True,
-              divergence_note="Unset is the task's reference (U14). POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
+              divergence_note="Left out, it is the task's reference (U14); a null is no value of it. POST /training/start takes it for a continuation, judged against the parent; a new base is refused it.",
               description="Rarely seen genes added to each gene-task patient's list in training."),
     # The freeze setting (research comparison Stage 9, owner's O4a): which parts
     # of a finetune train. Its parts and the stage rule are `src.config.recipe`'s
@@ -554,7 +577,8 @@ FIELDS: Tuple[FieldSpec, ...] = (
               valid={"ge": 1},
               current_api={"ge": 1},
               description=("Epochs with no better validation figure before stopping; off (unset) "
-                           "is no early stopping.")),
+                           "is no early stopping."),
+              null_means="off: no early stopping"),
     FieldSpec("save_top_k", "int", 3, "trainer", projects_to="TrainerConfig.save_top_k",
               valid={"ge": 1}, current_api={"ge": 1},
               description="How many of the run's best saves, by its selection metric, it keeps."),
@@ -580,7 +604,8 @@ FIELDS: Tuple[FieldSpec, ...] = (
               divergence_note="CLI (--extend-epochs), POST /training/start with resume_from, "
                               "and the console's continue block, shown only for a finished "
                               "parent; not a training-form field.",
-              description="Extend a finished parent by this many epochs at a fixed rate."),
+              description="Extend a finished parent by this many epochs at a fixed rate.",
+              null_means="no extension"),
     FieldSpec("extend_lr", "float", None, "trainer", projects_to="TrainConfig.extend_lr",
               valid={"gt": 0}, current_api={"gt": 0},
               known_divergence=True,
@@ -588,13 +613,15 @@ FIELDS: Tuple[FieldSpec, ...] = (
                               "and the Continue drawer's Extra-epoch rate, shown only for a "
                               "finished parent with a group at 0: replaces a zero rate, and "
                               "only a zero rate (the preview's zero_rate_groups names them).",
-              description="Rate for parameter groups whose rate ended at 0, when extending."),
+              description="Rate for parameter groups whose rate ended at 0, when extending.",
+              null_means="no rate replaced: an extension keeps its plan's rates"),
     FieldSpec("pause_after_epoch", "int", None, "runtime_setting",
               projects_to="TrainConfig.pause_after_epoch",
               valid={"ge": 1}, current_api=None,
               known_divergence=True,
               divergence_note="CLI and probe only (--pause-after-epoch); no WebUI or HTTP control.",
-              description="Stop with a resumable checkpoint after this many epochs of progress."),
+              description="Stop with a resumable checkpoint after this many epochs of progress.",
+              null_means="no pause: the run trains to its end"),
 
     # ---- runtime setting (exempt from the projection requirement) ----------------------------
     FieldSpec("compile", "bool", False, "runtime_setting", projects_to="TrainConfig.compile",
@@ -673,15 +700,19 @@ _KIND_WORDS = {"int": "an integer", "float": "a number", "bool": "true or false"
                "str": "text", "list[int]": "a list of integers", "dict": "a mapping"}
 
 
-def value_problem(name: str, value: Any, *, allow_none: bool = False) -> Optional[str]:
+def value_problem(name: str, value: Any) -> Optional[str]:
     """Why `value` is not a valid value of the field `name`, by its spec (kind,
     bounds, choices, list items), or None. Strict about kinds: a bool is not a
     number and a string is never coerced, so what is checked is what a run is
-    given. `allow_none` admits None where the caller's default is None (a
-    recipe value such as early stopping's patience)."""
+    given. **A null is a value only where the field says what it means**
+    (`FieldSpec.null_means`: early stopping's patience, off; no parent; no
+    extension), and refused everywhere else in one sentence ("task_loss_weight
+    must be set, not null."), whatever the field's stored default: a field left
+    out is never a null stated (decision S2). The one check of a value: the
+    training process, the job runner, the HTTP requests and the pages ask it."""
     spec = by_name(name)
     if value is None:
-        return None if allow_none or spec.default is None else f"{name} must be set, not null."
+        return None if spec.null_means else f"{name} must be set, not null."
     numbers = (int, float)
     if spec.kind == "int":
         ok = isinstance(value, int) and not isinstance(value, bool)

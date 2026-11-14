@@ -282,13 +282,14 @@ class TrainingStartRequest(BaseModel):
         # kind strictly, its bounds, choices and list items (a hop list of at
         # least one hop, each 1 or more or -1, every neighbour, as the CLI and
         # the WebUI take it), in the words the job runner and the training
-        # process refuse it in; a null is passed on, for the runner to judge
-        # by the run's reference (`run_plan.new_run_problem`).
+        # process refuse it in; a null only where the field says what one
+        # means (`FieldSpec.null_means`: early stopping's patience, off), as
+        # the runner judges it again (`run_plan.new_run_problem`).
         from src.config.training_fields import value_problem
 
         if info.data.get("resume_from"):
             return value
-        problem = value_problem(info.field_name, value, allow_none=True)
+        problem = value_problem(info.field_name, value)
         if problem:
             raise ValueError(problem)
         return handler(value)
@@ -297,12 +298,11 @@ class TrainingStartRequest(BaseModel):
     @classmethod
     def _check_by_the_spec(cls, value: Any, info: ValidationInfo) -> Any:
         # Each operational value as sent, by the field spec's one check
-        # (`value_problem`), before any coercion; a null parent or extension
-        # is not given.
+        # (`value_problem`), before any coercion: a null extension is no
+        # extension (its `null_means`), a null compile no value.
         from src.config.training_fields import value_problem
 
-        name = info.field_name
-        problem = value_problem(name, value, allow_none=name in _NULL_IS_NOT_GIVEN)
+        problem = value_problem(info.field_name, value)
         if problem:
             raise ValueError(problem)
         return value
@@ -531,8 +531,9 @@ def start_training(
     round, P22-S1): a file replaced after that is refused before it is loaded.
     """
     # The fields the caller set, an explicit null included (decision S2): a
-    # null setting is the caller's and is judged by the runner; for the parent
-    # and its extension, null is not given. A continuation's settings and task
+    # null setting is the caller's and is judged (refused where its field
+    # says no null means anything, `value_problem`); for the parent and its
+    # extension, null is not given. A continuation's settings and task
     # are carried as sent, whatever their kind, for the runner to judge, so
     # the dump does not warn of a value its field's type would not take.
     config = {name: value for name, value in request.model_dump(exclude_unset=True,

@@ -205,8 +205,10 @@ def new_run_problem(learning_stage: str, tasks: Collection[Optional[str]],
       hears that nothing would train;
     - a setting is taken only when every run reads it (`unread_problem`);
     - its value only when its field spec takes it (`value_problem`: its kind,
-      strictly, its bounds and choices), None only where a run's reference
-      value is None or the field's default is;
+      strictly, its bounds and choices), a null only where the field says
+      what one means (`FieldSpec.null_means`: early stopping's patience, off),
+      never because the field stores no default of its own (a task's loss
+      weights and sample sizes, which the recipe fills: OPS-R2);
     - the rules across settings (`training_fields.cross_field_problems`), on
       each run's settings as they are filled (`new_run_values`), for what
       `settings` set: one the run would not read is refused."""
@@ -239,23 +241,19 @@ def stated_problem(learning_stage: str, tasks: Collection[Optional[str]],
     sentence whether it starts a run or continues one, in the training
     process and the job runner alike."""
     return (unread_problem(learning_stage, tasks, settings)
-            or stated_values_problem(learning_stage, tasks, settings))
+            or stated_values_problem(settings))
 
 
-def stated_values_problem(learning_stage: str, tasks: Collection[Optional[str]],
-                          settings: Mapping[str, Any]) -> Optional[str]:
-    """Why a value of `settings`, values the operator stated for the runs of
-    `learning_stage` a start makes, one per one of `tasks`, is not one its
-    field spec takes, or None: **the one check of a stated value**
-    (`value_problem`: its kind, strictly, its bounds and choices), None
-    taken only where a run's reference value is None or the field's default
-    is. Asked through `stated_problem`, of a new run's settings and of what
-    a continuation or a branch states alike."""
-    references = [reference_settings(learning_stage, task)[0] for task in tasks]
+def stated_values_problem(settings: Mapping[str, Any]) -> Optional[str]:
+    """Why a value of `settings`, values the operator stated for the runs a
+    start makes, is not one its field spec takes, or None: **the one check of
+    a stated value** (`value_problem`: its kind, strictly, its bounds and
+    choices; a null only where the field says what one means,
+    `FieldSpec.null_means`, whatever the runs' references are). Asked through
+    `stated_problem`, after the settings the runs do not read, of a new
+    run's settings and of what a continuation or a branch states alike."""
     problems = [problem for name, value in sorted(settings.items())
-                for problem in [value_problem(name, value, allow_none=any(
-                    name in values and values[name] is None for values in references))]
-                if problem]
+                for problem in [value_problem(name, value)] if problem]
     return " ".join(problems) if problems else None
 
 

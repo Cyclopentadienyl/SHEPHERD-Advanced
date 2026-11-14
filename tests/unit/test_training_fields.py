@@ -573,7 +573,7 @@ def test_a_value_is_checked_by_its_field_spec_without_coercion():
     assert value_problem("num_epochs", 3) is None
     assert value_problem("learning_rate", 1) is None, "an int is a float's value"
     assert value_problem("num_neighbors", [-1, 3]) is None
-    assert value_problem("early_stopping_patience", None, allow_none=True) is None
+    assert value_problem("early_stopping_patience", None) is None, "a null patience is off"
     for name, value, fragment in (
             ("num_epochs", True, "must be an integer, not True"),
             ("num_epochs", "3", "must be an integer, not '3'"),
@@ -585,6 +585,63 @@ def test_a_value_is_checked_by_its_field_spec_without_coercion():
             ("num_epochs", None, "must be set, not null")):
         problem = value_problem(name, value)
         assert problem is not None and fragment in problem, (name, value, problem)
+
+
+#: The fields whose null is one of their values, each by what its consumer
+#: does with None (`FieldSpec.null_means`): no parent to resume, branch or
+#: finetune from (`train_model.train`: ``if config.resume_from`` …), no stage
+#: stated (a run from a parent is of its parent's; a new run naming none is
+#: refused by its identity check), the stage's reference spec
+#: (``config.model_spec is None``), a base's task, no early stopping
+#: (``early_stopping_patience is not None``), no extension, no zero rate
+#: replaced and no pause.
+NULL_IS_A_VALUE = frozenset({
+    "resume_from", "learning_stage", "model_spec", "task", "finetune_from", "branch_from",
+    "early_stopping_patience", "extend_epochs", "extend_lr", "pause_after_epoch"})
+#: The task's own settings, which the recipe fills for each task that reads
+#: them and this build stores no default of (``default`` None): their consumer
+#: (`finetune_task`'s samplers and tasks) takes ``float()`` or ``int()`` of
+#: them, so a null fails there (OPS-R2, the external review of 46a5c2b).
+TASK_OWN_NUMBERS = ("task_loss_weight", "lp_loss_weight", "candidate_sample_size",
+                    "sparse_sample_size", "candidate_upsample_size")
+
+
+def test_a_null_is_a_value_only_where_its_field_says_what_it_means():
+    """OPS-R2: a field's stored default of None said both "no build default:
+    the recipe or the task fills it" and "a null is a legal value", so a
+    task's loss weight stated null passed every check and the child failed
+    with a TypeError. Whether a null is a value is the field's own
+    (`null_means`), apart from its default: refused in one sentence wherever
+    it is not, whatever the default (the four task numbers among them);
+    taken wherever it is (early stopping's patience, whose default is 10)."""
+    from src.config.training_fields import FIELDS, by_name, value_problem
+
+    assert {f.name for f in FIELDS if f.null_means} == NULL_IS_A_VALUE
+    for spec in FIELDS:
+        said = value_problem(spec.name, None)
+        if spec.name in NULL_IS_A_VALUE:
+            assert said is None, spec.name
+        else:
+            assert said == f"{spec.name} must be set, not null.", spec.name
+    for name in TASK_OWN_NUMBERS:
+        assert by_name(name).default is None and not by_name(name).null_means, name
+    assert by_name("early_stopping_patience").default == 10
+
+
+def test_a_field_that_takes_no_null_and_has_no_default_is_filled_for_every_run_reading_it():
+    """A field this build stores no default of and whose null is no value
+    (the task's own numbers) is left out for its reference: the recipe fills
+    it for every stage and task whose run reads it (`run_plan.new_run_values`),
+    so leaving it out never gives a run None."""
+    from src.config.recipe import FINETUNE_TASKS
+    from src.utils.run_plan import new_run_settings, new_run_values
+
+    for stage, task in [("base", None)] + [("finetune", task) for task in FINETUNE_TASKS]:
+        filled = new_run_values(stage, task, {})
+        for name in new_run_settings(stage, task):
+            spec = tf.by_name(name)
+            if spec.default is None and not spec.null_means:
+                assert filled[name] is not None, (stage, task, name)
 
 
 def test_a_value_outside_its_bounds_is_refused_with_the_bounds_in_words():
