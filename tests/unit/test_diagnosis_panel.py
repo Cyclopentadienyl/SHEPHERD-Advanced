@@ -2256,12 +2256,16 @@ def test_a_refusal_the_route_raises_is_shown_in_words_without_a_path(monkeypatch
 
 def test_path_settings_are_not_applicable_where_no_path_is_discovered():
     """13: a gene task or patients-like-me model discovers no paths."""
-    assert dp._path_settings_cells(_task_identity("gene_task")) == (
+    def cells(identity):
+        state, value = dp._path_settings_cells(identity)
+        return state, dp._value_md(value)
+
+    assert cells(_task_identity("gene_task")) == (
         "not applicable", "not applicable — a gene task model discovers no paths")
-    assert dp._path_settings_cells(_task_identity("patients_like_me")) == (
+    assert cells(_task_identity("patients_like_me")) == (
         "not applicable", "not applicable — a patients-like-me model discovers no paths")
     for identity in (_task_identity("disease_task"), _served_identity()):
-        state, value = dp._path_settings_cells(identity)
+        state, value = cells(identity)
         assert state == "in effect" and "`max_path_length` 4" in value
 
 
