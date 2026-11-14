@@ -22,7 +22,8 @@ Dependencies:
       takes its theme, CSS, head and JS from gr.mount_gradio_app(), not from
       gr.Blocks(); `mount_dashboard` is the one place that passes them
       (`mount_options`: the theme, the CSS, and the head: every style sheet and
-      the scripts of the shared ⓘ and the shell).
+      the scripts of the shared ⓘ, the shell and the touch record,
+      `training_console.TOUCH_HEAD`).
 
 Called by:
     - src.api.main (`mount_dashboard`, at /ui)
@@ -273,9 +274,11 @@ MAX_UPLOAD_SIZE = "1mb"
 def mount_options() -> dict[str, Any]:
     """Everything `gr.mount_gradio_app` is given besides the app, the Blocks and the path.
 
-    The look: theme, CSS and ``head`` (the shared ⓘ and the shell's script,
-    `DASHBOARD_HEAD`); there is no ``js``. All of them belong here: Gradio 6
-    drops them from ``gr.Blocks``.
+    The look and the page's scripts: theme, CSS and ``head``
+    (`DASHBOARD_HEAD`: every style sheet, and the scripts of the shared ⓘ,
+    the shell and the touch record, `training_console.TOUCH_HEAD`); there is
+    no ``js``. All of them belong here: Gradio 6 drops them from
+    ``gr.Blocks``.
 
     The switches, each off whatever the environment says, because left to
     Gradio a ``GRADIO_*`` variable can turn it on:
