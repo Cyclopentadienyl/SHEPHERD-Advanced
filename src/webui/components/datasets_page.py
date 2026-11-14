@@ -152,11 +152,17 @@ def _bound_versions(row: Mapping[str, Any], versions: List[Mapping[str, Any]],
     comparison Test and Diagnosis use (`workspace_binding`, `binding_state`):
     the labels bound to it, how many were mapped against another graph or
     cannot be read, and why none could be checked (`problem`, its words
-    without a path)."""
+    without a path). A listed row whose directory was not reached (a name
+    that resolves outside the root, or cannot be resolved) is not checked for
+    the row's own reason, never Test's "no workspace is chosen": on this page
+    the row is the chosen one."""
     if not versions:
         return {"bound": [], "another": 0, "unknown": 0, "problem": None}
     directory = directories.get(row["name"])
-    binding = workspace_binding(directory, row if directory is not None else None)
+    if directory is None:
+        why = str(row.get("not_trainable") or "the workspace was not reached").rstrip(". ")
+        return {"bound": [], "another": 0, "unknown": 0, "problem": why}
+    binding = workspace_binding(directory, row)
     if binding.get("problem"):
         return {"bound": [], "another": 0, "unknown": 0, "problem": binding["problem"]}
     states: Dict[str, List[str]] = {"bound": [], "another": [], "unknown": []}
