@@ -499,7 +499,9 @@ def test_a_null_task_number_is_refused_in_one_sentence_on_the_cli_the_runner_and
     the task built, nothing written; the job runner's Fine-tune start and
     POST /training/finetune before any child (422), no run directory made; a
     continuation over POST /training/start as a value, never as a change from
-    its parent. Left out, the task's reference fills it."""
+    its parent; a branch over POST /training/branch (422) and on the command
+    line with --branch-from, as a value, no run directory made. Left out, the
+    task's reference fills it."""
     train_model = _train_model()
     from src.api.services.training_manager import FinetuneInputs, TrainingManager
     from src.training import finetune_task
@@ -539,6 +541,38 @@ def test_a_null_task_number_is_refused_in_one_sentence_on_the_cli_the_runner_and
         "resume_from": str(trained_disease_child["disease"]), "extend_epochs": 1, name: None})
     assert resp.status_code == 422 and resp.json()["detail"] == said
     popen.assert_not_called()
+    # A branch of the disease child states it null: refused as a value, over
+    # POST /training/branch (422) and on the command line (--branch-from),
+    # before any run directory.
+    child_data = Path(trained_disease_child["data_dir"])
+    child_runs = _run_dirs(child_data)
+    resp = http.post("/api/v1/training/branch", json={
+        "data_dir": str(child_data), "branch_from": str(trained_disease_child["disease"]),
+        "device": "cpu", "settings": {name: None}})
+    assert resp.status_code == 422 and resp.json()["detail"] == said, resp.text
+    popen.assert_not_called()
+    assert manager.active_job() is None and manager.run_dir is None
+    assert _run_dirs(child_data) == child_runs
+    branch_run = tmp_path / "cli-branch"
+    config = tmp_path / "branch.yaml"
+    config.write_text(yaml.safe_dump({
+        "data_dir": str(child_data), "run_dir": str(branch_run), "learning_stage": "finetune",
+        "task": "disease", "device": "cpu", name: None}))
+    monkeypatch.setattr(sys, "argv", ["train_model.py", "--config", str(config),
+                                      "--branch-from", str(trained_disease_child["disease"])])
+    caplog.clear()
+    with caplog.at_level("ERROR"):
+        assert train_model._train_main(train_model.parse_args()) == 1
+    assert f"train_model: refused: {said} Nothing was written." in caplog.text
+    assert "TypeError" not in caplog.text and not branch_run.exists()
+    assert _run_dirs(child_data) == child_runs
+
+
+def _run_dirs(data_dir):
+    """Every directory under a workspace's runs (none when it has none)."""
+    runs = Path(data_dir) / "runs"
+    return sorted(str(path.relative_to(runs)) for path in runs.rglob("*")
+                  if path.is_dir()) if runs.exists() else []
 
 
 def test_a_null_that_is_a_settings_value_still_trains_on_the_command_line(
