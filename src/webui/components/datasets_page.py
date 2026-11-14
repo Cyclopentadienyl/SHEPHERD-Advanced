@@ -16,10 +16,20 @@ renderer (`renderers.dataset_identity_html` and its pieces).
   (`PageContext.training_workspace`); "not trainable: <why>" rows stay listed.
 - **Details** of the selected row: the full fingerprint with Copy, what the
   manifest binds with short digests, the seeds and split counts, the sources and
-  the build record, the path **relative to the server's workspace root**, and
-  how it compares with the other listed workspaces ("Same graph build as …,
-  another cut: …"; "Same dataset as …"). The manifests are read once per
-  refresh (`read_datasets`), not on each selection.
+  the build record, the path **relative to the server's workspace root**, its
+  **registered data versions** (`versions_html`), and how it compares with the
+  other listed workspaces ("Same graph build as …, another cut: …"; "Same
+  dataset as …"). The manifests and the registry are read once per refresh
+  (`read_datasets`), not on each selection.
+- **Data versions**: the registry's versions mapped against the workspace's
+  graph, read by the registry's one listing (`server_lists.list_cohort_versions`)
+  and compared by the one comparison Test and Diagnosis use
+  (`workspaces.workspace_binding`, `binding_state`): each by its label, its kind
+  and role, and the measurements its data admits (`protocols.inputs_refusal`,
+  the data side of Test's measurement rule; the model chosen on Test decides
+  the rest), the others' reasons one click away. Versions are imported where
+  they always were (Test's "Import a new version…", `scripts/import_cohort.py`);
+  this page adds no importer.
 - **No absolute path, for any request**: the list is read through the
   dashboard's one workspace reader (`src/webui/components/workspaces.py`): a
   path under the root is cut to the part inside it, any other absolute path (a
@@ -33,8 +43,8 @@ renderer (`renderers.dataset_identity_html` and its pieces).
 - The one line on building datasets: they are built on the server with the CLI.
 
 Nothing here is gated: it reads small JSON files (the manifest, the dataset
-record, the build record), never a checkpoint, so a read-only request sees the
-same page.
+record, the build record, the registry's version manifests), never a
+checkpoint, so a request D8 refuses sees the same page.
 
 Module: src/webui/components/datasets_page.py
 """
@@ -45,15 +55,20 @@ from typing import Any, Dict, List, Mapping, Optional
 
 import gradio as gr
 
+from src.evaluation import protocols
+from src.evaluation.caveats import DATA_KIND_WORDS, MEASUREMENT_NAMES, label_words
 from src.webui.components import renderers as r
 from src.webui.components.help import help_button
 from src.webui.components.served_status import read_status, serving_workspace
 from src.webui.components.workspaces import (
     OUTSIDE_PATH,
     ROOT_REFUSED,
+    binding_state,
     manifest_facts,
     read_workspaces,
     redact,
+    version_row,
+    workspace_binding,
 )
 from src.webui.shell import page_elem_id, plain_html
 
@@ -67,12 +82,14 @@ BUILD_LINE = (
     "<code>scripts/build_knowledge_graph.py --generate-samples</code> (the demo with "
     "<code>scripts/setup_demo.py</code>)."
 )
+#: The markers' meaning, in plain words; the names they are read from only in
+#: the trailing "Ref:" (the WebUI skill's §5).
 FOOTNOTE = (
-    "“in your Training run bar” is this browser tab’s selection; nothing on the server "
-    "changes. “serving reads this workspace” is the pipeline status’s "
-    "<code>current_data_dir</code>; another workspace with the same full fingerprint reads "
-    "“same dataset as served”. A build time appears once a build records one "
-    "(<code>workspace_build.json</code>, outside the fingerprint)."
+    "“In your Training run bar” is this browser tab’s selection; nothing on the server "
+    "changes. “Serving reads this workspace” is the workspace the served model reads; "
+    "another with the same full fingerprint reads “same dataset as served”. A build time "
+    "appears once a build records one, outside the fingerprint. Ref: the pipeline status’s "
+    "<code>current_data_dir</code>; <code>workspace_build.json</code>."
 )
 USE_NOTE = ("Selects it in your Training run bar (this browser tab) and opens Training. Nothing "
             "changes on the server; Start is the gated act.")
@@ -109,8 +126,44 @@ def read_datasets() -> Dict[str, Any]:
     status, _problem = read_status()
     serving = (serving_workspace(status, rows, directories=directories)
                if status is not None else None)
+    versions, registry_problem = _read_versions(root)
+    for row in rows:
+        row["versions"] = _bound_versions(row, versions, directories)
     return {"rows": rows, "serving": serving, "problem": listed["problem"],
-            "status_read": status is not None}
+            "status_read": status is not None, "versions": versions,
+            "registry_problem": registry_problem}
+
+
+def _read_versions(root: Any) -> tuple:
+    """The registry's versions as plain data (`workspaces.version_row`, their
+    manifests only, no report store), read by the registry's one listing
+    (`server_lists.list_cohort_versions`, Test's), and why none is listed,
+    without a path."""
+    from src.api.services.server_lists import list_cohort_versions
+
+    listing = list_cohort_versions()
+    problem = redact(listing.problem, root) if listing.problem else None
+    return [version_row(item) for item in listing.items], problem
+
+
+def _bound_versions(row: Mapping[str, Any], versions: List[Mapping[str, Any]],
+                    directories: Mapping[str, Any]) -> Dict[str, Any]:
+    """Which registered versions were mapped against `row`'s graph, by the one
+    comparison Test and Diagnosis use (`workspace_binding`, `binding_state`):
+    the labels bound to it, how many were mapped against another graph or
+    cannot be read, and why none could be checked (`problem`, its words
+    without a path)."""
+    if not versions:
+        return {"bound": [], "another": 0, "unknown": 0, "problem": None}
+    directory = directories.get(row["name"])
+    binding = workspace_binding(directory, row if directory is not None else None)
+    if binding.get("problem"):
+        return {"bound": [], "another": 0, "unknown": 0, "problem": binding["problem"]}
+    states: Dict[str, List[str]] = {"bound": [], "another": [], "unknown": []}
+    for version in versions:
+        states[binding_state(version, binding)[0]].append(str(version.get("label")))
+    return {"bound": states["bound"], "another": len(states["another"]),
+            "unknown": len(states["unknown"]), "problem": None}
 
 
 def _marks(row: Mapping[str, Any], data: Mapping[str, Any], run_bar: Optional[str]) -> str:
@@ -135,8 +188,6 @@ def _record_cell(row: Mapping[str, Any]) -> str:
     """The dataset record's state (`renderers.record_words`): verified, or its
     own missing or contradicted state, never one "not verified" for all."""
     kind, words = r.record_words(row)
-    if kind == "ok":
-        return f'<span class="shep-ok-t">{r.CHECK} verified</span>'
     return r.status_mark(kind, words.removeprefix("record ").capitalize())
 
 
@@ -214,11 +265,14 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
 
 
 def header_html(data: Mapping[str, Any]) -> str:
+    """The panel's title with its count, in plain words (never "read-only",
+    which names the role D8 refuses), and its one-line description."""
     count = len(data.get("rows") or [])
     return (f'<div class="shep-panel-hd"><h2>Datasets</h2><span class="shep-panel-right">'
-            f'server workspace list · {count} · read-only</span></div>'
+            f'{count} workspace{"" if count == 1 else "s"} on the server</span></div>'
             '<p class="shep-intro">The same list Training, Test and Models choose from. Dataset '
-            'fingerprint: the SHA-256 of each workspace’s <code>split_manifest.json</code>'
+            'fingerprint: the SHA-256 of each workspace’s split manifest '
+            '(<code>split_manifest.json</code>)'
             f'{help_button("dataset-fingerprint", "Dataset fingerprint")}</p>')
 
 
@@ -282,8 +336,98 @@ def details_html(data: Mapping[str, Any], name: Optional[str]) -> str:
     head = (f'<div class="shep-panel-hd"><h2>{r.e(row["name"])}</h2>{r.record_chip(row)}'
             f'<span class="shep-muted">{r.e(r.origin_of(row) or "")}</span></div>')
     body = r.dataset_details_html(row, row.get("facts"), problem=row.get("facts_problem"))
-    return (head + '<div class="shep-panel-bd">' + body
+    return (head + '<div class="shep-panel-bd">' + body + versions_html(data, row)
             + comparison_html(row, list(data.get("rows") or [])) + "</div>")
+
+
+#: Where a data version is imported: the entries that always made one (no
+#: importer on this page).
+IMPORT_LINE = ("Import one on the Test page (“Import a new version…”) or on the server with "
+               "<code>scripts/import_cohort.py</code>.")
+
+
+def _kind_text(kind: Any) -> str:
+    """A version's data kind as a label names it ("Supplied cohort version",
+    "KG edge set", "Generated split"; `caveats.DATA_KIND_WORDS`), or Unknown
+    for a kind this build does not read, beside its recorded name."""
+    if kind in DATA_KIND_WORDS:
+        return r.e(label_words(DATA_KIND_WORDS[kind]))
+    return f'{r.status_mark("neutral", r.UNKNOWN)} {r.ident_html(kind)}'
+
+
+def admitted_measurements(version: Mapping[str, Any]) -> tuple:
+    """The measurements a version's data admits and, for each other one that
+    measures its kind, why not: the data side of Test's one rule
+    (`protocols.inputs_refusal`, which Start's reason and the run apply too),
+    in definition order, each by its plain words (`caveats.MEASUREMENT_NAMES`).
+    The model chosen on Test decides the rest (`protocols.available`)."""
+    kind, counts = version.get("kind"), version.get("counts")
+    admitted, refused = [], []
+    for name in protocols.names():
+        reason = protocols.inputs_refusal(name, kind, counts)
+        if reason is None:
+            admitted.append(MEASUREMENT_NAMES.get(name, name))
+        elif kind in protocols.PROTOCOLS[name].data_kinds:
+            refused.append((MEASUREMENT_NAMES.get(name, name), reason))
+    return admitted, refused
+
+
+def _measurements_cell(version: Mapping[str, Any]) -> str:
+    admitted, refused = admitted_measurements(version)
+    cell = (r.e(", ".join(admitted)) if admitted
+            else r.status_mark("neutral", "None admitted"))
+    if refused:
+        names = ", ".join(name for name, _why in refused)
+        reasons = "".join(f"<p><b>{r.e(name)}</b>: {r.e(why)}</p>" for name, why in refused)
+        cell += (f'<details class="shep-more"><summary>Not admitted: {r.e(names)} ›</summary>'
+                 f"{reasons}</details>")
+    return cell
+
+
+def versions_html(data: Mapping[str, Any], row: Mapping[str, Any]) -> str:
+    """The workspace's registered data versions (the module docstring): a
+    table of the versions mapped against its graph, each by its label, kind,
+    role and the measurements its data admits; under it how many others the
+    registry holds; or, in its own words, why none is shown (no registry, the
+    workspace not checked, none mapped against it yet), with where a version
+    is imported."""
+    versions = {str(v.get("label")): v for v in data.get("versions") or []}
+    mine = row.get("versions") or {}
+    bound = [versions[label] for label in mine.get("bound") or [] if label in versions]
+    title = (f'<div class="shep-ds-vt">Data versions <span class="shep-muted">'
+             f'({len(bound)})</span></div>')
+    problem = data.get("registry_problem")
+    if problem:
+        return (f'<div class="shep-ds-versions">{title}<div class="shep-reason">No registry is '
+                f"listed: {r.e(problem)}</div></div>")
+    if mine.get("problem"):
+        return (f'<div class="shep-ds-versions">{title}<div class="shep-reason">Not checked '
+                f"against the registry: {r.e(mine['problem'])}.</div></div>")
+    others = []
+    if mine.get("another"):
+        n = mine["another"]
+        others.append(f"{n} version{'' if n == 1 else 's'} mapped against another graph")
+    if mine.get("unknown"):
+        n = mine["unknown"]
+        others.append(f"{n} that cannot be read")
+    tail = (f'<p class="shep-sub">Not listed here: {r.e("; ".join(others))}.</p>'
+            if others else "")
+    if not bound:
+        return (f'<div class="shep-ds-versions">{title}<div class="shep-reason"><span>No data '
+                f"version is mapped against this workspace’s graph yet. {IMPORT_LINE}</span>"
+                f"</div>{tail}</div>")
+    body = "".join(
+        f'<tr><td class="shep-w600">{r.e(version.get("label"))}</td>'
+        f'<td>{_kind_text(version.get("kind"))}</td>'
+        f'<td>{r.ident_html(version.get("role"))}</td>'
+        f"<td>{_measurements_cell(version)}</td></tr>" for version in bound)
+    table = ('<div class="shep-tbl-wrap"><table class="shep-tbl shep-dsvtbl" '
+             'aria-label="Data versions"><thead><tr><th scope="col">Version</th>'
+             '<th scope="col">Kind</th><th scope="col">Role</th>'
+             f'<th scope="col">Measurements</th></tr></thead><tbody>{body}</tbody></table></div>')
+    lead = ('<p class="shep-sub">In the server’s registry, mapped against this workspace’s '
+            "graph: what its data admits; the model chosen on Test must take it too.</p>")
+    return f'<div class="shep-ds-versions">{title}{lead}{table}{tail}</div>'
 
 
 #: Row clicks (and Enter on a focused row) become the table's click event.
@@ -382,6 +526,12 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dstbl td.shep-ds-src {{ min-width: 7em; }}
 {_PAGE} .shep-dstbl td.shep-ds-use {{ min-width: 11em; }}
 {_PAGE} .shep-compare {{ margin: 0; font-size: 15px; color: var(--shep-text-2); overflow-wrap: anywhere; }}
+{_PAGE} .shep-ds-versions {{ display: flex; flex-direction: column; gap: 6px; }}
+{_PAGE} .shep-ds-vt {{ font-size: 15px; font-weight: 600; }}
+{_PAGE} .shep-ds-versions .shep-sub {{ margin: 0; }}
+{_PAGE} .shep-ds-versions .shep-tbl-wrap {{ margin: 0; }}
+{_PAGE} .shep-dsvtbl td {{ overflow-wrap: anywhere; }}
+{_PAGE} .shep-dsvtbl .shep-more p {{ margin: 4px 0 0; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} #shep-ds-details .shep-v, {_PAGE} #shep-ds-details .shep-panel-hd h2 {{ overflow-wrap: anywhere; min-width: 0; }}
 {_PAGE} .shep-ds-narrow {{ display: none; white-space: nowrap; }}
 @media (max-width: 1799px) {{
@@ -398,9 +548,11 @@ PAGE_CSS = f"""
 
 __all__ = [
     "BUILD_LINE",
+    "IMPORT_LINE",
     "OUTSIDE_PATH",
     "PAGE_CSS",
     "ROOT_REFUSED",
+    "admitted_measurements",
     "comparison_html",
     "create_datasets_page",
     "details_html",
@@ -409,4 +561,5 @@ __all__ = [
     "redact",
     "table_html",
     "use_note_html",
+    "versions_html",
 ]

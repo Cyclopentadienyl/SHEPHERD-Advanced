@@ -26,7 +26,14 @@ Research › Prepare › Datasets (M5-2, UI-A): the server's workspaces, read-on
 - **Use for training ›** sets this session's run-bar workspace and opens
   Research › Training; nothing on the server changes; a workspace that is not
   trainable cannot be used;
-- **everything escaped** (a workspace may be named with markup characters).
+- **everything escaped** (a workspace may be named with markup characters);
+- **the header in plain words**: its count, never "read-only" (D8's word for
+  a refused request);
+- **its data versions** (ops round B5): the registry's versions mapped against
+  the chosen workspace's graph, read by Test's reader and compared by Test's
+  comparison, each by its kind, role and the measurements its data admits
+  (the data side of Test's one rule), in the selected row's details; read
+  once per refresh; no row carries ``aria-selected``.
 
 Module: tests/unit/test_webui_datasets.py
 """
@@ -286,7 +293,8 @@ def test_the_page_refreshes_when_opened_and_rows_select_their_details(root, monk
     demo, ctx, fns = _page()
     refresh = fns["_refresh"]
     data, chosen, header, table, details, use, note = refresh.fn(None, None)
-    assert chosen == data["rows"][0]["name"] and "server workspace list · 5 · read-only" in header
+    assert chosen == data["rows"][0]["name"] and "5 workspaces on the server" in header
+    assert "read-only" not in header
     assert use["interactive"] is True and dsp.USE_NOTE in note
     select = fns["_select"]
 
@@ -441,3 +449,120 @@ def test_no_page_reaches_into_another_page_or_the_renderers_private_names():
         assert reached <= allowed.get(page, set()), (page, reached)
     assert "from src.webui.components import training_console as tc" in (
         folder / "finetune_page.py").read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- data versions
+@pytest.fixture
+def registry(root, tmp_path, monkeypatch):
+    """A registry holding a supplied cohort mapped against "demo"'s graph (and
+    so against every listed workspace with the same graph and record) and the
+    demo's generated validation split, through the importer's two steps."""
+    from src.evaluation.cohort_registry import commit_import, prepare_generated_import
+    from tests.fixtures.registered_cohort import graph_source_cases, import_version, write_source
+
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    import_version(registry, root / "demo",
+                   write_source(tmp_path / "cases.json", graph_source_cases(root / "demo")),
+                   label="ref-demo", role="demo")
+    plan = prepare_generated_import(registry, root / "demo", "gen-val", "val")
+    commit_import(plan, registry, plan.preview_id)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    return registry
+
+
+def test_the_details_list_the_versions_test_reads_by_the_same_comparison(
+        root, registry, monkeypatch):
+    """The versions under a workspace are the registry's, as Test lists them
+    (`server_lists.list_cohort_versions`), bound to its graph by the one
+    comparison Test and Diagnosis use (`workspace_binding`, `binding_state`),
+    never a second registry or reader."""
+    from src.api.services.server_lists import list_cohort_versions
+    from src.webui.components.workspaces import (
+        binding_state,
+        read_workspaces,
+        version_row,
+        workspace_binding,
+    )
+
+    _serving(monkeypatch, None)
+    data = dsp.read_datasets()
+    listed = read_workspaces()
+    versions = [version_row(item) for item in list_cohort_versions().items]
+    assert [v["label"] for v in data["versions"]] == [v["label"] for v in versions]
+    for row in listed["rows"]:
+        mine = next(x for x in data["rows"] if x["name"] == row["name"])["versions"]
+        if row["manifest"] != "read":
+            assert mine["bound"] == [] and mine["problem"], row["name"]
+            continue
+        binding = workspace_binding(listed["directories"][row["name"]], row)
+        assert mine["bound"] == [v["label"] for v in versions
+                                 if binding_state(v, binding)[0] == "bound"], row["name"]
+    html = dsp.details_html(data, "demo")
+    assert "Data versions <span class=\"shep-muted\">(2)</span>" in html
+    assert "aria-selected" not in html + dsp.table_html(data, None, "demo")
+    supplied = re.search(r"<tr><td[^>]*>ref-demo</td>.*?</tr>", html, re.S).group(0)
+    assert "Supplied cohort version" in supplied and ">demo</code>" in supplied
+    generated = re.search(r"<tr><td[^>]*>gen-val</td>.*?</tr>", html, re.S).group(0)
+    assert "Generated split" in generated and ">val</code>" in generated
+    # Not mapped against its graph's record: "scratch_ws" has no manifest.
+    assert "Not checked against the registry" in dsp.details_html(data, "scratch_ws")
+
+
+def test_each_version_says_the_measurements_its_data_admits_by_tests_rule(
+        root, registry, monkeypatch):
+    """What a version admits is the data side of Test's one rule
+    (`protocols.inputs_refusal`): a measurement offered with no reason, and
+    one that measures its kind but not its data with that reason, one click
+    away; one that measures another kind is not named."""
+    from src.evaluation import protocols
+    from src.evaluation.caveats import MEASUREMENT_NAMES
+
+    _serving(monkeypatch, None)
+    data = dsp.read_datasets()
+    for version in data["versions"]:
+        admitted, refused = dsp.admitted_measurements(version)
+        kind, counts = version["kind"], version["counts"]
+        assert admitted == [MEASUREMENT_NAMES[n] for n in protocols.names()
+                            if protocols.inputs_refusal(n, kind, counts) is None]
+        assert [why for _name, why in refused] == [
+            protocols.inputs_refusal(n, kind, counts) for n in protocols.names()
+            if protocols.inputs_refusal(n, kind, counts) is not None
+            and kind in protocols.PROTOCOLS[n].data_kinds]
+        assert "KG link prediction" not in admitted + [name for name, _ in refused]
+    html = dsp.details_html(data, "demo")
+    supplied = re.search(r"<tr><td[^>]*>ref-demo</td>.*?</tr>", html, re.S).group(0)
+    assert "<td>Disease<details" in supplied
+    assert "<summary>Not admitted: Gene, Patients-like-me ›</summary>" in supplied
+    assert "lists no causal genes" in supplied
+
+
+def test_the_registry_is_read_once_per_refresh_and_its_absence_is_said(
+        root, registry, monkeypatch):
+    from src.api.services import server_lists
+
+    _serving(monkeypatch, None)
+    data = dsp.read_datasets()
+    monkeypatch.setattr(server_lists, "list_cohort_versions",
+                        lambda *a, **k: pytest.fail("a selection read the registry"))
+    assert "ref-demo" in dsp.details_html(data, "demo")
+    monkeypatch.undo()
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
+    monkeypatch.delenv("SHEPHERD_REGISTRY", raising=False)
+    _serving(monkeypatch, None)
+    data = dsp.read_datasets()
+    html = dsp.details_html(data, "demo")
+    assert "No registry is listed: SHEPHERD_REGISTRY is not set" in html
+    assert "<table" not in html.split("Data versions", 1)[1]
+
+
+def test_a_workspace_no_version_was_mapped_against_says_where_versions_come_from(
+        root, tmp_path, monkeypatch):
+    registry = tmp_path / "empty-registry"
+    registry.mkdir()
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    _serving(monkeypatch, None)
+    data = dsp.read_datasets()
+    html = dsp.details_html(data, "demo")
+    assert "No data version is mapped against this workspace’s graph yet." in html
+    assert dsp.IMPORT_LINE in html
