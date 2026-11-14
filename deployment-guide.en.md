@@ -925,9 +925,15 @@ with its `device`, …). It is null when nothing is loaded. **The status says wh
 serving stands** (since the ops-wiring round, 2026-11-12): `serving` (`not_loaded`,
 `serving`, or `stopping` while a stop lets the accepted diagnoses finish), `loading`,
 `in_flight` (accepted diagnoses still running), `holds_gpu_lock` (this service's CUDA
-inference holds the GPU lock; no lock path, the route is open) and `not_serving_reason`
+inference holds the GPU lock; no lock path, the route is open), `not_serving_reason`
 (the reason `/diagnose` and `/ready` refuse with, null while a model is served; it names no
-path). The table and mixture
+path) and, since the B4 stage of that round (2026-11-14), `not_serving`, the same reason in
+parts (`state`: `stopping`, `loading`, `not_loaded`, `stopped`, `load_refused` or
+`startup_refused`; `lead`, its first words; `at`; `model_sha12`; null while a model is
+served), from which the Diagnosis card shows its state and lead. `weight_transfer` (also since
+B4) is the served checkpoint record's weight transfer as the model lists show it, each part
+trainable or frozen, read once at load; null when nothing is served or the record names none.
+The table and mixture
 fields (`sp_ready`, `eta_configured`, `sp_max_hops`, `sp_hop_bound_source`,
 `sp_kg_binding`) and `fingerprint_warnings` are removed since K8-4. **The status
 describes what is loaded now, and a reload replaces it.** To know what produced a
@@ -950,7 +956,8 @@ the status.
   contract's claim boundary: "Checked: these files are the ones their records
   name, and the records agree on the relations marked ✓. Not checked: who
   changed them, or anything a person able to edit both files and records could
-  alter."
+  alter." The dashboard's identity drawer marks a verified part "● verified",
+  and its boundary names that mark in place of ✓.
 
 ### No model, no answer
 
@@ -3006,6 +3013,11 @@ three panels stack and the page scrolls.
 results from different browsers never share one (before M5-2 a blank field was sent as
 `webui_patient`).
 
+**Each task asks only its inputs**: HPO terms and Patient ID for every model; "Candidate genes"
+for a gene task model; "Reference cohort" for a patients-like-me model; "Explanations" only for a
+disease task model, the one whose rows are explained (a gene or patients-like-me model's rows
+carry their own values, so the option is neither shown nor sent for them).
+
 **The "Model in use" card** is the last item of the input panel, with Run Diagnosis right below
 it: both follow Options, and stay pinned at the panel's bottom when the inputs need to scroll (at
 1536 × 760, for example). It shows:
@@ -3016,8 +3028,10 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 - the model, "2026-10-17 09:15 · GATv2, 6 epochs completed" (its run in the one run words, a
   named run's name first, "smoke-ft · GATv2 2026-10-17 09:15, 6 epochs completed"; how far the
   file trained, from its progress record, in the words every page uses; an older file without one
-  says the epoch it records, "recorded epoch 5"), and "model fingerprint <12 hex> ✓ verified"
-  (the SHA-256 of the checkpoint file served);
+  says the epoch it records, "recorded epoch 5"), under its task, "Disease task model" (a task
+  model whose graph backbone kept its base's weights is "Disease task model · frozen graph
+  backbone", from the weight transfer the status carries, read once when the model was loaded),
+  and "model fingerprint <12 hex> ● verified" (the SHA-256 of the checkpoint file served);
 - "trained on <workspace> · dataset fingerprint <12 hex>": the dataset the checkpoint records it
   was trained on (`training_input_digests.split_manifest`), named by the listed workspaces with
   that full fingerprint, or "matches no listed workspace"; never the served workspace's own
@@ -3032,10 +3046,13 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
   model…". The recorded tests, and the workspace names, are read again each time Diagnosis is
   shown, after each diagnosis, after a model change and with ↻ (the 5-second read reads only what
   is served): a test recorded in Research › Test shows when you come back to Diagnosis;
-- **the serving state** (since the ops-wiring round), the server's in its own words: "● Serving",
-  "Loading", "▲ Stopping · N in flight" (the diagnoses already accepted, still running) or
-  "○ Not loaded", each but Serving with the server's own reason under it (stopped by an
-  operator, a load or the start-up refused and why, nothing loaded, a load in progress);
+- **the serving state** (since the ops-wiring round), the server's in its own words: "● Serving"
+  (with "Loading" beside it while a load runs), "Loading", "▲ Stopping · N in flight" (the
+  diagnoses already accepted, still running), "○ Stopped", "✕ Load refused" or "○ Not loaded"
+  (nothing loaded since the service started). When no diagnosis is admitted, the server's lead
+  is under it ("By an operator at 10:15:00 UTC", or why a load was refused, naming the GPU lock's
+  holder) and its whole reason one click away under "Details ›" (how to load a model, the
+  start-up settings). A load is said by this state alone, whichever page or client started it;
 - **■ Stop inference**, while a model serves (an operator control, §4.13; locked for a read-only
   browser). It asks first: "Stop inference of model <12 hex>? Diagnoses already accepted finish;
   new diagnoses are refused until a model is loaded. Nothing loads a model again by itself."
@@ -3049,35 +3066,49 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
   loaded), and what a stop said lasts while the card shows what that stop left: "Inference
   stopped: …" goes once a model serves again (this browser's Load, another browser's, or a
   restart that loads one), so the page never keeps saying "stopped" over a model that serves.
+  After a stop the card reads "○ Stopped", who stopped it and when, and "Back to research ›",
+  which opens Research › Training.
 
 | The card shows | Meaning |
 |---|---|
 | "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example). × dismisses it |
 | grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read: "status not read" (the full reason is in the badge's line and in Details) or "timed out (5 s)". The lines shown are the last known state, without ✓, with grey dashed chips |
 | grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
-| "○ Not loaded", the server's reason, and "Load a model…" | No model is served: none configured, inference stopped, a load or the start-up refused, or a build that failed (since K7 a graph is never served on its own); the reason under it is the server's. Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now gets 503 with the reason (§4.7) |
-| "▲ Stopping · N in flight" | An operator stopped inference: the N diagnoses already accepted finish, and new ones are refused ("Disabled: inference is stopping; …" under Run Diagnosis; 503 for an API client). Then the card reads "Not loaded" |
+| "○ Not loaded", "Nothing has been loaded since the service started", "Details ›" and "Load a model…" | No model is served and none has been since the start (none configured; since K7 a graph is never served on its own). Nothing served is said here once, with this one action: Run Diagnosis is greyed out and cannot be clicked, "Disabled until a model is loaded." under it (pointing at it, or reaching it with Tab, shows why). An API client asking now gets 503 with the whole reason (§4.7) |
+| "○ Stopped", "By an operator at HH:MM:SS UTC", "Back to research ›" | Inference was stopped (by an operator, for Restart Backend, or as the service shut down); "Details ›" has the server's whole reason. Run Diagnosis says "Disabled until a model is loaded." |
+| "✕ Load refused" and why | A load (or the start-up's) was refused while nothing was served, for example "CUDA inference is refused: the GPU is in use by <holder>…" |
+| "▲ Stopping · N in flight" | An operator stopped inference: the N diagnoses already accepted finish, and new ones are refused ("Disabled until a model is loaded." under Run Diagnosis; 503 for an API client). Then the card reads "Stopped" |
 | "🔒 Change model…" greyed, "Operator controls only: <reason>" | A read-only browser (§4.13). It never sees the list of checkpoints |
 
 **The badge** above the results (§4.7) compares the result's whole served identity with the card's
 last read, and the card is read again after each diagnosis; a read that failed, or one older than
-the result, never shows "Produced by the model in use". The CSV and the report keep the result's
-own identity whatever the badge says. "Not a certified medical device; decision support for a
+the result, never shows "Produced by the model in use". With nothing served now (after a stop,
+say) it names the result by its own model, "Produced by model <12 hex> · not compared". The
+result, its table, CSV and report keep their own identity whatever the badge says: a model
+change or a stop never relabels them. "Not a certified medical device; decision support for a
 qualified clinician." is at the foot of the results.
 
 **The identity drawer** opens over the details panel, with two views. "Model in use" is the
 served model's facts in five sections (Identity, with the full digests and Copy; Uses; Data;
 Evidence; Warnings, always open) and a link to the full records in Research › Models (the
 structural-fingerprint line is gone since K8-4: the checkpoint's record binds its graph by
-digest, checked at load). "This result" shows only what the result carries, each part beside
-what is in use now. "Details ›" and "Recorded results ›" open the first, the badge the second; while
+digest, checked at load); its Task row says what the model is ("Disease · frozen graph backbone"
+for a frozen-backbone child). "This result" shows only what the result carries: the answer first,
+the parts that differ from what is in use now side by side (those only), then the result's own
+identity as one list, a part a row, and its full digests with Copy. "Details ›" and "Recorded
+results ›" open the first, the badge the second; while
 a model change is open (its confirmation, or a reload running) they leave the Change model drawer
 in place.
 
-**Change model…** (an operator control) opens a drawer over the results and the details: the
-workspace select (the server's list; the serving workspace is chosen first), "In use now" on top,
-the latest four runs ("Show older runs" for the rest), the selected checkpoint's facts, "Compare
-in Research › Models ›", and "Load this model" / Cancel. Load asks once ("Reload the pipeline
+**Change model…** (or "Load a model…" while nothing is served; an operator control) opens the
+drawer "Load for inference" over the results and the details: the workspace select (the
+server's list; the serving workspace is chosen first) with the chosen workspace said once under
+it (when it was built, its dataset fingerprint with Copy, its origin and its record's state, the
+line Research › Models shows), "In use now" on top, the latest four runs ("Show older runs" for
+the rest), each run named once in its heading ("Run smoke-ft · GATv2 2026-10-17 09:15") and its
+checkpoints under it by what they are ("Latest save, 6 epochs completed"), each with its task
+("Disease · frozen graph backbone" for a frozen-backbone child), the selected checkpoint's facts,
+"Compare in Research › Models ›", and "Load this model" / Cancel. Load asks once ("Reload the pipeline
 with <12 hex> for every session?", from → to, with the changed rows marked) and reloads the
 pipeline with the workspace and checkpoint the server lists. **The reload serves only the model
 the question named**: it compares its own read of the checkpoint with that fingerprint before
@@ -3093,12 +3124,13 @@ open the list's own footer is hidden, so the from → to rows and that sentence 
 "Disabled: finish or cancel the model change first." Once "Reload with <new>" is clicked, the
 confirmation shows only the reload's status ("Loading <12 hex> for every session… 00:00:42") and
 Close (closing does not stop it; after 180 s, Read again and Close), so a second reload cannot
-be asked for; the card says the same "Loading …" line and Run Diagnosis says "Disabled: a model
-load is in progress; diagnoses wait until it finishes." Cancel or × closes the drawer without
-reloading. While the reload runs, Close or × closes the drawer at once and the reload goes on
-(it cannot be stopped): the card keeps its "Loading …" line, and when the reload answers, the
-card shows the model then in use and its outcome is not shown again; "Change model…" meanwhile
-opens the drawer again on the reload's status. In Research › Models, Close closes the
+be asked for. The card says the load by the server's own state, "Loading", as it says a load
+any other page or client started, and Run Diagnosis says "Disabled until the model load started
+here answers." Cancel or × closes the drawer without reloading. While the reload runs, Close or
+× closes the drawer at once and the reload goes on (it cannot be stopped): the card goes on
+reading the server's state, and when the reload answers, the card shows the model then in use
+and its outcome is not shown again; "Change model…" meanwhile opens the drawer again on the
+reload's status. In Research › Models, Close closes the
 confirmation the same way. A Load from Research › Models refreshes this card too. Only one
 drawer is open at a time.
 

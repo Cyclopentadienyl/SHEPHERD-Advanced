@@ -1359,7 +1359,11 @@ checkpoint 的 `supplied_in_memory` 與 `absent` 狀態、圖的 `unverified` �
 正讓已接受的診斷跑完時的 `stopping`）、`loading`、`in_flight`（仍在執行的已接受診斷）、
 `holds_gpu_lock`（本服務的 CUDA 推論持有 GPU 鎖；不含鎖的路徑，這條路由是開放的）與
 `not_serving_reason`（`/diagnose` 與 `/ready` 拒絕時用的原因，有模型在服務時為 null；不含任何
-路徑）。距離表與
+路徑），以及自該輪的 B4 階段（2026-11-14）起的 `not_serving`：同一個原因的各部分（`state`：
+`stopping`、`loading`、`not_loaded`、`stopped`、`load_refused` 或 `startup_refused`；`lead`，它的
+開頭用語；`at`；`model_sha12`；有模型在服務時為 null），Diagnosis 卡片據此顯示狀態與開頭說明。
+`weight_transfer`（同樣自 B4 起）是所服務 checkpoint 紀錄的 weight transfer，與模型清單顯示的
+相同，每個部分為可訓練或凍結，在載入時讀取一次；沒有服務任何模型或紀錄沒有記載時為 null。距離表與
 mixture 的欄位（`sp_ready`、`eta_configured`、`sp_max_hops`、`sp_hop_bound_source`、
 `sp_kg_binding`）以及 `fingerprint_warnings` 自 K8-4 起已移除。**狀態描述的是現在載入的
 東西，reload 會換掉它。** 要知道某個結果是由什麼產生的，請讀那個結果自己的
@@ -1377,7 +1381,8 @@ mixture 的欄位（`sp_ready`、`eta_configured`、`sp_max_hops`、`sp_hop_boun
 - **它不證明什麼**，以 contract 的宣稱界線顯示在身分下方（原文照錄）："Checked: these
   files are the ones their records name, and the records agree on the relations marked ✓.
   Not checked: who changed them, or anything a person able to edit both files and records
-  could alter."
+  could alter." 儀表板的身分抽屜以 "● verified" 標示已驗證的部分，它的宣稱界線也以這個標記
+  取代 ✓。
 
 ### 沒有模型就沒有回答
 
@@ -3089,6 +3094,11 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 **Patient ID** 留空時以「沒有 id」送出：伺服器為結果給它自己的 id（`patient_…`），因此不同
 瀏覽器的結果絕不會共用同一個（M5-2 之前，空白欄位會以 `webui_patient` 送出）。
 
+**每個任務只詢問它自己的輸入**：每個模型都有 HPO terms 與 Patient ID；gene 任務模型有
+"Candidate genes"；patients-like-me 模型有 "Reference cohort"；"Explanations" 只屬於 disease
+任務模型，也就是其列會被解釋的那一種（gene 或 patients-like-me 模型的列帶有它們自己的值，因此
+這個選項對它們既不顯示也不送出）。
+
 **「Model in use」卡片**是輸入面板的最後一項，Run Diagnosis 緊接在它下方：兩者跟在 Options
 後面；當輸入欄位需要捲動時（例如 1536 × 760），兩者固定在面板底部。卡片顯示：
 
@@ -3097,8 +3107,10 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
   為 "timed out (5 s)"；
 - 模型 "2026-10-17 09:15 · GATv2, 6 epochs completed"（其 run 以唯一的 run 用語表示，有名稱的 run
   名稱在前，"smoke-ft · GATv2 2026-10-17 09:15, 6 epochs completed"；檔案訓練到哪裡，取自它的進度
-  紀錄，用語與每個頁面相同；沒有進度紀錄的舊檔案說它記錄的 epoch，"recorded epoch 5"），以及
-  "model fingerprint <12 hex> ✓ verified"（所服務之 checkpoint 檔的 SHA-256）；
+  紀錄，用語與每個頁面相同；沒有進度紀錄的舊檔案說它記錄的 epoch，"recorded epoch 5"），寫在它的
+  任務 "Disease task model" 之下（圖骨幹保留其 base 權重的任務模型是 "Disease task model · frozen
+  graph backbone"，取自狀態帶有的 weight transfer，在模型載入時讀取一次），以及
+  "model fingerprint <12 hex> ● verified"（所服務之 checkpoint 檔的 SHA-256）；
 - "trained on <workspace> · dataset fingerprint <12 hex>"：checkpoint 記錄的訓練所用 dataset
   （`training_input_digests.split_manifest`），以具有相同完整 fingerprint 的已列出 workspace
   命名，或 "matches no listed workspace"；絕不是所服務 workspace 自己的 manifest。讀取它需要打開
@@ -3111,9 +3123,12 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
   "Change model…"。紀錄的測試與 workspace 名稱會在每次顯示 Diagnosis、每次診斷後、更換模型後
   以及按下 ↻ 時重新讀取（每 5 秒的讀取只讀目前服務的內容）：在 Research › Test 記錄的測試，回到
   Diagnosis 時就會出現；
-- **服務狀態**（自 ops-wiring 這一輪起），以伺服器自己的用語顯示："● Serving"、"Loading"、
-  "▲ Stopping · N in flight"（已接受、仍在執行的診斷）或 "○ Not loaded"，除 Serving 外，下方都
-  附上伺服器自己的原因（由操作者停止、載入或啟動被拒絕及其原因、沒有載入任何模型、載入進行中）；
+- **服務狀態**（自 ops-wiring 這一輪起），以伺服器自己的用語顯示："● Serving"（載入進行中時旁邊
+  附 "Loading"）、"Loading"、"▲ Stopping · N in flight"（已接受、仍在執行的診斷）、"○ Stopped"、
+  "✕ Load refused" 或 "○ Not loaded"（服務啟動後從未載入任何模型）。不接受診斷時，下方是伺服器
+  的開頭說明（"By an operator at 10:15:00 UTC"，或載入被拒絕的原因，並指名持有 GPU 鎖者），完整
+  原因在 "Details ›" 之下，點一下即可看到（如何載入模型、啟動設定）。載入只由這個狀態表達，不論是
+  哪個頁面或用戶端發起的；
 - **■ Stop inference**，在有模型服務時出現（操作者控制項，§4.13；唯讀瀏覽器看到上鎖的按鈕）。它
   會先詢問："Stop inference of model <12 hex>? Diagnoses already accepted finish; new diagnoses
   are refused until a model is loaded. Nothing loads a model again by itself."，附
@@ -3124,32 +3139,43 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
   卡片的讀取掌管它顯示的這些內容：卡片不再顯示詢問所指名的模型時（在別處停止，或換上另一個模型），
   詢問就會關閉；停止所說的話只在卡片仍顯示該次停止留下的狀態時保留："Inference stopped: …" 在再有模型
   服務時（本瀏覽器的 Load、另一個瀏覽器的，或載入模型的重新啟動）就會移除，因此頁面不會在有模型服務時
-  仍說「已停止」。
+  仍說「已停止」。停止後卡片顯示 "○ Stopped"、由誰停止及時間，以及 "Back to research ›"，它會打開
+  Research › Training。
 
 | 卡片顯示 | 意義 |
 |---|---|
 | "Model changed at HH:MM — was <舊>, now <新>"，附 × | 這次讀取發現的模型（或所服務內容的其他部分）與這個瀏覽器上一次讀取的不同（例如另一個瀏覽器做了 Change model）。× 可關閉它 |
 | 灰色："cannot check · <原因> · Retry"、"last known HH:MM:SS · not current" | 無法讀取目前服務的內容："status not read"（完整原因寫在標記下方那一行與 Details 中）或 "timed out (5 s)"。顯示的是最後已知的狀態，沒有 ✓，標籤為灰色虛線 |
 | 灰色："read HH:MM:SS · older than this result" | 最後一次成功的讀取早於畫面上的結果 |
-| "○ Not loaded"、伺服器的原因與 "Load a model…" | 沒有服務任何模型：什麼都沒設定、推論已停止、載入或啟動被拒絕，或建置失敗（自 K7 起，圖從不單獨服務）；下方的原因是伺服器自己的。Run Diagnosis 呈灰色且無法點擊：滑鼠指向它，或以 Tab 移到它，會說明原因，下方也寫著 "Disabled: no model loaded. …"。API 用戶端此時提出請求，會得到附原因的 503（§4.7） |
-| "▲ Stopping · N in flight" | 操作者停止了推論：已接受的 N 個診斷會跑完，新的診斷被拒絕（Run Diagnosis 下方寫著 "Disabled: inference is stopping; …"；API 用戶端得到 503）。之後卡片顯示 "Not loaded" |
+| "○ Not loaded"、"Nothing has been loaded since the service started"、"Details ›" 與 "Load a model…" | 沒有服務任何模型，而且自啟動以來從未服務過（什麼都沒設定；自 K7 起，圖從不單獨服務）。「沒有服務」只在這裡說一次，附這唯一的動作：Run Diagnosis 呈灰色且無法點擊，下方寫著 "Disabled until a model is loaded."（滑鼠指向它，或以 Tab 移到它，會說明原因）。API 用戶端此時提出請求，會得到附完整原因的 503（§4.7） |
+| "○ Stopped"、"By an operator at HH:MM:SS UTC"、"Back to research ›" | 推論已停止（由操作者、為了 Restart Backend，或在服務關閉時）；"Details ›" 有伺服器的完整原因。Run Diagnosis 顯示 "Disabled until a model is loaded." |
+| "✕ Load refused" 與原因 | 在沒有服務任何模型時，一次載入（或啟動時的載入）被拒絕，例如 "CUDA inference is refused: the GPU is in use by <持有者>…" |
+| "▲ Stopping · N in flight" | 操作者停止了推論：已接受的 N 個診斷會跑完，新的診斷被拒絕（Run Diagnosis 下方寫著 "Disabled until a model is loaded."；API 用戶端得到 503）。之後卡片顯示 "Stopped" |
 | "🔒 Change model…" 呈灰色，附 "Operator controls only: <原因>" | 唯讀的瀏覽器（§4.13）。它永遠看不到 checkpoint 清單 |
 
 結果上方的**標記（badge）**（§4.7）把結果的整個 served identity 與卡片最近一次的讀取比對，而
 卡片在每次診斷後都會再讀一次；讀取失敗或早於結果的讀取，絕不會顯示 "Produced by the model in
-use"。不論標記怎麼說，CSV 與報告都保留結果自己的身分。"Not a certified medical device; decision
-support for a qualified clinician." 位於結果的底部。
+use"。目前沒有服務任何模型時（例如停止之後），它以結果自己的模型稱呼結果："Produced by model
+<12 hex> · not compared"。不論標記怎麼說，結果、它的表格、CSV 與報告都保留自己的身分：更換模型或
+停止都不會替它們改標籤。"Not a certified medical device; decision support for a qualified
+clinician." 位於結果的底部。
 
 **身分抽屜**蓋在細節面板上，有兩個檢視。"Model in use" 是所服務模型的資料，分五節（Identity，
 附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開），以及通往 Research › Models
 完整紀錄的連結（結構 fingerprint 那一行自 K8-4 起已移除：checkpoint 的紀錄以 digest 綁定它的圖，
-在載入時檢查）。"This result" 只顯示結果本身帶有的內容，每一項與目前使用中的對照。
+在載入時檢查）；它的 Task 列說明模型是什麼（frozen-backbone 子模型為 "Disease · frozen graph
+backbone"）。"This result" 只顯示結果本身帶有的內容：先給答案，再並列與目前使用中不同的部分（只列
+這些），然後是結果自己的身分，以一個清單呈現、每項一列，以及可 Copy 的完整 digest。
 "Details ›" 與 "Recorded results ›" 打開前者，標記打開後者；更換模型進行中（確認畫面打開，或正在
 重新載入）時，它們不會蓋掉 Change model 抽屜。
 
-**Change model…**（操作者控制項）會打開一個蓋住結果與細節的抽屜：workspace 選單（伺服器的
-清單；預設選中正在服務的 workspace）、置頂的 "In use now"、最近四個 run（其餘在 "Show older
-runs"）、選中 checkpoint 的資料、"Compare in Research › Models ›"，以及 "Load this model" /
+**Change model…**（沒有服務任何模型時為 "Load a model…"；操作者控制項）會打開蓋住結果與細節的
+抽屜 "Load for inference"：workspace 選單（伺服器的清單；預設選中正在服務的 workspace），其下說一次
+所選 workspace 是什麼（建置時間、可 Copy 的 dataset fingerprint、來源與其紀錄的狀態，與 Research ›
+Models 顯示的同一行）、置頂的 "In use now"、最近四個 run（其餘在 "Show older runs"），每個 run 只在
+標題中命名一次（"Run smoke-ft · GATv2 2026-10-17 09:15"），其下的 checkpoint 依其性質命名（"Latest
+save, 6 epochs completed"），各附任務（frozen-backbone 子模型為 "Disease · frozen graph
+backbone"）、選中 checkpoint 的資料、"Compare in Research › Models ›"，以及 "Load this model" /
 Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every session?"，from → to，
 變更的列會標出），並以伺服器列出的 workspace 與 checkpoint 重新載入 pipeline。**重新載入只服務
 問句中的那個模型**：它在發布任何東西之前，把自己讀到的 checkpoint 與那個指紋比對，因此期間被改寫
@@ -3162,10 +3188,10 @@ Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every ses
 期間，Run Diagnosis 停用："Disabled: finish or cancel the model change first."。按下
 "Reload with <新>" 之後，確認畫面只顯示重新載入的狀態（"Loading <12 hex> for every
 session… 00:00:42"）與 Close（關閉不會中止重新載入；180 秒後為 Read again 與 Close），因此無法
-再要求第二次重新載入；卡片顯示同一行 "Loading …"，Run Diagnosis 顯示 "Disabled: a model load is
-in progress; diagnoses wait until it finishes."。Cancel 或 × 關閉抽屜而不重新載入。重新載入期間，
-Close 或 × 會立即關閉抽屜，重新載入照常進行（無法中止）：卡片保留那一行 "Loading …"，重新載入
-回應後，卡片顯示當時使用中的模型，結果不會再顯示；期間按 "Change model…" 會重新打開抽屜，顯示
+再要求第二次重新載入。卡片以伺服器自己的狀態 "Loading" 表達這次載入，與其他頁面或用戶端發起的載入
+相同；Run Diagnosis 顯示 "Disabled until the model load started here answers."。Cancel 或 × 關閉
+抽屜而不重新載入。重新載入期間，Close 或 × 會立即關閉抽屜，重新載入照常進行（無法中止）：卡片持續
+讀取伺服器的狀態，重新載入回應後，卡片顯示當時使用中的模型，結果不會再顯示；期間按 "Change model…" 會重新打開抽屜，顯示
 重新載入的狀態。在 Research › Models 中，Close 也以同樣方式關閉確認畫面。
 從 Research › Models 做的 Load 也會更新這張卡片。同一時間只會打開一個抽屜。
 
