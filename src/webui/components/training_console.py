@@ -566,16 +566,17 @@ TOUCH_CLASS = "shep-touch"
 #: **An operator's every edit of a text box is its input, in the browser**
 #: (`record_touches`; in the dashboard's head, `app.dashboard_head`). Gradio
 #: 6.30's text box dispatches ``.input`` from a keypress alone: its Textbox
-#: calls its input handler from its keypress listener and has no listener of
-#: the DOM's input event, while its number box dispatches ``.input`` on that
-#: event. An edit that comes with no keypress (select all, then Backspace or
-#: Delete; a cut; a paste; a drop; an input method's text) therefore fired
+#: calls its input handler from its keypress listener, and its listeners of
+#: the DOM's input event only take the box's value (its value binding) and
+#: size a box of several lines, while its number box dispatches ``.input`` on
+#: that event. An edit that comes with no keypress (select all, then Backspace
+#: or Delete; a cut; a paste; a drop; an input method's text) therefore fired
 #: ``.change`` alone, which a page's own write fires too, so a text field the
 #: operator emptied was never recorded and Start sent the reference in its
 #: place (OPS-R1, the external review of 46a5c2b). This script gives such an
 #: edit of a text box in a field of `TOUCH_CLASS` the keypress the box reads
 #: its input from (key "Unidentified": never Enter, so never a submit), in
-#: the input event's bubbling phase, after the box's own listener has taken
+#: the input event's bubbling phase, after the box's value binding has taken
 #: the edit's value; an edit whose own key's keypress reached the box already
 #: has its input. Only an edit the operator made is a trusted input event: a
 #: page's write of a value (the first fill, Reset, a task change, a check's
@@ -609,17 +610,19 @@ TOUCH_HEAD = "<script>" + r"""
 
 def record_touches(field: Any, key: str, record: Any) -> None:
     """**`field`'s every edit by the operator adds `key` to `record`**
-    (`touched_record`), in the browser (`TOUCH_JS`), before any later click is
-    sent; every edit does ("multiple"). The edit is the field's ``.input``,
-    never ``.change``, which a page's own write fires too (decision S2): a
-    typed value, the reference's own included, a number box's or a text box
-    emptied, a cut, a paste. A text box's edit with no keypress reaches
-    ``.input`` through the page's touch script (`TOUCH_HEAD`), which acts on
-    the fields marked here (`TOUCH_CLASS`). An emptied field is then sent as
-    it is, empty, and meets its field spec's check (`sent_settings`). Wire it
-    before any other input listener of `field`: the browser runs an event's
-    listeners in order, so they read the record with `key`. The base form,
-    the Fine-tune page and the Continue drawer's Branch fields record by it."""
+    (`touched_record`), in the browser (`TOUCH_JS`), so a click the operator
+    makes after the edit sends the record with `key` (the box's input comes a
+    few milliseconds after the edit: `TOUCH_HEAD` says how many); every edit
+    does ("multiple"). The edit is the field's ``.input``, never ``.change``,
+    which a page's own write fires too (decision S2): a typed value, the
+    reference's own included, a number box's or a text box emptied, a cut, a
+    paste. A text box's edit with no keypress reaches ``.input`` through the
+    page's touch script (`TOUCH_HEAD`), which acts on the fields marked here
+    (`TOUCH_CLASS`). An emptied field is then sent as it is, empty, and meets
+    its field spec's check (`sent_settings`). Wire it before any other input
+    listener of `field`: the browser runs an event's listeners in order, so
+    they read the record with `key`. The base form, the Fine-tune page and the
+    Continue drawer's Branch fields record by it."""
     field.elem_classes = [*(field.elem_classes or []), TOUCH_CLASS]
     field.input(None, inputs=[record], outputs=[record],
                 js=TOUCH_JS.replace("{key}", json.dumps(key)), queue=False,
