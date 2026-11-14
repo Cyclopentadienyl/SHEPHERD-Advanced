@@ -11,11 +11,14 @@ skill's §2), every value it shows escaped:
   (`runtime_presets.running_allocator`: the saved preset at its start, an
   explicit setting in the launch environment, or none, PyTorch's default), is
   said apart from the preset saved for the next start; torch.compile's saved
-  value is said with the run that reads it. An explicit setting in the launch
-  environment is named as one, never a preset the launcher applied.
+  value is said with where it is read (`COMPILE_READ`). An explicit setting in
+  the launch environment is named as one, never a preset the launcher
+  applied.
 - **Fields**: the memory allocator, read once when the backend starts (a saved
-  change applies after Restart Backend), and torch.compile, read when a page
-  starts a training run. Their words say what is true today: GATv2 is the one
+  change applies after Restart Backend), and torch.compile, read when the
+  Training page starts, continues or branches a run (Fine-tune does not read
+  it). Each is shown as saved each time the page is opened, from the same read
+  as the facts. Their words say what is true today: GATv2 is the one
   architecture built; a measurement made on an earlier architecture is named
   as such.
 - **Acceleration**: no toggle; the area says "Not implemented yet"
@@ -93,9 +96,17 @@ RESTART_STOPS_SERVING = (
 #: re-exec would orphan the job's process), said beside the button.
 RESTART_BUSY = "Restart is off while a GPU job (training or a test run) runs."
 
-#: The acceleration area: a fact, never a toggle that does nothing.
-ACCELERATION = ("New acceleration work is deferred; each run's record keeps the kernels and "
-                "precision it ran with.")
+#: The acceleration area: a fact, never a toggle that does nothing; said in
+#: brackets after its "Not implemented yet" mark.
+ACCELERATION = ("new acceleration work is deferred; each run’s record keeps the kernels and "
+                "precision it ran with")
+
+#: Where torch.compile's saved value is read: the Training page's base Start
+#: and its Continue or Branch (`training_console`), the only readers; the
+#: Fine-tune page does not read it. Said in the facts, under the field, in its
+#: help and after Apply, in these words.
+COMPILE_READ = ("read when the Training page starts, continues or branches a run; Fine-tune "
+                "does not read it")
 
 # Browser-side poller chained after the restart click. Re-exec'ing the backend
 # gives the new process a fresh Gradio session, so the already-loaded page keeps
@@ -189,7 +200,7 @@ def facts_html(env: Optional[Mapping[str, str]] = None,
                settings: Optional[Mapping[str, Any]] = None) -> str:
     """The panel's facts (the module docstring), in the one summary list:
     the allocator running now against the one saved, torch.compile's saved
-    value and when it is read, and the acceleration area."""
+    value and where it is read (`COMPILE_READ`), and the acceleration area."""
     env = os.environ if env is None else env
     settings = load_runtime_settings() if settings is None else settings
     _preset, compile_on = _saved(settings)
@@ -197,9 +208,9 @@ def facts_html(env: Optional[Mapping[str, str]] = None,
         ("Allocator now", running_html(env)),
         ("Allocator saved", saved_html(env, settings)),
         ("torch.compile saved", (r.OFF if not compile_on else "On")
-         + ' <span class="shep-muted">(read when a page starts a training run)</span>'),
-        ("Acceleration", r.status_mark("neutral", "Not implemented yet") + " "
-         + f'<span class="shep-muted">{r.e(ACCELERATION)}</span>'),
+         + f' <span class="shep-muted">({r.e(COMPILE_READ)})</span>'),
+        ("Acceleration", r.status_mark("neutral", "Not implemented yet")
+         + f' <span class="shep-muted">({r.e(ACCELERATION)})</span>'),
     ])
 
 
@@ -234,7 +245,7 @@ def _on_apply(alloc, compile_on, request: gr.Request):
     data["torch_compile"] = bool(compile_on)
     save_runtime_settings(data)
     said = (f"Saved: {allocator_words(str(alloc))}; torch.compile "
-            f"{'on' if compile_on else 'off'}, read when a page starts a training run.")
+            f"{'on' if compile_on else 'off'}, {COMPILE_READ}.")
     return f'<span class="shep-muted">{r.e(said)}</span>', facts_html(settings=data)
 
 
@@ -278,10 +289,15 @@ def _refresh_restart_lock(request: gr.Request):
 def _on_open(request: gr.Request):
     """The page as it is opened: the buttons and their reasons
     (`_refresh_restart_lock`), the two fields that need the operator
-    interactive only for a request D8 allows, and the facts read again."""
+    interactive only for a request D8 allows, and the fields and the facts
+    from one read of the saved settings, so a field never shows a value the
+    facts call saved apart from it (B5 review: a field kept the value read
+    when the app was built, and Apply wrote it back over a newer save)."""
     allowed = operator_access(request).allowed
-    return (*_refresh_restart_lock(request), gr.update(interactive=allowed),
-            gr.update(interactive=allowed), facts_html())
+    settings = load_runtime_settings()
+    preset, compile_on = _saved(settings)
+    return (*_refresh_restart_lock(request), gr.update(interactive=allowed, value=preset),
+            gr.update(interactive=allowed, value=compile_on), facts_html(settings=settings))
 
 
 def _poll_restart_lock(location, request: gr.Request):
@@ -300,7 +316,7 @@ def _poll_restart_lock(location, request: gr.Request):
 FIELD_INFO = {
     "allocator_preset": "Read once when the backend starts: Restart Backend applies a saved "
                         "change.",
-    "torch_compile": "Read when a page starts a training run. Experimental.",
+    "torch_compile": COMPILE_READ[:1].upper() + COMPILE_READ[1:] + ". Experimental.",
 }
 
 #: The fields' help, behind the shared ⓘ (M5-2): ``{elem_id: (title, text)}``.
@@ -316,7 +332,7 @@ FIELD_HELP = {
         "Compile the model (torch.compile)",
         "Compiles supported model regions to cut overhead. PyG workloads may graph-break, fall "
         "back to eager or run slower; GATv2, the one architecture built today, has not been "
-        "measured with it. Read when a page starts a training run: no restart needed.",
+        "measured with it. It needs no restart: it is " + COMPILE_READ + ".",
     ),
 }
 
@@ -346,8 +362,9 @@ COMPILE_DETAILS = (
 def create_runtime_settings_tab(ctx: Any) -> None:
     """Build the Runtime Settings page under ⚙ Settings (call inside its gr.Tab).
 
-    ``ctx`` is the page context (`src/webui/shell.py`). D8's answer, the facts
-    and the restart lock are read each time the page is shown
+    ``ctx`` is the page context (`src/webui/shell.py`). D8's answer, the
+    saved fields, the facts and the restart lock are read each time the page
+    is shown
     (``ctx.on_page_open``), and the buttons' lock on the shell's slow timer
     while it is shown (`_poll_restart_lock`, ``queue=False``, no work on
     another page); the page has no timer of its own. The backend refuses a
@@ -433,7 +450,8 @@ PAGE_CSS = f"""
 """
 
 
-__all__ = ["ACCELERATION", "ALLOCATOR_CHOICES", "ALLOCATOR_WORDS", "FIELD_HELP", "FIELD_INFO",
+__all__ = ["ACCELERATION", "ALLOCATOR_CHOICES", "ALLOCATOR_WORDS", "COMPILE_READ", "FIELD_HELP",
+           "FIELD_INFO",
            "PAGE_CSS",
            "RESTART_BUSY", "RESTART_STOPS_SERVING", "allocator_words", "create_runtime_settings_tab",
            "facts_html", "running_html", "saved_html"]

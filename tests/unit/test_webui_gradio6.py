@@ -54,14 +54,16 @@ def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch):
     assert button["interactive"] is True and note["visible"] is False
 
 
-def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch):
+def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch, tmp_path):
     """The one gated-button rule (`chips.gated`, the WebUI skill's §3): a
     control a read-only request cannot use is disabled with the lock and the
     visible "Operator controls only: …" reason beside it, in D8's short words
     (each handler still checks its own request)."""
+    import src.config.runtime_presets as presets
     import src.webui.components.runtime_settings as rs
     from tests.fixtures.operator_access import gradio_request
 
+    monkeypatch.setattr(presets, "RUNTIME_SETTINGS_FILE", tmp_path / "settings.json")
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
     apply, button, note, reason, alloc, compile_, _facts = rs._on_open(gradio_request())
@@ -70,8 +72,35 @@ def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch):
     assert reason["visible"] is True and reason["value"] == (
         '<div class="shep-reason"><span aria-hidden="true">🔒</span><span>Operator controls '
         "only: deployment mode not set to M1.</span></div>")
-    # The fields that need the operator are not interactive for this request.
-    assert alloc == gr.update(interactive=False) and compile_ == gr.update(interactive=False)
+    # The fields that need the operator are not interactive for this request,
+    # and show the saved values (none saved: the default preset, compile off).
+    assert alloc == gr.update(interactive=False, value="cuda_async")
+    assert compile_ == gr.update(interactive=False, value=False)
+
+
+def test_the_fields_show_what_is_saved_each_time_the_page_is_opened(monkeypatch, tmp_path):
+    """B5 review: the fields kept the values read when the app was built, so
+    after a save the facts said one saved allocator and the field another,
+    and Apply wrote the stale one back. The page's open reads the saved file
+    once, for the fields and the facts alike."""
+    import src.config.runtime_presets as presets
+    import src.webui.components.runtime_settings as rs
+    from src.webui.app import create_gradio_app
+    from tests.fixtures.operator_access import operator_request
+
+    monkeypatch.setattr(presets, "RUNTIME_SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(rs, "is_training_active", lambda: False)
+    app = create_gradio_app()
+    built = {b.elem_id: b.value for b in app.blocks.values()
+             if getattr(b, "elem_id", None) in ("allocator_preset", "torch_compile")}
+    assert built == {"allocator_preset": "cuda_async", "torch_compile": False}
+    presets.save_runtime_settings({"allocator_preset": "expandable", "torch_compile": True})
+    *_lock, alloc, compile_, facts = rs._on_open(operator_request(monkeypatch))
+    assert alloc == gr.update(interactive=True, value="expandable")
+    assert compile_ == gr.update(interactive=True, value=True)
+    assert "Expandable segments (expandable)" in facts and ">On <span" in facts
+    # The fields are the saved values again, so nothing reads "Not saved".
+    assert rs._on_change(alloc["value"], compile_["value"]) == ""
 
 
 def test_a_read_only_request_gets_still_fields_and_escaped_refusals(monkeypatch, tmp_path):
@@ -134,6 +163,17 @@ def test_settings_say_the_running_allocator_apart_from_the_saved_one():
     explicit = rs.facts_html({"PYTORCH_ALLOC_CONF": "backend:native", ALLOC_SOURCE_ENV: "env"}, {})
     assert "set in the launch environment" in explicit
     assert "<code>PYTORCH_ALLOC_CONF=backend:native</code>" in explicit
+    # B5 review: an empty allocator variable is a setting a restart keeps, so
+    # it is named as one, never "no allocator was set" with a restart to apply
+    # the preset.
+    empty = rs.facts_html({"PYTORCH_ALLOC_CONF": ""}, {"allocator_preset": "expandable"})
+    assert "<code>PYTORCH_ALLOC_CONF=</code>" in empty and "no allocator was set" not in empty
+    assert "overrides it until the backend starts without it" in empty
+    assert "Not running yet" not in empty
+    # The acceleration row: its state, then why, in brackets as the other rows
+    # say theirs (B5 review: the two ran together as one sentence).
+    assert ('<span class="shep-st-w">Not implemented yet</span></span> <span class="shep-muted">'
+            f"({rs.ACCELERATION})</span>") in unset
 
 
 def test_no_settings_text_claims_an_architecture_that_is_not_built():
@@ -148,6 +188,36 @@ def test_no_settings_text_claims_an_architecture_that_is_not_built():
             if "HGT" in sentence:
                 assert "earlier" in sentence or "no longer built" in sentence, sentence
     assert "GATv2, the one architecture built today" in rs.FIELD_HELP["torch_compile"][1]
+
+
+def test_torch_compile_is_said_to_be_read_where_it_is_read():
+    """B5 review: the page said torch.compile was read "when a page starts a
+    training run", but only the Training page reads it (its base Start and
+    its Continue or Branch); Fine-tune starts runs and does not. The facts,
+    the field's info line, its help and Apply's answer say `COMPILE_READ`,
+    and these pins fail when another page starts reading it."""
+    import re
+    from pathlib import Path
+
+    import src.webui.components.runtime_settings as rs
+
+    src = Path(rs.__file__).resolve().parents[3] / "src"
+    readers = sorted({path.relative_to(src).as_posix() for path in src.rglob("*.py")
+                      if re.search(r"""get\(\s*["']torch_compile["']""",
+                                   path.read_text(encoding="utf-8"))})
+    # Settings reads it to show it; the Training page is the one that runs it.
+    assert readers == ["webui/components/runtime_settings.py",
+                       "webui/components/training_console.py"]
+    from src.webui.components import finetune_page
+
+    assert "torch_compile" not in Path(finetune_page.__file__).read_text(encoding="utf-8")
+    sentence = rs.COMPILE_READ[:1].upper() + rs.COMPILE_READ[1:]
+    assert rs.FIELD_INFO["torch_compile"].startswith(sentence)
+    assert rs.COMPILE_READ in rs.FIELD_HELP["torch_compile"][1]
+    assert f"({rs.COMPILE_READ})" in rs.facts_html({}, {})
+    for text in (rs.FIELD_INFO["torch_compile"], rs.FIELD_HELP["torch_compile"][1],
+                 rs.facts_html({}, {})):
+        assert "when a page starts" not in text
 
 
 def test_the_restart_lock_is_polled_on_the_shells_slow_timer_only_while_shown(monkeypatch):
