@@ -3463,7 +3463,7 @@ PAGE_CSS = f"""
   width: auto !important; flex: 0 0 auto !important; overflow: visible !important; }}
 {_TAB} .shep-dx-opt {{ font-size: 14px; color: var(--shep-text-2); font-weight: 500; }}
 {_TAB} #dx_top_k label.container {{ display: flex; align-items: center; gap: 6px; }}
-{_TAB} #dx_top_k [data-testid="block-info"] {{ margin: 0; background: none; padding: 0; font-size: 15px; color: var(--shep-text); }}
+{_TAB} #dx_top_k [data-testid="block-info"] {{ margin: 0; }}
 {_TAB} #dx_top_k input[type=number] {{ width: 72px; }}
 {_TAB} #shep-dx-input-bd > *, {_TAB} #shep-dx-sticky > *, {_TAB} #shep-dx-card > * {{ flex: none !important; }}
 {_TAB} .shep-dx-sticky {{ position: sticky; bottom: 0; z-index: 50; gap: 0 !important; margin: 0 -16px !important;
