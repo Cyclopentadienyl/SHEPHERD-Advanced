@@ -26,7 +26,8 @@ import pytest
 
 gr = pytest.importorskip("gradio")
 
-from src.utils.operator_access import (
+from src.webui.components.chips import LOCK, OPERATOR_ONLY  # noqa: E402
+from src.utils.operator_access import (  # noqa: E402
     CONDITIONS,
     FORWARDING_HEADERS,
     OperatorAccess,
@@ -783,10 +784,15 @@ def test_a_direct_call_to_a_gated_event_meets_the_same_refusal(
         for fn, data, _service in _dashboard_calls():
             outputs = dashboard.call(fn, data)
             said = json.dumps(outputs, ensure_ascii=False)
-            if fn.__name__ == "_refresh_checkpoints":
+            if fn.__name__ in ("_refresh_checkpoints", "_on_finetune_bases"):
                 # A list cannot hold a sentence: it is emptied, and the
                 # refusal is the note beside it.
                 assert {"__type__": "update", "choices": [], "value": None} in outputs
+            if fn.__name__ == "_on_finetune_bases":
+                # Its note is the reason beside its locked Refresh, in the
+                # gated-button rule's words (`chips.operator_only`).
+                assert OPERATOR_ONLY in said and LOCK in said, fn.__name__
+                continue
             assert "Refused: " in said, fn.__name__
     assert spies == [], "a refused event reached a service"
     assert not (tmp_path / "training.json").exists()

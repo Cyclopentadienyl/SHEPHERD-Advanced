@@ -108,7 +108,9 @@ def _option_rules(labels):
 
 # --------------------------------------------------------------------------- the parents
 def test_only_listed_bases_are_offered_as_parents(root, operator):
-    parents, runs, checkpoints, note = fp._on_finetune_bases(operator, {"name": "demo"}, None)
+    parents, runs, checkpoints, note, refresh = fp._on_finetune_bases(operator, {"name": "demo"},
+                                                                      None)
+    assert refresh == gr.update(value="Refresh", interactive=True)      # no lock while allowed
     assert set(parents) == {f"gatv2/{BASE_RUN}/last.pt", f"gatv2/{BASE_RUN}/model-03-0.8300.pt",
                             f"gatv2/{OLD_BASE_RUN}/last.pt"}
     assert all(item["learning_stage"] == "base" for item in parents.values())
@@ -137,9 +139,18 @@ def test_listing_the_bases_is_an_operator_control(root, monkeypatch):
 
     monkeypatch.setattr(server_lists, "list_checkpoints",
                         lambda *a, **k: pytest.fail("a refused request listed checkpoints"))
-    parents, runs, checkpoints, note = fp._on_finetune_bases(READ_ONLY, {"name": "demo"}, None)
+    parents, runs, checkpoints, note, refresh = fp._on_finetune_bases(READ_ONLY, {"name": "demo"},
+                                                                      None)
     assert parents == {} and runs == checkpoints == gr.update(choices=[], value=None)
-    assert "Refused" in note
+    # The one gated-button rule (the closing browser check: Refresh stayed
+    # enabled, with no lock, for a read-only request): disabled, the lock, and
+    # "Operator controls only: …" beside it, as Start's reason line says it.
+    from src.webui.components.chips import LOCK, operator_only
+    from src.webui.operator_access import operator_access
+
+    assert refresh == gr.update(value=f"{LOCK} Refresh", interactive=False)
+    assert r.e(operator_only(operator_access(READ_ONLY).condition)) in note
+    assert "listing the bases opens them" in note
 
 
 def test_an_empty_list_says_why(root, operator):

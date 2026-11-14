@@ -847,25 +847,36 @@ def _on_dataset(name, chosen):
     return state, identity_html(state), tasks, note
 
 
+#: The base list's Refresh, by the one gated-button rule (`chips.gated`).
+REFRESH_LABEL = "Refresh"
+
+
 def _on_finetune_bases(request: gr.Request, ws, current):
     """The parent list: the workspace's listed bases (`list_checkpoints(
     learning_stage="base")`). It opens every checkpoint, so D8 is checked
     first, on this event's own request; refused, the list is emptied, nothing
-    is opened, and the line says why.
+    is opened, its Refresh is disabled with the lock and the line beside it
+    says why in the gated-button rule's words (`chips.operator_only`, as
+    Start's reason line), the rule every gated button follows (`chips.gated`).
 
-    Returns the parents (state), the run and checkpoint selects and their line.
+    Returns the parents (state), the run and checkpoint selects, their line
+    and the Refresh button.
     """
     access = operator_access(request)
     empty = gr.update(choices=[], value=None)
+    refresh = gr.update(**gated(REFRESH_LABEL, access.allowed))
     if not access.allowed:
-        return {}, empty, empty, f'<p class="shep-muted">{r.e(access.refusal)}</p>'
+        why = _why(tc.LOCK_ICON, f"Not listed: listing the bases opens them. "
+                                 f"{operator_only(access.condition)}")
+        return {}, empty, empty, f'<div class="shep-ft-reasons">{why}</div>', refresh
     name = (ws or {}).get("name")
     if not name:
-        return {}, empty, empty, bases_note_html({}, "Select a dataset first.")
+        return {}, empty, empty, bases_note_html({}, "Select a dataset first."), refresh
     from src.api.services.server_lists import list_checkpoints
 
     parents, problem = tc.checkpoint_items(list_checkpoints(name, learning_stage="base"))
-    return (parents, *ml.parents_update(parents, current), bases_note_html(parents, problem))
+    return (parents, *ml.parents_update(parents, current), bases_note_html(parents, problem),
+            refresh)
 
 
 def _on_base_chosen(key, parents):
@@ -1180,7 +1191,7 @@ def create_finetune_page(ctx: Any) -> None:
                                              elem_id="ft_run")
                     checkpoint = gr.Dropdown(label="Checkpoint", choices=[], value=None,
                                              elem_id="ft_checkpoint")
-                    refresh = gr.Button("Refresh", size="sm", scale=0, elem_id="ft_refresh")
+                    refresh = gr.Button(REFRESH_LABEL, size="sm", scale=0, elem_id="ft_refresh")
                 bases_note = plain_html("", elem_id="ft_bases_note")
                 base = plain_html("", elem_id="ft_base")
                 tasks = gr.CheckboxGroup(label="Tasks", choices=task_choices({}), value=[],
@@ -1271,7 +1282,7 @@ def create_finetune_page(ctx: Any) -> None:
                  "outputs": [card, start, stop, reason, stop_reason, confirm_row, cache],
                  "show_progress": "hidden"}
     bases_step = {"fn": _on_finetune_bases, "inputs": [ws, checkpoint],
-                  "outputs": [parents, run_select, checkpoint, bases_note],
+                  "outputs": [parents, run_select, checkpoint, bases_note, refresh],
                   "show_progress": "hidden"}
     base_step = {"fn": _on_base_chosen, "inputs": [checkpoint, parents], "outputs": [base],
                  "show_progress": "hidden"}
