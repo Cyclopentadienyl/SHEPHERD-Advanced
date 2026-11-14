@@ -589,6 +589,35 @@ def test_the_recorded_frozen_parts_are_read_once_for_the_check_and_the_words(wor
     assert recorded_frozen_parts(None) is None
 
 
+def test_a_served_frozen_control_is_named_as_such_from_its_load(world, monkeypatch):
+    """Ops-wiring round B4 (decision F1, wherever a model is described): the
+    served pipeline's status carries the record's weight transfer as the
+    model lists show it (`checkpoint_meta`, read once when it is loaded), so
+    the Diagnosis card names the served control a task model with a frozen
+    graph backbone, and the full arm by its task alone, without opening the
+    checkpoint again."""
+    import src.api.main as api_main
+    from src.models.bundle.record import listed_record
+    from src.webui.components import diagnosis_card as card
+
+    monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
+    for name, words, kind in (
+            ("control", "Disease task model · frozen graph backbone",
+             "Disease · frozen graph backbone"),
+            ("full", "Disease task model", "Disease")):
+        path = world["files"][name]
+        bundle = api_main.build_pipeline(kg_path=str(world["workspace"] / "kg.json"),
+                                         checkpoint_path=str(path),
+                                         data_dir=str(world["workspace"]))
+        meta = bundle.config["checkpoint_meta"]
+        assert meta["weight_transfer"] == listed_record(_load(path))["weight_transfer"], name
+        status = {"initialized": True, "served_identity": bundle.config["served_identity"],
+                  "checkpoint_meta": meta}
+        assert card.task_model_name(card.served_task(status), card.served_transfer(status)) \
+            == words, name
+        assert card.served_kind_words(status) == kind, name
+
+
 # ---------------------------------------------------------------------------
 # A new frozen run: the CLI, the job runner's Fine-tune start, the process
 # ---------------------------------------------------------------------------

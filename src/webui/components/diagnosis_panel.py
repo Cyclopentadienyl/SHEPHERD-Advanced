@@ -16,7 +16,8 @@ scrolls.
   a patients-like-me model, chosen from the registry's versions; shown and
   hidden by a class as the card's read of the served task says,
   `diagnosis_card.served_task`), Patient ID (a blank field is sent as no id,
-  so the API gives the result its own), Options (Top-K, Explanations), then the
+  so the API gives the result its own), Options (Top-K, and Explanations for
+  a disease task model only, `asks_explanations`), then the
   **"Model in use" card** and Run Diagnosis, the last item of the column's
   scroll body and sticky at its bottom: they follow Options when there is room
   and pin when the column overflows. The card (`diagnosis_card`) is the one
@@ -111,16 +112,18 @@ from src.utils import csv_cells
 from src.utils.server_address import ServerAddressUnknownError, api_base_url
 from src.webui.components import diagnosis_card as card
 from src.webui.components.chips import D8_SHORT
-from src.webui.components.help import copy_button, help_button, text_id
+from src.webui.components.help import help_button, text_id
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import OPTION_CHARS
 from src.webui.components.renderers import e as _e
+from src.webui.components.renderers import fingerprint_value as _fingerprint_value
 from src.webui.components.renderers import is_digest as _is_digest
 from src.webui.components.renderers import resources_html as _resources_html
 from src.webui.exports import export_dir, file_slug
 from src.webui.components.renderers import summary_list as _summary_list
 from src.webui.components.renderers import short_hex as _short_hex
+from src.webui.components.renderers import status_mark as _status_mark
 from src.webui.operator_access import operator_access
 from src.webui.style import sticky_room_js
 
@@ -610,11 +613,9 @@ IDENTITY_NOT_REPORTED = "not_reported"
 IDENTITY_NO_MODEL = "no_model"
 _SERVED = "served"
 
+#: The report's mark of a verified part (Markdown); the page draws the
+#: shared status mark for it (`_part_html`).
 _VERIFIED_MARK = "✓"
-#: Hex characters of a digest shown in a summary line; the full value is in the
-#: identity table directly below it.
-_SHORT_HEX = 12
-_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 #: A key the response did not carry, as distinct from one it carried as null.
 _MISSING = object()
 
@@ -1530,7 +1531,10 @@ def empty_results_html(notice: Optional[str] = None) -> str:
 def compare_with_served(result: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str, Any]:
     """The result's served identity against the card's last read, part by part
     (`_identity_rows`, the one reading of an identity): ``equal``, ``differs``
-    (with the parts) or ``unknown`` (with one reason)."""
+    (with the parts), ``nothing`` (nothing is served now: the result is
+    compared with nothing, never said to differ in every part) or ``unknown``
+    (with one reason). Whatever it says, the result keeps its own identity:
+    nothing here relabels it."""
     kind, identity = _identity_of(result)
     total = len(_IDENTITY_PARTS)
     keep = "This result keeps its own identity; its exports use it."
@@ -1551,12 +1555,24 @@ def compare_with_served(result: Mapping[str, Any], state: Mapping[str, Any]) -> 
                            f"before this result was produced "
                            f"({card.hhmmss(_produced_at(result))}), so \"Produced by the model in "
                            f"use\" is not shown. {keep}")}
+    if _served_now(state)[0] == IDENTITY_NO_MODEL:
+        return {"state": "nothing", "total": total, "differ": [],
+                "reason": ("Nothing is served now (the card says why), so this result is "
+                           f"compared with nothing. {keep}")}
     mine = _identity_rows(kind, identity)
     now = _identity_rows(*_served_now(state))
     differ = [part for (part, s1, v1), (_, s2, v2) in zip(mine, now, strict=True)
               if (s1, v1) != (s2, v2)]
     return {"state": "differs" if differ else "equal", "total": total, "differ": differ,
             "reason": None}
+
+
+def _result_model(result: Mapping[str, Any]) -> str:
+    """The model a result names as its own (its served identity's checkpoint
+    fingerprint, 12 hex), in the badge's words."""
+    _kind, identity = _identity_of(result)
+    sha = _field(_field(identity, "checkpoint"), "sha256")
+    return f"model {_short_hex(sha)}" if _is_digest(sha) else "a model it does not name"
 
 
 def _parts_differ(n: int) -> str:
@@ -1579,6 +1595,13 @@ def badge_html(result: Optional[Mapping[str, Any]], state: Mapping[str, Any]) ->
                 f'shep-dx-badge-amber" data-key="result"><span aria-hidden="true">⇄</span> '
                 f'Produced by an earlier model or pipeline — <span class="shep-dx-u">'
                 f'{_parts_differ(n)} ›</span></button>{help_html}</div>')
+    if compared["state"] == "nothing":
+        # Nothing is served now (after a stop, say): the result is named by
+        # its own model, never relabelled, and compared with nothing.
+        return (f'<div class="shep-dx-badge-row"><button type="button" class="shep-dx-badge '
+                f'shep-dx-badge-grey" data-key="result"><span aria-hidden="true">○</span> '
+                f'Produced by {_e(_result_model(result))} · not compared <span '
+                f'aria-hidden="true">›</span></button>{help_html}</div>')
     return (f'<div class="shep-dx-badge-row"><button type="button" class="shep-dx-badge '
             f'shep-dx-badge-grey" data-key="result"><span aria-hidden="true">?</span> Cannot '
             f'check against the model in use yet</button>{help_html}</div>'
@@ -1932,51 +1955,105 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
 
 
 # ----------------------------------------------------------------- identity drawer
-def _short_digests(cell: str) -> str:
-    return _SHA256_RE.sub(lambda m: m.group(0)[:_SHORT_HEX] + "…", cell)
+#: A code span of an identity cell (`_md_code`, `_md_digest`): its fence, a
+#: run of backticks longer than any inside it, and the same run closing it.
+_MD_CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`)(.*?)(?<!`)\1(?!`)", re.DOTALL)
+#: A character `_md_text` escaped with a backslash.
+_MD_ESCAPED_RE = re.compile(r"\\([\\`*_{}\[\]<>#|~!])")
+_SHA256_SPAN_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
 
 
-def result_identity_md(result: Optional[Mapping[str, Any]], state: Mapping[str, Any]) -> str:
-    """The identity drawer's "This result": only what the result carries, each
-    part beside what is in use now when the card's read can be compared, then
-    the claim boundary and the medical-device line."""
+def _md_cell_html(cell: str) -> str:
+    """**An identity cell as HTML** (`_identity_rows`' Markdown, the one
+    reading of an identity the report also writes): its code spans as code,
+    a ``sha256:`` digest as the one digest value (`renderers.fingerprint_value`,
+    12 hex, the whole in its title; "This result in full" has its Copy),
+    every backslash escape undone; each piece escaped, so a value from the
+    API is never markup. The cell's text is the report's, word for word."""
+    out: List[str] = []
+    pos = 0
+    for match in _MD_CODE_SPAN_RE.finditer(cell):
+        out.append(_e(_MD_ESCAPED_RE.sub(r"\1", cell[pos:match.start()])))
+        code = match.group(2)
+        if len(code) >= 2 and code[0] == code[-1] == " " and code.strip(" "):
+            code = code[1:-1]
+        code = code.replace("\\|", "|")
+        digest = _SHA256_SPAN_RE.match(code)
+        out.append(_fingerprint_value(digest.group(1), what="digest", copy=False) if digest
+                   else f"<code>{_e(code)}</code>")
+        pos = match.end()
+    out.append(_e(_MD_ESCAPED_RE.sub(r"\1", cell[pos:])))
+    return "".join(out)
+
+
+def _part_html(state: str, value: str) -> str:
+    """One part of an identity as a details value: a verified part by the
+    shared mark (`renderers.status_mark`), then its value
+    (`_md_cell_html`), which says every other state in its own words."""
+    mark = _status_mark("ok", "verified") + " " if state.startswith(_VERIFIED_MARK) else ""
+    return mark + _md_cell_html(value)
+
+
+def _part_key(part: str) -> str:
+    """A part's row label, plain: its file names without code marks."""
+    return part.replace("`", "")
+
+
+def result_identity_html(result: Optional[Mapping[str, Any]], state: Mapping[str, Any]) -> str:
+    """The identity drawer's "This result": what the result carries, its own
+    served identity, **apart from what is served now**
+    (`compare_with_served`), never relabelled by a model change or a stop.
+    Answer first (produced by the model in use, by an earlier model or
+    pipeline, not compared while nothing is served, or why it cannot be
+    checked), then a comparison table of the parts that differ only (the
+    skill's §4: two things that differ), then the result's identity as one
+    summary list (`renderers.summary_list`, a part a row), then the claim
+    boundary and the medical-device line."""
     if not isinstance(result, Mapping):
-        return "No result yet: run a diagnosis to see what produced it."
+        return '<p class="shep-muted">Run a diagnosis to see what produced its result.</p>'
     kind, identity = _identity_of(result)
     compared = compare_with_served(result, state)
     mine = _identity_rows(kind, identity)
-    lines: List[str] = []
-    if compared["state"] in ("equal", "differs"):
-        now = _identity_rows(*_served_now(state))
-        when = card.hhmmss(state.get("good_at"))
-        if compared["state"] == "differs":
-            n = len(compared["differ"])
-            verb = "differs" if n == 1 else "differ"
-            lines += [f"**This result came from an earlier model or pipeline:** {n} of "
-                      f"{compared['total']} parts {verb} from what is in use now (status read "
-                      f"{when}). The result and its CSV and report keep their own identity.", ""]
-        else:
-            lines += [f"**Produced by the model in use:** all {compared['total']} parts are the "
-                      f"same as what is in use now (status read {when}).", ""]
-        lines += ["| Part | This result | In use now |", "|------|-------------|------------|"]
-        for (part, state_, value), (_, now_state, now_value) in zip(mine, now, strict=True):
-            this = _short_digests(f"{state_} · {value}")
-            there = ("= same" if (state_, value) == (now_state, now_value)
-                     else _short_digests(f"{now_state} · {now_value}") + " **· differs**")
-            lines.append(f"| {part} | {this} | {there} |")
+    when = card.hhmmss(state.get("good_at"))
+    parts: List[str] = []
+    if compared["state"] == "differs":
+        n = len(compared["differ"])
+        now = {part: (state_, value) for part, state_, value in _identity_rows(*_served_now(state))}
+        parts.append(f'<p class="shep-dx-lead"><b>This result came from an earlier model or '
+                     f'pipeline:</b> {n} of {compared["total"]} parts '
+                     f'{"differs" if n == 1 else "differ"} from what is in use now (status '
+                     f'read {_e(when)}). The result and its CSV and report keep their own '
+                     'identity.</p>')
+        rows = "".join(f'<tr><th scope="row">{_e(_part_key(part))}</th>'
+                       f'<td>{_part_html(state_, value)}</td>'
+                       f'<td>{_part_html(*now[part])}</td></tr>'
+                       for part, state_, value in mine if part in compared["differ"])
+        parts.append('<div class="shep-tbl-wrap"><table class="shep-tbl shep-dx-cmp" '
+                     'aria-label="The parts that differ"><thead><tr><th scope="col">Part</th>'
+                     '<th scope="col">This result</th><th scope="col">In use now</th></tr>'
+                     f'</thead><tbody>{rows}</tbody></table></div>')
+    elif compared["state"] == "equal":
+        parts.append(f'<p class="shep-dx-lead"><b>Produced by the model in use:</b> all '
+                     f'{compared["total"]} parts are the same as what is in use now (status '
+                     f'read {_e(when)}).</p>')
+    elif compared["state"] == "nothing":
+        parts.append(f'<p class="shep-dx-lead"><b>Not compared:</b> {_e(compared["reason"])}</p>')
     else:
-        lines += [f"**Cannot check against the model in use yet:** {compared['reason']}", "",
-                  "| Part | State | Value |", "|------|-------|-------|"]
-        lines += [f"| {part} | {state_} | {_short_digests(value)} |" for part, state_, value in mine]
-    for sentence in _claim_boundary_lines(kind, identity):
-        lines += ["", sentence]
-    lines += ["", f"**{NOT_A_MEDICAL_DEVICE}**"]
-    return "\n".join(lines)
+        parts.append(f'<p class="shep-dx-lead"><b>Cannot check against the model in use yet:'
+                     f'</b> {_e(compared["reason"])}</p>')
+    parts.append('<p class="shep-dx-sub-h"><b>What produced this result</b></p>')
+    parts.append(_summary_list((_part_key(part), _part_html(state_, value))
+                              for part, state_, value in mine))
+    boundary = "".join(f"<p>{_e(sentence)}</p>" for sentence in _claim_boundary_lines(kind, identity))
+    return ('<div class="shep-dx-result-id">' + "".join(parts)
+            + f'<div class="shep-dx-boundary">{boundary}<p><b>{_e(NOT_A_MEDICAL_DEVICE)}</b></p>'
+              '</div></div>')
 
 
 def result_digests_html(result: Optional[Mapping[str, Any]]) -> str:
-    """"This result in full": the full digests the result carries, each with
-    Copy."""
+    """"This result in full": the full digests the result carries, each a
+    wide row of one summary list with its Copy (`renderers.summary_list`,
+    `renderers.fingerprint_value`, as Model Facts draws its digests)."""
     if not isinstance(result, Mapping):
         return ""
     kind, identity = _identity_of(result)
@@ -1997,14 +2074,13 @@ def result_digests_html(result: Optional[Mapping[str, Any]]) -> str:
         rows += [(f"Reference cohort {label} · version (cohort.json)",
                   reference.get("version_sha256")),
                  (f"Reference cohort {label} · samples", reference.get("samples_sha256"))]
-    items = "".join(
-        f'<div class="shep-digest"><span class="shep-dl">{_e(label)}</span>'
-        f'<code class="shep-full">{_e(value)}</code>{copy_button(value, "the full " + label)}</div>'
-        for label, value in rows if _is_sha256(value))
-    if not items:
+    shown = [(label, _fingerprint_value(value, what="the full " + str(label), full=True))
+             for label, value in rows if _is_sha256(value)]
+    if not shown:
         return ""
     return ('<div class="shep-dx-digests"><p class="shep-dx-digests-h"><b>This result in full</b> '
-            f'<span class="shep-muted">digests to copy (sha256)</span></p>{items}</div>')
+            '<span class="shep-muted">digests to copy (sha256)</span></p>'
+            f'{_summary_list(shown, wide=[label for label, _value in shown])}</div>')
 
 
 def model_identity_html(state: Mapping[str, Any], section: str = "identity") -> str:
@@ -2039,10 +2115,10 @@ def identity_outputs(view: Mapping[str, Any], state: Mapping[str, Any],
         "id_model": view_update(on_model, *_HTML_VIEW,
                                 value=model_identity_html(state, view.get("section") or "identity")
                                 if on_model else None),
-        "id_result_md": view_update(not on_model, *_MD_VIEW,
-                                    value=None if on_model else result_identity_md(result, state)),
         "id_result_html": view_update(not on_model, *_HTML_VIEW,
-                                      value=None if on_model else result_digests_html(result)),
+                                      value=None if on_model
+                                      else result_identity_html(result, state)
+                                      + result_digests_html(result)),
     }
 
 
@@ -2269,9 +2345,18 @@ def card_loaded_outputs(state: Mapping[str, Any], phase: Any) -> Tuple[Any, ...]
 
 
 #: The outputs that follow the served task (`card_outputs(..., inputs=True)`):
-#: the two inputs' containers and the Reference cohort select. Never outputs
+#: the task inputs' containers and the Reference cohort select. Never outputs
 #: of Run Diagnosis, which reads the inputs.
-TASK_OUTPUTS = ("genes_box", "cohort_box", "cohort")
+TASK_OUTPUTS = ("genes_box", "cohort_box", "explanations_box", "cohort")
+
+
+def asks_explanations(task: Optional[str]) -> bool:
+    """Whether the served task reads the Explanations option: a disease task
+    model explains its rows (evidence, explanation, paths); a gene or a
+    patients-like-me model's rows carry their own values and no explanation
+    (`TASK_ROW_KINDS`), so it is not asked for them. Shown while the task is
+    not known (nothing read yet, or nothing served: Run is off then)."""
+    return task not in ("gene", "patients_like_me")
 
 
 def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], phase: Any,
@@ -2322,6 +2407,7 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
         task = card.served_task(state.get("status"))
         fresh["genes_box"] = task == "gene"
         fresh["cohort_box"] = task == "patients_like_me"
+        fresh["explanations_box"] = asks_explanations(task)
         if task == "patients_like_me":    # a hidden select keeps its last options
             cohorts = _cohorts(state)
             options, chosen = cohort_choices(cohorts, cohort)
@@ -2343,7 +2429,7 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
             out[name] = gr.update(visible=value)
         elif name == "run_btn":
             out[name] = gr.update(interactive=value)
-        elif name in ("genes_box", "cohort_box"):
+        elif name in ("genes_box", "cohort_box", "explanations_box"):
             out[name] = view_update(value, *_TASK_BOX)
         elif name == "cohort":
             out[name] = gr.update(choices=[tuple(option) for option in value["choices"]],
@@ -2437,7 +2523,8 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
     `diagnosis_card.served_task`): a gene task model gets the Candidate genes
     (`_parse_gene_list`; none is a notice at the click, and nothing is asked
     of the server), a patients-like-me model the Reference cohort label;
-    any other model neither."""
+    any other model neither; Explanations is asked of a disease task model
+    only (`asks_explanations`)."""
     state = state if isinstance(state, Mapping) else card.new_state()
     view = view if isinstance(view, Mapping) else {}
     hpo_ids = _parse_hpo_ids(phenotype_text)
@@ -2452,7 +2539,8 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
         return _no_result_outputs(NO_CANDIDATE_GENES)
     reference = cohort if task == "patients_like_me" and isinstance(cohort, str) and cohort \
         else None
-    explanations = bool(explanations)
+    # Asked of a disease task model only (`asks_explanations`).
+    explanations = bool(explanations) and asks_explanations(task)
     result = _call_diagnose(phenotypes=hpo_ids, patient_id=patient_id, top_k=_clamped_top_k(top_k),
                             include_explanations=explanations, candidate_genes=genes,
                             reference_cohort=reference)
@@ -2861,9 +2949,14 @@ def create_diagnosis_tab(ctx: Any) -> None:
                             top_k_input = gr.Number(label="Top-K", value=10, minimum=1,
                                                     maximum=20, step=1, precision=0,
                                                     elem_id="dx_top_k", min_width=0, scale=0)
-                            explanations_input = gr.Checkbox(label="Explanations", value=True,
-                                                             elem_id="dx_explanations", scale=0,
-                                                             min_width=0)
+                            # A disease task model's own option (`asks_explanations`),
+                            # shown by its container's class.
+                            with gr.Column(elem_id="shep-dx-expl-box", min_width=0, scale=0,
+                                           elem_classes=[*_TASK_BOX]) as explanations_box:
+                                explanations_input = gr.Checkbox(label="Explanations",
+                                                                 value=True,
+                                                                 elem_id="dx_explanations",
+                                                                 min_width=0)
                 with gr.Column(elem_id="shep-dx-sticky", elem_classes=["shep-dx-sticky"]):
                     with gr.Column(elem_id="shep-dx-card", elem_classes=["shep-dx-card"]):
                         with gr.Row(elem_id="shep-dx-card-hd", elem_classes=["shep-dx-card-hd"]):
@@ -2933,9 +3026,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 # The views are shown and hidden by a class, never `visible`
                 # (`view_update`).
                 id_model = plain_html("", elem_id="shep-dx-id-model", js_on_load=MODEL_LIST_JS)
-                id_result_md = gr.Markdown("", elem_id="shep-dx-id-result",
-                                           elem_classes=[*_MD_VIEW, VIEW_OFF])
-                id_result_html = plain_html("", elem_id="shep-dx-id-digests",
+                id_result_html = plain_html("", elem_id="shep-dx-id-result",
                                             elem_classes=[VIEW_OFF])
         with gr.Column(visible=False, elem_id="shep-dx-change",
                        elem_classes=["shep-panel", "shep-dx-drawer"], min_width=0) as change_drawer:
@@ -3029,10 +3120,11 @@ def create_diagnosis_tab(ctx: Any) -> None:
         "details_hd": details_hd, "details_seg": details_seg, "details_html": details_html,
         "details_md": details_md, "details_ft": details_ft, "identity_view": identity_view,
         "identity_drawer": identity_drawer, "identity_seg": identity_seg, "id_model": id_model,
-        "id_result_md": id_result_md, "id_result_html": id_result_html,
+        "id_result_html": id_result_html,
         "change_drawer": change_drawer, "plan": handle.plan, "confirm": handle.confirm,
         "confirm_html": handle.confirm_html, "list_reason": handle.reason, "phase": handle.phase,
         "change_closed": change_closed, "genes_box": genes_box, "cohort_box": cohort_box,
+        "explanations_box": explanations_box,
         "cohort": cohort_input,
     }
 
@@ -3048,7 +3140,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
     card_names = ("card_state", "card_time", "card_body", "change_btn", "change_reason",
                   "stop_btn", "details_btn", "run_btn", "run_cover", "run_reason", "badge",
                   "results_body",
-                  "identity_drawer", "identity_seg", "id_model", "id_result_md", "id_result_html")
+                  "identity_drawer", "identity_seg", "id_model", "id_result_html")
     # The card's reads also show the served task's inputs (`TASK_OUTPUTS`);
     # Run Diagnosis, which reads those inputs, never writes them. They close
     # the Stop inference views once the card no longer offers the model those
@@ -3100,7 +3192,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
 
     # --- the card's own links: dismiss, Retry / read it, Recorded results ›
     identity_names = ("identity_view", "identity_drawer", "change_drawer", "identity_seg",
-                      "id_model", "id_result_md", "id_result_html")
+                      "id_model", "id_result_html")
 
     def _card_link(state, result, phase, view, cohort, stop, evt: gr.EventData,
                    request: gr.Request):
@@ -3460,6 +3552,12 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-id-result code {{ display: inline; white-space: normal; word-break: normal;
   overflow-wrap: anywhere; -webkit-box-decoration-break: clone; box-decoration-break: clone; }}
 {_TAB} #shep-dx-id-result p {{ font-size: 15px; }}
+/* "This result": the answer first, the parts that differ, then the result's
+   own identity as one summary list. */
+{_TAB} .shep-dx-result-id {{ display: flex; flex-direction: column; gap: 8px; }}
+{_TAB} .shep-dx-result-id p.shep-dx-lead, {_TAB} .shep-dx-result-id p.shep-dx-sub-h {{ margin: 0; }}
+{_TAB} .shep-dx-result-id .shep-kv {{ font-size: 14px; }}
+{_TAB} .shep-dx-cmp th[scope="row"] {{ font-weight: 600; white-space: normal; }}
 /* The drawers' Model Facts take the one summary list's columns
    (`renderers.summary_list`: a digest's long label on a line of its own). */
 {_TAB} .shep-dx-drawer .shep-facts-sum {{ overflow-wrap: anywhere; }}
@@ -3523,6 +3621,7 @@ __all__ = [
     "TASK_OUTPUTS",
     "TASK_VIEWS",
     "TOPIC_HELP",
+    "asks_explanations",
     "badge_html",
     "card_outputs",
     "cohort_choices",
@@ -3537,7 +3636,8 @@ __all__ = [
     "poll_card",
     "reference_line_html",
     "refresh_card",
-    "result_identity_md",
+    "result_digests_html",
+    "result_identity_html",
     "results_body_html",
     "run_controls",
     "task_details_html",

@@ -1022,6 +1022,11 @@ def test_values_from_the_api_cannot_break_the_table():
     assert len(rows) == len(dp._IDENTITY_PARTS)
     assert all(len(row) == 3 for row in rows)
     assert "``a\\|b`c*d<script>``" in rows[5][2]
+    # The drawer's "This result" (B4: a summary list from the same cells)
+    # draws the value as text in its code, never as markup.
+    shown = dp.result_identity_html(_result_with(identity), dp.card.new_state())
+    assert "<code>a|b`c*d&lt;script&gt;</code>" in shown and "<script>" not in shown
+    assert "<code>x|y z</code>" in shown
 
 
 # ------------------------------------------------------------------- the CSV
@@ -1125,15 +1130,23 @@ def test_the_page_shows_what_produced_the_result(monkeypatch, status_read):
     assert body.index("SYNTHETIC WORKSPACE: not a clinical result.") < body.index("<table")
     assert 'aria-describedby="shep-help-text-dx-banner-synthetic"' in body
     # "This result" (the identity drawer): the result's own rows, as the
-    # report reads them, with full digests shortened in the table only.
-    shown = dp.result_identity_md(out["results_state"], out["card_state"])
+    # report reads them, one summary list (B4: B0c's details), a part a row,
+    # a verified part by the shared mark, a digest by its 12 hex (the whole
+    # in its title; "This result in full" has its Copy).
+    shown = dp.result_identity_html(out["results_state"], out["card_state"])
     for part, state, value in dp._identity_rows("served", _served_identity()):
-        assert f"| {part} | {dp._short_digests(f'{state} · {value}')} |" in shown
-    assert CHECKPOINT_SHA not in shown and f"{CHECKPOINT_SHA[:12]}…" in shown
+        assert (f'<dt class="shep-k">{dp._e(dp._part_key(part))}</dt>'
+                f'<dd class="shep-v">{dp._part_html(state, value)}</dd>') in shown
+    assert f'title="{CHECKPOINT_SHA}">{CHECKPOINT_SHA[:12]}</code>' in shown
+    assert r.status_mark("ok", "verified") in shown and "✓" not in shown.split("shep-dx-boundary")[0]
     assert _CLAIM_BOUNDARY in shown and _NOT_A_DEVICE in shown
+    # This fixture's status serves nothing: compared with nothing, never as
+    # ten parts that differ (B4), the result keeping its own identity.
+    assert "<b>Not compared:</b> Nothing is served now" in shown and "<table" not in shown
     digests = dp.result_digests_html(out["results_state"])
     for digest in (CHECKPOINT_SHA, KG_SHA, MANIFEST_SHA, RECORD_SHA):
         assert f'data-copy="{digest}"' in digests
+    assert digests.count('<dt class="shep-k shep-kv-wide">') == 4
 
 
 def test_the_page_does_not_say_nothing_was_checked_without_an_identity(monkeypatch, status_read):
@@ -1142,7 +1155,7 @@ def test_the_page_does_not_say_nothing_was_checked_without_an_identity(monkeypat
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _without_an_identity("missing"))
 
     out = _run("HP:0001250")
-    shown = dp.result_identity_md(out["results_state"], out["card_state"])
+    shown = dp.result_identity_html(out["results_state"], out["card_state"])
 
     assert "nothing in it was checked" not in shown
     assert shown.index(_CLAIM_BOUNDARY) < shown.index(_CHECKS_NOT_REPORTED)
@@ -1154,7 +1167,7 @@ def test_a_result_with_nothing_marked_says_nothing_was_checked(monkeypatch, stat
 
     report = _report_section(dp._build_results_report_md(_result_with(_parts_left_out())))
     out = _run("HP:0001250")
-    shown = dp.result_identity_md(out["results_state"], out["card_state"])
+    shown = dp.result_identity_html(out["results_state"], out["card_state"])
 
     assert dp.IDENTITY_NOTHING_CHECKED == _NOTHING_CHECKED
     for text in (report, shown):
@@ -1172,8 +1185,8 @@ def test_the_page_shows_the_served_pipelines_own_identity(served):
     assert result["result_kind"] == "disease_task/v1"
     assert identity["scoring_mode"] == "disease_task"
     assert identity["checkpoint"]["state"] == "verified"
-    shown = dp.result_identity_md(result, out["card_state"])
-    assert f"{identity['checkpoint']['sha256'][:12]}…" in shown
+    shown = dp.result_identity_html(result, out["card_state"])
+    assert f">{identity['checkpoint']['sha256'][:12]}</code>" in shown
     assert "a model finetuned for the disease task" in shown
     _, records, _ = _csv_records(dp._build_results_csv(result))
     assert {r["served_checkpoint_state"] for r in records} == {"verified"}
@@ -1250,9 +1263,15 @@ def test_a_result_older_than_a_load_says_how_many_parts_differ():
     later = _card(_status_serving(other), state=load, at="2026-07-07T16:31:12")
     assert dp.compare_with_served(_produced(), later)["differ"] == ["Checkpoint"]
     assert "1 part differs" in dp.badge_html(_produced(), later)
-    shown = dp.result_identity_md(_produced(), later)
+    shown = dp.result_identity_html(_produced(), later)
     assert "1 of 10 parts differs" in shown and "status read 16:31:12" in shown
-    assert "· differs**" in shown and "= same" in shown
+    # B4: the parts that differ only, side by side (the skill's §4), then the
+    # result's own identity: the model it used, never relabelled by the load.
+    table = shown[shown.index("<table"):shown.index("</table>")]
+    assert table.count('<th scope="row">') == 1 and '<th scope="row">Checkpoint</th>' in table
+    assert f'>{CHECKPOINT_SHA[:12]}</code>' in table and ">bbbbbbbbbbbb</code>" in table
+    own = shown[shown.index("What produced this result"):]
+    assert f'>{CHECKPOINT_SHA[:12]}</code>' in own and "bbbbbbbbbbbb" not in own
 
 
 # -------------------------------------------------- Run Diagnosis
@@ -1590,7 +1609,8 @@ def test_the_identity_drawer_switches_views_by_class():
         out = dp.identity_outputs(view, state, result)
         _assert_views_switch_by_class(out)
         assert _shown(out["id_model"]) is (seg == "model")
-        assert _shown(out["id_result_md"]) is _shown(out["id_result_html"]) is (seg == "result")
+        assert _shown(out["id_result_html"]) is (seg == "result")
+        assert "id_result_md" not in out
         _assert_views_switch_by_class(dp.card_outputs(state, result, "idle", view))
     _assert_views_switch_by_class(dp.open_identity(state, result, "result"))
 
@@ -1607,13 +1627,13 @@ def test_the_views_start_as_their_first_update_leaves_them(monkeypatch):
         assert list(by_id[elem_id].elem_classes) == first[name]["elem_classes"], elem_id
     model = dp.identity_outputs({"open": True, "seg": "model"},
                                 _card(_status_serving(_served_identity())), None)
-    for elem_id, name in (("shep-dx-id-model", "id_model"), ("shep-dx-id-result", "id_result_md"),
-                          ("shep-dx-id-digests", "id_result_html")):
+    for elem_id, name in (("shep-dx-id-model", "id_model"),
+                          ("shep-dx-id-result", "id_result_html")):
         assert list(by_id[elem_id].elem_classes) == model[name]["elem_classes"], elem_id
     for block in demo.blocks.values():
         if getattr(block, "elem_id", "") in ("shep-dx-seg", "shep-dx-details-body",
                                               "shep-dx-explanation", "shep-dx-id-model",
-                                              "shep-dx-id-result", "shep-dx-id-digests"):
+                                              "shep-dx-id-result"):
             assert block.visible is True
 
 
@@ -1767,21 +1787,25 @@ def _patients_result():
     }
 
 
-@pytest.mark.parametrize("mode, genes, cohort", [
-    ("gene_task", True, False), ("patients_like_me", False, True),
-    ("disease_task", False, False)])
-def test_the_inputs_follow_the_served_task(mode, genes, cohort):
+@pytest.mark.parametrize("mode, genes, cohort, explanations", [
+    ("gene_task", True, False, False), ("patients_like_me", False, True, False),
+    ("disease_task", False, False, True)])
+def test_the_inputs_follow_the_served_task(mode, genes, cohort, explanations):
     """1: Candidate genes for a gene task model, Reference cohort for a
-    patients-like-me model, neither otherwise; each shown by its container's
-    class (`view_update`), never `visible`."""
+    patients-like-me model, neither otherwise; Explanations for a disease
+    task model only (B4 (3): each task asks only for its own inputs: a gene's
+    or a reference patient's rows carry no explanation); each shown by its
+    container's class (`view_update`), never `visible`."""
     state = _task_card(mode, _cohorts(_version("reference-1")))
     out = dp.card_outputs(state, None, "idle")
     assert _shown(out["genes_box"]) is genes and _shown(out["cohort_box"]) is cohort
+    assert _shown(out["explanations_box"]) is explanations
     _assert_views_switch_by_class(out)
     assert ("cohort" in out) is cohort
     for state in (_card(_no_model_status()), _card(None, "timed out (5 s)")):
         out = dp.card_outputs(state, None, "idle")
         assert not _shown(out["genes_box"]) and not _shown(out["cohort_box"])
+        assert _shown(out["explanations_box"])
 
 
 def _sent(monkeypatch, result):
@@ -1810,17 +1834,22 @@ def test_each_task_gets_only_its_own_input(monkeypatch, status_read):
                       genes_text=genes, cohort="reference-1")
     assert sent[-1]["candidate_genes"] == ["SCN1A", "disgenet:PTEN", "scn1a"]
     assert "reference_cohort" not in sent[-1]
+    # Explanations is a disease task model's own option (B4): never asked
+    # of a gene task model, whatever the hidden box holds.
+    assert sent[-1]["include_explanations"] is False
     assert out["results_state"]["_query_candidate_genes"] == ["SCN1A", "disgenet:PTEN", "scn1a"]
     sent = _sent(monkeypatch, _patients_result())
     dp.diagnose("HP:0001250", "", 10, True,
                 _task_card("patients_like_me", _cohorts(_version("reference-1"))), "idle", {},
                 None, genes_text=genes, cohort="reference-1")
     assert sent[-1]["reference_cohort"] == "reference-1" and "candidate_genes" not in sent[-1]
+    assert sent[-1]["include_explanations"] is False
     for state in (_task_card("disease_task"), _card(_status_serving(_served_identity()))):
         sent = _sent(monkeypatch, _sample_result())
         dp.diagnose("HP:0001250", "", 10, True, state, "idle", {}, None, genes_text=genes,
                     cohort="reference-1")
         assert "candidate_genes" not in sent[-1] and "reference_cohort" not in sent[-1]
+        assert sent[-1]["include_explanations"] is True
 
 
 def test_an_empty_gene_list_is_said_at_the_click_and_nothing_is_asked(monkeypatch, status_read):
@@ -2060,7 +2089,7 @@ def test_a_patients_like_me_result_shows_reference_patients_and_its_version():
     assert second.count("not recorded") == 2
     digests = dp.result_digests_html(result)
     for digest in (VERSION_SHA, SAMPLES_SHA):
-        assert f'<code class="shep-full">{digest}</code>' in digests
+        assert f'<code class="shep-full" title="{digest}">{digest}</code>' in digests
         assert f'data-copy="{digest}"' in digests
     assert "Reference cohort reference-1 · version (cohort.json)" in digests
 
@@ -2094,7 +2123,8 @@ def test_values_of_both_task_kinds_are_escaped_on_every_surface():
     escapes it or keeps it in a code span; the CSV defuses a formula."""
     for result in _escaped_results():
         kind = result["result_kind"]
-        html = dp.results_body_html(result, 1) + dp.result_digests_html(result)
+        html = (dp.results_body_html(result, 1) + dp.result_digests_html(result)
+                + dp.result_identity_html(result, dp.card.new_state()))
         for rank in (1, 2):
             out = dp.details_outputs(result, rank)
             html += out["details_hd"] + out["details_html"]["value"]
@@ -2443,6 +2473,43 @@ def test_run_diagnosis_never_writes_the_stop_views():
     card's reads' alone."""
     out = dp.card_outputs(_serving_card(), None, "idle")
     assert not set(dp.STOP_VIEWS) & set(out)
+
+
+def test_after_a_stop_run_is_off_with_the_backends_reason_and_the_result_keeps_its_model():
+    """B4: after a stop, Run Diagnosis is off ("Disabled until a model is
+    loaded"), the card says the backend's state and lead (Stopped, who and
+    when, the whole reason one click away), and the result produced before
+    it keeps the model and data it used: its table is not redrawn, the badge
+    names its own model and compares it with nothing (never "10 parts
+    differ"), and "This result" lists its own identity."""
+    served = _card(_status_serving(_served_identity()))
+    result = _produced()
+    assert dp.compare_with_served(result, served)["state"] == "equal"
+    stopped = _card({"initialized": False, "serving": "not_loaded", "loading": False,
+                     "in_flight": 0, "holds_gpu_lock": False,
+                     "not_serving_reason": "Inference was stopped by an operator at "
+                                           "2026-07-07T16:00:30+00:00: model "
+                                           f"{CHECKPOINT_SHA[:12]} is no longer loaded.",
+                     "not_serving": {"state": "stopped", "lead": "By an operator",
+                                     "at": "2026-07-07T16:00:30+00:00",
+                                     "model_sha12": CHECKPOINT_SHA[:12]}},
+                    state=served, at="2026-07-07T16:00:40")
+    out = dp.card_outputs(stopped, result, "idle")
+    assert out["run_btn"]["interactive"] is False
+    assert dp.RUN_DISABLED_NO_MODEL in out["run_reason"]
+    assert "By an operator at 16:00:30 UTC" in out["card_body"]
+    assert "Inference was stopped by an operator" in out["card_body"]   # under Details ›
+    assert "results_body" not in out, "a result is never redrawn by a card read"
+    compared = dp.compare_with_served(result, stopped)
+    assert compared["state"] == "nothing" and compared["differ"] == []
+    badge = out["badge"]
+    assert f"Produced by model {CHECKPOINT_SHA[:12]} · not compared" in badge
+    assert "parts differ" not in badge and "the model in use" not in badge.split("dx-badge")[1]
+    shown = dp.result_identity_html(result, stopped)
+    assert "<b>Not compared:</b>" in shown and "<table" not in shown
+    own = shown[shown.index("What produced this result"):]
+    assert f'title="{CHECKPOINT_SHA}">{CHECKPOINT_SHA[:12]}</code>' in own
+    assert "no_model" not in shown and "no model is loaded" not in shown
 
 
 def test_run_diagnosis_is_off_while_inference_stops():
