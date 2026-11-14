@@ -534,6 +534,18 @@ def shown_value(value: Any) -> Any:
     return value
 
 
+def _epochs_text(count: int) -> str:
+    """"1 epoch", "3 epochs": a count of epochs with its word in its number
+    (the shared action text of the command line and the page)."""
+    return f"{count} epoch{'s' if count != 1 else ''}"
+
+
+def _epoch_span(first: int, count: int) -> str:
+    """The epochs `count` epochs from `first` cover: "epoch 2" for one,
+    "epochs 2-4" for several."""
+    return f"epoch {first}" if count == 1 else f"epochs {first}-{first + count - 1}"
+
+
 def _progress_text(completed: int, start: int, target: int) -> str:
     done = completed - start
     return f"{done}/{target} done, {target - done} left"
@@ -648,9 +660,9 @@ def plan_continuation(
         run_stage = {"kind": "extension", "start_epoch": completed,
                      "target_epochs": extend_epochs, "schedule": schedule}
         start_epoch, end_epoch = completed, completed + extend_epochs
-        action = (f"Extend training by {extend_epochs} epochs at {_rates_text(schedule['lrs'])} "
-                  f"(epochs {completed + 1}-{completed + extend_epochs}, new target "
-                  f"{completed + extend_epochs})")
+        action = (f"Extend training by {_epochs_text(extend_epochs)} at "
+                  f"{_rates_text(schedule['lrs'])} ({_epoch_span(completed + 1, extend_epochs)}, "
+                  f"new target {completed + extend_epochs})")
 
     pause = request.get("pause_after_epoch")
     if pause is not None and int(pause) <= start_epoch:

@@ -621,6 +621,18 @@ def test_extending_takes_the_restored_rate_and_says_so(parent):
                            "(epochs 5-7, new target 7)")
 
 
+def test_extending_by_one_epoch_says_one_epoch(parent):
+    """The closing check of the ops round: the plan said "Extend training by
+    1 epochs … (epochs 2-2, new target 2)" whatever the count; the words now
+    follow it (the shared text of the command line and the page)."""
+    path, record = parent
+    plan = _plan(_finished(record, 2e-5), path, _request(record, extend_epochs=1))
+
+    assert (plan.start_epoch, plan.end_epoch) == (4, 5)
+    assert plan.action == ("Extend training by 1 epoch at a fixed rate of 2e-05 "
+                           "(epoch 5, new target 5)")
+
+
 def test_extending_groups_at_different_rates_says_each(parent):
     path, record = parent
     finished = _finished(record, 2e-5)
