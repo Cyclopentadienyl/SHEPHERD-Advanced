@@ -668,17 +668,18 @@ def _products_cells(child: Mapping[str, Any], *, operator: bool,
     return f"<td>{names}{by}</td><td>{r.validation_cell(best[0]['validation'])}</td>"
 
 
-def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mapping[str, Any],
-                   scrub: Any = str) -> str:
+def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mapping[str, Any]) -> str:
     """One child's row: Task | Status | Run | Best save | Validation
-    (Trainer), escaped (a failure's first line through `scrub`,
-    `training_console.printed_scrub`). The run is its name part (`renderers.run_name`; the
-    parent line and the Task column say the rest), its whole id in its title."""
+    (Trainer), escaped (a failure's first line through the one redaction of a
+    printed line, `training_console.printed_scrub`, whoever calls). The run is
+    its name part (`renderers.run_name`; the parent line and the Task column
+    say the rest), its whole id in its title."""
     status = str(child.get("status") or "queued")
     task = TASK_NAMES.get(child.get("task"), str(child.get("task")))
     why = ""
     if status in ("failed", "refused") and child.get("error"):
         first = str(child["error"]).strip().split("\n", 1)[0]
+        scrub = tc.printed_scrub(workspaces_root()[0])
         why = f'<div class="shep-sub">{r.e(r.short_reason(scrub(first)))}</div>'
     architecture, run = _run_parts(child.get("run_dir"))
     if run:
@@ -693,7 +694,7 @@ def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mappin
 
 
 def job_card_html(status: Mapping[str, Any], *, operator: bool,
-                  products: Optional[Mapping[str, Any]] = None, scrub: Any = str) -> str:
+                  products: Optional[Mapping[str, Any]] = None) -> str:
     """The Fine-tune job card from the job runner's status (`get_status()`):
     its parent, the start's graph backbone (`freeze_line_html`) and one row
     per child; or, with no Fine-tune status, why
@@ -708,8 +709,7 @@ def job_card_html(status: Mapping[str, Any], *, operator: bool,
             text = ("No Fine-tune job to show: the latest training job is a base or continued "
                     "run (Research › Training shows it). The next Fine-tune start shows here.")
         return f'<div class="shep-ft-card"><p class="shep-ft-empty">{r.e(text)}</p></div>'
-    rows = "".join(child_row_html(child, operator=operator, products=products or {},
-                                  scrub=scrub)
+    rows = "".join(child_row_html(child, operator=operator, products=products or {})
                    for child in finetune.get("children") or [])
     head = ("<thead><tr><th>Task</th><th>Status</th><th>Run</th>"
             f'<th>Best save{help_button("finetune-best-save", "Best save")}</th>'
@@ -792,8 +792,7 @@ def _card_view(mode: Optional[Mapping[str, Any]], cache: Optional[Mapping[str, A
     if access.allowed:
         products = products_of(status.get("finetune"), cache.get("products") or {})
         cache["products"] = products
-    card = job_card_html(status, operator=access.allowed, products=products,
-                         scrub=tc.printed_scrub(workspaces_root()[0]))
+    card = job_card_html(status, operator=access.allowed, products=products)
     # Start and Stop by the one gated-button rule (`chips.gated`): no lock
     # while D8 allows this request; disabled with the lock while it refuses
     # it, each beside its own reason line.

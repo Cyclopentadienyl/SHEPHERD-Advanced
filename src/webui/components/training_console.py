@@ -1549,10 +1549,6 @@ def _log_where(run: Optional[str], run_dir: Optional[Path]) -> str:
     return f'<span class="shep-banner-where">{head} · {said}</span>'
 
 
-def _as_is(text: str) -> str:
-    return text
-
-
 def printed_scrub(root: Optional[Path]) -> Callable[[str], str]:
     """**The redaction of a line a run printed, as every page shows it to every
     request** (`redact`: no absolute server path, a path inside the
@@ -1568,17 +1564,17 @@ def printed_scrub(root: Optional[Path]) -> Callable[[str], str]:
 
 
 def _render_error_block(message: str, *, headline: str = "Training failed",
-                        run: Optional[str] = None, run_dir: Optional[Path] = None,
-                        scrub: Callable[[str], str] = _as_is) -> str:
+                        run: Optional[str] = None, run_dir: Optional[Path] = None) -> str:
     """The red block: the headline, the run and where its log is (only when
     there is one), Dismiss; under the headline the last error line the run
     printed (`last_error_line`), so the cause is read without scrolling; and
     the output tail (monospace, escaped) in a disclosure, open as sent; the
     banner's script closes it on a wide window under `BANNER_OPEN_HEIGHT` px
     tall, where it would squeeze the charts (`_BANNER_JS`). Every text the run
-    printed goes through `scrub` (`printed_scrub`), the cause
-    as the tail's lines, and then is escaped: the redaction reads text, never
-    the markup around it."""
+    printed goes through the one redaction of a printed line (`printed_scrub`),
+    whoever calls, the cause as the tail's lines, and then is escaped: the
+    redaction reads text, never the markup around it."""
+    scrub = printed_scrub(workspaces_root()[0])
     first, _sep, tail = str(message).partition("\n\n--- Last output ---\n")
     every = tail.splitlines() if tail else []
     lines = [scrub(line) for line in every[-BANNER_TAIL_LINES:]]
@@ -1600,9 +1596,11 @@ def _render_error_block(message: str, *, headline: str = "Training failed",
             f'</div>{cause_html}{body}</div>')
 
 
-def _render_warning_block(message: str, scrub: Callable[[str], str] = _as_is) -> str:
+def _render_warning_block(message: str) -> str:
     """The amber block for a non-fatal advisory: the condition first, by the
-    shared mark (a condition to watch's ▲: the skill's §6)."""
+    shared mark (a condition to watch's ▲: the skill's §6), its text through
+    the one redaction of a printed line (`printed_scrub`)."""
+    scrub = printed_scrub(workspaces_root()[0])
     return ('<div class="shep-banner shep-banner-amber" role="status">'
             f'<div class="shep-banner-hd"><span class="shep-banner-h">'
             f'{r.status_mark("warn", scrub(str(message)))}</span>'
@@ -1612,23 +1610,23 @@ def _render_warning_block(message: str, scrub: Callable[[str], str] = _as_is) ->
 
 def _build_error_banner_payload(
     status_info: Mapping[str, Any], pyg_warning: Optional[str], *, run: Optional[str] = None,
-    run_dir: Optional[Path] = None, scrub: Callable[[str], str] = _as_is,
+    run_dir: Optional[Path] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """``(html, key)`` for the banner, or ``(None, None)`` when nothing must
     show. ``key`` names the content, so a session's dismissal holds until it
-    changes (a new or different error shows again). `scrub` redacts each text
-    before it is escaped (`printed_scrub`: no absolute path)."""
+    changes (a new or different error shows again). Each block redacts each
+    text before it is escaped (`printed_scrub`: no absolute path), for every
+    caller."""
     blocks: List[str] = []
     key_parts: List[str] = []
     error_msg = status_info.get("error_message")
     if error_msg:
         epoch = _epochs(status_info)
         headline = f"Training failed at {epoch}" if epoch else "Training failed"
-        blocks.append(_render_error_block(error_msg, headline=headline, run=run, run_dir=run_dir,
-                                          scrub=scrub))
+        blocks.append(_render_error_block(error_msg, headline=headline, run=run, run_dir=run_dir))
         key_parts.append("ERR:" + str(error_msg))
     if pyg_warning:
-        blocks.append(_render_warning_block(pyg_warning, scrub))
+        blocks.append(_render_warning_block(pyg_warning))
         key_parts.append("PYG:" + str(pyg_warning))
     if not blocks:
         return None, None
@@ -2456,13 +2454,12 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
     else:
         snapshot = _snapshot_for(run, cache)
     # The banner is the failed job's, whatever run is viewed. No request sees
-    # an absolute server path: each printed text is redacted before it is
-    # escaped (redacting the built markup took its closing tags for paths:
-    # "</span>" became "<a path outside the workspaces root").
+    # an absolute server path: the banner's blocks redact each printed text
+    # before it is escaped (redacting the built markup took its closing tags
+    # for paths: "</span>" became "<a path outside the workspaces root").
     banner_html, banner_key = _build_error_banner_payload(
         status if s == "failed" else {}, _get_pyg_warning(),
-        run=job_run["label"] if job_run else None, run_dir=job_run["path"] if job_run else None,
-        scrub=printed_scrub(workspaces_root()[0]))
+        run=job_run["label"] if job_run else None, run_dir=job_run["path"] if job_run else None)
     if banner_key is None or banner_key in (dismissed or ()):
         banner_html = ""
     cache["banner_key"] = banner_key

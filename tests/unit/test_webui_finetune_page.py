@@ -982,6 +982,19 @@ def test_a_failed_childs_printed_line_names_no_server_path_for_any_request(monke
     assert str(tmp_path) not in card and "demo/node_features.pt" in card
 
 
+def test_the_card_redacts_a_printed_line_whoever_draws_it(monkeypatch, tmp_path):
+    """The closing review: the card's builders kept an unredacted default
+    (``scrub=str``) beside the one redaction of a printed line, so a caller
+    that left it out showed the absolute path; they redact themselves."""
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path))
+    failed = _child("gene", "failed", "r",
+                    error=f"train_model: refused: {tmp_path}/demo/node_features.pt could not "
+                          "be parsed\nTraceback")
+    for html in (fp.job_card_html(_status(failed), operator=True),
+                 fp.child_row_html(failed, operator=False, products={})):
+        assert str(tmp_path) not in html and "demo/node_features.pt" in html
+
+
 def test_stop_asks_with_the_training_pages_stop_logic(monkeypatch):
     """One stop logic: the card's Stop and its confirmation are thin handlers
     of their own (D8 on each request; the deployment probe finds the run bar's

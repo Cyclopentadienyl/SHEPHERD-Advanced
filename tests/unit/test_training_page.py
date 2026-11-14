@@ -1781,6 +1781,26 @@ def test_a_banner_redacts_paths_and_keeps_the_tails_indentation(root, monkeypatc
     assert tail_css[:tail_css.index("}")].count("font-family: var(--shep-mono) !important") == 1
 
 
+def test_every_banner_block_redacts_what_it_prints_whoever_calls_it(monkeypatch, tmp_path):
+    """The closing review: the redaction of a printed line became one rule
+    for every request, but the banner's blocks kept an unredacted default
+    (``_as_is``) beside it, so a caller that left the redaction out showed an
+    absolute server path again. The blocks redact themselves; no caller
+    chooses whether."""
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path))
+    inside = f"{tmp_path}/demo/node_features.pt"
+    message = (f"train_model: refused: {inside} could not be parsed\n\n--- Last output ---\n"
+               "Traceback (most recent call last):\n"
+               '  File "/srv/secret/train.py", line 9, in train\n'
+               f"ValueError: {inside} could not be parsed")
+    warning = "PyG native extensions missing: /srv/secret/torch_scatter.so"
+    html, _key = tc._build_error_banner_payload({"error_message": message}, warning)
+    for shown in (html, tc._render_error_block(message), tc._render_warning_block(warning)):
+        assert str(tmp_path) not in shown and "/srv/secret" not in shown
+    assert "demo/node_features.pt" in html and "a path outside the workspaces root" in html
+    assert not hasattr(tc, "_as_is")
+
+
 def test_the_banner_escapes_the_output():
     html, _key = tc._build_error_banner_payload(
         {"error_message": "Process exited\n\n--- Last output ---\n<script>alert(1)</script>"},
