@@ -3379,13 +3379,15 @@ dtype 僅在 Mixed precision 開啟時。Early stopping patience 關閉時（參
 開啟。欄位的格式或單位寫在欄位下方（hop 清單以逗號分隔、「-1 takes all」，warmup 以 optimizer
 steps 計，final learning-rate ratio 的「more than 0 with onecycle」）。旁邊是預設收合的「Model」：
 架構（GATv2，本版本唯一實作的架構；有更多架構時才是選項）、參考 spec 的文字欄位以事實列出，以及可修改的 input、encoder 與 LP head 數值與開關。**Start 送出你
-動過的欄位**：你編輯過的欄位一定送出，即使等於參考值，並記錄為你的設定；沒動過的不送出，由 run 補上
-並記錄。改動任一 Model 欄位會送出整份 spec，並先檢查（spec 自己的規則，以及 Neighbours per hop 是否
+動過的欄位**：你編輯過的欄位一定送出，即使等於參考值，並記錄為你的設定；清空欄位也算編輯（全選後按
+Backspace 或 Delete、剪下、貼上：每一種編輯都算，即使清空後立刻按 Start），因此 run 需要值的欄位留空
+會被拒絕（「Neighbours per hop needs at least 1 item(s).」），什麼都不會啟動，而 Early stopping
+patience 留空表示關閉；沒動過的不送出，由 run 補上並記錄。改動任一 Model 欄位會送出整份 spec，並先檢查（spec 自己的規則，以及 Neighbours per hop 是否
 符合其層數）。表單下方一行顯示「Set by you: Epochs 5 (reference 200)」或尚未設定任何值；超過三項時
 只列出前三項、其餘計數，全部列在它的「Details ›」之下。這一行也指出 Start 會拒絕的值（「Not valid:
 …」）：單一欄位的值，或跨設定規則拒絕的組合（onecycle 搭配 final learning-rate ratio 0）；
 **Reset to reference** 把每一欄還原並清除你設定的內容。任務模型由 base 在 Research › Prepare › Fine-tune 訓練，其設定也以同樣
-方式送出：你動過才送出。它提供每個所選任務的 run 都會讀取的設定（自 ops-wiring round B2 起）：顯示
+方式送出：你動過才送出，清空欄位也算。它提供每個所選任務的 run 都會讀取的設定（自 ops-wiring round B2 起）：顯示
 **Epochs**、**Seed** 與 **Graph backbone**，其餘在「More settings」下；只選一個任務時，「Disease
 settings」（任務名稱）下有該任務自己的設定（learning rate、sample size、loss weight 與 candidate
 size），各自從該任務的參考值開始；選多個任務時，一行文字說明每個子模型採用自己任務的參考值。
@@ -3451,8 +3453,8 @@ with Extra epochs」），並列出取自 checkpoint 的設定，繼續訓練時
 「2 settings changed: …」，並把每項改變寫成 parent 的值 → 新的值（「Learning rate 0.0001 →
 0.0005」）；其下是 **Settings to change**，即 parent 的 stage 與任務可以改的設定（預覽的清單：
 絕不包括 freeze、split seed 或 model spec），每個都從 parent 的值開始，只在另一個設定下才讀取的
-設定，與參數欄一樣只在適用時顯示；分支保留的設定列在檢查中。只會送出你編輯過的欄位，並記錄為你
-設定的，所以完全不編輯就是相同設定的分支；欄位不接受的值、parent 的 stage 不讀取的設定，以及
+設定，與參數欄一樣只在適用時顯示；分支保留的設定列在檢查中。只會送出你編輯過的欄位（清空也算編輯），
+並記錄為你設定的，所以完全不編輯就是相同設定的分支，而檢查本身填入欄位的值不算編輯；欄位不接受的值、parent 的 stage 不讀取的設定，以及
 跨設定規則，都以檢查的用語拒絕，每個設定與參數欄一樣以其標籤稱呼（「Final learning-rate ratio
 must be more than 0 when …」）；檢查之後再編輯，會要求重新檢查（Start branch 會先檢查）。編輯
 絕不會撤下針對 checkpoint 本身的拒絕：這時欄位會隨之隱藏。自 K8-7（2026-11-08）起，續接的執行只繼承本版仍有的設定：parent 記錄了、但本版

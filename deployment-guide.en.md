@@ -3356,15 +3356,19 @@ optimizer steps, the final learning-rate ratio's "more than 0 with onecycle"). B
 "Model", closed: the architecture (GATv2, the one this build implements; a choice once there are
 more), the reference spec's text fields as facts, and its input, encoder and LP head numbers and
 switches to change. **Start sends what you touched**: a
-field you edited is sent, even at its reference value, and recorded as yours; one you did not
-touch is not, and the run fills and records it. A changed model field sends the whole spec,
+field you edited is sent, even at its reference value, and recorded as yours; a field you emptied
+counts as edited (select all and Backspace or Delete, a cut, a paste: every edit, even with Start
+clicked straight after it), so an empty value the run needs is refused ("Neighbours per hop needs
+at least 1 item(s).") and nothing starts, while an empty Early stopping patience means off; one
+you did not touch is not sent, and the run fills and records it. A changed model field sends the whole spec,
 checked first (its own rules, and Neighbours per hop against its layers). A line under the form
 says "Set by you: Epochs 5 (reference 200)", or that nothing is set; past three settings it names
 the first three, counts the rest and lists every one under its "Details ›". It names a value
 Start would refuse ("Not valid: …"): a single field's value, or a combination the rules across
 settings refuse (onecycle with a final learning-rate ratio of 0); **Reset to reference** puts
 every field back and clears what you set. Task models are trained from a base on Research ›
-Prepare › Fine-tune, whose settings are sent the same way: when you touched them. It offers what
+Prepare › Fine-tune, whose settings are sent the same way: when you touched them, an emptied
+field included. It offers what
 every chosen task's run reads (since the ops-wiring round, B2): **Epochs**, **Seed** and **Graph
 backbone** shown, the rest under "More settings", and under "Disease settings" (the task's
 name) a task's own settings (its learning rate, sample sizes, loss weights and candidate
@@ -3453,7 +3457,8 @@ changed, else "2 settings changed: …" and each change as its parent's value �
 parent's stage and task may change (the preview's list: never the freeze, the split seed or the
 model spec), each at the parent's value, a setting read only under another one shown while it
 applies, as on the parameters; the settings a branch keeps are listed in the check. Only a field
-you edit is sent, recorded as yours, so editing none starts a same-settings branch; a value a
+you edit is sent (emptying one is an edit), recorded as yours, so editing none starts a
+same-settings branch, and the check's own fill of the fields is no edit; a value a
 field does not take, a setting the parent's stage does not read and a rule across settings are
 refused in the check's words, each setting named by its label as on the parameters ("Final
 learning-rate ratio must be more than 0 when …"), and an edit after a check asks for the check
