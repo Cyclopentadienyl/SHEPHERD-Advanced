@@ -408,7 +408,7 @@ def test_a_typed_path_only_locates_a_checkpoint_the_server_lists(checkpoints, mo
     # its cause and what to do; no notice says it again (the B1c review
     # measured a 174 px footer when a generic reason and the notice did).
     said, text, _extend, mode = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, str(typed))
-    assert said == tc.notice_html("")
+    assert said == ""
     assert "Nothing to check" in text and "not a checkpoint the server lists" in text
     assert mode["parent"]["refused"] == tc.REFUSED_UNLISTED
     assert tc.continue_refusal(mode["parent"], checkpoints["state"]) == (
@@ -456,7 +456,7 @@ def test_continue_sends_only_operational_fields_and_never_bypasses_the_check(
     assert started == [], "a refused checkpoint was started"
     # Said once (B1c): the check says why, the footer's reason beside the
     # start that it is disabled; no notice repeats it.
-    assert refused[0] == tc.notice_html("") and "Cannot continue" in refused[1]
+    assert refused[0] == "" and "Cannot continue" in refused[1]
     assert tc.continue_refusal(refused[3]["parent"], checkpoints["state"]) == (
         "the check says this checkpoint cannot be continued.")
 
@@ -487,7 +487,7 @@ def test_continue_training_is_refused_when_the_parents_dataset_is_not_the_worksp
     assert started == []
     # The footer's reason says it beside the start (B1c), and the check: no
     # notice repeats it.
-    assert out[0] == tc.notice_html("")
+    assert out[0] == ""
     assert "cannot continue on the current dataset" in out[1]
     assert tc.continue_refusal(out[3]["parent"], other) == (
         "the parent’s dataset is not this workspace’s current one.")
@@ -785,7 +785,7 @@ def test_a_file_without_a_model_spec_is_never_continued_from_the_dashboard(check
     text, *_rest = _check(checkpoints, tc.CONTINUE_FROM_PATH, None, typed)
     assert "Nothing to check" in text and "not a model record the run list offers" in text
     said, text, *_rest = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, typed)
-    assert said == tc.notice_html("")
+    assert said == ""
     assert "Nothing to check: the typed path is not a model record" in text
     assert opened == [] and started == []
 
@@ -905,7 +905,7 @@ def test_the_extra_epoch_rate_shows_only_for_a_parent_whose_rate_ended_at_zero(z
     assert "Extend training by 2 epochs at a fixed rate of 0.0001" in _plain(text)
     assert rate["visible"] is True
     said, *_rest = _resume_all(c, tc.CONTINUE_FROM_LIST, c["zero_key"], "", extend=2, rate=1e-4)
-    assert said == tc.notice_html("")
+    assert said == ""
     assert started[-1]["extend_epochs"] == 2 and started[-1]["extend_lr"] == 1e-4
     assert started[-1]["resume_from"] == str(c["zero"])
     # A rate left in the hidden field is not sent for a parent with no rate
@@ -958,7 +958,7 @@ def test_a_same_settings_branch_checks_and_starts_from_the_page(checkpoints, mon
     assert "Split seed" in keeps and "Learning rate" not in keeps
     said, text, *_rest = _resume_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "",
                                      operation=tc.BRANCH)
-    assert said == tc.notice_html("")
+    assert said == ""
     assert set(started[-1]) - {"__kwargs__"} == {"data_dir", "run_name", "device", "compile",
                                                  "branch_from"}
     assert started[-1]["branch_from"] == str(c["paused"])
@@ -1085,7 +1085,7 @@ def test_an_invalid_or_off_list_branch_edit_is_refused_with_the_plans_words(chec
                  {"scheduler_type": "onecycle", "min_lr_ratio": 0.0}):
         said, text, _extend, _rate, mode, *_rest = _resume_all(
             c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH, **edit)
-        assert said == tc.notice_html("") and "Cannot branch." in text
+        assert said == "" and "Cannot branch." in text
         assert mode["parent"]["refused"] == tc.REFUSED_SETTINGS
         assert tc.continue_refusal(mode["parent"], c["state"], operation=tc.BRANCH) == (
             "the check refuses a setting you edited; change it, then check again.")

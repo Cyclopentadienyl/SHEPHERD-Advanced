@@ -489,7 +489,7 @@ def test_continue_sends_the_parent_shown_and_the_preview_refuses_another(console
 
     # The positive control: nothing changed, the start carries the digest shown.
     said, *_rest = _continue(console, src, typed, mode)
-    assert said == tc.notice_html("")
+    assert said == ""
     assert console["started"][-1]["__kwargs__"] == {
         "expected_dataset_fingerprint": console["dataset"], "expected_parent_sha256": shown}
 
@@ -499,7 +499,7 @@ def test_continue_sends_the_parent_shown_and_the_preview_refuses_another(console
     # The check says why and the footer's reason that it is disabled (B1c),
     # by its cause and what to do (the B1c review).
     action = REFRESH if source == "list" else CHECK_AGAIN
-    assert said == tc.notice_html("")
+    assert said == ""
     assert tc.continue_refusal(mode["parent"], console["state"]) == (
         f"the checkpoint changed since it was chosen. {action}")
     assert CHANGED in text and f"(chosen: {shown[:12]}...)" in text
@@ -600,7 +600,7 @@ def test_a_refresh_between_check_and_start_never_starts_bytes_no_check_read(cons
     assert not mode["parent"].get("checked") and tuple(cleared) == tc._cleared_check()
     said, _text, _e, mode = _continue({**console, "listed": refreshed}, tc.CONTINUE_FROM_LIST,
                                       mode=mode, operation=op)
-    assert said == tc.notice_html("")
+    assert said == ""
     assert console["started"][-1]["__kwargs__"]["expected_parent_sha256"] == now
     assert mode["parent"].get("sha256") in (None, now)
     # A typed path's source is not the list's: a Refresh leaves its record.
@@ -664,7 +664,7 @@ def test_start_branch_sends_the_parent_shown_and_the_preview_refuses_another(con
     assert "Checkpoint read; it can be branched" in text and mode["parent"]["sha256"] == shown
 
     said, *_rest = _continue(console, src, typed, mode, operation=tc.BRANCH)
-    assert said == tc.notice_html("")
+    assert said == ""
     assert console["started"][-1]["branch_from"] == str(console["parents"]["a"])
     assert console["started"][-1]["__kwargs__"] == {
         "expected_dataset_fingerprint": console["dataset"], "expected_parent_sha256": shown}
@@ -673,7 +673,7 @@ def test_start_branch_sends_the_parent_shown_and_the_preview_refuses_another(con
     said, text, _extend, mode = _continue(console, src, typed, mode, operation=tc.BRANCH)
     assert len(console["started"]) == 1, "another parent was branched"
     action = REFRESH if source == "list" else CHECK_AGAIN
-    assert said == tc.notice_html("")
+    assert said == ""
     assert tc.continue_refusal(mode["parent"], console["state"], operation=tc.BRANCH) == (
         f"the checkpoint changed since it was chosen. {action}")
     assert "Cannot branch." in text and CHANGED in text and f"(chosen: {shown[:12]}...)" in text
@@ -738,7 +738,7 @@ def test_a_same_settings_branch_from_the_page_is_a_new_run_from_its_parent(case,
     shown = _sha(case["parents"]["a"])
     said, text, *_rest = tc._on_resume(OP, tc.BRANCH, ws, "cpu", tc.CONTINUE_FROM_LIST, key, "",
                                        None, None, parents, {}, [], *_values(tc))
-    assert said == tc.notice_html(""), said
+    assert said == "", said
     assert "no setting changed" in text
     job, log = _wait(manager)
     assert job.status == "completed", log[-3000:]

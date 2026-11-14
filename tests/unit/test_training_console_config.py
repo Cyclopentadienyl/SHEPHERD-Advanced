@@ -368,8 +368,10 @@ def test_the_line_names_the_first_few_and_every_one_is_in_its_details():
 def test_a_value_its_field_spec_refuses_starts_nothing_and_is_named(listed, started, name,
                                                                     value, words):
     notice = _start([name], **{name: value})
+    # A refusal, by the shared mark of one (B5: no longer plain amber text).
     assert started == [] and words in notice and notice.startswith(
-        '<span class="shep-notice-t">Not started: ')
+        '<span class="shep-notice-t"><span class="shep-st shep-st-error">')
+    assert '<span class="shep-st-w">Not started: ' in notice
     # The same words in the form's own line, before any Start.
     assert words in tc.set_by_you_html(_values(**{name: value}), [name])
     # Untouched, the same value is not the operator's: nothing is refused.
@@ -689,4 +691,4 @@ def test_on_start_says_the_runners_refusal(monkeypatch, listed):
                                                   "error": "The dataset changed since it was "
                                                            "shown; select it again."})
     assert _start() == tc.notice_html(
-        "Not started: The dataset changed since it was shown; select it again.")
+        "Not started: The dataset changed since it was shown; select it again.", mark="error")

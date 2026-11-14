@@ -2738,14 +2738,17 @@ def event_act(evt: Any) -> Optional[str]:
     return data.get("act") if isinstance(data, Mapping) else None
 
 
-def notice_html(text: Any, *, mark: Optional[str] = None) -> str:
+def notice_html(text: Any, *, mark: Optional[str]) -> str:
     """A handler's notice (an HTML component: the run bar's, the drawer's,
-    Fine-tune's): the one place a handler's sentence becomes markup. The
-    sentence carries server text (a workspace or run name, a path, the job
-    runner's error), so it is escaped whole; ``""`` for no notice. With
-    `mark`, a `renderers.STATUS_MARKS` row, it is that state's mark and
-    colour with its words (`renderers.status_mark`, the skill's §6): the
-    drawer's notice says only refusals, so its is the ✕ of a refusal."""
+    Fine-tune's Start and Stop): the one place a handler's sentence becomes
+    markup. The sentence carries server text (a workspace or run name, a
+    path, the job runner's error), so it is escaped whole; ``""`` for no
+    notice. **Its kind is its caller's to say, every time** (`mark`, a
+    `renderers.STATUS_MARKS` row, or None): a refusal is ``"error"``, the ✕
+    of a refusal; a warning ``"warn"``, ▲; a plain state (a stop done, a job
+    already ended, nothing to stop) None, plain text with no mark or colour,
+    since a normal state is quiet (`renderers.status_mark`, the skill's
+    §6)."""
     said = "" if text is None else str(text)
     if not said:
         return ""
@@ -2780,8 +2783,8 @@ def _on_start(request: gr.Request, ws, run_name, device, touched, *values):
     """
     access = operator_access(request)
     if not access.allowed:
-        return notice_html(access.refusal)
-    return notice_html(_start(ws, run_name, device, values, touched))
+        return notice_html(access.refusal, mark="error")
+    return notice_html(_start(ws, run_name, device, values, touched), mark="error")
 
 
 def _start(ws, run_name, device, values, touched) -> str:
@@ -2892,11 +2895,11 @@ def ask_stop(access: Any, mode: Optional[Mapping[str, Any]], *,
     mode = dict(mode or {})
     mode["confirm"] = None
     if not access.allowed:
-        return notice_html(access.refusal), mode
+        return notice_html(access.refusal, mark="error"), mode
     status = training_manager.get_status()
     job = reaches(status)
     if job is None:
-        return notice_html(f"Nothing to stop: no {what} is running."), mode
+        return notice_html(f"Nothing to stop: no {what} is running.", mark=None), mode
     mode["confirm"] = job
     return f'<div class="shep-rb-confirm-q">{stop_question(status)}</div>', mode
 
@@ -2919,14 +2922,15 @@ def confirm_stop(access: Any, mode: Optional[Mapping[str, Any]], *,
     asked = mode.get("confirm")
     mode["confirm"] = None
     if not access.allowed:
-        return notice_html(access.refusal), mode
+        return notice_html(access.refusal, mark="error"), mode
     status = training_manager.get_status()
     job = reaches(status)
     if isinstance(asked, str) and asked != job:
         return notice_html(f"Not stopped: the {what} you asked to stop is no longer the one "
-                           "running; click Stop again if this one should stop."), mode
+                           "running; click Stop again if this one should stop.",
+                           mark="error"), mode
     if job is None and running_job(status) is not None:
-        return notice_html(f"Not stopped: no {what} is running."), mode
+        return notice_html(f"Not stopped: no {what} is running.", mark="error"), mode
     result = training_manager.stop_training()
     if result.get("success"):
         cancelled = [TASK_NAMES.get(task, str(task)) for task in result.get("cancelled_children")
@@ -2939,9 +2943,10 @@ def confirm_stop(access: Any, mode: Optional[Mapping[str, Any]], *,
             ended = result.get("status")
             how = f" ({ended})" if ended in _ENDED else ""
             return notice_html(f"Nothing was stopped: the job had already ended on its own{how}."
-                               + tail), mode
-        return notice_html("Stopped. " + _snapshot_sentence(result.get("outcome")) + tail), mode
-    return notice_html(f"Not stopped: {result.get('error', 'unknown error')}"), mode
+                               + tail, mark=None), mode
+        return notice_html("Stopped. " + _snapshot_sentence(result.get("outcome")) + tail,
+                           mark=None), mode
+    return notice_html(f"Not stopped: {result.get('error', 'unknown error')}", mark="error"), mode
 
 
 def _on_stop_request(request: gr.Request, mode):
@@ -3194,7 +3199,7 @@ def _on_continue_open(request: gr.Request, ws, mode):
     access = operator_access(request)
     mode = dict(mode or {})
     if not access.allowed:
-        return (notice_html(access.refusal), mode, *(gr.update(),) * 5,
+        return (notice_html(access.refusal, mark="error"), mode, *(gr.update(),) * 5,
                 *(gr.update(),) * len(_cleared_check()))
     parents, problem = _list_parents(ws or {})
     mode.update(drawer=True, confirm=None, parent={}, operation=CONTINUE)
@@ -4601,7 +4606,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-confirm-q {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-radius: 8px; padding: 8px 12px; font-size: 15px; }}
 {_PAGE} #shep-train-notice:empty, {_PAGE} #shep-train-notice .html-container:empty {{ display: none; }}
 {_PAGE} #shep-train-notice:has(.html-container:empty), {_PAGE} #shep-train-banner:not(:has(.shep-banner)) {{ display: none !important; }}
-{_PAGE} #shep-train-notice {{ font-size: 15px; color: var(--shep-amber-800); overflow-wrap: anywhere; }}
+{_PAGE} #shep-train-notice {{ font-size: 15px; overflow-wrap: anywhere; }}
 {_PAGE} .shep-banner {{ border-radius: 8px; border: 1px solid; padding: 10px 14px; margin-bottom: 6px; font-size: 15px; }}
 {_PAGE} .shep-banner-red {{ background: var(--shep-red-50); border-color: var(--shep-red-200); border-left: 4px solid var(--shep-red-700); color: var(--shep-red-700); }}
 {_PAGE} .shep-banner-amber {{ background: var(--shep-amber-50); border-color: var(--shep-amber-300); border-left: 4px solid var(--shep-amber-600); color: var(--shep-amber-800); }}

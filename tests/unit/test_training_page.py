@@ -1806,12 +1806,61 @@ def _no_tag(html):
     return "<img" not in html and "<b>odd" not in html
 
 
+def test_each_notice_is_drawn_by_its_kind_a_refusal_with_its_mark_a_state_plain(
+        monkeypatch, operator):
+    """B5 (leftover e): the run bar's and Fine-tune's notices said refusals
+    and states alike in amber with no mark. Each caller now gives its
+    message's kind (`notice_html`'s `mark`, required): a refusal reads with the
+    ✕ of a refusal, a plain state ("Stopped. …", nothing to stop, a job that
+    had already ended) as plain text, with no mark or colour of its own."""
+    import inspect
+
+    from src.webui.components import finetune_page as fp
+
+    assert inspect.signature(tc.notice_html).parameters["mark"].default is \
+        inspect.Parameter.empty, "every caller says its notice's kind"
+    assert "amber" not in next(line for line in tc.PAGE_CSS.splitlines()
+                               if "#shep-train-notice {" in line)
+    monkeypatch.setattr(tc.training_manager, "get_status", lambda: {"status": "idle"})
+    nothing, _mode = tc.ask_stop(operator_access_allowed(), {})
+    assert nothing == tc.notice_html("Nothing to stop: no training job is running.", mark=None)
+    assert "shep-st" not in nothing
+    monkeypatch.setattr(tc.training_manager, "get_status",
+                        lambda: {"status": "running", "job_id": "j1"})
+    monkeypatch.setattr(tc.training_manager, "stop_training",
+                        lambda: {"success": True, "outcome": None})
+    stopped, _mode = tc.confirm_stop(operator_access_allowed(), {"confirm": "j1"})
+    assert stopped.startswith('<span class="shep-notice-t">Stopped.') and "shep-st" not in stopped
+    monkeypatch.setattr(tc.training_manager, "stop_training",
+                        lambda: {"success": False, "error": "<b>busy</b>"})
+    failed, _mode = tc.confirm_stop(operator_access_allowed(), {"confirm": "j1"})
+    assert failed == tc.notice_html("Not stopped: <b>busy</b>", mark="error")
+    assert "✕" in failed and "shep-st-error" in failed and "<b>busy" not in failed
+    refused, _mode = tc.ask_stop(operator_access_refused(), {})
+    assert "shep-st-error" in refused and "Refused: " in refused
+    # Fine-tune's Stop is the same two steps, so its notice by the same kinds.
+    assert "tc.ask_stop" in inspect.getsource(fp._on_finetune_stop_request)
+    assert "tc.confirm_stop" in inspect.getsource(fp._on_finetune_stop)
+
+
+def operator_access_allowed():
+    class Allowed:
+        allowed, condition, refusal = True, None, None
+    return Allowed()
+
+
+def operator_access_refused():
+    class Refused:
+        allowed, condition, refusal = False, "mode_unset", "Refused: deployment mode not set to M1."
+    return Refused()
+
+
 def test_the_notice_escapes_the_server_text_it_carries(root, monkeypatch, operator):
     """The run bar's notice is HTML: a workspace name, a path or the runner's
     error in it is escaped (`notice_html`), for Start, Stop and Continue
     Training alike."""
-    assert tc.notice_html("") == "" and tc.notice_html(None) == ""
-    assert tc.notice_html(TAG) == f'<span class="shep-notice-t">{tc.r.e(TAG)}</span>'
+    assert tc.notice_html("", mark=None) == "" and tc.notice_html(None, mark="error") == ""
+    assert tc.notice_html(TAG, mark=None) == f'<span class="shep-notice-t">{tc.r.e(TAG)}</span>'
     # Start: the runner's refusal, and a workspace that is not trainable.
     monkeypatch.setattr(tc.training_manager, "start_training",
                         lambda config, **k: {"success": False, "error": f"{TAG} refused"})

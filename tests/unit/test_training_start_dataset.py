@@ -267,7 +267,7 @@ def test_the_run_bars_start_sends_what_it_showed_and_the_runner_refuses_a_rebuil
     assert notice == tc.notice_html(
         "The dataset changed since it was shown; select it again. Its "
         f"split_manifest.json holds {_fingerprint(workspace)[:12]}... now "
-        f"(shown: {shown[:12]}...). Nothing was started.")
+        f"(shown: {shown[:12]}...). Nothing was started.", mark="error")
     popen.assert_not_called()
     assert fresh.run_dir is None
 
