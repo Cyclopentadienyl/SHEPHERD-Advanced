@@ -295,14 +295,14 @@ def runs_of(parents: Mapping[str, Any]) -> Dict[str, List[str]]:
 
 def run_options(runs: Mapping[Any, Tuple[Any, Any]]) -> List[Tuple[str, Any]]:
     """**Runs as a select's options**, in `runs`' order (latest first), from
-    ``{value: (architecture, run directory's name)}``: each run's words
-    (`renderers.run_words`); runs that would read alike get their start time to the
-    second, then their own id (`renderers.distinct_names`), and are numbered
-    only where nothing recorded tells them apart. Each value is its key,
-    whatever the words: the Run select's run identity (`run_choices`), the
-    Training run view's run id."""
-    names = r.distinct_names(runs, lambda parts, level: r.fit_option(*r.run_parts(
-        parts[0], parts[1], level)))
+    ``{value: (architecture, run directory's name)}``: each run's words told
+    apart from the others' (`renderers.run_names`: a name cut alike with
+    another's keeps its start through where they differ; runs that would
+    still read alike get their start time to the second, then their own id),
+    and numbered only where nothing recorded tells them apart. Each value is
+    its key, whatever the words: the Run select's run identity
+    (`run_choices`), the Training run view's run id."""
+    names = r.run_names(runs)
     return r.fit_options([(names[key], None, key) for key in runs])
 
 
@@ -835,13 +835,19 @@ def _table_html(sections: Sequence[Tuple[str, Sequence[Mapping[str, Any]]]],
     head = "".join(f'<th scope="col"{" class=shep-num" if h.startswith("Validation") else ""}>'
                    f'{r.e(h)}</th>' for h in heads)
 
+    # The table's runs, each by its words told apart from the others'
+    # (`renderers.run_names`), as every Run select names them.
+    runs = r.run_names({item_run_key(i): (i.get("architecture"), i.get("run"))
+                        for _title, members in sections for i in (*pinned, *members)})
+
     def row(item: Mapping[str, Any]) -> str:
         key = item_key(item)
         html_ = r.model_table_row_html(
             item, workspaces, recorded=_recorded(listing, key),
             in_use=bool(served) and item.get("sha256") == served, selected=key == selected,
             digits=digits, key=key, in_use_label=preset.in_use_label,
-            extra=(str(cells.get(key) or '<span class="shep-muted">—</span>') if column else None))
+            extra=(str(cells.get(key) or '<span class="shep-muted">—</span>') if column else None),
+            run=runs[item_run_key(item)])
         # The Model cell (the row's first) leads with what the file is, under
         # every order and filter.
         return html_.replace("<td>", f"<td>{_kind_line(item, 'div')}", 1)
@@ -1031,13 +1037,16 @@ def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) 
     `listing` gives the checkpoints to name the served one by (``items``), the
     listed workspaces (``workspaces``) and the serving workspace's name
     (``serving``). ``served`` is False when no model is loaded: then nothing is
-    served, and the rows that describe what is served do not apply (`_cell`)."""
+    served, and the rows that describe what is served do not apply (`_cell`).
+    A listed model is named whole (`renderers.model_name_line`, ``fit``
+    False), as the To column names its file: two runs compared are never cut
+    alike."""
     identity = (status or {}).get("served_identity") or {}
     sha = served_checkpoint_sha(status)
     item = next((i for i in listing.get("items") or [] if sha and i.get("sha256") == sha), None)
     meta = (status or {}).get("checkpoint_meta") or {}
     if item is not None:
-        model = r.model_name_line(item)
+        model = r.model_name_line(item, fit=False)
     elif sha:
         model = f"{r.epoch_words(meta)} (not in this workspace's list)"
     else:
@@ -1070,7 +1079,7 @@ def _to_side(item: Mapping[str, Any], workspace: str, workspace_dir: Path,
     origin = next((r.origin_of(w) for w in workspaces if r._get(w, "name") == workspace), None)
     mode = TASK_SCORING_MODES.get(item.get("task"))
     return {
-        "model": r.model_name_line(item),
+        "model": r.model_name_line(item, fit=False),
         "sha256": item.get("sha256"),
         "trained_on": item.get("dataset_fingerprint"),
         "trained_on_known": True,

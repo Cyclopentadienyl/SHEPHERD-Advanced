@@ -315,42 +315,82 @@ OPTION_CHARS = 40
 _WHAT_ROOM = 5
 
 
-def middle_cut(text: str, room: int) -> str:
+def middle_cut(text: str, room: int, *, head: int = 0) -> str:
     """`text` in at most `room` characters: whole where it fits, else cut in
     its middle with an ellipsis, so its start and its end stay (where a copy
-    or a version differs: "…copy_b.pt", "…67-v1.pt"). Never longer than
-    `text`."""
+    or a version differs: "…copy_b.pt", "…67-v1.pt"), its start at least
+    `head` characters long where the room allows (`fit_apart`: through where
+    two alike names differ). Never longer than `text`."""
     if len(text) <= room:
         return text
     keep = max(room, 1) - 1
-    head = keep // 2
-    return text[:head] + "…" + text[len(text) - (keep - head):]
+    first = max(keep // 2, min(head, keep))
+    return text[:first] + "…" + text[len(text) - (keep - first):]
 
 
-def fit_option(what: str, rest: Optional[str], mark: str = "") -> str:
-    """"<what><mark> · <rest>" in at most `OPTION_CHARS` characters with one
-    separator: `what` (the distinguishing token: a name, a file's name) is
-    shortened in its middle (`middle_cut`); `rest` stays whole while `what`
-    keeps at least `_WHAT_ROOM` characters (or all of its own, if fewer), and
-    past that is cut in its middle too, so neither is ever the only part cut
-    and the option never runs past `OPTION_CHARS`."""
+def _fitted(what: str, rest: Optional[str], mark: str = "",
+            keep: int = 0) -> Tuple[str, Optional[str]]:
+    """`fit_option`'s two parts, each as the option says it: `what` with its
+    mark, and `rest`."""
     room = OPTION_CHARS - len(mark)
     if rest:
         room -= 3
         rest = middle_cut(rest, room - min(len(what), _WHAT_ROOM))
         room -= len(rest)
-    what = middle_cut(what, room) + mark
+    return middle_cut(what, room, head=keep) + mark, rest
+
+
+def fit_option(what: str, rest: Optional[str], mark: str = "", *, keep: int = 0) -> str:
+    """"<what><mark> · <rest>" in at most `OPTION_CHARS` characters with one
+    separator: `what` (the distinguishing token: a name, a file's name) is
+    shortened in its middle (`middle_cut`, its start at least `keep`
+    characters where it can: `fit_apart`); `rest` stays whole while `what`
+    keeps at least `_WHAT_ROOM` characters (or all of its own, if fewer), and
+    past that is cut in its middle too, so neither is ever the only part cut
+    and the option never runs past `OPTION_CHARS`."""
+    what, rest = _fitted(what, rest, mark, keep)
     return f"{what} · {rest}" if rest else what
+
+
+def _shared_start(one: str, other: str) -> int:
+    """How many leading characters `one` and `other` share."""
+    return next((i for i, (a, b) in enumerate(zip(one, other)) if a != b),
+                min(len(one), len(other)))
+
+
+def fit_apart(entries: Mapping[Hashable, Tuple[str, Optional[str]]]) -> Dict[Hashable, str]:
+    """**Words shown together, each `fit_option`, told apart where a cut would
+    hide what tells them apart**, by key, from ``(what, rest)``: entries
+    whose different `what`s would be cut alike (the cut keeps their alike
+    start and end) each keep their start through the first two characters
+    where they differ ("cpb-dis-ful…" and "cpb-dis-fro…", never both
+    "cpb-dis…disease"), the end filling the rest of the room. A `what` alike
+    in full is the caller's to tell apart (`distinct_names`, `fit_options`)."""
+    cuts: Dict[str, List[Hashable]] = {}
+    for key, (what, rest) in entries.items():
+        cuts.setdefault(_fitted(what, rest)[0], []).append(key)
+    keep = dict.fromkeys(entries, 0)
+    for keys in cuts.values():
+        for key in keys:
+            what = entries[key][0]
+            for other in keys:
+                theirs = entries[other][0]
+                if theirs != what:
+                    keep[key] = max(keep[key], _shared_start(what, theirs) + 2)
+    return {key: fit_option(what, rest, keep=keep[key])
+            for key, (what, rest) in entries.items()}
 
 
 def fit_options(entries: Sequence[Tuple[str, Optional[str], Any]]) -> List[Tuple[str, Any]]:
     """A select's options from ``(what, rest, value)`` entries, in their order:
-    each `fit_option`, and those still alike numbered in that order, "(2)",
-    the last resort for what nothing else tells apart. Unique, at most
+    each `fit_option`, told apart where a cut would hide their difference
+    (`fit_apart`), and those still alike numbered in that order, "(2)", the
+    last resort for what nothing else tells apart. Unique, at most
     `OPTION_CHARS` characters and one separator; **each value is its entry's
     own, whatever the words** (Gradio's ``(label, value)``: the skill's §5, a
     label never changes what is chosen)."""
-    labels = [fit_option(what, rest) for what, rest, _value in entries]
+    fitted = fit_apart({place: (what, rest) for place, (what, rest, _value) in enumerate(entries)})
+    labels = [fitted[place] for place in range(len(entries))]
     seen, nth = Counter(labels), Counter()
     choices = []
     for (what, rest, value), label in zip(entries, labels):
@@ -772,6 +812,21 @@ def run_words(architecture: Any, run: Any, *, fit: bool = True) -> str:
     return f"{what} · {rest}" if rest else what
 
 
+def run_names(runs: Mapping[Hashable, Tuple[Any, Any]]) -> Dict[Hashable, str]:
+    """**Runs shown together, each by its words told apart from the others'**
+    (every Run select's options, `model_list.run_options`, and the Models
+    table's rows), by key, from ``{key: (architecture, run directory's
+    name)}``: each run's words at an option's length (`run_words`), a name cut
+    alike with another's keeping its start through where they differ
+    (`fit_apart`: "cpb-dis-ful…" beside "cpb-dis-fro…", where both read
+    "cpb-dis…disease" and only their start minute told them apart), and runs
+    whose words still read alike their start time to the second, then their
+    own id (`distinct_names`). Words nothing recorded tells apart are the
+    caller's to number (`fit_options`)."""
+    return distinct_names(runs, lambda parts, level: run_parts(parts[0], parts[1], level),
+                          together=fit_apart)
+
+
 def run_time(run_id: Any, *, seconds: bool = False) -> Optional[str]:
     """A run's time from its run id, as the pages name a run: "2026-10-17
     13:40 UTC" (with `seconds`, "2026-10-17 13:40:07 UTC") from a report store
@@ -783,17 +838,22 @@ def run_time(run_id: Any, *, seconds: bool = False) -> Optional[str]:
     return f"{y}-{mo}-{d} {h}:{mi}{':' + s if seconds else ''} UTC"
 
 
-def distinct_names(items: Mapping[Hashable, Any], name_at: Callable[[Any, int], str], *,
-                   top: int = 2) -> Dict[Hashable, str]:
+def distinct_names(items: Mapping[Hashable, Any], name_at: Callable[[Any, int], Any], *,
+                   top: int = 2,
+                   together: Optional[Callable[[Dict[Hashable, Any]], Dict[Hashable, str]]] = None
+                   ) -> Dict[Hashable, str]:
     """Names that read alike, told apart: each item's name, by its key, at
-    level 0 (``name_at(item, level)``), a level higher only for the items
-    whose names read alike, until no two do or each of them is at `top` (runs
-    named by their time to the minute, then to the second, then with the run
-    id's own last part: Models › Results' `row_names`). Names still alike at
-    `top` are the caller's to tell apart."""
+    level 0 (``name_at(item, level)``; with `together`, what it makes of every
+    item's at once, `run_names`' `fit_apart`), a level higher only for the
+    items whose names read alike, until no two do or each of them is at `top`
+    (runs named by their time to the minute, then to the second, then with
+    the run id's own last part: Models › Results' `row_names`). Names still
+    alike at `top` are the caller's to tell apart."""
     levels = dict.fromkeys(items, 0)
     while True:
         names = {key: name_at(item, levels[key]) for key, item in items.items()}
+        if together is not None:
+            names = together(names)
         seen = Counter(names.values())
         clashing = [key for key, name in names.items() if seen[name] > 1 and levels[key] < top]
         if not clashing:
@@ -899,8 +959,9 @@ def epoch_words(item: Any) -> str:
 def model_name_line(item: Any, *, fit: bool = True) -> str:
     """**A listed file by its run and how far it trained**, the one line every
     page titles a model by (the shared list's rows, Models' detail header,
-    the Diagnosis card, the load plan's From and To) and its details say
-    whole (Model Facts, the Test page's model): its run by the one run words
+    the Diagnosis card) and its details say whole (Model Facts, the Test
+    page's model, the load plan's From and To, which compare two files, so
+    neither run is ever cut alike with the other): its run by the one run words
     (`run_words`; `fit` for a title or a row, whole in details), then its
     progress (`epoch_words`) after a comma, so the line keeps the run words'
     one " · ": "ui-live-stop-02 · GATv2 2026-10-24 17:39, 6 epochs
@@ -1147,9 +1208,11 @@ def warning_html(head: str, detail: str) -> str:
 def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
                          recorded: Optional[RecordedTests] = None, in_use: bool = False,
                          selected: bool = False, digits: int = SHORT_HEX, key: str = "",
-                         in_use_label: str = "In use", extra: Optional[str] = None) -> str:
+                         in_use_label: str = "In use", extra: Optional[str] = None,
+                         run: Optional[str] = None) -> str:
     """One checkpoint as a row of the research table (Models): its run by the
-    one run words (`run_words`, an option's length) over how far it trained
+    one run words (`run_words`, an option's length; `run`, the words the
+    table's other runs are told apart from, `run_names`) over how far it trained
     (`epoch_words`); its model fingerprint's 12 hex digits (`fingerprint_value`,
     the whole value its title; its Copy is in the file's details), and under
     them its dataset only where it is not the workspace's current one
@@ -1163,7 +1226,7 @@ def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
     unreadable = problem is not None or not is_digest(_get(item, "sha256"))
     classes = [c for c, on in (("shep-on", selected), ("shep-row-dis", unreadable)) if on]
     tag = f' {chip(in_use_label, "accent")}' if in_use else ""
-    name = e(run_words(_get(item, "architecture"), _get(item, "run")))
+    name = e(run if run is not None else run_words(_get(item, "architecture"), _get(item, "run")))
     model = (f'<div class="shep-w600">{name}</div><div class="shep-sub">'
              f'{e(epoch_words(item))}</div>{tag}')
     # A plain table's selected row is `aria-current`, never `aria-selected`
@@ -2034,6 +2097,7 @@ __all__ = [
     "field_words",
     "fingerprint_html",
     "fingerprint_value",
+    "fit_apart",
     "fit_option",
     "fit_options",
     "freeze_words",
@@ -2065,6 +2129,7 @@ __all__ = [
     "run_parts",
     "run_started",
     "run_suffix",
+    "run_names",
     "run_time",
     "run_words",
     "selection_value",

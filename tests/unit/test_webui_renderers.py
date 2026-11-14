@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import inspect
 import re
+from pathlib import Path
 
 import pytest
 
@@ -282,6 +283,73 @@ def test_an_option_is_never_longer_than_the_rule_and_never_lengthens_its_token()
                 assert len(option) <= r.OPTION_CHARS and option.count(" · ") <= 1, option
                 token = option.split(" · ")[0].removesuffix(mark)
                 assert len(token) <= len(what) or token == what, option
+
+
+#: The full fine-tune and its frozen-backbone control of the round's
+#: checkpoint B flow, whose names differ only in their middle.
+ARMS = {"gatv2/20261114-025700_cpb-dis-full-disease_265be0":
+        ("gatv2", "20261114-025700_cpb-dis-full-disease_265be0"),
+        "gatv2/20261114-025600_cpb-dis-frozen-disease_1a2b3c":
+        ("gatv2", "20261114-025600_cpb-dis-frozen-disease_1a2b3c"),
+        "gatv2/20261114-025300_run_bb03cc": ("gatv2", "20261114-025300_run_bb03cc")}
+
+
+def test_runs_whose_names_cut_alike_keep_where_they_differ():
+    """The closing check of the ops round (checkpoint B's flow): the full
+    fine-tune and its frozen control, "cpb-dis-full-disease" and
+    "cpb-dis-frozen-disease", both read "cpb-dis…disease" in every Run
+    select and the Models table, told apart only by their start minute. Shown
+    together, a name cut alike with another's keeps its start through the
+    first two characters where they differ (`fit_apart`, `run_names`, used by
+    every Run select through `model_list.run_options` and by the Models
+    table); alone it keeps the plain middle cut; the values stay the full
+    keys."""
+    from src.webui.components import model_list as ml
+
+    names = r.run_names(ARMS)
+    full, frozen, base = ARMS
+    assert names[full] == "cpb-dis-ful…ase · GATv2 2026-11-14 02:57"
+    assert names[frozen] == "cpb-dis-fro…ase · GATv2 2026-11-14 02:56"
+    assert names[base] == r.run_words(*ARMS[base])
+    assert r.run_names({full: ARMS[full]})[full] == r.run_words(*ARMS[full]) == (
+        "cpb-dis…disease · GATv2 2026-11-14 02:57")
+    choices = ml.run_options(ARMS)
+    _option_rules(choices, list(ARMS))
+    assert [label for label, _key in choices] == [names[key] for key in ARMS]
+    # The rule is every select's (`fit_options`): two file names alike at
+    # both ends keep where they differ; numbering stays the last resort.
+    one, two = ("m" * 25 + "A" + "z" * 25, "m" * 25 + "B" + "z" * 25)
+    assert r.fit_option(one, None) == r.fit_option(two, None)
+    labels = [label for label, _v in r.fit_options([(one, None, 1), (two, None, 2)])]
+    assert labels[0] != labels[1] and "A" in labels[0] and "B" in labels[1]
+    assert [label for label, _v in r.fit_options([(one, None, 1), (one, None, 2)])] == [
+        r.fit_option(one, None, " (1)"), r.fit_option(one, None, " (2)")]
+    assert r.middle_cut("abcdefghij", 5, head=3) == "abc…j"
+    assert r.middle_cut("abcdefghij", 5, head=9) == "abcd…"
+
+
+def test_the_models_table_and_the_load_plan_tell_the_two_arms_apart():
+    """The Models table names its runs by the same rule as the Run selects
+    (`renderers.run_names`), and the load plan's From and To, which compare
+    two files, name each run whole: the closing check read "cpb-dis…disease
+    · GATv2 2026-11-14 02:56 → cpb-dis…disease · GATv2 2026-11-14 02:57"."""
+    from src.webui.components import model_list as ml
+
+    items = [{**checkpoint(run=run, sha=digit * 64), "key": f"{key}/last.pt", "run_key": key,
+              "filename": "last.pt", "record": "model", "learning_stage": "finetune",
+              "task": "disease"}
+             for (key, (_arch, run)), digit in zip(ARMS.items(), "abc")]
+    listing = {"items": items, "workspaces": [workspace("demo")], "workspace": "demo"}
+    table = text_of(ml.list_html(listing, None, ml.PRESETS["research"]))
+    assert "cpb-dis-ful…ase · GATv2 2026-11-14 02:57" in table
+    assert "cpb-dis-fro…ase · GATv2 2026-11-14 02:56" in table
+    assert "cpb-dis…disease" not in table
+    served = {"initialized": True, "checkpoint_meta": {},
+              "served_identity": {"checkpoint": {"sha256": "b" * 64}}}
+    frm = ml._from_side(served, {"items": items, "workspaces": listing["workspaces"]})
+    to = ml._to_side(items[0], "demo", Path("."), listing["workspaces"])
+    assert frm["model"] == "cpb-dis-frozen-disease · GATv2 2026-11-14 02:56, recorded epoch 5"
+    assert to["model"] == "cpb-dis-full-disease · GATv2 2026-11-14 02:57, recorded epoch 5"
 
 
 def test_the_workspace_options_are_one_label_for_every_page():

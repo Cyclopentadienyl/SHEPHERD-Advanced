@@ -2299,8 +2299,10 @@ def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
     _option_rules(labels, others["choices"], [k for k in parents if old in k])
     _option_rules(told)
     # Long names alike at their start keep the end that tells them apart (a
-    # copy, a versioned top-k file); names alike at both ends are numbered in
-    # the list's order. Never two options alike.
+    # copy, a versioned top-k file); names alike at both ends keep their start
+    # through where they differ (`renderers.fit_apart`: the closing check of
+    # the ops round, where they were numbered "(1)", "(2)", "(3)", which says
+    # nothing of which file is which). Never two options alike.
     for names, epochs in ((("base_model_before_change_epoch10_copy_a.pt",
                             "base_model_before_change_epoch10_copy_b.pt"), 10),
                           (("model-195-0.2867.pt", "model-195-0.2867-v1.pt"), 195),
@@ -2311,9 +2313,9 @@ def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
         told = [label for label, _key in chosen]
         _option_rules(told, chosen, list(files))
         assert all(label.endswith(f" · {epochs} epochs completed") for label in told), told
-    assert told == ["checkpo…inal.pt (1) · 3 epochs completed",
-                    "checkpo…inal.pt (2) · 3 epochs completed",
-                    "checkpo…inal.pt (3) · 3 epochs completed"]
+    assert told == ["checkpoint_run1_…pt · 3 epochs completed",
+                    "checkpoint_run2_…pt · 3 epochs completed",
+                    "checkpoint_run3_…pt · 3 epochs completed"]
     copies = {f"gatv2/{old}/base_model_before_change_epoch10_copy_{x}.pt":
               item(old, f"base_model_before_change_epoch10_copy_{x}.pt", 10) for x in "ab"}
     assert [label for label, _key in ml.checkpoint_choices(copies, list(copies))] == [
