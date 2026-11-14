@@ -95,7 +95,7 @@ import logging
 import re
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, NamedTuple, Optional, Tuple
 
 import gradio as gr
 import requests
@@ -703,11 +703,20 @@ _plain_value = csv_cells.plain_text
 _MD_SPECIAL_RE = re.compile(r"([\\`*_{}\[\]<>#|~!])")
 
 
+def _one_line(value: Any) -> str:
+    """A value from the API as plain text on one line (`csv_cells.plain_text`)."""
+    return " ".join(_plain_value(value).split())
+
+
+def _md_escape(text: str) -> str:
+    """Text with every character that could start Markdown or HTML escaped."""
+    return _MD_SPECIAL_RE.sub(r"\\\1", text)
+
+
 def _md_text(value: Any) -> str:
     """A value from the API as plain text, safe in a Markdown table cell: one
     line, every character that could start Markdown or HTML escaped."""
-    text = " ".join(_plain_value(value).split())
-    return _MD_SPECIAL_RE.sub(r"\\\1", text)
+    return _md_escape(_one_line(value))
 
 
 def _md_code(value: Any, in_table: bool = True) -> str:
@@ -718,7 +727,7 @@ def _md_code(value: Any, in_table: bool = True) -> str:
     splits a row on ``|`` before it parses code spans. Outside a table the
     escape would be shown literally, since a code span keeps backslashes.
     """
-    text = " ".join(_plain_value(value).split())
+    text = _one_line(value)
     if in_table:
         text = text.replace("|", "\\|")
     longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
@@ -732,48 +741,104 @@ def _md_digest(value: Any) -> str:
     return f"`sha256:{value}`" if _is_sha256(value) else _md_code(value)
 
 
-_NOT_REPORTED_CELLS = (
-    "not\\_reported", "not reported — the response did not include this value"
+# ----------------------------------------------------------------- identity values
+class _Piece(NamedTuple):
+    """**One piece of an identity value**, as the one builder of the identity
+    (`_identity_rows`) says it: ``text`` (the builder's own words, or a value
+    from the API on one line), ``code`` (a value from the API as code) or
+    ``digest`` (a full sha256). Its two readers draw the same pieces, each in
+    its own form: the report as Markdown (`_value_md`), the identity drawer as
+    HTML (`_value_html`). Neither parses the other's form."""
+
+    kind: str
+    text: str
+
+
+#: An identity value: its pieces, in order.
+_Value = Tuple[_Piece, ...]
+
+
+def _words(text: str) -> _Piece:
+    """The builder's own words, as they are."""
+    return _Piece("text", text)
+
+
+def _text(value: Any) -> _Piece:
+    """A value from the API as words, on one line."""
+    return _Piece("text", _one_line(value))
+
+
+def _code(value: Any) -> _Piece:
+    """A value from the API as code, on one line."""
+    return _Piece("code", _one_line(value))
+
+
+def _digest(value: Any) -> _Piece:
+    """A full digest; any other value as code."""
+    return _Piece("digest", value) if _is_sha256(value) else _code(value)
+
+
+def _value_md(value: _Value) -> str:
+    """An identity value as the report's Markdown table cell: words escaped
+    (`_md_escape`), code in a span (`_md_code`), a digest ``sha256:``-prefixed
+    in one (`_md_digest`)."""
+    return "".join(_md_escape(piece.text) if piece.kind == "text"
+                   else _md_digest(piece.text) if piece.kind == "digest"
+                   else _md_code(piece.text) for piece in value)
+
+
+def _value_html(value: _Value) -> str:
+    """An identity value as the identity drawer's HTML: words escaped, code as
+    code, a digest as the one digest value (`renderers.fingerprint_value`, 12
+    hex, the whole in its title; "This result in full" has its Copy). Every
+    piece is escaped, so a value from the API is never markup."""
+    return "".join(_e(piece.text) if piece.kind == "text"
+                   else _fingerprint_value(piece.text, what="digest", copy=False)
+                   if piece.kind == "digest"
+                   else f"<code>{_e(piece.text)}</code>" for piece in value)
+
+
+_NOT_REPORTED_CELLS: Tuple[str, _Value] = (
+    "not\\_reported", (_words("not reported — the response did not include this value"),)
 )
 
 
-def _md_setting(value: Any) -> str:
+def _setting(value: Any) -> _Piece:
     if value is _MISSING:
-        return "not reported"
-    return _md_code(value) if isinstance(value, str) else _md_text(value)
+        return _words("not reported")
+    return _code(value) if isinstance(value, str) else _text(value)
 
 
-def _checkpoint_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+def _checkpoint_cells(identity: Dict[str, Any]) -> Tuple[str, _Value]:
     part = _field(identity, "checkpoint")
     state = _field(part, "state")
     if state == "verified":
-        return f"{_VERIFIED_MARK} verified", _md_digest(_field(part, "sha256"))
+        return f"{_VERIFIED_MARK} verified", (_digest(_field(part, "sha256")),)
     return _NOT_REPORTED_CELLS
 
 
-def _graph_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+def _graph_cells(identity: Dict[str, Any]) -> Tuple[str, _Value]:
     part = _field(identity, "graph")
     state = _field(part, "state")
     if state == "verified":
-        return f"{_VERIFIED_MARK} verified", _md_digest(_field(part, "kg_sha256"))
+        return f"{_VERIFIED_MARK} verified", (_digest(_field(part, "kg_sha256")),)
     return _NOT_REPORTED_CELLS
 
 
-def _manifest_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+def _manifest_cells(identity: Dict[str, Any]) -> Tuple[str, _Value]:
     part = _field(identity, "graph")
     state = _field(part, "state")
     if state == "verified":
-        return (f"{_VERIFIED_MARK} verified",
-                _md_digest(_field(part, "split_manifest_sha256")))
+        return f"{_VERIFIED_MARK} verified", (_digest(_field(part, "split_manifest_sha256")),)
     return _NOT_REPORTED_CELLS
 
 
-def _shortest_path_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+def _shortest_path_cells(identity: Dict[str, Any]) -> Tuple[str, _Value]:
     part = _field(identity, "shortest_paths")
     state = _field(part, "state")
     if state == "computed":
-        return ("computed", "computed — exact hop distances from the model's graph view; "
-                "no table is read")
+        return ("computed", (_words("computed — exact hop distances from the model's graph "
+                                    "view; no table is read"),))
     if state == "absent":
         if _field(identity, "scoring_mode") == "disease_task":
             reason = "a disease task model scores without one"
@@ -781,7 +846,7 @@ def _shortest_path_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
             reason = "a patients-like-me model scores without one"
         else:
             reason = "it does not contribute to the score"
-        return "absent", f"absent — no table is served; {reason}"
+        return "absent", (_words(f"absent — no table is served; {reason}"),)
     return _NOT_REPORTED_CELLS
 
 
@@ -793,7 +858,7 @@ _DATASET_ORIGIN_MEANING = {
 }
 
 
-def _dataset_record_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+def _dataset_record_cells(identity: Dict[str, Any]) -> Tuple[str, _Value]:
     part = _field(identity, "dataset_record")
     state = _field(part, "state")
     if state == "verified":
@@ -802,40 +867,41 @@ def _dataset_record_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
         # binding and the origin are stated together.
         meaning = _DATASET_ORIGIN_MEANING.get(origin, "not described by this page")
         return (f"{_VERIFIED_MARK} verified · {_md_text(origin)}",
-                f"{_md_digest(_field(part, 'sha256'))} — origin {_md_text(origin)}: {meaning}")
+                (_digest(_field(part, "sha256")), _words(" — origin "), _text(origin),
+                 _words(f": {meaning}")))
     return _NOT_REPORTED_CELLS
 
 
-def _scoring_mode_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+def _scoring_mode_cells(identity: Dict[str, Any]) -> Tuple[str, _Value]:
     mode = _field(identity, "scoring_mode")
     if mode is _MISSING or mode is None:
         return _NOT_REPORTED_CELLS
     words = _SCORING_MODE_WORDS.get(mode, "not described by this page")
-    return "in effect", f"{_md_code(mode)} — {words}"
+    return "in effect", (_code(mode), _words(f" — {words}"))
 
 
-def _device_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+def _device_cells(identity: Dict[str, Any]) -> Tuple[str, _Value]:
     settings = _field(identity, "settings")
     device, requested = _field(settings, "device"), _field(settings, "device_requested")
     if device in (_MISSING, None) or requested in (_MISSING, None):
         return _NOT_REPORTED_CELLS
-    return "in effect", f"{_md_code(device)} in effect; requested: {_md_code(requested)}"
+    return "in effect", (_code(device), _words(" in effect; requested: "), _code(requested))
 
 
-def _eta_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+def _eta_cells(identity: Dict[str, Any]) -> Tuple[str, _Value]:
     eta = _field(_field(identity, "settings"), "eta")
     if eta is _MISSING:
         return _NOT_REPORTED_CELLS
     if eta is None and _field(identity, "scoring_mode") == "disease_task":
-        return "none", "none — a disease task model has no terms to mix"
+        return "none", (_words("none — a disease task model has no terms to mix"),)
     if eta is None and _field(identity, "scoring_mode") == "patients_like_me":
-        return "none", "none — a patients-like-me model has no terms to mix"
+        return "none", (_words("none — a patients-like-me model has no terms to mix"),)
     if eta is None:
         return _NOT_REPORTED_CELLS
-    mode = _field(identity, "scoring_mode")
-    note = (" — the gene model's own: its similarity against shortest-path proximity"
-            if mode == "gene_task" else "")
-    return "in effect", f"{_md_text(eta)}{note}"
+    if _field(identity, "scoring_mode") == "gene_task":
+        return "in effect", (_text(eta), _words(" — the gene model's own: its similarity "
+                                                "against shortest-path proximity"))
+    return "in effect", (_text(eta),)
 
 
 #: The scoring modes that discover no path: their rows are genes or reference
@@ -844,35 +910,40 @@ _NO_PATHS = {"gene_task": "a gene task model discovers no paths",
              "patients_like_me": "a patients-like-me model discovers no paths"}
 
 
-def _path_settings_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+def _path_settings_cells(identity: Dict[str, Any]) -> Tuple[str, _Value]:
     # In effect for a disease task model: paths explain the diseases shown.
     settings = _field(identity, "settings")
     if not isinstance(settings, dict):
         return _NOT_REPORTED_CELLS
     mode = _field(identity, "scoring_mode")
     if mode in _NO_PATHS:
-        return "not applicable", f"not applicable — {_NO_PATHS[mode]}"
-    return "in effect", " · ".join(
-        f"`{key}` {_md_setting(_field(settings, key))}" for key in _PATH_SETTING_KEYS
-    )
+        return "not applicable", (_words(f"not applicable — {_NO_PATHS[mode]}"),)
+    pieces: List[_Piece] = []
+    for key in _PATH_SETTING_KEYS:
+        if pieces:
+            pieces.append(_words(" · "))
+        pieces += [_code(key), _words(" "), _setting(_field(settings, key))]
+    return "in effect", tuple(pieces)
 
 
-def _phenotype_rule_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
+def _phenotype_rule_cells(identity: Dict[str, Any]) -> Tuple[str, _Value]:
     version = _field(_field(identity, "settings"), "phenotype_normalisation_version")
     if version is _MISSING or version is None:
         return _NOT_REPORTED_CELLS
-    return "in effect", f"version {_md_text(version)}"
+    return "in effect", (_words("version "), _text(version))
 
 
-def _identity_rows(kind: str, identity: Optional[Dict[str, Any]]) -> List[Tuple[str, str, str]]:
-    """``(part, state, value)`` Markdown cells, one row per part, never blank.
+def _identity_rows(kind: str, identity: Optional[Dict[str, Any]]) -> List[Tuple[str, str, _Value]]:
+    """``(part, state, value)``, one row per part, never blank: ``state`` the
+    report's State cell (Markdown; the drawer reads only whether it is
+    verified), ``value`` its pieces (`_Piece`).
 
-    The one builder of the identity table: the report and the tab's identity
-    block both render these rows, so they cannot disagree.
+    The one builder of the identity: the report (`_value_md`) and the identity
+    drawer (`_value_html`) both draw these rows, so they cannot disagree.
     """
     if kind != _SERVED or identity is None:
-        word = _md_text(kind)
-        return [(part, word, f"{word} — {_NO_IDENTITY_REASON[kind]}") for part in _IDENTITY_PARTS]
+        return [(part, _md_text(kind), (_text(kind), _words(f" — {_NO_IDENTITY_REASON[kind]}")))
+                for part in _IDENTITY_PARTS]
     cells = (
         _checkpoint_cells, _graph_cells, _manifest_cells, _shortest_path_cells,
         _dataset_record_cells, _scoring_mode_cells, _device_cells, _eta_cells,
@@ -906,7 +977,7 @@ def _claim_boundary_lines(kind: str, identity: Optional[Dict[str, Any]],
 def _identity_table_lines(kind: str, identity: Optional[Dict[str, Any]]) -> List[str]:
     """The identity table, the claim boundary under it and the fixed statement."""
     lines = ["| Part | State | Value |", "|------|-------|-------|"]
-    lines += [f"| {part} | {state} | {value} |"
+    lines += [f"| {part} | {state} | {_value_md(value)} |"
               for part, state, value in _identity_rows(kind, identity)]
     for sentence in _claim_boundary_lines(kind, identity):
         lines += ["", sentence]
@@ -1957,43 +2028,13 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
 
 
 # ----------------------------------------------------------------- identity drawer
-#: A code span of an identity cell (`_md_code`, `_md_digest`): its fence, a
-#: run of backticks longer than any inside it, and the same run closing it.
-_MD_CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`)(.*?)(?<!`)\1(?!`)", re.DOTALL)
-#: A character `_md_text` escaped with a backslash.
-_MD_ESCAPED_RE = re.compile(r"\\([\\`*_{}\[\]<>#|~!])")
-_SHA256_SPAN_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
-
-
-def _md_cell_html(cell: str) -> str:
-    """**An identity cell as HTML** (`_identity_rows`' Markdown, the one
-    reading of an identity the report also writes): its code spans as code,
-    a ``sha256:`` digest as the one digest value (`renderers.fingerprint_value`,
-    12 hex, the whole in its title; "This result in full" has its Copy),
-    every backslash escape undone; each piece escaped, so a value from the
-    API is never markup. The cell's text is the report's, word for word."""
-    out: List[str] = []
-    pos = 0
-    for match in _MD_CODE_SPAN_RE.finditer(cell):
-        out.append(_e(_MD_ESCAPED_RE.sub(r"\1", cell[pos:match.start()])))
-        code = match.group(2)
-        if len(code) >= 2 and code[0] == code[-1] == " " and code.strip(" "):
-            code = code[1:-1]
-        code = code.replace("\\|", "|")
-        digest = _SHA256_SPAN_RE.match(code)
-        out.append(_fingerprint_value(digest.group(1), what="digest", copy=False) if digest
-                   else f"<code>{_e(code)}</code>")
-        pos = match.end()
-    out.append(_e(_MD_ESCAPED_RE.sub(r"\1", cell[pos:])))
-    return "".join(out)
-
-
-def _part_html(state: str, value: str) -> str:
+def _part_html(state: str, value: _Value) -> str:
     """One part of an identity as a details value: a verified part by the
-    shared mark (`renderers.status_mark`), then its value
-    (`_md_cell_html`), which says every other state in its own words."""
+    shared mark (`renderers.status_mark`), then its value (`_value_html`,
+    the pieces the report draws as Markdown), which says every other state
+    in its own words."""
     mark = _status_mark("ok", "verified") + " " if state.startswith(_VERIFIED_MARK) else ""
-    return mark + _md_cell_html(value)
+    return mark + _value_html(value)
 
 
 def _part_key(part: str) -> str:

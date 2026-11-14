@@ -1045,6 +1045,36 @@ def test_values_from_the_api_cannot_break_the_table():
     assert "<code>x|y z</code>" in shown
 
 
+def test_the_report_and_the_drawer_draw_the_same_identity_pieces_each_in_its_own_form():
+    """B4 review: the identity drawer reads no Markdown back. The one builder
+    (`_identity_rows`) gives each value as pieces (words, code, a digest) and
+    the report and the drawer draw them, each in its own form; so a value
+    from the API in a text cell with backticks or escapes reads as written
+    on the page (gr.Markdown did so before B4), and the report keeps its
+    escapes."""
+    identity = _served_identity()
+    identity["settings"]["eta"] = "a`b`c\\_*"
+    identity["dataset_record"]["origin"] = "s`y|n<t>"
+    identity["settings"]["phenotype_normalisation_version"] = "v[1]#!"
+    rows = {part: (state, value) for part, state, value in dp._identity_rows("served", identity)}
+    eta = rows["Mixing weight eta"][1]
+    assert eta == (dp._Piece("text", "a`b`c\\_*"),)
+    assert dp._value_md(eta) == "a\\`b\\`c\\\\\\_\\*"
+    assert dp._value_html(eta) == "a`b`c\\_*"
+    record = dp._value_html(rows["Dataset record (`kg.provenance.json`)"][1])
+    assert record.endswith(" — origin s`y|n&lt;t&gt;: not described by this page")
+    assert f'title="{RECORD_SHA}">{RECORD_SHA[:12]}</code>' in record
+    assert dp._value_html(rows["Phenotype normalisation rule"][1]) == "version v[1]#!"
+    shown = dp.result_identity_html(_result_with(identity), dp.card.new_state())
+    assert "a`b`c\\_*" in shown and "<code>b" not in shown and "&lt;t&gt;" in shown
+    # The report's table cells are the same pieces in Markdown.
+    table = _table_rows(_report_section(dp._build_results_report_md(_result_with(identity))))
+    assert table[7][2] == "a\\`b\\`c\\\\\\_\\*"
+    assert table[4][2].endswith("— origin s\\`y\\|n\\<t\\>: not described by this page")
+    # Nothing on the page parses a Markdown cell any more.
+    assert not hasattr(dp, "_md_cell_html")
+
+
 # ------------------------------------------------------------------- the CSV
 def test_csv_keeps_one_header_and_appends_the_identity_after_the_candidates():
     header, records, rows = _csv_records(dp._build_results_csv(_sample_result()))
