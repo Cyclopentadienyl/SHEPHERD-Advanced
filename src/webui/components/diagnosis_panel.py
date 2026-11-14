@@ -1476,7 +1476,7 @@ TOPIC_HELP = {
     "dx-run-change": (
         "Run Diagnosis is disabled",
         "A model change is open: finish it (Reload with …) or cancel it (Keep … or Cancel) "
-        "first. Diagnoses wait while the pipeline reloads.",
+        "first, so no result is produced here while what is served may change.",
     ),
     "dx-run-loading": (
         "Run Diagnosis is disabled",
@@ -2887,7 +2887,7 @@ def _on_stop_inference(request: gr.Request, asked) -> Tuple[Any, ...]:
 
 
 #: While this page's reload runs, its Close, × and Cancel close the whole
-#: drawer at once in the page (the card keeps the reload's "Loading …" line),
+#: drawer at once in the page (the card says the server's Loading),
 #: and the × is clicked for the server once the reload has answered; "Change
 #: model…" meanwhile shows the drawer again, on the reload's status
 #: (`model_list.load_guard`).

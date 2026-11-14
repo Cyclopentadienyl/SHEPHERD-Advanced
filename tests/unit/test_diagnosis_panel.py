@@ -1463,6 +1463,10 @@ def test_this_pages_load_is_said_by_the_server_and_run_waits_for_its_answer(monk
     assert run_btn["interactive"] is False
     assert "dx-run-loading" in cover and dp.RUN_DISABLED_LOADING in reason
     assert dp.card_loading_outputs(None, state) == (gr.update(),) * 3
+    # Review of B4 (finding 4): no help says diagnoses wait while a pipeline
+    # reloads; the model in use keeps answering every session until the new
+    # one is published (I5). Run here waits for this page's own answer.
+    assert "Diagnoses wait" not in dp.TOPIC_HELP["dx-run-change"][1]
     run_btn, cover, reason = dp.card_loaded_outputs(state, "idle")
     assert run_btn["interactive"] is True and cover == "" and reason == ""
     assert not hasattr(dp, "loading_line_html")

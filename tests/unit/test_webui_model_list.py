@@ -419,6 +419,15 @@ def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
     assert plan["from"]["sha256"] == root["shas"]["model-05.pt"]
     assert f"Reload the pipeline with <code>{new}</code> for every session?" in html
     assert ml.REPLACES_NOTE in html
+    # Review of B4 (finding 4): the page's wait says only its own wait, the
+    # load's state is the server's (the Diagnosis card's Loading), and no
+    # word claims diagnoses wait: the model in use keeps answering every
+    # session until the new one is published (I5).
+    wait = html[html.index('<div class="shep-load-wait"'):]
+    wait = wait[:wait.index("</div>")]
+    assert "Reload sent; waiting for the server&#x27;s answer…" in wait and "Loading" not in wait
+    assert "wait" not in ml.REPLACES_NOTE and "until then nothing changes" in ml.REPLACES_NOTE
+    assert "Diagnoses wait" not in html
     assert _changed_rows(html) == ["Model", "Model fingerprint"]
     assert "disease · GATv2 2026-10-17 09:15, recorded epoch 5" in html and old in html
     assert "same dataset" in html and ">same<" in html

@@ -180,11 +180,15 @@ logger = logging.getLogger(__name__)
 
 #: How long the page waits for a reload before it says it stopped waiting.
 PAGE_WAIT_SECONDS = 180
+#: What the confirmation says while this page waits for its reload's answer:
+#: the page's own wait, never the load's state, which the server's status
+#: says (the Diagnosis card's "Loading"), whichever page or client started it.
+PAGE_WAIT_WORDS = "Reload sent; waiting for the server's answer…"
 
 #: What a confirmation says it replaces (the mockup's words).
 REPLACES_NOTE = (
-    "Replaces what every session is served; results already produced keep their own "
-    "identity. Diagnoses wait while the pipeline reloads."
+    "Replaces what every session is served once the new model is checked and published; "
+    "until then nothing changes, and results already produced keep their own identity."
 )
 #: The note "In use" carries.
 IN_USE_NOTE = "matched by the full model fingerprint (the checkpoint only, not the whole pipeline)"
@@ -1197,9 +1201,8 @@ def confirmation_html(plan: Mapping[str, Any], *, notice: Optional[str] = None) 
         f'</tr></thead><tbody>{"".join(rows)}</tbody></table>'
         f'<p class="shep-confirm-note">{r.e(REPLACES_NOTE)}</p>'
         f'<div class="shep-load-wait" hidden data-wait="{PAGE_WAIT_SECONDS}">'
-        f'<span class="shep-spinner" aria-hidden="true"></span> <b>Loading <code>{r.e(new)}</code> '
-        'for every session… <span class="shep-elapsed">00:00:00</span></b> Diagnoses wait until '
-        'the reload finishes. Closing this does not stop it.</div>'
+        f'<span class="shep-spinner" aria-hidden="true"></span> <b>{r.e(PAGE_WAIT_WORDS)} '
+        '<span class="shep-elapsed">00:00:00</span></b> Closing this does not stop it.</div>'
         '<div class="shep-load-timeout" hidden><b>The page stopped waiting after '
         f'{PAGE_WAIT_SECONDS} s; the server may still finish the reload.</b> '
         f'<button type="button" class="shep-btn shep-read-again" data-key="__read_again__">'
@@ -1895,6 +1898,7 @@ __all__ = [
     "ModelList",
     "NOTHING_RELOADED",
     "PAGE_WAIT_SECONDS",
+    "PAGE_WAIT_WORDS",
     "PRESETS",
     "Preset",
     "REPLACES_NOTE",
