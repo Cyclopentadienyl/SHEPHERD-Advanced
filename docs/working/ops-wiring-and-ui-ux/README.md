@@ -1,8 +1,9 @@
 # Operations wiring and the daily UI/UX flow
 
-**Status: in progress on `claude/ops-wiring-and-ui-ux`, from `main` `30e8ae1` (2026-11-12).** This is the round's
-plan and record. The owner authorised it on 2026-11-12 by adopting the reviewer's next-phase plan, rev 2 of
-2026-11-12, and its one-time authorisation (both outside this repository, in
+**Status: built on `claude/ops-wiring-and-ui-ux` from `main` `30e8ae1` (2026-11-12): A and B done, checkpoint A
+passed internally (§12), awaiting the external review; the GB10 acceptance ([`GB10_ACCEPTANCE.md`](GB10_ACCEPTANCE.md))
+not run.** This is the round's plan and record. The owner authorised it on 2026-11-12 by adopting the reviewer's
+next-phase plan, rev 2 of 2026-11-12, and its one-time authorisation (both outside this repository, in
 `SHEPHERD_next_phase_plan_30e8ae1_20261112_rev2_evidence.zip`). The owner added one condition: the UI/UX work follows
 the design rules agreed earlier with the owner and the reviewer, and waits if they cannot be found. They are
 [`.claude/skills/webui-design/SKILL.md`](../../../.claude/skills/webui-design/SKILL.md) and
