@@ -1728,8 +1728,8 @@ def job_inputs_html(job: Mapping[str, Any]) -> str:
     what it measures, its version (label and fingerprint), its model (its
     fingerprint, the one digest value) and its measurement
     (`_job_measurement`), and its start; the rest one "Details ›" away (the
-    skill's §1.5, so the card at the panel's foot leaves the choices above it
-    their room): its workspace, its register, determinism and device
+    skill's §1.5, so the card, which follows the choices in the panel's one
+    scroll region, stays short): its workspace, its register, determinism and device
     settings (the Result's keys for them) and its R10 evidence (by its own
     kind, the runner's choice: none for a KG edge set or a generated split).
     Drawn from the job alone, never from the selection (the poll writes the
