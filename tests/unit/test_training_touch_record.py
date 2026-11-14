@@ -42,7 +42,10 @@ What these pin:
   cut), a paste and a typed value each put the field's key in the record
   that a click on Start sent at once, before the field was left, and so does
   emptying a number box; the first fill, a page's own write of every value
-  and a Tab through every field put nothing there;
+  and a Tab through every field put nothing there; a switch toggled with
+  Enter (Gradio's checkbox takes it as a toggle with no input event of its
+  own) or Space puts its key there too, Enter while another edit is pending
+  included;
 - **on the Training page itself** (the dashboard as the service mounts it,
   a demo workspace, the job runner's start replaced by a recorder): Neighbours
   per hop emptied as the first action and Start clicked at once is refused in
@@ -534,6 +537,104 @@ def test_a_click_made_while_an_edit_is_pending_waits_for_its_record(tmp_path):
         assert case["tasks"] == ["a", "b"], case
         assert case["sent"] == {"record": [], "values": ["", 200, "none"]}, case
     assert seen["errors"] == []
+
+
+def _switch_page():
+    """A recorded text box and a recorded switch (a checkbox, as `value_field`
+    builds a bool), Start (what its own request carried) and Reset."""
+    with gr.Blocks() as demo:
+        record = tc.touched_record("rec")
+        hops = gr.Textbox(value="15, 10, 5", max_lines=1, elem_id="hops")
+        amp = gr.Checkbox(value=False, label="Mixed precision", elem_id="amp")
+        tc.record_touches(hops, "hops", record)
+        tc.record_touches(amp, "amp", record)
+        start = gr.Button("Start", elem_id="start")
+        reset = gr.Button("Reset", elem_id="reset")
+        sent = gr.Textbox(value="", elem_id="sent")
+        start.click(_sent_record, inputs=[record, hops, amp], outputs=[sent])
+        reset.click(lambda: ([], "", "15, 10, 5", False), outputs=[record, sent, hops, amp])
+    return demo
+
+
+#: Each case from Reset: the switch focused, then Enter (Gradio's checkbox
+#: takes it as a toggle) or Space (the browser's click); the last with an
+#: edit of the text box pending (the page's clock paused) when Enter is
+#: pressed. Then Start, once nothing is counted or held.
+_SWITCH_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 })).newPage();
+  await page.clock.install();
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#start', { timeout: 60000 });
+  const sent = () => page.locator('#sent textarea, #sent input').first().inputValue();
+  const focus = () => page.evaluate(() => document.querySelector('#amp input').focus());
+  const settled = () => {
+    const s = window.ShepTouch && window.ShepTouch.state ? window.ShepTouch.state() : { held: 0, counted: {} };
+    return !s.held && !Object.keys(s.counted).length;
+  };
+  const pause = async () => {
+    for (let i = 0; i < 5; i++) {
+      await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 60000);
+      const at = await page.evaluate(() => Date.now());
+      await new Promise((r) => setTimeout(r, 50));
+      if (await page.evaluate(() => Date.now()) === at) { return; }
+    }
+    throw new Error('the page clock did not pause');
+  };
+  const out = {};
+  for (const name of ['enter', 'space', 'enter while pending']) {
+    await page.click('#reset');
+    await page.waitForFunction(() => document.querySelector('#sent textarea, #sent input').value === ''
+      && document.querySelector('#hops input').value === '15, 10, 5' && !document.querySelector('#amp input').checked);
+    if (name === 'enter while pending') {
+      await page.locator('#hops input').click();
+      await page.keyboard.press('Control+A');
+      await pause();
+      await page.keyboard.press('Backspace');
+      await focus();
+      await page.keyboard.press('Enter');
+      out.held = await page.evaluate(() => (window.ShepTouch && window.ShepTouch.state ? window.ShepTouch.state() : null));
+      await page.clock.resume();
+    } else {
+      await focus();
+      await page.keyboard.press(name === 'enter' ? 'Enter' : ' ');
+    }
+    await page.waitForFunction(() => document.querySelector('#amp input').checked, null, { timeout: 10000 });
+    await page.waitForFunction(settled);
+    await new Promise((r) => setTimeout(r, 200));
+    await page.click('#start');
+    await page.waitForFunction(() => document.querySelector('#sent textarea, #sent input').value !== '');
+    out[name] = JSON.parse(await sent());
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_switch_toggled_with_enter_is_the_operators_edit(tmp_path):
+    """A recorded switch toggled from the keyboard is recorded as the
+    operator's, as one clicked is. Gradio 6.30's checkbox takes Enter as a
+    toggle in a keydown listener of its own, which writes the value and
+    dispatches no input event and no ``.input``, so on 50c2979 the record
+    stayed empty while the switch showed the new value, and Start sent
+    nothing for it (the run took the reference). Space is the browser's
+    click and was recorded. Now Enter on a recorded switch is made its click:
+    Enter and Space each send the key with the value on; and Enter pressed
+    while an edit of another field is pending is held like a click, then
+    toggles and records, both keys sent."""
+    from src.webui.app import mount_options
+    from tests.fixtures.served_page import served
+
+    _browser()
+    with served(_switch_page(), **mount_options()) as base:
+        seen = _run(_SWITCH_JS, tmp_path, base[:-len("gradio_api")])
+    assert seen["enter"] == {"record": ["amp"], "values": ["15, 10, 5", True]}, seen
+    assert seen["space"] == {"record": ["amp"], "values": ["15, 10, 5", True]}, seen
+    assert seen["held"]["held"] == 1, seen
+    assert seen["enter while pending"] == {"record": ["amp", "hops"], "values": ["", True]}, seen
 
 
 # --------------------------------------------------------------------------- the Training page

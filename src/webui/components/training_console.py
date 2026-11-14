@@ -612,7 +612,12 @@ LANDED_JS = "() => { if (window.ShepTouch) { window.ShepTouch.landed({mark}); } 
 #:   submit), in the input event's bubbling phase, after the box's value
 #:   binding has taken the edit's value; an edit whose own key's keypress
 #:   reached the box already has its input. The number box, the checkbox and
-#:   the radio dispatch ``.input`` from each input event of theirs.
+#:   the radio dispatch ``.input`` from each input event of theirs; the
+#:   checkbox also takes Enter as a toggle in a keydown listener of its own,
+#:   which writes the value and fires no input event, so a switch toggled
+#:   with Enter was never recorded either: on a recorded checkbox the script
+#:   stops that Enter and clicks the box instead, the toggle the browser
+#:   makes for Space, whose input event is the field's ``.input``.
 #: - **A click waits for the edits made before it** (the narrow re-review of
 #:   214b523, OPS-R1's residual). A field's input reaches the record after
 #:   the edit (a text box's two of its ticks after it, a radio's one, each
@@ -718,7 +723,10 @@ TOUCH_HEAD = "<script>" + r"""
   }
   window.addEventListener('keydown', function (e) {
     keyed = null;
-    if (e.key === 'Enter' && checkbox(e.target) && e.isTrusted && waiting()) { hold(e); }
+    if (e.key !== 'Enter' || !checkbox(e.target)) { return; }
+    if (e.isTrusted && waiting()) { hold(e); return; }
+    // A recorded switch: Gradio's own Enter toggle fires no input event, so its click toggles it.
+    if (markOf(e.target)) { e.preventDefault(); e.stopImmediatePropagation(); e.target.click(); }
   }, true);
   window.addEventListener('keyup', function () { keyed = null; }, true);
   window.addEventListener('keypress', function (e) {
