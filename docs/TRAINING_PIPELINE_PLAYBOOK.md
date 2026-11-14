@@ -187,8 +187,8 @@ here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspa
 reference recipe), holding `config.yaml`, `runtime.json`, `final_metrics.json`,
 `checkpoints/` (`last.pt`, written every epoch, and the top-K
 `model-<epoch>-<metric>.pt`) and `logs/`. The optional
-**Run name** field names it; the run view's header names the run once training
-starts. No run writes into or prunes another run's folder. The lists read
+**Run name** field names it, a run continued or branched from the drawer too;
+the run view's header names the run once training starts. No run writes into or prunes another run's folder. The lists read
 every folder under `$WS/runs/`, whatever its name (since K8-7b, 2026-11-08): a
 model moved into a folder of another name is still listed, chosen and served,
 judged by its own record.

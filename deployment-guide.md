@@ -3478,7 +3478,9 @@ resume 的一組仍寫明它開始時的下游權重（Models › Results 的 Co
 「Disease · frozen graph backbone」，是任務模型，絕不是 base 的分數。驗收 probe 以 fp32 檢查它，
 包括暫停後再 resume（`L7.disease_frozen`）；凍結下的混合精度與 `torch.compile` 不在這個檢查的
 範圍內，也仍然可用。抽屜打開
-期間，run bar 的 Start 停用（「close Continue… to start a new run」）；**4. Start** 是抽屜欄位下方
+期間，run bar 的 Start 停用（「close Continue… to start a new run」），它的 **Run name** 仍在，
+為抽屜啟動的新 run（接續或分支）命名（如同 `--run-name` 與 `POST /api/v1/training/branch`）；
+**4. Start** 是抽屜欄位下方
 的頁尾，放著 **Continue Training**（或 **Start branch**）與 **Cancel**，旁邊是啟動的原因，說明
 擋住它的是什麼、該怎麼做：「Start branch disabled: the parent’s dataset is not this workspace’s
 current one.」、「… the check refuses a setting you edited; change it, then check again.」、「… the

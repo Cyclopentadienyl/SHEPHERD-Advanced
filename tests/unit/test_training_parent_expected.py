@@ -468,7 +468,7 @@ def _continue(c, source, typed="", mode=None, operation=None):
     check's text, the Extra epochs update and the mode."""
     tc = c["tc"]
     said, text, extend, _rate, mode, *_branch = tc._on_resume(
-        OP, operation or tc.CONTINUE, c["state"], "cpu", source, c["key"], typed, None, None,
+        OP, operation or tc.CONTINUE, c["state"], "", "cpu", source, c["key"], typed, None, None,
         c["listed"], mode or {}, [], *_values(tc))
     return said, text, extend, mode
 
@@ -637,7 +637,7 @@ def test_a_typed_parent_changed_after_the_consoles_check_is_refused_by_the_start
     monkeypatch.setattr(manager, "preview_continuation", preview)
     shown = _sha(case["parents"]["a"])
     with patch.object(tm.subprocess, "Popen") as popen:
-        said, *_rest = tc._on_resume(OP, tc.CONTINUE, ws, "cpu", tc.CONTINUE_FROM_PATH, key,
+        said, *_rest = tc._on_resume(OP, tc.CONTINUE, ws, "", "cpu", tc.CONTINUE_FROM_PATH, key,
                                      str(case["parents"]["a"]), None, None, parents, {}, [],
                                      *_values(tc))
     assert sent == [None, shown]
@@ -709,7 +709,7 @@ def test_a_typed_branch_parent_changed_after_the_consoles_check_is_refused_by_th
     monkeypatch.setattr(manager, "preview_branch", preview)
     shown = _sha(case["parents"]["a"])
     with patch.object(tm.subprocess, "Popen") as popen:
-        said, *_rest = tc._on_resume(OP, tc.BRANCH, ws, "cpu", tc.CONTINUE_FROM_PATH, key,
+        said, *_rest = tc._on_resume(OP, tc.BRANCH, ws, "", "cpu", tc.CONTINUE_FROM_PATH, key,
                                      str(case["parents"]["a"]), None, None, parents, {}, [],
                                      *_values(tc))
     assert sent == [None, shown]
@@ -736,8 +736,8 @@ def test_a_same_settings_branch_from_the_page_is_a_new_run_from_its_parent(case,
     manager = tm.TrainingManager()
     monkeypatch.setattr(tc, "training_manager", manager)
     shown = _sha(case["parents"]["a"])
-    said, text, *_rest = tc._on_resume(OP, tc.BRANCH, ws, "cpu", tc.CONTINUE_FROM_LIST, key, "",
-                                       None, None, parents, {}, [], *_values(tc))
+    said, text, *_rest = tc._on_resume(OP, tc.BRANCH, ws, "", "cpu", tc.CONTINUE_FROM_LIST, key,
+                                       "", None, None, parents, {}, [], *_values(tc))
     assert said == "", said
     assert "no setting changed" in text
     job, log = _wait(manager)

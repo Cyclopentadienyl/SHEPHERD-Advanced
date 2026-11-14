@@ -199,13 +199,14 @@ def _check(c, source, listed, manual, device="cpu", extend=None, mode=None, **kw
 
 
 def _resume_all(c, source, listed, manual, extend=None, mode=None, device="cpu", *,
-                operation=tc.CONTINUE, rate=None, touched=(), state=None, **edited):
+                operation=tc.CONTINUE, rate=None, touched=(), state=None, run_name="",
+                **edited):
     """The drawer's start, every output: its notice, the check's text, the
     Extra epochs and Extra-epoch rate updates, the mode, the Branch box and
     each Branch field."""
-    return tc._on_resume(OP, operation, state or c["state"], device, source, listed, manual,
-                         extend, rate, c["parents"], mode or {}, sorted({*touched, *edited}),
-                         *_values(**edited))
+    return tc._on_resume(OP, operation, state or c["state"], run_name, device, source, listed,
+                         manual, extend, rate, c["parents"], mode or {},
+                         sorted({*touched, *edited}), *_values(**edited))
 
 
 def _resume(c, source, listed, manual, extend=None, mode=None, device="cpu", **kwargs):
@@ -965,6 +966,31 @@ def test_a_same_settings_branch_checks_and_starts_from_the_page(checkpoints, mon
     assert started[-1]["__kwargs__"] == {
         "expected_dataset_fingerprint": c["state"]["row"]["dataset_fingerprint"],
         "expected_parent_sha256": c["parents"][c["paused_key"]]["sha256"]}
+
+
+def test_the_run_bars_run_name_names_a_branch_and_a_continuation(checkpoints, monkeypatch):
+    """The closing check of the ops round (checkpoint B's flow): a branch or
+    an extension started from the page was always an unnamed run, the run
+    bar's Run name hidden while the drawer was open and an empty name sent,
+    where POST /api/v1/training/branch and train_model.py --run-name name
+    one. Each trains a new run of its own, so the run bar's Run name, shown
+    with the drawer open, names it, trimmed as a new base's is."""
+    started = []
+    monkeypatch.setattr(training_manager, "start_training", _starts(started))
+    c = checkpoints
+    _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH)
+    said, *_rest = _resume_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "",
+                               operation=tc.BRANCH, run_name="  cpb-branch-lr ")
+    assert said == "" and started[-1]["run_name"] == "cpb-branch-lr"
+    assert started[-1]["branch_from"] == str(c["paused"])
+    _resume(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", run_name="cpb-resume")
+    assert started[-1]["run_name"] == "cpb-resume"
+    assert started[-1]["resume_from"] == str(c["paused"])
+    _resume(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "")
+    assert started[-1]["run_name"] == ""
+    # Shown with the drawer open: no rule hides it there.
+    drawer = [rule for rule in tc.PAGE_CSS.split("}") if ".shep-rb-drawer #run_name" in rule]
+    assert drawer == []
 
 
 def test_a_checks_branch_values_are_what_each_field_takes(checkpoints):

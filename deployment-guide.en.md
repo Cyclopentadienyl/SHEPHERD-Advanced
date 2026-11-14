@@ -3486,7 +3486,9 @@ Frozen, and the model lists, the Models details and the Results table name such 
 frozen graph backbone", a task model, never the base's score. The acceptance probe checks it in
 fp32, paused and resumed (`L7.disease_frozen`); mixed precision and `torch.compile` with a freeze
 are not verified by that check, and stay available. While
-the drawer is open the run bar's Start is disabled ("close Continue… to start a new run"); **4.
+the drawer is open the run bar's Start is disabled ("close Continue… to start a new run") and its
+**Run name** stays, naming the new run the drawer starts, continued or branched (as `--run-name`
+and `POST /api/v1/training/branch` name one); **4.
 Start**, the drawer's footer under its fields, holds **Continue Training** (or **Start branch**)
 and **Cancel**, with the start's reason beside them, which says what stops it and what to do:
 "Start branch disabled: the parent’s dataset is not this workspace’s current one.", "… the check

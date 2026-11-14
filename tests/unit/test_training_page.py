@@ -1885,7 +1885,7 @@ def test_the_notice_escapes_the_server_text_it_carries(root, monkeypatch, operat
                                  "filename": "last.pt", "sha256": "c" * 64,
                                  "dataset_fingerprint": fp}}
     notice, text, *_rest = tc._on_resume(
-        operator, tc.CONTINUE, tc.workspace_state(ODD), "cpu", tc.CONTINUE_FROM_LIST,
+        operator, tc.CONTINUE, tc.workspace_state(ODD), "", "cpu", tc.CONTINUE_FROM_LIST,
         "gatv2/r/last.pt", "", None, None, parents, {}, [])
     assert notice == ""
     assert "no longer listed" in text and "&lt;b&gt;odd&amp;name" in text and _no_tag(text)
@@ -2592,7 +2592,7 @@ def test_the_drawers_notice_is_a_refusal_with_the_shared_mark():
             if sel == f"{tc._PAGE} #shep-train-drawer-notice"]
     assert rule and not any("amber" in body for body in rule)
     # D8's refusal of the start, should one reach it, is the same mark's.
-    notice, *_rest = tc._on_resume(READ_ONLY, tc.BRANCH, {}, "cpu", tc.CONTINUE_FROM_LIST,
+    notice, *_rest = tc._on_resume(READ_ONLY, tc.BRANCH, {}, "", "cpu", tc.CONTINUE_FROM_LIST,
                                    None, "", None, None, {}, {}, [],
                                    *(None,) * len(tc.BRANCH_FIELDS))
     refusal = tc.operator_access(READ_ONLY).refusal

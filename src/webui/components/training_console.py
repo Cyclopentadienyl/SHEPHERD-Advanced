@@ -3797,7 +3797,7 @@ def _on_check_continue(request: gr.Request, operation, source, listed, manual, d
             compare_html(record, ws or {}), *_branch_updates(preview, op, touched, values))
 
 
-def _on_resume(request: gr.Request, operation, ws, device, source, listed, manual,
+def _on_resume(request: gr.Request, operation, ws, run_name, device, source, listed, manual,
                extend_epochs, extend_lr, parents, mode, touched, *values):
     """The drawer's start, Continue Training or Start branch: an operator
     control (D8, checked first on this event's own request; refused, nothing
@@ -3807,7 +3807,10 @@ def _on_resume(request: gr.Request, operation, ws, device, source, listed, manua
 
     A continuation sends only operational fields (contract M3a-3): every
     learning setting comes from the checkpoint, so the training form's values
-    are not used; an extension its Extra epochs and, for a parent whose rate
+    are not used. Either operation trains a new run of its own (contract
+    M3a-2), named by the run bar's Run name as a new base is (`run_name`,
+    blank for "run"), as POST /api/v1/training/branch and train_model.py
+    --run-name name it; an extension its Extra epochs and, for a parent whose rate
     ended at 0, its Extra-epoch rate, as the check judged them. A branch
     sends ``branch_from`` and the settings the operator edited of its fields
     (`branch_sent`), none for a same-settings branch (decision B1). The job
@@ -3825,12 +3828,12 @@ def _on_resume(request: gr.Request, operation, ws, device, source, listed, manua
                 gr.update(), *(gr.update(),) * (1 + len(BRANCH_FIELDS)))
     said, text, extend, rate, mode, branch = _resume(
         operation, ws, device, source, listed, manual, extend_epochs, extend_lr, parents, mode,
-        touched, values)
+        touched, values, run_name=run_name)
     return notice_html(said, mark="error"), text, extend, rate, mode, *branch
 
 
 def _resume(operation, ws, device, source, listed, manual, extend_epochs, extend_lr, parents,
-            mode, touched=None, values: Sequence[Any] = ()):
+            mode, touched=None, values: Sequence[Any] = (), *, run_name: Any = ""):
     """The drawer's start's work after D8: ``(sentence, check text, Extra
     epochs update, Extra-epoch rate update, mode, Branch box and fields)``,
     the sentence plain text: "" once started, and "" when the start's own
@@ -3880,7 +3883,7 @@ def _resume(operation, ws, device, source, listed, manual, extend_epochs, extend
                 mode, branch)
     config: Dict[str, Any] = {
         "data_dir": str(directory),
-        "run_name": "",
+        "run_name": (run_name or "").strip(),
         "device": device or "auto",
         "compile": bool(load_runtime_settings().get("torch_compile", False)),
     }
@@ -3946,8 +3949,8 @@ FIELD_HELP = {
         "Run name",
         "Optional. Each run is saved in a new folder of its own:\n"
         "<workspace>/runs/<architecture>/<date-time>_<name>_<id>/\n\n"
-        "Letters, digits and hyphens are kept; blank uses \"run\". The run view shows the "
-        "name once training starts.",
+        "Letters, digits and hyphens are kept; blank uses \"run\". It names a continued or "
+        "branched run too. The run view shows the name once training starts.",
     ),
     # The base form: each setting's label, what it is, and the value a run
     # takes without it, with its source (`setting_help`).
@@ -4450,9 +4453,9 @@ def create_training_tab(ctx: Any) -> None:
         None, js=SHOW_CHECK_JS, queue=False).then(**ctx.chip_refresh)
     resume_btn.click(
         _on_resume,
-        inputs=[continue_operation, ws, continue_device, continue_source, checkpoint_dropdown,
-                manual_checkpoint, extend_epochs, extend_lr, parents, mode, branch_touched,
-                *branch_fields],
+        inputs=[continue_operation, ws, run_name, continue_device, continue_source,
+                checkpoint_dropdown, manual_checkpoint, extend_epochs, extend_lr, parents, mode,
+                branch_touched, *branch_fields],
         outputs=[drawer_notice, continue_preview, extend_epochs, extend_lr, mode,
                  *branch_shown],
         show_progress="hidden").then(**view_step).then(
@@ -4596,7 +4599,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-stop:not(:disabled) {{ color: var(--shep-red-700) !important; border-color: var(--shep-red-200) !important; background: #fff !important; }}
 {_PAGE} .shep-rb-row > button:disabled {{ background: var(--shep-grey-50) !important; border: 1px solid var(--shep-grey-200) !important; color: var(--shep-grey-600) !important; opacity: 1 !important; box-shadow: none !important; cursor: not-allowed; }}
 {_PAGE} #shep-train-continues {{ display: none !important; }}
-{_PAGE} .shep-rb-drawer #shep-train-continue, {_PAGE} .shep-rb-drawer #shep-train-stop, {_PAGE} .shep-rb-drawer #run_name {{ display: none !important; }}
+{_PAGE} .shep-rb-drawer #shep-train-continue, {_PAGE} .shep-rb-drawer #shep-train-stop {{ display: none !important; }}
 {_PAGE} .shep-rb-drawer #shep-train-continues {{ display: block !important; flex: 0 1 auto !important; }}
 {_PAGE} .shep-rb-k {{ font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2); margin-right: 8px; }}
 {_PAGE} .shep-rb-confirm {{ display: none !important; }}
