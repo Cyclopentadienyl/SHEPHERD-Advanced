@@ -427,7 +427,9 @@ def _held_page():
     return demo, record, start, reset
 
 
-#: Each case on the one page, from Reset (the page's clock running): the
+#: Each case on the one page, from Reset (the page's clock running; the
+#: first from the page as loaded, where Reset leaves it, since a Reset there
+#: could not be seen answered and its late answer could undo the case): the
 #: field selected, **the page's clock paused** (Playwright's: no timeout and
 #: no animation frame runs, so a text box's and a radio's ticks cannot pass
 #: and their input cannot reach the record), the edit, then the activation (a
@@ -503,8 +505,10 @@ const { chromium } = require('playwright');
   };
   const out = {};
   for (const [name, field, edit, act] of cases) {
-    await reset();
-    expect.reset += 1;
+    if (Object.keys(out).length) {
+      await reset();
+      expect.reset += 1;
+    }
     await until(() => count(fns.start) === expect.start && count(fns.reset) === expect.reset);
     const at = { radio: await centre(targets.radio), act: act ? await centre(targets[act]) : null };
     if (field) { await page.locator(field).click(); await page.keyboard.press('Control+A'); }
@@ -614,10 +618,13 @@ def _switch_page():
     return demo
 
 
-#: Each case from Reset: the switch focused, then Enter (Gradio's checkbox
-#: takes it as a toggle) or Space (the browser's click); the last with an
-#: edit of the text box pending (the page's clock paused) when Enter is
-#: pressed. Then Start, once nothing is counted or held.
+#: Each case from Reset, the first from the page as loaded (where Reset
+#: leaves it: a Reset there could not be seen answered, and its answer,
+#: late under load, undid the case's toggle): the switch focused, then
+#: Enter (Gradio's checkbox takes it as a toggle) or Space (the browser's
+#: click); the last with an edit of the text box pending (the page's clock
+#: paused) when Enter is pressed. Then Start, once nothing is counted or
+#: held.
 _SWITCH_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
@@ -643,9 +650,11 @@ const { chromium } = require('playwright');
   };
   const out = {};
   for (const name of ['enter', 'space', 'enter while pending']) {
-    await page.click('#reset');
-    await page.waitForFunction(() => document.querySelector('#sent textarea, #sent input').value === ''
-      && document.querySelector('#hops input').value === '15, 10, 5' && !document.querySelector('#amp input').checked);
+    if (name !== 'enter') {
+      await page.click('#reset');
+      await page.waitForFunction(() => document.querySelector('#sent textarea, #sent input').value === ''
+        && document.querySelector('#hops input').value === '15, 10, 5' && !document.querySelector('#amp input').checked);
+    }
     if (name === 'enter while pending') {
       await page.locator('#hops input').click();
       await page.keyboard.press('Control+A');
