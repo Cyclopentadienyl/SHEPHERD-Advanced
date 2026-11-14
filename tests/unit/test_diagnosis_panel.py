@@ -1312,13 +1312,20 @@ def test_a_result_older_than_a_load_says_how_many_parts_differ():
     assert "1 part differs" in dp.badge_html(_produced(), later)
     shown = dp.result_identity_html(_produced(), later)
     assert "1 of 10 parts differs" in shown and "status read 16:31:12" in shown
-    # B4: the parts that differ only, side by side (the skill's §4), then the
-    # result's own identity: the model it used, never relabelled by the load.
-    table = shown[shown.index("<table"):shown.index("</table>")]
-    assert table.count('<th scope="row">') == 1 and '<th scope="row">Checkpoint</th>' in table
-    assert f'>{CHECKPOINT_SHA[:12]}</code>' in table and ">bbbbbbbbbbbb</code>" in table
+    # B4: the result's own identity, the model it used, never relabelled by
+    # the load; each value said once (the skill's §1.2, review of B4): the
+    # part that differs carries what is in use now under its own value, and
+    # no table repeats the result's value.
+    assert "<table" not in shown
     own = shown[shown.index("What produced this result"):]
-    assert f'>{CHECKPOINT_SHA[:12]}</code>' in own and "bbbbbbbbbbbb" not in own
+    assert own.count(f'>{CHECKPOINT_SHA[:12]}</code>') == 1
+    assert shown.count(f'>{CHECKPOINT_SHA[:12]}</code>') == 1
+    assert own.count('<span class="shep-dx-now-k">In use now:</span>') == 1
+    checkpoint = own[own.index('<dt class="shep-k">Checkpoint</dt>'):]
+    checkpoint = checkpoint[:checkpoint.index("</dd>")]
+    assert checkpoint.index(f'>{CHECKPOINT_SHA[:12]}</code>') < checkpoint.index("In use now:")
+    assert checkpoint.index("In use now:") < checkpoint.index(">bbbbbbbbbbbb</code>")
+    assert shown.count(">bbbbbbbbbbbb</code>") == 1
 
 
 # -------------------------------------------------- Run Diagnosis

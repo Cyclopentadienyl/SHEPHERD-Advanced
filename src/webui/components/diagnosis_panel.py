@@ -2048,10 +2048,12 @@ def result_identity_html(result: Optional[Mapping[str, Any]], state: Mapping[str
     (`compare_with_served`), never relabelled by a model change or a stop.
     Answer first (produced by the model in use, by an earlier model or
     pipeline, not compared while nothing is served, or why it cannot be
-    checked), then a comparison table of the parts that differ only (the
-    skill's §4: two things that differ), then the result's identity as one
-    summary list (`renderers.summary_list`, a part a row), then the claim
-    boundary and the medical-device line."""
+    checked), then the result's identity as one summary list
+    (`renderers.summary_list`, a part a row), **each value said once**
+    (the skill's §1.2): a part that differs carries what is in use now under
+    its own value ("In use now: …"), the difference beside it, never a second
+    copy of the result's value in a table of its own. Then the claim boundary
+    and the medical-device line."""
     if not isinstance(result, Mapping):
         return '<p class="shep-muted">Run a diagnosis to see what produced its result.</p>'
     kind, identity = _identity_of(result)
@@ -2059,22 +2061,16 @@ def result_identity_html(result: Optional[Mapping[str, Any]], state: Mapping[str
     mine = _identity_rows(kind, identity)
     when = card.hhmmss(state.get("good_at"))
     parts: List[str] = []
+    now: Dict[str, Tuple[str, _Value]] = {}
     if compared["state"] == "differs":
         n = len(compared["differ"])
-        now = {part: (state_, value) for part, state_, value in _identity_rows(*_served_now(state))}
+        now = {part: (state_, value) for part, state_, value in _identity_rows(*_served_now(state))
+               if part in compared["differ"]}
         parts.append(f'<p class="shep-dx-lead"><b>This result came from an earlier model or '
                      f'pipeline:</b> {n} of {compared["total"]} parts '
                      f'{"differs" if n == 1 else "differ"} from what is in use now (status '
-                     f'read {_e(when)}). The result and its CSV and report keep their own '
-                     'identity.</p>')
-        rows = "".join(f'<tr><th scope="row">{_e(_part_key(part))}</th>'
-                       f'<td>{_part_html(state_, value)}</td>'
-                       f'<td>{_part_html(*now[part])}</td></tr>'
-                       for part, state_, value in mine if part in compared["differ"])
-        parts.append('<div class="shep-tbl-wrap"><table class="shep-tbl shep-dx-cmp" '
-                     'aria-label="The parts that differ"><thead><tr><th scope="col">Part</th>'
-                     '<th scope="col">This result</th><th scope="col">In use now</th></tr>'
-                     f'</thead><tbody>{rows}</tbody></table></div>')
+                     f'read {_e(when)}); each says what is in use now under its own value. The '
+                     'result and its CSV and report keep their own identity.</p>')
     elif compared["state"] == "equal":
         parts.append(f'<p class="shep-dx-lead"><b>Produced by the model in use:</b> all '
                      f'{compared["total"]} parts are the same as what is in use now (status '
@@ -2085,8 +2081,10 @@ def result_identity_html(result: Optional[Mapping[str, Any]], state: Mapping[str
         parts.append(f'<p class="shep-dx-lead"><b>Cannot check against the model in use yet:'
                      f'</b> {_e(compared["reason"])}</p>')
     parts.append('<p class="shep-dx-sub-h"><b>What produced this result</b></p>')
-    parts.append(_summary_list((_part_key(part), _part_html(state_, value))
-                              for part, state_, value in mine))
+    parts.append(_summary_list((_part_key(part), _part_html(state_, value) + (
+        f'<span class="shep-dx-now"><span class="shep-dx-now-k">In use now:</span> '
+        f'{_part_html(*now[part])}</span>' if part in now else ""))
+        for part, state_, value in mine))
     return ('<div class="shep-dx-result-id">' + "".join(parts)
             + _boundary_html(_claim_boundary_lines(kind, identity)) + '</div>')
 
@@ -3611,7 +3609,8 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-result-id {{ display: flex; flex-direction: column; gap: 8px; }}
 {_TAB} .shep-dx-result-id p.shep-dx-lead, {_TAB} .shep-dx-result-id p.shep-dx-sub-h {{ margin: 0; }}
 {_TAB} .shep-dx-result-id .shep-kv {{ font-size: 14px; }}
-{_TAB} .shep-dx-cmp th[scope="row"] {{ font-weight: 600; white-space: normal; }}
+{_TAB} .shep-dx-result-id .shep-dx-now {{ display: block; margin-top: 2px; }}
+{_TAB} .shep-dx-result-id .shep-dx-now-k {{ font-weight: 600; }}
 /* The drawers' Model Facts take the one summary list's columns
    (`renderers.summary_list`: a digest's long label on a line of its own). */
 {_TAB} .shep-dx-drawer .shep-facts-sum {{ overflow-wrap: anywhere; }}
