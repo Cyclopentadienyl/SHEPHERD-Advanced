@@ -154,6 +154,18 @@ def test_a_field_label_is_plain_text_with_four_and_a_half_to_one_where_fields_si
         assert contrast(_effective("--block-title-text-color"), colour) >= 4.5, name
 
 
+def test_a_chosen_radios_label_has_four_and_a_half_to_one_on_its_fill():
+    """The round's closing browser check (axe color-contrast, serious): a
+    chosen radio's label (Training's Device "auto", Fine-tune's Graph
+    backbone "Trained") was white on the theme's indigo-500, 4.47:1. The
+    stylesheet fills it with the dashboard's accent, a primary button's."""
+    assert contrast(_theme_value("checkbox_label_text_color_selected"),
+                    _theme_value("checkbox_label_background_fill_selected")) < 4.5
+    assert _effective("--checkbox-label-background-fill-selected") == _tokens()["--shep-accent"]
+    assert contrast(_effective("--checkbox-label-text-color-selected"),
+                    _effective("--checkbox-label-background-fill-selected")) >= 4.5
+
+
 def test_the_themes_own_info_line_and_placeholder_are_below_the_threshold():
     """Why the stylesheet sets them: the theme's subdued grey."""
     assert contrast(_theme_value("block_info_text_color"), "#ffffff") < 4.5

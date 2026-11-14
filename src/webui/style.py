@@ -224,7 +224,9 @@ body { color: var(--shep-text); }
    and its hover grey-300 1.4:1). A field's info= line (a state set at runtime,
    such as the Reference cohort select's "…: cannot be read: …", travels there)
    and a placeholder are text too: the theme's subdued grey (#9ca3af) is 2.54:1
-   on white; the secondary text and the muted token are 8.9:1 and 6.1:1. */
+   on white; the secondary text and the muted token are 8.9:1 and 6.1:1. A
+   chosen radio's label is white on a fill: the theme's indigo-500 is 4.47:1,
+   the dashboard's accent (a primary button's fill) 5.4:1. */
 .gradio-container {
   --block-title-text-color: var(--shep-text);
   --block-title-background-fill: transparent;
@@ -235,6 +237,7 @@ body { color: var(--shep-text); }
   --block-label-text-color: var(--shep-accent-text);
   --checkbox-border-color: var(--shep-grey-500);
   --checkbox-border-color-hover: var(--shep-accent);
+  --checkbox-label-background-fill-selected: var(--shep-accent);
   --block-info-text-color: var(--shep-text-2);
   --input-placeholder-color: var(--shep-muted);
 }
