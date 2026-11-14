@@ -183,9 +183,10 @@ def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
     - **the head scripts**: the shared ⓘ (and Copy), the shell (always
       light, title, header row) and the touch record's (every edit of a
       field whose touches a form records is that field's input, an emptied
-      text box included: `training_console.TOUCH_HEAD`). They run once per
+      text box included, and is in the form's record before a click made
+      after it goes out: `training_console.TOUCH_HEAD`). They run once per
       page load, before any component exists, so each works by
-      document-level delegation.
+      document-level (or window-level) delegation.
     """
     return ("<style>" + HELP_CSS + SHELL_CSS + "".join(page_css) + "</style>"
             + HELP_HEAD + shell.SHELL_HEAD + training_console.TOUCH_HEAD)

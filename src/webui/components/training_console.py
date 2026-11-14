@@ -55,9 +55,10 @@ a unit or "off" is said under the field (`FIELD_FORMATS`). **Explicit is what
 the operator touched** (decision S2): each field's input, every edit of the
 operator's and a field emptied among them (`record_touches`), records it in
 the form's record, held in the browser and carried by Start's own request
-(`touched_record`), Reset to reference clears it, and the line under the
-form says what is set ("Set by you: Epochs 5 (reference 200)", the first
-few named and every one under its Details).
+(`touched_record`; a click waits until each edit made before it is there,
+`TOUCH_HEAD`), Reset to reference clears it, and the line under the form
+says what is set ("Set by you: Epochs 5 (reference 200)", the first few
+named and every one under its Details).
 Start sends ``learning_stage="base"``, the settings touched that the run
 reads, whatever their value, and the model spec whole when a field of it was
 touched (`base_start_settings`); each value is checked first by its field
@@ -556,80 +557,228 @@ def touched_record(elem_id: str) -> Any:
     Reset, that each field's input adds its key to there (`record_touches`:
     every edit of the operator's, a field emptied included), with no request
     of its own, and that Start's own request carries beside the fields'
-    values. What Start sends is therefore read from the click's own payload
-    alone, never from a state another request writes on the server (the base
-    form's, the Fine-tune page's and the Continue drawer's Branch fields')."""
+    values. A click the operator makes waits until every edit made before it
+    has reached the record (`TOUCH_HEAD`: held, then replayed; never sent
+    with the record as it was), so Start's request carries each of them.
+    What Start sends is therefore read from the click's own payload alone,
+    never from a state another request writes on the server (the base form's,
+    the Fine-tune page's and the Continue drawer's Branch fields')."""
     return gr.JSON(value=[], visible=False, elem_id=elem_id)
 
 
 #: The class `record_touches` gives each field whose touches it records: the
-#: page's touch script (`TOUCH_HEAD`) acts on these fields' text boxes alone.
+#: page's touch script (`TOUCH_HEAD`) acts on these fields alone.
 TOUCH_CLASS = "shep-touch"
 
-#: **An operator's every edit of a text box is its input, in the browser**
-#: (`record_touches`; in the dashboard's head, `app.dashboard_head`). Gradio
-#: 6.30's text box dispatches ``.input`` from a keypress alone: its Textbox
-#: calls its input handler from its keypress listener, and its listeners of
-#: the DOM's input event only take the box's value (its value binding) and
-#: size a box of several lines, while its number box dispatches ``.input`` on
-#: that event. An edit that comes with no keypress (select all, then Backspace
-#: or Delete; a cut; a paste; a drop; an input method's text) therefore fired
-#: ``.change`` alone, which a page's own write fires too, so a text field the
-#: operator emptied was never recorded and Start sent the reference in its
-#: place (OPS-R1, the external review of 46a5c2b). This script gives such an
-#: edit of a text box in a field of `TOUCH_CLASS` the keypress the box reads
-#: its input from (key "Unidentified": never Enter, so never a submit), in
-#: the input event's bubbling phase, after the box's value binding has taken
-#: the edit's value; an edit whose own key's keypress reached the box already
-#: has its input. Only an edit the operator made is a trusted input event: a
-#: page's write of a value (the first fill, Reset, a task change, a check's
-#: or a Refresh's fills) and a focus or a Tab are none, so they still record
-#: nothing. The text box dispatches its input two of its ticks after the
-#: edit, a typed key's as an emptying's: on the Training page in Chromium a
-#: click on Start 15 ms or more after the edit carried the key every time
-#: (36 trials, 15 to 100 ms), one within 10 ms of it could still carry the
-#: record as it was.
+
+def touch_mark(record: Any, key: str) -> str:
+    """**The class naming the record and the key a field's edits go to**
+    (`record_touches`, beside `TOUCH_CLASS`):
+    ``shep-touch:<the record's element id>:<key>``. The page's touch script
+    (`TOUCH_HEAD`) counts the field's edits under it and the field's
+    acknowledgement (`LANDED_JS`) names it, so each edit is waited for by its
+    own record and key."""
+    return f"{TOUCH_CLASS}:{record.elem_id}:{key}"
+
+
+#: **The longest the page holds an operator's click for an edit's record**
+#: (`TOUCH_HEAD`), in milliseconds: the bound of a defect (an acknowledgement
+#: that never comes), never the guarantee, which is the acknowledgement.
+TOUCH_HOLD_MS = 2000
+
+#: **A field's input has reached its form's record** (`record_touches`;
+#: ``{mark}`` is the field's `touch_mark` as a JSON string): the js-only
+#: listener chained after the touch listener. Gradio 6.30 runs a listener's
+#: js, then writes its outputs, then dispatches what is chained after it, so
+#: the record holds the key when this runs; it counts one of the field's
+#: edits off in the page's touch script (`TOUCH_HEAD`).
+LANDED_JS = "() => { if (window.ShepTouch) { window.ShepTouch.landed({mark}); } }"
+
+#: **An operator's every edit of a recorded field reaches its record, before
+#: any click of theirs made after it goes out** (`record_touches`; in the
+#: dashboard's head, `app.dashboard_head`). For the fields of `TOUCH_CLASS`:
+#:
+#: - **Every edit is the field's input.** Gradio 6.30's text box dispatches
+#:   ``.input`` from a keypress alone: its Textbox calls its input handler
+#:   from its keypress listener, and its listeners of the DOM's input event
+#:   only take the box's value (its value binding) and size a box of several
+#:   lines. An edit that comes with no keypress (select all, then Backspace or
+#:   Delete; a cut; a paste; a drop; an input method's text) therefore fired
+#:   ``.change`` alone, which a page's own write fires too, so a text field
+#:   the operator emptied was never recorded and Start sent the reference in
+#:   its place (OPS-R1, the external review of 46a5c2b). This script gives
+#:   such an edit (a trusted input event) of a text box the keypress the box
+#:   reads its input from (key "Unidentified": never Enter, so never a
+#:   submit), in the input event's bubbling phase, after the box's value
+#:   binding has taken the edit's value; an edit whose own key's keypress
+#:   reached the box already has its input. The number box, the checkbox and
+#:   the radio dispatch ``.input`` from each input event of theirs.
+#: - **A click waits for the edits made before it** (the narrow re-review of
+#:   214b523, OPS-R1's residual). A field's input reaches the record after
+#:   the edit (a text box's two of its ticks after it, a radio's one, each
+#:   tick the first of an animation frame and a zero timeout; a number box's
+#:   and a checkbox's within the edit's own event), and Gradio reads an
+#:   event's inputs when it dispatches the event, so a click on Start between
+#:   the two carried the record as it was and the run took the reference for
+#:   a field the operator had just set. The script counts, by each field's
+#:   mark (`touch_mark`), the causes of the field's input: a keypress reaching
+#:   a text box (the operator's or the one given above), an input event
+#:   reaching a number box, a checkbox or a radio. Each cause is one input of
+#:   the field, and the input's acknowledgement (`LANDED_JS`), which comes
+#:   once the record holds the key, counts it off. While anything is counted,
+#:   or a click is already held, the operator's click (a trusted one: the
+#:   mouse's, or Enter or Space on a button, Space on a checkbox or a radio)
+#:   and Enter on a checkbox (which Gradio's checkboxes take as a toggle: the
+#:   Fine-tune tasks) are held: stopped before any listener sees them, their
+#:   default prevented. Once nothing is counted they are replayed on the same
+#:   element, in their order, each as one untrusted event of the same kind,
+#:   position, buttons and keys, which this script lets through; a replay
+#:   that makes an edit (a click on a checkbox) is waited for in turn. So
+#:   Start, Check, Start branch, Reset to reference and a change of the
+#:   Fine-tune tasks each go out after the edits made before them, and
+#:   Reset's and the tasks' writes of the record come after the edits', in
+#:   the operator's order. Every click is held, not a list of controls: any
+#:   control's event may read or write a record, and the hold lasts until the
+#:   edits' writes. A dropdown's option is chosen by a press, not a click, and
+#:   is not held.
+#: - **Bounded.** An acknowledgement that never comes is a defect: after
+#:   `TOUCH_HOLD_MS` the held clicks are dropped, never sent, and the console
+#:   names the fields still counted; they stay counted, so a later click
+#:   waits the same way until the page is loaded again.
+#:
+#: A page's write of a value (the first fill, Reset, a task change, a check's
+#: or a Refresh's fills) fires no keypress and no input event, and a focus or
+#: a Tab none: they count nothing and record nothing. ``ShepTouch.state()``
+#: reads what is counted and held.
 TOUCH_HEAD = "<script>" + r"""
 (function () {
   if (window.ShepTouch) { return; }
+  var FIELD = '.__CLASS__', MARK = '__CLASS__:', HOLD_MS = __HOLD_MS__;
   // The element a key's own keypress reached, until that key's input or keyup.
   var keyed = null;
-  function unkeyed() { keyed = null; }
-  document.addEventListener('keydown', unkeyed, true);
-  document.addEventListener('keyup', unkeyed, true);
-  document.addEventListener('keypress', function (e) { if (e.isTrusted) { keyed = e.target; } }, true);
+  // By field (its mark): the causes of its input not yet acknowledged.
+  var counted = new Map();
+  // The operator's clicks held, in their order, and the bound's timer.
+  var held = [], bound = null;
+  function markOf(el) {
+    var field = el && el.closest ? el.closest(FIELD) : null;
+    if (!field) { return null; }
+    for (var i = 0; i < field.classList.length; i++) {
+      if (field.classList[i].indexOf(MARK) === 0) { return field.classList[i]; }
+    }
+    return null;
+  }
+  function textBox(el) {
+    return !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text'));
+  }
+  function checkbox(el) { return !!el && el.tagName === 'INPUT' && el.type === 'checkbox'; }
+  function cause(el) {
+    var mark = markOf(el);
+    if (mark) { counted.set(mark, (counted.get(mark) || 0) + 1); }
+  }
+  function waiting() { return counted.size > 0 || held.length > 0; }
+  function hold(e) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    held.push({target: e.target, event: e});
+    if (bound === null) { bound = setTimeout(expire, HOLD_MS); }
+  }
+  function replay(h) {
+    var e = h.event, init = {bubbles: true, cancelable: true, composed: true, view: window,
+      detail: e.detail, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey};
+    if (e.type === 'keydown') {
+      init.key = e.key; init.code = e.code; init.location = e.location; init.repeat = e.repeat;
+      h.target.dispatchEvent(new KeyboardEvent('keydown', init));
+      return;
+    }
+    ['screenX', 'screenY', 'clientX', 'clientY', 'button', 'buttons'].forEach(function (k) { init[k] = e[k]; });
+    var Kind = MouseEvent;
+    if (window.PointerEvent && e instanceof PointerEvent) {
+      Kind = PointerEvent;
+      init.pointerId = e.pointerId; init.pointerType = e.pointerType; init.isPrimary = e.isPrimary;
+    }
+    h.target.dispatchEvent(new Kind('click', init));
+  }
+  function release() {
+    while (!counted.size && held.length) { replay(held.shift()); }
+    if (bound !== null) { clearTimeout(bound); bound = null; }
+    if (held.length) { bound = setTimeout(expire, HOLD_MS); }
+  }
+  function expire() {
+    bound = null;
+    if (!held.length) { return; }
+    console.error('SHEPHERD: ' + held.length + ' click(s) not sent: an edit of '
+      + Array.from(counted.keys()).join(', ') + ' has not reached its record in ' + HOLD_MS + ' ms.');
+    held = [];
+  }
+  function landed(mark) {
+    var left = (counted.get(mark) || 0) - 1;
+    if (left > 0) { counted.set(mark, left); } else { counted.delete(mark); }
+    if (!counted.size && held.length) { Promise.resolve().then(release); }
+  }
+  window.addEventListener('keydown', function (e) {
+    keyed = null;
+    if (e.key === 'Enter' && checkbox(e.target) && e.isTrusted && waiting()) { hold(e); }
+  }, true);
+  window.addEventListener('keyup', function () { keyed = null; }, true);
+  window.addEventListener('keypress', function (e) {
+    if (e.isTrusted) { keyed = e.target; }
+    if (textBox(e.target)) { cause(e.target); }
+  }, true);
+  window.addEventListener('input', function (e) {
+    var el = e.target;
+    if (el && el.tagName === 'INPUT' && (el.type === 'number' || el.type === 'checkbox' || el.type === 'radio')) {
+      cause(el);
+    }
+  }, true);
+  window.addEventListener('click', function (e) { if (e.isTrusted && waiting()) { hold(e); } }, true);
   document.addEventListener('input', function (e) {
     var box = e.target, reached = keyed === box;
     keyed = null;
-    if (!e.isTrusted || reached || !box || !box.closest || !box.closest('.__CLASS__')) { return; }
-    if (box.tagName === 'TEXTAREA' || (box.tagName === 'INPUT' && box.type === 'text')) {
-      box.dispatchEvent(new KeyboardEvent('keypress', {key: 'Unidentified'}));
-    }
+    if (!e.isTrusted || reached || !textBox(box) || !box.closest(FIELD)) { return; }
+    box.dispatchEvent(new KeyboardEvent('keypress', {key: 'Unidentified'}));
   });
-  window.ShepTouch = true;
+  window.ShepTouch = {
+    landed: landed,
+    state: function () { return {counted: Object.fromEntries(counted), held: held.length}; }
+  };
 })();
-""".replace("__CLASS__", TOUCH_CLASS) + "</script>"
+""".replace("__CLASS__", TOUCH_CLASS).replace("__HOLD_MS__", str(TOUCH_HOLD_MS)) + "</script>"
+
+#: The field kinds whose every edit is one input of theirs (`TOUCH_HEAD`):
+#: `value_field`'s text box, number box, checkbox and radio.
+TOUCH_KINDS = (gr.Textbox, gr.Number, gr.Checkbox, gr.Radio)
 
 
 def record_touches(field: Any, key: str, record: Any) -> None:
     """**`field`'s every edit by the operator adds `key` to `record`**
-    (`touched_record`), in the browser (`TOUCH_JS`), so a click the operator
-    makes after the edit sends the record with `key` (the box's input comes a
-    few milliseconds after the edit: `TOUCH_HEAD` says how many); every edit
-    does ("multiple"). The edit is the field's ``.input``, never ``.change``,
-    which a page's own write fires too (decision S2): a typed value, the
-    reference's own included, a number box's or a text box emptied, a cut, a
-    paste. A text box's edit with no keypress reaches ``.input`` through the
-    page's touch script (`TOUCH_HEAD`), which acts on the fields marked here
-    (`TOUCH_CLASS`). An emptied field is then sent as it is, empty, and meets
-    its field spec's check (`sent_settings`). Wire it before any other input
-    listener of `field`: the browser runs an event's listeners in order, so
-    they read the record with `key`. The base form, the Fine-tune page and the
-    Continue drawer's Branch fields record by it."""
-    field.elem_classes = [*(field.elem_classes or []), TOUCH_CLASS]
+    (`touched_record`), in the browser (`TOUCH_JS`), **before any click the
+    operator makes after the edit goes out**: every edit does ("multiple"),
+    and the acknowledgement chained after it (`LANDED_JS`) tells the page's
+    touch script (`TOUCH_HEAD`) that it has, which holds the operator's
+    clicks until each edit made before them has. The edit is the field's
+    ``.input``, never ``.change``, which a page's own write fires too
+    (decision S2): a typed value, the reference's own included, a number
+    box's or a text box emptied, a cut, a paste. A text box's edit with no
+    keypress reaches ``.input`` through the touch script too, which acts on
+    the fields marked here (`TOUCH_CLASS`, and the record's and key's
+    `touch_mark`). `field` is one of `TOUCH_KINDS` (a TypeError otherwise),
+    the kinds whose every edit is one input. An emptied field is then sent as
+    it is, empty, and meets its field spec's check (`sent_settings`). Wire it
+    before any other input listener of `field`: the browser runs an event's
+    listeners in order, so they read the record with `key`. The base form,
+    the Fine-tune page and the Continue drawer's Branch fields record by
+    it."""
+    if not isinstance(field, TOUCH_KINDS):
+        raise TypeError(f"record_touches: {type(field).__name__} is not one of "
+                        f"{[kind.__name__ for kind in TOUCH_KINDS]}")
+    mark = touch_mark(record, key)
+    field.elem_classes = [*(field.elem_classes or []), TOUCH_CLASS, mark]
     field.input(None, inputs=[record], outputs=[record],
                 js=TOUCH_JS.replace("{key}", json.dumps(key)), queue=False,
-                trigger_mode="multiple", show_progress="hidden")
+                trigger_mode="multiple", show_progress="hidden").then(
+        None, js=LANDED_JS.replace("{mark}", json.dumps(mark)), queue=False,
+        show_progress="hidden")
 
 
 def record_drops(control: Any, keys: Collection[str], record: Any) -> None:
