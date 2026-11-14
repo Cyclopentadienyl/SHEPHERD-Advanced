@@ -131,12 +131,27 @@ def test_the_themes_own_label_chip_and_checkbox_border_are_below_the_threshold()
     assert contrast(_theme_value("checkbox_border_color_hover"), "#ffffff") < 3.0
 
 
-@pytest.mark.parametrize("text, fill", [
-    ("--block-title-text-color", "--block-title-background-fill"),
-    ("--block-label-text-color", "--block-label-background-fill"),
-])
-def test_a_field_labels_text_has_at_least_four_and_a_half_to_one_on_its_chip(text, fill):
-    assert contrast(_effective(text), _effective(fill)) >= 4.5
+def test_a_components_corner_label_has_at_least_four_and_a_half_to_one_on_its_chip():
+    assert contrast(_effective("--block-label-text-color"),
+                    _effective("--block-label-background-fill")) >= 4.5
+
+
+def test_a_field_label_is_plain_text_with_four_and_a_half_to_one_where_fields_sit():
+    """The WebUI skill's §3: a field's label is plain 14 px / 600 text, never
+    a tinted chip (the theme's own fill, `--block-title-background-fill`, is
+    the indigo-100 pill the dashboard drew on every page until the ops
+    round's B5): no fill, no padding, and its text at 4.5:1 on every surface
+    a field sits on."""
+    assert _effective("--block-title-background-fill") == "transparent"
+    assert _effective("--block-title-padding") == "0"
+    assert (_effective("--block-title-text-size"), _effective("--block-title-text-weight")) == (
+        "14px", "600")
+    tokens = _tokens()
+    around = {"field": _effective("--input-background-fill"), "white": "#ffffff",
+              "panel": tokens["--shep-panel"], "panel-2": tokens["--shep-panel-2"],
+              "page": tokens["--shep-bg"]}
+    for name, colour in around.items():
+        assert contrast(_effective("--block-title-text-color"), colour) >= 4.5, name
 
 
 def test_the_themes_own_info_line_and_placeholder_are_below_the_threshold():

@@ -213,8 +213,12 @@ body { color: var(--shep-text); }
 }
 
 /* ---------------------------------------------------------------- field labels and checkboxes */
-/* A field's label chip (HPO terms, Patient ID, Workspace) is text: at least
-   4.5:1 on its chip (the Soft theme's indigo-500 on indigo-100 is 3.63:1). An
+/* A field's label (HPO terms, Patient ID, Workspace) is plain 14 px / 600 text,
+   never a chip (the WebUI skill's §3: the Soft theme drew it as a tinted pill,
+   indigo-500 on indigo-100 at 3.63:1, which reads as a tag or a button): no
+   fill, no padding, the body text's colour, at least 4.5:1 on every surface a
+   field sits on. A component's corner label (``block-label``, a plot's or a
+   file's) stays the theme's chip, its text at least 4.5:1 on it. An
    unchecked checkbox's border is what shows it is there: at least 3:1 against
    its fill and what is around it (WCAG 1.4.11; the theme's grey-100 is 1.1:1,
    and its hover grey-300 1.4:1). A field's info= line (a state set at runtime,
@@ -222,7 +226,12 @@ body { color: var(--shep-text); }
    and a placeholder are text too: the theme's subdued grey (#9ca3af) is 2.54:1
    on white; the secondary text and the muted token are 8.9:1 and 6.1:1. */
 .gradio-container {
-  --block-title-text-color: var(--shep-accent-text);
+  --block-title-text-color: var(--shep-text);
+  --block-title-background-fill: transparent;
+  --block-title-padding: 0;
+  --block-title-radius: 0;
+  --block-title-text-size: 14px;
+  --block-title-text-weight: 600;
   --block-label-text-color: var(--shep-accent-text);
   --checkbox-border-color: var(--shep-grey-500);
   --checkbox-border-color-hover: var(--shep-accent);
