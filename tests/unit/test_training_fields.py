@@ -589,14 +589,15 @@ def test_a_value_is_checked_by_its_field_spec_without_coercion():
 
 #: The fields whose null is one of their values, each by what its consumer
 #: does with None (`FieldSpec.null_means`): no parent to resume, branch or
-#: finetune from (`train_model.train`: ``if config.resume_from`` …), no stage
-#: stated (a run from a parent is of its parent's; a new run naming none is
-#: refused by its identity check), the stage's reference spec
-#: (``config.model_spec is None``), a base's task, no early stopping
-#: (``early_stopping_patience is not None``), no extension, no zero rate
-#: replaced and no pause.
+#: finetune from (`train_model.train`: ``if config.resume_from`` …), the
+#: stage's reference spec (``config.model_spec is None``), a base's task, no
+#: early stopping (``early_stopping_patience is not None``), no extension, no
+#: zero rate replaced and no pause. Not the stage: a continuation's stage
+#: left out is its parent's, but a null stated is no stage (`train` refuses
+#: it, and a continuation compares it with the parent's as stated,
+#: `run_plan.parent_identity_problem`).
 NULL_IS_A_VALUE = frozenset({
-    "resume_from", "learning_stage", "model_spec", "task", "finetune_from", "branch_from",
+    "resume_from", "model_spec", "task", "finetune_from", "branch_from",
     "early_stopping_patience", "extend_epochs", "extend_lr", "pause_after_epoch"})
 #: The task's own settings, which the recipe fills for each task that reads
 #: them and this build stores no default of (``default`` None): their consumer
@@ -626,6 +627,24 @@ def test_a_null_is_a_value_only_where_its_field_says_what_it_means():
     for name in TASK_OWN_NUMBERS:
         assert by_name(name).default is None and not by_name(name).null_means, name
     assert by_name("early_stopping_patience").default == 10
+
+
+def test_a_null_stage_is_no_stage_as_its_consumers_read_it():
+    """The stage's null (the review of the OPS-R2 fix): it was classified as
+    "not stated: the parent's stage", which no consumer does. A stage left
+    out of a continuation is its parent's; a null stated is compared with the
+    parent's as stated and refused (`parent_identity_problem`, which the plans
+    ask of a stated stage), and the training process refuses a run whose
+    stage is None. So the one rule refuses it, in its sentence."""
+    from src.config.training_fields import value_problem
+    from src.utils.run_plan import parent_identity_problem
+
+    assert value_problem("learning_stage", None) == "learning_stage must be set, not null."
+    assert parent_identity_problem("finetune", "disease", None, "disease", "The parent") == (
+        "The parent is a finetune checkpoint for disease; a run continues only its own stage "
+        "and task.")
+    assert parent_identity_problem("finetune", "disease", "finetune", "disease",
+                                   "The parent") is None
 
 
 def test_a_field_that_takes_no_null_and_has_no_default_is_filled_for_every_run_reading_it():

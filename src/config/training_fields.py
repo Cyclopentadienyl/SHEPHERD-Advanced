@@ -414,13 +414,15 @@ FIELDS: Tuple[FieldSpec, ...] = (
               current_api_choices=("base", "finetune"),
               known_divergence=True,
               divergence_note="CLI (--stage); the WebUI's Training base form sends 'base'. POST "
-                              "/training/start requires 'base' for a new run and takes either "
-                              "stage, or none, with resume_from (compared with the parent's "
-                              "when given, so a finetune child continues over HTTP); the "
+                              "/training/start requires 'base' for a new run and, with "
+                              "resume_from, takes either stage or leaves it out for the "
+                              "parent's (one given, a null included, is compared with the "
+                              "parent's, so a finetune child continues over HTTP); the "
                               "Fine-tune page and POST /training/finetune start finetunes.",
+              # No `null_means`: only a stage left out is the parent's; a null stated
+              # is no stage (train() refuses it, a continuation compares it as stated).
               description="Model bundle stage: base (KG link prediction) or finetune; "
-                          "required, a run without one is refused before anything is read.",
-              null_means="not stated: a run from a parent is of its parent's stage"),
+                          "required, a run without one is refused before anything is read."),
     FieldSpec("model_spec", "dict", None, "model", projects_to="TrainConfig.model_spec",
               current_api={},
               known_divergence=True,
