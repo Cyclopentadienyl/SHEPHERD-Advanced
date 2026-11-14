@@ -5,9 +5,10 @@ The ordering of a page's events (which listener runs when, what a
 ``gr.State`` holds when an event starts and when its answer is written) is
 Gradio's, so a test of it goes through Gradio's own queue and routes:
 
-- `served(demo)`: the page's Blocks mounted on a FastAPI app as the dashboard
-  mounts it (``/ui``), served by uvicorn on a free loopback port; yields the
-  base of Gradio's API.
+- `served(demo, **mount)`: the page's Blocks mounted on a FastAPI app as the
+  dashboard mounts it (``/ui``; with the mount's options, `app.mount_options`,
+  its theme, CSS and head too), served by uvicorn on a free loopback port;
+  yields the base of Gradio's API.
 - `ServedSession(base, demo)`: one browser session as Gradio 6.30's client
   speaks to the queue (`join`, `wait`) and to a ``queue=False`` listener such
   as a shell timer's tick (`predict`); `state(block)` reads the session's
@@ -111,16 +112,17 @@ class ServedSession:
 
 
 @contextlib.contextmanager
-def served(demo: Any) -> Iterator[str]:
+def served(demo: Any, **mount: Any) -> Iterator[str]:
     """The page's Blocks mounted on a FastAPI app as the dashboard mounts it
-    (``/ui``), served by uvicorn on a free loopback port; yields the base of
-    Gradio's API."""
+    (``/ui``, with `mount`: what `gr.mount_gradio_app` is given besides the
+    app, the Blocks and the path), served by uvicorn on a free loopback port;
+    yields the base of Gradio's API (the page itself is its ``/ui/``)."""
     import gradio as gr
     import uvicorn
     from fastapi import FastAPI
 
     app = FastAPI()
-    gr.mount_gradio_app(app, demo, path="/ui")
+    gr.mount_gradio_app(app, demo, path="/ui", **mount)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()

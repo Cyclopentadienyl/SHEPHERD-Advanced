@@ -28,6 +28,7 @@ Module: tests/unit/test_webui_shell.py
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -507,8 +508,8 @@ def test_the_wrapped_chips_sit_on_their_own_line_under_the_stage_switch():
     (measured with ``document.elementsFromPoint``). The header script now
     measures where the chips' and Settings' own line starts (the right tab
     group's top) and the wrapped chips sit there, however many lines the
-    switch takes; at 480, 760, 1100 and 1850 px no tab's centre or corner is
-    under another element (the stage's browser check)."""
+    switch takes. This pins that wiring; what the browser draws is
+    `test_no_header_element_covers_a_tab_at_any_width`'s."""
     from src.webui.style import SHELL_CSS
 
     head = shell.SHELL_HEAD
@@ -517,3 +518,77 @@ def test_the_wrapped_chips_sit_on_their_own_line_under_the_stage_switch():
     wrapped = SHELL_CSS[SHELL_CSS.index("#shep-shell.shep-nav-wrapped #shep-chips {"):]
     wrapped = wrapped[:wrapped.index("}")]
     assert "top: var(--shep-chips-top, var(--shep-row1-h));" in wrapped
+
+
+#: Opens the dashboard at 480 px, then 760, 1100 and 1850 (a resize runs the
+#: header's layout, as a load does), and reports for each stage tab what
+#: ``document.elementsFromPoint`` finds on top at its centre and four inset
+#: corners: the tab itself or something inside it, or what covers it.
+_HEADER_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 480, height: 800 } })).newPage();
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#shep-chips .shep-chips', { timeout: 60000 });
+  const out = {};
+  for (const width of [480, 760, 1100, 1850]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.waitForTimeout(800);
+    out[width] = await page.evaluate(() => {
+      const ids = ['shep-tab-clinical-button', 'shep-tab-research-button',
+                   'shep-tab-settings-button'];
+      const tabs = {};
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (!el) { tabs[id] = null; continue; }
+        const r = el.getBoundingClientRect();
+        const points = [[r.left + r.width / 2, r.top + r.height / 2], [r.left + 3, r.top + 3],
+                        [r.right - 3, r.top + 3], [r.left + 3, r.bottom - 3],
+                        [r.right - 3, r.bottom - 3]];
+        tabs[id] = points.map(([x, y]) => {
+          const top = document.elementsFromPoint(x, y)[0];
+          return !top || el.contains(top) ? null
+            : (top.id || String(top.className).slice(0, 60) || top.tagName);
+        }).filter(Boolean);
+      }
+      return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
+               chips: document.querySelector('#shep-chips .shep-chips').childElementCount, tabs };
+    });
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
+    """B5 review: the chips' line was pinned only as source text. In a real
+    browser (Node and Playwright, skipped without), the dashboard mounted as
+    the service mounts it (`app.mount_options`: its CSS and head script): at
+    480, 760, 1100 and 1850 px each stage tab is what
+    ``document.elementsFromPoint`` finds first at its centre and corners, the
+    chips never over it; at 480 the header has wrapped onto its second line."""
+    import subprocess
+
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright
+    from tests.fixtures.served_page import served
+
+    found = node_with_playwright()
+    if found is None:
+        pytest.skip("Node with Playwright is not installed")
+    node, env = found
+    script = tmp_path / "header.cjs"
+    script.write_text(_HEADER_JS, encoding="utf-8")
+    with served(create_gradio_app(), **mount_options()) as base:
+        page = base[:-len("gradio_api")]
+        result = subprocess.run([node, str(script), page], env=env, capture_output=True,
+                                text=True, timeout=180)
+    assert result.returncode == 0, result.stderr
+    seen = json.loads(result.stdout)
+    assert seen["480"]["wrapped"] is True and seen["1850"]["wrapped"] is False
+    for width, facts in seen.items():
+        assert facts["chips"] > 0, width
+        for tab, covered in facts["tabs"].items():
+            assert covered == [], (width, tab, covered)

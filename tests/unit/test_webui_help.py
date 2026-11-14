@@ -25,8 +25,6 @@ from __future__ import annotations
 
 import html
 import json
-import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -35,6 +33,7 @@ import pytest
 gr = pytest.importorskip("gradio")
 
 from src.webui.components import help as h  # noqa: E402
+from tests.fixtures.browser import node_with_playwright  # noqa: E402
 
 
 # --------------------------------------------------------------------------- the registry
@@ -144,23 +143,6 @@ HOSTILE = "<img src=x onerror=window.__pwned=true> & more"
 HOST = Path(__file__).resolve().parent.parent / "fixtures" / "help_host.cjs"
 
 
-def _node_with_playwright():
-    """Node and a NODE_PATH under which it resolves Playwright, or None."""
-    node = shutil.which("node")
-    if node is None:
-        return None
-    env = dict(os.environ)
-    npm = shutil.which("npm")
-    if npm:
-        found = subprocess.run([npm, "root", "-g"], capture_output=True, text=True, timeout=60)
-        if found.returncode == 0 and found.stdout.strip():
-            env["NODE_PATH"] = os.pathsep.join(
-                p for p in (env.get("NODE_PATH"), found.stdout.strip()) if p)
-    probe = subprocess.run([node, "-e", "require.resolve('playwright')"], env=env,
-                           capture_output=True, timeout=60)
-    return (node, env) if probe.returncode == 0 else None
-
-
 def _page(tmp_path: Path) -> Path:
     registry = h.HelpRegistry()
     # As Gradio 6 draws a field: the component's block (its elem_id), its
@@ -197,7 +179,7 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
     field's centre (``document.elementsFromPoint``); it is at most 320 px
     wide; the ⓘ's hit target is at least 24 × 24; a hostile text is literal
     text and runs nothing; Esc closes it back to a tooltip."""
-    found = _node_with_playwright()
+    found = node_with_playwright()
     if found is None:
         pytest.skip("Node with Playwright is not installed")
     node, env = found
@@ -263,7 +245,7 @@ def test_a_fields_visible_info_line_is_part_of_its_description(tmp_path):
     describes the input by its info line, then its help text, and keeps it
     so when Gradio draws the line again; a field with no info line is
     described by its help text alone."""
-    found = _node_with_playwright()
+    found = node_with_playwright()
     if found is None:
         pytest.skip("Node with Playwright is not installed")
     node, env = found
