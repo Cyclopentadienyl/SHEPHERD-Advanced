@@ -671,8 +671,8 @@ def _products_cells(child: Mapping[str, Any], *, operator: bool,
 def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mapping[str, Any],
                    scrub: Any = str) -> str:
     """One child's row: Task | Status | Run | Best save | Validation
-    (Trainer), escaped (a failure's first line through `scrub`, a read-only
-    request's redaction). The run is its name part (`renderers.run_name`; the
+    (Trainer), escaped (a failure's first line through `scrub`,
+    `training_console.printed_scrub`). The run is its name part (`renderers.run_name`; the
     parent line and the Task column say the rest), its whole id in its title."""
     status = str(child.get("status") or "queued")
     task = TASK_NAMES.get(child.get("task"), str(child.get("task")))
@@ -792,8 +792,8 @@ def _card_view(mode: Optional[Mapping[str, Any]], cache: Optional[Mapping[str, A
     if access.allowed:
         products = products_of(status.get("finetune"), cache.get("products") or {})
         cache["products"] = products
-    scrub = str if access.allowed else tc.read_only_scrub(workspaces_root()[0])
-    card = job_card_html(status, operator=access.allowed, products=products, scrub=scrub)
+    card = job_card_html(status, operator=access.allowed, products=products,
+                         scrub=tc.printed_scrub(workspaces_root()[0]))
     # Start and Stop by the one gated-button rule (`chips.gated`): no lock
     # while D8 allows this request; disabled with the lock while it refuses
     # it, each beside its own reason line.

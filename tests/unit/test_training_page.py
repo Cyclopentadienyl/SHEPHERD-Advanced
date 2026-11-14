@@ -1744,12 +1744,21 @@ def test_an_ended_run_with_no_checkpoint_is_headed_as_its_snapshot_says(root, mo
                         else "No checkpoint saved, so nothing can be continued" in pieces["head"])
 
 
-def test_a_read_only_banner_keeps_the_tails_indentation(root, monkeypatch):
+@pytest.mark.parametrize("role", ["read-only", "operator"])
+def test_a_banner_redacts_paths_and_keeps_the_tails_indentation(root, monkeypatch, role):
     """M5-3 review: the read-only redaction joined each line's whitespace, so
     the traceback's lines lost their indent and its ``^^^`` markers no longer
     sat under the code; and the tail was drawn in the page's proportional
-    font (the app's "* { font-family … !important }" won over its own)."""
+    font (the app's "* { font-family … !important }" won over its own). The
+    round's closing check: an operator's banner showed the server's absolute
+    path (the round's §8: no error shows a server's path), where the
+    Diagnosis drawer, the Load step and Test's job card redact for every
+    request; one redaction for every request (`printed_scrub`)."""
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
+    request = READ_ONLY
+    if role == "operator":
+        operator_mode(monkeypatch)
+        request = gradio_request()
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
     message = ("Process exited with code 1\n\n--- Last output ---\n"
                "Traceback (most recent call last):\n"
@@ -1760,12 +1769,12 @@ def test_a_read_only_banner_keeps_the_tails_indentation(root, monkeypatch):
     monkeypatch.setattr(tc.training_manager, "get_status",
                         lambda: {"status": "failed", "error_message": message,
                                  "gpu": {"job": None}})
-    banner = tc.render(tc.workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]["banner"]
+    banner = tc.render(tc.workspace_state("demo"), {}, {}, [], request)["pieces"]["banner"]
     tail = banner[banner.index('<pre class="shep-banner-tail">'):banner.index("</pre>")]
     assert "/srv/secret" not in banner
     assert '\n  File &quot;a path outside the workspaces root&quot;, line 949' in tail
     assert "\n    device = resolve(config.device)\n             ^^^^" in tail
-    scrub = tc.read_only_scrub(None)
+    scrub = tc.printed_scrub(None)
     assert scrub("\t  x = /srv/a/b.py  y") == "\t  x = a path outside the workspaces root y"
     assert scrub("   ") == "   " and scrub("") == ""
     tail_css = tc.PAGE_CSS[tc.PAGE_CSS.index(".shep-banner-tail {"):]

@@ -965,6 +965,23 @@ def test_start_and_stop_are_labelled_by_the_one_gated_rule(monkeypatch):
         assert "Operator controls only: deployment mode not set to M1" in line, line
 
 
+def test_a_failed_childs_printed_line_names_no_server_path_for_any_request(monkeypatch,
+                                                                          tmp_path):
+    """The round's §8 (no error shows a server's path), as the Diagnosis
+    drawer and Test's job card redact for every request: the card's failure
+    line goes through the one redaction of a printed line
+    (`training_console.printed_scrub`) for an operator too (the closing
+    check found Training's banner showing an operator the absolute path)."""
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path))
+    failed = _child("gene", "failed", "r",
+                    error=f"train_model: refused: {tmp_path}/demo/node_features.pt could not "
+                          "be parsed\nTraceback")
+    monkeypatch.setattr(fp.training_manager, "get_status", lambda: _status(failed))
+    operator_mode(monkeypatch)
+    card = fp._card_view({}, {}, gradio_request())[0]
+    assert str(tmp_path) not in card and "demo/node_features.pt" in card
+
+
 def test_stop_asks_with_the_training_pages_stop_logic(monkeypatch):
     """One stop logic: the card's Stop and its confirmation are thin handlers
     of their own (D8 on each request; the deployment probe finds the run bar's

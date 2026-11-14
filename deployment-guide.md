@@ -3363,7 +3363,7 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
 - 失敗的 run 的**錯誤橫幅**橫跨整頁，不論 run 檢視顯示哪個 run，它都是訓練工作的。標題以儀表板
   的狀態標記先說狀況（"✕ Training failed: Process exited with code 1"；PyG 退回較慢 kernel 的提醒
   是琥珀色的 "▲ PyG native extensions missing: …"），其下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
-  requires CUDA, …"），對唯讀瀏覽器與輸出一樣經過遮蔽。run 旁邊只在有日誌時說明日誌在哪裡（它的
+  requires CUDA, …"），對每個瀏覽器都與輸出一樣經過遮蔽（不顯示伺服器的絕對路徑；工作區根目錄內的路徑以它在其中的位置顯示，run 自己的日誌保留全文）。run 旁邊只在有日誌時說明日誌在哪裡（它的
   `logs/train_….json`），否則說明沒有日誌（在建立 run 目錄之前就被拒絕的 run 顯示 "no run
   directory, so no log"）。接著是輸出的最後幾行，放在「Last output (N lines)」之下：視窗高度至少 1000 px 時展開，較矮的視窗則收合成這一行，讓圖表保有空間（你展開或收合
   後，在這個頁面中會保持）；一次顯示四行，其餘在框內捲動（窄視窗中全部顯示）。Dismiss 會在這個

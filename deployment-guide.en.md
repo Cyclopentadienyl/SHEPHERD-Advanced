@@ -3333,8 +3333,9 @@ a run.
   shows. Its headline leads with the condition by the dashboard's status mark ("✕ Training failed:
   Process exited with code 1"; PyG's slow-fallback advisory is amber, "▲ PyG native extensions
   missing: …"). Under it is the last error line the run printed ("Last error printed:
-  TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
-  as the output is. Beside the run it says where the run's log is only when there is one (its
+  TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for every browser as
+  the output is (no absolute server path; a path in the workspaces root by its place there, the
+  run's own log keeping the whole text). Beside the run it says where the run's log is only when there is one (its
   `logs/train_….json`), else that there is none ("no run directory, so no log" for a run refused
   before it made its run directory). The last lines of its output follow
   under "Last output (N lines)": open in a window at least 1000 px tall, closed to that one line

@@ -1553,10 +1553,14 @@ def _as_is(text: str) -> str:
     return text
 
 
-def read_only_scrub(root: Optional[Path]) -> Callable[[str], str]:
-    """A read-only request's redaction of a printed line (`redact`: no
-    absolute path), its leading indentation kept: `redact` joins whitespace,
-    and a traceback's lines and its ``^^^`` markers line up by their indent."""
+def printed_scrub(root: Optional[Path]) -> Callable[[str], str]:
+    """**The redaction of a line a run printed, as every page shows it to every
+    request** (`redact`: no absolute server path, a path inside the
+    workspaces root by its place there; the round's §8: no error shows a
+    server's path, as the Diagnosis drawer, the Load step and Test's job card
+    redact for every request; the run's own log keeps the whole text), its
+    leading indentation kept: `redact` joins whitespace, and a traceback's
+    lines and its ``^^^`` markers line up by their indent."""
     def scrub(text: str) -> str:
         text = str(text)
         return text[:len(text) - len(text.lstrip())] + redact(text, root)
@@ -1572,7 +1576,7 @@ def _render_error_block(message: str, *, headline: str = "Training failed",
     the output tail (monospace, escaped) in a disclosure, open as sent; the
     banner's script closes it on a wide window under `BANNER_OPEN_HEIGHT` px
     tall, where it would squeeze the charts (`_BANNER_JS`). Every text the run
-    printed goes through `scrub` (a read-only request's redaction), the cause
+    printed goes through `scrub` (`printed_scrub`), the cause
     as the tail's lines, and then is escaped: the redaction reads text, never
     the markup around it."""
     first, _sep, tail = str(message).partition("\n\n--- Last output ---\n")
@@ -1613,7 +1617,7 @@ def _build_error_banner_payload(
     """``(html, key)`` for the banner, or ``(None, None)`` when nothing must
     show. ``key`` names the content, so a session's dismissal holds until it
     changes (a new or different error shows again). `scrub` redacts each text
-    before it is escaped (a read-only request: no absolute path)."""
+    before it is escaped (`printed_scrub`: no absolute path)."""
     blocks: List[str] = []
     key_parts: List[str] = []
     error_msg = status_info.get("error_message")
@@ -2451,14 +2455,14 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         snapshot = _used_while_live(run, cache)
     else:
         snapshot = _snapshot_for(run, cache)
-    # The banner is the failed job's, whatever run is viewed. A read-only
-    # request sees no absolute path: each printed text is redacted before it
-    # is escaped (redacting the built markup took its closing tags for paths:
+    # The banner is the failed job's, whatever run is viewed. No request sees
+    # an absolute server path: each printed text is redacted before it is
+    # escaped (redacting the built markup took its closing tags for paths:
     # "</span>" became "<a path outside the workspaces root").
     banner_html, banner_key = _build_error_banner_payload(
         status if s == "failed" else {}, _get_pyg_warning(),
         run=job_run["label"] if job_run else None, run_dir=job_run["path"] if job_run else None,
-        scrub=_as_is if access.allowed else read_only_scrub(workspaces_root()[0]))
+        scrub=printed_scrub(workspaces_root()[0]))
     if banner_key is None or banner_key in (dismissed or ()):
         banner_html = ""
     cache["banner_key"] = banner_key
