@@ -1231,6 +1231,18 @@ def _listed_context(listing: Mapping[str, Any]) -> Dict[str, Any]:
             "workspaces": list(listing.get("workspaces") or [])}
 
 
+def _said(text: Any, environ: Optional[Mapping[str, str]] = None) -> str:
+    """**A server's text as a Load step shows it**: with no absolute server
+    path left, by the dashboard's one redaction against the workspaces root
+    (`workspaces.redact`, as the list's own problems are shown). A reload's
+    refusal, a list's refusal and a re-read record's problem may name a
+    checkpoint's or the root's path (the reload route answers its operator
+    with it; the page never shows it)."""
+    from src.webui.components.workspaces import redact, workspaces_root
+
+    return redact(text, workspaces_root(environ)[0])
+
+
 def request_load(listing: Mapping[str, Any], key: Any, request: Any, *,
                  environ: Optional[Mapping[str, str]] = None
                  ) -> Tuple[Optional[Dict[str, Any]], str]:
@@ -1254,15 +1266,16 @@ def request_load(listing: Mapping[str, Any], key: Any, request: Any, *,
     try:
         target, directory, _checkpoint = _target_now(item, workspace, environ=environ)
     except ServerListRefused as exc:
-        return None, f'<div class="shep-reason">Refused: {r.e(exc)} Nothing was done.</div>'
+        return None, (f'<div class="shep-reason">Refused: {r.e(_said(exc, environ))} Nothing was '
+                      'done.</div>')
     if not loadable(target):
-        return None, (f'<div class="shep-reason">It cannot be loaded now: '
-                      f'{r.e(target.get("problem") or "its digest was not read")}. Nothing was '
+        why = _said(target.get("problem") or "its digest was not read", environ)
+        return None, (f'<div class="shep-reason">It cannot be loaded now: {r.e(why)}. Nothing was '
                       'done.</div>')
     refusal = load_refusal(target)
     if refusal is not None:
         return None, (f'<div class="shep-reason">The file changed since the list was read: '
-                      f'{r.e(refusal)} Nothing was done.</div>')
+                      f'{r.e(_said(refusal, environ))} Nothing was done.</div>')
     status, problem = read_status()
     if status is None:
         return None, (f'<div class="shep-reason">Cannot load now: {r.e(problem)}. Nothing was '
@@ -1358,12 +1371,14 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
                                                     plan["workspace"], environ=environ)
     except ServerListRefused as exc:
         return LoadStep(None, _outcome("grey", "Not reloaded.",
-                                       f"Refused: {exc} Nothing was done."), "", now_sha, False)
+                                       f"Refused: {_said(exc, environ)} Nothing was done."),
+                        "", now_sha, False)
     # The refusal again on what the file holds now (rewritten into a base
     # since the confirmation, say): never reloaded, never shown to confirm.
     refusal = load_refusal(target) if loadable(target) else None
     if refusal is not None:
-        return LoadStep(None, _outcome("grey", "Not reloaded.", f"{refusal} Nothing was done."),
+        return LoadStep(None, _outcome("grey", "Not reloaded.",
+                                       f"{_said(refusal, environ)} Nothing was done."),
                         "", now_sha, False)
     to_now = _to_side(target, plan["workspace"], directory, workspaces)
     if _sides_differ(to_now, plan["to"]):
@@ -1372,10 +1387,10 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
         notices.append(TO_CHANGED)
     if notices:
         if not loadable(target):
+            why = _said(target.get("problem") or "its digest was not read", environ)
             return LoadStep(None, _outcome(
-                "grey", "Not reloaded.",
-                f"It cannot be loaded now: {target.get('problem') or 'its digest was not read'}. "
-                "Nothing was done."), "", now_sha, False)
+                "grey", "Not reloaded.", f"It cannot be loaded now: {why}. Nothing was done."),
+                "", now_sha, False)
         return LoadStep(new_plan, confirmation_html(new_plan, notice=" ".join(
             [*notices, NOTHING_RELOADED])), "", now_sha, False)
 
@@ -1398,7 +1413,9 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
     served = served_checkpoint_sha(after)
     changed = isinstance(after, Mapping) and served_key(after) != now_key
     if not answer.get("success"):
-        why = str(answer.get("message") or "the reload was refused")
+        # The route answers its operator with the build's own words, which
+        # can name the checkpoint's path; the page says them without it.
+        why = _said(answer.get("message") or "the reload was refused", environ)
         return LoadStep(None, _outcome("grey", "Not reloaded; the model in use is unchanged.",
                                        why),
                         "", served if isinstance(after, Mapping) else now_sha, changed)

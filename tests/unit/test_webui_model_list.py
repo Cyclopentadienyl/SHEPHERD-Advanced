@@ -602,6 +602,30 @@ def test_a_reload_of_the_same_checkpoint_with_another_workspace_is_a_change(
     assert unchanged.changed is False
 
 
+def test_a_refused_reload_is_shown_without_a_server_path(root, serving, monkeypatch):
+    """Review of B4 (finding 7): the reload route answers its operator with
+    the build's own words, which name the checkpoint's absolute path (a
+    listed child whose workspace graph changed after training is refused at
+    build so); the page shows them through the dashboard's one redaction
+    (`workspaces.redact`, as the list's problems), never the path."""
+    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
+
+    plan = _plan(root, monkeypatch)
+    checkpoint = (root["workspace"] / "runs" / "gatv2" / RUNS[0][1] / "checkpoints"
+                  / "model-12.pt")
+    elsewhere = "/srv/other/place/last.pt"
+    message = (f"Pipeline initialization failed: Checkpoint {checkpoint} does not match this "
+               f"workspace's graph: kg differs. Not {elsewhere}.")
+    step = ml.finish_load(plan, operator_request(monkeypatch), reload=lambda request: (
+        PipelineReloadResponse(success=False, message=message, status=PipelineStatusResponse(
+            **_status(root)))))
+    assert "Not reloaded; the model in use is unchanged." in step.confirm_html
+    assert str(root["root"]) not in step.confirm_html and elsewhere not in step.confirm_html
+    inside = checkpoint.relative_to(root["root"])
+    assert f"Checkpoint {inside} does not match" in step.confirm_html
+    assert "a path outside the workspaces root" in step.confirm_html
+
+
 def _rewrite(root, name, epoch, kind="disease"):
     """Write other bytes into a listed checkpoint, as a training run that
     overwrites ``last.pt`` each epoch does (by default another epoch of the
