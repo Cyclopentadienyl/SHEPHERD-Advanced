@@ -262,7 +262,6 @@ body { color: var(--shep-text); }
 .shep-tag-grey { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-grey-800); }
 .shep-tag-accent { background: var(--shep-accent-50); border-color: var(--shep-accent-100); color: var(--shep-accent-text); }
 .shep-tag-red { background: var(--shep-red-50); border-color: var(--shep-red-200); color: var(--shep-red-700); }
-.shep-ok-t { color: var(--shep-green-800); display: inline-flex; align-items: center; gap: 3px; }
 .shep-amber-t { color: var(--shep-amber-800); }
 /* The one status indicator (`renderers.status_mark`, the WebUI skill's §6):
    the state's colour, its shape (hidden from a screen reader) and its word,

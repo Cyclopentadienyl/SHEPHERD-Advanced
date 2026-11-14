@@ -541,7 +541,7 @@ def test_the_cards_verified_marks_are_the_shared_status_mark(root):
     never a ✓ drawn by the card."""
     state = _state(root)
     body = card.body_html(state)
-    assert r.status_mark("ok", "verified") in body and r.CHECK not in body
+    assert r.status_mark("ok", "verified") in body
     data = _section(card.served_facts_html(state), "data")
     assert ('<dt class="shep-k">Graph</dt><dd class="shep-v">'
             f'{r.status_mark("ok", "verified")}</dd>') in data

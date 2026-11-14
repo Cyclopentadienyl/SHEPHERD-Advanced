@@ -1957,7 +1957,7 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
         return (r.status_mark("neutral", f"dataset {r.CANNOT_BE_VERIFIED.lower()}: the run "
                                          "bar's dataset has no fingerprint"), row)
     if recorded == current:
-        return f'<span class="shep-tag shep-tag-ok">{r.CHECK} same dataset as the run bar</span>', row
+        return r.status_mark("ok", "same dataset as the run bar", as_chip=True), row
     return r.warn_chip("not the selected dataset"), row
 
 
@@ -3316,8 +3316,9 @@ def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
            + r.fingerprint_html("dataset fingerprint", current, digits=digits, copy=False))
     if current and recorded == current:
         # Said once, as a relation: the fingerprint itself is the run bar's.
-        return (f'<div class="shep-cmp shep-cmp-ok">{r.CHECK} Trained on the dataset selected '
-                'in the run bar</div>')
+        return ('<div class="shep-cmp shep-cmp-ok">'
+                + r.status_mark("ok", "Trained on the dataset selected in the run bar")
+                + "</div>")
     listed = ws.get("listed") or []
     trained = r.trained_on_html(recorded, listed, digits=digits)
     built = r.built_text((ws.get("row") or {}).get("build"))
@@ -3378,8 +3379,7 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
     # headline repeated it, two lines more in a drawer that must fit).
     able = "it can continue" if operation == CONTINUE else "it can be branched"
     head = (r.status_mark("error", f"Checkpoint read; cannot {verb} on the current dataset.")
-            if differs else f'<span class="shep-ok-t">{r.CHECK} Checkpoint read; {able} on '
-                            'this workspace.</span>')
+            if differs else r.status_mark("ok", f"Checkpoint read; {able} on this workspace."))
     head = f'<div class="shep-check-h">{head}</div>'
     inherited = dict(preview.get("inherited") or {})
     # A setting the checkpoint's record does not hold, which the settings

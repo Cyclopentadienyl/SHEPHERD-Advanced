@@ -443,7 +443,7 @@ def test_the_status_pill(status, kind, words, details):
     else:
         assert f'<span class="shep-st-shape" aria-hidden="true">{marks[kind]}</span>' in html
         assert "shep-spinner" not in html
-    assert "shep-dot" not in html and r.CHECK not in html
+    assert "shep-dot" not in html
 
 
 def test_a_failed_or_stopped_run_is_never_green():
@@ -801,6 +801,8 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
     same = tc.run_head_html(run, ws, operator=True,
                             snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
     assert "same dataset as the run bar" in same and "a" * 12 in same     # the tag; Details
+    # By the shared OK mark, never a check glyph of the page's own (B5).
+    assert r.status_mark("ok", "same dataset as the run bar", as_chip=True) in same
     other = tc.run_head_html(run, ws, operator=True,
                              snapshot={"readable": True, "dataset_fingerprint": "a" * 12 + "b" * 52})
     # 12 equal digits are not equal: a condition to watch, by the one mark (▲, amber).
@@ -2493,7 +2495,7 @@ def test_the_continue_drawer_fits_and_says_the_plan_once():
                          "new target 180)", "sha256": "c" * 64, "inherited": {}}
     check = tc._check_html(preview, tc.CONTINUE_FROM_LIST)
     assert check.count("Extend training by 30 epochs") == 1
-    assert "Checkpoint read; it can continue on this workspace." in check
+    assert r.status_mark("ok", "Checkpoint read; it can continue on this workspace.") in check
 
 
 def test_the_drawers_refusals_lead_with_the_shared_status_mark():

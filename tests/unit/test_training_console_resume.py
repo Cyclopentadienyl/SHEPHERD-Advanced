@@ -244,7 +244,7 @@ def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
     # The parent recorded this workspace's dataset: the same, so Continue
     # Training is on.
     assert mode["parent"]["fingerprint"] == checkpoints["state"]["row"]["dataset_fingerprint"]
-    assert "Trained on the dataset selected in the run bar" in compare
+    assert r.status_mark("ok", "Trained on the dataset selected in the run bar") in compare
     assert tc.continue_refusal(mode["parent"], checkpoints["state"]) is None
 
 

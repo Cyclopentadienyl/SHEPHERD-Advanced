@@ -120,11 +120,6 @@ _VALIDATION_NOTE = "selection metric on val, not an independent test"
 #: ``max``.
 SELECTION_DIRECTIONS = {"max": "higher is better", "min": "lower is better"}
 
-#: The dashboard's check mark (an inline svg that stays on its line), for a
-#: page's own "✓ …" (M5-3 review ARCH-4: pages used the private name).
-CHECK = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
-         '<path d="M3.2 8.6l3 3 6.6-7.4" fill="none" stroke="currentColor" stroke-width="2.2" '
-         'stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
 # ---------------------------------------------------------------------------
 # State words and status marks (the WebUI skill's §6)
@@ -1991,7 +1986,6 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
 
 
 __all__ = [
-    "CHECK",
     "CURRENT_DATASET",
     "FACTS_MODEL_FP",
     "FACTS_TRAINED_FP",

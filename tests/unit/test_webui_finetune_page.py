@@ -168,7 +168,7 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     assert "the dataset selected" in same
     # Each state by the shared status mark (colour, shape and word; B2's
     # leftover: no ✓ of the page's own).
-    assert r.status_mark("ok", "the dataset selected") in same and r.CHECK not in same
+    assert r.status_mark("ok", "the dataset selected") in same
     assert r.status_mark("warn", "another dataset than the one selected (the start refuses a "
                                  "parent of another knowledge graph)") in odd
     assert r.status_mark("neutral", "not recorded") in html

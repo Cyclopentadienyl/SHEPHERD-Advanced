@@ -784,7 +784,9 @@ def test_each_missing_state_has_its_own_word_and_a_dash_never_stands_for_not_rec
     # this graph" on the Test page's Data panel and Models' workspace line).
     verified = r.record_chip(workspace(binding="verified"))
     assert verified == r.status_mark("ok", "record verified", as_chip=True)
-    assert r.CHECK not in verified and r.CHECK not in r.dataset_identity_html(workspace())
+    # The page's own check glyph retired once no page drew it (the ops round's
+    # B5): every OK state is this one mark.
+    assert not hasattr(r, "CHECK") and "CHECK" not in r.__all__
 
 
 # --------------------------------------------------------------------------- shared details
