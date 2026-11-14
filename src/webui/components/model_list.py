@@ -1136,11 +1136,12 @@ def _target_now(item: Mapping[str, Any], workspace: Any, *,
 
 
 #: The From rows that describe what is served: with no model loaded nothing is
-#: served, so they say "not applicable" (their own word, never "absent" or
-#: "files", which would describe something served). Otherwise every side names
-#: a task: a served model's scoring mode is a task's, and only a model
-#: finetuned for a task is loaded (`load_refusal`).
-_SERVED_ROWS = ("trained", "workspace", "mode", "sp", "data")
+#: served, so they say "not applicable" (their own word, never "absent",
+#: "files" or a fingerprint "not recorded", which would describe something
+#: served). Otherwise every side names a task: a served model's scoring mode
+#: is a task's, and only a model finetuned for a task is loaded
+#: (`load_refusal`).
+_SERVED_ROWS = ("sha", "trained", "workspace", "mode", "sp", "data")
 
 
 def _cell(side: Mapping[str, Any], row: str, workspaces: Sequence[Any], *, to: bool,

@@ -447,16 +447,19 @@ def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
     assert "computed from the model's graph view" in html
     # Nothing served (no model loaded, the first screen since K7): the From
     # rows that describe what is served say "not applicable", never words that
-    # describe something served (unlisted, absent, files).
+    # describe something served (unlisted, absent, files, and the fingerprint
+    # "not recorded", which read as a model whose fingerprint is missing: the
+    # round's closing check).
     serving["value"] = {"initialized": False}
     plan, html = ml.request_load(_listing(root, monkeypatch), key,
                                  operator_request(monkeypatch))
     frm = _from_cells(html)
     assert plan["from"]["served"] is False and frm["Model"] == "no model loaded"
-    for row in ("Trained on", "Serving workspace", "SP table", "Data"):
+    for row in ("Model fingerprint", "Trained on", "Serving workspace", "SP table", "Data"):
         assert frm[row] == "not applicable", row
     shown = " ".join(frm.values())
-    for word in ("not in this workspace's list", "not a listed workspace", "absent", "files"):
+    for word in ("not in this workspace's list", "not a listed workspace", "absent", "files",
+                 "not recorded"):
         assert word not in shown, word
     assert ">same<" not in html and "same dataset" not in html
 
