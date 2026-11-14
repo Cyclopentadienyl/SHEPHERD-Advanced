@@ -1194,6 +1194,11 @@ def test_the_page_shows_what_produced_the_result(monkeypatch, status_read):
     for digest in (CHECKPOINT_SHA, KG_SHA, MANIFEST_SHA, RECORD_SHA):
         assert f'data-copy="{digest}"' in digests
     assert digests.count('<dt class="shep-k shep-kv-wide">') == 4
+    # Each Copy is named for its row once (review of B4: "the full the full").
+    labels = re.findall(r'aria-label="([^"]*)"', digests)
+    assert "Copy the full Checkpoint · model fingerprint" in labels
+    assert "Copy the full Knowledge graph (kg.json)" in labels
+    assert not any("the full the full" in label for label in labels)
 
 
 def test_the_page_does_not_say_nothing_was_checked_without_an_identity(monkeypatch, status_read):

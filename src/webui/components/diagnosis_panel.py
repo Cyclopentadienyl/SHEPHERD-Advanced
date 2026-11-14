@@ -2125,7 +2125,7 @@ def result_digests_html(result: Optional[Mapping[str, Any]]) -> str:
         rows += [(f"Reference cohort {label} · version (cohort.json)",
                   reference.get("version_sha256")),
                  (f"Reference cohort {label} · samples", reference.get("samples_sha256"))]
-    shown = [(label, _fingerprint_value(value, what="the full " + str(label), full=True))
+    shown = [(label, _fingerprint_value(value, what=str(label), full=True))
              for label, value in rows if _is_sha256(value)]
     if not shown:
         return ""
