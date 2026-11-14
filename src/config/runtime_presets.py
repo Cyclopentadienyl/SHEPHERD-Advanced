@@ -113,6 +113,28 @@ def allocator_env(
     return new_env
 
 
+def running_allocator(env: Mapping[str, str]) -> dict:
+    """**What a process started under `env` runs CUDA's allocator as**: the
+    read side of `allocator_env`, which wrote `env` when the process started.
+
+    Returns ``{"variable", "conf", "preset", "source"}``: the allocator
+    variable that is set (``PYTORCH_ALLOC_CONF`` first, as PyTorch reads it)
+    and its value; the preset whose value it is (None for a value no preset
+    gives); and where it came from, by `allocator_env`'s own rule: ``"preset"``
+    (marked so: the saved preset at the process's start), ``"env"`` (any other
+    allocator variable: an explicit setting in the launch environment) or None
+    (no allocator variable: PyTorch's default backend). A saved preset changed
+    since then is not what runs until the process starts again.
+    """
+    variable = next((name for name in ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF")
+                     if env.get(name)), None)
+    conf = env.get(variable) if variable else None
+    preset = next((name for name, value in ALLOCATOR_PRESETS.items() if value == conf), None)
+    source = None if conf is None else (
+        "preset" if env.get(ALLOC_SOURCE_ENV) == "preset" else "env")
+    return {"variable": variable, "conf": conf, "preset": preset, "source": source}
+
+
 __all__ = [
     "REPO_ROOT",
     "RUNTIME_SETTINGS_FILE",
@@ -123,4 +145,5 @@ __all__ = [
     "resolve_allocator",
     "ALLOC_SOURCE_ENV",
     "allocator_env",
+    "running_allocator",
 ]

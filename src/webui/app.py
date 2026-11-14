@@ -42,6 +42,7 @@ from src.webui.components import (
     diagnosis_panel,
     finetune_page,
     models_page,
+    runtime_settings,
     test_page,
     training_console,
 )
@@ -93,8 +94,8 @@ def _runtime_footer() -> str:
 
 
 #: The dashboard's CSS: the IBM Plex font files (served by the API at /static,
-#: so the page needs no network), the polled panels' loading flash, and the
-#: Runtime Settings badges. Passed to the mount (`mount_dashboard`).
+#: so the page needs no network) and the polled panels' loading flash. Passed
+#: to the mount (`mount_dashboard`).
 DASHBOARD_CSS = """
     /* IBM Plex Sans — local font files (offline-safe) */
     @font-face {
@@ -150,40 +151,6 @@ DASHBOARD_CSS = """
     div:has(> #resource_display) .eta-bar {
         display: none !important;
     }
-
-    /* Runtime Settings — coloured impact/scope pill badges */
-    .shep-badge-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin: 2px 0 8px;
-    }
-    .shep-badge {
-        display: inline-flex;
-        align-items: center;
-        padding: 2px 10px;
-        border-radius: 999px;
-        font-size: 14px;
-        font-weight: 600;
-        line-height: 1.55;
-        letter-spacing: 0.01em;
-        white-space: nowrap;
-        border: 1px solid transparent;
-    }
-    .shep-badge-mem     { background: rgba(37,99,235,0.12);  color: #1d4ed8; border-color: rgba(37,99,235,0.30); }
-    .shep-badge-speed   { background: rgba(22,163,74,0.12);  color: #15803d; border-color: rgba(22,163,74,0.30); }
-    .shep-badge-prec    { background: rgba(217,119,6,0.14);  color: #b45309; border-color: rgba(217,119,6,0.34); }
-    .shep-badge-exp     { background: rgba(147,51,234,0.12); color: #7e22ce; border-color: rgba(147,51,234,0.30); }
-    .shep-badge-restart { background: rgba(220,38,38,0.12);  color: #b91c1c; border-color: rgba(220,38,38,0.30); }
-    .shep-badge-nextrun { background: rgba(100,116,139,0.14);color: #475569; border-color: rgba(100,116,139,0.32); }
-
-    /* Restart-locked warning (training in progress): the red token, 6.7:1 on
-       the page (#dc2626 was 4.39:1). */
-    .shep-restart-locked {
-        color: var(--shep-red-700);
-        font-weight: 600;
-        font-size: 14px;
-    }
 """
 
 #: Each page's own style sheet (the page contract, `src/webui/shell.py`): a page
@@ -195,6 +162,7 @@ PAGE_CSS = (
     models_page.PAGE_CSS,
     training_console.PAGE_CSS,
     finetune_page.PAGE_CSS,
+    runtime_settings.PAGE_CSS,
 )
 
 

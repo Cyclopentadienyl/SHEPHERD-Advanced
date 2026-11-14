@@ -158,15 +158,6 @@ def test_an_info_line_and_a_placeholder_have_four_and_a_half_to_one_where_fields
         assert contrast(_effective(text), colour) >= 4.5, name
 
 
-def test_the_restart_locked_note_is_drawn_in_a_readable_red_token():
-    from src.webui.app import DASHBOARD_CSS
-
-    rule = re.search(r"\.shep-restart-locked\s*\{([^}]*)\}", DASHBOARD_CSS).group(1)
-    colour = re.search(r"(?<![-\w])color:\s*([^;]+);", rule).group(1)
-    tokens = _tokens()
-    assert contrast(_resolve(colour, tokens), tokens["--shep-bg"]) >= 4.5
-
-
 @pytest.mark.parametrize("border", ["--checkbox-border-color", "--checkbox-border-color-hover"])
 def test_an_unchecked_checkboxs_border_shows_against_its_fill_and_every_background(border):
     tokens = _tokens()

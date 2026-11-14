@@ -181,3 +181,24 @@ def test_the_launcher_re_resolves_an_inherited_preset_value():
     env = {"PYTORCH_ALLOC_CONF": ALLOCATOR_PRESETS["native"], ALLOC_SOURCE_ENV: "preset"}
     _launcher().apply_allocator(env, {"allocator_preset": "expandable"})
     assert env["PYTORCH_ALLOC_CONF"] == ALLOCATOR_PRESETS["expandable"]
+
+
+# --------------------------------------------------------------------------- running_allocator
+def test_what_runs_is_read_back_by_the_rule_that_wrote_it():
+    """`running_allocator` reads what `allocator_env` wrote: a preset marked
+    so, an explicit setting under either variable, or none (PyTorch's
+    default); a value no preset gives has no preset name."""
+    from src.config.runtime_presets import ALLOC_SOURCE_ENV, allocator_env, running_allocator
+
+    started = allocator_env({}, {"allocator_preset": "expandable"})
+    assert running_allocator(started) == {
+        "variable": "PYTORCH_ALLOC_CONF", "conf": ALLOCATOR_PRESETS["expandable"],
+        "preset": "expandable", "source": "preset"}
+    explicit = allocator_env({"PYTORCH_CUDA_ALLOC_CONF": "backend:native"}, {})
+    assert running_allocator(explicit) == {
+        "variable": "PYTORCH_CUDA_ALLOC_CONF", "conf": "backend:native", "preset": "native",
+        "source": "env"}
+    assert running_allocator({"PYTORCH_ALLOC_CONF": "garbage_collection_threshold:0.6",
+                              ALLOC_SOURCE_ENV: "env"})["preset"] is None
+    assert running_allocator({ALLOC_SOURCE_ENV: "preset"}) == {
+        "variable": None, "conf": None, "preset": None, "source": None}

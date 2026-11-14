@@ -46,7 +46,8 @@ class TestGradioApp:
 
     def test_no_page_names_the_retired_training_console(self):
         """The Training Console became Research › Training (M5-2); Settings
-        still named it (M5-3). No text the dashboard shows names it."""
+        still named it (M5-3). No text the dashboard shows names it; Settings
+        names the page that sets the model."""
         from src.webui.app import create_gradio_app
 
         app = create_gradio_app()
@@ -57,7 +58,7 @@ class TestGradioApp:
                 if isinstance(value, str):
                     shown.append(value)
         assert not [text for text in shown if "Training Console" in text]
-        assert any("separate from Research › Training" in text for text in shown)
+        assert any("Research › Training sets the model" in text for text in shown)
 
 
 # ==============================================================================

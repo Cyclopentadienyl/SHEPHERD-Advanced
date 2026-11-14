@@ -1,12 +1,14 @@
 """
 The dashboard's Gradio 6.30 adjustments that a browser would otherwise show.
 ============================================================================
-- **gr.HTML padding** is off by default in Gradio 6; the components laid out
-  with Gradio 5's padding ask for it.
 - **Timers in an unopened tab do not tick** in Gradio 6 (gradio#11984,
   #11993): Runtime Settings refreshes its restart lock when its tab is
   selected, and then on the shell's slow timer (outside the tabs) while it is
   shown; it has no timer of its own.
+
+(gr.HTML's padding, off by default in Gradio 6, was asked for by the Settings
+badges and restart note laid out with Gradio 5's: both went with the one
+Settings panel of the ops round's B5, which draws its HTML itself.)
 
 (The Training Console's native-plot workarounds, the typed empty frames, the
 legend step after each data step and the Epoch Window's row filter, went with
@@ -20,19 +22,6 @@ import pytest
 gr = pytest.importorskip("gradio")
 
 
-# --------------------------------------------------------------- HTML padding
-def test_the_html_laid_out_with_gradio_5_padding_keeps_it():
-    from src.webui.app import create_gradio_app
-
-    app = create_gradio_app()
-    html = [b for b in app.blocks.values() if isinstance(b, gr.HTML)]
-    by_elem = {b.elem_id: b for b in html if b.elem_id}
-    for elem_id in ("runtime_restart_lock",):
-        assert by_elem[elem_id].padding is True, elem_id
-    badges = [b for b in html if "shep-badge-row" in str(b.value)]
-    assert len(badges) == 2 and all(b.padding is True for b in badges)
-
-
 # --------------------------------------------------------------- Runtime Settings
 def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch):
     import src.webui.components.runtime_settings as rs
@@ -43,21 +32,25 @@ def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch):
     tab = next(b for b in app.blocks.values()
                if isinstance(b, gr.Tab) and b.elem_id == "shep-tab-settings")
     on_select = [fn for fn in app.fns.values() if (tab._id, "select") in fn.targets
-                 and fn.name == "_refresh_restart_lock"]
+                 and fn.name == "_on_open"]
     assert len(on_select) == 1
     assert [o.elem_id for o in on_select[0].outputs] == [
-        "runtime_apply", "runtime_restart", "runtime_restart_lock", "runtime_access_reason"]
+        "runtime_apply", "runtime_restart", "runtime_restart_lock", "runtime_access_reason",
+        "allocator_preset", "torch_compile", "runtime_facts"]
 
     from tests.fixtures.operator_access import operator_request
 
     monkeypatch.setattr(rs, "is_training_active", lambda: True)
-    apply, button, note, reason = on_select[0].fn(operator_request(monkeypatch))
+    apply, button, note, reason, alloc, compile_, _facts = on_select[0].fn(
+        operator_request(monkeypatch))
     assert apply["interactive"] is True and button["interactive"] is False
     assert note["visible"] is True and reason["visible"] is False
+    assert rs.RESTART_BUSY in note["value"] and "shep-st-neutral" in note["value"]
+    assert alloc["interactive"] is True and compile_["interactive"] is True
     # Off while training runs, but not refused: no lock (the WebUI skill's §3).
     assert (apply["value"], button["value"]) == (rs.APPLY_LABEL, rs.RESTART_LABEL)
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
-    apply, button, note, reason = on_select[0].fn(operator_request(monkeypatch))
+    apply, button, note, reason, *_fields = on_select[0].fn(operator_request(monkeypatch))
     assert button["interactive"] is True and note["visible"] is False
 
 
@@ -71,12 +64,90 @@ def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch):
 
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
-    apply, button, note, reason = rs._refresh_restart_lock(gradio_request())
+    apply, button, note, reason, alloc, compile_, _facts = rs._on_open(gradio_request())
     assert (apply["value"], apply["interactive"]) == (f"🔒 {rs.APPLY_LABEL}", False)
     assert (button["value"], button["interactive"]) == (f"🔒 {rs.RESTART_LABEL}", False)
     assert reason["visible"] is True and reason["value"] == (
-        '<div class="shep-reason shep-reason-grey">🔒 Operator controls only: deployment mode '
-        "not set to M1.</div>")
+        '<div class="shep-reason"><span aria-hidden="true">🔒</span><span>Operator controls '
+        "only: deployment mode not set to M1.</span></div>")
+    # The fields that need the operator are not interactive for this request.
+    assert alloc == gr.update(interactive=False) and compile_ == gr.update(interactive=False)
+
+
+def test_a_read_only_request_gets_still_fields_and_escaped_refusals(monkeypatch, tmp_path):
+    """The ops round's B5: a request D8 refuses gets the allocator and
+    torch.compile as non-interactive fields from the page's open, and every
+    text the page interpolates (D8's refusal, the restart's error, an explicit
+    allocator in the launch environment) is escaped: markup in it reads as
+    literal text."""
+    import src.webui.components.runtime_settings as rs
+    from src.config.runtime_presets import ALLOC_SOURCE_ENV
+    from src.webui.app import create_gradio_app
+    from tests.fixtures.operator_access import gradio_request, operator_request
+
+    hostile = "<img src=x onerror=alert(1)>"
+    app = create_gradio_app()
+    fields = {b.elem_id: b for b in app.blocks.values()
+              if getattr(b, "elem_id", None) in ("allocator_preset", "torch_compile")}
+    assert all(field.interactive is False for field in fields.values())
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
+
+    class Refused:
+        allowed, condition = False, "mode_unset"
+        refusal = f"Refused: {hostile}"
+
+    monkeypatch.setattr(rs, "operator_access", lambda request: Refused())
+    for said in (rs._on_restart(gradio_request())["value"],
+                 rs._on_apply("cuda_async", False, gradio_request())[0]):
+        assert hostile not in said and "&lt;img src=x onerror=alert(1)&gt;" in said
+        assert "shep-st-error" in said
+    monkeypatch.undo()
+    monkeypatch.setattr(rs, "restart_backend", lambda: {"success": False, "error": hostile})
+    said = rs._on_restart(operator_request(monkeypatch))["value"]
+    assert hostile not in said and "Not restarted: &lt;img" in said
+    facts = rs.facts_html({"PYTORCH_ALLOC_CONF": hostile, ALLOC_SOURCE_ENV: "env"},
+                          {"allocator_preset": hostile})
+    assert hostile not in facts and "PYTORCH_ALLOC_CONF=&lt;img" in facts
+    assert "overrides it until the backend starts without it" in facts
+
+
+def test_settings_say_the_running_allocator_apart_from_the_saved_one():
+    """What runs is read back from the backend's own environment by the rule
+    that wrote it (`running_allocator`), never taken from the saved file: a
+    preset the launcher applied is not an explicit override, and a saved
+    preset the backend does not run yet says what applies it."""
+    import src.webui.components.runtime_settings as rs
+    from src.config.runtime_presets import ALLOC_SOURCE_ENV, ALLOCATOR_PRESETS, allocator_env
+
+    assert set(rs.ALLOCATOR_WORDS) == set(ALLOCATOR_PRESETS)
+    started = allocator_env({}, {"allocator_preset": "cuda_async"})
+    facts = rs.facts_html(started, {"allocator_preset": "expandable"})
+    assert "Driver memory pool (cuda_async) <span class=\"shep-muted\">(the saved preset" in facts
+    assert "Expandable segments (expandable)" in facts
+    assert "Not running yet: Restart Backend applies it" in facts
+    assert "launch environment" not in facts
+    same = rs.facts_html(started, {"allocator_preset": "cuda_async"})
+    assert "Not running yet" not in same
+    unset = rs.facts_html({}, {})
+    assert "PyTorch’s default (native)" in unset and "(the default; none saved)" in unset
+    assert "Not implemented yet" in unset and "<input" not in unset
+    explicit = rs.facts_html({"PYTORCH_ALLOC_CONF": "backend:native", ALLOC_SOURCE_ENV: "env"}, {})
+    assert "set in the launch environment" in explicit
+    assert "<code>PYTORCH_ALLOC_CONF=backend:native</code>" in explicit
+
+
+def test_no_settings_text_claims_an_architecture_that_is_not_built():
+    """Only GATv2 is built (`builder._ENCODERS`): HGT is named only as the
+    earlier architecture a measurement was made on, never as what runs."""
+    import src.webui.components.runtime_settings as rs
+
+    texts = [text for _title, text in rs.FIELD_HELP.values()] + [rs.ALLOCATOR_DETAILS,
+                                                                  rs.COMPILE_DETAILS]
+    for text in texts:
+        for sentence in text.replace("\n", " ").split(". "):
+            if "HGT" in sentence:
+                assert "earlier" in sentence or "no longer built" in sentence, sentence
+    assert "GATv2, the one architecture built today" in rs.FIELD_HELP["torch_compile"][1]
 
 
 def test_the_restart_lock_is_polled_on_the_shells_slow_timer_only_while_shown(monkeypatch):
