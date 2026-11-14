@@ -592,7 +592,8 @@ def test_the_recorded_frozen_parts_are_read_once_for_the_check_and_the_words(wor
 def test_a_served_frozen_control_is_named_as_such_from_its_load(world, monkeypatch):
     """Ops-wiring round B4 (decision F1, wherever a model is described): the
     served pipeline's status carries the record's weight transfer as the
-    model lists show it (`checkpoint_meta`, read once when it is loaded), so
+    model lists show it (its ``weight_transfer``, read once when it is
+    loaded), so
     the Diagnosis card names the served control a task model with a frozen
     graph backbone, and the full arm by its task alone, without opening the
     checkpoint again."""
@@ -609,10 +610,12 @@ def test_a_served_frozen_control_is_named_as_such_from_its_load(world, monkeypat
         bundle = api_main.build_pipeline(kg_path=str(world["workspace"] / "kg.json"),
                                          checkpoint_path=str(path),
                                          data_dir=str(world["workspace"]))
-        meta = bundle.config["checkpoint_meta"]
-        assert meta["weight_transfer"] == listed_record(_load(path))["weight_transfer"], name
-        status = {"initialized": True, "served_identity": bundle.config["served_identity"],
-                  "checkpoint_meta": meta}
+        from src.api.routes.pipeline import _status_of
+
+        transfer = bundle.config["weight_transfer"]
+        assert transfer == listed_record(_load(path))["weight_transfer"] is not None, name
+        status = _status_of(bundle.config, None, None).model_dump()
+        assert status["weight_transfer"] == transfer
         assert card.task_model_name(card.served_task(status), card.served_transfer(status)) \
             == words, name
         assert card.served_kind_words(status) == kind, name

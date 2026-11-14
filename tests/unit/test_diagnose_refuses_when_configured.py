@@ -555,4 +555,5 @@ class TestTheNoModelMatrix:
             assert button["interactive"] is operator
             assert ("Operator controls only" in card.change_reason_html(state)) is not operator
             assert "Not loaded" in card.body_html(state)
-        assert "An operator" in panel.RUN_DISABLED_NO_MODEL_READ_ONLY
+        # One reason for everyone (B4): the card says why, and who can load.
+        assert panel.RUN_DISABLED_NO_MODEL == "Disabled until a model is loaded."

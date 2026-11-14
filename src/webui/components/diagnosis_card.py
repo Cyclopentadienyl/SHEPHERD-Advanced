@@ -58,8 +58,8 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   (`served_task`, `src.core.types.SCORING_MODE_TASKS`); **a task model with
   a frozen graph backbone is named as such** (decision F1), "Disease task
   model · frozen graph backbone", from the weight transfer the status
-  carries (`served_transfer`: read once when the model was loaded; no
-  checkpoint is opened for it), in the words `renderers.model_kind_text`
+  carries (`served_transfer`, its ``weight_transfer``: read once when the
+  model was loaded; no checkpoint is opened for it), in the words `renderers.model_kind_text`
   adds, which the identity drawer's Task row says whole (`served_kind_words`);
 - "model fingerprint <12 hex> ● verified" from the served identity (the
   shared mark, `renderers.status_mark`);
@@ -322,9 +322,9 @@ def served_task(status: Optional[Mapping[str, Any]]) -> Optional[str]:
 
 def served_transfer(status: Optional[Mapping[str, Any]]) -> Any:
     """The served checkpoint's weight transfer as the model lists show it
-    (the status's ``checkpoint_meta``, read once when the model was loaded:
+    (the status's ``weight_transfer``, read once when the model was loaded:
     no checkpoint is opened for it), or None."""
-    return _part(status, "checkpoint_meta", "weight_transfer")
+    return status.get("weight_transfer") if isinstance(status, Mapping) else None
 
 
 def served_kind_words(status: Optional[Mapping[str, Any]]) -> Optional[str]:
@@ -471,7 +471,7 @@ def served_item(status: Mapping[str, Any], serving: Optional[str], *,
              "filename": filename, "sha256": sha, "epoch": whole(meta.get("epoch")),
              "completed_epochs": whole(meta.get("completed_epochs")),
              "validation": _validation(meta), "dataset_fingerprint": None, "problem": None,
-             "weight_transfer": meta.get("weight_transfer")},
+             "weight_transfer": served_transfer(status)},
             None)
 
 
@@ -1031,7 +1031,7 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
         item = {"architecture": None, "run": None, "filename": None, "sha256": sha,
                 "epoch": meta.get("epoch"), "completed_epochs": meta.get("completed_epochs"),
                 "validation": _validation(meta), "dataset_fingerprint": None, "problem": None,
-                "weight_transfer": meta.get("weight_transfer")}
+                "weight_transfer": served_transfer(status)}
     trained = facts.get("trained") or {}
     shown = trained.get("state") == "read"
     if shown:

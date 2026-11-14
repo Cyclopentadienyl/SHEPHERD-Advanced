@@ -230,9 +230,9 @@ def test_the_checkpoint_replaced_after_its_read_builds_the_model_read(
     # same read: a page names a frozen-backbone child without opening it.
     from src.models.bundle.record import listed_record
 
-    transfer = bundle.config["checkpoint_meta"]["weight_transfer"]
+    transfer = bundle.config["weight_transfer"]
     assert transfer == listed_record(contents)["weight_transfer"] == contents["weight_transfer"]
-    assert transfer is not None
+    assert transfer is not None and "weight_transfer" not in bundle.config["checkpoint_meta"]
 
 
 def test_a_tensor_file_that_does_not_parse_is_refused_naming_it(api, workspace):

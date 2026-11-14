@@ -847,9 +847,10 @@ class DiagnosisPipeline:
         # once from the checkpoint this build read, so a page names a served
         # task model with a frozen graph backbone as such (ops-wiring round,
         # decision F1: `renderers.freeze_words`) without opening the file again.
+        # Kept apart from `checkpoint_meta`, whose values are JSON primitives.
         from src.models.bundle.record import listed_record
 
-        self._checkpoint_meta["weight_transfer"] = listed_record(checkpoint)["weight_transfer"]
+        self._weight_transfer = listed_record(checkpoint)["weight_transfer"]
         # Extract best metrics from logs if available
         logs = checkpoint.get("logs", {})
         if isinstance(logs, dict):
@@ -1875,6 +1876,9 @@ class DiagnosisPipeline:
             "has_model": True,
             "gnn_ready": self._gnn_ready,
             "checkpoint_meta": getattr(self, "_checkpoint_meta", {}),
+            # The served checkpoint record's weight transfer, as the model
+            # lists show it (`_load_checkpoint`); None where it names none.
+            "weight_transfer": getattr(self, "_weight_transfer", None),
             "kg_nodes": len(self.kg._nodes) if self.kg else 0,
             "kg_edges": len(self.kg._edges) if self.kg else 0,
         }

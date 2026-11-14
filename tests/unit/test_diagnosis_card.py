@@ -514,8 +514,8 @@ def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
 
 def test_a_served_frozen_backbone_child_is_named_as_such_on_the_card_and_in_the_drawer(root):
     """B4 (decision F1, wherever a model is described): the served weight
-    transfer the status carries (`checkpoint_meta`, read once at the load;
-    no checkpoint is opened here) names a task model whose graph backbone
+    transfer the status carries (its ``weight_transfer``, read once at the
+    load; no checkpoint is opened here) names a task model whose graph backbone
     kept its base's weights, on the card and in the identity drawer's Task
     row (`renderers.model_kind_text`); a full fine-tune reads as its task."""
     frozen = {"parts": {"input": "frozen", "encoder": "frozen", "lp_head": "frozen",
@@ -525,8 +525,7 @@ def test_a_served_frozen_backbone_child_is_named_as_such_on_the_card_and_in_the_
                                   "Disease · frozen graph backbone"),
                                  (full, "Disease task model", "Disease"),
                                  (None, "Disease task model", "Disease")):
-        status = _status(root)
-        status["checkpoint_meta"] = {**status["checkpoint_meta"], "weight_transfer": transfer}
+        status = _status(root, weight_transfer=transfer)
         state = _state(root, status=status)
         assert f'<p class="shep-dx-name">{name}</p>' in card.body_html(state)
         assert card.served_kind_words(status) == kind

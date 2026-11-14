@@ -79,11 +79,13 @@ class PipelineStatusResponse(BaseModel):
     kg_nodes: int = 0
     kg_edges: int = 0
     has_model: bool = False
-    #: What the served checkpoint records of itself, read once at its load:
-    #: its epoch index and completed epochs, parameters, device, the
-    #: Trainer's logged metrics and `weight_transfer` (its record's, as the
-    #: model lists show it: a page names a frozen-backbone task model by it).
     checkpoint_meta: Dict[str, Any] = Field(default_factory=dict)
+    #: The served checkpoint record's weight transfer, as the model lists show
+    #: it (`record.listed_record`, read once when the model was loaded): each
+    #: part trainable or frozen, plain data; a page names a task model whose
+    #: graph backbone kept its base's weights by it. None when nothing is
+    #: served or the record names none.
+    weight_transfer: Optional[Dict[str, Any]] = None
     current_data_dir: Optional[str] = None
     current_checkpoint_path: Optional[str] = None
     #: The lifecycle (`AppState.snapshot`): "not_loaded", "serving", or
@@ -287,6 +289,7 @@ def _status_of(
         kg_edges=config.get("kg_edges", 0),
         has_model=config.get("has_model", False),
         checkpoint_meta=config.get("checkpoint_meta", {}),
+        weight_transfer=config.get("weight_transfer"),
         current_data_dir=data_dir,
         current_checkpoint_path=checkpoint_path,
     )
