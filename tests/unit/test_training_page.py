@@ -204,9 +204,10 @@ def test_the_form_is_what_a_new_base_takes_common_settings_first():
 
 def test_each_fields_input_records_it_and_reset_and_the_guards_are_wired():
     """Decision S2: each field's ``.input`` (never ``.change``, which a page's
-    own write fires too) adds it to the form's record in the browser first
-    (`record_touches`: no request), then says the line, its last input always
-    said ("always_last"); the record is a hidden JSON that Start's own
+    own write fires too) adds it to the form's record in the browser
+    (`record_touches`: no request, the input's one listener), then, chained
+    after it, says the line, its last input always said ("always_last"); the
+    record is a hidden JSON that Start's own
     request carries with every field, so what Start sends is read from the
     click's payload alone. Reset writes the record, the line and every
     field; the guards' change shows what depends on them. None of these
@@ -222,14 +223,17 @@ def test_each_fields_input_records_it_and_reset_and_the_guards_are_wired():
     touched = by_id["shep-train-touched"]
     assert isinstance(touched, gr.JSON) and touched.visible is False and touched.value == []
     for key, field in zip(keys, fields, strict=True):
-        record, line = [fn for fn in fns if (field._id, "input") in fn.targets]
+        (record,) = [fn for fn in fns if (field._id, "input") in fn.targets]
+        (line,) = [fn for fn in fns if fn.trigger_after == record._id and fn.fn is not None]
         assert record.fn is None and record.inputs == [touched] == record.outputs
         assert record.js == tc.TOUCH_JS.replace("{key}", json.dumps(key))
         assert record.queue is False and record.trigger_mode == "multiple"
         assert line.outputs == [setby] and line.inputs == [touched, *fields]
         assert line.queue is False and line.trigger_mode == "always_last"
-        assert line.fn(["x"], *tc.base_form_defaults()) == tc.set_by_you_html(
-            dict(zip(keys, tc.base_form_defaults(), strict=True)), sorted({"x", key}))
+        # The line said from the record as it is (it holds the key by then).
+        assert line.fn is tc._on_base_input
+    assert tc._on_base_input(["x", keys[0]], *tc.base_form_defaults()) == tc.set_by_you_html(
+        dict(zip(keys, tc.base_form_defaults(), strict=True)), ["x", keys[0]])
     assert not [fn for fn in fns if any(target[1] == "change" and target[0] in
                                         {f._id for f in fields} for target in fn.targets)
                 and fn.fn is not tc._on_base_guards]

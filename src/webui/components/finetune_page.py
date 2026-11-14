@@ -896,10 +896,10 @@ def _on_tasks_input(tasks, touched, *values):
     """**The operator changed the tasks**: each of a task's own settings
     starts again for them (`task_starts`: one task's reference, or for
     several the hop list they share), having left the form's record in the
-    browser (`TASK_OWN_FIELDS`, `training_console.record_drops`, wired first;
-    `touched_without` drops them all the same), so a value set for one task
-    is never sent for another; a hop list the operator set stays, theirs for
-    every child of any task set (`ANY_TASKS`). A page's write: no field's
+    browser (`TASK_OWN_FIELDS`, `training_console.record_drops`, chained
+    after it; `touched_without` drops them all the same), so a value set for
+    one task is never sent for another; a hop list the operator set stays,
+    theirs for every child of any task set (`ANY_TASKS`). A page's write: no field's
     input fires. It never writes the record, which is the browser's: an
     answer that arrives late cannot undo a touch made since. `values` are
     the fields', in `FINETUNE_FIELDS` order. Returns each task field's update
@@ -914,18 +914,16 @@ def _on_tasks_input(tasks, touched, *values):
               for name in TASK_FIELDS), set_by_html(tasks, fields, record)]
 
 
-def _input_listener(key: str):
-    """The line listener of the field `key` (`set_by_html`), on the field's
-    input after the record has `key` (`training_console.record_touches`,
-    wired first; `touched_with` adds it all the same), as the base form's
-    fields say their line. Its values are the fields', in `FINETUNE_FIELDS`
-    order. It writes only the line, never the record, which is the
-    browser's."""
-    def on_input(tasks: Any, touched: Any, *values: Any) -> str:
-        return set_by_html(tasks, dict(zip(FINETUNE_FIELDS, values, strict=True)),
-                           tc.touched_with(touched, key))
-
-    return on_input
+def _on_field_input(tasks: Any, touched: Any, *values: Any) -> str:
+    """The line on what the operator set (`set_by_html`), said again on a
+    field's input, chained after the field's touch listener
+    (`training_console.record_touches`), as the base form's fields say
+    theirs: the record it reads holds the field's key, and, run again alone
+    for the last input ("always_last"), it reads the record as it is then
+    (after Reset or a task switch, without what they dropped). Its values
+    are the fields', in `FINETUNE_FIELDS` order. It writes only the line,
+    never the record, which is the browser's."""
+    return set_by_html(tasks, dict(zip(FINETUNE_FIELDS, values, strict=True)), touched)
 
 
 def _on_finetune_reset(tasks):
@@ -946,22 +944,23 @@ def _on_guards(*values):
 
 
 def _on_hops_input(tasks, key, parents, touched, *values):
-    """The hop field's input, after the record has its key
-    (`training_console.record_touches`, wired first; `touched_with` adds it
-    all the same), its one listener besides it: the line on what the operator
-    set (`set_by_html`, as every field's listener says it), the hop note and
-    its pointer beside Start, for the list typed (`hops_note_html`,
-    `hops_warning_html`). `values` are the fields', in `FINETUNE_FIELDS`
-    order. It writes only them, never the record, which is the browser's.
-    One listener, not two: two listeners of one input that each send its
-    last value ("always_last") retrigger each other in the browser without
-    end (seen on the page while it had two)."""
+    """The hop field's input, chained after its touch listener
+    (`training_console.record_touches`), so the record it reads holds its key
+    (run again alone for the last input, the record as it is then): its one
+    listener besides it, the line on what the operator set (`set_by_html`, as
+    every field's listener says it), the hop note and its pointer beside
+    Start, for the list typed (`hops_note_html`, `hops_warning_html`).
+    `values` are the fields', in `FINETUNE_FIELDS` order. It writes only
+    them, never the record, which is the browser's.
+    One listener, not two: two input listeners of one field that each send
+    its last value ("always_last") retriggered each other in the browser
+    without end (seen on the page while it had two; Gradio runs a deferred
+    listener again by dispatching its trigger again)."""
     item = (parents or {}).get(key) if key else None
-    record = tc.touched_with(touched, "num_neighbors")
     fields = dict(zip(FINETUNE_FIELDS, values, strict=True))
     hops = fields["num_neighbors"]
-    return (set_by_html(tasks, fields, record), hops_note_html(tasks, item, record, hops),
-            hops_warning_html(tasks, item, record, hops))
+    return (set_by_html(tasks, fields, touched), hops_note_html(tasks, item, touched, hops),
+            hops_warning_html(tasks, item, touched, hops))
 
 
 def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run_name,
@@ -1324,27 +1323,27 @@ def create_finetune_page(ctx: Any) -> None:
     tasks.change(**task_view_step)
     fields["frozen_parts"].change(freeze_note_html, inputs=[fields["frozen_parts"]],
                                   outputs=[freeze_note], show_progress="hidden")
-    # Each field's input records it (first), then says the line again, as the
-    # base form's do; its last input is always said ("always_last"). The hop
-    # list's one listener says its note and the note's pointer too.
+    # Each field's input records it, then (chained after it) says the line
+    # again, as the base form's do; its last input is always said
+    # ("always_last"). The hop list's one listener says its note and the
+    # note's pointer too.
     for name in FINETUNE_FIELDS:
-        tc.record_touches(fields[name], name, touched)
+        touch = tc.record_touches(fields[name], name, touched)
         if name in ANY_TASKS:
-            fields[name].input(_on_hops_input,
-                               inputs=[tasks, checkpoint, parents, touched, *field_list],
-                               outputs=[set_by, hops_note, hops_warn], queue=False,
-                               trigger_mode="always_last", show_progress="hidden")
+            touch.then(_on_hops_input, inputs=[tasks, checkpoint, parents, touched, *field_list],
+                       outputs=[set_by, hops_note, hops_warn], queue=False,
+                       trigger_mode="always_last", show_progress="hidden")
         else:
-            fields[name].input(_input_listener(name), inputs=[tasks, touched, *field_list],
-                               outputs=[set_by], queue=False, trigger_mode="always_last",
-                               show_progress="hidden")
+            touch.then(_on_field_input, inputs=[tasks, touched, *field_list],
+                       outputs=[set_by], queue=False, trigger_mode="always_last",
+                       show_progress="hidden")
     # The operator's own change of the tasks: a task's own settings leave the
-    # record in the browser (first), then start again at their reference, a
-    # hop list set kept; the line again.
-    tc.record_drops(tasks, TASK_OWN_FIELDS, touched)
-    tasks.input(_on_tasks_input, inputs=[tasks, touched, *field_list],
-                outputs=[*(fields[name] for name in TASK_FIELDS), set_by], queue=False,
-                show_progress="hidden")
+    # record in the browser, then (chained after it) start again at their
+    # reference, a hop list set kept; the line again.
+    tc.record_drops(tasks, TASK_OWN_FIELDS, touched).then(
+        _on_tasks_input, inputs=[tasks, touched, *field_list],
+        outputs=[*(fields[name] for name in TASK_FIELDS), set_by], queue=False,
+        show_progress="hidden")
     # Reset to reference: the record empty, every field where it starts for
     # the tasks, the line; then the hop note for them.
     reset.click(_on_finetune_reset, inputs=[tasks], outputs=[touched, set_by, *field_list],

@@ -522,13 +522,6 @@ def touched_keys(touched: Any) -> frozenset:
     return frozenset(key for key in touched if isinstance(key, str))
 
 
-def touched_with(touched: Any, key: str) -> List[str]:
-    """A form's record (`touched_keys`) with `key` added: the record a
-    field's input leaves (`TOUCH_JS`), which the base form's line on what the
-    operator set is said from (`_base_input_listener`)."""
-    return sorted({*touched_keys(touched), key})
-
-
 #: **A field's input adds its key to its form's record, in the browser**
 #: (`record_touches`; ``{key}`` is the key as a JSON string): the record's
 #: keys and the key, each once, in order. Returned in a list, the listener's
@@ -630,7 +623,10 @@ LANDED_JS = "() => { if (window.ShepTouch) { window.ShepTouch.landed({mark}); } 
 #:   a text box (the operator's or the one given above), an input event
 #:   reaching a number box, a checkbox or a radio. Each cause is one input of
 #:   the field, and the input's acknowledgement (`LANDED_JS`), which comes
-#:   once the record holds the key, counts it off. While anything is counted,
+#:   once the record holds the key, counts it off; the touch listener is the
+#:   field's one input listener and the rest is chained after it
+#:   (`record_touches`), so no input is run again without an edit, and no
+#:   acknowledgement comes without a cause. While anything is counted,
 #:   or a click is already held, the operator's click (a trusted one: the
 #:   mouse's, or Enter or Space on a button, Space on a checkbox or a radio)
 #:   and Enter on a checkbox (which Gradio's checkboxes take as a toggle: the
@@ -758,7 +754,7 @@ TOUCH_HEAD = "<script>" + r"""
 TOUCH_KINDS = (gr.Textbox, gr.Number, gr.Checkbox, gr.Radio)
 
 
-def record_touches(field: Any, key: str, record: Any) -> None:
+def record_touches(field: Any, key: str, record: Any) -> Any:
     """**`field`'s every edit by the operator adds `key` to `record`**
     (`touched_record`), in the browser (`TOUCH_JS`), **before any click the
     operator makes after the edit goes out**: every edit does ("multiple"),
@@ -772,34 +768,46 @@ def record_touches(field: Any, key: str, record: Any) -> None:
     the fields marked here (`TOUCH_CLASS`, and the record's and key's
     `touch_mark`). `field` is one of `TOUCH_KINDS` (a TypeError otherwise),
     the kinds whose every edit is one input. An emptied field is then sent as
-    it is, empty, and meets its field spec's check (`sent_settings`). Wire it
-    before any other input listener of `field`: the browser runs an event's
-    listeners in order, so they read the record with `key`. The base form,
-    the Fine-tune page and the Continue drawer's Branch fields record by
-    it."""
+    it is, empty, and meets its field spec's check (`sent_settings`).
+
+    Returns the touch listener: **what else the field's edit does is chained
+    after it** (``.then``: the line on what the operator set, a check gone
+    stale), never wired as another input listener of `field`. Gradio 6.30
+    dispatches what is chained after a listener once its outputs are written,
+    so a listener chained here reads the record with `key`; and it runs a
+    deferred listener ("always_last") again by dispatching that listener's
+    trigger again: for a second input listener of `field`, every listener of
+    the field's input, the touch listener with them, so `key` came back into
+    the record with no edit, after a task switch or Reset made since had
+    dropped it (the review of 9a6895f). Chained here, a deferred listener runs
+    again alone. The base form, the Fine-tune page and the Continue drawer's
+    Branch fields record by it."""
     if not isinstance(field, TOUCH_KINDS):
         raise TypeError(f"record_touches: {type(field).__name__} is not one of "
                         f"{[kind.__name__ for kind in TOUCH_KINDS]}")
     mark = touch_mark(record, key)
     field.elem_classes = [*(field.elem_classes or []), TOUCH_CLASS, mark]
-    field.input(None, inputs=[record], outputs=[record],
-                js=TOUCH_JS.replace("{key}", json.dumps(key)), queue=False,
-                trigger_mode="multiple", show_progress="hidden").then(
-        None, js=LANDED_JS.replace("{mark}", json.dumps(mark)), queue=False,
-        show_progress="hidden")
+    touch = field.input(None, inputs=[record], outputs=[record],
+                        js=TOUCH_JS.replace("{key}", json.dumps(key)), queue=False,
+                        trigger_mode="multiple", show_progress="hidden")
+    touch.then(None, js=LANDED_JS.replace("{mark}", json.dumps(mark)), queue=False,
+               show_progress="hidden")
+    return touch
 
 
-def record_drops(control: Any, keys: Collection[str], record: Any) -> None:
+def record_drops(control: Any, keys: Collection[str], record: Any) -> Any:
     """`control`'s input (the operator's own change of what a form's fields
     mean: the Fine-tune page's tasks) drops `keys` from `record`
     (`touched_record`) in the browser (`DROP_JS`), as `record_touches` adds
     one: the record is never written by an answer of the server, so one
-    that arrives late cannot undo a touch made since. Wire it before any
-    other input listener of `control`, which reads the record without them
-    (`touched_without` drops them all the same)."""
-    control.input(None, inputs=[record], outputs=[record],
-                  js=DROP_JS.replace("{keys}", json.dumps(sorted(keys))), queue=False,
-                  trigger_mode="multiple", show_progress="hidden")
+    that arrives late cannot undo a touch made since. Returns the drop
+    listener: what else `control`'s input does is chained after it, never
+    wired as another input listener of `control` (as `record_touches`: it
+    then reads the record without `keys`, and a deferred run of it never
+    runs the drop again)."""
+    return control.input(None, inputs=[record], outputs=[record],
+                         js=DROP_JS.replace("{keys}", json.dumps(sorted(keys))), queue=False,
+                         trigger_mode="multiple", show_progress="hidden")
 
 
 def sent_settings(values: Mapping[str, Any], touched: Collection[str]
@@ -1171,18 +1179,17 @@ def _on_base_guards(*values: Any) -> List[Any]:
     return guard_updates(BASE_FIELDS, values)
 
 
-def _base_input_listener(key: str) -> Callable[..., str]:
-    """The line listener of the base form's field `key` (`set_by_you_html`),
-    on the field's input after the record has `key` (`record_touches`, wired
-    first; `touched_with` adds it all the same). Its values are the form's,
-    in `base_form_keys` order. It writes only the line, never the record,
-    which is the browser's: an answer that arrives late cannot undo a later
-    touch."""
-    def on_input(touched: Any, *values: Any) -> str:
-        return set_by_you_html(dict(zip(base_form_keys(), values, strict=True)),
-                               touched_with(touched, key))
-
-    return on_input
+def _on_base_input(touched: Any, *values: Any) -> str:
+    """The base form's line on what the operator set (`set_by_you_html`),
+    said again on each field's input, chained after the field's touch
+    listener (`record_touches`): the record it reads holds the field's key,
+    and, run again alone for the last input ("always_last"), it reads the
+    record as it is then (after Reset, nothing set). Its values are the
+    form's, in `base_form_keys` order. It writes only the line, never the
+    record, which is the browser's: an answer that arrives late cannot undo
+    a later touch."""
+    return set_by_you_html(dict(zip(base_form_keys(), values, strict=True)),
+                           touched_keys(touched))
 
 
 def _on_base_reset() -> Tuple[Any, ...]:
@@ -4517,16 +4524,15 @@ def create_training_tab(ctx: Any) -> None:
     # Explicit is what the operator touched (decision S2): the base form's
     # record, the browser's (`touched_record`), which Start's own request
     # carries. Each field's input (never a value a page writes) adds it there,
-    # then says the line again; the line's last input is always said
-    # ("always_last": an input while the one before is answered is sent after
-    # it, never dropped). Reset to reference clears the record and writes every
-    # field's starting value.
+    # then (chained after it) says the line again; the line's last input is
+    # always said ("always_last": an input while the one before is answered is
+    # sent after it, never dropped). Reset to reference clears the record and
+    # writes every field's starting value.
     touched = touched_record("shep-train-touched")
     for key, field in zip(base_form_keys(), base_fields, strict=True):
-        record_touches(field, key, touched)
-        field.input(_base_input_listener(key), inputs=[touched, *base_fields],
-                    outputs=[set_by], queue=False, trigger_mode="always_last",
-                    show_progress="hidden")
+        record_touches(field, key, touched).then(
+            _on_base_input, inputs=[touched, *base_fields], outputs=[set_by],
+            queue=False, trigger_mode="always_last", show_progress="hidden")
     reset_btn.click(_on_base_reset, inputs=None, outputs=[touched, set_by, *base_fields],
                     queue=False, show_progress="hidden")
     # A setting a rule across settings reads only under its guard is shown while
@@ -4707,14 +4713,13 @@ def create_training_tab(ctx: Any) -> None:
                               outputs=[mode, *check_cleared], show_progress="hidden").then(
         **chosen_step).then(**view_step)
     # The Branch fields: each edit recorded in the browser first (decision
-    # S2: what is sent is what the operator touched), then the check says it
-    # is stale and the start checks again; a guard of a rule across settings
-    # shows or hides what it guards, as on the base form.
+    # S2: what is sent is what the operator touched), then (chained after
+    # it) the check says it is stale and the start checks again; a guard of a
+    # rule across settings shows or hides what it guards, as on the base form.
     for name, field in zip(BRANCH_FIELDS, branch_fields, strict=True):
-        record_touches(field, name, branch_touched)
-    gr.on(triggers=[field.input for field in branch_fields], fn=_on_branch_edited,
-          inputs=[mode], outputs=[continue_preview, mode], show_progress="hidden",
-          trigger_mode="always_last").then(**view_step)
+        record_touches(field, name, branch_touched).then(
+            _on_branch_edited, inputs=[mode], outputs=[continue_preview, mode],
+            show_progress="hidden", trigger_mode="always_last").then(**view_step)
     branch_by_name = dict(zip(BRANCH_FIELDS, branch_fields, strict=True))
     branch_dependent, branch_guards = rule_fields(BRANCH_FIELDS)
     gr.on(triggers=[branch_by_name[name].change for name in branch_guards],

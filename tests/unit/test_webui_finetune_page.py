@@ -649,15 +649,15 @@ def test_the_line_says_what_start_sends_and_reset_brings_back_each_tasks_referen
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
     tasks = ["disease", "gene"]
-    listener = fp._input_listener("batch_size")
-    line = listener(tasks, ["num_epochs"], *_fields(tasks, num_epochs=5, batch_size=64))
+    line = fp._on_field_input(tasks, ["batch_size", "num_epochs"],
+                              *_fields(tasks, num_epochs=5, batch_size=64))
     assert line == fp.set_by_html(tasks, dict(zip(fp.FINETUNE_FIELDS, _fields(
         tasks, num_epochs=5, batch_size=64), strict=True)), ["batch_size", "num_epochs"])
     assert ("<p>Set by you: Epochs 5 (reference 100), Batch size 64 (reference 64)</p>"
             in line)
     # Typed, then cleared: still touched, so empty is sent and refused.
     cleared = _fields(tasks, num_neighbors="")
-    hops_line = fp._input_listener("num_neighbors")(tasks, [], *cleared)
+    hops_line = fp._on_field_input(tasks, ["num_neighbors"], *cleared)
     assert "Not valid: Neighbours per hop needs at least 1 item(s)." in hops_line
     said, _stop = fp._on_finetune_start(operator, ws, parents, key, tasks, "cpu", "",
                                         ["num_neighbors"], *cleared)
@@ -721,11 +721,12 @@ def test_the_hop_list_against_the_bases_encoder_is_the_starts_own_check(root, op
     fits = fp.task_settings_view(["disease"], item, ["num_neighbors"], "15")
     assert fits[-3] == "" and fits[-1] == ""
     key = f"gatv2/{BASE_RUN}/last.pt"
-    line, note, pointer = fp._on_hops_input(["disease"], key, {key: item}, [],
+    # The hop field's input, chained after its touch listener: the record holds its key.
+    line, note, pointer = fp._on_hops_input(["disease"], key, {key: item}, ["num_neighbors"],
                                             *_fields(["disease"], num_neighbors="15"))
     assert (note, pointer) == ("", "")
     assert "Set by you: Neighbours per hop 15 (reference 15, 10, 5)" in line
-    line, typed, pointer = fp._on_hops_input(["disease"], key, {key: item}, [],
+    line, typed, pointer = fp._on_hops_input(["disease"], key, {key: item}, ["num_neighbors"],
                                              *_fields(["disease"], num_neighbors="15, 10"))
     assert "Neighbours per hop needs 1 numbers" in typed and fp.HOPS_REFERENCE_LEAD not in typed
     assert "see the field under Epochs" in pointer and "Neighbours per hop 15, 10" in line
@@ -1196,8 +1197,8 @@ def test_the_page_follows_the_contract():
     assert start.outputs == [by_id["ft_notice"], by_id["ft_stop_notice"]]
     # Explicit is what the operator touched (decision S2): each field's input
     # (never its change) adds it to the form's record in the browser (the
-    # shared `record_touches`, wired before any other input listener), which
-    # Start's own request carries.
+    # shared `record_touches`, the input's one listener; the rest is chained
+    # after it), which Start's own request carries.
     touched = start.inputs[-len(fp.FINETUNE_FIELDS) - 1]
     assert touched is by_id["ft_touched"] and isinstance(touched, gr.JSON)
     assert touched.visible is False and touched.value == []
@@ -1206,10 +1207,11 @@ def test_the_page_follows_the_contract():
     parents_state = start.inputs[1]
     for name in fp.FINETUNE_FIELDS:
         field = by_id[f"ft_{name}"]
-        listeners = [fn for fn in fns if (field._id, "input") in fn.targets]
-        # The record first, then one listener: two that each send the last
-        # value ("always_last") retrigger each other in the browser.
-        first, line = listeners
+        (first,) = [fn for fn in fns if (field._id, "input") in fn.targets]
+        # The record first, then one listener chained after it: two that each
+        # send the last value ("always_last") retrigger each other in the
+        # browser.
+        (line,) = [fn for fn in fns if fn.trigger_after == first._id and fn.fn is not None]
         assert first.fn is None and first.inputs == [touched] == first.outputs
         assert first.js == tc.TOUCH_JS.replace("{key}", json.dumps(name))
         assert first.queue is False
@@ -1223,20 +1225,25 @@ def test_the_page_follows_the_contract():
             continue
         # Then the line, as the base form's fields say theirs.
         assert line.outputs == [setby] and line.inputs == [by_id["ft_tasks"], touched, *fields]
-        assert line.fn(["gene"], ["x"], *fp.start_values(["gene"])) == fp.set_by_html(
+        # Said from the record as it is (it holds the key by then).
+        assert line.fn is fp._on_field_input
+        assert line.fn(["gene"], ["x", name], *fp.start_values(["gene"])) == fp.set_by_html(
             ["gene"], dict(zip(fp.FINETUNE_FIELDS, fp.start_values(["gene"]), strict=True)),
-            sorted({"x", name}))
+            ["x", name])
     # No record on the server: nothing a field's or the tasks' input answers
     # writes it, and no State either.
     tasks_id = by_id["ft_tasks"]._id
-    inputs = [fn for fn in fns if any(t[1] == "input" and t[0] in {f._id for f in fields}
-                                      | {tasks_id} for t in fn.targets)]
+    writers = [fn for fn in fns if any(t[1] == "input" and t[0] in {f._id for f in fields}
+                                       | {tasks_id} for t in fn.targets)]
+    inputs = [*writers, *(fn for fn in fns if fn.trigger_after in {w._id for w in writers})]
     assert not [fn for fn in inputs if fn.fn is not None and (
         touched in fn.outputs or any(isinstance(b, gr.State) for b in fn.outputs))]
     # The tasks: the operator's change first drops a task's own settings
-    # from the record, in the browser (`record_drops`), then starts them
-    # again and says the line; any change redraws the section.
-    drop, restart = [fn for fn in fns if (tasks_id, "input") in fn.targets]
+    # from the record, in the browser (`record_drops`, the input's one
+    # listener), then (chained after it) starts them again and says the line;
+    # any change redraws the section.
+    (drop,) = [fn for fn in fns if (tasks_id, "input") in fn.targets]
+    (restart,) = [fn for fn in fns if fn.trigger_after == drop._id]
     assert drop.fn is None and drop.inputs == [touched] == drop.outputs
     assert drop.js == tc.DROP_JS.replace("{keys}", json.dumps(sorted(fp.TASK_OWN_FIELDS)))
     assert drop.queue is False and drop.trigger_mode == "multiple"

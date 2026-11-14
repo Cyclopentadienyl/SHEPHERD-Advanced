@@ -24,6 +24,16 @@ What these pin:
   input listener adding its own key to its own form's record, and the field
   marked; **each field's touch listener is followed by its acknowledgement**
   (`LANDED_JS`, naming its own record and key), which the click waits for;
+  **it is the field's one input listener and what else the edit does is
+  chained after it** (the line, the Branch check; the Fine-tune tasks'
+  restart after their drop), so a deferred run ("always_last") never runs
+  the touch listener again;
+- **on the Training page, a line answered late never records the field
+  again** (the review of 9a6895f): two keys with the line held on the server,
+  Reset, then the line let go: two acknowledgements for two keys, the line
+  says nothing is set and Start sends no setting (on 9a6895f a third
+  acknowledgement put the key back and the reference was sent as the
+  operator's);
 - **in a real browser, with the edit's processing held** (the page's clock
   paused, so the text box's and the radio's ticks cannot pass): a click on
   Start, Reset or a task, or Enter on a task, made while an edit is pending
@@ -65,6 +75,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 
 import pytest
 
@@ -149,14 +160,15 @@ def test_the_three_forms_record_every_field_through_the_one_listener_and_mark_it
     build them: the Training base form (`shep-train-touched`, one field per
     `base_form_keys`), the Fine-tune page (`ft_touched`, `FINETUNE_FIELDS`)
     and the Continue drawer's Branch fields (`shep-train-branch-touched`,
-    `BRANCH_FIELDS`). Each field's first input listener adds its own key to
+    `BRANCH_FIELDS`). Each field's one input listener adds its own key to
     its own form's record in the browser (`TOUCH_JS`, no request), and the
     field carries `TOUCH_CLASS`, without which the touch script leaves an
     emptied text box unrecorded (OPS-R1); no other block carries the class.
-    A field left unwired, wired by a listener of its own, or wired after
-    another of its input listeners, fails here: a start of that form would
-    send nothing for an edit of it and use the reference's or the parent's
-    value."""
+    A field left unwired or wired by a listener of its own fails here: a
+    start of that form would send nothing for an edit of it and use the
+    reference's or the parent's value; so does a field with another input
+    listener beside it (what else an edit does is chained after the touch
+    listener: `test_what_else_an_edit_does_is_chained_after_the_record_write`)."""
     demo, expected = _three_forms()
     before, after = tc.TOUCH_JS.split("{key}")
     fns = list(demo.fns.values())
@@ -175,8 +187,8 @@ def test_the_three_forms_record_every_field_through_the_one_listener_and_mark_it
             key: field._id for key, field in fields.items()}, record
         for key, field in fields.items():
             assert tc.TOUCH_CLASS in field.elem_classes, (record, key)
-            first = next(fn for fn in fns if (field._id, "input") in fn.targets)
-            assert first.js == tc.TOUCH_JS.replace("{key}", json.dumps(key)), (record, key)
+            (only,) = [fn for fn in fns if (field._id, "input") in fn.targets]
+            assert only.js == tc.TOUCH_JS.replace("{key}", json.dumps(key)), (record, key)
     marked = {block._id for block in demo.blocks.values()
               if tc.TOUCH_CLASS in (getattr(block, "elem_classes", None) or [])}
     assert marked == {field._id for fields in expected.values() for field in fields.values()}
@@ -185,7 +197,7 @@ def test_the_three_forms_record_every_field_through_the_one_listener_and_mark_it
 def test_every_recorded_field_of_the_three_forms_acknowledges_its_record():
     """OPS-R1's residual, the wiring the click waits on: on the three forms,
     every recorded field carries its own mark (`touch_mark`: its record and
-    its key), and its touch listener is followed by exactly one listener, its
+    its key), and its touch listener is followed by exactly one
     acknowledgement (`LANDED_JS` naming that mark: js alone, no request, no
     input, no output), which Gradio dispatches after the record is written.
     A field whose acknowledgement is missing, names another record or key,
@@ -205,12 +217,48 @@ def test_every_recorded_field_of_the_three_forms_acknowledges_its_record():
             mark = tc.touch_mark(record, key)
             assert field.elem_classes[-2:] == [tc.TOUCH_CLASS, mark], (record_id, key)
             touch = next(fn for fn in fns if (field._id, "input") in fn.targets)
-            chained = [fn for fn in fns if fn.trigger_after == touch._id]
-            assert len(chained) == 1, (record_id, key)
-            (ack,) = chained
+            (ack,) = [fn for fn in fns if fn.trigger_after == touch._id
+                      and isinstance(fn.js, str) and fn.js.startswith(before)]
             assert ack.js == tc.LANDED_JS.replace("{mark}", json.dumps(mark)), (record_id, key)
             assert ack.fn is None and ack.inputs == [] and ack.outputs == [], (record_id, key)
             assert ack.queue is False and not ack.trigger_only_on_success, (record_id, key)
+
+
+def test_what_else_an_edit_does_is_chained_after_the_record_write():
+    """The review of 9a6895f (P2): Gradio 6.30 runs a deferred listener
+    ("always_last") again by dispatching its trigger again, so a second input
+    listener of a recorded field (the line on what the operator set, the
+    Branch check) ran every listener of the field's input once more when its
+    answer came: the touch listener put the key back with no edit, after a
+    task switch or Reset made since had dropped it, and a start sent it.
+    Now, on the three forms, a recorded field's input has one listener, its
+    touch listener, and what else the edit does is chained after it, each
+    sending its last value ("always_last"; a deferred run of it runs it
+    alone): the base form's and the Fine-tune page's line (the hop list's
+    with its note), the Branch fields' check gone stale. So are the
+    Fine-tune tasks: their input's one listener drops the task's own keys,
+    and their restart is chained after it. A listener wired back beside the
+    touch or the drop listener fails here."""
+    from src.webui.components import finetune_page as fp
+
+    demo, expected = _three_forms()
+    fns = list(demo.fns.values())
+    landed = tc.LANDED_JS.split("{mark}")[0]
+    by_id = {getattr(block, "elem_id", None): block for block in demo.blocks.values()}
+    said = {"shep-train-touched": {"shep-train-setby"}, "ft_touched": {"ft_setby"},
+            "shep-train-branch-touched": {"continue_preview"}}
+    for record_id, fields in expected.items():
+        for key, field in fields.items():
+            (touch,) = [fn for fn in fns if (field._id, "input") in fn.targets]
+            (step,) = [fn for fn in fns if fn.trigger_after == touch._id
+                       and not (isinstance(fn.js, str) and fn.js.startswith(landed))]
+            assert step.fn is not None and step.trigger_mode == "always_last", (record_id, key)
+            assert said[record_id] <= {block.elem_id for block in step.outputs}, (record_id, key)
+    tasks = by_id["ft_tasks"]
+    (drop,) = [fn for fn in fns if (tasks._id, "input") in fn.targets]
+    assert drop.js == tc.DROP_JS.replace("{keys}", json.dumps(sorted(fp.TASK_OWN_FIELDS)))
+    (restart,) = [fn for fn in fns if fn.trigger_after == drop._id]
+    assert restart.fn is fp._on_tasks_input
 
 
 # --------------------------------------------------------------------------- every edit, in a browser
@@ -932,6 +980,110 @@ def test_a_start_clicked_while_the_hop_list_edit_is_pending_carries_it(
     assert "Neighbours per hop 15, 10, 5 (reference 15, 10, 5)" in seen["reference"]["line"]
     assert seen["reset"]["after"] == {"counted": {}, "held": 0}
     assert "Set by you: nothing" in seen["reset"]["line"]
+
+
+#: The Training page, one field's line held on the server (`gate`): two keys
+#: in Neighbours per hop, so the first key's line is answered late and the
+#: second's waits for it ("always_last"); once the touch script holds
+#: nothing, Reset to reference; then the line is let go (the gate file
+#: written), and once both of its answers are in, Start. The acknowledgements
+#: counted, what Start's answer and the form's line say, and the line's
+#: requests seen.
+_REDISPATCH_JS = r"""
+const { chromium } = require('playwright');
+const fs = require('fs');
+(async () => {
+  const [base, gate, line] = [process.argv[2], process.argv[3], Number(process.argv[4])];
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 })).newPage();
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.waitForSelector('#shep-train-start:not([disabled])', { timeout: 60000 });
+  let asked = 0, answered = 0;
+  const lineOf = (r) => { try { return JSON.parse(r.postData()).fn_index === line; } catch (e) { return false; } };
+  page.on('request', (r) => { if (r.url().includes('/run/predict') && lineOf(r)) { asked += 1; } });
+  page.on('requestfinished', (r) => { if (r.url().includes('/run/predict') && lineOf(r)) { answered += 1; } });
+  await page.evaluate(() => {
+    window.__landed = 0;
+    const own = window.ShepTouch.landed;
+    window.ShepTouch.landed = (mark) => { window.__landed += 1; return own(mark); };
+  });
+  const settled = () => { const s = window.ShepTouch.state(); return !s.held && !Object.keys(s.counted).length; };
+  const until = async (check) => { for (let i = 0; i < 1500 && !check(); i++) { await new Promise((r) => setTimeout(r, 20)); } };
+  await page.getByText('More training settings', { exact: true }).click();
+  await page.locator('#num_neighbors input').click();
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('98');
+  await page.waitForFunction(settled);
+  await until(() => asked >= 1);
+  const out = { keys: { asked, answered, landed: await page.evaluate(() => window.__landed) } };
+  await page.click('#shep-train-reset');
+  await page.waitForFunction(() => document.querySelector('#num_neighbors input').value === '15, 10, 5');
+  fs.writeFileSync(gate, '');
+  await until(() => answered >= 2);
+  await page.waitForFunction(settled);
+  await new Promise((r) => setTimeout(r, 500));
+  out.after = { asked, answered, landed: await page.evaluate(() => window.__landed),
+                line: await page.locator('#shep-train-setby').innerText() };
+  await page.click('#shep-train-start');
+  await page.waitForFunction(() => document.querySelector('#shep-train-notice').innerText.includes('recorded by the test'),
+                             null, { timeout: 30000 });
+  out.notice = await page.locator('#shep-train-notice').innerText();
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_late_line_answer_never_records_the_field_again_after_reset(
+        tmp_path, workspace_root, monkeypatch):
+    """The review of 9a6895f (P2), on the Training page as the service mounts
+    it, the order of events controlled: the line of Neighbours per hop is
+    held on the server, so two keys make its first request wait and its
+    second wait for the first ("always_last"); Reset to reference then
+    empties the record; the line is let go. On 9a6895f the line was a second
+    input listener of the field, and Gradio runs a deferred listener again by
+    dispatching its trigger again: every listener of the field's input ran
+    once more, so the touch listener put the key back with no edit (a third
+    acknowledgement for two keys), the line said the reference was set by
+    the operator, and Start sent it as theirs. Now the line is chained after
+    the touch listener and runs again alone: two acknowledgements for two
+    keys, the line says nothing is set, and Start sends no setting."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.served_page import served
+
+    _browser()
+    asked, carried = _recorded_starts(monkeypatch)
+    gate = tmp_path / "gate"
+    own, held = tc._on_base_input, {}
+
+    def held_line(touched, *values):
+        if not held:
+            held["first"] = True
+            for _ in range(3000):
+                if gate.exists():
+                    break
+                time.sleep(0.01)
+        return own(touched, *values)
+
+    monkeypatch.setattr(tc, "_on_base_input", held_line)
+    demo = create_gradio_app()
+    field = next(block for block in demo.blocks.values()
+                 if getattr(block, "elem_id", None) == "num_neighbors")
+    touch = next(fn for fn in demo.fns.values() if (field._id, "input") in fn.targets)
+    line = next(fn._id for fn in demo.fns.values()
+                if fn.fn is held_line and fn.trigger_after == touch._id)
+    with served(demo, **mount_options()) as base:
+        seen = _run(_REDISPATCH_JS, tmp_path, base[:-len("gradio_api")], str(gate), str(line))
+
+    # Two keys: two acknowledgements, the first line request waiting.
+    assert seen["keys"]["landed"] == 2 and seen["keys"]["asked"] == 1, seen
+    # Its second run, once the first was answered, and nothing else.
+    assert seen["after"]["asked"] == 2 == seen["after"]["answered"], seen
+    assert seen["after"]["landed"] == 2, seen
+    assert "Set by you: nothing" in seen["after"]["line"], seen
+    assert [touched for touched, _values in carried] == [[]]
+    assert len(asked) == 1 and "num_neighbors" not in asked[0], asked
 
 
 def _base_fields():

@@ -223,17 +223,17 @@ def test_start_takes_compile_from_the_runtime_settings(listed, started, monkeypa
 
 def test_each_fields_input_says_the_line_and_reset_clears_the_record():
     """Decision S2: a field's input (never a page's write) adds it to the
-    form's record, in the browser (`TOUCH_JS`), and says the line from the
-    record with it; Reset to reference clears the record, writes every
-    field's starting value and says the line again."""
-    listener = tc._base_input_listener("num_epochs")
-    line = listener(["seed"], *_form(num_epochs=5))
+    form's record, in the browser (`TOUCH_JS`), and, chained after it, says
+    the line from the record as it is (`_on_base_input`); Reset to reference
+    clears the record, writes every field's starting value and says the line
+    again."""
+    line = tc._on_base_input(["num_epochs", "seed"], *_form(num_epochs=5))
     assert line == tc.set_by_you_html(_values(num_epochs=5), ["num_epochs", "seed"])
     assert "Epochs 5 (reference 200)" in line and "Seed 1 (reference 1)" in line
-    # The record already holding the key (the browser added it first): the same line.
-    assert listener(["num_epochs", "seed"], *_form(num_epochs=5)) == line
-    assert tc.touched_with(None, "encoder.layers") == ["encoder.layers"]
-    assert tc.touched_with(["a"], "a") == ["a"]
+    # Run again alone after Reset emptied the record: nothing set, whatever the values.
+    assert tc._on_base_input([], *_form(num_epochs=5)) == tc.set_by_you_html(
+        _values(num_epochs=5), [])
+    assert tc._on_base_input(None, *_form()) == tc.set_by_you_html(_values(), [])
     reset = tc._on_base_reset()
     assert reset[0] == [] and reset[1] == tc.set_by_you_html(_values(), [])
     assert "Set by you: nothing" in reset[1]
@@ -267,7 +267,6 @@ def test_the_record_is_read_as_data_from_the_request(listed, started):
         assert tc.touched_keys(odd) == set()
         assert tc._on_start(OP, WS, "", "cpu", odd, *_form(num_epochs=5, seed=3)) == ""
         assert _sent(started[-1]) == {}
-    assert tc.touched_with("num_epochs", "seed") == ["seed"]
 
 
 def test_the_touch_script_adds_the_key_once_in_the_browser():
