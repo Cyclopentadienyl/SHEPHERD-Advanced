@@ -2999,31 +2999,95 @@ def test_the_r10_help_sits_beside_the_r10_lines(site):
     assert r10.index("Help: R10 labels") < r10.index('class="shep-v"')
 
 
-def test_start_and_the_job_follow_the_choices_in_the_panels_one_scroll_region():
-    """The skill's §2 (one scroll region per area). Start and the job card
-    follow the choices inside the Run panel's body, the panel's one scroll
-    region, each at its natural height, Cancel beside the job's state. The
-    round's closing check measured two stacked regions at 1850 x 960 (the
-    choices 238 px of 484 shown, the job card 391 of 1049): Measurement,
-    Register and Device were hidden until the choices were scrolled."""
+def _css_rules(css):
+    """(selector, declarations) for each rule of a page's style sheet, the
+    page's own id taken off the selector and its @media blocks opened."""
+    css = re.sub(r"@media[^{]*\{", "", css).replace(tp._PAGE + " ", "")
+    return [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)]
+
+
+def _tokens(block):
+    """The ids and classes of `block` and every component inside it."""
+    own = {"#" + block.elem_id} if getattr(block, "elem_id", None) else set()
+    own |= {"." + c for c in (getattr(block, "elem_classes", None) or [])}
+    for child in getattr(block, "children", []):
+        own |= _tokens(child)
+    return own
+
+
+def test_the_run_panels_foot_keeps_start_the_jobs_state_and_cancel_out_of_its_one_scroll_region():
+    """The skill's §1.1 and §2. At a wide size the Run panel is three rows: its
+    title; its body, the one scroll region, holding the choices and then the
+    job's details (what it was given, what it left, its output) under their
+    heading; and a foot in flow that never scrolls, holding Start, its reason,
+    the action line and the job's title row (its state, Cancel beside it).
+    The round's closing check measured two stacked regions (the choices 238
+    px of 484 shown at 1850 x 960); one region holding everything then put
+    Start under its fold before any job, and the job's state and Cancel
+    scrolled away with the output."""
     demo, _ctx, _registry = _page_component()
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
-    foot = [getattr(c, "elem_id", None) for c in by_id["shep-test-runft"].children]
-    assert foot == ["shep-test-start", "shep-test-start-reason", "shep-test-action",
-                    "shep-test-jobcard"]
-    run = [getattr(c, "elem_id", None) for c in by_id["shep-test-run"].children]
-    body = [c for c in by_id["shep-test-run"].children
-            if "shep-test-bd" in (getattr(c, "elem_classes", None) or [])]
-    assert run[0] == "shep-test-run-hd" and len(body) == 1 and len(run) == 2
-    assert "shep-test-runft" in [getattr(c, "elem_id", None) for c in body[0].children]
+
+    def names(block):
+        return [getattr(c, "elem_id", None) or (c.elem_classes or [type(c).__name__])[0]
+                for c in block.children]
+
+    run = by_id["shep-test-run"]
+    assert names(run) == ["shep-test-run-hd", "shep-test-bd", "shep-test-runft"]
+    body, foot = run.children[1], run.children[2]
+    assert names(body)[-2:] == ["shep-test-fixed", "shep-test-jobcard"]
+    assert names(body)[0] == "shep-test-model-row"
+    assert names(by_id["shep-test-jobcard"]) == ["shep-test-job-title", "shep-test-job"]
+    # The heading names the run once; its state is the foot's alone.
+    title = by_id["shep-test-job-title"].value
+    assert "Latest test run" in title and "shep-test-pill" not in title
+    assert names(foot) == ["shep-test-start", "shep-test-start-reason", "shep-test-action",
+                           "shep-test-job-top", "shep-test-cancel-reason"]
+    assert names(foot.children[3]) == ["shep-test-job-head", "shep-test-cancel"]
+    # The classes the job's two parts draw, running and ended.
+    job = {"status": "running", "inputs": {"version_label": LABEL}, "log": ["a line"],
+           "elapsed_seconds": 5}
+    ended = dict(job, status="cancelled", end_time="2026-11-14T05:00:00Z",
+                 outcome={"kept": False, "registered": False, "summary": "Cancelled."})
+
+    def drawn(*html):
+        return {"." + c for attr in re.findall(r'class="([^"]+)"', "".join(html))
+                for c in attr.split()}
+
+    head = drawn(tp.job_head_html(job), tp.job_head_html(ended))
+    details = drawn(tp.job_body_html(job, [], ("busy", "GPU")),
+                    tp.job_body_html(ended, [], ("none", "")))
+    around = {"#shep-test-row", ".shep-page", ".shep-test", ".shep-panel", ".shep-test-col",
+              "#shep-test-run"}
+    in_panel = _tokens(run) | head | details | around
+    in_foot = _tokens(foot) | head | around
+    scrolls = re.compile(r"overflow(-y)?: (auto|scroll)|max-height|position: (sticky|fixed)")
+    regions = []
+    for selectors, rule in _css_rules(tp.PAGE_CSS):
+        for selector in selectors.split(","):
+            needs = set(re.findall(r"[#.][\w-]+", selector))
+            if not needs or not scrolls.search(rule):
+                continue
+            # No rule that could reach the foot or anything in it scrolls,
+            # caps or pins it.
+            assert not needs <= in_foot, selector
+            if needs <= in_panel:
+                regions.append(selector.strip())
+    # The body is the panel's one scroll region.
+    assert regions == [".shep-test-col > .shep-test-bd"]
+    wide = tp.PAGE_CSS[tp.PAGE_CSS.index("@media (min-width: 1400px)"):]
+    wide = wide[:wide.index("@media (max-width: 1399px)")]
+    assert re.search(r"\.shep-test-col > \.shep-test-bd \{ flex: 1 1 auto !important; "
+                     r"min-height: 0; overflow: auto !important;", wide)
+    # The foot keeps its own height, the body taking what is left.
+    assert "#shep-test-runft { flex: none !important; }" in wide
+
+
+def test_the_import_drawer_lies_over_the_panels_at_every_size():
+    """Wide, the drawer covers the panels' right side; narrow, the window. Its
+    body scrolls inside it under its title either way."""
     wide, narrow = tp.PAGE_CSS.split("@media (max-width: 1399px)")
     wide = wide[wide.index("@media (min-width: 1400px)"):]
-    assert ".shep-test-col > .shep-test-bd { flex: 1 1 auto !important; min-height: 0; " \
-           "overflow: auto !important;" in wide
-    # No second region and nothing sticky in it.
-    assert "max-height: 64%" not in tp.PAGE_CSS and "#shep-test-run > .shep-test-bd" not in wide
-    jobcard = [rule for rule in tp.PAGE_CSS.split("}") if "#shep-test-jobcard" in rule]
-    assert jobcard and not any("overflow" in rule or "sticky" in rule for rule in jobcard)
     assert "{ position: fixed !important;" in narrow.split(".shep-test-drawer ", 1)[1]
     assert re.search(r"\.shep-test-drawer > \.shep-test-bd \{[^}]*overflow: auto", narrow)
     # Over the panels, Gradio's own field labels included (position: relative;

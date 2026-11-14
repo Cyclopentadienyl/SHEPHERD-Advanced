@@ -1711,7 +1711,8 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
 
 
 def job_head_html(job: Mapping[str, Any]) -> str:
-    """The job card's title row: the state and its time (Cancel sits beside it)."""
+    """The job's title row, in the Run panel's foot under Start: the state and
+    its time (Cancel sits beside it)."""
     status = job.get("status") or "idle"
     head = f'<div class="shep-test-job-hd"><h3>Test run</h3>{_pill(status)}'
     if status in _BUSY:
@@ -1728,14 +1729,14 @@ def job_inputs_html(job: Mapping[str, Any]) -> str:
     what it measures, its version (label and fingerprint), its model (its
     fingerprint, the one digest value) and its measurement
     (`_job_measurement`), and its start; the rest one "Details ›" away (the
-    skill's §1.5, so the card, which follows the choices in the panel's one
-    scroll region, stays short): its workspace, its register, determinism and device
-    settings (the Result's keys for them) and its R10 evidence (by its own
-    kind, the runner's choice: none for a KG edge set or a generated split).
-    Drawn from the job alone, never from the selection (the poll writes the
-    card, `_card_outputs`), so a run keeps its own identity while another
-    model or version is chosen: these rows are the run's, which can differ
-    from the selection's (the skill's §1.2)."""
+    skill's §1.5, so the job's details, which follow the choices in the
+    panel's one scroll region, stay short): its workspace, its register,
+    determinism and device settings (the Result's keys for them) and its R10
+    evidence (by its own kind, the runner's choice: none for a KG edge set or
+    a generated split). Drawn from the job alone, never from the selection
+    (the poll writes the card, `_card_outputs`), so a run keeps its own
+    identity while another model or version is chosen: these rows are the
+    run's, which can differ from the selection's (the skill's §1.2)."""
     inputs = job.get("inputs") or {}
     started = utc_time(job.get("start_time"))
     evidence = inputs.get("evidence_dirs") or []
@@ -1766,9 +1767,10 @@ def job_inputs_html(job: Mapping[str, Any]) -> str:
 
 def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
                   gpu: Tuple[str, str]) -> str:
-    """The job card's body: what the run was given (`job_inputs_html`), once
-    it has ended what it left (the runner's outcome), its output tail, and
-    while it runs the GPU line."""
+    """The job's details, in the Run panel's scroll region after the choices:
+    what the run was given (`job_inputs_html`), once it has ended what it left
+    (the runner's outcome), its output tail, and while it runs the GPU line.
+    Its state is the title row's (`job_head_html`), in the panel's foot."""
     status = job.get("status") or "idle"
     if status == "idle":
         return ('<div class="shep-test-job-bd"><span class="shep-sub">No test run since the '
@@ -1806,7 +1808,9 @@ def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
 
 def job_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
              gpu: Tuple[str, str]) -> str:
-    """The latest test run's whole card (title row and body)."""
+    """The latest test run's title row and details together; the page draws
+    them apart (`job_head_html` in the Run panel's foot, `job_body_html` in
+    its scroll region)."""
     return job_head_html(job) + job_body_html(job, roots, gpu)
 
 
@@ -2949,6 +2953,13 @@ def create_test_page(ctx: Any) -> None:
                     "changed.</span>", elem_id="shep-test-commit-note")
                 commit_out = plain_html("", elem_id="shep-test-commit-out")
         # ------------------------------------------------------------ Run
+        # Three rows at wide sizes: the title; the body, the panel's one
+        # scroll region, with the choices and then the job's details; and the
+        # foot, in flow and never scrolled, with Start, its reason, the action
+        # line and the job's title row (its state, Cancel beside it), so Start,
+        # the job's state and Cancel are on screen whatever the model's
+        # details or the output's length. Narrow, the three follow one another
+        # in flow.
         with gr.Column(elem_classes=["shep-panel", "shep-test-col"], elem_id="shep-test-run",
                        scale=10, min_width=320):
             plain_html(run_header_html(), elem_id="shep-test-run-hd")
@@ -2979,26 +2990,25 @@ def create_test_page(ctx: Any) -> None:
                     deterministic = gr.Checkbox(label="Deterministic execution", value=False,
                                                 elem_id="shep-test-deterministic")
                 fixed = plain_html("", elem_id="shep-test-fixed")
-                # Start and the job follow the choices in the panel's one
-                # scroll region (the skill's §2), each at its natural height:
-                # the closing check measured the choices squeezed to half
-                # their height between a second region, the job card's own,
-                # and the panel's top. Cancel sits beside the job's state.
-                with gr.Column(elem_classes=["shep-test-runft"], elem_id="shep-test-runft"):
-                    start = gr.Button(GATED_LABELS["start"], variant="primary",
-                                      interactive=False, elem_id="shep-test-start")
-                    start_reason = plain_html("", elem_id="shep-test-start-reason")
-                    action_out = plain_html("", elem_id="shep-test-action")
-                    with gr.Column(elem_classes=["shep-test-job"], elem_id="shep-test-jobcard"):
-                        with gr.Row(elem_classes=["shep-test-job-top"]):
-                            job_head = plain_html(job_head_html({}),
-                                                  elem_id="shep-test-job-head")
-                            cancel = gr.Button(GATED_LABELS["cancel"], variant="stop",
-                                               interactive=False, elem_id="shep-test-cancel",
-                                               scale=0, size="sm")
-                        cancel_reason = plain_html("", elem_id="shep-test-cancel-reason")
-                        job_out = plain_html(job_body_html({}, [], ("none", "")),
-                                             elem_id="shep-test-job")
+                # The job's details at their natural height, after the
+                # choices: what it was given, what it left, its output. Their
+                # heading names the run; its state is the foot's.
+                with gr.Column(elem_classes=["shep-test-job"], elem_id="shep-test-jobcard"):
+                    plain_html('<h3 class="shep-test-job-title">Latest test run</h3>',
+                               elem_id="shep-test-job-title")
+                    job_out = plain_html(job_body_html({}, [], ("none", "")),
+                                         elem_id="shep-test-job")
+            with gr.Column(elem_classes=["shep-test-runft"], elem_id="shep-test-runft"):
+                start = gr.Button(GATED_LABELS["start"], variant="primary",
+                                  interactive=False, elem_id="shep-test-start")
+                start_reason = plain_html("", elem_id="shep-test-start-reason")
+                action_out = plain_html("", elem_id="shep-test-action")
+                with gr.Row(elem_classes=["shep-test-job-top"]):
+                    job_head = plain_html(job_head_html({}), elem_id="shep-test-job-head")
+                    cancel = gr.Button(GATED_LABELS["cancel"], variant="stop",
+                                       interactive=False, elem_id="shep-test-cancel",
+                                       scale=0, size="sm")
+                cancel_reason = plain_html("", elem_id="shep-test-cancel-reason")
         # ------------------------------------------------------------ Result
         # The reports as a compact single-select table at the panel's top, the
         # chosen report's result under it, both in the panel's one scroll
@@ -3662,12 +3672,12 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-res-hd h3 {{ margin: 0; font-size: 15px; font-weight: 600; }}
 {_PAGE} .shep-test-vd-why {{ margin-top: 6px; }}
 {_PAGE} .shep-test-job {{ border: 1px solid var(--shep-border) !important; border-radius: 10px !important; background: var(--shep-panel-2) !important; padding: 0 0 8px !important; gap: 4px !important; }}
-{_PAGE} .shep-test-job-top {{ align-items: center !important; flex-wrap: nowrap !important; gap: 8px !important; padding-right: 14px; }}
+{_PAGE} .shep-test-job-top {{ align-items: center !important; flex-wrap: nowrap !important; gap: 8px !important; }}
 {_PAGE} .shep-test-job-top > .block {{ flex: 1 1 auto !important; min-width: 0 !important; }}
 {_PAGE} .shep-test-job-top > button {{ flex: none !important; white-space: nowrap; }}
-{_PAGE} #shep-test-cancel-reason {{ padding: 0 14px; }}
-{_PAGE} .shep-test-job-hd {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px 4px; }}
-{_PAGE} .shep-test-job-hd h3 {{ margin: 0; font-size: 15px; font-weight: 600; }}
+{_PAGE} .shep-test-job-hd {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
+{_PAGE} .shep-test-job-hd h3, {_PAGE} .shep-test-job-title {{ margin: 0; font-size: 15px; font-weight: 600; }}
+{_PAGE} .shep-test-job-title {{ padding: 10px 14px 4px; }}
 {_PAGE} .shep-test-job-bd {{ padding: 0 14px; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-job-ft {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 14px 0; }}
 {_PAGE} .shep-test-log {{ margin: 0; padding: 8px 10px; background: #fff; border: 1px solid var(--shep-border); border-radius: 6px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--shep-mono); }}
@@ -3702,7 +3712,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-form {{ gap: 10px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-form > * {{ min-width: 180px !important; }}
 {_PAGE} #shep-test-start {{ width: 100%; }}
-{_PAGE} .shep-test-runft {{ padding: 10px 0 0 !important; gap: 10px !important; border-top: 1px solid var(--shep-border); }}
+{_PAGE} .shep-test-runft {{ padding: 10px 16px 12px !important; gap: 10px !important; border-top: 1px solid var(--shep-border); }}
 {_PAGE} .shep-test-select input {{ padding-right: 26px !important; }}
 {_PAGE} .shep-test-rep-old, {_PAGE} .shep-test-more-fewer {{ display: none !important; }}
 {_PAGE} .shep-test-all .shep-test-rep-old {{ display: table-row !important; }}
@@ -3715,8 +3725,7 @@ PAGE_CSS = f"""
 @media (min-width: 1400px) and (min-height: 760px) {{
   {_PAGE} .shep-test-col > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-test-noteform {{ max-height: 50%; overflow: auto !important; flex-wrap: nowrap !important; }}
-  {_PAGE} #shep-test-runft, {_PAGE} #shep-test-jobcard {{ flex-wrap: nowrap !important; }}
-  {_PAGE} #shep-test-runft > *, {_PAGE} #shep-test-jobcard > * {{ flex-shrink: 0 !important; }}
+  {_PAGE} #shep-test-runft {{ flex: none !important; }}
   {_PAGE} .shep-test-drawer {{ position: absolute !important; top: 0; right: 0; bottom: 0; width: min(780px, 62%) !important; z-index: 50; display: flex; flex-direction: column; max-height: 100%; }}
   {_PAGE} .shep-test-drawer > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
 }}

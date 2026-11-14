@@ -3680,17 +3680,19 @@ it. Three panels:
   it with Stop inference on Diagnosis." while a model is served on CUDA), since no choice
   enables it while that lasts,
   then a choice missing or another
-  graph. The job card shows the state (Running, Completed, Failed in red, Cancelled in grey:
-  never green for a failed or cancelled run), the elapsed time, what the run was given as one
+  graph. The job's title row shows its state (Running, Completed, Failed in red, Cancelled in
+  grey: never green for a failed or cancelled run) and the elapsed time or its end time;
+  **Cancel**, beside the state, stops the test run only, never a training job. The job card,
+  headed "Latest test run", shows what the run was given as one
   list, a row each (its version and its model by their own fingerprints, whatever is chosen
   now; its measurement in its report's words; its start in UTC, as the report rows name runs;
   under **Details ›** its workspace, Register, Deterministic algorithms, Device and R10
-  evidence), its end time and the last 12 lines of its output
+  evidence) and the last 12 lines of its output
   (folded after a cancel, whose last line says the run was cancelled, with no traceback; a
-  patient id a measurement refusal names is left out, D7); **Cancel**, beside the state,
-  stops the test run only, never a training job. Start, its reason and the job card follow the
-  choices in the panel's one scroll region, each at its full height, the output in the card under
-  the line with Cancel. Once the run has ended, the card shows what the runner read
+  patient id a measurement refusal names is left out, D7). On a wide screen Start, its reason
+  and the job's title row stay at the panel's foot, under its one scroll region, whatever the
+  job; the card follows the choices in that region. Narrow, the choices, the card, Start and the
+  title row follow one another. Once the run has ended, the card shows what the runner read
   from disk as the run ended (headed "When the run ended:"): whether a report was kept and whether
   it was registered then, with the runner's sentence ("No report was published …" when the run
   wrote no outcome file; after a cancel, what was left). A report registered afterwards with
