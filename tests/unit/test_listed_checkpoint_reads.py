@@ -578,7 +578,8 @@ def test_a_refused_read_whose_message_holds_a_string_that_is_not_text_is_listed_
     parent_run = _payload(child)["parent"]["run"]
     _filed(workspace, parent_run).write_bytes(
         pickle.dumps(_LEGACY_MAGIC, protocol=2) + pickle.dumps("\udc80proto", protocol=2))
-    message = "RuntimeError: Invalid protocol version: \\udc80proto"
+    message = ("the file cannot be read as a checkpoint; Ref: RuntimeError: Invalid protocol "
+               "version: \\udc80proto")
 
     for request in ("first", "next"):
         rows = _rows_over_http(workspace, monkeypatch, endpoint)

@@ -647,7 +647,7 @@ def test_the_read_listing_keeps_the_order_and_each_reads_digest(tmp_path):
 def test_a_file_the_read_refuses_is_listed_with_its_reason(tmp_path):
     import torch
 
-    from src.utils.checkpoint_paths import read_run_checkpoints
+    from src.utils.checkpoint_paths import CHECKPOINT_NOT_READ, read_run_checkpoints
 
     run = tmp_path / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints"
     run.mkdir(parents=True)
@@ -660,7 +660,10 @@ def test_a_file_the_read_refuses_is_listed_with_its_reason(tmp_path):
     for name in ("garbage.pt", "pickled.pt"):
         entry = entries[name]
         assert entry.sha256 is None and entry.logs is None and entry.validation is None
-        assert entry.problem and "\n" not in entry.problem and len(entry.problem) <= 330
+        # Plain words first, the loader's line (bounded) after them as a reference.
+        assert entry.problem.startswith(f"{CHECKPOINT_NOT_READ}; Ref: "), entry.problem
+        assert "\n" not in entry.problem
+        assert len(entry.problem) <= len(f"{CHECKPOINT_NOT_READ}; Ref: ") + 330
     assert "UnpicklingError" in entries["pickled.pt"].problem
     # Loads, but is not a record: its digest is kept, its metadata is not there.
     assert entries["list.pt"].sha256 is not None and entries["list.pt"].logs is None
@@ -963,7 +966,8 @@ def test_a_refused_read_is_listed_with_its_message_escaped_and_bounded(tmp_path,
 
     legacy = rows["legacy.pt"]
     assert legacy.problem.isprintable() and legacy.sha256 is None   # shown escaped if not
-    assert legacy.problem == f"RuntimeError: Invalid protocol version: {shown}"
+    assert legacy.problem == (f"the file cannot be read as a checkpoint; Ref: RuntimeError: "
+                              f"Invalid protocol version: {shown}")
     assert rows["good.pt"].problem is None and rows["good.pt"].sha256 == good
 
 
@@ -971,16 +975,30 @@ def test_a_problem_line_is_the_first_line_escaped_and_bounded():
     """K8-6e.1: `problem_line` is the one rule a reason line follows, split out
     of `refusal_line`, whose behaviour is unchanged: the first non-empty line,
     each character that is not printable escaped, at most 300 characters.
-    HEAD: no `problem_line`."""
-    from src.utils.checkpoint_paths import problem_line, refusal_line
+    HEAD: no `problem_line`. A refused checkpoint read leads with plain words
+    and keeps the exception's line after them as a reference (the closing
+    browser check of the ops round: "RuntimeError: PytorchStreamReader …"
+    read as the reason)."""
+    from src.utils.checkpoint_paths import (
+        CHECKPOINT_NOT_READ,
+        exception_line,
+        problem_line,
+        refusal_line,
+    )
 
     assert problem_line("\n  \nfirst line \nsecond") == "first line"
     assert problem_line("a\udc80b\x00") == "a\\udc80b\\x00"
     long = problem_line("k" * 500)
     assert len(long) == 300 and long.endswith("...")
     assert problem_line("") == "" and problem_line("\n\n") == ""
-    assert refusal_line(ValueError("bad\nmore")) == "ValueError: bad"
-    assert refusal_line(ValueError("")) == "ValueError"
+    assert exception_line(ValueError("bad\nmore")) == "ValueError: bad"
+    assert exception_line(ValueError("")) == "ValueError"
+    zip_error = RuntimeError("PytorchStreamReader failed reading zip archive: failed finding "
+                             "central directory")
+    assert refusal_line(zip_error) == (
+        "the file cannot be read as a checkpoint; Ref: RuntimeError: PytorchStreamReader "
+        "failed reading zip archive: failed finding central directory")
+    assert refusal_line(zip_error).startswith(CHECKPOINT_NOT_READ)
 
 
 def test_importing_the_listing_does_not_import_torch():
@@ -1014,7 +1032,8 @@ def test_a_link_whose_target_is_gone_is_listed_not_fatal(tmp_path):
     good, gone = read_run_checkpoints(tmp_path)
     assert good.problem is None and good.sha256 is not None
     assert gone.path.name == "gone.pt" and gone.sha256 is None
-    assert gone.problem.startswith("FileNotFoundError") and gone.size_bytes is None
+    assert gone.problem.startswith("the file cannot be read as a checkpoint; Ref: "
+                                   "FileNotFoundError") and gone.size_bytes is None
 
 
 def test_the_size_is_the_listed_files(tmp_path):

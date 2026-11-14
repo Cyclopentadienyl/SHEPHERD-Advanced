@@ -553,7 +553,8 @@ class TestTrainingAPIEndpoints:
          "its progress.completed_epochs is a Tensor, not a whole number"),
         ({"progress": {"stage": {"start_epoch": "x", "target_epochs": 2}}},
          "its progress.stage.start_epoch is a str, not a whole number"),
-        (b"legacy", "RuntimeError: Invalid protocol version: \\udc80proto"),
+        (b"legacy", "the file cannot be read as a checkpoint; Ref: RuntimeError: Invalid "
+                    "protocol version: \\udc80proto"),
     ], ids=["end-surrogate", "stop-reason-surrogate", "completed-tensor", "start-epoch-text",
             "legacy-protocol-surrogate"])
     def test_a_stopped_runs_snapshot_that_cannot_be_shown_as_read_is_not_readable(

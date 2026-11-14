@@ -645,7 +645,8 @@ class TestCheckpointsInAndOut:
         assert listing.available
         items = {i.filename: i for i in listing.items}
         assert items["last.pt"].problem is None
-        assert items["gone.pt"].problem.startswith("FileNotFoundError")
+        assert items["gone.pt"].problem.startswith(
+            "the file cannot be read as a checkpoint; Ref: FileNotFoundError")
         assert items["gone.pt"].sha256 is None
 
     def test_an_item_names_the_workspace_as_listed(self, demo_workspace, tmp_path):

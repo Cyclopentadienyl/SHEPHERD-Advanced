@@ -520,7 +520,7 @@ def list_runs(data_dir: PathLike, conv_type: Optional[str] = None, *,
             # Its kind and the system's words, never the path it names.
             refused.append((directory, directory, unlisted_problem(
                 directory.relative_to(base), f"{type(exc).__name__}: {exc.strerror}"
-                if exc.strerror else refusal_line(exc))))
+                if exc.strerror else exception_line(exc))))
             continue
         for run in found:
             if text_problem(run.name) is None:
@@ -741,13 +741,28 @@ def problem_line(text: Any) -> str:
     return line
 
 
-def refusal_line(exc: BaseException) -> str:
-    """A refused read of a checkpoint as a reason shows it, the listing's
-    (`_read_one`) and the training status's (`TrainingManager.latest_snapshot`):
-    the exception's kind and the first line of its message (`problem_line`:
-    escaped and bounded)."""
+def exception_line(exc: BaseException) -> str:
+    """An exception as a reason's reference: its kind and the first line of
+    its message (`problem_line`: escaped and bounded)."""
     text = problem_line(str(exc))
     return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
+#: What a file is whose read as a checkpoint was refused, in plain words, the
+#: lead of its reason wherever it is shown (`refusal_line`).
+CHECKPOINT_NOT_READ = "the file cannot be read as a checkpoint"
+
+
+def refusal_line(exc: BaseException) -> str:
+    """A refused read of a checkpoint as a reason shows it, the listing's
+    (`_read_one`, so every page's list, the Load refusals and Models' "Record
+    unknown") and the training status's (`TrainingManager.latest_snapshot`):
+    plain words first (`CHECKPOINT_NOT_READ`), then the exception as a
+    trailing reference (`exception_line`; the WebUI skill's §5: an internal
+    code only after a plain label), so the loader's own words stay viewable
+    and never lead ("RuntimeError: PytorchStreamReader failed reading zip
+    archive" read as the reason in the closing browser check)."""
+    return f"{CHECKPOINT_NOT_READ}; Ref: {exception_line(exc)}"
 
 
 def text_problem(value: Any) -> Optional[str]:
@@ -1467,6 +1482,7 @@ def select_auto_run_checkpoint(
 
 
 __all__ = [
+    "CHECKPOINT_NOT_READ",
     "RANKING_SCORE_KEYS",
     "RETIRED_LOCATION_FIELDS",
     "RUN_LAYOUT_KEYS",
@@ -1492,6 +1508,7 @@ __all__ = [
     "plain_data_problem",
     "propose_run_dir",
     "read_run_checkpoints",
+    "exception_line",
     "problem_line",
     "refusal_line",
     "refuse_retired_locations",
