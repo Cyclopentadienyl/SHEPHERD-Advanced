@@ -687,8 +687,9 @@ ABSENT = object()
 #: A value Compare shows where the row's field does not apply to the result's
 #: data kind ("not applicable"): a KG edge set's exposure definition and
 #: counts for another kind's result, R10 for a result not of a supplied cohort,
-#: and an entry of the data's identity, counts or content references that only
-#: results of another kind hold (`_Field.by_kind`).
+#: an entry of the data's identity, counts or content references that only
+#: results of another kind hold (`_Field.by_kind`), and what a branch changed
+#: from its parent for a model of another operation.
 NOT_APPLICABLE = object()
 #: The values that are no value: each passed down to every row a mapping's
 #: entries make (`_tree`), as a value recorded as null is.
@@ -812,6 +813,14 @@ def _fields(row: Mapping[str, Any]) -> List[_Field]:
             # "not recorded" on each of their rows, and it records "none
             # changed", which is not "not recorded" (decision B1).
             value = mp.SAME_SETTINGS
+        elif name == "parent_changes" and isinstance(model.get("operation"), str) \
+                and model["operation"] != "branch":
+            # Only a branch records what it changed: for a model of another
+            # operation the row does not apply, as Models' detail shows it for
+            # a branch alone. Its listing's None is no record of "none
+            # changed" (decision B1: a fine-tune whose rate differs from its
+            # base's read "none").
+            value = NOT_APPLICABLE
         out.append(_Field("Model", label, value, why(f"model.{name}"), ref=f"model.{name}"))
     out.append(_Field("Training settings", "Training rules", model.get("training_rules"),
                       why("model.training_rules"), ref="model.training_rules"))
@@ -1041,7 +1050,8 @@ def compare_fields(row: Mapping[str, Any]) -> List[Tuple[str, str, Any, Optional
     result): the result, the model (its stage, task, operation, parent, what
     a branch changed from its parent as its record holds it, a same-settings
     branch's ``{}`` in the Models page's words (`models_page.SAME_SETTINGS`)
-    and none for any other operation (ops-wiring round, decision B4),
+    and `NOT_APPLICABLE` for a model of any other operation, which records
+    none (ops-wiring round, decisions B1, B4),
     family, encoder, relation to the reference recipe, its
     capabilities and every value of its spec but the stage, the encoder's
     kind and the task its

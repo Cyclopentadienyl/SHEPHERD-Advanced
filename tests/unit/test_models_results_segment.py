@@ -860,13 +860,19 @@ def test_compare_says_what_a_branch_changed_from_its_parent(world, monkeypatch):
     page: a same-settings branch in the Models page's words, never "not
     recorded" beside a branch that changed settings (decision B1: none
     changed is not not recorded); each setting changed with its parent's
-    value and its own; "none" for a result of any other operation, which
-    records none."""
+    value and its own; "not applicable" for a result of any other operation,
+    which records none, as Models' detail shows the row for a branch alone
+    (the closing check: a fine-tune whose rate differs from its base's, and a
+    new base, read "none", as if recorded unchanged). A model whose record was
+    not read says nothing of it either way (its operation is unknown)."""
     from src.webui.components import models_page as mp
     from src.webui.components import results_segment as rs
 
-    _finetune, base, _supplied, _kg = _finetune_base_supplied_kg(world, monkeypatch)
+    finetune, base, _supplied, _kg = _finetune_base_supplied_kg(world, monkeypatch)
     assert base["model"]["parent_changes"] is None
+    base["model"]["operation"] = "new"
+    finetune["model"]["operation"] = "finetune"
+    finetune["report_sha256"] = "f" * 64
     same, changed = (copy.deepcopy(base) for _ in range(2))
     same["model"].update(operation="branch", parent_changes={})
     same["report_sha256"] = "d" * 64
@@ -877,15 +883,26 @@ def test_compare_says_what_a_branch_changed_from_its_parent(world, monkeypatch):
     assert labels.index("Settings changed") == labels.index("Parent run") + 1
     shown = {label: value for _group, label, value, _why in rs.compare_fields(same)}
     assert shown["Settings changed"] == mp.SAME_SETTINGS
-    assert {label: value for _group, label, value, _why in rs.compare_fields(base)}[
+    for other in (base, finetune):
+        assert {label: value for _group, label, value, _why in rs.compare_fields(other)}[
+            "Settings changed"] is rs.NOT_APPLICABLE
+    unread = copy.deepcopy(finetune)
+    unread["model"]["operation"] = None
+    assert {label: value for _group, label, value, _why in rs.compare_fields(unread)}[
         "Settings changed"] is None
     markup = rs.compare_html([same, changed], False)
     cells = _cells(markup, "Settings changed")
     assert cells[0] == mp.SAME_SETTINGS and "learning_rate" in cells[1]
     assert not [label for label in _labels(markup) if label.startswith("Settings changed ·")]
-    markup = rs.compare_html([changed, base], False)
-    assert _cells(markup, "Settings changed · Learning rate › Parent") == ["0.0001", "none"]
-    assert _cells(markup, "Settings changed · Learning rate › New") == ["0.001", "none"]
+    markup = rs.compare_html([same, finetune, base], False)
+    assert _cells(markup, "Settings changed") == [mp.SAME_SETTINGS, "○ Not applicable",
+                                                  "○ Not applicable"]
+    markup = rs.compare_html([changed, finetune], False)
+    assert _cells(markup, "Settings changed · Learning rate › Parent") == [
+        "0.0001", "○ Not applicable"]
+    assert _cells(markup, "Settings changed · Learning rate › New") == [
+        "0.001", "○ Not applicable"]
+    assert "none" not in _cells(markup, "Settings changed · Learning rate › New")
 
 
 def test_compare_keeps_not_applicable_not_recorded_and_none_apart(world, monkeypatch):
