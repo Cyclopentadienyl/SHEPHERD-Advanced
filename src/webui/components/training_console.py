@@ -1244,10 +1244,13 @@ def _on_base_input(touched: Any, *values: Any) -> str:
     said again on each field's input, chained after the field's touch
     listener (`record_touches`): the record it reads holds the field's key,
     and, run again alone for the last input ("always_last"), it reads the
-    record as it is then (after Reset, nothing set). Its values are the
-    form's, in `base_form_keys` order. It writes only the line, never the
-    record, which is the browser's: an answer that arrives late cannot undo
-    a later touch."""
+    record as it is when it runs (once Reset has landed, nothing set). Its
+    values are the form's, in `base_form_keys` order. It writes only the
+    line, never the record, which is the browser's: an answer that arrives
+    late cannot undo a later touch. The line is display, said by more than
+    one request (this one, Reset's): a run read before Reset landed can be
+    answered after Reset's line and name what Reset cleared until the next
+    edit, while the record, which Start sends, is Reset's."""
     return set_by_you_html(dict(zip(base_form_keys(), values, strict=True)),
                            touched_keys(touched))
 

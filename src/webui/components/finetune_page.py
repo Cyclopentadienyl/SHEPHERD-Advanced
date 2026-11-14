@@ -919,10 +919,12 @@ def _on_field_input(tasks: Any, touched: Any, *values: Any) -> str:
     field's input, chained after the field's touch listener
     (`training_console.record_touches`), as the base form's fields say
     theirs: the record it reads holds the field's key, and, run again alone
-    for the last input ("always_last"), it reads the record as it is then
-    (after Reset or a task switch, without what they dropped). Its values
-    are the fields', in `FINETUNE_FIELDS` order. It writes only the line,
-    never the record, which is the browser's."""
+    for the last input ("always_last"), it reads the record as it is when it
+    runs (once Reset or a task switch has landed, without what they
+    dropped). Its values are the fields', in `FINETUNE_FIELDS` order. It
+    writes only the line, never the record, which is the browser's; as the
+    base form's line (`training_console._on_base_input`), a run read before
+    Reset or a task switch landed can be answered after their line."""
     return set_by_html(tasks, dict(zip(FINETUNE_FIELDS, values, strict=True)), touched)
 
 
@@ -946,10 +948,11 @@ def _on_guards(*values):
 def _on_hops_input(tasks, key, parents, touched, *values):
     """The hop field's input, chained after its touch listener
     (`training_console.record_touches`), so the record it reads holds its key
-    (run again alone for the last input, the record as it is then): its one
-    listener besides it, the line on what the operator set (`set_by_html`, as
-    every field's listener says it), the hop note and its pointer beside
-    Start, for the list typed (`hops_note_html`, `hops_warning_html`).
+    (run again alone for the last input, the record as it is when it runs):
+    its one listener besides it, the line on what the operator set
+    (`set_by_html`, as every field's listener says it), the hop note and its
+    pointer beside Start, for the list typed (`hops_note_html`,
+    `hops_warning_html`).
     `values` are the fields', in `FINETUNE_FIELDS` order. It writes only
     them, never the record, which is the browser's.
     One listener, not two: two input listeners of one field that each send
