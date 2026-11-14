@@ -62,7 +62,7 @@ import threading
 import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
@@ -217,7 +217,10 @@ def _served_part(config: Any, *keys: str) -> Any:
 
 
 def _now() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+    """A not-serving record's time: now, in UTC (ISO 8601), the zone every
+    page says a clock time in (the dashboard's "10:15:00 UTC"), so the
+    record's reason and a page's line give one moment in one zone."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 class AppState:

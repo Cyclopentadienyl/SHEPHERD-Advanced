@@ -932,8 +932,12 @@ def test_each_state_shows_its_words_and_the_backend_s_lead_escaped(root):
                      "3fa9c1a2b3c4"),
         "Inference was stopped by an operator at 2026-10-20T10:15:00+00:00: <b>x</b>."))
     body = card.body_html(stopped)
-    assert r.status_mark("neutral", "Stopped", as_chip=True) in body
-    assert "By &lt;img src=x onerror=alert(1)&gt; at 10:15:00 UTC</p>" in body
+    # When, beside the state word, in the dashboard's one clock form; the
+    # backend's lead under it as it is (review of B4, finding 2).
+    assert (r.status_mark("neutral", "Stopped", as_chip=True)
+            + ' <span class="shep-dx-when">at 10:15:00 UTC</span></p>') in body
+    assert ('<p class="shep-dx-line shep-dx-reason">By &lt;img src=x onerror=alert(1)&gt;</p>'
+            in body)
     assert "&lt;b&gt;x&lt;/b&gt;" in body and "<img" not in body and "<b>x" not in body
     # After a stop, the way back to research (Research › Training).
     assert f'data-key="research" aria-label="Back to research: open Research › Training">' \
@@ -947,8 +951,13 @@ def test_each_state_shows_its_words_and_the_backend_s_lead_escaped(root):
         f"No model is loaded: the last load was refused at 2026-10-20T10:16:00+00:00: {holder}. "
         "An operator loads one …"))
     body = card.body_html(refused)
-    assert r.status_mark("error", "Load refused", as_chip=True) in body
-    assert f'<p class="shep-dx-line shep-dx-reason">{r.e(holder)} (10:16:00 UTC)</p>' in body
+    # The time is the refusal's, beside its state: never after the backend's
+    # sentence, where it read as when to load again.
+    assert (r.status_mark("error", "Load refused", as_chip=True)
+            + ' <span class="shep-dx-when">at 10:16:00 UTC</span></p>') in body
+    assert f'<p class="shep-dx-line shep-dx-reason">{r.e(holder)}</p>' in body
+    visible = re.sub(r"<details.*?</details>", "", body, flags=re.S)
+    assert "ended (10:16:00 UTC)" not in body and visible.count("10:16:00") == 1
     assert card.BACK_TO_RESEARCH not in body
     startup = _nothing_served(_not_serving("startup_refused", "At start-up: it could not be "
                                            "initialized"), "A pipeline is configured …")

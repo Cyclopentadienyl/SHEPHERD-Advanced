@@ -34,9 +34,11 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   (`serving_state`, never a page flag): Serving (with Loading beside it while
   a load runs, `loading_too`), Loading, Stopping with the accepted diagnoses
   still in flight, Stopped, Load refused or Not loaded (nothing loaded since
-  the service started). When no diagnosis is admitted, **the backend's lead**
-  under it (``not_serving``, `not_serving_lead`: who stopped it and when, why
-  a load was refused and the GPU lock's holder) and its whole reason one click
+  the service started), with when a stop or a refusal was recorded beside
+  it ("Stopped at 10:15:00 UTC", `not_serving_when`). When no diagnosis is
+  admitted, **the backend's lead** under it (``not_serving``,
+  `not_serving_lead`: who stopped it, why a load was refused and the GPU
+  lock's holder) and its whole reason one click
   away ("Details ›", ``not_serving_reason``: the load hint, the start-up
   settings): said once, here. After a stop, "Back to research ›" opens
   Research › Training. A load is said by the server's state alone: the page
@@ -296,19 +298,21 @@ def _when(at: Any) -> Optional[str]:
 def not_serving_lead(status: Optional[Mapping[str, Any]]) -> Optional[str]:
     """The backend's lead of why nothing is admitted (``not_serving``'s
     ``lead``: who stopped it, why a load was refused and the GPU lock's
-    holder, a load in progress), with when for a stop ("By an operator at
-    10:15:00 UTC") or a refusal ("… (10:15:00 UTC)"); None without one (a
+    holder, a load in progress), as the backend says it; None without one (a
     model serving)."""
     lead = _part(status, "not_serving", "lead")
-    if not isinstance(lead, str) or not lead:
+    return lead if isinstance(lead, str) and lead else None
+
+
+def not_serving_when(status: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """When the not-serving record was written ("10:15:00 UTC", the
+    dashboard's one clock form, `renderers.clock_utc`), for the states it
+    dates: a stop or a refusal. Said beside the state word ("Stopped at
+    10:15:00 UTC"), never after the lead, whose own words may end in a time
+    or a parenthesis; None otherwise."""
+    if serving_state(status)[0] not in (STOPPED, REFUSED):
         return None
-    when = _when(_part(status, "not_serving", "at"))
-    state = serving_state(status)[0]
-    if when and state == STOPPED:
-        return f"{lead} at {when}"
-    if when and state == REFUSED:
-        return f"{lead} ({when})"
-    return lead
+    return _when(_part(status, "not_serving", "at"))
 
 
 def served_task(status: Optional[Mapping[str, Any]]) -> Optional[str]:
@@ -799,9 +803,10 @@ BACK_TO_RESEARCH = "Back to research ›"
 
 def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
     """The serving state in the backend's words (`serving_state`; a load
-    while a model serves beside it, `loading_too`), and when no diagnosis is
-    admitted the backend's lead under it (`not_serving_lead`: who stopped it
-    and when, why a load was refused and the holder) with its whole reason
+    while a model serves beside it, `loading_too`; when a stop or a refusal
+    was recorded beside it, `not_serving_when`), and when no diagnosis is
+    admitted the backend's lead under it (`not_serving_lead`: who stopped it,
+    why a load was refused and the holder) with its whole reason
     one click away ("Details ›", ``not_serving_reason``: the load hint, the
     start-up settings), and after a stop the way back to research. Grey
     while the card is not current: the last known state. Nothing here names
@@ -816,6 +821,9 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
         mark = r.status_mark(kind, words, as_chip=as_chip)
         if loading_too(status):
             mark += " " + r.status_mark("running", "Loading")
+    when = not_serving_when(status)
+    if when:
+        mark += f' <span class="shep-dx-when">at {r.e(when)}</span>'
     line = f'<p class="shep-dx-line shep-dx-serving" data-state="{r.e(state)}">{mark}</p>'
     if state == SERVING:
         return line
@@ -1105,6 +1113,7 @@ __all__ = [
     "loading_too",
     "new_state",
     "not_serving_lead",
+    "not_serving_when",
     "parse_local",
     "problem_sentence",
     "read_status_within",

@@ -34,7 +34,7 @@ scrolls.
   model is loaded, and it says what the stop said, with the resources reading
   taken after it (never a promise that memory was returned). The card then
   shows the server's state in its own words (`diagnosis_card.serving_state`:
-  Stopped, the backend's lead "By an operator at …", its reason under
+  "Stopped at …", the backend's lead "By an operator", its reason under
   Details ›) and the way back to research ("Back to research ›", Research ›
   Training).
   **The card's reads own what the stop shows**: its question closes, and what
@@ -3495,6 +3495,7 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-state .shep-dx-retry {{ height: 24px; padding: 0 6px; }}
 /* Nothing served: the backend's lead under the state, its whole reason one click away. */
 {_TAB} .shep-dx-serving .shep-st + .shep-st {{ margin-left: 8px; }}
+{_TAB} .shep-dx-serving .shep-dx-when {{ white-space: nowrap; }}
 {_TAB} .shep-dx-why-more {{ font-size: 14px; }}
 {_TAB} .shep-dx-why-more > .shep-dx-line {{ margin-top: 2px; color: var(--shep-grey-800); }}
 {_TAB} button.shep-dx-back {{ min-height: 24px; }}

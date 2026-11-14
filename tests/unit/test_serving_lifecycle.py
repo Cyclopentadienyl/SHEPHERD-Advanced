@@ -147,6 +147,7 @@ def test_a_load_is_refused_while_another_process_holds_the_lock(service, tmp_pat
     # The same record as its parts (B4): the state, and the lead a page shows
     # beside it naming the holder, with no load hint and no path.
     assert said["state"] == "load_refused" and said["at"] and said["model_sha12"] is None
+    assert said["at"].endswith("+00:00") and said["at"] in reason
     assert said["lead"].startswith("CUDA inference is refused: the GPU is in use by a training "
                                    "job (lock_holder.py")
     assert "Load a model" not in said["lead"] and str(tmp_path) not in said["lead"]
@@ -338,6 +339,9 @@ def test_a_stop_refuses_new_requests_waits_for_the_accepted_one_then_releases(se
     assert said == {"state": "stopped", "lead": "By an operator", "at": said["at"],
                     "model_sha12": sha_of(model)[:12]}
     assert said["at"] in stopped.status.not_serving_reason
+    # In UTC, the zone every page says a clock time in (review of B4): the
+    # card's "Stopped at HH:MM:SS UTC" and this reason give one moment one way.
+    assert said["at"].endswith("+00:00")
     assert status["not_serving"]["state"] == "stopping"
     assert status["not_serving"]["lead"] == (
         "The diagnoses already accepted finish; new ones are refused")

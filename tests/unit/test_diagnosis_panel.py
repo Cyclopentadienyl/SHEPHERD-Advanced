@@ -2562,7 +2562,9 @@ def test_after_a_stop_run_is_off_with_the_backends_reason_and_the_result_keeps_i
     out = dp.card_outputs(stopped, result, "idle")
     assert out["run_btn"]["interactive"] is False
     assert dp.RUN_DISABLED_NO_MODEL in out["run_reason"]
-    assert "By an operator at 16:00:30 UTC" in out["card_body"]
+    assert 'Stopped</span></span> <span class="shep-dx-when">at 16:00:30 UTC</span>' in \
+        out["card_body"]
+    assert '<p class="shep-dx-line shep-dx-reason">By an operator</p>' in out["card_body"]
     assert "Inference was stopped by an operator" in out["card_body"]   # under Details ›
     assert "results_body" not in out, "a result is never redrawn by a card read"
     compared = dp.compare_with_served(result, stopped)
