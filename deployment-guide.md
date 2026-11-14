@@ -3332,9 +3332,13 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   `true`），範圍取自 field spec，所以 `-1` 的 hop（「所有鄰居」）在這裡與命令列一樣合法。新的
   run 需要 `learning_stage` 為 `base`；有 `resume_from` 時可以不給 stage，給了就與 parent 的
   比對，所以 finetune 子模型也能在這裡續訓或延長（parent 的學習率降到 0 時用 `extend_lr`）。
-  只有送出的欄位會到達服務，包括明確的 `null`，而且會被判斷：新的 run 中不接受 null 的設定會
-  被拒絕，續訓時則視為與 parent 不同的值而拒絕；`resume_from`、`extend_epochs` 或 `extend_lr`
-  為 `null` 表示沒有給。新 run 不會讀取的設定一律拒絕，絕不忽略：scheduler 不是 `cosine` 時的
+  只有送出的欄位會到達服務，包括明確的 `null`，而且依 field spec 判斷：欄位沒有賦予 null
+  任何意義時一律拒絕，用它的句子（`"task_loss_weight must be set, not null."`：任務的 loss
+  weight 與 sample size 不接受 null，要採用任務的參考值就不要送出），新 run 與續訓皆同；null
+  是該欄位的合法值時（`early_stopping_patience`：關閉）會被接受，續訓時再像其他值一樣與
+  parent 的比對；`resume_from`、`extend_epochs` 或 `extend_lr` 為 `null` 表示沒有給。POST
+  /training/finetune 與 /training/branch 的 `settings` 也依同一規則判斷，在建立任何子模型或
+  run 目錄之前回 422。新 run 不會讀取的設定一律拒絕，絕不忽略：scheduler 不是 `cosine` 時的
   `warmup_steps`（cosine 下 `0` 表示以十分之一的步數 warmup）、scheduler 為 `none` 時的
   `min_lr_ratio`、`use_amp` 關閉時的 `amp_dtype`；`onecycle` 需要大於 0 的 `min_lr_ratio`。
   續訓或延長不改變任何設定，所以這些規則從不拒絕它：以 parent 的值明確給出的設定與繼承的設定
@@ -3381,13 +3385,16 @@ steps 計，final learning-rate ratio 的「more than 0 with onecycle」）。�
 架構（GATv2，本版本唯一實作的架構；有更多架構時才是選項）、參考 spec 的文字欄位以事實列出，以及可修改的 input、encoder 與 LP head 數值與開關。**Start 送出你
 動過的欄位**：你編輯過的欄位一定送出，即使等於參考值，並記錄為你的設定；清空欄位也算編輯（全選後按
 Backspace 或 Delete、剪下、貼上：每一種編輯都算，即使清空後立刻按 Start），因此 run 需要值的欄位留空
-會被拒絕（「Neighbours per hop needs at least 1 item(s).」），什麼都不會啟動，而 Early stopping
-patience 留空表示關閉；沒動過的不送出，由 run 補上並記錄。改動任一 Model 欄位會送出整份 spec，並先檢查（spec 自己的規則，以及 Neighbours per hop 是否
+會被拒絕（「Neighbours per hop needs at least 1 item(s).」、「Epochs must be set, not null.」），什麼都不會啟動，而 Early stopping
+patience 留空表示關閉（這裡唯一一個 field spec 賦予空值意義的設定）；沒動過的不送出，由 run 補上並記錄。改動任一 Model 欄位會送出整份 spec，並先檢查（spec 自己的規則，以及 Neighbours per hop 是否
 符合其層數）。表單下方一行顯示「Set by you: Epochs 5 (reference 200)」或尚未設定任何值；超過三項時
 只列出前三項、其餘計數，全部列在它的「Details ›」之下。這一行也指出 Start 會拒絕的值（「Not valid:
-…」）：單一欄位的值，或跨設定規則拒絕的組合（onecycle 搭配 final learning-rate ratio 0）；
+…」）：單一欄位的值，或跨設定規則拒絕的組合（onecycle 搭配 final learning-rate ratio 0）；你動過的
+設定都無法送出時，它顯示「Set by you: nothing valid.」，不會說 run 將採用什麼值。
 **Reset to reference** 把每一欄還原並清除你設定的內容。任務模型由 base 在 Research › Prepare › Fine-tune 訓練，其設定也以同樣
-方式送出：你動過才送出，清空欄位也算。它提供每個所選任務的 run 都會讀取的設定（自 ops-wiring round B2 起）：顯示
+方式送出：你動過才送出，清空欄位也算，因此清空的任務設定（loss weight 或 sample size）會在 Start
+旁被拒絕（「Task loss weight must be set, not null.」），什麼都不會啟動；不動它，或按 Reset to
+reference，就由任務的參考值補上。它提供每個所選任務的 run 都會讀取的設定（自 ops-wiring round B2 起）：顯示
 **Epochs**、**Seed** 與 **Graph backbone**，其餘在「More settings」下；只選一個任務時，「Disease
 settings」（任務名稱）下有該任務自己的設定（learning rate、sample size、loss weight 與 candidate
 size），各自從該任務的參考值開始；選多個任務時，一行文字說明每個子模型採用自己任務的參考值。

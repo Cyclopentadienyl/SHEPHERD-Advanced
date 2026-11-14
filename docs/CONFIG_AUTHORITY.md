@@ -74,6 +74,16 @@ Its settings left `TrainConfig` in K8-7, and `ShepherdGNNConfig` with
     a task's own settings (`recipe.FINETUNE_TASKS`) only with one task, the hop list with
     any, checked against the base's encoder by `spec.hops_problem`. The base's split seed and
     model spec are its summary's facts, never fields.
+  - *Note (2026-11-14, OPS-R2 of the external review of 46a5c2b):* each field of the spec says
+    whether an explicit null is one of its values (`FieldSpec.null_means`: early stopping's
+    patience, off; no parent; no extension; a base's task; the stage's reference spec), apart
+    from its stored `default`. `value_problem` refuses a null wherever the field gives it no
+    meaning ("task_loss_weight must be set, not null."), whatever the default: a task's loss
+    weights and sample sizes store None only because the recipe fills them for each task, so
+    they are left out for their reference, never stated null. The one rule serves the CLI, the
+    HTTP start, Fine-tune and branch requests, the job runner and the pages; the callers' own
+    allowance of a null (by a run's reference or by the caller) retired with it, and an emptied
+    task setting on Fine-tune is refused beside Start instead of failing in the child.
 
 ## Rationale
 

@@ -3294,9 +3294,14 @@ a run.
   as on the command line. A new run needs `learning_stage` `base`; with `resume_from` the stage
   may be left out, and is compared with the parent's when given, so a finetune child is resumed
   or extended here too (`extend_lr` for a parent whose rate ended at 0). Only the fields sent
-  reach the service, an explicit `null` included, which is judged: for a new run refused where
-  the setting takes no null, for a continuation refused as another value than the parent's; a
-  `null` `resume_from`, `extend_epochs` or `extend_lr` means not given. A setting a new run
+  reach the service, an explicit `null` included, which is judged by the field spec: refused
+  wherever the field gives a null no meaning, in its sentence (`"task_loss_weight must be set,
+  not null."`: a task's loss weights and sample sizes take none, so leave them out for the
+  task's reference), on a new run and a continuation alike; a null that is one of the field's
+  values (`early_stopping_patience`: off) is taken, and on a continuation compared with the
+  parent's like any value; a `null` `resume_from`, `extend_epochs` or `extend_lr` means not
+  given. The same rule judges POST /training/finetune's and /training/branch's `settings`, with
+  422 before any child or run directory. A setting a new run
   would not read is refused, never ignored: `warmup_steps` unless the scheduler is `cosine`
   (with cosine, `0` warms up over a tenth of the steps), `min_lr_ratio` with the scheduler
   `none`, `amp_dtype` with `use_amp` off; and `onecycle` needs a `min_lr_ratio` above 0. A
@@ -3359,16 +3364,20 @@ switches to change. **Start sends what you touched**: a
 field you edited is sent, even at its reference value, and recorded as yours; a field you emptied
 counts as edited (select all and Backspace or Delete, a cut, a paste: every edit, even with Start
 clicked straight after it), so an empty value the run needs is refused ("Neighbours per hop needs
-at least 1 item(s).") and nothing starts, while an empty Early stopping patience means off; one
-you did not touch is not sent, and the run fills and records it. A changed model field sends the whole spec,
+at least 1 item(s).", "Epochs must be set, not null.") and nothing starts, while an empty Early
+stopping patience means off (the one setting here whose empty value the field spec gives a
+meaning); one you did not touch is not sent, and the run fills and records it. A changed model field sends the whole spec,
 checked first (its own rules, and Neighbours per hop against its layers). A line under the form
 says "Set by you: Epochs 5 (reference 200)", or that nothing is set; past three settings it names
 the first three, counts the rest and lists every one under its "Details ›". It names a value
 Start would refuse ("Not valid: …"): a single field's value, or a combination the rules across
-settings refuse (onecycle with a final learning-rate ratio of 0); **Reset to reference** puts
-every field back and clears what you set. Task models are trained from a base on Research ›
-Prepare › Fine-tune, whose settings are sent the same way: when you touched them, an emptied
-field included. It offers what
+settings refuse (onecycle with a final learning-rate ratio of 0); when nothing you touched can
+be sent it says "Set by you: nothing valid.", never what the run would take. **Reset to
+reference** puts every field back and clears what you set. Task models are trained from a base
+on Research › Prepare › Fine-tune, whose settings are sent the same way: when you touched them,
+an emptied field included, so an emptied task setting (a loss weight or a sample size) is
+refused beside Start ("Task loss weight must be set, not null.") and nothing starts; untouched,
+or after Reset to reference, the task's reference fills it. It offers what
 every chosen task's run reads (since the ops-wiring round, B2): **Epochs**, **Seed** and **Graph
 backbone** shown, the rest under "More settings", and under "Disease settings" (the task's
 name) a task's own settings (its learning rate, sample sizes, loss weights and candidate
