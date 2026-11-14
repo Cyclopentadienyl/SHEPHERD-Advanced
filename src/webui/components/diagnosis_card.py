@@ -23,7 +23,9 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
 - *stale*: the last good read is older than the result shown: grey, "read
   HH:MM:SS · older than this result";
 - *changed*: a read found something else served than this session's last read
-  did: the dismissable "Model changed at HH:MM UTC — was …, now …";
+  did: the dismissable "Model changed at HH:MM UTC — was …, now …", only
+  while the new read serves something (nothing served is the state's to say,
+  once: a stop's notice is never raised, and one raised before goes);
 - what is served: nothing (no pipeline: the service refuses every diagnosis,
   Run Diagnosis is disabled until a model is loaded, with a bubble, and the
   card offers its one action, "Load a model…"), or a model read from its
@@ -629,7 +631,8 @@ def advance(state: Optional[Mapping[str, Any]], status: Optional[Mapping[str, An
     A failed read keeps the last known status (shown grey, never as current).
     A read that finds another served identity than this session's last read
     (`served_key`: every part, and the served workspace) sets the change
-    notice. What the card adds to the status (`served_facts`) is read again
+    notice while it serves something; one that finds nothing served clears
+    it (the state says that, once). What the card adds to the status (`served_facts`) is read again
     on every queued refresh (`open_checkpoints`: the listed workspaces, the
     recorded tests), keeping what the served checkpoint records while the
     served identity and the request's D8 answer are the same (the file is
@@ -645,12 +648,11 @@ def advance(state: Optional[Mapping[str, Any]], status: Optional[Mapping[str, An
     key = served_key(status)
     previous = new.get("status")
     if previous is not None and new.get("key") != key:
-        was, was_sha = served_kind(previous), served_checkpoint_sha(previous)
-        is_sha = served_checkpoint_sha(status)
-        new["change"] = {"at": r.clock_utc(now, seconds=False),
-                         "was": r.short_hex(was_sha) if was_sha else _kind_word(was),
-                         "now": r.short_hex(is_sha) if is_sha else _kind_word(served_kind(status)),
-                         "same_model": bool(was_sha) and was_sha == is_sha}
+        # Nothing served now is said by the card's state, once, with the
+        # backend's who and when (`_serving_html`): no notice says it again,
+        # and one raised before goes, since its "now" is no longer served.
+        new["change"] = (None if served_kind(status) == "no_model"
+                         else _change(previous, status, now))
     kept = new.get("facts")
     same = (not reread and isinstance(kept, Mapping) and kept.get("key") == key
             and kept.get("operator") == operator)
@@ -664,9 +666,17 @@ def advance(state: Optional[Mapping[str, Any]], status: Optional[Mapping[str, An
     return new
 
 
-def _kind_word(kind: str) -> str:
-    # Nothing served is said once, by the card's state; the notice says none.
-    return {"no_model": "none"}.get(kind, "not known")
+def _change(previous: Mapping[str, Any], status: Mapping[str, Any],
+            now: datetime) -> Dict[str, Any]:
+    """The change notice for a read whose served identity differs from this
+    session's last one, while the new read serves something: when, the model
+    it was (a 12 hex; "none" when nothing was served) and the model it is."""
+    was_sha, is_sha = served_checkpoint_sha(previous), served_checkpoint_sha(status)
+    return {"at": r.clock_utc(now, seconds=False),
+            "was": (r.short_hex(was_sha) if was_sha
+                    else "none" if served_kind(previous) == "no_model" else "not known"),
+            "now": r.short_hex(is_sha) if is_sha else "not known",
+            "same_model": bool(was_sha) and was_sha == is_sha}
 
 
 def dismiss_change(state: Mapping[str, Any]) -> Dict[str, Any]:

@@ -1011,6 +1011,64 @@ def test_no_model_loaded_is_said_once_on_the_card_with_its_one_action(root):
     assert "no model" not in card.served_facts_html(state).lower()
 
 
+def test_a_stop_after_a_serving_read_is_said_by_the_state_never_by_a_change_notice(root):
+    """Review of B4 (finding 1): the path every stop takes, a serving read
+    then a stopped one through `advance`, says the stop once on the card:
+    its state with the backend's who and when; no "Model changed … now
+    none" notice repeats it, and one raised by an earlier load goes, since
+    its "now" is no longer served. The stop's own answer (its notice) and
+    Run's one reason stay the stop's and Run's."""
+    from types import SimpleNamespace
+
+    from src.api.routes.pipeline import PipelineStatusResponse, PipelineStopResponse
+    from src.webui.components import diagnosis_panel as dp
+
+    serving = _state(root, open_checkpoints=False)
+    sha = card.served_checkpoint_sha(serving["status"])
+    stopped_status = _nothing_served(
+        _not_serving("stopped", "By an operator", "2026-10-20T10:15:30+00:00", sha[:12]),
+        "Inference was stopped by an operator at 2026-10-20T10:15:30+00:00: model "
+        f"{sha[:12]} is no longer loaded, so no diagnosis can be produced. An operator loads "
+        "one with “Load a model…”.")
+    later = datetime(2026, 10, 20, 10, 15, 40)
+    stopped = card.advance(serving, stopped_status, None, now=later, operator=True,
+                           d8_short=None, open_checkpoints=False)
+    assert stopped["change"] is None
+
+    def stop(request):
+        return PipelineStopResponse(
+            success=True, released=True,
+            message=f"Inference stopped: 0 accepted request(s) finished first, then model "
+                    f"{sha[:12]} and its graph were released. New diagnoses are refused until "
+                    "a model is loaded.",
+            status=PipelineStatusResponse(initialized=False))
+
+    done = dp.confirm_stop_inference(SimpleNamespace(allowed=True), {"sha256": sha}, stop=stop,
+                                     resources={"gpu": {"available": False}, "ram": {},
+                                                "unified_memory": False})
+    out = dp.card_outputs(stopped, None, "idle", stop=done["stop_asked"])
+    shown = " ".join(str(out[k]) for k in ("card_body", "run_reason")) + done["stop_notice"]
+    visible = " ".join(re.sub(r"<details.*?</details>|<[^>]+>", " ", shown, flags=re.S).split())
+    assert "Model changed" not in visible and "now none" not in visible
+    assert visible.count("Stopped") == 1 and visible.count("10:15:30 UTC") == 1
+    assert visible.count("Inference stopped:") == 1
+    assert visible.count(dp.RUN_DISABLED_NO_MODEL) == 1
+    assert not re.search(r"(?i)no model (is )?loaded", visible)
+
+    # A notice an earlier load raised goes with the stop: its "now" model is
+    # no longer served, and the state says what is.
+    loaded = card.advance(serving, _status(root, "model-12.pt", NEWER), None, now=later,
+                          operator=True, d8_short=None, open_checkpoints=False)
+    assert loaded["change"]["now"] == root["shas"]["model-12.pt"][:12]
+    after = card.advance(loaded, stopped_status, None, now=later, operator=True,
+                         d8_short=None, open_checkpoints=False)
+    assert after["change"] is None and "Model changed" not in card.body_html(after)
+    # A model loaded after nothing was served is a change, "was none".
+    again = card.advance(after, _status(root), None, now=later, operator=True, d8_short=None,
+                         open_checkpoints=False)
+    assert again["change"]["was"] == "none" and again["change"]["now"] == sha[:12]
+
+
 def test_stop_inference_is_offered_while_a_model_serves_and_locked_for_a_read_only_request(
         root):
     serving = _status(root, serving="serving", loading=False, in_flight=0)
