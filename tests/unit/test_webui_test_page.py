@@ -2018,11 +2018,11 @@ def test_the_page_is_read_when_shown_and_polled_only_while_shown(monkeypatch):
 
 
 def test_the_poll_reads_and_writes_nothing_drawn_from_the_selection():
-    """F6: the poll writes the job card, Cancel, what the session saw of the
-    job and the hand-off; never Start or its reason, which are drawn from the
-    selection (a tick that read the selection before a choice wrote Start
-    back for the selection it read), and it is given no part of the
-    selection to draw them from."""
+    """F6: the poll writes the job's title row, its details, Cancel and
+    Cancel's reason, what the session saw of the job and the hand-off; never
+    Start or its reason, which are drawn from the selection (a tick that read
+    the selection before a choice wrote Start back for the selection it read),
+    and it is given no part of the selection to draw them from."""
     demo, _ctx, _registry = _page_component()
     poll = _named(demo, "_poll")
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
