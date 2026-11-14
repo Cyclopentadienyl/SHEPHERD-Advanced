@@ -649,8 +649,10 @@ class AppState:
     def finish_stop(self, begun: StopBegun) -> StopOutcome:
         """The rest of the stop `begin_stop` began: the accepted requests
         waited for (those waiting for the run lock among them), with no
-        timeout and nothing killed; then the pipeline, its graph, the current
-        paths and the diagnosis reference-sample cache cleared, `gc`, and
+        timeout and nothing killed; then the pipeline, its graph and the
+        current paths cleared and the stopped record written in the same
+        step (so a release step that raises still leaves a true "stopped"),
+        the diagnosis reference-sample cache cleared, `gc`, and
         while the GPU lock is held a synchronize and `empty_cache` (no claim
         that memory is returned: the measured reading is the resource
         route's); then the GPU lock and its description given back, by this
@@ -670,6 +672,12 @@ class AppState:
                 self._current_checkpoint_path = None
                 self.serving_device = None
                 self.served_sha256 = None
+                # The record is written with the clearing, in one step: from
+                # here nothing is served because it was stopped, whatever the
+                # release below does. The status says Stopping until the end
+                # (`_not_serving_locked` reads the transition first).
+                self.not_serving = NotServingRecord(STOPPED, _now(), STOPPED_BY.get(by, by),
+                                                    sha[:12] if sha else None)
             from src.api.routes.diagnose import clear_reference_samples
 
             clear_reference_samples()
@@ -680,8 +688,6 @@ class AppState:
             self._release_gpu_if_unused(free=False)
             with self._admission:
                 gave_back = held and self.gpu_lock is None
-                self.not_serving = NotServingRecord(STOPPED, _now(), STOPPED_BY.get(by, by),
-                                                    sha[:12] if sha else None)
                 self.transition = None
             model = f"model {sha[:12]}" if sha else "the model"
             return StopOutcome(True, True, (

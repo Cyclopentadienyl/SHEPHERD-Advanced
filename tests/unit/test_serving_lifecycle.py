@@ -359,6 +359,34 @@ def test_a_stop_clears_the_reference_sample_cache(service, monkeypatch):
     assert diagnose._REFERENCE_SAMPLES == {}
 
 
+def test_a_stop_whose_release_step_raises_still_says_it_was_stopped(service, monkeypatch):
+    """Review of B4 (finding 3): the stopped record is written with the
+    clearing of the pipeline, in one step, so a release step that raises
+    afterwards (a CUDA synchronize, say) leaves a true "stopped" with who
+    and which model, never "Nothing has been loaded since the service
+    started"; while the stop runs the status says Stopping."""
+    _, _, workspace = service
+    model = checkpoint(workspace, "a")
+    assert reload(workspace, model, "cpu").success
+    seen = []
+
+    def boom(device):
+        seen.append(api.app_state.snapshot()["not_serving"]["state"])
+        raise RuntimeError("synchronize failed")
+
+    monkeypatch.setattr(api, "_free_device_memory", boom)
+    with pytest.raises(RuntimeError, match="synchronize failed"):
+        api.app_state.stop_serving()
+
+    assert seen == ["stopping"], "the record showed before the stop ended"
+    said = api.app_state.snapshot()
+    assert said["serving"] == "not_loaded" and said["pipeline"] is None
+    assert said["not_serving"] == {"state": "stopped", "lead": "By an operator",
+                                   "at": said["not_serving"]["at"],
+                                   "model_sha12": sha_of(model)[:12]}
+    assert api.app_state.transition is None and not api.app_state.lifecycle_busy()
+
+
 def test_a_stop_with_nothing_loaded_is_nothing_to_stop(service):
     stopped = run_stop(PipelineStopRequest())
 
