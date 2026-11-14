@@ -34,7 +34,9 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   the field mounts (a ``MutationObserver``: lazily mounted tabs and accordions
   included), with ``aria-expanded`` and ``aria-describedby`` naming the help
   text; the field's own input is labelled by its title alone and described by
-  the help text, and the ``<label>`` names its input by id, so a click on the
+  its visible ``info=`` line, when it has one, then the help text (`describe`,
+  kept on every pass, so an ``info=`` set or drawn again at runtime stays
+  part of it), and the ``<label>`` names its input by id, so a click on the
   title still focuses the field (a button inside a label would otherwise
   become its control);
 - shows one shared bubble, a toggletip (the WebUI skill's §7), by
@@ -444,13 +446,31 @@ _HELP_JS = r"""
     if (!input.id) { input.id = 'shep-in-' + key; }
     if (label.htmlFor !== input.id) { label.htmlFor = input.id; }
   }
+  // A field's description: its visible info= line first (Gradio's
+  // .info-text, set when it is built or at runtime, which Gradio may draw
+  // again), then its help text, so a screen reader reads what the page shows
+  // under the field as well as the bubble's text. Kept on every pass.
+  function describe(target, key, textId) {
+    var input = target.querySelector('textarea, input:not([type=radio]):not([type=hidden])');
+    if (!input) { return; }
+    var ids = [], info = target.querySelector('.info-text');
+    if (info && (info.textContent || '').trim()) {
+      if (!info.id) { info.id = 'shep-info-' + key; }
+      ids.push(info.id);
+    }
+    ids.push(textId);
+    var want = ids.join(' ');
+    if (input.getAttribute('aria-describedby') !== want) { input.setAttribute('aria-describedby', want); }
+  }
   function enhance() {
     var texts = document.querySelectorAll('.shep-help-texts [data-help-target]');
     for (var i = 0; i < texts.length; i++) {
       var t = texts[i], target = document.getElementById(t.getAttribute('data-help-target'));
       if (!target) { continue; }
       var key = t.getAttribute('data-help-key');
-      if (target.querySelector(SEL + '[data-help="' + key + '"]')) { keepLabel(target, key); continue; }
+      if (target.querySelector(SEL + '[data-help="' + key + '"]')) {
+        keepLabel(target, key); describe(target, key, t.id); continue;
+      }
       var title = titleIn(target);
       if (!title) { continue; }
       var btn = document.createElement('button');
@@ -465,10 +485,8 @@ _HELP_JS = r"""
       title.insertAdjacentElement('afterend', btn);
       if (!title.id) { title.id = 'shep-lbl-' + key; }
       var input = target.querySelector('textarea, input:not([type=radio])');
-      if (input) {
-        if (!input.hasAttribute('aria-label')) { input.setAttribute('aria-labelledby', title.id); }
-        input.setAttribute('aria-describedby', t.id);
-      }
+      if (input && !input.hasAttribute('aria-label')) { input.setAttribute('aria-labelledby', title.id); }
+      describe(target, key, t.id);
       keepLabel(target, key);
     }
   }

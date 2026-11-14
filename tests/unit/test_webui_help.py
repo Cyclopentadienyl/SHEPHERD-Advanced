@@ -23,6 +23,7 @@ Module: tests/unit/test_webui_help.py
 """
 from __future__ import annotations
 
+import html
 import json
 import os
 import shutil
@@ -110,7 +111,7 @@ def test_a_click_on_a_fields_title_still_reaches_the_field():
     assert "label.htmlFor = input.id" in h.HELP_HEAD
     assert "input.id = 'shep-in-' + key" in h.HELP_HEAD
     # kept on every pass, for a field Gradio renders again
-    assert "{ keepLabel(target, key); continue; }" in h.HELP_HEAD
+    assert "keepLabel(target, key); describe(target, key, t.id); continue;" in h.HELP_HEAD
 
 
 def test_the_bubble_is_in_the_dashboards_font_and_never_taller_than_the_window():
@@ -223,6 +224,73 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
             if which in ("field", "kv"):
                 assert HOSTILE in pinned["text"], where
             assert seen["closed"] is True, where
+
+
+_DESCRIBED_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  await page.goto('file://' + process.argv[2]);
+  await page.waitForSelector('#fld button.shep-i');
+  const read = () => page.evaluate(() => {
+    const input = document.querySelector('#fld input');
+    const ids = (input.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+    return { ids, texts: ids.map((id) => (document.getElementById(id) || {}).textContent || null) };
+  });
+  const first = await read();
+  // Gradio draws an info= line set at runtime again: a new element, no id.
+  await page.evaluate(() => {
+    const old = document.querySelector('#fld .info-text');
+    const fresh = document.createElement('div');
+    fresh.className = 'info-text'; fresh.textContent = 'Now: 7 passes';
+    old.replaceWith(fresh);
+  });
+  await page.waitForTimeout(150);
+  const again = await read();
+  const bare = await page.evaluate(() => document.querySelector('#bare input').getAttribute('aria-describedby'));
+  console.log(JSON.stringify({ first, again, bare }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_fields_visible_info_line_is_part_of_its_description(tmp_path):
+    """B5 (leftover d): the help set each input's ``aria-describedby`` to the
+    bubble's text alone, so a field's visible ``info=`` line (a format, a
+    unit, when a setting applies) was neither its name (the input is
+    labelled by its title) nor its description. The shared help now
+    describes the input by its info line, then its help text, and keeps it
+    so when Gradio draws the line again; a field with no info line is
+    described by its help text alone."""
+    found = _node_with_playwright()
+    if found is None:
+        pytest.skip("Node with Playwright is not installed")
+    node, env = found
+    registry = h.HelpRegistry()
+    registry.field("fld", "Epochs", "How many passes.")
+    registry.field("bare", "Seed", "The seed.")
+    page = tmp_path / "described.html"
+    page.write_text(
+        f"""<!doctype html><html><head><meta charset="utf-8"><style>{h.HELP_CSS}</style>
+{h.HELP_HEAD}</head><body>
+<div class="block" id="fld"><label class="block"><span data-testid="block-info">Epochs</span>
+<div class="info-text">Whole passes, 1 to 10000. {html.escape(HOSTILE)}</div><input></label></div>
+<div class="block" id="bare"><label class="block"><span data-testid="block-info">Seed</span>
+<input></label></div>
+{registry.texts_html()}</body></html>""", encoding="utf-8")
+    script = tmp_path / "described.cjs"
+    script.write_text(_DESCRIBED_JS, encoding="utf-8")
+    result = subprocess.run([node, str(script), str(page)], env=env, capture_output=True,
+                            text=True, timeout=120)
+    assert result.returncode == 0, result.stderr
+    seen = json.loads(result.stdout)
+    assert seen["first"]["ids"] == ["shep-info-fld", h.text_id("fld")]
+    assert seen["first"]["texts"][0] == f"Whole passes, 1 to 10000. {HOSTILE}"
+    assert seen["first"]["texts"][1].startswith("How many passes.")
+    assert seen["again"]["ids"] == ["shep-info-fld", h.text_id("fld")]
+    assert seen["again"]["texts"][0] == "Now: 7 passes"
+    assert seen["bare"] == h.text_id("bare")
 
 
 # --------------------------------------------------------------------------- the built dashboard
