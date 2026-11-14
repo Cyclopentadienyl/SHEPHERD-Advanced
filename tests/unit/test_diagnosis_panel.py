@@ -533,6 +533,16 @@ def test_the_page_css_hides_a_view_by_its_class_and_keeps_the_confirmation_in_vi
     assert css.index(f"{confirming} > .shep-model-body {{ display: none !important; }}") > low
 
 
+def test_the_stop_questions_buttons_keep_their_words_width():
+    """B4 browser check at 1850x960: Gradio gives a scale-0 button a 0% flex
+    basis, so the stop question's two buttons were 12 px wide, "Keep serving"
+    drawn over "Stop inference now", and a click on one hit the other. Each
+    keeps its words' width."""
+    css = " ".join(dp.PAGE_CSS.split())
+    assert (f"{dp._TAB} .shep-dx-stop-row > button "
+            "{ flex: 0 0 auto !important; width: auto !important; }") in css
+
+
 def test_the_sticky_card_and_run_row_never_cover_a_focused_control(monkeypatch):
     """K6 closing smoke at 1536x760: the sticky Model-in-use card and Run row
     (bottom 0 inside the input column's scroll region) covered a focused

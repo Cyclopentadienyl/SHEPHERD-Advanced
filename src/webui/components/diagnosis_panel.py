@@ -3459,6 +3459,10 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-details-btn {{ border: 0 !important; background: none !important; box-shadow: none !important; color: var(--shep-accent-text) !important; padding: 0 2px !important; font-weight: 500; }}
 {_TAB} #shep-dx-change-btn {{ margin-left: auto; }}
 {_TAB} .shep-dx-stop-row {{ flex-wrap: wrap !important; gap: 8px !important; justify-content: flex-end !important; }}
+/* The question's buttons keep their words' width (Gradio gives a scale-0
+   button a 0% basis: measured 12 px wide, "Keep serving" over "Stop
+   inference now", so a click on one hit the other). */
+{_TAB} .shep-dx-stop-row > button {{ flex: 0 0 auto !important; width: auto !important; }}
 {_TAB} #shep-dx-stop-text {{ flex: 1 1 100% !important; }}
 {_TAB} .shep-dx-stop-q {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-radius: 8px; padding: 8px 12px; }}
 {_TAB} .shep-dx-stop-said, {_TAB} .shep-dx-stop-mem {{ margin: 2px 0 0; font-size: 14px; }}
