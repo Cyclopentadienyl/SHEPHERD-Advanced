@@ -487,9 +487,8 @@ def sticky_room_js(sticky: str, region: str, var: str) -> str:
     ``--shep-chips-h``. The page's style sheet gives the region
     ``scroll-padding-top`` or ``-bottom`` from it, so a control focused in
     the region scrolls clear of the block. Diagnosis' sticky Model-in-use
-    block and the Models list's header use it. Once per mount; the block may
-    be drawn a frame later than the component, so it is looked for again a
-    few times."""
+    block uses it. Once per mount; the block may be drawn a frame later than
+    the component, so it is looked for again a few times."""
     return r"""
 (function find(tries) {
   var sticky = element.closest('__STICKY__');
