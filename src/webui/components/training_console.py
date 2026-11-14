@@ -52,8 +52,9 @@ encoder and LP head fields generated from their dataclasses
 field's help is behind the shared ⓘ (`FIELD_HELP`: its field spec's
 description, the value the run takes without it and its source); a format,
 a unit or "off" is said under the field (`FIELD_FORMATS`). **Explicit is what
-the operator touched** (decision S2): each field's input records it in the
-form's record, held in the browser and carried by Start's own request
+the operator touched** (decision S2): each field's input, every edit of the
+operator's and a field emptied among them (`record_touches`), records it in
+the form's record, held in the browser and carried by Start's own request
 (`touched_record`), Reset to reference clears it, and the line under the
 form says what is set ("Set by you: Epochs 5 (reference 200)", the first
 few named and every one under its Details).
@@ -549,21 +550,77 @@ def touched_without(touched: Any, keys: Collection[str]) -> List[str]:
 def touched_record(elem_id: str) -> Any:
     """**A form's record of the fields the operator touched** (decision S2),
     held in the browser: a hidden JSON list, empty at first and again after
-    Reset, that each field's input adds its key to there (`record_touches`),
-    with no request of its own, and that Start's own request carries beside
-    the fields' values. What Start sends is therefore read from the click's
-    own payload alone, never from a state another request writes on the
-    server (the base form's and the Fine-tune page's)."""
+    Reset, that each field's input adds its key to there (`record_touches`:
+    every edit of the operator's, a field emptied included), with no request
+    of its own, and that Start's own request carries beside the fields'
+    values. What Start sends is therefore read from the click's own payload
+    alone, never from a state another request writes on the server (the base
+    form's, the Fine-tune page's and the Continue drawer's Branch fields')."""
     return gr.JSON(value=[], visible=False, elem_id=elem_id)
 
 
+#: The class `record_touches` gives each field whose touches it records: the
+#: page's touch script (`TOUCH_HEAD`) acts on these fields' text boxes alone.
+TOUCH_CLASS = "shep-touch"
+
+#: **An operator's every edit of a text box is its input, in the browser**
+#: (`record_touches`; in the dashboard's head, `app.dashboard_head`). Gradio
+#: 6.30's text box dispatches ``.input`` from a keypress alone: its Textbox
+#: calls its input handler from its keypress listener and has no listener of
+#: the DOM's input event, while its number box dispatches ``.input`` on that
+#: event. An edit that comes with no keypress (select all, then Backspace or
+#: Delete; a cut; a paste; a drop; an input method's text) therefore fired
+#: ``.change`` alone, which a page's own write fires too, so a text field the
+#: operator emptied was never recorded and Start sent the reference in its
+#: place (OPS-R1, the external review of 46a5c2b). This script gives such an
+#: edit of a text box in a field of `TOUCH_CLASS` the keypress the box reads
+#: its input from (key "Unidentified": never Enter, so never a submit), in
+#: the input event's bubbling phase, after the box's own listener has taken
+#: the edit's value; an edit whose own key's keypress reached the box already
+#: has its input. Only an edit the operator made is a trusted input event: a
+#: page's write of a value (the first fill, Reset, a task change, a check's
+#: or a Refresh's fills) and a focus or a Tab are none, so they still record
+#: nothing. The text box dispatches its input two of its ticks after the
+#: edit, a typed key's as an emptying's: on the Training page in Chromium a
+#: click on Start 15 ms or more after the edit carried the key every time
+#: (36 trials, 15 to 100 ms), one within 10 ms of it could still carry the
+#: record as it was.
+TOUCH_HEAD = "<script>" + r"""
+(function () {
+  if (window.ShepTouch) { return; }
+  // The element a key's own keypress reached, until that key's input or keyup.
+  var keyed = null;
+  function unkeyed() { keyed = null; }
+  document.addEventListener('keydown', unkeyed, true);
+  document.addEventListener('keyup', unkeyed, true);
+  document.addEventListener('keypress', function (e) { if (e.isTrusted) { keyed = e.target; } }, true);
+  document.addEventListener('input', function (e) {
+    var box = e.target, reached = keyed === box;
+    keyed = null;
+    if (!e.isTrusted || reached || !box || !box.closest || !box.closest('.__CLASS__')) { return; }
+    if (box.tagName === 'TEXTAREA' || (box.tagName === 'INPUT' && box.type === 'text')) {
+      box.dispatchEvent(new KeyboardEvent('keypress', {key: 'Unidentified'}));
+    }
+  });
+  window.ShepTouch = true;
+})();
+""".replace("__CLASS__", TOUCH_CLASS) + "</script>"
+
+
 def record_touches(field: Any, key: str, record: Any) -> None:
-    """`field`'s input (the operator's own edit: ``.input``, never
-    ``.change``, which a page's own write fires too) adds `key` to `record`
-    (`touched_record`) in the browser (`TOUCH_JS`), before any later click is
-    sent; every input does ("multiple"). Wire it before any other input
-    listener of `field`: the browser runs an event's listeners in order, so
-    they read the record with `key`."""
+    """**`field`'s every edit by the operator adds `key` to `record`**
+    (`touched_record`), in the browser (`TOUCH_JS`), before any later click is
+    sent; every edit does ("multiple"). The edit is the field's ``.input``,
+    never ``.change``, which a page's own write fires too (decision S2): a
+    typed value, the reference's own included, a number box's or a text box
+    emptied, a cut, a paste. A text box's edit with no keypress reaches
+    ``.input`` through the page's touch script (`TOUCH_HEAD`), which acts on
+    the fields marked here (`TOUCH_CLASS`). An emptied field is then sent as
+    it is, empty, and meets its field spec's check (`sent_settings`). Wire it
+    before any other input listener of `field`: the browser runs an event's
+    listeners in order, so they read the record with `key`. The base form,
+    the Fine-tune page and the Continue drawer's Branch fields record by it."""
+    field.elem_classes = [*(field.elem_classes or []), TOUCH_CLASS]
     field.input(None, inputs=[record], outputs=[record],
                 js=TOUCH_JS.replace("{key}", json.dumps(key)), queue=False,
                 trigger_mode="multiple", show_progress="hidden")
@@ -586,9 +643,12 @@ def sent_settings(values: Mapping[str, Any], touched: Collection[str],
                   references: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     """**What a start sends of a form's settings** (decisions S2, S3):
     ``(settings, problems)``. A setting is sent **when the operator touched
-    its field** (`touched`, the form's record of its fields' input), whatever
-    its value: the reference's own value typed is sent, and recorded as the
-    operator's; an untouched one is not, and the run fills it (the
+    its field** (`touched`, the form's record of its fields' input,
+    `record_touches`), whatever its value: the reference's own value typed is
+    sent, and recorded as the operator's; a field emptied is sent empty, so
+    it is refused where the run needs a value ("Neighbours per hop needs at
+    least 1 item(s).") and means off where empty does (early stopping's
+    patience); an untouched one is not sent, and the run fills it (the
     reference's, or this build's default) and records it so. A touched
     setting the run would not read on the form's values (a rule across
     settings, `training_fields.not_read_by_rules`: warmup without cosine) is

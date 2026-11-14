@@ -179,12 +179,15 @@ def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
       reach the page frame above ``.contain`` (the one-screen layout needs
       ``body`` and Gradio's containers), and it drops ``@supports`` and
       ``@container`` rules. A style element in the head is applied as written;
-    - **the head scripts**: the shared ⓘ (and Copy) and the shell (always
-      light, title, header row). They run once per page load, before any
-      component exists, so both work by document-level delegation.
+    - **the head scripts**: the shared ⓘ (and Copy), the shell (always
+      light, title, header row) and the touch record's (every edit of a
+      field whose touches a form records is that field's input, an emptied
+      text box included: `training_console.TOUCH_HEAD`). They run once per
+      page load, before any component exists, so each works by
+      document-level delegation.
     """
     return ("<style>" + HELP_CSS + SHELL_CSS + "".join(page_css) + "</style>"
-            + HELP_HEAD + shell.SHELL_HEAD)
+            + HELP_HEAD + shell.SHELL_HEAD + training_console.TOUCH_HEAD)
 
 
 DASHBOARD_HEAD = dashboard_head()
