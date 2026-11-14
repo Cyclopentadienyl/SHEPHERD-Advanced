@@ -2999,21 +2999,31 @@ def test_the_r10_help_sits_beside_the_r10_lines(site):
     assert r10.index("Help: R10 labels") < r10.index('class="shep-v"')
 
 
-def test_start_and_the_job_sit_in_the_run_panels_foot():
-    """Start and the job card are one region after the choices: at wide sizes
-    it keeps to the panel's foot (the choices scroll) and the job's output
-    scrolls inside its card under the title row with Cancel."""
+def test_start_and_the_job_follow_the_choices_in_the_panels_one_scroll_region():
+    """The skill's §2 (one scroll region per area). Start and the job card
+    follow the choices inside the Run panel's body, the panel's one scroll
+    region, each at its natural height, Cancel beside the job's state. The
+    round's closing check measured two stacked regions at 1850 x 960 (the
+    choices 238 px of 484 shown, the job card 391 of 1049): Measurement,
+    Register and Device were hidden until the choices were scrolled."""
     demo, _ctx, _registry = _page_component()
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     foot = [getattr(c, "elem_id", None) for c in by_id["shep-test-runft"].children]
     assert foot == ["shep-test-start", "shep-test-start-reason", "shep-test-action",
                     "shep-test-jobcard"]
+    run = [getattr(c, "elem_id", None) for c in by_id["shep-test-run"].children]
+    body = [c for c in by_id["shep-test-run"].children
+            if "shep-test-bd" in (getattr(c, "elem_classes", None) or [])]
+    assert run[0] == "shep-test-run-hd" and len(body) == 1 and len(run) == 2
+    assert "shep-test-runft" in [getattr(c, "elem_id", None) for c in body[0].children]
     wide, narrow = tp.PAGE_CSS.split("@media (max-width: 1399px)")
     wide = wide[wide.index("@media (min-width: 1400px)"):]
-    assert "#shep-test-runft {" in wide and "#shep-test-jobcard > .shep-test-job-top { position: sticky" in wide
-    # The region never shrinks below its content (the choices shrink and
-    # scroll); past its cap the job card scrolls inside.
-    assert "#shep-test-runft { flex: 0 0 auto !important;" in wide and "max-height: 64%" in wide
+    assert ".shep-test-col > .shep-test-bd { flex: 1 1 auto !important; min-height: 0; " \
+           "overflow: auto !important;" in wide
+    # No second region and nothing sticky in it.
+    assert "max-height: 64%" not in tp.PAGE_CSS and "#shep-test-run > .shep-test-bd" not in wide
+    jobcard = [rule for rule in tp.PAGE_CSS.split("}") if "#shep-test-jobcard" in rule]
+    assert jobcard and not any("overflow" in rule or "sticky" in rule for rule in jobcard)
     assert "{ position: fixed !important;" in narrow.split(".shep-test-drawer ", 1)[1]
     assert re.search(r"\.shep-test-drawer > \.shep-test-bd \{[^}]*overflow: auto", narrow)
     # Over the panels, Gradio's own field labels included (position: relative;

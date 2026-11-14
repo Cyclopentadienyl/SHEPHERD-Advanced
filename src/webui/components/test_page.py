@@ -2979,26 +2979,26 @@ def create_test_page(ctx: Any) -> None:
                     deterministic = gr.Checkbox(label="Deterministic execution", value=False,
                                                 elem_id="shep-test-deterministic")
                 fixed = plain_html("", elem_id="shep-test-fixed")
-            # Start and the job are the panel's main operations: at wide sizes
-            # this region stays at the panel's foot (the choices above scroll),
-            # and the job's output scrolls inside its card under its title row,
-            # so Start and Cancel are on screen whatever the model's details or
-            # the output's length. Narrow, it follows the choices.
-            with gr.Column(elem_classes=["shep-test-runft"], elem_id="shep-test-runft"):
-                start = gr.Button(GATED_LABELS["start"], variant="primary", interactive=False,
-                                  elem_id="shep-test-start")
-                start_reason = plain_html("", elem_id="shep-test-start-reason")
-                action_out = plain_html("", elem_id="shep-test-action")
-                with gr.Column(elem_classes=["shep-test-job"], elem_id="shep-test-jobcard"):
-                    # Cancel beside the state, so it stays in view however long the output.
-                    with gr.Row(elem_classes=["shep-test-job-top"]):
-                        job_head = plain_html(job_head_html({}), elem_id="shep-test-job-head")
-                        cancel = gr.Button(GATED_LABELS["cancel"], variant="stop",
-                                           interactive=False, elem_id="shep-test-cancel",
-                                           scale=0, size="sm")
-                    cancel_reason = plain_html("", elem_id="shep-test-cancel-reason")
-                    job_out = plain_html(job_body_html({}, [], ("none", "")),
-                                         elem_id="shep-test-job")
+                # Start and the job follow the choices in the panel's one
+                # scroll region (the skill's §2), each at its natural height:
+                # the closing check measured the choices squeezed to half
+                # their height between a second region, the job card's own,
+                # and the panel's top. Cancel sits beside the job's state.
+                with gr.Column(elem_classes=["shep-test-runft"], elem_id="shep-test-runft"):
+                    start = gr.Button(GATED_LABELS["start"], variant="primary",
+                                      interactive=False, elem_id="shep-test-start")
+                    start_reason = plain_html("", elem_id="shep-test-start-reason")
+                    action_out = plain_html("", elem_id="shep-test-action")
+                    with gr.Column(elem_classes=["shep-test-job"], elem_id="shep-test-jobcard"):
+                        with gr.Row(elem_classes=["shep-test-job-top"]):
+                            job_head = plain_html(job_head_html({}),
+                                                  elem_id="shep-test-job-head")
+                            cancel = gr.Button(GATED_LABELS["cancel"], variant="stop",
+                                               interactive=False, elem_id="shep-test-cancel",
+                                               scale=0, size="sm")
+                        cancel_reason = plain_html("", elem_id="shep-test-cancel-reason")
+                        job_out = plain_html(job_body_html({}, [], ("none", "")),
+                                             elem_id="shep-test-job")
         # ------------------------------------------------------------ Result
         # The reports as a compact single-select table at the panel's top, the
         # chosen report's result under it, both in the panel's one scroll
@@ -3702,7 +3702,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-form {{ gap: 10px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-form > * {{ min-width: 180px !important; }}
 {_PAGE} #shep-test-start {{ width: 100%; }}
-{_PAGE} .shep-test-runft {{ padding: 0 16px 12px !important; gap: 10px !important; }}
+{_PAGE} .shep-test-runft {{ padding: 10px 0 0 !important; gap: 10px !important; border-top: 1px solid var(--shep-border); }}
 {_PAGE} .shep-test-select input {{ padding-right: 26px !important; }}
 {_PAGE} .shep-test-rep-old, {_PAGE} .shep-test-more-fewer {{ display: none !important; }}
 {_PAGE} .shep-test-all .shep-test-rep-old {{ display: table-row !important; }}
@@ -3715,12 +3715,8 @@ PAGE_CSS = f"""
 @media (min-width: 1400px) and (min-height: 760px) {{
   {_PAGE} .shep-test-col > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-test-noteform {{ max-height: 50%; overflow: auto !important; flex-wrap: nowrap !important; }}
-  {_PAGE} #shep-test-run > .shep-test-bd {{ flex: 0 1 auto !important; }}
-  {_PAGE} #shep-test-runft {{ flex: 0 0 auto !important; min-height: 0; max-height: 64%; flex-wrap: nowrap !important; padding-top: 10px !important; border-top: 1px solid var(--shep-border); }}
-  {_PAGE} #shep-test-runft > * {{ flex-shrink: 0 !important; }}
-  {_PAGE} #shep-test-runft > #shep-test-jobcard {{ flex: 0 1 auto !important; min-height: 96px; overflow: auto !important; flex-wrap: nowrap !important; }}
-  {_PAGE} #shep-test-jobcard > .shep-test-job-top {{ position: sticky; top: 0; z-index: 2; background: var(--shep-panel-2); flex-shrink: 0 !important; }}
-  {_PAGE} #shep-test-jobcard > * {{ flex-shrink: 0 !important; }}
+  {_PAGE} #shep-test-runft, {_PAGE} #shep-test-jobcard {{ flex-wrap: nowrap !important; }}
+  {_PAGE} #shep-test-runft > *, {_PAGE} #shep-test-jobcard > * {{ flex-shrink: 0 !important; }}
   {_PAGE} .shep-test-drawer {{ position: absolute !important; top: 0; right: 0; bottom: 0; width: min(780px, 62%) !important; z-index: 50; display: flex; flex-direction: column; max-height: 100%; }}
   {_PAGE} .shep-test-drawer > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
 }}

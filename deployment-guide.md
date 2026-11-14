@@ -3638,9 +3638,8 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   其開始時間；**Details ›** 之下是其 workspace、Register、Deterministic algorithms、Device 與 R10
   證據）、以 UTC 表示的開始與結束時間（與報告列命名執行的方式相同），以及其輸出的最後 12 行（取消後
   會收合，其最後一行說明執行已被取消，沒有 traceback；量測拒絕訊息中提到的病患 id 會被略去，
-  D7）；狀態旁的 **Cancel** 只停止測試執行，從不停止訓練工作。在寬螢幕上，Start、其原因與工作卡片固定在
-  面板底部（上方的選擇會捲動），輸出則在卡片內、Cancel 所在那一行之下捲動，所以兩者都保持
-  可見。執行結束後，卡片顯示 job runner 在執行結束當時從磁碟讀到的結果（標為「When the run
+  D7）；狀態旁的 **Cancel** 只停止測試執行，從不停止訓練工作。Start、其原因與工作卡片接在選擇之後，
+  位於面板唯一的捲動區域內，各自完整高度顯示，輸出在卡片內、Cancel 所在那一行之下。執行結束後，卡片顯示 job runner 在執行結束當時從磁碟讀到的結果（標為「When the run
   ended:」）：是否保留了報告、當時是否已登錄，並附上 job runner 的說明（執行沒有寫出 outcome
   檔案時為「No report was published …」；取消後說明留下了什麼）。之後才以 Register this report
   登錄的報告，卡片仍保留執行結束時的狀態，並指向 Result：報告現在的登錄狀態以 Result 為準。頁面顯示時每 5 秒讀取一次工作狀態；剛結束的執行的報告會被選取，
