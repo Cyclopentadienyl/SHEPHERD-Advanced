@@ -3049,9 +3049,10 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 - **the serving state** (since the ops-wiring round), the server's in its own words: "● Serving"
   (with "Loading" beside it while a load runs), "Loading", "▲ Stopping · N in flight" (the
   diagnoses already accepted, still running), "○ Stopped", "✕ Load refused" or "○ Not loaded"
-  (nothing loaded since the service started). When no diagnosis is admitted, the server's lead
-  is under it ("By an operator at 10:15:00 UTC", or why a load was refused, naming the GPU lock's
-  holder) and its whole reason one click away under "Details ›" (how to load a model, the
+  (nothing loaded since the service started), with when a stop or a refusal happened beside it
+  ("○ Stopped at 10:15:00 UTC"). When no diagnosis is admitted, the server's lead is under it
+  ("By an operator", or why a load was refused, naming the GPU lock's holder) and its whole
+  reason one click away under "Details ›" (how to load a model, the
   start-up settings). A load is said by this state alone, whichever page or client started it;
 - **■ Stop inference**, while a model serves (an operator control, §4.13; locked for a read-only
   browser). It asks first: "Stop inference of model <12 hex>? Diagnoses already accepted finish;
@@ -3071,12 +3072,12 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 
 | The card shows | Meaning |
 |---|---|
-| "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example). × dismisses it |
+| "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example), and something is served now. × dismisses it. A stop raises none: the state says it, once, and a notice raised earlier goes |
 | grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read: "status not read" (the full reason is in the badge's line and in Details) or "timed out (5 s)". The lines shown are the last known state, without ✓, with grey dashed chips |
 | grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
 | "○ Not loaded", "Nothing has been loaded since the service started", "Details ›" and "Load a model…" | No model is served and none has been since the start (none configured; since K7 a graph is never served on its own). Nothing served is said here once, with this one action: Run Diagnosis is greyed out and cannot be clicked, "Disabled until a model is loaded." under it (pointing at it, or reaching it with Tab, shows why). An API client asking now gets 503 with the whole reason (§4.7) |
-| "○ Stopped", "By an operator at HH:MM:SS UTC", "Back to research ›" | Inference was stopped (by an operator, for Restart Backend, or as the service shut down); "Details ›" has the server's whole reason. Run Diagnosis says "Disabled until a model is loaded." |
-| "✕ Load refused" and why | A load (or the start-up's) was refused while nothing was served, for example "CUDA inference is refused: the GPU is in use by <holder>…" |
+| "○ Stopped at HH:MM:SS UTC", "By an operator", "Back to research ›" | Inference was stopped (by an operator, for Restart Backend, or as the service shut down); "Details ›" has the server's whole reason. Run Diagnosis says "Disabled until a model is loaded." |
+| "✕ Load refused at HH:MM:SS UTC" and why | A load (or the start-up's) was refused while nothing was served, for example "CUDA inference is refused: the GPU is in use by <holder>…" |
 | "▲ Stopping · N in flight" | An operator stopped inference: the N diagnoses already accepted finish, and new ones are refused ("Disabled until a model is loaded." under Run Diagnosis; 503 for an API client). Then the card reads "Stopped" |
 | "🔒 Change model…" greyed, "Operator controls only: <reason>" | A read-only browser (§4.13). It never sees the list of checkpoints |
 
@@ -3094,8 +3095,9 @@ Evidence; Warnings, always open) and a link to the full records in Research › 
 structural-fingerprint line is gone since K8-4: the checkpoint's record binds its graph by
 digest, checked at load); its Task row says what the model is ("Disease · frozen graph backbone"
 for a frozen-backbone child). "This result" shows only what the result carries: the answer first,
-the parts that differ from what is in use now side by side (those only), then the result's own
-identity as one list, a part a row, and its full digests with Copy. "Details ›" and "Recorded
+then the result's own identity as one list, a part a row, each value once (a part that differs
+from what is in use now says "In use now: …" under its own value), and its full digests with
+Copy. "Details ›" and "Recorded
 results ›" open the first, the badge the second; while
 a model change is open (its confirmation, or a reload running) they leave the Change model drawer
 in place.
@@ -3114,15 +3116,17 @@ pipeline with the workspace and checkpoint the server lists. **The reload serves
 the question named**: it compares its own read of the checkpoint with that fingerprint before
 anything is published, so a file rewritten in the meantime (a running training job rewrites its
 `last.pt` every epoch, and the reload reads the graph first) changes nothing, and the outcome is
-"Not reloaded; the model in use is unchanged." with the reason. The API takes the same check as
+"Not reloaded; the model in use is unchanged." with the reason (a server path in it reads as its
+place under the workspaces root, as the list's own problems do). The API takes the same check as
 an optional field of the reload request, `expected_checkpoint_sha256` (64 lowercase hex digits,
 else 422): other bytes are refused and the running pipeline goes on serving; without it nothing
-is checked, as before. It replaces what every browser is served; results already produced keep
-their own identity, and diagnoses wait while the pipeline reloads. While the confirmation is
+is checked, as before. It replaces what every browser is served once the new model is checked
+and published; until then nothing changes (the model in use keeps answering every browser), and
+results already produced keep their own identity. While the confirmation is
 open the list's own footer is hidden, so the from → to rows and that sentence stay in view;
 "Keep <old>" drops the confirmation. While the confirmation is open, Run Diagnosis is disabled:
 "Disabled: finish or cancel the model change first." Once "Reload with <new>" is clicked, the
-confirmation shows only the reload's status ("Loading <12 hex> for every session… 00:00:42") and
+confirmation shows only this page's wait ("Reload sent; waiting for the server's answer… 00:00:42") and
 Close (closing does not stop it; after 180 s, Read again and Close), so a second reload cannot
 be asked for. The card says the load by the server's own state, "Loading", as it says a load
 any other page or client started, and Run Diagnosis says "Disabled until the model load started

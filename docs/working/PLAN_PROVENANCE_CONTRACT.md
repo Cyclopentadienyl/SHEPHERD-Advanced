@@ -4025,6 +4025,11 @@ labelled differently. *(K8-6r.3, 2026-11-07, made it 2 when it added the evidenc
 > marked ✓. Not checked: who changed them, or anything a person able to edit both files and
 > records could alter.
 
+*(2026-11-14, ops-wiring round B4: the Markdown report shows this line as written, under its
+Part | State | Value table with ✓. The dashboard's identity drawer draws a verified part with its
+shared verified mark, "● verified" (`renderers.status_mark`), and shows this line word for word
+with ✓ drawn as that mark, so the line names the mark its reader sees.)*
+
 ## 7. Out of scope
 
 - Accounts, keys, signing, an append-only or chained log.

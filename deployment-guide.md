@@ -3125,8 +3125,9 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
   Diagnosis 時就會出現；
 - **服務狀態**（自 ops-wiring 這一輪起），以伺服器自己的用語顯示："● Serving"（載入進行中時旁邊
   附 "Loading"）、"Loading"、"▲ Stopping · N in flight"（已接受、仍在執行的診斷）、"○ Stopped"、
-  "✕ Load refused" 或 "○ Not loaded"（服務啟動後從未載入任何模型）。不接受診斷時，下方是伺服器
-  的開頭說明（"By an operator at 10:15:00 UTC"，或載入被拒絕的原因，並指名持有 GPU 鎖者），完整
+  "✕ Load refused" 或 "○ Not loaded"（服務啟動後從未載入任何模型），停止或拒絕發生的時間寫在狀態
+  旁邊（"○ Stopped at 10:15:00 UTC"）。不接受診斷時，下方是伺服器的開頭說明（"By an operator"，
+  或載入被拒絕的原因，並指名持有 GPU 鎖者），完整
   原因在 "Details ›" 之下，點一下即可看到（如何載入模型、啟動設定）。載入只由這個狀態表達，不論是
   哪個頁面或用戶端發起的；
 - **■ Stop inference**，在有模型服務時出現（操作者控制項，§4.13；唯讀瀏覽器看到上鎖的按鈕）。它
@@ -3144,12 +3145,12 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 
 | 卡片顯示 | 意義 |
 |---|---|
-| "Model changed at HH:MM — was <舊>, now <新>"，附 × | 這次讀取發現的模型（或所服務內容的其他部分）與這個瀏覽器上一次讀取的不同（例如另一個瀏覽器做了 Change model）。× 可關閉它 |
+| "Model changed at HH:MM — was <舊>, now <新>"，附 × | 這次讀取發現的模型（或所服務內容的其他部分）與這個瀏覽器上一次讀取的不同（例如另一個瀏覽器做了 Change model），且目前有服務內容。× 可關閉它。停止不會產生這個通知：由狀態說一次，先前的通知也會消失 |
 | 灰色："cannot check · <原因> · Retry"、"last known HH:MM:SS · not current" | 無法讀取目前服務的內容："status not read"（完整原因寫在標記下方那一行與 Details 中）或 "timed out (5 s)"。顯示的是最後已知的狀態，沒有 ✓，標籤為灰色虛線 |
 | 灰色："read HH:MM:SS · older than this result" | 最後一次成功的讀取早於畫面上的結果 |
 | "○ Not loaded"、"Nothing has been loaded since the service started"、"Details ›" 與 "Load a model…" | 沒有服務任何模型，而且自啟動以來從未服務過（什麼都沒設定；自 K7 起，圖從不單獨服務）。「沒有服務」只在這裡說一次，附這唯一的動作：Run Diagnosis 呈灰色且無法點擊，下方寫著 "Disabled until a model is loaded."（滑鼠指向它，或以 Tab 移到它，會說明原因）。API 用戶端此時提出請求，會得到附完整原因的 503（§4.7） |
-| "○ Stopped"、"By an operator at HH:MM:SS UTC"、"Back to research ›" | 推論已停止（由操作者、為了 Restart Backend，或在服務關閉時）；"Details ›" 有伺服器的完整原因。Run Diagnosis 顯示 "Disabled until a model is loaded." |
-| "✕ Load refused" 與原因 | 在沒有服務任何模型時，一次載入（或啟動時的載入）被拒絕，例如 "CUDA inference is refused: the GPU is in use by <持有者>…" |
+| "○ Stopped at HH:MM:SS UTC"、"By an operator"、"Back to research ›" | 推論已停止（由操作者、為了 Restart Backend，或在服務關閉時）；"Details ›" 有伺服器的完整原因。Run Diagnosis 顯示 "Disabled until a model is loaded." |
+| "✕ Load refused at HH:MM:SS UTC" 與原因 | 在沒有服務任何模型時，一次載入（或啟動時的載入）被拒絕，例如 "CUDA inference is refused: the GPU is in use by <持有者>…" |
 | "▲ Stopping · N in flight" | 操作者停止了推論：已接受的 N 個診斷會跑完，新的診斷被拒絕（Run Diagnosis 下方寫著 "Disabled until a model is loaded."；API 用戶端得到 503）。之後卡片顯示 "Stopped" |
 | "🔒 Change model…" 呈灰色，附 "Operator controls only: <原因>" | 唯讀的瀏覽器（§4.13）。它永遠看不到 checkpoint 清單 |
 
@@ -3164,8 +3165,9 @@ clinician." 位於結果的底部。
 附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開），以及通往 Research › Models
 完整紀錄的連結（結構 fingerprint 那一行自 K8-4 起已移除：checkpoint 的紀錄以 digest 綁定它的圖，
 在載入時檢查）；它的 Task 列說明模型是什麼（frozen-backbone 子模型為 "Disease · frozen graph
-backbone"）。"This result" 只顯示結果本身帶有的內容：先給答案，再並列與目前使用中不同的部分（只列
-這些），然後是結果自己的身分，以一個清單呈現、每項一列，以及可 Copy 的完整 digest。
+backbone"）。"This result" 只顯示結果本身帶有的內容：先給答案，然後是結果自己的身分，以一個清單
+呈現、每項一列、每個值只出現一次（與目前使用中不同的部分，在自己的值下方寫 "In use now: …"），
+以及可 Copy 的完整 digest。
 "Details ›" 與 "Recorded results ›" 打開前者，標記打開後者；更換模型進行中（確認畫面打開，或正在
 重新載入）時，它們不會蓋掉 Change model 抽屜。
 
@@ -3180,14 +3182,16 @@ Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every ses
 變更的列會標出），並以伺服器列出的 workspace 與 checkpoint 重新載入 pipeline。**重新載入只服務
 問句中的那個模型**：它在發布任何東西之前，把自己讀到的 checkpoint 與那個指紋比對，因此期間被改寫
 的檔案（執行中的訓練工作每個 epoch 都會改寫它的 `last.pt`，而重新載入會先讀圖譜）不會改變任何
-東西，結果是 "Not reloaded; the model in use is unchanged." 加上原因。API 以重新載入請求的選用
+東西，結果是 "Not reloaded; the model in use is unchanged." 加上原因（原因中的伺服器路徑，與清單本身
+的問題一樣，只顯示它在工作區根目錄下的位置）。API 以重新載入請求的選用
 欄位 `expected_checkpoint_sha256` 提供同樣的檢查（64 個小寫十六進位數字，否則 422）：其他位元組
 會被拒絕，正在服務的 pipeline 照常服務；沒有這個欄位時與以前一樣不做檢查。它會取代每個瀏覽器
-所服務的內容；已產生的結果保留自己的身分，重新載入期間診斷會等待。確認畫面打開期間，清單本身的
+所服務的內容，但要等新模型通過檢查並發布之後；在那之前什麼都不變（使用中的模型繼續回答每個瀏覽
+器），已產生的結果保留自己的身分。確認畫面打開期間，清單本身的
 底部列會隱藏，讓 from → to 各列與這句話保持在畫面內；"Keep <舊>" 會放棄這次確認。確認畫面打開
 期間，Run Diagnosis 停用："Disabled: finish or cancel the model change first."。按下
-"Reload with <新>" 之後，確認畫面只顯示重新載入的狀態（"Loading <12 hex> for every
-session… 00:00:42"）與 Close（關閉不會中止重新載入；180 秒後為 Read again 與 Close），因此無法
+"Reload with <新>" 之後，確認畫面只顯示這個頁面的等待（"Reload sent; waiting for the server's
+answer… 00:00:42"）與 Close（關閉不會中止重新載入；180 秒後為 Read again 與 Close），因此無法
 再要求第二次重新載入。卡片以伺服器自己的狀態 "Loading" 表達這次載入，與其他頁面或用戶端發起的載入
 相同；Run Diagnosis 顯示 "Disabled until the model load started here answers."。Cancel 或 × 關閉
 抽屜而不重新載入。重新載入期間，Close 或 × 會立即關閉抽屜，重新載入照常進行（無法中止）：卡片持續
