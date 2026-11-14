@@ -12,6 +12,11 @@ a page's own write fires too. What these pin:
 
 - **every field whose touches a form records is marked for the page's touch
   script**, and the dashboard's head carries that script;
+- **the three forms that keep a record wire every field through
+  `record_touches`**, as their pages build them: the Training base form, the
+  Fine-tune page and the Continue drawer's Branch fields, each field's first
+  input listener adding its own key to its own form's record, and the field
+  marked;
 - **in a real browser** (Node with Playwright; skipped without), on a page
   of fields of each kind the record covers, wired by `record_touches` and
   served with the dashboard's head: emptying a text box (Backspace, Delete, a
@@ -27,9 +32,10 @@ a page's own write fires too. What these pin:
   the record and Start then sends no setting; a Tab through every field
   records nothing; the reference's own value typed is sent as the operator's.
 
-The Fine-tune page and the Continue drawer's Branch fields record through the
-same `record_touches` (their wiring: `test_webui_finetune_page.py`,
-`test_training_console_resume.py`).
+What else a field's input does on each form is pinned with the form: the
+"Set by you" line in `test_training_page.py` and
+`test_webui_finetune_page.py`, the Branch fields' check that goes stale
+(`_on_branch_edited`) in `test_training_console_resume.py`.
 
 Module: tests/unit/test_training_touch_record.py
 """
@@ -85,6 +91,59 @@ def test_a_recorded_field_is_marked_for_the_touch_script_the_dashboard_loads():
     assert "e.isTrusted" in tc.TOUCH_HEAD and "key: 'Unidentified'" in tc.TOUCH_HEAD
     head = dashboard_head()
     assert head.count(tc.TOUCH_HEAD) == 1 and head.endswith(tc.TOUCH_HEAD)
+
+
+def test_the_three_forms_record_every_field_through_the_one_listener_and_mark_it():
+    """Decision S2 on the three forms that keep a record, as their pages
+    build them: the Training base form (`shep-train-touched`, one field per
+    `base_form_keys`), the Fine-tune page (`ft_touched`, `FINETUNE_FIELDS`)
+    and the Continue drawer's Branch fields (`shep-train-branch-touched`,
+    `BRANCH_FIELDS`). Each field's first input listener adds its own key to
+    its own form's record in the browser (`TOUCH_JS`, no request), and the
+    field carries `TOUCH_CLASS`, without which the touch script leaves an
+    emptied text box unrecorded (OPS-R1); no other block carries the class.
+    A field left unwired, wired by a listener of its own, or wired after
+    another of its input listeners, fails here: a start of that form would
+    send nothing for an edit of it and use the reference's or the parent's
+    value."""
+    from src.webui import shell
+    from src.webui.components import finetune_page as fp
+
+    with gr.Blocks() as demo:
+        ctx = shell.standalone_context(demo)
+        tc.create_training_tab(ctx)
+        fp.create_finetune_page(ctx)
+    by_id = {getattr(block, "elem_id", None): block for block in demo.blocks.values()}
+    expected = {
+        "shep-train-touched": {key: by_id[key] if key in by_id
+                               else by_id[f"spec-{key.replace('.', '-')}"]
+                               for key in tc.base_form_keys()},
+        "ft_touched": {name: by_id[f"ft_{name}"] for name in fp.FINETUNE_FIELDS},
+        "shep-train-branch-touched": {name: by_id[f"branch_{name}"]
+                                      for name in tc.BRANCH_FIELDS},
+    }
+    before, after = tc.TOUCH_JS.split("{key}")
+    fns = list(demo.fns.values())
+    recorded = {record: {} for record in expected}
+    for fn in fns:
+        if not (isinstance(fn.js, str) and fn.js.startswith(before) and fn.js.endswith(after)):
+            continue
+        (record,) = fn.outputs
+        ((target, event),) = fn.targets
+        assert fn.fn is None and fn.inputs == [record] and event == "input", fn.js
+        assert fn.queue is False and fn.trigger_mode == "multiple", fn.js
+        key = json.loads(fn.js[len(before):-len(after)])
+        recorded[record.elem_id][key] = demo.blocks[target]
+    for record, fields in expected.items():
+        assert {key: field._id for key, field in recorded[record].items()} == {
+            key: field._id for key, field in fields.items()}, record
+        for key, field in fields.items():
+            assert tc.TOUCH_CLASS in field.elem_classes, (record, key)
+            first = next(fn for fn in fns if (field._id, "input") in fn.targets)
+            assert first.js == tc.TOUCH_JS.replace("{key}", json.dumps(key)), (record, key)
+    marked = {block._id for block in demo.blocks.values()
+              if tc.TOUCH_CLASS in (getattr(block, "elem_classes", None) or [])}
+    assert marked == {field._id for fields in expected.values() for field in fields.values()}
 
 
 # --------------------------------------------------------------------------- every edit, in a browser
