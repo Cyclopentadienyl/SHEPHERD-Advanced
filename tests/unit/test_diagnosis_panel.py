@@ -1308,6 +1308,31 @@ def test_a_stale_or_unreadable_status_never_leaves_equal_showing():
         assert "keeps its own identity" in badge
 
 
+def test_the_badge_says_its_state_by_the_shared_mark():
+    """B5 review (leftover f): the badge drew its own marks, a check SVG for
+    "Produced by the model in use", ⇄ and ?, the last page glyphs beside the
+    shared status mark. Each state is now `renderers.status_mark`: ● equal,
+    ▲ differs, ○ not compared or not checkable yet."""
+    other = _served_identity()
+    other["checkpoint"] = {"state": "verified", "sha256": "b" * 64}
+    stale = _card(_status_serving(_served_identity()))
+    cases = {
+        "ok": dp.badge_html(_produced(), _card(_status_serving(_served_identity()))),
+        "warn": dp.badge_html(_produced(), _card(_status_serving(other), state=stale,
+                                                 at="2026-07-07T16:31:12")),
+        "neutral": dp.badge_html(_produced("2026-07-07T16:00:30"), stale),
+    }
+    for kind, shown in cases.items():
+        badge = shown.split("</button>", 1)[0]  # the badge; the ⓘ after it is the help's
+        assert f"shep-st shep-st-{kind}" in badge, kind
+        shape = r.STATUS_MARKS[kind][0]
+        assert f'<span class="shep-st-shape" aria-hidden="true">{shape}</span>' in badge, kind
+        assert "<svg" not in badge and "⇄" not in badge and "✓" not in badge, kind
+        assert '<span aria-hidden="true">?</span>' not in badge, kind
+    assert r.status_mark("ok", "Produced by the model in use") in cases["ok"]
+    assert "1 part differs ›</span>" in cases["warn"]
+
+
 def test_a_result_older_than_a_load_says_how_many_parts_differ():
     load = _card(_status_serving(_served_identity()))
     other = _served_identity()

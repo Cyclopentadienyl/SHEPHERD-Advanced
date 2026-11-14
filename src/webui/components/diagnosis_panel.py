@@ -1545,10 +1545,6 @@ _DOT_CLASS = {
     "Weak path support": "weak",
     "Insufficient evidence": "none",
 }
-_CHECK_SVG = ('<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
-              '<circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.6 8.3l2.3 2.3 4.5-4.9" '
-              'fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" '
-              'stroke-linejoin="round"/></svg>')
 
 
 # =============================================================================
@@ -1653,31 +1649,37 @@ def _parts_differ(n: int) -> str:
 
 
 def badge_html(result: Optional[Mapping[str, Any]], state: Mapping[str, Any]) -> str:
-    """The results badge, in the card's noun; its › opens "This result"."""
+    """The results badge, in the card's noun; its › opens "This result".
+    Its state is the shared status mark (`renderers.status_mark`, the WebUI
+    skill's §6): ● produced by the model in use, ▲ by an earlier one, ○ not
+    compared or not checkable yet; the page draws no mark of its own."""
     if not isinstance(result, Mapping):
         return ""
     compared = compare_with_served(result, state)
     help_html = help_button("dx-badge", "Compared with the model in use")
     if compared["state"] == "equal":
         return (f'<div class="shep-dx-badge-row"><button type="button" class="shep-dx-badge '
-                f'shep-dx-badge-ok" data-key="result">{_CHECK_SVG} Produced by the model in use '
+                f'shep-dx-badge-ok" data-key="result">'
+                f'{_status_mark("ok", "Produced by the model in use")} '
                 f'<span aria-hidden="true">›</span></button>{help_html}</div>')
     if compared["state"] == "differs":
         n = len(compared["differ"])
+        words = ('Produced by an earlier model or pipeline — <span class="shep-dx-u">'
+                 f"{_e(_parts_differ(n))} ›</span>")
         return (f'<div class="shep-dx-badge-row"><button type="button" class="shep-dx-badge '
-                f'shep-dx-badge-amber" data-key="result"><span aria-hidden="true">⇄</span> '
-                f'Produced by an earlier model or pipeline — <span class="shep-dx-u">'
-                f'{_parts_differ(n)} ›</span></button>{help_html}</div>')
+                f'shep-dx-badge-amber" data-key="result">'
+                f'{_status_mark("warn", words, words_html=True)}</button>{help_html}</div>')
     if compared["state"] == "nothing":
         # Nothing is served now (after a stop, say): the result is named by
         # its own model, never relabelled, and compared with nothing.
         return (f'<div class="shep-dx-badge-row"><button type="button" class="shep-dx-badge '
-                f'shep-dx-badge-grey" data-key="result"><span aria-hidden="true">○</span> '
-                f'Produced by {_e(_result_model(result))} · not compared <span '
-                f'aria-hidden="true">›</span></button>{help_html}</div>')
+                f'shep-dx-badge-grey" data-key="result">'
+                f'{_status_mark("neutral", f"Produced by {_result_model(result)} · not compared")}'
+                f' <span aria-hidden="true">›</span></button>{help_html}</div>')
     return (f'<div class="shep-dx-badge-row"><button type="button" class="shep-dx-badge '
-            f'shep-dx-badge-grey" data-key="result"><span aria-hidden="true">?</span> Cannot '
-            f'check against the model in use yet</button>{help_html}</div>'
+            f'shep-dx-badge-grey" data-key="result">'
+            f'{_status_mark("neutral", "Cannot check against the model in use yet")}'
+            f'</button>{help_html}</div>'
             f'<p class="shep-dx-badge-why">{_e(compared["reason"])}</p>')
 
 

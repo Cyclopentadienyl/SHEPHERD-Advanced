@@ -3303,9 +3303,9 @@ def _chosen(source: str, listed: Any, manual: Any, parents: Mapping[str, Any],
 
 def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
     """The parent's recorded dataset fingerprint against the workspace's
-    current one: ✓ the same; when it differs, the ✕ of a refusal (the start
-    refuses another dataset, so the drawer's start is disabled: the shared
-    status mark, `renderers.status_mark`) with the listed workspace it
+    current one, in the shared status mark (`renderers.status_mark`): ● the
+    same; when it differs, the ✕ of a refusal (the start refuses another
+    dataset, so the drawer's start is disabled) with the listed workspace it
     matches, or "matches no listed workspace"; or what is not known yet."""
     if not parent.get("chosen"):
         return ""
