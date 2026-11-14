@@ -3015,17 +3015,19 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | 位置 | 內容 |
 |---|---|
 | **Diagnosis (clinical)** | 病患表型、結果與選中候選的細節，使用中的模型顯示在一張卡片上（見下文）。它是第一個畫面 |
-| **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
+| **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，以及所選 workspace 已登錄的資料版本與各自接受的量測（見下文）；這個頁面不會改變伺服器上的任何東西 |
 | **Research (pre-clinical)** › Prepare › **Training** | run bar、下一次 run 的參數、Continue… 與附圖表的 run 檢視（見下文）。它是 Research 下最先顯示的頁面 |
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run，Epochs、Seed 與 Graph backbone（Trained，或凍結主幹對照的 Frozen）對每個子模型相同；每個所選任務都會讀取的其他設定在 More settings 下，只選一個任務時另有該任務自己的設定（見下文）；一張 job card 顯示這次啟動的 graph backbone、每個任務的狀態、Stop 與產出 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
 | **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文）；模型 family 或此 workspace 的結果，可比較與匯出（Results，自 research comparison Stage 8b 起） |
-| 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會停用並顯示鎖，"Operator controls only: <原因>" 寫在它們下方 |
+| 頁首右側的 **⚙ Settings** | Runtime Settings：目前執行中與已儲存的記憶體配置器、記憶體配置器與 torch.compile 兩個欄位，接著是 Apply Settings 與 Restart Backend（見下文）。對唯讀的瀏覽器，這兩個欄位不能更改，兩個按鈕會停用並顯示鎖，"Operator controls only: <原因>" 寫在它們旁邊 |
 
 - 選中的階段（Diagnosis 或 Research）以填色加粗體顯示；選中的研究頁面以底線加粗體顯示；
-  Settings 被選中時有淺色填色與底線。Prepare 與 Evaluate 是分組標籤，不是按鈕。
-- 不會有任何分頁被收進選單。視窗較窄或放大倍率較高時，兩個 chip 與 Settings 會移到頁首的第二
-  行，研究頁面的分頁也會換行。
+  Settings 被選中時有淺色填色與底線。Prepare 與 Evaluate 是分組標籤，不是按鈕。欄位名稱是欄位
+  上方的一般文字，不是有底色的標籤。
+- 不會有任何分頁被收進選單。視窗較窄或放大倍率較高時，兩個 chip 與 Settings 會移到 Diagnosis 與
+  Research 下方自己的一行（不論這兩個分頁佔幾行），因此 chip 不會蓋住任何分頁；研究頁面的分頁也會
+  換行。
 - 瀏覽器分頁的標題會說明目前位置，例如 `Training · Research — SHEPHERD-Advanced`。重新載入
   頁面會再次打開 Diagnosis：網址不保留位置。
 - 視窗至少 1400 × 760 CSS 像素時，頁面本身不捲動；某個區域的內容超出空間時，在它自己的面板
@@ -3082,7 +3084,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 旁邊打開，旁邊放不下就在上方，再不行就在下方，永遠不會蓋住該欄位；它也永遠不會比視窗高：較長
 的文字在泡泡內捲動。必須一直可見的內容仍然直接印出：拒絕的原因、工作的狀態、合成資料的標記、
 未經驗證的來源，以及 Training Console 對 HGT 的 AMP 拒絕（「Disabled: HGT requires full float32
-…」）。
+…」）。螢幕閱讀器會先讀欄位下方印出的那一行，再讀它的說明（自 ops-wiring 這一輪的 B5 起）。
 
 ### Diagnosis (clinical)
 
@@ -3223,7 +3225,8 @@ run，不論目錄名稱為何，所以放在其他名稱之下的模型也會�
 
 ### Research › Prepare › Datasets
 
-伺服器在 `SHEPHERD_WORKSPACES_ROOT` 下列出的 workspace 的唯讀清單（§4.12）：也就是 Training、
+伺服器在 `SHEPHERD_WORKSPACES_ROOT` 下列出的 workspace 清單（§4.12；頁首寫出數量，例如「2
+workspaces on the server」）：也就是 Training、
 Fine-tune、Test 與 Models 選擇時使用的同一份清單。每一列顯示名稱；建置時間（UTC，來自
 `workspace_build.json`），或「build time not recorded」加上各來源宣告的版本；**資料集指紋**，
 即其 `split_manifest.json` 的 SHA-256 的前 12 個十六進位數字（Copy 會複製完整的 64 個；兩個
@@ -3240,19 +3243,29 @@ workspace 前 12 個相同時會顯示更多位數）；來源（`synthetic` 以
 
 較長的名稱或來源清單會在儲存格內換行，因此「In use」欄一直保持在視野內。選取一列會顯示它的細節：
 完整指紋與 Copy、manifest 綁定的內容（短 digest）、種子與切分數量、來源與建置紀錄、workspace
-相對於伺服器 workspace 根目錄的路徑，以及它與其他列出的 workspace 的比較：「Same dataset as …」
+相對於伺服器 workspace 根目錄的路徑、它的資料版本（見下文），以及它與其他列出的 workspace 的比較：「Same dataset as …」
 （完整指紋相同）或「Same graph build as … (kg, tensors and record identical), another cut: the
 allocation seed differs …」。對任何瀏覽器都不會顯示伺服器的絕對路徑：根目錄之下的路徑以相對於
 根目錄的方式顯示，其他路徑寫作「a path outside the workspaces root」，被拒絕的
 `SHEPHERD_WORKSPACES_ROOT` 會說明被拒絕但不顯示它的路徑。頁面在打開時讀取 manifest，而不是每次
-選取時讀取。
+選取時讀取；registry 也是如此。
+
+**資料版本**（自 ops-wiring 這一輪的 B5 起）：伺服器 registry（`SHEPHERD_REGISTRY`）中對應到所選
+workspace 圖的版本，與 Test 頁面列出的相同、以同一種比較判斷，以表格顯示：版本的 label、種類
+（Supplied cohort version、KG edge set、Generated split）、role，以及它的資料接受的量測（例如未列出
+基因的 supplied cohort 為「Disease」，KG edge set 為「KG link prediction」）。屬於該版本種類、但資料
+不接受的量測列在 **Not admitted: … ›** 下，原因在點一下之後顯示（「this cohort version lists no
+causal genes, …」）。模型能以哪些量測測量，由 Test 頁面決定；這裡說的是資料這一側。表格下方會列出
+對應到其他圖的版本與無法讀取的版本的數量。沒有 registry 時頁面會說明原因；manifest 無法讀取的
+workspace 會說明它未被檢查；還沒有任何版本對應到它時，會說明在哪裡匯入版本：Test 頁面的
+**Import a new version…**，或在伺服器上執行 `scripts/import_cohort.py`（這個頁面不匯入任何東西）。
 
 **Use for training ›** 會打開 Research › Training，並在它的 run bar 中選好該 workspace，只對
 這個瀏覽器分頁有效。伺服器上什麼都不會改變；Start 仍是 D8 檢查的控制項。不可訓練的 workspace
 無法使用，按鈕旁的說明會寫出原因（「Not available: scratch_ws is not trainable — no split
 manifest.」）。在 run bar 中改選另一個資料集，「in your Training run bar」標記會隨之移到那一個。
 
-這個頁面上沒有任何操作者控制項：它只讀取 workspace 的小型 JSON 檔案，從不開啟 checkpoint，因此
+這個頁面上沒有任何操作者控制項：它只讀取 workspace 與 registry 的小型 JSON 檔案，從不開啟 checkpoint，因此
 唯讀的瀏覽器看到的是同樣的頁面。沒有設定 `SHEPHERD_WORKSPACES_ROOT` 時，頁面會說明這一點。資料集
 仍在伺服器上以 CLI 建置（`scripts/build_knowledge_graph.py --generate-samples`；示範資料用 `scripts/setup_demo.py`）。
 
@@ -3290,7 +3303,9 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   詢問開著時工作仍在訓練，提問當下讀到的 epoch 到回答時已經過時；停止後，通知會說明停止留下的
   checkpoint。這個詢問屬於提出它時正在執行的
   工作：若該工作在你回答前結束，詢問就會關閉，之後啟動的工作不會顯示它；對已不是目前執行中的
-  工作按下 **■ Stop training** 不會停止任何東西（「Not stopped: …; click Stop again」）。
+  工作按下 **■ Stop training** 不會停止任何東西（「Not stopped: …; click Stop again」）。run bar 的
+  通知與 Fine-tune 的一樣，拒絕以紅色 ✕ 開頭（「Not started: …」、「Not stopped: …」），一般狀態則是
+  不加標記的文字（「Stopped. …」、「Nothing to stop: …」、已自行結束的工作）。
 - **Start 會送出 chip 顯示的資料集指紋**，job runner 在做任何事之前會再讀一次 manifest：若
   workspace 在這段時間內重建過，什麼都不會寫入或啟動，頁面會顯示「Not started: The dataset
   changed since it was shown; select it again. Its split_manifest.json holds … now (shown: …).
@@ -3423,7 +3438,7 @@ Trainer 的驗證數值（base 為「LP accuracy (Trainer)
 工作卡片也依檔案記錄的選擇方式指出每個子 run 的最佳存檔。
 自 M5-3 起，手動輸入的路徑只會找到該清單中的 checkpoint，其他任何檔案都會在開啟之前被拒絕（`PLAN_TEST_RESULTS.md` D8）。
 **3. Check**（Check checkpoint）顯示所選操作會做什麼，並比較 parent 記錄的資料集指紋與
-workspace 目前的指紋：相同時為 ✓，不同時為表示拒絕的紅色 ✕，因為啟動會拒絕不同的資料集（附上
+workspace 目前的指紋：相同時為 ●，不同時為表示拒絕的紅色 ✕，因為啟動會拒絕不同的資料集（附上
 相符的已列出 workspace，或「matches no listed workspace」）；被拒絕的檢查同樣以 ✕ 開頭
 （「Cannot continue.」、「Cannot branch.」）。每個設定與值都以文字說明，絕不顯示程式碼本身的形式。
 **選 Continue** 時，檢查列出計畫的句子，抽屜的欄位以其標籤稱呼（「… extend it at a fixed rate
@@ -3489,7 +3504,7 @@ checkpoint）。API 也以選用的查詢參數接受 parent 的 digest，
 格式錯誤時 422）；沒有這個參數時，訓練行程仍綁定在 runner 讀到的 parent。job runner 與訓練
 行程在啟動時仍會檢查其他一切。Check checkpoint 會說明它讀取的是清單上的哪個檔案（「Checked
 gatv2/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑與指紋），資料集相符時只說一次
-「✓ Trained on the dataset selected in the run bar」（指紋在 run bar）。抽屜打開期間，run bar 的
+「● Trained on the dataset selected in the run bar」（指紋在 run bar）。抽屜打開期間，run bar 的
 那一行是「Run: a new one, continued from the checkpoint chosen in Continue or branch a run」（選
 Branch 時為「branched from」）：兩者都在自己的 run 目錄中訓練。抽屜有自己的 **Device**（auto、
 cuda 或 cpu），每次打開時從參數的 Device 開始，Check checkpoint 與啟動使用的就是它。抽屜打開期間若 run
@@ -3506,7 +3521,7 @@ run。只要 run bar 顯示的是做出選擇時的 workspace，而且之後沒�
 就顯示它；中途改看另一個 workspace 不會結束選擇，回到原本的 workspace 時會再次顯示所選的 run）。選單旁的
 標題說明所檢視的 run 與訓練工作的關係（「the running job」、「the last job」、「a past run, while
 another runs」、「the latest run」、「a past run」）；從 checkpoint 讀到的、這個 run 使用的資料集與
-run bar 所選資料集的關係（「✓ same dataset as the run bar」、琥珀色的「▲ not the selected
+run bar 所選資料集的關係（「● same dataset as the run bar」、琥珀色的「▲ not the selected
 dataset」、執行中還沒有 checkpoint 時的「dataset recorded at the first checkpoint」，或已結束而沒有
 checkpoint 時的「dataset not recorded (no checkpoint)」）；Continue… 打開且選了清單上的 checkpoint
 時，這是「the run continued from」還是「not the run continued from」（選 Branch 時為「branched
@@ -3819,6 +3834,27 @@ build; start a new run.」）。Load 不會寫入任何使用紀錄。頁面在�
 
 **窄版**（寬度低於 1400 或高度低於 760，各區域上下堆疊時），選取一列會捲動到它的細節區並把鍵盤焦點
 移到那裡；細節區標題列的 **↑ Back to the list** 會回到該列。
+
+### ⚙ Settings 與執行環境那一行
+
+**Settings**（自 ops-wiring 這一輪的 B5 起是一個面板）先說明正在執行的與已儲存的：**Allocator
+now**，這個後端啟動時使用的 CUDA 記憶體配置器，從它自己的環境讀出（啟動時已儲存的 preset、啟動
+環境中設定的配置器（附上變數名稱），或沒有設定：PyTorch 的預設）；**Allocator saved**，下次啟動
+會套用的 preset，兩者不同時寫「▲ Not running yet: Restart Backend applies it」，啟動環境中設定的
+配置器優先時寫「▲ The launch environment's setting overrides it …」；**torch.compile saved**，從頁面
+啟動的訓練 run 會讀取它；以及 **Acceleration**，「○ Not implemented yet」：新的加速工作暫緩，沒有
+任何開關，每個 run 的紀錄保留它實際使用的內容。下方是兩個欄位：**Memory allocator**（每個 preset
+以文字說明、名稱寫在旁邊：Driver memory pool（`cuda_async`，預設）、Expandable segments、Native
+rounded、Native no tuning；後端啟動時讀取一次）與 **Compile the model (torch.compile)**（實驗性；
+尚未以目前唯一建置的架構 GATv2 量測過）。接著是 **Apply Settings**（儲存兩者；尚未儲存的變更會寫在
+它們下方）與 **Restart Backend**（GPU 工作執行時停用，原因寫在旁邊；重啟會先停止服務，如 §4.13）。
+對唯讀的瀏覽器，這兩個欄位不能更改，兩個按鈕會顯示鎖，"Operator controls only: <原因>" 寫在旁邊。
+
+**執行環境那一行**在每個頁面的底部，先寫問題的後果，再寫原因：「▲ No CUDA device visible: GPU
+training is unavailable. torch is built for CUDA 13.0; check the driver and CUDA libraries.」（失去某項
+能力時為紅色 ✕，例如「GNN scoring cannot run: torch is not importable (…)」）；沒有問題時寫
+「Runtime: every checked module imports.」。版本（torch、CUDA、PyG、原生擴充、Voyager）在
+**Versions ›** 下，點一下即可看到。`GET /api/v1/system/runtime` 以相同的文字回傳相同的問題。
 
 ## 4.15 PyTorch Geometric 的版本（自 Batch 1 起，2026-10-26）
 

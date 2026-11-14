@@ -2925,18 +2925,20 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | Where | What is there |
 |---|---|
 | **Diagnosis (clinical)** | Patient phenotypes, the results and the selected candidate's details, with the model in use on a card (below). It is the first screen |
-| **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
+| **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, and the chosen one's registered data versions with what each admits (below); nothing on it changes the server |
 | **Research (pre-clinical)** › Prepare › **Training** | The run bar, the parameters for the next run, Continue… and the run view with its charts (below). It is the research page shown first |
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, with Epochs, Seed and Graph backbone (Trained, or Frozen for the frozen-backbone control) for every child, the rest of what every chosen task reads under More settings and the task's own settings for one task (below), and a job card with the start's graph backbone, each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
 | **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below); the results of a model's family or the workspace, compared and exported (Results, since research comparison Stage 8b) |
-| **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are disabled with the lock, with "Operator controls only: <reason>" written below them |
+| **⚙ Settings**, at the right of the header | Runtime Settings: the memory allocator running against the one saved, the allocator and torch.compile, then Apply Settings and Restart Backend (below). For a read-only browser the two fields cannot be changed and both buttons are disabled with the lock, with "Operator controls only: <reason>" beside them |
 
 - The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
   underlined and bold; Settings, when selected, has a light fill and an underline. Prepare and
-  Evaluate are group labels, not buttons.
+  Evaluate are group labels, not buttons. A field's name is plain text over the field, never
+  a tinted chip.
 - No tab is ever hidden in a menu. In a narrow window, or at a large zoom, the chips and
-  Settings move onto a second header line, and the research pages wrap.
+  Settings move onto a line of their own under Diagnosis and Research (however many lines
+  those two take), so no chip covers a tab, and the research pages wrap.
 - The browser tab's title says where you are, for example `Training · Research —
   SHEPHERD-Advanced`. Reloading the page opens Diagnosis again: the address does not keep the
   location.
@@ -2999,7 +3001,8 @@ the field. The bubble opens beside the field it explains, else above it, else be
 covers the field; it is never taller than the window: a long text scrolls inside it. What must
 stay visible is still printed: a refusal's reason, a job's state, the synthetic marker, an
 unverified source, and the Training Console's AMP refusal for HGT ("Disabled: HGT requires full
-float32 …").
+float32 …"). A screen reader reads a field's printed line under it, then its help (since the
+ops-wiring round's B5).
 
 ### Diagnosis (clinical)
 
@@ -3167,8 +3170,9 @@ directory under `runs/` that holds it (since K8-4r; any directory's name since K
 
 ### Research › Prepare › Datasets
 
-A read-only list of the workspaces the server lists under `SHEPHERD_WORKSPACES_ROOT` (§4.12):
-the same list Training, Fine-tune, Test and Models choose from. Each row shows the name; when it
+The workspaces the server lists under `SHEPHERD_WORKSPACES_ROOT` (§4.12), which the page only reads:
+the same list Training, Fine-tune, Test and Models choose from. The header gives the count ("2
+workspaces on the server"). Each row shows the name; when it
 was built (UTC, from `workspace_build.json`), or "build time not recorded" with its sources'
 declared releases; the **dataset fingerprint**, the first 12 hex digits of the SHA-256 of its
 `split_manifest.json` (Copy gives all 64, and more digits are shown when two workspaces share
@@ -3186,12 +3190,25 @@ train and validation sample counts. The markers:
 A long name or source list wraps in its cell, so the "In use" column stays in view. Selecting a
 row shows its details: the full fingerprint with Copy, what the manifest binds (short digests),
 the seeds and split counts, the sources and the build record, the workspace's path relative to
-the server's workspace root, and how it compares with the other listed workspaces: "Same dataset
-as …" (the same full fingerprint) or "Same graph build as … (kg, tensors and record identical),
-another cut: the allocation seed differs …". No absolute server path is shown, to any browser:
+the server's workspace root, its data versions (below), and how it compares with the other listed
+workspaces: "Same dataset as …" (the same full fingerprint) or "Same graph build as … (kg,
+tensors and record identical), another cut: the allocation seed differs …". No absolute server path is shown, to any browser:
 a path under the root is shown relative to it, any other one reads "a path outside the
 workspaces root", and a refused `SHEPHERD_WORKSPACES_ROOT` is said without its path. The page
-reads the manifests when it is opened, not on each selection.
+reads the manifests and the registry when it is opened, not on each selection.
+
+**Data versions** (since the ops-wiring round's B5): the versions in the server's registry
+(`SHEPHERD_REGISTRY`) that were mapped against the chosen workspace's graph, as the Test page
+lists them and by the same comparison, in a table: the version's label, its kind (Supplied
+cohort version, KG edge set, Generated split), its role, and the measurements its data admits
+(for example "Disease" for a supplied cohort that lists no genes, "KG link prediction" for a KG
+edge set). A measurement of the version's kind that its data does not admit is named under
+**Not admitted: … ›**, its reason one click away ("this cohort version lists no causal genes,
+…"). What a model can be measured by is the Test page's choice; this says the data's side. Under
+the table, the versions mapped against other graphs and those that cannot be read are counted.
+With no registry the page says why; a workspace whose manifest cannot be read says it was not
+checked; with none mapped yet it says where a version is imported: Test's **Import a new
+version…** or `scripts/import_cohort.py` on the server (this page imports nothing).
 
 **Use for training ›** opens Research › Training with that workspace chosen in its run bar, for
 this browser tab only. Nothing changes on the server; Start is still the control D8 checks. A
@@ -3199,8 +3216,8 @@ workspace that is not trainable cannot be used, and the line beside the button s
 available: scratch_ws is not trainable — no split manifest."). Choosing another dataset in the run
 bar moves the "in your Training run bar" marker to it.
 
-Nothing on this page is an operator control: it reads the workspaces' small JSON files, never a
-checkpoint, so a read-only browser sees the same page. With `SHEPHERD_WORKSPACES_ROOT` unset,
+Nothing on this page is an operator control: it reads the workspaces' and the registry's small
+JSON files, never a checkpoint, so a read-only browser sees the same page. With `SHEPHERD_WORKSPACES_ROOT` unset,
 the page says so. Datasets are still built on the server with the CLI
 (`scripts/build_knowledge_graph.py --generate-samples`; the demo with `scripts/setup_demo.py`).
 
@@ -3244,7 +3261,9 @@ a run.
   answer; once stopped, the notice names the checkpoint the stop left. The question belongs to the job it was
   asked for: if that job ends before you answer, it closes, and a job started later never shows
   it; **■ Stop training** answered for a job that is no longer the one running stops nothing
-  ("Not stopped: …; click Stop again").
+  ("Not stopped: …; click Stop again"). The run bar's notice, like Fine-tune's, says a refusal
+  with the red ✕ ("Not started: …", "Not stopped: …") and a plain state in plain text ("Stopped.
+  …", "Nothing to stop: …", a job that had already ended).
 - **Start sends the dataset fingerprint the chip showed**, and the job runner reads the manifest
   again before anything else: if the workspace was rebuilt in the meantime, nothing is written or
   started, and the page says "Not started: The dataset changed since it was shown; select it
@@ -3415,7 +3434,7 @@ Fine-tune page's base select is this same pair, and its job card names each chil
 the selection its files record. Since M5-3
 a typed path only finds a checkpoint that list holds, and any other file is refused without being
 opened (`PLAN_TEST_RESULTS.md` D8). **3. Check** (Check checkpoint) shows what the operation would
-do, and the dataset fingerprint the parent recorded against the workspace's current one: ✓ the
+do, and the dataset fingerprint the parent recorded against the workspace's current one: ● the
 same, or the red ✕ of a refusal when it differs, since the start refuses another dataset (with
 the listed workspace it matches, or "matches no listed workspace"); a refused check leads with
 the same ✕ ("Cannot continue.", "Cannot branch."). Each setting and value is said in words, never
@@ -3499,7 +3518,7 @@ optional query parameter too, `expected_parent_sha256=<64 hex digits>` beside `r
 the parent the runner read. The job runner and the training process still check everything
 else at start. Check checkpoint names the listed file it read ("Checked gatv2/<run>/<file> from
 the run list"; a typed path's check gives its path and fingerprint), and a matching dataset is said
-once, as "✓ Trained on the dataset selected in the run bar" (the fingerprint is the run bar's).
+once, as "● Trained on the dataset selected in the run bar" (the fingerprint is the run bar's).
 While the drawer is open the run bar's line reads "Run: a new one, continued from the checkpoint
 chosen in Continue or branch a run" ("branched from" with Branch): either trains in a run
 directory of its own. The drawer has
@@ -3523,7 +3542,7 @@ not end it, and back on its workspace the choice is shown again). Beside the sel
 says how the run viewed stands to
 the job ("the running job", "the last job", "a past run, while another runs", "the latest run",
 "a past run"); how the dataset the run used, read from its checkpoint, stands to the run bar's
-("✓ same dataset as the run bar", amber "▲ not the selected dataset", "dataset recorded at the
+("● same dataset as the run bar", amber "▲ not the selected dataset", "dataset recorded at the
 first checkpoint" while it runs without one yet, or "dataset not recorded (no checkpoint)" once
 it has ended without one); while Continue… is open with a listed checkpoint chosen, whether this
 is "the run continued from" or "not the run continued from" ("branched from" with Branch; the
@@ -3928,6 +3947,32 @@ use loaded again), so what changed meanwhile is shown; nothing on it runs on a t
 **Narrow** (below 1400 × 760, where the regions stack under one another), choosing a row scrolls
 to its detail and moves the keyboard focus there; **↑ Back to the list** in the detail's header
 returns to the row.
+
+### ⚙ Settings and the runtime line
+
+**Settings** (one panel since the ops-wiring round's B5) says first what runs and what is
+saved: **Allocator now**, the CUDA memory allocator this backend started with, read from its
+own environment (the saved preset at its start, an allocator set in the launch environment,
+named with its variable, or none: PyTorch's default); **Allocator saved**, the preset the next
+start applies, with "▲ Not running yet: Restart Backend applies it" while the two differ, or
+"▲ The launch environment's setting overrides it …" when an allocator set there wins; **torch.compile
+saved**, which a training run started from a page reads; and **Acceleration**, "○ Not
+implemented yet": new acceleration work is deferred, with no switch, and each run's record keeps
+what it ran with. Under them the two fields: **Memory allocator** (each preset in words, its name
+beside: Driver memory pool (`cuda_async`, the default), Expandable segments, Native rounded,
+Native with no tuning; read once when the backend starts) and **Compile the model
+(torch.compile)** (experimental; not yet measured with GATv2, the one architecture built today).
+Then **Apply Settings** (saves both; a change not yet saved is said under them) and **Restart
+Backend** (off while a GPU job runs, said beside it; a restart stops serving first, as in
+§4.13). For a read-only browser the fields cannot be changed and both buttons show the lock,
+with "Operator controls only: <reason>" beside them.
+
+**The runtime line** at the foot of every page leads with what a problem costs, then its cause:
+"▲ No CUDA device visible: GPU training is unavailable. torch is built for CUDA 13.0; check the
+driver and CUDA libraries." (a ✕ in red when a capability is gone, such as "GNN scoring cannot
+run: torch is not importable (…)"); with no problem it reads "Runtime: every checked module
+imports.". The versions (torch, CUDA, PyG, the native extensions, Voyager) are one click away
+under **Versions ›**. `GET /api/v1/system/runtime` returns the same issues in the same words.
 
 ## 4.15 PyTorch Geometric's version (since Batch 1, 2026-10-26)
 
