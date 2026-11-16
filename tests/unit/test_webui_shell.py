@@ -1351,10 +1351,14 @@ _LAYOUT_FACTS_JS = r"""() => {
 #: The walk's windows, narrow to wide and back on each page: the shared
 #: check's representative sizes (`UI_SIZES`), checked, and the layout's other
 #: shapes (a narrow column, a square, a portrait screen), laid out only;
-#: 1536 x 760, short and the owner's laptop, checked too.
+#: 1536 x 760, short and the owner's laptop, and 1280 x 600, a short laptop's
+#: window, checked too (side by side below about 660 px of height, Models
+#: scrolled its list around the rows' own region and Training's plots' body was
+#: shorter than one plot: the T04 review).
 _WALK_SIZES = ((760, 1000, False), (1850, 960, True), (1280, 900, True), (1920, 700, True),
-               (1440, 1600, True), (1000, 1000, False), (1536, 760, True), (1080, 1920, False),
-               (960, 1080, True), (390, 844, True), (1850, 960, False))
+               (1440, 1600, True), (1000, 1000, False), (1536, 760, True), (1366, 620, True),
+               (1280, 600, True), (1080, 1920, False), (960, 1080, True), (390, 844, True),
+               (1850, 960, False))
 
 #: The Diagnosis load drawer, opened at a stop of the walk (`browser.UI_WALK_JS`).
 _CHANGE_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
@@ -1422,8 +1426,9 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
     - wider: side by side exactly when the page's panels fit by their own
       minimum widths (1280 x 900: every page but Datasets, whose table and
       digest grid need about 1400 px, whether resized to it or opened at it
-      between two pages that fit; 1920 x 700: every page, a short window only
-      denser, ``data-shep-short``); side by side, the panels on one line and
+      between two pages that fit; 1920 x 700, 1366 x 620 and 1280 x 600: every
+      page but Datasets below its width, a short window only denser,
+      ``data-shep-short``); side by side, the panels on one line and
       none narrower than its minimum, and the page itself never scrolls;
     - never a horizontal page scroll;
     - back at 1850 x 960, the same as the first time; there the Training run
@@ -1431,14 +1436,13 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
     Nothing covering a focused control, at every size, is the shared check's
     (`test_every_page_at_every_size_passes_the_ui_measurement_check`)."""
     portrait = {"1440x1600", "1000x1000", "1080x1920", "760x1000", "960x1080", "390x844"}
+    datasets_stacked = {"1280x900", "1366x620", "1280x600"}          # its own minimum, about 1400 px
     for s in ui_walk:
         where, facts = (s["size"], s["page"]), s["extra"]
         assert facts["overX"] == 0, (where, facts)
         assert facts["short"] == (int(s["size"].split("x")[1]) < 900), (where, facts)
-        if s["size"] in portrait or (s["size"] == "1280x900" and s["page"] == "datasets"):
-            want = "stack"
-        else:
-            want = "side"
+        narrow_datasets = s["page"] == "datasets" and s["size"] in datasets_stacked
+        want = "stack" if s["size"] in portrait or narrow_datasets else "side"
         assert facts["layout"] == want, (where, facts)
         if want == "side":
             assert facts["need"] <= facts["width"] + 0.5, (where, facts)
@@ -1446,7 +1450,7 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
             assert facts["overY"] <= 0, (where, facts)
         elif len(facts["tops"]) > 1:
             assert facts["tops"] == sorted(facts["tops"]) and len(set(facts["tops"])) == len(facts["tops"]), (where, facts)
-        if s["size"] == "1280x900" and s["page"] == "datasets":
+        if narrow_datasets:
             assert facts["need"] > facts["width"], s                  # its own measure, no global gate
     wide = [s for s in ui_walk if s["size"] == "1850x960"]
     for page in {s["page"] for s in wide}:
@@ -1463,8 +1467,9 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     """D08 (INT-AUDIT): the shared UI measurement check (`browser.check`,
     `browser.focusWalk`, `browser.ui_problems`) on every page at every
     representative window (`browser.UI_SIZES`: 1850 x 960, 1280 x 900,
-    1920 x 700, 1440 x 1600, 960 x 1080, a 390 x 844 phone; and 1536 x 760),
-    and with the Diagnosis load drawer open at 1280 x 900, 1366 x 620 and 390 x 844 (its focus walk
+    1920 x 700, a 1366 x 620 short laptop, 1440 x 1600, 960 x 1080, a
+    390 x 844 phone; and 1536 x 760 and 1280 x 600), and with the Diagnosis
+    load drawer open at 1280 x 900, 1366 x 620 and 390 x 844 (its focus walk
     inside the drawer), the service on the demo workspace for an operator
     (`ui_walk`):
 
@@ -1485,7 +1490,9 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     b405973); on c1e57c6 it also fails on the captions on the tabs' line, the
     type scale and the field borders. On eafa8a2 it fails on the drawer's
     Workspace label (its select squeezed to 26 px at 1280 x 900, 71 px at
-    390 x 844)."""
+    390 x 844), on Models' list scrolling around its rows' own region
+    (1366 x 620, 1280 x 600) and on Training's focused plot with its centre
+    under the resources line (1280 x 600)."""
     from tests.fixtures.browser import UI_PAGES, UI_SIZES, ui_problems
 
     checked = [s for s in ui_walk if "check" in s]

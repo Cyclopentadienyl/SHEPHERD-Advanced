@@ -4843,6 +4843,16 @@ _PAGE = f"#shep-page-{TRAINING}"
 #: scrolls the plots.
 PLOT_MIN_HEIGHT = 170
 PLOT_AXIS_ROOM = 47
+#: The run view's height (side by side) that holds its header, the charts'
+#: toolbar, one row of plots and the resources line: the header at its tallest
+#: (102 px, three lines at 1280 px wide), the toolbar's row (44), a plot card
+#: (its title and keys, `PLOT_MIN_HEIGHT` and `PLOT_AXIS_ROOM`: 241), the
+#: resources line (38) and the panel's border. A shorter run view (a short
+#: laptop window: 288 px at 1280 x 600) scrolls as a whole with its plots in
+#: flow, so a plot is never clipped by a body shorter than itself (T04 review:
+#: the plots' body was 106 px there, a focused plot's centre under the
+#: resources line), one scroll region either way.
+RUN_VIEW_ONE_ROW = 430
 
 #: This page's style sheet (the page contract: listed in `src/webui/app.py`'s
 #: ``PAGE_CSS``), with the chart component's. Nothing under 14 px.
@@ -5132,6 +5142,16 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-charts > .html-container {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
   {_PAGE} #shep-train-charts > .html-container > div {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
   {_PAGE} #shep-train-charts .shep-charts {{ flex: 1 1 auto; }}
+  /* The run view's room, read by its own height (`RUN_VIEW_ONE_ROW`, below), never the window's. */
+  {_PAGE} #shep-train-page {{ container: shep-train-page / size; }}
+}}
+/* A run view too short for one row of plots scrolls as a whole, its plots in flow (the plots'
+   body no longer a region of its own): each plot can be brought wholly into view, nothing drawn
+   over it (the header is not sticky, the resources line ends the scroll). */
+@container shep-train-page (max-height: {RUN_VIEW_ONE_ROW}px) {{
+  {_PAGE} #shep-train-runview {{ overflow-y: auto !important; }}
+  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: none !important; }}
+  {_PAGE} #shep-train-charts .shep-charts-body {{ flex: none; overflow-y: visible; }}
 }}
 {SIDE_SHORT} {{
   {_PAGE} #shep-train-rv-top {{ min-height: 40px; padding-top: 4px !important; padding-bottom: 4px !important; }}

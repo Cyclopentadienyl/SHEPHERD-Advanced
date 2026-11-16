@@ -2766,7 +2766,11 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     scrolled), nothing is drawn over an axis, and no drawn chart's axis label
     is hidden to make room (an empty chart's goes with its plot: BACKLOG 69).
     The floor was raised from 140 with the room B1b took back (measured in a
-    browser: all four plots and their axes in view at 1850 x 960)."""
+    browser: all four plots and their axes in view at 1850 x 960). A run view
+    too short for one row of plots (`RUN_VIEW_ONE_ROW`, a container query on
+    the page row's own height: 288 px at 1280 x 600, where the body was 106 px
+    and a focused plot's centre sat under the resources line) scrolls as a
+    whole instead, its plots and the resources line in flow, nothing sticky."""
     assert tc.PLOT_MIN_HEIGHT >= 170
     from tests.unit.test_webui_shell import side
 
@@ -2779,7 +2783,13 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     assert ("#shep-train-runview > #shep-train-charts { flex: 1 1 0 !important; min-height: 0 "
             "!important; overflow: hidden !important;") in wide
     assert "#shep-train-runview > #resource_display { flex: none !important; }" in wide
-    assert "position: sticky; bottom" not in css and "#shep-train-runview { overflow-y" not in css
+    assert "position: sticky; bottom" not in css and "#shep-train-runview { overflow-y" not in wide
+    assert "#shep-train-page { container: shep-train-page / size; }" in wide
+    short = css.split(f"@container shep-train-page (max-height: {tc.RUN_VIEW_ONE_ROW}px) {{", 1)[1].split("\n}", 1)[0]
+    assert "#shep-train-runview { overflow-y: auto !important; }" in short
+    assert "#shep-train-runview > #shep-train-charts { flex: none !important; }" in short
+    assert "#shep-train-charts .shep-charts-body { flex: none; overflow-y: visible; }" in short
+    assert "sticky" not in short and tc.RUN_VIEW_ONE_ROW >= tc.PLOT_MIN_HEIGHT + tc.PLOT_AXIS_ROOM
     assert "#shep-train-charts .shep-charts-bar { flex: none; min-height: 34px; padding-bottom: 4px; }" in wide
     assert ("#shep-train-charts .shep-charts-body { flex: 1 1 0; min-height: 0; overflow-y: auto; }"
             in wide)

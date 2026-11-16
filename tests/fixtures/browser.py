@@ -377,8 +377,9 @@ LOOK_JS = r"""
 
 
 #: The representative windows (D08): the owner's, 1280 wide, short and wide,
-#: portrait, a narrow column and a phone.
-UI_SIZES = ((1850, 960), (1280, 900), (1920, 700), (1440, 1600), (960, 1080), (390, 844))
+#: a short laptop's (1366 x 768 less the browser's own bars), portrait, a
+#: narrow column and a phone.
+UI_SIZES = ((1850, 960), (1280, 900), (1920, 700), (1366, 620), (1440, 1600), (960, 1080), (390, 844))
 
 #: Every page, by the id its tab button carries (``shep-tab-<id>-button`` for
 #: level 1, ``shep-page-<id>-button`` under Research).

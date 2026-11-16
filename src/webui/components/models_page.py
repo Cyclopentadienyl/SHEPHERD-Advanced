@@ -2125,7 +2125,7 @@ PAGE_CSS = f"""
   {_PAGE} > .column {{ height: 100%; }}
   {_PAGE} .shep-models {{ height: 100%; min-height: 0; }}
   {_PAGE} {_LIST} {{ height: 100%; min-height: 0; }}
-  /* The panel scrolls as a whole only when its header and the rows' floor do not both fit. */
+  /* The panel scrolls as a whole only when its header alone does not fit (below about 480 px of window). */
   {_PAGE} {_LIST} > .shep-model-main {{ height: 100%; overflow-y: auto; }}
   {_PAGE} #shep-mp-detail {{ overflow: hidden; display: flex !important; flex-direction: column; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-mp-detail-bd {{ flex: 1 1 auto !important; overflow: auto !important; container-type: size; }}
@@ -2154,12 +2154,14 @@ PAGE_CSS = f"""
      covers a row (the closing check: a sticky title over the panel's scroll
      region hid three to six rows below 1000 px tall). The header row's items
      are laid out in the panel's own grid (the row itself draws no box). The
-     rows keep a floor of about four rows; a header taller than the rest
-     scrolls the panel, its title with it. */
+     rows take what the header leaves (``minmax(0, 1fr)``): a floor of 160 px
+     made the panel scroll around the rows' own region below about 660 px of
+     window, two scroll regions in one panel (1366 x 620, 1280 x 600); only a
+     header taller than the panel scrolls the panel, its title with it. */
   {_PAGE} {_LIST} > .shep-model-main {{
     display: grid !important; align-items: start; align-content: start; gap: 10px 10px !important;
     grid-template-columns: minmax(0, 1fr) 170px;
-    grid-template-rows: repeat(5, max-content) minmax(160px, 1fr);
+    grid-template-rows: repeat(5, max-content) minmax(0, 1fr);
     grid-template-areas: "lhd lhd" "ws task" "wsline wsline" "ctl ctl" "count count" "body body";
     padding: 0 16px !important;
   }}
