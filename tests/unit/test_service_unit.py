@@ -686,7 +686,7 @@ def test_an_explicit_read_only_mode_is_said_and_kept_at_a_local_start(monkeypatc
     assert done["exec_env"]["SHEPHERD_DEPLOYMENT_MODE"] == "read-only"
     out = capsys.readouterr().out
     assert ("Operator controls     : off. this deployment is read-only: the deployment mode set "
-            "at start is not M1") in out and "never overrides it" in out
+            "at start is not the operator mode") in out and "never overrides it" in out
     done = _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install", "--no-browser"])
     assert "Operator controls     : on for requests made on this computer (the local start)" \
         in capsys.readouterr().out
