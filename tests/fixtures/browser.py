@@ -318,7 +318,12 @@ LOOK_JS = r"""
      overlay of another control over its centre, and is its focus cue (what
      its focus changes: outline, shadow, border or fill, its own or its
      select's box) at 3:1 against what is behind it? An `auto` outline is
-     the browser's own ring, not a token: 0. */
+     the browser's own ring, not a token: 0. What its focus changes is read
+     from it unfocused: the caller's key press (or an earlier step) may have
+     focused it already, and a look read while focused changes nothing (the
+     T06 review: Training's Continue drawer's Close, its first control, read
+     "none" though it draws a 3 px ring). Blurred, a script's focus stays
+     :focus-visible (the keyboard's modality is kept). */
   const look = (e) => { const s = getComputedStyle(e);
     return { outline: s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0
                ? [s.outlineStyle, s.outlineColor].join('|') : '',
@@ -342,15 +347,17 @@ LOOK_JS = r"""
     const controls = [...root.querySelectorAll(FOCUSABLE)].filter((c) => c.tabIndex >= 0 && !c.disabled
       && drawn(c) && c.offsetWidth > 2 && c.offsetHeight > 2 && shown(c) && !c.closest('#shep-help-texts'));
     const covered = [], cues = [];
+    const settled = (c, box) => Promise.all([...c.getAnimations(), ...(box === c ? [] : box.getAnimations())]
+      .map((a) => a.finished.catch(() => null)));
     for (const c of controls) {
       const box = c.closest('.wrap:has(> .wrap-inner)') || c;
+      if (c.contains(document.activeElement)) { document.activeElement.blur(); await settled(c, box); }
       const before = [look(c), look(box)];
       c.focus();
       if (document.activeElement !== c) { continue; }
       if (c.matches('.shep-i')) { await frame(); }        // its bubble placed
       // Its focus cue drawn to the end (Gradio's buttons move every property).
-      await Promise.all([...c.getAnimations(), ...(box === c ? [] : box.getAnimations())]
-        .map((a) => a.finished.catch(() => null)));
+      await settled(c, box);
       const r = c.getBoundingClientRect(), what = named(c) + ' "' +
         (c.getAttribute('aria-label') || c.textContent || c.value || '').trim().slice(0, 24) + '"';
       if (r.bottom <= 0 || r.top >= innerHeight || r.right <= 0 || r.left >= innerWidth) {

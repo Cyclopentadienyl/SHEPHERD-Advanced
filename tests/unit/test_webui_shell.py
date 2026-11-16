@@ -1409,6 +1409,53 @@ _CHANGE_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
 _CONTINUE_DRAWER = {"click": "#shep-train-continue", "shown": "#shep-train-drawer",
                     "close": "#shep-train-drawer-close"}
 
+#: A static page for the shared focus walk itself (`browser.LOOK_JS`'s
+#: `focusWalk`): two buttons that draw a 3 px ring on keyboard focus, with no
+#: transition, the first the walk's first Tab press lands on, and one that
+#: draws no cue; the walk run after that one Tab press, as `UI_WALK_JS` runs it.
+_FOCUS_WALK_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 800, height: 400 } });
+  await page.setContent(`<!doctype html><html><head><style>
+    body { background: #fff; }
+    button { outline: none; border: 1px solid #767676; background: #fff; width: 120px; height: 32px; }
+    button.ring:focus-visible { outline: 3px solid rgb(67, 74, 88); }
+  </style></head><body><button class="ring" id="first">First</button>
+    <button class="ring" id="second">Second</button><button id="bare">No cue</button></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  await page.keyboard.press('Tab');
+  const tabbed = await page.evaluate(() => document.activeElement.id);
+  const seen = await page.evaluate(() => window.__shepLook.focusWalk(null));
+  const after = await page.evaluate(() => document.activeElement === document.body);
+  console.log(JSON.stringify({ tabbed, seen, after }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_focus_walk_reads_a_controls_cue_from_it_unfocused(tmp_path):
+    """The T06 review: the shared walk presses Tab once and then walks every
+    control, reading each one's look before focusing it; the control that Tab
+    had focused (Training's Continue drawer's Close, its first control) was
+    read while focused, so its 3 px ring changed nothing and read "none"
+    (`ui_problems`: "focus cue under 3:1: #shep-train-drawer-close "Close"
+    none"), failing the check on a cue the page draws. Each control's cue is
+    what its focus changes from it unfocused: the first ring measures as the
+    second does, and a control with no cue still reads "none"."""
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    seen = run_node(_FOCUS_WALK_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS)), tmp_path,
+                    timeout=120)
+    assert seen["tabbed"] == "first", seen
+    assert seen["seen"]["n"] == 3 and seen["seen"]["covered"] == [], seen
+    assert seen["seen"]["cues"] == ['#bare "No cue" none'], seen
+    assert seen["after"], seen                     # focus left as the walk found the page
+
 
 def _walk_stops():
     from tests.fixtures.browser import UI_PAGES
