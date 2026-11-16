@@ -141,7 +141,7 @@ def _read_versions(root: Any) -> tuple:
     without a path."""
     from src.api.services.server_lists import list_cohort_versions
 
-    listing = list_cohort_versions()
+    listing = list_cohort_versions(contents=True)
     problem = redact(listing.problem, root) if listing.problem else None
     return [version_row(item) for item in listing.items], problem
 
@@ -156,20 +156,22 @@ def _bound_versions(row: Mapping[str, Any], versions: List[Mapping[str, Any]],
     that resolves outside the root, or cannot be resolved) is not checked for
     the row's own reason, never Test's "no workspace is chosen": on this page
     the row is the chosen one."""
+    none = {"bound": [], "another": 0, "changed": 0, "unknown": 0}
     if not versions:
-        return {"bound": [], "another": 0, "unknown": 0, "problem": None}
+        return {**none, "problem": None}
     directory = directories.get(row["name"])
     if directory is None:
         why = str(row.get("not_trainable") or "the workspace was not reached").rstrip(". ")
-        return {"bound": [], "another": 0, "unknown": 0, "problem": why}
+        return {**none, "problem": why}
     binding = workspace_binding(directory, row)
     if binding.get("problem"):
-        return {"bound": [], "another": 0, "unknown": 0, "problem": binding["problem"]}
-    states: Dict[str, List[str]] = {"bound": [], "another": [], "unknown": []}
+        return {**none, "problem": binding["problem"]}
+    states: Dict[str, List[str]] = {"bound": [], "another": [], "changed": [], "unknown": []}
     for version in versions:
         states[binding_state(version, binding)[0]].append(str(version.get("label")))
     return {"bound": states["bound"], "another": len(states["another"]),
-            "unknown": len(states["unknown"]), "problem": None}
+            "changed": len(states["changed"]), "unknown": len(states["unknown"]),
+            "problem": None}
 
 
 def _marks(row: Mapping[str, Any], data: Mapping[str, Any], run_bar: Optional[str]) -> str:
@@ -413,9 +415,12 @@ def versions_html(data: Mapping[str, Any], row: Mapping[str, Any]) -> str:
     if mine.get("another"):
         n = mine["another"]
         others.append(f"{n} version{'' if n == 1 else 's'} mapped against another graph")
+    if mine.get("changed"):
+        n = mine["changed"]
+        others.append(f"{n} whose files changed after the import")
     if mine.get("unknown"):
         n = mine["unknown"]
-        others.append(f"{n} that cannot be read")
+        others.append(f"{n} that cannot be read or checked now")
     tail = (f'<p class="shep-sub">Not listed here: {r.e("; ".join(others))}.</p>'
             if others else "")
     if not bound:

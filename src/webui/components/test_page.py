@@ -201,6 +201,7 @@ from src.webui.components.model_list import item_key
 from src.utils.path_redaction import redact_paths
 from src.webui.components.workspaces import (
     binding_state,
+    contents_reason,
     version_row,
     workspace_binding,
 )
@@ -606,7 +607,11 @@ def read_page(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> D
     serving = (serving_workspace(status, listed["rows"], directories=listed["directories"])
                if status is not None else None)
     registry = server_settings.cohort_registry(environ)
-    versions = list_cohort_versions(environ=environ) if registry.available else None
+    # Each version's kept files checked against its record (remembered by
+    # their state, so a page opened again hashes nothing unchanged): a version
+    # whose files changed after its import is never shown as bound.
+    versions = (list_cohort_versions(environ=environ, contents=True)
+                if registry.available else None)
     evidence = server_settings.training_evidence_dirs(environ)
     try:
         from src.api.services.training_manager import deployment_device
@@ -1162,11 +1167,16 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     counts = version.get("counts") or {}
     state, words = binding_state(version, binding)
     # The binding's state by the shared mark (the skill's §6): bound a filled
-    # mark; mapped against another graph a condition with ▲ and, under the
-    # list, the refusal it brings (`ANOTHER_GRAPH`), beside the version;
-    # not checked a hollow one.
-    mark = r.status_mark({"bound": "ok", "another": "warn", "unknown": "neutral"}[state],
-                         words[:1].upper() + words[1:])
+    # mark, with when its files were read; mapped against another graph a
+    # condition with ▲ and, under the list, the refusal it brings
+    # (`ANOTHER_GRAPH`); files changed after the import a refusal with ✕ and,
+    # under the list, which file (`CHANGED_FILES`); not checked a hollow one.
+    mark = r.status_mark({"bound": "ok", "another": "warn", "changed": "error",
+                          "unknown": "neutral"}[state], words[:1].upper() + words[1:])
+    checked = (version.get("contents") or {}).get("checked_at") if state == "bound" else None
+    if isinstance(checked, str) and checked:
+        mark += (' <span class="shep-sub">' + r.word_groups(
+            "files checked", checked.replace("T", " ").replace("Z", " UTC")) + '</span>')
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
     reasons = "; ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
@@ -1185,7 +1195,10 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     source_format = version.get("source_format")
     if source_format:
         rows.append(("Format", e(source_format)))
-    refusal = (r.status_mark("error", ANOTHER_GRAPH) if state == "another" else "")
+    refusal = (r.status_mark("error", ANOTHER_GRAPH) if state == "another" else
+               r.status_mark("error", CHANGED_FILES.format(
+                   reason=contents_reason(version) or "a kept file is not the bytes recorded"))
+               if state == "changed" else "")
     reason = f'<div class="shep-reason shep-test-vd-why">{refusal}</div>' if refusal else ""
     return f'<div class="shep-test-vd">{r.summary_list(rows)}{reason}</div>{empty}'
 
@@ -1206,6 +1219,13 @@ SELECTED_VERSION = "the selected version"
 ANOTHER_GRAPH = ("Not measured on this workspace: the version was mapped against another "
                  "graph, so a run would refuse it. Choose a workspace with its graph, or "
                  "import the source again against this one.")
+
+#: **Why a run on a version whose kept files changed is refused**, said beside
+#: the version with the file it names (`workspaces.contents_reason`) and
+#: named by Start's reason, which points here: a committed version's files
+#: are never rewritten, so other bytes there are an edit after the import.
+CHANGED_FILES = ("Not measured: {reason}. A version's files are never rewritten after its "
+                 "import, so a run would refuse it. Import it again under a new label.")
 
 
 def _row_chip(run: Mapping[str, Any]) -> str:
@@ -1692,7 +1712,12 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, "Disabled: choose a data version."
     if version.get("problem"):
         return False, "Disabled: this data version cannot be read."
-    if binding_state(version, binding)[0] == "another":
+    bound = binding_state(version, binding)[0]
+    if bound == "changed":
+        # Its refusal, naming the file, is said beside the version (`CHANGED_FILES`).
+        return False, ("Disabled: the data version's files changed after its import "
+                       "(see Data).")
+    if bound == "another":
         # Its refusal is said beside the version (`ANOTHER_GRAPH`), once.
         return False, "Disabled: the data version is mapped against another graph (see Data)."
     item = find_model(models, key)

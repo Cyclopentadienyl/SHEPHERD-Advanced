@@ -1188,6 +1188,52 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
                "Choose a model with a readable record.")
 
 
+def test_a_version_whose_kept_file_changed_is_not_bound_and_start_says_why(site, monkeypatch):
+    """UI-12 (B72-T3): "Bound to this graph" says two facts, the version's
+    record names this graph and its kept files were read as the bytes that
+    record binds, with when. One byte of its samples.json changed (on the
+    site's copy): its cohort.json still names this graph, but the version
+    no longer reads bound, the refusal under it names the file and both
+    digests (no path), and Start is off with a reason pointing there. The
+    run's own content refusal is unchanged. At ba6e85e the listing read
+    cohort.json alone: "● Bound to this graph" and Start enabled, and only
+    the run refused."""
+    _child, child = _put_bundle(site)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    version = tp.find(page["versions"], "label", LABEL)
+    assert version["contents"]["state"] == "verified"
+    assert tp.binding_state(version, binding) == ("bound", "bound to this graph")
+    shown = tp.version_html(page, LABEL, binding)
+    checked = version["contents"]["checked_at"].replace("T", " ").replace("Z", " UTC")
+    assert (tp.r.status_mark("ok", "Bound to this graph")
+            + f' <span class="shep-sub">{tp.r.word_groups("files checked", checked)}</span>'
+            ) in shown
+    assert tp.start_state(page, models, "demo", LABEL, child, binding, ("none", ""),
+                          protocol="disease") == (True, None)
+
+    samples = site.registry / "versions" / LABEL / "samples.json"
+    data = bytearray(samples.read_bytes())
+    data[len(data) // 2] ^= 0x01
+    samples.write_bytes(bytes(data))
+    page, request = _page(monkeypatch)
+    version = tp.find(page["versions"], "label", LABEL)
+    assert version["manifest_sha256"] == site.version_sha      # its record is unchanged
+    assert version["contents"]["state"] == "differs"
+    assert tp.binding_state(version, binding) == (
+        "changed", "not bound: its files changed after the import")
+    shown = tp.version_html(page, LABEL, binding)
+    assert "Bound to this graph" not in shown
+    assert tp.r.status_mark("error", "Not bound: its files changed after the import") in shown
+    reason = version["contents"]["files"][0]["reason"]
+    assert reason.startswith("the version's samples.json holds ") and str(site.root) not in reason
+    assert tp.r.status_mark("error", tp.CHANGED_FILES.format(reason=reason)) in shown
+    assert tp.start_state(page, models, "demo", LABEL, child, binding, ("none", ""),
+                          protocol="disease") == (
+        False, "Disabled: the data version's files changed after its import (see Data).")
+
+
 # --------------------------------------------------------------------------- the operator controls
 def test_start_is_refused_for_a_read_only_request_and_starts_nothing(site, monkeypatch):
     page, request = _page(monkeypatch)

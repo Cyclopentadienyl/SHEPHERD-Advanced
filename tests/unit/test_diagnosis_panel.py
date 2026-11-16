@@ -1809,6 +1809,7 @@ def _version(label, binding="bound", problem=None):
     (`diagnosis_card.reference_cohorts`)."""
     words = {"bound": "bound to this graph",
              "another": "mapped against another graph (node_features differ)",
+             "changed": "not bound: its files changed after the import",
              "unknown": "the version cannot be read"}
     return {"label": label, "manifest_sha256": None if problem else VERSION_SHA,
             "problem": problem, "binding": "unknown" if problem else binding,
@@ -2056,6 +2057,13 @@ def test_the_reference_cohort_options_are_short_unique_and_keep_the_full_label()
     info = dp.cohort_info(cohorts, "reference-1")
     assert info == f"reference-1: version {VERSION_SHA[:12]}, bound to this graph"
     assert dp.cohort_info(cohorts, "torn-1") == "torn-1: cannot be read: x"
+    # A version whose kept files changed after its import (UI-12) is marked,
+    # never bound or chosen by default, its words under the select.
+    changed = _cohorts(_version("edited-1", "changed"), _version("reference-1"))
+    options, chosen = dp.cohort_choices(changed, None)
+    assert options[0] == ("edited-1 · files changed", "edited-1") and chosen == "reference-1"
+    assert dp.cohort_info(changed, "edited-1") == (
+        f"edited-1: version {VERSION_SHA[:12]}, not bound: its files changed after the import")
 
 
 def test_the_timer_never_redraws_the_reference_cohort_select_for_nothing():

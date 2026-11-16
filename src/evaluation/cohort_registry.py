@@ -200,7 +200,9 @@ import json
 import os
 import re
 import secrets
-from collections import Counter
+import threading
+import time
+from collections import Counter, OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
@@ -3348,8 +3350,6 @@ def check_references(
     caller's. This compares bytes with digests and reads only the files named
     by the references, writing nothing.
     """
-    from src.utils.fingerprint import file_sha256, read_once
-
     registry_root = version.directory.parent.parent
     places = {IN_VERSION: version.directory, IN_REGISTRY: registry_root,
               IN_WORKSPACE: None if workspace is None else Path(workspace)}
@@ -3375,41 +3375,134 @@ def check_references(
         if path is None:
             states.append(ReferenceState(ref, NOT_CHECKED, None, unlocated))
             continue
-        # The kept files a version copies blocks from, compared twice.
-        copies = ref.kept == IN_VERSION and ref.file in _KEPT_COPIES
-        data: Optional[bytes] = None
-        try:
-            if copies:
-                read = read_once(path)
-                found, data = read.sha256, read.data
-                del read
-            else:
-                found = file_sha256(path)
-        except FileNotFoundError:
-            found = None
-        except OSError as exc:
-            states.append(ReferenceState(ref, UNREADABLE, None, (
-                f"{where} cannot be read ({type(exc).__name__}: "
-                f"{exc.strerror or 'no reason given'})"), path))
-            continue
-        differ = ([] if data is None or found != ref.sha256
-                  else _KEPT_COPIES[ref.file](version.manifest, data))
-        if found is None:
-            states.append(ReferenceState(ref, MISSING, None, f"{where} is not there", path))
-        elif found != ref.sha256:
-            states.append(ReferenceState(ref, DIFFERS, found, (
-                f"{where} holds {found[:12]}..., not the {ref.sha256[:12]}... recorded"), path))
-        elif differ and ref.file == VERSION_TASK_FIXTURE:
-            states.append(ReferenceState(ref, DIFFERS, found, (
-                f"{where} holds the bytes recorded, but {'; '.join(differ)}"), path))
-        elif differ:
-            states.append(ReferenceState(ref, DIFFERS, found, (
-                f"{where} holds the bytes recorded, but the version's {', '.join(differ)} "
-                f"{'is' if len(differ) == 1 else 'are'} not that file's"), path))
-        else:
-            states.append(ReferenceState(ref, VERIFIED, found, f"{where} holds the bytes recorded",
-                                         path))
+        states.append(_located_state(version, ref, path, where))
     return tuple(states)
+
+
+def _located_state(version: CohortVersionRead, ref: ContentReference, path: Path,
+                   where: str) -> ReferenceState:
+    """**The one comparison of a located reference** (`check_references`,
+    `kept_contents`): the bytes at `path` against the digest `ref` records,
+    and for a kept file a version copies blocks from, those blocks against
+    the version's copies (`_KEPT_COPIES`). `where` names the location in the
+    reason, by its kind and the file's name, never by a path."""
+    from src.utils.fingerprint import file_sha256, read_once
+
+    # The kept files a version copies blocks from, compared twice.
+    copies = ref.kept == IN_VERSION and ref.file in _KEPT_COPIES
+    data: Optional[bytes] = None
+    try:
+        if copies:
+            read = read_once(path)
+            found, data = read.sha256, read.data
+            del read
+        else:
+            found = file_sha256(path)
+    except FileNotFoundError:
+        found = None
+    except OSError as exc:
+        return ReferenceState(ref, UNREADABLE, None, (
+            f"{where} cannot be read ({type(exc).__name__}: "
+            f"{exc.strerror or 'no reason given'})"), path)
+    differ = ([] if data is None or found != ref.sha256
+              else _KEPT_COPIES[ref.file](version.manifest, data))
+    if found is None:
+        return ReferenceState(ref, MISSING, None, f"{where} is not there", path)
+    if found != ref.sha256:
+        return ReferenceState(ref, DIFFERS, found, (
+            f"{where} holds {found[:12]}..., not the {ref.sha256[:12]}... recorded"), path)
+    if differ and ref.file == VERSION_TASK_FIXTURE:
+        return ReferenceState(ref, DIFFERS, found, (
+            f"{where} holds the bytes recorded, but {'; '.join(differ)}"), path)
+    if differ:
+        return ReferenceState(ref, DIFFERS, found, (
+            f"{where} holds the bytes recorded, but the version's {', '.join(differ)} "
+            f"{'is' if len(differ) == 1 else 'are'} not that file's"), path)
+    return ReferenceState(ref, VERIFIED, found, f"{where} holds the bytes recorded", path)
+
+
+class KeptContents(NamedTuple):
+    """**What a version's own files are against its record** (`kept_contents`),
+    apart from how it stands to a workspace's graph: ``state`` is
+    `VERIFIED` when every file the version keeps holds the bytes its
+    ``cohort.json`` binds, else the first other state found (`DIFFERS`,
+    `MISSING`, `UNREADABLE`); ``files`` each kept file's state, its reason
+    naming the file and never a path; ``checked_at`` when those bytes were
+    read (UTC, ISO 8601), which a listing that found the files unchanged since
+    repeats rather than read them again."""
+
+    state: str
+    files: Tuple[ReferenceState, ...]
+    checked_at: str
+
+
+#: How many versions' checks `kept_contents` remembers.
+KEPT_CONTENTS_REMEMBERED = 256
+#: A kept file whose content or metadata changed less than this long before
+#: its check is checked again at every listing: a rewrite within one tick of
+#: the file system's clock could leave its `stat` unchanged (as the
+#: checkpoint listing's `checkpoint_paths.SETTLED_NS`).
+KEPT_CONTENTS_SETTLED_NS = 2_000_000_000
+_KEPT_CONTENTS: "OrderedDict[Tuple[str, str], Tuple[Tuple[Any, ...], KeptContents]]" = \
+    OrderedDict()
+_KEPT_CONTENTS_LOCK = threading.Lock()
+
+
+def _file_identity(path: Path) -> Optional[Tuple[int, ...]]:
+    from src.utils.fingerprint import stat_identity
+
+    try:
+        return stat_identity(path.stat())
+    except OSError:
+        return None
+
+
+def kept_contents(version: CohortVersionRead) -> KeptContents:
+    """Whether the files a version keeps in its directory (`IN_VERSION`:
+    ``samples.json``, ``pairs.bin``, a generated split's kept split manifest
+    and fixture) are still the bytes its ``cohort.json`` binds: each by the
+    one comparison `check_references` makes (`_located_state`), so a version
+    whose ``pairs.bin`` lost one byte, or whose kept split manifest no longer
+    gives the blocks it copies, is told apart from one whose record only says
+    it was mapped against a graph. A committed version's files are never
+    rewritten, so another byte there is an edit after the import.
+
+    **Read once per state of the files**: the check is remembered by the
+    version's directory and ``cohort.json`` digest together with each kept
+    file's `stat_identity` (device, inode, size, modification and change
+    times, as the checkpoint listing remembers a read), and a listing that
+    finds every file as it was is answered from it, so polling a page never
+    hashes a large file again. A check whose files changed while it read, or
+    had changed less than `KEPT_CONTENTS_SETTLED_NS` before, or that found a
+    file missing or unreadable, is not remembered. A display's hint: a run
+    compares the bytes it reads itself (`read_kg_edge_pairs`, the samples
+    read), whatever this said. Never raises for a file; reads nothing outside
+    the version directory."""
+    refs = [ref for ref in version_references(version) if ref.kept == IN_VERSION]
+    paths = [version.directory / ref.file for ref in refs]
+    before = tuple(_file_identity(path) for path in paths)
+    key = (str(version.directory), version.identity.sha256)
+    with _KEPT_CONTENTS_LOCK:
+        kept = _KEPT_CONTENTS.get(key)
+        if kept is not None and kept[0] == before and None not in before:
+            _KEPT_CONTENTS.move_to_end(key)
+            return kept[1]
+    started_ns = time.time_ns()
+    files = tuple(_located_state(version, ref, path, f"the {ref.kept}'s {ref.file}")
+                  for ref, path in zip(refs, paths))
+    state = next((f.state for f in files if f.state != VERIFIED), VERIFIED)
+    checked = KeptContents(state, files, datetime.fromtimestamp(
+        started_ns / 1e9, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    settled = all(max(i[3], i[4]) <= started_ns - KEPT_CONTENTS_SETTLED_NS
+                  for i in before if i is not None)
+    if (None not in before and settled and state in (VERIFIED, DIFFERS)
+            and tuple(_file_identity(path) for path in paths) == before):
+        with _KEPT_CONTENTS_LOCK:
+            _KEPT_CONTENTS[key] = (before, checked)
+            _KEPT_CONTENTS.move_to_end(key)
+            while len(_KEPT_CONTENTS) > KEPT_CONTENTS_REMEMBERED:
+                _KEPT_CONTENTS.popitem(last=False)
+    return checked
 
 
 def _split_manifest_copies_differ(manifest: Mapping[str, Any], data: bytes) -> List[str]:
@@ -3567,6 +3660,8 @@ __all__ = [
     "IN_REGISTRY",
     "IN_VERSION",
     "IN_WORKSPACE",
+    "KEPT_CONTENTS_REMEMBERED",
+    "KEPT_CONTENTS_SETTLED_NS",
     "ImportPlan",
     "KG_EDGES",
     "KG_EDGES_BLOCK_FIELDS",
@@ -3577,6 +3672,7 @@ __all__ = [
     "KG_EDGES_WHAT_THIS_IS",
     "KINDED_SCHEMA_VERSION",
     "KIND_SCHEMAS",
+    "KeptContents",
     "KgEdgePairsRead",
     "ListedRun",
     "ListedVersion",
@@ -3626,6 +3722,7 @@ __all__ = [
     "create_report_dir",
     "encode_json",
     "is_run_id",
+    "kept_contents",
     "list_report_runs",
     "list_versions",
     "map_cases",

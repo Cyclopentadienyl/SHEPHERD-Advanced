@@ -23,7 +23,11 @@ dashboard shows besides:
 It also holds the one way a page says whether a registered cohort version was
 mapped against a workspace's graph (`workspace_binding`, `binding_state`,
 `version_row`): the Test page's version select and the Diagnosis panel's
-reference cohorts read the same comparison, the registry's.
+reference cohorts read the same comparison, the registry's. **Bound** says
+two facts together: the version's record names this graph, and the files it
+keeps were read and are the bytes that record binds (`contents`, the
+registry's `kept_contents`); a version whose files changed after its import
+is never bound, and one whose files cannot be checked now is said so.
 
 Module: src/webui/components/workspaces.py
 """
@@ -225,15 +229,45 @@ def workspace_binding(directory: Optional[Path], row: Optional[Mapping[str, Any]
             "problem": None if sha else "its dataset record is not verified"}
 
 
+#: The states of a version's kept files (`cohort_registry.kept_contents`)
+#: that a run on it would refuse: other bytes, or a file that is not there.
+CHANGED_CONTENTS = ("differs", "missing")
+
+
+def contents_reason(version: Mapping[str, Any]) -> Optional[str]:
+    """Why a version's kept files are not known to be its record's bytes: the
+    first kept file's reason that is not verified (`contents`, naming the
+    file, never a path), or None when every file was verified or none was
+    checked."""
+    contents = version.get("contents")
+    files = contents.get("files") if isinstance(contents, Mapping) else None
+    return next((str(f.get("reason")) for f in files or ()
+                 if isinstance(f, Mapping) and f.get("state") != "verified"), None)
+
+
 def binding_state(version: Mapping[str, Any], binding: Optional[Mapping[str, Any]]
                   ) -> Tuple[str, str]:
-    """``("bound" | "another" | "unknown", words)``: whether `version` was
-    mapped against the workspace `binding` describes, by the registry's one
-    comparison (`verify_cohort_binding`, R3's)."""
+    """``("bound" | "another" | "changed" | "unknown", words)``: whether
+    `version` was mapped against the workspace `binding` describes, by the
+    registry's one comparison (`verify_cohort_binding`, R3's), and whether
+    the files it keeps are the bytes its record binds (its ``contents``, the
+    registry's `kept_contents`):
+
+    - ``changed``: a kept file is other bytes or not there, whatever the
+      graph: a run would refuse it, so it is never bound (`contents_reason`
+      names the file);
+    - ``another``: its record names another graph;
+    - ``bound``: its record names this graph and its files were checked;
+    - ``unknown``: it cannot be read, no workspace is chosen, or its record
+      names this graph and its files cannot be checked now (or were not).
+    """
     from src.evaluation.cohort_registry import CohortBindingMismatch, verify_cohort_binding
 
     if version.get("problem"):
         return "unknown", "the version cannot be read"
+    contents = version.get("contents") if isinstance(version.get("contents"), Mapping) else {}
+    if contents.get("state") in CHANGED_CONTENTS:
+        return "changed", "not bound: its files changed after the import"
     if not binding or binding.get("problem") or not binding.get("graph"):
         why = (binding or {}).get("problem") or "no workspace is chosen"
         return "unknown", f"not checked against this workspace: {why}"
@@ -244,14 +278,21 @@ def binding_state(version: Mapping[str, Any], binding: Optional[Mapping[str, Any
                               binding["graph"], binding["record_sha256"])
     except CohortBindingMismatch as exc:
         return "another", f"mapped against another graph ({', '.join(exc.roles)} differ)"
-    return "bound", "bound to this graph"
+    if contents.get("state") == "verified":
+        return "bound", "bound to this graph"
+    if contents.get("state") == "unreadable":
+        return "unknown", ("mapped against this graph; its files cannot be checked now: "
+                           f"{contents_reason(version)}")
+    return "unknown", "mapped against this graph; its files are not checked"
 
 
 __all__ = [
     "BOUND_ROLES",
+    "CHANGED_CONTENTS",
     "OUTSIDE_PATH",
     "ROOT_REFUSED",
     "binding_state",
+    "contents_reason",
     "manifest_facts",
     "manifest_state",
     "read_workspaces",

@@ -96,6 +96,7 @@ __all__ = [
     "WorkspaceItem",
     "cohort_version_item",
     "family_rows",
+    "kept_contents_item",
     "list_checkpoints",
     "list_cohort_versions",
     "list_family",
@@ -334,7 +335,16 @@ class CohortVersionItem:
     units its manifest records for its counts (a KG edge set's and a
     generated split's; `None` for a supplied cohort, whose manifest records
     none), so every count is shown in its own unit (research comparison
-    Stage 7)."""
+    Stage 7).
+
+    `contents` is whether the files the version keeps are still the bytes its
+    `cohort.json` binds (`cohort_registry.kept_contents`): ``state``
+    (verified, differs, missing or unreadable), ``checked_at`` (when those
+    bytes were read) and ``files`` (each kept file's ``file``, ``state`` and
+    ``reason``, naming the file, never a path), for a listing asked to check
+    them (`list_cohort_versions`' `contents`, the WebUI pages'); `None` where
+    it was not asked (the open route's listing hashes no file) or the version
+    was not read."""
 
     label: str
     manifest_sha256: Optional[str]
@@ -350,6 +360,7 @@ class CohortVersionItem:
     reports_problem: Optional[str] = None
     kind: Optional[str] = None
     count_units: Optional[Dict[str, Any]] = None
+    contents: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -1139,9 +1150,22 @@ def _report_items(
     return tuple(items), None
 
 
+def kept_contents_item(version: Any) -> Dict[str, Any]:
+    """A read version's kept files against its record
+    (`cohort_registry.kept_contents`, remembered by each file's state) as
+    plain data: ``state``, ``checked_at`` and ``files`` (each its ``file``,
+    ``state`` and ``reason``, never a path)."""
+    from src.evaluation.cohort_registry import kept_contents
+
+    checked = kept_contents(version)
+    return {"state": checked.state, "checked_at": checked.checked_at,
+            "files": [{"file": f.reference.file, "state": f.state, "reason": f.reason}
+                      for f in checked.files]}
+
+
 def _version_item(listed: Any, report_state: Optional[ReportStateReader], *,
-                  store: Optional[Any] = None,
-                  operator: bool = False) -> CohortVersionItem:
+                  store: Optional[Any] = None, operator: bool = False,
+                  contents: bool = False) -> CohortVersionItem:
     if listed.version is None:
         return CohortVersionItem(listed.label, None, None, None, None, None, None, None,
                                  None, listed.problem)
@@ -1166,6 +1190,7 @@ def _version_item(listed: Any, report_state: Optional[ReportStateReader], *,
         reports_problem=reports_problem,
         kind=listed.version.kind,
         count_units=_as_dict(manifest.get("count_units")),
+        contents=kept_contents_item(listed.version) if contents else None,
     )
 
 
@@ -1200,9 +1225,15 @@ def stored_report_state(run_directory: Path) -> Dict[str, Any]:
 def list_cohort_versions(
     *, environ: Optional[Mapping[str, str]] = None,
     report_state: Optional[ReportStateReader] = None,
+    contents: bool = False,
 ) -> Listing:
     """Every cohort version in `SHEPHERD_REGISTRY`, by label, with its
     manifest's digest, role, aggregates, and its report store's runs.
+
+    `contents` also checks each read version's kept files against its record
+    (`CohortVersionItem.contents`, `kept_contents_item`): the WebUI pages ask
+    for it, so a version whose files changed after its import is never shown
+    as bound; the open route does not, and hashes no file.
 
     `report_state`, given a run directory, says what that run kept and whether
     its report is registered: the registration's one helper
@@ -1222,7 +1253,8 @@ def list_cohort_versions(
         listed = list_versions(setting.value)
     except RegistryRefused as exc:
         return Listing((), str(exc))
-    return Listing(tuple(_version_item(entry, report_state) for entry in listed))
+    return Listing(tuple(_version_item(entry, report_state, contents=contents)
+                         for entry in listed))
 
 
 def _registry_root(environ: Optional[Mapping[str, str]]) -> Path:

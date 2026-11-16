@@ -488,7 +488,7 @@ def test_the_details_list_the_versions_test_reads_by_the_same_comparison(
     _serving(monkeypatch, None)
     data = dsp.read_datasets()
     listed = read_workspaces()
-    versions = [version_row(item) for item in list_cohort_versions().items]
+    versions = [version_row(item) for item in list_cohort_versions(contents=True).items]
     assert [v["label"] for v in data["versions"]] == [v["label"] for v in versions]
     for row in listed["rows"]:
         mine = next(x for x in data["rows"] if x["name"] == row["name"])["versions"]
@@ -532,10 +532,11 @@ def test_a_row_outside_the_root_is_not_checked_for_its_own_reason(
 
 def test_the_versions_not_listed_under_a_workspace_are_counted_by_why(
         root, registry, tmp_path, monkeypatch):
-    """The comparison's other two answers are counted under the table: a
-    version mapped against another graph (another graph export of the same
-    graph) and one that cannot be read (an interrupted import), never listed
-    as bound and never dropped unsaid."""
+    """The comparison's other answers are counted under the table: a version
+    mapped against another graph (another graph export of the same graph),
+    one whose kept files changed after its import (one byte of its
+    samples.json: UI-12, B72-T3) and one that cannot be read (an interrupted
+    import), never listed as bound and never dropped unsaid."""
     from tests.fixtures.registered_cohort import (
         DEFAULT_FEATURE_SEED,
         graph_source_cases,
@@ -549,19 +550,28 @@ def test_the_versions_not_listed_under_a_workspace_are_counted_by_why(
     import_version(registry, other,
                    write_source(tmp_path / "other.json", graph_source_cases(other)),
                    label="ref-other", role="demo")
+    import_version(registry, root / "demo",
+                   write_source(tmp_path / "changed.json", graph_source_cases(root / "demo")),
+                   label="ref-changed", role="demo")
+    samples = registry / "versions" / "ref-changed" / "samples.json"
+    data = bytearray(samples.read_bytes())
+    data[len(data) // 2] ^= 0x01
+    samples.write_bytes(bytes(data))
     (registry / "versions" / "broken-import").mkdir()
     _serving(monkeypatch, None)
     data = dsp.read_datasets()
     assert {v["label"] for v in data["versions"]} == {
-        "broken-import", "gen-val", "ref-demo", "ref-other"}
+        "broken-import", "gen-val", "ref-changed", "ref-demo", "ref-other"}
     mine = next(x for x in data["rows"] if x["name"] == "demo")["versions"]
-    assert mine == {"bound": ["gen-val", "ref-demo"], "another": 1, "unknown": 1,
-                    "problem": None}
+    assert mine == {"bound": ["gen-val", "ref-demo"], "another": 1, "changed": 1,
+                    "unknown": 1, "problem": None}
     html = dsp.details_html(data, "demo")
     assert 'Data versions <span class="shep-muted">(2)</span>' in html
     assert ('<p class="shep-sub">Not listed here: 1 version mapped against another graph; '
-            "1 that cannot be read.</p>") in html
+            "1 whose files changed after the import; 1 that cannot be read or checked "
+            "now.</p>") in html
     assert ">ref-other<" not in html and ">broken-import<" not in html
+    assert ">ref-changed<" not in html
 
 
 def test_each_version_says_the_measurements_its_data_admits_by_tests_rule(

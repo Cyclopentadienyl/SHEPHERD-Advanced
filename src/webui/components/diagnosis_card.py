@@ -408,7 +408,7 @@ def reference_cohorts(serving: Optional[str], rows: List[Mapping[str, Any]],
     from src.webui.components.workspaces import binding_state, version_row, workspace_binding
 
     try:
-        listing = list_cohort_versions(environ=environ)
+        listing = list_cohort_versions(environ=environ, contents=True)
     except Exception:  # noqa: BLE001 - said as a problem, never raised
         logger.exception("The cohort registry could not be listed for the card")
         return {"versions": [], "problem": "the cohort registry could not be listed"}

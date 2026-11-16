@@ -1247,3 +1247,71 @@ def test_the_fixture_refuses_a_root_inside_the_repository():
     with pytest.raises(ValueError, match="inside the repository"):
         build_registered_cohort(REPO_ROOT / "data" / "no-such-fixture")
     assert not (REPO_ROOT / "data" / "no-such-fixture").exists()
+
+
+# ---------------------------------------------------------------------------
+# A version's kept files against its record (UI-12, B72-T3)
+# ---------------------------------------------------------------------------
+def _flip_one_byte(path: Path) -> None:
+    data = bytearray(path.read_bytes())
+    data[len(data) // 2] ^= 0x01
+    path.write_bytes(bytes(data))
+
+
+def test_a_version_whose_kept_file_changed_is_told_apart_by_its_bytes(registered, registry):
+    """UI-12 (B72-T3): `kept_contents` reads the files a version keeps by the
+    one comparison `check_references` makes, so a samples.json with one byte
+    changed is DIFFERS, naming the file and both digests, never a path,
+    while its cohort.json, which the listing reads, is unchanged; a file not
+    there is MISSING. At ba6e85e nothing between the listing and a run read
+    those bytes: the version read as bound and only the run refused it."""
+    from src.evaluation import cohort_registry as cr
+
+    version = import_version(registry, registered.data_dir, registered.source, label="kept-1")
+    checked = cr.kept_contents(version)
+    assert checked.state == cr.VERIFIED
+    assert [(f.reference.file, f.state) for f in checked.files] == [("samples.json", "verified")]
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", checked.checked_at)
+
+    _flip_one_byte(version.samples_path)
+    again = resolve_version(registry, "kept-1", expected_sha256=version.identity.sha256)
+    changed = cr.kept_contents(again)
+    assert changed.state == cr.DIFFERS
+    (state,) = changed.files
+    assert state.reason == (f"the version's samples.json holds {state.found[:12]}..., not the "
+                            f"{version.manifest['samples']['sha256'][:12]}... recorded")
+    assert str(registry) not in state.reason
+
+    version.samples_path.unlink()
+    assert cr.kept_contents(again).state == cr.MISSING
+
+
+def test_a_check_of_unchanged_files_is_answered_without_hashing_them(registered, registry,
+                                                                      monkeypatch):
+    """UI-12: polling a page never hashes a large file again. A check whose
+    files had settled is remembered by each file's stat identity (as the
+    checkpoint listing remembers a read), so a second listing hashes
+    nothing and repeats the first check's time; a file rewritten in place,
+    whatever its size, is hashed again and read as changed. A check of files
+    changed within the settle window is never remembered."""
+    from src.evaluation import cohort_registry as cr
+    from src.utils import fingerprint
+
+    hashed = []
+    real = fingerprint.file_sha256
+    monkeypatch.setattr(fingerprint, "file_sha256", lambda p: hashed.append(p) or real(p))
+    version = import_version(registry, registered.data_dir, registered.source, label="kept-2")
+
+    # Written just now: within the settle window, so checked again each time.
+    cr.kept_contents(version)
+    cr.kept_contents(version)
+    assert len(hashed) == 2
+
+    monkeypatch.setattr(cr, "KEPT_CONTENTS_SETTLED_NS", 0)
+    first = cr.kept_contents(version)
+    assert len(hashed) == 3 and first.state == cr.VERIFIED
+    second = cr.kept_contents(version)
+    assert len(hashed) == 3 and second == first
+
+    _flip_one_byte(version.samples_path)
+    assert cr.kept_contents(version).state == cr.DIFFERS and len(hashed) == 4

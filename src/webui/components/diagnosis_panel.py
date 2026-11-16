@@ -2178,10 +2178,11 @@ def identity_outputs(view: Mapping[str, Any], state: Mapping[str, Any],
 #: The task inputs' containers' own class (a view's classes are never empty).
 _TASK_BOX = ("shep-dx-task-box",)
 #: The marks an option carries for a version the server would refuse: one
-#: mapped against another graph, one that cannot be read, and one of another
-#: kind, which holds no patients (`card.NOT_A_COHORT`), marked by its kind.
-_VERSION_MARKS = {"another": " · another graph", "unreadable": " · cannot be read",
-                  card.NOT_A_COHORT: " · not a cohort"}
+#: mapped against another graph, one whose kept files changed after its
+#: import, one that cannot be read, and one of another kind, which holds no
+#: patients (`card.NOT_A_COHORT`), marked by its kind.
+_VERSION_MARKS = {"another": " · another graph", "changed": " · files changed",
+                  "unreadable": " · cannot be read", card.NOT_A_COHORT: " · not a cohort"}
 _KIND_MARKS = {"kg_edges": " · KG edge set", "generated": " · generated split"}
 
 
