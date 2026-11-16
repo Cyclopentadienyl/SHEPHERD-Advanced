@@ -38,6 +38,19 @@ Safety:
     every restart: a restart made by a supervisor could close it, and none
     is built (BACKLOG 47).
 
+Stop service (UI-06e, 2026-11-16):
+    A service started from the desktop entry has no terminal to press Ctrl-C
+    in, so Settings offers "Stop service" beside Restart Backend
+    (`stop_backend`). It is refused while a GPU job runs or a model load or a
+    stop of inference runs, like a restart, and after its delay it closes the
+    job runner's slot only if it is still idle and open (`close_if_idle`, one
+    step, so no job starts in between) and then sends this process the
+    SIGTERM a service manager sends: the backend's one orderly stop
+    (`src.api.main`'s shutdown signals), which stops serving and gives the
+    GPU lock back, and the launcher's instance record is removed. The log
+    names what asked for the stop. A failure to send the signal opens the
+    slot again, and the process serves on.
+
 Allocator re-resolution:
     The launcher records HOW ``PYTORCH_ALLOC_CONF`` was set via the
     ``SHEPHERD_ALLOC_SOURCE`` env marker. If it came from a preset, we
@@ -51,7 +64,8 @@ Dependencies:
     - src.config.runtime_presets: allocator preset resolution (gradio-free)
 
 Called by:
-    - src/webui/components/runtime_settings.py (Restart Backend button + poll)
+    - src/webui/components/runtime_settings.py (Restart Backend button + poll;
+      Stop service)
 
 Version: 1.0.0
 """
@@ -59,6 +73,7 @@ from __future__ import annotations
 
 import logging
 import os
+import signal
 import sys
 import threading
 import time
@@ -219,10 +234,78 @@ def restart_backend(
     return {"success": True}
 
 
+def _send_stop_signal() -> None:
+    """This process's orderly stop: the SIGTERM a service manager sends,
+    which the backend's shutdown signals handle (`src.api.main`). On Windows,
+    where a SIGTERM sent by `os.kill` is TerminateProcess and no handler
+    runs, it is raised in this process, so the handler uvicorn installed
+    runs (not verified on Windows)."""
+    if os.name == "nt":  # pragma: no cover - Windows
+        signal.raise_signal(signal.SIGTERM)
+    else:
+        os.kill(os.getpid(), signal.SIGTERM)
+
+
+#: Why a stop is refused, said beside the button and returned by the backend.
+STOP_BUSY_JOB = "A GPU job (training or a test run) is in progress — Stop service is locked."
+STOP_BUSY_LIFECYCLE = ("A model is being loaded or inference is stopping — Stop service is "
+                       "locked.")
+
+
+def stop_backend(
+    delay: float = 1.0,
+    *,
+    asked_by: str = "Stop service in Settings",
+    _scheduler: Callable[[Callable[[], None]], None] | None = None,
+    _signal: Callable[[], None] = _send_stop_signal,
+) -> Dict[str, object]:
+    """Stop the service (the backend and the dashboard it serves) after a
+    short delay, through its orderly stop (module docstring, "Stop service").
+
+    Refused, with nothing scheduled, while a GPU job runs (an unreadable
+    status counts as one) and while a model load or a stop of inference runs.
+    The delay lets the answer reach the page first. After it the job runner's
+    slot is closed only if it is still idle and open, in one step; a job
+    started meanwhile aborts the stop, and the process serves on. Then the
+    log names who asked (`asked_by`) and the stop signal is sent. D8's check
+    is the caller's, as for a restart.
+
+    The ``_scheduler`` / ``_signal`` hooks exist for testing — production uses
+    a daemon thread and a SIGTERM to this process."""
+    from src.api.main import app_state
+
+    if is_training_active(default_on_error=True):
+        return {"success": False, "error": STOP_BUSY_JOB}
+    if app_state.lifecycle_busy():
+        return {"success": False, "error": STOP_BUSY_LIFECYCLE}
+
+    def _worker() -> None:
+        time.sleep(delay)
+        if not training_manager.close_if_idle():
+            logger.warning("Stop service aborted: a GPU job became active, or the backend began "
+                           "to stop or restart, before the stop was sent.")
+            return
+        logger.warning("Stopping the service (pid %s): asked for by %s.", os.getpid(), asked_by)
+        try:
+            _signal()
+        except Exception:  # noqa: BLE001 — log and leave the process running
+            logger.exception("Stop service failed: the stop signal could not be sent")
+            training_manager.open(closed_by=training_manager.CLOSED_BY_RESTART)
+
+    scheduler = _scheduler or (
+        lambda fn: threading.Thread(target=fn, daemon=True, name="backend-stop").start()
+    )
+    scheduler(_worker)
+    return {"success": True}
+
+
 __all__ = [
     "ALLOC_SOURCE_ENV",
+    "STOP_BUSY_JOB",
+    "STOP_BUSY_LIFECYCLE",
     "is_training_active",
     "resolve_restart_env",
     "build_restart_argv",
     "restart_backend",
+    "stop_backend",
 ]

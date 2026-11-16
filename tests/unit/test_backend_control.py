@@ -10,6 +10,7 @@ import os
 import signal
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -672,3 +673,112 @@ def test_a_restart_reads_the_saved_file_again_never_a_derived_environment(
                      "SHEPHERD_TRAINING_EVIDENCE_DIRS", "SHEPHERD_DEPLOYMENT_MODE"):
         assert variable not in env
     assert env["SHEPHERD_SETTINGS_FILE"] == os.environ["SHEPHERD_SETTINGS_FILE"]
+
+
+# --------------------------------------------------------------------------- Stop service (UI-06e)
+def test_stop_backend_is_refused_while_a_job_runs(monkeypatch):
+    """A service started from the desktop entry has no terminal to stop it
+    from, so Settings offers Stop service; like a restart it is refused while
+    a GPU job runs (an unreadable status counts as one), with nothing
+    scheduled."""
+    monkeypatch.setattr(bc, "is_training_active", lambda **kwargs: kwargs["default_on_error"])
+    scheduled = []
+    result = bc.stop_backend(_scheduler=scheduled.append, _signal=lambda: None)
+    assert result == {"success": False, "error": bc.STOP_BUSY_JOB} and scheduled == []
+
+
+def test_stop_backend_is_refused_while_a_load_or_stop_of_inference_runs(monkeypatch, runner):
+    import src.api.main as api
+
+    monkeypatch.setattr(api.app_state, "lifecycle_busy", lambda: True)
+    scheduled = []
+    result = bc.stop_backend(_scheduler=scheduled.append, _signal=lambda: None)
+    assert result == {"success": False, "error": bc.STOP_BUSY_LIFECYCLE} and scheduled == []
+
+
+def test_stop_backend_closes_the_idle_slot_then_sends_the_stop(runner, tmp_path, caplog):
+    """After its delay the stop closes the idle slot in one step, so no job
+    starts in between, names who asked in the log, and sends the orderly
+    stop's signal once."""
+    signals, worker_box = [], []
+    assert bc.stop_backend(delay=0, _scheduler=worker_box.append,
+                           _signal=lambda: signals.append("SIGTERM")) == {"success": True}
+    assert signals == []
+    with caplog.at_level("WARNING", logger=bc.logger.name):
+        worker_box[0]()
+    assert signals == ["SIGTERM"]
+    assert "asked for by Stop service in Settings" in caplog.text
+    assert _start(runner, tmp_path)["error"] == "The backend is stopping; nothing was started."
+
+
+def test_a_job_started_during_the_stop_s_delay_aborts_it(runner, tmp_path):
+    signals, worker_box = [], []
+    assert bc.stop_backend(delay=0, _scheduler=worker_box.append,
+                           _signal=lambda: signals.append(1))["success"]
+    assert _start(runner, tmp_path)["success"]
+    worker_box[0]()
+    assert signals == [], "the stop was sent while a job ran"
+    runner.end_active_job()
+    assert _start(runner, tmp_path)["success"], "the aborted stop left the slot closed"
+
+
+def test_a_stop_signal_that_cannot_be_sent_leaves_the_service_serving(runner, tmp_path):
+    def fails():
+        raise OSError("no such process")
+
+    worker_box = []
+    assert bc.stop_backend(delay=0, _scheduler=worker_box.append, _signal=fails)["success"]
+    worker_box[0]()
+    assert _start(runner, tmp_path)["success"], "the slot stayed closed after a failed stop"
+
+
+#: A real server (uvicorn in its own main thread, so its signal handlers and
+#: the backend's are installed) whose Stop service is asked for once it serves.
+_STOPPED_SERVER = r'''
+import sys, threading, time, urllib.request
+import uvicorn
+from src.api import main
+from src.api.services import backend_control
+
+port = int(sys.argv[1])
+
+def ask_for_the_stop():
+    for _ in range(600):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2)
+            break
+        except OSError:
+            time.sleep(0.2)
+    print("STOP", backend_control.stop_backend(delay=0.2), flush=True)
+
+threading.Thread(target=ask_for_the_stop, daemon=True).start()
+uvicorn.run(main.app, host="127.0.0.1", port=port, log_level="info")
+print("EXITED", flush=True)
+'''
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_stop_service_stops_a_real_server_through_its_orderly_stop(tmp_path):
+    """End to end: Stop service sends the server the SIGTERM a service
+    manager sends, so uvicorn shuts down and the application's shutdown runs
+    (the backend's stop of its job and of serving), with the reason in its
+    log. uvicorn then ends by the signal it caught, as after a service
+    manager's stop (systemd counts that as a clean stop)."""
+    import socket
+    import subprocess
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH")}
+    env.update(GRADIO_ANALYTICS_ENABLED="False", PYTHONUNBUFFERED="1")
+    done = subprocess.run([sys.executable, "-c", _STOPPED_SERVER, str(port)],
+                          cwd=str(Path(bc.__file__).resolve().parents[3]), env=env,
+                          capture_output=True, text=True, timeout=300)
+    out = done.stdout + done.stderr
+    assert done.returncode == -signal.SIGTERM, out[-4000:]
+    assert "STOP {'success': True}" in out
+    assert "Stopping the service (pid" in out and "asked for by Stop service in Settings" in out
+    assert out.index("Stopping the service") < out.index("Shutting down SHEPHERD-Advanced API")
+    assert "Application shutdown complete" in out
