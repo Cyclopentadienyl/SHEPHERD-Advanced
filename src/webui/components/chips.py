@@ -97,34 +97,35 @@ def gated(label: str, allowed: bool, *, interactive: bool = True) -> Dict[str, A
 
 #: Every operator control, as the D8 chip's ⓘ lists them (no exception remains).
 D8_SCOPE = (
-    "- the import, test start and cancel, registration, model load, stopping inference;\n"
-    "- the checkpoint list, training start and stop, pipeline reload, saving settings and "
-    "data locations, restart and stopping the service."
+    "- import, test start and cancel, registration, model load, stopping inference;\n"
+    "- checkpoint list, training start and stop, pipeline reload, saving settings and data "
+    "locations, restart, stopping the service."
 )
-#: How to reach them.
+#: How to reach them; the codes and the SSH command in the trailing Ref line
+#: (each D8 chip's ⓘ ends with it, `d8_chip`).
 D8_HOW = (
-    "They work when the service was started here (desktop entry, launch_shepherd.sh or mode "
-    "M1) and the request:\n"
-    "- arrives on this machine's loopback, directly or through an SSH forward to localhost;\n"
+    "They need a service started here (desktop entry or launch_shepherd.sh) and a request "
+    "that:\n"
+    "- arrives on this machine's loopback, directly or through an SSH forward;\n"
     "- has no forwarding header (no reverse proxy) and comes from this dashboard.\n"
-    "Each control checks its own request; this chip shows the answer.\n"
-    "Ref: SHEPHERD_DEPLOYMENT_MODE; ssh -L 8264:localhost:8264 <server>, then "
-    "http://localhost:8264/ui"
+    "Ref: deployment mode M1 (SHEPHERD_DEPLOYMENT_MODE); ssh -L 8264:localhost:8264 <server>, "
+    "then http://localhost:8264/ui"
 )
 #: Each D8 chip's lead (the bubble's first line, `help.help_lines`), which
 #: the list of controls (`D8_SCOPE`) follows.
 D8_ON_LEAD = "This request may use the operator controls:"
 D8_READONLY_LEAD = "This request may not use the operator controls:"
 
-#: What the GPU chip's ⓘ always says.
+#: What the GPU chip's ⓘ always says, after its state's words (`gpu_detail`).
 GPU_SCOPE = (
-    "One GPU lock covers managed training and evaluation jobs:\n"
-    "- the ones started here or through the API (the job runner), and the formal training and "
-    "evaluation CLIs (train_model.py, measure_scorer.py);\n"
-    "- this service's inference holds it while a model is loaded on CUDA, until an operator "
-    "stops inference.\n"
+    "One GPU lock covers:\n"
+    "- training and test runs, from the job runner (here or through the API) or the formal "
+    "command-line scripts;\n"
+    "- this service's inference, which holds it while a model is loaded on CUDA.\n"
     "A second holder is refused, not queued. Inference on the CPU takes no lock."
 )
+#: The scripts `GPU_SCOPE` names in words, said in its trailing Ref line.
+GPU_SCOPE_REF = "the formal scripts train_model.py, measure_scorer.py"
 #: The GPU chip's lead when nothing holds the lock (its words: "none", never "free").
 GPU_FREE_LEAD = "No managed job holds the GPU lock now."
 
@@ -137,13 +138,16 @@ STOP_INFERENCE_HERE = "stop it with Stop inference on Diagnosis"
 GPU_NOT_READ = "GPU jobs: not read"
 GPU_NOT_CONFIGURED = "GPU jobs: refused, no workspaces folder"
 #: What the chip's ⓘ says with no workspaces root set (review of 8242b47,
-#: P2-4); it names no server path, so every request may see it.
+#: P2-4), and its references; it names no server path, so every request may
+#: see it.
 GPU_NOT_CONFIGURED_DETAIL = (
     "No workspaces folder is set, so the GPU lock is not configured.\n"
-    f"The job runner refuses every training and test run. Choose the folder in "
-    f"{DATA_LOCATIONS}: the lock is the file .shepherd-gpu.lock in it.\n"
-    "Ref: SHEPHERD_WORKSPACES_ROOT"
+    "The job runner refuses every training and test run until one is chosen in "
+    f"{DATA_LOCATIONS}."
 )
+GPU_NOT_CONFIGURED_REF = "SHEPHERD_WORKSPACES_ROOT (the lock: .shepherd-gpu.lock in that folder)"
+#: The chip's ⓘ before its first read (`CHIPS_PLACEHOLDER`).
+NOT_READ_YET = "Not read yet; the page reads it once it has loaded."
 #: Where a request that may not see the lock's problem is told to look.
 GPU_LOCK_WHY_HIDDEN = f"An operator sees why in {DATA_LOCATIONS}."
 _RUNNER_NOUN = {"training": "training", "test": "test run"}
@@ -188,6 +192,16 @@ def d8_chip(access: OperatorAccess) -> Chip:
 # ---------------------------------------------------------------------------
 # GPU jobs
 # ---------------------------------------------------------------------------
+def gpu_detail(text: str, *refs: str) -> str:
+    """**A GPU chip's ⓘ text, the one way every state composes it**: the
+    state's own words, then what the lock covers (`GPU_SCOPE`), then one
+    trailing Ref line, the state's references before the scope's
+    (`GPU_SCOPE_REF`). The bubble shows a "Ref:" line as the muted reference
+    line, the last (`help.help_lines`, the WebUI skill's §7); a state's own
+    Ref line placed before the scope stood mid-bubble (T06 review)."""
+    return f"{text}\n\n{GPU_SCOPE}\nRef: {'; '.join((*refs, GPU_SCOPE_REF))}"
+
+
 def _since(started_at: Any) -> Optional[str]:
     """``HH:MM UTC`` from a holder record's ISO time, or None."""
     if not isinstance(started_at, str):
@@ -225,19 +239,20 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         text = f"GPU job: {noun} (job runner)"
         if active.get("status") == "stopping":
             text += " · stopping"
-        return Chip("busy", text, f"Held by the job runner's {noun}.\n\n{GPU_SCOPE}")
+        return Chip("busy", text, gpu_detail(f"Held by the job runner's {noun}."))
     if lock.get("unset"):
-        return Chip("unread", GPU_NOT_CONFIGURED, f"{GPU_NOT_CONFIGURED_DETAIL}\n\n{GPU_SCOPE}")
+        return Chip("unread", GPU_NOT_CONFIGURED,
+                    gpu_detail(GPU_NOT_CONFIGURED_DETAIL, GPU_NOT_CONFIGURED_REF))
     if lock.get("problem"):
         detail = ("The GPU lock cannot be used, so every managed job is refused until it is "
                   "corrected.")
         # An operator reads the problem itself (it says where to correct it);
         # anyone else, where an operator sees why, never the value's words.
         detail += f"\n{lock['problem']}" if operator else f"\n{GPU_LOCK_WHY_HIDDEN}"
-        return Chip("unread", GPU_NOT_READ, f"{detail}\n\n{GPU_SCOPE}")
+        return Chip("unread", GPU_NOT_READ, gpu_detail(detail))
     description = str(lock.get("held_by") or "")
     if not description:
-        return Chip("none", GPU_NONE, f"{GPU_FREE_LEAD}\n\n{GPU_SCOPE}")
+        return Chip("none", GPU_NONE, gpu_detail(GPU_FREE_LEAD))
     holder = lock.get("holder")
     alive = isinstance(holder, Mapping) and lock.get("holder_alive") is not False
     if held_by_inference(lock):
@@ -245,9 +260,10 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         # record's words (which name the host), by the one rule the job
         # runner's refusal names it by (`gpu_lock.held_by_inference`).
         return Chip("busy", GPU_INFERENCE,
-                    "Held by this service's inference: a model is loaded on CUDA.\n"
-                    f"To start a training or a test run, {STOP_INFERENCE_HERE} (Model in use), or "
-                    f"with POST /api/v1/pipeline/stop.\n\n{GPU_SCOPE}", remedy=STOP_INFERENCE_HERE)
+                    gpu_detail("Held by this service's inference: a model is loaded on CUDA.\n"
+                               f"To start a training or a test run, {STOP_INFERENCE_HERE} "
+                               "(Model in use).", "POST /api/v1/pipeline/stop"),
+                    remedy=STOP_INFERENCE_HERE)
     if alive:
         # What the holder record says, and only that: its command, pid and
         # start. A formal CLI run and another server's job runner write the
@@ -266,7 +282,7 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         text = what + (f" ({', '.join(parts)})" if parts else "")
     else:
         text = "GPU job: lock held, holder not described"
-    return Chip("busy", text, f"Held by {description}.\n\n{GPU_SCOPE}")
+    return Chip("busy", text, gpu_detail(f"Held by {description}."))
 
 
 def busy_words(chip: Chip) -> str:
@@ -285,7 +301,7 @@ def read_gpu_chip(manager: Any, *, operator: bool,
     except Exception:  # noqa: BLE001 - a chip that raises would hide the page's state
         logger.exception("The GPU chip could not be read")
         return Chip("unread", GPU_NOT_READ,
-                    f"The job runner or the GPU lock could not be read just now.\n\n{GPU_SCOPE}")
+                    gpu_detail("The job runner or the GPU lock could not be read just now."))
 
 
 # ---------------------------------------------------------------------------
@@ -320,9 +336,8 @@ def chips_html(d8: Chip, gpu: Chip) -> str:
 #: server serves, so nothing is read at build time).
 CHIPS_PLACEHOLDER = chips_html(
     Chip("unread", "Operator controls: not read yet",
-         f"Not read yet; the page reads it once it has loaded. Operator controls:\n{D8_SCOPE}"
-         f"\n\n{D8_HOW}"),
-    Chip("unread", GPU_NOT_READ, GPU_SCOPE))
+         f"{NOT_READ_YET} Operator controls:\n{D8_SCOPE}\n\n{D8_HOW}"),
+    Chip("unread", GPU_NOT_READ, gpu_detail(NOT_READ_YET)))
 
 
 def chips_on_change(seen: Any, now: Any, request: Any) -> Any:
@@ -367,6 +382,7 @@ __all__ = [
     "GPU_NOT_READ",
     "GPU_NOT_CONFIGURED",
     "GPU_SCOPE",
+    "GPU_SCOPE_REF",
     "LOCK",
     "OPERATOR_ONLY",
     "STOP_INFERENCE_HERE",
@@ -377,6 +393,7 @@ __all__ = [
     "d8_chip",
     "gated",
     "gpu_chip_from",
+    "gpu_detail",
     "operator_only",
     "read_chips",
     "read_gpu_chip",

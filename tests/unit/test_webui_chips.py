@@ -103,7 +103,7 @@ def test_nothing_running_is_none_never_free():
     longer says inference is outside the lock."""
     chip = c.gpu_chip_from(None, LOCK_FREE, operator=True)
     assert (chip.kind, chip.text) == ("none", "GPU jobs: none")
-    assert "inference holds it while a model is loaded on CUDA" in chip.detail
+    assert "inference, which holds it while a model is loaded on CUDA" in chip.detail
     assert "Inference on the CPU takes no lock" in chip.detail
     assert "outside the lock" not in chip.detail and chip.remedy == ""
 
@@ -406,6 +406,72 @@ def test_every_gated_page_labels_its_buttons_by_the_one_rule():
         assert ("🔒 Operator controls only: request not local." in beside) is not operator
 
 
+def _every_chip() -> list:
+    """Every chip state `d8_chip`, `gpu_chip_from`, `read_gpu_chip` and the
+    placeholder can show, by name. A read-only chip's reason and a holder's
+    description are another reader's words (D8's refusal, the holder
+    record), stood in for by words of no budget weight."""
+    import html
+    import re
+
+    from src.utils.gpu_lock import SERVING_COMMAND, SERVING_JOB_TYPE
+
+    class Broken:
+        def active_job(self):
+            raise RuntimeError("boom")
+
+    holder = {"job_type": "training", "command": "a training", "pid": 41822,
+              "started_at": "2026-10-20T09:58:12+00:00"}
+    other = {"job_type": SERVING_JOB_TYPE, "command": SERVING_COMMAND, "pid": os.getpid() + 1}
+    states = {
+        "on": c.d8_chip(ENABLED),
+        **{f"read-only {condition}": c.d8_chip(OperatorAccess(False, condition, "why"))
+           for condition in sorted(c.D8_SHORT)},
+        **{f"runner {job} {status}": c.gpu_chip_from({"job_type": job, "status": status},
+                                                     LOCK_FREE, operator=True)
+           for job in ("training", "test") for status in ("running", "stopping")},
+        "none": c.gpu_chip_from(None, LOCK_FREE, operator=True),
+        "unset": c.gpu_chip_from(None, {**LOCK_FREE, "configured": False, "unset": True,
+                                        "path": None, "problem": "x"}, operator=True),
+        **{f"problem operator={who}": c.gpu_chip_from(
+            None, {**LOCK_FREE, "problem": "the folder is read-only"}, operator=who)
+           for who in (True, False)},
+        "inference here": c.gpu_chip_from(None, _inference_holder(os.getpid()), operator=False),
+        "inference elsewhere": c.gpu_chip_from(None, {**LOCK_FREE, "holder": other,
+                                                      "holder_alive": True,
+                                                      "held_by": "an inference job"},
+                                               operator=True),
+        "holder": c.gpu_chip_from(None, {**LOCK_FREE, "holder": holder, "holder_alive": True,
+                                         "held_by": "a training job"}, operator=True),
+        "holder exited": c.gpu_chip_from(None, {**LOCK_FREE, "holder": holder,
+                                                "holder_alive": False,
+                                                "held_by": "another process"}, operator=True),
+        "not read": c.read_gpu_chip(Broken(), operator=True, lock_reader=lambda: LOCK_FREE),
+    }
+    for which, text in re.findall(r'<span id="shep-chip-(d8|gpu)-text" hidden>(.*?)</span>',
+                                  c.CHIPS_PLACEHOLDER, re.S):
+        states[f"placeholder {which}"] = c.Chip("unread", "", html.unescape(text))
+    return list(states.items())
+
+
+@pytest.mark.parametrize("state, chip", _every_chip(), ids=[n for n, _ in _every_chip()])
+def test_every_chip_bubble_is_within_the_help_budget(state, chip):
+    """T06 review (R-9): the chips' ⓘ texts go through the one bubble but
+    are composed per request, so the registry's budget test never read them:
+    the D8 one was 90 words with "M1" in its body, the GPU ones named
+    train_model.py in their body, and with no workspaces folder (every first
+    start) the GPU bubble showed its muted Ref line mid-bubble, the scope's
+    list after it. Each state is now within the skill's §7 budget
+    (`help.budget_problems`: a lead of 100 characters at most, 80 words at
+    most without the Ref line, no sentence over 25 words, codes only in one
+    trailing Ref line). A read-only chip's reason is D8's own refusal, also
+    the API's, stood in for here."""
+    from src.webui.components import help as h
+
+    assert h.budget_problems(chip.detail) == (), (state, chip.detail)
+    assert h.help_lines(chip.detail)[-1].kind == "ref", state
+
+
 def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
     """R-9: the chips' ⓘ texts go through the one bubble, whose first line is
     its bold lead (`help.help_lines`): each chip state leads with a short
@@ -413,31 +479,81 @@ def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
     "- " items (never a typed '•'), and keeps every fact the bubble said."""
     from src.webui.components import help as h
 
-    lock_unset = {**LOCK_FREE, "configured": False, "unset": True, "path": None}
     lock_broken = {**LOCK_FREE, "problem": "the folder is read-only"}
-    chips = [c.d8_chip(ENABLED),
-             *(c.d8_chip(OperatorAccess(False, condition, f"why {condition}"))
-               for condition in sorted(c.D8_SHORT)),
-             c.gpu_chip_from(None, LOCK_FREE, operator=True),
-             c.gpu_chip_from({"job_type": "training", "status": "running"}, LOCK_FREE,
-                             operator=True),
-             c.gpu_chip_from(None, lock_unset, operator=True),
-             c.gpu_chip_from(None, lock_broken, operator=True),
-             c.gpu_chip_from(None, _inference_holder(os.getpid()), operator=False)]
-    for chip in chips:
+    for state, chip in _every_chip():
         lines = h.help_lines(chip.detail)
         assert len(lines[0].text) <= 100, lines[0].text
-        assert all(not line.text.startswith("•") for line in lines), chip.text
+        assert all(not line.text.startswith("•") for line in lines), state
     on = h.help_lines(c.d8_chip(ENABLED).detail)
-    assert [line.kind for line in on] == ["lead", "item", "item", "para", "item", "item",
-                                          "para", "ref"]
+    assert [line.kind for line in on] == ["lead", "item", "item", "para", "item", "item", "ref"]
     assert on[0].text == c.D8_ON_LEAD and "ssh -L 8264:localhost:8264" in on[-1].text
-    words = sum(len(line.text.split()) for line in on if line.kind != "ref")
-    # 115 words in one run at the base; the controls and the conditions are
-    # must-know words, so about 90 (the skill's budget is guidance).
-    assert words <= 90, words
+    assert "M1" in on[-1].text and "SHEPHERD_DEPLOYMENT_MODE" in on[-1].text
+    unset = c.gpu_chip_from(None, {**LOCK_FREE, "unset": True}, operator=True).detail
+    assert unset.splitlines()[-1] == (
+        "Ref: SHEPHERD_WORKSPACES_ROOT (the lock: .shepherd-gpu.lock in that folder); the "
+        "formal scripts train_model.py, measure_scorer.py")
     refused = c.d8_chip(OperatorAccess(False, "not_loopback", "why")).detail
     assert refused.startswith(f"{c.D8_READONLY_LEAD}\n{c.D8_SCOPE}\n\nFor this request: why")
     assert c.gpu_chip_from(None, lock_broken, operator=True).detail.startswith(
         "The GPU lock cannot be used, so every managed job is refused until it is corrected.\n"
         "the folder is read-only")
+
+
+#: The header's two chips in a real browser, through the one bubble: each
+#: chip's ⓘ clicked, its pinned bubble's body parts read as the bubble built
+#: them. Waits for what each click shows, never for a fixed time.
+_CHIP_BUBBLES_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 } });
+  await page.goto('file://' + process.argv[2]);
+  for (const which of ['d8', 'gpu']) {
+    await page.click(`.shep-chip-${which} button.shep-i`);
+    await page.waitForFunction(() => {
+      const b = document.getElementById('shep-help-bubble');
+      return !!b && !b.hidden && b.getAttribute('role') === 'dialog';
+    });
+    out[which] = await page.evaluate(() => Array.from(
+      document.querySelector('#shep-help-bubble .shep-bubble-bd').children).map((el) => (
+        { tag: el.tagName.toLowerCase(), cls: el.className, text: el.textContent })));
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.getElementById('shep-help-bubble').hidden);
+  }
+  await browser.close();
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_each_chip_bubble_ends_with_its_one_ref_line_in_a_browser(tmp_path):
+    """T06 review (R-9): with no workspaces folder set, the default of every
+    first start, the GPU chip's bubble drew its muted "Ref:
+    SHEPHERD_WORKSPACES_ROOT" line third, then the scope's paragraphs and
+    list. In a real browser, each chip's pinned bubble now holds one Ref line
+    (`p.shep-bubble-ref`), its last part, and its lead first."""
+    from src.webui.components import help as h
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    unset = c.gpu_chip_from(None, {**LOCK_FREE, "configured": False, "unset": True,
+                                   "path": None}, operator=True)
+    page = tmp_path / "chips.html"
+    page.write_text(f"""<!doctype html><html><head><meta charset="utf-8">
+<style>body {{ margin: 0; font: 15px sans-serif; }} .shep-chips {{ display: flex; gap: 8px;
+justify-content: flex-end; padding: 12px; }} {h.HELP_CSS}</style>{h.HELP_HEAD}</head><body>
+{c.chips_html(c.d8_chip(ENABLED), unset)}</body></html>""", encoding="utf-8")
+    seen = run_node(_CHIP_BUBBLES_JS, tmp_path, str(page))
+    for which, parts in seen.items():
+        classes = [part["cls"] for part in parts]
+        assert classes[0] == "shep-bubble-lead", (which, parts)
+        assert classes.count("shep-bubble-ref") == 1 and classes[-1] == "shep-bubble-ref", (
+            which, classes)
+    assert seen["gpu"][0]["text"] == ("No workspaces folder is set, so the GPU lock is not "
+                                      "configured.")
+    assert seen["gpu"][-1]["text"].startswith("Ref: SHEPHERD_WORKSPACES_ROOT")
+    assert "train_model.py" in seen["gpu"][-1]["text"]
+    assert not any("train_model.py" in part["text"] for part in seen["gpu"][:-1])
+    assert not any("M1" in part["text"] for part in seen["d8"][:-1])
