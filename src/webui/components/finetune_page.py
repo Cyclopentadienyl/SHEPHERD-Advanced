@@ -1190,7 +1190,7 @@ def create_finetune_page(ctx: Any) -> None:
                 # Run → Checkpoint, two cascading selects side by side (the
                 # skill's §4), then the list's Refresh; on a narrow form they
                 # wrap, one under the other.
-                with gr.Row(elem_classes=["shep-ft-parent-row"]):
+                with gr.Row(elem_classes=["shep-ft-parent-row", "shep-field-row"]):
                     run_select = gr.Dropdown(label="Run", choices=[], value=None,
                                              elem_id="ft_run")
                     checkpoint = gr.Dropdown(label="Checkpoint", choices=[], value=None,
@@ -1387,9 +1387,7 @@ _PAGE = "#" + page_elem_id(PAGE)
 #: tokens.
 PAGE_CSS = f"""
 {_PAGE} .shep-ft-bd {{ padding: 8px 16px 12px !important; gap: 8px !important; }}
-{_PAGE} .shep-ft-parent-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
 {_PAGE} #ft_run, {_PAGE} #ft_checkpoint {{ flex: 1 1 300px !important; min-width: 0 !important; }}
-{_PAGE} #ft_refresh {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
 {_PAGE} .shep-ft-settings {{ flex-wrap: wrap !important; gap: 8px 16px !important; }}
 {_PAGE} .shep-ft-ds {{ font-size: 15px; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }}
 {_PAGE} .shep-ft-ds-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}

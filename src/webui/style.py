@@ -104,6 +104,9 @@ SHELL_CSS = """
   --shep-title-size: 20px; --shep-body-size: 15px; --shep-key-size: 14px;
   --shep-weight-strong: 600;
   --shep-label-size: 14px; --shep-label-weight: 600; --shep-label-color: var(--shep-text);
+  /* A field row's two measures (D03, `.shep-field-row`): a select's or text box's box, 39 px and
+     its 1 px border each side, and the room Gradio's padded block leaves under it. */
+  --shep-field-box-h: 41px; --shep-field-pad-b: 10px;
   /* The room every scroll region keeps under what it brings into view (R-25): a line of a text
      box (21 px) and a little more. */
   --shep-caret-room: 32px;
@@ -487,6 +490,33 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
    accordion: the turn is set here over Gradio's inline one. */
 .gradio-container button.label-wrap > .icon { transform: rotate(-90deg) !important; }
 .gradio-container button.label-wrap.open > .icon { transform: none !important; }
+
+/* **A field row** (D03, the WebUI ledger's UI-03): labelled fields with an action beside them
+   (Fine-tune's base picker, Training's Continue drawer, Test's Run, the Diagnosis load drawer's
+   head). Gradio 6.30 draws a field as a padded block whose last line is its box, its label and any
+   info line above it, so every item lines up on the boxes: each block draws its box at its
+   bottom (two fields with different labels or info lines still line up; their form wrapper keeps
+   its stretch), an action button is the box's height and stands on the box's bottom line (an
+   icon-only one, ``shep-icon-btn``, a square of it), and words or another control beside a field
+   (``shep-field-aside``) end on the box's bottom, a line of words centred on it. A wrapped row
+   keeps the button beside the last box. A region that draws its blocks denser sets
+   ``--shep-field-pad-b`` with its padding, so the two never drift apart. */
+.shep-field-row { align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }
+.shep-field-row > .form > .block, .shep-field-row > .block:not(.shep-field-aside) {
+  display: flex !important; flex-direction: column !important; justify-content: flex-end !important;
+}
+.shep-field-row > .form > .block > .container { flex: none !important; }
+.shep-field-row > button {
+  align-self: flex-end !important; flex: none !important; width: auto !important; min-width: max-content !important;
+  height: var(--shep-field-box-h) !important; min-height: 0 !important; margin: 0 0 var(--shep-field-pad-b) !important;
+  padding: 0 14px !important;
+}
+.shep-field-row > button.shep-icon-btn { min-width: var(--shep-field-box-h) !important; width: var(--shep-field-box-h) !important; padding: 0 !important; }
+.shep-field-row > .shep-field-aside {
+  align-self: flex-end !important; flex: none !important; width: auto !important; margin: 0 0 var(--shep-field-pad-b) !important;
+  min-height: var(--shep-field-box-h); display: flex !important; align-items: center;
+}
+.shep-field-row > .shep-field-aside > .html-container { display: flex; align-items: center; }
 
 /* panels */
 .shep-panel { background: var(--shep-panel) !important; border: 1px solid var(--shep-border) !important; border-radius: 10px !important; padding: 0 !important; gap: 0 !important; overflow: hidden; flex-wrap: nowrap !important; }

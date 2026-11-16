@@ -2603,7 +2603,10 @@ def test_the_continue_drawer_fits_and_says_the_plan_once():
     assert ("#shep-train-drawer-why:not(:has(.shep-drawer-why)), "
             f"{tc._PAGE} #shep-train-drawer-notice:not(:has(.shep-notice-t)) "
             "{ display: none !important; }") in tc.PAGE_CSS
-    assert "#shep-train-drawer-bd .block.padded { padding-top: 4px !important;" in tc.PAGE_CSS
+    # Its blocks as dense as its field row's measure says (D03: one token for both).
+    assert "#shep-train-drawer-bd { gap: 8px !important; --shep-field-pad-b: 4px; }" in tc.PAGE_CSS
+    assert ("#shep-train-drawer-bd .block.padded { padding-top: var(--shep-field-pad-b) !important; "
+            "padding-bottom: var(--shep-field-pad-b) !important; }") in tc.PAGE_CSS
     preview = {"parent": "/w/demo/runs/gatv2/r/checkpoints/last.pt", "ok": True,
                "action": "Extend training by 30 epochs at a fixed rate of 1e-05 (epochs 151-180, "
                          "new target 180)", "sha256": "c" * 64, "inherited": {}}

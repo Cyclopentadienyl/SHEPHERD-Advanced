@@ -641,7 +641,9 @@ def test_the_fields_scroll_above_the_card_and_run_row_whose_foot_never_covers_th
     column's one scroll region and the card and Run its foot, in flow under
     them, nothing sticky; every scroll region keeps a line's room under what
     it brings into view (`style.py`). The sticky block's room script is gone
-    with the sticky block. What the browser draws is
+    with the sticky block. R-24: every label and control starts at the
+    panel's one inner edge (no side padding on the fields), and Options is a
+    key/ⓘ/control grid with no box of its own. What the browser draws is
     `test_the_hpo_caret_stays_in_view_and_the_input_column_has_one_left_edge`."""
     from src.webui import style
     from tests.unit.test_webui_shell import side
@@ -652,9 +654,13 @@ def test_the_fields_scroll_above_the_card_and_run_row_whose_foot_never_covers_th
     assert "position: sticky" not in css and "--shep-dx-sticky-h" not in css
     assert not hasattr(dp, "STICKY_JS") and not hasattr(style, "sticky_room_js")
     assert "html, .shep-panel * { scroll-padding-bottom: var(--shep-caret-room); }" in style.SHELL_CSS
+    assert f"{dp._TAB} #shep-dx-fields .block.padded {{ padding: 6px 0 !important; }}" in css
+    options = css[css.index(f"{dp._TAB} .shep-dx-options {{"):]
+    options = options[:options.index("}")]
+    assert "display: grid !important" in options and "border" not in options and "background" not in options
 
 
-#: R-25 in a browser at 1536 x 760, a disease model served (a
+#: R-25 and R-24 in a browser at 1536 x 760, a disease model served (a
 #: stand-in status: its card as tall as the real one): twelve lines typed into
 #: the HPO box, what `elementsFromPoint` finds on the caret's line after each;
 #: then the input column's left edges and the Options grid's columns.
@@ -699,9 +705,12 @@ const { chromium } = require('playwright');
 
 
 def test_the_hpo_caret_stays_in_view_and_the_input_column_has_one_left_edge(monkeypatch, tmp_path):
-    """R-25 as drawn (Node and Playwright, skipped without): at 1536 x 760
-    with a disease model served, the caret's line is the HPO box's own after
-    every one of twelve typed lines (it was the card's from the ninth on)."""
+    """R-25 and R-24 as drawn (Node and Playwright, skipped without): at
+    1536 x 760 with a disease model served, the caret's line is the HPO box's
+    own after every one of twelve typed lines (it was the card's from the
+    sixth on); every label and control of the input column starts at one
+    left edge, Options draws no box, and Top-K's and Explanations' keys and
+    controls share two columns."""
     from src.webui import shell
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.operator_access import operator_mode
@@ -725,6 +734,12 @@ def test_the_hpo_caret_stays_in_view_and_the_input_column_has_one_left_edge(monk
     with served(demo, **mount_options()) as base:
         seen = run_node(_CARET_JS, tmp_path, base[:-len("gradio_api")])
     assert seen["lines"] == ["box"] * 12, seen["lines"]
+    edges = seen["edges"]
+    edge = edges["hpo"][0]
+    assert {edges["hpo"][1], *edges["patient"], edges["options"], edges["topk"][0],
+            edges["expl"][0], edges["card"], edges["run"]} == {edge}, edges
+    assert edges["topk"][1] == edges["expl"][1] > edge, edges
+    assert edges["box"] == {"background": "rgba(0, 0, 0, 0)", "border": "0px"}, edges
 
 
 # ------------------------------------------------- the phenotype list and the API

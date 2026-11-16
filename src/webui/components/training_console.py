@@ -4522,7 +4522,7 @@ def create_training_tab(ctx: Any) -> None:
                     # run, epoch, file, kind and fingerprint, read as a wall of text):
                     # the run, then its checkpoint, each in a few words; the chosen
                     # file's details in a table under them.
-                    with gr.Row(elem_classes=["shep-train-parent-row"]):
+                    with gr.Row(elem_classes=["shep-train-parent-row", "shep-field-row"]):
                         continue_run = gr.Dropdown(label=STEP_RUN, choices=[], value=None,
                                                    elem_id="continue_run")
                         refresh_ckpt_btn = gr.Button("Refresh", size="sm", scale=0,
@@ -5024,7 +5024,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rv-res b {{ color: var(--shep-text); margin-right: 8px; }}
 {_PAGE} .shep-lock {{ flex: none; }}
 {_PAGE} .shep-html svg {{ display: inline-block; vertical-align: -2px; }}
-{_PAGE} .shep-train-parent-row {{ align-items: flex-end !important; flex-wrap: nowrap !important; }}
+{_PAGE} .shep-train-parent-row {{ flex-wrap: nowrap !important; }}
 {_PAGE} #continue_run {{ flex: 1 1 auto !important; min-width: 0 !important; }}
 /* An open list at least as wide as its few words need (Gradio sizes the list and each entry to
    the box, inline), so an option reads on one line; still fixed and opaque, as Gradio draws it,
@@ -5035,7 +5035,6 @@ PAGE_CSS = charts.CHART_CSS + f"""
    (`parent_details_html`). */
 {_PAGE} #shep-train-parent-details:not(:has(.shep-ckpt)) {{ display: none !important; }}
 {_PAGE} .shep-ckpt .shep-kv {{ font-size: 14px; gap: 4px 14px; }}
-{_PAGE} #shep-train-refresh {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
 /* Extra epochs (when shown) beside Check checkpoint, above what the check says. */
 {_PAGE} .shep-train-check-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
 {_PAGE} .shep-train-check-row > * {{ flex: 0 0 auto !important; width: auto !important; }}
@@ -5082,8 +5081,8 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-params-bd .form > .block input[type="number"], {_PAGE} #shep-train-params-bd .form > .block input[type="text"] {{ padding-top: 6px !important; padding-bottom: 6px !important; }}
   /* The Continue drawer as dense: it fits at 1920 x 1080 with Extra epochs on screen, as
      drawn (M5-3: 821 px of content in 684); a shorter window scrolls its body inside. */
-  {_PAGE} #shep-train-drawer-bd {{ gap: 8px !important; }}
-  {_PAGE} #shep-train-drawer-bd .block.padded {{ padding-top: 4px !important; padding-bottom: 4px !important; }}
+  {_PAGE} #shep-train-drawer-bd {{ gap: 8px !important; --shep-field-pad-b: 4px; }}
+  {_PAGE} #shep-train-drawer-bd .block.padded {{ padding-top: var(--shep-field-pad-b) !important; padding-bottom: var(--shep-field-pad-b) !important; }}
   {_PAGE} #shep-train-drawer-bd [data-testid="block-info"] {{ margin-bottom: 4px !important; padding-top: 2px !important; padding-bottom: 2px !important; }}
   {_PAGE} #shep-train-drawer-bd .wrap label {{ padding-top: 4px !important; padding-bottom: 4px !important; }}
   {_PAGE} #shep-train-drawer-bd input[type="number"], {_PAGE} #shep-train-drawer-bd input[type="text"] {{ padding-top: 6px !important; padding-bottom: 6px !important; }}

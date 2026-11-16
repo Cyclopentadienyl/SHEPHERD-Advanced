@@ -3008,14 +3008,14 @@ def create_test_page(ctx: Any) -> None:
                 # (`model_list.parents_update`), one under the other so each
                 # 40-character option shows whole in the column; ↻ lists the
                 # workspace's checkpoints again.
-                with gr.Row(elem_classes=["shep-test-model-row"]):
+                with gr.Row(elem_classes=["shep-test-model-row", "shep-field-row"]):
                     run_select = gr.Dropdown(label="Run", choices=[], value=None,
                                              elem_id="shep-test-model-run", interactive=False,
                                              elem_classes=["shep-test-select"])
                     model_reload = gr.Button(GATED_LABELS["reload"], variant="secondary",
                                              size="sm", scale=0,
                                              elem_id="shep-test-model-reload",
-                                             interactive=False)
+                                             elem_classes=["shep-icon-btn"], interactive=False)
                 model = gr.Dropdown(label="Checkpoint", choices=[], value=None,
                                     elem_id="shep-test-model", interactive=False,
                                     elem_classes=["shep-test-select"])
@@ -3706,8 +3706,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-actions > button {{ flex: none !important; }}
 {_PAGE} .shep-test-ident {{ font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-ident > div {{ margin: 1px 0; }}
-{_PAGE} .shep-test-model-row {{ align-items: flex-end !important; gap: 8px !important; }}
-{_PAGE} .shep-test-model-row > button {{ flex: none !important; min-width: 40px; margin-bottom: 4px; }}
+{_PAGE} .shep-test-model-row {{ flex-wrap: nowrap !important; gap: 8px !important; }}
 {_PAGE} .shep-test-checks {{ gap: 18px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-checks > .block {{ flex: 0 1 auto !important; min-width: 0 !important; width: auto !important; }}
 {_PAGE} .shep-test-replist {{ padding: 12px 16px 0; }}

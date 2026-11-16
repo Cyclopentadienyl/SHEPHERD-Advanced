@@ -3216,14 +3216,14 @@ def create_diagnosis_tab(ctx: Any) -> None:
                     # The Task control: its `.input` sets the shared list's view.
                     links["task"] = gr.Radio(choices=list(TASK_VIEWS), value="all",
                                              label="Task", show_label=False, container=False,
-                                             elem_classes=["shep-seg"],
+                                             elem_classes=["shep-seg", "shep-field-aside"],
                                              elem_id="shep-dx-change-task")
                     # Each "›" keeps to the word before it (a no-break space):
                     # at 1440 x 900 the last one was left alone on a line.
                     links["compare"] = plain_html(
                         f'<button type="button" class="shep-dx-link" data-key="models">'
                         f'{COMPARE_LINK}</button>', elem_id="shep-dx-compare",
-                        js_on_load=MODEL_LIST_JS)
+                        elem_classes=["shep-field-aside"], js_on_load=MODEL_LIST_JS)
                     # The chosen workspace's identity, once, under the select,
                     # as Training, Fine-tune, Models and Test say theirs (the
                     # shared list's line, `model_list.workspace_line_html`).
@@ -3558,7 +3558,9 @@ _TAB = "#shep-tab-clinical"
 #: inside; in the input column the fields are its one scroll region and the
 #: Model-in-use card and Run Diagnosis are its foot, in flow under them, never
 #: over them (R-25: a sticky card hid the HPO box's lower lines and its caret
-#: at 1536 x 760 once it held 8 lines); stacked, the panels stack.
+#: at 1536 x 760 once it held 8 lines); stacked, the panels stack. Every
+#: label and control in the input column starts at the panel's one inner edge,
+#: and Options is a label over a key/control list, no box of its own (R-24).
 #: While the Load confirmation is open (UI-A's confirmation box is mounted only
 #: then) the list's footer is hidden and its rows give up their height to it
 #: (all of it below 820 px of height), so the from → to rows and the warning
@@ -3580,23 +3582,30 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-scroll > * {{ flex-shrink: 0 !important; }}
 {_TAB} #shep-dx-input-bd {{ padding-top: 12px !important; padding-bottom: 0 !important; gap: 0 !important; }}
 {_TAB} .shep-dx-fields, {_TAB} .shep-dx-side {{ gap: 8px !important; }}
-{_TAB} #shep-dx-fields {{ padding-bottom: 8px; }}
+{_TAB} #shep-dx-fields {{ padding: 0 2px 8px; margin: 0 -2px; }}
 {_TAB} #shep-dx-fields > .form {{ background: none !important; border: 0 !important; box-shadow: none !important; }}
-{_TAB} #shep-dx-fields .block.padded {{ padding: 6px 8px !important; }}
+{_TAB} #shep-dx-fields .block.padded {{ padding: 6px 0 !important; }}
 {_TAB} #shep-dx-fields [data-testid="block-info"] {{ margin-bottom: 4px !important; }}
 {_TAB} #shep-dx-options .form {{ display: contents !important; }}
 {_TAB} #shep-dx-options .block.padded {{ padding: 0 !important; }}
 {_TAB} #dx_top_k input[type=number] {{ height: 34px; padding: 4px 8px; }}
-{_TAB} .shep-dx-options {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important;
-  border: 1px solid var(--shep-border); border-radius: 8px; background: var(--shep-panel-2); padding: 8px 10px !important; }}
-{_TAB} .shep-dx-options > * {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
-{_TAB} .shep-dx-options .form {{ display: flex !important; flex-direction: row !important; flex-wrap: wrap; align-items: center;
-  gap: 8px 14px; background: none !important; border: 0 !important; box-shadow: none !important; }}
-{_TAB} .shep-dx-options .block {{ padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important;
-  width: auto !important; flex: 0 0 auto !important; overflow: visible !important; }}
+/* Options (R-24): its label over its controls, no box of its own; each control a row of one grid,
+   its key, its ⓘ and its control in three columns (the keys as wide as the longest), the
+   checkbox's words in the key column as Top-K's are. The blocks between the grid and each
+   control's label draw no box (display: contents); the label takes the grid's columns. */
+{_TAB} .shep-dx-options {{ display: grid !important; grid-template-columns: max-content auto 1fr; align-items: center !important;
+  gap: 6px 8px !important; padding: 6px 0 !important; }}
+{_TAB} #shep-dx-options-label {{ grid-column: 1 / -1; }}
+{_TAB} .shep-dx-options #dx_top_k, {_TAB} .shep-dx-options #shep-dx-expl-box:not(.shep-dx-off),
+{_TAB} .shep-dx-options #dx_explanations {{ display: contents !important; }}
+{_TAB} .shep-dx-options :is(#dx_top_k, #dx_explanations) > label {{ grid-column: 1 / -1; display: grid !important;
+  grid-template-columns: subgrid; align-items: center; gap: 0 8px; margin: 0; padding: 0; }}
+{_TAB} #dx_explanations label > span {{ margin: 0 !important; font-size: var(--shep-label-size);
+  font-weight: var(--shep-label-weight); color: var(--shep-label-color); }}
+{_TAB} :is(#dx_top_k, #dx_explanations) label > :is(span, [data-testid="block-info"]) {{ grid-column: 1; grid-row: 1; margin: 0 !important; }}
+{_TAB} :is(#dx_top_k, #dx_explanations) label > button.shep-i {{ grid-column: 2; grid-row: 1; }}
+{_TAB} :is(#dx_top_k, #dx_explanations) label > input {{ grid-column: 3; grid-row: 1; justify-self: start; margin: 0; }}
 {_TAB} .shep-dx-opt {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); }}
-{_TAB} #dx_top_k label.container {{ display: flex; align-items: center; gap: 6px; }}
-{_TAB} #dx_top_k [data-testid="block-info"] {{ margin: 0; }}
 {_TAB} #dx_top_k input[type=number] {{ width: 72px; }}
 {_TAB} #shep-dx-input-bd > *, {_TAB} #shep-dx-sticky > *, {_TAB} #shep-dx-card > * {{ flex: none !important; }}
 {_TAB} .shep-dx-sticky {{ gap: 0 !important; margin: 0 -16px !important;
@@ -3673,7 +3682,7 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-banner-amber {{ background: var(--shep-amber-50); border: 1px solid var(--shep-amber-100); border-left: 4px solid var(--shep-amber-600); color: var(--shep-amber-800); }}
 {_TAB} .shep-dx-banner-red {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-left: 4px solid var(--shep-red-700); color: var(--shep-red-700); }}
 {_TAB} .shep-dx-warnings {{ font-size: 14px; color: var(--shep-amber-800); margin: 0 0 8px; overflow-wrap: anywhere; }}
-{_TAB} .shep-dx-echo {{ font-size: 14px; color: var(--shep-text-2); margin: 2px 0 0; padding: 0 8px; overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-echo {{ font-size: 14px; color: var(--shep-text-2); margin: 2px 0 0; padding: 0; overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-used {{ margin: 0 0 8px; overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-why {{ color: var(--shep-text-2); }}
 {_TAB} .shep-dx-tbl-wrap {{ margin: 0; }}
@@ -3751,7 +3760,7 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change button.shep-row > .shep-row-sub {{ display: block; margin-top: 2px; }}
 {_TAB} #shep-dx-change button.shep-row > .shep-tag {{ margin-left: 6px; }}
 {_TAB} #shep-dx-change-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
-{_TAB} #shep-dx-change .shep-model-head {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
+{_TAB} #shep-dx-change .shep-model-head {{ gap: 8px 14px !important; }}
 {_TAB} #shep-dx-change .shep-model-head > * {{ min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-body {{ gap: 14px !important; align-items: flex-start !important; flex-wrap: nowrap !important; }}
 {_TAB} #shep-dx-change .shep-model-rows {{ flex: 3 1 0 !important; min-width: 0 !important; }}

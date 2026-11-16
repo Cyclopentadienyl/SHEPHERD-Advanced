@@ -1497,6 +1497,103 @@ def test_one_layout_decision_at_every_size_and_back(tmp_path, monkeypatch):
     assert training["runbar"]["lines"] == 1 and training["runbar"]["h"] < 90, training["runbar"]
 
 
+#: The four field rows' boxes and actions as drawn (D03): Fine-tune's base
+#: picker and Test's Run, at 1850 x 960 and at 1440 x 900 (where Fine-tune's
+#: two selects wrap, Checkpoint under Run).
+_ROWS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
+                                          && window.__shepQueue.joins.every((j) => j.event_id !== null),
+                                          null, { timeout: 30000 });
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  await idle();
+  await page.click('#shep-tab-research-button'); await idle();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [1440, 900]]) {
+    await page.setViewportSize({ width: w, height: h });
+    for (const [name, fields, button] of [['finetune', ['ft_run', 'ft_checkpoint'], 'ft_refresh'],
+                                          ['test', ['shep-test-model-run'], 'shep-test-model-reload']]) {
+      await page.click(`#shep-page-${name}-button`); await idle();
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      out[`${name}@${w}`] = await page.evaluate(([fields, button]) => {
+        const r = (e) => { const b = e.getBoundingClientRect(); return [+b.top.toFixed(1), +b.bottom.toFixed(1), +b.left.toFixed(1)]; };
+        return { boxes: fields.map((f) => r(document.querySelector(`#${f} .wrap:has(> .wrap-inner)`))),
+                 button: r(document.getElementById(button)) };
+      }, [fields, button]);
+    }
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_field_rows_action_is_its_boxes_height_and_stands_on_their_line(tmp_path, monkeypatch):
+    """D03 (FL-UI-03): Gradio draws a select as a padded block, its box the
+    block's last line; the rows lined their small action button up with the
+    block's outer bottom (Fine-tune's Refresh 15 px under the boxes' centre,
+    Test's ↻ patched by 4 px and still 12 px off). The shared field row
+    (`style.py`'s ``.shep-field-row``, two tokens) makes the action the box's
+    height on the box's line, an icon-only one a square of it; with the
+    selects wrapped (Fine-tune at 1440 x 900) the button stays beside the
+    last box. Measured in a browser (Node and Playwright, skipped without)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    script = _ROWS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")])
+    for where, row in seen.items():
+        last = max(row["boxes"], key=lambda b: b[0])
+        assert abs(row["button"][0] - last[0]) <= 1 and abs(row["button"][1] - last[1]) <= 1, (where, row)
+        assert row["button"][2] > max(b[2] for b in row["boxes"] if b[0] == last[0]), (where, row)
+    assert seen["finetune@1850"]["boxes"][0][0] == seen["finetune@1850"]["boxes"][1][0]
+    assert seen["finetune@1440"]["boxes"][1][0] > seen["finetune@1440"]["boxes"][0][1]   # wrapped
+    test = seen["test@1850"]["button"]
+    assert abs((test[1] - test[0]) - (seen["test@1850"]["boxes"][0][1] - seen["test@1850"]["boxes"][0][0])) <= 1
+
+
+def test_the_field_rows_share_one_class_and_two_tokens():
+    """D03: the four rows of a select and an action (Fine-tune's base picker,
+    Training's Continue drawer, Test's Run, the Diagnosis load drawer's head)
+    carry the one field-row class; their own alignment patches are gone; the
+    Training drawer's denser blocks set the row's padding token with their
+    padding (one value, never two that drift)."""
+    from src.webui.components import (
+        diagnosis_panel,
+        finetune_page,
+        model_list,
+        test_page,
+        training_console,
+    )
+    from src.webui.style import SHELL_CSS
+
+    assert "--shep-field-box-h: 41px; --shep-field-pad-b: 10px;" in SHELL_CSS
+    button = _rule(SHELL_CSS, ".shep-field-row > button")
+    assert "height: var(--shep-field-box-h) !important" in button
+    assert "margin: 0 0 var(--shep-field-pad-b) !important" in button
+    assert '"shep-ft-parent-row", "shep-field-row"' in Path(finetune_page.__file__).read_text()
+    assert '"shep-test-model-row", "shep-field-row"' in Path(test_page.__file__).read_text()
+    assert '"shep-train-parent-row", "shep-field-row"' in Path(training_console.__file__).read_text()
+    assert '["shep-field-row"] if chosen.layout != "table"' in Path(model_list.__file__).read_text()
+    assert '"shep-seg", "shep-field-aside"' in Path(diagnosis_panel.__file__).read_text()
+    assert "margin-bottom: 4px" not in test_page.PAGE_CSS
+    assert "#ft_refresh {" not in finetune_page.PAGE_CSS
+    assert "#shep-train-refresh {" not in training_console.PAGE_CSS
+    assert "--shep-field-pad-b: 4px;" in training_console.PAGE_CSS
+
+
 #: The shared scroll cue and Compare's bounded box on a page of their own (the
 #: shell's style sheet and head script, and the Models page's style sheet):
 #: a region with more below says so until its end; a Compare taller and wider
