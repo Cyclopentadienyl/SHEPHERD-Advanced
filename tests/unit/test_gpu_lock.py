@@ -51,6 +51,10 @@ POSIX = pytest.mark.skipif(sys.platform == "win32", reason="signals and fork are
 RETIRED_LOCK_FILE_ENV = "SHEPHERD_GPU_LOCK_FILE"
 
 
+#: How a refused workspaces root set in the environment is introduced (UI-06).
+REFUSED_ROOT = r"The workspaces folder set at start \(Ref: SHEPHERD_WORKSPACES_ROOT\) is refused"
+
+
 @pytest.fixture
 def root(tmp_path, monkeypatch):
     """A workspace root named by the setting, which names the lock."""
@@ -92,7 +96,7 @@ def test_no_setting_but_the_root_names_a_lock(root, tmp_path, monkeypatch):
     with take_gpu_lock("training", "train_model.py"):
         assert probe(root / LOCK_FILE_NAME) is not None
     monkeypatch.delenv(WORKSPACES_ROOT_ENV)
-    with pytest.raises(GpuLockNotConfigured, match=f"^{WORKSPACES_ROOT_ENV} is not set"):
+    with pytest.raises(GpuLockNotConfigured, match="^No workspaces folder is set"):
         lock_location()
     assert lock_state()["unset"] is True and lock_state()["configured"] is False
     with pytest.raises(GpuLockNotConfigured):
@@ -102,7 +106,7 @@ def test_no_setting_but_the_root_names_a_lock(root, tmp_path, monkeypatch):
 
 def test_a_refused_root_is_refused_never_replaced(monkeypatch, tmp_path):
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path / "missing"))
-    with pytest.raises(GpuLockMisconfigured, match=f"{WORKSPACES_ROOT_ENV} is refused") as refused:
+    with pytest.raises(GpuLockMisconfigured, match=REFUSED_ROOT) as refused:
         lock_location()
     assert not isinstance(refused.value, GpuLockNotConfigured)
     assert lock_state()["unset"] is False
@@ -136,9 +140,10 @@ def test_no_root_is_not_configured_and_refused_with_guidance(monkeypatch):
     with pytest.raises(GpuLockNotConfigured) as refused:
         lock_location()
     said = str(refused.value)
-    assert said.startswith(f"{WORKSPACES_ROOT_ENV} is not set, so the GPU lock is not "
-                           "configured")
-    assert f"Set {WORKSPACES_ROOT_ENV} in this environment to the value the service uses" in said
+    assert said.startswith("No workspaces folder is set, so the GPU lock is not configured")
+    # UI-06: where to choose it, in plain words; the variable as its Ref.
+    assert "Choose the folder in Settings › Data locations" in said
+    assert said.endswith(f"Ref: {WORKSPACES_ROOT_ENV}")
     assert "§4.11" in said and RETIRED_LOCK_FILE_ENV not in said
     assert isinstance(refused.value, GpuLockMisconfigured)
     assert lock_state() == {"configured": False, "path": None, "held_by": None,
@@ -161,7 +166,7 @@ def test_the_location_is_the_server_settings_one_rule(monkeypatch, tmp_path):
     assert lock_location() == real.resolve() / LOCK_FILE_NAME
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, " " + str(real))
     assert server_settings.workspaces_root().value is None
-    with pytest.raises(GpuLockMisconfigured, match=f"{WORKSPACES_ROOT_ENV} is refused"):
+    with pytest.raises(GpuLockMisconfigured, match=REFUSED_ROOT):
         lock_location()
 
 
@@ -370,7 +375,7 @@ def test_probe_creates_nothing(root):
 
 
 #: How the not-configured refusal begins.
-NOT_CONFIGURED = f"{WORKSPACES_ROOT_ENV} is not set, so the GPU lock is not configured"
+NOT_CONFIGURED = "No workspaces folder is set, so the GPU lock is not configured"
 
 
 def test_not_configured_is_refused_never_run_unlocked(monkeypatch, tmp_path, caplog, capsys):

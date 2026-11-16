@@ -1904,7 +1904,8 @@ def test_a_cohort_run_in_a_copy_of_the_registry_is_refused_before_the_lock_and_a
     assert err.startswith("measure_scorer: refused: --cohort measures a version of the "
                           f"deployment's registry only, and the registry {copy.resolve()} is "
                           "not the deployment's")
-    assert f"SHEPHERD_REGISTRY ({cohort.registry}) resolves to {cohort.registry.resolve()}" in err
+    assert (f"the results registry set at start (Ref: SHEPHERD_REGISTRY) is {cohort.registry}, "
+            f"which resolves to {cohort.registry.resolve()}") in err
     assert "Nothing was read or written." in err and "cannot be registered" not in err
     assert not [p for p, n in opens.counts.items() if n and (
         str(copy) in p or str(cohort.data_dir) in p or str(cohort.checkpoint) in p)]
@@ -1924,9 +1925,10 @@ def test_with_the_setting_unset_a_cohort_run_is_refused_saying_how_to_set_it(
     assert cli._run_as_program(_argv(cohort)) == 1
 
     err = capsys.readouterr().err
-    assert ("SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot be "
-            "told. Set SHEPHERD_REGISTRY in this environment to the value the service's "
-            "environment gives it") in err
+    assert ("no results registry is set here, so which registry is the deployment's cannot be "
+            "told. Choose it in Settings › Data locations, which the service and the commands "
+            "of the same account read, or set SHEPHERD_REGISTRY for this command to the "
+            "service's value") in err
     assert "features" not in err and "cannot be registered" not in err
     assert _nothing_written(cohort)
 

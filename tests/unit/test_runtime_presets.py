@@ -48,6 +48,53 @@ def test_load_non_object_json_falls_back(tmp_path):
         assert load_runtime_settings(p) == {}, payload
 
 
+def test_save_uses_the_one_atomic_writer_of_the_settings_files(tmp_path, monkeypatch):
+    """UI-06: written whole by `atomic_json.write_json_atomic` (it was written
+    in place), so a failure before the replace leaves the old file."""
+    import stat
+
+    from src.config import atomic_json
+
+    p = tmp_path / "rt.json"
+    save_runtime_settings({"allocator_preset": "native"}, p)
+    assert stat.S_IMODE(p.stat().st_mode) == 0o600
+    written = []
+    real = atomic_json.write_json_atomic
+    monkeypatch.setattr("src.config.runtime_presets.write_json_atomic",
+                        lambda path, data: written.append(path) or real(path, data))
+    save_runtime_settings({"allocator_preset": "expandable"}, p)
+    assert written == [p] and load_runtime_settings(p) == {"allocator_preset": "expandable"}
+
+    def refuse(*args):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(atomic_json.os, "replace", refuse)
+    with pytest.raises(OSError):
+        save_runtime_settings({"allocator_preset": "native"}, p)
+    assert load_runtime_settings(p) == {"allocator_preset": "expandable"}
+    assert sorted(tmp_path.iterdir()) == [p]
+
+
+@pytest.mark.parametrize("payload, says", [
+    ("{ not json", "it is not valid JSON"),
+    ("[]", "it does not hold a JSON object"),
+])
+def test_a_corrupt_file_is_read_as_defaults_and_said(tmp_path, payload, says):
+    """The read stays tolerant (it never blocks a start); what Settings says
+    about it is `runtime_settings_problem`'s."""
+    from src.config.runtime_presets import runtime_settings_problem
+
+    p = tmp_path / "rt.json"
+    assert runtime_settings_problem(p) is None                       # absent
+    p.write_text(payload, encoding="utf-8")
+    assert load_runtime_settings(p) == {}
+    problem = runtime_settings_problem(p)
+    assert problem.startswith(f"The saved runtime settings file {p} cannot be read (")
+    assert says in problem and "the defaults are used" in problem
+    save_runtime_settings({"allocator_preset": "native"}, p)
+    assert runtime_settings_problem(p) is None
+
+
 # --------------------------------------------------------------------------- resolve
 def test_resolve_known_preset():
     assert resolve_allocator("expandable") == ("expandable", ALLOCATOR_PRESETS["expandable"])

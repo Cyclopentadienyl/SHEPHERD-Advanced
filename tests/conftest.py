@@ -7,10 +7,12 @@ import sys
 
 import pytest
 
+from src.config.deployment_settings import ENV_SETTINGS_FILE, FILE_NAME
 from src.config.server_settings import (
     ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND,
     ENV_BIND_HOST,
     ENV_DEPLOYMENT_MODE,
+    ENV_LOCAL_ENTRY,
     ENV_REGISTRY,
 )
 from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
@@ -25,7 +27,29 @@ def _suite_gpu_lock(tmp_path_factory):
     (`_no_deployment_gpu_lock`)."""
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path_factory.mktemp("suite-workspaces")))
+        patch.setenv(ENV_SETTINGS_FILE,
+                     str(tmp_path_factory.mktemp("suite-settings") / FILE_NAME))
         yield
+
+
+@pytest.fixture(autouse=True)
+def _no_saved_deployment_settings(monkeypatch, tmp_path_factory):
+    """Every test starts with saved deployment settings of its own, never the
+    account's: `SHEPHERD_SETTINGS_FILE` names a file in an empty directory of
+    the test's own, which does not exist, so nothing is saved (UI-06).
+
+    Since 2026-11-16 a data location the environment does not set is read
+    from the saved settings file, which is otherwise the account's user
+    configuration file (`~/.config/shepherd-advanced/deployment.json` on
+    Linux): a suite run by the account that runs the service would read the
+    deployment's workspaces folder and registry wherever a test unsets the
+    variable, and a test that saves would write the operator's file. A test
+    about saved settings writes this file, or names another with
+    `monkeypatch` or `environ=`, and its child processes inherit only what it
+    set. The session's fixtures get one of their own too (`_suite_gpu_lock`).
+    """
+    monkeypatch.setenv(ENV_SETTINGS_FILE,
+                       str(tmp_path_factory.mktemp("settings") / FILE_NAME))
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +93,8 @@ def _no_deployment_access_settings(monkeypatch):
     """Every test starts read-only, as an unconfigured deployment does.
 
     The shell the guide tells operators to prepare sets
-    `SHEPHERD_DEPLOYMENT_MODE=M1`; a suite run from it would otherwise pass
+    `SHEPHERD_DEPLOYMENT_MODE=M1`, and a terminal of the local start holds the
+    launcher's `SHEPHERD_LOCAL_ENTRY=1`; a suite run from either would otherwise pass
     D8's check on every loopback request, and a test meant to see a refusal
     would see the control run. A test that needs mode M1, or the network-bind
     acceptance, sets it with `monkeypatch` (tests/fixtures/operator_access.py).
@@ -80,6 +105,7 @@ def _no_deployment_access_settings(monkeypatch):
     which a plain ``delenv`` of an unset variable would not undo.
     """
     monkeypatch.delenv(ENV_DEPLOYMENT_MODE, raising=False)
+    monkeypatch.delenv(ENV_LOCAL_ENTRY, raising=False)
     monkeypatch.delenv(ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND, raising=False)
     monkeypatch.setenv(ENV_BIND_HOST, "")
     monkeypatch.delenv(ENV_BIND_HOST)

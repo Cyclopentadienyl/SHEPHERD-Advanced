@@ -245,8 +245,11 @@ ALLOWED = {
                                    "report it published and that report's digest; kept and "
                                    "registered are read from the store and the ledger by "
                                    "`registration.report_state` (M5-1)")),
-    ("src/config/runtime_presets.py", "load_runtime_settings", "json.load"):
+    ("src/config/runtime_presets.py", "_read_runtime_settings", "json.load"):
         (1, _NOT_INPUT.format(what="a user's persisted runtime UI settings")),
+    ("src/config/deployment_settings.py", "parse", "json.loads"):
+        (1, _NOT_INPUT.format(what="the saved deployment settings: where the data locations "
+                                   "are (UI-06), each checked by its directory rule when read")),
     ("src/utils/gpu_lock.py", "read_holder", "json.loads"):
         (1, _NOT_INPUT.format(what="the GPU lock holder's own description, for the "
                                    "\"held by\" message (M5); the lock is the flock")),

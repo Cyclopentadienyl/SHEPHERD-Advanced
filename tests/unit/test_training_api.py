@@ -655,7 +655,7 @@ class TestTrainingRoutesAreGated:
 
     @pytest.mark.parametrize("method, path, body", GATED)
     @pytest.mark.parametrize("mode, base_url, headers, says", [
-        (None, "http://127.0.0.1", {}, "SHEPHERD_DEPLOYMENT_MODE is not set"),
+        (None, "http://127.0.0.1", {}, "this deployment is read-only"),
         ("M1", "http://192.0.2.10", {}, "did not arrive on a loopback address"),
         ("M1", "http://127.0.0.1", {"X-Forwarded-For": "203.0.113.9"}, "forwarding header"),
         ("M1", "http://127.0.0.1", {"Origin": "https://evil.example"}, "origin"),

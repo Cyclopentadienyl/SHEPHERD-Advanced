@@ -1281,7 +1281,9 @@ def test_an_evidence_entry_that_is_not_a_directory_still_disables_start(site, mo
                                   protocol="disease")
     assert allowed is False
     assert why.startswith("Disabled: the evidence directories setting is refused: "
-                          "SHEPHERD_TRAINING_EVIDENCE_DIRS is refused: evidence directory 1 ")
+                          "The training evidence folders set at start "
+                          "(Ref: SHEPHERD_TRAINING_EVIDENCE_DIRS) are refused: evidence "
+                          "directory 1 ")
     assert "does not exist or is not a directory" in why
     manager = FakeManager()
     result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,

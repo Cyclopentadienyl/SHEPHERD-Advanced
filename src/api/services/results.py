@@ -182,7 +182,8 @@ class SourceContext:
 def deployment_sources(environ: Optional[Mapping[str, str]] = None
                        ) -> Tuple[SourceContext, ...]:
     """The server's own source: its workspaces root and its registry, as its
-    settings name them (`os.environ` when `environ` is None)."""
+    settings name them (`os.environ` when `environ` is None, and with it the
+    saved settings file it locates, `server_settings`)."""
     return (SourceContext("deployment", os.environ if environ is None else environ),)
 
 
@@ -477,12 +478,19 @@ def read_all(sources: Iterable[SourceContext]) -> _Read:
     """Read every source: each registry's stores, then each workspaces root's
     checkpoints and ledgers. Runs that hold different bytes for one run are
     marked, never chosen between."""
-    from src.config.server_settings import ENV_REGISTRY, ENV_WORKSPACES_ROOT
+    from src.config.server_settings import (
+        ENV_REGISTRY,
+        ENV_WORKSPACES_ROOT,
+        cohort_registry,
+        workspaces_root,
+    )
 
     read = _Read()
     sources = tuple(sources)
     for source in sources:
-        if not any(source.environ.get(name) for name in (ENV_WORKSPACES_ROOT, ENV_REGISTRY)):
+        # By the settings' own reading (UI-06): the deployment's source may
+        # name them in its saved settings rather than its environment.
+        if workspaces_root(source.environ).unset and cohort_registry(source.environ).unset:
             _unreadable(read, source.name, "source",
                         f"it names no workspaces root ({ENV_WORKSPACES_ROOT}) and no registry "
                         f"({ENV_REGISTRY}), so nothing was read from it")

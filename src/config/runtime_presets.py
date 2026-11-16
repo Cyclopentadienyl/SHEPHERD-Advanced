@@ -19,6 +19,8 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
+from src.config.atomic_json import write_json_atomic
+
 # Repo root: src/config/runtime_presets.py -> parents[2] == repo root.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_SETTINGS_FILE = REPO_ROOT / ".shepherd_runtime_settings.json"
@@ -56,25 +58,50 @@ def load_runtime_settings(path: Path | None = None) -> dict:
     """Load persisted runtime settings.
 
     Returns an empty dict if the file is absent, unreadable, or malformed —
-    a user-specific UI settings file must never block startup.
+    a user-specific UI settings file must never block startup. Whether it was
+    unreadable is `runtime_settings_problem`'s, for Settings to say.
     """
+    return _read_runtime_settings(path or RUNTIME_SETTINGS_FILE)[0]
+
+
+def _read_runtime_settings(p: Path) -> tuple[dict, str | None]:
+    """The settings `p` holds (empty when absent or unreadable) and why it
+    could not be read (None when it was read or is absent)."""
+    if not p.exists():
+        return {}, None
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return {}, f"it is not valid JSON ({exc})"
+    except (OSError, ValueError) as exc:
+        return {}, f"{type(exc).__name__}: {exc}"
+    # Valid JSON of the wrong shape (list/str/number) must not reach
+    # downstream .get(...) calls — only a JSON object is usable.
+    if not isinstance(data, dict):
+        return {}, "it does not hold a JSON object"
+    return data, None
+
+
+def runtime_settings_problem(path: Path | None = None) -> str | None:
+    """Why the saved runtime settings file cannot be read, naming it, or None
+    (read, or absent). The read stays tolerant (`load_runtime_settings` gives
+    the defaults and never blocks a start); this is what Settings says about
+    it (UI-06, 2026-11-16)."""
     p = path or RUNTIME_SETTINGS_FILE
-    if p.exists():
-        try:
-            with open(p, encoding="utf-8") as f:
-                data = json.load(f)
-            # Valid JSON of the wrong shape (list/str/number) must not reach
-            # downstream .get(...) calls — only a JSON object is usable.
-            return data if isinstance(data, dict) else {}
-        except (json.JSONDecodeError, OSError, ValueError):
-            return {}
-    return {}
+    problem = _read_runtime_settings(p)[1]
+    if problem is None:
+        return None
+    return (f"The saved runtime settings file {p} cannot be read ({problem}), so the defaults "
+            "are used; saving the runtime settings again replaces it.")
 
 
 def save_runtime_settings(data: dict, path: Path | None = None) -> None:
-    p = path or RUNTIME_SETTINGS_FILE
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    """Write the runtime settings whole, by the one atomic writer of the
+    settings files (`src.config.atomic_json.write_json_atomic`: a staged file,
+    fsync, ``os.replace``; the file 0600), so a reader never sees half of it
+    (UI-06, 2026-11-16; before, it was written in place)."""
+    write_json_atomic(path or RUNTIME_SETTINGS_FILE, data)
 
 
 def resolve_allocator(preset: str | None) -> tuple[str, str]:
@@ -152,6 +179,7 @@ __all__ = [
     "ALLOCATOR_PRESETS",
     "DEFAULT_ALLOCATOR",
     "load_runtime_settings",
+    "runtime_settings_problem",
     "save_runtime_settings",
     "resolve_allocator",
     "ALLOC_SOURCE_ENV",

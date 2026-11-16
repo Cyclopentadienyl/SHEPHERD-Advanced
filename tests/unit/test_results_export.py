@@ -417,6 +417,28 @@ def test_copies_of_one_run_are_one_row_with_each_place(world):
     assert [ledger["source"] for ledger in rows[0]["ledgers"]] == ["a", "c"]
 
 
+def test_the_deployment_source_reads_its_saved_settings_too(world, monkeypatch):
+    """UI-06: the server's own source is read with its settings as they
+    resolve, so a workspaces root and a registry saved in Settings are read,
+    and the source is not said to name neither."""
+    from src.api.services import results
+    from src.config.atomic_json import write_json_atomic
+    from src.config.deployment_settings import ENV_SETTINGS_FILE, FORMAT
+
+    settings = world["tmp"] / "settings" / "deployment.json"
+    write_json_atomic(settings, {"format": FORMAT, "applied": {
+        "workspaces_root": str(world["root_a"]), "registry": str(world["registry"])}})
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(settings))
+    monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    monkeypatch.delenv("SHEPHERD_REGISTRY", raising=False)
+    read = results.read_all(results.deployment_sources())
+    assert not [row for row in read.unreadable if row.get("item") == "source"], read.unreadable
+    found = results.query(results.deployment_sources())
+    run = world["registered"].parent.name
+    rows = [row for row in found if row["run_id"] == run]
+    assert rows and rows[0]["stores"] == [{"source": "deployment", "label": LABEL}]
+
+
 def test_a_run_whose_report_bytes_differ_between_two_places_is_kept_twice_none_chosen(world):
     import shutil
 

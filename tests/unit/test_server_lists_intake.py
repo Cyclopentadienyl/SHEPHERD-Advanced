@@ -61,7 +61,8 @@ class TestIntakeListing:
 
     def test_no_intake_directory_no_list_and_why(self):
         listing = sl.list_intake_files(environ={})
-        assert listing.items == () and "SHEPHERD_INTAKE_DIR is not set" in listing.problem
+        assert listing.items == () and "No import folder is set" in listing.problem
+        assert listing.problem.endswith("Ref: SHEPHERD_INTAKE_DIR")
 
     def test_a_refused_setting_lists_nothing(self, tmp_path):
         listing = sl.list_intake_files(environ={ss.ENV_INTAKE_DIR: "relative/intake"})
@@ -119,7 +120,7 @@ class TestResolveIntakeFile:
             sl.resolve_intake_file("folder.json", environ=_intake(intake))
 
     def test_no_intake_directory_refuses(self):
-        with pytest.raises(sl.ServerListRefused, match="SHEPHERD_INTAKE_DIR is not set"):
+        with pytest.raises(sl.ServerListRefused, match="No import folder is set"):
             sl.resolve_intake_file("b-cases.json", environ={})
 
 
@@ -164,7 +165,7 @@ class TestOneVersion:
             sl.resolve_cohort_version(label, environ=environ)
 
     def test_no_registry_refuses(self):
-        with pytest.raises(sl.ServerListRefused, match="SHEPHERD_REGISTRY is not set"):
+        with pytest.raises(sl.ServerListRefused, match="No results registry is set"):
             sl.resolve_cohort_version("demo-test-1", environ={})
 
     def test_one_versions_item_carries_its_runs_and_the_readers_states(self, store):

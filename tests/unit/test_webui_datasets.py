@@ -338,8 +338,8 @@ def test_nothing_listed_says_why(monkeypatch):
     monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
     monkeypatch.setattr(dsp, "read_status", lambda: (None, "x"))
     data = dsp.read_datasets()
-    assert data["rows"] == [] and "SHEPHERD_WORKSPACES_ROOT is not set" in data["problem"]
-    assert "SHEPHERD_WORKSPACES_ROOT is not set" in dsp.table_html(data, None, None)
+    assert data["rows"] == [] and "No workspaces folder is set" in data["problem"]
+    assert "No workspaces folder is set" in dsp.table_html(data, None, None)
 
 
 def test_the_model_lists_workspace_select_reads_the_same_list_the_same_way(root, monkeypatch):
@@ -607,7 +607,7 @@ def test_the_registry_is_read_once_per_refresh_and_its_absence_is_said(
     _serving(monkeypatch, None)
     data = dsp.read_datasets()
     html = dsp.details_html(data, "demo")
-    assert "No registry is listed: SHEPHERD_REGISTRY is not set" in html
+    assert "No registry is listed: No results registry is set" in html
     assert "<table" not in html.split("Data versions", 1)[1]
 
 

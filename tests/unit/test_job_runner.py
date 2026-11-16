@@ -312,7 +312,7 @@ def test_a_lock_not_configured_refuses_every_start_before_anything(tmp_path, pop
                    manager.start_test(inputs)):
         assert result["success"] is False
         assert result["error"].startswith("The GPU lock cannot be used: "
-                                          "SHEPHERD_WORKSPACES_ROOT is not set, so the GPU lock "
+                                          "No workspaces folder is set, so the GPU lock "
                                           "is not configured")
         assert "§4.11" in result["error"] and result["error"].endswith("Nothing was started.")
     assert calls.calls == [] and manager.run_dir is None and not (tmp_path / "run").exists()
@@ -668,7 +668,9 @@ def test_the_evidence_choice_is_made_once_by_the_version_s_kind(monkeypatch, tmp
         assert supplied == tm.EvidenceChoice(dirs=(directory,))
     else:
         assert supplied.dirs == () and supplied.not_applicable is None
-        assert supplied.problem.startswith("SHEPHERD_TRAINING_EVIDENCE_DIRS is refused")
+        assert supplied.problem.startswith(
+            "The training evidence folders set at start (Ref: SHEPHERD_TRAINING_EVIDENCE_DIRS) "
+            "are refused")
     read = []
     monkeypatch.setattr(server_settings, "training_evidence_dirs",
                         lambda *a, **k: read.append(1))

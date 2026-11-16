@@ -859,7 +859,7 @@ def test_a_patients_like_me_model_lists_the_reference_cohorts_on_a_queued_refres
 def test_no_registry_is_said_without_a_path(root, tmp_path, monkeypatch):
     monkeypatch.delenv("SHEPHERD_REGISTRY", raising=False)
     cohorts = card.reference_cohorts("demo", [], {})
-    assert cohorts["versions"] == [] and "SHEPHERD_REGISTRY is not set" in cohorts["problem"]
+    assert cohorts["versions"] == [] and "No results registry is set" in cohorts["problem"]
     registry = tmp_path / "reg"
     registry.mkdir()
     monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))

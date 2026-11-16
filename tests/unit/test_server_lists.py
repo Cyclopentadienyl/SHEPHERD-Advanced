@@ -67,7 +67,7 @@ class TestWorkspaces:
     def test_no_root_no_list_and_why(self):
         listing = sl.list_workspaces(environ={})
         assert listing.items == () and not listing.available
-        assert "SHEPHERD_WORKSPACES_ROOT is not set" in listing.problem
+        assert "No workspaces folder is set" in listing.problem
 
     def test_a_refused_root_lists_nothing(self, tmp_path):
         listing = sl.list_workspaces(environ=_roots(tmp_path / "missing"))
@@ -280,7 +280,7 @@ class TestResolveWorkspace:
             sl.resolve_workspace(name, environ=_roots(root))
 
     def test_no_root_refuses(self):
-        with pytest.raises(sl.ServerListRefused, match="SHEPHERD_WORKSPACES_ROOT is not set"):
+        with pytest.raises(sl.ServerListRefused, match="No workspaces folder is set"):
             sl.resolve_workspace("demo", environ={})
 
     def test_a_long_name_is_not_echoed_whole(self, tmp_path):
@@ -312,7 +312,7 @@ class TestResolveWorkspaces:
         assert "out" not in resolved and ".hidden" not in resolved
 
     def test_no_root_refuses(self):
-        with pytest.raises(sl.ServerListRefused, match="SHEPHERD_WORKSPACES_ROOT is not set"):
+        with pytest.raises(sl.ServerListRefused, match="No workspaces folder is set"):
             sl.resolve_workspaces(environ={})
 
 
@@ -1164,7 +1164,7 @@ class TestCohortVersions:
 
     def test_no_registry_no_list_and_why(self):
         listing = sl.list_cohort_versions(environ={})
-        assert listing.items == () and "SHEPHERD_REGISTRY is not set" in listing.problem
+        assert listing.items == () and "No results registry is set" in listing.problem
 
     def test_a_registry_inside_the_repository_is_refused(self):
         listing = sl.list_cohort_versions(
@@ -1471,7 +1471,7 @@ class TestRoutes:
         response = client.get("/api/v1/workspaces")
         assert response.status_code == 200
         assert response.json()["workspaces"] == []
-        assert "SHEPHERD_WORKSPACES_ROOT is not set" in response.json()["problem"]
+        assert "No workspaces folder is set" in response.json()["problem"]
 
     def test_workspaces(self, client, checkpoint_root, monkeypatch):
         root, ws, _ = checkpoint_root
@@ -1483,8 +1483,8 @@ class TestRoutes:
             ws / "split_manifest.json")
 
     @pytest.mark.parametrize("mode, base_url, says", [
-        (None, "http://127.0.0.1", "SHEPHERD_DEPLOYMENT_MODE is not set"),
-        ("M3", "http://127.0.0.1", "not to M1"),
+        (None, "http://127.0.0.1", "started from its desktop entry or launch_shepherd.sh"),
+        ("M3", "http://127.0.0.1", "is not M1 (the value is compared exactly)"),
         ("M1", "http://192.0.2.10", "did not arrive on a loopback address"),
         ("M1", "http://testserver", "did not arrive on a loopback address"),
     ], ids=["mode-unset", "mode-m3", "lan-address", "not-an-address"])

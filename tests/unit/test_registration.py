@@ -2115,7 +2115,8 @@ def test_a_copy_of_the_whole_registry_is_refused_before_anything_in_it_is_read(
 
     said = str(refused.value)
     assert f"{in_copy} is not registered: the registry {copy} is not the deployment's" in said
-    assert (f"SHEPHERD_REGISTRY ({tmp_path / 'registry'}) resolves to "
+    assert (f"the results registry set at start (Ref: SHEPHERD_REGISTRY) is "
+            f"{tmp_path / 'registry'}, which resolves to "
             f"{(tmp_path / 'registry').resolve()}") in said
     assert "Nothing was written" in said and "is a copy" not in said
     assert resolved == [], "something in the copy was read"
@@ -2138,10 +2139,10 @@ def test_a_runs_own_report_in_another_registry_is_not_called_lost(tmp_path, chec
 
 
 @pytest.mark.parametrize("setting, said", [
-    (None, "SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot "
+    (None, "no results registry is set here, so which registry is the deployment's cannot "
            "be told"),
-    ("relative/registry", "SHEPHERD_REGISTRY is refused: the registry 'relative/registry' is "
-                          "not an absolute path"),
+    ("relative/registry", "the results registry set at start (Ref: SHEPHERD_REGISTRY) is "
+                          "refused: the registry 'relative/registry' is not an absolute path"),
 ], ids=["unset", "refused"])
 def test_with_no_usable_setting_every_registration_is_refused_saying_so(
     tmp_path, checkpoints, monkeypatch, setting, said

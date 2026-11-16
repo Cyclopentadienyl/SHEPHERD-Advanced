@@ -17,13 +17,18 @@ Contents:
     - model_types.py       : torch-free model-type constants
                              (SUPPORTED_CONV_TYPES, ENCODER_KINDS, the model
                              record's keys).
-    - server_settings.py   : the service's M5 settings, read from the environment
-                             at each use (deployment mode, workspaces root,
-                             cohort registry, intake directory, R10 evidence
+    - server_settings.py   : the service's M5 settings, read at each use from
+                             the environment, else the saved settings file
+                             (deployment mode, workspaces root, cohort
+                             registry, intake directory, R10 evidence
                              directories), the one rule for a
                              directory an operator names, and the network-bind
                              rule (SPEC_4 §3.1) the launcher and
                              `src.api.main:main()` apply.
+    - deployment_settings.py: the saved settings file of the data locations
+                             (UI-06): where it is, its format, its reading.
+    - atomic_json.py       : the one atomic writer of the small JSON settings
+                             files.
     - config_validator.py,
       schema_loader.py     : RESERVED homes for committed-config validation
                              (configs/deployment.yaml + configs/schemas/*.json).

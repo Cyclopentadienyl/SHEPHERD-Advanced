@@ -218,7 +218,7 @@ def test_train_model_is_refused_before_anything_is_written(monkeypatch, tmp_path
         if case == "not configured":
             monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
             assert setup_demo.main() == 1
-            assert "setup_demo: refused: SHEPHERD_WORKSPACES_ROOT is not set, so the GPU " \
+            assert "setup_demo: refused: No workspaces folder is set, so the GPU " \
                 "lock is not configured" in caplog.text
         else:
             lock = tmp_path / LOCK_FILE_NAME

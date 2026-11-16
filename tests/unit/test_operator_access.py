@@ -84,16 +84,44 @@ def test_the_client_address_is_never_read():
 
 # --------------------------------------------------------------------------- refused
 @pytest.mark.parametrize("environ, says", [
-    ({}, "SHEPHERD_DEPLOYMENT_MODE is not set"),
-    ({"SHEPHERD_DEPLOYMENT_MODE": ""}, "SHEPHERD_DEPLOYMENT_MODE is not set"),
-    ({"SHEPHERD_DEPLOYMENT_MODE": "m1"}, "not to M1"),
-    ({"SHEPHERD_DEPLOYMENT_MODE": " M1"}, "not to M1"),
-    ({"SHEPHERD_DEPLOYMENT_MODE": "M3"}, "not to M1"),
+    ({}, "started from its desktop entry or launch_shepherd.sh"),
+    ({"SHEPHERD_DEPLOYMENT_MODE": ""}, "started from its desktop entry or launch_shepherd.sh"),
+    ({"SHEPHERD_DEPLOYMENT_MODE": "m1"}, "is not M1 (the value is compared exactly)"),
+    ({"SHEPHERD_DEPLOYMENT_MODE": " M1"}, "is not M1 (the value is compared exactly)"),
+    ({"SHEPHERD_DEPLOYMENT_MODE": "M3"}, "is not M1 (the value is compared exactly)"),
 ])
 def test_without_mode_m1_every_request_is_refused(environ, says):
     decision = check(http_scope(), environ)
     assert (decision.allowed, decision.condition) == (False, "deployment_mode")
     assert says in decision.reason and "read-only" in decision.reason
+
+
+#: The environment the launcher's local start gives the service (UI-06, D06):
+#: its mark and the loopback bind it passes to startup; no mode set.
+LOCAL_START = {"SHEPHERD_LOCAL_ENTRY": "1", "SHEPHERD_BIND_HOST": "127.0.0.1"}
+
+
+def test_the_local_start_enables_controls_only_through_d8_s_own_check():
+    """The local default mode is one of D8's conditions, like an explicit M1:
+    a loopback request is allowed, and every other condition still refuses
+    (no setup route skips them)."""
+    assert check(http_scope(), LOCAL_START).allowed
+    assert check(http_scope(("192.0.2.10", 8264)), LOCAL_START).condition == "not_loopback"
+    assert check(http_scope(headers=[("X-Forwarded-For", "203.0.113.9")]),
+                 LOCAL_START).condition == "forwarding_header"
+    assert not check(http_scope(host="evil.example:8264"), LOCAL_START).allowed
+
+
+@pytest.mark.parametrize("environ", [
+    {**LOCAL_START, "SHEPHERD_DEPLOYMENT_MODE": "read-only"},
+    {**LOCAL_START, "SHEPHERD_DEPLOYMENT_MODE": "m1"},
+    {**LOCAL_START, "SHEPHERD_BIND_HOST": "0.0.0.0"},
+    {"SHEPHERD_LOCAL_ENTRY": "1"},
+], ids=["explicit-read-only", "explicit-other", "network-bind", "no-bind-host"])
+def test_the_local_start_never_upgrades_an_explicit_mode_or_a_network_bind(environ):
+    decision = check(http_scope(), environ)
+    assert (decision.allowed, decision.condition) == (False, "deployment_mode")
+    assert "read-only" in decision.reason
 
 
 def test_the_mode_is_read_at_each_check(monkeypatch):
