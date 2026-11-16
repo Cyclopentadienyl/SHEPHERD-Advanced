@@ -292,6 +292,11 @@ def test_every_refusal_says_nothing_was_done_and_names_a_condition():
     assert "ssh -L" in ref and "ssh -L" not in text
     assert decision.condition in CONDITIONS
     assert decision.as_status()["enabled"] is False
+    # Both deployment guides quote this refusal as it reads (T06-D1 review:
+    # they kept the words before R-9's residual, "Nothing was done." last).
+    repo = Path(__file__).resolve().parents[2]
+    for guide in ("deployment-guide.en.md", "deployment-guide.md"):
+        assert f"\n{decision.refusal}\n" in (repo / guide).read_text(encoding="utf-8"), guide
 
 
 def every_refusal() -> dict:

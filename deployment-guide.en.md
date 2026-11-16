@@ -2921,13 +2921,14 @@ reload still running after 180 s is no longer shown as failed: the page says "Th
 waiting after 180 s; the server may still finish the reload." with Read again, and "The reload
 finished after the page stopped waiting." if its answer arrives later.
 
-**A refusal** is `403` from the API, with an `error` that names the condition that failed in
-words to act on and ends "Nothing was done."; it never repeats a header's value. The dashboard
-shows the same sentence where the control shows its result (the run list, which cannot hold a
-sentence, is emptied and the sentence appears as a notice). For example:
+**A refusal** is `403` from the API, with an `error` that says in plain words which condition
+failed and what to do, then "Nothing was done.", then one trailing "Ref:" with the codes and the
+exact check; it never repeats a header's value. The dashboard shows the same text where the
+control shows its result (the run list, which cannot hold a sentence, is emptied and the text
+appears as a notice). For example:
 
 ```
-Refused: This request did not arrive on a loopback address of this machine. The operator controls work only on the machine itself, or through an SSH forward to localhost (for example ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui). Nothing was done.
+Refused: This request did not arrive on this machine. Open the dashboard on the machine itself, or through an SSH forward to localhost. Nothing was done. Ref: ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui
 ```
 
 **Is it enabled for this browser?** `GET /api/v1/system/operator-access` answers for the request

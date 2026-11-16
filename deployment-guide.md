@@ -3001,12 +3001,12 @@ Research › Models）在行程內執行 API 的 reload 函式，與 API 的 rel
 stopped waiting after 180 s; the server may still finish the reload." 並提供 Read again；若回應
 之後才抵達，則顯示 "The reload finished after the page stopped waiting."。
 
-**拒絕時**，API 回應 `403`，其 `error` 以可據以行動的文字說明哪個條件未通過，並以 "Nothing was
-done." 結尾；絕不重複任何標頭的值。儀表板在控制項顯示結果的地方顯示同一句話（run 清單無法容納
-句子，因此會被清空，這句話以通知的形式出現）。例如：
+**拒絕時**，API 回應 `403`，其 `error` 先以白話說明哪個條件未通過、該怎麼做，接著是 "Nothing
+was done."，最後以一行 "Ref:" 列出代碼與確切的檢查；絕不重複任何標頭的值。儀表板在控制項顯示
+結果的地方顯示同一段文字（run 清單無法容納句子，因此會被清空，這段文字以通知的形式出現）。例如：
 
 ```
-Refused: This request did not arrive on a loopback address of this machine. The operator controls work only on the machine itself, or through an SSH forward to localhost (for example ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui). Nothing was done.
+Refused: This request did not arrive on this machine. Open the dashboard on the machine itself, or through an SSH forward to localhost. Nothing was done. Ref: ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui
 ```
 
 **這個瀏覽器是否啟用了？** `GET /api/v1/system/operator-access` 針對發出詢問的請求回答：
