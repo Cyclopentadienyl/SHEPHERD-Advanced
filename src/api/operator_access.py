@@ -35,6 +35,8 @@ Module: src/api/operator_access.py
 """
 from __future__ import annotations
 
+import os
+from pathlib import PurePath
 from typing import Any, List, Optional, Tuple
 
 from fastapi import Depends, HTTPException, Request, status
@@ -68,30 +70,50 @@ OPERATOR_ONLY: List[Any] = [Depends(require_operator_access)]
 _ROUTES = (("/api/v1/", "/api/v1/"),)
 
 
+def _a_server_directory(text: Any) -> bool:
+    """Whether a data location's text names a server directory to hide: an
+    absolute path, a filesystem root excepted. A relative value (refused:
+    ``workspaces``, ``.``) names none; its text is a word of the answer, the
+    refusal's own quote of it included, and as a hidden directory it took
+    every such word, an object's key too ("workspaces", "data", each ". ").
+    A root holds every absolute path, which the pattern replaces anyway; as
+    a hidden directory it took every ``/`` (``train/val``)."""
+    if not isinstance(text, str) or not text.strip():
+        return False
+    path = PurePath(text)
+    return path.is_absolute() and path != PurePath(path.anchor)
+
+
 def _data_locations() -> List[Tuple[str, Optional[str]]]:
     """The service's data locations as `redact_value`'s known, hidden
     directories (name None): each as it is set (the environment's text or the
-    saved file's) and as it was checked, so a reason that names one whose own
-    name holds a space ("… outside the workspaces root /srv/Jane (MRN 1) ws,
-    so …") is replaced whole, which the pattern alone cannot see. Read now,
-    through the one read point (`server_settings.configured`); none when it
-    cannot be read."""
+    saved file's; the evidence folders' environment text entry by entry, as
+    its reader splits it) and as it was checked, so a reason that names one
+    whose own name holds a space ("… outside the workspaces root /srv/Jane
+    (MRN 1) ws, so …") is replaced whole, which the pattern alone cannot see.
+    Only the texts that are server directories (`_a_server_directory`). Read
+    now, through the one read point (`server_settings.configured`); none when
+    it cannot be read."""
     from src.config import server_settings
 
-    texts: List[str] = []
+    texts: List[Any] = []
     try:
         for variable in (server_settings.ENV_WORKSPACES_ROOT, server_settings.ENV_REGISTRY,
                          server_settings.ENV_INTAKE_DIR,
                          server_settings.ENV_TRAINING_EVIDENCE_DIRS):
             raw = server_settings.configured(variable).raw
-            texts += [raw] if isinstance(raw, str) else list(raw or ())
+            if isinstance(raw, str):
+                many = variable == server_settings.ENV_TRAINING_EVIDENCE_DIRS
+                texts += raw.split(os.pathsep) if many else [raw]
+            else:
+                texts += list(raw or ())
         for setting in server_settings.all_settings()[1:]:
             value = setting.value
             texts += [str(v) for v in (value if isinstance(value, (tuple, list)) else (value,))
                       if v is not None]
     except Exception:  # noqa: BLE001 - the pattern still replaces every path it sees
         pass
-    return [(text, None) for text in texts if isinstance(text, str) and text.strip()]
+    return [(text, None) for text in texts if _a_server_directory(text)]
 
 
 def answer_for(request: Request, answer: Any) -> Any:

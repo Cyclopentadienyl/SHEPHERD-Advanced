@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 
 from pathlib import Path
 
@@ -823,6 +824,69 @@ def test_an_open_answer_keeps_a_route_its_reason_names_and_no_part_of_a_path():
         "problem": "[Errno 13] Permission denied: 'a server path'",
         "a server path": 1,
     }
+
+
+@pytest.mark.parametrize("value", ["workspaces", ".", "data"])
+def test_a_refused_relative_location_leaves_an_open_answers_keys_and_words(
+        monkeypatch, value):
+    """T06-D1 review: a data location set to a relative value is refused, and
+    its refusal is what a remote reader needs. `_data_locations` took the raw
+    text as a hidden server directory and replaced it everywhere, an object's
+    key too: ``GET /workspaces`` answered ``{"a server path": [], "problem":
+    "The a server path folder … the a server path root 'a server path' is not
+    an absolute path …"}``, and with ``.`` every ". " read "a server path". A
+    relative value names no server directory: a request D8 does not allow
+    gets the operator's answer, keys and words whole."""
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", value)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", value)
+    operator_mode(monkeypatch)
+    operator = _app_client()
+    expected = {path: operator.get(path).json()
+                for path in ("/api/v1/workspaces", "/api/v1/cohorts", "/api/v1/training/status")}
+    assert expected["/api/v1/workspaces"]["workspaces"] == []
+    assert f"the workspaces root '{value}' is not an absolute path. It holds the workspaces," \
+        in expected["/api/v1/workspaces"]["problem"]
+    assert f"the registry '{value}' is not an absolute path. It holds patient-level data," \
+        in expected["/api/v1/cohorts"]["problem"]
+    for read_only in (_app_client(headers={"X-Forwarded-For": "192.0.2.7"}),
+                      _app_client("http://192.0.2.10")):
+        for path in ("/api/v1/workspaces", "/api/v1/cohorts"):
+            answer = read_only.get(path)
+            assert answer.json() == expected[path], answer.text
+            assert "a server path" not in answer.text
+        lock = read_only.get("/api/v1/training/status").json()["gpu"]["lock"]
+        assert lock == expected["/api/v1/training/status"]["gpu"]["lock"]
+
+
+def test_an_open_answer_hides_each_evidence_folder_and_never_a_root_s_slashes(
+        monkeypatch, tmp_path):
+    """The same review: the evidence folders' environment text was one hidden
+    "directory", ``/a/Jane Doe ev:/b``, which no answer holds, so a refusal
+    naming ``/a/Jane Doe ev`` kept "Doe ev" (the pattern ends a path at its
+    last part's space); each entry is one now, as its reader splits it. A
+    location set to ``/`` (absolute, and accepted) took every ``/`` of an
+    answer: ``scripts/build_knowledge_graph.py`` read "scriptsa server path
+    …". A filesystem root is no hidden directory; the pattern still replaces
+    every absolute path."""
+    from starlette.requests import Request
+
+    from src.api.operator_access import answer_for
+    from src.config import server_settings
+
+    missing = tmp_path / "Jane Doe ev"
+    monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS",
+                       f"{missing}{os.pathsep}{tmp_path / 'other'}")
+    monkeypatch.setenv("SHEPHERD_REGISTRY", "/")
+    read_only = Request(http_scope(headers=[("X-Forwarded-For", "192.0.2.7")]))
+    problem = server_settings.training_evidence_dirs().problem
+    assert f"evidence directory 1 {missing} does not exist" in problem
+    words = {"reason": "Rebuild it with scripts/build_knowledge_graph.py, then POST "
+                       "/api/v1/pipeline/reload (train/val).",
+             "train/val": "/srv/x y/z.json"}
+    answer = answer_for(read_only, {"problem": problem, **words})
+    assert answer["problem"] == problem.replace(str(missing), "a server path")
+    assert answer["reason"] == words["reason"]
+    assert answer["train/val"] == "a server path"
 
 
 # --------------------------------------------------------------------------- the dashboard
