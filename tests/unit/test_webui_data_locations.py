@@ -122,8 +122,9 @@ def test_a_first_start_says_nothing_is_set_and_offers_the_suggested_folders(dl, 
     assert dl.EVIDENCE_NONE in evidence["state"]["value"]
     assert evidence["create"]["visible"] is False
     # The variable is named only under Advanced, never in the row's facts.
-    facts, advanced = rows["registry"]["state"]["value"].split("Advanced: source")
-    assert "SHEPHERD_REGISTRY" not in facts and "SHEPHERD_REGISTRY" in advanced
+    assert "SHEPHERD_REGISTRY" not in rows["registry"]["state"]["value"]
+    assert "Advanced: source" in rows["registry"]["adv"]["value"]
+    assert "SHEPHERD_REGISTRY" in rows["registry"]["adv"]["value"]
     # Nothing was created or saved by opening the page.
     assert not (os.path.exists(os.environ[ENV_SETTINGS_FILE])
                 or os.path.exists(os.path.join(os.environ["HOME"], "SHEPHERD-data")))

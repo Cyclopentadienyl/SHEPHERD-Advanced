@@ -122,7 +122,7 @@ REPAIR_THEN = ("Replace renames it beside itself and keeps it; then choose the f
                "again.")
 
 #: The order of the per-row outputs (`_panel`).
-ROW_PARTS = ("state", "key", "box", "check", "save", "create", "suggest", "result")
+ROW_PARTS = ("state", "key", "box", "check", "save", "create", "suggest", "result", "adv")
 PANEL_PARTS = ("notice", "repair", "apply", "status", "where")
 
 
@@ -176,8 +176,9 @@ def _words(text: Optional[str], shown: bool) -> str:
 
 def state_html(item: FieldView, view: DeploymentView, *, shown: bool) -> str:
     """A row's facts (the module docstring): In effect and its source, Saved
-    when it differs (pending, overridden), the problem or the note, and the
-    one-level "Advanced: source ›" naming the start-up setting."""
+    when it differs (pending, overridden), the problem or the note. The
+    start-up setting is named under its "Advanced: source ›" only
+    (`advanced_html`)."""
     rows: List[Tuple[str, str]] = []
     # The saved file cannot be read and nothing else sets this: the notice
     # says why, once; the row says only that its value is unknown.
@@ -210,13 +211,19 @@ def state_html(item: FieldView, view: DeploymentView, *, shown: bool) -> str:
                                 "</span>"))
     if item.note:
         rows.append(("Note", r.status_mark("warn", _words(item.note, shown), words_html=True)))
-    facts = r.summary_list(rows, classes="shep-dl-kv")
+    return r.summary_list(rows, classes="shep-dl-kv")
+
+
+def advanced_html(item: FieldView) -> str:
+    """A row's "Advanced: source ›", one level deep: the start-up setting
+    that would override it, and whether it is set. The variable is named
+    here only."""
     is_set = item.source == server_settings.SOURCE_ENVIRONMENT
     advanced = r.summary_list([
         ("Start-up setting", f"<code>{r.e(item.variable)}</code> "
                              + ("set" if is_set else "not set")),
     ], classes="shep-dl-kv")
-    return (f'{facts}<details class="shep-more shep-dl-adv"><summary>Advanced: source ›'
+    return (f'<details class="shep-more shep-dl-adv"><summary>Advanced: source ›'
             f"</summary>{advanced}</details>")
 
 
@@ -304,6 +311,7 @@ def _row_updates(item: FieldView, view: DeploymentView, access: Any,
         gr.update(value=(f'<code class="shep-dl-path"{_title(suggestion, shown)}>'
                          f"{r.e(_tilde(suggestion))}</code>") if creatable else ""),
         gr.update(value=result),
+        gr.update(value=advanced_html(item)),
     ]
 
 
@@ -558,6 +566,7 @@ def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
                                                       elem_id=f"dl_create_{key}")
                             row["suggest"] = plain_html("", elem_id=f"dl_suggest_{key}")
                         row["result"] = plain_html("", elem_id=f"dl_result_{key}")
+                        row["adv"] = plain_html("", elem_id=f"dl_adv_{key}")
                 rows[key] = row
             parts["status"] = plain_html("", elem_id="dl_status")
             parts["where"] = plain_html("", elem_id="dl_where")
@@ -603,9 +612,12 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-name p {{ margin: 0; }}
 {_PAGE} .shep-dl-main {{ flex: 1 1 420px !important; min-width: 0 !important; gap: 6px !important; }}
 {_PAGE} .shep-dl-set {{ gap: 8px !important; align-items: center; flex-wrap: nowrap; }}
-{_PAGE} .shep-dl-keycell {{ flex: 0 0 8em !important; min-width: 8em !important; }}
 {_PAGE} .shep-dl-key {{ font-size: 14px; color: var(--shep-text-2); }}
-{_PAGE} .shep-dl-set > .block, {_PAGE} .shep-dl-set > div:has(textarea, input) {{ flex: 1 1 auto !important; min-width: 0 !important; }}
+{_PAGE} .shep-dl-set > .block:not(.shep-dl-keycell) {{ flex: 1 1 auto !important; min-width: 0 !important; }}
+{_PAGE} .shep-dl-set > .block.shep-dl-keycell {{ flex: 0 0 8em !important; min-width: 8em !important; }}
+{_PAGE} .shep-dl-set input, {_PAGE} .shep-dl-set textarea {{ border: 1px solid var(--shep-grey-500) !important; border-radius: 6px !important; padding: 8px 12px !important; font-size: 15px; }}
+{_PAGE} .shep-dl-set input:focus-visible, {_PAGE} .shep-dl-set textarea:focus-visible {{ outline: 2px solid var(--shep-accent-600) !important; outline-offset: 1px; }}
+{_PAGE} .shep-dl-set input:disabled, {_PAGE} .shep-dl-set textarea:disabled {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
 {_PAGE} .shep-dl-set > button, {_PAGE} .shep-dl-create > button {{ flex: none !important; min-width: max-content !important; }}
 {_PAGE} .shep-dl-create {{ gap: 8px !important; align-items: center; padding-left: calc(8em + 8px); }}
 {_PAGE} .shep-dl-create:not(:has(button:not([hidden]))) {{ display: none !important; }}
