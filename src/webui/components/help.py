@@ -260,6 +260,20 @@ _HELP_JS = r"""
   // only its label), else its table row, else its key-value row (the key
   // cell and the value beside it), else the line the ⓘ sits in.
   function box(r) { return {left: r.left, top: r.top, right: r.right, bottom: r.bottom}; }
+  // An element drawn with "display: contents" (a field whose label's cells
+  // sit in a grid row, as Diagnosis' Options) has no box of its own: its
+  // rectangle is the one its drawn children take together.
+  function rectOf(el) {
+    if (getComputedStyle(el).display !== 'contents') { return box(el.getBoundingClientRect()); }
+    var u = null;
+    for (var c = el.firstElementChild; c; c = c.nextElementSibling) {
+      var r = rectOf(c);
+      if (r.right <= r.left && r.bottom <= r.top) { continue; }
+      u = u ? {left: Math.min(u.left, r.left), top: Math.min(u.top, r.top),
+               right: Math.max(u.right, r.right), bottom: Math.max(u.bottom, r.bottom)} : r;
+    }
+    return u || box(el.getBoundingClientRect());
+  }
   function fieldRect(btn) {
     var el = btn.classList.contains('shep-i-field') &&
       document.getElementById(btn.getAttribute('data-help') || '');
@@ -276,7 +290,7 @@ _HELP_JS = r"""
       }
       el = btn.closest('.shep-chip, li, p, dt, dd, h1, h2, h3, h4, label, div') || btn;
     }
-    return box(el.getBoundingClientRect());
+    return rectOf(el);
   }
   function overlaps(a, b) {
     return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
