@@ -62,14 +62,14 @@ function makeHost(modulePath, initialToken) {
   }
   // ---- DOM: the template's parts the module reads
   const msg = el("div"); msg._text = "Charts loading…";
-  const grid = el("div"), zoom = el("span"), cue = el("button"), stale = el("span");
-  zoom.hidden = true; cue.hidden = true; stale.hidden = true;
+  const grid = el("div"), zoom = el("span"), cue = el("button"), stale = el("span"), xl = el("div");
+  zoom.hidden = true; cue.hidden = true; stale.hidden = true; xl.hidden = true;
   const root = el("div"); const listeners = {};
   root.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
   Object.assign(root.attrs, { "data-series-fn": "series", "data-csv-fn": "csv", "data-empty": "No run to show yet." });
   root.querySelector = (s) => ({ ".shep-charts-msg": msg, ".shep-charts-grid": grid,
                                  ".shep-charts-zoom": zoom, ".shep-charts-new": cue,
-                                 ".shep-charts-stale": stale })[s] || null;
+                                 ".shep-charts-stale": stale, ".shep-charts-xl": xl })[s] || null;
   const element = el("div"); element.querySelector = (s) => (s === ".shep-charts" ? root : null);
   // ---- uPlot stub
   function UPlot(opts, data) {
@@ -156,7 +156,7 @@ function makeHost(modulePath, initialToken) {
                epochs: v && v.order.length ? v.charts[v.order[0]].n : 0,
                message: msg.hidden ? "" : msg.textContent,
                zoom: zoom.hidden ? "" : zoom.textContent, pending: h.pending(),
-               stale: !stale.hidden };
+               stale: !stale.hidden, xLabel: xl.hidden ? "" : xl.textContent };
     },
     timers() { return timers.size; },
   };
@@ -167,7 +167,7 @@ function settle() { return new Promise((r) => setImmediate(r)); }
 
 function payload(run, rev, epochs) {
   const x = Array.from({ length: epochs }, (_, i) => i + 1);
-  return { run, rev, charts: [
+  return { run, rev, xLabel: "Epoch (shared axis)", charts: [
     { id: "loss", title: "Loss", x, series: [{ label: "train", values: x.map((i) => 1 / i) }], yScale: "linear" },
     { id: "lr", title: "Learning rate", x, series: [{ label: "learning rate", values: x.map(() => 1e-3) }], yScale: "log" },
   ] };
@@ -548,6 +548,24 @@ S.empty_chart_says_its_line_and_the_blank_figure_its_one = async () => {
                !back.blank && !back.lr.empty && back.lr.line === "" && back.message === "",
            one, all, back };
 };
+S.one_epoch_label_under_the_grid_while_a_chart_has_epochs = async () => {
+  // R-54: the shared epoch axis is labelled once, by the figure (each bottom
+  // chart said it); a figure with nothing drawn, or no run, says none.
+  const h = await shown("ws/A", 2, 2);
+  const drawn = h.state();
+  h.setToken(tok("ws/A", 3)); await settle();
+  const none = payload("ws/A", 3, 0);
+  await h.answer(h.series()[1], none);
+  const blank = h.state();
+  h.setToken(tok("ws/A", 4)); await settle();
+  await h.answer(h.series()[2], payload("ws/A", 4, 3));
+  const back = h.state();
+  h.setToken(tok(null, 0)); await settle();
+  const cleared = h.state();
+  return { ok: drawn.xLabel === "Epoch (shared axis)" && blank.xLabel === "" &&
+               back.xLabel === "Epoch (shared axis)" && cleared.xLabel === "",
+           drawn, blank, back, cleared };
+};
 S.another_runs_titles_replace_the_last_ones = async () => {
   // B1b: the run view shows any listed run, so the next run's charts (the same
   // ids, another kind's titles: a base's LP accuracy after a waiting task
@@ -585,22 +603,41 @@ S.cleared_keeps_last_zoom_of_run = async () => {       // a zoom 100 ms before t
 // ---------------------------------------------------------------- the legend isolates a series (R-33)
 S.legend_key_hides_and_shows_its_series = async () => {
   const h = await shown("ws/A", 2, 2);
-  const inst = h.win.ShepCharts._inst.training, st = inst.charts.lr;
+  const inst = h.win.ShepCharts._inst.training, st = inst.charts.loss;
   const drawn = st.u.opts.series[1].show;
-  const btn = h.legend(1, "learning rate");
+  const btn = h.legend(0, "train");
   const hidden = { show: st.u.opts.series[1].show, pressed: btn.attrs["aria-pressed"] };
-  // drawn again (a log axis turned linear rebuilds the chart): the series stays hidden
-  const next = payload("ws/A", 3, 3); next.charts[1].yScale = "linear";
+  // drawn again (a linear axis turned log rebuilds the chart): the series stays hidden
+  const next = payload("ws/A", 3, 3); next.charts[0].yScale = "log";
   h.setToken(tok("ws/A", 3)); await settle();
   await h.answer(h.series()[1], next);
-  const rebuilt = inst.charts.lr.u.opts.series[1].show;
-  const keys = h.win.ShepCharts._keys.html(inst, next.charts[1]);
-  h.legend(1, "learning rate");
-  const shownAgain = inst.charts.lr.u.opts.series[1].show;
-  const other = inst.charts.loss.u.opts.series[1].show;
+  const rebuilt = inst.charts.loss.u.opts.series[1].show;
+  const keys = h.win.ShepCharts._keys.html(inst, next.charts[0]);
+  h.legend(0, "train");
+  const shownAgain = inst.charts.loss.u.opts.series[1].show;
+  const other = inst.charts.lr.u.opts.series[1].show;
   return { ok: drawn === true && hidden.show === false && hidden.pressed === "false" &&
                rebuilt === false && keys.includes('aria-pressed="false"') && shownAgain === true &&
                other === true, drawn, hidden, rebuilt, keys, shownAgain, other };
+};
+S.a_chart_of_one_series_its_title_names_draws_no_key = async () => {
+  // R-54: "learning rate" under "Learning rate (log scale)" repeated the
+  // title; one series the title does not name ("train" under "Loss") keeps
+  // its key, which says which loss it is; two series keep theirs. Another
+  // run's title with the same labels redraws the keys by its own title.
+  const h = await shown("ws/A", 2, 2);
+  const inst = h.win.ShepCharts._inst.training, K = h.win.ShepCharts._keys;
+  const card = (id) => inst.charts[id].card._html.includes('class="shep-chart-key"');
+  const first = { loss: card("loss"), lr: card("lr") };
+  const two = K.html(inst, { id: "loss", title: "Loss", series: [{ label: "train" }, { label: "validation" }] });
+  const named = K.html(inst, { id: "mrr", title: "Pooled MRR (validation, Trainer)", series: [{ label: "pooled MRR" }] });
+  h.setToken(tok("ws/B", 3)); await settle();
+  const other = payload("ws/B", 3, 3); other.charts[1].title = "Rate";
+  await h.answer(h.series()[1], other);
+  const keysPart = inst.charts.lr.card.querySelector(".shep-chart-keys")._html;
+  return { ok: first.loss && !first.lr && (two.match(/shep-chart-key"/g) || []).length === 2 &&
+               named === "" && keysPart.includes("learning rate"),
+           first, two: two.length, named, keysPart };
 };
 
 (async () => {

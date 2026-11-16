@@ -771,7 +771,11 @@ def test_the_series_function_returns_the_four_charts_of_a_listed_run(root):
     assert by_id["lr"]["yScale"] == "log" and by_id["loss"]["yScale"] == "linear"
     assert by_id["loss"]["x"] == [1, 2, 3, 4, 5, 6]
     assert by_id["lr"]["series"][0]["values"][0] == 0.0     # the browser draws it as a gap
-    assert by_id["hits"]["xLabel"] == by_id["lr"]["xLabel"] == "epoch (shared axis)"
+    # R-54: the learning rate says its scale; the shared epoch axis is labelled
+    # once, by the figure, not under each bottom chart.
+    assert by_id["lr"]["title"] == "Learning rate (log scale)"
+    assert payload["xLabel"] == tc.SHARED_AXIS == "Epoch (shared axis)"
+    assert not [c for c in payload["charts"] if "xLabel" in c]
     json.dumps(payload)
 
 
@@ -2950,8 +2954,8 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     # The boxes inside the row take its height, the cards keep their content's minimum.
     assert "#shep-train-charts .shep-charts-grid { min-height: 0; }" in wide
     assert "#shep-train-charts .shep-chart { min-height: auto; }" in wide
-    hidden = [sel for sel, b in _rules(css, "shep-chart-xl") if "display: none" in b]
-    assert hidden == [".shep-chart-empty .shep-chart-plot, .shep-chart-empty .shep-chart-xl"], hidden
+    hidden = [sel for sel, b in _rules(css, "shep-chart-empty") if "display: none" in b]
+    assert hidden == [".shep-chart-empty .shep-chart-plot"], hidden
     _demo, _ctx, by_id = _page()
     assert by_id["shep-train-run-head"].js_on_load == tc._POPOVER_JS
     assert by_id["shep-train-chip"].js_on_load == tc._POPOVER_JS

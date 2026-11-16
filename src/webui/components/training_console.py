@@ -2403,9 +2403,11 @@ def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, opera
 #: `VALIDATION_CHARTS`.
 CHART_TITLES = {
     "loss": "Loss",
-    "lr": "Learning rate (log)",
+    "lr": "Learning rate (log scale)",
 }
-SHARED_AXIS = "epoch (shared axis)"
+#: The four charts' one epoch axis, labelled once under the grid
+#: (`charts.figure_payload`'s ``x_label``; R-54: each bottom chart said it).
+SHARED_AXIS = "Epoch (shared axis)"
 _POOLED_TOP = re.compile(r"^val_pooled_top(\d+)$")
 #: The middle two charts by the run's kind, read from the keys its validation
 #: log holds (`validation_kind`): ``(the figure's title, its series, the
@@ -2498,18 +2500,18 @@ def training_charts(history: Mapping[str, Any], *, live: bool = False) -> List[D
     left with none says why in its own line (`WAITING_FOR_VALIDATION` while
     the run is `live`, the training job's run still logging, else
     `NO_VALIDATION_LOGGED`; `NOT_IN_THE_LOG`; the generic state's titles say
-    it themselves)."""
+    it themselves). Their shared epoch axis is labelled once, by the figure
+    (`training_chart_series`)."""
     train = [e for e in history.get("train") or [] if isinstance(e, Mapping)]
     val = [e for e in history.get("validation") or [] if isinstance(e, Mapping)]
     specs = []
 
-    def spec(chart_id, title, columns, *, y_scale="linear", x_label=None, empty=NOT_IN_THE_LOG):
+    def spec(chart_id, title, columns, *, y_scale="linear", empty=NOT_IN_THE_LOG):
         epochs = sorted(set().union(*[set(c) for _label, c in columns])) if columns else []
         series = [(label, [col.get(x) for x in epochs]) for label, col in columns]
         series = [(label, values) for label, values in series if _has_value(values)]
         return charts.chart_spec(chart_id, title, epochs if series else [],
-                                 series, y_scale=y_scale, x_label=x_label,
-                                 empty=None if series else empty)
+                                 series, y_scale=y_scale, empty=None if series else empty)
 
     def columns(pairs):
         return [(label, _by_epoch(val, key)) for label, key in pairs]
@@ -2524,10 +2526,9 @@ def training_charts(history: Mapping[str, Any], *, live: bool = False) -> List[D
                       [("train", _by_epoch(train, "total", "train_loss")),
                        ("validation", _by_epoch(val, "val_loss", "val_lp_loss"))]))
     specs.append(spec("mrr", figure_title, columns(figure), empty=waiting))
-    specs.append(spec("hits", others_title, columns(others), x_label=SHARED_AXIS, empty=waiting))
+    specs.append(spec("hits", others_title, columns(others), empty=waiting))
     specs.append(spec("lr", CHART_TITLES["lr"],
-                      [("learning rate", _by_epoch(train, "learning_rate"))],
-                      y_scale="log", x_label=SHARED_AXIS))
+                      [("learning rate", _by_epoch(train, "learning_rate"))], y_scale="log"))
     return specs
 
 
@@ -2581,7 +2582,8 @@ def training_chart_series(data: Any) -> Dict[str, Any]:
     history = training_manager.get_metrics_history(path)
     live = _logging_now(path)
     return charts.figure_payload(run_id, _rows(history), training_charts(history, live=live),
-                                 empty=WAITING_FOR_EPOCH if live else NO_EPOCH_LOGGED)
+                                 empty=WAITING_FOR_EPOCH if live else NO_EPOCH_LOGGED,
+                                 x_label=SHARED_AXIS)
 
 
 def _metrics_csv_text(history: Mapping[str, Any]) -> str:

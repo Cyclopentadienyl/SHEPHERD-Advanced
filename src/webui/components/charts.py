@@ -6,8 +6,10 @@ vendored). One Python builder (`chart_figure`, used by Training and by any
 later chart) and one browser module (``window.ShepCharts``,
 `src/webui/static/js/shep_charts.js`) that takes curve groups as data plus
 settings: per chart a title, ``{x, series: [{label, values}], yScale:
-"linear" | "log"}`` (`chart_spec`). Colours are assigned by label, never by
-position, and the second colour is also dashed; zoom and pan live in the
+"linear" | "log"}`` (`chart_spec`), and the shared X axis's one label
+(`figure_payload`'s ``x_label``, drawn once under the grid). Colours are
+assigned by label, never by position, and the second colour is also dashed;
+a chart of one series its title names draws no key; zoom and pan live in the
 module, never in a chart; the figure shares one X view and keeps one Y view
 per chart.
 
@@ -143,12 +145,12 @@ def rounded(value: Any) -> Optional[float]:
 
 def chart_spec(chart_id: str, title: str, x: Sequence[Any],
                series: Iterable[tuple], *, y_scale: str = "linear",
-               x_label: Optional[str] = None, empty: Optional[str] = None) -> Dict[str, Any]:
+               empty: Optional[str] = None) -> Dict[str, Any]:
     """One chart: ``series`` is ``(label, values)`` pairs aligned with `x`.
     `empty` is the chart's own line while it has nothing to draw (what will
-    appear, or why nothing does): the module shows it in place of the plot
-    and its axis label, so an empty chart takes its title and that line, not
-    a plot's height."""
+    appear, or why nothing does): the module shows it in place of the plot,
+    so an empty chart takes its title and that line, not a plot's height.
+    The X axis is the figure's, labelled once (`figure_payload`)."""
     if y_scale not in ("linear", "log"):
         raise ValueError(f"y_scale is 'linear' or 'log', not {y_scale!r}")
     spec: Dict[str, Any] = {
@@ -157,20 +159,23 @@ def chart_spec(chart_id: str, title: str, x: Sequence[Any],
                    for label, values in series],
         "yScale": y_scale,
     }
-    if x_label:
-        spec["xLabel"] = x_label
     if empty:
         spec["empty"] = empty
     return spec
 
 
 def figure_payload(run: Optional[str], rev: Any, charts: List[Dict[str, Any]],
-                   *, empty: Optional[str] = None) -> Dict[str, Any]:
+                   *, empty: Optional[str] = None,
+                   x_label: Optional[str] = None) -> Dict[str, Any]:
     """What a series server function returns: the run and rev it answers for,
-    and the charts in figure order. `empty` is said when no chart has data."""
+    and the charts in figure order. `empty` is said when no chart has data;
+    `x_label` names the charts' shared X axis once, under the grid, while a
+    chart has data (R-54: each bottom chart said it)."""
     payload: Dict[str, Any] = {"run": run, "rev": rev, "charts": charts}
     if empty:
         payload["empty"] = empty
+    if x_label:
+        payload["xLabel"] = x_label
     return payload
 
 
@@ -217,8 +222,9 @@ GESTURES = "Wheel: zoom · drag: pan · double-click: reset"
 def figure_template(*, series_fn: str, csv_fn: Optional[str], help_key: Optional[str],
                     help_title: str, empty: str) -> str:
     """The component's static template: the toolbar (with the note `STALE`,
-    hidden until the module shows it), the grid the module fills, the "new
-    epochs" overlay and a message line (`LOADING` at first)."""
+    hidden until the module shows it), the grid the module fills, the epoch
+    axis's one label under it, the "new epochs" overlay and a message line
+    (`LOADING` at first)."""
     from html import escape
 
     help_html = help_button(help_key, help_title) if help_key else ""
@@ -243,6 +249,7 @@ def figure_template(*, series_fn: str, csv_fn: Optional[str], help_key: Optional
         '</span></span></div>'
         '<div class="shep-charts-body">'
         '<div class="shep-charts-grid"></div>'
+        '<div class="shep-charts-xl" hidden></div>'
         '<button type="button" class="shep-charts-new" data-chart-act="follow" hidden></button>'
         f'<div class="shep-charts-msg">{escape(LOADING)}</div>'
         '</div></div>')
@@ -275,10 +282,10 @@ def chart_figure(*, key: str, elem_id: str, series_fn: Callable[[Any], Any],
 #: (they are drawn at 14 px by the module). The buttons' rules name the
 #: figure too (two classes): Gradio's own ``.gradio-container-<version>
 #: button { padding: 0; font-size: 100% }`` outranks a single class. While
-#: the module marks the figure busy (``aria-busy="true"``) its grid, overlay,
-#: zoom and `STALE` notes and message are hidden with ``visibility`` and the body says
-#: `LOADING` (filled in for ``@LOADING@``); in the narrow layout the body keeps
-#: room for that line. **A plot box is sized by the layout alone**
+#: the module marks the figure busy (``aria-busy="true"``) its grid, epoch
+#: label, overlay, zoom and `STALE` notes and message are hidden with
+#: ``visibility`` and the body says `LOADING` (filled in for ``@LOADING@``);
+#: in the narrow layout the body keeps room for that line. **A plot box is sized by the layout alone**
 #: (``contain: size``): the canvas drawn into it never counts toward its size,
 #: so a canvas drawn for an earlier layout (narrow, or before a banner came or
 #: went) cannot hold the box at that size; the module's one ResizeObserver then
@@ -315,11 +322,12 @@ CHART_CSS = """
 .shep-chart-plot { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; border-radius: 4px; contain: size; }
 .shep-chart-plot .u-wrap { cursor: crosshair; touch-action: none; }
 .shep-chart-plot .u-wrap.shep-panning { cursor: grabbing; }
-.shep-chart-xl { text-align: center; font-size: 14px; color: var(--shep-text-2); line-height: 1.3; }
+.shep-charts-xl { flex: none; text-align: center; font-size: 14px; color: var(--shep-text-2); line-height: 1.3; padding-top: 2px; }
+.shep-charts-xl[hidden] { display: none; }
 .shep-chart-none { font-size: 14px; color: var(--shep-text-2); line-height: 1.4; padding: 2px 0 6px; }
 .shep-chart-none[hidden] { display: none; }
-.shep-chart-empty .shep-chart-plot, .shep-chart-empty .shep-chart-xl { display: none; }
-.shep-charts-blank .shep-charts-grid { display: none; }
+.shep-chart-empty .shep-chart-plot { display: none; }
+.shep-charts-blank .shep-charts-grid, .shep-charts-blank .shep-charts-xl { display: none; }
 .shep-chart-tip { position: absolute; z-index: 3; pointer-events: none; background: #fff; border: 1px solid var(--shep-border-2); border-radius: 6px; box-shadow: 0 4px 14px rgba(20,24,40,.14); padding: 6px 8px; font-size: 14px; line-height: 1.35; color: var(--shep-text); white-space: nowrap; }
 .shep-chart-tip[hidden] { display: none; }
 .shep-chart-tip .shep-tip-hd { font-weight: 600; }
@@ -328,7 +336,7 @@ CHART_CSS = """
 .shep-charts-new[hidden] { display: none; }
 .shep-charts-msg { position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
 .shep-charts-msg[hidden] { display: none; }
-.shep-charts[aria-busy="true"] .shep-charts-grid, .shep-charts[aria-busy="true"] .shep-charts-new, .shep-charts[aria-busy="true"] .shep-charts-zoom, .shep-charts[aria-busy="true"] .shep-charts-stale, .shep-charts[aria-busy="true"] .shep-charts-msg { visibility: hidden; }
+.shep-charts[aria-busy="true"] .shep-charts-grid, .shep-charts[aria-busy="true"] .shep-charts-xl, .shep-charts[aria-busy="true"] .shep-charts-new, .shep-charts[aria-busy="true"] .shep-charts-zoom, .shep-charts[aria-busy="true"] .shep-charts-stale, .shep-charts[aria-busy="true"] .shep-charts-msg { visibility: hidden; }
 .shep-charts[aria-busy="true"] .shep-charts-body::after { content: "@LOADING@"; position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
 @STACK@ {
   .shep-charts { height: auto; }

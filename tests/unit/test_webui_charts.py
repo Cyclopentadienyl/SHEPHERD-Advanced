@@ -159,19 +159,29 @@ def test_the_toolbar_offers_reset_export_zoom_and_the_gestures():
     assert 'aria-describedby="shep-help-text-training-charts"' in template
 
 
-def test_the_toolbar_says_when_newer_epochs_could_not_be_loaded():
+def test_the_toolbar_says_when_newer_epochs_could_not_be_loaded_and_the_axis_once():
     """B41: a drawn run whose newer epochs fail RETRY_MAX times stayed at its
     older epochs with no word; the toolbar's note says so over the curves,
     as the shared amber ▲ with its words, hidden until the module shows it
-    (the host's scenario `gave_up_on_new_epochs_says_so_over_the_curves`)."""
+    (the host's scenario `gave_up_on_new_epochs_says_so_over_the_curves`).
+    R-54: the shared epoch axis is labelled once, under the grid, from the
+    payload (each bottom chart said it)."""
     template = _figure().html_template
     note = template.split('<span class="shep-charts-stale" role="status" hidden>', 1)[1]
     assert note.startswith(charts.status_mark("warn", charts.STALE))
     assert template.index("shep-charts-stale") < template.index('<span class="shep-charts-tools">')
     assert charts.STALE == "Newer epochs could not be loaded: reload the page to try again."
+    assert template.index('<div class="shep-charts-grid"></div>') < template.index(
+        '<div class="shep-charts-xl" hidden></div>')
+    assert "xLabel" not in charts.chart_spec("lr", "Learning rate", [1], [("lr", [0.1])])
+    assert charts.figure_payload("r", 1, [], x_label="Epoch")["xLabel"] == "Epoch"
     css = charts.CHART_CSS
     assert ".shep-charts-stale[hidden] { display: none; }" in css
+    assert ".shep-charts-xl[hidden] { display: none; }" in css
     assert ".shep-charts[aria-busy=\"true\"] .shep-charts-stale" in css
+    assert "shep-chart-xl" not in css
+    js = (STATIC / charts.MODULE).read_text(encoding="utf-8")
+    assert "shep-chart-xl" not in js and "spec.xLabel" not in js
 
 
 # --------------------------------------------------------------------------- the data
@@ -180,9 +190,9 @@ def test_values_are_rounded_and_what_is_not_a_finite_number_is_a_gap():
     assert charts.rounded(1234567.89) == 1234570.0
     for gap in (float("nan"), float("inf"), None, True, "1.0"):
         assert charts.rounded(gap) is None
-    spec = charts.chart_spec("lr", "Learning rate (log)", [1, 2, 3],
+    spec = charts.chart_spec("lr", "Learning rate (log scale)", [1, 2, 3],
                              [("learning rate", [1e-4, 0.0, float("nan")])], y_scale="log")
-    assert spec == {"id": "lr", "title": "Learning rate (log)", "x": [1.0, 2.0, 3.0],
+    assert spec == {"id": "lr", "title": "Learning rate (log scale)", "x": [1.0, 2.0, 3.0],
                     "series": [{"label": "learning rate", "values": [0.0001, 0.0, None]}],
                     "yScale": "log"}
     json.dumps(spec)                 # plain lists, as the server function returns them
@@ -198,6 +208,8 @@ def test_the_token_and_the_payload():
     assert charts.token_from("ws/../x") == {}
     assert charts.figure_payload("r", 3, [], empty="e") == {"run": "r", "rev": 3, "charts": [],
                                                             "empty": "e"}
+    assert charts.figure_payload("r", 3, [], x_label="Epoch") == {"run": "r", "rev": 3,
+                                                                  "charts": [], "xLabel": "Epoch"}
 
 
 def test_no_chart_text_is_under_14px():
@@ -494,10 +506,13 @@ REPLY_SCENARIOS = [
     # chart says its own line, a figure with nothing its one (BACKLOG 69)
     "cleared_hides_zoom_note", "cleared_keeps_last_zoom_of_run",
     "empty_chart_says_its_line_and_the_blank_figure_its_one",
+    # the shared epoch axis is labelled once, under the grid (R-54)
+    "one_epoch_label_under_the_grid_while_a_chart_has_epochs",
     # another run's charts are titled by its own specs
     "another_runs_titles_replace_the_last_ones",
-    # a legend key hides its series and shows it again, kept when the chart is rebuilt (R-33)
-    "legend_key_hides_and_shows_its_series",
+    # a legend key hides its series and shows it again, kept when the chart is rebuilt (R-33);
+    # a chart of one series its title names draws no key (R-54)
+    "legend_key_hides_and_shows_its_series", "a_chart_of_one_series_its_title_names_draws_no_key",
 ]
 
 
@@ -557,15 +572,15 @@ def test_the_charts_are_two_by_two_in_the_wide_layout_and_by_their_width_in_the_
 def test_an_empty_chart_gives_its_plot_and_axis_label_way_to_its_own_line():
     """BACKLOG 69: an empty chart kept its full height, an axis label alone
     under a blank box. A spec may carry its line (`chart_spec`'s ``empty``),
-    which the module shows in place of the plot and its axis label; a figure
-    with nothing to draw gives its cards way to its one line."""
+    which the module shows in place of the plot (the axis label is the
+    figure's, under the grid: R-54); a figure with nothing to draw gives its
+    cards and that label way to its one line."""
     spec = charts.chart_spec("mrr", "Pooled MRR", [], [], empty="Drawn once the run logs one.")
     assert spec["empty"] == "Drawn once the run logs one."
     assert "empty" not in charts.chart_spec("loss", "Loss", [1], [("train", [0.5])])
     css = charts.CHART_CSS
-    assert (".shep-chart-empty .shep-chart-plot, .shep-chart-empty .shep-chart-xl "
-            "{ display: none; }") in css
-    assert ".shep-charts-blank .shep-charts-grid { display: none; }" in css
+    assert ".shep-chart-empty .shep-chart-plot { display: none; }" in css
+    assert ".shep-charts-blank .shep-charts-grid, .shep-charts-blank .shep-charts-xl { display: none; }" in css
     assert ".shep-chart-none[hidden] { display: none; }" in css
     js = (STATIC / charts.MODULE).read_text(encoding="utf-8")
     assert '<div class="shep-chart-none" hidden></div>' in js

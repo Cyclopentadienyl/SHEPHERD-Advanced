@@ -8,8 +8,10 @@
  * component's head= only.
  *
  * Data, from the component's server function (one parameter, the token):
- *   {run, rev, charts: [{id, title, x: [...], xLabel,
- *                        series: [{label, values: [...]}], yScale: "linear"|"log"}]}
+ *   {run, rev, xLabel, charts: [{id, title, x: [...],
+ *                                series: [{label, values: [...]}], yScale: "linear"|"log"}]}
+ * `xLabel` names the shared epoch axis once, under the grid (R-54: it was
+ * under each bottom chart).
  * Colours are assigned by label (never by position); the second colour is
  * also dashed. No chart has zoom code of its own: the figure holds one X view
  * (shared, so the epoch axis is one) and one Y view per chart, and
@@ -404,12 +406,25 @@
   // Enter or Space, the series is hidden or shown again, so a line under
   // another can be isolated. The choice is kept per chart and label, across
   // re-mounts, as the colours are.
+  //
+  // A chart draws keys only where they tell something (R-54): a chart of one
+  // series its title already names ("LP accuracy" under "LP accuracy
+  // (validation, Trainer)", "learning rate" under "Learning rate (log
+  // scale)") draws none; one series its title does not name keeps its key
+  // (Loss's "train": which loss the line is).
+  function keyed(spec) {
+    var series = spec.series || [];
+    if (series.length !== 1) { return series.length > 0; }
+    var title = String(spec.title || "").toLowerCase(), label = String(series[0].label).toLowerCase();
+    return !label || title.indexOf(label) !== 0;
+  }
   function hiddenOf(inst, chartId) {
     var byKey = HIDDEN[inst.key] || (HIDDEN[inst.key] = {});
     return byKey[chartId] || (byKey[chartId] = {});
   }
   function keysHtml(inst, spec) {
     var hidden = hiddenOf(inst, spec.id);
+    if (!keyed(spec)) { return ""; }
     return (spec.series || []).map(function (s) {
       var label = String(s.label), slot = colourSlot(inst, spec.id, label);
       return '<button type="button" class="shep-chart-key" data-chart-key="' + esc(label) +
@@ -432,8 +447,7 @@
       '<span class="shep-chart-keys">' + keysHtml(inst, spec) + "</span></div>" +
       '<div class="shep-chart-none" hidden></div>' +
       '<div class="shep-chart-plot" tabindex="0" role="img"></div>' +
-      '<div class="shep-chart-tip" hidden></div>' +
-      (spec.xLabel ? '<div class="shep-chart-xl">' + esc(spec.xLabel) + "</div>" : "");
+      '<div class="shep-chart-tip" hidden></div>';
   }
 
   function buildCards(inst, specs) {
@@ -591,6 +605,15 @@
     msg.hidden = !text;
   }
 
+  // The figure's one epoch label, under its grid (the template's
+  // .shep-charts-xl): the payload's `xLabel` while a chart has epochs.
+  function setXLabel(inst, text) {
+    var xl = inst.root.querySelector(".shep-charts-xl");
+    if (!xl) { return; }
+    if (xl.textContent !== text) { xl.textContent = text; }
+    xl.hidden = !text;
+  }
+
   // The run drawn whose newer epochs could not be loaded after RETRY_MAX
   // tries (B41): its curves stay as they were, and the toolbar's note (the
   // template's, `charts.STALE`) says over them that they stop there, until a
@@ -607,11 +630,12 @@
     return true;
   }
 
-  // A chart with nothing to draw shows its own line in place of its plot and
-  // axis label (CHART_CSS: .shep-chart-empty), so it takes its title and that
-  // line, not a plot's height; when no chart has anything, the cards give way
-  // to the figure's one line (.shep-charts-blank), set before any chart is
-  // drawn so the ones that have data are measured in the grid's layout.
+  // A chart with nothing to draw shows its own line in place of its plot
+  // (CHART_CSS: .shep-chart-empty), so it takes its title and that line, not a
+  // plot's height; when no chart has anything, the cards and the epoch label
+  // give way to the figure's one line (.shep-charts-blank), set before any
+  // chart is drawn so the ones that have data are measured in the grid's
+  // layout.
   function apply(inst, d) {
     var specs = (d && d.charts) || [];
     if (!sameSpecs(inst, specs)) { buildCards(inst, specs); }
@@ -624,7 +648,8 @@
       var recreate = st.u && (st.yLog !== log || labels.join("\u0001") !== st.labels.join("\u0001"));
       st.yLog = log;
       st.dropped = 0;
-      if (st.title !== spec.title) {                     // another run's kind: its own title
+      var retitled = st.title !== spec.title;
+      if (retitled) {                                    // another run's kind: its own title
         var title = st.card.querySelector(".shep-chart-title");
         if (title) { title.textContent = String(spec.title || ""); }
       }
@@ -632,8 +657,8 @@
       st.data = [Array.prototype.slice.call(spec.x || [])].concat((spec.series || []).map(function (s) {
         return sanitize(st, Array.prototype.slice.call(s.values || []));
       }));
-      if (labels.join("\u0001") !== st.labels.join("\u0001")) {
-        st.labels = labels;
+      if (retitled || labels.join("\u0001") !== st.labels.join("\u0001")) {
+        st.labels = labels;                              // its keys by its title too (`keyed`)
         st.card.querySelector(".shep-chart-keys").innerHTML = keysHtml(inst, spec);
       }
       st.card.classList.toggle("shep-chart-empty", !st.data[0].length);
@@ -647,6 +672,7 @@
       else { sizeOrCreate(inst, st); }
     });
     applyView(inst);
+    setXLabel(inst, specs.length && !empty ? String(d.xLabel || "") : "");
     setMessage(inst, specs.length ? (empty ? (d.empty || "No epochs logged yet.") : "") : (d.empty || ""));
   }
 
@@ -804,6 +830,7 @@
     inst.x = null; inst.xManual = false; inst.frozenLast = null;
     buildCards(inst, []);
     setStale(inst, false);
+    setXLabel(inst, "");
     updateToolbar(inst);
   }
 
