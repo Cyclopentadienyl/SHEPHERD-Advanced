@@ -57,12 +57,20 @@ path), at the stage's reference recipe with the demo graph's sizes
 model too). It used to train a ShepherdGNN of its own configuration, which
 nothing serves any more.
 
-With `--train-model`, the command to start the API is printed on completion,
-with the disease child's checkpoint (its run's `last.pt`) and the device it was
-trained on: serving refuses `auto` without CUDA (contract M3c), so the command
-names the device. Without a model nothing is served, so no command is printed.
-It has no `--reload`: uvicorn's reloader restarts the server on every saved
-source file, and the server's shutdown stops the GPU job it runs.
+With `--train-model`, what to do next is printed on completion, **led by the
+dashboard** (`dashboard_lines`, T08): start it (its desktop entry or
+`launch_shepherd.sh`), which lists the demo when it is in the workspaces folder
+saved in Settings (or says which folder to choose there), and load the disease
+child in Diagnosis › Load a model…; a demo trained on the CPU says the
+dashboard must then be started with ``SHEPHERD_DEVICE=cpu``. A command
+starting the API alone follows only as a "Ref:", with the disease child's
+checkpoint (its run's `last.pt`) and the device it was trained on: serving
+refuses `auto` without CUDA (contract M3c), so the command names the device.
+Without a model nothing is served, so no command is printed. It has no
+`--reload`: uvicorn's reloader restarts the server on every saved source
+file, and the server's shutdown stops the GPU job it runs. *History: until
+T08 the uvicorn command was all it printed, so a first run was told to start
+a bare API instead of the dashboard it had just configured.*
 
 **`--train-model` takes the deployment's GPU lock** (M5; review of 8242b47,
 P2-4), as `scripts/train_model.py` does: the demo trains through the real
@@ -79,13 +87,16 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import textwrap
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 # Add project root to path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.config import server_settings
+from src.config.server_settings import SOURCE_SAVED
 from src.core.types import (
     DataSource,
     Edge,
@@ -94,7 +105,6 @@ from src.core.types import (
     NodeID,
     NodeType,
 )
-from src.config import server_settings
 from src.kg.graph import KnowledgeGraph
 from src.kg.workspace import SampleBudget, write_workspace
 
@@ -287,6 +297,10 @@ def build_demo_kg() -> KnowledgeGraph:
 #: Epochs of each stage `--train-model` trains, the base and its disease child:
 #: the demo graph is learnt in that, and the point is the path, not the score.
 DEMO_EPOCHS = 2
+#: The names of the two runs `--train-model` trains, as the dashboard's lists
+#: show them: the base, and the disease model fine-tuned from it.
+DEMO_BASE_RUN = "demo-base"
+DEMO_DISEASE_RUN = "demo-disease"
 #: Distractor candidates per case of the demo workspace's functional gene
 #: fixture (`scripts/derive_task_fixture.py --distractors`), which a gene or
 #: patients-like-me child of the demo trains and is measured on: the demo
@@ -371,8 +385,8 @@ def train_demo_model(workspace: Path, num_epochs: int, device: str = "auto") -> 
                 "SHEPHERD_WORKSPACES_ROOT; deployment guide §4.11)")
         return last
 
-    base = run("base", "demo-base", learning_stage="base")
-    child = run("disease", "demo-disease", learning_stage="finetune", task="disease",
+    base = run("base", DEMO_BASE_RUN, learning_stage="base")
+    child = run("disease", DEMO_DISEASE_RUN, learning_stage="finetune", task="disease",
                 finetune_from=str(base))
     logger.info("Demo disease model: %s (base %s)", child, base)
     return child
@@ -404,6 +418,45 @@ def default_output_dir(environ: Optional[Mapping[str, str]] = None
     if root.value is None:
         return None, root.problem
     return root.value / DEMO_WORKSPACE, None
+
+
+def dashboard_lines(output_dir: Path, training_device: str,
+                    environ: Optional[Mapping[str, str]] = None) -> List[str]:
+    """**What to do with a trained demo, led by the dashboard** (T08): start
+    it, find the workspace on Datasets and load the disease model in
+    Diagnosis › Load a model…, which work with the folder saved in Settings
+    and nothing exported. Said truthfully for where the demo went: in the
+    workspaces folder saved in Settings, the dashboard lists it; in one set
+    for this command only, it does once the same folder is chosen there; in
+    another folder, once its parent is. A demo trained on the CPU is served
+    only by a dashboard started with ``SHEPHERD_DEVICE=cpu`` (serving refuses
+    `auto` without CUDA, contract M3c). Two-space indent, no trailing blank."""
+    root = server_settings.workspaces_root(environ)
+    parent = Path(output_dir).resolve().parent
+    name = Path(output_dir).name
+    if root.value is not None and parent == root.value and root.source == SOURCE_SAVED:
+        where = (f"It lists the workspace {name}: it is in the workspaces folder saved in "
+                 f"{server_settings.DATA_LOCATIONS}.")
+    elif root.value is not None and parent == root.value:
+        where = (f"It lists the workspace {name} once its workspaces folder is {parent}: this "
+                 f"command was given that folder by {server_settings.ENV_WORKSPACES_ROOT}, so "
+                 f"choose the same folder in {server_settings.DATA_LOCATIONS} if it is not "
+                 "saved there.")
+    else:
+        where = (f"It lists the workspace {name} once {parent} is its workspaces folder: "
+                 f"choose that folder in {server_settings.DATA_LOCATIONS}.")
+    device = serving_device(training_device)
+    start = "Start the dashboard: its desktop entry, or bash launch_shepherd.sh"
+    lines = [f"  1. {start} (launch_shepherd.cmd on Windows). {where}"]
+    if device == "cpu":
+        lines.append("     It was trained on the CPU: on a host without CUDA, start it as "
+                     "SHEPHERD_DEVICE=cpu bash launch_shepherd.sh, or the load is refused "
+                     "(development hosts only; deployment guide §4.8).")
+    lines.append(f"  2. Diagnosis › Load a model…: the run {DEMO_DISEASE_RUN} of the workspace "
+                 f"{name} (the disease model; its base is the run {DEMO_BASE_RUN}).")
+    return [wrapped for line in lines
+            for wrapped in textwrap.wrap(line, 92, subsequent_indent="     ",
+                                         break_long_words=False, break_on_hyphens=False)]
 
 
 #: The refusal with no `--output-dir` and no workspaces folder in effect.
@@ -517,9 +570,12 @@ def _setup(args: argparse.Namespace, output_dir: Path) -> int:
           f"(disjoint: {written.manifest['disjoint']})")
 
     if checkpoint_path is not None:
+        steps = "\n".join(dashboard_lines(output_dir, args.device))
         print(f"""
-Start the API serving the demo's disease model:
+Open the demo in the dashboard and load its disease model:
+{steps}
 
+Ref: the API alone, with no dashboard, serving this disease model:
   SHEPHERD_KG_PATH={kg_path} \\
   SHEPHERD_CHECKPOINT_PATH={checkpoint_path} \\
   SHEPHERD_DATA_DIR={output_dir} \\

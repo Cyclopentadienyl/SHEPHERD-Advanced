@@ -339,3 +339,76 @@ def test_help_says_where_the_demo_goes(monkeypatch, capsys):
             "chosen in Settings › Data locations, or SHEPHERD_WORKSPACES_ROOT set for this "
             "command; with neither, the demo is refused unless this is given") in flat
     assert "data/workspaces/demo" not in flat
+
+
+# --------------------------------------------------------------------------- what it says next
+def _trained_demo(monkeypatch, capsys, tmp_path, *args):
+    """setup_demo.py --train-model with `args`, the training stubbed, run from
+    an empty directory of the test's: what it printed, flattened (its lines
+    are wrapped), and the printed text."""
+    started = tmp_path / "cwd"
+    started.mkdir(exist_ok=True)
+    monkeypatch.chdir(started)
+
+    def _trained(workspace, num_epochs, device):
+        return Path(workspace) / "runs" / "gatv2" / "x_demo-disease_y" / "checkpoints" / "last.pt"
+
+    monkeypatch.setattr(setup_demo, "train_demo_model", _trained)
+    monkeypatch.setattr(sys, "argv", ["setup_demo.py", "--train-model", *args])
+    assert setup_demo.main() == 0
+    printed = capsys.readouterr().out
+    return " ".join(printed.split()), printed
+
+
+@pytest.mark.parametrize("device", ["cpu", "auto"])
+def test_a_trained_demo_leads_with_the_dashboard_and_keeps_uvicorn_as_a_ref(
+        monkeypatch, capsys, tmp_path, device):
+    """T08 (first run): the last lines printed a `SHEPHERD_KG_PATH=… uvicorn
+    … --port 8000` command, a bare API, after the folder was chosen in
+    Settings for the dashboard. They now lead with the dashboard (its
+    desktop entry or launch_shepherd.sh), which lists the demo from the saved
+    folder, and Diagnosis › Load a model…; the uvicorn command stays only as
+    a Ref, after them. A CPU-trained demo says the dashboard needs
+    SHEPHERD_DEVICE=cpu on a host without CUDA; one trained on CUDA does not."""
+    from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
+
+    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+    root = tmp_path / "SHEPHERD-data" / "workspaces"
+    _save_root(root)
+    flat, printed = _trained_demo(monkeypatch, capsys, tmp_path, "--device", device)
+    assert ("Open the demo in the dashboard and load its disease model: 1. Start the "
+            "dashboard: its desktop entry, or bash launch_shepherd.sh (launch_shepherd.cmd on "
+            "Windows). It lists the workspace demo: it is in the workspaces folder saved in "
+            "Settings › Data locations.") in flat
+    assert ("2. Diagnosis › Load a model…: the run demo-disease of the workspace demo (the "
+            "disease model; its base is the run demo-base).") in flat
+    cpu = "start it as SHEPHERD_DEVICE=cpu bash launch_shepherd.sh, or the load is refused"
+    assert (cpu in flat) is (device == "cpu")
+    lead, ref = flat.index("Open the demo in the dashboard"), flat.index("Ref: the API alone")
+    assert lead < ref < flat.index("python -m uvicorn src.api.main:app")
+    assert "Start the API serving" not in printed
+    # The Ref keeps the serving environment, one variable a line.
+    assert _environment(printed)["SHEPHERD_DATA_DIR"] == str(root.resolve() / "demo")
+
+
+def test_the_dashboard_steps_say_which_folder_to_choose_when_it_is_not_saved(
+        monkeypatch, capsys, tmp_path):
+    """A folder given for this command only (the variable), or a demo
+    written elsewhere with --output-dir, is not what a dashboard started by
+    double click reads: the steps say which folder to choose in Settings,
+    never that it is listed."""
+    from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
+
+    root = tmp_path / "given"
+    root.mkdir()
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
+    flat, _ = _trained_demo(monkeypatch, capsys, tmp_path, "--device", "cpu")
+    assert (f"It lists the workspace demo once its workspaces folder is {root.resolve()}: this "
+            "command was given that folder by SHEPHERD_WORKSPACES_ROOT, so choose the same "
+            "folder in Settings › Data locations if it is not saved there.") in flat
+    elsewhere = tmp_path / "elsewhere" / "my-demo"
+    flat, _ = _trained_demo(monkeypatch, capsys, tmp_path, "--device", "cpu", "--output-dir",
+                            str(elsewhere))
+    assert (f"It lists the workspace my-demo once {elsewhere.parent.resolve()} is its "
+            "workspaces folder: choose that folder in Settings › Data locations.") in flat
+    assert "the run demo-disease of the workspace my-demo" in flat
