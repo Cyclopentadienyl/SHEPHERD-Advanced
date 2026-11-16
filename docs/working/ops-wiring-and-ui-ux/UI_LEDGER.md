@@ -37,39 +37,39 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### NEW-shell-nav-theme-1 · Chosen in-page radio fill is exactly the level-1 switch's fill
 
-- **State**: to do · found by the 2026-11-16 audit · page: shell
+- **State**: code-verified · found by the 2026-11-16 audit · page: shell
 - **Duplicate of**: R-20+R-46+B72 (closed with it)
 - **At ba6e85e**: Close fix 3d85531 made the chosen in-page radio's fill exactly the level-1 switch's fill: --checkbox-label-background-fill-selected is var(--shep-accent) (src/webui/style.py:240), the same as the selected level-1 tab (style.py:113-114, both rgb(85,88,227) in theme-1850x960.json and shell1-1850x960.json). The likeness BACKLOG 72 'left open' became an exact match, and the close record (OPS:364) mentions only the 5.4:1 contrast.
 - **Done when**: The selected level-1 tab and a selected in-page radio have different computed styles (fill or shape), checked in a browser at 1850x960.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: d3203dd, closed with R-20+R-46+B72. A chosen in-page radio is a tinted option (accent-50 fill, accent border and dot, body-colour text), no longer the level-1 accent fill with white text. Seen in Chromium at 1850x960 on Training: Research tab rgb(85, 88, 227) with white text; Device "auto" rgb(238, 240, 255) with rgb(29, 34, 48) text and an rgb(85, 88, 227) border. Tests: tests/unit/test_webui_shell.py::test_the_research_navigation_and_shared_tokens_as_drawn (the fills differ, computed) and tests/unit/test_webui_button_contrast.py::test_a_chosen_radios_label_reads_on_its_fill_and_is_not_the_level_1_look. Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_training_1850x960.png.
 
 #### R-15 · Two navigation rows plus footer take 131px of a 964px window
 
-- **State**: to do · found by the 2026-10-25 review · severity medium · page: shell
+- **State**: partly done · found by the 2026-10-25 review · severity medium · page: shell
 - **Problem**: Two navigation rows plus the footer took 131 px of 964, out of the chart grid (evidence cites the owner's 'charts squeezed' complaint).
 - **At ba6e85e**: At 1850x960 the header row is 0-55 px, the research tab row 55-100 px and the runtime footer 928-960 px: 132 of 960 px (the review measured 131 of 964). The research tabs are still a second row. The footer is still its own 32 px row, now leading with the consequence. Training's four plots are 230/217 px. At 960 px wide the header wraps to 99 px, with a 45 px tab row under it.
 - **Done when**: At 1850x960 the research tabs sit in the header row (and/or the footer is folded into it), so navigation and footer together take clearly less than 132 px and Training's chart grid gains that height.
 - **Sources**: UX:217 (appendix 15); RJ audits[0].findings[16]; UX:119-120 (section 4: research tabs inside the header row when there is room); RJ research[1].principles[1] (G2)
-- **Closed at**: —
+- **Closed at**: d3203dd (D01), with the footer decision measured and recorded; the row's Done when is not met. Measured at 1850x960 on Training: header 0-47 px and research tabs 47-102 px, so header and tabs take 102 px (D01's about 100; 100 before, when the group labels sat on the tab line); the footer stays its own 32 px row (928-960), so the three take 134 px against 132 before, and the four plots stay 231/231/217/217 px. **Footer decision: kept as its own row.** Its line (the consequence, 749 px, then Versions ›, 61 px: 822 px with the gap) does not fit the header's free span between the stage switch and the chips (538 to 1299 px less the gaps: about 713 px), so folding it in would cut words to an ellipsis or wrap row 1, losing what it says; a chip with an ⓘ would hide a must-know consequence behind a bubble (skill §7). Left: the owner's choice between D01's caption tier (2 px more than before) and the row's "clearly less than 132 px", which needs the footer folded or the caption tier dropped. Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_training_1850x960.png.
 
 #### R-20+R-46+B72 · Level-1 switch and in-page radios share one filled accent style
 
-- **State**: to do · found by the 2026-10-25 review · severity medium · page: shell
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: shell
 - **Problem**: The Diagnosis/Research switch looked like a selected form radio, in-page radios copied its filled style, and Settings had a fourth navigation look.
 - **At ba6e85e**: The level-1 switch's selected 'Research (pre-clinical)' is a #5558e3 fill with white 700 text. Training's chosen Device 'auto' and Fine-tune's chosen Graph backbone 'Trained' have exactly the same #5558e3 fill with white text, and neither uses the .shep-seg third style. Close fix 3d85531 caused the exact match: it set --checkbox-label-background-fill-selected to var(--shep-accent) to fix contrast. When Settings is selected it has a fourth look (an accent-50 box with an inset underline), and the level-1 switch then shows neither stage as selected. The level-1 tablist is still named 'Stage'. R-46's label half is fixed (b33cb14).
 - **Done when**: The selected level-1 switch option looks different from a selected in-page radio (Training Device, Fine-tune Graph backbone use .shep-seg or another style), and Settings' selected look fits the navigation levels; a computed-style test shows the fills differ.
 - **Sources**: UX:222 (appendix 20); RJ audits[0].findings[7]; UX:248 (appendix 46); RJ audits[1].findings[13]; UX:54 (section 2 layer 4); BL:1030 (item 72 Shell); SK:48-50
-- **Closed at**: —
+- **Closed at**: d3203dd. Level 1's selected item, the stage switch's segment and Settings alike, is the one accent-filled look (white text, 600); level 2 is an underline, level 3 (.shep-seg) a raised white segment, and a form's chosen radio (Training's Device, Fine-tune's Graph backbone) a tinted option with its accent dot and border and body-colour text, so no two levels share a treatment. Settings' selected look is level 1's (it was a fourth look, a tint with an inset underline). Seen in Chromium at 1850x960: Research and selected Settings rgb(85, 88, 227) with white text; Device "auto" rgb(238, 240, 255) with dark text. Tests: tests/unit/test_webui_shell.py::test_the_research_navigation_and_shared_tokens_as_drawn; tests/unit/test_webui_button_contrast.py::test_a_chosen_radios_label_reads_on_its_fill_and_is_not_the_level_1_look (both fail on c1e57c6). The level-1 tablist is still named "Stage" for a screen reader (unchanged). Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_training_1850x960.png, *_settings_1850x960.png.
 
 #### R-22+R-37 · PREPARE/EVALUATE group labels sit on the tab row and read as tabs
 
-- **State**: to do · found by the owner · severity medium · page: shell
+- **State**: code-verified · found by the owner · severity medium · page: shell
 - **Problem**: The PREPARE and EVALUATE group labels are ::before content on the first tab of each group, on the tabs' 44 px row at about the same size and weight, so they read as two more (clickable) tabs.
 - **At ba6e85e**: Unchanged. 'Prepare' and 'Evaluate' are ::before content of the first tab in each group. They are absolutely positioned left of that tab, inside the same 44 px row and centred on the tabs' line, at 14 px/600 uppercase with .07em spacing in #5b6270 (6.13:1). The tabs beside them are 15 px/500 #434a58, so the labels are heavier than the unselected tabs. The gap from PREPARE to Datasets is about 18 px, against 24 px between tabs, and the offsets are still hard-coded margins (84 px and 116 px). The accessibility half is met: the labels sit outside the tabs' hit area (elementsFromPoint returns the tablist; the cursor is auto), have pointer-events none, are not focusable, and the tablist's aria-label names the groups. The visual half the owner reported, that they read as tabs, is not. At 480 px the EVALUATE group wraps onto its own line, with its divider at the line's start. The CSS predates the shallow history's root 9a96a72 (2026-10-30), no commit in 30e8ae1..ba6e85e touched it, and no test pins its look (tests/unit/test_webui_shell.py:74 checks only the aria-label). The shell docstring (shell.py:17-23) still describes it as is.
 - **Done when**: PREPARE and EVALUATE no longer sit on the tabs' line: they are placed apart (e.g. as overlines or with a clear gap and divider) at 14 px, distinguished by position, spacing and weight, without hard-coded pixel margins; a browser test checks their vertical offset from the tabs.
 - **Sources**: UX:224 (appendix 22); RJ audits[0].findings[2]; UX:239 (appendix 37); RJ audits[1].findings[19]; UX:53-54 (section 2 layer 4); UX:119 (section 4 site-wide); UX:152 (section 5 decision 2); RJ audits[0].overall (point 4); RJ research[1].principles[0] (G1); RJ research[4].principles[7] (S8); RJ audits[2].findings[15] (R-76 principle); SK:51-52; SK:187-188
-- **Closed at**: —
+- **Closed at**: d3203dd (D01 option (e); the mockups are not owner-approved, so the owner's look is still to come). "Prepare" and "Evaluate" are sentence-case captions on a tier of their own above the first tab of each group, aligned with its text (12 px in), 14 px / 600 in the muted token (6.13:1), 2 px above the 32 px tabs; the groups are a group gap (32 px token) apart with a 1 px divider; no fitted margins (84/116 px gone). Measured in Chromium at 1850x960: captions 18 px tall ending at the tabs' top (y 49-67 against tabs at 69), elementsFromPoint at a caption's centre finds the tablist, not a tab; pointer-events none, not focusable. Tests: tests/unit/test_webui_shell.py::test_the_research_navigation_and_shared_tokens_as_drawn (vertical offset, alignment, size, weight, case, hit test) and tests/unit/test_webui_shell.py::test_the_group_captions_are_sentence_case_overlines_without_fitted_margins; both fail on c1e57c6. The shell docstring says it as it is now. Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_training_1850x960.png, *_nav_hover_1850x960.png, *_nav_focus_1850x960.png.
 
 ### UI-02 Orientation and scrolling
 
@@ -95,11 +95,11 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### NEW-shell-nav-theme-2 · At 480 px the wrapped EVALUATE group starts its line with a divider
 
-- **State**: to do · found by the 2026-11-16 audit · page: shell
+- **State**: code-verified · found by the 2026-11-16 audit · page: shell
 - **At ba6e85e**: At 480 px wide the EVALUATE group wraps onto its own line, and its divider (the ::before border-left) is drawn at that line's start, so the line reads '| EVALUATE Test Models' ((audit evidence, not kept in the repository) src/webui/style.py:164-167).
 - **Done when**: At 480 px wide, the EVALUATE line has no divider drawn at its line start (no '| EVALUATE'), checked by screenshot.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: d3203dd. The shell's layout pass measures the research tabs and sets shep-rnav-wrapped when both groups do not fit one line: the Evaluate group then moves whole onto its own line under its own caption, with the divider not drawn. At 480 px both groups now fit one line (the tabs lost their fitted margins); at 420 px the group wraps: Test starts its line at Datasets' left edge, Models beside it, divider display none; back at 1850 one row again at 102 px. Test: tests/unit/test_webui_shell.py::test_the_research_navigation_and_shared_tokens_as_drawn (420x900 and back). Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_training_480x900.png, *_training_420x900.png.
 
 #### R-60 · At narrow width Parameters push the run view below the fold
 
@@ -652,56 +652,56 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### NEW-settings-datasets-footer-3 · Disabled Settings fields look like enabled ones for a read-only viewer
 
-- **State**: to do · found by the 2026-11-16 audit · page: settings
+- **State**: partly done · found by the 2026-11-16 audit · page: settings
 - **At ba6e85e**: For a read-only viewer, the disabled allocator select and the disabled torch.compile checkbox look almost the same as enabled ones; only the dropdown arrow disappears. The 'Operator controls only' reason sits beside the buttons, not the fields. Screenshot (audit evidence, not kept in the repository) Low severity.
 - **Done when**: For a read-only viewer, the allocator select and torch.compile checkbox have a visibly distinct disabled style (computed colour/border differs from enabled) and the operator-only reason is shown next to the fields.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: d3203dd: the look half. For a read-only viewer the disabled allocator select is rgb(242, 243, 245) with an rgb(217, 220, 226) border and rgb(83, 90, 102) text (6.26:1), the torch.compile checkbox the same fill and border with its words grey, and both show a not-allowed cursor; for an operator they are white with the 4.32:1 control border and dark text. Seen in Chromium on a server without M1 (port 9012) and one with M1 (9011). Test: tests/unit/test_webui_shell.py::test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge (fails on c1e57c6). Left: the operator-only reason still sits beside the buttons, not the fields; moving it is Settings markup, which the Settings lane changes in parallel (runtime_settings.py). Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_settings_readonly_runtime_panel_1850x960.png.
 
 #### NEW-shell-nav-theme-4 · Diagnosis identity banners and warnings line draw their own ⚠ glyph
 
-- **State**: to do · found by the 2026-11-16 audit · page: diagnosis
+- **State**: code-verified · found by the 2026-11-16 audit · page: diagnosis
 - **Duplicate of**: B72-N7 (closed with it)
 - **At ba6e85e**: The Diagnosis result's identity banners and warnings line still draw their own ⚠ glyph (src/webui/components/diagnosis_panel.py:1698, 1811), although BACKLOG 72's B5-review note says no page draws a status glyph of its own. Inferred from the code; it needs a diagnosis to see.
 - **Done when**: The Diagnosis result banners and warnings line use the shared status mark; grep of diagnosis_panel.py finds no literal ⚠ in rendered HTML.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: b613515, closed with B72-N7: the banners and the warnings line draw the shared mark; no ⚠ in diagnosis_panel.py. Test: tests/unit/test_diagnosis_panel.py::test_the_results_banners_and_warnings_draw_the_shared_marks_not_their_own. Not seen in the running app (a diagnosis is needed).
 
 #### R-17+R-56 · Type scale too flat: four sizes, four weights; uppercase style serves several roles
 
-- **State**: to do · found by the 2026-10-25 review · severity medium · page: shell
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: shell
 - **Problem**: Text used 14, 15 and 16 px and four weights, too close to form a hierarchy; one uppercase style served four roles.
 - **At ba6e85e**: Every page still uses 14, 15, 16 and 17 px at weights 400, 500, 600 and 700. Training, for example, measures 14/400, 15/400, 14/600, 15/600, 15/500, 15/700, 16/600, 14/500, 17/700 and 14/700. No 20 px region title exists: panel titles are 16/600, the brand 17/700, tabs 15/500 (700 when selected). The 14 px/600 uppercase letter-spaced style still serves three roles: the nav group labels, Training's field labels and Diagnosis' card title (that one at 700).
 - **Done when**: Computed styles on every page use only 20/15/14 px and weights 400/600, with a 20 px region title, and the uppercase letter-spaced style serves at most one role; a test checks the set of sizes/weights.
 - **Sources**: UX:219 (appendix 17); RJ audits[0].findings[17]; UX:258 (appendix 56); RJ audits[1].findings[22]; UX:47; SK:33-35
-- **Closed at**: —
+- **Closed at**: d3203dd. One type scale from tokens (--shep-title-size 20, --shep-body-size 15, --shep-key-size 14) and two weights: panel and drawer titles 20/600, the brand 15/600 (at 20 px the stage switch no longer fit beside it at 420 px), Gradio's large buttons 15 (theme lg 15, xl and xxl 20), tabs and segments 400 with 600 selected, links 400, fingerprints and bold text 600; the 500 and 700 font faces are dropped; nothing is upper case, so the letter-spaced style serves no role. Measured in Chromium on every page with the CPU demo workspace (and the Diagnosis drawer and Training's Continue drawer): only 14/400, 14/600, 15/400, 15/600 and 20/600 (before: 14/500, 14/700, 15/500, 15/700, 16/600 and 17/700 too). Glyph-only buttons (×, ⓘ, ↻, ▼) are icons at 15-20 px. Test: tests/unit/test_webui_shell.py::test_the_research_navigation_and_shared_tokens_as_drawn (sizes, weights and upper case on all seven pages, served app; fails on c1e57c6). Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_<page>_1850x960.png.
 
 #### R-1c · Diagnosis evidence marks are raw-hex dots of one shape; report uses colour emoji
 
-- **State**: to do · found by the 2026-10-25 review · severity high (finding 1 as a whole); this part low · page: diagnosis
+- **State**: code-verified · found by the 2026-10-25 review · severity high (finding 1 as a whole); this part low · page: diagnosis
 - **Problem**: Review finding 1 recorded that the Evidence column's dots use raw hex outside the tokens, including #d69e00 at 2.4:1. Fix step 4 asked to move them onto the --shep-status-* tokens. At ba6e85e the table and the details still draw one filled dot shape in raw hex for every state (.shep-dx-dot-strong #1f9d55, -weak #d69e00 at 2.40:1 on white, -none #8a909b; diagnosis_panel.py:3558-3561; markup at :1726-1727 and :1882-1883). They are not the shared ●/▲/○ marks. The Markdown report's table and explanation headings use 🟢/🟡/⚪ (LABEL_STYLES, diagnosis_panel.py:220-224), as seen in the diagnosis checker's export (11-export-report.md:40-42). The word sits beside each dot, so colour is not the only cue, but the states are told apart by hue alone.
 - **At ba6e85e**: Not in M5's must-fix list (UX:84-85 names only the label) and not in section 4's Later list. The B5 review's 'no page draws a status glyph of its own' (BACKLOG 72 note of 2026-11-14) covered the results badge, not these dots. Unchanged at ba6e85e.
 - **Done when**: Evidence marks in the table, details and report use --shep-status-* tokens with distinct shapes per state, no raw hex (e.g. #d69e00) and no colour emoji.
 - **Sources**: docs/working/webui-ux-review-2026-10-25/review.json audits[0].findings[0] (evidence: 'Evidence column's coloured dots use raw hex ... #d69e00 at 2.4:1'; fix step 4); docs/working/WEBUI_UX_REVIEW_2026-10-25.md:47 (section 2 layer 1: 'status colours as raw hex'); src/webui/components/diagnosis_panel.py:220-224, 1726-1727, 1882-1883, 3558-3561
-- **Closed at**: —
+- **Closed at**: b613515 (the mark source only; the Diagnosis markup is otherwise unchanged). EVIDENCE_MARKS maps strong path support to ● OK, weak to ▲ warn and insufficient evidence to ○ neutral; the table and the details draw renderers.status_mark (the status tokens), the report the same shapes; no raw hex (the .shep-dx-dot rules are gone) and no colour emoji. Test: tests/unit/test_diagnosis_panel.py::test_evidence_marks_are_the_shared_status_marks_in_the_page_and_the_report (fails on c1e57c6). Not seen in the running app (a diagnosis is needed).
 
 #### R-8+R-51 · Input and select borders nearly invisible (1.0-1.52:1, below 3:1)
 
-- **State**: to do · found by the 2026-10-25 review · severity medium · page: shell
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: shell
 - **Problem**: Text inputs and dropdowns had borders at about 1.05:1 to 1.52:1, below the 3:1 non-text floor, site-wide.
 - **At ba6e85e**: No input border token is set (grep 'input-border-color' in src/webui finds nothing), so the theme's #f9fafb applies (1.05:1 on white). Text and number inputs have 0 px borders plus the theme's 0 1px 4px rgba(0,0,0,.1) shadow: Epochs, Learning rate, Seed, HPO terms and Patient ID are white on white (1.0:1). Gradio dropdowns have 0 px borders, a white fill on a #e5e7eb frame (1.24:1). Training's own select wraps and Run name have a 1 px #cdd2da border (1.52:1). All are below the 3:1 floor.
 - **Done when**: Every text/number input and dropdown on all pages has a border of at least 3:1 against its background (e.g. #8d94a1), set through --input-border-color and the select wraps, and a contrast test pins it.
 - **Sources**: UX:210 (appendix 8); RJ audits[0].findings[10]; UX:253 (appendix 51); RJ audits[1].findings[14]; UX:46 (section 2 layer 1); UX:118 (section 4: 'input borders at 3:1'); BL:1010 (52: 'site-wide label, border, lock and status rework'); SK:150
-- **Closed at**: —
+- **Closed at**: d3203dd. --input-border-width 1px and --input-border-color the control token (grey-500, 4.32:1 on white), hover grey-600, focus the focus token with a 1 px ring; select wraps (.wrap around .wrap-inner, where Gradio 6.30 drew #e5e7eb at 1.24:1 by an equally specific rule) and container-less text boxes (Training's Run name) take the same border; Training's own #cdd2da borders are gone. Measured in Chromium on every page with the demo workspace: 27 visible fields, the lowest 4.1:1 (Diagnosis, on its grey panel), none below 3:1 (before: 1.05 to 1.52:1). Tests: tests/unit/test_webui_button_contrast.py (the theme's own below 3:1; every field token at 3:1 on field, white, panel, panel-2 and page; the wrap and bare box rules) and tests/unit/test_webui_shell.py::test_the_research_navigation_and_shared_tokens_as_drawn (every field's border as drawn on every page); they fail on c1e57c6. Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_<page>_1850x960.png.
 
 #### B72-N7 · Diagnosis identity banners and warnings line draw their own ⚠ glyph
 
-- **State**: partly done · found by an internal review · page: diagnosis
+- **State**: code-verified · found by an internal review · page: diagnosis
 - **Problem**: Datasets, the Diagnosis card, Training lines and the results badge drew their own marks.
 - **At ba6e85e**: Datasets, the Diagnosis card, Training's lines and the results badge use the shared mark (renderers.status_mark; renderers.CHECK retired). But the Diagnosis result's identity banners still draw their own ⚠ before each headline, and its warnings line reads '⚠ Warnings: …', where the shared warn shape is ▲. Inferred from the code, not seen: the banners need a diagnosis, which only the diagnosis checker may run.
 - **Done when**: The Diagnosis result's identity banners and warnings line use the shared status mark (▲ via renderers.status_mark) instead of ⚠; a test finds no ⚠ in the rendered result HTML.
 - **Sources**: BL:1030 (B3, B4, B5 notes)
-- **Closed at**: —
+- **Closed at**: b613515. The identity banners draw ▲ (✕ for the not-reported error) and the warnings line "▲ Warnings: …" by renderers.status_mark; no ⚠ in the rendered result HTML. Test: tests/unit/test_diagnosis_panel.py::test_the_results_banners_and_warnings_draw_the_shared_marks_not_their_own (fails on c1e57c6). Not seen in the running app (a diagnosis is needed).
 
 #### OWN-1 · Pages still overloaded and hard to read (theme layer unchanged)
 
@@ -710,52 +710,52 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The round improved the shared pieces: status marks, gated buttons, short options, summary lists, plain field labels and a footer that leads with the consequence. The theme layer that the review (UX §2) blamed for the overload remains: a flat type scale (four sizes and four weights, no 20 px title), invisible input borders (1.52:1 at most), PREPARE/EVALUATE on the tab row, a level-1 switch identical to the in-page radios, and inverted chip emphasis. Pages still carry engineering detail, for example Datasets' footnotes naming scripts/build_knowledge_graph.py, current_data_dir and workspace_build.json. No UX acceptance by the owner has happened since 2026-10-25.
 - **Done when**: The theme-layer items R-8, R-15, R-17, R-20, R-21 and R-22 are closed and the owner records UX acceptance of the pages.
 - **Sources**: M5W:9-10; M5W:62-67; UX:190-192; PTR:16; BL:1010 (item 52)
-- **Closed at**: —
+- **Closed at**: Advanced at d3203dd: of the theme-layer items, R-8, R-17, R-20, R-21 and R-22 are code-verified and R-15 is partly done (its footer decision is recorded). Left: R-15's height, and the owner's UX acceptance of the pages (none since 2026-10-25).
 
 #### R-16+R-76+B72 · Pages still mix field-label styles (uppercase micro-labels beside sentence case)
 
-- **State**: partly done · found by the 2026-10-25 review · severity medium · page: shell
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: shell
 - **Problem**: Field labels were indigo/tinted chips that look like tags, buttons or links; each page mixed 3-4 label styles (R-76: 'the same affordance confusion the owner raised for PREPARE/EVALUATE'; R-46's label half).
 - **At ba6e85e**: Gradio field labels are plain 14 px/600 #1d2230 with no fill and no padding on every page; the chips are gone. But each page still mixes label styles. Training's DATASET, RUN NAME and VIEWING are uppercase, letter-spaced 14/600 #434a58, beside sentence-case 'Epochs' at 14/600 #1d2230. Diagnosis has 'MODEL IN USE' (uppercase 14/700) and 'Options' (14/500) beside 'Top-K' (14/600). On Test, 'R10 evidence', 'Batch size' and 'Device' are plain grey keys beside dark 600 labels.
 - **Done when**: Each page uses one field-label style: Training's DATASET/RUN NAME/VIEWING and Diagnosis' 'MODEL IN USE' render in the same sentence-case 14-15px/600 as other labels, verified by a computed-style check.
 - **Sources**: UX:218 (appendix 16); RJ audits[0].findings[9]; UX:278 (appendix 76); RJ audits[2].findings[15]; RJ audits[1].findings[13] (R-46 label half); UX:45-46; UX:118 (section 4); BL:1030 (item 72 Shell); SK:53-54
-- **Closed at**: —
+- **Closed at**: d3203dd. One field-label style from tokens (--shep-label-size 14, --shep-label-weight 600, --shep-label-color the text colour), which Gradio's labels (block-title variables) and the pages' own labels share: Training's run-bar Dataset, Run name and Viewing, Fine-tune's keys, Diagnosis' "Model in use" and "Options", and Test's R10 evidence, Batch size and Device rows (renderers.FIELD_ROWS); sentence case, no letter spacing. Measured in Chromium: one label style per page on all seven pages. Test: tests/unit/test_webui_shell.py::test_the_research_navigation_and_shared_tokens_as_drawn (one style per page, labels named; fails on c1e57c6) and tests/unit/test_webui_test_page.py (the Test rows carry FIELD_ROWS). Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_training_1850x960.png, *_clinical_1850x960.png, *_test_1850x960.png.
 
 #### R-21 · Read-only chip is quieter than the normal state; header chips look like buttons
 
-- **State**: partly done · found by the 2026-10-25 review · severity medium · page: shell
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: shell
 - **Problem**: In the header the read-only state was quieter than normal and status chips looked like buttons; status colours were raw hex.
 - **At ba6e85e**: Done: the lock now appears only on the read-only chip, which leads with 'Read-only:'. Remaining: the normal 'Operator controls: on (this machine)' is still an accent-tinted pill (#eef0ff fill, #3a3dbd text), while 'Read-only: forwarded by a proxy' is a grey pill (#f2f3f5, #2f3540). The state viewers must notice is still quieter than the normal one. Both chips and 'GPU jobs: none' are 28 px bordered pills with a 999 px radius, so they look like buttons while showing normal states. The dot is raw #8a909b.
 - **Done when**: In the header, normal states ('Operator controls: on', 'GPU jobs: none') render as plain text without pill borders, while the read-only state is an amber lozenge with the lock; status colours come from tokens, not raw hex.
 - **Sources**: UX:223 (appendix 21); RJ audits[0].findings[6]; UX:47; UX:118 ('status marks with the traffic-light vocabulary')
-- **Closed at**: —
+- **Closed at**: d3203dd. A header chip is plain text by default (no fill, no border): "Operator controls: on" with a filled green ● (--shep-status-ok), "GPU jobs: none" with a hollow grey ring; only a state to watch is a lozenge: read-only amber (amber-50 fill, amber-300 border, amber-800 text) with the lock, a running GPU job in the info colour, a state not read grey. No raw hex (#8a909b gone). Seen in Chromium for an operator (9011) and a read-only viewer (9012). Tests: tests/unit/test_webui_button_contrast.py::test_the_header_chips_marks_are_status_tokens_and_normal_states_are_quiet, tests/unit/test_webui_shell.py::test_the_research_navigation_and_shared_tokens_as_drawn (normal chips transparent, the on dot green) and tests/unit/test_webui_shell.py::test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge (the amber lozenge); they fail on c1e57c6. Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_training_1850x960.png, *_settings_readonly_1850x960.png.
 
 #### R-31 · Collapsed accordion chevron points left instead of right/down
 
-- **State**: partly done · found by the 2026-10-25 review · severity low · page: settings
+- **State**: code-verified · found by the 2026-10-25 review · severity low · page: settings
 - **Problem**: The restart-locked warning failed contrast; a collapsed accordion's chevron pointed left.
 - **At ba6e85e**: The contrast half is gone. f9202b6 fixed it, and 0ee56f9 then retired the red restart-locked note. While a GPU job runs, Restart's reason is now the shared neutral mark 'Restart is off while a GPU job (training or a test run) runs.'. I could not see it, because nothing was training and starting a job is not allowed here; this is from the code. The chevron half is unchanged. A collapsed accordion's icon is Gradio's ▼ with inline 'transform: rotate(90deg)', computed matrix(0,1,-1,0), so it points left (◀). Opened, it is rotate(0deg), pointing down. The project's only rule on that icon boxes it in 22x22 px and does not turn it. Seen on both Settings accordions at 1850 and 960 wide. Inferred: the same on every gr.Accordion in the app (e.g. Training's), since the only rule is the shared one.
 - **Done when**: Closed Gradio accordions show a right-pointing chevron and open ones a down-pointing chevron on every page.
 - **Sources**: UX:233 (appendix 31); RJ audits[0].findings[28]; UX:11; UX:86-87
-- **Closed at**: —
+- **Closed at**: d3203dd. The shared accordion rule turns Gradio's ▼ -90° when closed (points right) and not at all when open (.label-wrap.open: points down), over Gradio's inline rotate(90deg). Measured in Chromium on Training's More training settings: closed matrix(0, -1, 1, 0, 0, 0), open none after its turn ends; the rule is the one every gr.Accordion takes (Settings' two seen in the screenshots). Test: tests/unit/test_webui_shell.py::test_the_research_navigation_and_shared_tokens_as_drawn (fails on c1e57c6). Screens: scratchpad/t04/nav-tokens/shots/{before,after}/after_training_1850x960.png, after_settings_readonly_runtime_panel_1850x960.png.
 
 #### R-33 · Hits@K chart palette has two colours under 3:1 and overlapping series cannot be isolated
 
-- **State**: partly done · found by the 2026-10-25 review · severity high · page: training
+- **State**: code-verified · found by the 2026-10-25 review · severity high · page: training
 - **Problem**: The Hits@K legend told dashed series apart by colour alone, three of five series overlapped, two palette colours missed 3:1.
 - **At ba6e85e**: Legend and tooltip swatches are now inline SVG lines drawn with each series' own dash (shep_charts.js:391-404). This is seen in the Pooled top-k legend: top-1 solid, top-3 '7 4', top-5 '2 3', top-10 '9 3 2 3'. The palette is unchanged (shep_charts.js:74). Against the plot's white background (measured rgb(255,255,255)), #1baf7a is 2.82:1 and #eb6834 is 3.20:1, and top-5 is drawn in #1baf7a with a dotted line. Series that coincide still hide each other: at epoch 1, top-5 at 1.0 sits under top-10, so only three of the four points show. The legend keys are plain spans (no button, role or aria-pressed, and no uPlot setSeries), so a viewer cannot isolate an overlapped series. The tooltip lists every value.
 - **Done when**: Every chart series colour measures at least 3:1 against the plot background, and clicking a legend key toggles that series so overlapping lines can be isolated.
 - **Sources**: UX:235 (appendix 33); RJ audits[1].findings[1]; UX:64 (section 3 high #3); UX:88; UX:131 (section 4); BL:1010 (52)
-- **Closed at**: —
+- **Closed at**: 0c24e9b. The palette takes the same hues a step darker (#d95926 for #eb6834, #199e70 for #1baf7a), validated as a set: every series colour at least 3:1 on white. Each legend key is a button with aria-pressed that hides or shows its series (uPlot setSeries), kept per chart and label across rebuilds; a hidden key is struck through with its swatch faded. Seen in Chromium on Training's Pooled top-k: clicking top-3 set aria-pressed false and struck it through. Tests: tests/unit/test_webui_charts.py::test_the_chart_series_colours_show_at_three_to_one_on_the_plot and the chart host's legend_key_hides_and_shows_its_series (both fail on c1e57c6). Screen: scratchpad/t04/nav-tokens/shots/{before,after}/after_chart_legend_toggle_1850x960.png.
 
 #### R-57 · Run-view 'continued from' relation is an accent pill that looks clickable
 
-- **State**: partly done · found by the 2026-10-25 review · severity low · page: training
+- **State**: code-verified · found by the 2026-10-25 review · severity low · page: training
 - **Problem**: Run-view header tags were ambiguous and looked clickable.
 - **At ba6e85e**: The ambiguous 'latest' now reads 'the latest run' or 'a past run' (RELATION_LATEST, training_console.py:2125; 443cfc1). While the Continue drawer is open, the relation is an accent-tinted pill, 'the run continued from' or 'the run branched from' (shep-tag-accent, :2284-2289), in the same tint as links and selected controls. The ordinary 'same dataset as the run bar' is a green chip (status_mark as_chip=True, :2258), although the skill's §6 says normal states are quiet. Neither has a pointer cursor or focus.
 - **Done when**: In the run-view header the continued/branched-from relation is plain grey text with an icon, and coloured tags appear only for states needing attention.
 - **Sources**: UX:259 (appendix 57); RJ audits[1].findings[23]
-- **Closed at**: —
+- **Closed at**: f04a51f. While Continue… is open the relation is plain grey 14 px text, "the run continued from" (or branched from) led by an arrow icon, "not the run … from" without; "same dataset as the run bar" is the OK mark and its word with no tag; coloured tags stay for states to watch. Seen in Chromium on Training: the same-dataset state as quiet green text. Tests: tests/unit/test_training_console_resume.py::test_the_run_bar_and_the_run_view_say_branched_for_branch and tests/unit/test_training_page.py::test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full (both fail on c1e57c6). The relation with the drawer open was not looked at in the app. Screen: scratchpad/t04/nav-tokens/shots/{before,after}/after_training_1850x960.png.
 
 #### OPS-C6 · A chosen radio's label was 4.46:1
 
@@ -763,7 +763,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: Below 4.5:1 (P2).
 - **At ba6e85e**: The chosen radio's label is white on #5558e3 (the dashboard's accent), 5.4:1, measured in the page (rgb(85,88,227)) and computed.
 - **Sources**: OPS:363-364
-- **Closed at**: —
+- **Closed at**: Look changed at d3203dd (R-20): a chosen radio's label is the body colour on a tint, 14.0:1; white on the accent (5.4:1) is level 1's selected look alone. Test: tests/unit/test_webui_button_contrast.py::test_a_chosen_radios_label_reads_on_its_fill_and_is_not_the_level_1_look.
 
 #### R-2 · Placeholders and info= text used Gradio's subdued grey at 2.54:1
 
@@ -779,7 +779,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: Datasets' rows (and the Diagnosis disease table and model table, per 52 L) carried aria-selected on a plain table; links had no focus style.
 - **At ba6e85e**: Datasets' selected row carries aria-current="true" and no aria-selected, and on no page does any element outside tab or option roles carry aria-selected. With keyboard focus, 'Details ›' (.shep-link), the icon Copy buttons and the model-list rows show Chromium's default focus ring (outline auto, dark on white), clearly visible; table rows show the 2 px accent outline. There is no explicit :focus-visible rule for .shep-link or button.shep-copy, so their ring is the browser default. Inferred: a browser with a weaker default would show less.
 - **Sources**: UX:254 (appendix 52); RJ audits[1].findings[28]; BL:1010 (item 52 (L), K6d2 review)
-- **Closed at**: —
+- **Closed at**: d3203dd adds the explicit ring the audit missed: .shep-link and button.shep-copy take a 2 px focus ring in --shep-focus-ring on :focus-visible (as the tabs, table rows and Details › do), not the browser's default.
 
 #### R-58 · Training labels mixed casing, abbreviations and an emoji
 
