@@ -123,6 +123,7 @@ from src.webui.components.renderers import resources_html as _resources_html
 from src.webui.exports import export_dir, file_slug
 from src.webui.components.renderers import summary_list as _summary_list
 from src.webui.components.renderers import short_hex as _short_hex
+from src.webui.components.renderers import STATUS_MARKS as _STATUS_MARKS
 from src.webui.components.renderers import status_mark as _status_mark
 from src.webui.operator_access import operator_access
 from src.webui.style import sticky_room_js
@@ -293,12 +294,31 @@ SIMILARITY_NOTE = ("Similarity ranks the reference cohort's patients: 0 is the c
 REFERENCE_CONTEXT_NOTE = ("Recorded by the reference cohort: context, never an input of this "
                           "query.")
 
-# Evidence label (the API's evidence_label) → (emoji, CSS color)
-LABEL_STYLES = {
-    "Strong path support": ("🟢", "#22c55e"),
-    "Weak path support": ("🟡", "#eab308"),
-    "Insufficient evidence": ("⚪", "#9ca3af"),
+#: Each evidence label's (the API's evidence_label) status mark, by the one
+#: indicator's rows (`renderers.status_mark`, the WebUI skill's §6; R-1c):
+#: strong path support ● OK, weak ▲ to watch, insufficient evidence ○
+#: neutral, in the status tokens in the page and by the same shapes in the
+#: report, never a raw hex or a colour emoji. A label not listed has no mark.
+EVIDENCE_MARKS = {
+    "Strong path support": "ok",
+    "Weak path support": "warn",
+    "Insufficient evidence": "neutral",
 }
+
+
+def _evidence_shape(label: Any) -> str:
+    """The report's mark for an evidence label: its status shape, or ""."""
+    kind = EVIDENCE_MARKS.get(label)
+    return _STATUS_MARKS[kind][0] if kind else ""
+
+
+def _evidence_mark(label: Any, *, strong: bool = False) -> str:
+    """The page's mark for an evidence label: the status mark with the label
+    as its word (in the strong weight with `strong`), or the escaped label
+    alone when it has none."""
+    kind = EVIDENCE_MARKS.get(label)
+    words = f"<b>{_e(label)}</b>" if strong else _e(label)
+    return _status_mark(kind, words, words_html=True) if kind else words
 
 
 # =============================================================================
@@ -537,8 +557,7 @@ def _format_results_table(candidates: List[Dict], kind: Optional[str] = None) ->
     for c in candidates:
         cells = [str(c.get("rank")), f"**{c.get('disease_name')}**", _num(_score(c, kind))]
         label = c.get("evidence_label") or "—"
-        emoji, _ = LABEL_STYLES.get(label, ("", "#888"))
-        cells.append(f"{emoji} {label}".strip())
+        cells.append(" ".join(part for part in (_evidence_shape(label), label) if part))
         rows.append("| " + " | ".join(cells) + " |")
     header = ("| " + " | ".join(columns) + " |\n"
               + "|" + "|".join(":----:" if c == "Rank" else "---" for c in columns) + "|\n")
@@ -595,10 +614,9 @@ def _format_evidence_detail(candidate: Dict) -> str:
     mode = pkg.get("mode") or "unknown"
     summary = pkg.get("summary") or ""
     label = pkg.get("evidence_label") or "—"
-    emoji, _color = LABEL_STYLES.get(label, ("", "#888"))
 
     parts = [
-        f"### {emoji} {label}",
+        "### " + " ".join(part for part in (_evidence_shape(label), label) if part),
         "",
         f"> {summary}",
         "",
@@ -1630,13 +1648,6 @@ MATCHING_NOTE = (
     "list does not mean no clinical overlap."
 )
 
-_DOT_CLASS = {
-    "Strong path support": "strong",
-    "Weak path support": "weak",
-    "Insufficient evidence": "none",
-}
-
-
 # =============================================================================
 # The result, as the page shows it
 # =============================================================================
@@ -1784,9 +1795,10 @@ def banners_html(result: Mapping[str, Any]) -> str:
     for headline, _detail in _identity_banners(kind, identity):
         key = _BANNER_KEYS.get(headline, "")
         tone = "red" if key == "not_reported" else "amber"
-        out.append(f'<div class="shep-dx-banner shep-dx-banner-{tone}" role="note">'
-                   f'<span class="shep-dx-banner-ic" aria-hidden="true">⚠</span>'
-                   f'<b>{_e(headline)}</b>'
+        # The shared mark (B72-N7): ✕ for an error, ▲ for a condition to watch.
+        mark = _status_mark("error" if tone == "red" else "warn", f"<b>{_e(headline)}</b>",
+                            words_html=True)
+        out.append(f'<div class="shep-dx-banner shep-dx-banner-{tone}" role="note">{mark}'
                    f'{help_button(f"dx-banner-{key}", headline) if key else ""}</div>')
     return "".join(out)
 
@@ -1813,8 +1825,7 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
                  f'<span class="shep-dx-clamp" title="{name}">{name}</span></td>'
                  f'<td class="shep-num">{_num(_score(c, kind))}</td>')
         label = c.get("evidence_label") or "—"
-        cells += (f'<td><span class="shep-dx-dot shep-dx-dot-{_DOT_CLASS.get(label, "none")}"'
-                  f' aria-hidden="true"></span>{_e(label)}</td>')
+        cells += f'<td>{_evidence_mark(label)}</td>'
         # A plain table's selected row is `aria-current` (the skill's §8).
         rows.append(f'<tr data-key="{_e(rank)}" tabindex="0"'
                     f'{selected_class if on else ""}>{cells}</tr>')
@@ -1898,8 +1909,9 @@ def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
     (what the Score column holds, visible text), a patients-like-me result's
     reference cohort version, and the table."""
     warnings = result.get("warnings") or []
-    note = (f'<p class="shep-dx-warnings">⚠ Warnings: {_e("; ".join(str(w) for w in warnings))}'
-            '</p>' if warnings else "")
+    note = (f'<p class="shep-dx-warnings">'
+            f'{_status_mark("warn", "Warnings: " + "; ".join(str(w) for w in warnings))}</p>'
+            if warnings else "")
     kind = _result_kind(result)
     label = (f'<p class="shep-dx-kind">{_e(kind_label(result))}</p>'
              if kind is not None else "")
@@ -1986,8 +1998,7 @@ def evidence_html(candidate: Mapping[str, Any], explanations: bool = True) -> st
                "candidate.")
         return f'<p class="shep-muted">{_e(why)}</p>'
     label = candidate.get("evidence_label") or pkg.get("evidence_label") or "—"
-    parts = [f'<p class="shep-dx-ev-label"><span class="shep-dx-dot shep-dx-dot-'
-             f'{_DOT_CLASS.get(label, "none")}" aria-hidden="true"></span><b>{_e(label)}</b></p>']
+    parts = [f'<p class="shep-dx-ev-label">{_evidence_mark(label, strong=True)}</p>']
     if pkg.get("summary"):
         parts.append(f'<blockquote class="shep-dx-quote">{_e(pkg.get("summary"))}</blockquote>')
     mode = pkg.get("mode")
@@ -3679,10 +3690,6 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-tbl tbody tr[data-key] {{ cursor: pointer; }}
 {_TAB} .shep-dx-tbl tbody tr.shep-on td.shep-dx-dis {{ color: var(--shep-accent-text); font-weight: 600; }}
 {_TAB} .shep-dx-clamp {{ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
-{_TAB} .shep-dx-dot {{ display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }}
-{_TAB} .shep-dx-dot-strong {{ background: #1f9d55; }}
-{_TAB} .shep-dx-dot-weak {{ background: #d69e00; }}
-{_TAB} .shep-dx-dot-none {{ background: #8a909b; }}
 {_TAB} .shep-dx-empty {{ margin: auto; max-width: 440px; text-align: center; color: var(--shep-text-2); padding: 24px 8px; }}
 {_TAB} .shep-dx-empty p {{ margin: 4px 0; }}
 {_TAB} .shep-dx-empty-h {{ font-size: 15px; font-weight: 600; color: var(--shep-text); }}

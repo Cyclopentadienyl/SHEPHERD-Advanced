@@ -2801,3 +2801,49 @@ def test_the_card_shows_stop_inference_by_class_while_a_model_serves():
     assert "visible" not in out["stop_btn"]
     hidden = dp.card_outputs({**_serving_card(), "status": {"initialized": False}}, None, "idle")
     assert not _shown(hidden["stop_btn"])
+
+
+# --------------------------------------------------------------------------- status marks (R-1c, B72-N7)
+_RAW_HEX = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+_COLOUR_EMOJI = ("🟢", "🟡", "⚪", "🔴", "⚠")
+
+
+def test_evidence_marks_are_the_shared_status_marks_in_the_page_and_the_report():
+    """R-1c: the Evidence column, the details' label and the report drew one
+    raw-hex dot (#d69e00 at 2.4:1) or a colour emoji for every state. Each
+    label is now its status mark: strong ● OK, weak ▲ to watch, insufficient
+    ○ neutral, by `renderers.status_mark` (the status tokens), its word kept;
+    the report uses the same shapes."""
+    from src.webui.components.renderers import status_mark
+
+    result = _sample_result()
+    result["candidates"][1]["evidence_label"] = "Weak path support"
+    table = dp.candidates_table_html(result["candidates"], 1, dp.DISEASE_TASK)
+    assert status_mark("ok", "Strong path support") in table
+    assert status_mark("warn", "Weak path support") in table
+    details = dp.evidence_html(_sample_result()["candidates"][0])
+    assert status_mark("ok", "<b>Strong path support</b>", words_html=True) in details
+    css = dp.PAGE_CSS
+    assert "shep-dx-dot" not in table + details + css
+    md = dp._build_results_report_md(result)
+    assert "● Strong path support" in md and "▲ Weak path support" in md
+    for glyph in _COLOUR_EMOJI:
+        assert glyph not in table + details + md, glyph
+    # A label the API has not listed keeps its word and draws no mark.
+    assert dp._evidence_mark("Something new") == "Something new"
+
+
+def test_the_results_banners_and_warnings_draw_the_shared_marks_not_their_own():
+    """B72-N7: the identity banners drew their own ⚠ before each headline and
+    the warnings line read "⚠ Warnings: …"; both use the shared mark (▲ to
+    watch, ✕ for the not-reported error), and no rendered result HTML holds a
+    ⚠."""
+    from src.webui.components.renderers import status_mark
+
+    result = _result_with(_served_identity())
+    body = dp.results_body_html(result, 1) + dp.banners_html(result)
+    assert "⚠" not in body
+    assert status_mark("warn", "Warnings: low phenotype count") in body
+    assert 'class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲' in (
+        dp.banners_html(result))
+    assert not _RAW_HEX.search(dp.banners_html(result))
