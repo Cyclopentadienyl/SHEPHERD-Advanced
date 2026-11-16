@@ -728,7 +728,8 @@ def job_card_html(status: Mapping[str, Any], *, operator: bool,
 # =============================================================================
 # Start, Stop and the reason line
 # =============================================================================
-def refused_html(tasks: Any, values: Mapping[str, Any], touched: Any) -> str:
+def refused_html(tasks: Any, values: Mapping[str, Any], touched: Any, *,
+                 tried: bool = False) -> str:
     """**What Start would refuse of the form, said beside Start** (UI ledger
     NEW-training-finetune-6: an emptied task setting was said only in the
     line under the fields, out of view under the form's fold, while Start
@@ -736,12 +737,19 @@ def refused_html(tasks: Any, values: Mapping[str, Any], touched: Any) -> str:
     the line's "Not valid: …"), by its label in the shared words ("Task loss
     weight must be set."), beside the ▲ of a condition to watch; else empty.
     Start stays enabled: its own check refuses it, in the same words.
-    Escaped."""
+
+    **Start's own refusal of them is this same line** (`tried`: Start was
+    clicked and refused the form's values), said as the ✕ of a refusal ("✕
+    Not started: Learning rate must be set."), never a second notice beside
+    it (the T06 review: "▲ Start would refuse: …" and "✕ Not started: …", one
+    fact twice in Start's row). The next input says it again as what Start
+    would refuse. Escaped."""
     _settings, problems = sent_settings(tasks, values, touched)
     if not problems:
         return ""
+    words = ("Not started: " if tried else "Start would refuse: ") + " ".join(problems)
     return ('<span class="shep-ft-refused">'
-            + r.status_mark("warn", "Start would refuse: " + " ".join(problems)) + "</span>")
+            + r.status_mark("error" if tried else "warn", words) + "</span>")
 
 
 def _why(icon: str, text: str) -> str:
@@ -1016,15 +1024,20 @@ def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run
 
     Returns the notice beside Start, a refusal with the shared mark of a
     refusal, escaped (`training_console.notice_html`), or nothing once started
-    (the card shows the job); and the Stop's notice cleared, which spoke of a
-    job before this start.
+    (the card shows the job); the Stop's notice cleared, which spoke of a job
+    before this start; and the line on what Start would refuse of the form
+    (`refused_html`): a refusal of the form's own values is said there, as
+    Start's ✕, with no notice (the T06 review: the same sentence twice in
+    Start's row); otherwise it is left as it is.
     """
     access = operator_access(request)
     if not access.allowed:
-        return tc.notice_html(access.refusal, mark="error"), ""
-    said = _start(ws, parents, key, tasks, device, run_name,
-                  dict(zip(FINETUNE_FIELDS, values, strict=True)), touched)
-    return tc.notice_html(said, mark="error"), ""
+        return tc.notice_html(access.refusal, mark="error"), "", gr.update()
+    fields = dict(zip(FINETUNE_FIELDS, values, strict=True))
+    said, of_the_form = _start(ws, parents, key, tasks, device, run_name, fields, touched)
+    if of_the_form:
+        return "", "", refused_html(tasks, fields, touched, tried=True)
+    return tc.notice_html(said, mark="error"), "", gr.update()
 
 
 def _on_finetune_stop_request(request: gr.Request, mode):
@@ -1046,8 +1059,10 @@ def _on_finetune_stop(request: gr.Request, mode):
 
 
 def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
-           touched: Any) -> str:
-    """Start's work after D8, as a plain sentence ("" once started): the
+           touched: Any) -> Tuple[str, bool]:
+    """Start's work after D8, as a plain sentence ("" once started) and
+    whether it is a refusal of the form's own values (`sent_settings`'
+    problems, which the line beside Start says: `refused_html`): the
     chosen base and tasks (in `TASKS` order), the settings the chosen tasks
     take (`offered_settings`) of `values` (the fields', by `FINETUNE_FIELDS`)
     that the operator touched (`touched`; decision S2: `sent_settings`),
@@ -1061,21 +1076,22 @@ def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
     row = (ws or {}).get("row") or {}
     fingerprint = tc.workspace_fingerprint(ws)
     if not row or not fingerprint:
-        return "Not started: select a dataset from the server's list first."
+        return "Not started: select a dataset from the server's list first.", False
     if not row.get("trainable"):
-        return f"Not started: {row.get('name')} is not trainable: {r.not_trainable_short(row)}."
+        return (f"Not started: {row.get('name')} is not trainable: "
+                f"{r.not_trainable_short(row)}.", False)
     item = (parents or {}).get(key) if key else None
     if not item:
-        return "Not started: choose a base checkpoint from the list."
+        return "Not started: choose a base checkpoint from the list.", False
     if item.get("workspace") != row.get("name"):
         return (f"Not started: the list shows {item.get('workspace')}’s bases, not "
-                f"{row.get('name')}’s; list them again (Refresh).")
+                f"{row.get('name')}’s; list them again (Refresh).", False)
     chosen = chosen_tasks(tasks)
     if not chosen:
-        return "Not started: choose at least one task."
+        return "Not started: choose at least one task.", False
     settings, problems = sent_settings(chosen, values, touched)
     if problems:
-        return "Not started: " + " ".join(problems)
+        return "Not started: " + " ".join(problems), True
     from src.api.services.server_lists import (
         ServerListRefused,
         resolve_checkpoint,
@@ -1088,20 +1104,20 @@ def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
                                   item["filename"])
     except ServerListRefused as exc:
         return (f"Not started: {redact(exc, workspaces_root()[0])}; list the bases again "
-                "(Refresh).")
+                "(Refresh).", False)
     result = training_manager.start_finetune(
         FinetuneInputs(data_dir=str(directory), finetune_from=str(path), tasks=chosen,
                        expected_parent_sha256=item.get("sha256"), device=device or "auto",
                        run_name=(run_name or "").strip(), settings=settings),
         expected_dataset_fingerprint=fingerprint)
     if result.get("success"):
-        return ""
+        return "", False
     error = result.get("error")
     # A setting the runner names first by its record name, by the field's
     # label instead, as the Training page's Branch says the runner's
     # refusal of its settings (`labelled_problem`).
     return tc.not_started(tc.labelled_problem(error) if result.get("invalid_settings")
-                          else error)
+                          else error), False
 
 
 # =============================================================================
@@ -1413,7 +1429,7 @@ def create_finetune_page(ctx: Any) -> None:
 
     start.click(_on_finetune_start,
                 inputs=[ws, parents, checkpoint, tasks, device, run_name, touched, *field_list],
-                outputs=[notice, stop_notice], show_progress="hidden").then(
+                outputs=[notice, stop_notice, refused], show_progress="hidden").then(
         tc.close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden").then(
         **card_step).then(**ctx.chip_refresh)
     # Stop asks first: the Training page's stop logic, D8 on each request.

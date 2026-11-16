@@ -279,6 +279,12 @@ def _values(**changed):
     return [changed.get(name, tc.form_value(built[name])) for name in fp.FINETUNE_FIELDS]
 
 
+def gr_update(**kwargs):
+    import gradio as gr
+
+    return gr.update(**kwargs)
+
+
 def _start_with(operator, ws, parents, key, tasks, touched, device="cpu", run_name="",
                 **changed):
     return fp._on_finetune_start(operator, ws, parents, key, tasks, device, run_name, touched,
@@ -292,9 +298,10 @@ def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_was_touche
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
-    said, stop_notice = _start_with(operator, ws, parents, key, ["patients_like_me", "disease"],
-                                    ["seed"], run_name="  ft  ", seed=7.0)
-    assert (said, stop_notice) == ("", "")
+    said, stop_notice, beside = _start_with(operator, ws, parents, key,
+                                            ["patients_like_me", "disease"], ["seed"],
+                                            run_name="  ft  ", seed=7.0)
+    assert (said, stop_notice, beside) == ("", "", gr_update())
     inputs, kwargs = started[-1]
     assert inputs.tasks == ("disease", "patients_like_me")           # TASKS order
     assert inputs.settings == {"seed": 7} and type(inputs.settings["seed"]) is int
@@ -326,7 +333,7 @@ def test_a_frozen_graph_backbone_reaches_the_start_and_the_note_says_what_trains
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
     assert _start_with(operator, ws, parents, key, ["disease", "gene"], ["frozen_parts"],
-                       frozen_parts="graph_side") == ("", "")
+                       frozen_parts="graph_side") == ("", "", gr_update())
     assert started[-1][0].settings == {"frozen_parts": "graph_side"}
     assert started[-1][0].tasks == ("disease", "gene")
     _start_with(operator, ws, parents, key, ["disease"], ["num_epochs"], num_epochs=5,
@@ -365,11 +372,21 @@ def test_start_refuses_what_it_cannot_send_and_starts_nothing(root, operator, st
             "tasks": ["disease"]}
     fields = {name: value for name, value in change.items() if name in fp.FINETUNE_FIELDS}
     args.update({name: value for name, value in change.items() if name not in fields})
-    said, _stop = _start_with(operator, args["ws"], args["parents"], args["key"], args["tasks"],
-                              list(fp.FINETUNE_FIELDS), **fields)
-    assert started == [] and words in said and "Not started" in said
-    # Beside Start, with the shared mark of a refusal (the skill's §6, §9).
-    assert said.startswith('<span class="shep-notice-t"><span class="shep-st shep-st-error">')
+    said, _stop, beside = _start_with(operator, args["ws"], args["parents"], args["key"],
+                                      args["tasks"], list(fp.FINETUNE_FIELDS), **fields)
+    assert started == []
+    # Beside Start, with the shared mark of a refusal (the skill's §6, §9),
+    # once: a refusal of the form's own values is the line that said what
+    # Start would refuse, now Start's ✕, with no notice beside it (the T06
+    # review: "▲ Start would refuse: …" and "✕ Not started: …" in one row);
+    # any other refusal is the notice, the line left as it is.
+    if fields:
+        assert said == "" and words in beside and "Not started" in beside
+        assert beside.startswith('<span class="shep-ft-refused"><span class="shep-st shep-st-error">')
+        assert "Start would refuse" not in beside
+    else:
+        assert beside == gr_update() and words in said and "Not started" in said
+        assert said.startswith('<span class="shep-notice-t"><span class="shep-st shep-st-error">')
 
 
 @pytest.mark.parametrize("name", ["task_loss_weight", "lp_loss_weight", "candidate_sample_size",
@@ -407,9 +424,12 @@ def test_an_emptied_task_number_is_refused_before_start_and_never_said_to_be_the
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
-    said, _stop = fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu", "",
-                                        [name], *_fields(["disease"], **{name: emptied}))
-    assert started == [] and "Not started" in said and sentence in said
+    said, _stop, beside = fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu",
+                                                "", [name],
+                                                *_fields(["disease"], **{name: emptied}))
+    assert started == [] and said == ""
+    assert beside == ('<span class="shep-ft-refused">' + r.status_mark(
+        "error", f"Not started: {sentence}") + "</span>")
     # Untouched, nothing is sent: each child takes its task's reference.
     assert fp.sent_settings(["disease"], values, []) == ({}, [])
     typed = 0.5 if by_name(name).kind == "float" else 7
@@ -421,7 +441,7 @@ def test_a_parent_listed_for_another_workspace_is_not_started(root, operator, st
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
     parents = {key: {**parents[key], "workspace": "other"}}
-    said, _stop = _start_with(operator, ws, parents, key, ["disease"], [])
+    said, _stop, _beside = _start_with(operator, ws, parents, key, ["disease"], [])
     assert started == [] and "the list shows other’s bases, not demo’s" in said
 
 
@@ -433,7 +453,7 @@ def test_a_refused_start_shows_the_runners_sentence_escaped(root, operator, monk
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
-    said, _stop = _start_with(operator, ws, parents, key, ["disease"], [])
+    said, _stop, _beside = _start_with(operator, ws, parents, key, ["disease"], [])
     assert "<img" not in said and "&lt;img" in said and "another knowledge graph" in said
     # The runner's sentence already says nothing was started: not said twice
     # (K6 closing review: "Not started: … Nothing was started.").
@@ -442,7 +462,7 @@ def test_a_refused_start_shows_the_runners_sentence_escaped(root, operator, monk
     # A refusal that does not say it keeps the page's lead.
     monkeypatch.setattr(fp.training_manager, "start_finetune",
                         lambda inputs, **k: {"success": False, "error": "The slot is busy."})
-    said, _stop = _start_with(operator, ws, parents, key, ["disease"], [])
+    said, _stop, _beside = _start_with(operator, ws, parents, key, ["disease"], [])
     assert said == tc.notice_html("Not started: The slot is busy.", mark="error")
 
 
@@ -481,16 +501,17 @@ def test_the_runners_refusal_of_the_settings_is_said_beside_start_in_its_words(
         monkeypatch.setattr(fp.training_manager, "start_finetune",
                             lambda inputs, refusal=refusal, **k: {
                                 "success": False, "invalid_settings": True, **refusal})
-        said, _stop = _start_with(operator, ws, parents, key, ["disease"], [])
+        said, _stop, _beside = _start_with(operator, ws, parents, key, ["disease"], [])
         assert words in said, said
         assert said.count("Nothing was started.") == 1 and "shep-st-error" in said
         assert "num_neighbors" not in said and "min_lr_ratio" not in said
 
 
 def test_start_is_refused_for_a_read_only_request(root, started):
-    said, _stop = fp._on_finetune_start(READ_ONLY, tc.workspace_state("demo"), {}, None,
-                                        ["disease"], "cpu", "", [], *_values())
+    said, _stop, beside = fp._on_finetune_start(READ_ONLY, tc.workspace_state("demo"), {}, None,
+                                                ["disease"], "cpu", "", [], *_values())
     assert "Refused" in said and started == [] and "shep-st-error" in said
+    assert beside == gr_update()                   # what Start would refuse, left as it is
 
 
 # --------------------------------------------------------------------------- the settings (B2)
@@ -673,9 +694,10 @@ def test_the_line_says_what_start_sends_and_reset_brings_back_each_tasks_referen
     hops_line, refused = fp._on_field_input(tasks, ["num_neighbors"], *cleared)
     assert "Not valid: Neighbours per hop needs at least 1 item(s)." in hops_line
     assert "Start would refuse: Neighbours per hop needs at least 1 item(s)." in refused
-    said, _stop = fp._on_finetune_start(operator, ws, parents, key, tasks, "cpu", "",
-                                        ["num_neighbors"], *cleared)
-    assert "Neighbours per hop needs at least 1 item(s)" in said and started == []
+    said, _stop, beside = fp._on_finetune_start(operator, ws, parents, key, tasks, "cpu", "",
+                                                ["num_neighbors"], *cleared)
+    assert said == "" and started == []
+    assert "Not started: Neighbours per hop needs at least 1 item(s)" in beside
     # Reset to reference: the record empty, every field where it starts.
     record, reset_line, refused, *updates = fp._on_finetune_reset(tasks)
     assert record == [] and refused == "" and [u["value"] for u in updates] == fp.start_values(tasks)
@@ -684,8 +706,8 @@ def test_the_line_says_what_start_sends_and_reset_brings_back_each_tasks_referen
         [], [], "each child takes its task’s reference values and this build’s defaults.")
     assert "Untouched, each child takes its task’s reference" in fp.hops_note_html(
         tasks, None, record, "")
-    said, _stop = fp._on_finetune_start(operator, ws, parents, key, tasks, "cpu", "", record,
-                                        *(u["value"] for u in updates))
+    said, _stop, _beside = fp._on_finetune_start(operator, ws, parents, key, tasks, "cpu", "",
+                                                 record, *(u["value"] for u in updates))
     assert said == "" and "num_neighbors" not in started[-1][0].settings
     assert started[-1][0].settings == {}
     # One task: Reset puts its own settings at its reference.
@@ -1221,7 +1243,7 @@ def test_the_page_follows_the_contract():
     (start,) = [fn for fn in fns if fn.fn is fp._on_finetune_start]
     assert start.inputs[-len(fp.FINETUNE_FIELDS):] == [
         by_id[f"ft_{name}"] for name in fp.FINETUNE_FIELDS]
-    assert start.outputs == [by_id["ft_notice"], by_id["ft_stop_notice"]]
+    assert start.outputs == [by_id["ft_notice"], by_id["ft_stop_notice"], by_id["ft_refused"]]
     # Explicit is what the operator touched (decision S2): each field's input
     # (never its change) adds it to the form's record in the browser (the
     # shared `record_touches`, the input's one listener; the rest is chained
