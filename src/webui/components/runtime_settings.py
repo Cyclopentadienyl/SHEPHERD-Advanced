@@ -10,24 +10,29 @@ skill's §2), every value it shows escaped:
   runs now, read from its own environment by the rule that wrote it
   (`runtime_presets.running_allocator`: the saved preset at its start, an
   explicit setting in the launch environment, or none, PyTorch's default), is
-  said apart from the preset saved for the next start; torch.compile's saved
-  value is said with where it is read (`COMPILE_READ`). An explicit setting in
-  the launch environment is named as one, never a preset the launcher
-  applied.
+  said apart from the preset saved for the next start, and torch.compile's
+  saved value. An explicit setting in the launch environment is named as one,
+  never a preset the launcher applied.
 - **Fields**: the memory allocator, read once when the backend starts (a saved
-  change applies after Restart Backend), and torch.compile, read when the
-  Training page starts, continues or branches a run (Fine-tune does not read
-  it). Each is shown as saved each time the page is opened, from the same read
-  as the facts. Their words say what is true today: GATv2 is the one
-  architecture built; a measurement made on an earlier architecture is named
-  as such.
+  change applies after Restart Backend), and torch.compile, whose visible line
+  leads with "Experimental" and says where it is read, once on the screen
+  (`COMPILE_READ`: the Training page's starts, continues and branches;
+  Fine-tune does not read it). Each is shown as saved each time the page is
+  opened, from the same read as the facts. Their words say what is true today:
+  GATv2 is the one architecture built; a measurement made on an earlier
+  architecture is named as such.
 - **Acceleration**: no toggle; the area says "Not implemented yet"
   (`ACCELERATION`): new acceleration work is deferred, and each run's record
   keeps what it ran with.
 - **Actions**: Apply Settings saves the fields to
   ``.shepherd_runtime_settings.json`` (`src.config.runtime_presets`), which the
   launcher reads at start-up (`scripts/launch/shep_launch.py`) and Restart
-  Backend applies again; Restart Backend relaunches the backend.
+  Backend applies again. Restart Backend relaunches the backend, and is on only
+  while a restart would apply a saved allocator (`restart_applies`, the rule
+  the facts' "Not running yet" reads too); Restart Backend and Stop service
+  each ask once in the panel's one question row (`_ask`: what it does to every
+  open page and to a loaded model, then "Restart now" or "Stop service now",
+  or Cancel) before anything is asked of the backend.
 
 Operator controls (D8, M5-1):
     Restart Backend and Apply Settings each check their own Gradio request
@@ -38,8 +43,9 @@ Operator controls (D8, M5-1):
     request D8 refuses, both buttons disabled with the lock, the two fields
     that need the operator (the allocator and torch.compile) not interactive,
     and the visible "Operator controls only: …" reason beside the buttons
-    (`chips.operator_only`). Restart is also off while a GPU job runs, said
-    beside it. A disabled control is a display, never the control.
+    (`chips.operator_only`). Restart and Stop service are also off while a
+    GPU job runs, and Restart while no saved allocator waits for it, each
+    said beside them. A disabled control is a display, never the control.
 
 Module: src/webui/components/runtime_settings.py
 """
@@ -85,13 +91,20 @@ def allocator_words(preset: str) -> str:
 #: The allocator select's options: each preset's words, its name the value.
 ALLOCATOR_CHOICES = [(allocator_words(name), name) for name in ALLOCATOR_PRESETS]
 
-#: What a restart does to inference (the ops round's I7), said beside the
-#: button and when it starts: the backend stops serving before it replaces its
-#: process, and the new one loads only a model its start-up configures.
+#: What a restart does to inference (the ops round's I7), said in the question
+#: Restart Backend asks and when it starts: the backend stops serving before it
+#: replaces its process, and the new one loads only a model its start-up
+#: configures (the deployment guide names the setting).
 RESTART_STOPS_SERVING = (
     "A loaded model is stopped first (the diagnoses already accepted finish) and is not "
-    "loaded again unless the service's start-up configures one (SHEPHERD_CHECKPOINT_PATH)."
+    "loaded again unless the service's start-up configures one."
 )
+#: Restart Backend, asked once before it restarts (`_on_restart_request`, R-12).
+RESTART_CONFIRM_LABEL = "Restart now"
+RESTART_QUESTION = ("Restart the backend? Every open page reconnects in a few seconds. "
+                    + RESTART_STOPS_SERVING)
+#: Why Restart Backend is off while nothing waits for it (`restart_applies`).
+RESTART_IDLE = "Restart Backend is off: a restart would run the same allocator."
 
 #: Why Restart and Stop service are off while a GPU job runs (the backend
 #: refuses both too: a re-exec or a stop would end the job's process), said
@@ -117,10 +130,12 @@ ACCELERATION = ("new acceleration work is deferred; each run’s record keeps th
 
 #: Where torch.compile's saved value is read: the Training page's base Start
 #: and its Continue or Branch (`training_console`), the only readers; the
-#: Fine-tune page does not read it. Said in the facts, under the field, in its
-#: help and after Apply, in these words.
+#: Fine-tune page does not read it. Said once on the screen, in the field's
+#: visible line (`FIELD_INFO`), in these words.
 COMPILE_READ = ("read when the Training page starts, continues or branches a run; Fine-tune "
                 "does not read it")
+#: torch.compile's warning, the lead of the field's visible line (R-13).
+COMPILE_EXPERIMENTAL = "Experimental: keep it off unless you are benchmarking it."
 
 # Browser-side poller chained after the restart click. Re-exec'ing the backend
 # gives the new process a fresh Gradio session, so the already-loaded page keeps
@@ -188,6 +203,17 @@ def running_html(env: Mapping[str, str]) -> str:
             "</span>")
 
 
+def restart_applies(env: Mapping[str, str], settings: Mapping[str, Any]) -> bool:
+    """**Whether Restart Backend would change what runs** (R-12): the saved
+    preset is not the one this backend runs (`running_allocator`), and no
+    explicit setting in the launch environment, which a restart keeps,
+    overrides it. The one rule the facts' "Not running yet" and Restart's
+    state read."""
+    preset, _compile = _saved(settings)
+    run = running_allocator(env)
+    return run["source"] != "env" and run["preset"] != preset
+
+
 def saved_html(env: Mapping[str, str], settings: Mapping[str, Any]) -> str:
     """The saved allocator preset and when it applies: said apart from what
     runs; a saved name that is no preset said with the default that applies;
@@ -201,11 +227,10 @@ def saved_html(env: Mapping[str, str], settings: Mapping[str, Any]) -> str:
     elif requested != preset:
         said += (f' <span class="shep-muted">(the saved name {r.ident_html(requested)} is no '
                  "preset)</span>")
-    run = running_allocator(env)
-    if run["source"] == "env":
+    if running_allocator(env)["source"] == "env":
         said += "<br>" + r.status_mark("warn", "The launch environment’s setting overrides it "
                                                "until the backend starts without it")
-    elif run["preset"] != preset:
+    elif restart_applies(env, settings):
         said += "<br>" + r.status_mark("warn", "Not running yet: Restart Backend applies it")
     return said
 
@@ -214,15 +239,15 @@ def facts_html(env: Optional[Mapping[str, str]] = None,
                settings: Optional[Mapping[str, Any]] = None) -> str:
     """The panel's facts (the module docstring), in the one summary list:
     the allocator running now against the one saved, torch.compile's saved
-    value and where it is read (`COMPILE_READ`), and the acceleration area."""
+    value (where it is read is the field's line, `FIELD_INFO`), and the
+    acceleration area."""
     env = os.environ if env is None else env
     settings = load_runtime_settings() if settings is None else settings
     _preset, compile_on = _saved(settings)
     return r.summary_list([
         ("Allocator now", running_html(env)),
         ("Allocator saved", saved_html(env, settings)),
-        ("torch.compile saved", (r.OFF if not compile_on else "On")
-         + f' <span class="shep-muted">({r.e(COMPILE_READ)})</span>'),
+        ("torch.compile saved", r.OFF if not compile_on else "On"),
         ("Acceleration", r.status_mark("neutral", "Not implemented yet")
          + f' <span class="shep-muted">({r.e(ACCELERATION)})</span>'),
     ])
@@ -231,20 +256,53 @@ def facts_html(env: Optional[Mapping[str, str]] = None,
 # ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
-def _on_restart(request: gr.Request):
-    """Restart Backend: an operator control (D8), checked on this event's own
-    request before the backend is asked for anything. The backend's own guard
-    refuses while a GPU job runs."""
+#: The panel's question row's parts (`_ask`): the row, its question, its two
+#: confirming buttons (one shown, the act asked for) and the status line.
+RESTART = "restart"
+STOP = "stop"
+
+
+def _ask(asked: Optional[str] = None, said: str = "") -> tuple:
+    """**The one question row** of Restart Backend and Stop service, as its
+    outputs: shown with `asked`'s question and its own confirming button
+    (`RESTART`, `STOP`), or hidden (None) with `said` in the status line."""
+    question = {RESTART: RESTART_QUESTION, STOP: STOP_QUESTION}.get(asked, "")
+    return (gr.update(visible=asked is not None),
+            gr.update(value=f'<p class="shep-sub">{r.e(question)}</p>' if asked else ""),
+            gr.update(visible=asked == RESTART), gr.update(visible=asked == STOP),
+            said)
+
+
+def _on_restart_request(request: gr.Request):
+    """Restart Backend, asked once (R-12): an operator control (D8), checked
+    on this event's own request before the question is shown; refused while a
+    GPU job runs (the backend refuses then too) and while a restart would
+    change nothing (`restart_applies`). Returns `_ask`'s outputs."""
     access = operator_access(request)
     if not access.allowed:
-        return gr.update(value=r.status_mark("error", access.refusal))
+        return _ask(said=r.status_mark("error", access.refusal))
+    if is_training_active():
+        return _ask(said=r.status_mark("neutral", RESTART_BUSY))
+    if not restart_applies(os.environ, load_runtime_settings()):
+        return _ask(said=r.status_mark("neutral", RESTART_IDLE))
+    return _ask(RESTART)
+
+
+def _on_restart(request: gr.Request):
+    """The confirmed Restart Backend: an operator control (D8), checked on
+    this event's own request before the backend is asked for anything. The
+    backend's own guard refuses while a GPU job runs. Returns `_ask`'s
+    outputs, the row closed."""
+    access = operator_access(request)
+    if not access.allowed:
+        return _ask(said=r.status_mark("error", access.refusal))
     result = restart_backend()
     if not result.get("success"):
-        return gr.update(value=r.status_mark(
+        return _ask(said=r.status_mark(
             "error", f"Not restarted: {result.get('error') or 'cannot restart right now.'}"))
-    return gr.update(value=r.status_mark("running", "Restarting the backend…")
-                     + f" {RESTART_STOPS_SERVING} This page reloads by itself once the backend "
-                       "is back (a few seconds).")
+    return _ask(said=r.status_mark("running", "Restarting the backend…")
+                + f" {RESTART_STOPS_SERVING} This page reloads by itself once the "
+                  "backend is back (a few seconds).")
 
 
 def _on_apply(alloc, compile_on, request: gr.Request):
@@ -258,8 +316,7 @@ def _on_apply(alloc, compile_on, request: gr.Request):
     data["allocator_preset"] = alloc
     data["torch_compile"] = bool(compile_on)
     save_runtime_settings(data)
-    said = (f"Saved: {allocator_words(str(alloc))}; torch.compile "
-            f"{'on' if compile_on else 'off'}, {COMPILE_READ}.")
+    said = f"Saved: {allocator_words(str(alloc))}; torch.compile {'on' if compile_on else 'off'}."
     return f'<span class="shep-muted">{r.e(said)}</span>', facts_html(settings=data)
 
 
@@ -275,33 +332,33 @@ def _on_change(alloc, compile_on):
 def _on_stop_service_request(request: gr.Request):
     """Stop service, asked once: an operator control (D8), checked on this
     event's own request before the question is shown; refused while a GPU
-    job runs (the backend refuses then too). Returns the question row's
-    visibility and the status line."""
+    job runs (the backend refuses then too). Returns `_ask`'s outputs."""
     access = operator_access(request)
     if not access.allowed:
-        return gr.update(visible=False), r.status_mark("error", access.refusal)
+        return _ask(said=r.status_mark("error", access.refusal))
     if is_training_active():
-        return gr.update(visible=False), r.status_mark("neutral", RESTART_BUSY)
-    return gr.update(visible=True), ""
+        return _ask(said=r.status_mark("neutral", RESTART_BUSY))
+    return _ask(STOP)
 
 
 def _on_stop_service(request: gr.Request):
     """The confirmed Stop service: an operator control (D8), checked on this
     event's own request before the backend is asked; the backend refuses
-    while a GPU job or a model load runs (`stop_backend`) and logs who asked."""
+    while a GPU job or a model load runs (`stop_backend`) and logs who asked.
+    Returns `_ask`'s outputs, the row closed."""
     access = operator_access(request)
     if not access.allowed:
-        return gr.update(visible=False), r.status_mark("error", access.refusal)
+        return _ask(said=r.status_mark("error", access.refusal))
     result = stop_backend()
     if not result.get("success"):
-        return gr.update(visible=False), r.status_mark(
-            "error", f"Not stopped: {result.get('error') or 'cannot stop right now.'}")
-    return gr.update(visible=False), r.status_mark("stopping", STOP_DONE)
+        return _ask(said=r.status_mark(
+            "error", f"Not stopped: {result.get('error') or 'cannot stop right now.'}"))
+    return _ask(said=r.status_mark("stopping", STOP_DONE))
 
 
-def _on_stop_service_cancel():
+def _on_confirm_cancel():
     """Cancel: the question closes; nothing was asked of the backend."""
-    return gr.update(visible=False), ""
+    return _ask()
 
 
 #: The operator controls' words, shown with no lock while D8 allows the
@@ -311,23 +368,27 @@ RESTART_LABEL = "Restart Backend"
 
 
 def _refresh_restart_lock(request: gr.Request):
-    """Apply and Restart as this request may use them, by the one
-    gated-button rule (`chips.gated`): for a refused request, both disabled
-    with the lock and D8's short reason beside them (`chips.operator_only`;
-    the header chip's ⓘ gives D8's whole reason); Restart also off while a
-    GPU job runs, said beside it (`RESTART_BUSY`). A display: each button's
-    handler checks its own request."""
+    """Apply, Restart and Stop service as this request may use them, by the
+    one gated-button rule (`chips.gated`): for a refused request, all
+    disabled with the lock and D8's short reason beside them
+    (`chips.operator_only`; the header chip's ⓘ gives D8's whole reason);
+    Restart and Stop service also off while a GPU job runs (`RESTART_BUSY`),
+    and Restart while a restart would change nothing (`restart_applies`,
+    `RESTART_IDLE`), the reason beside them. A display: each button's handler
+    checks its own request."""
     locked = is_training_active()
     access = operator_access(request)
+    idle = not restart_applies(os.environ, load_runtime_settings())
     reason = ("" if access.allowed else
               f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
               f'<span>{r.e(operator_only(access.condition))}.</span></div>')
+    why = RESTART_BUSY if locked else RESTART_IDLE if idle and access.allowed else None
     return (
         gr.update(**gated(APPLY_LABEL, access.allowed)),
-        gr.update(**gated(RESTART_LABEL, access.allowed, interactive=not locked)),
-        gr.update(visible=locked, value=(f'<div class="shep-reason">'
-                                         f'{r.status_mark("neutral", RESTART_BUSY)}</div>'
-                                         if locked else "")),
+        gr.update(**gated(RESTART_LABEL, access.allowed, interactive=not (locked or idle))),
+        gr.update(visible=why is not None, value=(f'<div class="shep-reason">'
+                                                  f'{r.status_mark("neutral", why)}</div>'
+                                                  if why else "")),
         gr.update(visible=not access.allowed, value=reason),
         gr.update(**gated(STOP_LABEL, access.allowed, interactive=not locked)),
     )
@@ -363,7 +424,7 @@ def _poll_restart_lock(location, request: gr.Request):
 FIELD_INFO = {
     "allocator_preset": "Read once when the backend starts: Restart Backend applies a saved "
                         "change.",
-    "torch_compile": COMPILE_READ[:1].upper() + COMPILE_READ[1:] + ". Experimental.",
+    "torch_compile": f"{COMPILE_EXPERIMENTAL} {COMPILE_READ[:1].upper()}{COMPILE_READ[1:]}.",
 }
 
 #: The fields' help, behind the shared ⓘ (M5-2): ``{elem_id: (title, text)}``.
@@ -381,7 +442,7 @@ FIELD_HELP = {
         "Compiles supported model regions to cut overhead.\n\n"
         "- PyG workloads may graph-break, fall back to eager or run slower; GATv2, the one "
         "architecture built today, has not been measured with it.\n"
-        "- It needs no restart: it is " + COMPILE_READ + ".",
+        "- It needs no restart.",
     ),
 }
 
@@ -399,9 +460,10 @@ ALLOCATOR_DETAILS = (
     "the driver pool and expandable segments both used about 26 GB at a comparable speed; "
     "native fragmented (about 60 → 120 GB). Not yet measured with GATv2."
 )
-#: torch.compile's caveat (static text, behind its accordion).
+#: torch.compile's caveat (static text, behind its accordion; its lead,
+#: `COMPILE_EXPERIMENTAL`, is the field's visible line).
 COMPILE_DETAILS = (
-    "**Experimental: keep it off unless you are benchmarking it.** Not yet measured with "
+    "Not yet measured with "
     "GATv2, the one architecture built today. On GB10 (DGX Spark) an earlier architecture "
     "(HGT) ran slower with it, and a known sm_121 Triton issue makes it fall back to eager. "
     "Compare MRR and Hits@K with an eager run before trusting a result."
@@ -468,53 +530,54 @@ def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
             # (D8), beside them.
             restart_lock_note = plain_html("", visible=False, elem_id="runtime_restart_lock")
             access_note = plain_html("", visible=False, elem_id="runtime_access_reason")
+        # The one question row of Restart Backend and Stop service (`_ask`):
+        # the question asked, its own confirming button, Cancel.
         with gr.Row(visible=False, elem_classes=["shep-panel-ft"],
-                    elem_id="runtime_stop_confirm") as stop_confirm:
-            plain_html(f'<p class="shep-sub">{r.e(STOP_QUESTION)}</p>',
-                       elem_id="runtime_stop_question")
+                    elem_id="runtime_confirm") as confirm:
+            question = plain_html("", elem_id="runtime_question")
+            restart_now = gr.Button(RESTART_CONFIRM_LABEL, variant="primary", scale=0,
+                                    visible=False, elem_id="runtime_restart_now")
             stop_now = gr.Button(STOP_CONFIRM_LABEL, variant="primary", scale=0,
-                                 elem_id="runtime_stop_now")
-            stop_cancel = gr.Button("Cancel", variant="secondary", scale=0,
-                                    elem_id="runtime_stop_cancel")
+                                 visible=False, elem_id="runtime_stop_now")
+            cancel = gr.Button("Cancel", variant="secondary", scale=0,
+                               elem_id="runtime_confirm_cancel")
         with gr.Column(elem_id="shep-settings-out"):
             status = plain_html("", elem_id="runtime_status")
             restart_status = plain_html("", elem_id="runtime_restart_status")
-            plain_html(f'<p class="shep-note">Restart Backend relaunches the backend (the REST '
-                       f"API and this page) so a newly saved memory allocator takes effect. "
-                       f"{RESTART_STOPS_SERVING} The page reconnects by itself a few seconds "
-                       "after a restart.</p>", elem_id="runtime_restart_note")
     return (facts, allocator, torch_compile, apply_btn, restart_btn, stop_btn,
-            restart_lock_note, access_note, stop_confirm, stop_now, stop_cancel, status,
-            restart_status)
+            restart_lock_note, access_note, (confirm, question, restart_now, stop_now), cancel,
+            status, restart_status)
 
 
 def _wire_runtime_panel(ctx: Any, facts, allocator, torch_compile, apply_btn, restart_btn,
-                        stop_btn, restart_lock_note, access_note, stop_confirm, stop_now,
-                        stop_cancel, status, restart_status) -> None:
+                        stop_btn, restart_lock_note, access_note, asking, cancel, status,
+                        restart_status) -> None:
     """The Runtime settings panel's events (`create_runtime_settings_tab`)."""
+    confirm, question, restart_now, stop_now = asking
+    asked = [confirm, question, restart_now, stop_now, restart_status]
     lock_outputs = [apply_btn, restart_btn, restart_lock_note, access_note, stop_btn]
     ctx.timer_slow.tick(fn=_poll_restart_lock, inputs=[ctx.location], outputs=lock_outputs,
                         queue=False, show_progress="hidden")
     ctx.on_page_open(SETTINGS_PAGE, {"fn": _on_open,
                                      "outputs": [*lock_outputs, allocator, torch_compile, facts],
                                      "queue": False, "show_progress": "hidden"})
-    # After the click handler runs, kick off a browser-side poller that reloads
-    # the page once the fresh backend is up (a new process means a new Gradio
-    # session; without a reload the old page's pollers hang). The poller no-ops
-    # if the restart was refused.
-    restart_btn.click(fn=_on_restart, outputs=[restart_status]).then(
+    # Restart Backend asks first; after the confirmed restart, a browser-side
+    # poller reloads the page once the fresh backend is up (a new process means
+    # a new Gradio session; without a reload the old page's pollers hang). The
+    # poller no-ops if the restart was refused.
+    restart_btn.click(fn=_on_restart_request, outputs=asked, show_progress="hidden")
+    restart_now.click(fn=_on_restart, outputs=asked, show_progress="hidden").then(
         **ctx.chip_refresh).then(fn=None, inputs=None, outputs=None, js=_RESTART_RELOAD_JS)
     for field in (allocator, torch_compile):
         field.change(fn=_on_change, inputs=[allocator, torch_compile], outputs=[status],
                      show_progress="hidden")
+    # Apply may make a restart wanted (or not): the buttons are read again.
     apply_btn.click(fn=_on_apply, inputs=[allocator, torch_compile],
-                    outputs=[status, facts]).then(**ctx.chip_refresh)
-    stop_btn.click(fn=_on_stop_service_request, outputs=[stop_confirm, restart_status],
-                   show_progress="hidden")
-    stop_now.click(fn=_on_stop_service, outputs=[stop_confirm, restart_status],
-                   show_progress="hidden")
-    stop_cancel.click(fn=_on_stop_service_cancel, outputs=[stop_confirm, restart_status],
-                      show_progress="hidden")
+                    outputs=[status, facts]).then(**ctx.chip_refresh).then(
+        fn=_refresh_restart_lock, outputs=lock_outputs, queue=False, show_progress="hidden")
+    stop_btn.click(fn=_on_stop_service_request, outputs=asked, show_progress="hidden")
+    stop_now.click(fn=_on_stop_service, outputs=asked, show_progress="hidden")
+    cancel.click(fn=_on_confirm_cancel, outputs=asked, show_progress="hidden")
 
 
 _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
@@ -531,18 +594,17 @@ PAGE_CSS = f"""
 {_PAGE} #shep-settings-ft > button {{ flex: none !important; min-width: max-content !important; white-space: nowrap; }}
 {_PAGE} #shep-settings-ft > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}
 {_PAGE} #shep-settings-out {{ padding: 0 16px 12px !important; gap: 6px !important; }}
-{_PAGE} #shep-settings-out .shep-note {{ margin: 0; }}
 {_PAGE} #runtime_status:has(.html-container:empty),
 {_PAGE} #runtime_restart_status:has(.html-container:empty) {{ display: none !important; }}
-{_PAGE} #runtime_stop_confirm > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}
-{_PAGE} #runtime_stop_confirm > button {{ flex: none !important; min-width: max-content !important; }}
-{_PAGE} #runtime_stop_confirm p {{ margin: 0; }}
+{_PAGE} #runtime_confirm > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}
+{_PAGE} #runtime_confirm > button {{ flex: none !important; min-width: max-content !important; }}
+{_PAGE} #runtime_confirm p {{ margin: 0; }}
 """ + data_locations.PAGE_CSS
 
 
-__all__ = ["ACCELERATION", "ALLOCATOR_CHOICES", "ALLOCATOR_WORDS", "COMPILE_READ", "FIELD_HELP",
-           "FIELD_INFO",
-           "PAGE_CSS",
-           "RESTART_BUSY", "RESTART_STOPS_SERVING", "STOP_CONFIRM_LABEL", "STOP_DONE",
-           "STOP_LABEL", "STOP_QUESTION", "allocator_words", "create_runtime_settings_tab",
-           "facts_html", "running_html", "saved_html"]
+__all__ = ["ACCELERATION", "ALLOCATOR_CHOICES", "ALLOCATOR_WORDS", "COMPILE_EXPERIMENTAL",
+           "COMPILE_READ", "FIELD_HELP", "FIELD_INFO", "PAGE_CSS", "RESTART_BUSY",
+           "RESTART_CONFIRM_LABEL", "RESTART_IDLE", "RESTART_QUESTION", "RESTART_STOPS_SERVING",
+           "STOP_CONFIRM_LABEL", "STOP_DONE", "STOP_LABEL", "STOP_QUESTION", "allocator_words",
+           "create_runtime_settings_tab", "facts_html", "restart_applies", "running_html",
+           "saved_html"]

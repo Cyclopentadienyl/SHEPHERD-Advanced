@@ -556,24 +556,33 @@ def test_a_restart_whose_stop_fails_opens_the_slot_again(serving, runner, monkey
     assert runner._closed_by is None, "the slot stayed closed after the restart's stop failed"
 
 
-def test_the_restart_words_say_a_loaded_model_is_stopped_and_not_loaded_again(monkeypatch):
-    """The ops round's A3b (I7): Settings' Restart Backend says, beside the
-    button and when the restart starts, what the backend does: a loaded model
-    is stopped first and is not loaded again unless the start-up configures
-    one; no page Load is restored."""
+def test_the_restart_words_say_a_loaded_model_is_stopped_and_not_loaded_again(
+        monkeypatch, tmp_path):
+    """The ops round's A3b (I7): Settings' Restart Backend says, in the
+    question it asks before the restart (R-12) and when the restart starts,
+    what the backend does: a loaded model is stopped first and is not loaded
+    again unless the start-up configures one; no page Load is restored. The
+    words name no internal variable (NEW-settings-datasets-footer-2)."""
     pytest.importorskip("gradio")
-    import inspect
-
+    import src.config.runtime_presets as presets
     from src.webui.components import runtime_settings as rs
     from tests.fixtures.operator_access import operator_request
 
     assert "is stopped first" in rs.RESTART_STOPS_SERVING
     assert "not loaded again unless the service's start-up configures one" in (
         rs.RESTART_STOPS_SERVING)
-    assert "RESTART_STOPS_SERVING" in inspect.getsource(rs._runtime_panel)
-    monkeypatch.setattr(rs, "restart_backend", lambda: {"success": True})
-    said = rs._on_restart(operator_request(monkeypatch))
-    assert rs.RESTART_STOPS_SERVING in said["value"]
+    assert "SHEPHERD_" not in rs.RESTART_QUESTION
+    assert rs.RESTART_QUESTION.startswith("Restart the backend? Every open page reconnects")
+    monkeypatch.setattr(presets, "RUNTIME_SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.delenv("PYTORCH_ALLOC_CONF", raising=False)
+    monkeypatch.setattr(rs, "is_training_active", lambda: False)
+    restarts = []
+    monkeypatch.setattr(rs, "restart_backend", lambda: restarts.append(1) or {"success": True})
+    _row, question, *_buttons, _said = rs._on_restart_request(operator_request(monkeypatch))
+    assert rs.RESTART_STOPS_SERVING.replace("'", "&#x27;") in question["value"]
+    assert restarts == []
+    said = rs._on_restart(operator_request(monkeypatch))[-1]
+    assert rs.RESTART_STOPS_SERVING in said and restarts == [1]
 
 
 # --------------------------------------------------------------------------- data locations (UI-06)

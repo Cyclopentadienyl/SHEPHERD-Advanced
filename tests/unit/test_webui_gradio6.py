@@ -23,8 +23,10 @@ gr = pytest.importorskip("gradio")
 
 
 # --------------------------------------------------------------- Runtime Settings
-def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch):
+def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch, tmp_path):
+    import src.config.runtime_presets as presets
     import src.webui.components.runtime_settings as rs
+    from src.config.runtime_presets import allocator_env
     from src.webui.app import create_gradio_app
 
     app = create_gradio_app()
@@ -40,6 +42,12 @@ def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch):
 
     from tests.fixtures.operator_access import operator_request
 
+    # The backend started under the default preset; another one is saved, so a
+    # restart would apply it (`restart_applies`).
+    monkeypatch.setattr(presets, "RUNTIME_SETTINGS_FILE", tmp_path / "settings.json")
+    for name, value in allocator_env({}, {}).items():
+        monkeypatch.setenv(name, value)
+    presets.save_runtime_settings({"allocator_preset": "expandable"})
     monkeypatch.setattr(rs, "is_training_active", lambda: True)
     apply, button, note, reason, stop, alloc, compile_, _facts = on_select[0].fn(
         operator_request(monkeypatch))
@@ -55,6 +63,13 @@ def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch):
     apply, button, note, reason, stop, *_fields = on_select[0].fn(operator_request(monkeypatch))
     assert button["interactive"] is True and note["visible"] is False
     assert stop["interactive"] is True
+    # R-12: with the running allocator saved, a restart would change nothing,
+    # so Restart is off, said beside it; Stop service stays on.
+    presets.save_runtime_settings({"allocator_preset": "cuda_async"})
+    apply, button, note, reason, stop, *_fields = on_select[0].fn(operator_request(monkeypatch))
+    assert (button["value"], button["interactive"]) == (rs.RESTART_LABEL, False)
+    assert note["visible"] is True and rs.RESTART_IDLE in note["value"]
+    assert stop["interactive"] is True and apply["interactive"] is True
 
 
 def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch, tmp_path):
@@ -102,7 +117,7 @@ def test_the_fields_show_what_is_saved_each_time_the_page_is_opened(monkeypatch,
     *_lock, alloc, compile_, facts = rs._on_open(operator_request(monkeypatch))
     assert alloc == gr.update(interactive=True, value="expandable")
     assert compile_ == gr.update(interactive=True, value=True)
-    assert "Expandable segments (expandable)" in facts and ">On <span" in facts
+    assert "Expandable segments (expandable)" in facts and ">On</dd>" in facts
     # The fields are the saved values again, so nothing reads "Not saved".
     assert rs._on_change(alloc["value"], compile_["value"]) == ""
 
@@ -130,13 +145,14 @@ def test_a_read_only_request_gets_still_fields_and_escaped_refusals(monkeypatch,
         refusal = f"Refused: {hostile}"
 
     monkeypatch.setattr(rs, "operator_access", lambda request: Refused())
-    for said in (rs._on_restart(gradio_request())["value"],
+    for said in (rs._on_restart(gradio_request())[-1],
+                 rs._on_restart_request(gradio_request())[-1],
                  rs._on_apply("cuda_async", False, gradio_request())[0]):
         assert hostile not in said and "&lt;img src=x onerror=alert(1)&gt;" in said
         assert "shep-st-error" in said
     monkeypatch.undo()
     monkeypatch.setattr(rs, "restart_backend", lambda: {"success": False, "error": hostile})
-    said = rs._on_restart(operator_request(monkeypatch))["value"]
+    said = rs._on_restart(operator_request(monkeypatch))[-1]
     assert hostile not in said and "Not restarted: &lt;img" in said
     facts = rs.facts_html({"PYTORCH_ALLOC_CONF": hostile, ALLOC_SOURCE_ENV: "env"},
                           {"allocator_preset": hostile})
@@ -194,12 +210,14 @@ def test_no_settings_text_claims_an_architecture_that_is_not_built():
     assert "GATv2, the one architecture built today" in rs.FIELD_HELP["torch_compile"][1]
 
 
-def test_torch_compile_is_said_to_be_read_where_it_is_read():
+def test_torch_compile_is_said_to_be_read_where_it_is_read(monkeypatch, tmp_path):
     """B5 review: the page said torch.compile was read "when a page starts a
     training run", but only the Training page reads it (its base Start and
-    its Continue or Branch); Fine-tune starts runs and does not. The facts,
-    the field's info line, its help and Apply's answer say `COMPILE_READ`,
-    and these pins fail when another page starts reading it."""
+    its Continue or Branch); Fine-tune starts runs and does not. Since T06
+    (NEW-settings-datasets-footer-1, R-13) the field's visible line says it,
+    once on the screen, after its warning: the facts, the help and Apply's
+    answer no longer repeat it. These pins fail when another page starts
+    reading it."""
     import re
     from pathlib import Path
 
@@ -215,10 +233,22 @@ def test_torch_compile_is_said_to_be_read_where_it_is_read():
     from src.webui.components import finetune_page
 
     assert "torch_compile" not in Path(finetune_page.__file__).read_text(encoding="utf-8")
+    import src.config.runtime_presets as presets
+    from tests.fixtures.operator_access import operator_request
+
     sentence = rs.COMPILE_READ[:1].upper() + rs.COMPILE_READ[1:]
-    assert rs.FIELD_INFO["torch_compile"].startswith(sentence)
-    assert rs.COMPILE_READ in rs.FIELD_HELP["torch_compile"][1]
-    assert f"({rs.COMPILE_READ})" in rs.facts_html({}, {})
+    # R-13: the warning leads the visible line, then where it is read.
+    assert rs.FIELD_INFO["torch_compile"] == f"{rs.COMPILE_EXPERIMENTAL} {sentence}."
+    assert rs.COMPILE_EXPERIMENTAL.startswith("Experimental: keep it off unless you are "
+                                              "benchmarking")
+    monkeypatch.setattr(presets, "RUNTIME_SETTINGS_FILE", tmp_path / "settings.json")
+    applied, _facts = rs._on_apply("cuda_async", True, operator_request(monkeypatch))
+    # Each said once on the screen: the facts, the help, the accordion and
+    # Apply's answer repeat neither.
+    for text in (rs.FIELD_HELP["torch_compile"][1], rs.facts_html({}, {}), rs.COMPILE_DETAILS,
+                 applied):
+        assert "read when the training page" not in text.lower(), text
+        assert "keep it off unless" not in text.lower(), text
     for text in (rs.FIELD_INFO["torch_compile"], rs.FIELD_HELP["torch_compile"][1],
                  rs.facts_html({}, {})):
         assert "when a page starts" not in text
@@ -252,3 +282,99 @@ def test_the_restart_lock_is_polled_on_the_shells_slow_timer_only_while_shown(mo
     apply, button, note, _reason, stop = poll.fn("settings", operator_request(monkeypatch))
     assert button["interactive"] is False and note["visible"] is True
     assert stop["interactive"] is False
+
+
+#: Settings in a browser (R-12, R-13, NEW-settings-datasets-footer-1 and -2):
+#: the screen's own words read; Restart Backend clicked, cancelled, clicked and
+#: confirmed; then the running allocator saved again with Apply Settings. Each
+#: step waits for what it asked to be drawn, never for a fixed time.
+_SETTINGS_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const out = {};
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 } });
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-settings-button', { timeout: 60000 });
+  await page.waitForSelector('#runtime_restart:not([disabled])', { timeout: 60000 });
+  const shown = (sel) => page.evaluate((s) => {
+    const el = document.querySelector(s);
+    return !!el && el.getClientRects().length > 0;
+  }, sel);
+  const text = (sel) => page.evaluate((s) => document.querySelector(s).innerText, sel);
+  const panel = await text('#shep-settings');
+  out.compileReadTimes = (panel.match(/read when the training page starts/gi) || []).length;
+  out.compileLine = await text('#torch_compile');
+  out.variableNamed = /SHEPHERD_[A-Z_]+/.test(panel);
+  out.note = await shown('#runtime_restart_note');
+  // Restart asks first; Cancel closes the question and asks nothing.
+  await page.click('#runtime_restart');
+  await page.waitForSelector('#runtime_confirm', { state: 'visible' });
+  out.question = await text('#runtime_question');
+  out.confirmButtons = [await shown('#runtime_restart_now'), await shown('#runtime_stop_now')];
+  await page.click('#runtime_confirm_cancel');
+  await page.waitForSelector('#runtime_confirm', { state: 'hidden' });
+  // Asked again and confirmed.
+  await page.click('#runtime_restart');
+  await page.waitForSelector('#runtime_restart_now', { state: 'visible' });
+  await page.click('#runtime_restart_now');
+  await page.waitForFunction(() => /Restarting the backend/.test(
+    document.querySelector('#runtime_restart_status').innerText));
+  out.afterConfirm = { status: await text('#runtime_restart_status'),
+                       questionShown: await shown('#runtime_confirm') };
+  // The running allocator saved again: nothing waits, so Restart is off and
+  // says why beside it.
+  await page.click('#allocator_preset input');
+  await page.click('ul[role=listbox] li:has-text("Driver memory pool")');
+  await page.click('#runtime_apply');
+  await page.waitForSelector('#runtime_restart[disabled]', { timeout: 30000 });
+  out.idle = { reason: await text('#runtime_restart_lock'),
+               stopEnabled: await page.evaluate(() => !document.querySelector('#runtime_stop').disabled) };
+  await browser.close();
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_settings_asks_before_a_restart_and_says_each_fact_once_in_a_browser(
+        monkeypatch, tmp_path):
+    """R-12: on ba6e85e one click of Restart Backend restarted at once, with
+    nothing waiting for it. Now it asks in the panel's question row (every
+    open page reconnects; a loaded model is stopped first) with Restart now
+    and Cancel, nothing is asked of the backend before Restart now, and with
+    the running allocator saved Restart is off, the reason beside it. R-13 and
+    NEW-settings-datasets-footer-1: torch.compile's visible line leads with
+    the warning and where it is read is said once on the screen.
+    NEW-settings-datasets-footer-2: no standing restart note, no internal
+    variable in the panel's text."""
+    import src.config.runtime_presets as presets
+    import src.webui.components.runtime_settings as rs
+    from src.config.runtime_presets import allocator_env
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_request
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_request(monkeypatch)
+    monkeypatch.setattr(presets, "RUNTIME_SETTINGS_FILE", tmp_path / "settings.json")
+    for name, value in allocator_env({}, {}).items():   # started under the default preset
+        monkeypatch.setenv(name, value)
+    presets.save_runtime_settings({"allocator_preset": "expandable", "torch_compile": False})
+    monkeypatch.setattr(rs, "is_training_active", lambda: False)
+    restarts = []
+    monkeypatch.setattr(rs, "restart_backend", lambda: restarts.append(1) or {"success": True})
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_SETTINGS_JS, tmp_path, base[:-len("gradio_api")])
+
+    assert seen["compileReadTimes"] == 1, seen
+    assert seen["compileLine"].splitlines()[-1].startswith(rs.COMPILE_EXPERIMENTAL), seen
+    assert seen["variableNamed"] is False and seen["note"] is False, seen
+    assert seen["question"].startswith("Restart the backend? Every open page reconnects"), seen
+    assert seen["confirmButtons"] == [True, False], seen
+    assert seen["afterConfirm"]["questionShown"] is False, seen
+    assert "Restarting the backend" in seen["afterConfirm"]["status"]
+    assert restarts == [1], "the backend was asked other than once, by Restart now"
+    assert rs.RESTART_IDLE in seen["idle"]["reason"] and seen["idle"]["stopEnabled"], seen

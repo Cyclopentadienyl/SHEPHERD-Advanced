@@ -348,22 +348,27 @@ def test_the_evidence_folders_are_saved_as_a_list_one_per_line(dl, monkeypatch, 
 
 
 def test_stop_service_asks_once_then_stops_through_the_orderly_stop(monkeypatch):
+    """Stop service asks in the panel's one question row (`_ask`, shared with
+    Restart Backend since R-12): its own question and its own confirming
+    button, never Restart's."""
     import src.webui.components.runtime_settings as rs
 
     stops = []
     monkeypatch.setattr(rs, "stop_backend", lambda: stops.append(1) or {"success": True})
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
     request = operator_request(monkeypatch)
-    row, status = rs._on_stop_service_request(request)
+    row, question, restart_now, stop_now, status = rs._on_stop_service_request(request)
     assert row["visible"] is True and status == "" and stops == []
-    assert rs._on_stop_service_cancel()[0]["visible"] is False and stops == []
-    row, status = rs._on_stop_service(request)
+    assert "Stop the service?" in question["value"]
+    assert (restart_now["visible"], stop_now["visible"]) == (False, True)
+    assert rs._on_confirm_cancel()[0]["visible"] is False and stops == []
+    row, *_parts, status = rs._on_stop_service(request)
     assert stops == [1] and row["visible"] is False and rs.STOP_DONE in status
     monkeypatch.setattr(rs, "is_training_active", lambda: True)
-    row, status = rs._on_stop_service_request(request)
+    row, *_parts, status = rs._on_stop_service_request(request)
     assert row["visible"] is False and rs.RESTART_BUSY in status
     refused = gradio_request(server=("192.0.2.10", 8264))
     for act in (rs._on_stop_service_request, rs._on_stop_service):
-        row, status = act(refused)
+        row, *_parts, status = act(refused)
         assert row["visible"] is False and "Refused: " in status
     assert stops == [1]
