@@ -3472,6 +3472,32 @@ def test_a_bracketed_name_in_a_path_outside_every_root_is_replaced_whole(text, k
     assert tp.SERVER_PATH in out and kept in out, out
 
 
+@pytest.mark.parametrize("text, said", [
+    ("Cannot read /data/Jane (MRN 1)/x.json: denied", "Cannot read {}: denied"),
+    ("Cannot read /data/other/x.json: denied", "Cannot read {}: denied"),
+    ("see /data/Jöhn Doe (MRN 1)/x.json.", "see {}."),
+    ("/mnt/clinic share/MRN 0012345.json: denied", "{}: denied"),
+    ("Is /data/Jane (MRN 1).json readable? no", "Is {} readable? no"),
+    ("/data/患者 (病历 1)/x.json! retry", "{}! retry"),
+    ("Cannot read /data/x.json (permission denied)", "Cannot read {} (permission denied)"),
+])
+def test_a_bracketed_spaced_name_goes_whole_and_the_sentence_keeps_its_punctuation(text, said):
+    """UI-13 (B72-N5, NEW-shell-nav-theme-3): a path outside every root whose
+    name holds a bracketed part with a space ended at that space, so
+    "(MRN 1)/x.json" was shown, and a path took the sentence's ': ' after it
+    ("…root denied"). Every part of the name goes, the punctuation after it
+    stays, through the Test page's redaction and the dashboard's; a bracket
+    that only follows a path after a space is prose and stays."""
+    from pathlib import Path
+
+    from src.webui.components import workspaces
+
+    assert tp.redact(text, [("/srv/registry", "<registry>")]) == said.format(tp.SERVER_PATH)
+    out = workspaces.redact(text, Path("/srv/workspaces"))
+    assert out == said.format(workspaces.OUTSIDE_PATH)
+    assert "MRN" not in out and "Jane" not in out and "x.json" not in out and "患者" not in out
+
+
 def test_the_words_after_a_path_stay_and_two_paths_are_two():
     roots = [("/srv/registry", "<registry>")]
     assert tp.redact("/x/model.pt in 3.2 s", roots) == f"{tp.SERVER_PATH} in 3.2 s"

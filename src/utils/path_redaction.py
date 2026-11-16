@@ -28,37 +28,46 @@ from typing import Any, Dict, Sequence, Tuple
 #: - after a quote (``'…'``, as Python's messages quote a path), at the
 #:   closing quote, spaces included;
 #: - otherwise at a space, a quote, a bracket, a comma or a semicolon (a
-#:   bracketed part with no space inside a name is taken: ``MRN(0012345)/x``),
-#:   but it runs on through the words after a space up to the last one that
-#:   holds a path separator
+#:   bracketed part of a name is taken, spaces inside it included:
+#:   ``MRN(0012345)/x``, ``Jane (MRN 1)/x.json``), but it runs on through the
+#:   words after a space up to the last one that holds a path separator
 #:   (``share/MRN 0012345/cases.json``), and then takes one more word that ends
 #:   in a file extension (``MRN 0012345.json``). A word that starts another
 #:   absolute path is never taken; it is replaced on its own.
+#: - **never at a sentence's punctuation** (``.``, ``:``, ``!`` or ``?``): a
+#:   path's last character is none of them, so ``Cannot read /data/x.json:
+#:   denied`` keeps its colon after the replacement, as a path under a named
+#:   directory does.
 #:
 #: It may take a few words of prose too (``… cannot be read: train/val``):
 #: shown less, never a path. A space-holding last part with no separator or
-#: extension after it (``/data/Jane Doe``) still ends at its space, and so does
-#: a bracketed part with a space inside it (``/data/Jane (MRN 1)/x.json``: its
-#: bracket on is shown).
+#: extension after it (``/data/Jane Doe``, ``/data/Jane (MRN 1)``) still ends
+#: at its space; a bracket that only follows a path after a space ("…/x.json
+#: (permission denied)") is prose and stays.
 #:
 #: **A path under a named directory ends by the same rules** (`_ROOTED`): the
 #: directory is a mark (`redact_paths`), and the rest of that path is read with
 #: it, as one match the scan keeps, so no name inside it starts another path
 #: (``<workspaces>/demo (copy)/runs/…``, ``ws🧬/runs/…``).
 _P = r"""[^\s'"(),;\x00]"""
-#: A path's character, or a bracketed part with no space inside it.
-_G = rf"""(?:{_P}|\({_P}*\))"""
+#: A path's character, or a bracketed part of a name (no bracket inside it;
+#: spaces and tabs may be: ``Jane (MRN 1)/x.json``, B72-N5).
+_G = rf"""(?:{_P}|\((?:{_P}|[ \t])*\))"""
 _NOT_ABSOLUTE = r"""(?![/\\]|[A-Za-z]:[\\/])"""
+#: What a word ending in a file extension may be followed by: nothing of a
+#: path, after a sentence's punctuation if any (``MRN 0012345.json: denied``).
+_ENDS = rf"""(?=[.:!?]*(?!{_P}))"""
 #: The rest of a path after its first character, or after a named directory.
 _REST = rf"""
     {_G}*
     (?: (?:[ \t]+{_NOT_ABSOLUTE}{_G}+)* [ \t]+{_NOT_ABSOLUTE}{_G}*[/\\]{_G}* )?
-    (?: [ \t]+{_NOT_ABSOLUTE}[^\s'"(),;\x00/\\]*\.[A-Za-z][A-Za-z0-9]{{0,7}}(?!{_P}) )?"""
+    (?: [ \t]+{_NOT_ABSOLUTE}(?:[^\s'"(),;\x00/\\]|\((?:[^'"(),;\x00\n/\\])*\))*
+        \.[A-Za-z][A-Za-z0-9]{{0,7}}{_ENDS} )?"""
 _ABSOLUTE = rf"""
     (?<![\w.:/\\\x00])
     (?:
         (?<=['"]) (?:/[^\s'"/\x00]|[A-Za-z]:[\\/]) [^'"\n\x00]*
-      | (?:/[^\s'"(),;/\x00]|[A-Za-z]:[\\/]) {_REST}
+      | (?:/[^\s'"(),;/\x00]|[A-Za-z]:[\\/]) {_REST} (?<![.:!?])
     )"""
 #: A named directory's mark (`redact_paths`) and the rest of its path.
 _ROOTED = rf"""
