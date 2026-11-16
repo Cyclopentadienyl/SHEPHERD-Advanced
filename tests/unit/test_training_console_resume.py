@@ -336,9 +336,13 @@ def test_a_path_inside_the_root_is_shown_whole_whatever_its_names_hold(workspace
     ref = tc.RunRef(id=f"{workspace}/gatv2/{run.name}", label=f"gatv2/{run.name}", path=run,
                     workspace=workspace, job=True, latest=False)
     monkeypatch.setattr(tc, "_newest_checkpoint", lambda _run: checkpoint)
+    # R-41: the run details name the run's folder once, whole, and its
+    # checkpoint by its place in it.
+    folder = run.relative_to(root).as_posix()
     for head in (tc.run_head_html(ref, {}, operator=True, snapshot=None, live=True),
                  tc.run_head_html(ref, {}, operator=True, snapshot={"checkpoint": str(checkpoint)})):
-        assert f"<code>{r.e(inside)}</code>" in head, head
+        assert f"<code>{r.e(folder)}</code>" in head, head
+        assert "<code>checkpoints/last.pt</code>" in head and head.count(r.e(folder)) == 1, head
     for page in (refused, head):
         assert str(root) not in page and OUTSIDE_PATH not in page
     # A path outside the root is never shown, in the line or the reason.

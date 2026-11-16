@@ -2471,10 +2471,14 @@ class TrainingManager:
         try:
             from src.utils.checkpoint_io import read_checkpoint
 
-            record = read_checkpoint(last, map_location="cpu", weights_only=True).checkpoint
+            read = read_checkpoint(last, map_location="cpu", weights_only=True)
         except Exception as exc:  # noqa: BLE001 - shown, not raised
             snapshot = {"checkpoint": str(last), "readable": False, "reason": refusal_line(exc)}
         else:
+            record = read.checkpoint
+            # The model fingerprint: the SHA-256 of the bytes this one read
+            # parsed (R-41: the run view's details named the file by path only).
+            digest = read.identity.sha256
             progress = record.get("progress") if isinstance(record, dict) else None
             progress = progress if isinstance(progress, dict) else {}
             stage = progress.get("stage") if isinstance(progress.get("stage"), dict) else {}
@@ -2487,11 +2491,12 @@ class TrainingManager:
                 ("stage.target_epochs", stage.get("target_epochs"), whole_number_problem))
                 if value is not None and (why := check(value)) is not None), None)
             if unshown is not None:
-                snapshot = {"checkpoint": str(last), "readable": False,
+                snapshot = {"checkpoint": str(last), "readable": False, "sha256": digest,
                             "reason": f"{unshown}, so its training state is not shown"}
             else:
                 snapshot = {
                     "checkpoint": str(last),
+                    "sha256": digest,
                     "readable": True,
                     # The dataset the run trained on, as the checkpoint records it
                     # (M5-2: the Training page's run view, for operators).

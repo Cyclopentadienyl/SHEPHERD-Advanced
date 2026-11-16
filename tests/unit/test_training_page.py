@@ -835,7 +835,9 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
                     latest=True)
     same = tc.run_head_html(run, ws, operator=True,
                             snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
-    assert "same dataset as the run bar" in same and "a" * 12 in same     # the tag; Details
+    # The tag; Details says the relation, not the run bar's fingerprint again (R-41).
+    assert "same dataset as the run bar" in same and "a" * 12 not in same
+    assert "<dt class=\"shep-k\">Dataset used</dt><dd class=\"shep-v\">same as the run bar</dd>" in same
     # By the shared OK mark, never a check glyph of the page's own (B5), and
     # quiet: a normal state is the mark and its word, never a tag (R-57).
     assert r.status_mark("ok", "same dataset as the run bar") in same
@@ -844,6 +846,7 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
                              snapshot={"readable": True, "dataset_fingerprint": "a" * 12 + "b" * 52})
     # 12 equal digits are not equal: a condition to watch, by the one mark (▲, amber).
     assert tc.r.warn_chip("not the selected dataset") in other
+    assert r.fingerprint_value("a" * 12 + "b" * 52, what="dataset fingerprint") in other
     unreadable = tc.run_head_html(run, ws, operator=True, snapshot={"readable": False})
     assert tc.r.warn_chip("checkpoint cannot be read") in unreadable
     assert "recorded at the first checkpoint" in tc.run_head_html(run, ws, operator=True,
@@ -877,7 +880,8 @@ def test_the_snapshot_sentence_names_no_path_to_a_read_only_request(root):
     assert str(root) not in operator and "last.pt" not in operator     # the path: Details
     ws = {"row": {"dataset_fingerprint": "a" * 64}, "digits": 12}
     head = tc.run_head_html(run, ws, operator=True, snapshot=snapshot)
-    assert "demo/runs/gatv2/r/checkpoints/last.pt" in head and str(root) not in head
+    assert "<code>demo/runs/gatv2/r</code>" in head and str(root) not in head
+    assert "<code>checkpoints/last.pt</code>" in head
     read_only = tc.run_snapshot_html(run, status, operator=False, snapshot=None)
     assert "Completed · epoch 60 of 60. Checkpoint details are an operator control" in read_only
     early = {**snapshot, "end": "stopped_early", "completed_epochs": 40, "target_epochs": 60}
@@ -972,6 +976,53 @@ def test_a_run_that_kept_only_best_pt_names_its_dataset_and_its_state(root):
     empty = tc.RunRef(run, id="demo/gatv2/e", path=root / "demo" / "runs" / "gatv2" / "e")
     (empty["path"] / "checkpoints").mkdir(parents=True)
     assert tc._snapshot_for(empty, {}) is None
+
+
+def test_the_run_details_name_the_folder_once_the_model_and_the_log_with_no_bubble(root):
+    """R-41: the Run details popover named the run's folder twice (Run, and
+    inside Checkpoint's path), said Logs as a sentence ("the run directory's
+    logs/"), repeated the run bar's dataset fingerprint with Copy beside a
+    header that already says "same dataset as the run bar", carried an ⓘ
+    (a bubble inside a popover) and had no model fingerprint. Now: the folder
+    once, the checkpoint and the log by their place in it, the model's 12 hex
+    digits with Copy (the snapshot's own read), the dataset "same as the run
+    bar" (or its fingerprint where it is not), and no help bubble."""
+    from src.utils.checkpoint_io import write_checkpoint
+
+    run = tc.RunRef(id="demo/gatv2/d", label="gatv2/d", path=root / "demo" / "runs" / "gatv2" / "d",
+                    workspace="demo", job=False, latest=True)
+    digest = write_checkpoint({"checkpoint_kind": "training_state", "epoch": 0,
+                               "training_input_digests": {"split_manifest": "a" * 64},
+                               "progress": {"completed_epochs": 1, "end": "finished",
+                                            "stage": {"start_epoch": 0, "target_epochs": 1}}},
+                              run["path"] / "checkpoints" / "last.pt")
+    (run["path"] / "logs").mkdir()
+    (run["path"] / "logs" / "train_20261116_204731.json").write_text(json.dumps(_metrics(1)))
+    snapshot = tc._snapshot_for(run, {})
+    assert snapshot["sha256"] == digest
+    ws = {"name": "demo", "row": {"dataset_fingerprint": "a" * 64}, "digits": 12}
+    head = tc.run_head_html(run, ws, operator=True, snapshot=snapshot)
+    details = head.split('id="shep-train-run-details"', 1)[1]
+    rows = dict(re.findall(r'<dt class="shep-k">([^<]+)</dt><dd class="shep-v">(.*?)</dd>', details))
+    assert list(rows) == ["Run folder", "Checkpoint", "Model fingerprint", "Logs", "Dataset used"]
+    assert rows["Run folder"] == "<code>demo/runs/gatv2/d</code>"
+    assert details.count("demo/runs/gatv2/d") == 1
+    assert rows["Checkpoint"] == "<code>checkpoints/last.pt</code>"
+    assert rows["Model fingerprint"] == r.fingerprint_value(digest, what="model fingerprint")
+    assert digest[:12] in rows["Model fingerprint"] and "data-copy" in rows["Model fingerprint"]
+    assert rows["Logs"] == "<code>logs/train_20261116_204731.json</code>"
+    assert rows["Dataset used"] == "same as the run bar" and "a" * 12 not in details
+    assert "data-help" not in details and "shep-help" not in head
+    assert "training-used-dataset" not in tc.TOPIC_HELP
+    # Another dataset: its fingerprint, once, with Copy.
+    other = tc.run_head_html(run, {**ws, "row": {"dataset_fingerprint": "b" * 64}}, operator=True,
+                             snapshot=snapshot)
+    assert other.count(f'<code class="shep-fpv" title="{"a" * 64}">') == 1
+    assert f'data-copy="{"a" * 64}"' in other
+    # No log yet: said, not left blank.
+    (run["path"] / "logs" / "train_20261116_204731.json").unlink()
+    assert '<span class="shep-muted">none written</span>' in tc.run_head_html(
+        run, ws, operator=True, snapshot=snapshot)
 
 
 def test_the_runs_checkpoint_is_read_again_only_when_it_changed(root, monkeypatch):
@@ -1713,7 +1764,7 @@ def test_new_epochs_reach_the_charts_and_the_run_head_while_nobody_acts(
     (job_run / "checkpoints" / "last.pt").write_bytes(b"saved state")
     assert "head" in page.tick()
     head = page.shown("shep-train-run-head")
-    assert fingerprint[:12] in head and "same dataset as the run bar" in head
+    assert "same as the run bar</dd>" in head and "same dataset as the run bar" in head
     assert page.tick() == []
 
 
@@ -1838,7 +1889,9 @@ def test_a_read_only_request_sees_every_action_disabled_and_no_checkpoint(root, 
         assert pieces[key] == {"value": f"🔒 {label}", "interactive": False}, key
     assert "Operator controls only: deployment mode not set to M1" in pieces["reason"]
     assert "dataset not shown · operator control" in pieces["head"]
-    assert "runs/" not in pieces["head"]
+    # The run's folder is a listing's fact (R-41: named once, in Details); its
+    # checkpoint and model fingerprint are an operator's.
+    assert "checkpoints/" not in pieces["head"] and "Model fingerprint" not in pieces["head"]
     assert "last.pt" not in pieces["head"]
 
 
@@ -2196,8 +2249,8 @@ def test_the_notice_escapes_the_server_text_it_carries(root, monkeypatch, operat
 def test_the_run_view_and_drawer_builders_escape_names_and_paths(root):
     """The run header (workspace, run label), the drawer's note, the dataset
     comparison and the check's checkpoint path, each with markup in a name."""
-    run = tc.RunRef(id=f"{ODD}/gatv2/{TAG}", label=f"gatv2/{TAG}", path=Path("/x"), workspace=ODD,
-                    latest=True)
+    run = tc.RunRef(id=f"{ODD}/gatv2/{TAG}", label=f"gatv2/{TAG}",
+                    path=root / ODD / "runs" / "gatv2" / TAG, workspace=ODD, latest=True)
     ws = {"name": ODD, "row": {"name": ODD, "dataset_fingerprint": "a" * 64}, "digits": 12,
           "listed": [{"name": ODD, "dataset_fingerprint": "a" * 64}]}
     head = tc.run_head_html(run, ws, operator=True, snapshot={"readable": True,
@@ -2422,7 +2475,7 @@ def test_a_live_run_reads_its_checkpoint_once_for_the_fingerprint(root, monkeypa
         last.write_bytes(b"epoch %d" % epoch * epoch)                  # a new size each epoch
         rendered = tc.render(ws, {}, cache, [], operator)
         cache = rendered["cache"]
-        assert fp[:12] in rendered["pieces"]["head"]
+        assert "same as the run bar</dd>" in rendered["pieces"]["head"]
         assert "same dataset as the run bar" in rendered["pieces"]["head"]
     assert len(reads) == 1
     status = {"status": "completed", "job_id": "j", "current_epoch": 9, "total_epochs": 9}
@@ -2766,7 +2819,7 @@ def test_the_chart_help_leads_with_the_gestures_in_paragraphs():
     title, text = tc.TOPIC_HELP["training-charts"]
     assert text.startswith(tc.charts.GESTURES + "\n\n") and "\n- The wheel over the epoch axis" in text
     for key in ("continue_source", "checkpoint_dropdown", "continue_device", "run_name",
-                "training-used-dataset", "continue_run"):
+                "continue_run"):
         help_text = {**tc.FIELD_HELP, **tc.TOPIC_HELP}[key][1]
         assert "\n\n" in help_text, key                      # a lead, then the rest
 

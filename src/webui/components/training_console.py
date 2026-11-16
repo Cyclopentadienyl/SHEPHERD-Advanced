@@ -221,7 +221,7 @@ from src.webui.components import charts
 from src.webui.components import renderers as r
 from src.webui.components.chips import (busy_words, chips_on_change, gated, gpu_chip_from,
                                          operator_only)
-from src.webui.components.help import REF_PREFIX, help_button
+from src.webui.components.help import REF_PREFIX
 from src.webui.components.workspaces import (
     manifest_facts,
     read_workspaces,
@@ -2239,9 +2239,10 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
                       snapshot: Optional[Mapping[str, Any]], live: bool) -> Tuple[str, str]:
     """How the run's recorded dataset stands to the run bar's: ``(tag, row)``,
     the header's short tag (always shown: a mismatch, a missing record or a
-    refusal changes what the curves mean) and the Details row with the
-    fingerprint itself. Reading it opens the run's checkpoint: an operator's
-    only."""
+    refusal changes what the curves mean) and the Details row: the
+    fingerprint itself where it is not the run bar's, "same as the run bar"
+    where it is (R-41: the run bar shows it, with its Copy). Reading it opens
+    the run's checkpoint: an operator's only."""
     if not operator:
         return (f'<span class="shep-tag shep-tag-grey">{LOCK_ICON} dataset not shown · operator '
                 'control</span>',
@@ -2266,9 +2267,20 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
                                          "bar's dataset has no fingerprint"), row)
     if recorded == current:
         # A normal state, so quiet (R-57; the skill's §6): the mark and its
-        # word, no tag.
-        return r.status_mark("ok", "same dataset as the run bar"), row
+        # word, no tag; the fingerprint is the run bar's, named there once.
+        return r.status_mark("ok", "same dataset as the run bar"), "same as the run bar"
     return r.warn_chip("not the selected dataset"), row
+
+
+def _in_run(path: Any, folder: Path) -> str:
+    """A file of a run by its place in the run's folder ("checkpoints/last.pt",
+    "logs/train_20261116_204731.json"), which the run details name once in
+    their own row (R-41: the folder was said twice); a file outside it by the
+    shared redaction (`_shown_path`)."""
+    try:
+        return Path(path).relative_to(folder).as_posix()
+    except (TypeError, ValueError):
+        return _shown_path(path)
 
 
 #: The icon before "the run continued from" (or branched from) in the run
@@ -2292,11 +2304,15 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
     (or, for the drawer's `operation` Branch, branched) from (`continuing`,
     its "<architecture>/<run>": the drawer's parent and the run viewed are
     different runs unless chosen so), the run's state
-    (`state`, `run_snapshot_html`), and Details ›. The rest, read less often
-    (the run's directory, its checkpoint and logs, the dataset fingerprint it
-    used; its workspace when it is not the run bar's), is in Details. `live`:
-    the run viewed is the training job, running. With no run, nothing: the
-    chart region says what will appear and how (`NO_RUN_YET`, `NO_RUN_YET_READ_ONLY`)."""
+    (`state`, `run_snapshot_html`), and Details ›. The rest, read less often,
+    is in Details, a summary list with no help bubble of its own (R-41): the
+    run's folder, named once, its checkpoint and log by their place in it,
+    the checkpoint's model fingerprint (12 hex digits with Copy), the dataset
+    it used (or "same as the run bar"), and its workspace when it is not the
+    run bar's. `live`: the run viewed is the training job, running (its newest
+    checkpoint, rewritten each epoch, is named without its fingerprint). With
+    no run, nothing: the chart region says what will appear and how
+    (`NO_RUN_YET`, `NO_RUN_YET_READ_ONLY`)."""
     if run is None:
         return ""
     label = str(run["label"])
@@ -2309,20 +2325,27 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
         said += (f'<span class="shep-rv-from">{_FROM_ICON}the run {done} from</span>'
                  if continuing == label else
                  f'<span class="shep-rv-from">not the run {done} from</span>')
-    rows = [("Run", f"<code>{r.e(label)}</code>")]
+    folder = Path(run["path"])
+    rows = [("Run folder", f"<code>{r.e(_shown_path(folder))}</code>")]
     if run.get("workspace") and run.get("workspace") != ws.get("name"):
         # Said here only when it is not the run bar's (which names its own).
         rows.append(("Workspace", r.e(run["workspace"])))
     if operator:
         if live:
-            newest = _newest_checkpoint(run["path"])
-            rows.append(("Newest checkpoint", f"<code>{r.e(_shown_path(newest))}</code>" if newest
-                         else '<span class="shep-muted">none written yet</span>'))
+            newest = _newest_checkpoint(folder)
+            rows.append(("Newest checkpoint", f"<code>{r.e(_in_run(newest, folder))}</code>"
+                         if newest else '<span class="shep-muted">none written yet</span>'))
         elif snapshot and snapshot.get("checkpoint"):
-            rows.append(("Checkpoint", f"<code>{r.e(_shown_path(snapshot['checkpoint']))}</code>"))
-    rows.append(("Logs", "the run directory’s <code>logs/</code>"))
-    rows.append(("Dataset used", used + help_button("training-used-dataset",
-                                                    "Used dataset fingerprint")))
+            rows.append(("Checkpoint",
+                         f"<code>{r.e(_in_run(snapshot['checkpoint'], folder))}</code>"))
+            if r.is_digest(snapshot.get("sha256")):
+                rows.append(("Model fingerprint",
+                             r.fingerprint_value(snapshot["sha256"], what="model fingerprint")))
+    log = training_manager.metrics_log_file(folder)
+    rows.append(("Logs", f"<code>{r.e(_in_run(log, folder))}</code>" if log else
+                 f'<span class="shep-muted">{"none written yet" if live else "none written"}'
+                 '</span>'))
+    rows.append(("Dataset used", used))
     details = ('<button type="button" class="shep-link shep-rv-details" data-act="details" '
                'aria-expanded="false" aria-controls="shep-train-run-details">Details ›</button>'
                '<div class="shep-pop shep-rv-pop" id="shep-train-run-details" role="dialog" '
@@ -4452,14 +4475,6 @@ TOPIC_HELP = {
         "End the latest epochs, 0 resets.\n"
         "- The view is kept per run in this tab, its epochs never below 0.\n"
         "- Zoomed in a live run, a button counts new epochs beyond the view.",
-    ),
-    "training-used-dataset": (
-        "Used dataset fingerprint",
-        "The dataset the run trained on, as its checkpoint records it, against the run bar's.\n\n"
-        "- The split manifest's fingerprint, compared in full.\n"
-        "- Shown to the operator only: reading it opens the checkpoint.\n"
-        "- Before the first checkpoint nothing records it yet; a run that ended without one "
-        "never recorded it.",
     ),
 }
 
