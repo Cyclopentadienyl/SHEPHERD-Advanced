@@ -480,6 +480,26 @@ def test_the_research_table_row_has_its_columns_and_escapes():
     assert broken.endswith(f"<td>{r.status_mark('neutral', r.UNKNOWN)}</td></tr>")
 
 
+def test_an_entry_never_read_does_not_claim_a_failed_read():
+    """NEW-models-results-5: an entry the listing never opened (a run or file
+    whose name is not text, a directory that cannot be listed, a file outside
+    the workspace: no digest and no size, `ListedCheckpoint`) reads "not
+    read", never "metadata not readable", on the shared list's row and the
+    research table's; a file whose read was made and failed (its size known)
+    or that gave no record (its digest known) still reads "metadata not
+    readable"."""
+    never = {**checkpoint(sha=None, problem="'bad\\xff' is not text"), "size_bytes": None,
+             "run": "bad\\xff", "filename": "RUNS"}
+    for html in (r.model_row_html(never, []), r.model_table_row_html(never, [])):
+        assert "not read · cannot be loaded" in html and "metadata not readable" not in html
+    assert r.unreadable_words(never) == "not read"
+    failed = checkpoint(sha=None, problem="UnpicklingError: …")
+    loaded = checkpoint(problem="it loads as list, not a checkpoint record")
+    for item in (failed, loaded):
+        assert r.unreadable_words(item) == "metadata not readable"
+        assert "metadata not readable · cannot be loaded" in r.model_row_html(item, [])
+
+
 def test_one_run_reads_one_way_on_every_page():
     """The ops-wiring round's B3 (BACKLOG 72): one run words for every page
     (`run_words`), so a run is never "GATv2 · run …" in one place and its

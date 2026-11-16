@@ -19,7 +19,8 @@ group compares (runs that differ, a comparison incomplete), from the cohort
 version's report store (`record_states.contest_states`, the one implementation
 the API's route shares): never a number of a result, and a description that
 hides, orders or refuses nothing. An
-unreadable entry is greyed "metadata not readable · cannot be loaded". "In use"
+unreadable entry is greyed "metadata not readable · cannot be loaded" ("not
+read · …" for one never opened, `renderers.unreadable_words`). "In use"
 is matched by the **full** model fingerprint the status serves and marks the
 checkpoint only.
 

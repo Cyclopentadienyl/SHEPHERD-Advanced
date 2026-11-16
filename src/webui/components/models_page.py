@@ -1510,8 +1510,8 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     workspaces = listing.get("workspaces") or []
     if not ml.loadable(item):
         why = item.get("problem") or "its digest was not read"
-        top = (f'<div class="shep-reason">{r.e(item.get("filename"))} · metadata not readable · '
-               f'cannot be loaded: {r.e(why)}</div>')
+        top = (f'<div class="shep-reason">{r.e(item.get("filename"))} · '
+               f'{r.e(r.unreadable_words(item))} · cannot be loaded: {r.e(why)}</div>')
         return {"header": header, "top": top, "records": "", "usage": "", "seg": None}
     facts = r.facts_from_checkpoint(item, workspaces)
     # Model Facts' warnings, but its synthetic banner: that one speaks of "the

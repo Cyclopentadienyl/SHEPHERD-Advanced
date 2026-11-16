@@ -1507,8 +1507,8 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
                                 else "")
         return '<div class="shep-sub">Choose the run, then the checkpoint to test.</div>'
     if item.get("problem") or not r.is_digest(item.get("sha256")):
-        return _reason_html(f"{item.get('filename')}: metadata not readable · cannot be tested "
-                            f"({redact(item.get('problem') or 'no digest was read', roots)})")
+        return _reason_html(f"{item.get('filename')}: {r.unreadable_words(item)} · cannot be "
+                            f"tested ({redact(item.get('problem') or 'no digest was read', roots)})")
     rows = [("Model", e(r.model_kind_text(item))),
             ("File", r.ident_html(item.get("filename"))),
             ("Validation", e(r.validation_value(r.validation_figure(item),

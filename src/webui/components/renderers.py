@@ -1086,6 +1086,18 @@ def is_synthetic_training(fingerprint: Any, workspaces: Sequence[Any]) -> bool:
                if is_digest(fingerprint) and _get(w, "dataset_fingerprint") == fingerprint)
 
 
+def unreadable_words(item: Any) -> str:
+    """**Why a listed checkpoint shows no metadata, without claiming a read
+    that did not happen**: "metadata not readable" for a file whose one read
+    was made and failed, or gave no record this build shows (it carries a
+    digest or a size, `ListedCheckpoint`); "not read" for an entry never
+    opened: a name that is not text, a directory that cannot be listed, a
+    file outside the workspace (BACKLOG 66, `read_run_checkpoints`), whose
+    reason says why. Every list and detail of a checkpoint says it alike."""
+    read = is_digest(_get(item, "sha256")) or _get(item, "size_bytes") is not None
+    return "metadata not readable" if read else "not read"
+
+
 def model_row_html(item: Any, workspaces: Sequence[Any], *,
                    recorded: Optional[RecordedTests] = None, in_use: bool = False,
                    selected: bool = False, digits: int = SHORT_HEX, key: str = "",
@@ -1094,7 +1106,8 @@ def model_row_html(item: Any, workspaces: Sequence[Any], *,
     where a heading above names its run: the file's own words; else the name
     line, `model_name_line`), "model fingerprint" 12 hex, what it was trained
     on, the synthetic chip and the recorded tests' state. An unreadable
-    checkpoint is greyed: "metadata not readable · cannot be loaded"."""
+    checkpoint is greyed: "metadata not readable · cannot be loaded", or
+    "not read · …" for an entry never opened (`unreadable_words`)."""
     problem = _get(item, "problem")
     unreadable = problem is not None or not is_digest(_get(item, "sha256"))
     classes = ["shep-row"]
@@ -1108,7 +1121,8 @@ def model_row_html(item: Any, workspaces: Sequence[Any], *,
     if unreadable:
         why = problem or "its digest was not read"
         body = (f'<span class="shep-row-sub">{e(_get(item, "filename"))} · '
-                f'<span title="{e(why)}">metadata not readable · cannot be loaded</span></span>')
+                f'<span title="{e(why)}">{e(unreadable_words(item))} · cannot be loaded</span>'
+                '</span>')
         return (f'<button type="button" class="{" ".join(classes)}" data-key="{e(key)}" '
                 f'aria-disabled="true" aria-pressed="false">{head}{body}</button>')
     fingerprint = _get(item, "dataset_fingerprint")
@@ -1220,7 +1234,8 @@ def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
     holds it); the Trainer's validation figure, an optional cell the page
     fills (`extra`, HTML it built with these renderers) and the recorded
     tests' state. An unreadable checkpoint is greyed: "metadata not readable ·
-    cannot be loaded", its recorded tests Unknown (its digest, by which they
+    cannot be loaded" ("not read · …" for an entry never opened,
+    `unreadable_words`), its recorded tests Unknown (its digest, by which they
     are found, was not read)."""
     problem = _get(item, "problem")
     unreadable = problem is not None or not is_digest(_get(item, "sha256"))
@@ -1238,8 +1253,8 @@ def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
     if unreadable:
         why = problem or "its digest was not read"
         return (f'<tr {attrs}><td>{model}</td><td colspan="2"><span class="shep-sub">'
-                f'{e(_get(item, "filename"))} · <span title="{e(why)}">metadata not readable · '
-                f'cannot be loaded</span></span></td>{extra_cell}'
+                f'{e(_get(item, "filename"))} · <span title="{e(why)}">'
+                f'{e(unreadable_words(item))} · cannot be loaded</span></span></td>{extra_cell}'
                 f'<td>{status_mark("neutral", UNKNOWN)}</td></tr>')
     exception = dataset_exception(item)
     if exception and is_synthetic_training(_get(item, "dataset_fingerprint"), workspaces):
@@ -2201,6 +2216,7 @@ __all__ = [
     "summary_list",
     "trained_on",
     "trained_on_html",
+    "unreadable_words",
     "validation_cell",
     "validation_text",
     "validation_figure",
