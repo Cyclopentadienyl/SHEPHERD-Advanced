@@ -382,7 +382,7 @@ def test_a_trained_demo_leads_with_the_dashboard_and_keeps_uvicorn_as_a_ref(
             "Settings › Data locations.") in flat
     assert ("2. Diagnosis › Load a model…: the run demo-disease of the workspace demo (the "
             "disease model; its base is the run demo-base).") in flat
-    cpu = "start it as SHEPHERD_DEVICE=cpu bash launch_shepherd.sh, or the load is refused"
+    cpu = "It was trained on the CPU: on a host without CUDA its load is refused"
     assert (cpu in flat) is (device == "cpu")
     lead, ref = flat.index("Open the demo in the dashboard"), flat.index("Ref: the API alone")
     assert lead < ref < flat.index("python -m uvicorn src.api.main:app")
@@ -412,3 +412,38 @@ def test_the_dashboard_steps_say_which_folder_to_choose_when_it_is_not_saved(
     assert (f"It lists the workspace my-demo once {elsewhere.parent.resolve()} is its "
             "workspaces folder: choose that folder in Settings › Data locations.") in flat
     assert "the run demo-disease of the workspace my-demo" in flat
+
+
+@pytest.mark.parametrize("where", ["saved in Settings", "set for this command", "elsewhere"])
+def test_a_cpu_demo_says_to_stop_the_running_dashboard_before_its_cpu_start(
+        monkeypatch, capsys, tmp_path, where):
+    """Review of b39bd3f: the CPU line said "start it as SHEPHERD_DEVICE=cpu
+    bash launch_shepherd.sh, or the load is refused". With the folder saved
+    through the dashboard, that dashboard normally still runs, and a second
+    start of the same configuration only opens it, keeping its device
+    (`test_service_unit.py::test_a_second_start_of_a_running_configuration_opens_it`
+    starts it with SHEPHERD_DEVICE=cpu), so Load was still refused. In every
+    case the steps now say to stop the running one first (Settings › Stop
+    service), then start it with SHEPHERD_DEVICE=cpu, before the Load of step 2."""
+    from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
+
+    root = tmp_path / "SHEPHERD-data" / "workspaces"
+    args = ["--device", "cpu"]
+    if where == "saved in Settings":
+        monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+        _save_root(root)
+    else:  # the lock's folder given for this command; the demo there, or elsewhere
+        root.mkdir(parents=True)
+        monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
+        if where == "elsewhere":
+            args += ["--output-dir", str(tmp_path / "elsewhere" / "demo")]
+    flat, _ = _trained_demo(monkeypatch, capsys, tmp_path, *args)
+    said = ("It was trained on the CPU: on a host without CUDA its load is refused unless the "
+            "dashboard runs with SHEPHERD_DEVICE=cpu (development hosts only; deployment guide "
+            "§4.8). A dashboard already running keeps the device it was started with, and a "
+            "second start only opens it. So stop it first (Settings › Stop service), then "
+            "start it as SHEPHERD_DEVICE=cpu bash launch_shepherd.sh.")
+    assert said in flat
+    assert "start it as SHEPHERD_DEVICE=cpu bash launch_shepherd.sh, or the load" not in flat
+    start, load = flat.index("1. Start the dashboard"), flat.index("2. Diagnosis › Load a model…")
+    assert start < flat.index(said) < load

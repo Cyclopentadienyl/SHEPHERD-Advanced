@@ -851,13 +851,21 @@ def test_a_second_start_of_a_running_configuration_opens_it(monkeypatch, tmp_pat
     held and whose /health answers with its info file's id, opens it, and
     starts nothing. T08: it said "Opening it." whatever `webbrowser.open`
     answered, so a host with no browser was told a page opened that did not;
-    it now says which happened, and gives the address when none opened."""
+    it now says which happened, and gives the address when none opened.
+
+    The second start is given SHEPHERD_DEVICE=cpu, which the running one was
+    not: a start-up setting is not part of the configuration
+    (`instance_key`), so it still starts nothing, and the running service
+    keeps its device. setup_demo.py's CPU steps say so and send the operator
+    to stop it first (`test_setup_demo.py::
+    test_a_cpu_demo_says_to_stop_the_running_dashboard_before_its_cpu_start`)."""
     launcher = _launcher()
     files, fd, health = _running_instance(launcher, tmp_path, "abc123", "abc123")
     try:
         done = _run_launcher(monkeypatch, ["--no-auto-install"] + ([] if browser
                                                                    else ["--no-browser"]),
-                             env=_state_env(tmp_path), launcher=launcher, browser=found)
+                             env=_state_env(tmp_path, SHEPHERD_DEVICE="cpu"),
+                             launcher=launcher, browser=found)
     finally:
         health.close()
         os.close(fd)

@@ -1174,7 +1174,11 @@ device the model's parameters are on (`cuda:0`, not just `cuda`). The status's
 > `scripts/setup_demo.py --train-model` ends with how to open the demo in the
 > dashboard and load the disease child it trained (a base, then one disease child,
 > since K7) in Diagnosis › Load a model…; a demo trained with `--device cpu` says the
-> dashboard must then be started with `SHEPHERD_DEVICE=cpu`. The command serving it
+> dashboard must then be started with `SHEPHERD_DEVICE=cpu`, after the one already running is
+> stopped (Settings › Stop service): a running dashboard keeps the device it was started with,
+> and a second start of the same configuration only opens it (since the T08 review; it used to
+> say only to start it so, which changed nothing while the dashboard that saved the folder ran).
+> The command serving it
 > from the API alone follows as a "Ref:", with the device they were trained on (since T08;
 > it used to print only that command).
 

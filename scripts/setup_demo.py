@@ -62,7 +62,10 @@ dashboard** (`dashboard_lines`, T08): start it (its desktop entry or
 `launch_shepherd.sh`), which lists the demo when it is in the workspaces folder
 saved in Settings (or says which folder to choose there), and load the disease
 child in Diagnosis › Load a model…; a demo trained on the CPU says the
-dashboard must then be started with ``SHEPHERD_DEVICE=cpu``. A command
+dashboard must then be started with ``SHEPHERD_DEVICE=cpu``, and that one
+already running must be stopped first (Settings › Stop service): it keeps the
+device it was started with, and a second start of the same configuration only
+opens it (`src.utils.launch_instance`). A command
 starting the API alone follows only as a "Ref:", with the disease child's
 checkpoint (its run's `last.pt`) and the device it was trained on: serving
 refuses `auto` without CUDA (contract M3c), so the command names the device.
@@ -430,7 +433,13 @@ def dashboard_lines(output_dir: Path, training_device: str,
     for this command only, it does once the same folder is chosen there; in
     another folder, once its parent is. A demo trained on the CPU is served
     only by a dashboard started with ``SHEPHERD_DEVICE=cpu`` (serving refuses
-    `auto` without CUDA, contract M3c). Two-space indent, no trailing blank."""
+    `auto` without CUDA, contract M3c), so the steps say to stop one already
+    running first: it keeps the device it was started with, and a second
+    start of the same configuration only opens it (the instance key is the
+    repository and the settings file, `launch_instance.instance_key`; review
+    of b39bd3f: the steps said to start it as SHEPHERD_DEVICE=cpu, which did
+    nothing while the dashboard that saved the folder still ran). Two-space
+    indent, no trailing blank."""
     root = server_settings.workspaces_root(environ)
     parent = Path(output_dir).resolve().parent
     name = Path(output_dir).name
@@ -449,15 +458,22 @@ def dashboard_lines(output_dir: Path, training_device: str,
     start = "Start the dashboard: its desktop entry, or bash launch_shepherd.sh"
     lines = [f"  1. {start} (launch_shepherd.cmd on Windows). {where}"]
     if device == "cpu":
-        lines.append("     It was trained on the CPU: on a host without CUDA, start it as "
-                     "SHEPHERD_DEVICE=cpu bash launch_shepherd.sh, or the load is refused "
-                     "(development hosts only; deployment guide §4.8).")
+        lines.append(f"     {CPU_DASHBOARD}")
     lines.append(f"  2. Diagnosis › Load a model…: the run {DEMO_DISEASE_RUN} of the workspace "
                  f"{name} (the disease model; its base is the run {DEMO_BASE_RUN}).")
     return [wrapped for line in lines
             for wrapped in textwrap.wrap(line, 92, subsequent_indent="     ",
                                          break_long_words=False, break_on_hyphens=False)]
 
+
+#: What a demo trained on the CPU needs of the dashboard (`dashboard_lines`):
+#: one started with SHEPHERD_DEVICE=cpu, after the running one is stopped.
+CPU_DASHBOARD = (
+    "It was trained on the CPU: on a host without CUDA its load is refused unless the "
+    "dashboard runs with SHEPHERD_DEVICE=cpu (development hosts only; deployment guide §4.8). "
+    "A dashboard already running keeps the device it was started with, and a second start "
+    "only opens it. So stop it first (Settings › Stop service), then start it as "
+    "SHEPHERD_DEVICE=cpu bash launch_shepherd.sh.")
 
 #: The refusal with no `--output-dir` and no workspaces folder in effect.
 NO_OUTPUT_DIR = ("setup_demo: refused: the demo is written to the workspaces folder in effect "
