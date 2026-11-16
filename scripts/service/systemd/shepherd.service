@@ -30,9 +30,12 @@ Environment=PYTHONUNBUFFERED=1
 #Environment=SHEPHERD_DEPLOYMENT_MODE=M1
 # The data locations are chosen in the dashboard's Settings › Data locations
 # and saved in this account's settings file, which this service, a shell of
-# the same account and the jobs the service starts all read; nothing needs to
-# be set here. A line below sets one at start instead and wins over the saved
-# value (Settings shows it as set at start). Deployment guide §4.12.
+# the same account and the jobs the service starts all read. Choosing them is
+# an operator control, which this unit as shipped leaves off: set the mode line
+# above to M1, or choose them once from a local start (launch_shepherd.sh)
+# while this unit is stopped; after that nothing needs to be set here. A line
+# below sets one at start instead and wins over the saved value (Settings shows
+# it as set at start). Deployment guide §4.12 and §4.13.
 # The workspaces root, absolute: its subdirectories are the workspaces listed,
 # and its .shepherd-gpu.lock is the deployment's only GPU lock; while neither
 # this line nor Settings names one, every training and test run is refused.
