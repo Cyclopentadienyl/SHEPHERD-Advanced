@@ -202,30 +202,37 @@ def test_a_read_only_request_lists_nothing_and_opens_nothing(root, serving, monk
     assert "Refused" not in shown and "Nothing was done" not in shown
 
 
-def test_an_operator_lists_the_serving_workspace_with_in_use_pinned(root, serving, monkeypatch):
+def test_an_operator_lists_the_serving_workspace_with_the_one_in_use_located(
+        root, serving, monkeypatch):
+    """The drawer (the clinical preset) draws the one tree Models draws (D04:
+    the two may differ in their defaults, never in how a model is drawn):
+    each run a summary row in the one run words, its files folded under it,
+    each by what it is; the model in use marked once, in its own row, its run
+    unfolded and the row located (RC-B: it was pinned in an "In use now" group
+    and named again in its run, "— in use, pinned above"); the latest four
+    runs, then "Show older runs"; models finetuned for a task only."""
     listing = ml.list_models(None, operator_request(monkeypatch))
     assert listing["workspace"] == "demo" and listing["serving"] == "demo"
     assert listing["served_sha"] == root["shas"]["model-05.pt"]
     assert len(listing["items"]) == 9
     html = ml.list_html(listing, None, ml.PRESETS["clinical"])
-    first_row = html.index('class="shep-row')
-    assert html.index("In use now") < first_row
-    assert html[first_row:].startswith('class="shep-row"') or "epoch 5" in html[first_row:first_row + 400]
-    assert html.count('shep-tag-accent">In use<') == 1
-    assert "in use, pinned above" in html
-    # Each run is named once, by its heading in the one run words (B4,
-    # BACKLOG 72's record of B3); its rows say what each file is and how far
-    # it trained (`file_line`), the pinned row its whole name line.
+    assert html.count('<table class="shep-tbl shep-mtbl shep-mtree"') == 1
+    assert "In use now" not in html and "pinned above" not in html
+    served = _row_of(html, "model-05.pt")
+    assert html.count('shep-tag-accent">In use<') == 1 and 'In use<' in served
+    assert " hidden" not in served and f'data-locate="{_key("model-05.pt")}"' in html
+    assert " hidden" in _row_of(html, "model-12.pt")                     # another run: folded
+    # Each run is named once, by its summary row in the one run words (B4,
+    # BACKLOG 72's record of B3); its files say what each is.
     from src.webui.components import renderers as r
 
-    headings = re.findall(r'<div class="shep-list-hd"><b>(Run [^<]*)</b></div>', html)
-    mains = re.findall(r'<span class="shep-row-main">([^<]*)</span>', html)
-    runs = {r.run_words(i["architecture"], i["run"], fit=False) for i in listing["items"]}
-    assert headings and {h.removeprefix("Run ") for h in headings} <= runs, headings
-    pinned, *in_runs = mains
-    assert any(words in pinned for words in runs)              # the pinned row: whole
-    assert not [m for m in in_runs if any(words in m for words in runs)], in_runs
-    assert "model-12.pt, recorded epoch 12" in in_runs and "model-12.pt · " not in "".join(mains)
+    for arch, run, files, _kind in RUNS[:2]:
+        words = r.run_words(arch, run, fit=False)
+        assert words in _visible(_run_row(html, f"{arch}/{run}")), run
+        for name in files:
+            assert words not in _visible(_row_of(html, name)), name
+    assert [_cells(_row_of(html, name))[0] for name in ("model-12.pt", "model-08.pt")] == [
+        "model-12.pt", "model-08.pt"]                       # no recorded selection here
     # the clinical preset: models finetuned for a task only (a base offers no
     # diagnosis; refused and unreadable files are never run), the latest four
     # runs, then the rest on request
@@ -236,33 +243,213 @@ def test_an_operator_lists_the_serving_workspace_with_in_use_pinned(root, servin
     assert "disease_cccccc" in older and "Show older runs" not in older
     research = ml.list_html(listing, None, ml.PRESETS["research"])
     assert "disease_cccccc" in research and 'In use (Diagnosis)<' in research
-    # Correct roles (the WebUI skill's §8, §10): each group's list holds list
-    # items only, one per checkpoint (a row a button inside its item, the
-    # served file in its run a note pointing above); the headings and "Show
-    # older runs" are outside the lists, so a list counts its checkpoints
-    # (B0a review: the headings and notes were items too). The table's rows
-    # take no `aria-selected`.
-    from tests.fixtures.list_roles import lists
-
-    found = lists(html)
-    assert found[0]["label"] == "In use now" and len(found[0]["children"]) == 1
-    # Then one list per run shown, named by its heading (the latest four).
-    assert len(found) == 5 and all(x["label"].startswith("Run ") for x in found[1:])
-    for group in found:
-        assert group["children"], group
-        assert all(child["role"] == "listitem" for child in group["children"]), group
-        assert not any("In use now" in c["text"] or c["text"].startswith("Run ")
-                       for c in group["children"]), group
-    rows = html.count('<button type="button" class="shep-row"') + html.count("pinned above</div>")
-    assert sum(len(group["children"]) for group in found) == rows
-    assert html.startswith('<div class="shep-list"><div class="shep-list-hd"><b>In use now</b>')
-    assert '<div role="listitem"><button type="button" class="shep-row shep-row-more"' not in html
-    assert "aria-selected" not in research
+    # One row group, its own tbody; the table's rows take no `aria-selected`.
+    assert html.count("<tbody") == 1 and "aria-selected" not in html + research
     # The drawer's own rule is its scope, not a filter it names: no "· Task
     # models only, of 9 listed" (the 9 would count files it never shows); no
     # order word beside the order it is drawn in, no " · " (R-27, R-77).
     assert ml.count_line(listing, ml.PRESETS["clinical"], False) == (
         "Latest 4 of 5 runs, 5 saved files")
+
+
+def test_the_drawer_shows_the_run_in_use_beyond_its_latest_runs(root, serving, monkeypatch):
+    """BACKLOG 39, D04: a model in use in a run older than the latest four is
+    drawn with them, its run unfolded and its row located, and the count line
+    says so; a selection in a run left out is said, its details kept, never
+    dropped (the rows' pinned "In use now" group is gone with the rows)."""
+    serving["value"] = _status(root, served="model-01.pt")          # the oldest task run
+    listing = ml.list_models("demo", operator_request(monkeypatch))
+    two = ml.Preset("two", 2, "In use", rows="task_models")
+    html = ml.list_html(listing, None, two)
+    served = _row_of(html, "model-01.pt")
+    assert 'In use<' in served and " hidden" not in served
+    assert f'data-locate="{_key("model-01.pt")}"' in html
+    assert "gene_aaaaaa" not in html and "Show older runs (2)" in html
+    assert ml.count_line(listing, two, False) == (
+        "Latest 2 of 5 runs and the one in use, 4 saved files")
+    # The drawer reads on until the model in use is read (`_latest_checkpoints`):
+    # here every task run, so every one is drawn and counted.
+    clinical = ml.PRESETS["clinical"]
+    listing = ml.list_models("demo", operator_request(monkeypatch),
+                             latest_runs=clinical.latest_runs)
+    html = ml.list_html(listing, None, clinical)
+    assert 'In use<' in _row_of(html, "model-01.pt") and "Show older runs" not in html
+    assert ml.count_line(listing, clinical, False) == "5 runs, 6 saved files"
+    # A selection in a run the drawer leaves out: said, kept.
+    serving["value"] = _status(root)
+    listing = ml.list_models("demo", operator_request(monkeypatch))
+    one = ml.Preset("one", 1, "In use", rows="task_models")
+    picked = _key("model-03.pt")
+    html = ml.list_html(listing, picked, one)
+    assert f'data-key="{picked}"' not in html
+    assert ("Selected model not shown among the latest runs: Gene, gene · GATv2 "
+            "2026-10-15 08:00; its details are kept") in _visible(html)
+    assert f'data-facts-key="{picked}"' in ml.facts_html(listing, picked)
+    assert f'data-key="{picked}"' in ml.list_html(listing, picked, one, show_older=True)
+
+
+def test_the_drawers_rows_and_facts_name_the_workspace_dataset_by_its_relation(
+        root, serving, monkeypatch):
+    """R-7+B51a, RC-B, B27-5 (the drawer's part), NEW-diagnosis-3: each row of
+    the Load for inference drawer read "model fingerprint … · trained on demo
+    · dataset fingerprint 50bef1bf5f9f · synthetic" (three " · "), repeating
+    the dataset fingerprint and "synthetic" the workspace line under the
+    select says, ten times on one screen. Now a row trained on the chosen
+    workspace's current dataset says nothing of it (the dataset said once,
+    under the select), every row has at most one " · ", and the chosen
+    model's facts name that dataset by its relation ("the selected
+    workspace's current dataset"), with no synthetic banner for a file that
+    is listed, not served; counted on the drawer's one screen."""
+    from src.webui.components import renderers as r
+
+    listing = _listing(root, monkeypatch)
+    clinical = ml.PRESETS["clinical"]
+    picked = _key("model-12.pt")
+    rows = ml.list_html(listing, picked, clinical, show_older=True)
+    facts = ml.facts_html(listing, picked)
+    line = ml.workspace_line_html(listing)
+    workspace = next(w for w in listing["workspaces"] if w["name"] == "demo")
+    digits = r.distinguishing_digits(w.get("dataset_fingerprint") for w in listing["workspaces"])
+    dataset = root["fingerprint"][:digits]
+    assert all(item.get("trained_on_this_dataset") is True for item in ml.shown_items(
+        listing, None, clinical))
+    seen = _visible(rows)
+    assert dataset not in seen and "trained on" not in seen and "synthetic" not in seen
+    for row in re.findall(r"<tr[ >].*?</tr>", rows, re.S):
+        assert _visible(row).count(" · ") <= 1, _visible(row)
+    assert r.CURRENT_DATASET in _visible(facts) and dataset not in _visible(facts)
+    assert "SYNTHETIC WORKSPACE" not in facts
+    screen = _visible(line + rows + facts)
+    assert screen.count(dataset) == 1, screen                     # the workspace line
+    if r.origin_of(workspace) == "synthetic":
+        assert screen.count("synthetic") == 1, screen
+
+
+_DRAWER_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+const ROWS = '#shep-models-clinical-rows', FACTS = '#shep-models-clinical-facts';
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(), null, { timeout: 30000 });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const geometry = () => page.evaluate(([R, F]) => {
+    const box = (e) => { const b = e.getBoundingClientRect(); return [Math.round(b.top), Math.round(b.bottom)]; };
+    const rows = document.querySelector(R), facts = document.querySelector(F);
+    const load = document.querySelector('#shep-models-clinical-load'), lb = load.getBoundingClientRect();
+    const top = document.elementsFromPoint(lb.left + lb.width / 2, lb.top + lb.height / 2)[0];
+    return { layout: document.documentElement.getAttribute('data-shep-layout'),
+             rows: [...rows.querySelectorAll('[data-key], tr.shep-tree-run')].filter((t) => !t.hidden)
+               .slice(0, 4).map((t) => Math.round(t.getBoundingClientRect().top)),
+             list: box(rows), facts: box(facts), load: box(load), loadOnTop: !!top && load.contains(top),
+             factsScroll: facts.scrollTop, factsScrolls: facts.scrollHeight > facts.clientHeight + 1,
+             innerH: innerHeight };
+  }, [ROWS, FACTS]);
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-dx-change-btn:not([disabled])', { timeout: 60000 });
+  await idle();
+  await page.click('#shep-dx-change-btn');
+  await page.waitForSelector(`${ROWS} [data-key]`, { state: 'attached', timeout: 30000 });
+  await idle();
+  const out = {};
+  // Side by side: choose the first file shown, then read its details with the wheel.
+  const first = await page.$eval(`${ROWS} [data-key]:not([hidden])`, (r) => r.getAttribute('data-key'));
+  await page.click(`${ROWS} [data-key="${first}"]`);
+  await page.waitForSelector(`${FACTS} .shep-facts-title`, { timeout: 30000 });
+  await idle(); await frames();
+  out.before = await geometry();
+  const at = await page.$eval(FACTS, (e) => { const b = e.getBoundingClientRect();
+    return [b.left + b.width / 2, b.top + Math.min(b.height, innerHeight - b.top) / 2]; });
+  await page.mouse.move(at[0], at[1]);
+  await page.mouse.wheel(0, 400);
+  await page.waitForFunction((F) => { const f = document.querySelector(F);
+    return f.scrollTop > 0 || f.closest('.shep-model-body').scrollTop > 0; }, FACTS, { timeout: 10000 });
+  await frames();
+  out.after = await geometry();
+  // Side by side at 1280 x 900, the narrowest pair asked for: the tree whole in its region.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') === 'side');
+  await frames();
+  out.fit = await page.evaluate(([R, F]) => { const rows = document.querySelector(R), facts = document.querySelector(F);
+    return { rows: [rows.clientWidth, rows.scrollWidth], facts: [facts.clientWidth, facts.scrollWidth],
+             body: [rows.parentElement.clientWidth, rows.parentElement.scrollWidth] }; }, [ROWS, FACTS]);
+  // Stacked: the list, the details, Load, in that order; a file chosen brings its
+  // details into view, "Back to the list" the row.
+  await page.setViewportSize({ width: 760, height: 1000 });
+  await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') === 'stack');
+  await frames();
+  out.stacked = await geometry();
+  await page.click(`${ROWS} tr.shep-tree-run button.shep-fold[aria-expanded="false"]`);
+  const second = await page.$eval(`${ROWS} tr[data-key]:not([hidden])`, (r) => r.getAttribute('data-key'));
+  await page.click(`${ROWS} tr[data-key="${second}"]`);
+  await page.waitForFunction(([F, k]) => { const t = document.querySelector(F + ' [data-facts-key]');
+    if (!t || t.getAttribute('data-facts-key') !== k) { return false; }
+    const b = t.getBoundingClientRect(); return b.top >= -1 && b.top < innerHeight / 2; },
+    [FACTS, second], { timeout: 30000 });
+  await idle();
+  out.picked = await page.evaluate(() => !!document.activeElement.closest('[data-facts-key]'));
+  await page.click(`${FACTS} button.shep-back-list`);
+  await page.waitForFunction(([R, k]) => { const b = document.querySelector(`${R} tr[data-key="${k}"]`).getBoundingClientRect();
+    return b.top >= 0 && b.bottom <= innerHeight; }, [ROWS, second], { timeout: 10000 });
+  out.back = await page.evaluate(([R, k]) => document.activeElement === document.querySelector(`${R} tr[data-key="${k}"]`), [ROWS, second]);
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
+        root, serving, monkeypatch, tmp_path):
+    """UI-07 (RC-C) as drawn (Node and Playwright, skipped without), the
+    Diagnosis page with its Load for inference drawer open for an operator:
+    side by side at 1850 x 960, the details of the chosen model longer than
+    their region scroll on their own under the wheel and the list's rows stay
+    where they were (they moved with the details: one region held both, 216
+    px at ba6e85e), Load in view under both, nothing over it; stacked at 760
+    x 1000, the list, the details and Load in that order, a file chosen
+    brings its details into view with the focus on their title, and "↑ Back
+    to the list" brings the row back into view and focuses it. At 1280 x 900,
+    still side by side, the tree of every task's models (614 px) is whole in
+    its region and the details in theirs: the list was 524 px there, its tree
+    cut at the Fingerprint column, before the shared tree took 7 px a side
+    and the regions their measured minimums."""
+    from src.webui import shell
+    from src.webui.app import mount_options
+    from src.webui.components import diagnosis_panel as dp
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    status = _status(root)
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (status, None))
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": True, "workspaces": [], "serving": None,
+        "item": None, "item_problem": None, "recorded": None, "trained": None,
+        "cohorts": None})
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_DRAWER_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    before, after = seen["before"], seen["after"]
+    assert before["layout"] == "side"
+    assert after["rows"] == before["rows"], seen                  # the list stays
+    assert before["factsScrolls"] and after["factsScroll"] > 0, seen
+    assert after["load"] == before["load"] and after["loadOnTop"], seen
+    assert after["load"][1] <= after["innerH"], seen
+    assert after["list"][0] == after["facts"][0], seen            # side by side
+    fit = seen["fit"]                         # at 1280 x 900, nothing cut or scrolled sideways
+    assert all(scroll <= client for client, scroll in fit.values()), fit
+    stacked = seen["stacked"]
+    assert stacked["layout"] == "stack"
+    assert stacked["list"][1] <= stacked["facts"][0] < stacked["load"][0], stacked
+    assert seen["picked"] is True and seen["back"] is True, seen
 
 
 def test_in_use_is_matched_by_the_full_fingerprint_only(root, serving, monkeypatch):
@@ -1190,19 +1377,26 @@ def _cells(row):
     return [re.sub(r"<[^>]+>", "", cell) for cell in re.findall(r"<td[^>]*>(.*?)</td>", row)]
 
 
+def _visible(html):
+    """HTML as the words it shows (tags dropped, entities read)."""
+    import html as html_
+
+    return html_.unescape(re.sub(r"<[^>]+>", "", html))
+
+
 def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypatch):
     """README §5 (map B7): what a file is is said once where a person reads
-    its row: the drawer's rows, which list every task's models together,
-    lead with its kind word (`renderers.record_kind_text`); the research
-    tree says it in its run's Task column (a run's files share their record),
-    its refused and unreadable files included, under any group."""
+    its row: in its run's Task column (a run's files share their record,
+    `renderers.record_kind_text`), in the drawer, which lists every task's
+    models together, as in the research tree, its refused and unreadable
+    files included, under any group."""
     listing = _listing(root, monkeypatch)
     rows = ml.list_html(listing, None, ml.PRESETS["clinical"], show_older=True)
-    for name, kind in (("model-12.pt", "Disease"), ("model-05.pt", "Disease"),
-                       ("model-03.pt", "Gene"), ("model-02.pt", "Patients-like-me")):
-        row = _row_of(rows, name)
-        assert (f'"><span class="shep-row-sub shep-row-kind">{kind}</span>'
-                f'<span class="shep-row-main">') in row, (name, row)
+    for run, kind in (("20261018-091200_disease_8c2e7a", "Disease"),
+                      ("20261017-091500_disease_3fa9c1", "Disease"),
+                      ("20261015-080000_gene_aaaaaa", "Gene"),
+                      ("20261014-080000_patients_like_me_bbbbbb", "Patients-like-me")):
+        assert _cells(_run_row(rows, f"gatv2/{run}"))[1] == kind, run
     view = {"groups": [{"title": "Group A", "keys": [_key("model-07.pt")]}]}
     table = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
     for run, kind, operation in (
@@ -1236,15 +1430,12 @@ def test_a_frozen_backbone_row_says_so_in_both_presets(root, serving, monkeypatc
         elif item.get("filename") == "model-01.pt":
             item["weight_transfer"] = partly
     rows = ml.list_html(listing, None, ml.PRESETS["clinical"], show_older=True)
-    assert ('"><span class="shep-row-sub shep-row-kind">Disease · frozen graph backbone</span>'
-            in _row_of(rows, "model-12.pt"))
-    assert '<span class="shep-row-sub shep-row-kind">Disease</span>' in _row_of(rows,
-                                                                                "model-05.pt")
     table = ml.list_html(listing, None, ml.PRESETS["research"])
     for run, words in (("20261018-091200_disease_8c2e7a", "Fine-tune, frozen"),
                        ("20261017-091500_disease_3fa9c1", "Fine-tune, full"),
                        ("20261013-080000_disease_cccccc", "Fine-tune, partly frozen")):
-        assert _cells(_run_row(table, f"gatv2/{run}"))[1:3] == ["Disease", words], run
+        for html in (rows, table):
+            assert _cells(_run_row(html, f"gatv2/{run}"))[1:3] == ["Disease", words], run
     # Each word whole: a narrow frame may break the line at a space, never at a
     # word's own hyphen (D8).
     assert ('<span class="shep-op"><span class="shep-nowrap">Fine-tune,</span> '
@@ -1552,9 +1743,11 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     # The drawer opened the latest runs only (BACKLOG 39), so how many older
     # runs hold a model is not said.
     assert count == "Latest 4 runs, 5 saved files" and "listed" not in count
-    # The run named once, by its heading (B4), its file by what it is.
-    assert "<b>Run disease · GATv2 2026-10-18 09:12</b>" in rows
-    assert "model-12.pt, recorded epoch 12" in rows
+    # The run named once, by its row in the tree (B4), its file by what it is.
+    assert "disease · GATv2 2026-10-18 09:12" in _visible(_run_row(
+        rows, "gatv2/20261018-091200_disease_8c2e7a"))
+    assert _cells(_row_of(rows, "model-12.pt"))[:4] == ["model-12.pt", "", "",
+                                                         "recorded epoch 12"]
     assert handle.load_button is not None and handle.refresh["fn"] is refresh.fn
 
 
@@ -1593,7 +1786,7 @@ def test_a_selection_made_after_a_load_survives_the_lists_re_read(root, serving,
     by = dict(zip(map(id, refresh["outputs"]), out, strict=True))
     assert by[id(handle.selected)] == picked
     assert by[id(handle.load_button)]["interactive"] is True
-    assert 'aria-pressed="true"' in by[id(handle.rows)]
+    assert 'aria-current="true"' in _row_of(by[id(handle.rows)], "model-12.pt")
     assert "Select a model" not in by[id(handle.facts)]
     elsewhere = ({**before, "workspace": "other"}, picked)
     gone = (before, "gatv2/x/gone.pt")

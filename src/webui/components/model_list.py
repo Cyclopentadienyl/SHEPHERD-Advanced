@@ -24,30 +24,31 @@ read · …" for one never opened, `renderers.unreadable_words`). "In use"
 is matched by the **full** model fingerprint the status serves and marks the
 checkpoint only.
 
-**The two presets** (`PRESETS`), each row of either leading with what its
-file is (`renderers.model_kind_text`: "Disease", "Base", "Disease · frozen
-graph backbone", "Record not readable" …), under every view and order:
+**One tree, two presets** (`PRESETS`; D04: the two views may differ in
+their defaults, never in how a model is drawn). Both draw **the tree**
+(`tree_view`, `_tree_html`): every run a summary row (its run words, task,
+operation with its freeze words, epochs completed and saved files; no score:
+a file's figures are its details, so validations of different tasks are
+never put on one scale), indented under the run of the exact parent file it
+records where the page gives its families, its saved files folded under it,
+each a row of its own (what it is, by the run's recorded selection, how far
+it trained, its model fingerprint's 12 hex digits, the dataset only where it
+is not the workspace's current one, `renderers.dataset_exception`: the
+workspace's dataset is said once, under its select, `workspace_line_html`),
+the served file marked in its own row; each group its own ``<tbody>``
+(B72-C5). Where they differ:
 
-- ``clinical`` (the drawer): rows (`renderers.model_row_html`), "In use now"
-  pinned on top (its whole name line), the latest 4 runs, each under a
-  heading naming it by the one run words (`renderers.run_words`), its rows
-  then saying what each file is and how far it trained (`file_line`), so a
-  run is said once; then "Show older runs"; **models finetuned for a task
-  only** (``Preset.rows``; README §5, "a base offers no diagnosis"),
-  whatever view the page, or a direct call, gives; the chosen workspace's
-  identity once under the select (`workspace_line_html`), as Models says
-  it;
-- ``research`` (Models): **the tree** (D04, `tree_view`, `_tree_html`):
-  every run a summary row (its run words, task, operation with its freeze
-  words, epochs completed and saved files; no score: a file's figures are
-  its details, so validations of different tasks are never put on one
-  scale), indented under the run of the exact parent file it records where
-  the page gives its families, its saved files folded under it, each a row
-  of its own (what it is, by the run's recorded selection, how far it
-  trained, its model fingerprint's 12 hex digits, the dataset only where it
-  is not the workspace's current one), "In use (Diagnosis)" on its own row,
-  not pinned; each group its own ``<tbody>`` (B72-C5); its listing carries
-  the family view too (``listing["family"]``, `family_views`).
+- ``clinical`` (Diagnosis' Load for inference drawer): **models finetuned
+  for a task only** (``Preset.rows``; README §5, "a base offers no
+  diagnosis"), whatever view the page, or a direct call, gives; the latest 4
+  runs and the run of the model in use, then "Show older runs"
+  (`Preset.latest_runs`, BACKLOG 39); the chosen model's facts beside the
+  rows (`facts_html`), each its own scroll region side by side, under them
+  stacked, where choosing a row brings the facts into view and "↑ Back to the
+  list" returns to the row (`FACTS_JS`; UI-07);
+- ``research`` (Models): every run, its listing carrying the family view
+  too (``listing["family"]``, `family_views`); its page lays the head out and
+  shows a detail of its own.
 
 **Search, folds and the selection** (D04), the list's own: a search box
 (`search_hit`: names ignoring case, a model fingerprint by its first hex
@@ -216,9 +217,6 @@ REPLACES_NOTE = (
     "Replaces what every session is served once the new model is checked and published; "
     "until then nothing changes, and results already produced keep their own identity."
 )
-#: The note "In use" carries.
-IN_USE_NOTE = "matched by the full model fingerprint (the checkpoint only, not the whole pipeline)"
-
 #: Said when what is served changed between the confirmation and its confirm.
 FROM_CHANGED = ("What every session is served changed since this was shown (another session "
                 "reloaded): the From column is what is served now.")
@@ -254,14 +252,16 @@ class Preset:
     """What differs between the two views of the one list."""
 
     key: str
-    #: Runs shown before "Show older runs" (None: every run).
+    #: Runs shown before "Show older runs", with the run of the model in use
+    #: (None: every run).
     latest_runs: Optional[int]
     #: The words of the "In use" mark.
     in_use_label: str
-    #: Whether the model in use is pinned on top ("In use now").
-    pin_in_use: bool = True
-    #: ``rows`` (the drawer's list) or ``table`` (Models' tree, D04).
-    layout: str = "rows"
+    #: How the list's own pieces are placed (the tree is drawn alike in
+    #: both): ``drawer`` (Diagnosis: its head and search a field row each,
+    #: the chosen model's facts beside the rows) or ``page`` (Models: its page
+    #: lays the head out in its grid and shows its own detail).
+    layout: str = "drawer"
     #: The rows this preset ever shows (a `TASK_FILTERS` name), whatever the
     #: view asks: the drawer lists models finetuned for a task only, so a view
     #: of None (a direct call) never lists a base or a refused file there.
@@ -271,10 +271,8 @@ class Preset:
 
 
 PRESETS: Dict[str, Preset] = {
-    "clinical": Preset("clinical", 4, "In use", pin_in_use=True, layout="rows",
-                       rows="task_models"),
-    "research": Preset("research", None, "In use (Diagnosis)", pin_in_use=False, layout="table",
-                       family=True),
+    "clinical": Preset("clinical", 4, "In use", layout="drawer", rows="task_models"),
+    "research": Preset("research", None, "In use (Diagnosis)", layout="page", family=True),
 }
 
 
@@ -368,16 +366,6 @@ def checkpoint_words(item: Mapping[str, Any], *, best: bool = False) -> str:
     its selection, what it holds and its model fingerprint are the chosen
     file's details."""
     return r.fit_option(*_checkpoint_parts(item, best))
-
-
-def file_line(item: Mapping[str, Any], *, best: bool = False) -> str:
-    """**A listed file under a heading that names its run** (the clinical
-    list's rows): what the file is (`checkpoint_words`' first part: "Latest
-    save", "Best pooled MRR", "Top-k save", else its name) and how far it
-    trained (`renderers.epoch_words`) after a comma, as `model_name_line`
-    says a file after its run: "Latest save, 6 epochs completed". The run is
-    the heading's, said once."""
-    return f"{_checkpoint_parts(item, best)[0]}, {r.epoch_words(item)}"
 
 
 def checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[Tuple[str, str]]:
@@ -667,18 +655,6 @@ def _recorded(listing: Mapping[str, Any], key: str) -> Optional[r.RecordedTests]
     return r.RecordedTests(**raw) if isinstance(raw, Mapping) else None
 
 
-def _runs_in_order(items: Sequence[Mapping[str, Any]]) -> List[Tuple[str, List[Mapping[str, Any]]]]:
-    """Items grouped by run, in the listing's order (latest run first), each
-    group with its run's shown names (``architecture/run``). Grouped by the
-    run's identity (`item_run_key`), never by those names, so two runs shown
-    alike (BACKLOG 66) are two groups."""
-    runs: Dict[str, List[Mapping[str, Any]]] = {}
-    for item in items:
-        runs.setdefault(item_run_key(item), []).append(item)
-    return [(f"{group[0].get('architecture')}/{group[0].get('run')}", group)
-            for group in runs.values()]
-
-
 def _view(view: Any) -> Mapping[str, Any]:
     return view if isinstance(view, Mapping) else {}
 
@@ -789,15 +765,6 @@ def kept_selection(previous: Any, listing: Mapping[str, Any], key: Any,
     return item_key(shown[0]) if len(shown) == 1 and can_load(shown[0]) else None
 
 
-def _kind_line(item: Mapping[str, Any], tag: str) -> str:
-    """A row's first line: what its file is, in the words every page
-    describes a model by (`renderers.model_kind_text`: "Disease", "Base",
-    "Disease · frozen graph backbone", "Record not readable", "Record not
-    read" …), escaped."""
-    css = "shep-row-sub" if tag == "span" else "shep-sub"
-    return f'<{tag} class="{css} shep-row-kind">{r.e(r.model_kind_text(item))}</{tag}>'
-
-
 def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Preset],
                    search: Any = "") -> str:
     chosen = _rows_filter(view, preset)
@@ -814,9 +781,9 @@ def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Prese
 def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Preset, *,
               show_older: bool = False, view: Any = None, search: Any = "",
               fold: Optional[Mapping[str, Any]] = None) -> str:
-    """The list as the preset draws it: rows (the drawer: "In use now" pinned,
-    runs newest first, the latest runs then "Show older runs") or the tree
-    (Models, D04: `tree_view`, `_tree_html`); the view's filter or rows and
+    """The list as the preset draws it: the one tree (D04: `tree_view`,
+    `_tree_html`), the latest runs then "Show older runs" where the preset
+    shows the latest only (`older_html`); the view's filter or rows and
     groups, the search (`search_hit`), the fold state, a selection the list
     does not show said (`outside_html`), and what the view was shaped for
     (`view_marker`), an empty list's too."""
@@ -831,90 +798,26 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
 def _list_body(listing: Mapping[str, Any], selected: Optional[str], preset: Preset, *,
                show_older: bool, view: Any, search: Any = "",
                fold: Optional[Mapping[str, Any]] = None) -> str:
-    if preset.layout == "table":
-        tree = tree_view(listing, view, preset, search=search, fold=fold, selected=selected)
-        if not tree.groups:
-            return outside_html(listing, tree, view) + _no_items_html(listing, view, preset,
-                                                                      search)
-        return outside_html(listing, tree, view) + _tree_html(listing, selected, preset, view,
-                                                              tree)
-    items = [i for i in shown_items(listing, view, preset) if search_hit(i, search)]
-    outside = _rows_outside(listing, selected, items, view, search)
-    if not items:
-        return outside + _no_items_html(listing, view, preset, search)
-    workspaces = listing.get("workspaces") or []
-    digits = r.distinguishing_digits(i.get("sha256") for i in items)
-    served = listing.get("served_sha")
-
-    def is_served(item: Mapping[str, Any]) -> bool:
-        return bool(served) and item.get("sha256") == served
-
-    pinned = [i for i in items if is_served(i)][:1] if preset.pin_in_use else []
-    runs = _runs_in_order(items)
-    shown = runs if (preset.latest_runs is None or show_older) else runs[:preset.latest_runs]
-    hidden = len(runs) - len(shown)
-    unread = int(listing.get("runs_unread") or 0)
-    # Each run's heading names it by the one run words, whole (its name
-    # first, then its architecture and start); its rows then say only what
-    # each file is and how far it trained (`file_line`), so the run is said
-    # once per group.
-    sections = [("Run " + r.run_words(items_[0].get("architecture"), items_[0].get("run"),
-                                      fit=False), items_)
-                for _run, items_ in shown]
-    best = r.best_saves({item_key(i): i for i in items})
-
-    def row(item: Mapping[str, Any], *, in_use: bool, in_run: bool = False) -> str:
-        key = item_key(item)
-        html_ = r.model_row_html(item, workspaces, recorded=_recorded(listing, key),
-                                 in_use=in_use, selected=key == selected, digits=digits,
-                                 key=key, in_use_label=preset.in_use_label,
-                                 name=file_line(item, best=key in best) if in_run else None)
-        # The row leads with what its file is (the drawer lists every task's
-        # models together, and its name line does not say the task).
-        return html_.replace('<span class="shep-row-main">', f'{_kind_line(item, "span")}'
-                             '<span class="shep-row-main">', 1)
-
-    def group(heading: str, label: str, entries: Sequence[str]) -> str:
-        """A heading and the list of its entries: each entry a list item (a
-        row stays a button inside its item), the heading outside the list, so
-        a screen reader counts the checkpoints only (the skill's §10, correct
-        roles)."""
-        body = "".join(f'<div role="listitem">{entry}</div>' for entry in entries)
-        return f'{heading}<div role="list" aria-label="{r.e(label)}">{body}</div>'
-
-    parts = []
-    if pinned:
-        parts.append(group(f'<div class="shep-list-hd"><b>In use now</b> · {r.e(IN_USE_NOTE)}</div>',
-                           "In use now", [row(pinned[0], in_use=True)]))
-    for title, members in sections:
-        entries = []
-        for item in members:
-            # The served file stands in its run as a note pointing above: it
-            # is one of the run's checkpoints, listed once.
-            if pinned and is_served(item):
-                entries.append(f'<div class="shep-list-note">{r.e(r.epoch_words(item))} · '
-                               f'model fingerprint {r.e(r.short_hex(served, digits))} — in use, '
-                               'pinned above</div>')
-                continue
-            entries.append(row(item, in_use=not pinned and is_served(item), in_run=True))
-        parts.append(group(f'<div class="shep-list-hd"><b>{r.e(title)}</b></div>', title,
-                           entries))
-    if hidden > 0 or (unread and not show_older):
-        # Runs not read yet may hold no task model (a base run), so their
-        # count is the most "Show older runs" can add.
-        more = f"up to {hidden + unread} more" if unread else str(hidden)
-        parts.append(f'<button type="button" class="shep-row shep-row-more" data-key="__older__">'
-                     f'Show older runs ({more})</button>')
-    return outside + f'<div class="shep-list">{"".join(parts)}</div>'
+    tree = tree_view(listing, view, preset, search=search, fold=fold, selected=selected,
+                     show_older=show_older)
+    if not tree.groups:
+        return outside_html(listing, tree, view) + _no_items_html(listing, view, preset, search)
+    return (outside_html(listing, tree, view) + _tree_html(listing, selected, preset, view, tree)
+            + older_html(listing, tree, show_older))
 
 
-def _rows_outside(listing: Mapping[str, Any], selected: Any,
-                  items: Sequence[Mapping[str, Any]], view: Any, search: Any) -> str:
-    """The rows' line for a selection they do not show (`outside_html`)."""
-    if find_item(listing, selected) is None or any(item_key(i) == selected for i in items):
+def older_html(listing: Mapping[str, Any], tree: TreeView, show_older: bool) -> str:
+    """**"Show older runs"** under the tree of a preset that shows its latest
+    runs only (the drawer, BACKLOG 39): how many runs it leaves out, "up to N
+    more" while some were not read yet (a run not read may hold no task model,
+    a base run, so its count is the most it can add); nothing once every run
+    is shown."""
+    unread = 0 if show_older else int(listing.get("runs_unread") or 0)
+    if not tree.cut and not unread:
         return ""
-    return outside_html(listing, TreeView((), (), (), frozenset(), selected,
-                                          str(search or "").strip()), view)
+    more = f"up to {tree.cut + unread} more" if unread else str(tree.cut)
+    return (f'<button type="button" class="shep-row shep-row-more" data-key="__older__">'
+            f'Show older runs ({more})</button>')
 
 
 # ---------------------------------------------------------------------------
@@ -991,7 +894,10 @@ class TreeGroup(NamedTuple):
 class TreeView(NamedTuple):
     """What the tree shows for one listing, view, search and fold state: its
     groups, the keys of its matches (context rows apart), the runs and groups
-    unfolded, and the selection when the tree does not show it."""
+    unfolded, and the selection when the tree does not show it; where the
+    preset shows its latest runs only (`Preset.latest_runs`), how many runs
+    the listing holds that it leaves out (`cut`) and whether the run of the
+    model in use is shown beyond them (`served_run`)."""
 
     groups: Tuple[TreeGroup, ...]
     matched: Tuple[str, ...]
@@ -999,6 +905,8 @@ class TreeView(NamedTuple):
     open_nodes: frozenset
     outside: Optional[str]
     query: str
+    cut: int = 0
+    served_run: bool = False
 
 
 def _runs_of_keys(keys: Sequence[str], by_key: Mapping[str, Mapping[str, Any]]
@@ -1011,7 +919,7 @@ def _runs_of_keys(keys: Sequence[str], by_key: Mapping[str, Mapping[str, Any]]
 
 def tree_view(listing: Mapping[str, Any], view: Any = None, preset: Optional[Preset] = None, *,
               search: Any = "", fold: Optional[Mapping[str, Any]] = None,
-              selected: Any = None) -> TreeView:
+              selected: Any = None, show_older: bool = True) -> TreeView:
     """**The tree the shared list draws** (D04), from the one listing and the
     page's view: its groups (the view's, each with its runs in lineage order
     and depth, `family_groups`; else one group of every run, the listing's
@@ -1021,8 +929,11 @@ def tree_view(listing: Mapping[str, Any], view: Any = None, preset: Optional[Pre
     every group, and a run where the fold state names it open (`fold`, ``{node:
     bool}``, what the operator unfolded or folded), else where it holds the
     selection, the model in use, or a file the search found by its own name or
-    fingerprint. Nothing here changes what is selected: a selection the tree
-    does not show is `outside`."""
+    fingerprint. A preset that shows its latest runs only (the drawer's
+    `Preset.latest_runs`, until `show_older`) keeps the first of them in the
+    listing's order (newest first) and the run of the model in use, and
+    counts the others (`TreeView.cut`). Nothing here changes what is
+    selected: a selection the tree does not show is `outside`."""
     items = shown_items(listing, view, preset)
     by_key = {item_key(i): i for i in items}
     order = {key: index for index, key in enumerate(by_key)}
@@ -1071,6 +982,21 @@ def tree_view(listing: Mapping[str, Any], view: Any = None, preset: Optional[Pre
                                       _runs_of_keys(rest, by_key))))
 
     served = listing.get("served_sha")
+    cut, served_run = 0, False
+    latest = preset.latest_runs if preset is not None else None
+    if latest is not None and not show_older:
+        # The latest runs (the listing's order), and the run of the model in
+        # use wherever it is: the drawer locates it (BACKLOG 39, D04).
+        order = list(dict.fromkeys(run.key for group in groups for run in group.runs))
+        in_use = {run.key for group in groups for run in group.runs
+                  if served and any(by_key[k].get("sha256") == served for k in run.files)}
+        keep = set(order[:latest]) | in_use
+        served_run = bool(in_use - set(order[:latest]))
+        cut = len(order) - len(keep)
+        groups = [g._replace(runs=tuple(run for run in g.runs if run.key in keep))
+                  for g in groups]
+        groups = [g for g in groups if g.runs]
+    drawn = {key for group in groups for run in group.runs for key in run.files}
     fold = fold if isinstance(fold, Mapping) else {}
     open_nodes = set()
     for group in groups:
@@ -1085,11 +1011,11 @@ def tree_view(listing: Mapping[str, Any], view: Any = None, preset: Optional[Pre
                 open_nodes.add(run_node(run.key))
     outside = None
     item = find_item(listing, selected)
-    if item is not None and selected not in shown:
+    if item is not None and selected not in drawn:
         outside = selected
-    return TreeView(tuple(groups), tuple(k for k in by_key if k in shown and k not in context),
-                    tuple(k for k in by_key if k in context), frozenset(open_nodes), outside,
-                    query)
+    return TreeView(tuple(groups), tuple(k for k in by_key if k in drawn and k not in context),
+                    tuple(k for k in by_key if k in drawn and k in context),
+                    frozenset(open_nodes), outside, query, cut, served_run)
 
 
 def _run_summary(listing: Mapping[str, Any], run: TreeRun) -> Mapping[str, Any]:
@@ -1274,8 +1200,10 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
 def outside_html(listing: Mapping[str, Any], tree: TreeView, view: Any = None) -> str:
     """**A selection the list does not show, said** (D04): "Selected model not
     shown by this filter" with what it is and why (the Task filter, the
-    search), its details kept; one action, Clear search, where the search
-    hides it. Nothing for a selection the list shows, or none."""
+    search), or "… not shown among the latest runs" where the drawer leaves
+    its run out until "Show older runs"; its details kept; one action, Clear
+    search, where the search hides it. Nothing for a selection the list
+    shows, or none."""
     item = find_item(listing, tree.outside)
     if item is None:
         return ""
@@ -1285,9 +1213,10 @@ def outside_html(listing: Mapping[str, Any], tree: TreeView, view: Any = None) -
         why.append(f"Task: {FILTER_WORDS[chosen][0]}")
     if tree.query and search_hit(item, tree.query) is None:
         why.append(f"search “{tree.query}”")
-    words = (f"Selected model not shown by this filter ({', '.join(why) or 'the order'}): "
-             f"{r.model_kind_text(item)}, {r.run_words(item.get('architecture'), item.get('run'))}"
-             "; its details are kept")
+    lead = ("Selected model not shown among the latest runs" if not why and tree.cut
+            else f"Selected model not shown by this filter ({', '.join(why) or 'the order'})")
+    words = (f"{lead}: {r.model_kind_text(item)}, "
+             f"{r.run_words(item.get('architecture'), item.get('run'))}; its details are kept")
     action = ('<button type="button" class="shep-btn shep-linkish" data-key="__clear_search__">'
               'Clear search</button>' if tree.query and search_hit(item, tree.query) is None
               else "")
@@ -1308,13 +1237,14 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     """**What the list shows, in a few words** (R-27, R-77): never the order,
     which its switch shows, and no " · ". Under every row of the preset, the
     families, runs and saved files shown ("2 families, 10 runs, 20 saved
-    files"; the drawer's latest runs, "Latest 4 runs, 7 saved files"); a
-    filter leads with its name and counts its runs against the runs listed
-    ("Gene: 2 of 10 runs, with 1 run they come from": a family view's
-    context, the runs a shown run descends from, counted apart); a search
-    says what matches ("3 runs match “disease”, with 2 runs they come from").
-    Counted against what the preset ever lists (the drawer: its task models);
-    nothing for a list with no rows."""
+    files"; the drawer's latest runs, "Latest 4 runs, 7 saved files", "Latest
+    4 of 7 runs and the one in use, 10 saved files" when the run of the model
+    in use is older); a filter leads with its name and counts its runs
+    against the runs listed ("Gene: 2 of 10 runs, with 1 run they come from":
+    a family view's context, the runs a shown run descends from, counted
+    apart); a search says what matches ("3 runs match “disease”, with 2 runs
+    they come from"). Counted against what the preset ever lists (the drawer:
+    its task models); nothing for a list with no rows."""
     if listing.get("refused") or not listing.get("items"):
         return ""
     chosen = task_filter(view)
@@ -1322,29 +1252,17 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     query = str(search or "").strip()
     every = shown_items(listing, None, preset)
     total = len({item_run_key(i) for i in every})
-    if preset.layout == "table":
-        tree = tree_view(listing, view, preset, search=query, fold=fold)
-        # A run is counted once, whatever groups it is drawn in; an entry the
-        # listing could not list (a directory, B69) is counted apart, never as
-        # a run or a saved file.
-        entries = {k for k in tree.matched if r.entry_place(find_item(listing, k) or {})}
-        runs = list(dict.fromkeys(run.key for g in tree.groups for run in g.runs
-                                  if not run.context and run.files[0] not in entries))
-        context = len({run.key for g in tree.groups for run in g.runs if run.context}
-                      - set(runs))
-        families = sum(g.family for g in tree.groups)
-        files = len(tree.matched) - len(entries)
-    else:
-        items = [i for i in shown_items(listing, view, preset) if search_hit(i, query)]
-        all_runs = _runs_in_order(items)
-        latest = preset.latest_runs
-        cut = (latest is not None and not show_older
-               and (len(all_runs) > latest or listing.get("runs_unread")))
-        runs = all_runs[:latest] if cut else all_runs
-        files = sum(len(group) for _run, group in runs)
-        context, families = 0, 0
-    if preset.layout != "table":
-        entries = set()
+    tree = tree_view(listing, view, preset, search=query, fold=fold, show_older=show_older)
+    # A run is counted once, whatever groups it is drawn in; an entry the
+    # listing could not list (a directory, B69) is counted apart, never as
+    # a run or a saved file.
+    entries = {k for k in tree.matched if r.entry_place(find_item(listing, k) or {})}
+    runs = list(dict.fromkeys(run.key for g in tree.groups for run in g.runs
+                              if not run.context and run.files[0] not in entries))
+    context = len({run.key for g in tree.groups for run in g.runs if run.context} - set(runs))
+    families = sum(g.family for g in tree.groups)
+    files = len(tree.matched) - len(entries)
+    unread = 0 if show_older else int(listing.get("runs_unread") or 0)
     if not runs:
         if query:
             return f"{lead}no run matches “{query}”" if lead else f"No run matches “{query}”"
@@ -1353,16 +1271,17 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
         body = f"{_counted(len(runs), 'run')} match{'es' if len(runs) == 1 else ''} “{query}”"
     elif lead:
         body = f"{len(runs)} of {_counted(total, 'run')}"
-    elif preset.layout != "table" and cut:
-        of = "" if listing.get("runs_unread") else f" of {len(all_runs)}"
-        body = (f"Latest {len(runs)}{of} {'run' if len(runs) == 1 and not of else 'runs'}, "
-                f"{_counted(files, 'saved file')}")
+    elif tree.cut or unread:
+        latest = len(runs) - tree.served_run
+        of = "" if unread else f" of {latest + tree.cut + tree.served_run}"
+        body = (f"Latest {latest}{of} {'run' if latest == 1 and not of else 'runs'}"
+                + (" and the one in use" if tree.served_run else "")
+                + f", {_counted(files, 'saved file')}")
     else:
         body = (f"{_counted(families, 'family')}, " if families else "") + (
             f"{_counted(len(runs), 'run')}, {_counted(files, 'saved file')}")
     with_ = f", with {_counted(context, 'run')} they come from" if context else ""
-    unlisted = (f", {_counted(len(entries), 'entry')} not listed"
-                if preset.layout == "table" and entries else "")
+    unlisted = f", {_counted(len(entries), 'entry')} not listed" if entries else ""
     return f"{lead}{body}{with_}{unlisted}"
 
 
@@ -1437,16 +1356,26 @@ def load_reason_html(item: Optional[Mapping[str, Any]],
     return f'<div class="shep-reason shep-reason-grey">{r.e(why)}</div>' if why else ""
 
 
+#: Under the chosen model's title, shown stacked only (the drawer's CSS):
+#: back to the row chosen (`FACTS_JS`).
+BACK_TO_LIST = ('<button type="button" class="shep-btn shep-back-list">'
+                '↑ Back to the list</button>')
+
+
 def facts_html(listing: Mapping[str, Any], key: Any) -> str:
+    """The chosen model's facts beside the rows (the drawer: Model Facts,
+    `renderers.model_facts_html`), under a title that names it and its key
+    (``data-facts-key``, for `FACTS_JS`), with "↑ Back to the list"; what
+    to do when nothing is chosen."""
     item = find_item(listing, key)
     if item is None:
         return '<div class="shep-muted">Select a model to see its facts.</div>'
     workspaces = listing.get("workspaces") or []
     serving = next((w for w in workspaces if w.get("name") == listing.get("serving")), None)
     facts = r.facts_from_checkpoint(item, workspaces, recorded=_recorded(listing, key),
-                                    serving_workspace=serving)
-    title = (f'<div class="shep-facts-title"><b>{r.e(facts.name_line)}</b> '
-             f'{r.chip("selected", "neutral")}</div>')
+                                    serving_workspace=serving, listed=True)
+    title = (f'<div class="shep-facts-title" data-facts-key="{r.e(key)}" tabindex="-1">'
+             f'<b>{r.e(facts.name_line)}</b> {r.chip("selected", "neutral")}{BACK_TO_LIST}</div>')
     return title + r.model_facts_html(facts)
 
 
@@ -1937,6 +1866,13 @@ var foldRows = function (node, open) {
     });
   });
 };
+// A row chosen (a click, Enter or Space) is said to the server and marked on
+// the list, so its facts (`FACTS_JS`) know they answer the operator's choice.
+var pick = function (key) {
+  var list = element.closest('.shep-model-list');
+  if (list && key.indexOf('__') !== 0) { list.setAttribute('data-shep-picked', key); }
+  trigger('click', {key: key});
+};
 element.addEventListener('click', function (e) {
   if (e.target.closest && e.target.closest('button.shep-copy, button.shep-i')) { return; }
   var fold = e.target.closest ? e.target.closest('[data-fold]') : null;
@@ -1951,7 +1887,7 @@ element.addEventListener('click', function (e) {
   }
   var row = e.target.closest ? e.target.closest('[data-key]') : null;
   if (!row || row.getAttribute('aria-disabled') === 'true') { return; }
-  trigger('click', {key: row.getAttribute('data-key')});
+  pick(row.getAttribute('data-key'));
 });
 // The selected row, or else the model in use, is located once it is drawn
 // (D04): scrolled into view the first time the list names it under a view
@@ -1974,7 +1910,7 @@ locate();
 element.addEventListener('keydown', function (e) {
   var row = e.target.closest ? e.target.closest('tr[data-key]') : null;
   if (!row || e.target !== row || row.getAttribute('aria-disabled') === 'true') { return; }
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); trigger('click', {key: row.getAttribute('data-key')}); }
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(row.getAttribute('data-key')); }
 });
 // A row focused under its table's sticky header scrolls clear of it (the
 // layout rule: nothing sticky covers a focused row): the header's height,
@@ -1991,6 +1927,47 @@ var headRoom = function () {
 };
 if (window.ResizeObserver) { new ResizeObserver(headRoom).observe(element); }
 headRoom();
+"""
+
+#: **The chosen model's facts, a region of their own** (UI-07; on the facts'
+#: ``js_on_load``): a newly chosen model's facts start at their top (side by
+#: side the facts scroll on their own, so another model's would open where the
+#: last was read); stacked (the shell's one layout decision), a row the
+#: operator chose (`MODEL_LIST_JS` marks it on the list) brings its facts into
+#: view, their title focused, and "↑ Back to the list" brings the chosen row
+#: back into view and focuses it, the list where it was. Waits for the facts
+#: that name the row (their title's ``data-facts-key``, which Gradio's HTML may
+#: change in place, so the attribute is observed too), never a fixed time.
+FACTS_JS = r"""
+var region = element.closest('.block') || element;
+var list = element.closest('.shep-model-list');
+var shown = null;
+var stacked = function () { return document.documentElement.getAttribute('data-shep-layout') !== 'side'; };
+var drawnKey = function () {
+  var t = element.querySelector('[data-facts-key]');
+  return t ? t.getAttribute('data-facts-key') : null;
+};
+new MutationObserver(function () {
+  var key = drawnKey();
+  if (key === shown) { return; }
+  shown = key;
+  region.scrollTop = 0;
+  if (!key || !list || list.getAttribute('data-shep-picked') !== key) { return; }
+  list.removeAttribute('data-shep-picked');
+  if (!stacked()) { return; }
+  var title = element.querySelector('[data-facts-key]');
+  title.scrollIntoView({block: 'start'});
+  title.focus({preventScroll: true});
+}).observe(element, {childList: true, subtree: true, attributes: true,
+                     attributeFilter: ['data-facts-key']});
+shown = drawnKey();
+element.addEventListener('click', function (e) {
+  if (!(e.target.closest && e.target.closest('button.shep-back-list')) || !list) { return; }
+  var row = list.querySelector('.shep-model-rows tr.shep-on') || list.querySelector('.shep-model-rows');
+  if (!row) { return; }
+  row.scrollIntoView({block: 'center'});
+  if (row.tagName === 'TR') { row.focus({preventScroll: true}); }
+});
 """
 
 _START_WAIT_JS = r"""
@@ -2245,17 +2222,18 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     show_older = gr.State(False)
     #: What the operator folded and unfolded, ``{node: bool}`` (`tree_view`).
     fold = gr.State({})
-    # The table preset (Models) keeps its header and its rows in one column
+    # The page preset (Models) keeps its header and its rows in one column
     # (``shep-model-main``), so the page can scroll them as one region when
     # they do not fit together (M5-3 review UI-1); the drawer's rows need none.
     with gr.Column(elem_id=elem_id, elem_classes=["shep-model-list", f"shep-preset-{preset}"]):
-        main = (gr.Column(elem_classes=["shep-model-main"]) if chosen.layout == "table"
+        main = (gr.Column(elem_classes=["shep-model-main"]) if chosen.layout == "page"
                 else contextlib.nullcontext())
         with main:
             # A row of fields (the drawer's head) lines up on the boxes (D03,
-            # `style.py`'s `.shep-field-row`); the table preset lays its head out
+            # `style.py`'s `.shep-field-row`); the page preset lays its head out
             # in its page's grid.
-            head_classes = ["shep-model-head"] + (["shep-field-row"] if chosen.layout != "table" else [])
+            head_classes = ["shep-model-head"] + (["shep-field-row"] if chosen.layout == "drawer"
+                                                  else [])
             with gr.Row(elem_classes=head_classes):
                 workspace = gr.Dropdown(label="Workspace", choices=[], value=None,
                                         elem_id=f"{elem_id}-workspace", interactive=True,
@@ -2263,7 +2241,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                 head_extra = head() if head is not None else None
             # The search and what the list shows, on a line of their own under
             # the head (R-27: the count line never wraps beside a select).
-            tools_classes = ["shep-model-tools"] + (["shep-field-row"] if chosen.layout != "table"
+            tools_classes = ["shep-model-tools"] + (["shep-field-row"] if chosen.layout == "drawer"
                                                     else [])
             with gr.Row(elem_classes=tools_classes):
                 # "Search" said beside its box, as "Order" is (no line of its
@@ -2280,13 +2258,15 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                 count = plain_html("", elem_id=f"{elem_id}-count",
                                    elem_classes=["shep-field-aside"])
             with gr.Row(elem_classes=["shep-model-body"]):
+                # Two areas, each its own region where it scrolls (UI-07; the
+                # shared UI check's ``shep-area``): the rows and the facts.
                 rows = plain_html(
                     '<div class="shep-muted">The list is read when it is opened.</div>',
                     elem_id=f"{elem_id}-rows", js_on_load=MODEL_LIST_JS,
-                    elem_classes=["shep-model-rows"])
+                    elem_classes=["shep-model-rows", "shep-area"])
                 facts = plain_html(facts_html(empty_listing(), None),
-                                   elem_id=f"{elem_id}-facts",
-                                   elem_classes=["shep-model-facts"])
+                                   elem_id=f"{elem_id}-facts", js_on_load=FACTS_JS,
+                                   elem_classes=["shep-model-facts", "shep-area"])
         with gr.Row(elem_classes=["shep-model-foot"]):
             load = gr.Button(LOAD_LABEL, variant="primary", interactive=False,
                              elem_id=f"{elem_id}-load", scale=0)
@@ -2524,10 +2504,11 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
 
 __all__ = [
     "BASE_REFUSAL",
+    "BACK_TO_LIST",
+    "FACTS_JS",
     "FAMILY_FILTERS",
     "FILTER_WORDS",
     "FROM_CHANGED",
-    "IN_USE_NOTE",
     "LoadStep",
     "MODEL_LIST_JS",
     "ModelList",
@@ -2546,11 +2527,11 @@ __all__ = [
     "create_model_list",
     "facts_html",
     "family_views",
-    "file_line",
     "find_item",
     "finish_load",
     "item_key",
     "kept_selection",
+    "older_html",
     "list_html",
     "list_models",
     "load_answered_js",

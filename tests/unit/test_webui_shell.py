@@ -1366,9 +1366,13 @@ _WALK_SIZES = ((760, 1000, False), (1850, 960, True), (1280, 900, True), (1920, 
                (1280, 600, True), (1080, 1920, False), (960, 1080, True), (390, 844, True),
                (1850, 960, False))
 
-#: The Diagnosis load drawer, opened at a stop of the walk (`browser.UI_WALK_JS`).
+#: The Diagnosis load drawer, opened at a stop of the walk (`browser.UI_WALK_JS`), a
+#: row of its list chosen (the served model's, unfolded and located), so its
+#: details show beside the list (UI-07: two regions, each its own scroll).
 _CHANGE_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
-                  "close": "#shep-dx-change-close button"}
+                  "close": "#shep-dx-change-close button",
+                  "pick": "#shep-models-clinical-rows tr[data-key]:not([hidden])",
+                  "picked": "#shep-models-clinical-facts [data-facts-key]"}
 
 
 def _walk_stops():
@@ -1380,9 +1384,10 @@ def _walk_stops():
         stop["options"] = True                   # each page's selects, once, at its last stop
     # The Diagnosis load drawer open, its head a field row (D03): side by side
     # from 1280 px its workspace select was squeezed to 26 px, its label cut
-    # to "W" (the T04 review), and to 71 px on a phone; and in a short window.
+    # to "W" (the T04 review), and to 71 px on a phone; and in a short window;
+    # and at the owner's window, its list and details side by side (UI-07).
     stops += [{"size": [w, h], "page": "clinical", "open": _CHANGE_DRAWER}
-              for w, h in ((1280, 900), (1366, 620), (390, 844))]
+              for w, h in ((1850, 960), (1280, 900), (1366, 620), (390, 844))]
     # A page opened at a size, not only resized to it: at 1280 x 900 Datasets
     # (its own minimum is wider) between two pages that fit.
     stops += [{"size": [1280, 900], "page": page, "check": False}
@@ -1475,12 +1480,13 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     representative window (`browser.UI_SIZES`: 1850 x 960, 1280 x 900,
     1920 x 700, a 1366 x 620 short laptop, 1440 x 1600, 960 x 1080, a
     390 x 844 phone; and 1536 x 760 and 1280 x 600), and with the Diagnosis
-    load drawer open at 1280 x 900, 1366 x 620 and 390 x 844 (its focus walk
-    inside the drawer), the service on the demo workspace for an operator
-    (`ui_walk`):
+    load drawer open at 1850 x 960, 1280 x 900, 1366 x 620 and 390 x 844, a
+    row of it chosen (its focus walk inside the drawer), the service on the
+    demo workspace for an operator (`ui_walk`):
 
     - no horizontal page scroll; one scroll region per area (none inside
-      another, the page included; never two in one panel);
+      another, the page included; never two in one panel, or in one area a
+      page marks in it: the drawer's list and its details, each its own);
     - every control drawn, focused as a keyboard focuses it, in view with
       nothing over it (another control's own overlay, a help bubble or an
       open list it leaves behind, aside), its focus cue at 3:1;
@@ -1513,7 +1519,7 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     options = {s["page"]: s["options"] for s in ui_walk if "options" in s}
     assert all(options[page] for page in ("training", "finetune", "test", "models", "settings")), options
     drawer = [s for s in checked if s.get("open") == "#shep-dx-change"]
-    assert {s["size"] for s in drawer} == {"1280x900", "1366x620", "390x844"}
+    assert {s["size"] for s in drawer} == {"1850x960", "1280x900", "1366x620", "390x844"}
     for s in drawer:                                  # its head's select measured
         assert "Workspace" in {label["text"] for label in s["check"]["labels"]}, s
     labels = {s["page"]: {label["text"] for label in s["check"]["labels"]}
@@ -1611,7 +1617,7 @@ def test_the_field_rows_share_one_class_and_two_tokens():
     assert '"shep-ft-parent-row", "shep-field-row"' in Path(finetune_page.__file__).read_text()
     assert '"shep-test-model-row", "shep-field-row"' in Path(test_page.__file__).read_text()
     assert '"shep-train-parent-row", "shep-field-row"' in Path(training_console.__file__).read_text()
-    assert '["shep-field-row"] if chosen.layout != "table"' in Path(model_list.__file__).read_text()
+    assert '["shep-field-row"] if chosen.layout == "drawer"' in Path(model_list.__file__).read_text()
     assert '"shep-seg", "shep-field-aside"' in Path(diagnosis_panel.__file__).read_text()
     assert "margin-bottom: 4px" not in test_page.PAGE_CSS
     assert "#ft_refresh {" not in finetune_page.PAGE_CSS

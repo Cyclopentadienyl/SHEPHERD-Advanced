@@ -189,21 +189,21 @@ def test_the_name_line_comes_from_the_run_id_and_the_epoch():
 
 def test_trained_on_every_listed_workspace_with_the_full_digest():
     listed = [workspace("demo"), workspace("demo_copy"), workspace("other", FP_B)]
-    html = r.model_row_html(checkpoint(), listed, key="gatv2/r/f")
-    plain = text_of(html)
+    plain = text_of(r.trained_on_html(FP_A, listed))
     assert "trained on demo, demo_copy · dataset fingerprint 2be1f04c9a83" in plain
-    assert "model fingerprint 15f098277b54" in plain and 'shep-tag-amber">synthetic' in html
+    assert r.is_synthetic_training(FP_A, listed)
     # a twin that shares 12 hex only is not a match: comparisons are on the full digest
     twin = [workspace("twin", FP_A[:12] + "f" * 52)]
-    assert "matches no listed workspace" in text_of(r.model_row_html(checkpoint(), twin))
+    assert "matches no listed workspace" in text_of(r.trained_on_html(FP_A, twin))
+    assert not r.is_synthetic_training(FP_A, twin)
 
 
-def test_the_row_shows_recorded_tests_as_a_state_never_a_number():
-    html = r.model_row_html(checkpoint(validation=0.3180), [workspace()],
-                            recorded=r.RecordedTests("records", 3, 1))
-    plain = text_of(html)
-    assert "Recorded results: 3 · runs differ for 1" in plain
-    assert "0.318" not in plain
+def test_the_facts_show_recorded_tests_as_a_state_never_a_number():
+    facts = r.facts_from_checkpoint(checkpoint(validation=0.3180), [workspace()],
+                                    recorded=r.RecordedTests("records", 3, 1))
+    evidence = text_of(r.model_facts_html(facts).split('data-sec="evidence"')[1])
+    assert "3 · runs differ for 1" in evidence
+    assert "0.318" in evidence and "Recorded results" in evidence  # the Trainer's figure apart
     assert r.recorded_tests_text(r.RecordedTests("none")) == "Recorded results: none in ledger"
     assert r.recorded_tests_text(r.RecordedTests("no_ledger")) == "Recorded results: none kept"
     assert r.recorded_tests_text(r.RecordedTests("not_read")) == (
@@ -227,22 +227,25 @@ def test_records_that_cannot_be_read_are_named_apart_from_the_results():
     assert text(r.RecordedTests("records", 3, 1, unchecked=1, unreadable=2)) == (
         "Recorded results: 3 · 2 not readable; runs differ for 1; comparison incomplete for 1")
     assert text(r.RecordedTests("records", 3, 1, unreadable=2)).count(" · ") == 1
-    html = r.model_row_html(checkpoint(), [workspace()],
-                            recorded=r.RecordedTests("records", 0, 0, unreadable=1))
-    assert "Recorded results: 0 · 1 not readable" in text_of(html)
-    assert "none in ledger" not in text_of(html)
+    facts = r.facts_from_checkpoint(checkpoint(), [workspace()],
+                                    recorded=r.RecordedTests("records", 0, 0, unreadable=1))
+    html = text_of(r.model_facts_html(facts))
+    assert "0 · 1 not readable" in html and "none in ledger" not in html
 
 
 def test_an_unreadable_checkpoint_is_greyed_and_cannot_be_loaded():
-    html = r.model_row_html(checkpoint(sha=None, problem="UnpicklingError: no"), [workspace()])
+    html = _models_tree(checkpoint(sha=None, problem="UnpicklingError: no"))
     assert 'aria-disabled="true"' in html and "shep-row-dis" in html
     assert "metadata not readable · cannot be loaded" in html
 
 
 def test_in_use_marks_the_row():
-    html = r.model_row_html(checkpoint(), [workspace()], in_use=True,
-                            in_use_label="In use (Diagnosis)")
-    assert 'shep-tag-accent">In use (Diagnosis)<' in html
+    from src.webui.components import model_list as ml
+
+    item = checkpoint()
+    listing = {"items": [item], "workspaces": [workspace()], "served_sha": item["sha256"]}
+    html = ml.list_html(listing, None, ml.PRESETS["research"])
+    assert html.count('shep-tag-accent">In use (Diagnosis)<') == 1
 
 
 # --------------------------------------------------------------------------- Model Facts
@@ -477,14 +480,14 @@ def test_an_entry_never_read_does_not_claim_a_failed_read():
     readable"."""
     never = {**checkpoint(sha=None, problem="'bad\\xff' is not text"), "size_bytes": None,
              "run": "bad\\xff", "filename": "RUNS"}
-    for html in (r.model_row_html(never, []), _models_tree(never)):
-        assert "not read · cannot be loaded" in html and "metadata not readable" not in html
+    html = _models_tree(never)
+    assert "not read · cannot be loaded" in html and "metadata not readable" not in html
     assert r.unreadable_words(never) == "not read"
     failed = checkpoint(sha=None, problem="UnpicklingError: …")
     loaded = checkpoint(problem="it loads as list, not a checkpoint record")
     for item in (failed, loaded):
         assert r.unreadable_words(item) == "metadata not readable"
-        assert "metadata not readable · cannot be loaded" in r.model_row_html(item, [])
+        assert "metadata not readable · cannot be loaded" in _models_tree(item)
 
 
 def test_one_run_reads_one_way_on_every_page():
@@ -499,7 +502,6 @@ def test_one_run_reads_one_way_on_every_page():
     assert words == "ui-live-stop-02 · GATv2 2026-10-24 17:39"
     assert r.model_name_line(item).startswith(words)                       # titles, rows
     assert words in text_of(_models_tree(item))                             # Models' tree
-    assert words in r.model_row_html(item, [])                             # the drawer's rows
     assert ml.run_choices({"k": item})[0][0] == words                       # the Run selects
     assert not hasattr(r, "run_label") and not hasattr(r, "run_label_html")
     assert not hasattr(ml, "run_words") and not hasattr(ml, "_run_parts")

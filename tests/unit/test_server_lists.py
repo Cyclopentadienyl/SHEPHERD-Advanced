@@ -30,6 +30,7 @@ Module: tests/unit/test_server_lists.py
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import asdict
 from pathlib import Path
@@ -1036,14 +1037,15 @@ class TestCheckpointsInAndOut:
         # with its own files, and counts two runs; the console groups them apart.
         assert sorted(i["run_key"] for i in items) == sorted(
             ["gatv2/bad\\xff"] * 3 + ["gatv2//" + b"bad\xff".hex()])
-        groups = ml._runs_in_order(listing_ui["items"])
-        assert sorted((label, len(group)) for label, group in groups) == [
-            (r"gatv2/bad\xff", 1), (r"gatv2/bad\xff", 3)]
-        by_run = ml.Preset("by_run", None, "In use", layout="rows")  # every row, by run
-        html = ml.list_html(listing_ui, None, by_run)
-        # Each group's heading, outside its list (which names it in its
-        # aria-label too, since B0a).
-        assert html.count(r"<b>Run bad\xff · GATv2</b>") == 2, html
+        tree = ml.tree_view(listing_ui, None, ml.PRESETS["research"])
+        assert sorted(len(run.files) for g in tree.groups for run in g.runs) == [1, 3]
+        html = ml.list_html(listing_ui, None, ml.PRESETS["research"])
+        # Two rows of their own: the run of three files under its fold node,
+        # the run that cannot be listed by its own key.
+        assert re.findall(r'<tr class="shep-tree-run[^"]*" data-fold="r:([^"]*)"', html) == [
+            "gatv2/bad\\xff"]
+        lone = next(i for i in items if i["run_key"] == "gatv2//" + b"bad\xff".hex())
+        assert html.count(f'data-key="{lone["key"]}"') == 1
         assert sorted(len(v) for v in ml.runs_of(console).values()) == [1, 3]
 
     def test_a_directory_entry_never_shares_a_key_with_a_run_or_file_named_alike(

@@ -634,6 +634,52 @@ def test_the_load_drawer_says_the_chosen_workspace_once_by_the_shared_line(monke
     assert "<h2>Load for inference</h2>" in title.value
 
 
+def test_the_load_drawers_list_and_details_are_two_regions_that_fit_side_by_side():
+    """UI-07 (RC-C): the Load for inference drawer's list and its chosen
+    model's details shared one scroll region (``.shep-model-body``), so
+    reading the details moved the list (216 px at 1850 x 960, ba6e85e). Side
+    by side (the shell's one layout decision, `style.SIDE`) each is a region
+    of its own, its own minimum width (``--shep-panel-min``) and its own
+    scroll, the body around them none; stacked (`style.STACK`) they flow one
+    under the other with the page, no region of their own. No media query
+    decides it. Side by side the drawer covers the candidates and the
+    details panels, so the page is side by side only where the drawer holds
+    both regions whole: those two panels' minimums and their gap are at least
+    the two regions', theirs and the drawer body's padding (what the browser
+    draws is `test_webui_model_list.py::
+    test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser`)."""
+    from tests.unit.test_webui_shell import blocks, side, stack
+
+    css = " ".join(dp.PAGE_CSS.split())
+
+    def px(selector, prop):
+        found = re.findall(re.escape(selector) + r" \{[^}]*?" + re.escape(prop)
+                           + r": (\d+)px", css)
+        assert len(found) == 1, (selector, prop, found)
+        return int(found[0])
+
+    body = f"{dp._TAB} #shep-dx-change .shep-model-body"
+    rows, facts = f"{body} > .shep-model-rows", f"{body} > .shep-model-facts"
+    panels = (px(f"{dp._TAB} #shep-dx-results", "--shep-panel-min")
+              + px(f"{dp._TAB} #shep-dx-details", "--shep-panel-min")
+              + px(f"{dp._TAB} #shep-dx", "gap"))
+    (pad,) = re.findall(re.escape(f"{dp._TAB} #shep-dx-change-bd") + r" \{ padding: \d+px (\d+)px",
+                        css)
+    regions = (px(rows, "--shep-panel-min") + px(facts, "--shep-panel-min") + px(body, "gap")
+               + 2 * int(pad))
+    assert regions + 2 <= panels, (regions, panels)            # and the drawer's border
+    wide = side(css)
+    assert f"{body} {{ flex: 1 1 0 !important; min-height: 120px; overflow: hidden;" in wide
+    assert (f"{rows}, {facts} {{ min-width: var(--shep-panel-min) !important; min-height: 0; "
+            "max-height: 100%; overflow: auto !important; overscroll-behavior: contain; }") in wide
+    narrow = stack(css)
+    assert f"{body} {{ flex-direction: column !important; }}" in narrow
+    assert "overflow" not in narrow[narrow.index(body):]
+    queries = {css[at:css.index("{", at)].strip() for at in
+               (m.start() for m in re.finditer("@media", css))}
+    assert "shep-model-body" not in "".join(blocks(css, q) for q in queries)  # no media query
+
+
 def test_the_card_is_read_on_load_when_shown_after_a_load_and_on_the_timer(monkeypatch):
     demo, ctx = _build_tab(monkeypatch)
     refreshes = _named(demo, "_card_refresh")

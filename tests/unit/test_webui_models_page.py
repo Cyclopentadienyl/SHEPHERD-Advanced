@@ -2416,11 +2416,16 @@ def test_the_table_fits_its_frame_beside_a_classic_scrollbar():
     """M5-3: at 1440 x 900 with a classic (non-overlay) 15 px scrollbar the
     table (602 px: its columns' longest words and 10 px a side) ran 13 px past
     its 589 px frame; with 7 px a side it is 572 px (measured in a browser with
-    the scrollbar forced classic)."""
+    the scrollbar forced classic). The rule is the shared tree's, in the shared
+    style sheet, so the Diagnosis load drawer's tree is as narrow (it kept
+    Gradio's 10 px there and ran 601 px in its 524 px list at 1280 x 900);
+    two classes outrank Gradio's own ``.gradio-container-… th``."""
+    from src.webui.style import SHELL_CSS
     from tests.unit.test_webui_shell import side
 
-    wide = side(mp.PAGE_CSS).replace(f"{mp._PAGE} ", "")
-    assert ".shep-mtbl th, .shep-mtbl td { padding-left: 7px; padding-right: 7px; }" in wide
+    rule = ".shep-tbl.shep-mtbl th, .shep-tbl.shep-mtbl td { padding-left: 7px; padding-right: 7px; }"
+    assert rule in side(SHELL_CSS)
+    assert ".shep-mtbl th" not in mp.PAGE_CSS
 
 
 # --------------------------------------------------------------------------- K8-6r.2

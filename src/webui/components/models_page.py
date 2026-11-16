@@ -1499,12 +1499,11 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
         top = (f'<div class="shep-reason">{r.e(item.get("filename"))} · '
                f'{r.e(r.unreadable_words(item))} · cannot be loaded: {r.e(why)}</div>')
         return {"header": header, "top": top, "records": "", "usage": "", "seg": None}
-    facts = r.facts_from_checkpoint(item, workspaces)
-    # Model Facts' warnings, but its synthetic banner: that one speaks of "the
-    # served workspace", which a listed checkpoint need not be; the workspace
-    # line and the Dataset row say synthetic for this checkpoint.
-    warnings = "".join(r.warning_html(h, d) for h, d in facts.warnings
-                       if (h, d) != r.IDENTITY_BANNERS["synthetic"])
+    # Model Facts' warnings for a listed file (`listed`: no synthetic banner,
+    # which speaks of "the served workspace"; the workspace line and the
+    # Dataset row say synthetic for this checkpoint).
+    facts = r.facts_from_checkpoint(item, workspaces, listed=True)
+    warnings = "".join(r.warning_html(h, d) for h, d in facts.warnings)
     top = (identity_html(item, family_row(listing, ml.item_key(item)), workspaces=workspaces)
            + warnings)
     ledger = (data.get("ledgers") or {}).get(ml.item_key(item))
@@ -2124,10 +2123,6 @@ PAGE_CSS = f"""
   {_PAGE} .shep-rs-wrap:has(> .shep-rs-cmp) {{ max-height: calc(100cqh - 24px); }}
   /* The table's header sticks to the top of the region the rows scroll in. */
   {_PAGE} #shep-models-research-rows .shep-tbl-wrap {{ overflow: visible; }}
-  /* The table fits its frame at 1440 x 900 with a classic 15 px scrollbar beside it (M5-3:
-     at 10 px a side its columns' longest words, "run 2026-10-21 18:03", a 12-hex digest,
-     "Validation", "non-deterministic", "contested", made it 602 px in a 589 px frame). */
-  {_PAGE} .shep-mtbl th, {_PAGE} .shep-mtbl td {{ padding-left: 7px; padding-right: 7px; }}
   /* The confirmation: its table scrolls inside, its buttons stay in view
      under it however short the window. */
   {_PAGE} {_LIST} > .shep-model-confirm-box {{

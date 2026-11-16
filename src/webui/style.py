@@ -603,21 +603,17 @@ table.shep-r10 .shep-r10-n { font-size: 14px; font-weight: 400; color: var(--she
 .shep-tbl tr.shep-grp th { position: static; background: var(--shep-panel-2); font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 10px; border-bottom: 1px solid var(--shep-border); }
 .shep-tbl tbody tr.shep-row-dis td { background: var(--shep-grey-50); color: var(--shep-muted); cursor: default; }
 
-/* the shared model list */
-.shep-list { display: flex; flex-direction: column; border: 1px solid var(--shep-border); border-radius: 8px; overflow: hidden; }
-.shep-list-hd { padding: 6px 12px; background: var(--shep-panel-2); border-bottom: 1px solid var(--shep-border); font-size: 14px; color: var(--shep-text-2); }
+/* the shared model list: a note under a list (the Test page's), "Show older runs" under the
+   tree (`model_list.older_html`) */
 .shep-list-note { padding: 6px 12px; font-size: 14px; color: var(--shep-muted); border-bottom: 1px solid #edf0f3; }
 button.shep-row {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; width: 100%;
   padding: 8px 12px; border: 0; border-bottom: 1px solid #edf0f3; background: #fff; font: inherit; color: inherit; cursor: pointer;
 }
 .shep-row:hover { background: var(--shep-panel-2); }
-.shep-row-on { background: var(--shep-accent-50) !important; box-shadow: inset 4px 0 0 var(--shep-accent); }
 .shep-row-dis { background: var(--shep-grey-50); color: var(--shep-muted); cursor: default; }
-.shep-row-main { font-weight: 600; }
 /* The shared list's line under its workspace select (`model_list.workspace_line_html`). */
 .shep-ws-line { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 14px; color: var(--shep-text-2); }
-.shep-row-sub { font-size: 14px; color: var(--shep-text-2); }
 .shep-row-more { align-items: center; color: var(--shep-accent-text); font-weight: 400; }
 .shep-mtbl-wrap { margin: 0; }
 /* Words in the list's table break only where they must, in either layout (a column is
@@ -666,6 +662,8 @@ button.shep-row {
 .shep-search-lbl { font-size: 15px; color: var(--shep-text-2); white-space: nowrap; }
 .shep-list-outside { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 8px; font-size: 14px; color: var(--shep-text-2); }
 .shep-facts-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
+/* Its "↑ Back to the list" (`model_list.BACK_TO_LIST`), shown stacked only, at the title's end. */
+.shep-facts-title > .shep-back-list { display: none; margin-left: auto; font-weight: 400; }
 .shep-facts { display: flex; flex-direction: column; gap: 8px; }
 .shep-facts-sec { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
 .shep-facts-sec > summary, .shep-facts-sec > h4 { padding: 8px 12px; font-weight: 600; font-size: 15px; cursor: pointer; margin: 0; }
@@ -745,6 +743,12 @@ __SIDE__ {
      Result panel's title scrolled away with the report): a header drawn inside
      the region that scrolls sticks to that region's top. */
   .shep-panel .shep-panel-hd { position: sticky; top: 0; z-index: 6; background: var(--shep-panel); }
+  /* The shared model list's tree (`model_list._tree_html`, on Models and in the Diagnosis load
+     drawer) 7 px a side, so it fits the region it is given whole: at 10 px its columns' longest
+     words and a 12-hex digest made it 602 px in a 589 px frame (Models at 1440 x 900, M5-3), and
+     601 px in the drawer's 524 px list at 1280 x 900, cut at its Fingerprint column. Two classes:
+     Gradio's own `.gradio-container-… th` (10 px) comes later and outranks one. */
+  .shep-tbl.shep-mtbl th, .shep-tbl.shep-mtbl td { padding-left: 7px; padding-right: 7px; }
 }
 /* Stacked: the regions stack, the page scrolls, nothing scrolls inside; a
    table wider than its panel scrolls sideways in its own box (it was cut by
@@ -755,6 +759,7 @@ __STACK__ {
   .shep-tbl-wrap { overflow-x: auto; overflow-y: hidden; }
   .shep-tbl th { position: static; }
   .shep-tbl td { overflow-wrap: anywhere; }
+  .shep-facts-title > .shep-back-list { display: inline-flex; align-items: center; }
 }
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK)
 
