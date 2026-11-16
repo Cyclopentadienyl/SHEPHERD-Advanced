@@ -490,9 +490,11 @@ def test_an_uncheckable_evidence_directory_that_alone_may_hold_the_bytes_is_sear
     run = tp.find(reports["runs"], "run_id", path.parent.name)
     assert run["state"]["registered"] == "registered"
     result = tp.result_html(reports, path.parent.name, tp.path_roots(), notes=[])
-    assert "inputs (evidence search incomplete):" in result
-    assert "R10, training inputs (evidence search incomplete):" in re.sub(
-        r"<[^>]+>", "", mp.r10_html(record["r10"]))
+    from tests.fixtures.r10_table import r10_cells
+
+    assert r10_cells(result)["Training"]["evidence"] == "evidence search incomplete"
+    assert r10_cells(mp.r10_html(record["r10"]))["Training"]["evidence"] == (
+        "evidence search incomplete")
 
 
 def test_evidence_in_a_later_directory_is_found_past_one_that_cannot_be_checked(

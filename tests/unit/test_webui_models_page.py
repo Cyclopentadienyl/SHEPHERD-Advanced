@@ -471,6 +471,8 @@ def test_a_record_of_another_or_no_mode_is_shown_as_recorded(world, monkeypatch)
     described" cells; no claim of what its cases are; never another mode's
     words. An entry written before `mode` existed reads "Measurement mode not
     recorded", never Mode C, with its metrics as recorded one click away."""
+    from tests.fixtures.r10_table import without_r10
+
     _listing, data = _read(world, monkeypatch)
     record = next(r for entry in data["ledgers"].values() for r in entry.get("records") or [])
     view = mp.record_view(record)
@@ -480,7 +482,7 @@ def test_a_record_of_another_or_no_mode_is_shown_as_recorded(world, monkeypatch)
         raw = mp.records_block_html([{**view, "mode": mode}], {})
         text = _text(raw)
         assert label in text
-        assert "Mode C" not in text and "Disease" not in text
+        assert "Mode C" not in text and "Disease" not in _text(without_r10(raw))
         assert re.findall(r"<th[^>]*>([^<]*)</th>", raw)[1:3] == ["Recorded metrics", "Coverage"]
         assert '<th scope="col" colspan="2">Recorded metrics</th>' in raw
         assert ">not described<" not in raw and "what they are is not described" in text
@@ -518,9 +520,18 @@ def _kept_c_and_d_records(*more):
 
 
 def _table(raw, mode_label_text):
-    """The records table named for `mode_label_text` (its aria-label)."""
+    """The records table named for `mode_label_text` (its aria-label), to its
+    own closing tag: a record's R10 table nests inside its detail row."""
     start = raw.index(f'aria-label="{e("Recorded results, " + mode_label_text)}"')
-    return raw[start:raw.index("</table>", start)]
+    depth, at = 1, start
+    while depth:
+        opens, closes = raw.find("<table", at), raw.index("</table>", at)
+        if 0 <= opens < closes:
+            depth, at = depth + 1, opens + 1
+        else:
+            depth, at = depth - 1, closes + 1
+    return raw[start:at - 1]
+
 
 
 def test_kept_c_and_d_records_are_shown_as_recorded_by_the_one_display():
@@ -790,12 +801,14 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     assert ("Validation pooled MRR" not in records and "(Trainer)" not in records
             and "0.2410" not in records)
     assert e(mode_label("disease")) in records and "Disease pooled MRR" in records
-    # Each relation a row of its own under its record, its name visible whole
-    # (`renderers.relation_rows`; never a chain of short names with the full
-    # ones in a title: BACKLOG 72, the ops-wiring round's B3).
-    assert '<dl class="shep-kv shep-mp-rel">' in records
-    assert ('<dt class="shep-k">R3 model trained on this graph</dt><dd class="shep-v">'
+    # Each relation a row of its own under its record, its meaning first and
+    # its code after it (`renderers.relations_html`; never a chain of short
+    # names with the full ones in a title: BACKLOG 72, the ops-wiring round's
+    # B3; R-72), in the list whose key column keeps the name on one line.
+    assert '<dl class="shep-kv shep-kv-rel shep-mp-rel">' in records
+    assert ('<dt class="shep-k">Model trained on this graph (R3)</dt><dd class="shep-v">'
             + r.status_mark("ok", "Verified")) in records
+    assert "R3 model" not in records
     assert "Relations:" not in records and "version↔graph" not in records
     # newest registration first: no record is picked or put ahead of the others
     assert records.index("registered #3") < records.index("registered #2")
@@ -876,16 +889,49 @@ def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_
 
 
 def test_unverifiable_is_a_word_and_never_a_count(world, monkeypatch):
+    from tests.fixtures.r10_table import cell_text, r10_cells
+
     listing, data = _read(world, monkeypatch)
     records = mp.detail_parts(listing, data, _key(world, "model-08.pt"), NEWEST_CTL)["records"]
-    assert "Training disease overlap: <b>unverifiable</b>" in records
-    assert "there is no count" in records
-    line = records[records.index("<b>R10, training</b>"):]
-    line = line[:line.index('<span class="shep-mp-ln">')]
-    assert " of 50 " not in line and " of 80 " not in line
-    text = r.r10_label_text("disease_overlap", "D", {"state": "unverifiable", "k": None,
-                                                     "n": 50, "cases": None}, "not_found")
-    assert "0" not in text.replace("D:", "")
+    training = r10_cells(records)["Training"]
+    for column in ("Disease overlap", "Phenotype-set overlap"):
+        cell = training[column]
+        assert cell.startswith(r.status_mark("neutral", "Unverifiable"))
+        assert "there is no count" in cell
+        assert " of " not in cell_text(cell) and not re.search(r"\d", cell_text(cell))
+    state, words, count = r.r10_state_parts(
+        "disease_overlap", {"state": "unverifiable", "k": None, "n": 50, "cases": None},
+        "not_found")
+    assert (state, count) == ("unverifiable", None) and "0" not in words
+
+
+def test_a_records_r10_is_a_table_with_a_mark_on_each_overlap_and_no_stutter():
+    """R-63: Models' record shows R10 as its table (training / validation by
+    disease / phenotype set), each overlap cell amber with ▲ and its count,
+    denominator, unit and cases, never "overlap: overlap" nor a run-on " · "
+    sentence; "none" in its own quiet words with its count, never a green
+    pass and never "no overlap"; the evidence's path never shown. At
+    ba6e85e it was one dark ' · ' sentence per scope with no mark."""
+    from tests.fixtures.r10_table import cell_text, r10_cells
+    from tests.unit.test_evaluation_sidecar import r10_block
+
+    block = r10_block("overlap")
+    html = mp.r10_html(block)
+    cells = r10_cells(html)
+    assert list(cells) == ["Training", "Validation"]
+    assert set(cells["Training"]) == {"evidence", "Disease overlap", "Phenotype-set overlap"}
+    disease = cells["Training"]["Disease overlap"]
+    assert disease.startswith(r.status_mark("warn", "Overlap"))
+    assert cell_text(disease) == ("▲ Overlap 3 of 50 distinct test diseases; 5 test cases "
+                                  "with one of them")
+    none = cells["Training"]["Phenotype-set overlap"]
+    assert "shep-st" not in none and cell_text(none) == (
+        "None in the inputs this checkpoint records (not evidence about data outside them) "
+        "0 of 80 test cases")
+    text = cell_text(html)
+    assert "overlap: overlap" not in text.lower() and " · " not in text
+    assert "no overlap" not in text.lower() and "/abs/" not in html
+    assert '<table class="shep-r10" aria-label="Train/test overlap (R10)">' in html
 
 
 @pytest.mark.parametrize("version, state, evidence_words, reason", [
@@ -913,14 +959,19 @@ def test_a_records_r10_reads_in_its_states_words_never_a_count(version, state,
 
     html = mp.r10_html(block)
 
-    # The one R10 rendering (`renderers.r10_rows`), its scope's label leading.
-    line = html[:html.index('<span class="shep-mp-ln">', 1)]
-    assert line.startswith('<span class="shep-mp-ln"><b>R10, training</b> <span '
-                           f'class="shep-muted">inputs (evidence {evidence_words}):</span> ')
-    for name in ("Training disease overlap", "Training phenotype-set overlap"):
-        assert f"{name}: <b>unverifiable</b>: {reason}" in line
-    text = re.sub(r"<[^>]+>", "", line).split("):", 1)[1]  # the labels, after "R10, ..."
-    assert not re.search(r"\d", text) and "—" not in text and " none" not in text
+    # The one R10 rendering (`renderers.r10_table_html`) under its title: a
+    # row per scope with its evidence's state, a cell per label.
+    from tests.fixtures.r10_table import cell_text, r10_cells
+
+    assert html.startswith(f'<span class="shep-mp-ln"><b>{r.R10_TITLE}</b></span>')
+    training = r10_cells(html)["Training"]
+    assert training["evidence"] == f"evidence {evidence_words}"
+    for column in ("Disease overlap", "Phenotype-set overlap"):
+        cell = training[column]
+        assert cell == (r.status_mark("neutral", "Unverifiable")
+                        + f'<div class="shep-r10-n">{e(reason[:1].upper() + reason[1:])}</div>')
+        text = cell_text(cell)
+        assert not re.search(r"\d", text) and "—" not in text and "none" not in text.lower()
     assert "/srv/secret" not in html
 
 

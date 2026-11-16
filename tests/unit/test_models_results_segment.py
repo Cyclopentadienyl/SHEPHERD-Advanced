@@ -122,8 +122,9 @@ def test_the_tables_are_one_per_protocol_newest_first_with_each_rows_state(world
     for protocol in protocols:
         labels = [names[i] for i in state["shown"] if state["rows"][i] in results
                   and state["rows"][i]["protocol"] == protocol]
+        # To the results table's own end: a row's R10 table nests in its fold.
         table = markup.split(f'aria-label="Results, {html_lib.escape(rs.mode_label(protocol))}"'
-                             )[1].split("</table>")[0]
+                             )[1].split("</tbody></table></div>")[0]
         assert [_text(cell) for cell in re.findall(
             r'<td class="shep-rs-name">(.*?)</td>', table)] == labels
     runs = [row["run_id"] for row in results if row["result"] == service.RUN]

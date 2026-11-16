@@ -54,7 +54,7 @@ shared mark, and three
 in-page segments: "Recorded results" (every record its ledger holds, one
 table per mode in the order first shown, as the API's record view shows a record
 by **one display for every mode** (R2, K8-6e.2): each relation a row of its own,
-its name visible whole (`renderers.relation_rows`); its mode's label, a described
+its meaning first (`renderers.relations_html`); its mode's label, a described
 measurement's two columns in words with every metric as recorded one click away,
 any other mode's metrics as recorded in one column, its score semantics as
 recorded, coverage with every
@@ -711,12 +711,11 @@ def kind_html(view: Mapping[str, Any]) -> str:
 
 
 def r10_html(r10: Any) -> str:
-    """A supplied cohort's R10, one line per scope, "R10, training inputs
-    (evidence found): …": the one rendering (`renderers.r10_rows`), its
-    scope's label in bold leading its row, as this page lays out a kind's
-    lines."""
-    return "".join(f'<span class="shep-mp-ln"><b>{r.e(label)}</b> {value}</span>'
-                   for label, value in r.r10_rows(r10))
+    """A supplied cohort's R10 as its table (the one rendering,
+    `renderers.r10_table_html`), under its title in bold, as this page lays
+    out a kind's lines; Models › Results' Compare folds the same."""
+    return (f'<span class="shep-mp-ln"><b>{r.e(r.R10_TITLE)}</b></span>'
+            f'<div class="shep-mp-r10">{r.r10_table_html(r10)}</div>')
 
 
 def contested_value_text(value: Any) -> str:
@@ -944,9 +943,10 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
         registration = (f"Registered #{_get(view, 'registration', 'sequence')} at "
                         f"{_utc_text(_get(view, 'registration', 'registered_at'))} from "
                         f"{run_text(view)}, report {r.short_hex(view.get('source'))}")
-        # Each relation a row of its own, its name visible whole (the one
-        # rendering, `renderers.relation_rows`), never a chain in a title.
-        relations = r.summary_list(r.relation_rows(view.get("relations")), classes="shep-mp-rel")
+        # Each relation a row of its own, its meaning first and its name on
+        # one line (the one rendering, `renderers.relations_html`), never a
+        # chain in a title.
+        relations = r.relations_html(view.get("relations"), classes="shep-mp-rel")
         more = (f'<tr class="shep-mp-more"><td colspan="5">{relations}'
                 + (f'<span class="shep-mp-ln">{r.e(" · ".join(others))}</span>' if others else "")
                 + f'{kind_html(view)}{semantics_html(view)}{fold}'
@@ -2099,8 +2099,10 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-lin.shep-mp-d2 {{ padding-left: 24px; }}
 {_PAGE} .shep-mp-lin.shep-mp-d3 {{ padding-left: 36px; }}
 {_PAGE} .shep-mp-ident {{ font-size: 15px; }}
-/* A record's relations, a row each under its detail row's words (`renderers.relation_rows`). */
+/* A record's relations, a row each under its detail row's words (`renderers.relations_html`). */
 {_PAGE} .shep-mp-rel {{ margin: 0 0 6px; font-size: 14px; }}
+/* A supplied cohort record's R10 table under its title (`r10_html`). */
+{_PAGE} .shep-mp-r10 {{ margin: 0 0 6px; }}
 /* Read-only: no list, no workspace, no order; the reason is the header's. */
 {_PAGE} {_LIST}:has(.shep-mp-ro) .shep-model-head > .form,
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-mp-wsline,

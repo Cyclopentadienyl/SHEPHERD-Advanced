@@ -1786,7 +1786,7 @@ def recorded_count_text(value: Any) -> str:
     separator), or "not recorded" where the record holds no integer (the
     skill's §6, as `count_text` says it): the words every result surface
     gives a recorded count in (Models' records, the Test page's result,
-    `data_kind_lines`, `r10_rows`)."""
+    `data_kind_lines`, `r10_table_html`)."""
     return str(value) if type(value) is int else NOT_RECORDED.lower()
 
 
@@ -1808,13 +1808,15 @@ RELATION_STATE_MARKS = {"verified": ("ok", "Verified"), "not_applicable": ("neut
 
 
 def relation_rows(relations: Any) -> List[Tuple[str, str]]:
-    """**The one rendering of a record's relations** (the Test page's result,
-    Models' recorded results): one ``(label, escaped HTML)`` row each, its
-    name visible whole ("R3 model trained on this graph", "Data version bound
-    to this graph": `caveats.RELATION_DISPLAY_NAMES`, in that order, then any
-    other by its recorded name, once), its state a status mark with its word
-    (`RELATION_STATE_MARKS`; any other state as recorded). A record that
-    holds none reads one "Relations" row, "Not recorded"."""
+    """**The one reading of a record's relations** (the Test page's result,
+    Models' recorded results, both through `relations_html`): one ``(label,
+    escaped HTML)`` row each, its meaning first and its code after it ("Model
+    trained on this graph (R3)", "Data version bound to this graph":
+    `caveats.RELATION_DISPLAY_NAMES`, in that order, then any other by its
+    recorded name, once; the skill's §5: a code only beside a plain label),
+    its state a status mark with its word (`RELATION_STATE_MARKS`; any other
+    state as recorded). A record that holds none reads one "Relations" row,
+    "Not recorded"."""
     if not isinstance(relations, Mapping):
         return [("Relations", status_mark("neutral", NOT_RECORDED))]
     names = [*(n for n in RELATION_DISPLAY_NAMES if n in relations),
@@ -1825,71 +1827,131 @@ def relation_rows(relations: Any) -> List[Tuple[str, str]]:
         if display is None:
             # A relation this build has no words for: its recorded name, once.
             label = str(name)
-        elif re.fullmatch(r"R\d+", str(name)):
-            label = f"{name} {display}"
         else:
             label = display[:1].upper() + display[1:]
+            if re.fullmatch(r"R\d+", str(name)):
+                label += f" ({name})"
         state = relations[name]
         mark = RELATION_STATE_MARKS.get(state) if isinstance(state, str) else None
         rows.append((label, status_mark(*mark) if mark else e(state)))
     return rows
 
 
-def r10_state_text(label: str, part: Any, evidence: Any) -> str:
-    """One R10 label's state in the caveats' words, as text: a count with its
-    denominator only where the state has one; *unverifiable* is a reason
-    (by its scope's evidence state, `caveats.R10_UNVERIFIABLE_REASON`), never
-    a number; "not reported" where the state does not read. Models ›
-    Results' Compare shows it beside the label's name (its row's), and
-    `r10_label_text` after it."""
+def relations_html(relations: Any, *, classes: str = "") -> str:
+    """**The one rendering of a record's relations**: `relation_rows` as a
+    summary list of its own whose key column takes a relation's whole name on
+    one line (``.shep-kv-rel``, up to 32em, `src/webui/style.py`), so no
+    relation row wraps where the result's 12em key column would break it into
+    two or three lines. The Test page's result shows it under its "Relations"
+    key, Models' recorded results under each record's row. `classes` adds a
+    page's own classes."""
+    return summary_list(relation_rows(relations),
+                        classes=f"shep-kv-rel {classes}".strip())
+
+
+def r10_state_parts(label: str, part: Any, evidence: Any
+                    ) -> Tuple[Optional[str], str, Optional[str]]:
+    """One R10 label's state in the caveats' words, in its parts: the state
+    as recorded (None where it does not read), its words (`R10_STATE_TEXT`;
+    an *unverifiable* label's reason by its scope's evidence state,
+    `caveats.R10_UNVERIFIABLE_REASON`, never a number; "not reported" where
+    the state does not read), and its count with its denominator and unit
+    where the state has one ("3 of 5 distinct test diseases; 7 test cases
+    with one of them"), else None. **The one reading** of a label's state:
+    `r10_state_text` joins the parts, the R10 table (`r10_table_html`) lays
+    them out."""
     state = _get(part, "state")
     words = R10_STATE_TEXT.get(state) if isinstance(state, str) else None
     if state == "unverifiable" and isinstance(evidence, str):
         words = R10_UNVERIFIABLE_REASON.get(evidence, words)
     if words is None:
-        return "not reported"
+        return None, "not reported", None
     if state not in ("overlap", "none"):
-        return words
+        return state, words, None
     unit = "distinct test diseases" if label == "disease_overlap" else "test cases"
-    text = (f"{words} — {recorded_count_text(_get(part, 'k'))} of "
-            f"{recorded_count_text(_get(part, 'n'))} {unit}")
+    count = (f"{recorded_count_text(_get(part, 'k'))} of "
+             f"{recorded_count_text(_get(part, 'n'))} {unit}")
     if label == "disease_overlap":
-        text += f"; {recorded_count_text(_get(part, 'cases'))} test cases with one of them"
-    return text
+        count += f"; {recorded_count_text(_get(part, 'cases'))} test cases with one of them"
+    return state, words, count
 
 
-def r10_label_text(label: str, name: str, part: Any, evidence: Any) -> str:
-    """One R10 label in the caveats' words, as text: its name, then its state
-    (`r10_state_text`). The text of `r10_rows`."""
-    return f"{name}: {r10_state_text(label, part, evidence)}"
+def r10_state_text(label: str, part: Any, evidence: Any) -> str:
+    """One R10 label's state in the caveats' words, as text: its words, then
+    its count with its denominator where the state has one
+    (`r10_state_parts`). Models › Results' Compare shows it beside the
+    label's name (its row's)."""
+    _state, words, count = r10_state_parts(label, part, evidence)
+    return words if count is None else f"{words} — {count}"
 
 
-def r10_rows(r10: Any) -> list:
+#: The words before an unverifiable label's reason in every caveats text
+#: for it (`R10_STATE_TEXT`, `R10_UNVERIFIABLE_REASON`): the table's mark
+#: says the state, the reason follows it.
+_UNVERIFIABLE_LEAD = "unverifiable: "
+
+
+def _r10_cell(label: str, part: Any, evidence: Any) -> str:
+    """One R10 cell (`r10_table_html`): its state by the shared mark (the
+    skill's §6) and, under it, its count or its reason, all in the caveats'
+    words (`r10_state_parts`). An overlap is a condition to watch, amber ▲
+    (it qualifies the measurement and blocks nothing); an unverifiable label,
+    one with no validation inputs recorded and one not reported are missing
+    states, grey ○, an unverifiable one with its reason and never a number;
+    "none" is quiet, its words alone, never a green pass ("none in the
+    inputs this checkpoint records", not "no overlap")."""
+    state, words, count = r10_state_parts(label, part, evidence)
+    if state == "overlap":
+        head = status_mark("warn", words[:1].upper() + words[1:])
+    elif state == "none":
+        head = f'<span class="shep-r10-w">{e(words[:1].upper() + words[1:])}</span>'
+    elif state == "unverifiable" and words.startswith(_UNVERIFIABLE_LEAD):
+        reason = words[len(_UNVERIFIABLE_LEAD):]
+        head = (status_mark("neutral", "Unverifiable")
+                + f'<div class="shep-r10-n">{e(reason[:1].upper() + reason[1:])}</div>')
+    else:
+        head = status_mark("neutral", words[:1].upper() + words[1:])
+    return head + (f'<div class="shep-r10-n">{e(count)}</div>' if count else "")
+
+
+#: The R10 table's title, the key a page shows it under: its meaning first,
+#: its code after (the skill's §5).
+R10_TITLE = "Train/test overlap (R10)"
+
+
+def r10_table_html(r10: Any) -> str:
     """**The one rendering of a supplied cohort's R10** (research comparison
-    Stage 8b), as ``(label, escaped HTML)`` rows, one per scope, from the one
-    reader's view of a record (its ``r10``: each scope's evidence state and its
-    disease and phenotype-set overlap): ``("R10, training", "inputs (evidence
-    found): Training disease overlap: … · Training phenotype-set overlap: …")``,
-    each label in `r10_label_text`'s words with *unverifiable* in bold. Models'
-    records and the Test page's result lay the rows out each their own way,
-    as they lay out `data_kind_lines`; the evidence's path is never read."""
+    Stage 8b; the skill's §4: the R10 overlap matrix is a table), from the
+    one reader's view of a record (its ``r10``: each scope's evidence state
+    and its disease and phenotype-set overlap): a row per scope (Training,
+    Validation) with whether its evidence was found under it
+    (`R10_EVIDENCE_WORDS`), a column per label ("Disease overlap",
+    "Phenotype-set overlap": the label's name without its scope, which heads
+    the row), each cell its state by the shared mark and its count, unit,
+    denominator and cases or its reason (`_r10_cell`). The test page's
+    result, Models' recorded results and Models › Results' Compare show it
+    alike. The governed words are unchanged (the skill's §13, 2026-10-25):
+    an unverifiable cell never reads 0, "—" or "no overlap", and an overlap
+    blocks nothing. The evidence's path is never read. Every value is
+    escaped."""
+    scopes = list(R10_LABEL_TEXT.items())
+    heads = []
+    for label, words in scopes[0][1].items():
+        rest = str(words["name"]).split(" ", 1)[-1]
+        heads.append(f'<th scope="col">{e(rest[:1].upper() + rest[1:])}</th>')
     rows = []
-    for scope, labels in R10_LABEL_TEXT.items():
+    for scope, labels in scopes:
         part = _get(r10, scope)
         evidence = _get(_get(part, "evidence"), "state")
         found = R10_EVIDENCE_WORDS.get(evidence) if isinstance(evidence, str) else None
-        shown = []
-        for label, words in labels.items():
-            name = words["name"]
-            text = r10_label_text(label, name, _get(part, label), evidence)
-            lead = f"{name}: unverifiable"
-            shown.append(f"{e(name)}: <b>unverifiable</b>{e(text[len(lead):])}"
-                         if _get(_get(part, label), "state") == "unverifiable"
-                         and text.startswith(lead) else e(text))
-        rows.append((f"R10, {scope}",
-                     f'<span class="shep-muted">inputs ({e(found or "evidence not reported")}):'
-                     f'</span> {" · ".join(shown)}'))
-    return rows
+        cells = "".join(f"<td>{_r10_cell(label, _get(part, label), evidence)}</td>"
+                        for label in labels)
+        rows.append(f'<tr><th scope="row">{e(scope[:1].upper() + scope[1:])}'
+                    f'<div class="shep-r10-n">{e(found or "evidence not reported")}</div></th>'
+                    f"{cells}</tr>")
+    return (f'<table class="shep-r10" aria-label="{e(R10_TITLE)}"><thead><tr>'
+            f'<th scope="col">Inputs</th>{"".join(heads)}</tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table>')
 
 
 def data_kind_lines(view: Mapping[str, Any]) -> list:
@@ -2059,6 +2121,7 @@ __all__ = [
     "NO_READABLE_SPLIT_MANIFEST",
     "NO_SPLIT_MANIFEST",
     "R10_EVIDENCE_WORDS",
+    "R10_TITLE",
     "RELATION_STATE_MARKS",
     "RENDERER_HELP",
     "RecordedTests",
@@ -2109,14 +2172,15 @@ __all__ = [
     "model_table_row_html",
     "not_trainable_short",
     "origin_of",
-    "r10_label_text",
-    "r10_rows",
+    "r10_state_parts",
     "r10_state_text",
+    "r10_table_html",
     "record_chip",
     "record_kind_text",
     "record_read",
     "record_verified",
     "relation_rows",
+    "relations_html",
     "recorded_count_text",
     "recorded_tests_cell",
     "recorded_tests_text",

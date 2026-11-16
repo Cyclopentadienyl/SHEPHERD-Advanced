@@ -469,9 +469,10 @@ def test_the_research_table_row_has_its_columns_and_escapes():
     assert "Another dataset" in other and FP_B[:12] in other
     assert r.dataset_relation_html({**checkpoint(), "trained_on_this_dataset": True},
                                    [workspace()]) == r.e(r.CURRENT_DATASET)
-    # A relation this build has no words for reads its recorded name once.
+    # Each relation leads with its meaning, its code after it (R-72); a
+    # relation this build has no words for reads its recorded name once.
     rows = r.relation_rows({"R3": "verified", "R9": "verified", "cohort_graph": "not_applicable"})
-    assert [label for label, _ in rows] == ["R3 model trained on this graph",
+    assert [label for label, _ in rows] == ["Model trained on this graph (R3)",
                                             "Data version bound to this graph", "R9"]
     broken = r.model_table_row_html(checkpoint(sha=None, problem="bad"), [])
     assert 'aria-disabled="true"' in broken and "metadata not readable · cannot be loaded" in broken

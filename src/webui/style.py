@@ -366,6 +366,21 @@ body { color: var(--shep-text); }
 .shep-kv > .shep-v.shep-kv-wide { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
 .shep-kv > .shep-v.shep-kv-wide > code.shep-full { flex: 0 1 auto; min-width: 0; }
 .shep-k { color: var(--shep-text-2); }
+/* A record's relations (`renderers.relations_html`): a list of its own whose
+   key column takes a relation's whole name on one line, up to 32em. */
+.shep-kv.shep-kv-rel { grid-template-columns: fit-content(32em) minmax(0, 1fr); gap: 2px 14px; }
+.shep-kv.shep-kv-rel > .shep-k { overflow-wrap: normal; }
+/* R10's overlap matrix (`renderers.r10_table_html`, the skill's §4): a row
+   per scope, a column per label, row lines only (no box of its own inside
+   its region's). `table.` outranks the research tables' `.shep-tbl th/td`
+   where it sits inside one (a Models record, a Results row): never their
+   sticky, filled header. */
+table.shep-r10 { border-collapse: collapse; margin: 0; font-size: 15px; line-height: 1.35; }
+table.shep-r10 th, table.shep-r10 td { position: static; background: none; text-align: left; vertical-align: top; padding: 4px 14px 4px 0; border-bottom: 1px solid var(--shep-border); font-size: 15px; }
+table.shep-r10 thead th { font-size: 14px; font-weight: 600; color: var(--shep-text-2); }
+table.shep-r10 tbody th { font-size: 14px; font-weight: 600; min-width: 9em; }
+table.shep-r10 tbody tr:last-child > * { border-bottom: 0; }
+table.shep-r10 .shep-r10-n { font-size: 14px; font-weight: 400; color: var(--shep-text-2); }
 .shep-digest { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }
 .shep-digest .shep-dl { grid-column: 1 / -1; font-size: 14px; font-weight: 600; color: var(--shep-text-2); }
 

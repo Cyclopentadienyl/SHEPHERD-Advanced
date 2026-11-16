@@ -679,11 +679,11 @@ def test_models_shows_each_kind_by_the_one_display_with_its_exposure():
     # The version column's header names the kind of table: "Cohort version"
     # for supplied cohorts' records only. (A relation row names its relation
     # by its full words, "Data version bound to this graph", for every kind:
-    # `renderers.relation_rows`, the ops-wiring round's B3.)
+    # `renderers.relations_html`, the ops-wiring round's B3.)
     heads = [re.findall(r'<th scope="col">([^<]*)</th>', mp.records_table_html([v], {}))[0]
              for v in views]
     assert heads == ["Cohort version", "Data version", "Data version"]
-    assert "R10, training inputs" in supplied
+    assert "Train/test overlap (R10) Inputs Disease overlap Phenotype-set overlap" in supplied
     assert "Exposure" not in supplied
     assert "Data version" in kg and "A KG edge set (test)" in kg
     assert "Recorded metrics" in kg and "lp_roc_auc 0.625" in kg
@@ -769,4 +769,4 @@ def test_the_test_page_says_a_kg_edge_set_and_a_generated_split_in_their_words()
     for text in (kg, generated):
         assert "R10" not in text and "source cases" not in text
         assert "import-eligible" not in text
-    assert "R10, training" in supplied and "import-eligible cases" in supplied
+    assert "Train/test overlap (R10)" in supplied and "import-eligible cases" in supplied

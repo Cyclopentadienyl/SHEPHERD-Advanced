@@ -89,9 +89,10 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   words (`caveats.metric_text`) with every metric as recorded one click away;
   any other mode's metrics, a kept report's included, as recorded
   (`caveats.recorded_metric_lines`); the score semantics as recorded,
-  coverage with every exclusion, each relation a row of its own
-  (`renderers.relation_rows`), R10 in the
-  caveats' words (*unverifiable* is a word, never a 0), environment, dataset
+  coverage with every exclusion, each relation a row of its own, its meaning
+  first (`renderers.relations_html`), R10 as its table in the
+  caveats' words (`renderers.r10_table_html`: *unverifiable* is a word,
+  never a 0), environment, dataset
   origin, whether it is kept and registered; "Register this report" through the one
   registration function (`register_report`, the ledger beside the listed
   checkpoint holding the weights it measured, found by digest in the server's
@@ -2103,7 +2104,7 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     service reads every kept report by, registered or not). Every field shown
     is the view's: its mode, data (label, role, version, kind and counts),
     the run's counts, score semantics, relations, R10 or the kind's lines (the
-    shared renderings, `renderers.r10_rows` and `renderers.data_kind_lines`,
+    shared renderings, `renderers.r10_table_html` and `renderers.data_kind_lines`,
     as Models shows a registered record's), environment, native build and
     dataset origin; the measurement's device is the record's recorded
     setting (`record_views.recorded_settings`, as the service reads it), and
@@ -2190,12 +2191,18 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     # metrics as recorded are its main result, one per line.
     figures = (_task_rows(mode, metrics, tile_names) if task
                else [("Recorded metrics", recorded_metrics_html(metrics))])
+    # The relations and a supplied cohort's R10 each in its one rendering,
+    # under a key of its own across the list's width, so no relation's name
+    # wraps in the 12em key column and the overlap reads as its table.
+    relations = view["relations"]
     lines = [
         ("Coverage", coverage),
         *figures,
         ("Score semantics", _semantics_text(view["score_semantics"])),
-        *r.relation_rows(view["relations"]),
-        *(r.r10_rows(view["r10"]) if kind == "supplied" else r.data_kind_lines(view)),
+        ("Relations", r.relations_html(relations) if isinstance(relations, Mapping)
+         else r.status_mark("neutral", r.NOT_RECORDED)),
+        *([(r.R10_TITLE, r.r10_table_html(view["r10"]))] if kind == "supplied"
+          else r.data_kind_lines(view)),
         ("Environment", _environment(view)),
         ("Native build", _native_build(view)),
     ]
@@ -2223,8 +2230,9 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
                    else "none found beside the checkpoint the run read, or its ledger cannot be "
                         "read (a registration beside another copy of the weights is looked for only "
                         "with the checkpoint list, an operator control)") + e(overlap)))
-    # The R10 labels' ⓘ sits beside the first R10 line, which it explains.
-    kv = r.summary_list(lines, helps={"R10, training": ("test-r10", "R10 labels")},
+    # The R10 labels' ⓘ sits beside the R10 table's key, which it explains.
+    kv = r.summary_list(lines, wide=("Relations", r.R10_TITLE),
+                        helps={r.R10_TITLE: ("test-r10", "R10 labels")},
                         classes="shep-test-lines")
     topic = _MODE_HELP.get(mode)
     mode_help = help_button(topic, TOPIC_HELP[topic][0]) if topic else ""

@@ -77,6 +77,7 @@ from tests.fixtures.operator_access import (  # noqa: E402
     operator_mode,
     operator_request,
 )
+from tests.fixtures.r10_table import cell_text, r10_cells, without_r10  # noqa: E402
 from tests.fixtures.served_page import ServedSession, served  # noqa: E402
 from tests.fixtures.trained_children import CHILD_RUNS  # noqa: E402
 
@@ -371,12 +372,16 @@ def test_unverifiable_is_a_word_never_a_count():
                           "disease_overlap": {"state": "unverifiable", "k": None, "n": 5,
                                               "cases": None},
                           "phenotype_set_overlap": {"state": "unverifiable", "k": None, "n": 10}}}
-    lines = dict(renderers.r10_rows(r10))  # the one R10 rendering the page shows
-    validation = lines["R10, validation"]
-    assert "<b>unverifiable</b>" in validation and " of " not in validation
-    assert "3 of 5 distinct test diseases; 7 test cases" in lines["R10, training"]
-    assert "0 of 10 test cases" in lines["R10, training"]
-    assert "/srv/secret" not in "".join(lines.values())
+    html = renderers.r10_table_html(r10)  # the one R10 rendering the page shows
+    cells = r10_cells(html)
+    for column in ("Disease overlap", "Phenotype-set overlap"):
+        validation = cells["Validation"][column]
+        assert validation.startswith(renderers.status_mark("neutral", "Unverifiable"))
+        assert " of " not in cell_text(validation) and not re.search(r"\d", cell_text(validation))
+    assert cell_text(cells["Training"]["Disease overlap"]) == (
+        "▲ Overlap 3 of 5 distinct test diseases; 7 test cases with one of them")
+    assert cell_text(cells["Training"]["Phenotype-set overlap"]).endswith("0 of 10 test cases")
+    assert "/srv/secret" not in html
 
 
 #: An unverifiable label's words by its scope's evidence state, as the Test
@@ -420,13 +425,16 @@ def test_a_kept_reports_r10_reads_in_its_states_words_never_a_count(
 
     html = tp.result_html(reports, run_id, [], notes=[])
 
-    line = dict(renderers.r10_rows(record["r10"]))["R10, training"]
-    assert line.startswith(f'<span class="shep-muted">inputs ({evidence_words}):</span> ')
-    for name in ("Training disease overlap", "Training phenotype-set overlap"):
-        assert f"{name}: <b>unverifiable</b>: {reason}" in line
-    assert line in html
-    text = re.sub(r"<[^>]+>", "", line)
-    assert not re.search(r"\d", text) and "—" not in text and " none" not in text
+    table = renderers.r10_table_html(record["r10"])
+    assert table in html
+    training = r10_cells(table)["Training"]
+    assert training["evidence"] == evidence_words
+    for column in ("Disease overlap", "Phenotype-set overlap"):
+        cell = training[column]
+        assert cell == (renderers.status_mark("neutral", "Unverifiable")
+                        + f'<div class="shep-r10-n">{reason[:1].upper() + reason[1:]}</div>')
+        text = cell_text(cell)
+        assert not re.search(r"\d", text) and "—" not in text and "none" not in text.lower()
     assert "/srv/secret" not in html
 
 
@@ -557,7 +565,8 @@ def test_runs_that_differ_are_described_and_each_can_be_registered(site, monkeyp
     for run_id in (site.run_id, other):
         assert tp.register_state(page, reports, run_id) == (True, None)
         assert all(cell.count(" · ") <= 1 for cell in _report_rows(html)[run_id])
-    result = tp.result_html(reports, site.run_id, [], notes=[])
+    # The R10 table's ▲ marks an overlap, its own condition (R-63), not this.
+    result = without_r10(tp.result_html(reports, site.run_id, [], notes=[]))
     assert "<b>Runs under these conditions differ</b> on: pooled_mrr" in result
     assert "investigate" not in result and "▲" not in result
     assert "shep-tag-amber" not in result and "shep-notice-amber" not in result
@@ -680,7 +689,8 @@ def test_deterministic_runs_that_differ_are_flagged_for_investigation(site):
         run = {r["run_id"]: r for r in reports["runs"]}[other]
         row = "".join(_report_rows(tp.reports_html(reports, other))[other])
         chip = tp._row_chip(run)
-        result = tp.result_html(reports, other, [], notes=[])
+        # The R10 table's ▲ marks an overlap, its own condition (R-63), not this.
+        result = without_r10(tp.result_html(reports, other, [], notes=[]))
         block = tp.block_html(run, [], [])
         assert tp.notes_visible(reports, other)
         assert "Runs under these conditions differ" in block
@@ -935,7 +945,7 @@ def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):
     assert "Validation MRR" not in html, "Trainer validation and a test result never share a place"
     assert "case-" not in html and str(site.root) not in html
     assert "synthetic</b> — a generated stand-in" in html
-    assert "R1 graph files match the workspace manifest" in html
+    assert "Graph files match the workspace manifest (R1)" in html
 
 
 def _native_row(html):
@@ -997,7 +1007,7 @@ def test_the_result_shows_the_one_readers_view_of_its_record(site, monkeypatch):
     """Stage 8b review (one reader of a result for every surface): every field
     the Result shows but the metric values is the one reader's view of the
     record (`record_views.result_view`, what the results service and Models
-    read by) and its R10 the one rendering (`renderers.r10_rows`), never the
+    read by) and its R10 the one rendering (`renderers.r10_table_html`), never the
     page's own read of the raw record: a view that says otherwise than the
     record is what is shown."""
     import html as html_lib
@@ -1034,11 +1044,11 @@ def test_the_result_shows_the_one_readers_view_of_its_record(site, monkeypatch):
     assert " ".join(text.split()).count("Deterministic algorithms not recorded") == 1
     assert record["dataset_record"]["origin"] != "files" and "files — built from" in text
     assert _native_lines(raw) == ["not recorded"]
-    training = dict(renderers.r10_rows(
+    table = renderers.r10_table_html(
         {**record["r10"], "training": {**record["r10"]["training"],
-                                       "evidence": {"state": "not_recorded"}}}))
-    assert training["R10, training"] in raw
-    assert "inputs (evidence not recorded by the checkpoint):" in text
+                                       "evidence": {"state": "not_recorded"}}})
+    assert table in raw
+    assert r10_cells(raw)["Training"]["evidence"] == "evidence not recorded by the checkpoint"
 
 
 def test_a_result_of_another_or_no_mode_is_shown_as_recorded(site):
@@ -2997,8 +3007,9 @@ def test_the_r10_help_sits_beside_the_r10_lines(site):
     label = html[html.index('class="shep-test-label"'):]
     label = label[:label.index("</div>")]
     assert "Help: R10 labels" not in label and "Help: Disease task result" in label
-    r10 = html[html.index(">R10, training"):]
-    assert r10.index("Help: R10 labels") < r10.index('class="shep-v"')
+    r10 = html[html.index(f">{renderers.R10_TITLE}"):]
+    assert r10.index("Help: R10 labels") < r10.index('class="shep-v') < r10.index(
+        '<table class="shep-r10"')
 
 
 def _css_rules(css):
@@ -4017,7 +4028,7 @@ def test_a_kg_edge_set_or_generated_split_result_never_says_cohort(kind, mode):
     rows = dict(tp.r.relation_rows(record["relations"]))
     assert "cohort" not in " ".join(rows).lower() and "Data version bound to this graph" in rows
     supplied = tp._record_html(_kept_record(registered_report()), {}, {})
-    assert "R10, training" in _result_text(supplied) and bound in supplied
+    assert renderers.R10_TITLE in _result_text(supplied) and bound in supplied
 
 
 def test_the_measurement_options_are_the_protocols_the_record_admits():

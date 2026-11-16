@@ -968,7 +968,7 @@ def test_every_reader_of_the_evidence_states_knows_each_one():
     """D6 (invariant). Every reader that enumerates the evidence states has
     each one: the caveats' unverifiable reasons (every state but "found"), the
     API's `R10Evidence`, and the dashboard's words (the one R10 rendering the
-    Test page, Models and Models › Results share, `renderers.r10_rows`). A
+    Test page, Models and Models › Results share, `renderers.r10_table_html`). A
     state added without its readers would read "not reported", or be refused
     as malformed."""
     from typing import get_args

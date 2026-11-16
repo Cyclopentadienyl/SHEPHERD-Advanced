@@ -518,8 +518,8 @@ def _exposure_cell(row: Mapping[str, Any]) -> str:
     exposure = row.get("exposure") or {}
     kind = (row.get("data") or {}).get("kind")
     if kind == "supplied":
-        return (f'<details class="shep-mp-fold"><summary>R10 recorded</summary>'
-                f'{mp.r10_html(exposure.get("r10"))}</details>')
+        return (f'<details class="shep-mp-fold"><summary>{r.e(r.R10_TITLE)}</summary>'
+                f'{r.r10_table_html(exposure.get("r10"))}</details>')
     if kind == "kg_edges":
         if exposure.get("reading"):
             return r.e(exposure["reading"])
