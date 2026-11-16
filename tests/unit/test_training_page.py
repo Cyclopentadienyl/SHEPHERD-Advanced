@@ -122,14 +122,17 @@ def test_the_page_is_the_run_bar_the_parameters_the_drawer_and_the_run_view():
     for elem_id in ("shep-train-runbar", "shep-train-dataset", "shep-train-chip",
                     "shep-train-pill", "run_name", "shep-train-reason", "shep-train-start",
                     "shep-train-continue", "shep-train-stop", "shep-train-resume",
-                    "shep-train-cancel", "shep-train-stop-confirm", "shep-train-stop-keep",
+                    "shep-train-drawer-close", "shep-train-stop-confirm", "shep-train-stop-keep",
                     "shep-train-banner", "shep-train-params", "shep-train-drawer",
                     "shep-train-runview", "shep-train-run-head", "shep-train-view-run",
                     "shep-train-charts", "resource_display"):
         assert elem_id in by_id, elem_id
     # What M5-2 retired: the Data Paths section, the Epoch Window, the native plots.
+    # R-49: the drawer's second closer (its footer's Cancel) and the run bar's
+    # "Run a new one…" line while it is open.
     for gone in ("data_dir", "epoch_window", "loss_plot", "mrr_plot", "hits_plot", "lr_plot",
-                 "export_csv_file", "status_display", "error_banner"):
+                 "export_csv_file", "status_display", "error_banner", "shep-train-cancel",
+                 "shep-train-continues"):
         assert gone not in by_id, gone
     assert not [b for b in by_id.values() if isinstance(b, gr.LinePlot)]
     for name in ("_from_datasets", "_keep_or_clear_workspace", "_load_training_config",
@@ -548,12 +551,13 @@ def test_the_run_bars_actions_and_their_one_reason():
 def test_with_the_drawer_open_continue_training_follows_the_chosen_parent():
     """The drawer's start (Continue Training, or Start branch for Branch)
     follows the chosen parent, and its reason is beside it, in the drawer's
-    footer, in its own words (ops-wiring round B1c; the skill's §9): the run
-    bar says only why its Start waits."""
+    footer, in its own words (ops-wiring round B1c; the skill's §9). The run
+    bar draws none of its actions while the drawer is open, so it says no
+    reason (R-49: "Start disabled: close Continue… to start a new run.")."""
     ws = {"row": {"name": "demo", "trainable": True, "dataset_fingerprint": "a" * 64}}
     nothing = _view(ws=ws, mode={"drawer": True, "parent": {}})
     assert nothing["start"] is False and nothing["resume"] is False
-    assert "close Continue… to start a new run" in nothing["reason"]
+    assert nothing["reason"] == ""
     assert "Continue Training disabled: choose a checkpoint first." in nothing["drawer_reason"]
     same = _view(ws=ws, mode={"drawer": True, "parent": {"chosen": True, "fingerprint": "a" * 64}})
     assert same["resume"] is True and same["drawer_reason"] == ""
@@ -590,7 +594,10 @@ def test_with_the_drawer_open_continue_training_follows_the_chosen_parent():
     # A cause before the drawer's own names the drawer's start too.
     busy = _view({"status": "running"}, ws=ws, mode={"drawer": True, "operation": "branch"})
     assert "Start branch disabled: a training job is running." in busy["drawer_reason"]
-    assert "Start and Continue… disabled: a training job is running." in busy["reason"]
+    assert busy["reason"] == ""
+    # Closed, the run bar says it again.
+    closed = _view({"status": "running"}, ws=ws, mode={})
+    assert "Start and Continue… disabled: a training job is running." in closed["reason"]
 
 
 def test_the_gpu_line_comes_from_the_runner_and_the_lock_holder():
@@ -2848,7 +2855,7 @@ def test_the_device_help_says_auto_needs_cuda_as_the_trainer_does():
 def test_the_chart_help_leads_with_the_gestures_in_paragraphs():
     title, text = tc.TOPIC_HELP["training-charts"]
     assert text.startswith(tc.charts.GESTURES + "\n\n") and "\n- The wheel over the epoch axis" in text
-    for key in ("continue_source", "checkpoint_dropdown", "continue_device", "run_name",
+    for key in ("manual_checkpoint", "checkpoint_dropdown", "continue_device", "run_name",
                 "continue_run"):
         help_text = {**tc.FIELD_HELP, **tc.TOPIC_HELP}[key][1]
         assert "\n\n" in help_text, key                      # a lead, then the rest
@@ -2867,6 +2874,109 @@ def test_continue_has_its_own_device_which_its_check_and_start_use():
     assert [tc._continue_device(v) for v in ("cpu", "cuda", "auto", None)] == [
         "cpu", "cuda", "auto", "auto"]
     assert "continue_device" in tc.FIELD_HELP
+
+
+def test_every_device_field_is_the_one_field_with_the_hosts_note(monkeypatch):
+    """R-32 and NEW-training-finetune-1: Device defaulted to auto on Training,
+    in the Continue drawer and on Fine-tune, and nothing at the field said
+    that auto (and cuda) would be refused on a host with no CUDA device. Every
+    Device field is now the one field (`device_field`), its info line the one
+    note (`DEVICE_NOTE`) on such a host and none where CUDA is visible."""
+    import torch
+
+    from src.webui.components import finetune_page as fp
+
+    def fields():
+        with gr.Blocks() as demo:
+            ctx = shell.standalone_context(demo)
+            tc.create_training_tab(ctx)
+            fp.create_finetune_page(ctx)
+        by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+        return [by_id[key] for key in ("device", "continue_device", "ft_device")]
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert tc.DEVICE_NOTE == "No CUDA device here: auto and cuda are refused; choose cpu."
+    for field in fields():
+        assert isinstance(field, gr.Radio) and field.label == "Device"
+        assert [c[1] for c in field.choices] == ["auto", "cuda", "cpu"] and field.value == "auto"
+        assert field.info == tc.DEVICE_NOTE, field.elem_id
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert all(not field.info for field in fields())
+    # One note in the page's words: no command line flag.
+    assert "--device" not in tc.DEVICE_NOTE
+
+
+def test_the_drawer_says_the_check_is_optional_beside_a_normal_check_button():
+    """R-48: the drawer said "Select a checkpoint, then click Check
+    checkpoint." while a checkpoint was chosen and the start enabled (the
+    start checks first), with Check checkpoint a small button that read as a
+    chip, and the parent's dataset a filled green box. The prompt says the
+    check is optional, beside the button in step 3's row (so they are in view
+    together, NEW-training-finetune-2); the button is a normal secondary one;
+    the dataset relation is one line of text."""
+    _demo, _ctx, by_id = _page()
+    check = by_id["shep-train-check"]
+    assert check.size != "sm" and check.variant == "secondary"
+    prompt = by_id["shep-train-check-prompt"]
+    assert prompt.parent is check.parent and "shep-train-check-row" in check.parent.elem_classes
+    assert tc.CHECK_PROMPT in prompt.value and "Optional" in tc.CHECK_PROMPT
+    assert "Select a checkpoint" not in tc.CHECK_PROMPT + tc._CONTINUE_PROMPT
+    assert "The start checks first" in tc.CHECK_PROMPT
+    ws = {"name": "demo", "row": {"name": "demo", "dataset_fingerprint": "a" * 64}, "listed": []}
+    same = tc.compare_html({"chosen": True, "fingerprint": "a" * 64}, ws)
+    assert same == ('<p class="shep-cmp-line">'
+                    + r.status_mark("ok", "Same dataset as the run bar") + "</p>")
+    unknown = tc.compare_html({"chosen": True, "fingerprint": None}, ws)
+    assert unknown.startswith('<p class="shep-cmp-line"><span class="shep-st shep-st-neutral">')
+    assert not _rules(tc.PAGE_CSS, "shep-cmp-ok") and not _rules(tc.PAGE_CSS, "shep-cmp-grey")
+
+
+def test_with_the_drawer_open_the_run_bar_draws_no_action_and_the_drawer_one_closer():
+    """R-49: while Continue… was open the run bar kept a disabled Start with
+    "Start disabled: close Continue… to start a new run." and the line "Run a
+    new one, continued from the checkpoint chosen in …", the drawer had two
+    closers (its × and its footer's Cancel), and the rarely used "Manual
+    path" took a radio row near its top. Now the run bar draws none of its
+    actions and says no reason; the × is the one closer; the typed path is
+    behind a link beside the list's note, which switches the source."""
+    demo, _ctx, by_id = _page()
+    hidden = [sel for sel, body in _rules(tc.PAGE_CSS, ".shep-rb-drawer")
+              if "display: none" in body]
+    assert any("#shep-train-start" in sel for sel in hidden)
+    assert any("#shep-train-continue" in sel for sel in hidden)
+    assert any("#shep-train-stop" in sel for sel in hidden)
+    ws = {"row": {"name": "demo", "trainable": True, "dataset_fingerprint": "a" * 64}}
+    assert _view(ws=ws, mode={"drawer": True, "parent": {}})["reason"] == ""
+    # One closer, its word drawn (it was a "×" over a 0 px wide button whose
+    # word was drawn at 0 px).
+    closers = [f for f in demo.fns.values() if f.fn is tc._on_continue_close]
+    assert [f.targets for f in closers] == [[(by_id["shep-train-drawer-close"]._id, "click")]]
+    assert by_id["shep-train-drawer-close"].value == "Close"
+    (rule,) = [body for sel, body in _rules(tc.PAGE_CSS, ".shep-x-btn") if sel.endswith(".shep-x-btn")]
+    assert "font-size: 15px" in rule and "flex: none !important" in rule
+    assert not _rules(tc.PAGE_CSS, ".shep-x-btn::before")
+    # The source: a radio kept out of view, set by the link beside the note.
+    source, link = by_id["continue_source"], by_id["shep-train-source-link"]
+    assert source.visible == "hidden"
+    assert link.parent is by_id["shep-train-parents-note"].parent
+    assert link.value == tc.source_link_html(tc.CONTINUE_FROM_LIST)
+    assert "Type a path instead ›" in link.value and 'data-act="source"' in link.value
+    (wired,) = [f for f in demo.fns.values() if f.fn is tc._on_source_link]
+    assert wired.inputs == [source] and wired.outputs == [source, link]
+    assert wired.targets == [(link._id, "click")]
+
+    class _Evt:
+        def __init__(self, act):
+            self._data = {"act": act}
+
+    assert tc._on_source_link(tc.CONTINUE_FROM_LIST, _Evt("source")) == (
+        tc.CONTINUE_FROM_PATH, tc.source_link_html(tc.CONTINUE_FROM_PATH))
+    assert tc._on_source_link(tc.CONTINUE_FROM_PATH, _Evt("source"))[0] == tc.CONTINUE_FROM_LIST
+    assert "Choose from the list instead ›" in tc.source_link_html(tc.CONTINUE_FROM_PATH)
+    assert tc._on_source_link(tc.CONTINUE_FROM_LIST, _Evt("other")) == (gr.update(), gr.update())
+    # Its text is the typed path's own help (the radio's went with it).
+    assert "continue_source" not in tc.FIELD_HELP
+    assert "only finds a checkpoint that list has" in tc.FIELD_HELP["manual_checkpoint"][1]
 
 
 def test_a_failed_runs_output_tail_is_a_disclosure_fitted_to_the_window():
@@ -2936,10 +3046,19 @@ def test_the_continue_drawer_fits_and_says_the_plan_once():
     assert ("#shep-train-drawer-why:not(:has(.shep-drawer-why)), "
             f"{tc._PAGE} #shep-train-drawer-notice:not(:has(.shep-notice-t)) "
             "{ display: none !important; }") in tc.PAGE_CSS
-    # Its blocks as dense as its field row's measure says (D03: one token for both).
-    assert "#shep-train-drawer-bd { gap: 8px !important; --shep-field-pad-b: 4px; }" in tc.PAGE_CSS
-    assert ("#shep-train-drawer-bd .block.padded { padding-top: var(--shep-field-pad-b) !important; "
-            "padding-bottom: var(--shep-field-pad-b) !important; }") in tc.PAGE_CSS
+    # Its blocks as dense as its field row's measure says (D03: one token for
+    # both), by the shared dense form (`style.py`'s `shep-form-dense`, the
+    # parameters' and Fine-tune's form's too).
+    from src.webui.style import SHELL_CSS
+
+    _demo, _ctx, by_id = _page()
+    for body in ("shep-train-drawer-bd", "shep-train-params-bd"):
+        assert "shep-form-dense" in by_id[body].elem_classes, body
+    assert ".shep-form-dense { --shep-field-pad-b: 4px; }" in SHELL_CSS
+    assert (".shep-form-dense .block.padded { padding-top: var(--shep-field-pad-b) !important; "
+            "padding-bottom: var(--shep-field-pad-b) !important; }") in SHELL_CSS
+    assert "#shep-train-drawer-bd .block.padded" not in tc.PAGE_CSS     # no copy of its own
+    assert "#shep-train-params-bd .form > .block" not in tc.PAGE_CSS
     preview = {"parent": "/w/demo/runs/gatv2/r/checkpoints/last.pt", "ok": True,
                "action": "Extend training by 30 epochs at a fixed rate of 1e-05 (epochs 151-180, "
                          "new target 180)", "sha256": "c" * 64, "inherited": {}}
@@ -3013,13 +3132,15 @@ def test_extra_epochs_sits_above_every_check_result():
 
     row = row_of(by_id["extend_epochs"])
     assert row is not None and row_of(by_id["shep-train-check"]) is row
+    # The parent's dataset under its details (R-48), then step 3's row, then
+    # the check's answer.
     body = by_id["shep-train-drawer-bd"].children
-    assert body.index(row) < body.index(by_id["shep-train-compare"]) < body.index(
-        by_id["continue_preview"])
+    assert body.index(by_id["shep-train-parent-details"]) < body.index(
+        by_id["shep-train-compare"]) < body.index(row) < body.index(by_id["continue_preview"])
     from tests.unit.test_webui_shell import side
 
     wide = side(tc.PAGE_CSS).replace(f"{tc._PAGE} ", "")
-    assert ("#continue_operation, #continue_source, #continue_device { display: flex "
+    assert ("#continue_operation, #continue_device { display: flex "
             "!important;") in wide
     assert "#checkpoint_dropdown .container { display: flex;" not in wide   # labels above
     assert "#shep-train-drawer-ft { padding: 8px 16px !important; }" in wide
@@ -3063,9 +3184,10 @@ def test_the_drawers_start_sits_in_its_footer_beside_its_reason():
     run bar says one sentence, why its own Start waits."""
     _demo, _ctx, by_id = _page()
     footer = by_id["shep-train-drawer-ft"]
+    # R-49: one closer, the × in the drawer's header; no Cancel beside the start.
     assert [getattr(child, "elem_id", None) for child in footer.children] == [
-        "shep-train-step-start", "shep-train-resume", "shep-train-cancel",
-        "shep-train-drawer-why", "shep-train-drawer-notice"]
+        "shep-train-step-start", "shep-train-resume", "shep-train-drawer-why",
+        "shep-train-drawer-notice"]
     drawer = by_id["shep-train-drawer"]
     assert drawer.children.index(by_id["shep-train-drawer-bd"]) < drawer.children.index(footer)
     runbar = by_id["shep-train-runbar"]
@@ -3078,12 +3200,11 @@ def test_the_drawers_start_sits_in_its_footer_beside_its_reason():
         return False
 
     assert not inside(by_id["shep-train-resume"], runbar)
-    assert not inside(by_id["shep-train-cancel"], runbar)
+    assert "shep-train-cancel" not in by_id
     assert "shep-drawer-only" not in tc.PAGE_CSS
     ws = {"row": {"name": "demo", "trainable": True, "dataset_fingerprint": "a" * 64}}
     refused = _view(ws=ws, mode={"drawer": True, "parent": {"chosen": True, "refused": True}})
-    assert 'class="shep-wg"' not in refused["reason"]
-    assert "<span>Start disabled: close Continue… to start a new run.</span>" in refused["reason"]
+    assert refused["reason"] == ""
     assert ("<span>Continue Training disabled: the check says this checkpoint cannot be "
             "continued.</span>") in refused["drawer_reason"]
 

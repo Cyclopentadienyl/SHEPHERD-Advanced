@@ -245,7 +245,9 @@ def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
     # The parent recorded this workspace's dataset: the same, so Continue
     # Training is on.
     assert mode["parent"]["fingerprint"] == checkpoints["state"]["row"]["dataset_fingerprint"]
-    assert r.status_mark("ok", "Trained on the dataset selected in the run bar") in compare
+    # One line of text, not a filled box (R-48).
+    assert compare == ('<p class="shep-cmp-line">'
+                       + r.status_mark("ok", "Same dataset as the run bar") + "</p>")
     assert tc.continue_refusal(mode["parent"], checkpoints["state"]) is None
 
 
@@ -1216,7 +1218,7 @@ def test_a_task_models_branch_offers_its_own_settings_at_its_values(trained_dise
     # Emptied, it is refused by its field spec in the shared words, never sent
     # as a null the child would fail on (OPS-R2); an emptied patience is off.
     assert tc.branch_sent(["task_loss_weight"], _values(task_loss_weight=None)) == (
-        {}, ["Task loss weight must be set, not null."])
+        {}, ["Task loss weight must be set."])
     assert tc.branch_sent(["early_stopping_patience"], _values(early_stopping_patience="")) == (
         {"early_stopping_patience": None}, [])
     changed = training_manager.preview_branch(child, device="cpu", requested=settings)
@@ -1256,14 +1258,11 @@ def test_a_branch_guard_shows_what_it_guards_only_where_the_parent_may_change_it
 
 
 def test_the_run_bar_and_the_run_view_say_branched_for_branch():
-    """With Branch the run bar's line says the new run is branched from the
-    chosen checkpoint, and the run view's header whether the run viewed is
-    the one branched from (`continues_html`, `run_head_html`)."""
-    chosen = {"operation": tc.BRANCH, "parent": {"chosen": True}}
-    assert "a new one, branched from the checkpoint chosen in Continue or branch a run" in (
-        tc.continues_html(chosen))
-    assert "continued from" in tc.continues_html({"parent": {"chosen": True}})
-    assert "once a checkpoint is chosen" in tc.continues_html({"operation": tc.BRANCH})
+    """With Branch the run view's header says whether the run viewed is the
+    one branched from (`run_head_html`). The run bar draws no line of its
+    own for it while the drawer is open (R-49: "Run a new one, continued
+    from the checkpoint chosen in …" beside a disabled Start)."""
+    assert not hasattr(tc, "continues_html")
     run = tc.RunRef(id="demo/gatv2/r1", label="gatv2/r1", path=Path("/nowhere/r1"),
                     workspace="demo", job=False, latest=True)
     same = tc.run_head_html(run, {"name": "demo"}, operator=False, snapshot=None,

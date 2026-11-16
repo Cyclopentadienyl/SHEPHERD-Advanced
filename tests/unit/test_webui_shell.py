@@ -1349,12 +1349,44 @@ _LAYOUT_FACTS_JS = r"""() => {
     runbar = { h: Math.round(bar.getBoundingClientRect().height),
                lines: new Set(items.map((r) => Math.round((r.top + r.bottom) / 2 / 24))).size };
   }
+  // A box's top and bottom as drawn, or null when it is not drawn.
+  const at = (e) => { if (!e) { return null; } const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 ? [Math.round(r.top), Math.round(r.bottom)] : null; };
+  // Training's Continue drawer, open: its body, step 3's row (Check checkpoint and its prompt),
+  // and what the run bar draws of its actions and says beside them (R-48, R-49,
+  // NEW-training-finetune-2).
+  let drawer = null;
+  const dr = document.getElementById('shep-train-drawer');
+  if (dr && dr.getClientRects().length) {
+    drawer = { body: at(document.getElementById('shep-train-drawer-bd')),
+               check: at(document.getElementById('shep-train-check')),
+               prompt: at(document.getElementById('shep-train-check-prompt')),
+               actions: ['shep-train-start', 'shep-train-continue', 'shep-train-stop']
+                 .filter((i) => at(document.getElementById(i))),
+               reason: document.getElementById('shep-train-reason').innerText.trim(),
+               closers: [...dr.querySelectorAll('button')].filter((b) => at(b)
+                 && /^(close|cancel)$/i.test((b.getAttribute('aria-label') || b.textContent).trim())).length };
+  }
+  // Fine-tune's form with nothing expanded: what its body leaves to scroll, and the Device,
+  // Run name and "More settings" header against the body's bottom and the footer row's top
+  // (B27-1, NEW-training-finetune-5); its job panel's Stop (NEW-training-finetune-7).
+  let finetune = null;
+  const fb = document.getElementById('ft_form_bd');
+  if (fb && fb.getClientRects().length) {
+    finetune = { scroll: fb.scrollHeight - fb.clientHeight, bottom: at(fb)[1],
+                 footer: at(document.getElementById('ft_start_ft'))[0],
+                 device: at(document.getElementById('ft_device')),
+                 runName: at(document.getElementById('ft_run_name')),
+                 more: at(document.querySelector('#ft_more > button')),
+                 stop: at(document.getElementById('ft_stop')) };
+  }
   return { layout: document.documentElement.getAttribute('data-shep-layout'),
            short: document.documentElement.hasAttribute('data-shep-short'),
            need: panels.reduce((a, p) => a + p.min, 0) + Math.max(0, panels.length - 1) * gap,
            width: box ? box.getBoundingClientRect().width + innerWidth - document.documentElement.clientWidth : 0,
            tops: panels.map((p) => p.top), narrowest: Math.min(...panels.map((p) => p.w - p.min), 0),
-           overX: se.scrollWidth - se.clientWidth, overY: se.scrollHeight - innerHeight, runbar };
+           overX: se.scrollWidth - se.clientWidth, overY: se.scrollHeight - innerHeight, runbar,
+           drawer, finetune };
 }"""
 
 #: The walk's windows, narrow to wide and back on each page: the shared
@@ -1372,6 +1404,10 @@ _WALK_SIZES = ((760, 1000, False), (1850, 960, True), (1280, 900, True), (1920, 
 #: The Diagnosis load drawer, opened at a stop of the walk (`browser.UI_WALK_JS`).
 _CHANGE_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
                   "close": "#shep-dx-change-close button"}
+#: Training's Continue drawer, opened at a stop of the walk; its one closer is
+#: the × in its header (R-49).
+_CONTINUE_DRAWER = {"click": "#shep-train-continue", "shown": "#shep-train-drawer",
+                    "close": "#shep-train-drawer-close"}
 
 
 def _walk_stops():
@@ -1386,6 +1422,10 @@ def _walk_stops():
     # to "W" (the T04 review), and to 71 px on a phone; and in a short window.
     stops += [{"size": [w, h], "page": "clinical", "open": _CHANGE_DRAWER}
               for w, h in ((1280, 900), (1366, 620), (390, 844))]
+    # Training's Continue drawer open, at the owner's window (step 3 in view
+    # without scrolling: NEW-training-finetune-2) and stacked.
+    stops += [{"size": [w, h], "page": "training", "open": _CONTINUE_DRAWER}
+              for w, h in ((1850, 960), (960, 1080))]
     # A page opened at a size, not only resized to it: at 1280 x 900 Datasets
     # (its own minimum is wider) between two pages that fit.
     stops += [{"size": [1280, 900], "page": page, "check": False}
@@ -1461,9 +1501,11 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
             assert facts["tops"] == sorted(facts["tops"]) and len(set(facts["tops"])) == len(facts["tops"]), (where, facts)
         if narrow_datasets:
             assert facts["need"] > facts["width"], s                  # its own measure, no global gate
-    wide = [s for s in ui_walk if s["size"] == "1850x960"]
+    wide = [s for s in ui_walk if s["size"] == "1850x960" and not s.get("open")]
+    # The layout's facts, not a page's own (`drawer`, `finetune`: their test's).
+    layout = lambda facts: {k: v for k, v in facts.items() if k not in ("drawer", "finetune")}  # noqa: E731
     for page in {s["page"] for s in wide}:
-        first, *_, last = [s["extra"] for s in wide if s["page"] == page]
+        first, *_, last = [layout(s["extra"]) for s in wide if s["page"] == page]
         assert first == last, (page, first, last)
     assert [(s["page"], s["extra"]["layout"]) for s in ui_walk[-3:]] == [
         ("training", "side"), ("datasets", "stack"), ("finetune", "side")]
@@ -1523,6 +1565,45 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
               for s in checked if s["size"] == "1850x960" and not s.get("open")}
     assert labels["clinical"] >= {"Model in use", "Options", "HPO terms"}
     assert labels["training"] >= {"Dataset", "Run name", "Epochs"}
+
+
+def test_the_continue_drawer_and_the_fine_tune_form_fit_the_owners_window(ui_walk):
+    """The shared walk's facts (`_LAYOUT_FACTS_JS`) for Training's Continue
+    drawer, opened at 1850 x 960 and stacked at 960 x 1080, and Fine-tune's
+    form with nothing expanded at 1850 x 960:
+
+    - R-49: with the drawer open the run bar draws none of its actions
+      (Start, Continue…, Stop) and says no reason (it kept a disabled Start
+      beside "Start disabled: close Continue… to start a new run."); the
+      drawer has one closer (its × and its footer's Cancel did the same);
+    - NEW-training-finetune-2: at 1850 x 960 step 3's Check checkpoint and
+      its prompt are inside the drawer's body as it opens (its row was cut
+      at the body's bottom edge, the prompt under it, while the start was
+      enabled);
+    - B27-1 and NEW-training-finetune-5: Fine-tune's form leaves nothing to
+      scroll, and its Device, Run name and "More settings" header are inside
+      its body, above the footer row (the body scrolled 183 px; Device and
+      Run name at 925-1017 under a body ending at 846, the header cut);
+    - NEW-training-finetune-7: with no Fine-tune job its Stop is not drawn
+      (a disabled Stop with no reason)."""
+    opened = {s["size"]: s["extra"]["drawer"] for s in ui_walk
+              if s.get("open") == "#shep-train-drawer"}
+    assert set(opened) == {"1850x960", "960x1080"}
+    for size, drawer in opened.items():
+        assert drawer["actions"] == [] and drawer["reason"] == "", (size, drawer)
+        assert drawer["closers"] == 1, (size, drawer)
+    wide = opened["1850x960"]
+    top, bottom = wide["body"]
+    for part in ("check", "prompt"):
+        assert wide[part] and top <= wide[part][0] and wide[part][1] <= bottom, (part, wide)
+    forms = [s["extra"]["finetune"] for s in ui_walk
+             if s["page"] == "finetune" and s["size"] == "1850x960"]
+    assert forms
+    for form in forms:
+        assert form["scroll"] <= 0, form
+        for part in ("device", "runName", "more"):
+            assert form[part] and form[part][1] <= form["bottom"] <= form["footer"], (part, form)
+        assert form["stop"] is None, form
 
 
 #: The four field rows' boxes and actions as drawn (D03): Fine-tune's base

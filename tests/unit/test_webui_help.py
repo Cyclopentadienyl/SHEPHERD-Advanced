@@ -405,7 +405,8 @@ def test_every_registered_help_target_exists_in_the_built_app(built):
 
 def test_no_component_keeps_ordinary_help_in_info(built):
     """``info=`` holds only text that must stay visible (the WebUI skill's §7):
-    a state set at runtime, and a field's format, unit or "off", set at build
+    a state set at runtime, the host's Device note (no CUDA device: auto and
+    cuda are refused), and a field's format, unit or "off", set at build
     time only on the Training page's base form, its Continue drawer's
     Branch fields and the Fine-tune page's fields, the one field of each
     setting (`FIELD_FORMATS`, by its setting or its model spec field), when
@@ -429,6 +430,11 @@ def test_no_component_keeps_ordinary_help_in_info(built):
                      if name in fp.FINETUNE_FIELDS})
     expected.update(rs.FIELD_INFO)
     expected.update(dp.FIELD_INFO)
+    # The one Device note, on every Device field, where no CUDA device is
+    # visible (R-32, `training_console.device_note`).
+    if tc.device_note():
+        expected.update(dict.fromkeys(("device", "continue_device", "ft_device"),
+                                      tc.DEVICE_NOTE))
     assert with_info == expected
 
 
@@ -472,7 +478,9 @@ def test_every_registered_help_text_is_within_the_budget(built):
     _demo, registry, _texts = built
     over = {entry.key: h.budget_problems(entry.text) for entry in registry.entries()}
     assert {key: problems for key, problems in over.items() if problems} == {}
-    assert len(over) >= 148
+    # 147 since R-49: the Continue drawer's source radio, and its text, went
+    # behind a link; its facts are the Checkpoint path's text.
+    assert len(over) >= 147
 
 
 def _words(text: str) -> int:

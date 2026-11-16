@@ -77,16 +77,20 @@ models; a file without a model spec is never continued or branched from the
 dashboard, decision 1), from `server_lists.list_checkpoints` (an operator
 control since it opens every checkpoint) in the shared Run → Checkpoint
 selects (`model_list`'s, as Fine-tune's parent: short options whose values
-are the listing's keys), or a typed path that locates one of them; the
-chosen checkpoint's details (its kind by `renderers.model_kind_text`, a
-frozen-backbone child named so); 3. Check, which shows what the operation
-does (the shared run plan, through the job runner's one preview of each,
-`preview_continuation` or `preview_branch`) and compares the parent's
-recorded dataset fingerprint with the workspace's current one; 4. Start in
-the drawer's footer, Continue Training or Start branch and Cancel beside
-the start's reason, which says what the check refused and what to do
-(`continue_refusal`; the skill's §9), while the run bar's Start is disabled
-("close Continue… to start a new run"). Extending a parent whose rate ended
+are the listing's keys), or a typed path that locates one of them (behind
+the link beside the list's note, `SOURCE_LINKS`); the chosen checkpoint's
+details (its kind by `renderers.model_kind_text`, a frozen-backbone child
+named so) and, in one line under them, the parent's recorded dataset
+fingerprint against the workspace's current one; 3. Check, the drawer's
+Device then Check checkpoint beside its prompt (`CHECK_PROMPT`: optional,
+the start checks first), which shows what the operation does (the shared
+run plan, through the job runner's one preview of each,
+`preview_continuation` or `preview_branch`); 4. Start in the drawer's
+footer, Continue Training or Start branch beside the start's reason, which
+says what the check refused and what to do (`continue_refusal`; the
+skill's §9). While the drawer is open the run bar draws none of its
+actions and says no reason, and the drawer's one closer is Close in its
+header (R-49). Extending a parent whose rate ended
 at 0 asks its Extra-epoch rate (the preview's `zero_rate_groups`), sent as
 `extend_lr`. **A branch's fields are the settings its parent's stage and
 task may change** (the preview's `changeable`), each the one field of its
@@ -1666,7 +1670,21 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
     HTML: one line, empty when nothing is disabled that is drawn),
     ``drawer_reason`` (the drawer footer's, beside its start, in its words:
     "Start branch disabled: …"; the skill's §9) and ``progress`` (a fraction
-    while running, else None)."""
+    while running, else None). **While the Continue drawer is open the run
+    bar draws none of its actions** (Start, Continue… and Stop: the drawer's
+    start is the one in its footer), so its reason line says nothing (R-49:
+    a disabled Start with "close Continue… to start a new run" beside it)."""
+    view = _run_bar_actions(status, ws, mode, access=access, active=active, gpu=gpu)
+    if mode.get("drawer"):
+        view["reason"] = ""
+    return view
+
+
+def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping[str, Any],
+                     *, access: Any, active: Optional[Mapping[str, Any]],
+                     gpu: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """`run_bar_view`'s decision, its reason line said as if the drawer's
+    state did not hide the run bar's actions."""
     s = status.get("status") or "idle"
     training_busy = s in ("running", "stopping")
     drawer = bool(mode.get("drawer"))
@@ -1726,7 +1744,6 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
     # The drawer is open: its start's reason is beside it, in its footer.
     why = continue_refusal(mode.get("parent") or {}, ws, operation=operation_of(mode))
     view["resume"] = why is None
-    view["reason"] = line(NO_ICON, "Start disabled: close Continue… to start a new run.")
     if why:
         view["drawer_reason"] = line(NO_ICON, f"{action} disabled: {why}")
     return view
@@ -3393,6 +3410,30 @@ def device_field(elem_id: str) -> Any:
 #: The two sources of a parent checkpoint. Both go through the same check.
 CONTINUE_FROM_LIST = "From run list"
 CONTINUE_FROM_PATH = "Manual path"
+#: **The link that switches the source** (R-49: the rarely used typed path
+#: took the drawer's first rows as a radio of its own), beside the list's
+#: note: its words for the source it switches to, from the one shown.
+SOURCE_LINKS = {CONTINUE_FROM_LIST: "Type a path instead ›",
+                CONTINUE_FROM_PATH: "Choose from the list instead ›"}
+
+
+def source_link_html(source: Any) -> str:
+    """The drawer's source link (`SOURCE_LINKS`) for the `source` shown, a
+    link-styled button the page's trigger reads (`TRIGGER_JS`: its act
+    ``source``)."""
+    shown = CONTINUE_FROM_PATH if source == CONTINUE_FROM_PATH else CONTINUE_FROM_LIST
+    return (f'<button type="button" class="shep-link" data-act="source">'
+            f'{r.e(SOURCE_LINKS[shown])}</button>')
+
+
+def _on_source_link(source, evt: gr.EventData):
+    """The source link: the other source (the hidden source radio's value,
+    whose change shows its fields and clears the check), and the link's
+    words for it; any other act, nothing."""
+    if event_act(evt) != "source":
+        return gr.update(), gr.update()
+    other = CONTINUE_FROM_LIST if source == CONTINUE_FROM_PATH else CONTINUE_FROM_PATH
+    return other, source_link_html(other)
 
 #: The drawer's title: what it does from a checkpoint (`OPERATION_CHOICES`).
 DRAWER_TITLE = "Continue or branch a run"
@@ -3402,8 +3443,15 @@ DRAWER_TITLE = "Continue or branch a run"
 STEP_RUN, STEP_CHECKPOINT, STEP_CHECK, STEP_START = (
     "1. Run", "2. Checkpoint", "3. Check", "4. Start")
 
-#: The check's prompt before a check, and after what it would check changed.
-_CONTINUE_PROMPT = "Select a checkpoint, then click <b>Check checkpoint</b>."
+#: **Step 3's prompt, beside Check checkpoint**: the check is optional, since
+#: the drawer's start checks first (R-48: "Select a checkpoint, then click
+#: Check checkpoint." while a checkpoint was chosen and the start enabled).
+#: It is the check row's own words, so it and the button are in view
+#: together (NEW-training-finetune-2); the check's answer is under them.
+CHECK_PROMPT = "Optional: it shows the plan. The start checks first anyway."
+#: The check's answer before a check, and after what it would check changed:
+#: none (the prompt beside the button says what to do).
+_CONTINUE_PROMPT = ""
 #: **Step 3's answer brought into view** once a check (Check checkpoint, or
 #: the start, which checks first) has written it: the drawer's body, the one
 #: region that scrolls (the skill's §1.1), scrolls the least that shows the
@@ -3545,8 +3593,8 @@ def _parents_note(ws: Mapping[str, Any], parents: Mapping[str, Any], problem: Op
     if problem:
         return f'<span class="shep-muted">{r.e(problem)}</span>'
     runs = len(_model_list().runs_of(parents))
-    return (f'<span class="shep-muted">server list · {runs} run{"s" if runs != 1 else ""}, '
-            f'{len(parents)} checkpoint{"s" if len(parents) != 1 else ""} · latest first</span>')
+    return (f'<span class="shep-muted">Server list: {runs} run{"s" if runs != 1 else ""}, '
+            f'{len(parents)} checkpoint{"s" if len(parents) != 1 else ""}, latest first.</span>')
 
 
 def parent_details_html(item: Optional[Mapping[str, Any]], operation: str = CONTINUE) -> str:
@@ -3716,9 +3764,10 @@ def _chosen(source: str, listed: Any, manual: Any, parents: Mapping[str, Any],
 def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
     """The parent's recorded dataset fingerprint against the workspace's
     current one, in the shared status mark (`renderers.status_mark`): ● the
-    same; when it differs, the ✕ of a refusal (the start refuses another
-    dataset, so the drawer's start is disabled) with the listed workspace it
-    matches, or "matches no listed workspace"; or what is not known yet."""
+    same, one line of text; when it differs, the ✕ of a refusal in its box
+    (the start refuses another dataset, so the drawer's start is disabled)
+    with the listed workspace it matches, or "matches no listed workspace";
+    or what is not known yet, one line beside the ○ of a state."""
     if not parent.get("chosen"):
         return ""
     recorded, current = parent.get("fingerprint"), workspace_fingerprint(ws)
@@ -3728,14 +3777,14 @@ def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
                if parent.get("source") == CONTINUE_FROM_PATH and not parent.get("checked")
                else "The parent records no dataset fingerprint; the start checks it against "
                     "this workspace’s data.")
-        return f'<div class="shep-cmp shep-cmp-grey">{r.e(why)}</div>'
+        return f'<p class="shep-cmp-line">{r.status_mark("neutral", why)}</p>'
     now = (f'this workspace now: <b>{r.e(ws.get("name"))}</b> · '
            + r.fingerprint_html("dataset fingerprint", current, digits=digits, copy=False))
     if current and recorded == current:
-        # Said once, as a relation: the fingerprint itself is the run bar's.
-        return ('<div class="shep-cmp shep-cmp-ok">'
-                + r.status_mark("ok", "Trained on the dataset selected in the run bar")
-                + "</div>")
+        # Said once, as a relation in one line of text (R-48: it was a filled
+        # green box before any check): the fingerprint itself is the run bar's.
+        return f'<p class="shep-cmp-line">{r.status_mark("ok", "Same dataset as the run bar")}</p>'
+
     listed = ws.get("listed") or []
     trained = r.trained_on_html(recorded, listed, digits=digits)
     built = r.built_text((ws.get("row") or {}).get("build"))
@@ -4321,20 +4370,6 @@ def _resume(operation, ws, device, source, listed, manual, extend_epochs, extend
     return said, text, *shown, mode, branch
 
 
-def continues_html(mode: Optional[Mapping[str, Any]]) -> str:
-    """The run bar's line for the run the drawer would start (while it is
-    open): a new run of its own (contract M3a-2), continued or branched, by
-    the drawer's operation, from the checkpoint the drawer shows chosen
-    (named there once; the run view's header says whether the run it shows
-    is that one)."""
-    done = OPERATION_VERBS[operation_of(mode)][1]
-    chosen = ((mode or {}).get("parent") or {}).get("chosen")
-    return (f'<span class="shep-rb-k">Run</span> a new one, {done} from the checkpoint chosen '
-            f'in {DRAWER_TITLE}' if chosen else
-            '<span class="shep-rb-k">Run</span> <span class="shep-muted">a new one, once a '
-            f'checkpoint is chosen in {DRAWER_TITLE}</span>')
-
-
 def _toggle_continue_source(source):
     """The run list's two selects, its Refresh and the chosen checkpoint's
     details, or the typed path."""
@@ -4441,15 +4476,14 @@ FIELD_HELP = {
         "settings its stage allows, or none for the same settings.\n"
         "Both train a new run of their own.",
     ),
-    "continue_source": (
-        "Checkpoint source",
-        "Where the checkpoint to continue or branch from comes from.\n\n"
-        "- From run list: the run bar's dataset's model records (bases and task models), as "
-        "the server lists them.\n"
-        "- Manual path: a typed path. It only finds a checkpoint that list has; any other "
-        "file is refused, unopened.\n\n"
-        "Both are checked the same way, and a file without a model spec is never continued "
-        "here. Listing opens each checkpoint, so it is an operator control.",
+    "manual_checkpoint": (
+        "Checkpoint path",
+        "A checkpoint by its typed path, instead of the run list's Run and Checkpoint.\n\n"
+        "- It only finds a checkpoint that list has (the run bar's dataset's bases and task "
+        "models); any other file is refused, unopened.\n"
+        "- It is checked as a listed one is, and a file without a model spec is never "
+        "continued here.\n"
+        "- \"Choose from the list instead ›\" goes back to the run list.",
     ),
     "continue_run": (
         STEP_RUN,
@@ -4468,11 +4502,6 @@ FIELD_HELP = {
         "The metric is the Trainer's validation figure, not a test result. The table under it "
         "names the file and its model fingerprint, which the server checks the file's bytes "
         "against.",
-    ),
-    "manual_checkpoint": (
-        "Checkpoint path",
-        "The typed or pasted path of a model record the run list has.\n\n"
-        "It is checked the same way as a listed one.",
     ),
     "continue_device": (
         "Device",
@@ -4564,7 +4593,6 @@ def create_training_tab(ctx: Any) -> None:
             with gr.Row(elem_classes=["shep-rb-row", "shep-rb-row2"]):
                 run_name = gr.Textbox(label="Run name", value="", max_lines=1, elem_id="run_name",
                                       scale=0, min_width=240, container=False)
-                continues = plain_html("", elem_id="shep-train-continues")
                 reason = plain_html('<div class="shep-rb-reason"></div>', elem_id="shep-train-reason",
                                     js_on_load=TRIGGER_JS)
                 # Labelled by the render's one gated-button rule (`ACTION_LABELS`).
@@ -4662,19 +4690,27 @@ def create_training_tab(ctx: Any) -> None:
             with gr.Column(elem_id="shep-train-drawer", elem_classes=["shep-panel"], scale=10,
                            min_width=360):
                 with gr.Row(elem_classes=["shep-panel-hd", "shep-drawer-hd"]):
-                    plain_html(f'<h2>{r.e(DRAWER_TITLE)}</h2><span class="shep-muted">replaces '
-                               'the parameters until closed</span>',
+                    plain_html(f'<h2>{r.e(DRAWER_TITLE)}</h2><span class="shep-muted">in place of '
+                               'the parameters</span>',
                                elem_id="shep-train-drawer-title")
                     close_btn = gr.Button("Close", scale=0, elem_id="shep-train-drawer-close",
                                           elem_classes=["shep-x-btn"])
-                with gr.Column(elem_id="shep-train-drawer-bd", elem_classes=["shep-train-bd"]):
+                with gr.Column(elem_id="shep-train-drawer-bd",
+                               elem_classes=["shep-train-bd", "shep-form-dense"]):
                     continue_operation = gr.Radio(choices=OPERATION_CHOICES, value=CONTINUE,
                                                   label="Operation",
                                                   elem_id="continue_operation")
+                    # The source: the run list, or a typed path behind the
+                    # link beside the list's note (R-49); the source itself is
+                    # this radio, kept out of view, which the link sets.
                     continue_source = gr.Radio(choices=[CONTINUE_FROM_LIST, CONTINUE_FROM_PATH],
                                                value=CONTINUE_FROM_LIST, label="Checkpoint source",
-                                               elem_id="continue_source")
-                    parents_note = plain_html("", elem_id="shep-train-parents-note")
+                                               visible="hidden", elem_id="continue_source")
+                    with gr.Row(elem_classes=["shep-train-source-row"]):
+                        parents_note = plain_html("", elem_id="shep-train-parents-note")
+                        source_link = plain_html(source_link_html(CONTINUE_FROM_LIST),
+                                                 elem_id="shep-train-source-link",
+                                                 js_on_load=TRIGGER_JS)
                     # Two steps (the GB10 WebUI recheck: one option per file, each the
                     # run, epoch, file, kind and fingerprint, read as a wall of text):
                     # the run, then its checkpoint, each in a few words; the chosen
@@ -4689,10 +4725,12 @@ def create_training_tab(ctx: Any) -> None:
                     parent_details = plain_html("", elem_id="shep-train-parent-details")
                     manual_checkpoint = gr.Textbox(label="Checkpoint path", value="", max_lines=1,
                                                    visible=False, elem_id="manual_checkpoint")
+                    # The chosen parent's dataset against the run bar's, one
+                    # line under its details (R-48).
+                    compare = plain_html("", elem_id="shep-train-compare")
                     # The device is part of the check, so it is here, not only
                     # in the parameters the drawer covers.
-                    continue_device = gr.Radio(label="Device", choices=["auto", "cuda", "cpu"],
-                                               value="auto", elem_id="continue_device")
+                    continue_device = device_field("continue_device")
                     # Extra epochs (shown for a finished checkpoint) and its rate
                     # (for one whose rate ended at 0) beside Check checkpoint,
                     # above what the check says (M5-3: under a long result it
@@ -4710,11 +4748,14 @@ def create_training_tab(ctx: Any) -> None:
                         extend_lr = gr.Number(label=EXTEND_WORDS["extend_lr"], value=None,
                                               visible=False, elem_id="extend_lr", scale=0,
                                               min_width=0)
-                        check_continue_btn = gr.Button("Check checkpoint", size="sm", scale=0,
+                        # A normal secondary button, the step's action (R-48:
+                        # a small one read as a chip).
+                        check_continue_btn = gr.Button("Check checkpoint", scale=0,
                                                        elem_id="shep-train-check")
-                    compare = plain_html("", elem_id="shep-train-compare")
-                    continue_preview = plain_html(f'<p class="shep-note">{_CONTINUE_PROMPT}</p>',
-                                                  elem_id="continue_preview")
+                        plain_html(f'<span class="shep-note">{r.e(CHECK_PROMPT)}</span>',
+                                   elem_id="shep-train-check-prompt",
+                                   elem_classes=["shep-field-aside"])
+                    continue_preview = plain_html(_CONTINUE_PROMPT, elem_id="continue_preview")
                     # Branch: the settings its parent's stage and task may
                     # change, each the one field of its setting, shown after a
                     # check at the parent's value (`_branch_updates`).
@@ -4736,7 +4777,6 @@ def create_training_tab(ctx: Any) -> None:
                     resume_btn = gr.Button(ACTION_LABELS["resume"], variant="primary",
                                            interactive=False, scale=0,
                                            elem_id="shep-train-resume")
-                    cancel_btn = gr.Button("Cancel", scale=0, elem_id="shep-train-cancel")
                     drawer_reason = plain_html("", elem_id="shep-train-drawer-why")
                     drawer_notice = plain_html("", elem_id="shep-train-drawer-notice")
 
@@ -4890,9 +4930,9 @@ def create_training_tab(ctx: Any) -> None:
         _continue_device, inputs=[device], outputs=[continue_device],
         show_progress="hidden", **in_order).then(**chosen_step).then(**view_step).then(
         **ctx.chip_refresh)
-    for closer in (cancel_btn, close_btn):
-        closer.click(_on_continue_close, inputs=[mode], outputs=[mode],
-                     show_progress="hidden", **in_order).then(**view_step)
+    # One closer, Close in the drawer's header (R-49: a footer Cancel did the same).
+    close_btn.click(_on_continue_close, inputs=[mode], outputs=[mode],
+                    show_progress="hidden", **in_order).then(**view_step)
     # Refresh, then the chosen option's file as the list holds it now: a
     # kept option fires no selection event, so the record, the details and
     # the check follow it here (`_on_refreshed`), then the drawer's start.
@@ -4933,6 +4973,10 @@ def create_training_tab(ctx: Any) -> None:
     # bar's group (B46-races): the list, the choice and the check are drawn
     # from the session's workspace, so one drawn from the workspace before is
     # never applied after a newer one.
+    # The source link sets the source (`_on_source_link`), whose change below
+    # shows its fields and clears the check.
+    source_link.click(_on_source_link, inputs=[continue_source],
+                      outputs=[continue_source, source_link], show_progress="hidden", **in_order)
     continue_source.change(fn=_toggle_continue_source, inputs=[continue_source],
                            outputs=[continue_run, checkpoint_dropdown, refresh_ckpt_btn,
                                     parent_details, manual_checkpoint], show_progress="hidden",
@@ -4977,8 +5021,6 @@ def create_training_tab(ctx: Any) -> None:
           outputs=[branch_by_name[name] for name in branch_dependent], queue=False,
           show_progress="hidden")
 
-    # The run bar's line for the run the drawer would start (`continues_html`).
-    mode.change(continues_html, inputs=[mode], outputs=[continues], show_progress="hidden")
 
 
 #: The parameters' fold, stacked (R-60): "Show" opens the body, "Hide" folds it again; the
@@ -5109,12 +5151,12 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} button.primary:not(:disabled):hover {{ background: var(--shep-accent-600) !important; border-color: var(--shep-accent-600) !important; }}
 {_PAGE} #shep-train-stop:not(:disabled) {{ color: var(--shep-red-700) !important; border-color: var(--shep-red-200) !important; background: #fff !important; }}
 {_PAGE} .shep-rb-row > button:disabled {{ background: var(--shep-grey-50) !important; border: 1px solid var(--shep-grey-200) !important; color: var(--shep-grey-600) !important; opacity: 1 !important; box-shadow: none !important; cursor: not-allowed; }}
-{_PAGE} #shep-train-continues {{ display: none !important; }}
-{_PAGE} .shep-rb-drawer #shep-train-continue, {_PAGE} .shep-rb-drawer #shep-train-stop {{ display: none !important; }}
+/* While the Continue drawer is open the run bar draws none of its actions: the drawer's start is
+   in its footer (R-49: a disabled Start and its reason stayed). */
+{_PAGE} .shep-rb-drawer #shep-train-start, {_PAGE} .shep-rb-drawer #shep-train-continue, {_PAGE} .shep-rb-drawer #shep-train-stop {{ display: none !important; }}
 /* No training job runs or stops: Stop has nothing to stop and is not drawn (R-39: a visible,
    disabled Stop beside "Stop disabled: no training is running."). */
 {_PAGE} .shep-rb-nojob #shep-train-stop {{ display: none !important; }}
-{_PAGE} .shep-rb-drawer #shep-train-continues {{ display: block !important; flex: 0 1 auto !important; }}
 {_PAGE} .shep-rb-k {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); margin-right: 8px; }}
 {_PAGE} .shep-rb-confirm {{ display: none !important; }}
 {_PAGE} .shep-rb-confirming .shep-rb-confirm {{ display: flex !important; }}
@@ -5146,8 +5188,10 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-drawer-title {{ flex: 1 1 auto !important; }}
 {_PAGE} #shep-train-drawer-title .html-container > div {{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }}
 {_PAGE} #shep-train-drawer-title h2 {{ font-size: var(--shep-title-size); font-weight: 600; margin: 0; }}
-{_PAGE} .shep-x-btn {{ font-size: 0 !important; width: 32px; height: 32px; min-width: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important; }}
-{_PAGE} .shep-x-btn::before {{ content: "×"; font-size: 20px; color: var(--shep-muted); }}
+/* The drawer's one closer (R-49), its word drawn as words: it was a "×" drawn over a 0 px wide
+   button whose "Close" was drawn at 0 px (a target of 0 x 32, and text off the type scale). */
+{_PAGE} .shep-x-btn {{ flex: none !important; width: auto !important; min-width: 0 !important; height: 32px; padding: 0 8px !important; font-size: 15px !important; font-weight: 400 !important; color: var(--shep-text-2) !important; background: none !important; border: 0 !important; box-shadow: none !important; }}
+{_PAGE} .shep-x-btn:hover {{ text-decoration: underline; }}
 /* The dataset comparison and the check result sit in the drawer's one container, the panel:
    a tint and the status mark's lead set them apart, never a border of their own (the skill's
    §2: no bordered box inside a box). A result that can continue has no tint. */
@@ -5155,8 +5199,8 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-cmp p, {_PAGE} .shep-check p {{ margin: 4px 0 0; }}
 /* A refusal (the ✕ of the shared status mark: the start refuses it) is tinted red, the skill's §6. */
 {_PAGE} .shep-cmp-red, {_PAGE} .shep-check-red {{ background: var(--shep-red-50); color: var(--shep-red-700); }}
-{_PAGE} .shep-cmp-ok {{ background: var(--shep-green-50); color: var(--shep-green-800); }}
-{_PAGE} .shep-cmp-grey {{ background: var(--shep-grey-50); color: var(--shep-grey-800); }}
+/* The parent's dataset as one line of text (R-48), its mark the shared status mark's. */
+{_PAGE} .shep-cmp-line {{ margin: 0; font-size: 15px; }}
 {_PAGE} .shep-check-h {{ font-weight: 600; margin-bottom: 4px; }}
 {_PAGE} .shep-check code {{ overflow-wrap: anywhere; word-break: normal; }}
 /* The check's model spec and settings (`_check_html`): summary lists and one closed disclosure in
@@ -5165,10 +5209,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-check .shep-kv {{ font-size: inherit; gap: 4px 14px; margin-top: 6px; }}
 {_PAGE} .shep-inherit {{ margin-top: 8px; }}
 {_PAGE} .shep-inherit > summary {{ cursor: pointer; font-weight: 600; min-height: 24px; }}
-/* The drawer's footer, under its body and never scrolled with it: the step, the start and Cancel,
+/* The drawer's footer, under its body and never scrolled with it: the step and the start,
    then the start's reason (the render's) and its last notice, each taking the line's rest, wrapping
    under the buttons when narrow; an empty one takes no room. */
-{_PAGE} #shep-train-drawer-ft {{ flex: none !important; }}
 {_PAGE} #shep-train-drawer-ft > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; white-space: nowrap; }}
 {_PAGE} #shep-train-drawer-ft > button:disabled {{ background: var(--shep-grey-50) !important; border: 1px solid var(--shep-grey-200) !important; color: var(--shep-grey-600) !important; opacity: 1 !important; box-shadow: none !important; cursor: not-allowed; }}
 {_PAGE} #shep-train-drawer-ft > .block {{ width: auto !important; }}
@@ -5214,7 +5257,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 /* The chosen checkpoint's details: the one summary list in the drawer's panel, no box of its own
    (`parent_details_html`). */
 {_PAGE} #shep-train-parent-details:not(:has(.shep-ckpt)) {{ display: none !important; }}
-{_PAGE} .shep-ckpt .shep-kv {{ font-size: 14px; gap: 4px 14px; }}
+{_PAGE} .shep-ckpt .shep-kv {{ font-size: 14px; gap: 2px 14px; }}
 /* Extra epochs (when shown) beside Check checkpoint, above what the check says. */
 {_PAGE} .shep-train-check-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
 {_PAGE} .shep-train-check-row > * {{ flex: 0 0 auto !important; width: auto !important; }}
@@ -5225,7 +5268,16 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #extend_epochs [data-testid="block-info"], {_PAGE} #extend_lr [data-testid="block-info"] {{ margin: 0 !important; }}
 {_PAGE} #extend_epochs input[type="number"], {_PAGE} #extend_lr input[type="number"] {{ width: 96px; }}
 {_PAGE} #shep-train-check {{ align-self: flex-end; width: auto !important; min-width: max-content !important; }}
+/* Step 3's prompt beside the button, its words wrapping in the row's rest (`CHECK_PROMPT`); the
+   check's answer under the row takes no room until there is one. */
+{_PAGE} .shep-train-check-row > #shep-train-check-prompt {{ flex: 1 1 180px !important; min-width: 0 !important; align-self: center !important; }}
+{_PAGE} #shep-train-check-prompt .shep-note {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
+{_PAGE} #continue_preview:not(:has(p, div)) {{ display: none !important; }}
 {_PAGE} #shep-train-parents-note {{ margin-top: -4px; }}
+/* The list's note and, at its end, the link to a typed path instead (R-49). */
+{_PAGE} .shep-train-source-row {{ align-items: baseline !important; flex-wrap: wrap !important; gap: 2px 12px !important; }}
+{_PAGE} .shep-train-source-row > #shep-train-parents-note {{ flex: 1 1 auto !important; width: auto !important; min-width: 0 !important; }}
+{_PAGE} .shep-train-source-row > #shep-train-source-link {{ flex: none !important; width: auto !important; }}
 /* The base form's fields, and the drawer's Branch fields, in columns of at least 240 px (one in a
    narrow panel), the group drawn as no box of its own (the skill's §2: one container per region,
    the panel). */
@@ -5255,26 +5307,19 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-page {{ flex: 1 1 auto; min-height: 0; height: auto; }}
   {_PAGE} #shep-train-params-bd, {_PAGE} #shep-train-drawer-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-train-params-bd > *, {_PAGE} #shep-train-drawer-bd > * {{ flex-shrink: 0 !important; }}
-  /* The fields as dense as drawn, so the three groups fit at 1920 × 1080 without scrolling. */
-  {_PAGE} #shep-train-params-bd .form > .block {{ padding-top: 4px !important; padding-bottom: 4px !important; }}
-  {_PAGE} #shep-train-params-bd .form > .block [data-testid="block-info"] {{ margin-bottom: 4px !important; padding-top: 2px !important; padding-bottom: 2px !important; }}
-  {_PAGE} #shep-train-params-bd .form > .block input[type="number"], {_PAGE} #shep-train-params-bd .form > .block input[type="text"] {{ padding-top: 6px !important; padding-bottom: 6px !important; }}
-  /* The Continue drawer as dense: it fits at 1920 x 1080 with Extra epochs on screen, as
-     drawn (M5-3: 821 px of content in 684); a shorter window scrolls its body inside. */
-  {_PAGE} #shep-train-drawer-bd {{ gap: 8px !important; --shep-field-pad-b: 4px; }}
-  {_PAGE} #shep-train-drawer-bd .block.padded {{ padding-top: var(--shep-field-pad-b) !important; padding-bottom: var(--shep-field-pad-b) !important; }}
-  {_PAGE} #shep-train-drawer-bd [data-testid="block-info"] {{ margin-bottom: 4px !important; padding-top: 2px !important; padding-bottom: 2px !important; }}
-  {_PAGE} #shep-train-drawer-bd .wrap label {{ padding-top: 4px !important; padding-bottom: 4px !important; }}
-  {_PAGE} #shep-train-drawer-bd input[type="number"], {_PAGE} #shep-train-drawer-bd input[type="text"] {{ padding-top: 6px !important; padding-bottom: 6px !important; }}
+  /* The parameters and the Continue drawer are dense forms (`shep-form-dense`, the shared
+     style sheet's): the three groups fit at 1920 x 1080, and at 1850 x 960 the drawer shows
+     step 3 (its device, Check checkpoint and its prompt) without scrolling
+     (NEW-training-finetune-2); a shorter window scrolls the body inside. */
   {_PAGE} #shep-train-drawer-bd .shep-cmp, {_PAGE} #shep-train-drawer-bd .shep-check {{ padding: 8px 12px; }}
   /* In every check result at 1920 x 1080 (M5-3: the first check of a finished parent and a
      parent whose dataset differs overflowed by 20 and 118 px): the source's label beside its
      choices, and the results' lines closer. */
-  {_PAGE} #continue_operation, {_PAGE} #continue_source, {_PAGE} #continue_device {{ display: flex !important; flex-wrap: wrap; align-items: center; gap: 2px 10px; }}
-  {_PAGE} #continue_operation > [data-testid="block-info"], {_PAGE} #continue_source > [data-testid="block-info"], {_PAGE} #continue_device > [data-testid="block-info"] {{ margin: 0 !important; }}
+  {_PAGE} #continue_operation, {_PAGE} #continue_device {{ display: flex !important; flex-wrap: wrap; align-items: center; gap: 2px 10px; }}
+  {_PAGE} #continue_operation > [data-testid="block-info"], {_PAGE} #continue_device > [data-testid="block-info"] {{ margin: 0 !important; }}
   /* The run and checkpoint selects keep their labels above them, so each box has the drawer's
      width for its option's few words (the run's Refresh beside its box). */
-  {_PAGE} #shep-train-drawer-bd {{ gap: 6px !important; }}
+  {_PAGE} #shep-train-drawer-bd {{ gap: 4px !important; }}
   {_PAGE} #shep-train-drawer-ft {{ padding: 8px 16px !important; }}
   {_PAGE} #shep-train-drawer-ft .html-container, {_PAGE} #shep-train-drawer-ft .shep-html {{ padding: 0 !important; }}
   {_PAGE} #shep-train-drawer-bd .shep-cmp, {_PAGE} #shep-train-drawer-bd .shep-check {{ font-size: 14px; line-height: 1.4; }}
