@@ -3218,11 +3218,16 @@ in place.
 drawer "Load for inference" over the results and the details: the workspace select (the
 server's list; the serving workspace is chosen first) with the chosen workspace said once under
 it (when it was built, its dataset fingerprint with Copy, its origin and its record's state, the
-line Research › Models shows), "In use now" on top, the latest four runs ("Show older runs" for
-the rest), each run named once in its heading ("Run smoke-ft · GATv2 2026-10-17 09:15") and its
-checkpoints under it by what they are ("Latest save, 6 epochs completed"), each with its task
-("Disease · frozen graph backbone" for a frozen-backbone child), the selected checkpoint's facts,
-"Compare in Research › Models ›", and "Load this model" / Cancel. Load asks once ("Reload the pipeline
+line Research › Models shows), a search (names, or a model fingerprint by its first hex digits)
+and the task filter, then the list Research › Models draws: each run one row ("smoke-ft · GATv2
+2026-10-17 09:15", its task, its operation such as "Fine-tune, frozen", epochs completed, saved
+files) that folds and unfolds its checkpoints, each by what it is ("Latest save", "Best pooled
+MRR") with its model fingerprint; the latest four runs and the run of the model in use, open with
+that checkpoint marked "In use" ("Show older runs" for the rest). Beside the list, the selected
+checkpoint's facts, a checkpoint trained on the workspace's current dataset said so by that
+relation; the list and the facts each scroll on their own (in a narrow window the facts come under
+the list, a chosen row brings them into view, "↑ Back to the list" returns to it). Then "Compare
+in Research › Models ›", and "Load this model" / Cancel. Load asks once ("Reload the pipeline
 with <12 hex> for every session?", from → to, with the changed rows marked) and reloads the
 pipeline with the workspace and checkpoint the server lists. **The reload serves only the model
 the question named**: it compares its own read of the checkpoint with that fingerprint before

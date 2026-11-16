@@ -3261,11 +3261,14 @@ backbone"）。"This result" 只顯示結果本身帶有的內容：先給答案
 **Change model…**（沒有服務任何模型時為 "Load a model…"；操作者控制項）會打開蓋住結果與細節的
 抽屜 "Load for inference"：workspace 選單（伺服器的清單；預設選中正在服務的 workspace），其下說一次
 所選 workspace 是什麼（建置時間、可 Copy 的 dataset fingerprint、來源與其紀錄的狀態，與 Research ›
-Models 顯示的同一行）、置頂的 "In use now"、最近四個 run（其餘在 "Show older runs"），每個 run 只在
-標題中命名一次（"Run smoke-ft · GATv2 2026-10-17 09:15"），其下的 checkpoint 依其性質命名（"Latest
-save, 6 epochs completed"），各附任務（frozen-backbone 子模型為 "Disease · frozen graph
-backbone"）、選中 checkpoint 的資料、"Compare in Research › Models ›"，以及 "Load this model" /
-Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every session?"，from → to，
+Models 顯示的同一行）、搜尋（名稱，或 model fingerprint 的前幾個十六進位字元）與任務篩選，接著是
+Research › Models 畫的同一份清單：每個 run 一列（"smoke-ft · GATv2 2026-10-17 09:15"、任務、操作如
+"Fine-tune, frozen"、已完成的 epoch、存檔數），可摺疊與展開其 checkpoint，每個依其性質命名（"Latest
+save"、"Best pooled MRR"）並附其 model fingerprint；顯示最近四個 run 與目前使用中模型所在的 run，後者
+展開並把那個 checkpoint 標為 "In use"（其餘在 "Show older runs"）。清單旁是選中 checkpoint 的資料，以
+所選 workspace 目前 dataset 訓練的 checkpoint 以這層關係說明；清單與資料各自捲動（窄視窗時資料在清單
+下方，選一列會把資料帶入視野，"↑ Back to the list" 回到該列）。然後是 "Compare in Research › Models
+›"，以及 "Load this model" / Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every session?"，from → to，
 變更的列會標出），並以伺服器列出的 workspace 與 checkpoint 重新載入 pipeline。**重新載入只服務
 問句中的那個模型**：它在發布任何東西之前，把自己讀到的 checkpoint 與那個指紋比對，因此期間被改寫
 的檔案（執行中的訓練工作每個 epoch 都會改寫它的 `last.pt`，而重新載入會先讀圖譜）不會改變任何
