@@ -90,8 +90,10 @@ def get_deployment_settings(request: Request) -> Dict[str, Any]:
     locations; null: not set), the saved value, whether a saved change is
     ``pending``, whether the environment overrides a saved value (``overridden``), and
     the ``problem`` that turns its feature off; the saved settings file, the
-    deployment mode and the GPU lock. The same view as Settings and
-    ``scripts/deployment_settings.py show`` (`src.utils.deployment_view`).
+    deployment mode and the GPU lock; the pending keys this service's
+    start-up settings hold back (``held_back``: they apply at a start without
+    them). The same view as Settings and ``scripts/deployment_settings.py
+    show`` (`src.utils.deployment_view`).
 
     Read-only and open, like the operator-access status: for a request D8
     does not allow (`check_operator_access`), every path is null, a refused

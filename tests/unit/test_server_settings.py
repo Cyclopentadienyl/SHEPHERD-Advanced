@@ -1105,6 +1105,60 @@ class TestSavingApplyingAndRepairing:
             assert store.apply_saved(env).pending
         assert store.apply_saved(env).applied
 
+    def test_a_value_the_service_start_up_setting_overrides_is_not_applied_there(
+            self, store, saved_file, folders):
+        """T03 review (P2): a service started with the workspaces root in its
+        environment saves another folder in Settings. Applied there, the
+        service would keep its own lock while a command run by hand with no
+        variable took the saved folder's: both held at once. The overridden
+        key is held back (pending, its applied value kept); the others apply;
+        the hand command's lock is unchanged (refused, as before the save)."""
+        from src.utils.gpu_lock import GpuLockNotConfigured, take_gpu_lock
+
+        path, environ = saved_file
+        service = {**environ, ss.ENV_WORKSPACES_ROOT: str(folders["workspaces"])}
+        hand = dict(environ)
+        assert ss.gpu_lock_location(hand).unset
+        assert store.save({"workspaces_root": str(folders["other"]),
+                           "registry": str(folders["registry"])}, service).saved
+        outcome = store.apply_saved(service)
+        assert outcome.applied and outcome.pending, outcome.message
+        assert "a start-up setting sets the workspaces folder for this service" in outcome.message
+        saved = ds.read_saved(environ)
+        assert saved.pending == ("workspaces_root",)
+        assert "workspaces_root" not in saved.applied
+        assert ss.cohort_registry(hand).value == folders["registry"].resolve()
+        assert ss.gpu_lock_location(hand).unset                 # not moved to the saved folder
+        assert ss.gpu_lock_location(service).value == (folders["workspaces"].resolve()
+                                                       / ss.GPU_LOCK_FILE_NAME)
+        with take_gpu_lock("training", "the service's job", environ=service) as job:
+            assert job.held
+            with pytest.raises(GpuLockNotConfigured):
+                take_gpu_lock("training", "train_model.py by hand", environ=hand)
+        again = store.apply_saved(service)                      # the startup Apply too
+        assert not again.applied and again.pending
+        assert "applies at a start without that setting" in again.message
+        # A start without the setting applies it, as for any pending change.
+        assert store.apply_saved(hand).applied
+        assert ss.gpu_lock_location(hand).value == (folders["other"].resolve()
+                                                    / ss.GPU_LOCK_FILE_NAME)
+
+    def test_a_saved_value_equal_to_the_start_up_setting_is_applied(
+            self, store, saved_file, folders):
+        """The same folder (compared as a path) gives every process one lock,
+        so it is applied as usual, and a list of evidence folders alike."""
+        path, environ = saved_file
+        service = {**environ, ss.ENV_WORKSPACES_ROOT: str(folders["workspaces"]) + "/",
+                   ss.ENV_TRAINING_EVIDENCE_DIRS: os.pathsep.join(
+                       [str(folders["evidence-a"]), "", str(folders["evidence-b"])])}
+        assert store.save({"workspaces_root": str(folders["workspaces"]),
+                           "training_evidence_dirs": [str(folders["evidence-a"]),
+                                                      str(folders["evidence-b"])]},
+                          service).saved
+        outcome = store.apply_saved(service)
+        assert outcome.applied and not outcome.pending, outcome.message
+        assert ss.gpu_lock_location(environ).value == ss.gpu_lock_location(service).value
+
     def test_a_crash_between_the_write_and_the_replace_leaves_the_old_file(
             self, saved_file, folders):
         """The one writer stages the new bytes beside the file and replaces it
@@ -1255,6 +1309,26 @@ class TestTheOneViewOfTheDataLocations:
         assert view.pending_reason.startswith("Saved, not applied yet: press Apply")
         assert view.gpu_lock.value == folders["workspaces"].resolve() / ss.GPU_LOCK_FILE_NAME
         assert not view.nothing_set
+
+    def test_a_held_back_change_is_said_as_such_and_not_offered_to_apply(
+            self, saved_file, folders):
+        """A pending change a start-up setting of this process holds back is
+        named (`held`), and the reason says so, not "press Apply"."""
+        from src.utils.deployment_view import as_dict, deployment_view
+
+        path, environ = saved_file
+        _write_saved(path, {}, saved={"workspaces_root": str(folders["other"])})
+        service = {**environ, ss.ENV_WORKSPACES_ROOT: str(folders["workspaces"])}
+        view = deployment_view(service)
+        assert view.pending == ("workspaces_root",) and view.held == ("workspaces_root",)
+        assert view.applicable == ()
+        assert view.pending_reason == (
+            "Saved, not applied yet: a start-up setting sets the workspaces folder for this "
+            "service, so the saved value applies at a start without that setting.")
+        assert as_dict(view, paths_shown=False)["held_back"] == ["workspaces_root"]
+        alone = deployment_view(environ)                        # no start-up setting here
+        assert alone.held == () and alone.applicable == ("workspaces_root",)
+        assert alone.pending_reason.startswith("Saved, not applied yet: press Apply")
 
     def test_a_refused_value_is_shown_with_what_was_set_never_as_not_set(
             self, saved_file, tmp_path):

@@ -2793,8 +2793,10 @@ yet …」）並提供 **Apply**，下次啟動時也會套用。所以工作看
 分裂。
 
 **啟動時的設定優先**：由環境變數設定的列顯示「Set when the service started」；它的路徑框與 Save 只
-改變儲存的值，顯示為「Saved, applies when the start-up setting is removed」。沒有任何東西會把環境
-變數的值寫進檔案。
+改變儲存的值，顯示為「Saved, applies when the start-up setting is removed」。只要那個設定還在，這個值
+就不會被套用（Save、Apply 或帶著該設定的啟動都不會），所以同一帳號手動執行的指令仍讀先前已套用的值，
+這樣儲存的 workspaces 資料夾也絕不會讓它拿到與服務不同的 GPU 鎖。面板不會為它提供 Apply；下次不帶
+該設定啟動時才會套用。沒有任何東西會把環境變數的值寫進檔案。
 
 **讀不出的儲存檔**（不是 JSON、結構錯誤、其他格式）絕不會被當成空的：所有會來自它的位置都關閉並指出
 這個檔案，面板顯示一個 ✕ 提示與 **Replace the unreadable file (a copy is kept)**，它會把檔案改名為旁邊的

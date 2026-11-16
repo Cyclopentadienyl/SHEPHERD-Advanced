@@ -590,7 +590,9 @@ Data versions and Keeping items keep, as of Stage 6.)*
   the feature is off with its reason, never a default path. A saved value is checked by the same
   rules as an environment value, at each read. Every write is an operator control under the
   file's lock (`src/utils/settings_store.py`); Apply changes what is in use only while no job and
-  no holder of the old GPU lock could be using the old locations. The service, a command of the
+  no holder of the old GPU lock could be using the old locations, and never applies a location
+  the applying service's own start-time setting sets to another value (it stays pending until a
+  start without that setting; T03 review, 2026-11-16). The service, a command of the
   same account and a job the service starts read the same applied values; the workspaces root
   stays the GPU lock's one name. One view of them all: Settings, `GET
   /api/v1/settings/deployment` and `scripts/deployment_settings.py show`

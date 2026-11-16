@@ -54,7 +54,8 @@ rule `src.utils.gpu_lock` applies). **The workspaces root is its one name**:
 the lock is `.shepherd-gpu.lock` under the workspaces root in effect, and no
 other setting names one (root-cause round, P24-S1 and its verification). With
 no root, every managed GPU job is refused (review of 8242b47, P2-4). A saved
-root changes only when nothing could be using the old lock
+root changes only when nothing could be using the old lock, and never while
+the applying service's own start-up setting names another root
 (`src/utils/settings_store.py`, `apply_saved`).
 
 **A missing setting turns its feature off with a stated reason; nothing falls
@@ -202,6 +203,7 @@ __all__ = [
     "ENV_REGISTRY",
     "ENV_TRAINING_EVIDENCE_DIRS",
     "ENV_WORKSPACES_ROOT",
+    "FIELD_NAMES",
     "GPU_LOCK_FILE_NAME",
     "GPU_LOCK_NOT_CONFIGURED",
     "LOCAL_ENTRY",
@@ -220,6 +222,7 @@ __all__ = [
     "configured",
     "deployment_mode",
     "deployment_registry_refusal",
+    "environment_value",
     "gpu_lock_location",
     "inherited_socket_bind",
     "intake_directory",
@@ -437,6 +440,8 @@ _FIELDS = {
 }
 #: The environment variable of each key the saved settings file holds.
 SAVED_VARIABLES = {field.key: variable for variable, field in _FIELDS.items()}
+#: Each key's plain name in a sentence ("the workspaces folder").
+FIELD_NAMES = {field.key: field.name for field in _FIELDS.values()}
 
 
 class _Resolved(NamedTuple):
@@ -473,6 +478,19 @@ def _resolve(environ: Optional[Mapping[str, str]], variable: str) -> _Resolved:
     if value is None:
         return _Resolved(None, None)
     return _Resolved(value, SOURCE_SAVED)
+
+
+def environment_value(key: str, environ: Optional[Mapping[str, str]] = None) -> Any:
+    """What an explicit environment variable of `environ` (the process's when
+    None) sets the data location `key` to, in the saved file's shape (a
+    string; for the evidence folders a tuple, split by `os.pathsep`, empty
+    entries skipped), or None when it sets nothing: `_resolve`'s first layer
+    alone, for an apply that must not change a value this process does not
+    read from the file (`settings_store.held_back`)."""
+    raw = _raw(environ, SAVED_VARIABLES[key])
+    if raw is None or key not in deployment_settings.LIST_KEYS:
+        return raw
+    return tuple(entry for entry in raw.split(os.pathsep) if entry)
 
 
 def configured(variable: str, environ: Optional[Mapping[str, str]] = None) -> _Resolved:
@@ -633,9 +651,11 @@ def gpu_lock_location(environ: Optional[Mapping[str, str]] = None) -> Setting:
     **The limit one rule keeps**: each process names the lock from its own
     settings, so a process whose environment names another root takes another
     file and is not excluded. A saved root is changed only while nothing
-    could be using the old lock (`settings_store.apply_saved`), and a taker
-    checks after taking it that the location still holds
-    (`gpu_lock.take_gpu_lock`).
+    could be using the old lock (`settings_store.apply_saved`), and never by
+    a service whose own start-up setting names another root, which would
+    move every other process's lock away from the one it takes
+    (`settings_store.held_back`); a taker checks after taking it that the
+    location still holds (`gpu_lock.take_gpu_lock`).
     """
     root = workspaces_root(environ)
     if root.value is None:

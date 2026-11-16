@@ -2667,7 +2667,11 @@ job's view of the locations never changes under it, and the GPU lock is never sp
 
 **A start-time setting wins**: a row set by an environment variable reads "Set when the service
 started"; its box and Save change only the saved value, which reads "Saved, applies when the
-start-up setting is removed". Nothing writes an environment value into the file.
+start-up setting is removed". It is not applied while that setting is in place, by Save, Apply
+or a start with the setting, so a command run by hand by the same account keeps reading the
+value applied before, and a workspaces folder saved so never gives it another GPU lock than the
+service's. The panel offers no Apply for it; the next start without the setting applies it.
+Nothing writes an environment value into the file.
 
 **A saved file that cannot be read** (not JSON, the wrong shape, another format) is never read as
 empty: every location that would come from it is off, naming the file, and the panel shows one ✕

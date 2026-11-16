@@ -186,13 +186,21 @@ def test_an_environment_override_keeps_the_box_and_never_claims_the_saved_value(
                                                                               tmp_path):
     """Syncthing's form: the start-up setting wins and the page says so; the
     box and Save change the saved value only, which applies once the setting
-    is removed. An environment-configured deployment works unchanged."""
+    is removed. An environment-configured deployment works unchanged.
+
+    Not applied while the setting is in place (T03 review, P2): applied, a
+    command run by hand with no variable would read the saved folder while
+    the service reads its own, and for the workspaces folder take another
+    GPU lock. So the panel offers no Apply for it, and a start without the
+    setting applies it."""
+    from src.api.services import data_locations as service
+
     started, chosen = tmp_path / "started", tmp_path / "chosen"
     started.mkdir()
     chosen.mkdir()
     monkeypatch.setenv("SHEPHERD_REGISTRY", str(started))
     request = operator_request(monkeypatch)
-    rows, _ = _parts(dl, dl._on_save("registry", str(chosen), request))
+    rows, panel = _parts(dl, dl._on_save("registry", str(chosen), request))
     assert "start-up setting stays in effect" in rows["registry"]["result"]["value"]
     state = rows["registry"]["state"]["value"]
     effect, saved = state.split(">Saved<")
@@ -200,8 +208,13 @@ def test_an_environment_override_keeps_the_box_and_never_claims_the_saved_value(
     assert str(chosen) in saved and dl.OVERRIDDEN in saved
     assert rows["registry"]["box"]["interactive"] is True
     assert rows["registry"]["save"]["interactive"] is True
+    assert panel["apply"]["visible"] is False
+    assert "Saved, not in effect yet" not in panel["notice"]["value"]
     assert server_settings.cohort_registry().value == started.resolve()
+    without = {ENV_SETTINGS_FILE: os.environ[ENV_SETTINGS_FILE]}
+    assert server_settings.cohort_registry(without).unset     # a hand command: unchanged
     monkeypatch.delenv("SHEPHERD_REGISTRY")
+    assert service.apply_saved().applied                      # a start without it
     assert server_settings.cohort_registry().value == chosen.resolve()
 
 

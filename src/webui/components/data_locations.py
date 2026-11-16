@@ -24,9 +24,12 @@ it shows escaped:
 - **Overridden** (Syncthing's form): a row the environment sets keeps its box
   and Save, which change the saved value only; its Saved line says it applies
   once the start-up setting is removed, and the page never calls it in effect.
+  It is not applied while the setting is in place (`settings_store.held_back`),
+  so a command run by hand never reads it before the service does.
 - **Pending**: a saved change waits while something could use the old
   locations (a GPU job, a command run by hand: `data_locations.apply_saved`).
-  One notice says why, with **Apply**; it also applies at the next start.
+  One notice says why, with **Apply**; it also applies at the next start. A
+  change a start-up setting holds back is said in its row only.
 - **An unreadable settings file**: one ✕ notice naming the file, with
   "Replace the unreadable file (a copy is kept)"; Save is off and Create is
   hidden until then (said once, in the notice). Folders set at start still
@@ -278,8 +281,10 @@ def notice_html(view: DeploymentView, access: Any) -> str:
         return (f'<div class="shep-dl-notice shep-dl-error">'
                 f'{r.status_mark("error", UNREADABLE)}<p class="shep-sub">'
                 f"{r.e(view.file.problem)}. {r.e(then)}</p></div>")
-    if view.pending:
-        names = ", ".join(view.field(key).name for key in view.pending)
+    if view.applicable:
+        # A change a start-up setting holds back is said in its own row
+        # (`OVERRIDDEN`), not here: Apply cannot apply it.
+        names = ", ".join(view.field(key).name for key in view.applicable)
         return (f'<div class="shep-dl-notice">'
                 f'{r.status_mark("warn", f"Saved, not in effect yet: {names}")}'
                 f'<p class="shep-sub">{r.e(view.pending_reason)}</p></div>')
@@ -336,7 +341,7 @@ def _panel(request: gr.Request, *, results: Optional[Mapping[str, str]] = None,
     out += [
         gr.update(value=notice_html(view, access)),
         gr.update(visible=repairable, **gated(REPAIR_LABEL, access.allowed)),
-        gr.update(visible=bool(view.pending) and access.allowed,
+        gr.update(visible=bool(view.applicable) and access.allowed,
                   **gated(APPLY_LABEL, access.allowed)),
         gr.update(value=status),
         gr.update(value=where_html(view, shown=access.allowed)),
@@ -423,8 +428,10 @@ def _outcome_words(done: Any, key: Optional[str] = None) -> str:
     if key is not None:
         item = deployment_view.deployment_view().field(key)
         if item.source == server_settings.SOURCE_ENVIRONMENT:
-            return r.status_mark("neutral", "Saved. The start-up setting stays in effect until "
-                                            "it is removed")
+            # Not applied either while it differs (`settings_store.held_back`),
+            # so no other process reads it before the setting is removed.
+            return r.status_mark("neutral", "Saved. The start-up setting stays in effect; the "
+                                            "saved value applies at a start without it")
     if apply is not None and apply.applied:
         return r.status_mark("ok", "Saved and in effect")
     if apply is not None and apply.pending:

@@ -39,8 +39,9 @@ process's environment.
 `applied` is what every process uses: the service, a command run by hand and a
 job the service starts. `saved` is the latest choice made in Settings. They
 differ only while a change waits to be applied (`settings_store.apply_saved`:
-not while a GPU job could be using the old locations), so saving never splits
-the GPU lock between processes. Every key is optional; a missing one is not
+not while a GPU job could be using the old locations, and not for a location
+the applying service's own start-up setting sets to another value), so saving
+never splits the GPU lock between processes. Every key is optional; a missing one is not
 set. Unknown keys, at the top and inside either object, are kept when the file
 is rewritten (`compose`). The deployment mode is not stored here: it is an
 explicit environment value or the local start's default

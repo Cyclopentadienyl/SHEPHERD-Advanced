@@ -23,7 +23,10 @@ compared. This module is that one view; it reads nothing of its own:
 **Overridden**: a location the environment sets while the saved file holds a
 value of its own. The environment's value is in effect; the saved one applies
 once the start-time setting is removed (Syncthing's ``guiAddressOverridden``).
-Nothing ever writes an environment value into the file.
+Nothing ever writes an environment value into the file, and a saved value
+that differs from this process's start-up setting is not applied here either
+(`held`, `settings_store.held_back`): it would change only what every other
+process reads.
 
 **Paths shown or hidden** (`as_dict`): every path, and every text that may
 name one, is shown for a request D8 allows, and hidden for any other: a
@@ -153,7 +156,10 @@ class FileView(NamedTuple):
 class DeploymentView(NamedTuple):
     """Every data location, the saved file, the deployment mode and the GPU
     lock, as read now. `pending`: the keys saved and not applied yet, and
-    `pending_reason` why (None when nothing is pending)."""
+    `pending_reason` why (None when nothing is pending). `held`: those of
+    them a start-up setting of this process holds back
+    (`settings_store.held_back`): an Apply here does not apply them, a start
+    without that setting does."""
 
     fields: Tuple[FieldView, ...]
     file: FileView
@@ -161,6 +167,12 @@ class DeploymentView(NamedTuple):
     gpu_lock: Any
     pending: Tuple[str, ...]
     pending_reason: Optional[str]
+    held: Tuple[str, ...] = ()
+
+    @property
+    def applicable(self) -> Tuple[str, ...]:
+        """The pending keys an Apply here would apply (`pending` less `held`)."""
+        return tuple(key for key in self.pending if key not in self.held)
 
     def field(self, key: str) -> FieldView:
         return next(item for item in self.fields if item.key == key)
@@ -180,23 +192,35 @@ def _text(value: Any) -> Any:
     return str(value)
 
 
-def _pending_reason(environ: Optional[Mapping[str, str]]) -> str:
-    """Why a saved change is not applied yet, as far as the GPU lock tells:
-    a holder of the lock in use (a job, a command started by hand, this
-    service's CUDA inference), else nothing but Apply. Apply checks the job
-    runner's slot too, and says so."""
+def _pending_reason(environ: Optional[Mapping[str, str]], pending: Tuple[str, ...],
+                    held: Tuple[str, ...]) -> str:
+    """Why a saved change is not applied yet: for one a start-up setting
+    holds back, that setting (`settings_store.held_back_words`); for any
+    other, as far as the GPU lock tells, a holder of the lock in use (a job,
+    a command started by hand, this service's CUDA inference), else nothing
+    but Apply. Apply checks the job runner's slot too, and says so."""
     from src.utils.gpu_lock import lock_state
-    from src.utils.settings_store import APPLIES_LATER
+    from src.utils.settings_store import APPLIES_LATER, held_back_words
 
-    state = lock_state(environ)
-    if state.get("held_by"):
-        return f"The GPU lock is held by {state['held_by']}, so {APPLIES_LATER}."
-    return "Saved, not applied yet: press Apply, or it applies at the next start."
+    reasons = []
+    if any(key not in held for key in pending):
+        state = lock_state(environ)
+        if state.get("held_by"):
+            reasons.append(f"The GPU lock is held by {state['held_by']}, so {APPLIES_LATER}.")
+        else:
+            reasons.append("Saved, not applied yet: press Apply, or it applies at the next start.")
+    if held:
+        words = held_back_words(held)
+        reasons.append(f"Not applied here: {words}." if reasons else
+                       f"Saved, not applied yet: {words}.")
+    return " ".join(reasons)
 
 
 def deployment_view(environ: Optional[Mapping[str, str]] = None) -> DeploymentView:
     """Every data location as `environ` (the process's when None) reads it
     now (module docstring)."""
+    from src.utils.settings_store import held_back
+
     saved_file = deployment_settings.read_saved(environ)
     location = deployment_settings.settings_location(environ)
     fields = []
@@ -221,6 +245,7 @@ def deployment_view(environ: Optional[Mapping[str, str]] = None) -> DeploymentVi
             problem=setting.problem, note=setting.note, unset=setting.unset,
             optional=key in OPTIONAL_KEYS))
     pending = tuple(saved_file.pending) if saved_file.problem is None else ()
+    held = held_back(saved_file, environ) if pending else ()
     return DeploymentView(
         fields=tuple(fields),
         file=FileView(
@@ -231,7 +256,8 @@ def deployment_view(environ: Optional[Mapping[str, str]] = None) -> DeploymentVi
         mode=server_settings.deployment_mode(environ),
         gpu_lock=server_settings.gpu_lock_location(environ),
         pending=pending,
-        pending_reason=_pending_reason(environ) if pending else None,
+        pending_reason=_pending_reason(environ, pending, held) if pending else None,
+        held=held,
     )
 
 
@@ -344,6 +370,7 @@ def as_dict(view: DeploymentView, *, paths_shown: bool) -> Dict[str, Any]:
                      "configured": view.gpu_lock.value is not None,
                      "problem": _lock_problem_words(view.gpu_lock, paths_shown=paths_shown)},
         "pending": list(view.pending),
+        "held_back": list(view.held),
         "pending_reason": words(view.pending_reason),
     }
 
