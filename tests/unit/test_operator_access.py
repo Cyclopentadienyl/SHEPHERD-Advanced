@@ -604,18 +604,21 @@ def test_the_deployment_settings_route_hides_every_path_from_a_request_d8_refuse
         assert answer["settings_file"]["path"] is None
 
 
+@pytest.mark.parametrize("place", ["Jane (MRN 1) ws", "srv/api/v1/Jane (MRN 1) ws"])
 def test_the_open_status_routes_name_no_server_path_to_a_request_d8_does_not_allow(
-        monkeypatch, tmp_path):
+        monkeypatch, tmp_path, place):
     """UI-13 (BACKLOG 53): a read-only request (one carrying
     ``X-Forwarded-For``, or not on loopback) read the pages' redaction around:
     ``GET /training/status`` answered the GPU lock's absolute path and
     ``GET /pipeline/status`` the served workspace's and checkpoint's. It gets
     each as "a server path" now, the answer's shape and every other value as
-    they were; an operator's request gets the paths it acts on."""
+    they were; an operator's request gets the paths it acts on. A path that
+    holds ``/api/v1/`` (the service's routes, which an answer keeps) is one
+    path still: it was answered as "a server path/api/v1/Jane (MRN 1) ws/…"."""
     from src.api.main import app_state
 
-    root = tmp_path / "Jane (MRN 1) ws"
-    root.mkdir()
+    root = tmp_path / place
+    root.mkdir(parents=True)
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
     snapshot = app_state.snapshot
     monkeypatch.setattr(app_state, "snapshot", lambda: {
@@ -639,6 +642,32 @@ def test_the_open_status_routes_name_no_server_path_to_a_request_d8_does_not_all
     status = operator.get("/api/v1/pipeline/status").json()
     assert status["current_data_dir"] == str(root / "demo")
     assert status["current_checkpoint_path"] == str(root / "demo" / "runs" / "r" / "last.pt")
+
+
+def test_an_open_answer_keeps_a_route_its_reason_names_and_no_part_of_a_path():
+    """`answer_for` keeps this service's routes a reason names ("… or POST
+    /api/v1/pipeline/reload"); a server path that holds ``/api/v1/`` is not
+    one: it went as "a server path/api/v1/Jane Doe MRN 1/runs/x", in a text,
+    in quotes and in an object's key."""
+    from starlette.requests import Request
+
+    from src.api.operator_access import answer_for
+
+    read_only = Request(http_scope(headers=[("X-Forwarded-For", "192.0.2.7")]))
+    answer = {
+        "reason": "Load one with POST /api/v1/pipeline/reload, or stop via "
+                  "(POST /api/v1/pipeline/stop).",
+        "run_dir": "/srv/clinic/api/v1/Jane Doe MRN 1/runs/x",
+        "problem": "[Errno 13] Permission denied: '/srv/clinic/api/v1/Jane Doe MRN 1/x.json'",
+        "/srv/clinic/api/v1/Jane Doe MRN 1/runs/x": 1,
+    }
+    assert answer_for(read_only, answer) == {
+        "reason": "Load one with POST /api/v1/pipeline/reload, or stop via "
+                  "(POST /api/v1/pipeline/stop).",
+        "run_dir": "a server path",
+        "problem": "[Errno 13] Permission denied: 'a server path'",
+        "a server path": 1,
+    }
 
 
 # --------------------------------------------------------------------------- the dashboard

@@ -52,30 +52,47 @@ SERVER_PATH = "a server path"
 #: directory is a mark (`redact_paths`), and the rest of that path is read with
 #: it, as one match the scan keeps, so no name inside it starts another path
 #: (``<workspaces>/demo (copy)/runs/…``, ``ws🧬/runs/…``).
+#:
+#: **A named directory's text inside a longer path is that path's own**
+#: (`_MARK` in `_G`, `_SEP` and `_QUOTED`): a path that runs into a mark goes
+#: on through it as through a separator, so ``/mnt/old/srv/ws/Jane (MRN 1)/x``
+#: is one path, replaced whole, not "a server path" then ``<workspaces>/Jane
+#: (MRN 1)/x``, and ``/srv/clinic/api/v1/Jane Doe/x`` is not kept from
+#: ``/api/v1/`` on (the service's routes, `src.api.operator_access`). A mark
+#: no path runs into starts its own path, as before (``see /srv/ws/demo``,
+#: ``'/srv/ws/x y'``, ``(see above)/srv/ws/x``).
 _P = r"""[^\s'"(),;\x00]"""
+#: A named directory's mark (`redact_paths`).
+_MARK = r"""\x00\d+\x00"""
 #: A path's character, or a bracketed part of a name (no bracket inside it;
-#: spaces and tabs may be: ``Jane (MRN 1)/x.json``, B72-N5).
-_G = rf"""(?:{_P}|\((?:{_P}|[ \t])*\))"""
-_NOT_ABSOLUTE = r"""(?![/\\]|[A-Za-z]:[\\/])"""
+#: spaces and tabs may be: ``Jane (MRN 1)/x.json``, B72-N5), or a mark.
+_G = rf"""(?:{_P}|\((?:{_P}|[ \t])*\)|{_MARK})"""
+#: A separator inside a path: a slash, a backslash, or a mark (a named
+#: directory's own path starts at a separator).
+_SEP = rf"""(?:[/\\]|{_MARK})"""
+#: The rest of a quoted path, up to its closing quote.
+_QUOTED = rf"""(?:[^'"\n\x00]|{_MARK})*"""
+#: A word that starts another absolute path, or a named directory's.
+_NOT_ABSOLUTE = r"""(?![/\\\x00]|[A-Za-z]:[\\/])"""
 #: What a word ending in a file extension may be followed by: nothing of a
 #: path, after a sentence's punctuation if any (``MRN 0012345.json: denied``).
 _ENDS = rf"""(?=[.:!?]*(?!{_P}))"""
 #: The rest of a path after its first character, or after a named directory.
 _REST = rf"""
     {_G}*
-    (?: (?:[ \t]+{_NOT_ABSOLUTE}{_G}+)* [ \t]+{_NOT_ABSOLUTE}{_G}*[/\\]{_G}* )?
+    (?: (?:[ \t]+{_NOT_ABSOLUTE}{_G}+)* [ \t]+{_NOT_ABSOLUTE}{_G}*{_SEP}{_G}* )?
     (?: [ \t]+{_NOT_ABSOLUTE}(?:[^\s'"(),;\x00/\\]|\((?:[^'"(),;\x00\n/\\])*\))*
         \.[A-Za-z][A-Za-z0-9]{{0,7}}{_ENDS} )?"""
 _ABSOLUTE = rf"""
     (?<![\w.:/\\\x00])
     (?:
-        (?<=['"]) (?:/[^\s'"/\x00]|[A-Za-z]:[\\/]) [^'"\n\x00]*
+        (?<=['"]) (?:/[^\s'"/\x00]|[A-Za-z]:[\\/]) {_QUOTED}
       | (?:/[^\s'"(),;/\x00]|[A-Za-z]:[\\/]) {_REST} (?<![.:!?])
     )"""
 #: A named directory's mark (`redact_paths`) and the rest of its path.
 _ROOTED = rf"""
-    (?<=['"]) \x00\d+\x00 [^'"\n\x00]*
-  | \x00\d+\x00 {_REST}"""
+    (?<=['"]) {_MARK} {_QUOTED}
+  | {_MARK} {_REST}"""
 _SCAN = re.compile(rf"(?P<rooted>{_ROOTED})|{_ABSOLUTE}", re.VERBOSE)
 
 

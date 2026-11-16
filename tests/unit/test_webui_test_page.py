@@ -3459,6 +3459,29 @@ def test_a_path_after_any_mark_that_is_no_words_is_still_replaced(text):
         assert "/srv/clinic" not in out and "MRN0012345" not in out, out
 
 
+@pytest.mark.parametrize("text, said", [
+    ("/mnt/old/srv/ws/Jane Doe (MRN 1)/x.json does not exist.", "{} does not exist."),
+    ("No such file: '/mnt/old/srv/ws/Jane Doe/x.json'", "No such file: '{}'"),
+    ("Cannot read /mnt/Jane Doe/srv/ws/MRN 1/x.json: denied", "Cannot read {}: denied"),
+    ("/mnt/Jane (MRN 1)/srv/ws/x.pt in 3.2 s", "{} in 3.2 s"),
+])
+def test_a_roots_text_inside_a_longer_path_is_that_paths_own(text, said):
+    """UI-13 (a residual of B53): a root found anywhere in a text was taken as
+    its start, inside another path too, so "/mnt/old/srv/ws/Jane Doe (MRN
+    1)/x.json" read "a server path<workspaces>/Jane Doe (MRN 1)/x.json": a path
+    outside the root shown under its name, its private part on. A path that
+    runs into a root's text is one path, replaced whole, through the Test
+    page's redaction and the dashboard's; a root that starts a path is named
+    as before (the tests above)."""
+    from pathlib import Path
+
+    from src.webui.components import workspaces
+
+    assert tp.redact(text, [("/srv/ws", "<workspaces>")]) == said.format(tp.SERVER_PATH)
+    out = workspaces.redact(text, Path("/srv/ws"))
+    assert out == said.format(workspaces.OUTSIDE_PATH), out
+
+
 @pytest.mark.parametrize("text, kept", [
     ("/data/MRN(0012345)/cases.json does not exist.", " does not exist."),
     ("/srv/x/(0012345)/z.pt and (/srv/q)", " and ("),

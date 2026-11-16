@@ -59,7 +59,8 @@ OPERATOR_ONLY: List[Any] = [Depends(require_operator_access)]
 
 #: This service's own routes, which a reason may name ("… or POST
 #: /api/v1/pipeline/reload"): a route, never a server path, so an answer keeps
-#: it as it is (`answer_for`).
+#: it as it is (`answer_for`). Inside a longer path (``/srv/clinic/api/v1/…``)
+#: it is that path's text and goes with it (`path_redaction`).
 _ROUTES = (("/api/v1/", "/api/v1/"),)
 
 
