@@ -531,7 +531,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-08 Form density after expanding
 
-16 rows: 3 to do, 3 partly done, 1 outside this round's scope (owner to decide), 1 not applicable, 8 code-verified at ba6e85e (audit).
+16 rows: 1 partly done, 1 outside this round's scope (owner to decide), 1 not applicable, 5 code-verified, 8 code-verified at ba6e85e (audit).
 
 #### B27-2 · Expanding More training settings / More settings makes scrolling long
 
@@ -1073,7 +1073,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-116 rows: 41 to do, 17 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 17 code-verified, 31 code-verified at ba6e85e (audit).
+116 rows: 29 to do, 14 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 32 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
