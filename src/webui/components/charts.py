@@ -289,7 +289,11 @@ CHART_CSS = """
 .shep-chart-hd { display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; min-height: 24px; }
 .shep-chart-title { font-weight: 600; font-size: 15px; color: var(--shep-text); }
 .shep-chart-keys { display: inline-flex; gap: 4px 14px; flex-wrap: wrap; }
-.shep-chart-key { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }
+.shep-charts .shep-chart-key { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 4px; margin: 0 -4px; border: 0; border-radius: 4px; background: none; font: inherit; font-size: 14px; color: var(--shep-text-2); white-space: nowrap; cursor: pointer; }
+.shep-charts .shep-chart-key:hover { background: var(--shep-panel-2); }
+.shep-charts .shep-chart-key[aria-pressed="false"] { color: var(--shep-muted); text-decoration: line-through; }
+.shep-charts .shep-chart-key[aria-pressed="false"] .shep-sw { opacity: .35; }
+.shep-charts .shep-chart-key:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: 1px; }
 .shep-sw { display: inline-block; flex: none; vertical-align: middle; }
 .shep-chart-plot { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; border-radius: 4px; contain: size; }
 .shep-chart-plot .u-wrap { cursor: crosshair; touch-action: none; }

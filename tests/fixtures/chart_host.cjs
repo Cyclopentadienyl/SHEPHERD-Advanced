@@ -79,6 +79,7 @@ function makeHost(modulePath, initialToken) {
   UPlot.prototype.setScale = function (k, r) { this.scales[k] = { min: r.min, max: r.max }; };
   UPlot.prototype.batch = function (fn) { fn(); };
   UPlot.prototype.setSize = function (s) { this.width = s.width; this.height = s.height; };
+  UPlot.prototype.setSeries = function (i, o) { this.opts.series[i].show = o.show; };
   UPlot.prototype.destroy = function () {};
   const store = new Map();
   const win = { uPlot: UPlot, matchMedia: () => ({ matches: false }),
@@ -125,6 +126,15 @@ function makeHost(modulePath, initialToken) {
       const btn = el("button"); btn.attrs["data-chart-act"] = act;
       btn.closest = (sel) => (sel === "[data-chart-act]" ? btn : null);
       for (const fn of listeners.click || []) { fn({ target: btn, preventDefault() {} }); }
+    },
+    legend(chartIdx, label) {                             // a click on a chart's legend key
+      const inst = win.ShepCharts._inst.training;
+      const st = inst.charts[inst.order[chartIdx || 0]];
+      const btn = el("button"); btn.attrs["data-chart-key"] = label;
+      btn.attrs["aria-pressed"] = "true";
+      btn.closest = (sel) => (sel === "[data-chart-key]" ? btn : sel === ".shep-chart" ? st.card : null);
+      for (const fn of listeners.click || []) { fn({ target: btn, preventDefault() {} }); }
+      return btn;
     },
     win, calls, msg, zoom, store, setToken, advance, root,
     series() { return calls.filter((c) => c.fn === "series"); },
@@ -544,6 +554,26 @@ S.cleared_keeps_last_zoom_of_run = async () => {       // a zoom 100 ms before t
   await h.advance(1000);
   const kept = h.stored("ws/A");
   return { ok: !!(kept && kept.x && kept.x[0] === zoomed[0] && kept.x[1] === zoomed[1]), zoomed, kept };
+};
+// ---------------------------------------------------------------- the legend isolates a series (R-33)
+S.legend_key_hides_and_shows_its_series = async () => {
+  const h = await shown("ws/A", 2, 2);
+  const inst = h.win.ShepCharts._inst.training, st = inst.charts.lr;
+  const drawn = st.u.opts.series[1].show;
+  const btn = h.legend(1, "learning rate");
+  const hidden = { show: st.u.opts.series[1].show, pressed: btn.attrs["aria-pressed"] };
+  // drawn again (a log axis turned linear rebuilds the chart): the series stays hidden
+  const next = payload("ws/A", 3, 3); next.charts[1].yScale = "linear";
+  h.setToken(tok("ws/A", 3)); await settle();
+  await h.answer(h.series()[1], next);
+  const rebuilt = inst.charts.lr.u.opts.series[1].show;
+  const keys = h.win.ShepCharts._keys.html(inst, next.charts[1]);
+  h.legend(1, "learning rate");
+  const shownAgain = inst.charts.lr.u.opts.series[1].show;
+  const other = inst.charts.loss.u.opts.series[1].show;
+  return { ok: drawn === true && hidden.show === false && hidden.pressed === "false" &&
+               rebuilt === false && keys.includes('aria-pressed="false"') && shownAgain === true &&
+               other === true, drawn, hidden, rebuilt, keys, shownAgain, other };
 };
 
 (async () => {
