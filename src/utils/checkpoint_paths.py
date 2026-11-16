@@ -389,6 +389,18 @@ def run_checkpoints(run_dir: PathLike) -> List[Path]:
     return _run_files(run_dir)[0]
 
 
+def latest_saved(run_dir: PathLike) -> Optional[Path]:
+    """**The file a run's latest saved state is read from**: its ``last.pt``
+    when it has one, else its newest checkpoint file (by time, then name:
+    `select_checkpoint_in_dir`'s fallback, over `run_checkpoints`), or None
+    when it kept none. A run that kept only another file (a ``best.pt``, a
+    top-k file) is not a run that saved nothing (BACKLOG 69: the run view
+    said "no checkpoint" of a run whose ``best.pt`` its Continue drawer
+    listed). Nothing is read; the training status's snapshot reads it
+    (`TrainingManager.latest_snapshot`)."""
+    return _select_among(run_checkpoints(run_dir), run_checkpoint_dir(run_dir), None)
+
+
 def _mtime(path: Path) -> float:
     """A listed file's modification time, for ordering only; 0 when it cannot
     be read: a link whose target is gone, or a checkpoint training removed
@@ -1515,6 +1527,7 @@ __all__ = [
     "run_architecture",
     "run_checkpoint_dir",
     "run_checkpoints",
+    "latest_saved",
     "run_dir_outside",
     "run_log_dir",
     "runs_root",

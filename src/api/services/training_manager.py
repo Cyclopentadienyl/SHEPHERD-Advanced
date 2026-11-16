@@ -2431,9 +2431,10 @@ class TrainingManager:
         return log_files[0] if log_files else None
 
     def latest_snapshot(self, run_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
-        """The run's latest saved training state (`last.pt`) as its own record
-        describes it, or `None` when the run saved none. The run is `run_dir`
-        when given (a stopped job's own), else the run started last.
+        """The run's latest saved state (`checkpoint_paths.latest_saved`: its
+        `last.pt`, else the newest file it kept, a `best.pt` say) as its own
+        record describes it, or `None` when the run kept none. The run is
+        `run_dir` when given (a stopped job's own), else the run started last.
 
         Read whole with the safe loader, so only when asked (the stop
         confirmation, a status after the process ended) and cached by the
@@ -2448,8 +2449,8 @@ class TrainingManager:
         naming the field, or the loader's message escaped.
         """
         from src.utils.checkpoint_paths import (
+            latest_saved,
             refusal_line,
-            run_checkpoint_dir,
             text_problem,
             whole_number_problem,
         )
@@ -2457,7 +2458,9 @@ class TrainingManager:
         run_dir = run_dir if run_dir is not None else self.run_dir
         if run_dir is None:
             return None
-        last = run_checkpoint_dir(run_dir) / "last.pt"
+        last = latest_saved(run_dir)
+        if last is None:
+            return None
         try:
             stat = last.stat()
         except OSError:

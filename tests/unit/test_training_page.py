@@ -936,6 +936,44 @@ def test_epochs_done_says_one_epoch_and_more_epochs():
     assert done({"completed_epochs": None, "target_epochs": None}) == "epochs not recorded"
 
 
+def test_a_run_that_kept_only_best_pt_names_its_dataset_and_its_state(root):
+    """B69-T2: the run view read ``last.pt`` alone, so a run that kept only a
+    ``best.pt`` (which its Continue drawer lists) read "dataset not recorded
+    (no checkpoint)" and "No checkpoint saved, so nothing can be continued".
+    The snapshot is the run's latest saved file (`checkpoint_paths.latest_saved`:
+    its ``last.pt``, else its newest file), read once per change of it."""
+    from src.utils.checkpoint_io import write_checkpoint
+
+    run = tc.RunRef(id="demo/gatv2/b", label="gatv2/b", path=root / "demo" / "runs" / "gatv2" / "b",
+                    workspace="demo", job=False, latest=True)
+    best = run["path"] / "checkpoints" / "best.pt"
+    write_checkpoint({"checkpoint_kind": "training_state", "epoch": 3,
+                      "training_input_digests": {"split_manifest": "d" * 64},
+                      "progress": {"completed_epochs": 4, "end": "finished",
+                                   "stage": {"start_epoch": 0, "target_epochs": 4}}}, best)
+    cache = {}
+    snapshot = tc._snapshot_for(run, cache)
+    assert snapshot["checkpoint"] == str(best) and snapshot["dataset_fingerprint"] == "d" * 64
+    ws = {"row": {"dataset_fingerprint": "d" * 64}, "digits": 12}
+    head = tc.run_head_html(run, ws, operator=True, snapshot=snapshot)
+    assert "same dataset as the run bar" in head and "no checkpoint" not in head
+    line = tc.run_snapshot_html(run, {"status": "idle"}, operator=True, snapshot=snapshot)
+    assert "Finished · 4 of 4 epochs completed" in line and "No checkpoint" not in line
+    assert not tc._snapshot_sentence(snapshot).startswith("No checkpoint")
+    # A last.pt written since is the one read.
+    last = best.with_name("last.pt")
+    write_checkpoint({"checkpoint_kind": "training_state", "epoch": 4,
+                      "training_input_digests": {"split_manifest": "e" * 64},
+                      "progress": {"completed_epochs": 5, "end": "paused",
+                                   "stage": {"start_epoch": 0, "target_epochs": 6}}}, last)
+    again = tc._snapshot_for(run, cache)
+    assert again["checkpoint"] == str(last) and again["dataset_fingerprint"] == "e" * 64
+    # No file at all is still "no checkpoint".
+    empty = tc.RunRef(run, id="demo/gatv2/e", path=root / "demo" / "runs" / "gatv2" / "e")
+    (empty["path"] / "checkpoints").mkdir(parents=True)
+    assert tc._snapshot_for(empty, {}) is None
+
+
 def test_the_runs_checkpoint_is_read_again_only_when_it_changed(root, monkeypatch):
     run = tc.RunRef(id="demo/gatv2/r", label="gatv2/r", path=root / "demo" / "runs" / "gatv2" / "r",
                     workspace="demo", latest=True)

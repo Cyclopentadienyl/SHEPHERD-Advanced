@@ -2185,14 +2185,16 @@ def resolve_run(run_id: Any) -> Optional[Path]:
 
 def _snapshot_for(run: RunRef, cache: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The run's latest saved state (`TrainingManager.latest_snapshot`, which
-    reads its ``last.pt``), read again only when the file changed since this
-    session last read it."""
-    from src.utils.checkpoint_paths import run_checkpoint_dir
+    reads the file `checkpoint_paths.latest_saved` names: its ``last.pt``,
+    else the newest file it kept), read again only when that file changed
+    since this session last read it. A run that kept only a ``best.pt`` is
+    read from it: its header names the dataset that file records (B69)."""
+    from src.utils.checkpoint_paths import latest_saved
 
-    last = run_checkpoint_dir(run["path"]) / "last.pt"
+    last = latest_saved(run["path"])
     try:
-        stat = last.stat()
-        key = [str(last), stat.st_mtime_ns, stat.st_size]
+        stat = last.stat() if last is not None else None
+        key = [str(last), stat.st_mtime_ns, stat.st_size] if stat else [str(last), None, None]
     except OSError:
         key = [str(last), None, None]
     held = cache.get("snapshot")
