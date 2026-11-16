@@ -256,9 +256,9 @@ def locate_store_report(report_path: Any, *,
 
     The path's shape names the registry, the label and the run
     (`store_report_parts`). **That registry must be the deployment's**
-    (`deployment_registry_refusal`, with ``SHEPHERD_REGISTRY`` read from
-    `environ`, `os.environ` when `None`), checked from the path's shape before
-    anything in it is read. The version is then resolved there
+    (`deployment_registry_refusal`: ``SHEPHERD_REGISTRY`` of `environ`,
+    `os.environ` when `None`, else the registry saved in the settings file it
+    locates), checked from the path's shape before anything in it is read. The version is then resolved there
     (`resolve_version`: the registry absolute, outside the repository and
     existing; the version's ``cohort.json`` read once and checked; its directory
     checked against the registry). That the file sits in the store is not proof
