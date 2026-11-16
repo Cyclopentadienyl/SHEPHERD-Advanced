@@ -113,6 +113,47 @@ def test_a_restart_question_left_open_restarts_nothing_once_restart_is_off(
     assert restarts == [1] and "Restarting the backend" in said
 
 
+def test_an_open_restart_question_closes_once_restart_turns_off(monkeypatch, tmp_path):
+    """R-12's residual (T06-A review): a Restart question left open stayed on
+    screen after Restart turned off (the running allocator saved again with
+    Apply, or by another tab and read on the slow timer; a GPU job started),
+    until Restart now (which refused) or Cancel. Apply's last step and the
+    slow timer now make the question's own check (`_restart_refusal`) and
+    close it with the reason; a Stop question, a closed row and a Restart
+    still wanted are left as they are."""
+    import src.config.runtime_presets as presets
+    import src.webui.components.runtime_settings as rs
+    from src.config.runtime_presets import allocator_env
+    from tests.fixtures.operator_access import operator_request
+
+    monkeypatch.setattr(presets, "RUNTIME_SETTINGS_FILE", tmp_path / "settings.json")
+    for name, value in allocator_env({}, {}).items():   # started under the default preset
+        monkeypatch.setenv(name, value)
+    presets.save_runtime_settings({"allocator_preset": "expandable"})
+    monkeypatch.setattr(rs, "is_training_active", lambda: False)
+    _row, restart_question, *_rest = rs._on_restart_request(operator_request(monkeypatch))
+    _row, stop_question, *_rest = rs._on_stop_service_request(operator_request(monkeypatch))
+    restart_question, stop_question = restart_question["value"], stop_question["value"]
+    unchanged = [gr.update()] * 5
+    # Still wanted: the open question stays.
+    for fn in (rs._after_apply, lambda q, req: rs._poll_restart_lock("settings", q, req)):
+        assert list(fn(restart_question, operator_request(monkeypatch))[5:]) == unchanged
+    # The running allocator saved again, or a GPU job started: it closes.
+    for save, busy, reason in (("cuda_async", False, rs.RESTART_IDLE),
+                               ("expandable", True, rs.RESTART_BUSY)):
+        presets.save_runtime_settings({"allocator_preset": save})
+        monkeypatch.setattr(rs, "is_training_active", lambda busy=busy: busy)
+        for fn in (rs._after_apply, lambda q, req: rs._poll_restart_lock("settings", q, req)):
+            row, question, restart_now, stop_now, said = fn(
+                restart_question, operator_request(monkeypatch))[5:]
+            assert (row["visible"], restart_now["visible"], stop_now["visible"]) == (
+                False, False, False)
+            assert question["value"] == "" and reason in said
+            # A Stop question and a closed row are left as they are.
+            assert list(fn(stop_question, operator_request(monkeypatch))[5:]) == unchanged
+            assert list(fn("", operator_request(monkeypatch))[5:]) == unchanged
+
+
 def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch, tmp_path):
     """The one gated-button rule (`chips.gated`, the WebUI skill's §3): a
     control a read-only request cannot use is disabled with the lock and the
@@ -312,32 +353,46 @@ def test_the_restart_lock_is_polled_on_the_shells_slow_timer_only_while_shown(mo
     slow = next(t for t in timers if t.value == shell.SLOW_SECONDS)
     assert poll.targets == [(slow._id, "tick")] and poll.queue is False
     assert isinstance(poll.inputs[0], gr.State)
+    assert poll.inputs[1].elem_id == "runtime_question"
     assert [o.elem_id for o in poll.outputs] == [
         "runtime_apply", "runtime_restart", "runtime_restart_lock", "runtime_access_reason",
-        "runtime_stop"]
+        "runtime_stop", "runtime_confirm", "runtime_question", "runtime_restart_now",
+        "runtime_stop_now", "runtime_restart_status"]
     from tests.fixtures.operator_access import operator_request
 
     monkeypatch.setattr(rs, "is_training_active", lambda: pytest.fail("read on another page"))
-    assert poll.fn("clinical", operator_request(monkeypatch)) == (gr.update(),) * 5
+    assert poll.fn("clinical", "", operator_request(monkeypatch)) == (gr.update(),) * 10
     monkeypatch.setattr(rs, "is_training_active", lambda: True)
-    apply, button, note, _reason, stop = poll.fn("settings", operator_request(monkeypatch))
+    apply, button, note, _reason, stop, *asked = poll.fn("settings", "",
+                                                          operator_request(monkeypatch))
     assert button["interactive"] is False and note["visible"] is True
     assert stop["interactive"] is False
+    assert asked == [gr.update()] * 5, "no question was open: the row is left as it is"
 
 
 #: Settings in a browser (R-12, R-13, NEW-settings-datasets-footer-1 and -2):
 #: the screen's own words read; Restart Backend clicked, cancelled, clicked and
 #: confirmed; then asked again and, with the question open, the running
-#: allocator saved again with Apply Settings, and Restart now clicked. Each
-#: step waits for what it asked to be drawn, never for a fixed time.
+#: allocator saved again by another hand (the settings file written: the slow
+#: timer's read); saved as before and asked again, and with the question
+#: open the running allocator saved again with Apply Settings. Each step waits
+#: for what it asked to be drawn, never for a fixed time.
 _SETTINGS_JS = r"""
 const { chromium } = require('playwright');
+const fs = require('fs');
 (async () => {
-  const base = process.argv[2];
+  const [base, saved, mounted, queueJs] = [process.argv[2], process.argv[3], Number(process.argv[4]),
+                                           process.argv[5]];
+  const save = (preset) => fs.writeFileSync(saved, JSON.stringify({ allocator_preset: preset, torch_compile: false }));
   const browser = await chromium.launch();
   const out = {};
   const page = await browser.newPage({ viewport: { width: 1850, height: 960 } });
+  await page.addInitScript(queueJs);
   await page.goto(base, { waitUntil: 'domcontentloaded' });
+  // Diagnosis' own select at mount writes the location first (the slow
+  // timer's poll reads it): answered before Settings is opened.
+  await page.waitForFunction((fn) => window.__shepQueue && window.__shepQueue.answered(fn) >= 1,
+                             mounted, { timeout: 60000 });
   await page.click('#shep-tab-settings-button', { timeout: 60000 });
   await page.waitForSelector('#runtime_restart:not([disabled])', { timeout: 60000 });
   const shown = (sel) => page.evaluate((s) => {
@@ -366,22 +421,32 @@ const { chromium } = require('playwright');
   out.afterConfirm = { status: await text('#runtime_restart_status'),
                        questionShown: await shown('#runtime_confirm') };
   // Asked once more (the status line clears), and with the question open the
-  // running allocator saved again: nothing waits, so Restart is off and says
-  // why beside it.
-  await page.click('#runtime_restart');
-  await page.waitForSelector('#runtime_restart_now', { state: 'visible' });
-  await page.waitForFunction(() => document.querySelector('#runtime_restart_status').innerText.trim() === '');
+  // running allocator saved again by another hand: on the slow timer's read
+  // Restart is off, and the open question closes with the reason (R-12's
+  // residual: it stayed open until Restart now or Cancel).
+  const asked = async () => {
+    await page.click('#runtime_restart');
+    await page.waitForSelector('#runtime_restart_now', { state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('#runtime_restart_status').innerText.trim() === '');
+  };
+  await asked();
+  save('cuda_async');
+  await page.waitForSelector('#runtime_confirm', { state: 'hidden', timeout: 30000 });
+  out.timer = { status: await text('#runtime_restart_status'),
+                restartDisabled: await page.evaluate(() => document.querySelector('#runtime_restart').disabled) };
+  // Saved as before: Restart is on again; asked, and with the question open
+  // the running allocator saved again with Apply Settings: Restart is off and
+  // says why beside it, and the question closes with the reason.
+  save('expandable');
+  await page.waitForSelector('#runtime_restart:not([disabled])', { timeout: 30000 });
+  await asked();
   await page.click('#allocator_preset input');
   await page.click('ul[role=listbox] li:has-text("Driver memory pool")');
   await page.click('#runtime_apply');
   await page.waitForSelector('#runtime_restart[disabled]', { timeout: 30000 });
+  await page.waitForSelector('#runtime_confirm', { state: 'hidden', timeout: 30000 });
   out.idle = { reason: await text('#runtime_restart_lock'),
                stopEnabled: await page.evaluate(() => !document.querySelector('#runtime_stop').disabled) };
-  // The question left open: Restart now restarts nothing and closes the row
-  // with the reason (T06 review).
-  await page.click('#runtime_restart_now');
-  await page.waitForFunction(() => document.querySelector('#runtime_restart_status').innerText.trim() !== '');
-  await page.waitForSelector('#runtime_confirm', { state: 'hidden' });
   out.stale = { status: await text('#runtime_restart_status'),
                 questionShown: await shown('#runtime_confirm') };
   await browser.close();
@@ -397,7 +462,9 @@ def test_settings_asks_before_a_restart_and_says_each_fact_once_in_a_browser(
     open page reconnects; a loaded model is stopped first) with Restart now
     and Cancel, nothing is asked of the backend before Restart now, and with
     the running allocator saved Restart is off, the reason beside it; a
-    question left open then restarts nothing (T06 review). R-13 and
+    question left open then closes with the reason, whether Apply on the page
+    or another hand (the slow timer's read) saved it (R-12's residual: it
+    stayed open until Restart now, which refuses, or Cancel). R-13 and
     NEW-settings-datasets-footer-1: torch.compile's visible line leads with
     the warning and where it is read is said once on the screen.
     NEW-settings-datasets-footer-2: no standing restart note, no internal
@@ -420,8 +487,13 @@ def test_settings_asks_before_a_restart_and_says_each_fact_once_in_a_browser(
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
     restarts = []
     monkeypatch.setattr(rs, "restart_backend", lambda: restarts.append(1) or {"success": True})
-    with served(create_gradio_app(), **mount_options()) as base:
-        seen = run_node(_SETTINGS_JS, tmp_path, base[:-len("gradio_api")])
+    from tests.fixtures.browser import QUEUE_JS
+
+    demo = create_gradio_app()
+    mounted = next(fn._id for fn in demo.fns.values() if fn.name == "_shown_clinical")
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_SETTINGS_JS, tmp_path, base[:-len("gradio_api")],
+                        str(tmp_path / "settings.json"), str(mounted), QUEUE_JS)
 
     assert seen["compileReadTimes"] == 1, seen
     assert seen["compileLine"].splitlines()[-1].startswith(rs.COMPILE_EXPERIMENTAL), seen
@@ -431,8 +503,10 @@ def test_settings_asks_before_a_restart_and_says_each_fact_once_in_a_browser(
     assert seen["afterConfirm"]["questionShown"] is False, seen
     assert "Restarting the backend" in seen["afterConfirm"]["status"]
     assert rs.RESTART_IDLE in seen["idle"]["reason"] and seen["idle"]["stopEnabled"], seen
-    # T06 review: the question left open while Restart turned off restarts
-    # nothing; its row closes with the reason the button shows.
+    # R-12's residual: the question left open while Restart turned off
+    # closes with the reason the button shows, on the slow timer's read and
+    # after Apply; nothing more is asked of the backend.
+    assert rs.RESTART_IDLE in seen["timer"]["status"] and seen["timer"]["restartDisabled"], seen
     assert rs.RESTART_IDLE in seen["stale"]["status"], seen
     assert seen["stale"]["questionShown"] is False, seen
     assert restarts == [1], "the backend was asked other than once, by Restart now"

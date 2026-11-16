@@ -34,7 +34,8 @@ skill's §2), every value it shows escaped:
   open page and to a loaded model, then "Restart now" or "Stop service now",
   or Cancel) before anything is asked of the backend. "Restart now" makes
   the question's check again (`_restart_refusal`): a question left open
-  restarts nothing once Restart has turned off.
+  restarts nothing once Restart has turned off, and Apply and the slow timer
+  close it then with the reason (`_restart_question_closed`).
 
 Operator controls (D8, M5-1):
     Restart Backend and Apply Settings each check their own Gradio request
@@ -264,13 +265,19 @@ RESTART = "restart"
 STOP = "stop"
 
 
+def _question_html(asked: Optional[str]) -> str:
+    """The question row's question as drawn (`_ask`): `asked`'s words, or
+    nothing. What the row shows is what an open Restart question is known by
+    (`_restart_question_closed`)."""
+    question = {RESTART: RESTART_QUESTION, STOP: STOP_QUESTION}.get(asked or "", "")
+    return f'<p class="shep-sub">{r.e(question)}</p>' if question else ""
+
+
 def _ask(asked: Optional[str] = None, said: str = "") -> tuple:
     """**The one question row** of Restart Backend and Stop service, as its
     outputs: shown with `asked`'s question and its own confirming button
     (`RESTART`, `STOP`), or hidden (None) with `said` in the status line."""
-    question = {RESTART: RESTART_QUESTION, STOP: STOP_QUESTION}.get(asked, "")
-    return (gr.update(visible=asked is not None),
-            gr.update(value=f'<p class="shep-sub">{r.e(question)}</p>' if asked else ""),
+    return (gr.update(visible=asked is not None), gr.update(value=_question_html(asked)),
             gr.update(visible=asked == RESTART), gr.update(visible=asked == STOP),
             said)
 
@@ -300,6 +307,20 @@ def _on_restart_request(request: gr.Request):
     otherwise. Returns `_ask`'s outputs."""
     refusal = _restart_refusal(operator_access(request))
     return _ask(said=refusal) if refusal else _ask(RESTART)
+
+
+def _restart_question_closed(question: Any, request: gr.Request) -> tuple:
+    """The question row once Restart has turned off (R-12's residual): a
+    Restart question left open (`question`, the row's question as drawn) is
+    closed with the reason, by the one check the question and "Restart now"
+    make (`_restart_refusal`), when Apply saved the running allocator again or
+    the slow timer finds Restart off (another tab's Apply, a GPU job); a Stop
+    question, a closed row and a Restart still wanted are left as they are.
+    Returns `_ask`'s outputs."""
+    if question != _question_html(RESTART):
+        return (gr.update(),) * 5
+    refusal = _restart_refusal(operator_access(request))
+    return _ask(said=refusal) if refusal else (gr.update(),) * 5
 
 
 def _on_restart(request: gr.Request):
@@ -423,15 +444,24 @@ def _on_open(request: gr.Request):
             gr.update(interactive=allowed, value=compile_on), facts_html(settings=settings))
 
 
-def _poll_restart_lock(location, request: gr.Request):
+def _poll_restart_lock(location, question, request: gr.Request):
     """The shell's slow timer (``queue=False``): the buttons and their
-    reasons read again only while Settings is shown; on any other page, no
-    work and no change (M5-3 review ARCH-8: the page kept a queued 4 s timer
-    of its own that ticked on every page once Settings had been opened). The
-    fields are left as they are, so an open select is never redrawn."""
+    reasons read again only while Settings is shown, and a Restart question
+    left open closed once Restart is off (`_restart_question_closed`); on
+    any other page, no work and no change (M5-3 review ARCH-8: the page kept
+    a queued 4 s timer of its own that ticked on every page once Settings
+    had been opened). The fields are left as they are, so an open select is
+    never redrawn."""
     if location != SETTINGS_PAGE:
-        return (gr.update(),) * 5
-    return _refresh_restart_lock(request)
+        return (gr.update(),) * 10
+    return (*_refresh_restart_lock(request), *_restart_question_closed(question, request))
+
+
+def _after_apply(question, request: gr.Request):
+    """Apply's last step: the buttons read again (Apply may make a restart
+    wanted, or not) and a Restart question left open closed once it is off
+    (`_restart_question_closed`)."""
+    return (*_refresh_restart_lock(request), *_restart_question_closed(question, request))
 
 
 #: When each field applies, visible under it (its ``info=``: a fact that
@@ -571,8 +601,8 @@ def _wire_runtime_panel(ctx: Any, facts, allocator, torch_compile, apply_btn, re
     confirm, question, restart_now, stop_now = asking
     asked = [confirm, question, restart_now, stop_now, restart_status]
     lock_outputs = [apply_btn, restart_btn, restart_lock_note, access_note, stop_btn]
-    ctx.timer_slow.tick(fn=_poll_restart_lock, inputs=[ctx.location], outputs=lock_outputs,
-                        queue=False, show_progress="hidden")
+    ctx.timer_slow.tick(fn=_poll_restart_lock, inputs=[ctx.location, question],
+                        outputs=[*lock_outputs, *asked], queue=False, show_progress="hidden")
     ctx.on_page_open(SETTINGS_PAGE, {"fn": _on_open,
                                      "outputs": [*lock_outputs, allocator, torch_compile, facts],
                                      "queue": False, "show_progress": "hidden"})
@@ -586,10 +616,12 @@ def _wire_runtime_panel(ctx: Any, facts, allocator, torch_compile, apply_btn, re
     for field in (allocator, torch_compile):
         field.change(fn=_on_change, inputs=[allocator, torch_compile], outputs=[status],
                      show_progress="hidden")
-    # Apply may make a restart wanted (or not): the buttons are read again.
+    # Apply may make a restart wanted (or not): the buttons are read again,
+    # and a Restart question left open closes once Restart is off.
     apply_btn.click(fn=_on_apply, inputs=[allocator, torch_compile],
                     outputs=[status, facts]).then(**ctx.chip_refresh).then(
-        fn=_refresh_restart_lock, outputs=lock_outputs, queue=False, show_progress="hidden")
+        fn=_after_apply, inputs=[question], outputs=[*lock_outputs, *asked], queue=False,
+        show_progress="hidden")
     stop_btn.click(fn=_on_stop_service_request, outputs=asked, show_progress="hidden")
     stop_now.click(fn=_on_stop_service, outputs=asked, show_progress="hidden")
     cancel.click(fn=_on_confirm_cancel, outputs=asked, show_progress="hidden")
