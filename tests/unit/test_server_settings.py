@@ -1223,3 +1223,87 @@ class TestAChildAndAHandCommandReadTheSameSettings:
         assert (root, source) == (str(folders["workspaces"].resolve()), "saved")
         assert registry == str(folders["registry"].resolve())
         assert lock == str(folders["workspaces"].resolve() / ss.GPU_LOCK_FILE_NAME)
+
+
+class TestTheOneViewOfTheDataLocations:
+    """`src/utils/deployment_view.py`: Settings, ``GET
+    /api/v1/settings/deployment`` and ``scripts/deployment_settings.py show``
+    say the same thing about each location, read through the one resolution
+    (UI-06, item 10)."""
+
+    def test_each_location_says_what_is_in_effect_from_where_and_what_is_saved(
+            self, saved_file, folders):
+        from src.utils.deployment_view import deployment_view
+
+        path, environ = saved_file
+        _write_saved(path, {"workspaces_root": str(folders["workspaces"]),
+                            "registry": str(folders["registry"])},
+                     saved={"workspaces_root": str(folders["other"]),
+                            "registry": str(folders["registry"])})
+        environ = {**environ, ss.ENV_REGISTRY: str(folders["intake"])}
+        view = deployment_view(environ)
+        root = view.field("workspaces_root")
+        assert (root.value, root.source) == (str(folders["workspaces"].resolve()), "saved")
+        assert root.pending and root.saved == str(folders["other"]) and not root.overridden
+        registry = view.field("registry")
+        assert (registry.value, registry.source) == (str(folders["intake"].resolve()),
+                                                     "environment")
+        assert registry.overridden and not registry.pending
+        intake = view.field("intake_dir")
+        assert intake.unset and intake.source is None and intake.value is None
+        assert view.pending == ("workspaces_root",)
+        assert view.pending_reason.startswith("Saved, not applied yet: press Apply")
+        assert view.gpu_lock.value == folders["workspaces"].resolve() / ss.GPU_LOCK_FILE_NAME
+        assert not view.nothing_set
+
+    def test_a_refused_value_is_shown_with_what_was_set_never_as_not_set(
+            self, saved_file, tmp_path):
+        from src.utils.deployment_view import deployment_view
+
+        path, environ = saved_file
+        gone = tmp_path / "gone"
+        _write_saved(path, {"registry": str(gone)})
+        registry = deployment_view(environ).field("registry")
+        assert registry.value is None and registry.configured == str(gone)
+        assert registry.source == "saved" and not registry.unset
+        assert "saved in Settings is refused" in registry.problem
+
+    def test_hidden_paths_leave_what_is_set_and_from_where(self, saved_file, folders):
+        import json
+
+        from src.utils.deployment_view import as_dict, deployment_view
+
+        path, environ = saved_file
+        _write_saved(path, {"registry": str(folders["registry"]) + "/../registry"})
+        answer = as_dict(deployment_view(environ), paths_shown=False)
+        said = json.dumps(answer)
+        assert str(folders["registry"].parent) not in said and str(path) not in said
+        registry = next(f for f in answer["fields"] if f["key"] == "registry")
+        assert registry["set"] is True and registry["source"] == "saved"
+        assert registry["in_effect"] is None and registry["saved"] is None
+
+    def test_the_cli_prints_the_same_view_a_service_reads(self, saved_file, folders):
+        """A shell of the account, with no `SHEPHERD_*` data location set, and
+        the service read the same values: the CLI's ``--json`` is the route's
+        view for this environment, and its text names each source."""
+        import json
+        import subprocess
+        import sys
+
+        from src.utils.deployment_view import as_dict, deployment_view
+
+        path, environ = saved_file
+        _write_saved(path, {"workspaces_root": str(folders["workspaces"])})
+        env = {k: v for k, v in os.environ.items() if not k.startswith("SHEPHERD_")}
+        env[ENV_SETTINGS_FILE] = str(path)
+        script = str(REPO_ROOT / "scripts" / "deployment_settings.py")
+        done = subprocess.run([sys.executable, script, "show", "--json"], cwd="/", env=env,
+                              capture_output=True, text=True, timeout=120)
+        assert done.returncode == 0, done.stderr
+        assert json.loads(done.stdout) == as_dict(deployment_view(environ), paths_shown=True)
+        text = subprocess.run([sys.executable, script, "show"], cwd="/", env=env,
+                              capture_output=True, text=True, timeout=120)
+        assert text.returncode == 0, text.stderr
+        assert f"in effect: {folders['workspaces'].resolve()}" in text.stdout
+        assert "source:    saved settings file (applied)" in text.stdout
+        assert f"Settings file: {path} (named by SHEPHERD_SETTINGS_FILE)" in text.stdout

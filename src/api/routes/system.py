@@ -12,6 +12,9 @@ Purpose:
     - GET /system/runtime:   which torch / PyG / backend stack this process runs on
     - GET /system/operator-access: whether D8 enables the operator controls
       for this request, or which condition fails (read-only; the UI's chip)
+    - GET /settings/deployment: each data location in effect, its source,
+      the saved and pending values and its problem (UI-06; read-only, paths
+      hidden for a request D8 does not allow)
 
 Dependencies:
     - fastapi: Router
@@ -28,6 +31,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Request
 
 from src.api.services.training_manager import TrainingManager
+from src.utils import deployment_view
 from src.utils.operator_access import check_operator_access
 from src.utils.version_checker import probe_runtime
 
@@ -76,3 +80,27 @@ def get_operator_access(request: Request) -> Dict[str, Any]:
     control checks its own request.
     """
     return check_operator_access(request.scope).as_status()
+
+
+@router.get("/settings/deployment")
+def get_deployment_settings(request: Request) -> Dict[str, Any]:
+    """The data locations as this service reads them now (UI-06): for each,
+    the value in effect and its ``source`` (``environment``: set when the
+    service started, and it wins; ``saved``: saved in Settings › Data
+    locations; null: not set), the saved value, whether a saved change is
+    ``pending``, whether the environment overrides a saved value (``overridden``), and
+    the ``problem`` that turns its feature off; the saved settings file, the
+    deployment mode and the GPU lock. The same view as Settings and
+    ``scripts/deployment_settings.py show`` (`src.utils.deployment_view`).
+
+    Read-only and open, like the operator-access status: for a request D8
+    does not allow (`check_operator_access`), every path is null and every
+    text that may name one is redacted (``paths_shown`` false); what is set,
+    from where and whether it is pending stay. Nothing here changes a
+    setting: Save, Apply and Replace are operator controls of the Settings
+    page."""
+    access = check_operator_access(request.scope)
+    answer = deployment_view.as_dict(deployment_view.deployment_view(),
+                                     paths_shown=access.allowed)
+    answer["operator_access"] = access.as_status()
+    return answer

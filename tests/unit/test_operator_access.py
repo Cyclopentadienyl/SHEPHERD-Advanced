@@ -556,6 +556,54 @@ def test_the_status_route_answers_for_the_request_that_asks(monkeypatch):
     assert CANARY not in forwarded.text
 
 
+def test_the_deployment_settings_route_hides_every_path_from_a_request_d8_refuses(
+        monkeypatch, tmp_path):
+    """UI-06: ``GET /api/v1/settings/deployment`` is open and read-only, and
+    answers the one view of the data locations (`deployment_view`). For a
+    request D8 allows it shows the paths; for any other, what is set, from
+    where and whether it is pending, and no path."""
+    import json
+
+    from src.config.deployment_settings import ENV_SETTINGS_FILE, FORMAT
+    from src.utils import deployment_view
+
+    root, registry = tmp_path / "ws-canary", tmp_path / "reg-canary"
+    root.mkdir()
+    registry.mkdir()
+    settings = tmp_path / "settings" / "deployment.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({"format": FORMAT, "applied": {"workspaces_root": str(root)},
+                                    "saved": {"workspaces_root": str(root)}}))
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(settings))
+    monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    operator_mode(monkeypatch)
+    shown = _app_client().get("/api/v1/settings/deployment")
+    assert shown.status_code == 200
+    answer = shown.json()
+    assert answer["paths_shown"] is True and answer["operator_access"]["enabled"] is True
+    fields = {field["key"]: field for field in answer["fields"]}
+    assert fields["workspaces_root"]["in_effect"] == str(root.resolve())
+    assert fields["workspaces_root"]["source"] == "saved"
+    assert fields["registry"]["source"] == "environment"
+    assert fields["intake_dir"]["unset"] is True and fields["intake_dir"]["set"] is False
+    expected = deployment_view.as_dict(deployment_view.deployment_view(), paths_shown=True)
+    assert {k: v for k, v in answer.items() if k != "operator_access"} == expected
+    for client in (_app_client("http://192.0.2.10"),
+                   _app_client(headers={"X-Forwarded-For": "203.0.113.9"})):
+        hidden = client.get("/api/v1/settings/deployment")
+        assert hidden.status_code == 200 and "canary" not in hidden.text
+        assert str(tmp_path) not in hidden.text
+        answer = hidden.json()
+        assert answer["paths_shown"] is False
+        fields = {field["key"]: field for field in answer["fields"]}
+        assert fields["workspaces_root"]["set"] is True
+        assert fields["workspaces_root"]["in_effect"] is None
+        assert fields["workspaces_root"]["source"] == "saved"
+        assert fields["registry"]["source"] == "environment"
+        assert answer["settings_file"]["path"] is None
+
+
 # --------------------------------------------------------------------------- the dashboard
 #: Every state-changing Gradio handler, by module and name. Each takes a
 #: positional `gr.Request` (the one way Gradio passes it) and calls the helper.

@@ -211,6 +211,7 @@ __all__ = [
     "bind_is_loopback",
     "check_registry_root",
     "cohort_registry",
+    "configured",
     "deployment_mode",
     "deployment_registry_refusal",
     "gpu_lock_location",
@@ -466,6 +467,14 @@ def _resolve(environ: Optional[Mapping[str, str]], variable: str) -> _Resolved:
     if value is None:
         return _Resolved(None, None)
     return _Resolved(value, SOURCE_SAVED)
+
+
+def configured(variable: str, environ: Optional[Mapping[str, str]] = None) -> _Resolved:
+    """What a data location is set to and from where, before its rule checks
+    it: `_resolve`'s answer (the one read point), for a view that shows a
+    refused value with what was set (`src/utils/deployment_view.py`). Its
+    `raw` is the environment's string or the saved file's value."""
+    return _resolve(environ, variable)
 
 
 def _cap(text: str) -> str:
