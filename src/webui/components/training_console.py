@@ -1644,6 +1644,17 @@ def start_label(mode: Optional[Mapping[str, Any]]) -> str:
     return START_LABELS[operation_of(mode)]
 
 
+def stop_shown(status: Mapping[str, Any],
+               reaches: Callable[[Mapping[str, Any]], bool] = lambda status: True) -> bool:
+    """**Stop is drawn only while the job it stops runs or is stopping** (R-39:
+    with none, the page's state says so once, and a disabled Stop has nothing
+    to stop and no reason to give): a training job running or stopping that
+    this page's Stop `reaches` (the run bar's, any training job; Fine-tune's
+    job card's, a child of its Fine-tune start). The Training run bar and the
+    Fine-tune job card draw their Stop by it (NEW-training-finetune-7)."""
+    return (status.get("status") or "idle") in ("running", "stopping") and reaches(status)
+
+
 def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping[str, Any],
                  *, access: Any, active: Optional[Mapping[str, Any]],
                  gpu: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -1662,7 +1673,7 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
     row = ws.get("row") or {}
     action = start_label(mode).removeprefix("▸ ")
     view: Dict[str, Any] = {"start": False, "cont": False, "stop": False, "resume": False,
-                            "stop_shown": training_busy, "progress": None, "reason": "",
+                            "stop_shown": stop_shown(status), "progress": None, "reason": "",
                             "drawer_reason": ""}
     epoch, total = status.get("current_epoch"), status.get("total_epochs")
     if s == "running" and isinstance(epoch, int) and isinstance(total, int) and total > 0:
@@ -3350,6 +3361,34 @@ def _on_stop(request: gr.Request, mode):
     return confirm_stop(operator_access(request), mode)
 
 
+# --------------------------------------------------------------------------- Device
+#: The devices a page offers a run (`training_device.resolve_training_device`
+#: resolves each): auto (CUDA, refused without it), cuda and cpu.
+DEVICE_CHOICES = ("auto", "cuda", "cpu")
+#: **The one Device note** (UI ledger R-32, NEW-training-finetune-1): on a
+#: host with no CUDA device, every Device field (the base form's, the
+#: Continue drawer's, Fine-tune's) says before any start what the start
+#: would refuse, and what to choose, as its info line; the refusal itself is
+#: the job runner's, in the same words (`training_device.unavailable_words`).
+DEVICE_NOTE = "No CUDA device here: auto and cuda are refused; choose cpu."
+
+
+def device_note() -> Optional[str]:
+    """`DEVICE_NOTE` on a host where no CUDA device is visible
+    (`training_device.cuda_visible`), else None."""
+    from src.utils.training_device import cuda_visible
+
+    return None if cuda_visible() else DEVICE_NOTE
+
+
+def device_field(elem_id: str) -> Any:
+    """**The one Device field** of every form that starts a run: auto, cuda
+    or cpu, auto first (the deployment's GPU), with the host's note as its
+    info line (`device_note`)."""
+    return gr.Radio(label="Device", choices=list(DEVICE_CHOICES), value="auto",
+                    info=device_note(), elem_id=elem_id)
+
+
 # --------------------------------------------------------------------------- Continue…
 #: The two sources of a parent checkpoint. Both go through the same check.
 CONTINUE_FROM_LIST = "From run list"
@@ -3955,7 +3994,7 @@ def _on_branch_guards(mode, *values):
 
 def _continue_device(device):
     """Continue…'s Device starts from the Parameters' each time it opens."""
-    return device if device in ("auto", "cuda", "cpu") else "auto"
+    return device if device in DEVICE_CHOICES else "auto"
 
 
 def _on_continue_device_changed():
@@ -4562,7 +4601,8 @@ def create_training_tab(ctx: Any) -> None:
                            'aria-expanded="false" aria-controls="shep-train-params-bd">'
                            'Show</button></div>',
                            elem_id="shep-train-params-hd", js_on_load=FOLD_JS)
-                with gr.Column(elem_id="shep-train-params-bd", elem_classes=["shep-train-bd"]):
+                with gr.Column(elem_id="shep-train-params-bd",
+                               elem_classes=["shep-train-bd", "shep-form-dense"]):
                     # What a new base takes (decision S1), each field starting at
                     # the value the run takes without it: the common settings
                     # first, the rest one click away, a setting the run would not
@@ -4573,8 +4613,7 @@ def create_training_tab(ctx: Any) -> None:
                     with gr.Group(elem_classes=["shep-train-grid"]):
                         for name in BASE_FIELDS[:BASE_SHOWN]:
                             fields[name] = setting_field(name, references[name], elem_id=name)
-                        device = gr.Radio(label="Device", choices=["auto", "cuda", "cpu"],
-                                          value="auto", elem_id="device")
+                        device = device_field("device")
                     with gr.Accordion("More training settings", open=False,
                                       elem_id="shep-train-more"):
                         with gr.Group(elem_classes=["shep-train-grid"]):

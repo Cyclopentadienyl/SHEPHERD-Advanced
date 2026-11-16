@@ -523,6 +523,9 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
 .shep-panel-right { margin-left: auto; color: var(--shep-text-2); font-size: 14px; }
 .shep-panel-bd { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
 .shep-panel-ft { padding: 12px 16px !important; border-top: 1px solid var(--shep-border); align-items: center !important; gap: 12px !important; flex-wrap: wrap !important; }
+/* A panel's footer keeps its own height: its body takes the room the panel has left (a footer
+   drawn as a column grew with it, Fine-tune's Start row to 111 px). */
+.shep-panel > .shep-panel-ft { flex: none !important; }
 .shep-intro { padding: 12px 16px 0; margin: 0; font-size: 14px; color: var(--shep-text-2); }
 .shep-card { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
 .shep-card-hd .shep-muted { font-weight: 400; font-size: 14px; }
@@ -702,6 +705,16 @@ __SIDE__ {
      Result panel's title scrolled away with the report): a header drawn inside
      the region that scrolls sticks to that region's top. */
   .shep-panel .shep-panel-hd { position: sticky; top: 0; z-index: 6; background: var(--shep-panel); }
+  /* **A form drawn dense** (``shep-form-dense``: Training's parameters and its Continue drawer,
+     Fine-tune's form; B27-1, NEW-training-finetune-2): each field's padded block, its label and
+     its box as tight as drawn, with the field row's measure (``--shep-field-pad-b``) set to the
+     same padding, so an action beside the fields still stands on their boxes' line. Stacked,
+     nothing scrolls inside and the fields keep Gradio's room. */
+  .shep-form-dense { --shep-field-pad-b: 4px; }
+  .shep-form-dense .block.padded { padding-top: var(--shep-field-pad-b) !important; padding-bottom: var(--shep-field-pad-b) !important; }
+  .shep-form-dense [data-testid="block-info"] { margin-bottom: 4px !important; padding-top: 2px !important; padding-bottom: 2px !important; }
+  .shep-form-dense .wrap label { padding-top: 4px !important; padding-bottom: 4px !important; }
+  .shep-form-dense input[type="number"], .shep-form-dense input[type="text"] { padding-top: 6px !important; padding-bottom: 6px !important; }
 }
 /* Stacked: the regions stack, the page scrolls, nothing scrolls inside; a
    table wider than its panel scrolls sideways in its own box (it was cut by
