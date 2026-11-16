@@ -3078,6 +3078,12 @@ def _event_key(evt: Any) -> Optional[str]:
     return key if isinstance(key, str) else None
 
 
+#: Under the drawer's list, beside Load (R-27): what Load does next, in plain
+#: words; the confirmation then shows what changes.
+CHANGE_NOTE = ("Choose a model, then Load: you see what changes and confirm it before every "
+               "session is served it. Results already produced keep their own identity.")
+
+
 def create_diagnosis_tab(ctx: Any) -> None:
     """Build Diagnosis (clinical), the first screen (the page contract:
     `src/webui/shell.py`). The card is read on page load, each time the page
@@ -3251,9 +3257,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 def _foot() -> Any:
                     links["cancel"] = gr.Button("Cancel", size="sm", scale=0, min_width=0,
                                                 elem_id="shep-dx-change-cancel")
-                    plain_html('<span class="shep-note">Load reloads the pipeline and asks once, '
-                               'from → to. Replaces what every session is served; results already '
-                               'produced keep their own identity.</span>',
+                    # The next step in plain words (R-27), never "from → to".
+                    plain_html(f'<span class="shep-note">{_e(CHANGE_NOTE)}</span>',
                                elem_id="shep-dx-change-note")
                     return links["cancel"]
 
@@ -3784,6 +3789,9 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change button.shep-row > .shep-tag {{ margin-left: 6px; }}
 {_TAB} #shep-dx-change-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
 {_TAB} #shep-dx-change .shep-model-head {{ gap: 8px 14px !important; }}
+/* The search and what the list shows, on a line of their own under the head (R-27). */
+{_TAB} #shep-dx-change .shep-model-tools {{ gap: 8px 14px !important; }}
+{_TAB} #shep-models-clinical-count {{ flex: 1 1 12em !important; }}
 /* The head is a field row (D03): the workspace select keeps its own minimum width (Gradio's
    min(160px, 100%)), so a drawer too narrow for the row wraps it rather than squeezing the box
    (at 1280 x 900 it drew 26 px, its label cut to "W"); only the words beside it may shrink. */

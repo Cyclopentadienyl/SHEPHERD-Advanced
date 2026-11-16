@@ -589,6 +589,62 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
     return problems
 
 
+#: **What the shared model list's tree shows, read where the browser draws it**
+#: (D04, `model_list._tree_html`; a page init script): ``window.__shepTree(root)``
+#: gives its groups (each title, whether unfolded, its runs and files drawn),
+#: its runs (words, whether unfolded) and its files (key, words, selected),
+#: each drawn or folded away by what the page shows (`hidden`, a box), the
+#: count line beside it, and a selection the list says it does not show.
+TREE_JS = r"""
+(() => {
+  window.__shepTree = (root) => {
+    const el = document.querySelector(root);
+    if (!el) { return null; }
+    const shown = (t) => !t.hidden && t.getBoundingClientRect().height > 0;
+    const text = (t) => (t ? t.innerText.replace(/\s+/g, ' ').trim() : null);
+    const opened = (b) => !!b && b.getAttribute('aria-expanded') === 'true';
+    return {
+      groups: [...el.querySelectorAll('tbody[data-node]')].map((body) => ({
+        node: body.getAttribute('data-node'),
+        title: text(body.querySelector('.shep-grp-t')),
+        open: opened(body.querySelector('tr.shep-grp button.shep-fold')),
+        runs: [...body.querySelectorAll('tr.shep-tree-run')].filter(shown).length,
+        files: [...body.querySelectorAll('tr[data-key]')].filter(shown).length,
+      })),
+      runs: [...el.querySelectorAll('tr.shep-tree-run')].map((tr) => ({
+        node: tr.getAttribute('data-fold'), words: text(tr.querySelector('td')),
+        shown: shown(tr), open: opened(tr.querySelector('button.shep-fold')),
+        context: tr.classList.contains('shep-ctx'),
+      })),
+      files: [...el.querySelectorAll('tr[data-key]')].map((tr) => ({
+        key: tr.getAttribute('data-key'), words: text(tr.querySelector('td')),
+        shown: shown(tr), selected: tr.getAttribute('aria-current') === 'true',
+      })),
+      outside: text(el.querySelector('.shep-list-outside')),
+      fit: fit(el.querySelector('table.shep-mtree')),
+    };
+  };
+  // Whether the tree fits its frame (its width against its wrapper's), and every
+  // word a shown row splits over two lines (D8: a narrow frame never cuts a word).
+  const fit = (table) => {
+    if (!table) { return null; }
+    const wrap = table.closest('.shep-tbl-wrap');
+    const split = [];
+    const walk = document.createTreeWalker(table, NodeFilter.SHOW_TEXT);
+    for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+      for (const m of node.data.matchAll(/\S+/g)) {
+        const range = document.createRange();
+        range.setStart(node, m.index);
+        range.setEnd(node, m.index + m[0].length);
+        if (range.getClientRects().length > 1) { split.push(m[0]); }
+      }
+    }
+    return { over: Math.round(table.getBoundingClientRect().width - wrap.clientWidth), split };
+  };
+})();
+"""
+
+
 def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any:
     """Run a Node script (Playwright resolvable, `node_with_playwright`; the
     caller skips without it) and return the JSON it prints."""
@@ -603,5 +659,6 @@ def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any
     return json.loads(result.stdout)
 
 
-__all__ = ["LOOK_JS", "QUEUE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES", "UI_WALK_JS",
+__all__ = ["LOOK_JS", "QUEUE_JS", "TREE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES",
+           "UI_WALK_JS",
            "node_with_playwright", "run_node", "ui_problems", "walk_ui"]

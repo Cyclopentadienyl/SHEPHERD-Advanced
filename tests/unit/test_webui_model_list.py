@@ -259,9 +259,10 @@ def test_an_operator_lists_the_serving_workspace_with_in_use_pinned(root, servin
     assert '<div role="listitem"><button type="button" class="shep-row shep-row-more"' not in html
     assert "aria-selected" not in research
     # The drawer's own rule is its scope, not a filter it names: no "· Task
-    # models only, of 9 listed" (the 9 would count files it never shows).
+    # models only, of 9 listed" (the 9 would count files it never shows); no
+    # order word beside the order it is drawn in, no " · " (R-27, R-77).
     assert ml.count_line(listing, ml.PRESETS["clinical"], False) == (
-        "newest first · latest 4 runs · 5 checkpoints (of 6 in 5 runs)")
+        "Latest 4 of 5 runs, 5 saved files")
 
 
 def test_in_use_is_matched_by_the_full_fingerprint_only(root, serving, monkeypatch):
@@ -950,58 +951,70 @@ def test_a_markup_workspace_name_is_escaped_in_the_confirmation(root, serving, m
 
 
 # --------------------------------------------------------------------------- presets and views
-def test_the_research_preset_is_a_table_with_in_use_on_its_own_row(root, serving, monkeypatch):
+def test_the_research_preset_is_a_tree_with_in_use_on_its_own_row(root, serving, monkeypatch):
+    """D04: the research preset draws runs as summary rows, their files
+    folded under them, each still a row of its own; no score column (a
+    file's figures are its details, and validations of different tasks are
+    never put on one scale); "In use (Diagnosis)" on the served file, whose
+    run is unfolded and located."""
     listing = _listing(root, monkeypatch)
     research = ml.list_html(listing, None, ml.PRESETS["research"])
-    assert '<table class="shep-tbl shep-mtbl"' in research and "In use now" not in research
-    for column in ("Model", "Fingerprint", "Validation (Trainer)", "Recorded results"):
-        assert f">{column}</th>" in research, column
-    served_row = next(row for row in research.split("<tr") if "disease_3fa9c1" in row)
-    assert "In use (Diagnosis)" in served_row and "0.3500" in served_row
+    assert '<table class="shep-tbl shep-mtbl shep-mtree"' in research
+    assert "In use now" not in research
+    heads = re.findall(r'<th scope="col"[^>]*>([^<]*)</th>', research)
+    assert heads == list(ml.TREE_COLUMNS) == ["Model", "Task", "Operation", "Epochs", "Files",
+                                              "Fingerprint"]
+    assert "Validation" not in research and "0.3500" not in research
+    served_row = _row_of(research, "model-05.pt")
+    assert "In use (Diagnosis)" in served_row and " hidden" not in served_row
     assert research.count("In use (Diagnosis)") == 1
+    assert f'data-locate="{_key("model-05.pt")}"' in research
     assert "metadata not readable · cannot be loaded" in research
+    # Every file a row (nothing dropped by folding), the others' runs folded.
     assert research.count(" data-key=") == 9
+    assert ' hidden><td><div class="shep-tree-name shep-tree-leaf' in _row_of(
+        research, "model-12.pt")
 
 
-def test_a_pages_view_orders_filters_and_adds_a_column(root, serving, monkeypatch):
+def test_a_pages_view_orders_and_filters_its_groups(root, serving, monkeypatch):
+    """A page's view: its filter, its groups (each its own row group, B72-C5,
+    its runs in the order and depth it gives, the rest after them under the
+    rest title), its context rows counted apart, and its note beside Load."""
     listing = _listing(root, monkeypatch)
     keys = [ml.item_key(i) for i in listing["items"]]
     first, second = _key("model-01.pt"), _key("model-12.pt")
+    run_a = "gatv2/20261013-080000_disease_cccccc"
     view = {"task": "disease",
-            "groups": [{"title": "Group A", "keys": [first, second, "gatv2/nope/x.pt"]},
+            "groups": [{"title": "Group A", "keys": [first, second, "gatv2/nope/x.pt"],
+                        "runs": [{"run": run_a, "depth": 0},
+                                 {"run": "gatv2/20261018-091200_disease_8c2e7a", "depth": 1}]},
                        {"title": "Group B", "keys": []}],
-            "rest_title": "The rest · newest first",
-            "column": "A page column",
-            "cells": {first: 'a cell<div class="shep-sub">its second line</div>'},
+            "rest_title": "The rest",
             "note": "A note from the page <b>."}
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
     ordered = html.index("Group A")
-    assert ordered < html.index("disease_cccccc") < html.index("disease_8c2e7a") < html.index(
-        "Group B") < html.index("The rest · newest first")
+    assert ordered < html.index(f'data-key="{first}"') < html.index(
+        f'data-key="{second}"') < html.index("The rest")
+    assert "Group B" not in html                       # a group with no row is not drawn
     for other in ("run_e4c2a9", "gene_aaaaaa", "base_aaaaaa", "run_dddddd"):
         assert other not in html, other                    # not disease models: filtered out
-    assert ">A page column</th>" in html and "its second line" in html
-    assert ml.count_line(listing, ml.PRESETS["research"], False, view) == (
-        "in the groups below · 4 checkpoints in 3 runs · Disease only, of 9 listed")
+    bodies = re.findall(r"<tbody[^>]*>(.*?)</tbody>", html)
+    assert len(bodies) == 2 and all(body.count('scope="rowgroup"') == 1 for body in bodies)
+    assert 'class="shep-tree-name shep-d1"' in html     # the depth the page gives
+    assert ml.count_line(listing, ml.PRESETS["research"], False, view) == "Disease: 3 of 8 runs"
     assert ml.note_html(view) == '<span class="shep-note">A note from the page &lt;b&gt;.</span>'
-    # the clinical rows draw a page's cell as one more line of the row
-    rows = ml.list_html(listing, None, ml.PRESETS["clinical"],
-                        view={"cells": {second: "<b>regime</b>"}})
-    assert '<span class="shep-row-sub"><b>regime</b></span></button>' in rows
     assert len(keys) == 9
     # A view's explicit rows (a family view's, its context rows included).
     rows = ml.shown_items(listing, {"task": "disease", "keys": [_key("base.pt"), first]})
     assert [ml.item_key(i) for i in rows] == [first, _key("base.pt")]
-    # Its count says the filter's rows and the context rows apart: the base
-    # shown as the parent of the disease models is never counted as one, and
-    # the line never says "Disease only" beside it.
+    # Its count says the filter's runs and the context runs apart: the base
+    # shown as the parent of the disease models is never counted as one.
     family = [_key(name) for name in ("base.pt", "model-12.pt", "model-08.pt", "model-05.pt",
                                       "model-01.pt")]
-    view = {"task": "disease", "keys": family,
-            "groups": [{"title": "Family from run 2026-10-01 00:00 · 5 files", "keys": family}]}
+    view = {"task": "disease", "keys": family, "context": [_key("base.pt")],
+            "groups": [{"title": "Family from base", "keys": family}]}
     assert ml.count_line(listing, ml.PRESETS["research"], False, view) == (
-        "in the groups below · 4 checkpoints in 3 runs · Disease, with 1 context row, of 9 "
-        "listed")
+        "Disease: 3 of 8 runs, with 1 run they come from")
 
 
 def test_one_filter_vocabulary_and_the_drawer_lists_task_models_only(root, serving, monkeypatch):
@@ -1035,17 +1048,17 @@ def test_one_filter_vocabulary_and_the_drawer_lists_task_models_only(root, servi
     assert "No gene model is listed in this workspace." in ml.list_html(
         no_gene, None, research, view={"task": "gene"})
     assert ml.count_line(no_gene, research, False, {"task": "gene"}) == (
-        "no checkpoint shown · Gene only, of 8 listed")
-    assert ml.count_line(listing, research, False, {"task": "patients_like_me"}).endswith(
-        "· Patients-like-me only, of 9 listed")
+        "Gene: no checkpoint shown")
+    assert ml.count_line(listing, research, False, {"task": "patients_like_me"}) == (
+        "Patients-like-me: 1 of 8 runs")
     # Each count in its own number (K6 closing smoke: "1 checkpoints in 1 runs").
-    assert ml.count_line(listing, research, False, {"task": "gene"}) == (
-        "newest first · 1 checkpoint in 1 run · Gene only, of 9 listed")
+    assert ml.count_line(listing, research, False) == "8 runs, 9 saved files"
+    assert ml.count_line(listing, research, False, {"task": "gene"}) == "Gene: 1 of 8 runs"
     # The drawer's task filter is counted against what the drawer lists (its
-    # six task models), never against the bases and refused files it hides;
-    # asking for every row it shows names no filter at all.
+    # five runs of task models), never against the bases and refused files it
+    # hides; asking for every row it shows names no filter at all.
     assert ml.count_line(listing, clinical, False, {"task": "disease"}) == (
-        "newest first · 4 checkpoints in 3 runs · Disease only, of 6 listed")
+        "Disease: 3 of 5 runs")
     assert ml.count_line(listing, clinical, False, {"task": "task_models"}) == ml.count_line(
         listing, clinical, False, {"task": "all"}) == ml.count_line(listing, clinical, False)
 
@@ -1061,18 +1074,24 @@ def test_the_list_redraws_when_the_page_changes_its_view(root, serving, monkeypa
     assert redraw.outputs == [handle.selected, handle.rows, handle.count, handle.facts,
                               handle.load_button, handle.reason, handle.note]
     listing = _listing(root, monkeypatch)
-    broken = _key("broken.pt")
-    key, rows, count, facts, load, reason, note = redraw.fn(listing, broken, False,
-                                                            {"task": "disease"})
-    assert key is None and "run_e4c2a9" not in rows and load["interactive"] is False
-    assert reason == ""
+    # D04: a filter never changes what is selected; the list says it does not
+    # show the selection, whose details stay.
     disease = _key("model-12.pt")
+    key, rows, count, facts, load, reason, note = redraw.fn(listing, disease, False,
+                                                            {"task": "gene"}, "", {})
+    assert key == disease and "Selected model not shown by this filter (Task: Gene)" in rows
+    assert disease not in re.findall(r'data-key="([^"]+)"', rows)
+    assert "Select a model" not in facts and load["interactive"] is True and reason == ""
     key, _rows, _count, _facts, load, reason, _note = redraw.fn(listing, disease, False,
-                                                                {"task": "disease"})
+                                                                {"task": "disease"}, "", {})
     assert key == disease and load["interactive"] is True and reason == ""
+    assert "not shown by this filter" not in _rows
+    gone = redraw.fn(listing, "gatv2/x/gone.pt", False, {"task": "disease"}, "", {})
+    assert gone[0] is None and gone[4]["interactive"] is False
     assert handle.head_extra.value == "Full records" and handle.foot_extra.value == "Compare"
     assert handle.refresh["inputs"] == [handle.workspace, handle.show_older, handle.view,
-                                        handle.listing, handle.selected]
+                                        handle.listing, handle.selected, handle.search,
+                                        handle.fold]
 
 
 def test_the_research_load_is_off_for_a_base_or_refused_row_with_its_reason(
@@ -1086,15 +1105,20 @@ def test_the_research_load_is_off_for_a_base_or_refused_row_with_its_reason(
         ctx = standalone_context(demo)
         handle = ctx.create_model_list("research")
     select = next(fn for fn in demo.fns.values() if fn.name == "_select")
-    assert select.outputs[-2:] == [handle.load_button, handle.reason]
+    assert select.outputs[5:7] == [handle.load_button, handle.reason]
     listing = _listing(root, monkeypatch)
+
+    def pick(name):
+        return select.fn(listing, None, False, None, "", {},
+                         gr.EventData(None, {"key": _key(name)}), gradio_request())
+
     for name, why in (("base.pt", ml.BASE_REFUSAL),
                       ("model-07.pt", f"Record not readable: {WRITTEN_BEFORE_SPEC}.")):
-        out = select.fn(listing, False, None, gr.EventData(None, {"key": _key(name)}))
-        assert out[0] == _key(name) and out[-2]["interactive"] is False
-        assert out[-1] == f'<div class="shep-reason shep-reason-grey">{why}</div>'
-    out = select.fn(listing, False, None, gr.EventData(None, {"key": _key("model-05.pt")}))
-    assert out[-2]["interactive"] is True and out[-1] == ""
+        out = pick(name)
+        assert out[0] == _key(name) and out[5]["interactive"] is False
+        assert out[6] == f'<div class="shep-reason shep-reason-grey">{why}</div>'
+    out = pick("model-05.pt")
+    assert out[5]["interactive"] is True and out[6] == ""
     operator_mode(monkeypatch)
     refreshed = handle.refresh["fn"]("demo", False, None, listing, _key("base.pt"),
                                      gradio_request())
@@ -1133,9 +1157,8 @@ def test_a_view_shaped_for_another_workspace_never_hides_this_workspaces_rows(
     rows = by[id(handle.rows)]
     for name in ("model-12.pt", "model-08.pt", "model-05.pt", "model-01.pt"):
         assert f'data-key="{_key(name)}"' in rows, name
-    assert "Family from run" not in rows and ">Lineage</th>" in rows
-    assert by[id(handle.count)] == (
-        "newest first · 4 checkpoints in 3 runs · Disease only, of 9 listed")
+    assert "Family from run" not in rows and "Group" not in rows
+    assert by[id(handle.count)] == "Disease: 3 of 8 runs"
     assert by[id(handle.note)] == '<span class="shep-note">Reloads.</span>'
     # The same workspace: the view's own rows and groups.
     listing = by[id(handle.listing)]
@@ -1144,6 +1167,7 @@ def test_a_view_shaped_for_another_workspace_never_hides_this_workspaces_rows(
                         "keys": [_key("model-05.pt")]}]}
     rows = refresh(mine, listing)[id(handle.rows)]
     assert rows.count(" data-key=") == 1 and "Family from run 2026-10-01" in rows
+    assert "Group" not in rows
 
 
 def _row_of(html, name):
@@ -1154,12 +1178,24 @@ def _row_of(html, name):
                                  at)]
 
 
+def _run_row(html, run):
+    """The tree's summary row of the run directory `run`."""
+    at = html.index(f'data-fold="r:{run}"')
+    start = html.rfind("<tr", 0, at)
+    return html[start:html.index("</tr>", at)]
+
+
+def _cells(row):
+    """A table row's cells as the words they show (tags dropped)."""
+    return [re.sub(r"<[^>]+>", "", cell) for cell in re.findall(r"<td[^>]*>(.*?)</td>", row)]
+
+
 def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypatch):
-    """README §5 (map B7): every row leads with its kind word
-    (`renderers.record_kind_text`), whatever the view or the order: the
-    drawer's rows, which list every task's models together, and the research
-    table's Model cell under any order (here, a page's group and column), its
-    refused and unreadable files included."""
+    """README §5 (map B7): what a file is is said once where a person reads
+    its row: the drawer's rows, which list every task's models together,
+    lead with its kind word (`renderers.record_kind_text`); the research
+    tree says it in its run's Task column (a run's files share their record),
+    its refused and unreadable files included, under any group."""
     listing = _listing(root, monkeypatch)
     rows = ml.list_html(listing, None, ml.PRESETS["clinical"], show_older=True)
     for name, kind in (("model-12.pt", "Disease"), ("model-05.pt", "Disease"),
@@ -1167,36 +1203,52 @@ def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypa
         row = _row_of(rows, name)
         assert (f'"><span class="shep-row-sub shep-row-kind">{kind}</span>'
                 f'<span class="shep-row-main">') in row, (name, row)
-    view = {"groups": [{"title": "Group A", "keys": [_key("model-07.pt")]}],
-            "column": "A page column", "cells": {}}
+    view = {"groups": [{"title": "Group A", "keys": [_key("model-07.pt")]}]}
     table = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
-    for name, kind in (("base.pt", "Base"), ("model-07.pt", "Record not readable"),
-                       ("broken.pt", "Record unknown"), ("model-03.pt", "Gene")):
-        row = _row_of(table, name)
-        assert f'"><td><div class="shep-sub shep-row-kind">{kind}</div>' in row, (name, row)
+    for run, kind, operation in (
+            ("gatv2/20261001-000000_base_aaaaaa", "Base", "New run"),
+            ("hgt/20261012-080000_run_dddddd", "Record not readable", "Unknown"),
+            ("sage/20261016-083000_run_e4c2a9", "Record unknown", "Unknown"),
+            ("gatv2/20261015-080000_gene_aaaaaa", "Gene", "Fine-tune")):
+        row = _run_row(table, run)
+        assert _cells(row)[1] == kind and _cells(row)[2].startswith(operation), (run, row)
 
 
-def test_a_frozen_backbone_row_says_so_in_its_kind_line_in_both_presets(root, serving,
-                                                                        monkeypatch):
-    """Ops-wiring round, decision F1: the frozen-backbone control's row leads
-    with "Disease · frozen graph backbone" (`renderers.model_kind_text`, from
-    its record's weight transfer), in the drawer's rows and the research
-    table alike; the other disease rows stay "Disease"."""
+def test_a_frozen_backbone_row_says_so_in_both_presets(root, serving, monkeypatch):
+    """Ops-wiring round, decision F1; D04's three freeze words: the
+    frozen-backbone control's drawer row leads with "Disease · frozen graph
+    backbone" (`renderers.model_kind_text`, from its record's weight
+    transfer), its run in the research tree reads "Fine-tune, frozen"
+    (`renderers.operation_words`); a fine-tune recording every part
+    trainable "Fine-tune, full", other frozen parts "Fine-tune, partly
+    frozen"."""
     listing = _listing(root, monkeypatch)
     frozen = {"trainable": ["patient_encoder", "task_head"],
               "parts": {"input": "frozen", "encoder": "frozen", "lp_head": "frozen",
                         "patient_encoder": "trainable", "task_head": "trainable"}}
+    partly = {"parts": {"input": "frozen", "encoder": "trainable", "lp_head": "trainable",
+                        "patient_encoder": "trainable", "task_head": "trainable"}}
     for item in listing["items"]:
-        if item.get("filename") == "model-12.pt":
+        if item.get("filename") in ("model-12.pt", "model-08.pt"):
             item["weight_transfer"] = frozen
+        elif item.get("filename") == "model-05.pt":
+            item["weight_transfer"] = {"trainable": "all"}
+        elif item.get("filename") == "model-01.pt":
+            item["weight_transfer"] = partly
     rows = ml.list_html(listing, None, ml.PRESETS["clinical"], show_older=True)
     assert ('"><span class="shep-row-sub shep-row-kind">Disease · frozen graph backbone</span>'
             in _row_of(rows, "model-12.pt"))
     assert '<span class="shep-row-sub shep-row-kind">Disease</span>' in _row_of(rows,
                                                                                 "model-05.pt")
     table = ml.list_html(listing, None, ml.PRESETS["research"])
-    assert ('"><td><div class="shep-sub shep-row-kind">Disease · frozen graph backbone</div>'
-            in _row_of(table, "model-12.pt"))
+    for run, words in (("20261018-091200_disease_8c2e7a", "Fine-tune, frozen"),
+                       ("20261017-091500_disease_3fa9c1", "Fine-tune, full"),
+                       ("20261013-080000_disease_cccccc", "Fine-tune, partly frozen")):
+        assert _cells(_run_row(table, f"gatv2/{run}"))[1:3] == ["Disease", words], run
+    # Each word whole: a narrow frame may break the line at a space, never at a
+    # word's own hyphen (D8).
+    assert ('<span class="shep-op"><span class="shep-nowrap">Fine-tune,</span> '
+            'partly frozen</span>') in table
 
 
 def test_the_research_listing_carries_the_family_view_from_its_one_listing(
@@ -1482,7 +1534,7 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     def call(base_url):
         with TestClient(app, base_url=base_url) as client:
             started = client.post(f"/ui/gradio_api/call/{refresh.api_name}",
-                                  json={"data": [None, False, None, None, None]})
+                                  json={"data": [None, False, None, None, None, "", {}]})
             assert started.status_code == 200, started.text
             stream = client.get(f"/ui/gradio_api/call/{refresh.api_name}/"
                                 f"{started.json()['event_id']}")
@@ -1497,7 +1549,9 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     listed = call(OPERATOR_BASE_URL)
     _state, _selected, workspace, count, rows = listed[:5]
     assert workspace["value"] == "demo"
-    assert "5 checkpoints (of 6 in 5 runs)" in count and "listed" not in count
+    # The drawer opened the latest runs only (BACKLOG 39), so how many older
+    # runs hold a model is not said.
+    assert count == "Latest 4 runs, 5 saved files" and "listed" not in count
     # The run named once, by its heading (B4), its file by what it is.
     assert "<b>Run disease · GATv2 2026-10-18 09:12</b>" in rows
     assert "model-12.pt, recorded epoch 12" in rows
@@ -1530,7 +1584,7 @@ def test_a_selection_made_after_a_load_survives_the_lists_re_read(root, serving,
         ctx = standalone_context(demo)
         handle = ctx.create_model_list("clinical")
     refresh = handle.refresh
-    assert refresh["inputs"][-2:] == [handle.listing, handle.selected]
+    assert refresh["inputs"][3:5] == [handle.listing, handle.selected]
     operator_mode(monkeypatch)
     request = gradio_request()
     before = ml.list_models("demo", request)
@@ -1548,3 +1602,240 @@ def test_a_selection_made_after_a_load_survives_the_lists_re_read(root, serving,
         by = dict(zip(map(id, refresh["outputs"]), out, strict=True))
         assert by[id(handle.selected)] is None
         assert by[id(handle.load_button)]["interactive"] is False
+
+
+# --------------------------------------------------------------------------- the tree (D04)
+def _rows(html):
+    """Every row of the tree: its keys and whether it is folded away."""
+    return [(m.group(1), m.group(2), " hidden" in m.group(0))
+            for m in re.finditer(r'<tr class="([^"]*)"(?: data-key="([^"]*)")?[^>]*>', html)]
+
+
+def test_the_tree_folds_runs_and_unfolds_the_selected_and_the_served(root, serving, monkeypatch):
+    """D04: every run a summary row, its files folded; the run of the model in
+    use and of the selection unfolded (each file still its own row); what the
+    operator folds or unfolds is kept (the fold state) and wins over the
+    default; a folded group hides its runs; folding never changes what is
+    selected, and nothing is dropped from the table."""
+    listing = _listing(root, monkeypatch)
+    research = ml.PRESETS["research"]
+    html = ml.list_html(listing, None, research)
+    files = {key: hidden for cls, key, hidden in _rows(html) if key}
+    assert len(files) == 9                                     # nothing dropped
+    served_run = {_key("model-05.pt")}
+    assert {k for k, hidden in files.items() if not hidden} == served_run
+    # A selection unfolds its run too, and is the row located.
+    picked = _key("model-03.pt")
+    html = ml.list_html(listing, picked, research)
+    files = {key: hidden for cls, key, hidden in _rows(html) if key}
+    assert files[picked] is False and files[_key("model-05.pt")] is False
+    assert f'data-locate="{picked}"' in html
+    assert 'aria-current="true"' in _row_of_key(html, picked)
+    # The operator's own folds win: the selection's run folded by hand stays
+    # folded, another run unfolded stays open; the selection is unchanged.
+    fold = {ml.run_node("gatv2/20261015-080000_gene_aaaaaa"): False,
+            ml.run_node("gatv2/20261014-080000_patients_like_me_bbbbbb"): True}
+    html = ml.list_html(listing, picked, research, fold=fold)
+    files = {key: hidden for cls, key, hidden in _rows(html) if key}
+    assert files[picked] is True and files[_key("model-02.pt")] is False
+    assert 'aria-current="true"' in _row_of_key(html, picked)
+    assert 'aria-expanded="false"' in html and "▸" in html
+    # A folded group hides its runs and their files (By family's group here).
+    view = {"groups": [{"node": "g:fam", "title": "Family A",
+                        "keys": [_key("model-12.pt"), _key("model-08.pt")]}]}
+    html = ml.list_html(listing, None, research, view=view, fold={"g:fam": False})
+    body = re.search(r'<tbody data-node="g:fam">(.*?)</tbody>', html, re.S).group(1)
+    assert all(hidden for _cls, _key_, hidden in _rows(body)[1:]), body
+    assert ml.count_line(listing, research, False, view, fold={"g:fam": False}) == (
+        ml.count_line(listing, research, False, view))           # folding hides, counts nothing
+
+
+def test_a_search_finds_names_and_fingerprints_and_keeps_where_they_come_from(
+        root, serving, monkeypatch):
+    """D04's search: plain text, ignoring case, in a run's name or words or a
+    file's name; a model fingerprint by its first hex digits (four or more) or
+    whole; a match keeps the runs it comes from (the view's exact parent
+    files) as context; a file found by its own name or fingerprint has its run
+    unfolded; nothing matched says so; the selection never changes."""
+    listing = _listing(root, monkeypatch)
+    research = ml.PRESETS["research"]
+    sha = root["shas"]["model-03.pt"]
+    family = [_key(n) for n in ("base.pt", "model-12.pt", "model-08.pt", "model-05.pt",
+                                "model-01.pt", "model-03.pt", "model-02.pt")]
+    parents = {key: _key("base.pt") for key in family[1:]}
+    view = {"keys": family, "parents": parents,
+            "groups": [{"node": "g:base", "title": "Family from base", "keys": family,
+                        "family": True}]}
+    by_name = ml.tree_view(listing, view, research, search="GENE")
+    assert by_name.matched == (_key("model-03.pt"),) and by_name.context == (_key("base.pt"),)
+    assert ml.count_line(listing, research, False, view, search="GENE") == (
+        "1 run matches “GENE”, with 1 run they come from")
+    for query in (sha[:4].upper(), sha[:12], sha):
+        tree = ml.tree_view(listing, view, research, search=query)
+        assert tree.matched == (_key("model-03.pt"),), query
+        assert ml.run_node("gatv2/20261015-080000_gene_aaaaaa") in tree.open_nodes
+    assert ml.tree_view(listing, view, research, search=sha[:3]).matched == ()   # too short
+    assert ml.search_hit({"filename": "model-03.pt", "run": "x"}, "MODEL-03") == "file"
+    html = ml.list_html(listing, _key("model-12.pt"), research, view=view, search="gene")
+    assert "Selected model not shown by this filter (search “gene”)" in html
+    assert 'data-key="__clear_search__"' in html
+    assert "shep-ctx" in _run_row(html, "gatv2/20261001-000000_base_aaaaaa")
+    nothing = ml.list_html(listing, None, research, view=view, search="zzz")
+    assert "No checkpoint matches “zzz” in this workspace." in nothing
+    assert ml.count_line(listing, research, False, view, search="zzz") == "No run matches “zzz”"
+
+
+def test_the_refresh_keeps_the_selection_and_the_folds_and_a_lone_row_is_chosen(
+        root, serving, monkeypatch):
+    """D04: a refresh keeps a selection still listed in the same workspace,
+    whatever the filter or search show, and what was folded; another
+    workspace starts afresh. R-27: a lone candidate is chosen, so Load is no
+    dead end."""
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        ctx = standalone_context(demo)
+        handle = ctx.create_model_list("research")
+    operator_mode(monkeypatch)
+    request = gradio_request()
+    before = ml.list_models("demo", request)
+    picked = _key("model-03.pt")
+    fold = {ml.run_node("gatv2/20261013-080000_disease_cccccc"): True}
+    out = handle.refresh["fn"]("demo", False, {"task": "disease"}, before, picked, request,
+                               "nothing matches this", fold)
+    by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
+    assert by[id(handle.selected)] == picked and by[id(handle.fold)] == fold
+    assert "Selected model not shown by this filter (Task: Disease" in by[id(handle.rows)]
+    out = handle.refresh["fn"]("demo", False, None, {**before, "workspace": "other"}, picked,
+                               request, "", fold)
+    by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
+    assert by[id(handle.selected)] is None and by[id(handle.fold)] == {}
+    # A lone candidate (the drawer's one task model) is chosen.
+    lone = {**before, "items": [i for i in before["items"] if i["filename"] == "model-03.pt"]}
+    assert ml.kept_selection(None, lone, None, None, ml.PRESETS["clinical"]) == picked
+    assert ml.kept_selection(None, before, None, None, ml.PRESETS["clinical"]) is None
+    assert ml.kept_selection(None, {**before, "items": [ml.find_item(before, _key(
+        "base.pt"))]}, None, None, ml.PRESETS["research"]) is None    # a base: never loaded
+
+
+def test_a_fold_toggle_is_kept_and_draws_nothing_again(root, serving, monkeypatch):
+    """A fold toggle is folded in the page at once (`MODEL_LIST_JS`); the
+    server only keeps it, for the next drawing."""
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        ctx = standalone_context(demo)
+        handle = ctx.create_model_list("research")
+    select = next(fn for fn in demo.fns.values() if fn.name == "_select")
+    assert select.trigger_mode == "multiple"
+    listing = _listing(root, monkeypatch)
+    node = ml.run_node("gatv2/20261015-080000_gene_aaaaaa")
+    out = select.fn(listing, None, False, None, "", {}, gr.EventData(None, {"fold": node,
+                                                                          "open": True}),
+                    gradio_request())
+    by = dict(zip(map(id, select.outputs), out, strict=True))
+    assert by[id(handle.fold)] == {node: True}
+    assert all(by[id(c)] == gr.update() for c in (handle.rows, handle.selected, handle.facts))
+    assert "foldRows(node, open)" in ml.MODEL_LIST_JS and "scrollIntoView" in ml.MODEL_LIST_JS
+
+
+def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, monkeypatch):
+    """Text from a run's name is escaped in its row; a plain table's selected
+    row is `aria-current`, never `aria-selected` (the skill's §8); a file's
+    Fingerprint cell is its 12 hex by the one digest value, with its dataset
+    only where it is not the workspace's current one (BACKLOG 69 L1:) an
+    entry the listing could not list reads its own name and where it sits,
+    never an upper-cased directory as an architecture."""
+    listing = _listing(root, monkeypatch)
+    research = ml.PRESETS["research"]
+    item = ml.find_item(listing, _key("model-03.pt"))
+    marked = {**item, "run": "20261015-080000_<b>x_aaaaaa", "key": "gatv2/m/model-03.pt",
+              "run_key": "gatv2/m", "trained_on_this_dataset": False,
+              "dataset_fingerprint": "f" * 64}
+    unlisted = {"workspace": "demo", "architecture": "runs", "run": "bad\\xff",
+                "filename": "bad\\xff", "key": "/626164ff", "run_key": "/626164ff",
+                "sha256": None, "problem": "runs/bad\\xff cannot be listed (…)", "record": None}
+    data = {**listing, "items": [marked, unlisted, *listing["items"]]}
+    html = ml.list_html(data, "gatv2/m/model-03.pt", research)
+    assert "<b>x" not in html and "&lt;b&gt;x" in html and "aria-selected" not in html
+    assert "Another dataset" in _row_of_key(html, "gatv2/m/model-03.pt")
+    cells = re.findall(r"<td>(.*?)</td>", _row_of_key(html, _key("model-03.pt")), re.S)
+    assert cells[-1] == r_fingerprint(item["sha256"], listing)
+    entry = _row_of_key(html, "/626164ff")
+    assert "bad\\xff" in entry and "a folder in runs/" in entry and "RUNS" not in entry
+    assert "runs/bad\\xff cannot be listed (…)" in entry          # why, on the page
+    # Counted apart, never as a run or a saved file (B69 L3).
+    assert ml.count_line(data, research, False) == "9 runs, 10 saved files, 1 entry not listed"
+
+
+def _row_of_key(html, key):
+    at = html.index(f'data-key="{key}"')
+    start = html.rfind("<tr", 0, at)
+    return html[start:html.index("</tr>", at)]
+
+
+def r_fingerprint(sha, listing):
+    from src.webui.components import renderers as r
+
+    return r.fingerprint_value(sha, what="model fingerprint", copy=False,
+                               digits=r.distinguishing_digits(
+                                   i.get("sha256") for i in listing["items"]))
+
+
+def test_the_drawer_opens_only_the_runs_it_shows_and_the_rest_on_show_older_runs(
+        root, serving, monkeypatch):
+    """BACKLOG 39 (M5-3 review UI-2): the drawer read every checkpoint of the
+    workspace to show four runs. Its first listing opens the latest runs only
+    (a base run read on the way is not shown), the model in use's included,
+    and "Show older runs" opens the rest."""
+    import src.utils.checkpoint_io as checkpoint_io
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        ctx = standalone_context(demo)
+        handle = ctx.create_model_list("clinical")
+    operator_mode(monkeypatch)
+    opened = []
+    original = checkpoint_io.read_checkpoint
+    monkeypatch.setattr(checkpoint_io, "read_checkpoint",
+                        lambda path, **kw: opened.append(Path(path).name) or original(path, **kw))
+    out = handle.refresh["fn"]("demo", False, None, None, None, gradio_request())
+    by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
+    first = sorted(opened)
+    assert first == ["broken.pt", "model-02.pt", "model-03.pt", "model-05.pt", "model-08.pt",
+                     "model-12.pt"], first
+    listing = by[id(handle.listing)]
+    assert listing["runs_unread"] == 3
+    assert "Show older runs (up to 3 more)" in by[id(handle.rows)]
+    assert by[id(handle.count)] == "Latest 4 runs, 5 saved files"
+    select = next(fn for fn in demo.fns.values() if fn.name == "_select")
+    opened.clear()
+    out = select.fn(listing, None, False, None, "", {}, gr.EventData(None, {"key": "__older__"}),
+                    gradio_request())
+    shown = dict(zip(map(id, select.outputs), out, strict=True))
+    assert {"model-01.pt", "base.pt", "model-07.pt"} <= set(opened)
+    assert "disease_cccccc" in shown[id(handle.rows)]
+    assert shown[id(handle.listing)]["runs_unread"] == 0
+
+
+def test_a_search_unfolds_what_it_found(root, serving, monkeypatch):
+    """A match is never folded away: the search opens a group holding one and
+    a run holding a file found by its own name or fingerprint, whatever was
+    folded before (seen on the multi-family demo: a fingerprint found in a
+    family folded by hand showed no row)."""
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        ctx = standalone_context(demo)
+        handle = ctx.create_model_list("research")
+    searched = next(fn for fn in demo.fns.values() if fn.name == "_searched")
+    listing = _listing(root, monkeypatch)
+    view = {"groups": [{"node": "g:fam", "title": "Family A",
+                        "keys": [_key("model-03.pt"), _key("model-02.pt")]}]}
+    run = ml.run_node("gatv2/20261015-080000_gene_aaaaaa")
+    fold, rows, count = searched.fn(listing, None, False, view, root["shas"]["model-03.pt"][:8],
+                                    {"g:fam": False, run: False, "g:other": False})
+    assert fold == {"g:other": False}
+    assert not dict((k, h) for _c, k, h in _rows(rows) if k)[_key("model-03.pt")]
+    assert count.startswith("1 run matches") and searched.outputs == [handle.fold, handle.rows,
+                                                                       handle.count]

@@ -205,7 +205,7 @@ def test_the_row_shows_recorded_tests_as_a_state_never_a_number():
     assert "Recorded results: 3 · runs differ for 1" in plain
     assert "0.318" not in plain
     assert r.recorded_tests_text(r.RecordedTests("none")) == "Recorded results: none in ledger"
-    assert r.recorded_tests_text(r.RecordedTests("no_ledger")) == "Recorded results: no ledger"
+    assert r.recorded_tests_text(r.RecordedTests("no_ledger")) == "Recorded results: none kept"
     assert r.recorded_tests_text(r.RecordedTests("not_read")) == (
         "Recorded results: ledger not readable")
     assert r.recorded_tests_text(r.RecordedTests("records", 2, None)) == (
@@ -227,8 +227,6 @@ def test_records_that_cannot_be_read_are_named_apart_from_the_results():
     assert text(r.RecordedTests("records", 3, 1, unchecked=1, unreadable=2)) == (
         "Recorded results: 3 · 2 not readable; runs differ for 1; comparison incomplete for 1")
     assert text(r.RecordedTests("records", 3, 1, unreadable=2)).count(" · ") == 1
-    assert r.recorded_tests_cell(r.RecordedTests("records", 3, 0, unreadable=1)) == (
-        "3 · 1 not readable")
     html = r.model_row_html(checkpoint(), [workspace()],
                             recorded=r.RecordedTests("records", 0, 0, unreadable=1))
     assert "Recorded results: 0 · 1 not readable" in text_of(html)
@@ -373,10 +371,11 @@ def test_runs_whose_names_cut_alike_keep_where_they_differ():
 
 
 def test_the_models_table_and_the_load_plan_tell_the_two_arms_apart():
-    """The Models table names its runs by the same rule as the Run selects
-    (`renderers.run_names`), and the load plan's From and To, which compare
-    two files, name each run whole: the closing check read "cpb-dis…disease
-    · GATv2 2026-11-14 02:56 → cpb-dis…disease · GATv2 2026-11-14 02:57"."""
+    """The Models tree names its runs whole (it has the room an option has
+    not; runs that would read alike told apart, `renderers.distinct_names`),
+    and the load plan's From and To, which compare two files, name each run
+    whole too: the closing check read "cpb-dis…disease · GATv2 2026-11-14
+    02:56 → cpb-dis…disease · GATv2 2026-11-14 02:57"."""
     from src.webui.components import model_list as ml
 
     items = [{**checkpoint(run=run, sha=digit * 64), "key": f"{key}/last.pt", "run_key": key,
@@ -385,8 +384,8 @@ def test_the_models_table_and_the_load_plan_tell_the_two_arms_apart():
              for (key, (_arch, run)), digit in zip(ARMS.items(), "abc")]
     listing = {"items": items, "workspaces": [workspace("demo")], "workspace": "demo"}
     table = text_of(ml.list_html(listing, None, ml.PRESETS["research"]))
-    assert "cpb-dis-ful…ase · GATv2 2026-11-14 02:57" in table
-    assert "cpb-dis-fro…ase · GATv2 2026-11-14 02:56" in table
+    assert "cpb-dis-full-disease · GATv2 2026-11-14 02:57" in table
+    assert "cpb-dis-frozen-disease · GATv2 2026-11-14 02:56" in table
     assert "cpb-dis…disease" not in table
     served = {"initialized": True, "checkpoint_meta": {},
               "served_identity": {"checkpoint": {"sha256": "b" * 64}}}
@@ -460,68 +459,12 @@ def test_not_trainable_tells_an_absent_manifest_from_an_unreadable_one():
     assert "not trainable: no split manifest" in html
 
 
-def test_the_research_table_row_has_its_columns_and_escapes():
-    row = r.model_table_row_html(checkpoint(run="20261017-091500_<b>x"), [workspace()],
-                                 recorded=r.RecordedTests("records", 3, 1), in_use=True,
-                                 key="gatv2/r/f.pt", in_use_label="In use (Diagnosis)",
-                                 extra="<span>regime</span>")
-    # A plain table's row: `aria-current` when selected, never `aria-selected` (skill §8).
-    assert row.startswith('<tr class="" data-key="gatv2/r/f.pt" tabindex="0">')
-    assert "aria-selected" not in row
-    chosen = r.model_table_row_html(checkpoint(), [workspace()], selected=True, key="k")
-    assert chosen.startswith('<tr class="shep-on" data-key="k" tabindex="0" aria-current="true">')
-    cells = re.findall(r"<td[^>]*>(.*?)</td>", row)
-    assert len(cells) == 5
-    # The run by the one run words (what the Run selects say), then how far it trained.
-    assert '<div class="shep-w600">&lt;b&gt;x · GATv2 2026-10-17 09:15</div>' in cells[0]
-    assert '<div class="shep-sub">recorded epoch 5</div>' in cells[0]
-    assert "In use (Diagnosis)" in cells[0] and "<b>x" not in row
-    # The fingerprint column: the model's 12 hex only, by the one digest value;
-    # a row trained on the workspace's current dataset says nothing of it (the
-    # workspace line says that dataset once).
-    assert cells[1] == r.fingerprint_value(SHA, what="model fingerprint", copy=False)
-    assert cells[1] == f'<code class="shep-fpv" title="{SHA}">{SHA[:12]}</code>'
-    assert "dataset" not in cells[1].lower() and "synthetic" not in cells[1]
-    assert cells[2] == '0.3180<div class="shep-sub">Validation pooled MRR (Trainer)</div>'
-    assert cells[3] == "<span>regime</span>"
-    assert cells[4] == "3 · runs differ for 1"
-    assert r.MODEL_TABLE_COLUMNS == ("Model", "Fingerprint", "Validation (Trainer)",
-                                     "Recorded results")
-    # A dataset that is not the workspace's current one is the row's exception mark.
-    other = r.model_table_row_html({**checkpoint(fingerprint=FP_B),
-                                    "trained_on_this_dataset": False}, [workspace()])
-    assert "Another dataset" in other and "▲" in other and other.count("<td") == 4
-    assert FP_B[:12] not in other
-    synthetic = r.model_table_row_html({**checkpoint(fingerprint=FP_B),
-                                        "trained_on_this_dataset": False},
-                                       [workspace(), workspace("other", FP_B)])
-    assert "Another dataset" in synthetic and "synthetic" in synthetic
-    unrecorded = r.model_table_row_html({**checkpoint(fingerprint=None),
-                                         "trained_on_this_dataset": None}, [workspace()])
-    assert "Dataset not recorded" in unrecorded and "○" in unrecorded
-    unverified = r.model_table_row_html({**checkpoint(), "trained_on_this_dataset": None},
-                                        [workspace()])
-    assert "Dataset cannot be verified" in unverified
-    # The details' Dataset row says a missing dataset once (the skill's §1.2;
-    # review of B3: its exception, then trained_on_html's own "not recorded").
-    for current in (None, False):
-        row = r.dataset_relation_html({**checkpoint(fingerprint=None),
-                                       "trained_on_this_dataset": current}, [workspace()])
-        assert row == r.status_mark("neutral", "Dataset not recorded")
-    other = r.dataset_relation_html({**checkpoint(fingerprint=FP_B),
-                                     "trained_on_this_dataset": False}, [workspace()])
-    assert "Another dataset" in other and FP_B[:12] in other
-    assert r.dataset_relation_html({**checkpoint(), "trained_on_this_dataset": True},
-                                   [workspace()]) == r.e(r.CURRENT_DATASET)
-    # Each relation leads with its meaning, its code after it (R-72); a
-    # relation this build has no words for reads its recorded name once.
-    rows = r.relation_rows({"R3": "verified", "R9": "verified", "cohort_graph": "not_applicable"})
-    assert [label for label, _ in rows] == ["Model trained on this graph (R3)",
-                                            "Data version bound to this graph", "R9"]
-    broken = r.model_table_row_html(checkpoint(sha=None, problem="bad"), [])
-    assert 'aria-disabled="true"' in broken and "metadata not readable · cannot be loaded" in broken
-    # Its recorded tests are found by its digest, which was not read: Unknown, never a dash.
-    assert broken.endswith(f"<td>{r.status_mark('neutral', r.UNKNOWN)}</td></tr>")
+def _models_tree(item, workspaces=()):
+    """Models' tree (the shared list's research preset) with `item` its one row."""
+    from src.webui.components import model_list as ml
+
+    return ml.list_html({"items": [item], "workspaces": list(workspaces)}, None,
+                        ml.PRESETS["research"])
 
 
 def test_an_entry_never_read_does_not_claim_a_failed_read():
@@ -534,7 +477,7 @@ def test_an_entry_never_read_does_not_claim_a_failed_read():
     readable"."""
     never = {**checkpoint(sha=None, problem="'bad\\xff' is not text"), "size_bytes": None,
              "run": "bad\\xff", "filename": "RUNS"}
-    for html in (r.model_row_html(never, []), r.model_table_row_html(never, [])):
+    for html in (r.model_row_html(never, []), _models_tree(never)):
         assert "not read · cannot be loaded" in html and "metadata not readable" not in html
     assert r.unreadable_words(never) == "not read"
     failed = checkpoint(sha=None, problem="UnpicklingError: …")
@@ -555,7 +498,7 @@ def test_one_run_reads_one_way_on_every_page():
     words = r.run_words("gatv2", run)
     assert words == "ui-live-stop-02 · GATv2 2026-10-24 17:39"
     assert r.model_name_line(item).startswith(words)                       # titles, rows
-    assert f'<div class="shep-w600">{words}</div>' in r.model_table_row_html(item, [])  # Models
+    assert words in text_of(_models_tree(item))                             # Models' tree
     assert words in r.model_row_html(item, [])                             # the drawer's rows
     assert ml.run_choices({"k": item})[0][0] == words                       # the Run selects
     assert not hasattr(r, "run_label") and not hasattr(r, "run_label_html")
@@ -600,7 +543,6 @@ def test_the_run_suffix_and_a_validation_figure_by_its_name():
     assert "—" not in r.validation_cell(None)
     assert r.validation_cell(None) == r.status_mark("neutral", "Not recorded")
     assert r.validation_cell(None, read=False) == r.status_mark("neutral", "Unknown")
-    assert r.MODEL_TABLE_COLUMNS[2] == "Validation (Trainer)"
 
 
 def test_every_clock_time_is_utc_with_its_label():
@@ -894,14 +836,14 @@ def test_each_missing_state_has_its_own_word_and_a_dash_never_stands_for_not_rec
     absent = checkpoint(epoch=None, validation=None, sha=SHA)
     shown = [r.short_hex(None), r.count_text(None), r.recorded_count_text(None),
              r.model_name_line(absent), r.validation_cell(None),
-             r.validation_cell(None, read=False), r.model_table_row_html(absent, [workspace()])]
+             r.validation_cell(None, read=False), _models_tree(absent, [workspace()])]
     for text in shown:
         assert "—" not in text, text
     assert r.count_text(None) == "not recorded" and r.count_text(1200) == "1,200"
     # A record's count and a manifest's count: one word for the same state.
     assert r.recorded_count_text(None) == r.count_text(None)
     assert r.recorded_count_text(1200) == "1200"
-    assert "epochs not recorded" in r.model_table_row_html(absent, [workspace()])
+    assert "epochs not recorded" in _models_tree(absent, [workspace()])
     # The record's states, each its own words: absent apart from unverifiable.
     states = {binding: r.record_words(workspace(binding=binding))
               for binding in ("verified", "unrecorded", "unverifiable", "mismatch", None)}
