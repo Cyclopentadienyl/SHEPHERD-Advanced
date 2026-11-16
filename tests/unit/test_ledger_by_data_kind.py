@@ -715,20 +715,46 @@ def test_models_shows_each_kind_by_the_one_display_with_its_exposure():
     from src.webui.components.renderers import RENDERER_HELP
 
     assert 'data-help="kg-exposure"' in mp.records_table_html(views[1:2], {})
-    # The bubble says the caveat's points, a line each (the skill's §7 budget;
-    # the record and the API keep `EXPOSURE_CAVEAT`'s own words).
-    exposure_help = RENDERER_HELP["kg-exposure"][1]
-    for point in ("Scoped to the recorded evidence", "another run, a person's choice, a file "
-                  "outside the record", "never a gate", "rule-generated",
-                  "another tail of the same relation in the pair's batch",
-                  "never proven non-relations"):
-        assert point in exposure_help, point
+    # The bubble says the caveat's own parts, a line each (the skill's §7
+    # budget and §13); the record and the API keep `EXPOSURE_CAVEAT` whole.
+    _the_exposure_help_says_the_caveats_own_parts(RENDERER_HELP["kg-exposure"][1])
 
     hostile = copy.deepcopy(views[1])
     hostile["exposure"]["definition_version"] = "<b>kg-lp-exposure/v9</b>"
     hostile["exposure"]["reading"] = "<img src=x onerror=alert(1)>"
     markup = mp.records_table_html([hostile], {})
     assert "<img" not in markup and "&lt;img src=x onerror=alert(1)&gt;" in markup
+
+
+#: `EXPOSURE_CAVEAT` as every exposure block has recorded it since research
+#: comparison Stage 5a: its words are a record's, never changed by how a
+#: page presents them.
+RECORDED_EXPOSURE_CAVEAT = (
+    "Scoped to the recorded evidence: what the model's record and this KG edge set say, read by "
+    "this build. It does not establish that no other exposure happened (another run, a "
+    "person's choice, a file outside the record), and it is never a gate. The negatives are "
+    "rule-generated (another tail of the same relation in the pair's batch, never the "
+    "positive's own) and are never claimed as proven non-relations: a negative may be a true "
+    "relation the graph does not hold.")
+
+
+def _the_exposure_help_says_the_caveats_own_parts(text):
+    """T06 review: the help had become a hand-written paraphrase of the
+    governed caveat: it dropped "never the positive's own", said "never
+    proven non-relations" for "never claimed as proven non-relations", and
+    an owner's edit to the caveat would not reach the page. The caveat is
+    now its named parts (`caveats.EXPOSURE_*`), which the recorded words
+    join unchanged and the help lists, each verbatim."""
+    from src.evaluation import caveats
+
+    assert caveats.EXPOSURE_CAVEAT == RECORDED_EXPOSURE_CAVEAT
+    evidence = caveats.EXPOSURE_EVIDENCE
+    for part in (caveats.EXPOSURE_SCOPE, evidence[:1].upper() + evidence[1:],
+                 caveats.EXPOSURE_NOT_EXHAUSTIVE, caveats.EXPOSURE_NEGATIVES,
+                 caveats.EXPOSURE_NOT_PROVEN):
+        assert part in text, part
+    assert "never the positive's own" in text
+    assert "never claimed as proven non-relations" in text
 
 
 def test_the_test_page_says_a_kg_edge_set_and_a_generated_split_in_their_words():

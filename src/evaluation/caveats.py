@@ -373,14 +373,25 @@ EXPOSURE_READINGS = {
     NOT_RECORDED: "exposure not recorded",
 }
 
-#: What every exposure block says of itself and of the negatives.
+#: **What every exposure block says of itself and of the negatives**, in
+#: its named parts: what it is scoped to (`EXPOSURE_SCOPE`, the evidence
+#: `EXPOSURE_EVIDENCE`), what it cannot rule out (`EXPOSURE_NOT_EXHAUSTIVE`),
+#: how the negatives are made (`EXPOSURE_NEGATIVES`) and what they are
+#: never claimed to be (`EXPOSURE_NOT_PROVEN`). `EXPOSURE_CAVEAT` joins
+#: them in the words every block records; a page's help lists the same
+#: parts (`renderers.RENDERER_HELP`), so a change to one reaches both.
+EXPOSURE_SCOPE = "Scoped to the recorded evidence"
+EXPOSURE_EVIDENCE = "what the model's record and this KG edge set say, read by this build"
+EXPOSURE_NOT_EXHAUSTIVE = (
+    "It does not establish that no other exposure happened (another run, a person's choice, a "
+    "file outside the record), and it is never a gate")
+EXPOSURE_NEGATIVES = ("rule-generated (another tail of the same relation in the pair's batch, "
+                      "never the positive's own)")
+EXPOSURE_NOT_PROVEN = ("never claimed as proven non-relations: a negative may be a true "
+                       "relation the graph does not hold")
 EXPOSURE_CAVEAT = (
-    "Scoped to the recorded evidence: what the model's record and this KG edge set say, read by "
-    "this build. It does not establish that no other exposure happened (another run, a "
-    "person's choice, a file outside the record), and it is never a gate. The negatives are "
-    "rule-generated (another tail of the same relation in the pair's batch, never the "
-    "positive's own) and are never claimed as proven non-relations: a negative may be a true "
-    "relation the graph does not hold.")
+    f"{EXPOSURE_SCOPE}: {EXPOSURE_EVIDENCE}. {EXPOSURE_NOT_EXHAUSTIVE}. The negatives are "
+    f"{EXPOSURE_NEGATIVES} and are {EXPOSURE_NOT_PROVEN}.")
 
 #: The unit of an exposure block's counts, said in the block.
 MEASURED_EDGE_UNIT = ("positive edges scored: the (head, relation, tail) of each row of the "

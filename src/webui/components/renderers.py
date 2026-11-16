@@ -36,6 +36,11 @@ from typing import (Any, Callable, Dict, Hashable, Iterable, List, Mapping, Name
 
 from src.config.recipe import FROZEN_PARTS, unread_settings
 from src.evaluation.caveats import (
+    EXPOSURE_EVIDENCE,
+    EXPOSURE_NEGATIVES,
+    EXPOSURE_NOT_EXHAUSTIVE,
+    EXPOSURE_NOT_PROVEN,
+    EXPOSURE_SCOPE,
     GENERATED_EXPOSURE_NOTE,
     R10_LABEL_TEXT,
     RELATION_DISPLAY_NAMES,
@@ -91,15 +96,16 @@ RENDERER_HELP = {
         "- 12 of its 64 hex digits are shown; every comparison uses all 64.\n"
         "- A test record, a usage history entry and the served identity name the model by it.",
     ),
+    # The exposure caveat's own parts, a line each (`caveats.EXPOSURE_CAVEAT`,
+    # which records and the API keep whole): the skill's §13 lets a governed
+    # text change its presentation, never its words' meaning.
     "kg-exposure": (
         "Exposure (KG edge sets)",
-        "How a KG edge set's measured edges stand to the model's recorded graph use.\n\n"
-        "- Scoped to the recorded evidence, as this build reads the model's record and this "
-        "edge set.\n"
-        "- It cannot rule out other exposure (another run, a person's choice, a file outside "
-        "the record) and is never a gate.\n"
-        "- Negatives are rule-generated: another tail of the same relation in the pair's batch.\n"
-        "- They are never proven non-relations: one may be a true relation the graph lacks.",
+        f"{EXPOSURE_SCOPE}.\n"
+        f"{EXPOSURE_EVIDENCE[:1].upper()}{EXPOSURE_EVIDENCE[1:]}.\n\n"
+        f"- {EXPOSURE_NOT_EXHAUSTIVE}.\n"
+        f"- Negatives: {EXPOSURE_NEGATIVES}.\n"
+        f"- They are {EXPOSURE_NOT_PROVEN}.",
     ),
     "validation-trainer": (
         "Validation (Trainer)",
