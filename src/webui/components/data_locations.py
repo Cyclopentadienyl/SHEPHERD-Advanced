@@ -32,9 +32,11 @@ it shows escaped:
   hidden until then (said once, in the notice). Folders set at start still
   apply.
 - **Read-only**: for a request D8 refuses, every path reads "Set (path
-  hidden)" or ○ Not set (sources stay), every text is redacted by the one
-  redaction, every box and button is disabled with the lock, and one reason
-  line in D8's words says why (`chips.operator_only`).
+  hidden)" or ○ Not set (sources stay), a refused value's problem is said in
+  fixed words that never quote the value (`deployment_view.problem_words`),
+  every other text is redacted by the one redaction, every box and button is
+  disabled with the lock, and one reason line in D8's words says why
+  (`chips.operator_only`).
 
 These are folders on the server machine; the page says so. Nothing here
 blocks another page: a page that needs a folder that is not set says so in
@@ -169,8 +171,8 @@ def _source_html(item: FieldView) -> str:
 
 
 def _words(text: Optional[str], shown: bool) -> str:
-    """A problem or a note as the viewer may see it (paths hidden when not
-    `shown`), escaped."""
+    """A note as the viewer may see it (paths hidden when not `shown`),
+    escaped. A problem goes through `deployment_view.problem_words`."""
     return r.e(text if shown else deployment_view.hide_paths(text))
 
 
@@ -207,8 +209,10 @@ def state_html(item: FieldView, view: DeploymentView, *, shown: bool) -> str:
             mark = ""
         rows.append(("Saved", f"{saved}<br>{mark}" if mark else saved))
     if item.problem and not unknown and (item.configured is not None or not item.unset):
-        rows.append(("Problem", f'<span class="shep-dl-problem">{_words(item.problem, shown)}'
-                                "</span>"))
+        # A refused value in fixed words for a viewer whose paths are hidden:
+        # its refusal quotes the value as given (`deployment_view.problem_words`).
+        problem = r.e(deployment_view.problem_words(item, paths_shown=shown))
+        rows.append(("Problem", f'<span class="shep-dl-problem">{problem}</span>'))
     if item.note:
         rows.append(("Note", r.status_mark("warn", _words(item.note, shown), words_html=True)))
     return r.summary_list(rows, classes="shep-dl-kv")
@@ -239,8 +243,8 @@ def where_html(view: DeploymentView, *, shown: bool) -> str:
     for the panel, one click away."""
     file = view.file
     if file.path is None:
-        place = (_words(file.problem, shown) if file.problem else
-                 r.e("No place for a saved settings file in this service's environment"))
+        place = r.e(deployment_view.file_problem_words(file, paths_shown=shown)
+                    or "No place for a saved settings file in this service's environment")
     elif shown:
         place = f"<code>{r.e(file.path)}</code>"
     else:

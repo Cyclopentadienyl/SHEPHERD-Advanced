@@ -205,6 +205,24 @@ def test_an_environment_override_keeps_the_box_and_never_claims_the_saved_value(
     assert server_settings.cohort_registry().value == chosen.resolve()
 
 
+def test_a_refused_value_is_never_quoted_to_a_read_only_request(dl, monkeypatch, tmp_path):
+    """T03 review (P3): a relative or ``~`` value set at start was quoted in
+    its row's Problem to a read-only request, since the redaction finds only
+    an absolute path. Hidden, the row says it is refused in fixed words."""
+    monkeypatch.setenv("SHEPHERD_REGISTRY", "clinic/MRN 0012345/registry")
+    monkeypatch.setenv("SHEPHERD_INTAKE_DIR", "~/intake/Jane Doe")
+    outputs = dl._on_locations_open(gradio_request(server=("192.0.2.10", 8264)))
+    said = json.dumps(outputs, ensure_ascii=False)
+    for given in ("clinic", "MRN", "Jane", "Doe"):
+        assert given not in said, given
+    rows, _ = _parts(dl, outputs)
+    assert ("Results registry set when the service started is refused: an operator sees why "
+            "in Settings › Data locations.") in rows["registry"]["state"]["value"]
+    assert "Not usable" in rows["intake_dir"]["state"]["value"]
+    operator = _parts(dl, dl._on_locations_open(operator_request(monkeypatch)))[0]
+    assert "is not an absolute path" in operator["registry"]["state"]["value"]
+
+
 def test_a_change_waits_while_the_old_gpu_lock_is_held_and_apply_applies_it(dl, monkeypatch,
                                                                            tmp_path):
     from src.utils.gpu_lock import LOCK_FILE_NAME, GpuLock

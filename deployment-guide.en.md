@@ -2676,7 +2676,10 @@ notice with **Replace the unreadable file (a copy is kept)**, which renames it t
 opened (permissions, the disk) is fixed where it is and never renamed.
 
 **For a read-only browser** every path reads "Set (path hidden)", the sources stay, and every box
-and button is locked with "Operator controls only: <reason>".
+and button is locked with "Operator controls only: <reason>". A value that is set and refused
+reads "<Folder> set when the service started (or saved in Settings) is refused: an operator sees
+why in Settings › Data locations", never the refusal's own words, which repeat the value as it
+was typed (a relative or `~` path is not hidden by the path redaction).
 
 **The same view from a shell and over HTTP**: `python scripts/deployment_settings.py show`
 (`--json` for the fields) prints what that shell reads, by the same resolution, so a shell, the

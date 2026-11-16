@@ -1282,6 +1282,57 @@ class TestTheOneViewOfTheDataLocations:
         assert registry["set"] is True and registry["source"] == "saved"
         assert registry["in_effect"] is None and registry["saved"] is None
 
+    def test_a_refused_value_is_never_quoted_to_a_viewer_whose_paths_are_hidden(
+            self, saved_file):
+        """T03 review (P3): a refusal quotes the value as given, and the one
+        redaction finds an absolute path only, so a relative or ``~`` value
+        was shown to a read-only request ("the registry 'clinic/MRN
+        0012345/registry' is not an absolute path"). Hidden, a refused value
+        is said in fixed words; an operator still reads the refusal's own."""
+        import json
+
+        from src.utils.deployment_view import as_dict, deployment_view
+
+        path, environ = saved_file
+        _write_saved(path, {"workspaces_root": "rel/ws"})
+        environ = {**environ, ss.ENV_REGISTRY: "clinic/MRN 0012345/registry",
+                   ss.ENV_INTAKE_DIR: "~/intake/Jane Doe",
+                   ss.ENV_TRAINING_EVIDENCE_DIRS: "ev/MRN 99"}
+        view = deployment_view(environ)
+        hidden = as_dict(view, paths_shown=False)
+        said = json.dumps(hidden, ensure_ascii=False)
+        for given in ("rel/ws", "clinic", "MRN", "Jane", "Doe", "ev/"):
+            assert given not in said, given
+        problems = {f["key"]: f["problem"] for f in hidden["fields"]}
+        assert problems["registry"] == ("Results registry set when the service started is "
+                                        "refused: an operator sees why in Settings › Data "
+                                        "locations.")
+        assert problems["workspaces_root"].startswith("Workspaces folder saved in Settings is "
+                                                      "refused")
+        assert problems["training_evidence_dirs"].startswith(
+            "Training evidence folders set when the service started are refused")
+        assert hidden["gpu_lock"]["problem"].startswith("The GPU lock cannot be used")
+        assert all(f["set"] for f in hidden["fields"])
+        shown = {f["key"]: f["problem"] for f in as_dict(view, paths_shown=True)["fields"]}
+        assert "'clinic/MRN 0012345/registry' is not an absolute path" in shown["registry"]
+
+    def test_a_settings_file_named_at_start_and_refused_is_never_quoted_either(self):
+        """A relative `SHEPHERD_SETTINGS_FILE` is refused in words that quote it,
+        and every location that would come from it repeats them."""
+        import json
+
+        from src.utils.deployment_view import as_dict, deployment_view
+
+        view = deployment_view({ENV_SETTINGS_FILE: "clinic/MRN 7/deployment.json"})
+        assert view.file.problem and "MRN 7" in view.file.problem
+        said = json.dumps(as_dict(view, paths_shown=False), ensure_ascii=False)
+        assert "MRN" not in said and "clinic" not in said
+        answer = as_dict(view, paths_shown=False)
+        assert answer["settings_file"]["problem"].startswith(
+            "The settings file named when the service started is refused")
+        root = next(f for f in answer["fields"] if f["key"] == "workspaces_root")
+        assert root["problem"].startswith("Workspaces folder is not known")
+
     def test_the_cli_prints_the_same_view_a_service_reads(self, saved_file, folders):
         """A shell of the account, with no `SHEPHERD_*` data location set, and
         the service read the same values: the CLI's ``--json`` is the route's

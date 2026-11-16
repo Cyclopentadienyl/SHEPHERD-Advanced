@@ -2802,7 +2802,9 @@ yet …」）並提供 **Apply**，下次啟動時也會套用。所以工作看
 修正，絕不改名。
 
 **對唯讀的瀏覽器**，每個路徑都顯示「Set (path hidden)」，來源照樣顯示，每個路徑框與按鈕都上鎖，旁邊
-寫著「Operator controls only: <原因>」。
+寫著「Operator controls only: <原因>」。一個已設定但被拒絕的值顯示為「<Folder> set when the service
+started（或 saved in Settings）is refused: an operator sees why in Settings › Data locations」，
+絕不顯示拒絕原因本身的文字，因為它會照原樣重複輸入的值（相對路徑或 `~` 路徑不會被路徑遮蔽處理隱藏）。
 
 **從 shell 與經由 HTTP 看到相同的檢視**：`python scripts/deployment_settings.py show`（`--json` 輸出
 欄位）以相同的解析印出該 shell 讀到的內容，讓 shell、服務與工作可以比對；

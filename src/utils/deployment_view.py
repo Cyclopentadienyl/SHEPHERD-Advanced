@@ -26,9 +26,15 @@ once the start-time setting is removed (Syncthing's ``guiAddressOverridden``).
 Nothing ever writes an environment value into the file.
 
 **Paths shown or hidden** (`as_dict`): every path, and every text that may
-name one, is shown for a request D8 allows, and hidden for any other by the
-one redaction (`src.utils.path_redaction.redact_paths`, ``a server path``):
-a read-only viewer learns what is set and from where, never where.
+name one, is shown for a request D8 allows, and hidden for any other: a
+read-only viewer learns what is set and from where, never where. A value
+that is set and refused, or a settings file named at start and refused, is
+said in fixed words for that viewer (`problem_words`, `file_problem_words`),
+never in its refusal's, which quote the value as it was given: the one
+redaction (`src.utils.path_redaction.redact_paths`, ``a server path``) finds
+an absolute path only, so a relative or ``~`` value would be shown (T03
+review, 2026-11-16). Every other text goes through that redaction
+(`hide_paths`).
 
 Gradio-free and torch-free.
 
@@ -91,7 +97,9 @@ __all__ = [
     "OPTIONAL_KEYS",
     "as_dict",
     "deployment_view",
+    "file_problem_words",
     "hide_paths",
+    "problem_words",
     "text_lines",
 ]
 
@@ -229,10 +237,64 @@ def deployment_view(environ: Optional[Mapping[str, str]] = None) -> DeploymentVi
 
 def hide_paths(text: Any) -> Optional[str]:
     """`text` with every absolute path replaced (`HIDDEN_PATH`), for a viewer
-    D8 does not allow; None stays None."""
+    D8 does not allow; None stays None. Only an absolute path is found, so a
+    text that may quote a value as it was given (a refusal) is never passed
+    here: `problem_words` and `file_problem_words` say it in fixed words."""
     if text is None:
         return None
     return redact_paths(text, [], other=HIDDEN_PATH)
+
+
+#: Where an operator reads why, in the fixed words a hidden viewer is given.
+OPERATOR_SEES_WHY = f"an operator sees why in {server_settings.DATA_LOCATIONS}"
+#: Where a refused value was set, by its source, in those words.
+_SET_WHERE = {
+    server_settings.SOURCE_ENVIRONMENT: "set when the service started",
+    server_settings.SOURCE_SAVED: "saved in Settings",
+}
+
+
+def problem_words(item: FieldView, *, paths_shown: bool) -> Optional[str]:
+    """A location's problem as a viewer may read it. Shown: its own words.
+    Hidden: a value that is set and refused, or one that would come from a
+    saved file that cannot be used, in fixed words naming only the location
+    and its source, never the refusal's (which quote the value as given, a
+    relative or ``~`` path included); the unset words, which name no value,
+    with every path hidden (`hide_paths`)."""
+    if paths_shown or item.problem is None:
+        return item.problem
+    if item.unset:
+        return hide_paths(item.problem)
+    verb = "are" if item.key == KEY_TRAINING_EVIDENCE_DIRS else "is"
+    where = _SET_WHERE.get(item.source)
+    if where is not None:
+        return f"{item.name} {where} {verb} refused: {OPERATOR_SEES_WHY}."
+    return (f"{item.name} {verb} not known: the saved settings file cannot be used, and "
+            f"{OPERATOR_SEES_WHY}.")
+
+
+def file_problem_words(file: FileView, *, paths_shown: bool) -> Optional[str]:
+    """The saved settings file's problem as a viewer may read it. Hidden: a
+    file named at start and refused (`SHEPHERD_SETTINGS_FILE` relative, whose
+    words quote it) in fixed words; a file that cannot be read with its path
+    hidden (`hide_paths`; its reason names no value)."""
+    if paths_shown or file.problem is None:
+        return file.problem
+    if file.path is None:
+        return f"The settings file named when the service started is refused: {OPERATOR_SEES_WHY}."
+    return hide_paths(file.problem)
+
+
+def _lock_problem_words(lock: Any, *, paths_shown: bool) -> Optional[str]:
+    """The GPU lock's problem as a viewer may read it: hidden, a refused or
+    unknown workspaces folder in fixed words (its words are the folder's
+    refusal), as the GPU chip says it (`src.webui.components.chips`)."""
+    if paths_shown or lock.problem is None:
+        return lock.problem
+    if lock.unset:
+        return hide_paths(lock.problem)
+    return ("The GPU lock cannot be used, so every managed GPU job is refused until the "
+            f"workspaces folder is corrected: {OPERATOR_SEES_WHY}.")
 
 
 def _shown(value: Any, paths_shown: bool) -> Any:
@@ -243,9 +305,10 @@ def _shown(value: Any, paths_shown: bool) -> Any:
 
 def as_dict(view: DeploymentView, *, paths_shown: bool) -> Dict[str, Any]:
     """The view as plain data (the route's answer, the CLI's ``--json``).
-    With `paths_shown` False every path is None and every text that may name
-    one is redacted (`hide_paths`); what is set, from where, and whether it is
-    pending stay."""
+    With `paths_shown` False every path is None, a refused value is said in
+    fixed words (`problem_words`, `file_problem_words`) and every other text
+    that may name a path is redacted (`hide_paths`); what is set, from where,
+    and whether it is pending stay."""
     def words(text: Any) -> Optional[str]:
         return text if paths_shown else hide_paths(text)
 
@@ -260,7 +323,8 @@ def as_dict(view: DeploymentView, *, paths_shown: bool) -> Dict[str, Any]:
             "saved": _shown(item.saved, paths_shown),
             "applied": _shown(item.applied, paths_shown),
             "pending": item.pending, "overridden": item.overridden,
-            "problem": words(item.problem), "note": words(item.note),
+            "problem": problem_words(item, paths_shown=paths_shown),
+            "note": words(item.note),
             "unset": item.unset, "optional": item.optional,
         })
     return {
@@ -269,7 +333,8 @@ def as_dict(view: DeploymentView, *, paths_shown: bool) -> Dict[str, Any]:
         "settings_file": {
             "path": view.file.path if paths_shown else None,
             "explicit": view.file.explicit, "exists": view.file.exists,
-            "problem": words(view.file.problem), "repairable": view.file.repairable,
+            "problem": file_problem_words(view.file, paths_shown=paths_shown),
+            "repairable": view.file.repairable,
             "applied_at": view.file.applied_at, "saved_at": view.file.saved_at,
         },
         "deployment_mode": {"value": view.mode.value, "source": view.mode.source,
@@ -277,7 +342,7 @@ def as_dict(view: DeploymentView, *, paths_shown: bool) -> Dict[str, Any]:
         "gpu_lock": {"path": str(view.gpu_lock.value) if paths_shown and view.gpu_lock.value
                      else None,
                      "configured": view.gpu_lock.value is not None,
-                     "problem": words(view.gpu_lock.problem)},
+                     "problem": _lock_problem_words(view.gpu_lock, paths_shown=paths_shown)},
         "pending": list(view.pending),
         "pending_reason": words(view.pending_reason),
     }

@@ -94,9 +94,10 @@ def get_deployment_settings(request: Request) -> Dict[str, Any]:
     ``scripts/deployment_settings.py show`` (`src.utils.deployment_view`).
 
     Read-only and open, like the operator-access status: for a request D8
-    does not allow (`check_operator_access`), every path is null and every
-    text that may name one is redacted (``paths_shown`` false); what is set,
-    from where and whether it is pending stay. Nothing here changes a
+    does not allow (`check_operator_access`), every path is null, a refused
+    value's problem is said in fixed words that never quote the value, and
+    every other text that may name a path is redacted (``paths_shown``
+    false); what is set, from where and whether it is pending stay. Nothing here changes a
     setting: Save, Apply and Replace are operator controls of the Settings
     page."""
     access = check_operator_access(request.scope)
