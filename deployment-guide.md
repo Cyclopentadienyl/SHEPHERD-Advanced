@@ -3436,7 +3436,7 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   run 需要 `learning_stage` 為 `base`；有 `resume_from` 時可以不給 stage，給了就與 parent 的
   比對，所以 finetune 子模型也能在這裡續訓或延長（parent 的學習率降到 0 時用 `extend_lr`）。
   只有送出的欄位會到達服務，包括明確的 `null`，而且依 field spec 判斷：欄位沒有賦予 null
-  任何意義時一律拒絕，用它的句子（`"task_loss_weight must be set, not null."`：任務的 loss
+  任何意義時一律拒絕，用它的句子（`"task_loss_weight must be set."`：任務的 loss
   weight 與 sample size 不接受 null，要採用任務的參考值就不要送出），新 run 與續訓皆同；null
   是該欄位的合法值時（`early_stopping_patience`：關閉）會被接受，續訓時再像其他值一樣與
   parent 的比對；`resume_from`、`extend_epochs` 或 `extend_lr` 為 `null` 表示沒有給。POST
@@ -3488,7 +3488,7 @@ steps 計，final learning-rate ratio 的「more than 0 with onecycle」）。�
 架構（GATv2，本版本唯一實作的架構；有更多架構時才是選項）、參考 spec 的文字欄位以事實列出，以及可修改的 input、encoder 與 LP head 數值與開關。**Start 送出你
 動過的欄位**：你編輯過的欄位一定送出，即使等於參考值，並記錄為你的設定；清空欄位也算編輯（全選後按
 Backspace 或 Delete、剪下、貼上：每一種編輯都算，即使清空後立刻按 Start），因此 run 需要值的欄位留空
-會被拒絕（「Neighbours per hop needs at least 1 item(s).」、「Epochs must be set, not null.」），什麼都不會啟動，而 Early stopping
+會被拒絕（「Neighbours per hop needs at least 1 item(s).」、「Epochs must be set.」），什麼都不會啟動，而 Early stopping
 patience 留空表示關閉（這裡唯一一個 field spec 賦予空值意義的設定）；沒動過的不送出，由 run 補上並記錄。改動任一 Model 欄位會送出整份 spec，並先檢查（spec 自己的規則，以及 Neighbours per hop 是否
 符合其層數）。表單下方一行顯示「Set by you: Epochs 5 (reference 200)」或尚未設定任何值；超過三項時
 只列出前三項、其餘計數，全部列在它的「Details ›」之下。這一行也指出 Start 會拒絕的值（「Not valid:
@@ -3496,7 +3496,7 @@ patience 留空表示關閉（這裡唯一一個 field spec 賦予空值意義�
 設定都無法送出時，它顯示「Set by you: nothing valid.」，不會說 run 將採用什麼值。
 **Reset to reference** 把每一欄還原並清除你設定的內容。任務模型由 base 在 Research › Prepare › Fine-tune 訓練，其設定也以同樣
 方式送出：你動過才送出，清空欄位也算，因此清空的任務設定（loss weight 或 sample size）會在 Start
-旁被拒絕（「Task loss weight must be set, not null.」），什麼都不會啟動；不動它，或按 Reset to
+旁被拒絕（「Task loss weight must be set.」），什麼都不會啟動；不動它，或按 Reset to
 reference，就由任務的參考值補上。它提供每個所選任務的 run 都會讀取的設定（自 ops-wiring round B2 起）：顯示
 **Epochs**、**Seed** 與 **Graph backbone**，其餘在「More settings」下；只選一個任務時，「Disease
 settings」（任務名稱）下有該任務自己的設定（learning rate、sample size、loss weight 與 candidate
@@ -3508,7 +3508,11 @@ base）時，欄位旁顯示 start 自己的句子，Start 旁另有一個指向
 並清除你設定的內容（選多個任務時，每個子模型便再次採用自己任務的參考值）。base 的 split seed 與它的
 configuration 是 base 摘要中的事實，不是欄位（完整的 spec 在其「Details ›」之下，與參考值不同的欄位
 附上參考值）：finetune 在其 base 的 split 上訓練，並保留其 graph side。start 的拒絕（一個值，或 runner
-對 base 的檢查）以 runner 的原話顯示在 Start 旁，每個設定以其欄位名稱稱呼。
+對 base 的檢查）以 runner 的原話顯示在 Start 旁，每個設定以其欄位名稱稱呼；Start 會拒絕的值
+（例如清空的任務設定）在編輯時也會顯示在 Start 旁：「▲ Start would refuse: Task loss weight must
+be set.」（NEW-training-finetune-6）。表單夠寬時（部署視窗）分成兩欄：左邊是 base，右邊是子模型的
+設定、Device 與 Run name，因此什麼都不展開時能完整顯示（B27-1）；工作面板的 **Stop** 只在本頁啟動的
+子模型執行或停止中時才顯示（NEW-training-finetune-7），與 Training 的 run bar 相同。
 **Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
 讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
 提供「Save as the default dataset」是擁有者要決定的問題）。參數放不進視窗時（兩個收合區都收合時，
@@ -3526,7 +3530,8 @@ checkpoint 的）或 **Branch**（從 checkpoint 的權重開始一個新 run，
 schedule，見下文；自 ops-wiring 輪 B1c 起）。checkpoint 是 run bar 所選 workspace 的模型紀錄之一，
 也就是 base 與任務模型（自 K6 起，沒有 model spec 的檔案永遠不會從儀表板繼續訓練或分支；伺服器
 的清單：列出時會開啟每個 checkpoint，所以是操作者控制項），分兩步選擇，或手動輸入其中某個
-checkpoint 的路徑。**1. Run**：
+checkpoint 的路徑（在清單計數旁的連結「Type a path instead ›」之後；「Choose from the list
+instead ›」回到清單；UI ledger R-49）。**1. Run**：
 各個 run，最新的在前，來自 `runs/` 之下的每一個目錄（自 K8-7b，2026-11-08 起），每個最多 40 個
 字元、一個 " · "，以區分它的部分開頭：先是名稱，再是目錄與開始時間（「base-a · GATv2 2026-10-28
 13:57」：目錄名稱轉成大寫，`gatv2` 則寫成「GATv2」，太長時從中間截短；它是位置，不是模型的架構，
@@ -3590,10 +3595,10 @@ resume 的一組仍寫明它開始時的下游權重（Models › Results 的 Co
 「Disease · frozen graph backbone」，是任務模型，絕不是 base 的分數。驗收 probe 以 fp32 檢查它，
 包括暫停後再 resume（`L7.disease_frozen`）；凍結下的混合精度與 `torch.compile` 不在這個檢查的
 範圍內，也仍然可用。抽屜打開
-期間，run bar 的 Start 停用（「close Continue… to start a new run」），它的 **Run name** 仍在，
-為抽屜啟動的新 run（接續或分支）命名（如同 `--run-name` 與 `POST /api/v1/training/branch`）；
-**4. Start** 是抽屜欄位下方
-的頁尾，放著 **Continue Training**（或 **Start branch**）與 **Cancel**，旁邊是啟動的原因，說明
+期間，run bar 不顯示它的任何動作（Start、Continue…、Stop），也不說原因（R-49），它的 **Run
+name** 仍在，為抽屜啟動的新 run（接續或分支）命名（如同 `--run-name` 與 `POST
+/api/v1/training/branch`）；抽屜唯一的關閉鈕是標題列的 **Close**。**4. Start** 是抽屜欄位下方
+的頁尾，放著 **Continue Training**（或 **Start branch**），旁邊是啟動的原因，說明
 擋住它的是什麼、該怎麼做：「Start branch disabled: the parent’s dataset is not this workspace’s
 current one.」、「… the check refuses a setting you edited; change it, then check again.」、「… the
 checkpoint changed since it was chosen. Refresh the list, then check it again.」、「… the typed
@@ -3619,10 +3624,14 @@ checkpoint）。API 也以選用的查詢參數接受 parent 的 digest，
 格式錯誤時 422）；沒有這個參數時，訓練行程仍綁定在 runner 讀到的 parent。job runner 與訓練
 行程在啟動時仍會檢查其他一切。Check checkpoint 會說明它讀取的是清單上的哪個檔案（「Checked
 gatv2/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑與指紋），資料集相符時只說一次
-「● Trained on the dataset selected in the run bar」（指紋在 run bar）。抽屜打開期間，run bar 的
-那一行是「Run: a new one, continued from the checkpoint chosen in Continue or branch a run」（選
-Branch 時為「branched from」）：兩者都在自己的 run 目錄中訓練。抽屜有自己的 **Device**（auto、
-cuda 或 cpu），每次打開時從參數的 Device 開始，Check checkpoint 與啟動使用的就是它。抽屜打開期間若 run
+「● Same dataset as the run bar」（指紋在 run bar；在詳細資料表下方的一行文字）。兩種操作都在
+自己的 run 目錄中訓練。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時從參數的 Device
+開始，Check checkpoint 與啟動使用的就是它。**3. Check** 的 Check checkpoint 是一般按鈕，旁邊寫著
+「Optional: it shows the plan. The start checks first anyway.」（啟動會先檢查；R-48），在 1850 x 960
+下抽屜打開時第 3 步就在畫面中。主機沒有 CUDA 裝置時，每個 Device 欄位（參數、抽屜、Fine-tune）
+都在標籤下說明「No CUDA device here: auto and cuda are refused; choose cpu.」，Check checkpoint 或
+任何啟動的拒絕都用頁面的用語：「Device auto needs CUDA, which is not available here; choose cpu
+for development. Nothing was started.」（訓練行程自己的句子才寫 `--device`；R-32）。抽屜打開期間若 run
 bar 的資料集改變（手動選擇、從 Datasets 的「Use for training ›」，或跟隨在另一個資料集上啟動的
 訓練工作），清單會以同樣的方式重新讀取，改為該 workspace 的 run。
 

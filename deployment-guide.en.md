@@ -3424,8 +3424,8 @@ a run.
   may be left out, and is compared with the parent's when given, so a finetune child is resumed
   or extended here too (`extend_lr` for a parent whose rate ended at 0). Only the fields sent
   reach the service, an explicit `null` included, which is judged by the field spec: refused
-  wherever the field gives a null no meaning, in its sentence (`"task_loss_weight must be set,
-  not null."`: a task's loss weights and sample sizes take none, so leave them out for the
+  wherever the field gives a null no meaning, in its sentence (`"task_loss_weight must be
+  set."`: a task's loss weights and sample sizes take none, so leave them out for the
   task's reference), on a new run and a continuation alike; a null that is one of the field's
   values (`early_stopping_patience`: off) is taken, and on a continuation compared with the
   parent's like any value; a `null` `resume_from`, `extend_epochs` or `extend_lr` means not
@@ -3493,7 +3493,7 @@ switches to change. **Start sends what you touched**: a
 field you edited is sent, even at its reference value, and recorded as yours; a field you emptied
 counts as edited (select all and Backspace or Delete, a cut, a paste: every edit, even with Start
 clicked straight after it), so an empty value the run needs is refused ("Neighbours per hop needs
-at least 1 item(s).", "Epochs must be set, not null.") and nothing starts, while an empty Early
+at least 1 item(s).", "Epochs must be set.") and nothing starts, while an empty Early
 stopping patience means off (the one setting here whose empty value the field spec gives a
 meaning); one you did not touch is not sent, and the run fills and records it. A changed model field sends the whole spec,
 checked first (its own rules, and Neighbours per hop against its layers). A line under the form
@@ -3505,7 +3505,7 @@ be sent it says "Set by you: nothing valid.", never what the run would take. **R
 reference** puts every field back and clears what you set. Task models are trained from a base
 on Research › Prepare › Fine-tune, whose settings are sent the same way: when you touched them,
 an emptied field included, so an emptied task setting (a loss weight or a sample size) is
-refused beside Start ("Task loss weight must be set, not null.") and nothing starts; untouched,
+refused beside Start ("Task loss weight must be set.") and nothing starts; untouched,
 or after Reset to reference, the task's reference fills it. It offers what
 every chosen task's run reads (since the ops-wiring round, B2): **Epochs**, **Seed** and **Graph
 backbone** shown, the rest under "More settings", and under "Disease settings" (the task's
@@ -3522,7 +3522,13 @@ child then takes its own task's reference again). The base's split seed and its 
 are facts of its summary, not fields (the whole spec under its "Details ›", each field that
 differs from the reference with the reference's value): a finetune trains on its base's split
 and keeps its graph side. A refusal of the start (a value, or the runner's check against the
-base) is shown beside Start in the runner's words, each setting by its field's name.
+base) is shown beside Start in the runner's words, each setting by its field's name; a value
+Start would refuse (an emptied task setting) is said beside Start as you edit it too, "▲ Start
+would refuse: Task loss weight must be set." (NEW-training-finetune-6). Where the form is wide
+enough (the deployment window) it is two columns, the base on the left and its children's
+settings, Device and Run name on the right, so it fits with nothing expanded (B27-1); the job
+panel's **Stop** is drawn only while a child of this page's start runs or stops (NEW-training-
+finetune-7), as the Training run bar's.
 **Data Paths and its Save Path are gone**: the workspace
 is the run bar's choice, and the dashboard no longer reads or writes
 `.shepherd_training_config.json` in the server's working directory (a file left there is
@@ -3547,7 +3553,9 @@ checkpoint's weights with a new optimizer and schedule, below; since the ops-wir
 The checkpoint is one of the model records of the run bar's
 workspace, bases and task models (since K6 a file without a model spec is never continued or
 branched from the dashboard; the server's list: an operator control, since listing opens every
-checkpoint), chosen in two steps, or the path of one of those checkpoints typed by hand. **1.
+checkpoint), chosen in two steps, or the path of one of those checkpoints typed by hand, behind
+the link "Type a path instead ›" beside the list's count ("Choose from the list instead ›" goes
+back; the UI ledger's R-49). **1.
 Run**: the runs, latest
 first, from every directory under `runs/` (since K8-7b, 2026-11-08), each in at most 40
 characters with one " · ", led by what tells it apart: its name, then its directory and start
@@ -3577,10 +3585,14 @@ option then calls best), its model fingerprint (Copy gives all 64) and its run's
 Fine-tune page's base select is this same pair, and its job card names each child's best save by
 the selection its files record. Since M5-3
 a typed path only finds a checkpoint that list holds, and any other file is refused without being
-opened (`PLAN_TEST_RESULTS.md` D8). **3. Check** (Check checkpoint) shows what the operation would
-do, and the dataset fingerprint the parent recorded against the workspace's current one: ● the
-same, or the red ✕ of a refusal when it differs, since the start refuses another dataset (with
-the listed workspace it matches, or "matches no listed workspace"); a refused check leads with
+opened (`PLAN_TEST_RESULTS.md` D8). Under the table one line says the dataset fingerprint the
+parent recorded against the workspace's current one: "● Same dataset as the run bar", or the red
+✕ of a refusal when it differs, since the start refuses another dataset (with
+the listed workspace it matches, or "matches no listed workspace"). **3. Check** (Check
+checkpoint, a normal button, with the drawer's **Device** above it) shows what the operation
+would do; beside it, "Optional: it shows the plan. The start checks first anyway.", since the
+start checks first (R-48). At 1850 x 960 the drawer opens with step 3 in view (NEW-training-
+finetune-2). A refused check leads with
 the same ✕ ("Cannot continue.", "Cannot branch."). Each setting and value is said in words, never
 as the code's own form. **With Continue** the check gives the plan's sentence, naming the
 drawer's fields by their labels ("… extend it at a fixed rate with Extra epochs"), and lists the
@@ -3630,11 +3642,12 @@ Frozen, and the model lists, the Models details and the Results table name such 
 frozen graph backbone", a task model, never the base's score. The acceptance probe checks it in
 fp32, paused and resumed (`L7.disease_frozen`); mixed precision and `torch.compile` with a freeze
 are not verified by that check, and stay available. While
-the drawer is open the run bar's Start is disabled ("close Continue… to start a new run") and its
-**Run name** stays, naming the new run the drawer starts, continued or branched (as `--run-name`
-and `POST /api/v1/training/branch` name one); **4.
-Start**, the drawer's footer under its fields, holds **Continue Training** (or **Start branch**)
-and **Cancel**, with the start's reason beside them, which says what stops it and what to do:
+the drawer is open the run bar draws none of its actions (Start, Continue…, Stop) and says no
+reason (R-49), and its **Run name** stays, naming the new run the drawer starts, continued or
+branched (as `--run-name` and `POST /api/v1/training/branch` name one); the drawer's one closer
+is **Close** in its header. **4.
+Start**, the drawer's footer under its fields, holds **Continue Training** (or **Start branch**),
+with the start's reason beside it, which says what stops it and what to do:
 "Start branch disabled: the parent’s dataset is not this workspace’s current one.", "… the check
 refuses a setting you edited; change it, then check again.", "… the checkpoint changed since it
 was chosen. Refresh the list, then check it again.", "… the typed path is not a checkpoint the
@@ -3665,12 +3678,15 @@ optional query parameter too, `expected_parent_sha256=<64 hex digits>` beside `r
 the parent the runner read. The job runner and the training process still check everything
 else at start. Check checkpoint names the listed file it read ("Checked gatv2/<run>/<file> from
 the run list"; a typed path's check gives its path and fingerprint), and a matching dataset is said
-once, as "● Trained on the dataset selected in the run bar" (the fingerprint is the run bar's).
-While the drawer is open the run bar's line reads "Run: a new one, continued from the checkpoint
-chosen in Continue or branch a run" ("branched from" with Branch): either trains in a run
-directory of its own. The drawer has
+once, as "● Same dataset as the run bar" (the fingerprint is the run bar's). Either operation
+trains in a run directory of its own. The drawer has
 its own **Device** (auto, cuda or cpu), which starts from the
-parameters' Device each time it opens and is what Check checkpoint and the start use.
+parameters' Device each time it opens and is what Check checkpoint and the start use. On a host
+with no CUDA device every Device field (the parameters', the drawer's, Fine-tune's) says so under
+its label, "No CUDA device here: auto and cuda are refused; choose cpu.", and the refusal itself,
+from Check checkpoint or any start, is said in the page's words: "Device auto needs CUDA, which
+is not available here; choose cpu for development. Nothing was started." (the training process's
+own sentence names its `--device` flag; R-32).
 When the run bar's dataset changes while the drawer is open (by hand, with Datasets'
 "Use for training ›", or to follow a training job started on another dataset), the list
 becomes that workspace's runs, read again the same way.
