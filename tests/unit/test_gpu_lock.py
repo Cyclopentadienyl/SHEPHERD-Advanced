@@ -942,3 +942,61 @@ def test_train_model_as_a_program_refuses_naming_the_holder(root, tmp_path):
     assert f"is held by a training job (lock_holder.py, pid {holder.pid}" in done.stderr
     assert "Nothing was written." in done.stderr
     assert list(workspace.iterdir()) == []
+
+
+def _recorded_commands(path: Path) -> list:
+    """What each lock take in `path`'s code records as its command (the
+    second argument of `take_gpu_lock`, or `GpuLock`'s ``command=``), as
+    ``(kind, text)``: a literal's text, a name passed, or any other
+    expression's source."""
+    import ast
+
+    found = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+        if name == "take_gpu_lock":
+            arg = node.args[1] if len(node.args) > 1 else next(
+                k.value for k in node.keywords if k.arg == "command")
+        elif name == "GpuLock":
+            arg = next((k.value for k in node.keywords if k.arg == "command"), None)
+            if arg is None or (isinstance(arg, ast.Name) and arg.id == "command"):
+                continue                                      # the class's own pass-through
+        else:
+            continue
+        found.append(("literal", arg.value) if isinstance(arg, ast.Constant) else
+                     ("name", arg.id) if isinstance(arg, ast.Name) else
+                     ("expression", ast.unparse(arg)))
+    return found
+
+
+def test_no_lock_taker_records_a_path_a_read_only_viewer_could_read():
+    """T03 review leftover, verified in T06: `describe_holder` builds its
+    words from the holder record (job type, command, pid, host, start), and
+    every request reads them (the GPU chip's ⓘ, the Diagnosis card's
+    refusal, the route's pending reason), where the one redaction finds an
+    absolute path only. So no taker in this repository may record a command
+    that names a path, relative or absolute: each records fixed words (the
+    program's name, or the service's own words, whose one slash-holding part
+    is the API route to stop inference). Fails when a taker starts recording
+    its argv or a path."""
+    import src.utils.settings_store as settings_store
+    from src.utils.gpu_lock import SERVING_COMMAND
+
+    constants = {"SERVING_COMMAND": SERVING_COMMAND,
+                 "APPLY_COMMAND": settings_store.APPLY_COMMAND}
+    seen = {}
+    for under in ("src", "scripts"):
+        for name in _lock_takers(REPO, under):
+            for kind, command in _recorded_commands(REPO / name):
+                # Fixed words only: a literal, or one of the service's constants;
+                # an f-string or a variable could carry a path.
+                assert kind == "literal" or command in constants, (name, command)
+                seen[name] = constants.get(command, command)
+    assert set(seen) >= {"scripts/train_model.py", "scripts/measure_scorer.py",
+                         "scripts/setup_demo.py", "src/api/main.py",
+                         "src/utils/settings_store.py"}, seen
+    for name, text in seen.items():
+        words = text.replace("/api/v1/pipeline/stop", "")
+        assert "/" not in words and "\\" not in words and "~" not in words, (name, text)
