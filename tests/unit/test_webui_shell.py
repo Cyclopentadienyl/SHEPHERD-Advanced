@@ -138,7 +138,8 @@ def test_every_builder_gets_the_one_context_and_can_cross_link():
     with pytest.raises(ValueError):
         ctx.go("nowhere")
     links = [fn for fn in demo.fns.values() if fn.outputs == ctx.nav_outputs]
-    assert len(links) == 7
+    # Each page's link, and the shell's own: a load opens the page kept (UI-14).
+    assert len(links) == 7 + 1 and [fn.name for fn in links].count("_restore") == 1
 
 
 def test_the_shared_timers_are_outside_the_tabs(built):
@@ -232,11 +233,43 @@ def demo_builders():
 
 
 def test_the_location_follows_the_page_shown(built):
+    """Every writer of the location (Diagnosis', Settings', Research's and
+    each research tab's select) is queued in one group of one, each select
+    sent once (UI-14, B46-mount: Diagnosis' and Settings' ran without the
+    queue, so the select Diagnosis' tab fires when it mounts could write the
+    location after a page opened later)."""
     demo, ctx = built
     for tab in (shell.CLINICAL, shell.SETTINGS):
         shown = [fn for fn in demo.fns.values() if (ctx.tabs[tab]._id, "select") in fn.targets
                  and fn.outputs == [ctx.location]]
-        assert len(shown) == 1 and shown[0].fn() == tab and shown[0].queue is False
+        assert len(shown) == 1 and shown[0].fn() == tab
+    writers = [fn for fn in demo.fns.values() if ctx.location in fn.outputs]
+    assert len(writers) == 2 + 1 + len(shell.RESEARCH_PAGES)
+    for fn in writers:
+        assert fn.queue is not False and fn.concurrency_id == shell.OPEN_PAGE_CONCURRENCY
+        assert fn.concurrency_limit == 1 and fn.trigger_mode == "multiple", fn.name
+
+
+def test_a_load_opens_the_page_this_tab_kept_and_nothing_else(built):
+    """UI-14 (B32-UI8): the shell built level 1 with Diagnosis selected and
+    kept no page, so every reload landed on Diagnosis. The page load hands
+    the page the head script kept (`KEPT_PAGE`) to `_restore`, which opens a
+    research page or Settings as a cross-link does and leaves Diagnosis,
+    nothing kept or a value no page has."""
+    demo, ctx = built
+    (restore,) = [fn for fn in demo.fns.values() if fn.name == "_restore"]
+    assert ("load" in {t[1] for t in restore.targets})
+    assert restore.outputs == ctx.nav_outputs and "ShepShell.kept" in restore.js
+    assert len(restore.inputs) == 1 and restore.inputs[0].visible is False
+    nav, inner, page = restore.fn("models")
+    assert (nav.selected, inner.selected, page) == ("research", "models", "models")
+    assert restore.fn("settings")[0].selected == "settings"
+    for kept in ("clinical", "", None, "nowhere", "<script>", ["models"]):
+        assert restore.fn(kept) == ctx.no_nav(), kept
+    # What is kept, and where: the page id only, for this browser tab.
+    assert f"var KEPT = '{shell.KEPT_PAGE}'" in shell.SHELL_HEAD
+    assert "sessionStorage" in shell.SHELL_HEAD and "localStorage" not in shell.SHELL_HEAD
+    assert "restored: function" in shell.SHELL_HEAD
 
 
 def test_on_page_open_runs_on_its_own_tab_for_a_first_level_page():
@@ -597,6 +630,207 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
         for tab, covered in facts["tabs"].items():
             assert covered == [], (width, tab, covered)
 
+
+
+# --------------------------------------------------------------------------- a reload
+def _where_page():
+    """The shell with stand-in pages: Models holds a button that answers the
+    session's location as the server holds it (what every page's poll reads),
+    and Diagnosis' select writes it as late as a busy server would answer it
+    (`slow`, in seconds, set by the test)."""
+    slow = {"seconds": 0.0}
+
+    def models(ctx):
+        where = gr.Textbox(elem_id="where")
+        ask = gr.Button("Where", elem_id="ask-where")
+        asked = []
+
+        def answer(location):
+            asked.append(location)
+            return f"{location} #{len(asked)}"
+
+        ask.click(answer, inputs=[ctx.location], outputs=[where])
+
+    pages = {**{page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS,
+                                                       shell.CLINICAL)},
+             shell.MODELS: models}
+    with gr.Blocks() as demo:
+        ctx = shell.build_shell(demo, pages)
+    (shown,) = [fn for fn in demo.fns.values()
+                if (ctx.tabs[shell.CLINICAL]._id, "select") in fn.targets]
+    original = shown.fn
+
+    def late():
+        import time
+
+        time.sleep(slow["seconds"])
+        return original()
+
+    late.__name__ = original.__name__
+    shown.fn = late
+    return demo, slow
+
+
+#: Research › Models opened, then the page loaded again; then Settings and
+#: Diagnosis. Each says which tabs are selected after the load, what the
+#: session's location is on the server, and what this browser tab keeps.
+_RELOAD_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const tab = (nav, id) => `#${nav} > .tab-wrapper [role="tab"][data-tab-id="${id}"]`;
+  const chosen = (nav) => page.evaluate((n) => {
+    const b = document.querySelector(`#${n} > .tab-wrapper [role="tab"][aria-selected="true"]`);
+    return b ? b.getAttribute('data-tab-id') : null; }, nav);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
+                                          && window.__shepQueue.joins.every((j) => j.event_id !== null),
+                                          null, { timeout: 20000 });
+  // The server's answer to "Where", a new one each time (`location #n`).
+  const where = async () => {
+    const before = await page.inputValue('#where textarea');
+    await page.click('#ask-where');
+    await page.waitForFunction((b) => { const v = document.querySelector('#where textarea').value;
+                                        return v !== '' && v !== b; }, before, { timeout: 20000 });
+    return (await page.inputValue('#where textarea')).replace(/ #\d+$/, '');
+  };
+  const facts = async () => ({ outer: await chosen('shep-nav'), inner: await chosen('shep-research-nav'),
+                               kept: await page.evaluate((k) => sessionStorage.getItem(k), '__KEPT__'),
+                               title: await page.title() });
+  const loaded = async (outer) => {
+    await page.waitForSelector(tab('shep-nav', outer) + '[aria-selected="true"]', { timeout: 30000 });
+    await page.waitForFunction(() => window.ShepShell !== undefined);
+    await idle();
+  };
+  const out = {};
+  await page.goto(base, { waitUntil: 'load' });
+  await loaded('clinical');
+  await page.click(tab('shep-nav', 'research'));
+  await page.click(tab('shep-research-nav', 'models'));
+  await page.waitForSelector(tab('shep-research-nav', 'models') + '[aria-selected="true"]');
+  await idle();
+  out.opened = { ...(await facts()), location: await where() };
+  await page.reload({ waitUntil: 'load' });
+  await loaded('research');
+  await page.waitForSelector(tab('shep-research-nav', 'models') + '[aria-selected="true"]',
+                             { timeout: 20000 });
+  await idle();
+  out.reloaded = { ...(await facts()), location: await where() };
+  await page.click(tab('shep-nav', 'settings'));
+  await idle();
+  await page.reload({ waitUntil: 'load' });
+  await loaded('settings');
+  out.settings = await facts();
+  await page.click(tab('shep-nav', 'clinical'));
+  await idle();
+  await page.reload({ waitUntil: 'load' });
+  await loaded('clinical');
+  out.clinical = await facts();
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_reload_comes_back_on_the_page_shown(tmp_path):
+    """UI-14 (B32-UI8), in a real browser (Node and Playwright, skipped
+    without), the shell mounted as the service mounts it: with Research ›
+    Models open, a reload came back on Diagnosis. It comes back on Research ›
+    Models now, with the session's location the server holds there too (what
+    Models' poll reads), and the title; Settings and Diagnosis come back as
+    themselves. This browser tab keeps the page id alone."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    demo, _slow = _where_page()
+    script = (_RELOAD_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__KEPT__", shell.KEPT_PAGE))
+    with served(demo, **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")])
+    models = {"outer": "research", "inner": "models", "kept": "models",
+              "title": shell.TITLES["models"], "location": "models"}
+    assert seen["opened"] == models, seen
+    assert seen["reloaded"] == models, seen
+    assert seen["settings"]["outer"] == "settings" and seen["settings"]["kept"] == "settings"
+    assert seen["settings"]["title"] == shell.TITLES["settings"]
+    assert seen["clinical"]["outer"] == "clinical" and seen["clinical"]["kept"] == "clinical"
+
+
+#: Models opened while Diagnosis' mount-time select is still being answered
+#: (the server answers it late), then the session's location asked once every
+#: request has been answered.
+_MOUNT_RACE_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext()).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const cfg = await (await fetch(base + 'config')).json();
+  const shownIndex = cfg.dependencies.find((d) => d.api_name === '_shown_clinical').id;
+  let sent = false, answered = false;
+  const isShown = (req) => { try { return JSON.parse(req.postData() || '{}').fn_index === shownIndex; }
+                             catch (e) { return false; } };
+  page.on('request', (req) => { if (isShown(req)) { sent = true; } });
+  page.on('requestfinished', (req) => {
+    if (req.url().includes('/run/predict') && isShown(req)) { answered = true; } });
+  const tab = (nav, id) => `#${nav} > .tab-wrapper [role="tab"][data-tab-id="${id}"]`;
+  await page.goto(base, { waitUntil: 'load' });
+  // Observable completion only: the select sent, then every request answered.
+  for (let i = 0; !sent; i++) {
+    if (i > 400) { throw new Error('Diagnosis never fired its mount-time select'); }
+    await page.waitForTimeout(25);
+  }
+  await page.click(tab('shep-nav', 'research'));
+  await page.click(tab('shep-research-nav', 'models'));
+  await page.waitForSelector(tab('shep-research-nav', 'models') + '[aria-selected="true"]');
+  for (let i = 0; ; i++) {
+    if (i > 800) { throw new Error('the requests were never all answered'); }
+    const queued = await page.evaluate((n) => window.__shepQueue.answered(n) > 0
+                                        && window.__shepQueue.inflight === 0, shownIndex);
+    if (answered || queued) {
+      if (await page.evaluate(() => window.__shepQueue.inflight === 0)) { break; }
+    }
+    await page.waitForTimeout(25);
+  }
+  await page.click('#ask-where');
+  await page.waitForFunction(() => document.querySelector('#where textarea').value !== '', null,
+                             { timeout: 20000 });
+  console.log(JSON.stringify({
+    location: (await page.inputValue('#where textarea')).replace(/ #\d+$/, ''),
+    queued: !answered }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_diagnosis_mount_select_never_writes_over_a_page_opened_after_it(tmp_path):
+    """UI-14 (B46-mount): about 1.5 s after the page loads, Diagnosis' tab
+    fires its select as it mounts; it wrote the location without the queue,
+    so when the server answered it after Research › Models had been opened,
+    the location read Diagnosis while Models was shown and Models' poll did
+    nothing. Here the server answers that select 1.5 s late (a busy server);
+    the location the server holds after every answer is Models, since the
+    select is queued with the other location writers, in the order sent."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    demo, slow = _where_page()
+    slow["seconds"] = 1.5
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_MOUNT_RACE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    assert seen == {"location": "models", "queued": True}, seen
 
 
 # --------------------------------------------------------------------------- one choice, one request

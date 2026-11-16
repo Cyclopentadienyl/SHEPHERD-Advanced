@@ -32,6 +32,15 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
 - **The browser title follows the location**: "Diagnosis · Clinical —
   SHEPHERD-Advanced", "Training · Research — SHEPHERD-Advanced", "Settings —
   SHEPHERD-Advanced" (`TITLES`).
+- **A reload comes back on the page shown** (UI-14): the head script keeps
+  the page shown (``clinical``, ``settings`` or a research page id) for this
+  browser tab in ``sessionStorage`` (`KEPT_PAGE`), and the page load asks the
+  shell to open it again (`_restore`, the cross-links' own `PageContext.go`),
+  so a reload, Gradio's reload after a lost connection included, lands where
+  it was, not on Diagnosis. Only the page id is kept: never the address,
+  case data, a path, a choice or anything that starts, loads or registers;
+  the page opened reads its state as any opening does (a running job is read
+  back, never started).
 - **The layout rule** (the mockup's README): wide (at least 1400 × 760 CSS px)
   the page never scrolls, the selected page fills the space under the header and
   a region too long scrolls inside its own panel (a page that is taller than the
@@ -368,10 +377,22 @@ def _shown(page: str) -> Callable[[], str]:
     return shown
 
 
-#: The events that open a research page (Research's select and each research
-#: tab's) run one at a time, in the order they were sent, so the second of a
-#: pair sees the location the first set (`_open_research`).
+#: **Every event that writes the session's location** (Diagnosis', Settings',
+#: Research's and each research tab's select) runs one at a time, in the order
+#: they were sent, each sent once per selection (`LOCATION_WRITES`): the
+#: second of a pair sees the location the first set (`_open_research`), and a
+#: select that a page's mount fires (Diagnosis' tab, about 1.5 s after the
+#: page loads) never writes its page over one opened after it (UI-14,
+#: B46-mount: it ran without the queue, so a slow answer set the location to
+#: Diagnosis while Models was shown, and Models' poll did nothing).
 OPEN_PAGE_CONCURRENCY = "shep-open-research-page"
+#: The keyword arguments of every location writer (`OPEN_PAGE_CONCURRENCY`).
+#: ``trigger_mode="multiple"``: with Gradio's default a select asked while
+#: the same listener's event waits in the group would be dropped.
+LOCATION_WRITES = {"concurrency_id": OPEN_PAGE_CONCURRENCY, "concurrency_limit": 1,
+                   "trigger_mode": "multiple"}
+#: Where the head script keeps this browser tab's page (``sessionStorage``).
+KEPT_PAGE = "shep-location"
 
 #: The one queued group of every listener that writes a session's Training
 #: run-bar workspace (``PageContext.training_workspace`` and Training's own
@@ -411,6 +432,19 @@ def _open_page(page: str) -> Callable[[Any, Any], Tuple[Any, Any, Any]]:
         return page, page, (gr.update() if location == page else (token or 0) + 1)
     open_page.__name__ = f"_open_{page}"
     return open_page
+
+
+def _restore(kept: Any) -> Tuple[Any, Any, Any]:
+    """**The page this browser tab showed before it was loaded again**
+    (UI-14): `kept` is the page id the head script kept (`KEPT_PAGE`). A
+    research page or Settings is opened as a cross-link opens it
+    (`PageContext.go`: both levels and the research page shown, so only that
+    page refreshes); Diagnosis, nothing kept or a value no page has leaves
+    the first screen. It opens a page and nothing else: the page reads its
+    state as any opening does."""
+    if isinstance(kept, str) and (kept in RESEARCH_PAGES or kept == SETTINGS):
+        return PageContext.go(kept)
+    return PageContext.no_nav()
 
 
 def _brand_html() -> str:
@@ -474,15 +508,22 @@ def build_shell(blocks: Any, pages: Dict[str, Callable[[PageContext], None]],
     # event's answer (an answer to a ``queue=False`` POST carries no changed
     # states).
     for tab in (CLINICAL, SETTINGS):
-        tabs[tab].select(_shown(tab), None, [location], queue=False, show_progress="hidden")
+        tabs[tab].select(_shown(tab), None, [location], show_progress="hidden",
+                         **LOCATION_WRITES)
     tokens = [page_tokens[page] for page in RESEARCH_PAGES]
-    one_at_a_time = {"concurrency_id": OPEN_PAGE_CONCURRENCY, "concurrency_limit": 1}
     tabs[RESEARCH].select(_open_research, [location, research_page, *tokens],
-                          [location, *tokens], show_progress="hidden", **one_at_a_time)
+                          [location, *tokens], show_progress="hidden", **LOCATION_WRITES)
     for page in RESEARCH_PAGES:
         tabs[page].select(_open_page(page), [location, page_tokens[page]],
                           [location, research_page, page_tokens[page]], show_progress="hidden",
-                          **one_at_a_time)
+                          **LOCATION_WRITES)
+    # A reload comes back on the page this browser tab showed (`_restore`):
+    # the head script hands over the page it kept, the answer opens it as a
+    # cross-link does, and the script keeps the page shown again from then.
+    kept = gr.Textbox(visible=False, elem_id="shep-kept-page")
+    blocks.load(_restore, [kept], ctx.nav_outputs, show_progress="hidden",
+                js="() => (window.ShepShell ? window.ShepShell.kept : '')").then(
+        None, js="() => { if (window.ShepShell) { window.ShepShell.restored(); } }")
     # The chips: on load, on the slow timer and after every gated act, each
     # read for the request that asked, with no queue (plain POST, no SSE).
     blocks.load(**ctx.chip_refresh)
@@ -522,6 +563,23 @@ _SHELL_JS = r"""
     new MutationObserver(light).observe(document.body, {attributes: true, attributeFilter: ['class']});
   }
   var TITLES = __TITLES__, RESEARCH = 'research', DEFAULT_PAGE = '__DEFAULT__';
+  // The page this browser tab showed (`KEPT_PAGE`), read before Gradio draws
+  // the first screen: the page load hands it to the shell (`_restore`), and
+  // nothing is kept again until that answer is in (`restored`) or the
+  // operator picks a tab, so the first screen drawn never overwrites it.
+  var KEPT = '__KEPT__', kept = '', restoring = false;
+  try { kept = window.sessionStorage.getItem(KEPT) || ''; } catch (err) { kept = ''; }
+  restoring = kept !== '';
+  function keep(key) {
+    if (restoring || !key) { return; }
+    try { if (window.sessionStorage.getItem(KEPT) !== key) { window.sessionStorage.setItem(KEPT, key); } }
+    catch (err) { /* nothing kept: a reload starts on Diagnosis */ }
+  }
+  document.addEventListener('click', function (e) {
+    if (restoring && e.isTrusted && e.target && e.target.closest && e.target.closest('[role="tab"]')) {
+      restoring = false;
+    }
+  }, true);
   var TABLIST_LABELS = {'shep-nav': 'Stage', 'shep-research-nav': __RESEARCH_LABEL__};
   function selected(navId) {
     var b = document.querySelector('#' + navId + ' > .tab-wrapper [role="tab"][aria-selected="true"]');
@@ -532,6 +590,7 @@ _SHELL_JS = r"""
     var key = outer === RESEARCH ? (selected('shep-research-nav') || DEFAULT_PAGE) : outer;
     var want = TITLES[key];
     if (want && document.title !== want) { document.title = want; }
+    if (selected('shep-nav')) { keep(key); }
   }
   function labels() {
     for (var id in TABLIST_LABELS) {
@@ -609,7 +668,8 @@ _SHELL_JS = r"""
       if (chips && shell) { ro.observe(chips); ro.observe(shell); clearInterval(watch); }
     }, 200);
   }
-  window.ShepShell = {update: update, title: title, titles: titles};
+  window.ShepShell = {update: update, title: title, titles: titles, kept: kept,
+                     restored: function () { restoring = false; update(); }};
 })();
 """
 
@@ -617,6 +677,7 @@ _SHELL_JS = r"""
 SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__TITLES__", as_json_for_script(TITLES))
               .replace("__DEFAULT__", DEFAULT_RESEARCH_PAGE)
+              .replace("__KEPT__", KEPT_PAGE)
               .replace("__RESEARCH_LABEL__", as_json_for_script(RESEARCH_TABLIST_LABEL))
               + "</script>")
 
@@ -627,7 +688,9 @@ __all__ = [
     "DATASETS",
     "DEFAULT_RESEARCH_PAGE",
     "FINETUNE",
+    "KEPT_PAGE",
     "LABELS",
+    "LOCATION_WRITES",
     "MODELS",
     "OPEN_PAGE_CONCURRENCY",
     "PageContext",
