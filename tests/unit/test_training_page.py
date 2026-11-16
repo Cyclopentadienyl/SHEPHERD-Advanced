@@ -394,8 +394,9 @@ def test_datasets_use_for_training_reaches_the_run_bar():
                  if (ctx.training_workspace._id, "change") in fn.targets]
     assert [fn.fn.__name__ for fn in listeners] == ["_on_training_workspace"]
     assert by_id["shep-train-dataset"] in listeners[0].outputs
+    # The operator's pick (`shell.picked`: one request per option chosen).
     hand = [fn for fn in demo.fns.values()
-            if (by_id["shep-train-dataset"]._id, "input") in fn.targets]
+            if (by_id["shep-train-dataset"]._id, "blur") in fn.targets]
     assert [fn.fn.__name__ for fn in hand] == ["_on_dataset"]
     assert ctx.training_workspace in hand[0].outputs
 

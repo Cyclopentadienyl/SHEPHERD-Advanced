@@ -130,7 +130,7 @@ from src.webui.components import renderers as r
 from src.webui.components.help import help_button
 from src.webui.exports import file_slug, write_new
 from src.webui.operator_access import operator_access
-from src.webui.shell import plain_html
+from src.webui.shell import picked, plain_html
 
 #: The segment's value in the detail's segment control (`models_page`'s).
 RESULTS = mp.RESULTS
@@ -1522,7 +1522,7 @@ def wire_results_segment(parts: Mapping[str, Any], *, seg: Any, listing: Any,
                          inputs=[listing, selected, parts["scope"], *filters,
                                  parts["differences"]],
                          outputs=outputs, show_progress="minimal")
-    gr.on([parts["scope"].input, *(f.input for f in filters), selected.change, listing.change],
+    gr.on([parts["scope"].input, *(picked(f) for f in filters), selected.change, listing.change],
           _on_results_shown, inputs=shown_inputs, outputs=outputs, show_progress="hidden",
           trigger_mode="always_last")
     gr.on([parts["chosen"].input, parts["differences"].input], _on_results_compare,

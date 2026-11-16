@@ -137,7 +137,7 @@ from src.webui.components.chips import D8_SHORT, LOCK
 from src.webui.components.help import copy_button, help_button
 from src.webui.components.served_status import read_status, served_checkpoint_sha
 from src.webui.operator_access import operator_access
-from src.webui.shell import page_elem_id, plain_html
+from src.webui.shell import page_elem_id, picked, plain_html
 
 logger = logging.getLogger(__name__)
 
@@ -1760,7 +1760,7 @@ def create_models_page(ctx: Any) -> None:
             out[1] = {**out[1], "redraw": time.monotonic_ns()}
         return (*states, *out)
 
-    gr.on([handle.listing.change, handle.selected.change, *(c.input for c in control_inputs)],
+    gr.on([handle.listing.change, handle.selected.change, *(picked(c) for c in control_inputs)],
           _sync, inputs=[handle.listing, data_state, stale_state, last_state, handle.phase,
                          *control_inputs, handle.selected, parts["seg"]],
           outputs=[stale_state, last_state, handle.selected, *page_outputs],

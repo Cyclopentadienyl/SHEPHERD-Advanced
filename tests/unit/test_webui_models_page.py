@@ -1869,9 +1869,11 @@ def test_controls_selection_and_segments_are_wired(world, monkeypatch):
     sync = states["fn"]
     # One listener answers a new listing, a selection and the controls, so its
     # answers for one session never overlap; the last trigger always runs.
+    # A pick of the Task select is one request (`shell.picked`: its blur), the
+    # Order radio's its input.
     assert {(demo.blocks[t[0]], t[1]) for t in sync.targets} == {
         (states["listing"], "change"), (states["selected"], "change"),
-        *((by_id[c], "input") for c in ("shep-mp-order", "shep-mp-task"))}
+        (by_id["shep-mp-order"], "input"), (by_id["shep-mp-task"], "blur")}
     assert not {"shep-mp-version", "shep-mp-metric", "shep-mp-scoring",
                 "shep-mp-independence"} & set(by_id)
     assert sync.trigger_mode == "always_last"

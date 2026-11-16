@@ -174,7 +174,7 @@ from src.webui.components.served_status import (
     serving_workspace,
 )
 from src.webui.operator_access import operator_access
-from src.webui.shell import plain_html
+from src.webui.shell import picked, plain_html
 
 logger = logging.getLogger(__name__)
 
@@ -1778,7 +1778,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     refresh_outputs = [listing, selected, workspace, count, rows, facts, load, reason, note]
     refresh = {"fn": _refresh, "inputs": [workspace, show_older, view, listing, selected],
                "outputs": refresh_outputs, "show_progress": "minimal"}
-    workspace.input(**refresh)
+    picked(workspace)(**refresh)
 
     def _select(data, older, current_view, evt: gr.EventData):
         raw = getattr(evt, "_data", None)

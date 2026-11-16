@@ -239,9 +239,9 @@ def test_a_past_runs_state_is_its_checkpoints_never_the_jobs(runs, operator):  #
 
 
 def test_the_select_writes_only_the_view_choice_in_the_run_bars_ordered_group():
-    """The render/poll single-writer contract: the select's input writes the
-    session's view choice alone, in the run bar's queued group of one, then
-    the render; the select's options and value are a render's piece (`VIEW_KEYS`
+    """The render/poll single-writer contract: the select's pick (its blur,
+    `shell.picked`: once per option chosen) writes the session's view choice
+    alone, in the run bar's queued group of one, then the render; the select's options and value are a render's piece (`VIEW_KEYS`
     ``view``), handed over by the poll, never written by it; every render and
     the poll read the choice."""
     from src.webui import shell
@@ -253,7 +253,7 @@ def test_the_select_writes_only_the_view_choice_in_the_run_bars_ordered_group():
     chosen = [fn for fn in fns if fn.name == "_on_view_run"]
     assert len(chosen) == 1
     fn = chosen[0]
-    assert (select._id, "input") in fn.targets
+    assert fn.targets == [(select._id, "blur")]
     assert fn.concurrency_id == shell.TRAINING_SELECTION_CONCURRENCY
     viewing = fn.outputs[0]
     assert len(fn.outputs) == 1 and isinstance(viewing, gr.State)

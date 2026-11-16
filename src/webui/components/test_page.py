@@ -204,7 +204,7 @@ from src.webui.components.workspaces import (
     workspace_binding,
 )
 from src.webui.operator_access import operator_access
-from src.webui.shell import page_elem_id, plain_html
+from src.webui.shell import page_elem_id, picked, plain_html
 
 logger = logging.getLogger(__name__)
 
@@ -3288,13 +3288,13 @@ def create_test_page(ctx: Any) -> None:
                 *_run_outputs(page, models, binding, ws, label, key, protocol, job, _gpu(page)),
                 *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
 
-    workspace.input(_on_workspace,
-                    inputs=[page_state, workspace, version, model_state, measurement_state,
-                            models_state, selected_report],
-                    outputs=[models_state, binding_state_, reports_state, selected_report,
-                             preview_state, drawer, *cohort_outputs, *run_outputs,
-                             *result_outputs],
-                    show_progress="minimal", **one_at_a_time, **every_one) \
+    picked(workspace)(_on_workspace,
+                      inputs=[page_state, workspace, version, model_state, measurement_state,
+                              models_state, selected_report],
+                      outputs=[models_state, binding_state_, reports_state, selected_report,
+                               preview_state, drawer, *cohort_outputs, *run_outputs,
+                               *result_outputs],
+                      show_progress="minimal", **one_at_a_time, **every_one) \
         .then(**ctx.chip_refresh)
 
     def _on_version(page, binding, models, ws, label, key, protocol, current_report,
@@ -3312,13 +3312,13 @@ def create_test_page(ctx: Any) -> None:
                 *_run_outputs(page, models, binding, ws, label, key, protocol, job, _gpu(page)),
                 *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
 
-    version.input(_on_version,
-                  inputs=[page_state, binding_state_, models_state, workspace, version,
-                          model_state,
-                          measurement_state, selected_report],
-                  outputs=[reports_state, selected_report, version, version_info, *run_outputs,
-                           *result_outputs],
-                  show_progress="hidden", **one_at_a_time, **every_one)
+    picked(version)(_on_version,
+                    inputs=[page_state, binding_state_, models_state, workspace, version,
+                            model_state,
+                            measurement_state, selected_report],
+                    outputs=[reports_state, selected_report, version, version_info,
+                             *run_outputs, *result_outputs],
+                    show_progress="hidden", **one_at_a_time, **every_one)
 
     def _on_model(page, models, binding, ws, label, key, protocol, reports, run_id):
         """A checkpoint chosen: the Run panel for it, and the reports table and
@@ -3341,12 +3341,12 @@ def create_test_page(ctx: Any) -> None:
     # so a read handed over before this choice cannot write them back after it.
     model_inputs = [page_state, models_state, binding_state_, workspace, version, model,
                     measurement_state, reports_state, selected_report]
-    model.input(_on_model, inputs=model_inputs, outputs=[*run_outputs, *result_outputs],
-                show_progress="hidden", **one_at_a_time, **every_one)
-    run_select.input(_on_run, inputs=[*model_inputs[:5], run_select, model_state,
-                                      *model_inputs[6:]],
-                     outputs=[*run_outputs, *result_outputs], show_progress="hidden",
-                     **one_at_a_time, **every_one)
+    picked(model)(_on_model, inputs=model_inputs, outputs=[*run_outputs, *result_outputs],
+                  show_progress="hidden", **one_at_a_time, **every_one)
+    picked(run_select)(_on_run, inputs=[*model_inputs[:5], run_select, model_state,
+                                        *model_inputs[6:]],
+                       outputs=[*run_outputs, *result_outputs], show_progress="hidden",
+                       **one_at_a_time, **every_one)
 
     def _on_measurement(page, models, binding, ws, label, key, protocol):
         """A measurement picked: the radio (written back, as the version select

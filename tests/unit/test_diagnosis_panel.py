@@ -2124,7 +2124,9 @@ def test_the_task_inputs_are_never_run_outputs_and_clear_on_input(monkeypatch):
             assert genes not in fn.outputs, name
     triggers = {(fn.name, t) for fn in demo.fns.values() for t in fn.targets}
     assert ("_phenotypes_edited", (genes._id, "input")) in triggers
-    assert ("_cohort_picked", (cohort._id, "input")) in triggers
+    # The cohort's pick (`shell.picked`: once per option chosen, never on a
+    # card's write of the select).
+    assert ("_cohort_picked", (cohort._id, "blur")) in triggers
     assert not {t for _n, t in triggers if t in ((genes._id, "change"), (cohort._id, "change"))}
     clear = blocks["shep-dx-clear"]
     assert any(genes in fn.outputs for fn in demo.fns.values()

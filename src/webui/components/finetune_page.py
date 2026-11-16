@@ -130,7 +130,7 @@ from src.webui.components.help import help_button
 from src.webui.components.workspaces import read_workspaces, redact, workspaces_root
 from src.webui.operator_access import operator_access
 from src.webui.shell import FINETUNE as PAGE
-from src.webui.shell import page_elem_id, plain_html
+from src.webui.shell import page_elem_id, picked, plain_html
 
 logger = logging.getLogger(__name__)
 
@@ -1313,9 +1313,9 @@ def create_finetune_page(ctx: Any) -> None:
                         outputs=[card, start, stop, reason, stop_reason, confirm_row, cache],
                         queue=False, show_progress="hidden")
 
-    dataset.input(_on_dataset, inputs=[dataset, tasks],
-                  outputs=[ws, identity, tasks, tasks_note],
-                  show_progress="hidden").then(**bases_step).then(**base_step).then(
+    picked(dataset)(_on_dataset, inputs=[dataset, tasks],
+                    outputs=[ws, identity, tasks, tasks_note],
+                    show_progress="hidden").then(**bases_step).then(**base_step).then(
         **ctx.chip_refresh)
     refresh.click(**bases_step).then(**base_step).then(**ctx.chip_refresh)
     run_select.change(ml.on_run_chosen, inputs=[run_select, parents, checkpoint],

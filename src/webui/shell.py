@@ -236,6 +236,28 @@ def plain_html(value: Any = "", *, js_on_load: Optional[str] = None, **kwargs: A
                    elem_classes=["shep-html", *classes], **kwargs)
 
 
+def picked(control: Any) -> Any:
+    """**The one event of an operator's choice in a select**, for a listener
+    to wire (``picked(select)(fn, …)``, or a trigger of ``gr.on``): once per
+    option chosen, by pointer or by keys, never for the page's own write of
+    its value.
+
+    Gradio 6.30's single-select Dropdown (measured, the WebUI ledger's UI-11)
+    sends ``input`` on every blur and once more for an option clicked (the
+    click, then the blur it causes): two requests for one pick, and one for a
+    focus that chose nothing. Its ``select`` is not sent for an option chosen
+    with the arrow keys and Enter, and ``change`` follows the server's own
+    writes of the value too (a page that writes a select back would start its
+    listener again). Its ``blur`` comes once per option chosen either way and
+    never from a write, so a Dropdown's choice is its blur; a focus that
+    chose nothing is one request, as with ``input``. Every other control
+    (a Radio, a multiselect Dropdown, a Checkbox) keeps its ``input``, which
+    it sends once per change."""
+    if isinstance(control, gr.Dropdown) and not getattr(control, "multiselect", False):
+        return control.blur
+    return control.input
+
+
 def tab_elem_id(tab: str) -> str:
     return f"shep-tab-{tab}"
 
@@ -620,6 +642,7 @@ __all__ = [
     "build_shell",
     "help_texts",
     "page_elem_id",
+    "picked",
     "standalone_context",
     "tab_elem_id",
 ]

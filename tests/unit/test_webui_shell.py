@@ -22,7 +22,11 @@ The dashboard's shell (M5-2, UI-A): navigation, the page contract, the head.
   sizes are never under 14 px; the page is always light (Gradio's dark class is
   kept off); Gradio's footer is off; the segmented control's selected option
   is dark text on white;
-- the access log keeps the no-queue event path quiet (the chips' timer).
+- the access log keeps the no-queue event path quiet (the chips' timer);
+- **one choice, one request** (UI-11): a select's choice is wired through
+  `shell.picked` everywhere in the dashboard, and in a browser one pick of a
+  Dropdown, by pointer or by keys, is one request and the page's own write of
+  its value is none.
 
 Module: tests/unit/test_webui_shell.py
 """
@@ -592,3 +596,129 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
         assert facts["chips"] > 0, width
         for tab, covered in facts["tabs"].items():
             assert covered == [], (width, tab, covered)
+
+
+
+# --------------------------------------------------------------------------- one choice, one request
+def test_every_select_choice_in_the_dashboard_is_its_one_event_per_pick():
+    """UI-11 (review G6): no listener of the dashboard takes a single-select
+    Dropdown's ``input`` (Gradio 6.30 sends it twice for one pick and once
+    for a focus that chose nothing) or its ``change`` or ``select`` as the
+    operator's choice; every choice the ledger named is its blur
+    (`shell.picked`). A multiselect and a Radio keep their input."""
+    from src.webui.app import create_gradio_app
+
+    demo = create_gradio_app()
+    taken = {}
+    for fn in demo.fns.values():
+        for block_id, event in fn.targets:
+            block = demo.blocks.get(block_id)
+            if isinstance(block, gr.Dropdown):
+                taken.setdefault(block.elem_id, set()).add((event, fn.name))
+    single = {block.elem_id for block in demo.blocks.values()
+              if isinstance(block, gr.Dropdown) and not block.multiselect}
+    wrong = {elem: events for elem, events in taken.items()
+             if elem in single and any(event == "input" for event, _name in events)}
+    assert wrong == {}, wrong
+    for elem in ("shep-test-workspace", "shep-test-version", "shep-test-model",
+                 "shep-test-model-run", "shep-train-view-run", "shep-mp-task",
+                 "shep-models-research-workspace", "shep-models-clinical-workspace"):
+        assert any(event == "blur" for event, _name in taken[elem]), (elem, taken[elem])
+    chosen = next(b for b in demo.blocks.values()
+                  if isinstance(b, gr.Dropdown) and b.multiselect)
+    assert shell.picked(chosen) == chosen.input
+    radio = next(b for b in demo.blocks.values() if isinstance(b, gr.Radio))
+    assert shell.picked(radio) == radio.input
+
+
+def _picks_page():
+    """A Dropdown and a Radio, each choice wired through `shell.picked`, each
+    answer counting its calls into the page; a button writes the Dropdown's
+    value from the server."""
+    calls = {"select": [], "radio": []}
+    with gr.Blocks() as demo:
+        select = gr.Dropdown(choices=[("Alpha", "a"), ("Beta", "b"), ("Gamma", "c")], value="a",
+                             label="Pick", elem_id="pick", interactive=True)
+        radio = gr.Radio(choices=[("One", "1"), ("Two", "2")], value="1", label="Radio",
+                         elem_id="radio")
+        seen = gr.Textbox(elem_id="seen")
+        write = gr.Button("Write", elem_id="write")
+
+        def count(name):
+            def fn(value):
+                calls[name].append(value)
+                return f"{name} {len(calls[name])}"
+            fn.__name__ = f"_{name}_picked"
+            return fn
+
+        shell.picked(select)(count("select"), inputs=[select], outputs=[seen])
+        shell.picked(radio)(count("radio"), inputs=[radio], outputs=[seen])
+        write.click(lambda: gr.update(value="a"), inputs=None, outputs=[select])
+    return demo, calls
+
+
+#: Each act, then its answer drawn (the counter's words), then the requests it
+#: sent counted (`QUEUE_JS`: counted when asked, so a second request one act
+#: sends is counted before the first one's answer is drawn).
+_PICKS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext()).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.goto(base, { waitUntil: 'networkidle' });
+  const cfg = await page.evaluate(async (b) => (await fetch(b + 'config')).json(), base);
+  const fnOf = (name) => cfg.dependencies.find((d) => d.api_name === name).id;
+  const ids = { select: fnOf('_select_picked'), radio: fnOf('_radio_picked') };
+  const count = (id) => page.evaluate((i) => window.__shepQueue.count(i), id);
+  const seen = (words) => page.waitForFunction((w) => document.querySelector('#seen textarea').value === w,
+                                               words, { timeout: 20000 });
+  const out = {};
+  let before = await count(ids.select);
+  await page.click('#pick input');
+  await page.click('ul[role=listbox] li:has-text("Beta")');
+  await seen('select 1');
+  out.pointer = (await count(ids.select)) - before;
+  before = await count(ids.select);
+  await page.click('#pick input');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await seen('select 2');
+  out.keys = (await count(ids.select)) - before;
+  out.value = await page.inputValue('#pick input');
+  before = await count(ids.select);
+  await page.click('#write');
+  await page.waitForFunction(() => document.querySelector('#pick input').value === 'Alpha');
+  await page.waitForFunction(() => window.__shepQueue.inflight === 0);
+  // A listener the write had started would have been asked by now (in the
+  // answer's own handling); the Radio's pick after it is the marker.
+  before = { select: before, radio: await count(ids.radio) };
+  await page.click('#radio label:has-text("Two")');
+  await seen('radio 1');
+  out.server_write = (await count(ids.select)) - before.select;
+  out.radio = (await count(ids.radio)) - before.radio;
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_one_pick_of_a_select_is_one_request_and_the_pages_write_is_none(tmp_path):
+    """UI-11 in Gradio 6.30's own page (Node and Playwright, skipped without):
+    a Dropdown's option clicked, and one chosen with the arrow key and Enter,
+    each send its listener once (``input`` sent the click's twice); the
+    server's write of its value sends none (``change`` would); a Radio's pick
+    sends its listener once."""
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    demo, calls = _picks_page()
+    with served(demo) as base:
+        seen = run_node(_PICKS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    assert seen == {"pointer": 1, "keys": 1, "value": "Gamma", "server_write": 0, "radio": 1}, seen
+    assert calls == {"select": ["b", "c"], "radio": ["2"]}

@@ -2950,7 +2950,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
     and after a model change; its help and the fields' go behind the shared
     ⓘ."""
     from src.webui.components.model_list import MODEL_LIST_JS, workspace_line_html
-    from src.webui.shell import plain_html
+    from src.webui.shell import picked, plain_html
 
     ctx.help.fields(FIELD_HELP)
     ctx.help.topics(TOPIC_HELP)
@@ -3386,9 +3386,9 @@ def create_diagnosis_tab(ctx: Any) -> None:
     def _cohort_picked(result, state, cohort):
         return mapped(cohort_picked(result, state, cohort))
 
-    cohort_input.input(_cohort_picked, inputs=[results_state, card_state, cohort_input],
-                       outputs=outputs(*dict.fromkeys(result_names + ("card_state", "cohort"))),
-                       show_progress="hidden")
+    picked(cohort_input)(_cohort_picked, inputs=[results_state, card_state, cohort_input],
+                         outputs=outputs(*dict.fromkeys(result_names + ("card_state", "cohort"))),
+                         show_progress="hidden")
 
     def _select_candidate(result, segment, evt: gr.EventData):
         return mapped(select_candidate(result, segment, _event_key(evt)))

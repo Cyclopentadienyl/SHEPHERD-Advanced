@@ -4648,14 +4648,15 @@ def create_training_tab(ctx: Any) -> None:
                         queue=False, show_progress="hidden")
 
     # The run bar's dataset.
-    dataset.input(_on_dataset, inputs=[dataset, mode],
-                  outputs=[ws, chip, ctx.training_workspace, mode, notice],
-                  show_progress="hidden", **in_order, **every_one).then(**view_step)
+    picked = _shell().picked
+    picked(dataset)(_on_dataset, inputs=[dataset, mode],
+                    outputs=[ws, chip, ctx.training_workspace, mode, notice],
+                    show_progress="hidden", **in_order, **every_one).then(**view_step)
     # The run view's run (the session's view choice, then the render that
     # draws it), in the same group: a render drawn from an older choice is
     # never applied after a newer one's.
-    view_run.input(_on_view_run, inputs=[view_run, ws], outputs=[viewing],
-                   show_progress="hidden", **in_order, **every_one).then(**view_step)
+    picked(view_run)(_on_view_run, inputs=[view_run, ws], outputs=[viewing],
+                     show_progress="hidden", **in_order, **every_one).then(**view_step)
     # The session's workspace changed (a hand choice above writes it, and so
     # do Datasets' "Use for training ›" and a render that follows a job
     # running in another workspace): with Continue… open, the parent list
