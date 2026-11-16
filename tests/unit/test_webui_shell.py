@@ -1650,8 +1650,10 @@ def test_a_field_rows_action_is_its_boxes_height_and_stands_on_their_line(tmp_pa
     Test's ↻ patched by 4 px and still 12 px off). The shared field row
     (`style.py`'s ``.shep-field-row``, two tokens) makes the action the box's
     height on the box's line, an icon-only one a square of it; with the
-    selects wrapped (Fine-tune at 1440 x 900) the button stays beside the
-    last box. Measured in a browser (Node and Playwright, skipped without)."""
+    selects wrapped the button stays beside the last box. Fine-tune's form
+    is two columns at 1850 x 960 (B27-1), its base's selects wrapped in the
+    left one, and one column at 1440 x 900, the selects side by side.
+    Measured in a browser (Node and Playwright, skipped without)."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.operator_access import operator_mode
@@ -1667,8 +1669,8 @@ def test_a_field_rows_action_is_its_boxes_height_and_stands_on_their_line(tmp_pa
         last = max(row["boxes"], key=lambda b: b[0])
         assert abs(row["button"][0] - last[0]) <= 1 and abs(row["button"][1] - last[1]) <= 1, (where, row)
         assert row["button"][2] > max(b[2] for b in row["boxes"] if b[0] == last[0]), (where, row)
-    assert seen["finetune@1850"]["boxes"][0][0] == seen["finetune@1850"]["boxes"][1][0]
-    assert seen["finetune@1440"]["boxes"][1][0] > seen["finetune@1440"]["boxes"][0][1]   # wrapped
+    assert seen["finetune@1440"]["boxes"][0][0] == seen["finetune@1440"]["boxes"][1][0]
+    assert seen["finetune@1850"]["boxes"][1][0] > seen["finetune@1850"]["boxes"][0][1]   # wrapped
     test = seen["test@1850"]["button"]
     assert abs((test[1] - test[0]) - (seen["test@1850"]["boxes"][0][1] - seen["test@1850"]["boxes"][0][0])) <= 1
 
@@ -1676,8 +1678,9 @@ def test_a_field_rows_action_is_its_boxes_height_and_stands_on_their_line(tmp_pa
 def test_the_field_rows_share_one_class_and_two_tokens():
     """D03: the four rows of a select and an action (Fine-tune's base picker,
     Training's Continue drawer, Test's Run, the Diagnosis load drawer's head)
-    carry the one field-row class; their own alignment patches are gone; the
-    Training drawer's denser blocks set the row's padding token with their
+    carry the one field-row class; their own alignment patches are gone; a
+    dense form's blocks (the shared `shep-form-dense`: Training's parameters
+    and its drawer, Fine-tune's form) set the row's padding token with their
     padding (one value, never two that drift)."""
     from src.webui.components import (
         diagnosis_panel,
@@ -1700,7 +1703,10 @@ def test_the_field_rows_share_one_class_and_two_tokens():
     assert "margin-bottom: 4px" not in test_page.PAGE_CSS
     assert "#ft_refresh {" not in finetune_page.PAGE_CSS
     assert "#shep-train-refresh {" not in training_console.PAGE_CSS
-    assert "--shep-field-pad-b: 4px;" in training_console.PAGE_CSS
+    assert ".shep-form-dense { --shep-field-pad-b: 4px; }" in SHELL_CSS
+    assert (".shep-form-dense .block.padded { padding-top: var(--shep-field-pad-b) !important; "
+            "padding-bottom: var(--shep-field-pad-b) !important; }") in SHELL_CSS
+    assert "--shep-field-pad-b: 4px;" not in training_console.PAGE_CSS     # no copy of its own
 
 
 def test_every_button_link_and_disclosure_takes_the_focus_tokens_ring():
