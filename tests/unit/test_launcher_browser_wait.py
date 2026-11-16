@@ -53,7 +53,8 @@ class _Server:
     timeout -- and raises `failure`. `stop_at` ends the run, in elapsed seconds.
     """
 
-    def __init__(self, refusals=None, attempt_cost=0.0, failure=None, stop_at=None):
+    def __init__(self, refusals=None, attempt_cost=0.0, failure=None, stop_at=None,
+                 browser=True):
         self.now = self.start = 5000.0  # a monotonic clock's origin is arbitrary
         self.refusals = refusals
         self.attempt_cost = attempt_cost
@@ -62,6 +63,7 @@ class _Server:
         self.attempts = []  # (elapsed, url, timeout)
         self.sleeps = []
         self.opened = []
+        self.browser = browser  # what `webbrowser.open` answers: False when it finds none
 
     @property
     def elapsed(self):
@@ -87,7 +89,11 @@ class _Server:
         clock = types.SimpleNamespace(monotonic=self.monotonic, sleep=self.sleep)
         monkeypatch.setattr(launcher, "time", clock)
         monkeypatch.setattr(launcher, "urlopen", self.urlopen)
-        monkeypatch.setattr(launcher, "webbrowser", types.SimpleNamespace(open=self.opened.append))
+        monkeypatch.setattr(launcher, "webbrowser", types.SimpleNamespace(open=self.open))
+
+    def open(self, url):
+        self.opened.append(url)
+        return self.browser
 
 
 def _poll(monkeypatch, server):
@@ -104,7 +110,43 @@ def test_it_opens_the_browser_once_when_health_first_answers(monkeypatch, capsys
     # after the answer: the browser opens once and the thread is done.
     assert server.attempts == [(float(t), HEALTH, 3) for t in range(6)]
     assert server.sleeps == [1.0] * 5
-    assert f"Server ready — opening browser: {UI}" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"Server ready.\n[SHEPHERD] Opened {UI} in the browser." in out
+
+
+def test_when_no_browser_opens_it_says_where_the_dashboard_is(monkeypatch, capsys):
+    """T08: `webbrowser.open` answers False on a host where it finds no
+    browser (no desktop session), and the start said "opening browser"
+    whatever it answered. It now says none opened and gives the address; the
+    poll still ends, as for an opened one."""
+    server = _Server(refusals=2, browser=False)
+    assert _poll(monkeypatch, server) is True
+    assert server.opened == [UI]
+    out = capsys.readouterr().out
+    assert f"No browser could be opened on this computer: open {UI} in a browser." in out
+    assert "opening browser" not in out and "Opened" not in out
+
+
+@pytest.mark.parametrize("answer, said", [
+    (True, "Opened {url} in the browser."),
+    (False, "No browser could be opened on this computer: open {url} in a browser."),
+    (None, "No browser could be opened on this computer: open {url} in a browser."),
+    (RuntimeError("could not locate runnable browser"),
+     "No browser could be opened on this computer: open {url} in a browser."),
+], ids=["opened", "none-found", "no-answer", "raised"])
+def test_every_open_says_what_happened(monkeypatch, capsys, answer, said):
+    """The one open every start makes (`open_in_browser`): what it says
+    follows `webbrowser.open`'s answer, and a failure is never raised."""
+    launcher = _launcher()
+
+    def _open(url):
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(launcher, "webbrowser", types.SimpleNamespace(open=_open))
+    assert launcher.open_in_browser(UI) is (answer is True)
+    assert said.format(url=UI) in capsys.readouterr().out
 
 
 def test_it_does_not_give_up_before_the_server_answers(monkeypatch, capsys):

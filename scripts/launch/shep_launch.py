@@ -115,11 +115,35 @@ def _answers_as(response: Any, instance_id: Optional[str]) -> bool:
     return isinstance(body, dict) and body.get("instance_id") == instance_id
 
 
+#: What a start says once it asked this computer's browser for a page
+#: (`open_in_browser`): a browser was started for it, or none could be.
+BROWSER_OPENED = "Opened {url} in the browser."
+NO_BROWSER = "No browser could be opened on this computer: open {url} in a browser."
+
+
+def open_in_browser(url: str) -> bool:
+    """**Open ``url`` in this computer's browser and say what happened**: the
+    one open of every start (the first start's once its server answers, a
+    second start's of the instance that already runs, a failed start's error
+    page). ``webbrowser.open`` returns False when it finds no browser (a host
+    with no desktop session, an SSH login) and can raise; then the log says to
+    open the address instead (T08: a second start printed "Opening it." while
+    nothing opened). True means a browser program was started for it, which
+    is all ``webbrowser`` can tell; it is never raised from."""
+    try:
+        opened = bool(webbrowser.open(url))
+    except Exception:  # noqa: BLE001 - any failure to start a browser is "not opened"
+        opened = False
+    log((BROWSER_OPENED if opened else NO_BROWSER).format(url=url))
+    return opened
+
+
 def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 30.0,
                              server: Optional[int] = None, instance_id: Optional[str] = None,
                              on_gone: Optional[Callable[[], None]] = None) -> bool:
-    """Poll ``health_url`` until it answers, then open ``url`` once; True
-    when it opened it.
+    """Poll ``health_url`` until it answers, then open ``url`` once
+    (`open_in_browser`, which says whether a browser opened it); True once
+    the server answered, False when it ended first.
 
     Runs beside the server: in the helper `start_browser_opener` starts,
     given the server's PID as ``server``, or on Windows in a daemon thread of
@@ -145,8 +169,8 @@ def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 
         try:
             resp = urlopen(health_url, timeout=3)
             if _answers_as(resp, instance_id):
-                log(f"Server ready — opening browser: {url}")
-                webbrowser.open(url)
+                log("Server ready.")
+                open_in_browser(url)
                 return True
         except (URLError, OSError):
             pass
@@ -466,8 +490,8 @@ def show_error_page(page: Path, what: str, remedy: str, log_path: Optional[Path]
     either is logged, never raised (the start has failed already)."""
     try:
         written = write_error_page(page, what, remedy, log_path)
-        webbrowser.open(written.as_uri())
         log(f"The error page is {written}")
+        open_in_browser(written.as_uri())
     except Exception as exc:  # noqa: BLE001 - the start has failed already
         log(f"WARNING: the error page could not be shown ({exc})")
 
@@ -1102,8 +1126,7 @@ def main() -> int:
                 log(f"SHEPHERD-Advanced already runs for this configuration at {ui} (pid "
                     f"{found.running.get('pid')}); no second backend is started on the same data.")
                 if not args.no_browser:
-                    log("Opening it.")
-                    webbrowser.open(ui)
+                    open_in_browser(ui)
                 return 0
             if found is not None:
                 instance_fd, info_path = found.fd, files.info

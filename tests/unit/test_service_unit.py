@@ -93,7 +93,8 @@ class _ExecReachedError(Exception):
 
 
 def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True, busy_ports=(),
-                  terminal=True, output_kept=False, launcher=None, keep_lock=False):
+                  terminal=True, output_kept=False, launcher=None, keep_lock=False,
+                  browser=True):
     """Run the launcher's own main with the server, installs and browser stubbed.
 
     Returns what it did: the server command, whether it exec'd or waited,
@@ -104,7 +105,8 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True, busy_por
     and the host's own ports never decide a test); `terminal` is whether the
     start has one, `output_kept` whether its output already goes to a file or
     a pipe. The instance lock a start hands to its exec (`handed`) is
-    released afterwards, unless `keep_lock`.
+    released afterwards, unless `keep_lock`. `browser` is what the stubbed
+    ``webbrowser.open`` answers: False, as on a host where it finds none.
     """
     launcher = launcher or _launcher()
     record = {"exec": [], "run": [], "browsers": 0, "threads": [], "installs": [],
@@ -138,7 +140,7 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True, busy_por
     monkeypatch.setattr(launcher, "has_terminal", lambda: terminal)
     monkeypatch.setattr(launcher, "output_is_kept", lambda: output_kept)
     monkeypatch.setattr(launcher, "webbrowser", types.SimpleNamespace(
-        open=lambda url: record["opened"].append(url)))
+        open=lambda url: record["opened"].append(url) or browser))
     monkeypatch.setattr(launcher, "pip_install", lambda spec, name, **kwargs: (
         record["installs"].append(name) or False))
     # Every accelerator absent, so a requested one reaches the install decision.
@@ -840,26 +842,34 @@ def _running_instance(launcher, tmp_path, instance_id, answer_id, settings=None)
     return files, fd, health
 
 
-@pytest.mark.parametrize("browser", [True, False])
+@pytest.mark.parametrize("browser, found", [(True, True), (True, False), (False, None)],
+                         ids=["opened", "no-browser-found", "--no-browser"])
 def test_a_second_start_of_a_running_configuration_opens_it(monkeypatch, tmp_path, capsys,
-                                                            browser):
+                                                            browser, found):
     """Plan §4.5: a second double click started a second backend on the same
     data (or failed late on the port). It finds the instance whose lock is
     held and whose /health answers with its info file's id, opens it, and
-    starts nothing."""
+    starts nothing. T08: it said "Opening it." whatever `webbrowser.open`
+    answered, so a host with no browser was told a page opened that did not;
+    it now says which happened, and gives the address when none opened."""
     launcher = _launcher()
     files, fd, health = _running_instance(launcher, tmp_path, "abc123", "abc123")
     try:
         done = _run_launcher(monkeypatch, ["--no-auto-install"] + ([] if browser
                                                                    else ["--no-browser"]),
-                             env=_state_env(tmp_path), launcher=launcher)
+                             env=_state_env(tmp_path), launcher=launcher, browser=found)
     finally:
         health.close()
         os.close(fd)
     assert done["status"] == 0 and done["server"] is None and done["installs"] == []
-    assert done["opened"] == ([f"{health.url}/ui"] if browser else [])
+    ui = f"{health.url}/ui"
+    assert done["opened"] == ([ui] if browser else [])
     out = capsys.readouterr().out
-    assert f"SHEPHERD-Advanced already runs for this configuration at {health.url}/ui" in out
+    assert f"SHEPHERD-Advanced already runs for this configuration at {ui}" in out
+    assert "Opening it." not in out
+    opened = f"Opened {ui} in the browser."
+    missing = f"No browser could be opened on this computer: open {ui} in a browser."
+    assert (opened in out, missing in out) == (found is True, found is False)
 
 
 def test_another_configuration_is_another_instance(monkeypatch, tmp_path):
@@ -999,7 +1009,8 @@ def test_output_is_kept_tells_a_file_or_pipe_from_dev_null(tmp_path):
     assert said == {"file": "True", "pipe": "True", "devnull": "False"}
 
 
-def test_without_a_terminal_a_refused_start_opens_a_page_saying_why(monkeypatch, tmp_path):
+def test_without_a_terminal_a_refused_start_opens_a_page_saying_why(monkeypatch, tmp_path,
+                                                                   capsys):
     """A failure before the server is up (here a network bind without the
     risk accepted) opens a local page with what failed, what to do and where
     the log is, escaped; it says it in the log too."""
@@ -1011,6 +1022,7 @@ def test_without_a_terminal_a_refused_start_opens_a_page_saying_why(monkeypatch,
     page = tmp_path / "state" / "logs" / "launch-error.html"
     assert done["status"] == 2 and done["server"] is None
     assert done["opened"] == [page.as_uri()]
+    assert f"Opened {page.as_uri()} in the browser." in capsys.readouterr().out
     text = page.read_text(encoding="utf-8")
     assert "refusing to bind all interfaces" in text and "section 4.13" in text
     assert str(tmp_path / "state" / "logs" / "launch.log") in text
