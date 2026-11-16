@@ -318,9 +318,11 @@ def test_no_component_keeps_ordinary_help_in_info(built):
     a state set at runtime, and a field's format, unit or "off", set at build
     time only on the Training page's base form, its Continue drawer's
     Branch fields and the Fine-tune page's fields, the one field of each
-    setting (`FIELD_FORMATS`, by its setting or its model spec field), and
-    when each of Settings' two fields applies (`runtime_settings.FIELD_INFO`);
-    no ordinary help is kept there."""
+    setting (`FIELD_FORMATS`, by its setting or its model spec field), when
+    each of Settings' two fields applies (`runtime_settings.FIELD_INFO`), and
+    the Diagnosis fields' rules (`diagnosis_panel.FIELD_INFO`: which HPO ids
+    are read, what a blank Patient ID does); no ordinary help is kept there."""
+    from src.webui.components import diagnosis_panel as dp
     from src.webui.components import finetune_page as fp
     from src.webui.components import runtime_settings as rs
     from src.webui.components import training_console as tc
@@ -336,6 +338,7 @@ def test_no_component_keeps_ordinary_help_in_info(built):
     expected.update({f"ft_{name}": text for name, text in tc.FIELD_FORMATS.items()
                      if name in fp.FINETUNE_FIELDS})
     expected.update(rs.FIELD_INFO)
+    expected.update(dp.FIELD_INFO)
     assert with_info == expected
 
 

@@ -299,6 +299,91 @@ def test_phenotype_change_clears_after_a_run():
     assert out["export_report"] is dp._EXPORTS_HIDDEN
 
 
+#: The audit's query (UI-15, R-5): an id with its name, an id, a name on its
+#: own, an id the graph does not hold, a repeat.
+AUDIT_QUERY = "HP:0001250 Seizure, HP:0001263, Hypotonia, HP:9999999, HP:0001250"
+
+
+def test_the_hpo_box_says_live_what_it_reads_and_what_it_does_not_send():
+    """UI-15 (R-5, NEW-diagnosis-5): nothing under the box said which ids it
+    read, and a name typed on its own was dropped without a word. The line
+    under it counts the ids read and names each entry with no id (an id's
+    name in its own entry is the id's), as the shared ▲ mark with its words;
+    nothing while the box is empty, and every entry is escaped."""
+    assert dp.not_ids(AUDIT_QUERY) == ["Hypotonia"]
+    line = dp.hpo_echo_html(AUDIT_QUERY)
+    assert line.startswith('<p class="shep-dx-echo">4 HPO ids read. ')
+    assert "▲" in line and "Not an id, so not sent: “Hypotonia”" in line
+    assert dp.hpo_echo_html("") == "" and dp.hpo_echo_html(" ;; , ") == ""
+    assert dp.hpo_echo_html("HP:0001250") == '<p class="shep-dx-echo">1 HPO id read.</p>'
+    assert "No HPO id read. " in dp.hpo_echo_html("<b>Hypotonia</b>")
+    assert "&lt;b&gt;Hypotonia&lt;/b&gt;" in dp.hpo_echo_html("<b>Hypotonia</b>")
+    many = dp.hpo_echo_html(", ".join(f"name {i}" for i in range(8)))
+    assert "“name 4”" in many and "“name 5”" not in many and "and 3 more" in many
+
+
+def _audit_result():
+    """The audit's query, run: the server's account of the list it was sent
+    (the unknown id and the repeat dropped), and what the page sent."""
+    return {**_sample_result(),
+            "phenotype_input": {"received": 4, "unknown": ["HP:9999999"], "repeats_removed": 1,
+                                "used": ["HP:0001250", "HP:0001263"]},
+            "_query_phenotypes": dp._parse_hpo_ids(AUDIT_QUERY),
+            "_query_not_ids": dp.not_ids(AUDIT_QUERY)}
+
+
+def test_a_result_says_which_phenotypes_it_used_and_why_the_rest_were_not():
+    """UI-15 (R-5, NEW-diagnosis-5): after a run the only echo was the
+    server's warnings line, and the report's "Query phenotypes" listed the
+    repeat and the unknown id as if they were used. The result shows "Used"
+    from the server's account and "Not used" with each entry's reason, and
+    the report says the same; an account whose repeats do not add up names
+    no entry a repeat and says the count."""
+    result = _audit_result()
+    assert dp.phenotype_account(result) == (
+        ["HP:0001250", "HP:0001263"],
+        [("Hypotonia", dp.NOT_AN_ID), ("HP:9999999", dp.NOT_IN_GRAPH),
+         ("HP:0001250", dp.REPEAT)])
+    body = dp.results_body_html(result, 1)
+    assert "Used (2)</dt>" in body and "Not used (3)</dt>" in body
+    assert "Hypotonia <span" in body and "(not in the model&#x27;s graph)" in body
+    md = dp._build_results_report_md(result)
+    assert "- **Phenotypes used**: HP:0001250, HP:0001263" in md
+    assert ("- **Phenotypes not used**: Hypotonia (not an HPO id, not sent); HP:9999999 "
+            "(not in the model's graph); HP:0001250 (a repeat, scored once)") in md
+    assert "Query phenotypes" not in md
+    odd = {**result, "phenotype_input": {**result["phenotype_input"], "repeats_removed": 2}}
+    assert dp.phenotype_account(odd)[1][-1] == ("2 repeated entries", dp.REPEAT)
+    assert dp.phenotype_account({**result, "phenotype_input": None}) is None
+    assert "Used (" not in dp.results_body_html({**result, "phenotype_input": None}, 1)
+
+
+def test_the_run_keeps_the_entries_it_did_not_send(monkeypatch, status_read):
+    """The query's entries with no id are kept with the result as the page
+    sent it (``_query_not_ids``), beside the ids (``_query_phenotypes``)."""
+    sent = {}
+    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: sent.update(kw) or _sample_result())
+    out = _run(AUDIT_QUERY)
+    assert sent["phenotypes"] == ["HP:0001250", "HP:0001263", "HP:9999999", "HP:0001250"]
+    assert out["results_state"]["_query_not_ids"] == ["Hypotonia"]
+
+
+def test_the_fields_must_know_rules_are_visible_lines(monkeypatch):
+    """UI-15 (R-6): the rule that only HP:####### ids are read was only in a
+    placeholder and a bubble, and the placeholder ("HP:0001250 — Seizure")
+    implied names are read; Patient ID said what a blank does only in its
+    placeholder. Each rule is the field's visible info line, the HPO
+    placeholder is ids only, and the box's change draws the live line."""
+    demo, _ctx = _build_tab(monkeypatch)
+    blocks = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    hpo, patient = blocks["dx_hpo_terms"], blocks["dx_patient_id"]
+    assert hpo.info == "Only HP:####### ids are read; names and punctuation are ignored."
+    assert hpo.placeholder == "HP:0001250, HP:0001263"
+    assert patient.info == dp.FIELD_INFO["dx_patient_id"] and not patient.placeholder
+    (typed,) = [fn for fn in demo.fns.values() if (hpo._id, "change") in fn.targets]
+    assert blocks["shep-dx-hpo-echo"] in typed.outputs and hpo in typed.inputs
+
+
 def test_on_diagnose_no_hpo_disables_downloads(status_read):
     out = _run("no ids here")
     assert "No valid HPO terms found" in out["results_body"]

@@ -198,6 +198,83 @@ def _parse_gene_list(text: str) -> List[str]:
     return [entry for entry in _GENE_SEPARATORS.split(text or "") if entry]
 
 
+#: Where the HPO box's entries end: a line break, a comma or a semicolon.
+_HPO_ENTRIES = re.compile(r"[\n,;]+")
+#: At most this many entries that are not ids are named in the live line.
+_NOT_IDS_SHOWN = 5
+
+
+def not_ids(text: str) -> List[str]:
+    """**The HPO box's entries that hold no HPO id**, which are not sent
+    (UI-15, R-5): the box's text split at line breaks, commas and semicolons,
+    each entry with a letter or a digit and no id (`_HPO_ID_RE`), in order.
+    An id's name in its own entry ("HP:0001250 Seizure") is that id's; a name
+    on its own ("Hypotonia") is dropped, and the page says so."""
+    entries = (entry.strip() for entry in _HPO_ENTRIES.split(text or ""))
+    return [entry for entry in entries
+            if re.search(r"\w", entry) and not _HPO_ID_RE.search(entry)]
+
+
+def hpo_echo_html(text: str) -> str:
+    """The line under the HPO box, live: how many ids are read from it, and
+    each entry that is not an id and so is not sent (`not_ids`, the first
+    `_NOT_IDS_SHOWN` by name). Nothing while the box is empty. Which ids the
+    served model then used, and why any was not, is the result's to say
+    (`phenotype_account`)."""
+    ids, dropped = _parse_hpo_ids(text), not_ids(text)
+    if not ids and not dropped:
+        return ""
+    read = f"{len(ids)} HPO id{'' if len(ids) == 1 else 's'} read" if ids else "No HPO id read"
+    if not dropped:
+        return f'<p class="shep-dx-echo">{_e(read)}.</p>'
+    named = ", ".join(f"“{_e(entry)}”" for entry in dropped[:_NOT_IDS_SHOWN])
+    more = len(dropped) - _NOT_IDS_SHOWN
+    if more > 0:
+        named += f" and {more} more"
+    return (f'<p class="shep-dx-echo">{_e(read)}. '
+            + _status_mark("warn", f"Not an id, so not sent: {named}", words_html=True)
+            + "</p>")
+
+
+#: Why a query's entry was not used (`phenotype_account`).
+NOT_AN_ID = "not an HPO id, not sent"
+NOT_IN_GRAPH = "not in the model's graph"
+REPEAT = "a repeat, scored once"
+
+
+def phenotype_account(result: Mapping[str, Any]
+                      ) -> Optional[Tuple[List[str], List[Tuple[str, str]]]]:
+    """**What a result used of its query, and why the rest was not used**
+    (UI-15, R-5, NEW-diagnosis-5), from the server's account of the list it
+    was sent (``phenotype_input``: ``used`` in first-occurrence order and the
+    request's spelling, ``unknown``, ``repeats_removed``) and the query the
+    page sent (``_query_phenotypes``, ``_query_not_ids``): ``(used,
+    [(entry, reason), …])``. An entry sent that is neither used nor unknown
+    was removed as a repeat; when that does not add up to the server's count
+    of repeats, no entry is called a repeat and the count is said instead.
+    None when the result carries no account."""
+    account = result.get("phenotype_input")
+    if not isinstance(account, Mapping) or not isinstance(account.get("used"), list):
+        return None
+    used = [str(term) for term in account["used"]]
+    unknown = {str(term) for term in account.get("unknown") or ()}
+    left = [(entry, NOT_AN_ID) for entry in result.get("_query_not_ids") or ()]
+    pending, repeats = list(used), []
+    for term in result.get("_query_phenotypes") or ():
+        if term in unknown:
+            left.append((term, NOT_IN_GRAPH))
+        elif pending and term == pending[0]:
+            pending.pop(0)
+        else:
+            repeats.append(term)
+    removed = account.get("repeats_removed")
+    if repeats and removed == len(repeats) and not pending:
+        left += [(term, REPEAT) for term in repeats]
+    elif isinstance(removed, int) and removed > 0:
+        left.append((f"{removed} repeated entr{'y' if removed == 1 else 'ies'}", REPEAT))
+    return used, left
+
+
 #: What a candidate's score is, said under the report's table and in the
 #: Score column's help: the value its result kind ranks by (`score` or
 #: `similarity`, Spec 1 §2.1); the words shown say what the number is.
@@ -1250,9 +1327,15 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
     ):
         if value not in (None, ""):
             lines.append(f"- **{key}**: {value}")
-    query = result.get("_query_phenotypes") or []
-    if query:
-        lines.append(f"- **Query phenotypes**: {', '.join(query)}")
+    account = phenotype_account(result)
+    if account is not None:
+        used, left = account
+        lines.append(f"- **Phenotypes used**: {', '.join(used) or 'none'}")
+        if left:
+            lines.append("- **Phenotypes not used**: "
+                         + "; ".join(f"{entry} ({reason})" for entry, reason in left))
+    elif result.get("_query_phenotypes"):
+        lines.append(f"- **Phenotypes sent**: {', '.join(result['_query_phenotypes'])}")
     lines += _task_meta_lines(result, result_kind)
     warnings = result.get("warnings") or []
     if warnings:
@@ -1372,6 +1455,13 @@ _EXPORTS_HIDDEN = gr.update(value=None, interactive=False, visible="hidden")
 #: A result whose export files could not be written (or that has no
 #: candidate): the exports are shown, disabled, beside the reason.
 _DOWNLOAD_DISABLED = gr.update(value=None, interactive=False, visible=True)
+
+#: **What must stay visible under a field** (``info=``; the WebUI skill §7: a
+#: format is never only in a bubble or a placeholder; UI-15, R-6).
+FIELD_INFO = {
+    "dx_hpo_terms": "Only HP:####### ids are read; names and punctuation are ignored.",
+    "dx_patient_id": "Optional. Left blank, the server gives the result its own id.",
+}
 
 #: The fields' help, behind the shared ⓘ (`src/webui/components/help.py`):
 #: ``{elem_id: (title, text)}``, registered by the tab builder. Only a
@@ -1813,8 +1903,25 @@ def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
     kind = _result_kind(result)
     label = (f'<p class="shep-dx-kind">{_e(kind_label(result))}</p>'
              if kind is not None else "")
-    return banners_html(result) + note + label + reference_line_html(result) + \
+    return banners_html(result) + note + phenotypes_used_html(result) + label + \
+        reference_line_html(result) + \
         candidates_table_html(result.get("candidates") or [], selected, kind)
+
+
+def phenotypes_used_html(result: Mapping[str, Any]) -> str:
+    """The query's phenotypes as the result used them (`phenotype_account`):
+    "Used (n)" and, when any was not, "Not used (n)" with each one's reason;
+    "" for a result with no account."""
+    account = phenotype_account(result)
+    if account is None:
+        return ""
+    used, left = account
+    rows = [(f"Used ({len(used)})", _e(", ".join(used)) or "none")]
+    if left:
+        rows.append((f"Not used ({len(left)})", ", ".join(
+            f"{_e(entry)} <span class=\"shep-dx-why\">({_e(reason)})</span>"
+            for entry, reason in left)))
+    return _summary_list(rows, classes="shep-dx-used")
 
 
 # ----------------------------------------------------------------- details
@@ -2599,6 +2706,7 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
         error = _e(result["error"]).replace("\n\n", "<br><br>")
         return _no_result_outputs(f'<p class="shep-dx-error"><b>Error:</b> {error}</p>')
     result["_query_phenotypes"] = hpo_ids
+    result["_query_not_ids"] = not_ids(phenotype_text)
     if genes is not None:
         result["_query_candidate_genes"] = genes
     result["_explanations"] = explanations
@@ -2974,8 +3082,9 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 with gr.Column(elem_id="shep-dx-fields", elem_classes=["shep-dx-fields"]):
                     phenotype_input = gr.Textbox(
                         label="HPO terms", lines=3, max_lines=12, elem_id="dx_hpo_terms",
-                        placeholder=("HP:0001250 — Seizure\n"
-                                     "HP:0001263, HP:0002376   (commas / spaces are fine too)"))
+                        info=FIELD_INFO["dx_hpo_terms"], placeholder="HP:0001250, HP:0001263")
+                    # Live: how many ids the box holds, and what is not sent.
+                    hpo_echo = plain_html("", elem_id="shep-dx-hpo-echo")
                     with gr.Column(elem_id="shep-dx-side", elem_classes=["shep-dx-side"]):
                         # The served task's input, shown by its container's
                         # class (`card_outputs`): containers, so no handler
@@ -2992,7 +3101,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                                        value=None, interactive=True,
                                                        elem_id="dx_reference_cohort")
                         patient_id_input = gr.Textbox(label="Patient ID (optional)", value="",
-                                                      placeholder="(auto-generated if blank)",
+                                                      info=FIELD_INFO["dx_patient_id"],
                                                       max_lines=1, elem_id="dx_patient_id")
                         with gr.Row(elem_id="shep-dx-options", elem_classes=["shep-dx-options"]):
                             plain_html('<span class="shep-dx-opt">Options</span>',
@@ -3176,7 +3285,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
         "confirm_html": handle.confirm_html, "list_reason": handle.reason, "phase": handle.phase,
         "change_closed": change_closed, "genes_box": genes_box, "cohort_box": cohort_box,
         "explanations_box": explanations_box,
-        "cohort": cohort_input,
+        "cohort": cohort_input, "hpo_echo": hpo_echo,
     }
 
     def outputs(*names: str) -> List[Any]:
@@ -3386,7 +3495,13 @@ def create_diagnosis_tab(ctx: Any) -> None:
     # card shows the genes box by its container's class), so a change is the
     # user's edit or Clear. The cohort select clears on its pick, never on a
     # card's write of it (`_cohort_picked`).
-    phenotype_input.change(**edited)
+    def _phenotypes_typed(result, state, text):
+        return mapped({**phenotypes_changed(result, state), "hpo_echo": hpo_echo_html(text)})
+
+    phenotype_input.change(_phenotypes_typed, inputs=[results_state, card_state, phenotype_input],
+                           outputs=outputs(*dict.fromkeys(result_names
+                                                          + ("card_state", "hpo_echo"))),
+                           show_progress="hidden")
     genes_input.change(**edited)
 
     def _cohort_picked(result, state, cohort):
@@ -3548,6 +3663,9 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-banner-amber {{ background: var(--shep-amber-50); border: 1px solid var(--shep-amber-100); border-left: 4px solid var(--shep-amber-600); color: var(--shep-amber-800); }}
 {_TAB} .shep-dx-banner-red {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-left: 4px solid var(--shep-red-700); color: var(--shep-red-700); }}
 {_TAB} .shep-dx-warnings {{ font-size: 14px; color: var(--shep-amber-800); margin: 0 0 8px; overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-echo {{ font-size: 14px; color: var(--shep-text-2); margin: 2px 0 0; overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-used {{ margin: 0 0 8px; overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-why {{ color: var(--shep-text-2); }}
 {_TAB} .shep-dx-tbl-wrap {{ margin: 0; }}
 {_TAB} .shep-dx-tbl td, {_TAB} .shep-dx-tbl th {{ white-space: nowrap; }}
 {_TAB} .shep-dx-tbl td.shep-dx-dis {{ white-space: normal; width: 100%; min-width: 9em; }}
