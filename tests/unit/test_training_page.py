@@ -2952,9 +2952,19 @@ def test_the_drawer_says_the_check_is_optional_beside_a_normal_check_button():
     assert check.size != "sm" and check.variant == "secondary"
     prompt = by_id["shep-train-check-prompt"]
     assert prompt.parent is check.parent and "shep-train-check-row" in check.parent.elem_classes
-    assert tc.CHECK_PROMPT in prompt.value and "Optional" in tc.CHECK_PROMPT
-    assert "Select a checkpoint" not in tc.CHECK_PROMPT + tc._CONTINUE_PROMPT
-    assert "The start checks first" in tc.CHECK_PROMPT
+    said = tc.CHECK_PROMPTS[tc.CONTINUE]
+    assert prompt.value == tc.check_prompt_html(tc.CONTINUE) and said in prompt.value
+    assert said.startswith("Optional") and "The start checks first" in said
+    assert "Select a checkpoint" not in "".join(tc.CHECK_PROMPTS.values()) + tc._CONTINUE_PROMPT
+    # Branch: the check is how a setting is changed (its fields are shown by
+    # a check only), so its prompt never says "Optional" (the T06 review).
+    branch = tc.CHECK_PROMPTS[tc.BRANCH]
+    assert "Optional" not in branch and "change a setting" in branch
+    assert "keeps the parent’s settings" in branch
+    mode, shown, *_cleared = tc._on_operation(tc.BRANCH, {})
+    assert mode["operation"] == tc.BRANCH and shown == tc.check_prompt_html(tc.BRANCH)
+    assert tc._on_operation(tc.CONTINUE, mode)[1] == tc.check_prompt_html(tc.CONTINUE)
+    assert tc.check_prompt_html("<b>") == tc.check_prompt_html(tc.CONTINUE)
     ws = {"name": "demo", "row": {"name": "demo", "dataset_fingerprint": "a" * 64}, "listed": []}
     same = tc.compare_html({"chosen": True, "fingerprint": "a" * 64}, ws)
     assert same == ('<p class="shep-cmp-line">'

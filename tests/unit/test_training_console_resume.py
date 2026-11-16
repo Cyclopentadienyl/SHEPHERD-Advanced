@@ -690,7 +690,9 @@ def test_every_selection_change_clears_the_check_and_extra_epochs():
         ("continue_source", "change"): ("_on_continue_selection_changed", cleared),
         ("checkpoint_dropdown", "change"): ("_on_listed_changed", cleared),
         ("manual_checkpoint", "change"): ("_on_manual_changed", cleared),
-        ("continue_operation", "change"): ("_on_operation", [None, *cleared]),
+        # The operation also says step 3's prompt for itself (`check_prompt_html`).
+        ("continue_operation", "change"): ("_on_operation",
+                                           [None, "shep-train-check-prompt", *cleared]),
         ("continue_device", "change"): ("_on_continue_device_changed", ["continue_preview"]),
     }
     assert tc._on_continue_selection_changed() == (

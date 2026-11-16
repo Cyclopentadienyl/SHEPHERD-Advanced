@@ -82,8 +82,9 @@ the link beside the list's note, `SOURCE_LINKS`); the chosen checkpoint's
 details (its kind by `renderers.model_kind_text`, a frozen-backbone child
 named so) and, in one line under them, the parent's recorded dataset
 fingerprint against the workspace's current one; 3. Check, the drawer's
-Device then Check checkpoint beside its prompt (`CHECK_PROMPT`: optional,
-the start checks first), which shows what the operation does (the shared
+Device then Check checkpoint beside its prompt (`CHECK_PROMPTS`: optional to
+continue, since the start checks first; to branch, the way to the settings
+it may change), which shows what the operation does (the shared
 run plan, through the job runner's one preview of each,
 `preview_continuation` or `preview_branch`); 4. Start in the drawer's
 footer, Continue Training or Start branch beside the start's reason, which
@@ -3461,12 +3462,29 @@ DRAWER_TITLE = "Continue or branch a run"
 STEP_RUN, STEP_CHECKPOINT, STEP_CHECK, STEP_START = (
     "1. Run", "2. Checkpoint", "3. Check", "4. Start")
 
-#: **Step 3's prompt, beside Check checkpoint**: the check is optional, since
-#: the drawer's start checks first (R-48: "Select a checkpoint, then click
-#: Check checkpoint." while a checkpoint was chosen and the start enabled).
-#: It is the check row's own words, so it and the button are in view
-#: together (NEW-training-finetune-2); the check's answer is under them.
-CHECK_PROMPT = "Optional: it shows the plan. The start checks first anyway."
+#: **Step 3's prompt, beside Check checkpoint, by the operation** (R-48:
+#: "Select a checkpoint, then click Check checkpoint." while a checkpoint was
+#: chosen and the start enabled). To continue, the check is optional, since
+#: the drawer's start checks first. To branch, it is how a setting is
+#: changed: the Branch fields are shown only by a check (`_branch_updates`),
+#: and a start without one is a same-settings branch (the T06 review: the
+#: prompt said "Optional" there too). It is the check row's own words, so it
+#: and the button are in view together (NEW-training-finetune-2); the
+#: check's answer is under them. `check_prompt_html` draws it.
+CHECK_PROMPTS = {
+    CONTINUE: "Optional: it shows the plan. The start checks first anyway.",
+    BRANCH: ("Needed to change a setting: it shows them and the plan. Without it, the "
+             "branch keeps the parent’s settings."),
+}
+
+
+def check_prompt_html(operation: Any) -> str:
+    """Step 3's prompt for `operation` (`CHECK_PROMPTS`; Continue for any
+    value but Branch), escaped."""
+    return (f'<span class="shep-note">'
+            f'{r.e(CHECK_PROMPTS[BRANCH if operation == BRANCH else CONTINUE])}</span>')
+
+
 #: The check's answer before a check, and after what it would check changed:
 #: none (the prompt beside the button says what to do).
 _CONTINUE_PROMPT = ""
@@ -4020,12 +4038,13 @@ def _on_manual_changed(source):
 def _on_operation(operation, mode):
     """The operation chosen (Continue or Branch): the session records it (the
     drawer's start, its reason, the run bar's line and the run view's
-    header follow it), and the last check, which was the other operation's,
-    is cleared with what was entered for it (`_cleared_check`). Returns the
-    session's mode, then the check's outputs."""
+    header follow it), step 3's prompt says what the check is for it
+    (`check_prompt_html`), and the last check, which was the other
+    operation's, is cleared with what was entered for it (`_cleared_check`).
+    Returns the session's mode, the prompt, then the check's outputs."""
     mode = dict(mode or {})
     mode["operation"] = BRANCH if operation == BRANCH else CONTINUE
-    return (mode, *_cleared_check())
+    return (mode, check_prompt_html(mode["operation"]), *_cleared_check())
 
 
 def _on_branch_edited(mode):
@@ -4770,9 +4789,9 @@ def create_training_tab(ctx: Any) -> None:
                         # a small one read as a chip).
                         check_continue_btn = gr.Button("Check checkpoint", scale=0,
                                                        elem_id="shep-train-check")
-                        plain_html(f'<span class="shep-note">{r.e(CHECK_PROMPT)}</span>',
-                                   elem_id="shep-train-check-prompt",
-                                   elem_classes=["shep-field-aside"])
+                        check_prompt = plain_html(check_prompt_html(CONTINUE),
+                                                  elem_id="shep-train-check-prompt",
+                                                  elem_classes=["shep-field-aside"])
                     continue_preview = plain_html(_CONTINUE_PROMPT, elem_id="continue_preview")
                     # Branch: the settings its parent's stage and task may
                     # change, each the one field of its setting, shown after a
@@ -5021,7 +5040,7 @@ def create_training_tab(ctx: Any) -> None:
     # The operation chosen: the session's record, then the chosen parent's
     # record and details for it, then the drawer's start and the run bar.
     continue_operation.change(_on_operation, inputs=[continue_operation, mode],
-                              outputs=[mode, *check_cleared], show_progress="hidden",
+                              outputs=[mode, check_prompt, *check_cleared], show_progress="hidden",
                               **in_order).then(
         **chosen_step).then(**view_step)
     # The Branch fields: each edit recorded in the browser first (decision
@@ -5286,7 +5305,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #extend_epochs [data-testid="block-info"], {_PAGE} #extend_lr [data-testid="block-info"] {{ margin: 0 !important; }}
 {_PAGE} #extend_epochs input[type="number"], {_PAGE} #extend_lr input[type="number"] {{ width: 96px; }}
 {_PAGE} #shep-train-check {{ align-self: flex-end; width: auto !important; min-width: max-content !important; }}
-/* Step 3's prompt beside the button, its words wrapping in the row's rest (`CHECK_PROMPT`); the
+/* Step 3's prompt beside the button, its words wrapping in the row's rest (`CHECK_PROMPTS`); the
    check's answer under the row takes no room until there is one. */
 {_PAGE} .shep-train-check-row > #shep-train-check-prompt {{ flex: 1 1 180px !important; min-width: 0 !important; align-self: center !important; }}
 {_PAGE} #shep-train-check-prompt .shep-note {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
