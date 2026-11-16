@@ -2419,7 +2419,13 @@ def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, opera
     completed · to train further, use Continue…"): the state and how far it
     got, then a sentence. A finished run points to Continue… only while the
     Continue drawer is closed (`drawer`: open, its button is hidden and the
-    drawer is the next step itself)."""
+    drawer is the next step itself).
+
+    A snapshot read from a file other than the run's ``last.pt`` (its last
+    save gone: `checkpoint_paths.latest_saved`'s fallback) is that file's
+    state, not the run's, so the line names the file first ("best.pt: 2 of 4
+    epochs completed · can be continued"; the T06 review: a best.pt saved at
+    epoch 2 read as the state of a run that trained 4)."""
     if run is None:
         return ""
     s = (status.get("status") or "idle") if run.get("job") else "past"
@@ -2461,7 +2467,8 @@ def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, opera
     else:
         line = _epochs_done(snapshot) + (" · can be continued" if snapshot.get("resumable", True)
                                          else "")
-    return _state(r.e(line))
+    source = Path(str(snapshot.get("checkpoint") or "")).name
+    return _state(r.e(f"{source}: {line}" if source and source != "last.pt" else line))
 
 
 # =============================================================================

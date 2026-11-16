@@ -1048,6 +1048,37 @@ def test_a_run_that_kept_only_best_pt_names_its_dataset_and_its_state(root):
     assert tc._snapshot_for(empty, {}) is None
 
 
+def test_a_best_pt_saved_mid_run_is_said_as_that_files_state_not_the_runs(root):
+    """The T06 review of B69-T2: a run that trained 4 epochs and kept only a
+    ``best.pt`` saved at epoch 2 (a real best or top-k file records no end
+    mid-run) read "2 of 4 epochs completed · can be continued", as if the run
+    had stopped at epoch 2, while its charts showed 4. The state line names
+    the file it read first; a run's own ``last.pt`` is said as before."""
+    from src.utils.checkpoint_io import write_checkpoint
+
+    run = tc.RunRef(id="demo/gatv2/m", label="gatv2/m", path=root / "demo" / "runs" / "gatv2" / "m",
+                    workspace="demo", job=False, latest=True)
+    best = run["path"] / "checkpoints" / "best.pt"
+    write_checkpoint({"checkpoint_kind": "training_state", "epoch": 1,
+                      "training_input_digests": {"split_manifest": "d" * 64},
+                      "progress": {"completed_epochs": 2, "end": None,
+                                   "stage": {"start_epoch": 0, "target_epochs": 4}}}, best)
+    snapshot = tc._snapshot_for(run, {})
+    assert snapshot["checkpoint"] == str(best) and snapshot["end"] is None
+    line = tc.run_snapshot_html(run, {"status": "idle"}, operator=True, snapshot=snapshot)
+    assert "best.pt: 2 of 4 epochs completed · can be continued" in line, line
+    assert line.count(" · ") == 1
+    # The run's own last save names no file: its state is the run's.
+    last = best.with_name("last.pt")
+    write_checkpoint({"checkpoint_kind": "training_state", "epoch": 3,
+                      "training_input_digests": {"split_manifest": "d" * 64},
+                      "progress": {"completed_epochs": 4, "end": "finished",
+                                   "stage": {"start_epoch": 0, "target_epochs": 4}}}, last)
+    own = tc.run_snapshot_html(run, {"status": "idle"}, operator=True,
+                               snapshot=tc._snapshot_for(run, {}))
+    assert "Finished · 4 of 4 epochs completed" in own and ".pt" not in own, own
+
+
 def test_the_run_details_name_the_folder_once_the_model_and_the_log_with_no_bubble(root):
     """R-41: the Run details popover named the run's folder twice (Run, and
     inside Checkpoint's path), said Logs as a sentence ("the run directory's
