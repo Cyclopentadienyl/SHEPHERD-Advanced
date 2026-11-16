@@ -3379,10 +3379,15 @@ def create_diagnosis_tab(ctx: Any) -> None:
     edited = {"fn": _phenotypes_edited, "inputs": [results_state, card_state],
               "outputs": outputs(*dict.fromkeys(result_names + ("card_state",))),
               "show_progress": "hidden"}
+    # Every change of a box's text clears the result (UI-15, B73): its
+    # ``.change``. Gradio 6.30's Textbox dispatches ``.input`` from a keypress
+    # alone, so select all then Delete, a cut, a paste or an input method's
+    # text kept the old genes' result. No handler writes either box (the
+    # card shows the genes box by its container's class), so a change is the
+    # user's edit or Clear. The cohort select clears on its pick, never on a
+    # card's write of it (`_cohort_picked`).
     phenotype_input.change(**edited)
-    # The task inputs clear the result on the user's edit only (`.input`): a
-    # card update of the select must not clear it.
-    genes_input.input(**edited)
+    genes_input.change(**edited)
 
     def _cohort_picked(result, state, cohort):
         return mapped(cohort_picked(result, state, cohort))

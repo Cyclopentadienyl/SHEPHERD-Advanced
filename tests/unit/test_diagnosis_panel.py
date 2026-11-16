@@ -2112,11 +2112,12 @@ def test_a_timer_read_racing_a_pick_never_redraws_the_reference_cohort_select():
     assert "value" not in update
 
 
-def test_the_task_inputs_are_never_run_outputs_and_clear_on_input(monkeypatch):
+def test_the_task_inputs_are_never_run_outputs_and_clear_on_every_edit(monkeypatch):
     """6: the genes box and the select are inputs of Run Diagnosis, never its
-    outputs; the card's reads show and fill them; the user's edit (`.input`,
-    never `.change`, which a card update fires) clears the result; Clear
-    empties the genes box too."""
+    outputs; the card's reads show and fill them; every edit of the genes box
+    (its `.change`: no handler writes the box, UI-15) and a pick of the select
+    (its blur, never its `.change`, which a card update fires) clear the
+    result; Clear empties the genes box too."""
     demo, _ctx = _build_tab(monkeypatch)
     blocks = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     genes, cohort = blocks["dx_candidate_genes"], blocks["dx_reference_cohort"]
@@ -2131,14 +2132,96 @@ def test_the_task_inputs_are_never_run_outputs_and_clear_on_input(monkeypatch):
             assert {genes_box, cohort_box, cohort} <= set(fn.outputs), name
             assert genes not in fn.outputs, name
     triggers = {(fn.name, t) for fn in demo.fns.values() for t in fn.targets}
-    assert ("_phenotypes_edited", (genes._id, "input")) in triggers
+    assert ("_phenotypes_edited", (genes._id, "change")) in triggers
+    assert not {t for _n, t in triggers if t == (genes._id, "input")}
     # The cohort's pick (`shell.picked`: once per option chosen, never on a
     # card's write of the select).
     assert ("_cohort_picked", (cohort._id, "blur")) in triggers
-    assert not {t for _n, t in triggers if t in ((genes._id, "change"), (cohort._id, "change"))}
+    assert not {t for _n, t in triggers if t == (cohort._id, "change")}
     clear = blocks["shep-dx-clear"]
     assert any(genes in fn.outputs for fn in demo.fns.values()
                if (clear._id, "click") in fn.targets)
+
+
+#: UI-15 (B73) in a browser: a result is shown, then the genes box is edited
+#: four ways; each says whether the result was cleared ("Inputs changed") and
+#: what the box held after the edit.
+_GENES_EDIT_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext()).newPage();
+  // The shell's timers keep the network busy: wait for the box, not for idle.
+  await page.goto(base, { waitUntil: 'load' });
+  const genes = '#dx_candidate_genes textarea', body = '#shep-dx-results-body';
+  await page.waitForSelector(genes, { state: 'visible', timeout: 30000 });
+  await page.fill('#dx_hpo_terms textarea', 'HP:0001250');
+  const text = () => page.evaluate((s) => document.querySelector(s).textContent, body);
+  const edits = {
+    select_all_delete: async () => { await page.keyboard.press('ControlOrMeta+A');
+                                     await page.keyboard.press('Delete'); },
+    cut: async () => { await page.keyboard.press('ControlOrMeta+A');
+                       await page.keyboard.press('ControlOrMeta+X'); },
+    // An input method's text or a paste: an input event and no keypress.
+    insert_text: async () => { await page.keyboard.press('ControlOrMeta+A');
+                               await page.keyboard.insertText('MECP2'); },
+    typed: async () => { await page.keyboard.press('End'); await page.keyboard.type(' X'); },
+  };
+  const out = {};
+  for (const [name, edit] of Object.entries(edits)) {
+    await page.fill(genes, 'SCN1A, PTEN');
+    await page.click('#shep-dx-run-btn');
+    await page.waitForFunction((s) => { const t = document.querySelector(s).textContent;
+                                        return t.includes('PTEN') && !t.includes('Inputs changed'); },
+                               body, { timeout: 30000 });
+    await page.click(genes);
+    await edit();
+    const cleared = await page.waitForFunction(
+      (s) => document.querySelector(s).textContent.includes('Inputs changed'), body,
+      { timeout: 8000 }).then(() => true, () => false);
+    out[name] = { cleared, value: await page.inputValue(genes) };
+  }
+  out.last = (await text()).slice(0, 80);
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_every_edit_of_the_genes_box_clears_the_result_shown(monkeypatch, tmp_path):
+    """UI-15 (B73), in Gradio 6.30's own page (Node and Playwright, skipped
+    without): the genes box cleared the shown result on ``.input`` only, which
+    its Textbox dispatches from a keypress alone, so select all then Delete,
+    a cut, and a paste or an input method's text changed the genes and kept
+    the result of the old ones. Each of them, and typing, clears it now. A
+    gene task model's status, its result and the card's facts are stand-ins;
+    the panel, its wiring and the shell are the real ones."""
+    import copy
+
+    from src.webui import shell
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    status = _status_serving(_task_identity("gene_task"))
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (status, None))
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": False, "workspaces": [], "serving": None,
+        "item": None, "item_problem": None, "recorded": None, "trained": None,
+        "cohorts": None})
+    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: copy.deepcopy(_gene_result()))
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+    with served(demo) as base:
+        seen = run_node(_GENES_EDIT_JS, tmp_path, base[:-len("gradio_api")])
+    assert seen["select_all_delete"] == {"cleared": True, "value": ""}, seen
+    assert seen["cut"] == {"cleared": True, "value": ""}, seen
+    assert seen["insert_text"] == {"cleared": True, "value": "MECP2"}, seen
+    assert seen["typed"] == {"cleared": True, "value": "SCN1A, PTEN X"}, seen
 
 
 def test_a_gene_result_shows_its_genes_and_their_values():
