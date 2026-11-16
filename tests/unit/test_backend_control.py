@@ -800,4 +800,66 @@ def test_stop_service_stops_a_real_server_through_its_orderly_stop(tmp_path):
     assert "STOP {'success': True}" in out
     assert "Stopping the service (pid" in out and "asked for by Stop service in Settings" in out
     assert out.index("Stopping the service") < out.index("Shutting down SHEPHERD-Advanced API")
+    # The signal's own line (FL-SVC) says this one was the service's own.
+    assert ("SIGTERM received, sent by this service itself, asked for by Stop service in "
+            "Settings.") in out
+    assert "not known to the service" not in out
     assert "Application shutdown complete" in out
+
+
+#: A real server stopped from outside: uvicorn in its own main thread, so its
+#: signal handlers and the backend's are installed; the test sends the signal.
+_SERVED = r'''
+import sys
+import uvicorn
+from src.api import main
+
+uvicorn.run(main.app, host="127.0.0.1", port=int(sys.argv[1]), log_level="info")
+'''
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+@pytest.mark.parametrize("sent, source", [
+    (signal.SIGTERM, "a stop from outside the service (a service manager, kill, a logout)"),
+    (signal.SIGHUP, "a hangup (the terminal it ran in was closed)"),
+])
+def test_a_stop_signal_from_outside_is_named_in_the_log(tmp_path, sent, source):
+    """FL-SVC: a stop by a signal from outside was logged only as uvicorn's
+    "Shutting down", without the signal, so the manual acceptance's 16:09:14
+    stop read the same as any other. The service now logs the signal and what
+    usually sends it, and says it cannot know the sender (a Python handler
+    gets the signal's number only), before the application's shutdown."""
+    import socket
+    import subprocess
+    import time
+    import urllib.request
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH")}
+    env.update(GRADIO_ANALYTICS_ENABLED="False", PYTHONUNBUFFERED="1")
+    server = subprocess.Popen([sys.executable, "-c", _SERVED, str(port)],
+                              cwd=str(Path(bc.__file__).resolve().parents[3]), env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        deadline = time.monotonic() + 240
+        while True:
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2)
+                break
+            except OSError:
+                assert server.poll() is None and time.monotonic() < deadline, \
+                    "the server did not answer /health"
+                time.sleep(0.2)
+        server.send_signal(sent)
+        out, _ = server.communicate(timeout=120)
+    finally:
+        if server.poll() is None:
+            server.kill()
+    said = (f"Stopping the service (pid {server.pid}): {signal.Signals(sent).name} received, "
+            f"{source}; who sent it is not known to the service.")
+    assert said in out, out[-4000:]
+    assert out.index(said) < out.index("Shutting down SHEPHERD-Advanced API"), out[-4000:]
+    assert "asked for by" not in out

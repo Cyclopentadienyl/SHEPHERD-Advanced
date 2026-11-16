@@ -1107,6 +1107,11 @@ def main() -> int:
                 return 0
             if found is not None:
                 instance_fd, info_path = found.fd, files.info
+                # The lock was free: an info file still there is what a
+                # crash left (FL-SVC), said once before it is replaced.
+                left = instances.read_info(files.info)
+                if left is not None:
+                    log(f"WARNING: {instances.ended_without_stop_words(left)}")
         port_requested = last_option(passthrough, "--port")
         choice = choose_port(bind.host, port_requested)
         if choice.error is not None:

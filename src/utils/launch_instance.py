@@ -49,7 +49,10 @@ launcher's, like `SHEPHERD_BIND_HOST`: it removes them from its own
 environment first), answers the id on ``/health`` (`served_instance_id`) and
 removes the file at shutdown when it still names that id
 (`remove_own_info`). A file found while the lock is free is stale and
-replaced.
+replaced: **what a crash leaves** (FL-SVC). Its server ended without its
+orderly stop (killed by SIGKILL or the out-of-memory killer, crashed, forced
+to quit, or the machine stopped), which writes no line of its own; the next
+start logs that it found it (`ended_without_stop_words`).
 
 **Identity** is the lock held and ``/health`` answering with the info file's
 id: an answer of 200 alone never counts, since another program may hold the
@@ -104,6 +107,7 @@ __all__ = [
     "Instance",
     "LOG_ROTATE_BYTES",
     "claim",
+    "ended_without_stop_words",
     "error_page",
     "hand_to_exec",
     "instance_files",
@@ -235,6 +239,25 @@ def write_info(path: Path, *, instance_id: str, pid: int, port: int, url: str,
     }
     write_json_atomic(path, info)
     return info
+
+
+def ended_without_stop_words(info: Mapping[str, Any]) -> str:
+    """What a start says when it finds a previous start's info file with the
+    lock free (module docstring): that start's server ended without its
+    orderly stop, which removes the file, and so without a stop line in its
+    log. Every value it names is the file's, as plain words."""
+    pid = info.get("pid")
+    when = info.get("started_at")
+    said = ", ".join(part for part in (
+        f"pid {pid}" if isinstance(pid, int) and not isinstance(pid, bool) else "",
+        f"started {when}" if isinstance(when, str) and when else "") if part)
+    log = info.get("log")
+    where = (f"; its last output is in {log}" if isinstance(log, str) and log else
+             "; its last output, if it was kept, says how far it got")
+    return ("The previous start of this configuration"
+            + (f" ({said})" if said else "")
+            + " ended without its orderly stop: it was killed (SIGKILL or the out-of-memory "
+              "killer), crashed, was forced to quit, or the machine stopped" + where + ".")
 
 
 def served_instance_id(environ: Optional[Mapping[str, str]] = None) -> Optional[str]:

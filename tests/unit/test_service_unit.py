@@ -905,16 +905,30 @@ def test_an_answer_without_the_instance_s_id_is_never_taken_for_it(monkeypatch, 
     assert info["instance_id"] != "abc123" and info["pid"] == os.getpid()
 
 
-def test_a_stale_info_file_with_a_free_lock_is_replaced(monkeypatch, tmp_path):
+def test_a_stale_info_file_with_a_free_lock_is_replaced(monkeypatch, tmp_path, capsys):
+    """A file left with the lock free is what a crash leaves (its server
+    ended without the orderly stop that removes it, and so without a stop
+    line): FL-SVC, the next start says so once, naming the earlier start,
+    then replaces it. A start that finds no such file says nothing of it."""
     launcher = _launcher()
     files = _instance_files(launcher, tmp_path)
-    launcher.instances.write_info(files.info, instance_id="crashed", pid=1, port=8000,
-                                  url="http://127.0.0.1:9", repo_root=launcher.REPO_ROOT,
-                                  settings_file=None, log=None)
+    left = launcher.instances.write_info(files.info, instance_id="crashed", pid=1, port=8000,
+                                         url="http://127.0.0.1:9",
+                                         repo_root=launcher.REPO_ROOT, settings_file=None,
+                                         log=str(tmp_path / "launch.log"))
     done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"],
                          env=_state_env(tmp_path), launcher=launcher)
     assert done["exec"]
     assert json.loads(files.info.read_text(encoding="utf-8"))["instance_id"] != "crashed"
+    out = capsys.readouterr().out
+    assert (f"WARNING: The previous start of this configuration (pid 1, started "
+            f"{left['started_at']}) ended without its orderly stop: it was killed (SIGKILL or "
+            "the out-of-memory killer), crashed, was forced to quit, or the machine stopped; "
+            f"its last output is in {tmp_path / 'launch.log'}.") in out, out
+    files.info.unlink()
+    _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"], env=_state_env(tmp_path),
+                  launcher=_launcher())
+    assert "ended without its orderly stop" not in capsys.readouterr().out
 
 
 def test_a_refused_port_releases_the_lock_and_writes_no_info(monkeypatch, tmp_path):

@@ -77,7 +77,7 @@ import signal
 import sys
 import threading
 import time
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 
 from src.api.services.training_manager import training_manager
 from src.config.runtime_presets import (
@@ -252,6 +252,19 @@ STOP_BUSY_LIFECYCLE = ("A model is being loaded or inference is stopping — Sto
                        "locked.")
 
 
+#: Who asked for the stop this process is making (`stop_backend`), set just
+#: before its signal is sent, so the signal's own log line says it was this
+#: request and not a signal from outside (`stop_asked_by`; FL-SVC). A plain
+#: store: the signal handler's side only reads it.
+_ASKED_BY: Optional[str] = None
+
+
+def stop_asked_by() -> Optional[str]:
+    """Who asked this process to stop through `stop_backend`, or None (no
+    such request: a stop signal came from outside)."""
+    return _ASKED_BY
+
+
 def stop_backend(
     delay: float = 1.0,
     *,
@@ -280,15 +293,18 @@ def stop_backend(
         return {"success": False, "error": STOP_BUSY_LIFECYCLE}
 
     def _worker() -> None:
+        global _ASKED_BY
         time.sleep(delay)
         if not training_manager.close_if_idle():
             logger.warning("Stop service aborted: a GPU job became active, or the backend began "
                            "to stop or restart, before the stop was sent.")
             return
         logger.warning("Stopping the service (pid %s): asked for by %s.", os.getpid(), asked_by)
+        _ASKED_BY = asked_by
         try:
             _signal()
         except Exception:  # noqa: BLE001 — log and leave the process running
+            _ASKED_BY = None
             logger.exception("Stop service failed: the stop signal could not be sent")
             training_manager.open(closed_by=training_manager.CLOSED_BY_RESTART)
 

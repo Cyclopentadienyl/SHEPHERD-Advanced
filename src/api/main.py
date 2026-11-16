@@ -915,6 +915,42 @@ async def lifespan(app: FastAPI):
             _remove_instance_info()
 
 
+#: Each shutdown signal's likely source, in the log line that names it
+#: (`stop_signal_words`, FL-SVC): the service is told only the signal's
+#: number (a Python handler gets no sender), so the line says what usually
+#: sends it, never who did.
+SIGNAL_SOURCES = {
+    "SIGTERM": "a stop from outside the service (a service manager, kill, a logout)",
+    "SIGINT": "an interrupt (Ctrl-C in the terminal it runs in, or kill -INT)",
+    "SIGHUP": "a hangup (the terminal it ran in was closed)",
+    "SIGQUIT": "a quit (Ctrl-\\ in the terminal it runs in)",
+    "SIGBREAK": "a break (Ctrl-Break in the console it runs in)",
+}
+
+
+def stop_signal_words(signum: int, *, again: bool, asked_by: Optional[str]) -> str:
+    """**The log line naming the signal that stops the service** (FL-SVC):
+    the signal and its likely source; for the one this service sent itself
+    (Stop service, `backend_control.stop_asked_by`) who asked, as the line
+    before it says. The sender of a signal from outside cannot be known here:
+    the line says so rather than guess. A crash, a SIGKILL or the
+    out-of-memory killer writes no line at all: the next local start says
+    that the previous one ended without its orderly stop
+    (`launch_instance.ended_without_stop_words`)."""
+    try:
+        name = signal.Signals(signum).name
+    except ValueError:
+        name = f"signal {signum}"
+    if again:
+        return f"{name} received again while the service stops (pid {os.getpid()})."
+    if asked_by is not None and name == "SIGTERM":
+        source = f"sent by this service itself, asked for by {asked_by}"
+    else:
+        source = (f"{SIGNAL_SOURCES.get(name, 'a signal from outside the service')}; who sent "
+                  "it is not known to the service")
+    return f"Stopping the service (pid {os.getpid()}): {name} received, {source}."
+
+
 class _ShutdownSignals:
     """**The job's stop starts at the signal that stops the backend**
     (verification of the owner's decision, 2026-10-22). uvicorn's shutdown
@@ -943,7 +979,9 @@ class _ShutdownSignals:
     Backend's exec is refused from the signal on (round 3 of the review
     fixes, P3-3), then runs the server's handler as before (a second Ctrl-C
     is still uvicorn's forced quit), then
-    hands the event loop `begin`: the first time, the job's stop starts in a
+    hands the event loop `begin` with the signal's number: it logs the signal
+    and its likely source (`stop_signal_words`, FL-SVC; in the loop, never in
+    the handler, which takes no lock), and the first time, the job's stop starts in a
     thread of its own (it closes the GPU slot, then stops the job that held
     it: `_stop_the_active_job`), and every time, the dashboard's
     heartbeat streams end (`_end_dashboard_streams`), so an open tab holds up
@@ -1019,23 +1057,28 @@ class _ShutdownSignals:
             try:
                 server_handler(signum, frame)
             finally:
-                self._hand_to_the_loop()
+                self._hand_to_the_loop(signum)
 
         signal.signal(number, handler)
         self._installed[number] = (replaced, handler)
 
-    def _hand_to_the_loop(self) -> None:
+    def _hand_to_the_loop(self, signum: Optional[int] = None) -> None:
         """In the signal handler, only a callback handed to the event loop
         (`call_soon_threadsafe` also wakes it): a thread started or a lock
         taken here could wait on one the interrupted main thread holds."""
         try:
-            self._loop.call_soon_threadsafe(self.begin)
+            self._loop.call_soon_threadsafe(self.begin, signum)
         except RuntimeError:  # the event loop has closed: nothing is served
             pass
 
-    def begin(self) -> None:
-        """In the event loop: the job's stop started (once), the dashboard's
-        heartbeat streams ended."""
+    def begin(self, signum: Optional[int] = None) -> None:
+        """In the event loop: the signal logged (`stop_signal_words`), the
+        job's stop started (once), the dashboard's heartbeat streams ended."""
+        if signum is not None:
+            from src.api.services.backend_control import stop_asked_by
+
+            logger.warning("%s", stop_signal_words(signum, again=self._stopping is not None,
+                                                   asked_by=stop_asked_by()))
         if self._stopping is None:
             self._stopping = threading.Thread(target=_stop_the_active_job, daemon=False,
                                               name="backend-stops-its-job")
