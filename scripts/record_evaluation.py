@@ -38,7 +38,9 @@ report's own path and **must be the deployment's**, compared by resolved path:
 the one `SHEPHERD_REGISTRY` names when it is set, else the Results registry
 saved in Settings › Data locations, which a shell of the account the service
 runs as reads with nothing set (deployment guide §4.11; for a service started
-with `--settings-file`, name that file here with `SHEPHERD_SETTINGS_FILE`; a
+with `--settings-file`, name that file here with `SHEPHERD_SETTINGS_FILE`; for a
+service given the registry by a variable at start, the systemd unit's
+`Environment=` lines, give this shell the same `SHEPHERD_REGISTRY`; a
 variable set for this command wins). With neither set, and for a report in
 another directory (a copy of the registry, say), the registration is refused
 before anything in that registry is read. A registry moved as a whole still

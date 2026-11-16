@@ -111,8 +111,10 @@ A checkpoint is tested on a registered test cohort version, from the CLI below o
 dashboard's Research › Evaluate › Test, and its result is recorded beside it (provenance contract
 M4; deployment guide §4.9). Run the commands as the account that runs the service: its shell
 reads the data locations chosen in Settings › Data locations from the same saved file as the
-service, so nothing needs to be set first (deployment guide §4.11; for a service started with
-`--settings-file`, name that file in the shell too, Ref: `SHEPHERD_SETTINGS_FILE`). The
+service, so nothing needs to be set first (deployment guide §4.11). Two services need the
+service's setting in the shell too: one started with `--settings-file` (name that file, Ref:
+`SHEPHERD_SETTINGS_FILE`), and one given a location by a variable at start, such as the systemd
+unit's `Environment=` lines (give the shell the same variable: each process reads its own). The
 `<registry>` below must be the deployment's Results registry: registration and `--cohort` refuse
 any other, and refuse while none is set. Step 2 takes the GPU lock the Workspaces folder names. A
 variable set for a command wins over the saved value (Ref: `SHEPHERD_REGISTRY`,

@@ -131,10 +131,12 @@ of the registry keeps its own. With neither set, every `--cohort` run is
 refused saying to choose it in Settings or set the variable for this command
 to the service's value. A shell of the account the service runs as reads the
 saved registry, so nothing needs to be set first (for a service started with
-`--settings-file`, name that file here with `SHEPHERD_SETTINGS_FILE`); a
-variable set for this command wins, so a command run with it set to another
-directory on purpose measures there (D2: the rule catches a registry named by
-mistake; it is not tamper-proof).
+`--settings-file`, name that file here with `SHEPHERD_SETTINGS_FILE`; for a
+service given the registry by a variable at start, the systemd unit's
+`Environment=` lines, give this shell the same `SHEPHERD_REGISTRY`, deployment
+guide §4.11); a variable set for this command wins, so a command run with it
+set to another directory on purpose measures there (D2: the rule catches a
+registry named by mistake; it is not tamper-proof).
 
 **For a job that chose its inputs beforehand** (M5's job runner):
 `--expect-checkpoint-sha256` and `--expect-version-sha256` refuse the run before
