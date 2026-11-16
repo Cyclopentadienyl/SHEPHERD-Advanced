@@ -3663,7 +3663,7 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-banner-amber {{ background: var(--shep-amber-50); border: 1px solid var(--shep-amber-100); border-left: 4px solid var(--shep-amber-600); color: var(--shep-amber-800); }}
 {_TAB} .shep-dx-banner-red {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-left: 4px solid var(--shep-red-700); color: var(--shep-red-700); }}
 {_TAB} .shep-dx-warnings {{ font-size: 14px; color: var(--shep-amber-800); margin: 0 0 8px; overflow-wrap: anywhere; }}
-{_TAB} .shep-dx-echo {{ font-size: 14px; color: var(--shep-text-2); margin: 2px 0 0; overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-echo {{ font-size: 14px; color: var(--shep-text-2); margin: 2px 0 0; padding: 0 8px; overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-used {{ margin: 0 0 8px; overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-why {{ color: var(--shep-text-2); }}
 {_TAB} .shep-dx-tbl-wrap {{ margin: 0; }}
