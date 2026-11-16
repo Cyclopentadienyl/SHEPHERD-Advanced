@@ -1093,34 +1093,35 @@ FIELD_HELP = {
     "ft_dataset": (
         "Dataset",
         "The workspace the children train on, from the server's list as on Research › "
-        "Datasets. It starts from the Training page's dataset and never changes it.\n\n"
-        "Start sends the dataset fingerprint shown, and the server refuses the start if the "
+        "Datasets.\n\n"
+        "- It starts from the Training page's dataset and never changes it.\n"
+        "- Start sends the dataset fingerprint shown; the server refuses the start if the "
         "workspace changed since.",
     ),
     "ft_run": (
         "Run",
         "The runs holding a base checkpoint, latest first, each led by its name or start "
         "time.\n\n"
-        "Its architecture and start time follow; its directory is in the summary. Only bases "
-        "are offered: a task model is never a parent (children never chain), and a file "
-        "without a model spec is never trained from here.",
+        "- Its architecture and start time follow; its directory is in the summary.\n"
+        "- Only bases are offered: a task model is never a parent (children never chain).\n"
+        "- A file without a model spec is never trained from here.",
     ),
     "ft_checkpoint": (
         "Checkpoint",
         "The base to fine-tune, from the chosen run, newest first. Its summary is under the "
         "list.\n\n"
-        "• Latest save, Best (by the selection its files record, named by its metric) or "
+        "- Latest save, Best (by the selection its files record, named by its metric) or "
         "Top-k save.\n"
-        "• A weights-only or early-stopped base can be fine-tuned.\n"
-        "• Start sends its model fingerprint; the server reads the file against it.\n"
-        "• Listing opens each checkpoint, so it is an operator control.",
+        "- A weights-only or early-stopped base can be fine-tuned.\n"
+        "- Start sends its model fingerprint; the server reads the file against it.\n"
+        "- Listing opens each checkpoint, so it is an operator control.",
     ),
     "ft_tasks": (
         "Tasks",
         "The task models to train from the base: one child run each, in this order.\n\n"
-        "• Ready: the dataset can be trained, and for Gene and Patients-like-me the gene "
+        "- Ready: the dataset can be trained, and for Gene and Patients-like-me the gene "
         "task's functional fixture was derived from this build of it.\n"
-        "• Before anything starts, the server checks the parent, its graph and each fixture "
+        "- Before anything starts, the server checks the parent, its graph and each fixture "
         "again; the training process checks the fixture's files.",
     ),
     **{f"ft_{name}": tc.setting_help(name, built_values(), FINETUNE_SOURCES)
@@ -1128,14 +1129,13 @@ FIELD_HELP = {
     **{f"ft_{name}": task_setting_help(name) for name in TASK_FIELDS},
     "ft_device": (
         "Device",
-        "auto: the GPU (CUDA). With no CUDA device visible, Start is refused: training never "
-        "falls back to the CPU on its own.\n\n"
-        "cpu: for development, recorded as asked.",
+        "Where the children train; they never fall back to the CPU on their own.\n\n"
+        "- auto: the GPU (CUDA). With no CUDA device visible, Start is refused.\n"
+        "- cpu: for development, recorded as asked.",
     ),
     "ft_run_name": (
         "Run name",
-        "Optional. Each child is saved in a new folder of its own, named by the start time, "
-        "this name and its task:\n"
+        "Optional. Each child gets a new folder, named by start time, this name and task:\n"
         "<workspace>/runs/<architecture>/<date-time>_<name>-<task>_<id>/",
     ),
 }
@@ -1144,13 +1144,13 @@ FIELD_HELP = {
 TOPIC_HELP = {
     "finetune-best-save": (
         "Best save",
-        "The saved file of a child's run with the best value of the selection metric its "
-        "files record, in the direction they record; files that tie share it.\n\n"
-        "• The metric and its direction are named under the file (a task model selects on "
-        "validation pooled MRR, higher is better).\n"
-        "• It is the Trainer's figure on the val samples, not a test result: test the model "
+        "The child's saved file with the best value of its recorded selection metric; ties "
+        "share it.\n\n"
+        "- Its metric and direction are named under the file: a task model selects on "
+        "validation pooled MRR, higher is better.\n"
+        "- It is the Trainer's figure on the val samples, not a test result: test the model "
         "on Research › Test.\n"
-        "• Shown to the operator once the child has ended (reading it opens the run's "
+        "- Shown to the operator once the child has ended (reading it opens the run's "
         "checkpoints).",
     ),
 }

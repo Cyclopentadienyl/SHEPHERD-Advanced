@@ -36,7 +36,6 @@ from typing import (Any, Callable, Dict, Hashable, Iterable, List, Mapping, Name
 
 from src.config.recipe import FROZEN_PARTS, unread_settings
 from src.evaluation.caveats import (
-    EXPOSURE_CAVEAT,
     GENERATED_EXPOSURE_NOTE,
     R10_LABEL_TEXT,
     RELATION_DISPLAY_NAMES,
@@ -64,14 +63,13 @@ SYNTHETIC_FOR_TESTING = "Synthetic workspaces are for testing only."
 IDENTITY_BANNERS = {
     "not_reported": (
         "WHAT PRODUCED THIS RESULT WAS NOT REPORTED.",
-        "The API's response carried no served identity, so these candidates "
-        "cannot be attributed to a model, graph or table.",
+        "The API's response carried no served identity.\n"
+        "So these candidates cannot be attributed to a model, graph or table.",
     ),
     "synthetic": (
         "SYNTHETIC WORKSPACE: not a clinical result.",
-        "The served workspace's dataset record gives its origin as synthetic: a "
-        "generated stand-in, not a clinical knowledge graph. Results are for "
-        "testing only.",
+        "The served workspace's dataset record gives its origin as synthetic.\n"
+        "A generated stand-in, not a clinical knowledge graph: results are for testing only.",
     ),
 }
 
@@ -79,29 +77,35 @@ IDENTITY_BANNERS = {
 RENDERER_HELP = {
     "dataset-fingerprint": (
         "Dataset fingerprint",
-        "The SHA-256 of this workspace's split_manifest.json. The manifest binds by digest "
-        "the graph, the three tensors, the train and val samples and the dataset record, "
-        "plus the recipe, the seeds and the split. 12 of its 64 hex digits are shown; every "
-        "comparison uses all 64. Equal fingerprints mean the same recorded build: the "
-        "manifest names the same bytes by digest. The files themselves are checked against "
-        "it when a run or a load reads them.",
+        "The SHA-256 of this workspace's split manifest: equal ones mean the same build.\n\n"
+        "- The manifest binds by digest the graph, the three tensors, the train and val "
+        "samples and the dataset record.\n"
+        "- It also records the recipe, the seeds and the split.\n"
+        "- 12 of its 64 hex digits are shown; every comparison uses all 64.\n"
+        "- The files themselves are checked against it when a run or a load reads them.\n"
+        "Ref: split_manifest.json",
     ),
     "model-fingerprint": (
         "Model fingerprint",
-        "The SHA-256 of the checkpoint file's bytes, as the server read them. 12 of its 64 "
-        "hex digits are shown; every comparison uses all 64. A test record, a usage history "
-        "entry and the served identity name the model by it.",
+        "The SHA-256 of the checkpoint file's bytes, as the server read them.\n\n"
+        "- 12 of its 64 hex digits are shown; every comparison uses all 64.\n"
+        "- A test record, a usage history entry and the served identity name the model by it.",
     ),
     "kg-exposure": (
         "Exposure (KG edge sets)",
-        "How a KG edge set's measured edges stand to the model's recorded graph use.\n"
-        + EXPOSURE_CAVEAT,
+        "How a KG edge set's measured edges stand to the model's recorded graph use.\n\n"
+        "- Scoped to the recorded evidence, as this build reads the model's record and this "
+        "edge set.\n"
+        "- It cannot rule out other exposure (another run, a person's choice, a file outside "
+        "the record) and is never a gate.\n"
+        "- Negatives are rule-generated: another tail of the same relation in the pair's batch.\n"
+        "- They are never proven non-relations: one may be a true relation the graph lacks.",
     ),
     "validation-trainer": (
         "Validation (Trainer)",
         "The Trainer's own figure on the val samples, recorded in the checkpoint.\n"
-        "• Base: LP accuracy.\n"
-        "• Task model: pooled MRR.\n"
+        "- Base: LP accuracy.\n"
+        "- Task model: pooled MRR.\n"
         "Training selects a checkpoint by it, so it is not an independent test; recorded "
         "test results are kept apart from it.",
     ),
@@ -1932,6 +1936,20 @@ def _r10_cell(label: str, part: Any, evidence: Any) -> str:
 #: The R10 table's title, the key a page shows it under: its meaning first,
 #: its code after (the skill's §5).
 R10_TITLE = "Train/test overlap (R10)"
+#: The help of the R10 table's ⓘ (the Test page's result, Models' recorded
+#: results): what its two columns count, against the inputs each row names.
+#: Its definitions are `R10_LABEL_TEXT`'s, each said once (a column's for
+#: both rows); the governed meaning is unchanged (the skill's §13).
+R10_HELP = (
+    R10_TITLE,
+    "How much of the test set the checkpoint's recorded training or validation inputs hold.\n\n"
+    "Disease overlap: distinct test diseases an input case also has, of all distinct test "
+    "diseases, and their test cases.\n"
+    "Phenotype-set overlap: test cases matching an input case's disease and phenotype set, of "
+    "all test cases.\n"
+    "- Sets ignore order and repeats, so the scoring inputs may differ.\n"
+    "Ref: R10",
+)
 
 
 def r10_table_html(r10: Any) -> str:
@@ -1978,7 +1996,7 @@ def data_kind_lines(view: Mapping[str, Any]) -> list:
     page laying the rows out its own way:
 
     - a KG edge set's exposure in this build's words (`caveats.exposure_text`,
-      the ⓘ holding `EXPOSURE_CAVEAT`) and its source (definition version and
+      the ⓘ saying `EXPOSURE_CAVEAT`'s points) and its source (definition version and
       split, or why its block does not read: fields named, never values), its
       message-passing graph and pairs, and each metric that could not be
       computed, as a status;

@@ -217,7 +217,7 @@ from src.webui.components import charts
 from src.webui.components import renderers as r
 from src.webui.components.chips import (busy_words, chips_on_change, gated, gpu_chip_from,
                                          operator_only)
-from src.webui.components.help import help_button
+from src.webui.components.help import REF_PREFIX, help_button
 from src.webui.components.workspaces import (
     manifest_facts,
     read_workspaces,
@@ -370,7 +370,9 @@ def setting_help(name: str, references: Mapping[str, Any], sources: Mapping[str,
     the reference's, with the source of that value (`src.config.recipe`) and
     what that reference is (`_SETTING_CLOSINGS`, else a provisional default
     from the source), or this build's default where the reference recipe
-    sets none (`sources` names no source for it)."""
+    sets none (`sources` names no source for it). The source, a repository
+    file and its lines, is the text's trailing "Ref:" line (the bubble's
+    grammar, `help.help_lines`)."""
     lead = by_name(name).description
     shown = r.setting_words(name, references[name])
     if name not in sources:
@@ -378,9 +380,8 @@ def setting_help(name: str, references: Mapping[str, Any], sources: Mapping[str,
                 f"{lead}\n\nDefault: {shown}, this build's; the reference recipe sets none.")
     return (r.SETTING_LABELS[name],
             f"{lead}\n\n"
-            f"Reference: {shown}.\n"
-            f"Source: {sources[name]}.\n\n"
-            f"{_SETTING_CLOSINGS.get(name, _PROVISIONAL)}")
+            f"Reference: {shown}. {_SETTING_CLOSINGS.get(name, _PROVISIONAL)}\n"
+            f"{REF_PREFIX} {sources[name]}")
 
 
 def form_value(value: Any) -> Any:
@@ -4230,9 +4231,9 @@ def _toggle_continue_source(source):
 FIELD_HELP = {
     "shep-train-dataset": (
         "Dataset",
-        "The server's workspace list, as on Research › Datasets. Choosing one only reads it; "
-        "nothing changes on the server.\n\n"
-        "Start sends the dataset fingerprint shown, and the server refuses the start if the "
+        "The workspace to train on, from the server's list as on Research › Datasets.\n\n"
+        "- Choosing one only reads it; nothing changes on the server.\n"
+        "- Start sends the dataset fingerprint shown; the server refuses the start if the "
         "workspace changed since.",
     ),
     "run_name": (
@@ -4247,29 +4248,29 @@ FIELD_HELP = {
     **{name: setting_help(name, *base_references()) for name in BASE_FIELDS},
     "device": (
         "Device",
-        "auto: the GPU (CUDA). With no CUDA device visible, Start is refused: training never "
-        "falls back to the CPU on its own.\n\n"
+        "Where the run trains; it never falls back to the CPU on its own.\n\n"
+        "- auto: the GPU (CUDA). With no CUDA device visible, Start is refused.\n"
         "- cpu: for development, recorded as asked.\n"
         "- Continue… has its own Device, which starts from this one.",
     ),
     "continue_operation": (
         "Operation",
-        "What the drawer does from the chosen checkpoint. Both train a new run of their own; "
-        "the checkpoint is not changed.\n\n"
-        "• Continue: resume a paused run, or extend a finished one by Extra epochs. Every "
+        "What the drawer does from the chosen checkpoint, which is never changed.\n\n"
+        "- Continue: resume a paused run, or extend a finished one by Extra epochs. Every "
         "setting stays the checkpoint's.\n"
-        "• Branch: a new run from its weights, with a new optimizer and schedule. Change the "
-        "settings its stage allows, or none for the same settings.",
+        "- Branch: a new run from its weights, with a new optimizer and schedule. Change the "
+        "settings its stage allows, or none for the same settings.\n"
+        "Both train a new run of their own.",
     ),
     "continue_source": (
         "Checkpoint source",
         "Where the checkpoint to continue or branch from comes from.\n\n"
-        "• From run list: the run bar's dataset's model records (bases and task models), as "
+        "- From run list: the run bar's dataset's model records (bases and task models), as "
         "the server lists them.\n"
-        "• Manual path: a typed path. It only finds a checkpoint that list has; any other "
+        "- Manual path: a typed path. It only finds a checkpoint that list has; any other "
         "file is refused, unopened.\n\n"
-        "A file without a model spec is never continued here. Both are checked the same way. "
-        "Listing opens each checkpoint, so it is an operator control.",
+        "Both are checked the same way, and a file without a model spec is never continued "
+        "here. Listing opens each checkpoint, so it is an operator control.",
     ),
     "continue_run": (
         STEP_RUN,
@@ -4281,27 +4282,26 @@ FIELD_HELP = {
     "checkpoint_dropdown": (
         STEP_CHECKPOINT,
         "The chosen run's checkpoints, newest first.\n\n"
-        "• Latest save: last.pt, the run's last training state.\n"
-        "• Best (its metric named): the run's best value of the selection metric its files "
+        "- Latest save: last.pt, the run's last training state.\n"
+        "- Best (its metric named): the run's best value of the selection metric its files "
         "record, in their direction; files that tie share it.\n"
-        "• Top-k save: another file the run kept by that metric.\n\n"
-        "The metric is the Trainer's validation figure, not a test result. The table under "
-        "it shows the file, its stage, what it holds, that figure, the selection and the model "
-        "fingerprint. The server finds the file in its list again and compares its bytes with "
-        "that fingerprint. Refresh lists them again.",
+        "- Top-k save: another file the run kept by that metric.\n\n"
+        "The metric is the Trainer's validation figure, not a test result. The table under it "
+        "names the file and its model fingerprint, which the server checks the file's bytes "
+        "against.",
     ),
     "manual_checkpoint": (
         "Checkpoint path",
-        "The path of a model record the run list has, typed or pasted. It is checked the same "
-        "way as a listed one.",
+        "The typed or pasted path of a model record the run list has.\n\n"
+        "It is checked the same way as a listed one.",
     ),
     "continue_device": (
         "Device",
-        "Where the new run trains: auto is the GPU (CUDA), and with no CUDA device visible "
-        "the start is refused; choose cpu for development.\n\n"
-        "Check checkpoint and the start (Continue Training or Start branch) both use it. Mixed "
-        "precision works only on CUDA; the check says when the checkpoint's setting would not "
-        "hold here.\n\n"
+        "Where the new run trains: auto is the GPU (CUDA); choose cpu for development.\n\n"
+        "- auto: with no CUDA device visible, the start is refused.\n"
+        "- Check checkpoint and the start (Continue Training or Start branch) both use it.\n"
+        "- Mixed precision works only on CUDA; the check says when the checkpoint's setting "
+        "would not hold here.\n\n"
         "It starts from the Parameters' Device each time Continue… opens.",
     ),
     "extend_epochs": (
@@ -4319,12 +4319,12 @@ FIELD_HELP = {
     **{f"branch_{name}": branch_setting_help(name) for name in BRANCH_FIELDS},
     "shep-train-view-run": (
         "Viewing",
-        "The run whose curves and Export CSV the run view shows: the run bar's dataset's runs, "
-        "latest first, each led by its name or start time.\n\n"
-        "• Choosing one changes only the view. The run bar and its status pill always show the "
-        "training job.\n"
-        "• Beside it, how the run stands to that job: the running job, or a past run.\n"
-        "• A job started later is shown as it starts. Its directory is in Details.",
+        "The run whose curves and Export CSV the run view shows.\n\n"
+        "- The run bar's dataset's runs, latest first, each led by its name or start time.\n"
+        "- Choosing one changes only the view. The run bar and its status pill always show "
+        "the training job.\n"
+        "- Beside it, how the run stands to that job: the running job, or a past run.\n"
+        "- A job started later is shown as it starts. Its directory is in Details.",
     ),
 }
 
@@ -4333,22 +4333,19 @@ TOPIC_HELP = {
     "training-charts": (
         "Chart gestures",
         charts.GESTURES + "\n\n"
-        "The wheel zooms around the pointer:\n"
-        "• over the epoch axis, the epochs (the four charts share them);\n"
-        "• over a value axis, that chart's values;\n"
-        "• inside a plot, both.\n\n"
-        "Keys, with a chart focused: + and − zoom, x and y zoom one axis (Shift zooms out), "
-        "the arrows pan, End jumps to the latest epochs, 0 resets.\n\n"
-        "The view is kept per run in this browser tab, and the epoch axis never starts below "
-        "0. While zoomed in a live run, a button counts the new epochs beyond the view. Away "
-        "from the charts the wheel scrolls the page.",
+        "- The wheel over the epoch axis zooms all four charts' epochs; over a value axis, that "
+        "chart; inside a plot, both.\n"
+        "- Keys, a chart focused: + and − zoom, x or y one axis (Shift zooms out), arrows pan, "
+        "End the latest epochs, 0 resets.\n"
+        "- The view is kept per run in this tab, its epochs never below 0.\n"
+        "- Zoomed in a live run, a button counts new epochs beyond the view.",
     ),
     "training-used-dataset": (
         "Used dataset fingerprint",
-        "The dataset the run trained on, as its checkpoint records it (the split manifest's "
-        "fingerprint), compared in full with the run bar's dataset.\n\n"
-        "• Shown to the operator only: reading it opens the checkpoint.\n"
-        "• Before the first checkpoint nothing records it yet; a run that ended without one "
+        "The dataset the run trained on, as its checkpoint records it, against the run bar's.\n\n"
+        "- The split manifest's fingerprint, compared in full.\n"
+        "- Shown to the operator only: reading it opens the checkpoint.\n"
+        "- Before the first checkpoint nothing records it yet; a run that ended without one "
         "never recorded it.",
     ),
 }

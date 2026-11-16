@@ -715,8 +715,14 @@ def test_models_shows_each_kind_by_the_one_display_with_its_exposure():
     from src.webui.components.renderers import RENDERER_HELP
 
     assert 'data-help="kg-exposure"' in mp.records_table_html(views[1:2], {})
-    assert RENDERER_HELP["kg-exposure"][1].endswith(
-        __import__("src.evaluation.caveats", fromlist=["EXPOSURE_CAVEAT"]).EXPOSURE_CAVEAT)
+    # The bubble says the caveat's points, a line each (the skill's §7 budget;
+    # the record and the API keep `EXPOSURE_CAVEAT`'s own words).
+    exposure_help = RENDERER_HELP["kg-exposure"][1]
+    for point in ("Scoped to the recorded evidence", "another run, a person's choice, a file "
+                  "outside the record", "never a gate", "rule-generated",
+                  "another tail of the same relation in the pair's batch",
+                  "never proven non-relations"):
+        assert point in exposure_help, point
 
     hostile = copy.deepcopy(views[1])
     hostile["exposure"]["definition_version"] = "<b>kg-lp-exposure/v9</b>"

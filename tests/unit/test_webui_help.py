@@ -15,8 +15,7 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   about 90 characters, a few items, at most 80 words, no sentence over 25
   words and its codes only in a trailing "Ref:" line; the Test and Models
   texts at most three items, the train/test overlap text its two
-  definitions in about 55 words; and every editable field of Training's
-  Model accordion has help;
+  definitions in about 55 words;
 - **the browser side** builds the bubble's parts with ``createElement`` and
   ``textContent`` and is given to the mount's ``head`` (Gradio 6 drops a
   head given to ``gr.Blocks``); in a real headless browser (Node and
@@ -451,3 +450,57 @@ def test_every_renderer_help_key_is_registered(built):
     for key in keys:
         assert key in registry, key
 
+
+# --------------------------------------------------------------------------- the budget, over every text
+def test_every_registered_help_text_is_within_the_budget(built):
+    """R-9 (the WebUI skill's §7): every text the built dashboard registers,
+    whichever page registers it, answers first in a lead of about 90
+    characters, has a few items, about 60-80 words without its Ref line, no
+    sentence over 25 words and its codes (setting names, decision, review
+    and README codes, a source commit or file) only in a trailing Ref line.
+    The texts the base held failed it: 89 of its 131."""
+    _demo, registry, _texts = built
+    over = {entry.key: h.budget_problems(entry.text) for entry in registry.entries()}
+    assert {key: problems for key, problems in over.items() if problems} == {}
+    assert len(over) >= 131
+
+
+def _words(text: str) -> int:
+    return sum(len(f"{line.term or ''} {line.text}".split()) for line in h.help_lines(text)
+               if line.kind != "ref")
+
+
+def test_the_test_and_models_texts_are_an_answer_and_three_items_at_most(built):
+    """R-74: the Test and Models (Results included) texts are one answer
+    sentence and at most three items, about 60 words, their codes in the Ref
+    line (the budget above)."""
+    _demo, registry, _texts = built
+    keys = [e.key for e in registry.entries()
+            if e.key.startswith(("shep-test-", "test-", "models-"))]
+    assert len(keys) >= 24
+    for entry in registry.entries():
+        if entry.key in keys:
+            lines = h.help_lines(entry.text)
+            assert sum(line.kind == "item" for line in lines) <= 3, entry.key
+            assert _words(entry.text) <= 70, (entry.key, _words(entry.text))
+
+
+def test_the_train_test_overlap_text_defines_each_column_once(built):
+    """R-69: the overlap labels' text was the four generated definitions in
+    one 155-word paragraph, the training and validation ones repeating each
+    other; it is one hand-written text (Test's result and Models' records
+    alike): a lead naming the rows, one definition line per column, about 55
+    words, the code in its Ref line."""
+    from src.webui.components import renderers as r
+
+    _demo, registry, _texts = built
+    by_key = {e.key: e for e in registry.entries()}
+    for key in ("test-r10", "models-r10"):
+        entry = by_key[key]
+        assert (entry.title, entry.text) == r.R10_HELP and entry.title == r.R10_TITLE
+        lines = h.help_lines(entry.text)
+        assert "training or validation inputs" in lines[0].text
+        assert [line.term for line in lines if line.term and line.kind == "para"] == [
+            "Disease overlap", "Phenotype-set overlap"]
+        assert "ignore order and repeats" in entry.text and lines[-1].text == "R10"
+        assert _words(entry.text) <= 60

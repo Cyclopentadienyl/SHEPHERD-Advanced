@@ -2514,7 +2514,7 @@ def test_the_device_help_says_auto_needs_cuda_as_the_trainer_does():
 
 def test_the_chart_help_leads_with_the_gestures_in_paragraphs():
     title, text = tc.TOPIC_HELP["training-charts"]
-    assert text.startswith(tc.charts.GESTURES + "\n\n") and "\n• over the epoch axis" in text
+    assert text.startswith(tc.charts.GESTURES + "\n\n") and "\n- The wheel over the epoch axis" in text
     for key in ("continue_source", "checkpoint_dropdown", "continue_device", "run_name",
                 "training-used-dataset", "continue_run"):
         help_text = {**tc.FIELD_HELP, **tc.TOPIC_HELP}[key][1]

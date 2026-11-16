@@ -124,7 +124,6 @@ from src.api.services.record_states import CohortVersions, key_text
 
 # Each mode's label and note, R10's and the relations' words: rendered, never reworded.
 from src.evaluation.caveats import (
-    R10_LABEL_TEXT,
     RECORD_ABSENCE,
     TASK_NAMES,
     metric_text,
@@ -223,30 +222,27 @@ PAGE_HELP = {
     "models-ordering": (
         "Order",
         "How the list is ordered; the Task select chooses the rows.\n"
-        "• Newest first: latest run first.\n"
-        "• By family: each base, then its finetuned models.",
+        "- Newest first: latest run first.\n"
+        "- By family: each base, then its finetuned models.",
     ),
     "models-contested": (
         "Runs differ",
-        "Runs kept under this record's conditions in the cohort version's report store have "
-        "results that differ. Every run is kept as recorded, and each can be registered. "
-        "Without deterministic algorithms, runs can differ. With them on, the runs were "
-        "expected to agree, so the difference is flagged: investigate it, comparing "
-        "environment facts first. Investigation notes are kept with the reports (Test page); "
-        "they record what was found and change nothing.",
+        "Runs kept under this record's conditions in the version's report store differ.\n\n"
+        "- Every run is kept as recorded, and each can be registered.\n"
+        "- Without deterministic algorithms runs can differ; with them on, the runs were "
+        "expected to agree, so the difference is flagged.\n"
+        "- Investigate it, comparing environment facts first; notes on the Test page record "
+        "what was found and change nothing.",
     ),
     "models-usage": (
         "Usage history",
-        "Each cohort version keeps an append-only usage history (reports/usage.jsonl in its "
-        "report store): every test run and every registration, whether started here or from "
-        "the command line. Model loads from a list once ordered by test score stay shown as "
-        "they were recorded.",
+        "Each cohort version keeps an append-only usage history in its report store.\n\n"
+        "- Every test run and every registration, started here or from the command line.\n"
+        "- Model loads from a list once ordered by test score stay shown as they were "
+        "recorded.\n"
+        "Ref: reports/usage.jsonl",
     ),
-    "models-r10": (
-        "R10 labels",
-        " · ".join(f"{text['name']}: {text['definition']}"
-                   for labels in R10_LABEL_TEXT.values() for text in labels.values()) + ".",
-    ),
+    "models-r10": r.R10_HELP,
 }
 
 #: How many usage history entries of one checkpoint the detail shows.
@@ -1039,7 +1035,7 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
             parts.append(records_table_html(group, contest))
         # R10's definitions where a supplied cohort's record is shown; a KG
         # edge set's and a generated split's records carry none.
-        r10 = (f'R10 labels {help_button("models-r10", "R10 labels")} · '
+        r10 = (f'{r.e(r.R10_TITLE)} {help_button("models-r10", r.R10_HELP[0])} · '
                if any(data_kind(view) == "supplied" for view in views) else "")
         parts.append(f'<p class="shep-note">{r10}The Trainer validation '
                      "figure is not among these records' metrics.</p>")

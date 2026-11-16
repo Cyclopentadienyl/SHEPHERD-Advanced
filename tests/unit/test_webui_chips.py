@@ -399,3 +399,40 @@ def test_every_gated_page_labels_its_buttons_by_the_one_rule():
             "Load this model" if operator else "🔒 Load this model")
         beside = ml.load_reason_html(None, listing)
         assert ("🔒 Operator controls only: request not local." in beside) is not operator
+
+
+def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
+    """R-9: the chips' ⓘ texts go through the one bubble, whose first line is
+    its bold lead (`help.help_lines`): each chip state leads with a short
+    line (about 90 characters), says the controls and the conditions as
+    "- " items (never a typed '•'), and keeps every fact the bubble said."""
+    from src.webui.components import help as h
+
+    lock_unset = {**LOCK_FREE, "configured": False, "unset": True, "path": None}
+    lock_broken = {**LOCK_FREE, "problem": "the folder is read-only"}
+    chips = [c.d8_chip(ENABLED),
+             *(c.d8_chip(OperatorAccess(False, condition, f"why {condition}"))
+               for condition in sorted(c.D8_SHORT)),
+             c.gpu_chip_from(None, LOCK_FREE, operator=True),
+             c.gpu_chip_from({"job_type": "training", "status": "running"}, LOCK_FREE,
+                             operator=True),
+             c.gpu_chip_from(None, lock_unset, operator=True),
+             c.gpu_chip_from(None, lock_broken, operator=True),
+             c.gpu_chip_from(None, _inference_holder(os.getpid()), operator=False)]
+    for chip in chips:
+        lines = h.help_lines(chip.detail)
+        assert len(lines[0].text) <= 100, lines[0].text
+        assert all(not line.text.startswith("•") for line in lines), chip.text
+    on = h.help_lines(c.d8_chip(ENABLED).detail)
+    assert [line.kind for line in on] == ["lead", "item", "item", "para", "item", "item",
+                                          "para", "ref"]
+    assert on[0].text == c.D8_ON_LEAD and "ssh -L 8264:localhost:8264" in on[-1].text
+    words = sum(len(line.text.split()) for line in on if line.kind != "ref")
+    # 115 words in one run at the base; the controls and the conditions are
+    # must-know words, so about 90 (the skill's budget is guidance).
+    assert words <= 90, words
+    refused = c.d8_chip(OperatorAccess(False, "not_loopback", "why")).detail
+    assert refused.startswith(f"{c.D8_READONLY_LEAD}\n{c.D8_SCOPE}\n\nFor this request: why")
+    assert c.gpu_chip_from(None, lock_broken, operator=True).detail.startswith(
+        "The GPU lock cannot be used, so every managed job is refused until it is corrected.\n"
+        "the folder is read-only")

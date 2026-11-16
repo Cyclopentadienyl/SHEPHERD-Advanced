@@ -70,6 +70,7 @@ from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import renderers  # noqa: E402
 from src.webui.components import test_page as tp  # noqa: E402
+from src.webui.components.help import sentence_lines  # noqa: E402
 from tests.fixtures.capabilities import described  # noqa: E402
 from tests.fixtures.operator_access import (  # noqa: E402
     OPERATOR_BASE_URL,
@@ -3052,9 +3053,10 @@ def test_the_r10_help_sits_beside_the_r10_lines(site):
     html = tp.result_html(reports, site.run_id, [])
     label = html[html.index('class="shep-test-label"'):]
     label = label[:label.index("</div>")]
-    assert "Help: R10 labels" not in label and "Help: Disease task result" in label
+    help_label = f"Help: {renderers.R10_TITLE}"
+    assert help_label not in label and "Help: Disease task result" in label
     r10 = html[html.index(f">{renderers.R10_TITLE}"):]
-    assert r10.index("Help: R10 labels") < r10.index('class="shep-v') < r10.index(
+    assert r10.index(help_label) < r10.index('class="shep-v') < r10.index(
         '<table class="shep-r10"')
 
 
@@ -3903,8 +3905,10 @@ def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
     assert shown and not any(k in pooled for k in shown)
     assert all(f"k={k} " in pooled for k in (1, 3, 10) if f"k={k} " not in shown)
     assert f'data-help="test-mode-{mode}"' in raw
+    # The governed note in its own words, a sentence a line (its lead first).
     assert tp.TOPIC_HELP[f"test-mode-{mode}"] == (f"{TASK_NAMES[mode]} task result",
-                                                  mode_note(mode))
+                                                  sentence_lines(mode_note(mode)))
+    assert tp.TOPIC_HELP[f"test-mode-{mode}"][1].replace("\n", " ") == mode_note(mode)
     assert HOSTILE not in raw and html_lib.escape(HOSTILE, quote=False) in raw
 
 
@@ -4085,8 +4089,8 @@ def test_a_kg_link_prediction_result_has_its_measurement_note():
     label = raw[raw.index('class="shep-test-label"'):]
     label = label[:label.index("</div>")]
     assert 'data-help="test-mode-kg_link_prediction"' in label
-    assert tp.TOPIC_HELP["test-mode-kg_link_prediction"] == ("KG link prediction result",
-                                                             KG_LINK_PREDICTION_NOTE)
+    assert tp.TOPIC_HELP["test-mode-kg_link_prediction"] == (
+        "KG link prediction result", sentence_lines(KG_LINK_PREDICTION_NOTE))
     assert mode_label("kg_link_prediction") in _result_text(raw)
     assert '<dt class="shep-k">Recorded metrics</dt>' in raw
     assert "shep-test-tile-l" not in raw

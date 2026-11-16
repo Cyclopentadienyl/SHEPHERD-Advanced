@@ -194,7 +194,7 @@ GENE_TASK_NOTE = ("A score mixing the finetuned model's gene head with shortest-
 PATIENTS_LIKE_ME_RESULT_LABEL = ("Patients-like-me (model bundle): each patient against every "
                                  "other patient measured, average ranks")
 PATIENTS_LIKE_ME_NOTE = ("A similarity from the finetuned model's patient tower, uncalibrated. A "
-                         "pair is relevant when the two patients share a causal gene; a patient "
+                         "pair is relevant when the two patients share a causal gene. A patient "
                          "with no other relevant patient has no recall, not a recall of 0.")
 
 #: The common KG link-prediction measurement (`task_measurement.run_kg_link_prediction`,

@@ -282,12 +282,14 @@ SCORE_NOTE = ("Score ranks the candidates of this result. It is not a calibrated
               "disease probability.")
 #: The same for a gene task model's candidate genes (the report's note and the
 #: lead of the gene Score's help).
-GENE_SCORE_NOTE = ("Score ranks your candidate genes: η × model similarity + (1 − η) × SP "
-                   "similarity. It is not a calibrated probability.")
+GENE_SCORE_RANKS = ("Score ranks your candidate genes: η × model similarity + (1 − η) × SP "
+                    "similarity.")
+GENE_SCORE_NOTE = f"{GENE_SCORE_RANKS} It is not a calibrated probability."
 #: The same for a patients-like-me model's reference patients.
-SIMILARITY_NOTE = ("Similarity ranks the reference cohort's patients: 0 is the closest, lower "
-                   "is less alike. It is not a calibrated probability, and a shared causal "
-                   "gene is not implied.")
+SIMILARITY_RANKS = ("Similarity ranks the reference cohort's patients: 0 is the closest, lower "
+                    "is less alike.")
+SIMILARITY_CAVEAT = "It is not a calibrated probability, and a shared causal gene is not implied."
+SIMILARITY_NOTE = f"{SIMILARITY_RANKS} {SIMILARITY_CAVEAT}"
 #: What a reference patient's recorded diagnosis, causal genes and HPO terms
 #: are (the details and the report).
 REFERENCE_CONTEXT_NOTE = ("Recorded by the reference cohort: context, never an input of this "
@@ -1469,40 +1471,41 @@ FIELD_INFO = {
 FIELD_HELP = {
     "dx_hpo_terms": (
         "HPO terms",
-        "Paste HPO ids in any format — one per line, or comma/space-separated. Names and "
-        "stray punctuation are ignored; only HP:####### ids are used. Repeats are sent as "
-        "typed; the service removes them and says how many.",
+        "Paste HPO ids in any format: one per line, or separated by commas or spaces.\n\n"
+        "- Names and stray punctuation are ignored; only HP:####### ids are used.\n"
+        "- Repeats are sent as typed; the service removes them and says how many.",
     ),
     "dx_candidate_genes": (
         "Candidate genes",
-        "The patient's candidate genes, which a gene task model ranks. Enter gene symbols "
-        "(SCN1A) or gene ids (disgenet:PTEN), one per line or separated by commas, spaces or "
-        "semicolons. They are sent as typed, repeats included; the service counts any that "
-        "name no gene of the model's graph.",
+        "The patient's candidate genes, which a gene task model ranks.\n\n"
+        "- Enter gene symbols (SCN1A) or gene ids (disgenet:PTEN), one per line or separated "
+        "by commas, spaces or semicolons.\n"
+        "- They are sent as typed, repeats included; the service counts any that name no gene "
+        "of the model's graph.",
     ),
     "dx_reference_cohort": (
         "Reference cohort",
-        "The registered cohort version whose patients a patients-like-me model ranks for this "
-        "query. Every version in the server's registry is listed. One mapped against another "
-        "graph, a KG edge set, a generated split, or one that cannot be read is marked; the "
-        "server refuses it. "
-        "Under the select: the chosen version's fingerprint and its graph check.",
+        "The cohort version whose patients a patients-like-me model ranks for this query.\n\n"
+        "- Every version in the server's registry is listed.\n"
+        "- One mapped against another graph, a KG edge set, a generated split, or one that "
+        "cannot be read is marked; the server refuses it.\n"
+        "- Under the select: the chosen version's fingerprint and its graph check.",
     ),
     "dx_patient_id": (
         "Patient ID (optional)",
-        "An identifier for this diagnosis, carried by the result and its exports. Left blank, "
-        "the server gives the result its own id, so results from different browsers never "
-        "share one.",
+        "An identifier for this diagnosis, carried by the result and its exports.\n\n"
+        "Left blank, the server gives the result its own id, so results from different "
+        "browsers never share one.",
     ),
     "dx_top_k": (
         "Top-K",
-        "Number of candidates to return (1 to 20): diagnoses, candidate genes or reference "
-        "patients, as the model in use ranks.",
+        "Number of candidates to return, from 1 to 20.\n\n"
+        "Diagnoses, candidate genes or reference patients, as the model in use ranks them.",
     ),
     "dx_explanations": (
         "Explanations",
-        "Ask for each candidate's evidence and written explanation. Off, the ranking is the "
-        "same, and Evidence, Explanation and Paths stay empty.",
+        "Ask for each candidate's evidence and written explanation.\n\n"
+        "Off, the ranking is the same, and Evidence, Explanation and Paths stay empty.",
     ),
 }
 
@@ -1511,12 +1514,13 @@ TOPIC_HELP = {
     "dx-card": card.CARD_HELP,
     "dx-badge": (
         "Compared with the model in use",
-        "The whole served identity is compared, part by part: checkpoint, knowledge graph, "
-        "workspace manifest, shortest-path table, dataset record, scoring mode, device, "
-        "mixing weight eta, path settings and phenotype rule — never the checkpoint alone. "
-        "The model in use is the card's last status read. A read that failed, or one older "
-        "than the result, never shows \"Produced by the model in use\". The result, its CSV "
-        "and its report keep their own identity whatever the badge says.",
+        "The whole served identity is compared part by part, never the checkpoint alone.\n\n"
+        "- Parts: checkpoint, knowledge graph, workspace manifest, shortest-path table, "
+        "dataset record, scoring mode, device, mixing weight eta, path settings and phenotype "
+        "rule.\n"
+        "- The model in use is the card's last status read. A read that failed, or one older "
+        "than the result, never shows \"Produced by the model in use\".\n"
+        "- The result, its CSV and its report keep their own identity whatever the badge says.",
     ),
     "dx-score": (
         "Score",
@@ -1526,60 +1530,69 @@ TOPIC_HELP = {
     ),
     "dx-gene-score": (
         "Score",
-        GENE_SCORE_NOTE + "\n\n"
-        "Model similarity: the gene head's similarity to the patient, from −1 to 1. SP "
-        "similarity: the gene's mean hop distance to the phenotypes, scaled by the model's fixed "
-        "bounds and not clipped. η is the model's own (This result › Mixing weight eta).",
+        GENE_SCORE_RANKS + "\n\n"
+        "- It is not a calibrated probability.\n"
+        "- Model similarity: the gene head's similarity to the patient, from −1 to 1.\n"
+        "- SP similarity: the gene's mean hop distance to the phenotypes, scaled by the model's "
+        "fixed bounds and not clipped.\n"
+        "- η is the model's own (This result › Mixing weight eta).",
     ),
     "dx-similarity": (
         "Similarity",
-        SIMILARITY_NOTE + "\n\n"
-        "The model's patient tower compares this query's phenotypes with each reference "
-        "patient's recorded terms. The diagnosis, causal genes and terms shown are what the "
-        "cohort recorded: context, never an input of this query.",
+        SIMILARITY_RANKS + "\n\n"
+        f"- {SIMILARITY_CAVEAT}\n"
+        "- The model's patient tower compares this query's phenotypes with each reference "
+        "patient's recorded terms.\n"
+        "- The diagnosis, causal genes and terms shown are what the cohort recorded: context, "
+        "never an input of this query.",
     ),
     "dx-exports": (
         "Exports",
-        "CSV = one row per candidate (all Top-K) for spreadsheets, in the result kind's "
-        "columns (result_kind on every row) · report = every candidate's details: a "
-        "disease's evidence and explanation, a reference patient's recorded terms. Both say "
-        "what produced the result (the served_ columns; the report's identity section).",
+        "Two downloads of this result; both say what produced it.\n\n"
+        "- CSV: one row per candidate (all Top-K) for spreadsheets, in the result kind's "
+        "columns, with result_kind on every row.\n"
+        "- Report: every candidate's details, such as a disease's evidence and explanation or "
+        "a reference patient's recorded terms.\n"
+        "- What produced it: the CSV's served_ columns, the report's identity section.",
     ),
     "dx-candidate": (
         "Candidate details",
-        "Select a row of Diagnosis results (click it, or focus it and press Enter) to show "
-        "that candidate here. Evidence, explanation, matching phenotypes and paths come from "
-        "this result only.",
+        "Select a row of Diagnosis results to show that candidate here.\n\n"
+        "- Click it, or focus it and press Enter.\n"
+        "- Evidence, explanation, matching phenotypes and paths come from this result only.",
     ),
     "dx-run-no-model": (
         "Run Diagnosis is disabled",
-        "Nothing is served on this server, so nothing would compute a diagnosis. The card above "
-        "says why, and an operator loads a model with its \"Load a model…\". (An API client "
-        "asking now is refused, with the server's reason.)",
+        "Nothing is served on this server, so nothing would compute a diagnosis.\n\n"
+        "- The card above says why; an operator loads a model with its \"Load a model…\".\n"
+        "- An API client asking now is refused, with the server's reason.",
     ),
     "dx-run-stopping": (
         "Run Diagnosis is disabled",
-        "Inference is stopping: the diagnoses already accepted finish, and new ones are refused; "
-        "then nothing is served until an operator loads a model again with \"Load a model…\" "
-        "on the card above. (An API client asking now is refused, with the server's reason.)",
+        "Inference is stopping: the diagnoses already accepted finish; new ones are refused.\n\n"
+        "- Then nothing is served until an operator loads a model again with \"Load a "
+        "model…\" on the card above.\n"
+        "- An API client asking now is refused, with the server's reason.",
     ),
     "dx-run-change": (
         "Run Diagnosis is disabled",
-        "A model change is open: finish it (Reload with …) or cancel it (Keep … or Cancel) "
-        "first, so no result is produced here while what is served may change.",
+        "A model change is open: finish it (Reload with …) or cancel it (Keep … or Cancel).\n\n"
+        "Until then no result is produced here, as what is served may change.",
     ),
     "dx-run-loading": (
         "Run Diagnosis is disabled",
-        "This page started a model load, which reloads the pipeline for every session; Run "
-        "Diagnosis waits for its answer, so no result is produced here while what is served "
-        "changes. The card shows the server's state. Closing the drawer does not stop the load.",
+        "This page started a model load, which reloads the pipeline for every session.\n\n"
+        "- Run Diagnosis waits for its answer, so no result is produced here while what is "
+        "served changes.\n"
+        "- The card shows the server's state. Closing the drawer does not stop the load.",
     ),
     "dx-run-no-cohort": (
         "Run Diagnosis is disabled",
-        "This model ranks a registered reference cohort's patients, and no such version can be "
-        "read. The registry is not set or refused, holds no version yet, or holds only KG edge "
-        "sets and versions marked \"cannot be read\". An operator imports a cohort in "
-        "Research › Test, or corrects the server's cohort registry setting.",
+        "This model ranks a reference cohort's patients, and no such version can be read.\n\n"
+        "- The registry is not set or refused, holds no version yet, or holds only KG edge "
+        "sets and versions marked \"cannot be read\".\n"
+        "- An operator imports a cohort in Research › Test, or corrects the server's cohort "
+        "registry setting.",
     ),
     **{f"dx-banner-{key}": (headline, detail) for key, (headline, detail) in IDENTITY_BANNERS.items()},
 }

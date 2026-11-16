@@ -370,16 +370,18 @@ FIELD_INFO = {
 FIELD_HELP = {
     "allocator_preset": (
         "Memory allocator",
-        "How CUDA memory is pooled: it governs fragmentation and peak use. The backend runs "
-        "CUDA in its own process too (diagnosis), so it reads the allocator once at start-up: "
-        "a saved change applies after Restart Backend. An allocator set in the launch "
-        "environment overrides the saved one. A CPU run does not use it.",
+        "How CUDA memory is pooled: it governs fragmentation and peak use.\n\n"
+        "- The backend runs CUDA in its own process too (diagnosis), so it reads the allocator "
+        "once at start-up: a saved change applies after Restart Backend.\n"
+        "- An allocator set in the launch environment overrides the saved one.\n"
+        "- A CPU run does not use it.",
     ),
     "torch_compile": (
         "Compile the model (torch.compile)",
-        "Compiles supported model regions to cut overhead. PyG workloads may graph-break, fall "
-        "back to eager or run slower; GATv2, the one architecture built today, has not been "
-        "measured with it. It needs no restart: it is " + COMPILE_READ + ".",
+        "Compiles supported model regions to cut overhead.\n\n"
+        "- PyG workloads may graph-break, fall back to eager or run slower; GATv2, the one "
+        "architecture built today, has not been measured with it.\n"
+        "- It needs no restart: it is " + COMPILE_READ + ".",
     ),
 }
 

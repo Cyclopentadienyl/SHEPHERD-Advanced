@@ -640,11 +640,14 @@ def test_the_freeze_field_shows_plain_words_and_sends_the_field_specs_values():
     assert "Reference: Trained." in text and FINETUNE_SOURCES["frozen_parts"] in text
     # The freeze is a study's two arms, not a tuned value: its help says what
     # each is, never "a provisional default ... not tuned" (review of A2).
-    assert text.endswith("\n\nNot a tuned value: Trained is the source's full fine-tune, and "
-                         "Frozen is the frozen-backbone control.")
+    # Its source is the text's trailing Ref line (the bubble's grammar, R-42).
+    assert text.endswith("\n\nReference: Trained. Not a tuned value: Trained is the source's "
+                         "full fine-tune, and Frozen is the frozen-backbone control.\n"
+                         f"Ref: {FINETUNE_SOURCES['frozen_parts']}")
     assert "provisional" not in text
-    assert tc.setting_help("num_epochs", FINETUNE, FINETUNE_SOURCES)[1].endswith(
-        "\n\nA provisional default from the source, not tuned on this data.")
+    epochs = tc.setting_help("num_epochs", FINETUNE, FINETUNE_SOURCES)[1]
+    assert epochs.endswith("A provisional default from the source, not tuned on this data.\n"
+                           f"Ref: {FINETUNE_SOURCES['num_epochs']}")
     assert tc.sent_settings({"frozen_parts": "graph_side"}, ["frozen_parts"]) == (
         {"frozen_parts": "graph_side"}, [])
     assert tc.sent_settings({"frozen_parts": "none"}, ["frozen_parts"]) == (

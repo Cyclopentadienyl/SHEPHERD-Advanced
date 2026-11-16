@@ -127,7 +127,7 @@ from src.utils.run_environment import native_identity_text
 from src.webui.components import model_list as ml
 from src.webui.components import models_page as mp
 from src.webui.components import renderers as r
-from src.webui.components.help import help_button
+from src.webui.components.help import REF_PREFIX, help_button
 from src.webui.exports import file_slug, write_new
 from src.webui.operator_access import operator_access
 from src.webui.shell import picked, plain_html
@@ -150,22 +150,25 @@ SHOWN, SELECTED = "shown", "selected"
 EXPORT_ROWS = [("All shown", SHOWN), ("Selected", SELECTED)]
 EXPORT_FORMATS = [("CSV", "csv"), ("JSON", "json")]
 
+#: The command that joins workspaces through the same results service.
+EXPORT_SCRIPT = "scripts/export_results.py"
 #: Said where the scope holds nothing, and in the help: a gap, not a rule.
 CROSS_WORKSPACE_GAP = (
     "Comparing results across workspaces is not built in this page yet; on the machine, "
-    "scripts/export_results.py joins workspaces through the same results service.")
+    f"{EXPORT_SCRIPT} joins workspaces through the same results service.")
 
 #: The help texts this segment's ⓘ name (registered by Models' page builder).
 SEGMENT_HELP = {
     "models-results": (
         "Results",
-        "Every kept report and readable ledger record of this family or this workspace, read "
-        "by the one results service.\n"
-        "• One table per protocol, newest first by run time; nothing is ordered by a metric.\n"
-        "• Compare shows the first five chosen side by side, values as recorded, with no "
-        "computed difference.\n"
-        "• Export writes every chosen or every shown row as CSV or JSON, uncapped.\n"
-        + CROSS_WORKSPACE_GAP,
+        "Every kept report and readable ledger record of this family or workspace.\n\n"
+        "- One table per protocol, newest run first; nothing is ordered by a metric.\n"
+        "- Compare shows the first five chosen side by side, as recorded, with no computed "
+        "difference.\n"
+        "- Export writes every chosen or shown row as CSV or JSON, uncapped.\n"
+        "Across workspaces: not built in this page yet; on the machine, the export script "
+        "joins them.\n"
+        f"{REF_PREFIX} {EXPORT_SCRIPT}",
     ),
 }
 

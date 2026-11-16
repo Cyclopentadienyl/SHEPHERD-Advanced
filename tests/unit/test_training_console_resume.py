@@ -1300,8 +1300,8 @@ def test_the_branch_fields_are_the_settings_a_branch_may_change_through_the_one_
     assert by_id["continue_operation"].choices == [("Continue", "continue"),
                                                    ("Branch", "branch")]
     title, text = tc.FIELD_HELP["continue_operation"]
-    assert "• Continue: resume a paused run, or extend a finished one" in text
-    assert "• Branch: a new run from its weights, with a new optimizer" in text
+    assert "- Continue: resume a paused run, or extend a finished one" in text
+    assert "- Branch: a new run from its weights, with a new optimizer" in text
     # Steps, numbered in the order they are taken (the skill's §4).
     assert by_id["continue_run"].label == tc.STEP_RUN == "1. Run"
     assert by_id["checkpoint_dropdown"].label == tc.STEP_CHECKPOINT == "2. Checkpoint"
