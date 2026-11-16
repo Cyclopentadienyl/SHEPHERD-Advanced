@@ -2711,9 +2711,12 @@ def test_the_details_popover_holds_the_manifest_digests():
 def test_the_details_popover_is_drawn_over_the_parameter_labels():
     """M5-3 review: at 1280 x 720 and 1080 x 1920 the labels "Learning Rate",
     "Batch Size", "Device" and "Seed" (Gradio's z-index 40) were drawn on the
-    popover, which sits in the chip (z-index 20)."""
+    popover, which sits in the chip (z-index 20). The chip is never narrower
+    than its widest part (D08: stacked at 960 and 1440 px wide its box shrank
+    to 242 px under the 292 px fingerprint line, whose Copy and ⓘ ran past it,
+    so the ⓘ's bubble, placed beside the box, covered the ⓘ)."""
     assert tc.CHIP_Z_INDEX > 40
-    assert (f"#shep-train-chip {{ flex: 0 1 340px !important; min-width: 0 !important; "
+    assert (f"#shep-train-chip {{ flex: 0 1 340px !important; min-width: min-content !important; "
             f"position: relative; z-index: {tc.CHIP_Z_INDEX}; }}") in tc.PAGE_CSS
 
 

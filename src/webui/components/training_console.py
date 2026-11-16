@@ -4889,7 +4889,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #run_name input {{ border-radius: 8px; padding: 6px 10px !important; background: #fff; }}
 {_PAGE} #run_name input:disabled {{ background: var(--shep-grey-50); color: var(--shep-muted); }}
 {_PAGE} .shep-rb-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; white-space: nowrap; }}
-{_PAGE} #shep-train-chip {{ flex: 0 1 340px !important; min-width: 0 !important; position: relative; z-index: {CHIP_Z_INDEX}; }}
+{_PAGE} #shep-train-chip {{ flex: 0 1 340px !important; min-width: min-content !important; position: relative; z-index: {CHIP_Z_INDEX}; }}
 {_PAGE} .shep-rb-chip {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 15px; position: relative; }}
 /* The identity's parts wrap one by one (never hidden): "built …", the fingerprint, then the marks with "Details ›". */
 {_PAGE} .shep-rb-chip > .shep-ds {{ display: contents; }}
