@@ -2088,9 +2088,8 @@ PAGE_CSS = f"""
    container); stacked, the window. */
 {_PAGE} .shep-rs-wrap:has(> .shep-rs-cmp) {{ overflow: auto; max-height: calc(100vh - 32px); }}
 /* Every metric as recorded (R2): a closed native disclosure, its summary a 24 px
-   target that shows the keyboard focus (skill §10). */
+   target that shows the keyboard focus (skill §10; the ring is the shell's, style.py). */
 {_PAGE} .shep-mp-fold > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
-{_PAGE} .shep-mp-fold > summary:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 2px; }}
 {_PAGE} .shep-mp-fold[open] > summary {{ margin-bottom: 2px; }}
 {_PAGE} .shep-mp-delta {{ font-size: 14px; margin-top: 4px; }}
 {_PAGE} .shep-mp-refusal {{ display: flex; flex-direction: column; gap: 6px; margin: 12px 0;

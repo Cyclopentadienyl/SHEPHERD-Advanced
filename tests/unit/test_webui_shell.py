@@ -1594,6 +1594,26 @@ def test_the_field_rows_share_one_class_and_two_tokens():
     assert "--shep-field-pad-b: 4px;" in training_console.PAGE_CSS
 
 
+def test_every_button_link_and_disclosure_takes_the_focus_tokens_ring():
+    """D08 (R-52): the shared check found Gradio's buttons (the accent Run,
+    Start and Apply among them), every accordion's head and the Diagnosis
+    card's link buttons drawing the browser's own ring on keyboard focus
+    (``outline: auto``: no token, a faint grey on the accent buttons), on
+    every page at every size. One rule at no specificity gives every button,
+    link and disclosure the focus token's 2 px ring, so a control with a ring
+    of its own (a tab, a table row, the ⓘ) keeps it; the pages' own summary
+    rings, a second colour of the same cue, are gone. As drawn:
+    `test_every_page_at_every_size_passes_the_ui_measurement_check`."""
+    from src.webui.components import models_page, test_page
+    from src.webui.style import SHELL_CSS
+
+    assert (":where(button, a[href], summary):focus-visible { outline: 2px solid var(--shep-focus-ring); "
+            "outline-offset: 2px; }") in SHELL_CSS
+    assert ".shep-link:focus-visible" not in SHELL_CSS and ".shep-more > summary:focus-visible" not in SHELL_CSS
+    for css in (models_page.PAGE_CSS, test_page.PAGE_CSS):
+        assert "summary:focus-visible" not in css
+
+
 #: The shared scroll cue and Compare's bounded box on a page of their own (the
 #: shell's style sheet and head script, and the Models page's style sheet):
 #: a region with more below says so until its end; a Compare taller and wider

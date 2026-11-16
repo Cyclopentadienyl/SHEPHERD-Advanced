@@ -547,12 +547,12 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
 .shep-more > summary { cursor: pointer; color: var(--shep-accent-text); width: max-content; min-height: 24px; line-height: 24px; list-style: none; }
 .shep-more > summary::-webkit-details-marker { display: none; }
 .shep-more > summary:hover { text-decoration: underline; }
-.shep-more > summary:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: 2px; }
-/* Keyboard focus on a link-styled button and an icon Copy: the focus token's
-   ring, not the browser's default (R-52). */
-.gradio-container .shep-link:focus-visible, .gradio-container button.shep-copy:focus-visible {
-  outline: 2px solid var(--shep-focus-ring); outline-offset: 2px;
-}
+/* Keyboard focus on every button, link and disclosure (Gradio's buttons, an
+   accordion's head, a link-styled button, an icon Copy, a "Details ›"): the
+   focus token's 2 px ring, never the browser's own (`outline: auto`, in no
+   token: a faint grey ring on the accent buttons). At no specificity, so a
+   control with a ring of its own (a tab, a table row, the ⓘ) keeps it (R-52, D08). */
+:where(button, a[href], summary):focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: 2px; }
 .shep-more > .shep-kv { gap: 2px 12px; }
 /* A form's one line on what the operator set (`training_console.set_by_line_html`: the
    Training base form's and the Fine-tune page's), and a value Start would refuse. */
