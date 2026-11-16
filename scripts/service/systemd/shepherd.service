@@ -44,6 +44,12 @@ Environment=PYTHONUNBUFFERED=1
 # PID is the server and nothing waits beside it. Arguments after -- go to
 # uvicorn. To pin an allocator, set PYTORCH_ALLOC_CONF here; an explicit value
 # is kept on every start and restart.
+# One backend per configuration (this checkout and its saved settings file):
+# the launcher takes the configuration's instance lock in the user state
+# directory (~/.local/state/shepherd-advanced), so a desktop start of the same
+# configuration opens this service's page instead of starting a second
+# backend, and this unit's start ends with status 0 while a desktop start of it
+# runs. --port 8264 is this port or nothing: in use, the start is refused.
 ExecStart=%h/SHEPHERD-Advanced/.venv/bin/python %h/SHEPHERD-Advanced/scripts/launch/shep_launch.py --no-auto-install --no-browser -- --host 127.0.0.1 --port 8264
 # Stopping the service stops its GPU job through the backend (deployment guide
 # §4.11): SIGTERM goes to the main process only, which is the server (the

@@ -19,6 +19,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
+import types
 from pathlib import Path
 
 import pytest
@@ -90,16 +92,26 @@ class _ExecReachedError(Exception):
     """Raised by the execve stub: a real exec does not return either."""
 
 
-def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
+def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True, busy_ports=(),
+                  terminal=True, output_kept=False, launcher=None, keep_lock=False):
     """Run the launcher's own main with the server, installs and browser stubbed.
 
     Returns what it did: the server command, whether it exec'd or waited,
     browser threads started, browser openers started beside an exec (their
-    URLs), pip installs attempted, and main's status.
+    URLs and options), pip installs attempted, pages opened, whether it
+    changed to the repository, and main's status. `busy_ports` are the ports
+    another program holds (the port check is stubbed, so no socket is bound
+    and the host's own ports never decide a test); `terminal` is whether the
+    start has one, `output_kept` whether its output already goes to a file or
+    a pipe. The instance lock a start hands to its exec (`handed`) is
+    released afterwards, unless `keep_lock`.
     """
-    launcher = _launcher()
+    launcher = launcher or _launcher()
     record = {"exec": [], "run": [], "browsers": 0, "threads": [], "installs": [],
-              "openers": []}
+              "openers": [], "opened": [], "chdir": 0, "handed": []}
+    real_hand = launcher.instances.hand_to_exec
+    monkeypatch.setattr(launcher.instances, "hand_to_exec",
+                        lambda fd: (record["handed"].append(fd), real_hand(fd)))
 
     class _Thread:
         def __init__(self, *args, **kwargs):
@@ -117,7 +129,16 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
         record["run"].append(list(cmd)) or subprocess.CompletedProcess(cmd, 0)))
     monkeypatch.setattr(launcher, "serve", lambda cmd: record["run"].append(list(cmd)) or 0)
     monkeypatch.setattr(launcher, "start_browser_opener",
-                        lambda url, health: record["openers"].append((url, health)))
+                        lambda url, health, **options: record["openers"].append(
+                            (url, health, *([options] if any(options.values()) else []))))
+    monkeypatch.setattr(launcher, "port_problem", lambda host, port: (
+        launcher.IN_USE if port in busy_ports else None))
+    monkeypatch.setattr(launcher, "enter_repository",
+                        lambda: record.__setitem__("chdir", record["chdir"] + 1))
+    monkeypatch.setattr(launcher, "has_terminal", lambda: terminal)
+    monkeypatch.setattr(launcher, "output_is_kept", lambda: output_kept)
+    monkeypatch.setattr(launcher, "webbrowser", types.SimpleNamespace(
+        open=lambda url: record["opened"].append(url)))
     monkeypatch.setattr(launcher, "pip_install", lambda spec, name, **kwargs: (
         record["installs"].append(name) or False))
     # Every accelerator absent, so a requested one reaches the install decision.
@@ -135,6 +156,9 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
     except _ExecReachedError:
         record["status"] = None
     record["environ"] = dict(launcher.os.environ)
+    if not keep_lock:
+        for fd in record["handed"]:
+            os.close(fd)
     started = record["exec"] or record["run"]
     record["server"] = started[-1] if started else None
     if record["server"] is not None:
@@ -377,29 +401,42 @@ def test_with_a_browser_to_open_the_launcher_still_becomes_the_server(monkeypatc
     assert done["openers"] == [("http://127.0.0.1:8000/ui", "http://127.0.0.1:8000/health")]
 
 
-@pytest.mark.skipif(os.name != "posix", reason="launch_shepherd.sh is the POSIX start; "
-                                               "Windows starts through launch_shepherd.cmd")
+POSIX_SCRIPT = pytest.mark.skipif(os.name != "posix", reason="launch_shepherd.sh is the POSIX "
+                                   "start; Windows starts through launch_shepherd.cmd")
+
+
+def _script_checkout(root: Path, venv: bool = True) -> Path:
+    """A copy of launch_shepherd.sh in `root`, beside a stub virtual
+    environment (unless `venv` is False) and a stub launcher that says its
+    PID, working directory and arguments, so the script is tested without the
+    checkout's .venv, which the end-to-end case in
+    tests/integration/test_backend_stops_its_job.py needs."""
+    script = REPO_ROOT / "launch_shepherd.sh"
+    root.mkdir(parents=True, exist_ok=True)
+    shutil.copy(script, root / script.name)
+    if venv:
+        venv_bin = root / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        (venv_bin / "python").symlink_to(sys.executable)
+        (venv_bin / "activate").write_text(f'PATH={shlex.quote(str(venv_bin))}:"$PATH"\n',
+                                           encoding="utf-8")
+    launcher = root / "scripts" / "launch" / "shep_launch.py"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("import json, os, sys\n"
+                        "print(json.dumps({'pid': os.getpid(), 'cwd': os.getcwd(), "
+                        "'launcher': sys.argv[0], 'python': sys.executable, "
+                        "'argv': sys.argv[1:]}))\n", encoding="utf-8")
+    return root / script.name
+
+
+@POSIX_SCRIPT
 def test_launch_shepherd_sh_puts_the_launcher_in_the_pid_that_was_started(tmp_path):
     """Round 3 of the review fixes, P3-2: the script ran the launcher as its
     child, so a SIGTERM sent to the PID a supervisor started reached bash
     alone, and the server served on with its job. It execs the launcher now,
-    which execs into uvicorn (the tests above). Run here beside a stub
-    virtual environment and a stub launcher that says its PID, so this holds
-    without the checkout's .venv, which the end-to-end case in
-    tests/integration/test_backend_stops_its_job.py needs."""
-    script = REPO_ROOT / "launch_shepherd.sh"
-    shutil.copy(script, tmp_path / script.name)
-    venv_bin = tmp_path / ".venv" / "bin"
-    venv_bin.mkdir(parents=True)
-    (venv_bin / "python").symlink_to(sys.executable)
-    (venv_bin / "activate").write_text(f'PATH={shlex.quote(str(venv_bin))}:"$PATH"\n',
-                                       encoding="utf-8")
-    launcher = tmp_path / "scripts" / "launch" / "shep_launch.py"
-    launcher.parent.mkdir(parents=True)
-    launcher.write_text("import json, os, sys\n"
-                        "print(json.dumps({'pid': os.getpid(), 'argv': sys.argv[1:]}))\n",
-                        encoding="utf-8")
-
+    which execs into uvicorn (the tests above), as the local start
+    (``--local-entry`` first, UI-06)."""
+    script = _script_checkout(tmp_path)
     args = ["--no-auto-install", "--", "--port", "8264"]
     process = subprocess.Popen(["bash", script.name, *args], cwd=tmp_path,
                                stdout=subprocess.PIPE, text=True)
@@ -408,8 +445,74 @@ def test_launch_shepherd_sh_puts_the_launcher_in_the_pid_that_was_started(tmp_pa
     assert said["pid"] == process.pid, (
         f"the launcher ran as pid {said['pid']}, not as the pid that was started "
         f"({process.pid}): a SIGTERM sent to that pid would not reach it")
-    assert said["argv"] == args
+    assert said["argv"] == ["--local-entry", *args]
     assert process.returncode == 0
+
+
+@POSIX_SCRIPT
+@pytest.mark.parametrize("through", ["path", "relative-link", "absolute-link"])
+def test_launch_shepherd_sh_starts_from_any_directory(tmp_path, through):
+    """UI-06a: started from another directory (a desktop entry's, a file
+    manager's, a link on the desktop), the script looked for .venv in that
+    directory, said "Virtual environment not found" and started nothing.
+    It finds its own directory, links followed, and runs the checkout's
+    launcher with the checkout's virtual environment; the working directory
+    is left as it was started, so a relative --settings-file keeps its
+    meaning until the launcher has read it (the launcher then changes to
+    the repository: test_the_launcher_changes_to_the_repository_...)."""
+    script = _script_checkout(tmp_path / "checkout")
+    elsewhere = tmp_path / "desktop"
+    elsewhere.mkdir()
+    if through == "path":
+        argv = ["bash", str(script)]
+    else:
+        link = elsewhere / "SHEPHERD"
+        link.symlink_to(os.path.relpath(script, elsewhere) if through == "relative-link"
+                        else script)
+        argv = ["bash", str(link)]
+    done = subprocess.run([*argv, "--print-plan"], cwd=elsewhere, capture_output=True,
+                          text=True, timeout=60)
+    assert done.returncode == 0, done.stdout + done.stderr
+    said = json.loads(done.stdout.strip().splitlines()[-1])
+    checkout = script.parent.resolve()
+    assert Path(said["launcher"]) == checkout / "scripts" / "launch" / "shep_launch.py"
+    assert Path(said["python"]).parent == checkout / ".venv" / "bin"
+    assert Path(said["cwd"]) == elsewhere.resolve()
+    assert said["argv"] == ["--local-entry", "--print-plan"]
+
+
+@POSIX_SCRIPT
+def test_without_a_virtual_environment_or_a_terminal_a_page_says_why(tmp_path):
+    """UI-06e: a start from the desktop entry has no terminal to show "run
+    deploy.sh first" in. The script appends it to the launch log and opens a
+    local page saying what failed, what to do and where the log is; every
+    value escaped. With a terminal it only says so there."""
+    script = _script_checkout(tmp_path / "check<out>", venv=False)
+    state = tmp_path / "state"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    opened = tmp_path / "opened"
+    (bin_dir / "xdg-open").write_text(f'#!/bin/sh\necho "$1" >> {shlex.quote(str(opened))}\n',
+                                      encoding="utf-8")
+    (bin_dir / "xdg-open").chmod(0o755)
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path / "home"),
+           "SHEPHERD_STATE_DIR": str(state)}
+    done = subprocess.run(["bash", str(script)], cwd=tmp_path, env=env, stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True, timeout=60)
+    assert done.returncode == 1
+    assert "was not found" in done.stdout
+    page = state / "logs" / "launch-error.html"
+    for _ in range(50):  # xdg-open is started in the background
+        if opened.exists():
+            break
+        time.sleep(0.1)
+    assert opened.read_text(encoding="utf-8").strip() == f"file://{page}"
+    text = page.read_text(encoding="utf-8")
+    assert "SHEPHERD-Advanced did not start" in text
+    assert "check&lt;out&gt;/.venv was not found" in text and "<out>" not in text
+    assert "Run deploy.sh in" in text and str(state / "logs" / "launch.log") in text
+    assert "was not found" in (state / "logs" / "launch.log").read_text(encoding="utf-8")
+    assert (page.stat().st_mode & 0o777) == 0o600
 
 
 def test_where_exec_would_change_the_pid_the_browser_opens_from_a_thread(monkeypatch):
@@ -530,3 +633,484 @@ def test_the_unit_leaves_the_allocator_to_the_saved_preset():
     assert "PYTORCH_ALLOC_CONF" not in env
     assert "PYTORCH_CUDA_ALLOC_CONF" not in env
     assert _constant(PRESETS, "ALLOC_SOURCE_ENV") not in env
+
+
+# ---------------------------------------------------------------------------
+# The local start (UI-06): any directory, its mode, its settings file, the
+# port, one instance per configuration, a start without a terminal, and the
+# desktop entry
+# ---------------------------------------------------------------------------
+def test_the_launcher_changes_to_the_repository_before_it_starts_the_server(monkeypatch,
+                                                                            tmp_path):
+    """UI-06a: uvicorn imports `src` from its working directory, so a launcher
+    started elsewhere ended with "No module named 'src'". It changes to the
+    repository first, also for the systemd unit's start."""
+    done = _run_launcher(monkeypatch, shlex.split(_directive("ExecStart"))[2:])
+    assert done["chdir"] == 1 and done["exec"]
+    launcher = _launcher()
+    monkeypatch.chdir(tmp_path)
+    launcher.enter_repository()
+    assert Path.cwd() == launcher.REPO_ROOT
+
+
+@pytest.mark.parametrize("app_args, env, marked", [
+    ([], {}, True),
+    (["--host", "localhost"], {}, True),
+    (["--host", "0.0.0.0"], {"SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND": "1"}, False),
+    (["--uds", "/run/shepherd.sock"], {}, False),
+], ids=["loopback", "localhost", "network-bind", "unix-socket"])
+def test_the_local_start_marks_only_a_loopback_bind(monkeypatch, app_args, env, marked):
+    """D06: ``--local-entry`` gives the server `SHEPHERD_LOCAL_ENTRY=1` (an
+    unset mode is then M1 for this computer) only on a loopback bind; D8
+    still checks every request."""
+    done = _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install", "--no-browser",
+                                       "--", *app_args], env=env)
+    assert done["exec"]
+    assert (done["exec_env"].get("SHEPHERD_LOCAL_ENTRY") == "1") is marked
+
+
+def test_the_local_start_mark_is_never_inherited(monkeypatch):
+    """The mark is the launcher's: one in its environment (a terminal of a
+    local start, say) never reaches a server started without --local-entry,
+    as the systemd unit starts it."""
+    done = _run_launcher(monkeypatch, shlex.split(_directive("ExecStart"))[2:],
+                         env={"SHEPHERD_LOCAL_ENTRY": "1", "SHEPHERD_INSTANCE_ID": "inherited",
+                              "SHEPHERD_INSTANCE_FILE": "/tmp/inherited.json"})
+    for name in ("SHEPHERD_LOCAL_ENTRY", "SHEPHERD_INSTANCE_ID", "SHEPHERD_INSTANCE_FILE"):
+        assert name not in done["exec_env"]
+
+
+def test_an_explicit_read_only_mode_is_said_and_kept_at_a_local_start(monkeypatch, capsys):
+    done = _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install", "--no-browser"],
+                         env={"SHEPHERD_DEPLOYMENT_MODE": "read-only"})
+    assert done["exec_env"]["SHEPHERD_DEPLOYMENT_MODE"] == "read-only"
+    out = capsys.readouterr().out
+    assert ("Operator controls     : off. this deployment is read-only: the deployment mode set "
+            "at start is not M1") in out and "never overrides it" in out
+    done = _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install", "--no-browser"])
+    assert "Operator controls     : on for requests made on this computer (the local start)" \
+        in capsys.readouterr().out
+
+
+def test_settings_file_names_the_service_s_saved_settings(monkeypatch, tmp_path, capsys):
+    """``--settings-file`` (an A/B slot) is the service's
+    `SHEPHERD_SETTINGS_FILE`, over one the environment names; a relative
+    path is read against the directory the launcher was started in, not the
+    repository it changes to."""
+    monkeypatch.chdir(tmp_path)
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--settings-file",
+                                       "slot-b/deployment.json"],
+                         env={"SHEPHERD_SETTINGS_FILE": "/elsewhere/deployment.json"})
+    assert done["exec_env"]["SHEPHERD_SETTINGS_FILE"] == str(tmp_path / "slot-b"
+                                                             / "deployment.json")
+    assert (f"Saved settings file   : {tmp_path / 'slot-b' / 'deployment.json'} "
+            "(--settings-file)") in capsys.readouterr().out
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"],
+                         env={"SHEPHERD_SETTINGS_FILE": "/elsewhere/deployment.json"})
+    assert done["exec_env"]["SHEPHERD_SETTINGS_FILE"] == "/elsewhere/deployment.json"
+
+
+def test_a_default_port_in_use_moves_to_the_next_free_one_and_says_so(monkeypatch, capsys):
+    """Plan §4.5: with no --port, a port 8000 another program holds made
+    uvicorn exit after the whole start ("address already in use"). The
+    launcher takes the next free one and says which, in the URLs too."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install"], busy_ports={8000, 8001})
+    assert done["app_args"][:4] == ["--host", "127.0.0.1", "--port", "8002"]
+    assert done["openers"][0][:2] == ("http://127.0.0.1:8002/ui", "http://127.0.0.1:8002/health")
+    out = capsys.readouterr().out
+    assert "Ports 8000 to 8001 are in use by other programs, so the service uses port 8002." in out
+    assert "http://127.0.0.1:8002/ui" in out and ":8000/" not in out
+
+
+def test_every_fallback_port_in_use_starts_nothing(monkeypatch, capsys):
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"],
+                         busy_ports=set(range(8000, 8020)))
+    assert done["status"] == 1 and done["server"] is None
+    assert "Ports 8000 to 8019 are all in use by other programs" in capsys.readouterr().out
+
+
+def test_a_port_passed_in_use_is_refused_with_the_reason(monkeypatch, capsys):
+    """A port the operator chose is that port or nothing (the unit's 8264):
+    never moved to another one an operator did not ask for."""
+    argv = shlex.split(_directive("ExecStart"))[2:]
+    done = _run_launcher(monkeypatch, argv, busy_ports={8264})
+    assert done["status"] == 1 and done["server"] is None
+    out = capsys.readouterr().out
+    assert "Port 8264, passed with --port, is in use by another program, so nothing was " \
+           "started." in out
+    done = _run_launcher(monkeypatch, argv, busy_ports={8000})
+    assert done["exec"] and done["app_args"][-2:] == ["--port", "8264"]
+
+
+def test_port_problem_tells_a_port_in_use_from_a_free_one():
+    """The real check, on loopback: a port a listening socket holds is in
+    use, the same port once closed is free (SO_REUSEADDR, as uvicorn binds)."""
+    import socket as sockets
+
+    launcher = _launcher()
+    holder = sockets.socket(sockets.AF_INET, sockets.SOCK_STREAM)
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    port = holder.getsockname()[1]
+    try:
+        assert launcher.port_problem("127.0.0.1", port) == launcher.IN_USE
+    finally:
+        holder.close()
+    assert launcher.port_problem("127.0.0.1", port) is None
+
+
+def _state_env(tmp_path, **extra):
+    return {"SHEPHERD_STATE_DIR": str(tmp_path / "state"),
+            "SHEPHERD_SETTINGS_FILE": str(tmp_path / "settings" / "deployment.json"), **extra}
+
+
+def _instance_files(launcher, tmp_path, settings=None):
+    settings = settings or tmp_path / "settings" / "deployment.json"
+    return launcher.instances.instance_files(
+        tmp_path / "state", launcher.instances.instance_key(launcher.REPO_ROOT, settings))
+
+
+def test_a_start_holds_its_configuration_s_lock_through_the_exec(monkeypatch, tmp_path):
+    """Plan §4.5: the start takes its configuration's instance lock and
+    hands it to the server it becomes (an inheritable descriptor at the
+    exec), writes the info file (0600) with what a second start needs, and
+    gives the server its id and file."""
+    launcher = _launcher()
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"],
+                         env=_state_env(tmp_path), busy_ports={8000}, launcher=launcher,
+                         keep_lock=True)
+    handed = done["handed"]
+    files = _instance_files(launcher, tmp_path)
+    try:
+        assert done["exec"] and len(handed) == 1 and os.get_inheritable(handed[0])
+        info = json.loads(files.info.read_text(encoding="utf-8"))
+        assert info["format"] == "shepherd-instance/1"
+        assert info["pid"] == os.getpid() and info["port"] == 8001
+        assert info["url"] == "http://127.0.0.1:8001"
+        assert info["repo_root"] == str(launcher.REPO_ROOT)
+        assert info["settings_file"] == str(tmp_path / "settings" / "deployment.json")
+        assert done["exec_env"]["SHEPHERD_INSTANCE_ID"] == info["instance_id"]
+        assert done["exec_env"]["SHEPHERD_INSTANCE_FILE"] == str(files.info)
+        assert (files.info.stat().st_mode & 0o777) == 0o600
+        assert launcher.instances.claim(files.lock) is None, "the lock is not held"
+    finally:
+        for fd in handed:
+            os.close(fd)
+    assert launcher.instances.claim(files.lock) is not None
+
+
+class _Health:
+    """A loopback server whose /health answers with `instance_id`."""
+
+    def __init__(self, instance_id):
+        import http.server
+
+        answer = json.dumps({"status": "healthy", "instance_id": instance_id}).encode()
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(answer)
+
+            def log_message(self, *args):
+                pass
+
+        import threading
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def _running_instance(launcher, tmp_path, instance_id, answer_id, settings=None):
+    """Another start of the configuration: its lock held, its info file
+    written, its /health answering with `answer_id`."""
+    files = _instance_files(launcher, tmp_path, settings)
+    fd = launcher.instances.claim(files.lock)
+    health = _Health(answer_id)
+    launcher.instances.write_info(files.info, instance_id=instance_id, pid=4242, port=1,
+                                  url=health.url, repo_root=launcher.REPO_ROOT,
+                                  settings_file=settings, log=None)
+    return files, fd, health
+
+
+@pytest.mark.parametrize("browser", [True, False])
+def test_a_second_start_of_a_running_configuration_opens_it(monkeypatch, tmp_path, capsys,
+                                                            browser):
+    """Plan §4.5: a second double click started a second backend on the same
+    data (or failed late on the port). It finds the instance whose lock is
+    held and whose /health answers with its info file's id, opens it, and
+    starts nothing."""
+    launcher = _launcher()
+    files, fd, health = _running_instance(launcher, tmp_path, "abc123", "abc123")
+    try:
+        done = _run_launcher(monkeypatch, ["--no-auto-install"] + ([] if browser
+                                                                   else ["--no-browser"]),
+                             env=_state_env(tmp_path), launcher=launcher)
+    finally:
+        health.close()
+        os.close(fd)
+    assert done["status"] == 0 and done["server"] is None and done["installs"] == []
+    assert done["opened"] == ([f"{health.url}/ui"] if browser else [])
+    out = capsys.readouterr().out
+    assert f"SHEPHERD-Advanced already runs for this configuration at {health.url}/ui" in out
+
+
+def test_another_configuration_is_another_instance(monkeypatch, tmp_path):
+    """An A/B slot with a settings file of its own has its own lock: a start
+    of A never opens B."""
+    launcher = _launcher()
+    other = tmp_path / "slot-b" / "deployment.json"
+    files, fd, health = _running_instance(launcher, tmp_path, "abc123", "abc123", settings=other)
+    try:
+        done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"],
+                             env=_state_env(tmp_path), launcher=launcher)
+    finally:
+        health.close()
+        os.close(fd)
+    assert done["exec"] and done["opened"] == []
+
+
+def test_an_answer_without_the_instance_s_id_is_never_taken_for_it(monkeypatch, tmp_path,
+                                                                    capsys):
+    """/health 200 alone is not identity (another program may hold the port):
+    while the lock is held and the answer names another id, the start waits;
+    once the other start ends and the lock is free, it starts itself."""
+    launcher = _launcher()
+    files, fd, health = _running_instance(launcher, tmp_path, "abc123", "someone-else")
+    released = []
+
+    def sleep(seconds):
+        if not released:
+            os.close(fd)
+            released.append(seconds)
+
+    monkeypatch.setattr(launcher, "time", types.SimpleNamespace(
+        monotonic=time.monotonic, sleep=sleep, strftime=time.strftime))
+    try:
+        done = _run_launcher(monkeypatch, ["--no-auto-install"], env=_state_env(tmp_path),
+                             launcher=launcher)
+    finally:
+        health.close()
+    assert released, "the start did not wait for the instance that holds the lock"
+    assert done["exec"] and done["opened"] == []
+    assert "Another start of this configuration is under way" in capsys.readouterr().out
+    info = json.loads(files.info.read_text(encoding="utf-8"))
+    assert info["instance_id"] != "abc123" and info["pid"] == os.getpid()
+
+
+def test_a_stale_info_file_with_a_free_lock_is_replaced(monkeypatch, tmp_path):
+    launcher = _launcher()
+    files = _instance_files(launcher, tmp_path)
+    launcher.instances.write_info(files.info, instance_id="crashed", pid=1, port=8000,
+                                  url="http://127.0.0.1:9", repo_root=launcher.REPO_ROOT,
+                                  settings_file=None, log=None)
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"],
+                         env=_state_env(tmp_path), launcher=launcher)
+    assert done["exec"]
+    assert json.loads(files.info.read_text(encoding="utf-8"))["instance_id"] != "crashed"
+
+
+def test_a_refused_port_releases_the_lock_and_writes_no_info(monkeypatch, tmp_path):
+    launcher = _launcher()
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--", "--port",
+                                       "8264"], env=_state_env(tmp_path), busy_ports={8264},
+                         launcher=launcher)
+    files = _instance_files(launcher, tmp_path)
+    assert done["status"] == 1 and not files.info.exists()
+    fd = launcher.instances.claim(files.lock)
+    assert fd is not None
+    os.close(fd)
+
+
+def test_without_a_terminal_the_output_goes_to_the_launch_log(monkeypatch, tmp_path):
+    """UI-06e: a start from the desktop entry has no terminal, so its output
+    and the server's go to the launch log in the state directory, and the
+    browser opener is given the error page to show if the server ends before
+    it answers. A start with a terminal keeps its output there."""
+    launcher = _launcher()
+    logged = []
+    monkeypatch.setattr(launcher, "send_output_to_log", logged.append)
+    done = _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install"],
+                         env=_state_env(tmp_path), terminal=False, launcher=launcher)
+    state = tmp_path / "state"
+    assert logged == [state / "logs" / "launch.log"]
+    (url, health, options), = done["openers"]
+    assert options["failure_page"] == state / "logs" / "launch-error.html"
+    assert options["log_path"] == state / "logs" / "launch.log"
+    assert options["instance_id"] == done["exec_env"]["SHEPHERD_INSTANCE_ID"]
+    assert done["exec_env"]["PYTHONUNBUFFERED"] == "1"
+    logged.clear()
+    done = _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install"],
+                         env=_state_env(tmp_path, SHEPHERD_STATE_DIR=str(tmp_path / "other")),
+                         terminal=True, launcher=launcher)
+    (url, health, options), = done["openers"]
+    assert logged == [] and options["failure_page"] is None and options["log_path"] is None
+
+
+def test_without_a_terminal_output_already_redirected_stays_where_it_was(monkeypatch, tmp_path):
+    """``nohup launch_shepherd.sh > my.log`` (or a script that reads the
+    output) keeps its output there: only output nobody keeps (/dev/null, the
+    desktop session's journal) goes to the launch log. A failure still opens
+    the error page, which then names no log of its own."""
+    launcher = _launcher()
+    logged = []
+    monkeypatch.setattr(launcher, "send_output_to_log", logged.append)
+    done = _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install"],
+                         env=_state_env(tmp_path), terminal=False, output_kept=True,
+                         launcher=launcher)
+    assert logged == [] and done["exec"]
+    (url, health, options), = done["openers"]
+    assert options["failure_page"] == tmp_path / "state" / "logs" / "launch-error.html"
+    assert options["log_path"] is None
+
+
+def test_output_is_kept_tells_a_file_or_pipe_from_dev_null(tmp_path):
+    program = ("import importlib.util, sys\n"
+               "spec = importlib.util.spec_from_file_location('shep_launch', sys.argv[1])\n"
+               "launcher = importlib.util.module_from_spec(spec); spec.loader.exec_module(launcher)\n"
+               "sys.stderr.write(str(launcher.output_is_kept()))\n")
+    said = {}
+    for name, stdout in (("file", open(tmp_path / "out.log", "w")), ("pipe", subprocess.PIPE),
+                         ("devnull", subprocess.DEVNULL)):
+        done = subprocess.run([sys.executable, "-c", program, str(LAUNCHER)], stdout=stdout,
+                              stderr=subprocess.PIPE, text=True, timeout=60)
+        said[name] = done.stderr.strip().splitlines()[-1]
+    assert said == {"file": "True", "pipe": "True", "devnull": "False"}
+
+
+def test_without_a_terminal_a_refused_start_opens_a_page_saying_why(monkeypatch, tmp_path):
+    """A failure before the server is up (here a network bind without the
+    risk accepted) opens a local page with what failed, what to do and where
+    the log is, escaped; it says it in the log too."""
+    launcher = _launcher()
+    monkeypatch.setattr(launcher, "send_output_to_log", lambda path: None)
+    done = _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install", "--", "--host",
+                                       "0.0.0.0"], env=_state_env(tmp_path), terminal=False,
+                         launcher=launcher)
+    page = tmp_path / "state" / "logs" / "launch-error.html"
+    assert done["status"] == 2 and done["server"] is None
+    assert done["opened"] == [page.as_uri()]
+    text = page.read_text(encoding="utf-8")
+    assert "refusing to bind all interfaces" in text and "section 4.13" in text
+    assert str(tmp_path / "state" / "logs" / "launch.log") in text
+    assert (page.stat().st_mode & 0o777) == 0o600
+
+
+def test_the_launch_log_receives_the_output_and_is_bounded(tmp_path):
+    """The redirect itself, in a child process (it replaces fds 1 and 2):
+    the launcher's lines and a later process's land in the log, and a log
+    past its bound is moved aside once."""
+    log = tmp_path / "logs" / "launch.log"
+    log.parent.mkdir()
+    log.write_bytes(b"x" * 64)
+    program = (
+        "import importlib.util, os, sys\n"
+        "spec = importlib.util.spec_from_file_location('shep_launch', sys.argv[1])\n"
+        "launcher = importlib.util.module_from_spec(spec); spec.loader.exec_module(launcher)\n"
+        "launcher.instances.LOG_ROTATE_BYTES = 32\n"
+        "launcher.instances.rotate_log.__defaults__ = (32,)\n"
+        "launcher.send_output_to_log(__import__('pathlib').Path(sys.argv[2]))\n"
+        "launcher.log('from the launcher')\n"
+        "os.execv(sys.executable, [sys.executable, '-c', "
+        "'import sys; print(\"from the server\"); print(\"to stderr\", file=sys.stderr)'])\n")
+    done = subprocess.run([sys.executable, "-c", program, str(LAUNCHER), str(log)],
+                          capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0 and done.stdout == "" and done.stderr == ""
+    text = log.read_text(encoding="utf-8")
+    assert "from the launcher" in text and "from the server" in text and "to stderr" in text
+    assert (log.with_name("launch.log.1")).read_bytes() == b"x" * 64
+    assert (log.stat().st_mode & 0o777) == 0o600
+
+
+def _desktop_values(text):
+    """A desktop entry's keys as the specification reads them: the string
+    escapes, then (for Exec) the quoting of each argument."""
+    values = {}
+    for line in text.splitlines()[1:]:
+        key, _, value = line.partition("=")
+        values[key] = value
+    return values
+
+
+def _exec_argv(value):
+    """An Exec value's arguments by the desktop entry specification: the
+    string escapes (only \\s, \\n, \\t, \\r and \\\\), then each argument,
+    unquoted or in double quotes where a backslash escapes ", `, $ and
+    itself; %% is a literal %."""
+    string = re.sub(r"\\([sntr\\])", lambda m: {"s": " ", "n": "\n", "t": "\t", "r": "\r",
+                                                 "\\": "\\"}[m.group(1)], value)
+    argv, current, quoted, i = [], None, False, 0
+    while i < len(string):
+        ch = string[i]
+        if quoted:
+            if ch == "\\" and string[i + 1] in '"`$\\':
+                current += string[i + 1]
+                i += 1
+            elif ch == '"':
+                quoted = False
+            else:
+                current += ch
+        elif ch == " ":
+            if current is not None:
+                argv.append(current)
+            current = None
+        elif ch == '"':
+            current, quoted = (current or ""), True
+        else:
+            current = (current or "") + ch
+        i += 1
+    if current is not None:
+        argv.append(current)
+    return [arg.replace("%%", "%") for arg in argv]
+
+
+@pytest.mark.parametrize("settings", [None, "/srv/slot b/$HOME's \"100%\" `x`\\y.json"],
+                         ids=["default", "awkward-settings-path"])
+def test_the_desktop_entry_starts_this_checkout_without_a_terminal(monkeypatch, tmp_path,
+                                                                   settings):
+    """UI-06e: ``launch_shepherd.sh --install-desktop-entry`` writes an entry
+    whose Exec is this checkout's absolute launch_shepherd.sh (by bash), with
+    ``--settings-file`` for an A/B slot, quoted and escaped as the desktop
+    entry specification asks, no terminal, this repository's icon."""
+    launcher = _launcher()
+    home = tmp_path / "home"
+    args = ["--install-desktop-entry"] + (["--settings-file", settings] if settings else [])
+    done = _run_launcher(monkeypatch, args, env={"HOME": str(home)}, launcher=launcher)
+    assert done["status"] == 0 and done["server"] is None
+    entries = list((home / ".local" / "share" / "applications").iterdir())
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.name == ("shepherd-advanced.desktop" if settings is None
+                          else f"shepherd-advanced-{launcher.instances.instance_key(launcher.REPO_ROOT, settings)[:8]}.desktop")
+    text = entry.read_text(encoding="utf-8")
+    assert text.startswith("[Desktop Entry]\n")
+    values = _desktop_values(text)
+    assert values["Type"] == "Application" and values["Terminal"] == "false"
+    expected = ["bash", str(launcher.REPO_ROOT / "launch_shepherd.sh")]
+    if settings:
+        expected += ["--settings-file", settings]
+    assert _exec_argv(values["Exec"]) == expected
+    assert Path(values["Icon"]).is_file() and Path(values["Path"]) == launcher.REPO_ROOT
+    assert (entry.stat().st_mode & 0o777) == 0o644
+
+
+def test_the_desktop_entry_follows_xdg_data_home(monkeypatch, tmp_path):
+    data = tmp_path / "data"
+    done = _run_launcher(monkeypatch, ["--install-desktop-entry"],
+                         env={"HOME": str(tmp_path / "home"), "XDG_DATA_HOME": str(data)})
+    assert done["status"] == 0
+    assert (data / "applications" / "shepherd-advanced.desktop").is_file()
+    assert not (tmp_path / "home").exists()
+
+
+def test_the_desktop_entry_is_refused_without_a_home(monkeypatch, capsys):
+    done = _run_launcher(monkeypatch, ["--install-desktop-entry"], env={})
+    assert done["status"] == 2
+    assert "HOME is not set" in capsys.readouterr().out

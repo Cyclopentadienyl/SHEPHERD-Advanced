@@ -1,5 +1,8 @@
 @echo off
 rem --- Wrapper: keep the window open on error so the user can read messages ---
+rem The repository is this file's directory, read here at the top level (in a
+rem subroutine %0 is the label), and the working directory below (UI-06a).
+set "REPO_ROOT=%~dp0"
 call :main %*
 set "_EXIT_CODE=%ERRORLEVEL%"
 if %_EXIT_CODE% neq 0 (
@@ -33,9 +36,13 @@ if defined SHEP_COMMANDLINE_ARGS (
     set "COMMANDLINE_ARGS=%SHEP_COMMANDLINE_ARGS%"
 )
 
-REM Resolve repo root from this .cmd location
-set "REPO_ROOT=%~dp0"
+REM The repo root (set above from this .cmd location), and the working directory,
+REM wherever this was started from: uvicorn imports src from it
 if "%REPO_ROOT:~-1%"=="\" set "REPO_ROOT=%REPO_ROOT:~0,-1%"
+cd /d "%REPO_ROOT%" || (
+    echo [ERROR] Cannot change to %REPO_ROOT%.
+    exit /b 1
+)
 
 REM Create/activate venv if missing
 if not exist "%REPO_ROOT%\.venv" (
@@ -54,8 +61,11 @@ call "%REPO_ROOT%\.venv\Scripts\activate" || (
 REM Ensure pip is up-to-date (silent)
 python -m pip install --upgrade pip >nul 2>&1
 
-REM Call Python launcher (reads COMMANDLINE_ARGS env)
-python -u "%REPO_ROOT%\scripts\launch\shep_launch.py"
+REM Call Python launcher (reads COMMANDLINE_ARGS env) as the local start
+REM (--local-entry: on a loopback bind the operator controls are on for this
+REM computer unless SHEPHERD_DEPLOYMENT_MODE says otherwise), with this file's
+REM arguments
+python -u "%REPO_ROOT%\scripts\launch\shep_launch.py" --local-entry %*
 set EXITCODE=%ERRORLEVEL%
 
 REM Deactivate venv (optional)

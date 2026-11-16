@@ -218,3 +218,63 @@ def test_the_helper_stops_waiting_once_the_server_is_gone(monkeypatch):
     running.install(monkeypatch, launcher)
     launcher._open_browser_when_ready(UI, HEALTH, server=os.getpid())
     assert running.opened == [UI] and len(running.attempts) == 4
+
+
+class _Answer:
+    """A /health answer with a body, as urlopen returns one."""
+
+    def __init__(self, body, status=200):
+        self.status = status
+        self._body = body
+
+    def read(self):
+        return self._body.encode("utf-8")
+
+
+def test_with_an_instance_id_only_its_own_answer_opens_the_browser(monkeypatch):
+    """Plan §4.5: a 200 from /health alone is not this start's server (a
+    program that holds the port answers it too). With the instance id the
+    launcher gave its server, an answer naming another id, or none, never
+    opens the browser; the server's own answer does."""
+    launcher = _launcher()
+    answers = iter([_Answer('{"status": "healthy"}'), _Answer('{"instance_id": "other"}'),
+                    _Answer("not json"), _Answer('{"instance_id": "mine"}')])
+    server = _Server(refusals=0)
+    server.install(monkeypatch, launcher)
+    monkeypatch.setattr(launcher, "urlopen", lambda url, timeout: next(answers))
+    assert launcher._open_browser_when_ready(UI, HEALTH, instance_id="mine") is True
+    assert server.opened == [UI] and len(server.sleeps) == 3
+
+
+def test_a_server_that_ends_before_it_answers_shows_the_failure(monkeypatch):
+    """UI-06e: without a terminal nobody sees the server's last words; when
+    it ends before /health answers, the helper runs `on_gone` (the error
+    page), and never once it has opened the browser."""
+    ended = subprocess.Popen([sys.executable, "-c", "pass"])
+    ended.wait()
+    launcher = _launcher()
+    gone = []
+    _Server(refusals=None, stop_at=60).install(monkeypatch, launcher)
+    assert launcher._open_browser_when_ready(UI, HEALTH, server=ended.pid,
+                                             on_gone=lambda: gone.append(True)) is False
+    assert gone == [True]
+    running = _Server(refusals=1)
+    running.install(monkeypatch, launcher)
+    assert launcher._open_browser_when_ready(UI, HEALTH, server=os.getpid(),
+                                             on_gone=lambda: gone.append(False)) is True
+    assert gone == [True]
+
+
+def test_the_failure_page_names_the_log_and_escapes_what_it_shows(monkeypatch, tmp_path):
+    launcher = _launcher()
+    opened = []
+    monkeypatch.setattr(launcher, "webbrowser", types.SimpleNamespace(open=opened.append))
+    page, log = tmp_path / "logs" / "launch-error.html", tmp_path / "logs" / "launch.log"
+    launcher.server_gone_page(str(page), str(log))()
+    text = page.read_text(encoding="utf-8")
+    assert opened == [page.as_uri()]
+    assert launcher.SERVER_GONE in text and str(log) in text
+    launcher.show_error_page(page, "<script>x</script>", "a & b", None)
+    text = page.read_text(encoding="utf-8")
+    assert "&lt;script&gt;" in text and "<script>" not in text and "a &amp; b" in text
+    assert "none was written" in text

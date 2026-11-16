@@ -1,9 +1,9 @@
 # scripts/launch/shep_launch.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import argparse, json, os, platform, subprocess, sys, textwrap, threading, time, webbrowser
+import argparse, errno, html, json, os, platform, socket, subprocess, sys, textwrap, threading, time, webbrowser
 from pathlib import Path
-from typing import Dict, Any, List, Mapping, NamedTuple, Optional, Tuple
+from typing import Callable, Dict, Any, List, Mapping, NamedTuple, Optional, Tuple
 import shlex
 from urllib.request import ProxyHandler, build_opener
 from urllib.error import URLError
@@ -17,6 +17,10 @@ UVICORN_APP = "src.api.main:app"
 # Loopback by default (SPEC_4 B1, since M5-1); another --host, --fd or --uds
 # after `--` is checked by the bind guard below (`bind_plan`).
 UVICORN_DEFAULT_ARGS = ["--host", "127.0.0.1", "--port", "8000"]
+#: The port a start without ``--port`` takes, and the ones it tries next, in
+#: order, when that one is in use (plan §4.5; `choose_port`).
+DEFAULT_PORT = 8000
+FALLBACK_PORTS = range(8001, 8020)
 # Always last on uvicorn's command line, so a --proxy-headers passed through
 # cannot turn it back on: uvicorn would otherwise rewrite the client address
 # from X-Forwarded-For for a peer on 127.0.0.1. M1 has no proxy, and D8 reads
@@ -33,12 +37,27 @@ from src.config.runtime_presets import (  # noqa: E402
     load_runtime_settings,
     resolve_allocator,
 )
+from src.config.atomic_json import ensure_directory  # noqa: E402
+from src.config.deployment_settings import ENV_SETTINGS_FILE, settings_location  # noqa: E402
 from src.config.server_settings import (  # noqa: E402
     ENV_BIND_HOST,
+    ENV_LOCAL_ENTRY,
+    LOCAL_ENTRY,
     bind_is_loopback,
+    deployment_mode,
     inherited_socket_bind,
     network_bind,
 )
+from src.utils import launch_instance as instances  # noqa: E402
+
+#: The launcher's own variables, never an operator's: each is removed from its
+#: environment before anything reads it and set again only by this start
+#: (the bind host, the local start's mark, the instance's id and info file).
+LAUNCHER_VARIABLES = (ENV_BIND_HOST, ENV_LOCAL_ENTRY, instances.ENV_INSTANCE_ID,
+                      instances.ENV_INSTANCE_FILE)
+#: The script a desktop entry starts, and the icon it shows.
+LAUNCH_SCRIPT = REPO_ROOT / "launch_shepherd.sh"
+DESKTOP_ICON = REPO_ROOT / "scripts" / "launch" / "shepherd-advanced.svg"
 
 def log(msg: str) -> None:
     print(f"[SHEPHERD] {msg}")
@@ -81,9 +100,26 @@ def urlopen(url: str, timeout: float):
     """Open ``url`` on this host's own server, never through a proxy."""
     return _LOCAL_OPENER.open(url, timeout=timeout)
 
+def _answers_as(response: Any, instance_id: Optional[str]) -> bool:
+    """Whether a 200 from ``/health`` is this start's server: with no
+    ``instance_id`` to compare, any 200 is; with one, only an answer that
+    names it (another program may hold the port; plan §4.5)."""
+    if response.status != 200:
+        return False
+    if instance_id is None:
+        return True
+    try:
+        body = json.loads(response.read().decode("utf-8"))
+    except (ValueError, OSError, AttributeError):
+        return False
+    return isinstance(body, dict) and body.get("instance_id") == instance_id
+
+
 def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 30.0,
-                             server: Optional[int] = None) -> None:
-    """Poll ``health_url`` until it answers, then open ``url`` once.
+                             server: Optional[int] = None, instance_id: Optional[str] = None,
+                             on_gone: Optional[Callable[[], None]] = None) -> bool:
+    """Poll ``health_url`` until it answers, then open ``url`` once; True
+    when it opened it.
 
     Runs beside the server: in the helper `start_browser_opener` starts,
     given the server's PID as ``server``, or on Windows in a daemon thread of
@@ -98,17 +134,20 @@ def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 
     every ``progress_every`` seconds says the server is still starting.
 
     ``/health``, not ``/ready``: ``/ready`` stays 503 after a failed startup,
-    and the dashboard is where an operator then reloads a pipeline.
+    and the dashboard is where an operator then reloads a pipeline. With
+    ``instance_id`` (the launcher's start), only an answer naming that id
+    counts (`_answers_as`). ``on_gone`` runs when the server ended before it
+    answered: a start without a terminal shows its error page then.
     """
     started = time.monotonic()
     next_progress = progress_every
     while server is None or _is_running(server):
         try:
             resp = urlopen(health_url, timeout=3)
-            if resp.status == 200:
+            if _answers_as(resp, instance_id):
                 log(f"Server ready — opening browser: {url}")
                 webbrowser.open(url)
-                return
+                return True
         except (URLError, OSError):
             pass
         elapsed = time.monotonic() - started
@@ -116,6 +155,9 @@ def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 
             log(f"Server still starting ({elapsed:.0f} s); the browser opens when {health_url} answers")
             next_progress = elapsed + progress_every
         time.sleep(1.0)
+    if on_gone is not None:
+        on_gone()
+    return False
 
 def _is_running(pid: int) -> bool:
     """Whether a process ``pid`` exists (one of another user's counts)."""
@@ -131,7 +173,10 @@ def _is_running(pid: int) -> bool:
 #: first process forks and exits at once, so the launcher, which waits for
 #: that one, has no child left when it becomes the server; the second, whose
 #: parent is then the system's, polls (`_open_browser_when_ready`). It stays
-#: in the terminal's process group, so a Ctrl-C ends it too.
+#: in the terminal's process group, so a Ctrl-C ends it too. Its optional
+#: arguments: the instance id ``/health`` must answer, and the error page and
+#: log of a start without a terminal (`server_gone_page`), shown when the
+#: server ends before it answers.
 _BROWSER_OPENER = (
     "import importlib.util, os, sys\n"
     "if os.fork():\n"
@@ -140,19 +185,25 @@ _BROWSER_OPENER = (
     "    spec = importlib.util.spec_from_file_location('shep_launch', sys.argv[1])\n"
     "    launcher = importlib.util.module_from_spec(spec)\n"
     "    spec.loader.exec_module(launcher)\n"
-    "    launcher._open_browser_when_ready(sys.argv[2], sys.argv[3], server=int(sys.argv[4]))\n"
+    "    instance_id, page, log = (sys.argv[5:] + ['', '', ''])[:3]\n"
+    "    on_gone = launcher.server_gone_page(page, log) if page else None\n"
+    "    launcher._open_browser_when_ready(sys.argv[2], sys.argv[3], server=int(sys.argv[4]),\n"
+    "                                      instance_id=instance_id or None, on_gone=on_gone)\n"
     "except KeyboardInterrupt:\n"
     "    pass\n"
 )
 
-def start_browser_opener(url: str, health_url: str) -> None:
+def start_browser_opener(url: str, health_url: str, instance_id: Optional[str] = None,
+                         failure_page: Optional[Path] = None,
+                         log_path: Optional[Path] = None) -> None:
     """Start the browser opener detached from this process, which then becomes
     the server (`exec_server`) and keeps its PID, the one the opener is given
     to watch. A new interpreter rather than a fork of this one: the launcher
     has imported torch, whose threads a forked copy would not have."""
     sys.stdout.flush()
+    extra = [instance_id or "", str(failure_page or ""), str(log_path or "")]
     subprocess.run([sys.executable, "-c", _BROWSER_OPENER, str(Path(__file__).resolve()),
-                    url, health_url, str(os.getpid())], check=False)
+                    url, health_url, str(os.getpid()), *extra], check=False)
 
 def apply_allocator(env, settings: Dict[str, Any]) -> List[str]:
     """Put the CUDA allocator into ``env`` and return what to log.
@@ -326,6 +377,397 @@ def choose_spec(table: Dict[str, Any], key: str, *, torch_v: Optional[str], cuda
     except Exception:
         return entry.get("default")
 
+# ---------------------------------------------------------------------------
+# The local start (UI-06): a start without a terminal, its log and error page
+# ---------------------------------------------------------------------------
+def has_terminal() -> bool:
+    """Whether any of this process's standard streams is a terminal. A start
+    from the desktop entry has none (its output would be lost), a start from
+    a terminal has one even when its output is piped."""
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            if stream is not None and stream.isatty():
+                return True
+        except (AttributeError, ValueError, OSError):
+            continue
+    return False
+
+
+def output_is_kept() -> bool:
+    """Whether this process's output already goes somewhere a person chose:
+    a regular file or a pipe (``nohup ... > my.log``, a script or a test that
+    reads it). A desktop start's output goes to /dev/null or to the session's
+    journal socket, where nobody reads it; that, or a closed descriptor, is
+    not kept."""
+    import stat
+
+    try:
+        mode = os.fstat(1).st_mode
+    except OSError:
+        return False
+    return stat.S_ISREG(mode) or stat.S_ISFIFO(mode)
+
+
+def send_output_to_log(path: Path) -> None:
+    """Append this process's output, and the server's it execs into, to the
+    launch log at `path` (0600; moved aside once it is large,
+    `launch_instance.rotate_log`)."""
+    ensure_directory(path.parent)
+    instances.rotate_log(path)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.dup2(fd, 1)
+    os.dup2(fd, 2)
+    os.close(fd)
+    print(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} start of SHEPHERD-Advanced "
+          f"(pid {os.getpid()}, {REPO_ROOT}) =====", flush=True)
+
+
+ERROR_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>SHEPHERD-Advanced did not start</title>
+<style>
+body {{ font: 15px/1.5 system-ui, sans-serif; color: #1f2430; background: #fff;
+       max-width: 720px; margin: 40px auto; padding: 0 16px; }}
+h1 {{ font-size: 20px; font-weight: 600; }}
+dt {{ font-size: 14px; font-weight: 600; margin-top: 16px; }}
+dd {{ margin: 4px 0 0; }}
+code {{ font-size: 14px; word-break: break-all; }}
+.meta {{ font-size: 14px; color: #434a58; margin-top: 24px; }}
+</style></head>
+<body><h1>SHEPHERD-Advanced did not start</h1>
+<dl><dt>What failed</dt><dd>{what}</dd>
+<dt>What to do</dt><dd>{remedy}</dd>
+<dt>The full log</dt><dd><code>{log}</code></dd></dl>
+<p class="meta">Written {when} by the launcher of {repo}.</p>
+</body></html>
+"""
+
+
+def write_error_page(page: Path, what: str, remedy: str, log_path: Optional[Path]) -> Path:
+    """The local error page of a start without a terminal: what failed, what
+    to do and where the log is, every value escaped. Written whole (0600)."""
+    ensure_directory(page.parent)
+    text = ERROR_PAGE.format(what=html.escape(what), remedy=html.escape(remedy),
+                             log=html.escape(str(log_path) if log_path else "none was written"),
+                             when=html.escape(time.strftime("%Y-%m-%d %H:%M:%S")),
+                             repo=html.escape(str(REPO_ROOT)))
+    staged = page.with_name(f".{page.name}.{os.getpid()}.tmp")
+    fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as out:
+        out.write(text)
+    os.replace(staged, page)
+    return page
+
+
+def show_error_page(page: Path, what: str, remedy: str, log_path: Optional[Path]) -> None:
+    """Write the error page and open it in the browser; a failure to do
+    either is logged, never raised (the start has failed already)."""
+    try:
+        written = write_error_page(page, what, remedy, log_path)
+        webbrowser.open(written.as_uri())
+        log(f"The error page is {written}")
+    except Exception as exc:  # noqa: BLE001 - the start has failed already
+        log(f"WARNING: the error page could not be shown ({exc})")
+
+
+#: What to do when the server ended before it answered.
+SERVER_GONE = "The service stopped before it was ready to show the dashboard."
+SERVER_GONE_REMEDY = ("Read the end of the log for the reason, correct it, then start "
+                      "SHEPHERD-Advanced again.")
+
+
+def server_gone_page(page: str, log_path: str) -> Callable[[], None]:
+    """The browser opener's `on_gone` for a start without a terminal: the
+    error page saying the server ended before it answered."""
+    return lambda: show_error_page(Path(page), SERVER_GONE, SERVER_GONE_REMEDY,
+                                   Path(log_path) if log_path else None)
+
+
+class Failure:
+    """How this start reports a failure before the server is up: a log line
+    always, and the error page too when it has no terminal (`page` set)."""
+
+    def __init__(self, page: Optional[Path] = None, log_path: Optional[Path] = None) -> None:
+        self.page = page
+        self.log_path = log_path
+
+    def __call__(self, what: str, remedy: str, status: int) -> int:
+        log(f"ERROR: {what}")
+        if self.page is not None:
+            show_error_page(self.page, what, remedy, self.log_path)
+        return status
+
+
+# ---------------------------------------------------------------------------
+# The port (plan §4.5)
+# ---------------------------------------------------------------------------
+#: `port_problem`'s answer for a port another socket holds.
+IN_USE = "in use by another program"
+
+
+def port_problem(host: str, port: int) -> Optional[str]:
+    """None when uvicorn could bind `host`:`port` now, else why not
+    (`IN_USE`, or the system's reason). Bound as uvicorn binds it: the
+    address family of the host, and on POSIX ``SO_REUSEADDR``, so a port
+    left in TIME_WAIT is free; on Windows, where that option would let a
+    second socket take a port in use, without it."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    try:
+        sock = socket.socket(family, socket.SOCK_STREAM)
+    except OSError as exc:
+        return exc.strerror or str(exc)
+    with sock:
+        if os.name == "posix":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host.strip("[]"), port))
+        except OSError as exc:
+            if exc.errno == errno.EADDRINUSE or getattr(exc, "winerror", None) == 10048:
+                return IN_USE
+            return exc.strerror or str(exc)
+    return None
+
+
+class PortChoice(NamedTuple):
+    """`choose_port`'s answer: the port to serve on (None when the
+    arguments' port is left to uvicorn, or nothing is started), a note to
+    log, and the error that starts nothing."""
+
+    port: Optional[int]
+    note: Optional[str] = None
+    error: Optional[str] = None
+
+
+def choose_port(host: str, requested: Optional[str],
+                problem: Optional[Callable[[str, int], Optional[str]]] = None) -> PortChoice:
+    """The port this start serves on (plan §4.5). A port passed with
+    ``--port`` is that port or nothing: in use, the start is refused with the
+    reason. Without one, `DEFAULT_PORT`, else the first free one of
+    `FALLBACK_PORTS`, said in the note. A ``--port`` that is not a number, or
+    0 (any free port, which no URL can name in advance), is left to uvicorn.
+    `problem` is `port_problem` unless given."""
+    problem = problem or port_problem
+    last = FALLBACK_PORTS[-1]
+    if requested is not None:
+        try:
+            port = int(requested)
+        except ValueError:
+            return PortChoice(None)
+        if port <= 0:
+            return PortChoice(None)
+        why = problem(host, port)
+        if why is None:
+            return PortChoice(port)
+        if why == IN_USE:
+            return PortChoice(None, error=(
+                f"Port {port}, passed with --port, is in use by another program, so nothing "
+                f"was started. Pass a free port, or leave --port out and the launcher takes "
+                f"a free one from {DEFAULT_PORT} to {last}."))
+        return PortChoice(None, error=f"Port {port} on {host} cannot be used ({why}), so "
+                                      "nothing was started.")
+    for port in (DEFAULT_PORT, *FALLBACK_PORTS):
+        why = problem(host, port)
+        if why is None:
+            if port == DEFAULT_PORT:
+                return PortChoice(port)
+            taken = (f"Port {DEFAULT_PORT} is" if port == DEFAULT_PORT + 1
+                     else f"Ports {DEFAULT_PORT} to {port - 1} are")
+            return PortChoice(port, note=f"{taken} in use by other programs, so the service "
+                                         f"uses port {port}.")
+        if why != IN_USE:
+            return PortChoice(None, error=f"Port {port} on {host} cannot be used ({why}), so "
+                                          "nothing was started.")
+    return PortChoice(None, error=(
+        f"Ports {DEFAULT_PORT} to {last} are all in use by other programs, so nothing was "
+        "started. Close one of them, or pass a free port: launch_shepherd.sh -- --port N"))
+
+
+# ---------------------------------------------------------------------------
+# One instance per configuration (plan §4.5; src/utils/launch_instance.py)
+# ---------------------------------------------------------------------------
+def instance_answers(info: Mapping[str, Any], timeout: float = 3.0) -> bool:
+    """Whether the instance an info file describes answers ``/health`` with
+    the file's own id; a 200 alone never counts."""
+    url = info.get("url")
+    if not isinstance(url, str) or not url.startswith("http://"):
+        return False
+    try:
+        return _answers_as(urlopen(f"{url}/health", timeout=timeout), info.get("instance_id"))
+    except (URLError, OSError, ValueError):
+        return False
+
+
+class Claim(NamedTuple):
+    """What `claim_instance` found: this start's lock (`fd`), or the info of
+    the instance of this configuration that runs and answers (`running`)."""
+
+    fd: Optional[int]
+    running: Optional[Dict[str, Any]] = None
+
+
+def claim_instance(files: "instances.Instance", progress_every: float = 30.0) -> Claim:
+    """Take this configuration's instance lock, or find the instance that
+    holds it. While another start holds the lock and does not answer yet (it
+    is still starting), wait: it answers, and this start opens it, or it ends
+    and releases the lock, and this start takes it. No deadline, as the
+    browser opener has none: a start that loads a large table takes minutes.
+
+    Raises:
+        OSError: the lock file cannot be created or opened."""
+    started = time.monotonic()
+    next_progress = 0.0
+    while True:
+        fd = instances.claim(files.lock)
+        if fd is not None:
+            return Claim(fd)
+        info = instances.read_info(files.info)
+        if info is not None and instance_answers(info):
+            return Claim(None, info)
+        elapsed = time.monotonic() - started
+        if elapsed >= next_progress:
+            log(f"Another start of this configuration is under way ({elapsed:.0f} s; its lock "
+                f"is {files.lock}); waiting for it to answer, or to end")
+            next_progress = elapsed + progress_every
+        time.sleep(1.0)
+
+
+# ---------------------------------------------------------------------------
+# The saved settings file this start uses (--settings-file)
+# ---------------------------------------------------------------------------
+def apply_settings_file(argument: Optional[str], cwd: Path, environ) -> None:
+    """``--settings-file PATH``: the saved settings file the service reads
+    (`SHEPHERD_SETTINGS_FILE`; an A/B slot), over one the environment names.
+    A relative path is read against the directory the launcher was started
+    in, before it changes to the repository."""
+    if argument is None:
+        return
+    path = Path(argument).expanduser()
+    if not path.is_absolute():
+        path = cwd / path
+    environ[ENV_SETTINGS_FILE] = os.path.abspath(path)
+
+
+def settings_file_words(environ, named_here: bool) -> str:
+    """Which saved settings file the service reads, and why, for the log."""
+    location = settings_location(environ)
+    if location.problem is not None:
+        return f"WARNING: {location.problem}; the data locations come only from the environment"
+    if location.path is None:
+        return ("none (HOME is not set): the data locations come only from the environment")
+    why = ("--settings-file" if named_here
+           else ENV_SETTINGS_FILE if location.explicit else "this account's")
+    return f"{location.path} ({why})"
+
+
+# ---------------------------------------------------------------------------
+# The desktop entry (UI-06e)
+# ---------------------------------------------------------------------------
+#: Characters the desktop entry specification reserves in an Exec argument.
+_EXEC_RESERVED = set(' \t\n"\'\\><~|&;$*?#()`')
+
+
+def desktop_exec_argument(argument: str) -> str:
+    """`argument` as one Exec argument of a desktop entry: quoted when it holds
+    a reserved character (``"``, `` ` ``, ``$`` and ``\\`` escaped inside the
+    quotes), then every backslash doubled (the value is also a string whose
+    ``\\`` is an escape) and ``%`` written ``%%`` (a field code otherwise)."""
+    if "\n" in argument or "\r" in argument:
+        raise ValueError(f"a path with a line break cannot be started from a desktop entry: "
+                         f"{argument!r}")
+    if any(ch in _EXEC_RESERVED for ch in argument):
+        inner = "".join("\\" + ch if ch in '"`$\\' else ch for ch in argument)
+        argument = f'"{inner}"'
+    return argument.replace("\\", "\\\\").replace("%", "%%")
+
+
+def _desktop_string(value: str) -> str:
+    """A desktop entry string value: its backslashes escaped; a line break
+    refused (`desktop_exec_argument` refuses it in a path first)."""
+    if "\n" in value or "\r" in value:
+        raise ValueError(f"a desktop entry value cannot hold a line break: {value!r}")
+    return value.replace("\\", "\\\\")
+
+
+def desktop_entry_text(settings_file: Optional[str]) -> str:
+    """The desktop entry of this checkout: `LAUNCH_SCRIPT` by bash (so it
+    starts even where an unpacked archive dropped the script's exec bit), with
+    ``--settings-file`` for an A/B slot, no terminal, this repository's icon."""
+    argv = ["bash", str(LAUNCH_SCRIPT)]
+    name = "SHEPHERD-Advanced"
+    comment = f"Open the SHEPHERD-Advanced dashboard of {REPO_ROOT} on this computer"
+    if settings_file is not None:
+        argv += ["--settings-file", settings_file]
+        name = f"SHEPHERD-Advanced ({Path(settings_file).parent.name or settings_file})"
+        comment += f", with the saved settings {settings_file}"
+    exec_line = " ".join(desktop_exec_argument(arg) for arg in argv)
+    lines = [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Version=1.5",
+        f"Name={_desktop_string(name)}",
+        f"Comment={_desktop_string(comment)}",
+        f"Exec={exec_line}",
+        f"Path={_desktop_string(str(REPO_ROOT))}",
+        f"Icon={_desktop_string(str(DESKTOP_ICON))}",
+        "Terminal=false",
+        "StartupNotify=false",
+        "Categories=Science;MedicalSoftware;",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def desktop_entry_path(environ, settings_file: Optional[str]) -> Optional[Path]:
+    """Where the entry goes: ``${XDG_DATA_HOME:-~/.local/share}/applications``,
+    ``shepherd-advanced.desktop``, or for a settings file of its own one named
+    after it, so an A slot's and a B slot's entries are both kept. None when
+    HOME is not set."""
+    data = environ.get("XDG_DATA_HOME") or ""
+    base = Path(data) if data and Path(data).is_absolute() else None
+    if base is None:
+        home = environ.get("HOME") or ""
+        if not home or not Path(home).is_absolute():
+            return None
+        base = Path(home) / ".local" / "share"
+    name = "shepherd-advanced.desktop"
+    if settings_file is not None:
+        name = f"shepherd-advanced-{instances.instance_key(REPO_ROOT, settings_file)[:8]}.desktop"
+    return base / "applications" / name
+
+
+def install_desktop_entry(environ, settings_file: Optional[str]) -> int:
+    """``--install-desktop-entry``: write this checkout's desktop entry
+    (`desktop_entry_text`) and say where, with the paths it names."""
+    if sys.platform.startswith("win") or sys.platform == "darwin":
+        log("ERROR: a desktop entry is a Linux desktop's; on Windows start launch_shepherd.cmd "
+            "by double click, or make a shortcut to it")
+        return 2
+    target = desktop_entry_path(environ, settings_file)
+    if target is None:
+        log("ERROR: HOME is not set, so where the desktop entry goes cannot be told")
+        return 2
+    try:
+        text = desktop_entry_text(settings_file)
+    except ValueError as exc:
+        log(f"ERROR: {exc}")
+        return 2
+    ensure_directory(target.parent, mode=0o755)
+    staged = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as out:
+        out.write(text)
+    os.replace(staged, target)
+    log(f"Desktop entry written: {target}")
+    log(f"  It starts      : {LAUNCH_SCRIPT}")
+    log(f"  Settings file  : {settings_file or 'this account’s (the default)'}")
+    log(f"  Icon           : {DESKTOP_ICON}")
+    if not (REPO_ROOT / ".venv").is_dir():
+        log(f"WARNING: {REPO_ROOT / '.venv'} is not there yet: run deploy.sh first, or the "
+            "entry opens a page saying so")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="shep_launch", description="SHEPHERD launcher for optional accelerators", formatter_class=argparse.RawTextHelpFormatter,
                                 epilog="Arguments after -- go to the main app unchanged, e.g.  shep_launch.py --no-browser -- --port 8264")
@@ -351,6 +793,18 @@ def build_parser() -> argparse.ArgumentParser:
     m = p.add_argument_group("Main app")
     m.add_argument("--entry", type=str, default=DEFAULT_ENTRY, help="Python module to run with -m (default: uvicorn)")
     m.add_argument("--no-browser", action="store_true", help="Do not open a browser once the server is ready.")
+    s = p.add_argument_group("Local start")
+    s.add_argument("--local-entry", action="store_true",
+                   help="Started from the desktop entry or launch_shepherd.sh/.cmd. On a loopback\n"
+                        "bind the operator controls are on for this computer unless\n"
+                        "SHEPHERD_DEPLOYMENT_MODE says otherwise; without a terminal the output\n"
+                        "goes to a log file and a failed start opens a page saying why.")
+    s.add_argument("--settings-file", metavar="PATH",
+                   help="The saved settings file the service reads (an A/B slot); default:\n"
+                        "SHEPHERD_SETTINGS_FILE, else this account's.")
+    s.add_argument("--install-desktop-entry", action="store_true",
+                   help="Write a desktop entry that starts this checkout (with --settings-file,\n"
+                        "with that file) and exit.")
     return p
 
 def split_passthrough(argv: List[str]) -> Tuple[List[str], List[str]]:
@@ -502,6 +956,38 @@ def collect_args_from_env_and_cli() -> Tuple[List[str], List[str]]:
     cli_own, cli_app = split_passthrough(sys.argv[1:])
     return env_own + cli_own, env_app + cli_app
 
+def enter_repository() -> None:
+    """Change to the repository root, whatever directory the launcher was
+    started in (UI-06a): uvicorn imports ``src`` from its working directory,
+    and Restart Backend re-execs the server in it."""
+    os.chdir(REPO_ROOT)
+
+
+def _drop_instance(info_path: Optional[Path], instance_id: Optional[str],
+                   fd: Optional[int]) -> None:
+    """A start that ends before its server is up: its info file removed (when
+    it still names this start) and its instance lock released."""
+    if info_path is not None and instance_id is not None:
+        info = instances.read_info(info_path)
+        if info is not None and info.get("instance_id") == instance_id:
+            try:
+                info_path.unlink()
+            except OSError:
+                pass
+    if fd is not None:
+        os.close(fd)
+
+
+#: What to do after a refused bind, said on the error page.
+BIND_REMEDY = ("Start it on this computer's own address (leave --host out), or accept the risk "
+               "as the deployment guide's section 4.13 says.")
+#: What to do when the port cannot be had.
+PORT_REMEDY = ("Close the program that uses the port, or start SHEPHERD-Advanced on another "
+               "port; leave --port out and the launcher picks a free one.")
+#: What to do when the server program cannot be started at all.
+EXEC_REMEDY = "Run deploy.sh again in the repository, then start SHEPHERD-Advanced again."
+
+
 def main() -> int:
     parser = build_parser()
     own_args, passthrough_args = collect_args_from_env_and_cli()
@@ -515,6 +1001,48 @@ def main() -> int:
         if passthrough and passthrough[0] == "--":
             passthrough = passthrough[1:]
 
+    # **The launcher's own variables are this start's** (`LAUNCHER_VARIABLES`):
+    # an inherited bind host, local start mark or instance never reaches the
+    # server; each is set again below only when this start decides it.
+    for name in LAUNCHER_VARIABLES:
+        os.environ.pop(name, None)
+    try:
+        started_in = Path.cwd()
+    except OSError:  # the directory it was started in is gone
+        started_in = REPO_ROOT
+    apply_settings_file(args.settings_file, started_in, os.environ)
+    if args.install_desktop_entry:
+        if args.settings_file is None and os.environ.get(ENV_SETTINGS_FILE):
+            log(f"WARNING: {ENV_SETTINGS_FILE} is set in this shell, but a desktop entry starts "
+                "without this shell's environment; pass --settings-file to give the entry "
+                "that file")
+        return install_desktop_entry(
+            os.environ, os.environ[ENV_SETTINGS_FILE] if args.settings_file else None)
+    # **Any working directory** (UI-06a), before anything is read or started.
+    enter_repository()
+
+    launching = not (args.print_plan or args.dry_run or args.skip_launch)
+    state_dir = instances.state_directory(os.environ)
+    # **No terminal** (the desktop entry; UI-06e): a failure before the server
+    # is up opens a local page saying what failed and where the log is, and
+    # the output, the server's included, goes to the launch log unless it
+    # already goes to a file or a pipe someone chose (`output_is_kept`: a
+    # redirect of launch_shepherd.sh keeps working as before).
+    log_path: Optional[Path] = None
+    page: Optional[Path] = None
+    if args.local_entry and launching and not has_terminal() and state_dir is not None:
+        page = instances.error_page(state_dir)
+        if not output_is_kept():
+            try:
+                send_output_to_log(instances.log_file(state_dir))
+                log_path = instances.log_file(state_dir)
+            except OSError as exc:
+                log(f"WARNING: the launch log cannot be written ({exc}); the output stays "
+                    "where it was")
+        os.environ.setdefault("PYTHONUNBUFFERED", "1")
+    fail = Failure(page, log_path)
+    log(f"Saved settings file   : {settings_file_words(os.environ, args.settings_file is not None)}")
+
     # **The bind guard** (SPEC_4 §3.1), before anything is installed or
     # started: what uvicorn will listen on (`bind_plan`) other than loopback is
     # refused unless SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1 accepts the
@@ -522,14 +1050,92 @@ def main() -> int:
     # for the uvicorn entry, whose options this launcher can read. The host is
     # passed to application startup, which checks it again; no host, none.
     bind: Optional[BindPlan] = None
-    os.environ.pop(ENV_BIND_HOST, None)
     if args.entry == "uvicorn":
         bind = bind_plan(UVICORN_DEFAULT_ARGS + passthrough, os.environ)
         if bind.decision is not None and not bind.decision.allowed:
-            log(f"ERROR: {bind.decision.message}")
-            return 2
+            return fail(bind.decision.message, BIND_REMEDY, 2)
         if bind.host is not None:
             os.environ[ENV_BIND_HOST] = bind.host
+
+    # **The local start's mode** (D06): ``--local-entry`` on a loopback bind
+    # marks the start, and an unset deployment mode is then M1 for this
+    # computer (`server_settings.deployment_mode`); an explicit one decides,
+    # and D8 still checks every request.
+    if args.local_entry:
+        if bind is not None and bind.host is not None and bind_is_loopback(bind.host):
+            os.environ[ENV_LOCAL_ENTRY] = LOCAL_ENTRY
+        mode = deployment_mode(os.environ)
+        if mode.available:
+            log("Operator controls     : on for requests made on this computer "
+                + ("(the local start)" if os.environ.get(ENV_LOCAL_ENTRY) == LOCAL_ENTRY
+                   and mode.source != "environment" else "(the deployment mode set at start)"))
+        else:
+            why = mode.problem
+            lead = "Operator controls are off, so "
+            log(f"Operator controls     : off. {why[len(lead):] if why.startswith(lead) else why}")
+
+    # **One instance per configuration, and the port** (plan §4.5), before
+    # anything is installed: a start of a configuration that already runs
+    # opens that one and ends, and a port in use is said before the long
+    # part of a start. Only for a server on a host and port (a socket has no
+    # URL to tell an instance by).
+    uvicorn_defaults = list(UVICORN_DEFAULT_ARGS)
+    instance_fd: Optional[int] = None
+    info_path: Optional[Path] = None
+    instance_id: Optional[str] = None
+    settings_file = settings_location(os.environ).path
+    if launching and bind is not None and bind.host is not None:
+        if state_dir is None:
+            log("Single instance       : not checked (HOME is not set, so there is no state "
+                "directory)")
+        else:
+            files = instances.instance_files(state_dir,
+                                             instances.instance_key(REPO_ROOT, settings_file))
+            try:
+                found: Optional[Claim] = claim_instance(files)
+            except OSError as exc:
+                log(f"WARNING: the single-instance check is skipped: {files.lock} cannot be "
+                    f"used ({exc})")
+                found = None
+            if found is not None and found.running is not None:
+                ui = f"{found.running['url']}/ui"
+                log(f"SHEPHERD-Advanced already runs for this configuration at {ui} (pid "
+                    f"{found.running.get('pid')}); no second backend is started on the same data.")
+                if not args.no_browser:
+                    log("Opening it.")
+                    webbrowser.open(ui)
+                return 0
+            if found is not None:
+                instance_fd, info_path = found.fd, files.info
+        port_requested = last_option(passthrough, "--port")
+        choice = choose_port(bind.host, port_requested)
+        if choice.error is not None:
+            _drop_instance(None, None, instance_fd)
+            return fail(choice.error, PORT_REMEDY, 1)
+        if choice.note is not None:
+            log(f"WARNING: {choice.note}")
+        if choice.port is not None and port_requested is None:
+            uvicorn_defaults[uvicorn_defaults.index("--port") + 1] = str(choice.port)
+        if choice.port is None and instance_fd is not None:
+            log("Single instance       : not recorded (the port is uvicorn's to choose, so no "
+                "URL names this start)")
+            _drop_instance(None, None, instance_fd)
+            instance_fd = info_path = None
+    base_url = display_base_url(uvicorn_defaults + passthrough)
+    if instance_fd is not None and info_path is not None:
+        instance_id = instances.new_instance_id()
+        try:
+            instances.write_info(info_path, instance_id=instance_id, pid=os.getpid(),
+                                 port=int(bind_address(uvicorn_defaults + passthrough)[1]),
+                                 url=base_url, repo_root=REPO_ROOT, settings_file=settings_file,
+                                 log=log_path)
+        except (OSError, ValueError) as exc:
+            log(f"WARNING: the single-instance record {info_path} cannot be written ({exc})")
+            _drop_instance(None, None, instance_fd)
+            instance_fd = info_path = instance_id = None
+        else:
+            os.environ[instances.ENV_INSTANCE_ID] = instance_id
+            os.environ[instances.ENV_INSTANCE_FILE] = str(info_path)
 
     os_name = "windows" if is_windows() else ("linux" if sys.platform.startswith("linux") else sys.platform)
     arch = platform.machine().lower()
@@ -638,11 +1244,6 @@ def main() -> int:
     """)
     print(plan)
 
-    # Computed before the access points are logged: those lines used to say port
-    # 8000 whatever --port was passed, so the unit's journal told an operator to
-    # bookmark a port nothing listened on.
-    base_url = display_base_url(UVICORN_DEFAULT_ARGS + passthrough)
-
     # What the guard above decided, said where the access points are.
     if bind is not None:
         if bind.decision is not None and bind.decision.message:
@@ -658,7 +1259,7 @@ def main() -> int:
     else:
         log("Access points         : no URL is shown: uvicorn listens on a socket, not on a "
             "host and port this launcher knows")
-    if args.print_plan or args.dry_run or args.skip_launch:
+    if not launching:
         return 0
 
     # Print web interface endpoints
@@ -672,7 +1273,7 @@ def main() -> int:
 
     # Build launch command
     if args.entry == "uvicorn":
-        cmd = ([sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS
+        cmd = ([sys.executable, "-m", "uvicorn", UVICORN_APP] + uvicorn_defaults
                + ["--no-access-log"] + passthrough + UVICORN_FORCED_ARGS)
     else:
         cmd = [sys.executable, "-m", args.entry] + passthrough
@@ -688,20 +1289,31 @@ def main() -> int:
     # orderly stop, which stops its job; a launcher waiting beside the server
     # was ended by it alone, and the server served on with its job. Restart
     # Backend re-execs it in place as it would a bare uvicorn start. The
-    # browser, when one is to be opened, is a helper started first.
+    # browser, when one is to be opened, is a helper started first. The
+    # instance lock goes through the exec: the server holds it until it ends.
     if can_hand_over():
         if opens_browser:
-            start_browser_opener(f"{base_url}/ui", f"{base_url}/health")
-        return exec_server(cmd)
+            start_browser_opener(f"{base_url}/ui", f"{base_url}/health", instance_id=instance_id,
+                                 failure_page=page, log_path=log_path)
+        if instance_fd is not None:
+            instances.hand_to_exec(instance_fd)
+        status = exec_server(cmd)
+        _drop_instance(info_path, instance_id, instance_fd)
+        return fail(f"The server program could not be started ({cmd[0]}).", EXEC_REMEDY, status)
     if opens_browser:
         opener = threading.Thread(
             target=_open_browser_when_ready,
             args=(f"{base_url}/ui", f"{base_url}/health"),
+            kwargs={"instance_id": instance_id},
             daemon=True,
         )
         opener.start()
 
-    return serve(cmd)
+    status = serve(cmd)
+    _drop_instance(info_path, instance_id, instance_fd)
+    if status != 0:
+        return fail(f"The service ended with status {status}.", SERVER_GONE_REMEDY, status)
+    return status
 
 if __name__ == "__main__":
     sys.exit(main())

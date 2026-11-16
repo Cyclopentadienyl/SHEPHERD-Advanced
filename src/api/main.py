@@ -75,6 +75,7 @@ from src.api.middleware.frame_guard import RefuseFraming
 from src.api.middleware.gradio_routes import RefuseUnusedGradioRoutes
 from src.api.middleware.server_address import RecordServerAddress
 from src.config.serving_device import requested_serving_device
+from src.utils import launch_instance
 
 # Configure logging
 logging.basicConfig(
@@ -284,6 +285,11 @@ class AppState:
         #: kept here: each result carries its served identity (contract M3c),
         #: and shared state a reload swaps cannot say which pipeline answered.
         self.version = "1.0.0"
+        #: The instance id the launcher gave this server
+        #: (`src.utils.launch_instance`), read at startup and answered on
+        #: ``/health``, so a second start of the same configuration knows it
+        #: by more than a 200; None for a server the launcher did not start.
+        self.instance_id = None
         # Which workspace and checkpoint the loaded pipeline was built from.
         # Declared here rather than attached by whoever loaded it, so "what is
         # being served?" has an answer from the first moment it can be asked —
@@ -832,6 +838,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting SHEPHERD-Advanced API...")
     app_state.start_time = datetime.now()
+    app_state.instance_id = launch_instance.served_instance_id()
 
     # Suppress harmless ProactorEventLoop pipe cleanup errors on Windows.
     # These ConnectionResetError exceptions come from Gradio WebSocket/SSE
@@ -905,6 +912,7 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(_stop_serving_at_shutdown)
         finally:
             shutdown_signals.restore()
+            _remove_instance_info()
 
 
 class _ShutdownSignals:
@@ -1144,6 +1152,18 @@ def _apply_saved_settings() -> None:
         logger.warning(outcome.message)
 
 
+def _remove_instance_info() -> None:
+    """At the lifespan's end: the launcher's info file of this instance
+    removed when it still names this server (`launch_instance.remove_own_info`;
+    the instance lock itself is released when the process ends). Never fails
+    the shutdown."""
+    try:
+        if launch_instance.remove_own_info():
+            logger.info("The instance record of this start was removed.")
+    except OSError as exc:
+        logger.warning("The instance record of this start could not be removed: %s", exc)
+
+
 def _check_startup_bind() -> None:
     """Raise `RuntimeError` when the host passed in to startup is a bind
     `network_bind` refuses; log the warning of an accepted network bind."""
@@ -1291,6 +1311,10 @@ async def health_check() -> Dict[str, Any]:
         "version": app_state.version,
         "uptime_seconds": uptime,
         "timestamp": datetime.now().isoformat(),
+        # The launcher's instance id (None when it did not start this server):
+        # a second start of the same configuration compares it with the info
+        # file's, since an answer of 200 alone may be another program's.
+        "instance_id": app_state.instance_id,
     }
 
 

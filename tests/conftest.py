@@ -16,6 +16,7 @@ from src.config.server_settings import (
     ENV_REGISTRY,
 )
 from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
+from src.utils.launch_instance import ENV_INSTANCE_FILE, ENV_INSTANCE_ID, ENV_STATE_DIR
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -29,6 +30,7 @@ def _suite_gpu_lock(tmp_path_factory):
         patch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path_factory.mktemp("suite-workspaces")))
         patch.setenv(ENV_SETTINGS_FILE,
                      str(tmp_path_factory.mktemp("suite-settings") / FILE_NAME))
+        patch.setenv(ENV_STATE_DIR, str(tmp_path_factory.mktemp("suite-state")))
         yield
 
 
@@ -50,6 +52,21 @@ def _no_saved_deployment_settings(monkeypatch, tmp_path_factory):
     """
     monkeypatch.setenv(ENV_SETTINGS_FILE,
                        str(tmp_path_factory.mktemp("settings") / FILE_NAME))
+
+
+@pytest.fixture(autouse=True)
+def _no_account_state_directory(monkeypatch, tmp_path_factory):
+    """Every test starts with a state directory of its own, never the
+    account's (UI-06): `SHEPHERD_STATE_DIR` names an empty directory of the
+    test's own, so a launcher a test starts takes its instance lock, writes its
+    info file and its launch log there, never under
+    `~/.local/state/shepherd-advanced`, and finds no running instance of the
+    account's. An instance id or info file inherited from a terminal of a
+    running service is removed too: a test's server would otherwise answer
+    that id and remove that service's info file at its shutdown."""
+    monkeypatch.setenv(ENV_STATE_DIR, str(tmp_path_factory.mktemp("state")))
+    monkeypatch.delenv(ENV_INSTANCE_ID, raising=False)
+    monkeypatch.delenv(ENV_INSTANCE_FILE, raising=False)
 
 
 @pytest.fixture(autouse=True)
