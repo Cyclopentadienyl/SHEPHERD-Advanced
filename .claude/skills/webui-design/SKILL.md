@@ -117,11 +117,14 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry the same colours.
 - **Never the only place for must-know facts.** Formats, units, refusals and states that change what happens are
   visible text (`info=` under the field, or the reason line). A bubble explains; it does not warn.
 - **Placement never covers the field it explains**: try beside, then above, then below (Floating UI's flip order).
-- **One bubble, extended only when needed.** Today's bubble (`src/webui/components/help.py`) shows plain text with
-  paragraphs. When a text needs more structure (a lead, a list, key-value rows), extend that one shared component; do
-  not add a second tooltip mechanism, and do not impose a grammar on every text in advance. Whatever it renders is
-  built with `createElement` and `textContent`, never parsed as HTML; a test feeds `<img src=x onerror=…>` and must see
-  literal text.
+- **One bubble, extended only when needed.** Today's bubble (`src/webui/components/help.py`) reads every text by one
+  small grammar, defined there once (`BULLET`, `TERM_PATTERN`, `REF_PREFIX`, read in Python by `help_lines`) and given
+  to its script as written: the first line is the lead, shown bold; "- " lines form one list; a line led by a short
+  capitalised "Term: " shows the term bold; a "Ref:" line, last, holds codes and source references, muted; any other
+  line is a paragraph. When a text needs more structure than that, extend that one shared component and its grammar;
+  do not add a second tooltip mechanism, and do not make every text take on more structure in advance. Whatever it
+  renders is built with `createElement` and `textContent`, never parsed as HTML; a test feeds `<img src=x onerror=…>`
+  and must see literal text.
 
 ## 8. Selects, lists and tables
 
