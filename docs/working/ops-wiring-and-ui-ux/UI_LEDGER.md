@@ -77,20 +77,21 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### FL-UI-02 · Layout picks side-by-side vs stacked from fixed 1400x760 sizes, not the window's shape
 
-- **State**: to do · found by the owner · severity unrated (fix list) · page: shell
+- **State**: code-verified · found by the owner · severity unrated (fix list) · page: shell
 - **Problem**: The panels sit side by side only at 1400 px wide or more and 760 px tall or more; otherwise they stack (style.py:443-478). The fix list's counterexamples follow from this: 1280 x 900 and 1920 x 700 stack, while 1440 x 1600 (portrait) is side by side. A short-height window is forced into the stacked layout although it has the width.
 - **At ba6e85e**: Recorded only in the fix list rev 1 (2026-11-16), confirmed there from the code. Earlier records state the rule (by the usable size), but none records the fixed threshold as a problem. Not fixed.
 - **Done when**: At 1920x700 and 1280x900-wide-landscape windows the panels sit side by side and at 1440x1600 portrait they stack; short height is handled by region scrolling with no control covered, checked by a browser test over these sizes.
 - **Sources**: the owner's fix list rev 1 (2026-11-16); src/webui/style.py:443-478; docs/working/BACKLOG.md:985 (item 27: 'by the browser's usable size rather than the monitor's'); docs/working/PLAN_TEST_RESULTS.md:2390-2394
-- **Closed at**: —
+- **Closed at**: 497f583. The 15 orientation media queries and 2 matchMedia calls at 9b7d9b6 (style.py 2, finetune 1, diagnosis 3, models 2 + SCROLL_JS, datasets 1, training 3 + _BANNER_JS, test 2, charts 1) are one decision in the shell's layout pass: the window's inner size (no wider than tall: stack), then whether the shown page's panels fit by their own --shep-panel-min (read from the panels as drawn, with their gaps); written as data-shep-layout on the root element, which every style sheet nests its rules in (style.SIDE/STACK/SIDE_SHORT); data-shep-short under 900 px is density only. Content breakpoints kept: Diagnosis' input width (1600/1800) and one-column fields (760), Datasets' short labels (1799), Settings' name column (899), reduced motion; Training's 1199 run-bar rule went with its one-row bar. Measured on the CPU demo (4 test reports): 1280x900 side by side on every page but Datasets (its own minimum, about 1400 px: the six-column table 860 px and the four-column digest grid 495 px; whether a more compact table should bring it side by side at 1280 is the owner's call), 1920x700 side by side (short), 1440x1600, 1000x1000, 1080x1920, 960x1080 and 760x1000 stacked, 1850x960/1920x1080/1536x760 side by side; no page-level horizontal scroll at any size; nothing sticky over a focused control (the only cover the matrix found is the ⓘ help bubble of the control focused just before, the same as at 9b7d9b6). Also from the brief: the header chips end in a titled ellipsis inside the window (at 360 px the Operator controls chip's left edge was -41, now 16; ::test_no_header_element_covers_a_tab_at_any_width at 360 and 420); stacked, a table wider than its panel scrolls sideways in its own box (Datasets at 760x1000: 692/822, was cut by 94 px). Tests: tests/unit/test_webui_shell.py::test_one_layout_decision_at_every_size_and_back (an operator; 760x1000 → 1850x960 → 1280x900 → 1920x700 → 1440x1600 → 1000x1000 → 1536x760 → 1080x1920 → 1850x960, every page), ::test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_left; both fail on 9b7d9b6 (attribute absent, 1280x900 stacked). Screens: scratchpad/t04/layout-rows/shots/before/before_<size>_<page>.png and scratchpad/t04/layout-rows/shots/after/after_<size>_<page>.png for 1850x960, 1280x900, 1920x700, 1440x1600, 1000x1000, 1536x760, 960x1080, 1080x1920, 1920x1080, 760x1000; numbers in before_matrix.txt / after_matrix.txt.
 
 #### NEW-diagnosis-3 · Records claim sticky-cover and drawer-repeat fixes that are not in the code
 
-- **State**: to do · found by the 2026-11-16 audit · page: diagnosis
+- **State**: partly done · found by the 2026-11-16 audit · page: diagnosis
 - **Duplicate of**: R-25+K6 (closed with it)
 - **At ba6e85e**: Two records say something is fixed that is not: - scorer-retraining/README.md:963-966 says no focused Diagnosis control is covered at 1536 x 760 with each model loaded. At ba6e85e, with the disease model served, the HPO box's caret line is under the sticky card from 8 lines on (14-sticky-textarea-1536x760.png). - BACKLOG 72's B4 note says the load drawer 'says the chosen workspace once'. Every row still repeats 'trained on demo · dataset fingerprint 50bef1bf5f9f · synthetic' under the workspace line.
 - **Done when**: At 1536x760 with the disease model served, the HPO box caret stays visible above the sticky card while typing 12 lines, and the load drawer rows no longer repeat the workspace facts; or the README and BACKLOG 72 notes are corrected to say open.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
+- **Progress (T04 layout-rows, 497f583)**: the caret half is closed with R-25+K6 (below). Left: the load drawer's rows still repeat the workspace facts under the workspace line; that is the shared model list's (T05, UI-04), so the BACKLOG 72 B4 note stays wrong until then.
 - **Closed at**: —
 
 #### NEW-shell-nav-theme-2 · At 480 px the wrapped EVALUATE group starts its line with a divider
@@ -103,21 +104,21 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### R-60 · At narrow width Parameters push the run view below the fold
 
-- **State**: to do · found by the 2026-10-25 review · severity low · page: training
+- **State**: code-verified · found by the 2026-10-25 review · severity low · page: training
 - **Problem**: At 960 px the Parameters pushed the run view below the fold.
 - **At ba6e85e**: At 960x960 the header wraps to two rows, the run bar is 205 px, and the full Parameters panel comes next. The run view's header starts at y=883 and its first plot at y=1059, so no chart is visible without scrolling the page (page scroll 1386 px). The narrow media rules do not reorder the run view or collapse the parameters (training_console.py:5088-5101).
 - **Done when**: At 960x960 the Training run view's first plot is visible without page scrolling (run view placed before Parameters, or Parameters start folded).
 - **Sources**: UX:262 (appendix 60); RJ audits[1].findings[26]
-- **Closed at**: —
+- **Closed at**: 497f583. Stacked (the shared decision), Training's Parameters start folded under their title with a Show/Hide toggle (aria-expanded, aria-controls; its state is the button's own, which the style sheet reads); side by side the body is always shown and the toggle is not. At 960x960 on the demo the first plot is at y 607-867, the page not scrolled. Test: tests/unit/test_webui_shell.py::test_the_training_parameters_fold_when_stacked_and_show_side_by_side. Screens: scratchpad/t04/layout-rows/shots/before/before_960x1080_training.png, scratchpad/t04/layout-rows/shots/after/ptr/ptr_m1_960x960_training.png.
 
 #### B72-C3 · Tall wide Compare: sideways scrollbar unreachable mid-table
 
-- **State**: partly done · found by an internal review · severity minor · page: results
+- **State**: code-verified · found by an internal review · severity minor · page: results
 - **Problem**: Sideways scroll with the bar only at the foot.
 - **At ba6e85e**: The B3 mechanism works. I forced an overflow on the client (table min-width 1600px). The cue 'Wider than the panel: scroll sideways; the Field column stays.' then appears above the table (cue top 165, table top 190). Its bar's scroll range equals the table's (663 = 663), and scrolling the top bar to its end moved the table to 663. With the 4 real results, Compare fits its panel at 1850x960 (937/937) and at 960x1080 (892/892), so a natural five-column overflow could not be produced (only 4 results). The Compare table is 12,342 px tall with 'Differences only' and 21,825 px with all rows. Between its top and its foot, no horizontal bar is in view.
 - **Done when**: With a Compare wider and taller than its panel, a sideways scrollbar is reachable from anywhere in the table (sticky or bounded region) without scrolling to its top or foot.
 - **Sources**: BL:1030
-- **Closed at**: —
+- **Closed at**: 497f583. Compare's wrap is a box no taller than the region it is read in (side by side the detail's body is a size container, max-height 100cqh − 24 px; stacked, the window), so its sideways scrollbar is at the box's foot in view whenever the box is, the shared table header on top. Measured on the demo's 4 results, every row shown and the table forced to 1600 px: before the wrap was 15,151 px tall with its bar out of view mid-table; after 633 px inside the 681 px body, scrolled to its middle, the bar in view. Test: tests/unit/test_webui_shell.py::test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach (side and stacked). Screens: scratchpad/t04/layout-rows/shots/before/compare_1850x960.png, scratchpad/t04/layout-rows/shots/after/compare_1850x960.png.
 
 #### PTR-LAYOUT · Layout acceptance matrix (portrait, zoom, high DPI, long names) never run
 
@@ -126,34 +127,35 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: 'Not yet recorded' (PTR). Not an M5 gate; partly covered by the ops close. Nothing schedules the rest.
 - **Done when**: Screenshots at 1920x1080, 2560x1600, 3840x2160, 1080x1920 and 200% zoom, M1 and read-only, with long disease names and many results, are recorded with no clipped or covered controls and no page-level horizontal scroll.
 - **Sources**: docs/working/PLAN_TEST_RESULTS.md:2450-2452; docs/working/PLAN_TEST_RESULTS.md:2484-2490; docs/working/BACKLOG.md:985 (item 27 'Screens' and the proposed screenshot sizes); docs/working/ops-wiring-and-ui-ux/README.md:363
+- **Progress (T04 layout-rows, 497f583 and b405973)**: taken on the CPU demo (4 test reports, short names), M1 and read-only: 1920x1080, 2560x1600, 3840x2160, 1080x1920 and 200 % zoom of 1850x960 (925x480 CSS px at device scale 2), plus the matrix in FL-UI-02: no page-level horizontal scroll at any of them; 2560x1600 and 3840x2160 side by side on every page, 1080x1920 stacked, the 200 % zoom stacked on every page but Settings (its columns wrap by their own widths). The focused-control check ran on the FL-UI-02 matrix (M1, 1920x1080 and 1080x1920 among it), not on these extra sizes. Screens: scratchpad/t04/layout-rows/shots/after/ptr/ptr_m1_*.png, ptr_readonly_*.png (numbers ptr_*_matrix.txt). Left: long disease names and many results (the demo has neither); 1707x870, 1440x900 and 1280x720 not taken as such (1280x900 and 1536x760 were).
 - **Closed at**: —
 
 #### R-25+K6 · HPO box's lower lines and caret go under the sticky card at 1536x760
 
-- **State**: partly done · found by the 2026-10-25 review · severity low · page: diagnosis
+- **State**: code-verified · found by the 2026-10-25 review · severity low · page: diagnosis
 - **Problem**: Sticky regions (Diagnosis card and Run, panel headers) could hide focused controls; the K6 smoke saw the sticky card over a focused control at 1536 x 760.
 - **At ba6e85e**: The part that was fixed: the card and Run sit in a sticky region, and the input column's scroll padding equals that region's height (402 px at 1536 x 760 with the disease model served). Tabbing through Patient ID, Top-K, the checkbox, the info buttons and the card buttons, no focused control was covered at 1536 x 760 or 1850 x 960. The part that remains, at 1536 x 760 with the model served: - the scroll area is 591 px and the sticky region 402 px, leaving 189 px for the fields; - once the HPO box holds 8 or more lines (it grows to 12), the line with the caret is under the card: elementFromPoint at the caret line returns the sticky card at 8 and 12 lines; - at 12 lines the box's lower 127 px are hidden; - 3-6 lines are fine. At 1850 x 960 a 12-line entry is not covered. The K6 record says no focused Diagnosis control is covered at 1536 x 760 with each model loaded. B4 has since made the served card taller: state, lead, name, fingerprint, trained-on, chip, recorded results and two rows of buttons.
 - **Done when**: At 1536x760 with a model served, typing multiple lines into the HPO box never puts its caret or visible lines under the sticky card/Run region, checked by a browser test.
 - **Sources**: UX:227 (appendix 25); RJ audits[0].findings[29]; SR:963-966 (K6 smoke P2)
-- **Closed at**: —
+- **Closed at**: 497f583. Side by side the Diagnosis fields are the input column's one scroll region and the Model-in-use card and Run its foot, in flow under them, nothing sticky (the sticky block's room script, style.sticky_room_js and STICKY_JS, is gone); every scroll region keeps a line's room under what it brings into view (style.py --shep-caret-room), because the browser brings the caret into view and Gradio then grows the box a line under it. Measured with the demo's disease model served at 1536x760, twelve lines typed: before the caret's line was under the card from line 6 to 11; after, the box's own every line (also 760x1000 and 1920x700). Test: tests/unit/test_diagnosis_panel.py::test_the_hpo_caret_stays_in_view_and_the_input_column_has_one_left_edge (fails on 9b7d9b6 from line 9 with the stand-in card), ::test_the_fields_scroll_above_the_card_and_run_row_whose_foot_never_covers_them. Screens: scratchpad/t04/layout-rows/shots/before/caret_hpo12lines_1536x760.png, scratchpad/t04/layout-rows/shots/after/caret_hpo12lines_1536x760.png (numbers in the .json beside them).
 
 #### R-38+owner · Training plots squeezed near the minimum height; run bar still two rows
 
-- **State**: partly done · found by the owner · severity medium · page: training
+- **State**: code-verified · found by the owner · severity medium · page: training
 - **Problem**: The run view gave three rows to small text and the footer ~150 px, leaving the four plots at the 140 px floor.
 - **At ba6e85e**: PLOT_MIN_HEIGHT is 170 (training_console.py:4797-4806, 443cfc1). Measured at 1850x960: plot areas are 183/183 px in the top row and 170/170 px in the bottom row, up from about 130-155 px at the audit. The state line now sits in the header and the run bar's blank area is gone (c215031). The run bar is still two rows, 119 px tall (y 116-235: the Dataset row is 41 px, the Run name / Start row 40 px). The run-view header wraps to 62 px, the toolbar is its own 34 px row, resources take 38 px, and the page footer about 30 px. The code comment says the chart body holds 519 px and a 200 px floor needs 566. The skill still says 'today 140 px plot area' (SKILL.md:41).
 - **Done when**: At 1850x960 the Training run bar is one row and each of the four plot areas measures about 200 px tall without page scroll.
 - **Sources**: UX:240 (appendix 38); RJ audits[1].findings[2]; RJ audits[1].overall; RJ research[1].principles[1] (G2); RJ research[2].principles[6] (ML-CH-1); RJ research[4].principles[4] (S5); UX:130 (section 4 Training); BL:1010 (52); SK:41-42
-- **Closed at**: —
+- **Closed at**: 497f583. The run bar is one row: its two rows' items are one wrapping line of the bar, the dataset's identity, the reason and the job's state wrapping their words inside it; the build time moved to the identity's Details › (one click away; the fingerprint and marks stay); the labels lost their fixed 96 px. At 1850x960 on the demo: run bar 119 → 74 px, the chart body 565 px, plot areas 184/184/170/170 → 209/209/190/190 px, no page scroll (a floor of 200 would need 566, so PLOT_MIN_HEIGHT stays 170 and the comment says so); narrower windows wrap the bar (1536x760: 134 px). The skill's line now says the code's floor (170) and what the owner's window measures. Tests: the layout test above asserts one line and < 90 px at 1850x960; tests/unit/test_training_page.py::test_the_page_styles_hold_the_reviewed_layout, ::test_the_details_popover_is_drawn_over_the_parameter_labels. Screens: scratchpad/t04/layout-rows/shots/before/training_runbar_1850x960.png, scratchpad/t04/layout-rows/shots/after/training_runbar_1850x960.png.
 
 #### R-73 · Test Result scroll region has no scroll cue
 
-- **State**: partly done · found by the 2026-10-25 review · severity medium · page: test
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: test
 - **Problem**: Reports list away from the Result; the Result clipped without a cue.
 - **At ba6e85e**: The reports are now a compact single-select table (Report · Model · Measurement · State) at the top of the Result panel, with the result under it in the same scroll region. Narrow, the order Data, Run, Result keeps the table beside its result. There is still no scroll cue: at 1850x960 the Result body has scrollHeight 1536 against clientHeight 681, overflow auto, mask none. No gradient or mask exists anywhere in the Test page CSS, and the last line is cut mid-text above 'Register this report'. Whether a scrollbar shows depends on the OS: headless Chromium uses overlay scrollbars (0 px).
 - **Done when**: When the Result body's scrollHeight exceeds its clientHeight, a visible scroll cue (mask or line, as Compare's SCROLL_CUE) shows and disappears at the end.
 - **Sources**: UX:275 (appendix 73); RJ audits[2].findings[9]; UX:126-127; BL:1010 (52)
-- **Closed at**: —
+- **Closed at**: 497f583. A shared scroll cue: a region with .shep-scroll-cue fades its last 28 px while more is below (the head script keeps data-shep-more on its scroll and on each layout pass) and draws them whole at its end; Test's Result body has it. On the demo at 1850x960 with a report selected (1539 px in 680): the mask on at the top, off at the end, on again back at the top. Test: tests/unit/test_webui_shell.py::test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach. Screens: scratchpad/t04/layout-rows/shots/before/before_1850x960_test.png, scratchpad/t04/layout-rows/shots/after/after_1850x960_test.png.
 
 #### B52-G · Draggable splits between the main panels (owner's idea)
 
@@ -170,6 +172,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: With every section collapsed the run bar grew into a large blank area (screenshot 09).
 - **At ba6e85e**: The run bar is built at scale=0 (training_console.py:4382-4387), so it no longer takes a share of the page's height. It measured 119 px for two rows with no blank space, both idle and with the Continue drawer open.
 - **Sources**: BL:1010 (item 52 (F)); M5W:64-66; PTR:2488-2489
+- **Re-checked (T04 layout-rows, 497f583)**: the run bar is now one wrapping row, 74 px at 1850x960 with no blank area; still built at scale 0.
 - **Closed at**: —
 
 #### OPS-B5a · Header chips covered the Research tab at a narrow width
@@ -178,6 +181,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: At 480 px the D8 chip covered the Research tab.
 - **At ba6e85e**: At 480 and 760 px wide, the centre of every tab (level 1, Settings and the five research tabs) hits that tab: no header chip covers one. The chips sit on their own line under the stage switch.
 - **Sources**: OPS:361; commit 25e6af9
+- **Re-checked (T04 layout-rows, 497f583)**: no header element covers a tab at 360, 420, 480, 760, 1100 or 1850 px, and the chips stay inside the window (::test_no_header_element_covers_a_tab_at_any_width).
 - **Closed at**: —
 
 #### OPS-C10 · Test's Start below the fold at 1850x960
@@ -186,6 +190,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: After b639a0c Start was below the fold.
 - **At ba6e85e**: The Run panel's body scrolls over a fixed foot that holds Start, its reason, the job's state and Cancel. Measured with no page scroll and no sideways scroll, before and after a job: Start at y 790–830 at 1850x960, 705–745 at 1440x900 and 669–709 at 1536x864, with Cancel and Register in view each time.
 - **Sources**: OPS:363-364
+- **Re-checked (T04 layout-rows, 497f583)**: side by side (the shared decision) the Run panel keeps its body and foot, the page not scrolling at 1850x960, 1920x1080, 1536x760, 1920x700 or 1280x900 (after_matrix); no control covered when focused at 1536x760 or 1920x700 (the layout test).
 - **Closed at**: —
 
 #### OPS-C9 · Models had more than one scroll region at some heights
@@ -194,6 +199,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: Two scroll regions.
 - **At ba6e85e**: Measured at 1850x960, 1850x760, 1536x760, 1920x1080 and 1850x1300, on a 15-row workspace with a long detail: the page itself does not scroll. Exactly one region scrolls in each panel: shep-models-research-rows for the list (e.g. 501/1227 px at 1850x960) and shep-mp-detail-bd for the detail (682/1967). On the shared 4-row demo, the list region scrolls only where it must (1850x760, 1536x760). At 960 px wide the page is the one scroll region.
 - **Sources**: OPS:363-364
+- **Re-checked (T04 layout-rows, 497f583)**: on the 4-row demo, side by side Models has at most one scroll region per panel at every size of the matrix (the rows' or the detail's body); stacked the page is the one region.
 - **Closed at**: —
 
 #### R-55 · Sticky chart toolbar covered chart titles when scrolled
@@ -202,6 +208,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: A sticky toolbar inside the chart scroller covered the first row's titles when scrolled ('the same class of problem as the status line the owner reported').
 - **At ba6e85e**: The chart toolbar is a static row of its own, outside the scrolling chart body (training_console.py:5051-5076). At 1536x760 the body scrolls (527 px of content in 293 px); after scrolling it by 120 px, document.elementFromPoint at every plot corner still hits the plot. At 1850x960 nothing scrolls.
 - **Sources**: UX:257 (appendix 55); RJ audits[1].findings[21]
+- **Re-checked (T04 layout-rows, 497f583)**: the toolbar is still a row of its own; at 1536x760 and 1920x700 the run view's one scroll region is the plots' body, and nothing sticky covers a focused control (the layout test).
 - **Closed at**: —
 
 #### TR-F1+owner · Plot size stuck after narrow; sticky status line covered axes
@@ -210,6 +217,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: At b14c4de a narrow canvas height stuck in the wide plots and the resources line left the view; then the sticky resources line hid the bottom charts' ticks and axis label at the owner's window.
 - **At ba6e85e**: Resources is a row of its own below the charts (#resource_display flex none, training_console.py:5068-5069). Going wide, then narrow (960), then wide again, the plot areas measured 183/170 px, then 213, then 182/170, and the canvases 229/217 px (not stuck at the narrow 260). No axis corner is covered (elementFromPoint). The bottom plots end at y=851 and resources start at y=873.
 - **Sources**: M5W:21; commit 4764faa (F1); commit 1f4eb05 (F1); UX:100-101; RJ research[1].principles[2] (G3); RJ research[2].principles[9] (ML-CH-4); RJ research[4].principles[3] (S4)
+- **Re-checked (T04 layout-rows, 497f583)**: resources stay a row of their own under the plots; the layout test's first and last 1850x960 visits (with 760 to 1920 px between) give the same panels, tops and run bar; the plot sizes after a narrow visit were not re-measured here.
 - **Closed at**: —
 
 ### UI-03 Field-row alignment
@@ -218,21 +226,21 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### FL-UI-03 · Fine-tune's Refresh sits 15 px below the Run and Checkpoint selects
 
-- **State**: to do · found by the owner · severity unrated (fix list) · page: finetune
+- **State**: code-verified · found by the owner · severity unrated (fix list) · page: finetune
 - **Problem**: In the base-picker row the Refresh button is size='sm' and the row is bottom-aligned (finetune_page.py:1192-1197, CSS :1389 'align-items: flex-end', :1391). At 1850 x 960 the two selects' boxes span y 309-348 (centre 329) and Refresh spans y 329-358 (centre 344). The button sits 15 px lower, its top level with the selects' centre line (seen).
 - **At ba6e85e**: Recorded only in the fix list rev 1. The ops close fix gave Refresh the gated-button rule only. Open at ba6e85e.
 - **Done when**: At 1850x960, 1536x760 and 200% zoom the Refresh button's vertical centre equals the selects' box centre within 2 px, through the shared row style.
 - **Sources**: the owner's fix list rev 1 (2026-11-16); src/webui/components/finetune_page.py:1192-1197, 1389-1391; docs/working/ops-wiring-and-ui-ux/README.md:364 (close fix 7220957: Refresh by the gated-button rule, not its alignment)
-- **Closed at**: —
+- **Closed at**: b405973. One shared row class in style.py (.shep-field-row, tokens --shep-field-box-h 41 px and --shep-field-pad-b 10 px): every block draws its box at its bottom, an action is the box's height on the box's line (.shep-icon-btn a square of it), words or a control beside a field (.shep-field-aside) end on it; on Fine-tune's base picker, Training's Continue drawer (its denser padding sets the token), Test's Run and the shared list's head as a row (the Diagnosis drawer); the per-page patches are gone. Measured, button top/bottom against the last box: 0.0 px at 1850x960, 1536x760, 1440x900 (Fine-tune wrapped, Refresh beside Checkpoint), 760x1000 and 200 % zoom (925x480); before 22/10 px off on Fine-tune, 18/6 on Test, 16/4 on Training, the Diagnosis task control 10 px low (now its bottom on the box's, its centre 0.8 px off: it is 44.5 px tall). Tests: tests/unit/test_webui_shell.py::test_a_field_rows_action_is_its_boxes_height_and_stands_on_their_line (fails on 9b7d9b6: 22 px), ::test_the_field_rows_share_one_class_and_two_tokens. Screens: scratchpad/t04/layout-rows/shots/before/rows_1850x960_*.png, scratchpad/t04/layout-rows/shots/after/rows_<size>_*.png.
 
 #### R-24 · Diagnosis input column has three left edges; Options is a box inside the panel
 
-- **State**: to do · found by the 2026-10-25 review · severity low · page: diagnosis
+- **State**: code-verified · found by the 2026-10-25 review · severity low · page: diagnosis
 - **Problem**: In the Diagnosis input column left edges did not line up and Options was a box inside the panel.
 - **At ba6e85e**: Measured at 1850 x 960: - the HPO terms and Patient ID labels and boxes start at x=41; - the Options box spans x=33-369, with a 1 px #e1e4ea border and a #f8f9fb background; - inside it 'Options' starts at x=44 and the Top-K label at x=108, and the Explanations checkbox wraps to x=44, under 'Options' rather than under Top-K; - the 'MODEL IN USE' title and Run start at x=33. That makes three left edges (33, 41, 44), and Options is a box inside the panel next to the card's own grey surface. At 960 px wide the Options box (x=489) sits 8 px left of Patient ID (x=497).
 - **Done when**: At 1850x960 every label and control in the Diagnosis input column starts at one left edge, Options has no border or background, and Options' controls sit in a two-column label/control grid.
 - **Sources**: UX:226 (appendix 24); RJ audits[0].findings[22]
-- **Closed at**: —
+- **Closed at**: b405973. The fields lose their side padding, so every label and control starts at the panel's inner edge: at 1850x960 HPO terms, Patient ID, Options, Top-K, Explanations, the card title and Run all at x=33 (before 41/41, 44, 108, 44, 33, 33); Options has no border or background and is a grid of keys, ⓘ and controls (the Top-K box and the Explanations checkbox both at x=162). Test: tests/unit/test_diagnosis_panel.py::test_the_hpo_caret_stays_in_view_and_the_input_column_has_one_left_edge (1536x760). Screens: scratchpad/t04/layout-rows/shots/before/dx_input_column_1850x960.png, scratchpad/t04/layout-rows/shots/after/dx_input_column_1850x960.png (and _760x1000).
 
 ### UI-04 The shared model list: folding, search, lineage
 
