@@ -535,56 +535,56 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### B27-2 · Expanding More training settings / More settings makes scrolling long
 
-- **State**: to do · found by the owner · severity requirement · page: training
+- **State**: partly done · found by the owner · severity requirement · page: training
 - **Problem**: An expanded collapsible section made the scroll too long.
 - **At ba6e85e**: Expanding 'More training settings' on Training grows the Parameters region from 615 to 988 px of content (373 px to scroll). Fine-tune's 'More settings' grows its form to 1242 px in a 681 px region (561 px to scroll). Accordions still open downward in one column; nothing opens sideways or step by step.
 - **Done when**: At 1850x960, expanding Training's 'More training settings' and Fine-tune's 'More settings' adds little scroll (e.g. expanded fields laid out in two columns or a sideways step layout), measured by region scrollHeight, or an explicit owner decision is recorded.
 - **Sources**: BL:985 (item 27 (2)); SK:28-29
-- **Closed at**: —
+- **Closed at**: — (partly done at a37d09f). Fine-tune: expanding 'More settings' now adds 252 px of scroll (scrollHeight 930 in a 678 px body; was 1260, 582 px), its fields in the two columns with the dense spacing; measured by the region's scrollHeight (scratchpad/t06b/continue-finetune/shots/before/finetune_more_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/finetune_more_1850x960.png). Left, for the owner: Training's 'More training settings' still adds 346 px (Parameters 1003 in 657; was 1006). Its fields already sit two to a row in a 563 px panel, so less scroll needs a layout decision: (a) accept one bounded inner scroll region while a section is expanded (the no-scroll rule covers nothing expanded), (b) a wider Parameters panel at the run view's cost, or (c) a step or sideways layout for the expanded settings (scratchpad/t06b/continue-finetune/shots/after/training_more_1850x960.png).
 
 #### NEW-training-finetune-2 · Continue drawer opens with step 3 Check cut off while Start is enabled
 
-- **State**: to do · found by the 2026-11-16 audit · page: training
+- **State**: code-verified · found by the 2026-11-16 audit · page: training
 - **At ba6e85e**: At 1850x960, opening Continue… shows step '3. Check' cut at the drawer body's bottom edge, with its prompt below the fold, while '4. Start' (Continue Training) is enabled in the footer: drawer-1850x960-1-open.png in the same folder
 - **Done when**: At 1850x960, opening Continue… shows step 3 Check and its prompt fully inside the drawer body, or Start is not presented as the next step before Check is visible.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: 92084f4 (with the shared dense form, 137b637). At 1850x960 the open drawer's body is y 260-854 with nothing to scroll (scrollHeight 594 = clientHeight); step 3's row, Check checkpoint (799-838) and its prompt beside it, sits inside it. Before, the body was 334-854 and scrolled 134 px, the row at 879-908 and its prompt at 955-976. The drawer's fields take the shared `.shep-form-dense` field-row spacing (src/webui/style.py, inside the side-by-side decision), the result box starts hidden and the relation is one line. Test: `test_webui_shell.py::test_the_continue_drawer_and_the_fine_tune_form_fit_the_owners_window` (the drawer stop at 1850x960 and 960x1080; on b2732ea it fails with check [879, 908] under the body's 854). Screens: scratchpad/t06b/continue-finetune/shots/before/drawer_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/drawer_1850x960.png.
 
 #### NEW-training-finetune-5 · Fine-tune's Device and Run name sit below the form's visible body at 1850x960
 
-- **State**: to do · found by the 2026-11-16 audit · page: finetune
+- **State**: code-verified · found by the 2026-11-16 audit · page: finetune
 - **Duplicate of**: B27-1 (closed with it)
 - **At ba6e85e**: Fine-tune at 1850x960: Device (default auto, refused on this host) and Run name sit at y 913-1004, below the visible part of the form's scrolling body (which ends at 846; scrollHeight 851, clientHeight 681), and the 'More settings' header is cut at the edge (finetune-1850x960.png, finetune-1850x960.json)
 - **Done when**: At 1850x960 with nothing expanded, Fine-tune's Device, Run name and the 'More settings' header are fully inside the form's visible area without inner scrolling.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: a37d09f (with B27-1). At 1850x960 with nothing expanded, Device (y 471-585, its no-CUDA note included), Run name (471-585, beside it) and the 'More settings' header (400-422) are inside the form's visible body (168-846) with nothing to scroll; before, Device and Run name sat at 925-1017 under the body's 846. Test and screens as B27-1.
 
 #### B27-1 · Fine-tune form scrolls with nothing expanded at the owner's window
 
-- **State**: partly done · found by the owner · severity requirement · page: finetune
+- **State**: code-verified · found by the owner · severity requirement · page: finetune
 - **Problem**: The first WebUI's pages scrolled; deployment displays are landscape 16:9/16:10, 1080p-4K, rarely portrait.
 - **At ba6e85e**: The wide layout rule holds: at 1850x960 no page frame scrolls on any of the 7 pages. Diagnosis, Datasets, Training, Test, Models and Settings show their main task with no region scrolling (on tiny demo data). Fine-tune's form already scrolls 170 px inside its region with nothing expanded (681 of 851 px shown; 'More settings' is half under the footer row, and Start stays in that footer). At 960 px wide the page flows and scrolls by design (Training is 2346 px tall).
 - **Done when**: At 1850x960 with nothing expanded, Fine-tune's form fits its region without scrolling and 'More settings' is fully visible above the footer row.
 - **Sources**: BL:985 (item 27 'Screens' and (1)); SK:21-22; PTR:2390-2394
-- **Closed at**: —
+- **Closed at**: a37d09f, 137b637. At 1850x960 with nothing expanded Fine-tune's form fits its region: body y 168-846, scrollHeight 678 = clientHeight (was 861, 183 px to scroll), 'More settings' at 400-422 above the footer row (846-911). The form is two intrinsic columns, the base and its children (`.shep-ft-cols` / `.shep-ft-col`, flex 1 1 480px, wrapping; no media query), its fields take the shared `.shep-form-dense` field-row spacing, the panels scale 16:7, and a panel footer keeps its own height (`.shep-panel > .shep-panel-ft`, src/webui/style.py). At 960x1080 the columns wrap to one and the page flows. Test: `test_webui_shell.py::test_the_continue_drawer_and_the_fine_tune_form_fit_the_owners_window` (fails on b2732ea); the field-row checks follow the two columns (a9366d8). Screens: scratchpad/t06b/continue-finetune/shots/before/finetune_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/finetune_1850x960.png (and _960x1080).
 
 #### R-48 · Continue drawer prompt says to Check while a checkpoint is preselected and Start enabled
 
-- **State**: partly done · found by the 2026-10-25 review · severity medium · page: training
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: training
 - **Problem**: The Continue drawer's instructions contradicted its state.
 - **At ba6e85e**: The drawer now shows numbered steps: 1. Run, 2. Checkpoint, 3. Check, 4. Start (B1c 7649fa0). The contradiction remains. The prompt is unchanged, 'Select a checkpoint, then click Check checkpoint.' (training_console.py:3284), while a checkpoint is already preselected and 'Continue Training' is enabled before any check (seen: resume button enabled; the start runs the check itself, :4093-4111). At 1850x960 the drawer opens with step 3's row cut at the body's bottom edge and the prompt below it. 'Check checkpoint' is still a size='sm' button (:4538). Before any check, the dataset relation is a filled green box ('● Trained on the dataset selected in the run bar').
 - **Done when**: The Continue drawer's prompt matches its state (says the check is optional, or Start performs it), Check is a normal secondary button, and the dataset relation is one line of text, not a filled box.
 - **Sources**: UX:250 (appendix 48); RJ audits[1].findings[6]
-- **Closed at**: —
+- **Closed at**: 92084f4 (with 137b637). Step 3 is a normal secondary 'Check checkpoint' button (class lg secondary, as every secondary button; was sm) with its prompt beside it: 'Optional: it shows the plan. The start checks first anyway.' (`training_console.CHECK_PROMPT`); 'Select a checkpoint, then click Check checkpoint.' is gone and the result box starts empty and hidden. Before any check the dataset relation is one line of text, '● Same dataset as the run bar' (`compare_html`, `shep-cmp-line`, a status mark with no fill), under the checkpoint's facts; a different dataset keeps its red box. Tests: `test_training_page.py::test_the_drawer_says_the_check_is_optional_beside_a_normal_check_button` and `test_training_console_resume.py::test_the_listed_and_the_typed_checkpoint_go_through_one_check` (fails on b2732ea: the changed unit tests of this part, 19 fail there). Seen on the CPU demo at 1850x960 and 960x1080: before 'sm secondary' and the prompt at y 955-976 under the body (bottom 854); after the button and its prompt side by side inside the body. Screens: scratchpad/t06b/continue-finetune/shots/before/drawer_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/drawer_1850x960.png (and _960x1080).
 
 #### R-49 · Continue task split across drawer and run bar with duplicate controls
 
-- **State**: partly done · found by the 2026-10-25 review · severity medium · page: training
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: training
 - **Problem**: Continue split one task across the drawer and run bar, with duplicate controls.
 - **At ba6e85e**: Continue Training (or Start branch) and Cancel are now in the drawer's footer beside their reason (7649fa0; seen), and Continue… and Stop are hidden in the run bar while the drawer is open. Still split across two regions: the run bar keeps a disabled Start with 'Start disabled: close Continue… to start a new run.' and the line 'RUN a new one, continued from the checkpoint chosen in Continue or branch a run'. The drawer's × Close and the footer's Cancel do the same thing (training_console.py:4715-4717). The 'Checkpoint source: From run list / Manual path' radio still takes a row near the top.
 - **Done when**: While the Continue drawer is open, the run bar shows no disabled Start, no Start reason and no 'RUN a new one' line; the drawer has one closer and 'Manual path' sits behind a link.
 - **Sources**: UX:251 (appendix 49); RJ audits[1].findings[7]; UX:130 (section 4: Continue's buttons in the drawer's footer)
-- **Closed at**: —
+- **Closed at**: 92084f4. While the drawer is open the run bar draws no Start, no reason and no 'RUN a new one' line (`run_bar_view` clears the reason; 'Start disabled: close Continue… to start a new run.' and the `shep-train-continues` line, its listener and CSS are removed). The drawer has one closer, 'Close' in its header (`shep-train-drawer-close`; the footer's Cancel is removed). The checkpoint source radio is hidden (`visible="hidden"`) and chosen by a link beside the server-list note, 'Type a path instead ›' / 'Choose from the list instead ›' (`SOURCE_LINKS`, `source_link_html`, `_on_source_link`). Tests: `test_training_page.py::test_with_the_drawer_open_the_run_bar_draws_no_action_and_the_drawer_one_closer` (fails on b2732ea) and the shared walk's drawer stop, `test_webui_shell.py::test_the_continue_drawer_and_the_fine_tune_form_fit_the_owners_window`: on b2732ea it reports the run bar's actions ['shep-train-start']; after, none and one closer at 1850x960 and 960x1080. Screens: scratchpad/t06b/continue-finetune/shots/before/drawer_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/drawer_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/drawer_path_1850x960.png (the link's path field).
 
 #### B32-start · Training's New and Continue not merged into one mode with a single Start
 
@@ -594,6 +594,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Why this state**: Merging New and Continue into one Start is listed as a deferred new product surface in tasks_def.md (plan §1 backlog).
 - **Sources**: docs/working/BACKLOG.md:990 (item 32); src/webui/components/training_console.py:24, 70, 89 (module docstring: Start, Continue…)
 - **Closed at**: —
+- **Re-checked (T06-B continue-finetune, 92084f4)**: R-49 removed the disabled Start, its reason and the 'RUN a new one' line from the run bar while the drawer is open, so only one start is drawn at a time (Start, or the drawer's Continue Training / Start branch). The modes are not merged. The owner still decides: one mode with a single Start (BACKLOG 32), or the two starts as now, one drawn at a time.
 
 #### R-44 · Choosing HGT silently changed a setting in a collapsed section
 
@@ -1390,20 +1391,20 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### NEW-training-finetune-6 · Emptied task setting reads 'must be set, not null'
 
-- **State**: to do · found by the 2026-11-16 audit · page: finetune
+- **State**: code-verified · found by the 2026-11-16 audit · page: finetune
 - **Duplicate of**: OPS-R2 (closed with it)
 - **At ba6e85e**: Fine-tune: an emptied task setting reads 'Not valid: Task loss weight must be set, not null.' ('null' is a programming word on the page; finetune-form-checks.json)
 - **Done when**: Emptying a Fine-tune task setting shows a refusal without the word 'null' (e.g. 'Task loss weight must be set.'), and the reason also shows beside Start.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: f9512cf, a37d09f. The one value check (`training_fields.value_problem`) refuses an empty value as '<field> must be set.'; Fine-tune also draws what Start would refuse beside Start (`finetune_page.refused_html`, `#ft_refused`: '▲ Start would refuse: Learning rate must be set.'), refreshed by every field's input, the task choice and Reset. Tests: `test_webui_finetune_page.py::test_an_emptied_task_number_is_refused_before_start_and_never_said_to_be_the_reference` (no 'null'; the line beside Start) and `test_training_fields.py` (fails on b2732ea). Seen at 1850x960 and 960x1080 with Learning rate emptied: before 'Not valid: Learning rate must be set, not null.' and nothing beside Start; after 'Not valid: Learning rate must be set.' and the refusal beside Start. Screens: scratchpad/t06b/continue-finetune/shots/before/finetune_emptied_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/finetune_emptied_1850x960.png.
 
 #### NEW-training-finetune-7 · Idle Fine-tune panel shows a disabled Stop with no reason
 
-- **State**: to do · found by the 2026-11-16 audit · page: finetune
+- **State**: code-verified · found by the 2026-11-16 audit · page: finetune
 - **At ba6e85e**: Fine-tune job panel while idle: a visible, disabled '■ Stop' with no reason (ft_stop disabled, ft_stop_reason empty) beside 'No Fine-tune job since the server started…', the same pattern as R-39 (paths-and-ft-stop.json, finetune-1850x960.png)
 - **Done when**: With no Fine-tune job, the job panel shows no Stop button, or the disabled Stop has a visible reason.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: 137b637, a37d09f. R-39's rule is one predicate, `training_console.stop_shown` (a job running or stopping, and the page's own); Fine-tune's card draws Stop only for its own child job (`finetune_page.child_job`, `actions_view`), so idle there is no Stop and no reason; while a child stops the reason reads 'Stopping: the job is ending.'. Test: `test_webui_finetune_page.py::test_start_and_stop_follow_the_training_run_bars_states` (fails on b2732ea). Seen idle at 1850x960 and 960x1080: before a disabled '■ Stop' with no reason; after no Stop element. A running child's Stop was not exercised in the browser (unit test only). Screens: scratchpad/t06b/continue-finetune/shots/before/finetune_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/finetune_1850x960.png.
 
 #### OPS-R2 · Explicit null task setting passed and page said reference would be used
 
@@ -1956,12 +1957,12 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### NEW-training-finetune-1 · Continue Check with Device auto shows the CLI's --device sentence
 
-- **State**: to do · found by the 2026-11-16 audit · page: training
+- **State**: code-verified · found by the 2026-11-16 audit · page: training
 - **Duplicate of**: R-32 (closed with it)
 - **At ba6e85e**: Continue drawer, Check with the default Device auto on this no-CUDA host: the result box shows the CLI's sentence '--device auto requires CUDA … Pass --device cpu explicitly for development; the run records the device it was given. Nothing was started.' (flag words, about 50 words). Source: training_manager.py:619-632; evidence: (audit evidence, not kept in the repository)
 - **Done when**: On a no-CUDA host, Check in the Continue drawer with Device auto shows a short page-words refusal (e.g. 'No CUDA device: choose cpu') with no '--device' flag words.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: f9512cf (with R-32). Check in the drawer with Device auto on this no-CUDA host reads 'Device auto needs CUDA, which is not available here; choose cpu for development. Nothing was started.' with no '--device' words: the job runner says `TrainingDeviceUnavailable.words` (`training_device.unavailable_words`); the training process keeps the command line's sentence. Test: `test_training_device.py::test_the_job_runner_refuses_in_a_requests_words_not_the_command_lines` (fails on b2732ea). Screens: scratchpad/t06b/continue-finetune/shots/before/drawer_check_auto_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/drawer_check_auto_1850x960.png (and _960x1080).
 
 #### NEW-training-finetune-3 · State line says 'use Continue…' while the Continue drawer is open
 
@@ -2026,12 +2027,12 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### R-32 · Device default 'auto' is refused on a CUDA-less host with no warning before Start
 
-- **State**: partly done · found by the 2026-10-25 review · severity high · page: training
+- **State**: code-verified · found by the 2026-10-25 review · severity high · page: training
 - **Problem**: The Device help said 'auto' falls back to CPU; the trainer refuses 'auto' without CUDA.
 - **At ba6e85e**: The help text is fixed. Both Device help texts say auto is CUDA and is refused without it (training_console.py:4248-4254 for the base form, :4298-4305 for the Continue drawer; finetune_page.py:1131 the same). Since AF1 dc08792 the job runner resolves the device before it spawns anything (training_manager.py:619-632 and :1264; training_device.py:25-49), so Start with auto on this host is refused and creates no run (inferred from the code: Start was not pressed, per the audit rules). The B5 footer (6a9a7c3) leads with 'No CUDA device visible: GPU training is unavailable…'. What remains: Device still defaults to auto on Training (:4439-4440), in the Continue drawer (:4518-4519) and on Fine-tune (finetune_page.py:1249-1250). Start and Continue Training stay enabled, and nothing at the Device field or beside Start says auto will be refused here. Beside Start the reason line reads 'Stop disabled: no training is running.' In the Continue drawer, Check with the default auto answers in the CLI's words: '--device auto requires CUDA, which is not available here. … Pass --device cpu explicitly for development; the run records the device it was given. Nothing was started.' (seen)
 - **Done when**: On a host with no CUDA device, the Device radios on Training, Continue and Fine-tune show an info line that auto and cuda will be refused (choose cpu), or a reason beside Start, and the refusal text uses page words.
 - **Sources**: UX:234 (appendix 32); RJ audits[1].findings[0]; UX:62 (section 3 high #1); UX:198-199
-- **Closed at**: —
+- **Closed at**: f9512cf, 137b637. Every Device radio is one field, `training_console.device_field` (Training, the Continue drawer, Fine-tune); on a host where `training_device.cuda_visible()` is false its info line reads 'No CUDA device here: auto and cuda are refused; choose cpu.' (`DEVICE_NOTE`; no note on a CUDA host). The refusal is in page words, 'Device auto needs CUDA, which is not available here; choose cpu for development. Nothing was started.' (NEW-training-finetune-1). Tests: `test_training_page.py::test_every_device_field_is_the_one_field_with_the_hosts_note`, `test_training_device.py::test_the_job_runner_refuses_in_a_requests_words_not_the_command_lines`, `test_webui_help.py` (the info lines) (fails on b2732ea). Seen on the CPU demo at 1850x960 and 960x1080: the note under Device on Training, in the drawer and on Fine-tune (scratchpad/t06b/continue-finetune/shots/after/training_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/drawer_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/finetune_1850x960.png). The CUDA-host branch (no note) is checked by a unit test with `cuda_visible` patched; a look on a CUDA host is awaiting hardware.
 
 #### R-42+owner · Training help texts lack bold leads, exceed budget, and Model-spec fields lack help
 
