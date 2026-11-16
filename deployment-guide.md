@@ -1634,12 +1634,13 @@ allocator 計數（`max_memory_allocated`）在服務的行程裡，沒有任何
 
 registry 是**由你建立**的目錄，每個指令都以**位於 repository 之外的絕對路徑**傳入。相對路徑、
 不存在的路徑，以及解析後落在 repository 內的路徑（包括經由 symlink）一律拒絕。不會有任何東西
-替你建立它，也沒有任何請求指定它。各指令以 `--registry` 接收它；服務則從 `SHEPHERD_REGISTRY`
-讀取（§4.12），以同一個規則檢查。
+替你建立它，也沒有任何請求指定它。各指令以 `--registry` 接收它；服務則讀取在
+⚙ Settings › Data locations 中選擇的結果 registry，啟動時設定了 `SHEPHERD_REGISTRY` 時則以它優先
+（§4.12），以同一個規則檢查。
 
-**各指令也需要 `SHEPHERD_REGISTRY`**（自 M5 審查起，BACKLOG 37）：報告只從部署的 registry 登錄
+**各指令也需要部署的 registry**（自 M5 審查起，BACKLOG 37）：報告只從部署的 registry 登錄
 （`--record`、`record_evaluation.py --report`、Test 頁面），`measure_scorer.py --cohort` 也只在
-部署的 registry 中量測，也就是 `SHEPHERD_REGISTRY` 所指名的那一個。兩者以解析後的路徑比較，所以
+部署的 registry 中量測，也就是服務讀取的那一個（§4.12）。兩者以解析後的路徑比較，所以
 經由指向該目錄的連結給出的 `--registry` 會被接受；registry 的副本，或經由 bind mount 或另一個
 掛載點到達的同一個目錄，則是另一個 registry，在讀取其中任何東西之前就會被拒絕。
 `measure_scorer.py --cohort` 只在獲准開始時解析一次 `--registry`，之後都經由那個目錄讀寫：在它取得
@@ -1861,8 +1862,8 @@ patients-like-me 讀取版本保存的 fixture；每個檔案只讀取一次，�
 `split`；沒有 R10，role 也絕不被呈現為 test。它的報告與任何保存的報告一樣可以登錄（`--record`，
 或執行印出的之後登錄指令；research comparison Stage 6）：其 ledger 紀錄保留 role 與產生身分。目前
 無法匯入 generated test role，因此不會量測任何 test role。job runner 依版本的種類只做一次 R10 證據的
-選擇（自 research comparison Stage 7 起）：supplied cohort 的執行會取得 `SHEPHERD_TRAINING_EVIDENCE_DIRS`
-的目錄，該設定被拒絕時其啟動也被拒絕；generated split 或 KG 邊集合的執行不取得任何證據目錄，不論該設定
+選擇（自 research comparison Stage 7 起）：supplied cohort 的執行會取得訓練證據資料夾
+（§4.12），該設定被拒絕時其啟動也被拒絕；generated split 或 KG 邊集合的執行不取得任何證據目錄，不論該設定
 已設定或被拒絕，因此 Test 頁在它們上的執行會啟動並完成量測。以 `--split` 量測的報告維持原狀：
 它們留在寫出的位置，不會為它們捏造任何身分，`record_evaluation.py` 也仍然拒絕登錄它們。
 
@@ -1870,7 +1871,7 @@ patients-like-me 讀取版本保存的 fixture；每個檔案只讀取一次，�
 digest、dataset record 與它依角色列出的每個來源，以及依 kind 而定的：KG 邊集合的 view、
 split、配對與 checkpoint，或 generated split 的 split manifest、split 檔、樣本與其保存的功能性
 gene fixture）。複製或搬移到
-另一個目錄、並由 `--registry` 或 `SHEPHERD_REGISTRY` 指名的 registry，會以相同的 digest 讀到
+另一個目錄、並由 `--registry` 或部署的結果 registry（§4.12）指名的 registry，會以相同的 digest 讀到
 相同的版本；哪個目錄被允許是該設定的規則，與內容檢查分開。目前還沒有任何指令或頁面顯示版本的
 依賴是否存在：registry 的函式庫檢查（`check_references`）把每個依賴給成一個狀態（verified、
 differs、missing、unreadable 或 not checked），從不是版本無法讀取的理由，這些狀態將由結果服務
@@ -2115,7 +2116,8 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
 - **來源一律明確指定**，數量不限：`--workspaces-root [NAME=]DIR`（子目錄為 workspace 的目錄，如
   `SHEPHERD_WORKSPACES_ROOT` 所指）與 `--registry [NAME=]DIR`。每個來源都以服務讀取自身設定的同一
   規則讀取（絕對路徑、必須存在；registry 須在 repository 之外），各自是獨立的來源；不會為它們讀取或
-  修改這個 shell 的 `SHEPHERD_*` 設定。`NAME` 是各列顯示的來源名稱，絕不是路徑，也不是目錄本身的名稱
+  修改這個 shell 的資料位置（它的 `SHEPHERD_*` 變數與 Settings 中儲存的值）。`NAME` 是各列顯示的
+  來源名稱，絕不是路徑，也不是目錄本身的名稱
   （它可能透露超過匯出檔應有的資訊）；預設依給定順序為 `workspaces-root-1`、`workspaces-root-2`……
   與 `registry-1`……，兩個來源不得同名。
 - **每個結果一列。** 保存的報告與 ledger 紀錄只有在紀錄指名該報告的 run 並持有其位元組時才合為一列；
@@ -2197,7 +2199,7 @@ checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕�
 （`sha256:<前 12 字元>…`）完整列出 **「Recorded test results (Mode C)」**，透過
 `GET /api/v1/evaluations/loaded-model` 讀取，用語如下。這個 route 仍以這些紀錄回應 API 用戶端，
 且自 M5 審查起（BACKLOG 36）每筆紀錄都附上它的條件群組在存放處中的比較情形（`contest`），由儀表板
-本身的實作依服務的 `SHEPHERD_REGISTRY` 算出，但不附原因本身的文字，因為那些文字可能指名伺服器上的
+本身的實作依服務的 registry（§4.12）算出，但不附原因本身的文字，因為那些文字可能指名伺服器上的
 路徑。**自 K8-6r.2 起這些值只做描述**（政策 rev 16）：`uncontested`（各次執行一致）、`contested`
 （同樣條件下的執行結果不同，附上不同的欄位與每一個帶有不同報告的執行）與 `cannot_be_checked`
 （比較不完整，絕不視為一致）對 API 用戶端保留同樣的字串，但都不再隱藏、排除或拒絕任何紀錄。每筆
@@ -2308,8 +2310,10 @@ holds … Register the store's original instead」。副本仍可閱讀與分享
 **registry 必須是部署的 registry**（自 M5 審查起，BACKLOG 37）：整個 registry 的副本以相同的結構
 持有相同的位元組，但它會有自己的報告存放處與使用紀錄，而 Research › Models 與 job runner
 從不讀取它們，所以副本中的報告會被拒絕（「… is not registered: the registry … is not the
-deployment's: SHEPHERD_REGISTRY (…) resolves to …」）。整個搬移的 registry，在服務與你的 shell
-中的 `SHEPHERD_REGISTRY` 都指名它的新位置之後，便可再次使用；沒有任何絕對路徑被存成身分。如果
+deployment's: the results registry saved in Settings is …, which resolves to …」）。整個搬移的
+registry，在 ⚙ Settings › Data locations 中的結果 registry 指名它的新位置之後（或在設定了
+`SHEPHERD_REGISTRY` 的地方，服務與你的 shell 中的它都指名新位置之後），便可再次使用；沒有任何絕對
+路徑被存成身分。如果
 `--record` 發現它的 registry 已不再是部署的 registry（執行期間連結被改指向別處），執行會以 exit 3
 結束、保留報告，且不提供稍後登錄的命令，因為那個命令也會以同樣的原因被拒絕。這項檢查攔下的是
 誤用的 registry；刻意把這個變數設成副本後執行的指令，就會使用那個副本。產生的 split 的報告寫在
@@ -2594,7 +2598,7 @@ by an inference job (the SHEPHERD service's CUDA inference: stop inference first
 - **載入**：不論是啟動時或 reload（Change model…、Models 的 Load、`POST /api/v1/pipeline/reload`），
   對 CUDA 裝置都先取鎖，再檢查 job runner（它剛啟動的工作在其行程取鎖之前就已占住槽位），然後才建置
   並檢查候選。被拒絕時什麼都不讀：GPU 使用中（指出持有者）、runner 裡有工作，或**沒有設定鎖**：
-  `SHEPHERD_WORKSPACES_ROOT` 未設定（或被拒絕）時，CUDA 服務以工作同樣的說法被拒絕，CPU 服務仍可
+  沒有設定 workspaces 資料夾（或它被拒絕）時，CUDA 服務以工作同樣的說法被拒絕，CPU 服務仍可
   載入。在 CUDA 上換模型會保持同一把鎖；CPU 模型取代 CUDA 模型時，等 CUDA 模型已接受的診斷都結束後
   才交還鎖。被拒絕的候選（包括記憶體不足："The model in use keeps serving; stop inference first …"）
   讓使用中的模型與它的鎖維持原狀；不會為了騰出空間而先卸載。
@@ -2977,7 +2981,8 @@ workspace 與 cohort 清單、已記錄的結果、系統頁面，以及 `GET /a
 
 每個控制項都檢查它正在處理的請求，在處理的當下檢查，只有在下列條件全部成立時才允許：
 
-1. `SHEPHERD_DEPLOYMENT_MODE` 恰好是 `M1`；
+1. 部署模式是 `M1`：啟動時把 `SHEPHERD_DEPLOYMENT_MODE` 設成恰好 `M1`，或在完全沒有設定時，
+   由本機啟動的預設給出（見上文）；
 2. 請求抵達這台機器的 loopback 位址：由伺服器自己的 socket 決定，絕不採用用戶端自稱的位址；
 3. 請求不帶 proxy 會加上的標頭（`Forwarded`、`X-Forwarded-For`、`X-Forwarded-Host`、
    `X-Forwarded-Proto`、`X-Real-IP`、`X-Original-Forwarded-For`、`CF-Connecting-IP`、
@@ -3086,7 +3091,7 @@ launcher 與 `python -m src.api.main` 會把它們綁定的主機以 `SHEPHERD_B
 
 CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵達伺服器：這正是操作者控制項由 D8 而不是
 由 CORS 檢查的原因。基於同樣的理由，Gradio 的上傳路由在儀表板前面就被拒絕，請求本體不會被讀取
-（§4.10 的 route guard）：儀表板沒有上傳控制項（匯入來源來自 `SHEPHERD_INTAKE_DIR`），否則其他網站
+（§4.10 的 route guard）：儀表板沒有上傳控制項（匯入來源來自匯入資料夾，§4.12），否則其他網站
 的頁面每個請求最多能把 1000 個檔案寫進 Gradio 的暫存目錄。Gradio 每個檔案 1 MB 的上限保留作為
 第二道防線；它限制的是每個檔案，而不是檔案的數量。
 
@@ -3310,7 +3315,7 @@ run，不論目錄名稱為何，所以放在其他名稱之下的模型也會�
 
 ### Research › Prepare › Datasets
 
-伺服器在 `SHEPHERD_WORKSPACES_ROOT` 下列出的 workspace 清單（§4.12；第一個面板的標題寫出數量，
+伺服器在它的 workspaces 資料夾下列出的 workspace 清單（§4.12；第一個面板的標題寫出數量，
 例如「Workspaces (2)」）：也就是 Training、
 Fine-tune、Test 與 Models 選擇時使用的同一份清單。每一列只有一行：名稱；建置時間（「Built
 (UTC)」，來自 `workspace_build.json`），或「not recorded」；**資料集指紋**，即其
@@ -3334,10 +3339,10 @@ manifest 的檔案與各自的 digest 在 **Manifest contents (7 files) ›** �
 以及它與其他列出的 workspace 的比較：「Same dataset as …」（完整指紋相同）或「Same graph build as
 … (graph, tensors and record identical), another cut: the allocation seed differs …」。對任何瀏覽器都不會顯示伺服器的絕對路徑：根目錄之下的路徑以相對於
 根目錄的方式顯示，其他路徑寫作「a path outside the workspaces root」，被拒絕的
-`SHEPHERD_WORKSPACES_ROOT` 會說明被拒絕但不顯示它的路徑。頁面在打開時讀取 manifest，而不是每次
+workspaces 資料夾會說明被拒絕但不顯示它的路徑。頁面在打開時讀取 manifest，而不是每次
 選取時讀取；registry 也是如此。
 
-**資料版本**（自 ops-wiring 這一輪的 B5 起）：伺服器 registry（`SHEPHERD_REGISTRY`）中對應到所選
+**資料版本**（自 ops-wiring 這一輪的 B5 起）：伺服器 registry（結果 registry，§4.12）中對應到所選
 workspace 圖的版本，與 Test 頁面列出的相同、以同一種比較判斷，以表格顯示：版本的 label、種類
 （Supplied cohort version、KG edge set、Generated split）、role，以及它的資料接受的量測（例如未列出
 基因的 supplied cohort 為「Disease」，KG edge set 為「KG link prediction」）。屬於該版本種類、但資料
@@ -3353,7 +3358,7 @@ workspace 會說明它未被檢查；還沒有任何版本對應到它時，會�
 manifest.」）。在 run bar 中改選另一個資料集，「in your Training run bar」標記會隨之移到那一個。
 
 這個頁面上沒有任何操作者控制項：它只讀取 workspace 與 registry 的小型 JSON 檔案，從不開啟 checkpoint，因此
-唯讀的瀏覽器看到的是同樣的頁面。沒有設定 `SHEPHERD_WORKSPACES_ROOT` 時，頁面會說明這一點。資料集
+唯讀的瀏覽器看到的是同樣的頁面。沒有設定 workspaces 資料夾時，頁面會說明這一點。資料集
 仍在伺服器上以 CLI 建置（`scripts/build_knowledge_graph.py --generate-samples`；示範資料用 `scripts/setup_demo.py`）。
 
 ### Research › Prepare › Training
@@ -3682,7 +3687,7 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
 
 - **Data**（自 research comparison Stage 7 起；之前為「Cohort」）。workspace（伺服器的清單，以
   名稱列出；所選 workspace 的資料集指紋與 Datasets 相同，顯示在選單下方）與 **Data version**
-  （registry 的清單，`SHEPHERD_REGISTRY`），依種類與 role 列出，每個選項以標籤開頭、一個 " · "：先是
+  （結果 registry 的清單，§4.12），依種類與 role 列出，每個選項以標籤開頭、一個 " · "：先是
   supplied cohort（「label · role R」；可排名的案例數是所選版本的細節），接著是 KG 邊集合（「kg-test ·
   KG edge set (test)」），然後是 generated split（「gen-val · Generated split (val)」）；太長的標籤從
   中間截短，選項的值是完整的標籤。所選版本顯示它的計數（supplied cohort 的 role 與案例；KG 邊集合
@@ -3717,7 +3722,7 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   a model with a readable record」；自 K8-7b，2026-11-08 起）。它和模型一樣是操作者控制項。Mode C 與
   Mode D 都不是協定，因此沒有任何頁面或命令會執行它們。接著是 **R10 證據**，由執行器依所選版本的
   種類只選擇一次（自 research comparison Stage 7 起）：supplied cohort 顯示執行時會尋找的目錄（所選的
-  workspace，以及 `SHEPHERD_TRAINING_EVIDENCE_DIRS`），設定被拒絕時以紅色 ✕ 與「Refused:」加上原因
+  workspace，以及訓練證據資料夾，§4.12），設定被拒絕時以紅色 ✕ 與「Refused:」加上原因
   顯示，並停用 Start；KG 邊集合或 generated split 以灰色 ○ 顯示「Not applicable」與原因（R10 屬於
   supplied cohort），不論該設定如何，執行都不會取得任何證據目錄。接著是 **Register the result**、
   **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
@@ -3790,7 +3795,7 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   則筆記），從不顯示「沒有保存筆記」。
 
 **Import a new version…** 會在 Run 與 Result 上方打開一個抽屜：intake 目錄中的檔案
-（`SHEPHERD_INTAKE_DIR`，§4.12：其中的 `*.json` 檔案，依名稱、大小與修改時間列出；連結到目錄
+（匯入資料夾，§4.12：其中的 `*.json` 檔案，依名稱、大小與修改時間列出；連結到目錄
 之外的檔案會列出但不提供選擇；不會從瀏覽器上傳任何東西）、版本標籤、role（版本宣告的用途，例如
 mygene2、research_selection 或 institutional_acceptance）以及遺失 term 的政策。**Preview** 在服務內以 CPU 執行匯入程式（它會讀取 workspace 的圖譜），
 不寫入任何東西。預覽顯示各項數量、排除原因及其數量、無法映射的 term 及列出每個 term 的案例數，

@@ -89,7 +89,7 @@ Two steps, in order. Full walkthrough with data sources and expected artifacts:
 | Step | Command | Produces |
 |---|---|---|
 | 1. Knowledge graph | `scripts/build_knowledge_graph.py` | `kg.json`, `node_features.pt`, `edge_indices.pt` |
-| 2. Train | a base on the dashboard's Research › Prepare › Training, then its task models on Research › Prepare › Fine-tune; or `scripts/train_model.py --data-dir <workspace> --stage base` in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (deployment guide §4.11), then `--stage finetune` with `--task` and `--finetune-from` the base's checkpoint, adding `--frozen-parts graph_side` for the frozen-backbone control: the base's input module, encoder and LP head kept as they are, only the patient encoder and task head trained (research comparison Stage 9b; on the Fine-tune page, Graph backbone: Frozen, and listed as "Disease · frozen graph backbone") | `runs/<arch>/<run>/checkpoints/*.pt` |
+| 2. Train | a base on the dashboard's Research › Prepare › Training, then its task models on Research › Prepare › Fine-tune; or `scripts/train_model.py --data-dir <workspace> --stage base` run by the account that runs the service, which reads the Workspaces folder chosen in Settings › Data locations and takes the GPU lock it names (deployment guide §4.11; Ref: `SHEPHERD_WORKSPACES_ROOT`, which wins when set), then `--stage finetune` with `--task` and `--finetune-from` the base's checkpoint, adding `--frozen-parts graph_side` for the frozen-backbone control: the base's input module, encoder and LP head kept as they are, only the patient encoder and task head trained (research comparison Stage 9b; on the Fine-tune page, Graph backbone: Frozen, and listed as "Disease · frozen graph backbone") | `runs/<arch>/<run>/checkpoints/*.pt` |
 
 There is no shortest-path step: no task model reads `shortest_paths.pt`, and neither does the
 GB10 acceptance probe (`scripts/probe_deployment.py`, its `--m2-acceptance` run), which trains,
@@ -109,10 +109,14 @@ the KG-independent models in `models/pretrained/`. See
 
 A checkpoint is tested on a registered test cohort version, from the CLI below or from the
 dashboard's Research › Evaluate › Test, and its result is recorded beside it (provenance contract
-M4; deployment guide §4.9). Run the commands in a shell given the service's settings (deployment
-guide §4.11): `SHEPHERD_REGISTRY` naming the deployment's registry, the `<registry>` below
-(registration and `--cohort` refuse any other, and refuse while it is unset), and, for step 2,
-`SHEPHERD_WORKSPACES_ROOT`, the GPU lock's one name.
+M4; deployment guide §4.9). Run the commands as the account that runs the service: its shell
+reads the data locations chosen in Settings › Data locations from the same saved file as the
+service, so nothing needs to be set first (deployment guide §4.11; for a service started with
+`--settings-file`, name that file in the shell too, Ref: `SHEPHERD_SETTINGS_FILE`). The
+`<registry>` below must be the deployment's Results registry: registration and `--cohort` refuse
+any other, and refuse while none is set. Step 2 takes the GPU lock the Workspaces folder names. A
+variable set for a command wins over the saved value (Ref: `SHEPHERD_REGISTRY`,
+`SHEPHERD_WORKSPACES_ROOT`).
 
 | Step | Command | Produces |
 |---|---|---|

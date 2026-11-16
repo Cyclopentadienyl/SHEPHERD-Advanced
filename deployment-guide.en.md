@@ -1266,12 +1266,13 @@ anything.
 The registry is a directory **you create**, given to every command as an **absolute path outside
 the repository**. A relative path, a path that does not exist, and a path that resolves inside
 the repository (through a symlink too) are refused. Nothing creates it for you, and no request
-names it. The commands take it as `--registry`; the service reads it from `SHEPHERD_REGISTRY`
-(§4.12), checked by the same rule.
+names it. The commands take it as `--registry`; the service reads the Results registry chosen in
+⚙ Settings › Data locations, or `SHEPHERD_REGISTRY` when it is set at start, which wins (§4.12),
+checked by the same rule.
 
-**The commands need `SHEPHERD_REGISTRY` too** (since the M5 review, BACKLOG 37): a report is
+**The commands need the deployment's registry too** (since the M5 review, BACKLOG 37): a report is
 registered (`--record`, `record_evaluation.py --report`, the Test page), and `measure_scorer.py
---cohort` measures, only in the deployment's registry, the one `SHEPHERD_REGISTRY` names. The
+--cohort` measures, only in the deployment's registry, the one the service reads (§4.12). The
 two are compared as resolved paths, so `--registry` through a link to that directory is
 accepted, while a copy of the registry, or the same directory reached through a bind mount or
 another mount, is another registry and is refused before anything in it is read. A
@@ -1536,7 +1537,7 @@ R10, and the role is never presented as test. Its report is registered like any 
 ledger record keeps the role and the generation identity. A generated test role cannot be
 imported today, so none is measured. The job
 runner chooses R10's evidence once, by the version's kind (since research comparison Stage 7): a
-supplied cohort's run is given the `SHEPHERD_TRAINING_EVIDENCE_DIRS` directories, and a refused
+supplied cohort's run is given the training evidence folders (§4.12), and a refused
 setting refuses its start; a generated split's or a KG edge set's run is given none, whether the
 setting is set or refused, so a Test-page run on one starts and is measured. Reports measured with
 `--split` are untouched: they stay where they were written, no identity is made up for them, and
@@ -1546,8 +1547,8 @@ setting is set or refused, so a Test-page run on one starts and is measured. Rep
 graph's four digests, the dataset record and each source it names by role, and by kind the view,
 split, pairs and checkpoint of a KG edge set, or the split manifest, split files, samples and
 any functional gene fixture of a generated split). A registry copied or moved to another directory that `--registry` or
-`SHEPHERD_REGISTRY` then names reads the same versions under the same digests; which directory is
-allowed is that setting's rule, apart from the content check. No command or page shows whether
+the deployment's Results registry (§4.12) then names reads the same versions under the same
+digests; which directory is allowed is that setting's rule, apart from the content check. No command or page shows whether
 a version's dependencies are present yet: the registry's library check (`check_references`)
 gives each as a state (verified, differs, missing, unreadable or not checked), never a reason a
 version cannot be read, and the results service is to show those states (research comparison
@@ -1845,7 +1846,8 @@ python scripts/export_results.py --workspaces-root lab=/data/lab/workspaces \
   whose subdirectories are workspaces, as `SHEPHERD_WORKSPACES_ROOT` names one) and
   `--registry [NAME=]DIR`. Each is read with the rule the service reads its own setting by
   (absolute, existing; a registry outside the repository), as a source of its own; this shell's
-  `SHEPHERD_*` settings are neither read nor changed for them. `NAME` is what rows show for the
+  data locations (its `SHEPHERD_*` variables and the values saved in Settings) are neither read nor
+  changed for them. `NAME` is what rows show for the
   source, never its path or the directory's own name (which may say more than an export should); by
   default `workspaces-root-1`, `workspaces-root-2`, ... and `registry-1`, ... in the order given,
   and two sources may not share one.
@@ -1947,7 +1949,7 @@ as **"Recorded test results (Mode C)"** for the loaded checkpoint (`sha256:<firs
 through `GET /api/v1/evaluations/loaded-model`, in the words below. The route still answers API
 clients with those records, and since the M5 review (BACKLOG 36) each record carries how its
 condition group compares in the store (`contest`), from the dashboard's own implementation over
-the service's `SHEPHERD_REGISTRY`, without the reasons' own words, which may name a server path.
+the service's registry (§4.12), without the reasons' own words, which may name a server path.
 **Since K8-6r.2 these values only describe** (policy rev 16): `uncontested` (the runs agree),
 `contested` (runs under these conditions differ, with the fields and every run that carries a
 differing report) and `cannot_be_checked` (the comparison is incomplete, never to be read as
@@ -2085,9 +2087,10 @@ in the store that is a link to a file elsewhere does not count. **The registry m
 deployment's** (since the M5 review, BACKLOG 37): a copy of the whole registry holds the same
 bytes in the same structure, but it would keep its own report store and usage history, which
 Research › Models and the job runner never read, so its reports are refused ("…
-is not registered: the registry … is not the deployment's: SHEPHERD_REGISTRY (…) resolves to …").
-A registry moved as a whole works again once `SHEPHERD_REGISTRY` names its new place, for the
-service and in your shell; no absolute path is stored as an identity. If `--record` finds its
+is not registered: the registry … is not the deployment's: the results registry saved in Settings
+is …, which resolves to …"). A registry moved as a whole works again once the Results registry in
+⚙ Settings › Data locations names its new place (or `SHEPHERD_REGISTRY`, where it is set, for the
+service and in your shell); no absolute path is stored as an identity. If `--record` finds its
 registry is no longer the deployment's (a link retargeted during the run), the run exits 3,
 keeps its report and offers no register-later command, since that command would be refused the
 same way. The check catches a registry reached by mistake; a command run with the variable set to
@@ -2424,7 +2427,7 @@ model. **Serving on the CPU takes no lock** and excludes nothing.
   /api/v1/pipeline/reload`), takes the lock for a CUDA device first, then checks the job runner
   (a job it has just started holds the slot before its process takes the lock), then builds and
   checks the candidate. Refused, nothing is read: the GPU in use, naming the holder; a job in the
-  runner; or **no lock configured**: with `SHEPHERD_WORKSPACES_ROOT` unset (or refused) CUDA
+  runner; or **no lock configured**: with no workspaces folder set (or one refused) CUDA
   serving is refused in the jobs' words, while CPU serving still loads. Changing models on CUDA
   keeps the one lock; a CPU model replacing a CUDA one gives it back once the diagnoses the CUDA
   model accepted have ended. A refused candidate, out of memory included ("The model in use
@@ -2891,7 +2894,8 @@ allow.
 Each control checks the request it is handling, at the moment it handles it, and allows it only
 when all of these hold:
 
-1. `SHEPHERD_DEPLOYMENT_MODE` is exactly `M1`;
+1. the deployment mode is `M1`: `SHEPHERD_DEPLOYMENT_MODE` set to exactly `M1` at start, or, with
+   none set, the local start's default (above);
 2. the request arrived on a loopback address of this machine: the server's own socket decides,
    never an address the client states;
 3. it carries no header a proxy adds (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`,
@@ -3020,7 +3024,7 @@ CORS only decides what a page may read. A cross-origin request that needs no pre
 reaches the server: that is why the operator controls are checked by D8, not by CORS. For the
 same reason Gradio's upload route is refused in front of the dashboard, before the request body
 is read (§4.10, the route guard): the dashboard has no upload control (import sources come from
-`SHEPHERD_INTAKE_DIR`), and another site's page could otherwise write up to 1000 files a request
+the Import folder, §4.12), and another site's page could otherwise write up to 1000 files a request
 into Gradio's temporary directory. Gradio's limit of 1 MB per file stays as a second line of
 defence; it bounds each file, not their number.
 
@@ -3279,7 +3283,7 @@ directory under `runs/` that holds it (since K8-4r; any directory's name since K
 
 ### Research › Prepare › Datasets
 
-The workspaces the server lists under `SHEPHERD_WORKSPACES_ROOT` (§4.12), which the page only reads:
+The workspaces the server lists under its workspaces folder (§4.12), which the page only reads:
 the same list Training, Fine-tune, Test and Models choose from. The first panel is titled with the
 count ("Workspaces (2)"). Each row is one line: the name; when it was built ("Built (UTC)", from
 `workspace_build.json`), or "not recorded"; the **dataset fingerprint**, the first 12 hex digits of
@@ -3304,11 +3308,11 @@ digests under **Manifest contents (7 files) ›**; its data versions (below); an
 with the other listed workspaces: "Same dataset as …" (the same full fingerprint) or "Same graph
 build as … (graph, tensors and record identical), another cut: the allocation seed differs …". No absolute server path is shown, to any browser:
 a path under the root is shown relative to it, any other one reads "a path outside the
-workspaces root", and a refused `SHEPHERD_WORKSPACES_ROOT` is said without its path. The page
+workspaces root", and a refused workspaces folder is said without its path. The page
 reads the manifests and the registry when it is opened, not on each selection.
 
 **Data versions** (since the ops-wiring round's B5): the versions in the server's registry
-(`SHEPHERD_REGISTRY`) that were mapped against the chosen workspace's graph, as the Test page
+(the Results registry, §4.12) that were mapped against the chosen workspace's graph, as the Test page
 lists them and by the same comparison, in a table: the version's label, its kind (Supplied
 cohort version, KG edge set, Generated split), its role, and the measurements its data admits
 (for example "Disease" for a supplied cohort that lists no genes, "KG link prediction" for a KG
@@ -3328,7 +3332,7 @@ available: scratch_ws is not trainable — no split manifest."). Choosing anothe
 bar moves the "in your Training run bar" marker to it.
 
 Nothing on this page is an operator control: it reads the workspaces' and the registry's small
-JSON files, never a checkpoint, so a read-only browser sees the same page. With `SHEPHERD_WORKSPACES_ROOT` unset,
+JSON files, never a checkpoint, so a read-only browser sees the same page. With no workspaces folder set,
 the page says so. Datasets are still built on the server with the CLI
 (`scripts/build_knowledge_graph.py --generate-samples`; the demo with `scripts/setup_demo.py`).
 
@@ -3743,7 +3747,7 @@ it. Three panels:
 
 - **Data** (since research comparison Stage 7; "Cohort" before). The workspace (the server's
   list, by name; the chosen one's dataset fingerprint shown under it, as on Datasets) and the
-  **Data version** (the registry's list, `SHEPHERD_REGISTRY`), by kind and role, each option its
+  **Data version** (the list of the Results registry, §4.12), by kind and role, each option its
   label first with one " · ": supplied cohorts first ("label · role R"; its ranked-eligible count
   is the chosen version's details), then KG edge sets ("kg-test · KG edge set (test)"), then
   generated splits ("gen-val · Generated split (val)"); a long label is shortened in its middle,
@@ -3789,7 +3793,7 @@ it. Three panels:
   protocols, so no page or command runs them. Then the **R10 evidence**, chosen by the runner once
   by the chosen version's kind (since research comparison Stage 7): for a supplied cohort, the
   directories the run will look in (the selected workspace, and
-  `SHEPHERD_TRAINING_EVIDENCE_DIRS`), and a refused setting in red with ✕ and "Refused:" and
+  the training evidence folders, §4.12), and a refused setting in red with ✕ and "Refused:" and
   its reason, which turns Start off; for a KG edge set or a generated split, "Not applicable"
   in grey with ○ and why (R10 is a supplied cohort's), and the run is given no evidence
   directory whatever the setting says. Then **Register the result**,
@@ -3888,7 +3892,7 @@ it. Three panels:
   note is kept".
 
 **Import a new version…** opens a drawer over Run and Result: the file in the intake directory
-(`SHEPHERD_INTAKE_DIR`, §4.12: its `*.json` files by name, size and modification time; one that
+(the Import folder, §4.12: its `*.json` files by name, size and modification time; one that
 is a link leaving the directory is listed and not offered; nothing is uploaded from the
 browser), the version label, the role (the version's declared purpose, for example mygene2,
 research_selection or institutional_acceptance) and the lost-terms
