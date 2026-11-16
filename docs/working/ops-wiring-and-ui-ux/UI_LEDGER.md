@@ -875,16 +875,17 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-13 Path redaction and path exposure
 
-5 rows: 4 to do, 1 code-verified at ba6e85e (audit).
+5 rows: 3 code-verified, 1 to do, 1 code-verified at ba6e85e (audit).
 
 #### B53 · Open read routes name server paths the pages hide
 
-- **State**: to do · found by an internal review · page: api
+- **State**: code-verified · found by an internal review · page: api
 - **Problem**: pipeline/status and training/status return absolute paths, so the pages' redaction can be read around (API, not a page).
 - **At ba6e85e**: Reproduced for a read-only request (X-Forwarded-For): GET /api/v1/training/status answers gpu.lock.path as the absolute server path (…/scratchpad/audit-ui/ws/.shepherd-gpu.lock). GET /api/v1/pipeline/status carries no path while no model is loaded; its current_data_dir and current_checkpoint_path need a served model to show.
 - **Done when**: Per the owner's decision, GET /api/v1/training/status and /api/v1/pipeline/status for a read-only request return no absolute server path (gpu.lock.path, current_data_dir, current_checkpoint_path redacted at the service boundary); an API test pins it.
+- **Fix**: the decision is the rev 2 plan's (UI-13: no server path fragment to a request that is not allowed; an operator keeps what it needs). One function at the service boundary, `operator_access.answer_for`: a request D8 allows gets the answer as it is; any other the same JSON-ready answer with every absolute path in every text replaced by "a server path" (`path_redaction.redact_value`, the walk `run_environment.recorded_components` now uses too), the service's own `/api/v1/` routes named in a reason kept. Both status routes return through it; the pages read the same values in process and are unchanged.
 - **Sources**: BL:1011 (item 53); OPS:364
-- **Closed at**: —
+- **Closed at**: ee6d0aa. Test: `test_operator_access.py::test_the_open_status_routes_name_no_server_path_to_a_request_d8_does_not_allow` (a workspaces root named `Jane (MRN 1) ws`, a served data directory and checkpoint: with X-Forwarded-For and from a non-loopback address both routes answer `gpu.lock.path`, `current_data_dir` and `current_checkpoint_path` as "a server path" and no part of the root; a loopback M1 request gets the paths; fails on 32a286e at the lock's path), with the API tests beside it (601 passed). Seen on the real service (CPU demo, M1, a disease model served): read-only, 0 absolute paths in either answer; operator, the lock path and both served paths. Left, outside this row: BACKLOG 53's `GET /workspaces` and `GET /cohorts` problem texts were not checked here.
 
 #### B72-E1 · Export download link exposes Gradio's /tmp cache path
 
@@ -892,25 +893,28 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: The download link shows /ui/gradio_api/file=/tmp/gradio/….
 - **At ba6e85e**: On my private copy, Export (All shown, CSV) gave a link with href http://127.0.0.1:8871/ui/gradio_api/file=/tmp/gradio/bbcde121…/results_workspace-demo_20261116T103647Z.csv. The visible name and the download name carry no path, but the link does. The file is written by exports.write_new into a mkdtemp directory and served by gr.File (results_segment.py:1334-1345, 1506).
 - **Done when**: After the owner's D7 decision, the Export link's href carries no server temp path (or the decision to keep it is recorded).
+- **T02 note**: still the owner's D7 decision (README U3); not changed. Models › Results' Export is gated, so its link reaches an operator only, whom the rev 2 plan lets see full paths; the Diagnosis exports go through the same Gradio file route for any request (not rechecked by href in this pass: the export buttons hold no link before a click). Removing the path means a download route of the dashboard's own, a new serving surface.
 - **Sources**: BL:1030; OPS:172 (U3)
 - **Closed at**: —
 
 #### B72-N5 · Path outside every root with a bracketed spaced part is only partly redacted
 
-- **State**: to do · found by an internal review · severity minor · page: shell
+- **State**: code-verified · found by an internal review · severity minor · page: shell
 - **Problem**: '/data/Jane (MRN 1)/x.json' shows its bracket on.
 - **At ba6e85e**: Reproduced: workspaces.redact('Cannot read /data/Jane (MRN 1)/x.json: denied', root=/srv/workspaces) returns 'Cannot read a path outside the workspaces root (MRN 1)a path outside the workspaces root denied'. The bracketed part of the name is still shown.
 - **Done when**: workspaces.redact('Cannot read /data/Jane (MRN 1)/x.json: denied', root=...) returns text with no part of the path, including '(MRN 1)'; a unit test pins it.
+- **Fix**: in the one path pattern (`src/utils/path_redaction.py`) a bracketed part of a name may hold spaces, in a path's words and in its last word with an extension; bracketed text that only follows a path after a space stays prose ("…/x.json (permission denied)"). Nothing stored is rewritten.
 - **Sources**: BL:1030 (B0c review note)
-- **Closed at**: —
+- **Closed at**: 32a286e. Test: `test_webui_test_page.py::test_a_bracketed_spaced_name_goes_whole_and_the_sentence_keeps_its_punctuation` (7 cases through the Test page's redaction and `workspaces.redact`: 'Cannot read /data/Jane (MRN 1)/x.json: denied' → 'Cannot read a path outside the workspaces root: denied'; a non-ASCII name with a bracket and a space; 'MRN 0012345.json:'; no 'MRN', 'Jane', 'x.json' or '患者' left; 6 of 7 fail on ba6e85e's pattern, the prose bracket passes on both), and the redaction tests beside it (80 passed). A worst-case text of 2,000 bracketed words is redacted in under 2 ms.
 
 #### NEW-shell-nav-theme-3 · Path redaction outside the root swallows the following ': '
 
-- **State**: to do · found by the 2026-11-16 audit · page: shell
+- **State**: code-verified · found by the 2026-11-16 audit · page: shell
 - **At ba6e85e**: Path redaction swallows the ': ' after a path outside the workspaces root: workspaces.redact('Cannot read /data/other/x.json: denied', /srv/workspaces) gives 'Cannot read a path outside the workspaces root denied', a run-on sentence. Inside the root the colon stays ('Cannot read demo/x.json: denied'). Seen through src/webui/components/workspaces.py:53 and src/utils/path_redaction.py:70; separate from B72-N5's bracket case.
 - **Done when**: A unit test shows redact('Cannot read /data/other/x.json: denied', root) keeps the colon, e.g. 'Cannot read a path outside the workspaces root: denied'.
+- **Fix**: a path never ends in a sentence's punctuation (`.`, `:`, `!`, `?`), and a word ending in a file extension may be followed by it, so the replacement keeps it, as a path under a named directory already did. A path's own colon ('/data/a:b/x.json', 'x.py:12') is still part of it.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: 32a286e. The same test as B72-N5: 'Cannot read /data/other/x.json: denied' → 'Cannot read a path outside the workspaces root: denied', and '.', '!' and '?' after a path kept; fails on ba6e85e.
 
 #### OPS-C8 · A Training/Fine-tune printed line could name a server path
 
@@ -922,34 +926,38 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-14 Reload restores the page and valid selections
 
-4 rows: 3 to do, 1 outside this round's scope (owner to decide).
+4 rows: 3 code-verified, 1 outside this round's scope (owner to decide).
 
 #### B32-UI8 · Every open page lands on Diagnosis after a reconnect reload
 
-- **State**: to do · found by an internal review · page: shell
+- **State**: code-verified · found by an internal review · page: shell
 - **Problem**: After a restart every page lands on Diagnosis; the chart view returns only when Training is opened (M5-3 review UI-8); also per-page links, pages by role, New/Continue merged recorded.
 - **At ba6e85e**: Reproduced in a reload (the page-level part of a reconnect reload; the service was not restarted): with Research › Models open, the page came back on Diagnosis (clinical). The shell builds level 1 with selected=CLINICAL, and no page is kept in sessionStorage or in the address; the head script writes only __theme=light.
 - **Done when**: With Research › Models open, a page reload (and a reconnect reload) comes back on Research › Models, with the outer and research page kept in sessionStorage or the address.
+- **Fix**: the head script keeps the page shown (its id only: `clinical`, `settings` or a research page) for this browser tab in sessionStorage (`shell.KEPT_PAGE`), reads it before the first screen is drawn and keeps nothing until the shell has answered; the page load hands it to `shell._restore`, which opens a research page or Settings as a cross-link does (`PageContext.go`, so only that page refreshes) and leaves Diagnosis, nothing kept or an unknown value. No address, case data, path or choice is kept, and nothing is started, loaded or registered: the page opened reads its state as any opening does. Stable selections inside a page are not restored.
 - **Sources**: BL:990 (item 32)
-- **Closed at**: —
+- **Closed at**: 1c44b82. Tests: `test_webui_shell.py::test_a_reload_comes_back_on_the_page_shown` (browser, the shell mounted as the service mounts it: Research › Models opened, then reloaded, comes back on Research › Models with the title, the kept id and the session's location on the server all "models"; Settings and Diagnosis come back as themselves; fails on ee6d0aa, the reload stays on Diagnosis) and `test_a_load_opens_the_page_this_tab_kept_and_nothing_else` (unknown, empty and non-text values open nothing; sessionStorage, never localStorage). Seen on the real service (CPU demo, M1, 1850×960): Research › Models reloaded comes back on Models in 1.7 s with its list drawn; a dropped event stream's reconnect reload comes back on the page shown (B34-a).
 
 #### B34-a · Gradio SSE session loss shows 'Connection Lost' and reloads (upstream)
 
-- **State**: to do · found by other · severity upstream · page: shell
+- **State**: code-verified · found by other · severity upstream · page: shell
 - **Problem**: gradio#13895: a dropped stream reloads the page.
 - **At ba6e85e**: Gradio is still pinned at 6.30.0, and the dashboard adds nothing for a dropped /queue/data stream. Not reproduced: dropping the shared server's SSE stream would disturb the other checkers.
 - **Done when**: Against the pinned Gradio 6.30.0, dropping the /queue/data stream in an isolated instance is rechecked before release and the result (page reloads or recovers, and on which page) is recorded.
+- **Recorded (T02, at 1c44b82)**: an isolated instance (its own CPU demo copy, port 8911), Gradio 6.30.0, Chromium. With Research › Models open, the next `/queue/data` request reset once (Playwright `route.abort('connectionreset')`) while Test was being opened: the page shows "Connection to the server was lost. Attempting reconnection...", then reloads by itself (about 3.6 s), and comes back on Research › Test, the page shown when the stream dropped (UI-14's restore; before it, Diagnosis). Two resets in a row reload twice. The reload itself is Gradio's and stays; nothing in this round makes the page recover without one. Evidence kept outside the repository (stream_drop.json, stream_drop_after_1850.png).
 - **Sources**: BL:992 (item 34 (a))
-- **Closed at**: —
+- **Closed at**: 1c44b82 (the check above; no code change for the reload itself).
 
 #### B46-mount · Diagnosis tab mount writes the session location whatever page is shown
 
-- **State**: to do · found by an internal review · page: shell
+- **State**: code-verified · found by an internal review · page: shell
 - **Problem**: About 1.5 s after load the location becomes Diagnosis, so a page opened before polls nothing.
 - **At ba6e85e**: The code is unchanged: Diagnosis' tab select writes the session's location with no guard. Observed: on load, with no click, the page sends _shown_clinical (dependency 474) at about 1.4 s, along with Diagnosis' card refresh (dependency 16). The race itself was not reproduced in two tries: when Research and then Models were clicked at about 1.37 s, before that select, the Diagnosis select did not fire at all. Inferred to remain possible within a narrower timing window.
 - **Done when**: A Diagnosis tab select fired at mount does not overwrite the session location when another page is already shown; a test opening Models before that select sees Models' polling continue.
+- **Cause (reproduced in T02)**: Diagnosis' and Settings' selects wrote the location without the queue, beside the queued research selects; a mount-time select answered after Research › Models had been opened set the location back to Diagnosis. In Chromium, with that select answered 1.5 s late (a busy server), the location the server held after every answer was 'clinical' while Models was shown.
+- **Fix**: every location writer (Diagnosis', Settings', Research's and each research tab's select) is one queued group of one, run in the order sent, each select sent once (`shell.LOCATION_WRITES`, `trigger_mode="multiple"`).
 - **Sources**: BL:1004 (item 46, end)
-- **Closed at**: —
+- **Closed at**: 1c44b82. Tests: `test_webui_shell.py::test_diagnosis_mount_select_never_writes_over_a_page_opened_after_it` (browser: the mount-time select sent, then Research › Models opened, then, once every request is answered, the location the server holds, which is what Models' poll reads, is "models"; on ee6d0aa "clinical") and `test_the_location_follows_the_page_shown` (all eight writers queued in the group). Left: the order is the order the server receives the joins in, as for the other queued groups.
 
 #### B32-links · No per-page links (?stage=/?sub=) and no pages by role
 
@@ -962,38 +970,43 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-15 Diagnosis input changes and result identity
 
-3 rows: 3 to do.
+3 rows: 2 code-verified, 1 partly done.
 
 #### B73 · Genes box edited without a keypress keeps the old diagnosis result
 
-- **State**: to do · found by an internal review · page: diagnosis
+- **State**: code-verified · found by an internal review · page: diagnosis
 - **Problem**: Select-all+Delete, cut or paste changes the genes while the old result stays (read from Gradio's code; not reproduced).
 - **At ba6e85e**: Not reproduced; this is from the code. The genes box still clears the result only on .input (genes_input.input(**edited)), so an edit with no keypress keeps the old result. The HPO box uses .change. The demo serves no gene task model, so the genes box never appears here.
 - **Done when**: A unit/UI test shows that changing the genes box by paste, cut or select-all+Delete (a .change event) clears the shown result, as the HPO box already does.
+- **Reproduced (T02)**: in Chromium, the panel served with a gene task model's stand-in status and result: after a result, select all then Delete, a cut (Ctrl+X) and inserted text (an input method's or a paste's: an input event, no keypress) changed the genes and left the result; typing cleared it.
+- **Fix**: the genes box clears on `.change`, as the HPO box does. No handler writes the box (the card shows it by its container's class), so a change is the user's edit or Clear; the cohort select keeps its pick listener. The Training touch record is not used.
 - **Sources**: BL:1031 (item 73); OPS:371
-- **Closed at**: —
+- **Closed at**: 620056f. Tests: `test_diagnosis_panel.py::test_every_edit_of_the_genes_box_clears_the_result_shown` (browser, the real panel and shell: each of the four edits clears the result, "Inputs changed"; on ee6d0aa the three keypress-free edits fail) and `test_the_task_inputs_are_never_run_outputs_and_clear_on_every_edit` (the wiring). Inferred from the wiring, not reproduced, not changed: an edit made while Run Diagnosis is in flight clears only the result shown before it, so the answer then shows the older query's result under the edited box (either box; the run and the edit's listener are two queued events of their own groups). A check of the result's query against the boxes once it lands would close it.
 
 #### NEW-diagnosis-5 · A typed HPO name is dropped silently; report lists unused ids as used
 
-- **State**: to do · found by the 2026-11-16 audit · page: diagnosis
+- **State**: code-verified · found by the 2026-11-16 audit · page: diagnosis
 - **Duplicate of**: R-5 (closed with it)
 - **At ba6e85e**: A name typed in the HPO box ('Hypotonia') is dropped without a word on the page, in the warnings or in the report. The report's 'Query phenotypes' lists the duplicate and the unknown id as if they were used (11-export-report.md line 10). This adds to R-5 and R-6.
 - **Done when**: Entering 'Hypotonia', a duplicate and an unknown id shows each under 'Not used' with a reason on the page, and the exported report's query phenotypes lists only ids actually used.
+- **Fix**: see R-5: the result's "Not used (n)" row and the report's "Phenotypes used" / "Phenotypes not used" lines, from the server's account of what it used.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: b22829f. Tests: `test_diagnosis_panel.py::test_a_result_says_which_phenotypes_it_used_and_why_the_rest_were_not` (the audit's query: Hypotonia "not an HPO id, not sent", HP:9999999 "not in the model's graph", HP:0001250 "a repeat, scored once"; the report's "Phenotypes used: HP:0001250, HP:0001263", no "Query phenotypes") and `test_the_run_keeps_the_entries_it_did_not_send`. Seen on the real service with the audit's query: "Used (2) HP:0001250, HP:0001263" and "Not used (3)" with the three reasons under the warnings.
 
 #### R-5 · No echo of which HPO ids were recognised or used
 
-- **State**: to do · found by the 2026-10-25 review · severity medium · page: diagnosis
+- **State**: partly done · found by the 2026-10-25 review · severity medium · page: diagnosis
 - **Problem**: Nothing showed which HPO ids were recognised from the input or used by the run.
 - **At ba6e85e**: I typed 'HP:0001250 Seizure, HP:0001263, Hypotonia, HP:9999999, HP:0001250'. Before Run, nothing under the box says which ids were recognised. After Run, the only echo is the server's warnings line: 'Unknown phenotype: HP:9999999; Removed 1 repeated phenotype entry; each phenotype is scored once.' That line already existed at f9202b6. The name 'Hypotonia' was dropped without a word. There is no 'As used' list with names. The report's 'Query phenotypes' lists the ids as parsed, the duplicate and the unknown id included, with no used / not-used split. The CSV has no such column.
 - **Done when**: Under the HPO box a live line says how many ids were recognised and which tokens are not ids; after a run an 'As used' row lists terms with names and a 'Not used (n)' list gives a reason per id; the CSV and report carry the same split.
+- **Done (T02)**: the live line under the box, from its one change listener: "4 HPO ids read. ▲ Not an id, so not sent: “Hypotonia”" (`hpo_echo_html`; an entry is split at line breaks, commas and semicolons, and an id's name in its own entry is the id's). After a run, "Used (n)" and "Not used (n)" with a reason per entry (`phenotype_account`, from the server's `phenotype_input`: an entry sent that is neither used nor unknown is one the service removed as a repeat; when that does not add up to its count, the count is said instead), and the report says the same.
+- **Left**: "Used" lists ids, not names (the response carries ids only; names need the served graph's names in the response or a lookup); the CSV keeps its pinned columns (a split there changes the export format); the server's warnings line still says the unknown id and the repeat count beside the "Not used" row.
 - **Sources**: UX:207 (appendix 5); RJ audits[0].findings[12]; UX:123 (section 4 Diagnosis: 'the input echo')
-- **Closed at**: —
+- **Closed at**: — (advanced in b22829f and 26b3501. Tests: `test_diagnosis_panel.py::test_the_hpo_box_says_live_what_it_reads_and_what_it_does_not_send`, `test_a_result_says_which_phenotypes_it_used_and_why_the_rest_were_not`, `test_the_run_keeps_the_entries_it_did_not_send`; seen on the real service at 1850×960 and 760 wide: the line at 14 px under the box, aligned with its field, no sideways scroll, the wide page not scrolling.)
 
 ### UI-16 Every other recorded problem, by page
 
-116 rows: 52 to do, 23 partly done, 1 awaiting hardware, 3 outside this round's scope (owner to decide), 4 not applicable, 2 code-verified, 31 code-verified at ba6e85e (audit).
+116 rows: 51 to do, 23 partly done, 1 awaiting hardware, 3 outside this round's scope (owner to decide), 4 not applicable, 3 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
@@ -1161,12 +1174,13 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### R-6 · HPO input rule only in placeholder/bubble; placeholder implies names are read
 
-- **State**: to do · found by the 2026-10-25 review · severity medium · page: diagnosis
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: diagnosis
 - **Problem**: The rule that only HP:####### ids are read lived only in a placeholder and a bubble; the placeholder implied names are read.
 - **At ba6e85e**: The placeholder is unchanged: 'HP:0001250 — Seizure / HP:0001263, HP:0002376 (commas / spaces are fine too)'. It still suggests that names are read, and it disappears once typing starts. There is no visible info line under the field. The rule 'Names and stray punctuation are ignored; only HP:####### ids are used' appears only in the info bubble. Patient ID still uses the placeholder '(auto-generated if blank)' and has no info line.
 - **Done when**: A visible info line under HPO terms says 'Only HP:####### ids are read; names and punctuation are ignored.', the placeholder reads 'HP:0001250, HP:0001263', and Patient ID has a visible info line.
+- **Fix**: the two rules are the fields' `info=` lines (`diagnosis_panel.FIELD_INFO`, listed in the test of what may stay in `info=`): the HPO rule as written above, and Patient ID's "Optional. Left blank, the server gives the result its own id."; the HPO placeholder is ids only and Patient ID has none (handled with UI-15, which shares the input wiring).
 - **Sources**: UX:208 (appendix 6); RJ audits[0].findings[11]
-- **Closed at**: —
+- **Closed at**: b22829f. Tests: `test_diagnosis_panel.py::test_the_fields_must_know_rules_are_visible_lines`, `test_webui_help.py::test_no_component_keeps_ordinary_help_in_info` (fails on b22829f's parent for both). Seen on the real service at 1850×960: both lines visible under their labels, the placeholder "HP:0001250, HP:0001263".
 
 #### OWN-SP · Gene table shows component scores by default; no opt-in score facets
 
