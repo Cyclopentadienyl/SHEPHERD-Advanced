@@ -24,12 +24,13 @@ version (`resolve_version`), refusing whatever does not fit rather than
 guessing or falling back to a copy.
 
 **And only from the deployment's registry** (BACKLOG 37): the registry that
-structure names must be the one ``SHEPHERD_REGISTRY`` names, compared by
-resolved path (`server_settings.deployment_registry_refusal`), checked before
+structure names must be the deployment's -- ``SHEPHERD_REGISTRY`` when it is
+set, else the Results registry saved in Settings › Data locations -- compared
+by resolved path (`server_settings.deployment_registry_refusal`), checked before
 anything in it is read. A copy of the whole registry holds the same bytes and
 would pass every check above while keeping its own store and usage history,
 which the service never reads. A registry moved as a whole still works
-once ``SHEPHERD_REGISTRY`` names its new place; its version is the same version
+once that setting names its new place; its version is the same version
 by the digest of its ``cohort.json``.
 
 **The store scan lists; it never gates** (`scan_report_store`; policy rev 16,
@@ -128,8 +129,9 @@ class NotInReportStore(ValueError):
 class NotTheDeploymentRegistry(ValueError):
     """The registry a report is kept in, or a ``--cohort`` run would measure in,
     is not the deployment's (`server_settings.deployment_registry_refusal`:
-    compared by resolved path with ``SHEPHERD_REGISTRY``, which may also be
-    unset or refused). Nothing in that registry was read."""
+    compared by resolved path with ``SHEPHERD_REGISTRY``, else the saved
+    registry; neither may be set, or it may be refused). Nothing in that
+    registry was read."""
 
 
 class _NotTheExpectedBytes(Exception):

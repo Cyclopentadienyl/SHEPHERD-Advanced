@@ -119,18 +119,22 @@ run from the command line counts as one started from the Test tab.
 
 **Only in the deployment's registry** (D7, BACKLOG 37): a `--cohort` run is
 refused before the GPU lock is taken, the device resolved or anything read,
-unless `--registry`, resolved, is the directory `SHEPHERD_REGISTRY` names,
-resolved (`server_settings.deployment_registry_refusal`, the rule every
-registration applies). **The root checked is the root the run reads and
-writes through**: resolved once, before the lock, and passed on, so a
+unless `--registry`, resolved, is the deployment's registry, resolved: the
+one `SHEPHERD_REGISTRY` names when it is set, else the Results registry saved
+in Settings › Data locations (`server_settings.deployment_registry_refusal`,
+the rule every registration applies). **The root checked is the root the run
+reads and writes through**: resolved once, before the lock, and passed on, so a
 `--registry` link retargeted after the check cannot move the run into another
 directory. So every run on a cohort version is in the usage history
 the service reads, and its report in the store a registration accepts; a copy
-of the registry keeps its own. Unset, every `--cohort` run is refused saying to
-set it here as the service's environment sets it. The variable is read from
-this process's environment, so a command run with it set to another directory
-on purpose measures there (D2: the rule catches a registry named by mistake; it
-is not tamper-proof).
+of the registry keeps its own. With neither set, every `--cohort` run is
+refused saying to choose it in Settings or set the variable for this command
+to the service's value. A shell of the account the service runs as reads the
+saved registry, so nothing needs to be set first (for a service started with
+`--settings-file`, name that file here with `SHEPHERD_SETTINGS_FILE`); a
+variable set for this command wins, so a command run with it set to another
+directory on purpose measures there (D2: the rule catches a registry named by
+mistake; it is not tamper-proof).
 
 **For a job that chose its inputs beforehand** (M5's job runner):
 `--expect-checkpoint-sha256` and `--expect-version-sha256` refuse the run before
@@ -1680,7 +1684,7 @@ def _register(
     still the one published, it is kept and the command that registers it later
     is printed -- unless its
     registry is no longer the deployment's (`NotFromTheDeploymentRegistry`: the
-    deployment's `SHEPHERD_REGISTRY` resolves elsewhere than when the run was
+    deployment's registry setting resolves elsewhere than when the run was
     allowed to start, the link it names retargeted during the run, say; the run
     itself reads and writes through the registry root resolved once before it
     started, so a retargeted `--registry` cannot cause this), when that command
@@ -2014,7 +2018,8 @@ def _refuse_another_registry(args: argparse.Namespace) -> Optional[Path]:
     BACKLOG 37), checked before the GPU lock, the device or any input: the
     registry rule first (`validate_registry`, its own refusal), then the rule
     every registration applies (`deployment_registry_refusal`: `--registry`
-    and `SHEPHERD_REGISTRY` compared by resolved path; unset, refused). A run
+    and the deployment's registry, `SHEPHERD_REGISTRY` else the saved one,
+    compared by resolved path; neither set, refused). A run
     in another directory -- a copy of the registry, say -- would be in that
     copy's usage history only, which the service never reads, and its report
     could not be registered. A generated split has no registry (None).

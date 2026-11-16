@@ -2147,9 +2147,9 @@ def test_a_runs_own_report_in_another_registry_is_not_called_lost(tmp_path, chec
 def test_with_no_usable_setting_every_registration_is_refused_saying_so(
     tmp_path, checkpoints, monkeypatch, setting, said
 ):
-    """A fresh shell without the service's settings: refused, never "any
-    registry", with words true on the command line (nothing about features
-    that are off) and nothing written."""
+    """A shell with no registry set, by its variable or in the saved settings
+    file: refused, never "any registry", with words true on the command line
+    (nothing about features that are off) and nothing written."""
     report = _report(tmp_path)
     if setting is None:
         monkeypatch.delenv("SHEPHERD_REGISTRY")

@@ -18,12 +18,13 @@ the same version), its run directory must be named for the checkpoint it
 measured, and the checkpoint checks below still hold.
 
 **And only from the deployment's registry** (BACKLOG 37): the registry the
-report's path names must be the one ``SHEPHERD_REGISTRY`` names, compared by
+report's path names must be the deployment's -- ``SHEPHERD_REGISTRY`` when it is
+set, else the Results registry saved in Settings › Data locations -- compared by
 resolved path (`server_settings.deployment_registry_refusal`), so a copy of the
 whole registry -- the same bytes, its own report store and usage history
 -- is refused before anything in it is read (`NotFromTheDeploymentRegistry`).
-Unset, every registration is refused saying to set it. A registry moved as a
-whole still works once ``SHEPHERD_REGISTRY`` names its new place.
+With neither set, every registration is refused saying where to choose it. A
+registry moved as a whole still works once that setting names its new place.
 
 **Registered by the verified run** (policy rev 16, from K8-6r.2). A run is its
 run directory in the version's report store (`StoreReport.run_id`), verified
@@ -196,11 +197,12 @@ class LedgerBusy(RegistrationRefused):
 
 class NotFromTheDeploymentRegistry(RegistrationRefused):
     """The report is kept in a registry other than the deployment's -- the one
-    ``SHEPHERD_REGISTRY`` names, compared by resolved path -- or the variable is
-    unset or refused, so which registry is the deployment's cannot be told
-    (`server_settings.deployment_registry_refusal`). Nothing in that registry
-    was read. A run's own report stays where it was published, but no command
-    to register it from there is offered: it would be refused the same way."""
+    ``SHEPHERD_REGISTRY`` or the saved setting names, compared by resolved path
+    -- or neither is set, or it is refused, so which registry is the
+    deployment's cannot be told (`server_settings.deployment_registry_refusal`).
+    Nothing in that registry was read. A run's own report stays where it was
+    published, but no command to register it from there is offered: it would
+    be refused the same way."""
 
 
 class ReportNotAsPublished(RegistrationRefused):
@@ -379,9 +381,10 @@ def register_report(
     id: the ledger's record names it (``run_id``), and the same run is
     recognised by it (`sidecar.find_run`). **No other report of the store is
     read**, so none blocks or marks this registration. **The registry must be the
-    deployment's**: the one ``SHEPHERD_REGISTRY`` names, read from ``environ``
-    (`os.environ` when `None`), compared by resolved path before anything in the
-    registry is read (`NotFromTheDeploymentRegistry`, also when it is unset).
+    deployment's**: ``SHEPHERD_REGISTRY`` of ``environ`` (`os.environ` when
+    `None`), else the registry saved in the settings file it locates, compared by
+    resolved path before anything in the registry is read
+    (`NotFromTheDeploymentRegistry`, also when neither is set).
 
     **The ledger is always beside the checkpoint file's resolved path**
     (``Path(file).resolve().parent / "evaluations.json"``, M4 decision 15): the

@@ -14,21 +14,24 @@ D8 does not apply, and nothing here is offered over the network. Name each
 source explicitly:
 
 - ``--workspaces-root [NAME=]DIR``, as many as needed: a directory whose
-  subdirectories are workspaces (what ``SHEPHERD_WORKSPACES_ROOT`` names for the
-  service). Every checkpoint of every workspace is listed, and every ledger of
-  every workspace read, whatever became of the weights it names (an entry
-  that is not a workspace the server can use is a row with its reason);
-- ``--registry [NAME=]DIR``, as many as needed: a cohort registry (what
-  ``SHEPHERD_REGISTRY`` names). Every version is listed and every report its
-  store keeps read.
+  subdirectories are workspaces (what the service's workspaces folder is:
+  Settings › Data locations, or ``SHEPHERD_WORKSPACES_ROOT``). Every checkpoint
+  of every workspace is listed, and every ledger of every workspace read,
+  whatever became of the weights it names (an entry that is not a workspace
+  the server can use is a row with its reason);
+- ``--registry [NAME=]DIR``, as many as needed: a cohort registry (what the
+  service's Results registry is: Settings › Data locations, or
+  ``SHEPHERD_REGISTRY``). Every version is listed and every report its store
+  keeps read.
 
 Each is read with the rule the service reads its own setting by (absolute,
 existing; a registry outside the repository), as a source of its own; this
-process's ``SHEPHERD_*`` settings are not read or changed for them. ``NAME``
-is what rows show for the source (never its path or the directory's own name,
-which may say more than an export should); by default a fixed word and the
-source's place among its kind (``workspaces-root-1``, ``registry-1``, ...), and
-two sources may not share one.
+process's data locations (its ``SHEPHERD_*`` variables and the values saved in
+Settings) are not read or changed for them. ``NAME`` is what rows show for the
+source (never its path or the directory's own name, which may say more than an
+export should); by default a fixed word and the source's place among its kind
+(``workspaces-root-1``, ``registry-1``, ...), and two sources may not share
+one.
 
 **What it holds.** Every result: a kept report and a ledger record are one row
 only when the record names that report's run and bytes; a ledger record whose
@@ -114,13 +117,15 @@ def build_parser() -> argparse.ArgumentParser:
                 "cannot be read is a row with its reason; unknown names each field without a "
                 "source. No row is capped or ordered by a metric."))
     parser.add_argument("--workspaces-root", action="append", default=[], metavar="[NAME=]DIR",
-                        help="a directory whose subdirectories are workspaces, as "
-                             "SHEPHERD_WORKSPACES_ROOT names one for the service (repeatable); "
+                        help="a directory whose subdirectories are workspaces, as the "
+                             "service's workspaces folder is (Settings › Data locations; Ref: "
+                             "SHEPHERD_WORKSPACES_ROOT) (repeatable); "
                              "NAME is what rows show for it, never its path; by default "
                              "workspaces-root-1, workspaces-root-2, ... in the order given")
     parser.add_argument("--registry", action="append", default=[], metavar="[NAME=]DIR",
-                        help="a cohort registry, as SHEPHERD_REGISTRY names one for the service "
-                             "(repeatable); NAME as above, by default registry-1, registry-2, ...")
+                        help="a cohort registry, as the service's Results registry is "
+                             "(Settings › Data locations; Ref: SHEPHERD_REGISTRY) (repeatable); "
+                             "NAME as above, by default registry-1, registry-2, ...")
     for name in results.FILTERS:
         parser.add_argument(f"--{name.replace('_', '-')}", action="append", default=[],
                             dest=name, metavar="VALUE",

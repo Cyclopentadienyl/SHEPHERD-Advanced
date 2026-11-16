@@ -34,12 +34,15 @@ same run with other bytes is refused (a run's report is sealed when it is
 published). How its record differs from the other records of its condition
 group, and a possible overlap with a record merged before each run had its own
 record, are printed as notes that decide nothing. The registry is found from the
-report's own path and **must be the deployment's**: the one `SHEPHERD_REGISTRY`
-names, compared by resolved path, so set the variable in this shell as the
-service's environment sets it (deployment guide §4.11). With the variable unset,
-and for a report in another directory (a copy of the registry, say), the
-registration is refused before anything in that registry is read. A registry
-moved as a whole still works once `SHEPHERD_REGISTRY` names its new place.
+report's own path and **must be the deployment's**, compared by resolved path:
+the one `SHEPHERD_REGISTRY` names when it is set, else the Results registry
+saved in Settings › Data locations, which a shell of the account the service
+runs as reads with nothing set (deployment guide §4.11; for a service started
+with `--settings-file`, name that file here with `SHEPHERD_SETTINGS_FILE`; a
+variable set for this command wins). With neither set, and for a report in
+another directory (a copy of the registry, say), the registration is refused
+before anything in that registry is read. A registry moved as a whole still
+works once that setting names its new place.
 
 **The ledger has to be beside the weights.** Name the checkpoint with exactly one
 of `--checkpoint FILE`, which must hold the bytes the report measured (any file
@@ -133,7 +136,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                              "registry's report store, "
                              "<registry>/versions/<label>/reports/<run id>/report.json, as "
                              "scripts/measure_scorer.py keeps it, in the deployment's "
-                             "registry (SHEPHERD_REGISTRY, which must be set here); a copy "
+                             "registry (the Results registry chosen in Settings › Data "
+                             "locations; Ref: SHEPHERD_REGISTRY, which wins when set); a copy "
                              "elsewhere is refused. One record is derived from its manifest.")
     parser.add_argument("--show", default=None, metavar="CHECKPOINT_DIGEST",
                         help="Print what the ledger holds for one checkpoint digest. "

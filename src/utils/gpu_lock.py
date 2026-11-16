@@ -36,8 +36,8 @@ is not configured and every managed job is refused** (review of 8242b47,
 P2-4): a formal CLI exits before it reads anything and the runner refuses a
 start, each saying how to configure it; nothing runs without excluding the
 others. A root that is set but refused (relative, or missing) refuses every
-job too, never replaced by a default. What the environment cannot settle: a
-process that names another root takes another file.
+job too, never replaced by a default. What one rule cannot settle: a process
+whose environment names another root takes another file.
 
 **What the lock is.** An exclusive, non-blocking `fcntl.flock` on the lock file
 on POSIX; `msvcrt.locking` on the file's first byte on Windows (untested there,
@@ -162,7 +162,8 @@ class GpuLockNotConfigured(GpuLockMisconfigured):
 # Where the lock is
 # ---------------------------------------------------------------------------
 def lock_location(environ: Mapping[str, str] | None = None) -> Path:
-    """The lock file under the workspaces root, read from the environment at
+    """The lock file under the workspaces root in effect (the environment's
+    `SHEPHERD_WORKSPACES_ROOT`, else the saved workspaces folder), read at
     each call through the server settings' one rule
     (`server_settings.gpu_lock_location`).
 

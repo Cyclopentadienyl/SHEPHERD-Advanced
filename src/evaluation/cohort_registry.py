@@ -637,8 +637,9 @@ def validate_registry(path: Any) -> Path:
     it: a link swapped in the moment between is not caught. The registry is the
     operator's, on the machine, and one writer at a time (D7).
 
-    **One rule for `--registry` and the service's `SHEPHERD_REGISTRY`**
-    (`src.config.server_settings.check_registry_root`, M5-1): it lives below
+    **One rule for `--registry` and the service's registry setting**
+    (`SHEPHERD_REGISTRY`, else the saved one;
+    `src.config.server_settings.check_registry_root`, M5-1): it lives below
     this layer because the service's settings are read there too.
     """
     try:

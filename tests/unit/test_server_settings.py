@@ -1,12 +1,18 @@
 """
-The server's M5 settings (M5-1): read from the environment at each use, never a
+The server's M5 settings (M5-1; UI-06): one resolution at each use, never a
 default path, and one directory rule shared with `--registry`.
 =================================================================================
 `src/config/server_settings.py`. What these pin:
 
 - **the deployment mode** enables operator controls only when it is exactly
-  `M1`; unset or anything else is read-only, and the reason never repeats the
-  value set;
+  `M1`, or, unset, by the local start's default (the launcher's mark on a
+  loopback bind); anything else is read-only and never upgraded, and the
+  reason never repeats the value set;
+- **a data location** comes from its environment variable when it is set,
+  else from the saved settings file's applied value, else nothing (UI-06,
+  2026-11-16; `TestTheOneResolution` and the classes after it); a saved value
+  is checked by the same rule at each read, and an unreadable file is a
+  problem, never read as empty;
 - **a missing setting turns its feature off with a reason**, and nothing falls
   back to a default path (the repository's `data/workspaces/` included);
 - **the registry and the intake directory** must be absolute, existing, and
@@ -19,7 +25,8 @@ default path, and one directory rule shared with `--registry`.
 - **whether a named path is a directory** is one explicit stat
   (`is_directory`), never `Path.is_dir`, which from Python 3.14 reads an
   unknown state as absent;
-- **each read sees the environment as it is now**: no value is cached.
+- **each read sees the environment as it is now**: no value is cached (the
+  saved file is read again whenever it changes).
 
 Module: tests/unit/test_server_settings.py
 """
