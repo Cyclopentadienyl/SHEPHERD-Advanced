@@ -15,7 +15,8 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   about 90 characters, a few items, at most 80 words, no sentence over 25
   words and its codes only in a trailing "Ref:" line; the Test and Models
   texts at most three items, the train/test overlap text its two
-  definitions in about 55 words;
+  definitions in about 55 words; and every editable field of Training's
+  Model accordion has help;
 - **the browser side** builds the bubble's parts with ``createElement`` and
   ``textContent`` and is given to the mount's ``head`` (Gradio 6 drops a
   head given to ``gr.Blocks``); in a real headless browser (Node and
@@ -462,7 +463,7 @@ def test_every_registered_help_text_is_within_the_budget(built):
     _demo, registry, _texts = built
     over = {entry.key: h.budget_problems(entry.text) for entry in registry.entries()}
     assert {key: problems for key, problems in over.items() if problems} == {}
-    assert len(over) >= 131
+    assert len(over) >= 148
 
 
 def _words(text: str) -> int:
@@ -504,3 +505,25 @@ def test_the_train_test_overlap_text_defines_each_column_once(built):
             "Disease overlap", "Phenotype-set overlap"]
         assert "ignore order and repeats" in entry.text and lines[-1].text == "R10"
         assert _words(entry.text) <= 60
+
+
+def test_every_model_spec_field_has_help(built):
+    """NEW-help-1: the Model accordion's 17 editable fields had no help; each
+    now has its ⓘ (registered by its elem_id, titled by its label): what it
+    is, its reference value and, where the reference recipe names one, its
+    source in the Ref line."""
+    from src.webui.components import training_console as tc
+
+    _demo, registry, _texts = built
+    editable = [field for field in tc.spec_form_fields() if field.editable]
+    assert len(editable) == 17
+    targets = set(registry.targets())
+    by_key = {e.key: e for e in registry.entries()}
+    for field in editable:
+        assert field.elem_id in targets, field.path
+        entry = by_key[field.elem_id]
+        assert entry.text.split("\n", 1)[0] == tc.SPEC_FIELD_WORDS[field.path]
+        assert "Reference: " in entry.text, field.path
+    assert set(tc.SPEC_FIELD_WORDS) == {field.path for field in editable}
+    concat = by_key["spec-encoder-concat"].text
+    assert "GATv2 needs it on" in concat and concat.endswith("README C1)")

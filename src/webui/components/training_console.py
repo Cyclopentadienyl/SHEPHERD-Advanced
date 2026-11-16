@@ -209,8 +209,8 @@ from src.config.training_fields import (CROSS_FIELD_RULES, bound_words, by_name,
                                         cross_field_problems, names as field_names,
                                         not_read_by_rules, value_problem)
 from src.evaluation.caveats import TASK_NAMES
-from src.models.bundle.spec import (ENCODER_DECLARATIONS, SpecError, declared_fields,
-                                    hops_problem, reference_spec)
+from src.models.bundle.spec import (ENCODER_DECLARATIONS, REFERENCE_SOURCES, SpecError,
+                                    declared_fields, hops_problem, reference_spec)
 from src.utils.run_plan import new_run_hops, new_run_values
 from src.utils.gpu_lock import lock_state
 from src.webui.components import charts
@@ -4225,6 +4225,64 @@ def _toggle_continue_source(source):
 # =============================================================================
 # Help
 # =============================================================================
+#: What each editable field of the Model accordion is (its help's lead), by
+#: its spec field's dotted path (`spec_form_fields`); `spec_field_help` adds
+#: the reference base spec's value and the source the reference recipe names.
+SPEC_FIELD_WORDS = {
+    "input.dim": "The width of each node's learned input vector.",
+    "input.type_embedding": "Adds a learned vector for each node's type to its input vector.",
+    "encoder.layers": "The encoder's GATv2 layers; the sampler takes one hop per layer.",
+    "encoder.hidden": "Each head's width in the middle layers; the first layer multiplies it.",
+    "encoder.output": "Each head's width in the last layer; the encoder's output is this × heads.",
+    "encoder.heads": "Attention heads in every layer, their outputs concatenated.",
+    "encoder.first_hidden_multiplier": "The first layer's width per head is Hidden × this.",
+    "encoder.dropout": "Dropout after every layer but the last: a fraction, 0 or more and under 1.",
+    "encoder.attention_dropout": "Dropout on each layer's attention weights: 0 or more and under 1.",
+    "encoder.attention_slope": "The negative slope of the leaky ReLU in GATv2's attention scores.",
+    "encoder.activation_slope": "The negative slope of the leaky ReLU after every layer but the last.",
+    "encoder.relation_edge_dim": ("The width of a learned relation vector on each message-passing "
+                                  "edge."),
+    "encoder.add_self_loops": "Each node also attends to itself, through an added self-loop edge.",
+    "encoder.share_weights": "One weight matrix for both ends of each message.",
+    "encoder.concat": "Joins the heads' outputs; GATv2 needs it on, its width being output × heads.",
+    "encoder.residual": "Adds each layer's input, projected, to its output.",
+    "lp_head.margin": "The hinge loss margin: how far a positive edge's score should beat its negative's.",
+}
+#: What a spec field's reference is, where it is not a tunable default.
+_SPEC_CLOSINGS = {
+    "encoder.concat": "Not a tuned value: the source's GATv2 concatenates its heads.",
+}
+#: The `REFERENCE_SOURCES` entry a spec field's reference value comes from,
+#: where it is not the field's own path: the attention defaults are one
+#: entry, the first layer's doubling is the hidden width's, the margin the
+#: LP head's.
+_SPEC_SOURCE_KEYS = {
+    "encoder.attention_dropout": "encoder.attention",
+    "encoder.attention_slope": "encoder.attention",
+    "encoder.add_self_loops": "encoder.attention",
+    "encoder.share_weights": "encoder.attention",
+    "encoder.first_hidden_multiplier": "encoder.hidden",
+    "lp_head.margin": "lp_head",
+}
+
+
+def spec_field_help(spec_field: SpecField) -> Tuple[str, str]:
+    """A Model accordion field's help, ``(title, text)``: its label (the
+    field's, `r.field_words`), what it is (`SPEC_FIELD_WORDS`), then the
+    reference base spec's value with the source the reference recipe names
+    for it, in a trailing "Ref:" line, or that this build's reference spec
+    sets it where the recipe names none."""
+    shown = r.setting_words(spec_field.path, spec_field.reference)
+    source = REFERENCE_SOURCES.get(_SPEC_SOURCE_KEYS.get(spec_field.path, spec_field.path))
+    text = f"{SPEC_FIELD_WORDS[spec_field.path]}\n\n"
+    if source is None:
+        text += f"Reference: {shown}, this build's reference spec."
+    else:
+        closing = _SPEC_CLOSINGS.get(spec_field.path, _PROVISIONAL)
+        text += f"Reference: {shown}. {closing}\n{REF_PREFIX} {source}"
+    return r.field_words(spec_field.path.split(".", 1)[1]), text
+
+
 #: The fields' help, behind the shared ⓘ (`src/webui/components/help.py`):
 #: ``{elem_id: (title, text)}``, registered by the tab builder. Only a
 #: state-bearing text stays in ``info=``.
@@ -4317,6 +4375,8 @@ FIELD_HELP = {
     ),
     # The Branch fields: each setting's label, what it is, where it starts.
     **{f"branch_{name}": branch_setting_help(name) for name in BRANCH_FIELDS},
+    # The Model accordion's fields: what each is, its reference and source.
+    **{field.elem_id: spec_field_help(field) for field in spec_form_fields() if field.editable},
     "shep-train-view-run": (
         "Viewing",
         "The run whose curves and Export CSV the run view shows.\n\n"
