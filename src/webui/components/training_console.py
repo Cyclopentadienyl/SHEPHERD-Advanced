@@ -506,8 +506,8 @@ def setting_problem(name: str, value: Any) -> Tuple[Any, Optional[str]]:
     problem)``, the problem named by the field's label (`r.SETTING_LABELS`).
     Empty is taken only where the field says what a null means
     (`FieldSpec.null_means`: early stopping's patience, off); an emptied task
-    loss weight or sample size is refused ("Task loss weight must be set, not
-    null."), never read as its reference (OPS-R2)."""
+    loss weight or sample size is refused ("Task loss weight must be set."),
+    never read as its reference (OPS-R2)."""
     label = r.SETTING_LABELS[name]
     spec = by_name(name)
     parsed, why = parse_value(spec.kind, value, optional=bool(spec.null_means))
@@ -884,7 +884,7 @@ def sent_settings(values: Mapping[str, Any], touched: Collection[str]
     `record_touches`), whatever its value: the reference's own value typed is
     sent, and recorded as the operator's; a field emptied is sent empty, so
     it is refused where the run needs a value ("Neighbours per hop needs at
-    least 1 item(s).", "Task loss weight must be set, not null.") and means
+    least 1 item(s).", "Task loss weight must be set.") and means
     off where empty does (early stopping's patience, by its field spec's
     `null_means`); an untouched one is not sent, and the run fills it (the
     reference's, or this build's default) and records it so. A touched

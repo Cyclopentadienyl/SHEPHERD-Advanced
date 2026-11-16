@@ -488,7 +488,7 @@ def test_a_new_run_without_a_stage_is_refused_before_anything_starts(base, popen
     (dict(task="disease"), "A base run has no task and no finetune parent."),
     (dict(num_epochs=0), "num_epochs must be between 1 and 10000, not 0."),
     (dict(learning_rate="fast"), "learning_rate must be a number, not 'fast'"),
-    (dict(early_stopping_patience=None, seed=None), "seed must be set, not null"),
+    (dict(early_stopping_patience=None, seed=None), "seed must be set."),
     # One hop per layer of the spec's encoder (the reference recipe's three):
     # refused by the start, not by the process after a run directory exists.
     (dict(num_neighbors=[15, 10]), "num_neighbors needs 3 numbers, one hop per encoder layer, "

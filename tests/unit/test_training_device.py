@@ -110,8 +110,9 @@ def test_the_job_runner_refuses_what_the_process_refuses_before_any_start(
     without CUDA was refused by the CLI before anything and accepted by the
     job runner, whose child then failed. Every start now resolves its device
     by the process's resolver before anything is read or spawned, a new base,
-    a Fine-tune start and a branch alike, in its sentence (409 over HTTP:
-    the host, not the request), and nothing starts."""
+    a Fine-tune start and a branch alike (409 over HTTP: the host, not the
+    request), and nothing starts: the process in its command line's sentence,
+    the runner in a request's words (`TrainingDeviceUnavailable.words`)."""
     from unittest.mock import patch
 
     from fastapi import FastAPI
@@ -126,7 +127,7 @@ def test_the_job_runner_refuses_what_the_process_refuses_before_any_start(
     with pytest.raises(TrainingDeviceUnavailable) as raised:
         resolve_training_device("auto")
     said = str(raised.value)
-    started = f"{said} Nothing was started."
+    started = f"{raised.value.words} Nothing was started."
     data_dir = str(trained_disease_child["data_dir"])
     base, child = str(trained_disease_child["base"]), str(trained_disease_child["disease"])
 
@@ -177,8 +178,8 @@ def test_a_preview_resolves_its_device_as_the_start_does(no_cuda, trained_diseas
     host without CUDA the console's Check (which previews with the device as
     asked) said a continuation would run and Start then refused it. Both
     previews resolve the device by the start's rule first, before the parent
-    is read, so Check and Start say the same; an explicit cpu previews as
-    before."""
+    is read, so Check and Start say the same, in a request's words; an
+    explicit cpu previews as before."""
     pytest.importorskip("gradio")
     from src.api.services.training_manager import TrainingManager
     from src.utils.training_device import TrainingDeviceUnavailable, resolve_training_device
@@ -186,7 +187,7 @@ def test_a_preview_resolves_its_device_as_the_start_does(no_cuda, trained_diseas
 
     with pytest.raises(TrainingDeviceUnavailable) as raised:
         resolve_training_device("auto")
-    said = f"{raised.value} Nothing was started."
+    said = f"{raised.value.words} Nothing was started."
     manager = TrainingManager()
     child = str(trained_disease_child["disease"])
     for preview in (manager.preview_continuation(child, device="auto", extend_epochs=1),
@@ -201,3 +202,25 @@ def test_a_preview_resolves_its_device_as_the_start_does(no_cuda, trained_diseas
     assert started["success"] is False and started["error"] == said
     assert manager.preview_continuation(child, device="cpu", extend_epochs=1)["ok"] is True
     assert manager.preview_branch(child, device="cpu")["ok"] is True
+
+
+@pytest.mark.parametrize("requested", ["auto", "cuda"])
+def test_the_job_runner_refuses_in_a_requests_words_not_the_command_lines(no_cuda, requested):
+    """UI ledger R-32 and NEW-training-finetune-1: the job runner's refusal
+    (every start and every preview: the Continue drawer's Check, Fine-tune's
+    Start, an HTTP request) names the request's field, Device, and what to
+    choose; the command line's flag is the training process's own sentence
+    (above), never a page's. It said "--device auto requires CUDA … Pass
+    --device cpu explicitly …" (about 50 words) before."""
+    from src.api.services.training_manager import _training_device
+    from src.utils.training_device import TrainingDeviceUnavailable, resolve_training_device
+
+    device, said = _training_device(requested)
+    assert device is None
+    assert said == (f"Device {requested} needs CUDA, which is not available here; choose cpu "
+                    "for development. Nothing was started.")
+    assert "--device" not in said
+    with pytest.raises(TrainingDeviceUnavailable) as refused:
+        resolve_training_device(requested)
+    assert str(refused.value).startswith(f"--device {requested} requires CUDA")
+    assert refused.value.words in said

@@ -78,7 +78,7 @@ Its settings left `TrainConfig` in K8-7, and `ShepherdGNNConfig` with
     whether an explicit null is one of its values (`FieldSpec.null_means`: early stopping's
     patience, off; no parent; no extension; a base's task; the stage's reference spec), apart
     from its stored `default`. `value_problem` refuses a null wherever the field gives it no
-    meaning ("task_loss_weight must be set, not null."), whatever the default: a task's loss
+    meaning ("task_loss_weight must be set."), whatever the default: a task's loss
     weights and sample sizes store None only because the recipe fills them for each task, so
     they are left out for their reference, never stated null. The one rule serves the CLI, the
     HTTP start, Fine-tune and branch requests, the job runner and the pages; the callers' own

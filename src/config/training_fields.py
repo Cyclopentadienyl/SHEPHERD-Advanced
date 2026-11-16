@@ -709,12 +709,14 @@ def value_problem(name: str, value: Any) -> Optional[str]:
     given. **A null is a value only where the field says what it means**
     (`FieldSpec.null_means`: early stopping's patience, off; no parent; no
     extension), and refused everywhere else in one sentence ("task_loss_weight
-    must be set, not null."), whatever the field's stored default: a field left
-    out is never a null stated (decision S2). The one check of a value: the
-    training process, the job runner, the HTTP requests and the pages ask it."""
+    must be set."; it said "…, not null.", a programming word on the page: UI
+    ledger NEW-training-finetune-6), whatever the field's stored default: a
+    field left out is never a null stated (decision S2). The one check of a
+    value: the training process, the job runner, the HTTP requests and the
+    pages ask it."""
     spec = by_name(name)
     if value is None:
-        return None if spec.null_means else f"{name} must be set, not null."
+        return None if spec.null_means else f"{name} must be set."
     numbers = (int, float)
     if spec.kind == "int":
         ok = isinstance(value, int) and not isinstance(value, bool)

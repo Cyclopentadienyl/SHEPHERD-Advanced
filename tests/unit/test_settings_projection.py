@@ -430,7 +430,7 @@ def test_an_explicit_null_reaches_the_service_and_is_judged(client, tmp_path):
     http, popen, _ = client
     body = {"data_dir": str(tmp_path / "ws"), "learning_stage": "base", "device": "cpu"}
     resp = http.post("/api/v1/training/start", json={**body, "num_epochs": None})
-    assert resp.status_code == 422 and "num_epochs must be set, not null." in resp.text
+    assert resp.status_code == 422 and "num_epochs must be set." in resp.text
     popen.assert_not_called()
     resp = http.post("/api/v1/training/start", json={**body, "early_stopping_patience": None,
                                                      "resume_from": None})
@@ -506,7 +506,7 @@ def test_a_null_task_number_is_refused_in_one_sentence_on_the_cli_the_runner_and
     from src.api.services.training_manager import FinetuneInputs, TrainingManager
     from src.training import finetune_task
 
-    said = f"{name} must be set, not null."
+    said = f"{name} must be set."
     assert new_run_problem("finetune", ("disease",), {name: None}) == said
     assert new_run_problem("finetune", ("disease",), {}) is None
     assert new_run_values("finetune", "disease", {})[name] == (

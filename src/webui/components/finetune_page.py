@@ -318,7 +318,7 @@ def sent_settings(tasks: Any, values: Mapping[str, Any], touched: Any
     those whose field the operator touched (`touched`, the form's record),
     whatever their value, each checked by its field spec, as the base form
     sends its own (`training_console.sent_settings`): an emptied task
-    setting is refused ("Task loss weight must be set, not null."), never
+    setting is refused ("Task loss weight must be set."), never
     sent as a null nor said to take the task's reference (OPS-R2); untouched,
     the task's reference fills it. `values` are the fields', by name.
     Nothing for no task. Start (`_start`) and the line on what the operator

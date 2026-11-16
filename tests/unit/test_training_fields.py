@@ -582,7 +582,7 @@ def test_a_value_is_checked_by_its_field_spec_without_coercion():
             ("num_neighbors", [3, -2], "num_neighbors items must be 1 or more (or -1, every "
                                        "neighbour), not [3, -2]."),
             ("num_neighbors", [], "needs at least"),
-            ("num_epochs", None, "must be set, not null")):
+            ("num_epochs", None, "must be set.")):
         problem = value_problem(name, value)
         assert problem is not None and fragment in problem, (name, value, problem)
 
@@ -623,7 +623,7 @@ def test_a_null_is_a_value_only_where_its_field_says_what_it_means():
         if spec.name in NULL_IS_A_VALUE:
             assert said is None, spec.name
         else:
-            assert said == f"{spec.name} must be set, not null.", spec.name
+            assert said == f"{spec.name} must be set.", spec.name
     for name in TASK_OWN_NUMBERS:
         assert by_name(name).default is None and not by_name(name).null_means, name
     assert by_name("early_stopping_patience").default == 10
@@ -639,7 +639,7 @@ def test_a_null_stage_is_no_stage_as_its_consumers_read_it():
     from src.config.training_fields import value_problem
     from src.utils.run_plan import parent_identity_problem
 
-    assert value_problem("learning_stage", None) == "learning_stage must be set, not null."
+    assert value_problem("learning_stage", None) == "learning_stage must be set."
     assert parent_identity_problem("finetune", "disease", None, "disease", "The parent") == (
         "The parent is a finetune checkpoint for disease; a run continues only its own stage "
         "and task.")

@@ -622,14 +622,16 @@ def _training_device(requested: Any) -> Tuple[Optional[str], Optional[str]]:
     (`training_device.resolve_training_device`; decision S4), asked by every
     start before anything is read or spawned (a new base, a continuation, a
     branch, a Fine-tune start), so a device this host cannot give is refused
-    in the process's sentence and nothing is started. The request keeps the
-    device as asked; the run records it beside the one in effect."""
+    and nothing is started: in a request's words, its field named Device as
+    a page and an HTTP request name it, never the command line's flag
+    (`TrainingDeviceUnavailable.words`; UI ledger R-32). The request keeps
+    the device as asked; the run records it beside the one in effect."""
     from src.utils.training_device import TrainingDeviceUnavailable, resolve_training_device
 
     try:
         return resolve_training_device(str(requested)), None
     except TrainingDeviceUnavailable as exc:
-        return None, f"{exc} Nothing was started."
+        return None, f"{exc.words} Nothing was started."
 
 
 def deployment_device() -> Optional[str]:
