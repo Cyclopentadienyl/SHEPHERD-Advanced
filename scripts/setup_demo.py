@@ -31,8 +31,10 @@ command, else the folder saved in Settings › Data locations). That is the
 folder the dashboard lists and the one whose GPU lock `--train-model` takes,
 so the data and the lock go to one place. With no folder in effect (none
 chosen, or the one chosen is refused) it is refused with exit 1 and nothing
-written, with or without `--train-model`, naming why and the suggested
-folder; nothing falls back to the repository's `data/workspaces/`. An
+written, with or without `--train-model`, in the setting's own words (unset,
+or refused and why) and then `--output-dir` as the way round it (`refusal`:
+the setting's codes go last, in one "Ref:"); nothing falls back to the
+repository's `data/workspaces/`. An
 explicit `--output-dir` always wins. *History: until T08 the default was the
 repository's `data/workspaces/demo` whatever folder was chosen, so a demo
 trained under the saved folder's lock was written where the dashboard did not
@@ -110,6 +112,7 @@ from src.core.types import (
 )
 from src.kg.graph import KnowledgeGraph
 from src.kg.workspace import SampleBudget, write_workspace
+from src.utils.operator_access import REF_MARK, reason_parts
 
 logging.basicConfig(
     level=logging.INFO,
@@ -416,7 +419,8 @@ def default_output_dir(environ: Optional[Mapping[str, str]] = None
     else the folder saved in Settings › Data locations), the folder the
     dashboard lists and whose GPU lock `--train-model` takes. With none in
     effect (not chosen, refused, or a saved file that cannot be read), None
-    and that setting's own words for why; no other folder is assumed."""
+    and that setting's own words for why, which say which of these it is
+    (`refusal` quotes them); no other folder is assumed."""
     root = server_settings.workspaces_root(environ)
     if root.value is None:
         return None, root.problem
@@ -475,10 +479,32 @@ CPU_DASHBOARD = (
     "only opens it. So stop it first (Settings › Stop service), then start it as "
     "SHEPHERD_DEVICE=cpu bash launch_shepherd.sh.")
 
-#: The refusal with no `--output-dir` and no workspaces folder in effect.
-NO_OUTPUT_DIR = ("setup_demo: refused: the demo is written to the workspaces folder in effect "
-                 "(the one the dashboard lists), and there is none. {why} Or name the folder "
-                 "for this demo with --output-dir. Nothing was written.")
+#: The refusal's lead with no `--output-dir` and no workspaces folder in
+#: effect; the setting's own words follow (`refusal`), unset or refused.
+NO_OUTPUT_DIR = ("the demo is written to the workspaces folder in effect, the one the "
+                 "dashboard lists.")
+#: The way round it, after the setting's words.
+OUTPUT_DIR_INSTEAD = "Or name the folder for this demo with --output-dir."
+
+
+def refusal(problem: str, lead: str = "", then: str = "") -> str:
+    """**setup_demo's one refusal line**: `lead`, the quoted `problem` (a
+    setting's or the GPU lock's words), `then`, and "Nothing was written.";
+    the problem's codes go last, in its one trailing "Ref:"
+    (`operator_access.reason_parts`, as D8's refusals put theirs after
+    "Nothing was done."), so no sentence runs on after a Ref. Review of
+    b1a193f: the no-folder refusal read "No default is assumed. Ref:
+    SHEPHERD_WORKSPACES_ROOT Or name the folder for this demo with
+    --output-dir", and the lock's "Ref: SHEPHERD_WORKSPACES_ROOT Nothing was
+    written"; and it said "there is none" of a folder that was set and
+    refused, whose own words now say which it is."""
+    text, ref = reason_parts(problem)
+    text = text.strip()
+    if text and not text.endswith((".", "!", "?")):
+        text += "."
+    words = " ".join(part for part in (lead, text, then) if part)
+    return (f"setup_demo: refused: {words} Nothing was written."
+            + (f"{REF_MARK}{ref.strip()}" if ref else ""))
 
 
 # =============================================================================
@@ -526,7 +552,7 @@ def main():
     else:
         output_dir, why = default_output_dir()
         if output_dir is None:
-            logger.error(NO_OUTPUT_DIR.format(why=why))
+            logger.error(refusal(why, NO_OUTPUT_DIR, OUTPUT_DIR_INSTEAD))
             return 1
 
     # **A managed GPU job takes the deployment's GPU lock** before anything is
@@ -538,7 +564,7 @@ def main():
         try:
             gpu_lock = take_gpu_lock("training", "setup_demo.py --train-model", log=logger)
         except (OSError, GpuLockMisconfigured) as exc:  # GpuLockBusy is an OSError
-            logger.error(f"setup_demo: refused: {exc} Nothing was written.")
+            logger.error(refusal(str(exc)))
             return 1
     try:
         return _setup(args, output_dir)

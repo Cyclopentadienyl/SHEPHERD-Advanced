@@ -40,6 +40,14 @@ def _environment(printed: str) -> dict:
     return dict(re.findall(r"^\s+(SHEPHERD_[A-Z_]+)=(\S+) \\$", printed, flags=re.M))
 
 
+def _refusals(caplog) -> list[str]:
+    """The ERROR lines logged, each as one line (as a terminal shows it)."""
+    import logging
+
+    return [" ".join(record.getMessage().split()) for record in caplog.records
+            if record.levelno >= logging.ERROR]
+
+
 @pytest.mark.parametrize("trained_on, named", [
     ("auto", "cuda"),         # training's auto ran on CUDA, or it refused
     ("cuda", "cuda"),
@@ -237,6 +245,11 @@ def test_train_model_is_refused_before_anything_is_written(monkeypatch, tmp_path
             assert setup_demo.main() == 1
             assert "setup_demo: refused: No workspaces folder is set, so the GPU " \
                 "lock is not configured" in caplog.text
+            # Review of b1a193f: the lock's words end in their "Ref:", which
+            # ran into "Nothing was written."; the Ref now ends the line.
+            [said] = _refusals(caplog)
+            assert said.endswith("(deployment guide §4.11). Nothing was written. Ref: "
+                                 "SHEPHERD_WORKSPACES_ROOT"), said
         else:
             lock = tmp_path / LOCK_FILE_NAME
             monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
@@ -301,19 +314,29 @@ def test_the_default_output_is_demo_in_the_workspaces_folder_in_effect(
     assert "demo" in [item.name for item in list_workspaces().items]
 
 
+@pytest.mark.parametrize("folder", ["unset", "refused"])
 @pytest.mark.parametrize("train", [True, False], ids=["train-model", "workspace-only"])
 def test_with_no_workspaces_folder_in_effect_the_default_is_refused(monkeypatch, tmp_path,
-                                                                     caplog, train):
+                                                                     caplog, train, folder):
     """With no folder in effect and no `--output-dir` there is nowhere the
     dashboard reads, so the demo is refused before anything is written (and
     before the lock), naming why in the setting's own words; nothing falls
-    back to the repository's `data/workspaces/demo`. `--help` says the rule."""
+    back to the repository's `data/workspaces/demo`. `--help` says the rule.
+
+    Review of b1a193f: the line ran the setting's trailing "Ref:" into the
+    next sentence ("Ref: SHEPHERD_WORKSPACES_ROOT Or name the folder ..."),
+    and said "and there is none" of a folder that was set and refused. The
+    whole printed line is pinned: the setting's words (which say unset or
+    refused), --output-dir, "Nothing was written.", then the one Ref."""
     import logging
 
-    from src.config.server_settings import WORKSPACES_ROOT_NOT_SET
     from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
 
-    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+    missing = tmp_path / "no-such-folder"
+    if folder == "unset":
+        monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+    else:
+        monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(missing))
     started = tmp_path / "cwd"
     started.mkdir()
     monkeypatch.chdir(started)
@@ -322,12 +345,22 @@ def test_with_no_workspaces_folder_in_effect_the_default_is_refused(monkeypatch,
     monkeypatch.setattr(sys, "argv", ["setup_demo.py", *(["--train-model"] if train else [])])
     with caplog.at_level(logging.ERROR):
         assert setup_demo.main() == 1
-    flat = " ".join(caplog.text.split())
-    assert ("setup_demo: refused: the demo is written to the workspaces folder in effect (the "
-            "one the dashboard lists), and there is none.") in flat
-    assert " ".join(WORKSPACES_ROOT_NOT_SET.split()) in flat
-    assert "--output-dir" in flat and "Nothing was written." in flat
-    assert list(started.iterdir()) == []
+    lead = ("setup_demo: refused: the demo is written to the workspaces folder in effect, the "
+            "one the dashboard lists.")
+    if folder == "unset":
+        said = (" No workspaces folder is set, so the server lists no workspace. Choose the "
+                "folder whose subfolders are the workspaces in Settings › Data locations; its "
+                "Create suggested folder makes SHEPHERD-data/workspaces in the service "
+                "account's home folder. No default is assumed. Or name the folder for this "
+                "demo with --output-dir. Nothing was written. Ref: SHEPHERD_WORKSPACES_ROOT")
+    else:
+        said = (" The workspaces folder set at start (Ref: SHEPHERD_WORKSPACES_ROOT) is refused: "
+                f"the workspaces root {missing} does not exist or is not a directory. The "
+                "operator creates it; nothing creates one, so a mistyped path cannot become a "
+                "directory nobody chose. The server lists no workspace until it is corrected. "
+                "Or name the folder for this demo with --output-dir. Nothing was written.")
+    assert _refusals(caplog) == [lead + said]
+    assert list(started.iterdir()) == [] and not missing.exists()
 
 
 def test_help_says_where_the_demo_goes(monkeypatch, capsys):
