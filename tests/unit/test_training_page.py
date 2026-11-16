@@ -3127,8 +3127,10 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     assert ("#shep-train-charts .shep-charts-body { flex: 1 1 0; min-height: 0; overflow-y: auto; }"
             in wide)
     assert not [b for _s, b in _rules(css, "shep-charts-bar") if "sticky" in b]
-    # The boxes inside the row take its height, the cards keep their content's minimum.
-    assert "#shep-train-charts .shep-charts-grid { min-height: 0; }" in wide
+    # The boxes inside the row take its height, the cards keep their content's minimum, and
+    # the grid its rows' (so the epoch label under it is never under a row: R-54).
+    assert "#shep-train-charts .shep-charts { min-height: 0; }" in wide
+    assert "#shep-train-charts .shep-charts-grid { min-height: min-content; }" in wide
     assert "#shep-train-charts .shep-chart { min-height: auto; }" in wide
     hidden = [sel for sel, b in _rules(css, "shep-chart-empty") if "display: none" in b]
     assert hidden == [".shep-chart-empty .shep-chart-plot"], hidden

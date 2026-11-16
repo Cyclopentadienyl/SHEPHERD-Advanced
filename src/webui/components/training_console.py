@@ -4962,9 +4962,10 @@ _PAGE = f"#shep-page-{TRAINING}"
 #: (the epoch axis, 30 px, and its margins). 140 until B1b; 170 since, the most
 #: at which the owner's window (1850 x 960) showed all four plots with their
 #: axes under a two-row run bar. With the run bar one row (R-38) the chart body
-#: there holds 565 px and the four plot areas measure 209, 209, 190 and 190 px
-#: (a floor of 200 would need 566), so only a smaller window, or a banner,
-#: scrolls the plots.
+#: there holds 565 px; with the epoch axis labelled once under the grid (R-54:
+#: the two bottom charts each had the label, 19 px) the four plot areas measure
+#: 198 px each (209, 209, 190 and 190 before), so only a smaller window, or a
+#: banner, scrolls the plots.
 PLOT_MIN_HEIGHT = 170
 PLOT_AXIS_ROOM = 47
 #: The run view's height (side by side) that holds its header, the charts'
@@ -5254,9 +5255,12 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-charts .shep-chart-plot {{ min-height: {PLOT_MIN_HEIGHT + PLOT_AXIS_ROOM}px; }}
   /* The boxes between the charts' row and the grid take the row's height (min-height 0), so
      the grid's two rows share it, each at least what its own cards need (a card keeps its
-     content's minimum: title, keys, the plot's minimum, the axis label); rows that need more
-     than the body has overflow it, and the body scrolls. */
-  {_PAGE} #shep-train-charts .shep-charts, {_PAGE} #shep-train-charts .shep-charts-grid {{ min-height: 0; }}
+     content's minimum: title, keys, the plot's minimum). The grid itself is never shorter than
+     those rows (min-content): rows that need more than the body has make the grid taller, the
+     body scrolls, and the epoch label under the grid stays under its last row (R-54; a grid
+     shrunk below its rows let them run over the label). */
+  {_PAGE} #shep-train-charts .shep-charts {{ min-height: 0; }}
+  {_PAGE} #shep-train-charts .shep-charts-grid {{ min-height: min-content; }}
   /* The toolbar's row as dense as drawn (its buttons 30 px tall, the skill's §10 asks 24) and
      the grid's rows closer, so the room goes to the plots. */
   {_PAGE} #shep-train-charts {{ padding-top: 6px !important; padding-bottom: 4px !important; }}
