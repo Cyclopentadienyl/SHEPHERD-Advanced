@@ -54,8 +54,11 @@ source file, and the server's shutdown stops the GPU job it runs.
 P2-4), as `scripts/train_model.py` does: the demo trains through the real
 trainer on the GPU, so it is a managed GPU job. The lock is taken before
 anything is written and held until training ends; a busy lock, or one that is
-not configured (SHEPHERD_WORKSPACES_ROOT, the lock's one name, not set), is
-refused with exit 1 and nothing written.
+not configured (no workspaces folder set, the lock's one name: Settings › Data
+locations; Ref: SHEPHERD_WORKSPACES_ROOT), is refused with exit 1 and nothing
+written. Without a model, the training step it prints says the lock
+this shell would take, or how to choose the folder
+(`gpu_lock.training_step_lines`, the hint `build_knowledge_graph.py` prints).
 """
 from __future__ import annotations
 
@@ -345,8 +348,9 @@ def train_demo_model(workspace: Path, num_epochs: int, device: str = "auto") -> 
             raise SystemExit(
                 f"Demo training wrote no checkpoint under {last.parent}; see the log above. "
                 "The workspace itself was written and is valid: train on it with "
-                f"scripts/train_model.py --data-dir {workspace} --stage base, in a shell where "
-                "the GPU lock is configured (SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11)")
+                f"scripts/train_model.py --data-dir {workspace} --stage base, once the GPU lock "
+                "is configured (a workspaces folder chosen in Settings › Data locations; Ref: "
+                "SHEPHERD_WORKSPACES_ROOT; deployment guide §4.11)")
         return last
 
     base = run("base", "demo-base", learning_stage="base")
@@ -473,15 +477,17 @@ Start the API serving the demo's disease model:
   python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 """)
     else:
+        from src.utils.gpu_lock import training_step_lines
+
+        step = "\n".join(training_step_lines(output_dir))
         print(f"""
 No model was trained, so this workspace has nothing to serve yet: the API
 answers diagnoses only with a trained model, and refuses them (503) until one
 is loaded.
 
-Train on this workspace, in a shell where the GPU lock is configured (training
-refuses without it; deployment guide §4.11), for example with the workspaces
-root the service is given:
-  export SHEPHERD_WORKSPACES_ROOT={output_dir.resolve().parent}
+Train on this workspace; training takes the GPU lock and refuses without it
+(deployment guide §4.11):
+{step}
   python scripts/setup_demo.py --train-model
   # or the production entry point at the reference recipe's full size: a base,
   # then its disease model fine-tuned from the base run's checkpoint

@@ -257,6 +257,11 @@ def test_a_lock_that_cannot_be_used_names_its_path_only_to_an_operator():
         chip = c.gpu_chip_from(None, lock, operator=operator)
         assert (chip.kind, chip.text) == ("unread", "GPU jobs: not read")
         assert ("/srv/secret/x" in chip.detail) is operator
+        # T06: the request that may not read the problem is told where an
+        # operator reads it, Settings › Data locations, never the variable.
+        assert ("An operator sees why in Settings › Data locations." in chip.detail) is (
+            not operator)
+        assert "SHEPHERD_" not in chip.detail.split("\n\n")[0] or operator
 
 
 def test_the_lock_path_goes_only_to_a_request_d8_allows(monkeypatch):

@@ -48,6 +48,7 @@ from typing import Any, Callable, Dict, Mapping, NamedTuple, Optional
 
 import gradio as gr
 
+from src.config.server_settings import DATA_LOCATIONS
 from src.utils.gpu_lock import SERVING_JOB_TYPE, held_by_inference, lock_state
 from src.utils.operator_access import CONDITIONS, OperatorAccess
 from src.webui.components.help import help_button
@@ -139,10 +140,12 @@ GPU_NOT_CONFIGURED = "GPU jobs: refused, no workspaces folder"
 #: P2-4); it names no server path, so every request may see it.
 GPU_NOT_CONFIGURED_DETAIL = (
     "No workspaces folder is set, so the GPU lock is not configured.\n"
-    "The job runner refuses every training and test run. Choose the folder in Settings › "
-    "Data locations: the lock is the file .shepherd-gpu.lock in it.\n"
+    f"The job runner refuses every training and test run. Choose the folder in "
+    f"{DATA_LOCATIONS}: the lock is the file .shepherd-gpu.lock in it.\n"
     "Ref: SHEPHERD_WORKSPACES_ROOT"
 )
+#: Where a request that may not see the lock's problem is told to look.
+GPU_LOCK_WHY_HIDDEN = f"An operator sees why in {DATA_LOCATIONS}."
 _RUNNER_NOUN = {"training": "training", "test": "test run"}
 
 _LOCK_SVG = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
@@ -228,8 +231,9 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
     if lock.get("problem"):
         detail = ("The GPU lock cannot be used, so every managed job is refused until it is "
                   "corrected.")
-        if operator:
-            detail += f"\n{lock['problem']}"
+        # An operator reads the problem itself (it says where to correct it);
+        # anyone else, where an operator sees why, never the value's words.
+        detail += f"\n{lock['problem']}" if operator else f"\n{GPU_LOCK_WHY_HIDDEN}"
         return Chip("unread", GPU_NOT_READ, f"{detail}\n\n{GPU_SCOPE}")
     description = str(lock.get("held_by") or "")
     if not description:
@@ -359,6 +363,7 @@ __all__ = [
     "D8_SHORT",
     "GPU_INFERENCE",
     "GPU_NONE",
+    "GPU_LOCK_WHY_HIDDEN",
     "GPU_NOT_READ",
     "GPU_NOT_CONFIGURED",
     "GPU_SCOPE",

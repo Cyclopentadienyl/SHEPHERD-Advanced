@@ -439,7 +439,10 @@ def test_every_program_entry_says_a_lock_not_configured_is_refused():
     repo = Path(__file__).resolve().parents[2]
     for name in _lock_takers(repo, "scripts"):
         text = " ".join((repo / name).read_text(encoding="utf-8").split())
-        assert f"not configured ({WORKSPACES_ROOT_ENV}, the lock's one name, not set)" in text, \
+        # Since T06 each names where the folder is chosen first, the variable
+        # as its Ref (data locations are chosen in Settings since UI-06).
+        assert ("not configured (no workspaces folder set, the lock's one name: Settings › "
+                f"Data locations; Ref: {WORKSPACES_ROOT_ENV})") in text, \
             f"{name} does not say a lock that is not configured is refused"
         assert "the run goes on" not in text, f"{name} describes a run without the lock"
 

@@ -466,6 +466,42 @@ def lock_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     return state
 
 
+def training_step_lines(workspace: Path, environ: Mapping[str, str] | None = None) -> list[str]:
+    """**A training step's GPU lock, as a command prints it** before the
+    command it names (`setup_demo.py`, `build_knowledge_graph.py`): the lock's
+    one rule answering for this shell (`lock_state`; root-cause review,
+    INT-3), so no copied hint drifts from it. The lock the training takes and
+    where its folder was chosen; or why it is refused, in the rule's own words.
+    With no folder chosen, Settings › Data locations first (this account's
+    commands read the folder saved there), the variable only as the one-shell
+    alternative, with this workspace's parent as the example (T06). Comment
+    lines, then that alternative as a command; two-space indent."""
+    import textwrap
+
+    state = lock_state(environ)
+    if state["configured"]:
+        source = server_settings.workspaces_root(environ).source
+        where = (f"saved in {server_settings.DATA_LOCATIONS}"
+                 if source == server_settings.SOURCE_SAVED
+                 else f"set by {WORKSPACES_ROOT_ENV} here")
+        said = [f"In this shell it takes the GPU lock {state['path']}, in the workspaces "
+                f"folder {where}: the one the service's jobs take when it uses the same folder "
+                "(deployment guide §4.11)."]
+    else:
+        said = [f"Refused in this shell until the GPU lock is configured: {state['problem']}"]
+    root = Path(workspace).resolve().parent
+    if state["unset"]:
+        said.append(f"This workspace's parent, {root}, is one such folder: choose it in "
+                    f"{server_settings.DATA_LOCATIONS} (this account's commands read it too), or "
+                    "set it for this shell only:")
+    lines = [f"  # {line}" for text in said
+             for line in textwrap.wrap(text, 86, break_long_words=False, break_on_hyphens=False)]
+    if state["unset"]:
+        lines.append(f'  set "{WORKSPACES_ROOT_ENV}={root}"' if sys.platform == "win32"
+                     else f"  export {WORKSPACES_ROOT_ENV}={root}")
+    return lines
+
+
 def held_by_inference(state: Mapping[str, Any], pid: int | None = None) -> bool:
     """Whether the lock, as `lock_state` read it, is held by the CUDA
     inference of process `pid` (this process when None: **this service's
@@ -501,4 +537,5 @@ __all__ = [
     "probe",
     "read_holder",
     "take_gpu_lock",
+    "training_step_lines",
 ]

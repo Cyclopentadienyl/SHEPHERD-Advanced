@@ -280,6 +280,10 @@ _PILLS = {
 _BUSY = ("running", "stopping")
 
 #: Field help, behind the shared ⓘ (each title is its component's label).
+#: The import source select's label: the folder by the name Settings › Data
+#: locations gives it (`deployment_view.FIELD_WORDS`), where it is chosen.
+INTAKE_LABEL = "File in the import folder (server)"
+
 FIELD_HELP = {
     "shep-test-workspace": (
         "Workspace",
@@ -343,7 +347,7 @@ FIELD_HELP = {
         "- It guards against known non-deterministic operations; it does not certify a number.",
     ),
     "shep-test-intake": (
-        "File in the intake directory (server)",
+        INTAKE_LABEL,
         "The shepherd-cases/1 files (*.json) the operator placed in the server's import folder.\n\n"
         "- The folder is outside the repository, set in Settings › Data locations.\n"
         "- The server finds the chosen name there again and refuses anything else, a link "
@@ -2437,8 +2441,9 @@ def intake_note_html(listing: Mapping[str, Any], roots: Sequence[Tuple[str, str]
         if item.get("problem"):
             notes.append(f'<div class="shep-sub shep-amber-t">{e(redact(item["problem"], roots))}</div>')
     if not offered:
-        notes.append(_reason_html("No import source is in the intake directory: place a "
-                                  "shepherd-cases/1 file there on the machine, then open this again."))
+        notes.append(_reason_html("No import file is in the import folder: place a "
+                                  "shepherd-cases/1 file there on the server, then open this "
+                                  "again."))
     return "".join(notes)
 
 
@@ -2810,7 +2815,7 @@ def preview_import(workspace: Any, file: Any, label: Any, role: Any, policy: Any
         return None, access.refusal
     inputs = _import_inputs(workspace, file, label, role, policy)
     if not inputs["file"]:
-        return None, "Choose a file from the intake directory. Nothing was written."
+        return None, "Choose a file from the import folder. Nothing was written."
     try:
         plan = _prepare(inputs, environ)
     except (OSError, ValueError) as exc:  # ServerListRefused, RegistryRefused, MalformedSource, …
@@ -2967,7 +2972,7 @@ def create_test_page(ctx: Any) -> None:
                 import_close = gr.Button("✕ Close", variant="secondary", size="sm", scale=0,
                                          elem_id="shep-test-import-close")
             with gr.Column(elem_classes=["shep-test-bd"]):
-                intake = gr.Dropdown(label="File in the intake directory (server)", choices=[],
+                intake = gr.Dropdown(label=INTAKE_LABEL, choices=[],
                                      value=None, elem_id="shep-test-intake", interactive=True,
                                      elem_classes=["shep-test-select"])
                 intake_note = plain_html("", elem_id="shep-test-intake-note")

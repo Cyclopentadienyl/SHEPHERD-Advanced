@@ -174,8 +174,25 @@ def test_the_printed_commands_do_not_reload(monkeypatch, capsys, tmp_path):
     assert "uvicorn" not in plain
     for printed in (trained, plain):
         assert "--reload" not in printed
-    assert f"export SHEPHERD_WORKSPACES_ROOT={output.resolve().parent}" in plain
     assert "§4.11" in plain
+    # The training step's lock is the rule's answer for this shell
+    # (`gpu_lock.training_step_lines`, as build_knowledge_graph.py prints it).
+    # With no folder chosen: Settings › Data locations first, the variable
+    # only as the one-shell alternative (T06; it was the only way it named).
+    from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
+
+    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+    unset, output = _printed(monkeypatch, capsys, tmp_path / "unset")
+    root = output.resolve().parent
+    flat = " ".join(line.strip().lstrip("#").strip() for line in unset.splitlines())
+    assert "choose it in Settings › Data locations" in flat
+    assert f"export {WORKSPACES_ROOT_ENV}={root}" in unset
+    assert flat.index("Settings › Data locations") < flat.index(f"export {WORKSPACES_ROOT_ENV}")
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
+    configured, _ = _printed(monkeypatch, capsys, tmp_path / "unset")
+    flat = " ".join(line.strip().lstrip("#").strip() for line in configured.splitlines())
+    assert f"takes the GPU lock {root / '.shepherd-gpu.lock'}" in flat
+    assert "export" not in configured
 
 
 def test_train_model_takes_the_gpu_lock_for_the_whole_training(monkeypatch, capsys, tmp_path):

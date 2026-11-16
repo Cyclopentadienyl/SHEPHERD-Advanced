@@ -29,9 +29,9 @@ Usage:
 
     One managed GPU job at a time (M5): `main` takes the deployment's GPU lock
     (src/utils/gpu_lock.py) before anything is read; a busy lock is refused,
-    naming its holder, and so is a lock that is not configured
-    (SHEPHERD_WORKSPACES_ROOT, the lock's one name, not set), each with exit 1
-    and nothing written.
+    naming its holder, and so is a lock that is not configured (no workspaces
+    folder set, the lock's one name: Settings › Data locations; Ref:
+    SHEPHERD_WORKSPACES_ROOT), each with exit 1 and nothing written.
 
     A caller that chose the dataset beforehand passes the fingerprint it showed
     (`--expect-dataset-sha256`, M5's job runner does): a workspace whose

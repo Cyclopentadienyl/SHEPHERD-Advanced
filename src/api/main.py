@@ -546,9 +546,10 @@ class AppState:
             except GpuLockMisconfigured as exc:
                 logger.error("CUDA inference is refused: %s", exc)
                 raise ServingRefused(
-                    f"CUDA inference is refused: the GPU lock cannot be used ({ENV_WORKSPACES_ROOT} "
-                    "is set but cannot be used; the service log says why), and nothing runs "
-                    "on the GPU without excluding the others.") from exc
+                    "CUDA inference is refused: the GPU lock cannot be used (the workspaces "
+                    "folder in effect cannot be used: Settings › Data locations says why), and "
+                    "nothing runs on the GPU without excluding the others. Ref: "
+                    f"{ENV_WORKSPACES_ROOT}") from exc
             except GpuLockBusy as exc:
                 raise ServingRefused(
                     f"CUDA inference is refused: the GPU is in use by {exc.holder}. Load "

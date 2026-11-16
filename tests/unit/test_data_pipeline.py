@@ -1456,12 +1456,16 @@ class TestBuildPathOrdering:
         monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
         unset = printed_step()
         assert " ".join(GPU_LOCK_NOT_CONFIGURED.split()) in unset
+        # Settings › Data locations first; the variable only as the one-shell
+        # alternative (T06).
+        assert (f"This workspace's parent, {workspace.resolve().parent}, is one such folder: "
+                "choose it in Settings › Data locations") in unset
         assert f"export {WORKSPACES_ROOT_ENV}={workspace.resolve().parent}" in unset
 
         monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_dir))
         configured = printed_step()
-        assert (f"takes the GPU lock {tmp_dir.resolve() / '.shepherd-gpu.lock'}, "
-                f"under {WORKSPACES_ROOT_ENV}") in configured
+        assert (f"takes the GPU lock {tmp_dir.resolve() / '.shepherd-gpu.lock'}, in the "
+                f"workspaces folder set by {WORKSPACES_ROOT_ENV} here") in configured
         assert "Refused" not in configured and "export" not in configured
 
     def test_a_sufficient_build_writes_a_manifest_bound_to_the_graph_it_wrote(

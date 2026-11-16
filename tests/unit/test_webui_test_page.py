@@ -2022,6 +2022,23 @@ def test_the_intake_note_names_what_is_not_offered_without_its_path(site):
     assert "leaves.json resolves to a server path" in note and str(site.root) not in note
 
 
+def test_the_import_source_is_named_by_the_folder_settings_chooses():
+    """T06: the select read "File in the intake directory (server)" while
+    Settings › Data locations, where the folder is chosen, names it "Import
+    folder". The select, its help and its empty note now use that name."""
+    from src.config.deployment_settings import KEY_INTAKE_DIR
+    from src.utils.deployment_view import FIELD_WORDS
+
+    name = FIELD_WORDS[KEY_INTAKE_DIR][0].lower()
+    assert name == "import folder" and name in tp.INTAKE_LABEL
+    demo, _ctx, _registry = _page_component()
+    (select,) = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-test-intake"]
+    assert select.label == tp.INTAKE_LABEL
+    assert tp.FIELD_HELP["shep-test-intake"][0] == tp.INTAKE_LABEL
+    empty = tp.intake_note_html({"items": [], "problem": None}, [])
+    assert "No import file is in the import folder" in empty and "intake" not in empty
+
+
 # --------------------------------------------------------------------------- the page's wiring
 def _page_component():
     from src.webui.components.help import HelpRegistry
