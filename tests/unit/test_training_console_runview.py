@@ -98,6 +98,21 @@ def test_the_run_bar_keeps_its_own_height_and_the_run_view_takes_the_rest():
         "#shep-train-runbar {", 1)[1].split("}", 1)[0]
 
 
+def test_the_header_drops_use_continue_while_the_continue_drawer_is_open(runs, monkeypatch,
+                                                                        operator):  # noqa: F811
+    """B72-RV1 and NEW-training-finetune-3, through the render: with the drawer
+    open (its Continue… button hidden), the header's state line no longer
+    says "use Continue…"; closed, it does, after the one " · "."""
+    monkeypatch.setattr(tc, "_snapshot_for", lambda run, cache: {
+        "readable": True, "completed_epochs": 1, "target_epochs": 1, "end": "finished",
+        "dataset_fingerprint": None})
+    ws = tc.workspace_state("demo")
+    closed = _pieces(ws, {}, operator)["head"]
+    opened = _pieces(ws, {}, operator, mode={"drawer": True})["head"]
+    assert "Finished · 1 of 1 epoch completed. To train further, use Continue…" in closed
+    assert "Finished · 1 of 1 epoch completed</span>" in opened and "use Continue" not in opened
+
+
 # --------------------------------------------------------------------------- the Viewing select
 def test_the_select_lists_the_workspaces_runs_latest_first_by_the_one_option_rule(runs):
     """Options short and name first (at most 40 characters, one separator,

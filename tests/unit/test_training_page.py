@@ -873,20 +873,67 @@ def test_the_snapshot_sentence_names_no_path_to_a_read_only_request(root):
                 "completed_epochs": 60, "target_epochs": 60, "end": "finished"}
     status = {"status": "completed", "current_epoch": 60, "total_epochs": 60}
     operator = tc.run_snapshot_html(run, status, operator=True, snapshot=snapshot)
-    assert "Finished · 60 of 60 epochs completed · to train further, use Continue…" in operator
+    assert "Finished · 60 of 60 epochs completed. To train further, use Continue…" in operator
     assert str(root) not in operator and "last.pt" not in operator     # the path: Details
     ws = {"row": {"dataset_fingerprint": "a" * 64}, "digits": 12}
     head = tc.run_head_html(run, ws, operator=True, snapshot=snapshot)
     assert "demo/runs/gatv2/r/checkpoints/last.pt" in head and str(root) not in head
     read_only = tc.run_snapshot_html(run, status, operator=False, snapshot=None)
-    assert "Completed · epoch 60 of 60 · checkpoint details are an operator control" in read_only
+    assert "Completed · epoch 60 of 60. Checkpoint details are an operator control" in read_only
     early = {**snapshot, "end": "stopped_early", "completed_epochs": 40, "target_epochs": 60}
-    assert "Stopped early · 40 of 60 epochs completed · cannot be continued" in tc.run_snapshot_html(
+    assert "Stopped early · 40 of 60 epochs completed. It cannot be continued." in tc.run_snapshot_html(
         run, status, operator=True, snapshot=early)
     assert "Stopped early (patience) · " in tc.run_snapshot_html(
         run, status, operator=True, snapshot={**early, "stop_reason": "patience"})
     assert "last.pt" not in read_only
     assert "last.pt" not in tc.run_head_html(run, ws, operator=False, snapshot=None)
+
+
+def test_the_state_line_has_one_separator_and_no_continue_hint_with_the_drawer_open(root):
+    """B72-RV1 and NEW-training-finetune-3: the finished and stopped-early lines
+    carried two " · " ("Finished · 1 of 1 epochs completed · to train further,
+    use Continue…") and said "use Continue…" while the Continue drawer was
+    open and its button hidden. NEW-training-finetune-4: "1 of 1 epochs"."""
+    run = tc.RunRef(id="demo/gatv2/r", label="gatv2/r", path=root / "demo" / "runs" / "gatv2" / "r",
+                    workspace="demo", job=False, latest=True)
+    run["path"].mkdir(parents=True)
+    status = {"status": "idle"}
+    one = {"readable": True, "completed_epochs": 1, "target_epochs": 1, "end": "finished"}
+    lines = {
+        "finished": tc.run_snapshot_html(run, status, operator=True, snapshot=one),
+        "finished, drawer open": tc.run_snapshot_html(run, status, operator=True, snapshot=one,
+                                                      drawer=True),
+        "stopped early": tc.run_snapshot_html(run, status, operator=True, snapshot={
+            **one, "end": "stopped_early", "completed_epochs": 40, "target_epochs": 60,
+            "stop_reason": "patience"}),
+        "paused": tc.run_snapshot_html(run, status, operator=True, snapshot={
+            **one, "end": "paused", "completed_epochs": 3, "target_epochs": 60, "resumable": True}),
+        "read-only": tc.run_snapshot_html({**run, "job": True}, {
+            "status": "completed", "current_epoch": 1, "total_epochs": 1}, operator=False,
+            snapshot=None),
+    }
+    for name, line in lines.items():
+        assert line.count(" · ") <= 1, (name, line)
+    assert lines["finished"] == ('<span class="shep-rv-snap">Finished · 1 of 1 epoch completed. '
+                                 'To train further, use Continue…</span>')
+    assert lines["finished, drawer open"] == ('<span class="shep-rv-snap">Finished · 1 of 1 epoch '
+                                              'completed</span>')
+    assert "Continue…" not in lines["finished, drawer open"]
+    assert "Stopped early (patience) · 40 of 60 epochs completed. It cannot be continued." in \
+        lines["stopped early"]
+    assert "3 of 60 epochs completed · can be continued" in lines["paused"]
+
+
+def test_epochs_done_says_one_epoch_and_more_epochs():
+    """NEW-training-finetune-4: '1 of 1 epochs completed'; the unit's number
+    follows the total, and with no total the one epoch words of every page."""
+    done = tc._epochs_done
+    assert done({"completed_epochs": 1, "target_epochs": 1}) == "1 of 1 epoch completed"
+    assert done({"completed_epochs": 1, "target_epochs": 60}) == "1 of 60 epochs completed"
+    assert done({"completed_epochs": 3, "target_epochs": 3}) == "3 of 3 epochs completed"
+    assert done({"completed_epochs": 1, "target_epochs": None}) == "1 epoch completed"
+    assert done({"completed_epochs": 5}) == "5 epochs completed"
+    assert done({"completed_epochs": None, "target_epochs": None}) == "epochs not recorded"
 
 
 def test_the_runs_checkpoint_is_read_again_only_when_it_changed(root, monkeypatch):

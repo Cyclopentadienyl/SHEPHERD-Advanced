@@ -2333,9 +2333,14 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
 
 
 def _epochs_done(snapshot: Mapping[str, Any]) -> str:
-    """"195 of 1000 epochs completed" from a snapshot's progress record."""
+    """"195 of 1000 epochs completed" from a snapshot's progress record, the
+    unit's number by the total ("1 of 1 epoch completed"); with no total, the
+    one epoch words of every page (`renderers.epoch_words`: "1 epoch
+    completed", "epochs not recorded" for a file that records none)."""
     done, target = snapshot.get("completed_epochs"), snapshot.get("target_epochs")
-    return f"{done} of {target} epochs completed" if target else f"{done} epochs completed"
+    if target and isinstance(done, int) and not isinstance(done, bool):
+        return f"{done} of {target} epoch{'' if target == 1 else 's'} completed"
+    return r.epoch_words({"completed_epochs": done})
 
 
 def _state(text: str) -> str:
@@ -2343,14 +2348,20 @@ def _state(text: str) -> str:
 
 
 def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, operator: bool,
-                      snapshot: Optional[Mapping[str, Any]]) -> str:
+                      snapshot: Optional[Mapping[str, Any]], drawer: bool = False) -> str:
     """The run's state in a few words, in the header's line (`run_head_html`;
     the space it took as a row of its own went to the charts): how far it got
     and whether it can be continued, for an operator from its checkpoint's
     record; for a read-only request its state and that the rest is an
     operator's. The training job's state (`status`) is said only of the job's
     own run; a past run's is its checkpoint's. The checkpoint's and the logs'
-    paths are in the header's Details. With no run, nothing."""
+    paths are in the header's Details. With no run, nothing.
+
+    At most one " · " (the WebUI skill §5; B72: "Finished · 1 of 1 epochs
+    completed · to train further, use Continue…"): the state and how far it
+    got, then a sentence. A finished run points to Continue… only while the
+    Continue drawer is closed (`drawer`: open, its button is hidden and the
+    drawer is the next step itself)."""
     if run is None:
         return ""
     s = (status.get("status") or "idle") if run.get("job") else "past"
@@ -2373,9 +2384,9 @@ def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, opera
         epochs = _epochs(status)
         return _state(f'Running{" · " + r.e(epochs) if epochs else ""}')
     if not operator:
-        state = (f"{ended} · {_epochs(status)}" if s in ("completed", "stopped", "failed")
+        state = (f"{ended} · {_epochs(status)}. " if s in ("completed", "stopped", "failed")
                  and _epochs(status) else "")
-        return _state(f'{r.e(state)}{" · " if state else ""}checkpoint details are an '
+        return _state(f'{r.e(state)}{"Checkpoint" if state else "checkpoint"} details are an '
                       'operator control')
     if not snapshot:
         return _state("No checkpoint saved, so nothing can be continued")
@@ -2383,11 +2394,12 @@ def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, opera
         return _state(f'The latest checkpoint cannot be read ({r.e(snapshot.get("reason"))})')
     end = snapshot.get("end")
     if end == "finished":
-        line = f"Finished · {_epochs_done(snapshot)} · to train further, use Continue…"
+        line = f"Finished · {_epochs_done(snapshot)}" + (
+            "" if drawer else ". To train further, use Continue…")
     elif end == "stopped_early":
         reason = snapshot.get("stop_reason")
-        line = (f"Stopped early{f' ({reason})' if reason else ''} · {_epochs_done(snapshot)} · "
-                "cannot be continued")
+        line = (f"Stopped early{f' ({reason})' if reason else ''} · {_epochs_done(snapshot)}. "
+                "It cannot be continued.")
     else:
         line = _epochs_done(snapshot) + (" · can be continued" if snapshot.get("resumable", True)
                                          else "")
@@ -2827,7 +2839,8 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         "head": run_head_html(
             run, ws, operator=access.allowed, snapshot=snapshot, live=live,
             relation=view_relation(run, in_use) if run is not None else None,
-            state=run_snapshot_html(run, status, operator=access.allowed, snapshot=snapshot),
+            state=run_snapshot_html(run, status, operator=access.allowed, snapshot=snapshot,
+                                    drawer=bool(mode.get("drawer"))),
             continuing=((mode.get("parent") or {}).get("run_label")
                         if mode.get("drawer") else None),
             operation=operation_of(mode)),
