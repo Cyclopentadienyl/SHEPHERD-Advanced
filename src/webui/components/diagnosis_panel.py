@@ -1505,8 +1505,8 @@ RUN_DISABLED_LOADING = "Disabled until the model load started here answers."
 #: registry setting's own words (its name, a command's flag) are an
 #: operator's and never reach this reason (Research › Test shows them).
 RUN_DISABLED_NO_COHORT = "Disabled: no reference cohort version can be read."
-NO_COHORT_REGISTRY = ("The server's cohort registry is not set up or cannot be used; an operator "
-                      "corrects it on the server.")
+NO_COHORT_REGISTRY = ("The server's results registry is not set or cannot be used; an operator "
+                      "sets it in Settings\u00a0› Data locations.")
 NO_COHORT_VERSION = ("The registry holds no cohort version yet; an operator imports one in "
                      "Research\u00a0› Test.")
 NO_READABLE_VERSION = ("Every version in the registry is marked “cannot be read”; an operator "

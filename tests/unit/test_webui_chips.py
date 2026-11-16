@@ -214,9 +214,13 @@ def test_a_lock_not_configured_says_so_and_that_jobs_are_refused(monkeypatch):
     assert lock["unset"] is True and lock["configured"] is False and lock["problem"]
     for operator in (True, False):
         chip = c.gpu_chip_from(None, lock, operator=operator)
-        assert (chip.kind, chip.text) == ("unread", "GPU jobs: refused, lock not configured")
-        assert chip.detail.startswith("The GPU lock is not configured: "
-                                      "SHEPHERD_WORKSPACES_ROOT, which names it, is not set")
+        assert (chip.kind, chip.text) == ("unread", "GPU jobs: refused, no workspaces folder")
+        # Plain words that point to where a clinician sets it (UI-06, item 9);
+        # the variable only as a trailing "Ref:" for the command line.
+        assert chip.detail.startswith("No workspaces folder is set, so the GPU lock is not "
+                                      "configured")
+        assert "Settings › Data locations" in chip.detail
+        assert "Ref: SHEPHERD_WORKSPACES_ROOT" in chip.detail
         assert "refuses every training and test run" in chip.detail
         assert read_gpu_chip_now(operator) == chip
 

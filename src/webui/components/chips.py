@@ -98,12 +98,15 @@ def gated(label: str, allowed: bool, *, interactive: bool = True) -> Dict[str, A
 D8_SCOPE = (
     "Operator controls: the import (preview and commit), test start and cancel, "
     "registration, model load, stopping inference, the checkpoint list, training start and "
-    "stop, pipeline reload, saving settings, and restart."
+    "stop, pipeline reload, saving settings and data locations, restart and stopping the "
+    "service."
 )
 #: How to reach them.
 D8_HOW = (
-    "They work only when this deployment is set to M1 (SHEPHERD_DEPLOYMENT_MODE), the "
-    "request arrives on this machine's loopback — on the machine itself, or through an SSH "
+    "They work only when the service was started from its desktop entry or "
+    "launch_shepherd.sh on this computer, or set to mode M1 at start (Ref: "
+    "SHEPHERD_DEPLOYMENT_MODE), and the request arrives on this machine's loopback — on the "
+    "machine itself, or through an SSH "
     "forward to localhost (ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui) "
     "— with no forwarding header (no reverse proxy), and it comes from this dashboard's own "
     "page. Each control checks its own request; this chip only shows the answer."
@@ -125,13 +128,13 @@ GPU_INFERENCE = "GPU: inference (this service)"
 #: every research start it disables (`busy_words`) and in the chip's ⓘ.
 STOP_INFERENCE_HERE = "stop it with Stop inference on Diagnosis"
 GPU_NOT_READ = "GPU jobs: not read"
-GPU_NOT_CONFIGURED = "GPU jobs: refused, lock not configured"
+GPU_NOT_CONFIGURED = "GPU jobs: refused, no workspaces folder"
 #: What the chip's ⓘ says with no workspaces root set (review of 8242b47,
 #: P2-4); it names no server path, so every request may see it.
 GPU_NOT_CONFIGURED_DETAIL = (
-    "The GPU lock is not configured: SHEPHERD_WORKSPACES_ROOT, which names it, is not set in "
-    "the service's environment, so the job runner refuses every training and test run until "
-    "it is set (deployment guide §4.11)."
+    "No workspaces folder is set, so the GPU lock is not configured and the job runner "
+    "refuses every training and test run. Choose the folder in Settings › Data locations: "
+    "the lock is the file .shepherd-gpu.lock in it. Ref: SHEPHERD_WORKSPACES_ROOT"
 )
 _RUNNER_NOUN = {"training": "training", "test": "test run"}
 

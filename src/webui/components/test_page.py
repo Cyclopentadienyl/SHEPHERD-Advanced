@@ -282,13 +282,15 @@ _BUSY = ("running", "stopping")
 FIELD_HELP = {
     "shep-test-workspace": (
         "Workspace",
-        "The workspace the server lists under SHEPHERD_WORKSPACES_ROOT: its graph is what a "
+        "A workspace the server lists in its workspaces folder (Settings › Data locations): "
+        "its graph is what a "
         "data version is imported against and what a test run measures on; its checkpoints "
         "are the models offered. Shown by its dataset fingerprint, as on Datasets.",
     ),
     "shep-test-version": (
         "Data version",
-        "A version in the server's registry (SHEPHERD_REGISTRY), listed by kind and role.\n"
+        "A version in the server's results registry (Settings › Data locations), listed by "
+        "kind and role.\n"
         "• A supplied cohort: source cases mapped to one graph's nodes (Import).\n"
         "• A KG edge set: one part of a model's edge split, with fixed pairs.\n"
         "• A generated split: the workspace's own patients.\n"
@@ -340,8 +342,8 @@ FIELD_HELP = {
     ),
     "shep-test-intake": (
         "File in the intake directory (server)",
-        "The shepherd-cases/1 files (*.json) the operator placed in the server's intake "
-        "directory (SHEPHERD_INTAKE_DIR), outside the repository. The server finds the chosen "
+        "The shepherd-cases/1 files (*.json) the operator placed in the server's import "
+        "folder (Settings › Data locations), outside the repository. The server finds the chosen "
         "name in that directory again and refuses anything else, a link leaving it included. "
         "Nothing is uploaded from the browser.",
     ),
@@ -397,7 +399,7 @@ TOPIC_HELP = {
         "R10 evidence",
         "Where a run on a supplied cohort looks for the inputs the checkpoint records (R10).\n"
         "• It counts their overlap with the cohort's cases: the measured workspace always, and "
-        "the directories SHEPHERD_TRAINING_EVIDENCE_DIRS names.\n"
+        "the training evidence folders (Settings › Data locations).\n"
         "• Only bytes whose digest the checkpoint records count; otherwise a label is "
         "unverifiable, never 0.\n"
         "• A KG edge set or a generated split has no R10: its run is given no directory, and "
