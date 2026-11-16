@@ -964,7 +964,10 @@ and the GB10 acceptance.**
   four of its seven P3 are fixed in `f835fc5`; the two P2 were measured again in the browser at
   `29e6f96`: the patience field reads "off" once mounted and an Epochs edit leaves the form valid,
   and no focused Diagnosis control is covered at 1536 × 760 or 1850 × 960 with the disease, gene or
-  patients-like-me model loaded. The other three P3 are `../BACKLOG.md` 52 (I)–(K).
+  patients-like-me model loaded *(2026-11-16, the UI ledger's audit, NEW-diagnosis-3: not so at
+  `ba6e85e` for the HPO box, whose caret line went under the sticky Model-in-use card from 8 lines
+  at 1536 × 760; so since `497f583`, the card and Run in flow under the fields, R-25+K6)*. The other
+  three P3 are `../BACKLOG.md` 52 (I)–(K).
 - **Geometry** at 1850 × 960, 1920 × 1080, 1536 × 760, 960 × 1080 and 1080 × 1920 on six pages: no
   horizontal page scroll; the research navigation one row (45 px); at wide sizes at most one scroll
   region per area, none nested; every open dropdown uncovered; narrow then wide measures as a fresh
