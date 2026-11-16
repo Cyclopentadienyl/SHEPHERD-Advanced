@@ -4822,7 +4822,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-row > .block {{ width: auto !important; }}
 {_PAGE} #shep-train-dataset, {_PAGE} #run_name, {_PAGE} #shep-train-view-run {{ flex: 0 0 auto !important; width: auto !important; }}
 {_PAGE} #shep-train-dataset > div:not(.wrap), {_PAGE} #run_name > label, {_PAGE} #shep-train-view-run > div:not(.wrap) {{ display: flex !important; align-items: center; gap: 8px; }}
-{_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"], {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: 96px !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2) !important; }}
+{_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"], {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: 96px !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color) !important; }}
 {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ width: auto !important; }}
 {_PAGE} #shep-train-dataset .wrap {{ width: clamp(220px, 16vw, 320px); min-width: 0 !important; }}
 /* A run's option is 40 characters at most (`renderers.OPTION_CHARS`), its end the start time that
@@ -4838,15 +4838,14 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #shep-train-view-run .icon-wrap {{ flex: none !important; }}
 /* The two selects drawn as fields: a border, the text clear of the chevron, grey while disabled
    (a value too long ends in the shell's titled ellipsis, the rule for every select). */
-{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner), {_PAGE} #shep-train-view-run .wrap:has(> .wrap-inner), {_PAGE} #continue_run .wrap:has(> .wrap-inner), {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner) {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px !important; background: #fff !important; box-shadow: none !important; }}
-{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner):focus-within, {_PAGE} #shep-train-view-run .wrap:has(> .wrap-inner):focus-within, {_PAGE} #continue_run .wrap:has(> .wrap-inner):focus-within, {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner):focus-within {{ border-color: var(--shep-accent) !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner), {_PAGE} #shep-train-view-run .wrap:has(> .wrap-inner), {_PAGE} #continue_run .wrap:has(> .wrap-inner), {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner) {{ border-radius: 8px !important; background: #fff !important; }}
 {_PAGE} #shep-train-dataset input, {_PAGE} #shep-train-view-run input, {_PAGE} #continue_run input, {_PAGE} #checkpoint_dropdown input {{ padding-right: 30px !important; }}
 {_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #shep-train-view-run .icon-wrap, {_PAGE} #continue_run .icon-wrap, {_PAGE} #checkpoint_dropdown .icon-wrap {{ color: var(--shep-text-2) !important; }}
-{_PAGE} #shep-train-dataset .wrap:has(input:disabled), {_PAGE} #shep-train-view-run .wrap:has(input:disabled), {_PAGE} #continue_run .wrap:has(input:disabled), {_PAGE} #checkpoint_dropdown .wrap:has(input:disabled) {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(input:disabled), {_PAGE} #shep-train-view-run .wrap:has(input:disabled), {_PAGE} #continue_run .wrap:has(input:disabled), {_PAGE} #checkpoint_dropdown .wrap:has(input:disabled) {{ background: var(--shep-disabled-bg) !important; border-color: var(--shep-disabled-border) !important; }}
 {_PAGE} #shep-train-dataset input:disabled, {_PAGE} #shep-train-view-run input:disabled, {_PAGE} #continue_run input:disabled, {_PAGE} #checkpoint_dropdown input:disabled {{ color: var(--shep-grey-600) !important; -webkit-text-fill-color: var(--shep-grey-600); cursor: not-allowed; }}
 {_PAGE} #shep-train-dataset .wrap:has(input:disabled) .icon-wrap, {_PAGE} #shep-train-view-run .wrap:has(input:disabled) .icon-wrap {{ color: var(--shep-grey-600) !important; }}
 {_PAGE} #run_name .input-container {{ width: 260px; }}
-{_PAGE} #run_name input {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px; padding: 6px 10px !important; background: #fff; }}
+{_PAGE} #run_name input {{ border-radius: 8px; padding: 6px 10px !important; background: #fff; }}
 {_PAGE} #run_name input:disabled {{ background: var(--shep-grey-50); color: var(--shep-muted); }}
 {_PAGE} .shep-rb-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; white-space: nowrap; }}
 {_PAGE} #shep-train-chip {{ flex: 1 1 360px !important; position: relative; z-index: {CHIP_Z_INDEX}; }}
@@ -4857,7 +4856,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-chip > .shep-ds > .shep-sep {{ margin: 0 -2px; }}
 {_PAGE} .shep-rb-chip > .shep-ds > .shep-sep:has(+ .shep-ds-marks) {{ display: none; }}
 {_PAGE} .shep-rb-inuse {{ color: var(--shep-text-2); font-size: 14px; }}
-{_PAGE} .shep-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; font-weight: 500; }}
+{_PAGE} .shep-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; font-weight: 400; }}
 {_PAGE} .shep-link:hover {{ text-decoration: underline; }}
 {_PAGE} .shep-pop {{ position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; width: min({DETAILS_POPOVER_WIDTH}px, calc(100vw - 48px)); background: #fff; border: 1px solid var(--shep-border-2); border-radius: 10px; box-shadow: 0 10px 28px rgba(20,24,40,.16); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; font-size: 15px; }}
 {_PAGE} .shep-pop[hidden] {{ display: none; }}
@@ -4894,7 +4893,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-continues {{ display: none !important; }}
 {_PAGE} .shep-rb-drawer #shep-train-continue, {_PAGE} .shep-rb-drawer #shep-train-stop {{ display: none !important; }}
 {_PAGE} .shep-rb-drawer #shep-train-continues {{ display: block !important; flex: 0 1 auto !important; }}
-{_PAGE} .shep-rb-k {{ font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2); margin-right: 8px; }}
+{_PAGE} .shep-rb-k {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); margin-right: 8px; }}
 {_PAGE} .shep-rb-confirm {{ display: none !important; }}
 {_PAGE} .shep-rb-confirming .shep-rb-confirm {{ display: flex !important; }}
 {_PAGE} .shep-rb-confirming .shep-rb-row2 {{ display: none !important; }}
@@ -4924,9 +4923,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-drawer-hd {{ flex-wrap: nowrap !important; }}
 {_PAGE} #shep-train-drawer-title {{ flex: 1 1 auto !important; }}
 {_PAGE} #shep-train-drawer-title .html-container > div {{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }}
-{_PAGE} #shep-train-drawer-title h2 {{ font-size: 16px; font-weight: 600; margin: 0; }}
+{_PAGE} #shep-train-drawer-title h2 {{ font-size: var(--shep-title-size); font-weight: 600; margin: 0; }}
 {_PAGE} .shep-x-btn {{ font-size: 0 !important; width: 32px; height: 32px; min-width: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important; }}
-{_PAGE} .shep-x-btn::before {{ content: "×"; font-size: 22px; color: var(--shep-muted); }}
+{_PAGE} .shep-x-btn::before {{ content: "×"; font-size: 20px; color: var(--shep-muted); }}
 /* The dataset comparison and the check result sit in the drawer's one container, the panel:
    a tint and the status mark's lead set them apart, never a border of their own (the skill's
    §2: no bordered box inside a box). A result that can continue has no tint. */

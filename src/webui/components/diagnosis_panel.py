@@ -3584,7 +3584,7 @@ PAGE_CSS = f"""
   gap: 8px 14px; background: none !important; border: 0 !important; box-shadow: none !important; }}
 {_TAB} .shep-dx-options .block {{ padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important;
   width: auto !important; flex: 0 0 auto !important; overflow: visible !important; }}
-{_TAB} .shep-dx-opt {{ font-size: 14px; color: var(--shep-text-2); font-weight: 500; }}
+{_TAB} .shep-dx-opt {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); }}
 {_TAB} #dx_top_k label.container {{ display: flex; align-items: center; gap: 6px; }}
 {_TAB} #dx_top_k [data-testid="block-info"] {{ margin: 0; }}
 {_TAB} #dx_top_k input[type=number] {{ width: 72px; }}
@@ -3599,9 +3599,9 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-card-when {{ margin-left: auto !important; flex-wrap: nowrap !important; gap: 4px !important;
   align-items: center !important; }}
 {_TAB} .shep-dx-card-title {{ white-space: nowrap; }}
-{_TAB} .shep-dx-card-title {{ font-size: 14px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--shep-text-2); }}
+{_TAB} .shep-dx-card-title {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); }}
 {_TAB} .shep-dx-checked {{ font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }}
-{_TAB} button.shep-dx-reread {{ border: 0; background: none; color: var(--shep-accent-text); font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1; }}
+{_TAB} button.shep-dx-reread {{ border: 0; background: none; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; padding: 0 4px; line-height: 1; }}
 {_TAB} .shep-dx-card-bd {{ display: flex; flex-direction: column; gap: 1px; font-size: 15px; line-height: 1.3; }}
 {_TAB} .shep-dx-card-bd p {{ margin: 0; }}
 {_TAB} .shep-dx-name {{ font-weight: 600; }}
@@ -3623,12 +3623,12 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-why-more > .shep-dx-line {{ margin-top: 2px; color: var(--shep-grey-800); }}
 {_TAB} button.shep-dx-back {{ min-height: 24px; }}
 {_TAB} .shep-dx-change {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 2px; padding: 4px 8px; }}
-{_TAB} button.shep-dx-x {{ margin-left: auto; border: 0; background: none; color: var(--shep-amber-800); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }}
+{_TAB} button.shep-dx-x {{ margin-left: auto; border: 0; background: none; color: var(--shep-amber-800); font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }}
 {_TAB} button.shep-dx-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font: inherit; cursor: pointer; }}
 {_TAB} button.shep-dx-link:hover {{ text-decoration: underline; }}
 {_TAB} .shep-dx-card-actions {{ justify-content: space-between !important; align-items: center !important; flex-wrap: wrap !important; gap: 8px !important; margin-top: 2px; }}
 {_TAB} .shep-dx-card-actions > * {{ flex: 0 0 auto !important; width: auto !important; }}
-{_TAB} #shep-dx-details-btn {{ border: 0 !important; background: none !important; box-shadow: none !important; color: var(--shep-accent-text) !important; padding: 0 2px !important; font-weight: 500; }}
+{_TAB} #shep-dx-details-btn {{ border: 0 !important; background: none !important; box-shadow: none !important; color: var(--shep-accent-text) !important; padding: 0 2px !important; font-weight: 400; }}
 {_TAB} #shep-dx-change-btn {{ margin-left: auto; }}
 {_TAB} .shep-dx-stop-row {{ flex-wrap: wrap !important; gap: 8px !important; justify-content: flex-end !important; }}
 /* The question's buttons keep their words' width (Gradio gives a scale-0
@@ -3685,7 +3685,7 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-dot-none {{ background: #8a909b; }}
 {_TAB} .shep-dx-empty {{ margin: auto; max-width: 440px; text-align: center; color: var(--shep-text-2); padding: 24px 8px; }}
 {_TAB} .shep-dx-empty p {{ margin: 4px 0; }}
-{_TAB} .shep-dx-empty-h {{ font-size: 16px; font-weight: 600; color: var(--shep-text); }}
+{_TAB} .shep-dx-empty-h {{ font-size: 15px; font-weight: 600; color: var(--shep-text); }}
 {_TAB} .shep-dx-notice p {{ margin: 0 0 6px; }}
 {_TAB} .shep-dx-error {{ color: var(--shep-red-700); overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-warn {{ color: var(--shep-amber-800); }}
@@ -3715,10 +3715,10 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-drawer {{ box-shadow: 0 10px 30px rgba(20, 24, 40, .14); }}
 {_TAB} .shep-dx-drawer-hd {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important; padding: 10px 16px !important; border-bottom: 1px solid var(--shep-border); }}
 {_TAB} .shep-dx-drawer-hd > * {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
-{_TAB} .shep-dx-drawer-hd h2 {{ font-size: 16px; font-weight: 600; margin: 0; display: inline; }}
+{_TAB} .shep-dx-drawer-hd h2 {{ font-size: var(--shep-title-size); font-weight: 600; margin: 0; display: inline; }}
 {_TAB} .shep-dx-drawer-note {{ margin-left: 10px; font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} #shep-dx-identity-close, {_TAB} #shep-dx-change-close {{ margin-left: auto; }}
-{_TAB} button.shep-dx-close {{ border: 0; background: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--shep-text-2); padding: 0 4px; }}
+{_TAB} button.shep-dx-close {{ border: 0; background: none; font-size: 20px; line-height: 1; cursor: pointer; color: var(--shep-text-2); padding: 0 4px; }}
 {_TAB} .shep-dx-boundary {{ margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--shep-border); font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} .shep-dx-boundary p {{ margin: 0 0 6px; }}
 {_TAB} .shep-dx-digests {{ display: flex; flex-direction: column; gap: 8px; }}

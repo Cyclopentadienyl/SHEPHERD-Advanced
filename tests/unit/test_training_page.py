@@ -2556,11 +2556,15 @@ def _rules(css, needle):
 
 
 def test_the_page_styles_hold_the_reviewed_layout():
+    from src.webui.style import SHELL_CSS
+
     css = tc.PAGE_CSS
     # The build time wraps with the chip, never hidden.
     assert not [b for _s, b in _rules(css, "shep-ds-built") if "display: none" in b]
-    # The selects: a border, the text clear of the chevron, grey while disabled.
-    assert any("border: 1px solid" in b for _s, b in _rules(css, "#shep-train-dataset .wrap:has"))
+    # The selects: the shared field border (R-8: never a page's own, which was
+    # #cdd2da at 1.52:1), the text clear of the chevron, grey while disabled.
+    assert not any("border:" in b for _s, b in _rules(css, "#shep-train-dataset .wrap:has"))
+    assert "body .gradio-container .wrap:has(> .wrap-inner)" in SHELL_CSS
     assert any("padding-right: 30px" in b for _s, b in _rules(css, "#checkpoint_dropdown input"))
     assert any("padding-right: 30px" in b for _s, b in _rules(css, "#continue_run input"))
     assert any("grey" in b for _s, b in _rules(css, "input:disabled"))

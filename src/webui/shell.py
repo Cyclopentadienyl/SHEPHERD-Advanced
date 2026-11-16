@@ -12,18 +12,28 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
 
 - **Level 1** (``#shep-nav``): "Diagnosis (clinical)" (the first screen),
   "Research (pre-clinical)", and "⚙ Settings" (``alignment="right"``). Drawn as a
-  segmented control: the selected stage is filled in the accent colour and bold.
-  Settings, selected, has a light fill, a 3 px underline and bold.
+  segmented control: the selected stage is filled in the accent colour with
+  white text in the strong weight, and so is Settings when it is selected (one
+  look for level 1's selected item, which no other level has, R-20).
 - **Level 2** (``#shep-research-nav``, inside Research): Datasets · Training ·
-  Fine-tune · Test · Models under the group labels PREPARE and EVALUATE with a
-  divider. The
-  labels are CSS generated content with empty alternative text and
-  ``pointer-events: none``: not clickable and not part of a tab's name; the
-  tablist's ``aria-label`` gives the grouping to a screen reader. The selected
-  page has a 3 px underline and is bold, at normal size. The default inner page is
-  Training.
+  Fine-tune · Test · Models, 32 px tabs in two groups, each under its caption
+  ("Prepare", "Evaluate"; D01, R-22): the captions sit on a tier of their own
+  above their group's first tab, aligned with its text, in the strong weight
+  and the muted colour, with a divider between the groups. They are CSS
+  generated content with empty alternative text and ``pointer-events: none``:
+  outside every tab's box, not clickable, not focusable, not part of a tab's
+  name; the tablist's ``aria-label`` gives the grouping to a screen reader.
+  The selected page has a 3 px accent underline, the accent text and the
+  strong weight; a tab under the pointer has a grey fill and a grey underline.
+  When both groups do not fit on one line, the Evaluate group moves whole onto
+  a line of its own with no divider at its start (``shep-rnav-wrapped``, set
+  by the head script's layout pass). The default inner page is Training.
+- Every tab of both levels shows keyboard focus as a 2 px ring in the focus
+  token (``--shep-focus-ring``); hover, selected and focus cues are tokens in
+  `src/webui/style.py`.
 - In-page tabs use a third style: give a ``gr.Radio`` the class ``shep-seg``
-  (a grey track with a raised white segment), never a ``gr.Tabs``.
+  (a grey track with a raised white segment), never a ``gr.Tabs``. A form's
+  own radio is a fourth look, a tinted option with its filled dot.
 - Both levels use ``overflow_behavior="wrap"``: no tab ever goes into an overflow
   menu. Row 1 holds the brand, the D8 chip, the GPU chip and Settings: the brand
   and the chips are drawn over the level-1 tab row, and when they do not fit on
@@ -605,8 +615,23 @@ _SHELL_JS = r"""
   // own, under the stage switch however many lines it takes (at 480 px its
   // two tabs take two): the chips sit where that line starts, measured, so
   // they never cover a tab.
+  // Row 2 holds the research pages in two groups, each under its caption.
+  // When both groups do not fit on one line, the Evaluate group goes whole
+  // onto a line of its own (`shep-rnav-wrapped`), measured from the tabs'
+  // own widths, so the measure does not depend on the state it sets. A row
+  // not shown (Research closed) keeps the state it had.
+  function researchLayout(shell) {
+    var row = document.querySelector('#shep-research-nav > .tab-wrapper > .tab-container');
+    if (!row || !row.clientWidth) { return; }
+    var tabs = row.querySelectorAll(':scope > button[role="tab"]'), s = getComputedStyle(row);
+    var need = (parseFloat(s.paddingLeft) || 0) + (parseFloat(s.paddingRight) || 0)
+      + (parseFloat(getComputedStyle(shell).getPropertyValue('--shep-group-gap')) || 0);
+    for (var i = 0; i < tabs.length; i++) { need += tabs[i].offsetWidth; }
+    shell.classList.toggle('shep-rnav-wrapped', need > row.clientWidth);
+  }
   function layout() {
     var shell = document.getElementById('shep-shell');
+    if (shell) { researchLayout(shell); }
     var row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
     var chips = document.querySelector('#shep-chips .shep-chips');
     var brand = document.querySelector('#shep-brand .shep-brand');

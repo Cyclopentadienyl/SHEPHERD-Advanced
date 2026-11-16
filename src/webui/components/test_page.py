@@ -1566,7 +1566,8 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
     helps = {"R10 evidence": ("test-evidence", "R10 evidence")}
     if choice.not_applicable:
         return r.summary_list([("R10 evidence", f'{r.status_mark("neutral", r.NOT_APPLICABLE)} · '
-                                                f'{e(choice.not_applicable)}')], helps=helps)
+                                                f'{e(choice.not_applicable)}')], helps=helps,
+                              classes=r.FIELD_ROWS)
     evidence = page.get("evidence") or {}
     names = evidence.get("names") or []
     roots = page.get("roots") or []
@@ -1582,7 +1583,8 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
             note = f'<div>{r.status_mark("warn", redact(choice.note, roots))}</div>'
     else:
         extra = " · no other evidence directory is set on the server"
-    return r.summary_list([("R10 evidence", f"{measured}{extra}{note}")], helps=helps)
+    return r.summary_list([("R10 evidence", f"{measured}{extra}{note}")], helps=helps,
+                          classes=r.FIELD_ROWS)
 
 
 def fixed_html(page: Mapping[str, Any]) -> str:
@@ -1597,7 +1599,8 @@ def fixed_html(page: Mapping[str, Any]) -> str:
         shown = (f"<code>{e(value)}</code>" + (" (requires CUDA)" if value == "auto" else ""))
     return r.summary_list([("Batch size", f"{BATCH_SIZE_SHOWN} · fixed by the server"),
                            ("Device", f"{shown} · fixed by the server")],
-                          helps={"Batch size": ("test-fixed", "Fixed by the server")})
+                          helps={"Batch size": ("test-fixed", "Fixed by the server")},
+                          classes=r.FIELD_ROWS)
 
 
 def measurement_label(name: Any) -> str:
@@ -3748,7 +3751,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-drawer {{ box-shadow: -8px 0 24px rgba(20, 24, 40, .14); }}
 {_PAGE} .shep-test-drawer-hd {{ flex-wrap: nowrap !important; align-items: center !important; }}
 {_PAGE} .shep-test-drawer-hd > .block {{ flex: 1 1 auto !important; }}
-{_PAGE} #shep-test-import-title h2 {{ display: inline; margin-right: 10px; font-size: 16px; font-weight: 600; }}
+{_PAGE} #shep-test-import-title h2 {{ display: inline; margin-right: 10px; font-size: var(--shep-title-size); font-weight: 600; }}
 {_PAGE} .shep-test-form {{ gap: 10px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-form > * {{ min-width: 180px !important; }}
 {_PAGE} #shep-test-start {{ width: 100%; }}

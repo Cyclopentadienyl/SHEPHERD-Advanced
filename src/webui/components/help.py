@@ -573,7 +573,7 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
 .shep-bubble-hd { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 4px; }
 .shep-bubble-x {
   margin-left: auto; width: 26px; height: 26px; border: 0; background: none; color: var(--shep-muted);
-  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 18px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 20px; cursor: pointer;
 }
 .shep-bubble-bd { white-space: pre-line; overflow-wrap: anywhere; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
 .shep-bubble-hd, .shep-bubble-ft { flex: none; }

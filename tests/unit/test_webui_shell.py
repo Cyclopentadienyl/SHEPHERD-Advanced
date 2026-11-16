@@ -956,3 +956,314 @@ def test_one_pick_of_a_select_is_one_request_and_the_pages_write_is_none(tmp_pat
                         base[:-len("gradio_api")])
     assert seen == {"pointer": 1, "keys": 1, "value": "Gamma", "server_write": 0, "radio": 1}, seen
     assert calls == {"select": ["b", "c"], "radio": ["2"]}
+
+
+# --------------------------------------------------------------------------- D01 and the shared tokens (T04)
+def test_the_group_captions_are_sentence_case_overlines_without_fitted_margins():
+    """R-22+R-37: PREPARE and EVALUATE were upper-case ::before labels on the
+    tabs' own line, set off by margins fitted to their widths (84 and 116 px).
+    They are captions on a tier of their own above the first tab of each
+    group, in sentence case at 14 px / 600, never hit (pointer-events none),
+    and the groups are a group gap apart; what the browser draws is
+    `test_the_research_navigation_and_shared_tokens_as_drawn`'s."""
+    from src.webui.style import SHELL_CSS
+
+    caption = _rule(SHELL_CSS, "#shep-page-datasets-button::before, #shep-page-test-button::before")
+    assert "bottom: calc(100% + 2px)" in caption and "pointer-events: none" in caption
+    assert "font-size: 14px" in caption and "font-weight: 600" in caption
+    assert "uppercase" not in caption and "letter-spacing" not in caption
+    assert "margin-left: 84px" not in SHELL_CSS and "margin-left: 116px" not in SHELL_CSS
+    assert "#shep-page-test-button { margin-left: var(--shep-group-gap); }" in SHELL_CSS
+    # The wrapped Evaluate line has no divider at its start (NEW-shell-nav-theme-2).
+    assert ("#shep-shell.shep-rnav-wrapped #shep-research-nav > .tab-wrapper > .tab-container"
+            " > #shep-page-test-button::after { display: none !important; }") in SHELL_CSS
+    head = shell.SHELL_HEAD
+    assert "shell.classList.toggle('shep-rnav-wrapped', need > row.clientWidth);" in head
+    assert "if (shell) { researchLayout(shell); }" in head
+
+
+#: The dashboard as the service mounts it, at 1850 x 960 then 420 x 900 and
+#: back: the research row's geometry, captions and cues, level 1's selected
+#: look against a form's chosen radio, the accordion's chevron, the header
+#: chips, and on every page the type scale and every field's border, as
+#: drawn (`tests/fixtures/browser.py`, LOOK_JS). It waits for the page's own
+#: events to be answered (QUEUE_JS), never for a fixed time.
+_SHELL_LOOK_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.addInitScript(LOOK_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
+                                          && window.__shepQueue.joins.every((j) => j.event_id !== null),
+                                          null, { timeout: 30000 });
+  const open = async (id) => {
+    if (id === 'clinical' || id === 'settings') {
+      await page.click(`#shep-tab-${id}-button`);
+      await page.waitForSelector(`#shep-tab-${id}-button[aria-selected="true"]`);
+    } else {
+      if (!(await page.$('#shep-tab-research-button[aria-selected="true"]'))) {
+        await page.click('#shep-tab-research-button');
+      }
+      await page.click(`#shep-page-${id}-button`);
+      await page.waitForSelector(`#shep-page-${id}-button[aria-selected="true"]`);
+    }
+    await idle();
+  };
+  const rect = (sel) => page.evaluate((s) => { const r = document.querySelector(s).getBoundingClientRect();
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, height: r.height }; }, sel);
+  const css = (sel, props, pseudo) => page.evaluate(([s, p, ps]) => {
+    const el = document.querySelector(s); if (!el) { return null; }
+    const c = getComputedStyle(el, ps || null), o = {};
+    for (const k of p) { o[k] = c.getPropertyValue(k); }
+    return o; }, [sel, props, pseudo || null]);
+  const row = async () => {
+    const tabs = {};
+    for (const id of ['datasets', 'training', 'finetune', 'test', 'models']) {
+      tabs[id] = await rect(`#shep-page-${id}-button`);
+    }
+    return page.evaluate((tabs) => {
+      const shell = document.getElementById('shep-shell'), L = window.__shepLook;
+      const caps = {};
+      for (const id of ['datasets', 'test']) {
+        const c = L.pseudo(document.getElementById(`shep-page-${id}-button`), '::before');
+        c.hit = L.topAt(c.left + c.width / 2, c.top + c.height / 2);
+        caps[id] = c;
+      }
+      const divider = L.pseudo(document.getElementById('shep-page-test-button'), '::after');
+      return { tabs, caps, divider: { display: divider.display, left: divider.left },
+               wrapped: shell.classList.contains('shep-rnav-wrapped'),
+               headerAndTabs: document.querySelector('#shep-research-nav > .tab-wrapper')
+                 .getBoundingClientRect().bottom - shell.getBoundingClientRect().top,
+               hScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+    }, tabs);
+  };
+  const out = { pages: {} };
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  await idle();
+  out.chips = await page.evaluate(() => [...document.querySelectorAll('#shep-chips .shep-chip')].map((c) => {
+    const s = getComputedStyle(c), d = getComputedStyle(c.querySelector('.shep-dot') || c);
+    return { state: c.getAttribute('data-state'), background: s.backgroundColor, border: s.borderTopColor,
+             dot: d.backgroundColor, ring: d.borderTopColor }; }));
+  for (const id of ['clinical', 'datasets', 'training', 'finetune', 'test', 'models', 'settings']) {
+    await open(id);
+    await page.mouse.move(2, 950);
+    out.pages[id] = await page.evaluate(() => ({ type: window.__shepLook.typeScale(),
+                                                fields: window.__shepLook.fields(),
+                                                labels: window.__shepLook.labels() }));
+    if (id === 'settings') {
+      out.settingsSelected = await css('#shep-tab-settings-button', ['background-color', 'color', 'font-weight']);
+    }
+  }
+  await open('training');
+  await page.mouse.move(2, 950);
+  out.wide = await row();
+  const TAB = ['background-color', 'color', 'font-weight', 'border-bottom-color', 'border-bottom-width'];
+  out.level1 = await css('#shep-tab-research-button', ['background-color', 'color', 'font-weight']);
+  out.radio = await css('#device label.selected', ['background-color', 'color', 'border-top-color']);
+  out.radioRest = await css('#device label:not(.selected)', ['background-color', 'color']);
+  out.rest = await css('#shep-page-test-button', TAB);
+  out.selected = await css('#shep-page-training-button', TAB);
+  await page.hover('#shep-page-test-button');
+  out.hover = await css('#shep-page-test-button', TAB);
+  await page.mouse.move(2, 950);
+  await page.focus('#shep-page-training-button');
+  await page.keyboard.press('Shift');                    // keyboard focus: :focus-visible
+  out.focus = await page.evaluate(() => { const s = getComputedStyle(document.activeElement);
+    return { id: document.activeElement.id, outline: s.outlineStyle + ' ' + s.outlineWidth + ' ' + s.outlineColor }; });
+  await page.click('#shep-page-training-button');
+  await idle();
+  const chevron = () => page.evaluate(() => {
+    const b = [...document.querySelectorAll('#shep-page-training button.label-wrap')]
+      .find((x) => x.offsetParent);
+    return { open: b.classList.contains('open'), transform: getComputedStyle(b.querySelector('.icon')).transform };
+  });
+  out.closed = await chevron();
+  await page.locator('#shep-page-training button.label-wrap:visible').first().click();
+  await page.waitForFunction(() => [...document.querySelectorAll('#shep-page-training button.label-wrap')]
+    .some((x) => x.offsetParent && x.classList.contains('open')));
+  out.opened = await page.evaluate(async () => {
+    const icon = [...document.querySelectorAll('#shep-page-training button.label-wrap.open')][0]
+      .querySelector('.icon');
+    await Promise.all(icon.getAnimations().map((a) => a.finished));   // its turn, finished
+    return { open: true, transform: getComputedStyle(icon).transform }; });
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page.waitForFunction(() => document.getElementById('shep-shell').classList.contains('shep-rnav-wrapped'),
+                             null, { timeout: 10000 });
+  out.narrow = await row();
+  await page.setViewportSize({ width: 1850, height: 960 });
+  await page.waitForFunction(() => !document.getElementById('shep-shell').classList.contains('shep-rnav-wrapped'),
+                             null, { timeout: 10000 });
+  out.back = await row();
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+#: What a read-only viewer's Settings and header draw (no deployment mode).
+_READ_ONLY_LOOK_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.addInitScript(LOOK_JS);
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip-readonly', { timeout: 60000 });
+  await page.click('#shep-tab-settings-button');
+  await page.waitForSelector('#allocator_preset input:disabled', { timeout: 30000 });
+  await page.waitForFunction(() => window.__shepQueue.inflight === 0, null, { timeout: 30000 });
+  console.log(JSON.stringify(await page.evaluate(() => {
+    const s = (sel) => { const c = getComputedStyle(document.querySelector(sel));
+      return { background: c.backgroundColor, border: c.borderTopColor, color: c.color }; };
+    return { chip: s('#shep-chips .shep-chip-readonly'),
+             fields: window.__shepLook.fields(document.getElementById('shep-tab-settings')),
+             select: s('#allocator_preset .wrap:has(> .wrap-inner)'), value: s('#allocator_preset input'),
+             box: s('#torch_compile input[type=checkbox]'), label: s('#torch_compile label') };
+  })));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def _rgb(hex_colour):
+    return "rgb({}, {}, {})".format(*(int(hex_colour[i:i + 2], 16) for i in (1, 3, 5)))
+
+
+def test_the_research_navigation_and_shared_tokens_as_drawn(tmp_path, monkeypatch):
+    """D01 and UI-10 in a real browser (Node and Playwright, skipped without),
+    the dashboard mounted as the service mounts it, for an operator:
+
+    - **D01 / R-22+R-37**: at 1850 x 960 header and tabs take about 100 px
+      (102), the research tabs are 32 px, each group's caption sits above its
+      first tab (not on its line), aligned with its text, in sentence case at
+      14 px / 600, and ``elementsFromPoint`` at a caption finds no tab; at
+      420 px the Evaluate group wraps whole onto its own line with no divider
+      at its start (NEW-shell-nav-theme-2), and back at 1850 one row again;
+    - **cues**: a tab under the pointer has a fill and an underline it lacks
+      at rest, the selected one the accent line and text, keyboard focus a
+      2 px ring in the focus token;
+    - **R-20**: level 1's selected item (Research, and Settings) is the accent
+      fill with white text; a form's chosen radio (Training's Device) is not;
+    - **R-31**: a closed accordion's chevron points right, an open one down;
+    - **R-21**: a normal header chip is plain text, its mark in a status token;
+    - **R-17 / R-16**: on every page the visible text is 14, 15 or 20 px at
+      400 or 600, and none is drawn upper case;
+    - **R-16**: on every page each field's label (Gradio's, and the pages'
+      own: Training's run bar, Fine-tune's keys, Diagnosis' card title and
+      Options, Test's fixed rows) is drawn in one style;
+    - **R-8**: every visible field's border is at least 3:1 against what is
+      behind it."""
+    from src.webui import style
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import LOOK_JS, QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    script = (_SHELL_LOOK_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__LOOK_JS__", json.dumps(LOOK_JS)))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")])
+    tokens = dict(re.findall(r"(--shep-[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{6})", style.SHELL_CSS))
+
+    wide = seen["wide"]
+    assert 96 <= wide["headerAndTabs"] <= 104, wide["headerAndTabs"]
+    assert {round(t["height"]) for t in wide["tabs"].values()} == {32}
+    assert not wide["wrapped"] and not wide["hScroll"]
+    for group, first in (("datasets", "datasets"), ("test", "test")):
+        cap, tab = wide["caps"][group], wide["tabs"][first]
+        assert cap["top"] + cap["height"] <= tab["top"], (group, cap, tab)     # above, not on its line
+        assert abs(cap["left"] - (tab["left"] + 12)) <= 1, (group, cap, tab)   # with the tab's text
+        assert (cap["fontSize"], cap["fontWeight"], cap["textTransform"]) == ("14px", "600", "none")
+        assert cap["pointerEvents"] == "none" and cap["hit"] and not cap["hit"]["tab"], cap
+    assert wide["divider"]["display"] == "block"
+    assert wide["divider"]["left"] < wide["tabs"]["test"]["left"]
+    assert wide["divider"]["left"] > wide["tabs"]["finetune"]["right"]
+    narrow = seen["narrow"]
+    assert narrow["wrapped"] and not narrow["hScroll"]
+    assert abs(narrow["tabs"]["test"]["left"] - narrow["tabs"]["datasets"]["left"]) <= 1
+    assert narrow["tabs"]["test"]["top"] > narrow["tabs"]["finetune"]["bottom"]
+    assert narrow["tabs"]["models"]["top"] == narrow["tabs"]["test"]["top"]          # the group whole
+    assert narrow["caps"]["test"]["top"] >= narrow["tabs"]["finetune"]["bottom"]
+    assert narrow["divider"]["display"] == "none"
+    assert seen["back"]["headerAndTabs"] == wide["headerAndTabs"] and not seen["back"]["wrapped"]
+
+    rest, hover, selected = seen["rest"], seen["hover"], seen["selected"]
+    assert hover["background-color"] != rest["background-color"]
+    assert hover["border-bottom-color"] != rest["border-bottom-color"]
+    assert selected["border-bottom-color"] == _rgb(tokens["--shep-accent"])
+    assert selected["color"] == _rgb(tokens["--shep-accent-text"]) and selected["font-weight"] == "600"
+    assert seen["focus"]["id"] == "shep-page-training-button"
+    assert seen["focus"]["outline"] == f"solid 2px {_rgb(tokens['--shep-accent-600'])}"
+
+    accent = _rgb(tokens["--shep-accent"])
+    for level1 in (seen["level1"], seen["settingsSelected"]):
+        assert level1["background-color"] == accent and level1["color"] == "rgb(255, 255, 255)"
+    assert seen["radio"]["background-color"] != accent
+    assert seen["radio"]["color"] != "rgb(255, 255, 255)"
+    assert seen["radio"]["border-top-color"] == accent           # chosen: its border and dot
+
+    assert seen["closed"]["transform"] == "matrix(0, -1, 1, 0, 0, 0)" and not seen["closed"]["open"]
+    assert seen["opened"]["transform"] == "none"
+
+    normal = [c for c in seen["chips"] if c["state"] in ("on", "none")]
+    assert normal, seen["chips"]
+    for chip in normal:
+        assert chip["background"] == "rgba(0, 0, 0, 0)" and chip["border"] == "rgba(0, 0, 0, 0)"
+    on = next(c for c in seen["chips"] if c["state"] == "on")
+    assert on["dot"] == _rgb(tokens["--shep-green-800"])
+
+    for name, facts in seen["pages"].items():
+        sizes = {key.split("/")[0] for key in facts["type"]["pairs"]}
+        weights = {key.split("/")[1] for key in facts["type"]["pairs"]}
+        assert sizes <= {"14", "15", "20"}, (name, facts["type"]["pairs"])
+        assert weights <= {"400", "600"}, (name, facts["type"]["pairs"])
+        assert facts["type"]["upper"] == [], (name, facts["type"]["upper"])
+        weak = [f for f in facts["fields"] if not f["disabled"] and f["ratio"] < 3.0]
+        assert weak == [], (name, weak)
+        styles = {tuple(label["style"]) for label in facts["labels"]}
+        assert len(styles) <= 1, (name, facts["labels"])
+    assert sum(len(f["fields"]) for f in seen["pages"].values()) >= 10
+    assert {label["text"] for label in seen["pages"]["clinical"]["labels"]} >= {
+        "Model in use", "Options", "HPO terms"}
+    assert {label["text"] for label in seen["pages"]["training"]["labels"]} >= {
+        "Dataset", "Run name", "Epochs"}
+
+
+def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_path, monkeypatch):
+    """NEW-settings-datasets-footer-3 and R-21, in a real browser for a request
+    D8 refuses (no deployment mode): Settings' allocator select and
+    torch.compile checkbox are drawn off (the disabled fill, border and grey
+    words, the select's value at 4.5:1 on it), not like the enabled ones an
+    operator sees; the header's read-only chip is the amber lozenge."""
+    from src.webui import style
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import LOOK_JS, QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import DEPLOYMENT_MODE
+    from tests.fixtures.served_page import served
+    from tests.unit.test_webui_button_contrast import contrast
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    monkeypatch.delenv(DEPLOYMENT_MODE, raising=False)
+    script = (_READ_ONLY_LOOK_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__LOOK_JS__", json.dumps(LOOK_JS)))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")])
+    tokens = dict(re.findall(r"(--shep-[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{6})", style.SHELL_CSS))
+    off, line, words = (tokens["--shep-grey-50"], tokens["--shep-grey-200"], tokens["--shep-grey-600"])
+    assert seen["select"]["background"] == _rgb(off) and seen["select"]["border"] == _rgb(line)
+    assert seen["value"]["color"] == _rgb(words) and contrast(words, off) >= 4.5
+    assert seen["box"]["background"] == _rgb(off) and seen["box"]["border"] == _rgb(line)
+    assert seen["label"]["color"] == _rgb(words)
+    assert seen["chip"]["background"] == _rgb(tokens["--shep-amber-50"])
+    assert seen["chip"]["color"] == _rgb(tokens["--shep-amber-800"])
+    assert any(f["disabled"] for f in seen["fields"])

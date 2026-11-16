@@ -1422,6 +1422,12 @@ def selection_value(item: Any) -> str:
 # ---------------------------------------------------------------------------
 # Details: the one summary list and the words of a value (the skill's §4, §5)
 # ---------------------------------------------------------------------------
+#: The class of a summary list that sits among a form's fields (Test's R10
+#: evidence, batch size and device rows): its keys are drawn as the form's
+#: field labels, one label style per page (R-16), not a summary's grey keys.
+FIELD_ROWS = "shep-kv-field"
+
+
 def summary_list(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = (),
                  helps: Optional[Mapping[str, Tuple[str, str]]] = None,
                  titles: Optional[Mapping[str, str]] = None, classes: str = "") -> str:
@@ -2125,6 +2131,7 @@ __all__ = [
     "CURRENT_DATASET",
     "FACTS_MODEL_FP",
     "FACTS_TRAINED_FP",
+    "FIELD_ROWS",
     "FROZEN_BACKBONE_WORDS",
     "IDENTITY_BANNERS",
     "MODEL_TABLE_COLUMNS",

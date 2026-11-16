@@ -42,11 +42,15 @@ def _block(selector: str) -> str:
 
 
 def _resolve(value: str, tokens: dict) -> str:
+    """A declared value with its ``var(--shep-*)`` aliases followed to the
+    end (a token may alias another: ``--shep-label-color`` is the text's)."""
     value = value.strip().removesuffix("!important").strip()
+    declared = dict(re.findall(r"(--shep-[a-z0-9-]+)\s*:\s*([^;]+);", style.SHELL_CSS))
     found = re.fullmatch(r"var\((--shep-[a-z0-9-]+)\)", value)
-    if found:
-        return tokens[found.group(1)]
-    return {"white": "#ffffff"}.get(value, value)
+    while found:
+        value = tokens.get(found.group(1)) or declared[found.group(1)].strip()
+        found = re.fullmatch(r"var\((--shep-[a-z0-9-]+)\)", value)
+    return {"white": "#ffffff", "#fff": "#ffffff"}.get(value, value)
 
 
 def _theme_value(name: str) -> str:
@@ -154,16 +158,33 @@ def test_a_field_label_is_plain_text_with_four_and_a_half_to_one_where_fields_si
         assert contrast(_effective("--block-title-text-color"), colour) >= 4.5, name
 
 
-def test_a_chosen_radios_label_has_four_and_a_half_to_one_on_its_fill():
+#: Level 1's one selected look: the stage switch's segment and Settings.
+LEVEL1_SELECTED = ('#shep-nav > .tab-wrapper > .tab-container > button[role="tab"][aria-selected="true"],\n'
+                   '#shep-nav > .tab-wrapper .right-tab-group > button[role="tab"][aria-selected="true"]')
+
+
+def test_a_chosen_radios_label_reads_on_its_fill_and_is_not_the_level_1_look():
     """The round's closing browser check (axe color-contrast, serious): a
     chosen radio's label (Training's Device "auto", Fine-tune's Graph
-    backbone "Trained") was white on the theme's indigo-500, 4.47:1. The
-    stylesheet fills it with the dashboard's accent, a primary button's."""
+    backbone "Trained") was white on the theme's indigo-500, 4.47:1. Its fix
+    (3d85531) filled it with the accent, which made it the level-1 switch's
+    exact look (R-20, NEW-shell-nav-theme-1). A chosen radio is now a tinted
+    option, its text the body colour (at 4.5:1 on the tint) and its border and
+    dot the accent (3:1 against the tint and the panel); level 1's selected
+    item alone is the accent fill with white text."""
     assert contrast(_theme_value("checkbox_label_text_color_selected"),
                     _theme_value("checkbox_label_background_fill_selected")) < 4.5
-    assert _effective("--checkbox-label-background-fill-selected") == _tokens()["--shep-accent"]
-    assert contrast(_effective("--checkbox-label-text-color-selected"),
-                    _effective("--checkbox-label-background-fill-selected")) >= 4.5
+    tokens = _tokens()
+    fill = _effective("--checkbox-label-background-fill-selected")
+    assert contrast(_effective("--checkbox-label-text-color-selected"), fill) >= 4.5
+    for cue in ("--checkbox-label-border-color-selected", "--checkbox-background-color-selected"):
+        assert contrast(_effective(cue), fill) >= 3.0 and contrast(_effective(cue), "#ffffff") >= 3.0
+    level1 = {name.strip(): value.strip() for name, _, value in
+              (part.partition(":") for part in _block(LEVEL1_SELECTED).split(";")) if name.strip()}
+    assert _resolve(level1["background"], tokens) == tokens["--shep-accent"]
+    assert contrast(_resolve(level1["color"], tokens), tokens["--shep-accent"]) >= 4.5
+    assert fill != tokens["--shep-accent"], "a chosen radio never takes level 1's fill"
+    assert _effective("--checkbox-label-text-color-selected") != "#ffffff"
 
 
 def test_the_themes_own_info_line_and_placeholder_are_below_the_threshold():
@@ -234,12 +255,14 @@ def test_a_disabled_unchecked_box_does_not_answer_hover(kind):
     assert _GRADIO_HOVER[kind] + "{border-color:var(--checkbox-border-color-hover)" in gradio_css
 
     selector = f".gradio-container input[type={kind}]:disabled:not(:checked):hover"
-    bodies = [body for selectors, body in _rules() if selector in selectors]
+    bodies = [body for selectors, body in _rules() if selector in selectors
+              and f".gradio-container input[type={kind}]:disabled:not(:checked)" in selectors]
     assert bodies, f"no rule for {selector}"
     declarations = {name.strip(): value.strip() for name, _, value in
                     (part.partition(":") for part in ";".join(bodies).split(";")) if name.strip()}
-    assert declarations.get("border-color") == "var(--checkbox-border-color)"
-    assert declarations.get("background-color") == "var(--checkbox-background-color)"
+    # The same off look at rest and on hover (NEW-settings-datasets-footer-3).
+    assert declarations.get("border-color") == "var(--shep-disabled-border)"
+    assert declarations.get("background-color") == "var(--shep-disabled-bg)"
     assert _specificity(selector) > _specificity(_GRADIO_HOVER[kind])
 
 
@@ -270,3 +293,101 @@ def test_the_status_tokens_alias_the_tag_colours_and_read_on_every_surface():
         colour = _resolve(declared[name], tokens)
         for where, background in {**surfaces, tint: tokens[tint]}.items():
             assert contrast(colour, background) >= 4.5, (name, where)
+
+
+# --------------------------------------------------------------------------- the shared tokens (T04, UI-10)
+#: Every surface a field, a tab or a mark sits on.
+def _surfaces() -> dict:
+    tokens = _tokens()
+    return {"field": _effective("--input-background-fill"), "white": "#ffffff",
+            "panel": tokens["--shep-panel"], "panel-2": tokens["--shep-panel-2"],
+            "page": tokens["--shep-bg"]}
+
+
+def _alias(name: str) -> str:
+    """A ``--shep-*`` token's colour, through the aliases it is declared as."""
+    declared = dict(re.findall(r"(--shep-[a-z0-9-]+)\s*:\s*([^;]+);", style.SHELL_CSS))
+    value = declared[name].strip()
+    while value.startswith("var("):
+        value = declared[value[4:-1]].strip()
+    return value
+
+
+def test_the_themes_own_field_border_is_below_three_to_one():
+    """Why the stylesheet sets it (R-8+R-51): Gradio's Soft theme draws a
+    field's border 0 px wide in #f9fafb, 1.05:1 on white."""
+    assert contrast(_theme_value("input_border_color"), "#ffffff") < 3.0
+
+
+@pytest.mark.parametrize("variable", ["--input-border-color", "--input-border-color-hover",
+                                      "--input-border-color-focus"])
+def test_a_fields_border_shows_at_three_to_one_where_fields_sit(variable):
+    """R-8+R-51: text, number and text-area inputs and every select (its
+    wrap) have a 1 px border in the control token, at least 3:1 on every
+    surface a field sits on, at rest, on hover and focused; no theme shadow
+    stands in for it."""
+    assert _effective("--input-border-width") == "1px"
+    assert _effective("--input-shadow") == "none"
+    for name, colour in _surfaces().items():
+        assert contrast(_effective(variable), colour) >= 3.0, (variable, name)
+
+
+def test_a_selects_wrap_and_a_bare_text_box_carry_the_field_border():
+    """Gradio 6.30 draws a select's wrap in its own grey (#e5e7eb, 1.24:1) by
+    a rule as specific as the stylesheet's two-class one, and a text box
+    without a container (Training's Run name) with no border: the shared rule
+    names both, one element more specific than Gradio's."""
+    rule = [body for selectors, body in _rules()
+            if "body .gradio-container .wrap:has(> .wrap-inner)" in selectors]
+    assert rule and "border: var(--input-border-width) solid var(--input-border-color)" in rule[0]
+    assert any("input[type=text]:not([role=combobox])" in selector
+               for selectors, _ in _rules() for selector in selectors if selector.startswith("body "))
+
+
+def test_a_disabled_field_is_drawn_off_and_its_words_still_read():
+    """NEW-settings-datasets-footer-3: a read-only viewer's disabled select
+    and checkbox looked like enabled ones. A disabled field is the disabled
+    fill and border with grey words, which still read at 4.5:1, and differ
+    from an enabled field's white fill and control border."""
+    tokens = _tokens()
+    fill, line, words = (_alias("--shep-disabled-bg"), _alias("--shep-disabled-border"),
+                         _alias("--shep-disabled-text"))
+    assert contrast(words, fill) >= 4.5
+    assert fill != _effective("--input-background-fill") and line != _alias("--shep-control-border")
+    rule = [body for selectors, body in _rules()
+            if ".gradio-container input:not([type=checkbox]):not([type=radio]):disabled" in selectors]
+    assert rule and "var(--shep-disabled-bg)" in rule[0] and "var(--shep-disabled-text)" in rule[0]
+    assert tokens["--shep-grey-50"] == fill
+
+
+@pytest.mark.parametrize("cue, surfaces", [
+    ("--shep-tab-hover-line", ("--shep-tab-hover-bg", "--shep-panel")),
+    ("--shep-tab-selected-line", ("--shep-panel", "--shep-tab-hover-bg")),
+    ("--shep-focus-ring", ("--shep-panel", "--shep-panel-2", "--shep-bg", "--shep-accent-50")),
+    ("--shep-control-border", ("--shep-panel", "--shep-panel-2", "--shep-bg")),
+])
+def test_the_cues_that_identify_a_tab_or_a_control_show_at_three_to_one(cue, surfaces):
+    """D01's cues (the WebUI skill's §10; hover against rest has no 3:1 rule,
+    the line that shows a tab is hovered or selected, a focus ring and a
+    control's border do): each is an alias of an existing colour, at least
+    3:1 on the surfaces it is drawn on."""
+    declared = dict(re.findall(r"(--shep-[a-z0-9-]+)\s*:\s*([^;]+);", style.SHELL_CSS))
+    assert declared[cue].strip().startswith("var(--shep-"), "an alias, never a new hex"
+    for surface in surfaces:
+        assert contrast(_alias(cue), _alias(surface)) >= 3.0, (cue, surface)
+    assert contrast(_alias("--shep-group-caption"), _alias("--shep-panel")) >= 4.5   # caption text
+
+
+def test_the_header_chips_marks_are_status_tokens_and_normal_states_are_quiet():
+    """R-21: the normal "Operator controls: on" was an accent pill and every
+    chip a bordered 999 px pill; the dot was raw #8a909b. A chip is plain text
+    by default (no fill, no border), only a state to watch is a lozenge
+    (read-only amber), and the marks are the status tokens."""
+    chip = _block(".shep-chip")
+    assert "background: none" in chip and "border: 1px solid transparent" in chip
+    assert "var(--shep-amber-50)" in _block(".shep-chip-readonly")
+    assert "var(--shep-amber-800)" in _block(".shep-chip-readonly")
+    assert "var(--shep-status-ok)" in _block(".shep-chip-on .shep-dot")
+    dots = re.findall(r"\.shep-dot[^{]*\{([^}]*)\}", style.SHELL_CSS)
+    assert dots and not any(re.search(r"#[0-9a-fA-F]{3,6}\b", body) for body in dots)
+    assert "#8a909b" not in style.SHELL_CSS

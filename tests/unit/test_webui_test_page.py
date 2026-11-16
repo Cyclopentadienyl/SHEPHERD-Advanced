@@ -1086,6 +1086,9 @@ def test_a_result_of_another_or_no_mode_is_shown_as_recorded(site):
         "Mode C, not described by this version")
     fixed = tp.fixed_html({})
     assert "Mode C" not in fixed and "Mode D" not in fixed and "Measurement" not in fixed
+    # The server's fixed rows sit among the Run panel's fields: their keys are
+    # drawn as its field labels (R-16, one label style per page).
+    assert fixed.startswith(f'<dl class="shep-kv {tp.r.FIELD_ROWS}">')
 
 
 def test_a_run_without_a_report_says_none_was_kept(site):
@@ -1315,6 +1318,7 @@ def test_an_evidence_directory_that_cannot_be_checked_never_disables_start(site,
             "in it: inputs found nowhere else read unverifiable, naming it.</span></span></div>"
             "</dd>") in row
     assert str(site.root) not in row and "<denied>" not in row
+    assert row.startswith(f'<dl class="shep-kv {tp.r.FIELD_ROWS}">')         # a field's label (R-16)
     manager = FakeManager()
     result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
                                protocol="disease", manager=manager)
