@@ -1340,9 +1340,12 @@ _LAYOUT_FACTS_JS = r"""() => {
   const bar = document.getElementById('shep-train-runbar');
   let runbar = null;
   if (bar && bar.getClientRects().length) {
+    // The run bar's items as drawn: one not drawn (Stop while no job runs, R-39; Continue… and
+    // Stop while the drawer is open) has no box, and no line.
     const items = ['shep-train-dataset', 'shep-train-chip', 'run_name', 'shep-train-start',
                    'shep-train-continue', 'shep-train-stop', 'shep-train-pill']
-      .map((i) => document.getElementById(i).getBoundingClientRect());
+      .map((i) => document.getElementById(i).getBoundingClientRect())
+      .filter((r) => r.width > 0 && r.height > 0);
     runbar = { h: Math.round(bar.getBoundingClientRect().height),
                lines: new Set(items.map((r) => Math.round((r.top + r.bottom) / 2 / 24))).size };
   }
