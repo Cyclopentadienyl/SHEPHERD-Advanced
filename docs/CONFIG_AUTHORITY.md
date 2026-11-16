@@ -111,6 +111,16 @@ concern — a modularity violation. Removing it **serves** the principle.
 - **`config_validator.py` / `schema_loader.py`:** kept as **documented RESERVED homes** for
   committed-config validation (`configs/deployment.yaml` + `configs/schemas/*.json` exist but are
   not yet validated). Empty by design until deployment-config validation is built.
+- *Note (2026-11-16, UI-06):* **the deployment's data locations** (the workspaces folder, the
+  results registry, the import folder, the training evidence folders) are no dataclass's concern and
+  have one home. Which value is in effect is `src/config/server_settings.py`'s one resolver
+  (`_resolve`): an environment variable set at start, else the applied value of the saved settings
+  file, else nothing. That file's place, format (`shepherd-deployment-settings/1`) and reading are
+  `src/config/deployment_settings.py`; every write to it (save, apply, replacing an unreadable
+  file) is `src/utils/settings_store.py`'s. The dashboard's Settings › Data locations,
+  `GET /api/v1/settings/deployment` and `scripts/deployment_settings.py show` show one view of them
+  (`src/utils/deployment_view.py`). From M5-1 until that date these settings came only from the
+  environment; the owner withdrew that rule, and an explicit variable still wins.
 
 ## Rollout (behavior-preserving; each step an independent, revertible PR)
 
