@@ -665,6 +665,92 @@ def test_the_open_status_routes_name_no_server_path_to_a_request_d8_does_not_all
     assert status["current_checkpoint_path"] == str(root / "demo" / "runs" / "r" / "last.pt")
 
 
+#: Every open GET route that takes no path parameter (`test_every_open_read_
+#: route_is_checked_for_server_paths` keeps the list whole): each is asked by
+#: `test_an_open_read_route_names_no_server_path_to_a_request_d8_does_not_allow`.
+OPEN_READ_ROUTES = (
+    "/", "/health", "/ready", "/manifest.json",
+    "/.well-known/appspecific/com.chrome.devtools.json",
+    "/api/v1/workspaces", "/api/v1/cohorts", "/api/v1/training/status",
+    "/api/v1/training/metrics", "/api/v1/pipeline/status", "/api/v1/evaluations/loaded-model",
+    "/api/v1/hpo/search", "/api/v1/system/resources", "/api/v1/system/runtime",
+    "/api/v1/system/operator-access", "/api/v1/settings/deployment",
+)
+
+
+def _named_server_paths(tmp_path: Path, monkeypatch) -> Path:
+    """A workspaces root and a registry, each named like a patient, whose
+    listings' reasons name server paths: a workspace whose
+    ``split_manifest.json`` is not JSON, one with none, one that is a link
+    outside the root; a version whose ``cohort.json`` is not JSON, one with
+    none. The root's own name ends a clause in a reason ("… outside the
+    workspaces root …/Jane (MRN 1) ws, so …"). The service reads both (mode
+    M1)."""
+    base = tmp_path / "site"
+    root, registry = base / "Jane (MRN 1) ws", base / "Jane (MRN 1) registry"
+    outside = base / "Jane (MRN 2) elsewhere" / "target"
+    (root / "broken").mkdir(parents=True)
+    (root / "broken" / "split_manifest.json").write_text("{not json", encoding="utf-8")
+    (root / "empty").mkdir()
+    outside.mkdir(parents=True)
+    (root / "linked").symlink_to(outside)
+    (registry / "versions" / "bad-json").mkdir(parents=True)
+    (registry / "versions" / "bad-json" / "cohort.json").write_text("{nope", encoding="utf-8")
+    (registry / "versions" / "no-manifest").mkdir()
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    operator_mode(monkeypatch)
+    return base
+
+
+def test_every_open_read_route_is_checked_for_server_paths():
+    """`OPEN_READ_ROUTES` is every open GET route with no path parameter, so a
+    new one is asked by the test below as it is added."""
+    from fastapi.routing import APIRoute
+
+    from src.api.main import app
+
+    found = {route.path for route in app.routes
+             if isinstance(route, APIRoute) and "GET" in route.methods
+             and not route.dependencies and "{" not in route.path}
+    assert found == set(OPEN_READ_ROUTES)
+
+
+@pytest.mark.parametrize("path", OPEN_READ_ROUTES)
+def test_an_open_read_route_names_no_server_path_to_a_request_d8_does_not_allow(
+        monkeypatch, tmp_path, path):
+    """BACKLOG 53's leftover (UI-13, B53): ``GET /workspaces`` and ``GET
+    /cohorts`` answered a request D8 does not allow (``X-Forwarded-For``, or
+    not on loopback) each entry's reason as it was read, with the server path
+    it checked: "…/Jane (MRN 1) ws/broken/split_manifest.json is not UTF-8
+    JSON …", "linked resolves to …/target, outside the workspaces root
+    …/Jane (MRN 1) ws, so …", "…/versions/no-manifest has no cohort.json".
+    Every open read route now answers such a request with no part of either
+    location: each reason keeps its words with "a server path" in place of
+    the path (the one redaction, `answer_for`), the root's own name whole
+    where it ends a clause (the pattern alone ends a path at its last part's
+    space, and "(MRN 1) ws" was left). An operator's request still gets the
+    lists' paths, which it acts on."""
+    base = _named_server_paths(tmp_path, monkeypatch)
+    for read_only in (_app_client(headers={"X-Forwarded-For": "192.0.2.7"}),
+                      _app_client("http://192.0.2.10")):
+        answer = read_only.get(path)
+        assert str(tmp_path) not in answer.text and "MRN" not in answer.text, answer.text
+        if path == "/api/v1/workspaces":
+            rows = {row["name"]: row for row in answer.json()["workspaces"]}
+            assert set(rows) == {"broken", "empty", "linked"}
+            assert rows["broken"]["not_trainable"].startswith("a server path is not UTF-8 JSON")
+            assert rows["linked"]["not_trainable"] == (
+                "linked resolves to a server path, outside the workspaces root a server "
+                "path, so it is not in the server's one workspace namespace")
+        if path == "/api/v1/cohorts":
+            versions = {v["label"]: v["problem"] for v in answer.json()["versions"]}
+            assert versions["no-manifest"].startswith("a server path has no cohort.json")
+            assert versions["bad-json"].startswith("a server path is not UTF-8 JSON")
+    if path in ("/api/v1/workspaces", "/api/v1/cohorts"):
+        assert str(base) in _app_client().get(path).text
+
+
 def test_an_open_answer_keeps_a_route_its_reason_names_and_no_part_of_a_path():
     """`answer_for` keeps this service's routes a reason names ("… or POST
     /api/v1/pipeline/reload"); a server path that holds ``/api/v1/`` is not

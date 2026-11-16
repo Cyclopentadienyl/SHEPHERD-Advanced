@@ -17,7 +17,7 @@ Module: src/utils/path_redaction.py
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Mapping, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 #: The words every surface uses for a server path it does not name.
 SERVER_PATH = "a server path"
@@ -94,9 +94,11 @@ _ROOTED = rf"""
     (?<=['"]) {_MARK} {_QUOTED}
   | {_MARK} {_REST}"""
 _SCAN = re.compile(rf"(?P<rooted>{_ROOTED})|{_ABSOLUTE}", re.VERBOSE)
+#: The named directory's mark a `_ROOTED` match starts with.
+_LEAD = re.compile(_MARK)
 
 
-def redact_paths(text: Any, roots: Sequence[Tuple[str, str]], *, other: str) -> str:
+def redact_paths(text: Any, roots: Sequence[Tuple[str, Optional[str]]], *, other: str) -> str:
     """`text` with no absolute server path left: one under a named server
     directory (`roots`: ``(path, name)``, longest first) is shown under its
     name, any other replaced by `other` (`_SCAN`). A path that ends in a
@@ -105,23 +107,43 @@ def redact_paths(text: Any, roots: Sequence[Tuple[str, str]], *, other: str) -> 
     ``<workspace>/runs/…``). The rest of a path under a named directory is
     read with it (`_ROOTED`), so no name in it starts another path. The one
     redaction every surface uses, for one root (the dashboard's
-    `workspaces.redact`) or several (the Test page's, the results service's)."""
+    `workspaces.redact`) or several (the Test page's, the results service's).
+
+    **A directory named None is known, not shown** (an open route's answer to
+    a request D8 does not allow, `src.api.operator_access.answer_for`): its
+    text is found exactly, spaces included (``/srv/Jane (MRN 1) ws, so…``,
+    where the pattern alone ends a path at its last part's space), and it and
+    the rest of any path under it are replaced whole by `other`."""
     flat = str(text if text is not None else "")
     marks: Dict[str, str] = {}
+    hidden = set()
     for index, (prefix, token) in enumerate(roots):
         if not prefix:
             continue
         mark = f"\x00{index}\x00"
         bound = "" if prefix.endswith(("/", "\\")) else r"(?=$|[/\\\s'\"(),;:])"
         flat = re.sub(re.escape(prefix) + bound, mark, flat)
-        marks[mark] = token
-    flat = _SCAN.sub(lambda m: m.group(0) if m.group("rooted") is not None else other, flat)
+        if token is None:
+            hidden.add(mark)
+        else:
+            marks[mark] = token
+
+    def replaced(match: "re.Match[str]") -> str:
+        if match.group("rooted") is None:
+            return other
+        lead = _LEAD.search(match.group(0))
+        return other if lead is not None and lead.group(0) in hidden else match.group(0)
+
+    flat = _SCAN.sub(replaced, flat)
+    for mark in hidden:
+        flat = flat.replace(mark, other)
     for mark, token in marks.items():
         flat = flat.replace(mark, token)
     return flat
 
 
-def redact_value(value: Any, roots: Sequence[Tuple[str, str]], *, other: str) -> Any:
+def redact_value(value: Any, roots: Sequence[Tuple[str, Optional[str]]], *,
+                 other: str) -> Any:
     """`value`, an answer's JSON-ready data, with every text in it through
     `redact_paths`, an object's keys included; every other value as it is (a
     tuple is answered as a list). The one form for a structure: a recorded

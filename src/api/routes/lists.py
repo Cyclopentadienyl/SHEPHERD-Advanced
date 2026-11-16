@@ -46,6 +46,13 @@ request.
   is built from; a parent outside the workspace is looked for in the other
   listed workspaces' run of the recorded name only.
 
+**The two open lists answer through `answer_for`** (BACKLOG 53, D7): a
+listing's reasons name what they checked (an entry's unreadable or malformed
+``split_manifest.json`` or ``cohort.json``, a link that resolves outside the
+root, the root itself), so a request D8 does not allow gets the same answer
+with every absolute server path replaced by "a server path"; an operator gets
+it as it is. The pages read the same lists in process.
+
 Plain `def` handlers: each reads files, so FastAPI runs them in its thread pool
 instead of on the event loop.
 
@@ -55,22 +62,23 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
-from src.api.operator_access import OPERATOR_ONLY
+from src.api.operator_access import OPERATOR_ONLY, answer_for
 from src.api.services import server_lists
 
 router = APIRouter()
 
 
 @router.get("/workspaces")
-def get_workspaces() -> Dict[str, Any]:
-    """The server's workspaces, by name and dataset fingerprint."""
-    return server_lists.list_workspaces().as_dict("workspaces")
+def get_workspaces(request: Request) -> Dict[str, Any]:
+    """The server's workspaces, by name and dataset fingerprint; to a request
+    D8 does not allow, with no absolute server path (`answer_for`)."""
+    return answer_for(request, server_lists.list_workspaces().as_dict("workspaces"))
 
 
 @router.get("/cohorts")
-def get_cohort_versions() -> Dict[str, Any]:
+def get_cohort_versions(request: Request) -> Dict[str, Any]:
     """The cohort versions in the server's registry, by label and digest, with
     each kept run's kept and registered state read from the disk (registered
     by this run's own record, with any possible overlap with a record merged
@@ -80,9 +88,11 @@ def get_cohort_versions() -> Dict[str, Any]:
     Without a checkpoint file, ``registered`` is either ``registered`` (the
     ledger beside the checkpoint the report records names it) or
     ``cannot_be_checked``; a list never says ``not_registered``, because a
-    registration beside another copy of the same weights is not looked for."""
-    return server_lists.list_cohort_versions(
-        report_state=server_lists.stored_report_state).as_dict("versions")
+    registration beside another copy of the same weights is not looked for.
+    To a request D8 does not allow, with no absolute server path
+    (`answer_for`)."""
+    return answer_for(request, server_lists.list_cohort_versions(
+        report_state=server_lists.stored_report_state).as_dict("versions"))
 
 
 @router.get("/workspaces/{name}/checkpoints", dependencies=OPERATOR_ONLY)

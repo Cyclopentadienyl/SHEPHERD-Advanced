@@ -1577,20 +1577,26 @@ class TestRoutes:
         assert [r["problem"] for r in listed["reports"]] == [None]
 
     def test_the_cohort_route_reads_each_runs_state_through_the_registration(
-            self, client, registered, tmp_path, monkeypatch):
+            self, client, operator_client, registered, tmp_path, monkeypatch):
         """The registration's one helper, given a run directory (`stored_report_state`): a
         run directory with no report reads as not kept, never as a state the
-        list supposed, and the route passes the helper rather than nothing."""
+        list supposed, and the route passes the helper rather than nothing.
+        Its reason names the file it looked for to an operator; to a request
+        D8 does not allow, "a server path" in its place (B53, `answer_for`)."""
         cohort = _registry_copy(registered, tmp_path)
         run = "20261020T120000Z-bbbbbbbbbbbb-00000002"
         (cohort.version.directory / "reports" / run).mkdir(parents=True)
         monkeypatch.setenv(ss.ENV_REGISTRY, str(cohort.registry))
-        (version,) = client.get("/api/v1/cohorts").json()["versions"]
+        (version,) = operator_client.get("/api/v1/cohorts").json()["versions"]
         (listed,) = version["reports"]
         assert listed["problem"] is None
         assert listed["state"]["kept"] == "not_kept"
         assert listed["state"]["registered"] == "cannot_be_checked"
-        assert "report.json" in listed["state"]["why_kept"]
+        assert listed["state"]["why_kept"].endswith(f"{run}/report.json")
+        (version,) = client.get("/api/v1/cohorts").json()["versions"]
+        (read_only,) = version["reports"]
+        assert read_only["state"]["why_kept"] == "there is no a server path"
+        assert {**read_only["state"], "why_kept": None} == {**listed["state"], "why_kept": None}
         assert set(listed["state"]) == {"kept", "why_kept", "registered", "why_registered",
                                         "report_sha256", "sequence", "historical_overlap",
                                         "replaced_after_registration"}

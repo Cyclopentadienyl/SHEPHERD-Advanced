@@ -751,15 +751,19 @@ def _unreadable_copy(site):
 
 def _cohorts_route_runs(label):
     """``GET /api/v1/cohorts`` through the real route: each run of `label`'s
-    store as the open route lists it, by run id."""
+    store as the open route lists it to an operator, by run id (a request D8
+    does not allow gets its reasons' paths as "a server path", B53)."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from src.api.routes import lists
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
 
     app = FastAPI()
     app.include_router(lists.router, prefix="/api/v1")
-    body = TestClient(app).get("/api/v1/cohorts").json()
+    with pytest.MonkeyPatch.context() as patch:
+        operator_mode(patch)
+        body = TestClient(app, base_url=OPERATOR_BASE_URL).get("/api/v1/cohorts").json()
     (version,) = [v for v in body["versions"] if v["label"] == label]
     return {run["run_id"]: run for run in version["reports"]}
 

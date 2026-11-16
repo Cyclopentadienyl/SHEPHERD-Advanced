@@ -21,17 +21,21 @@ The refusal's body names the condition that failed (`OperatorAccess.refusal`)
 and repeats no header value.
 
 **What an open read route answers** (`answer_for`, BACKLOG 53, D7): the status
-routes (``GET /pipeline/status``, ``GET /training/status``) answer a request D8
-allows as they are, every path an operator acts on included (the GPU lock's,
-the run directory, the served workspace and checkpoint); any other request,
-the same answer with every absolute server path replaced by "a server path".
-The pages read the same values in process and show paths their own way.
+routes (``GET /pipeline/status``, ``GET /training/status``) and the server's
+lists (``GET /workspaces``, ``GET /cohorts``: an entry's reason names the file
+or link it checked) answer a request D8 allows as they are, every path an
+operator acts on included (the GPU lock's, the run directory, the served
+workspace and checkpoint); any other request, the same answer with every
+absolute server path replaced by "a server path". The other open routes answer
+no server path of their own (``GET /settings/deployment`` hides its paths
+itself; the rest name none). The pages read the same values in process and
+show paths their own way.
 
 Module: src/api/operator_access.py
 """
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any, List, Optional, Tuple
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -64,17 +68,45 @@ OPERATOR_ONLY: List[Any] = [Depends(require_operator_access)]
 _ROUTES = (("/api/v1/", "/api/v1/"),)
 
 
+def _data_locations() -> List[Tuple[str, Optional[str]]]:
+    """The service's data locations as `redact_value`'s known, hidden
+    directories (name None): each as it is set (the environment's text or the
+    saved file's) and as it was checked, so a reason that names one whose own
+    name holds a space ("… outside the workspaces root /srv/Jane (MRN 1) ws,
+    so …") is replaced whole, which the pattern alone cannot see. Read now,
+    through the one read point (`server_settings.configured`); none when it
+    cannot be read."""
+    from src.config import server_settings
+
+    texts: List[str] = []
+    try:
+        for variable in (server_settings.ENV_WORKSPACES_ROOT, server_settings.ENV_REGISTRY,
+                         server_settings.ENV_INTAKE_DIR,
+                         server_settings.ENV_TRAINING_EVIDENCE_DIRS):
+            raw = server_settings.configured(variable).raw
+            texts += [raw] if isinstance(raw, str) else list(raw or ())
+        for setting in server_settings.all_settings()[1:]:
+            value = setting.value
+            texts += [str(v) for v in (value if isinstance(value, (tuple, list)) else (value,))
+                      if v is not None]
+    except Exception:  # noqa: BLE001 - the pattern still replaces every path it sees
+        pass
+    return [(text, None) for text in texts if isinstance(text, str) and text.strip()]
+
+
 def answer_for(request: Request, answer: Any) -> Any:
     """`answer` as an open read route gives it to `request`: as it is when D8
     allows the request (an operator acts on these paths: a GPU lock's holder,
     a run directory), and otherwise as JSON-ready data with every absolute
     server path in every text replaced, an object's keys included
-    (`path_redaction.redact_value`; no directory named, this service's own
-    routes kept, `_ROUTES`). The answer's shape and every other value stay,
-    so its response model still holds."""
+    (`path_redaction.redact_value`; this service's own routes kept,
+    `_ROUTES`; its data locations known and replaced whole, any path under
+    them with them, `_data_locations`). The answer's shape and every other
+    value stay, so its response model still holds."""
     if check_operator_access(request.scope).allowed:
         return answer
-    return redact_value(jsonable_encoder(answer), _ROUTES, other=SERVER_PATH)
+    roots = sorted([*_ROUTES, *_data_locations()], key=lambda root: -len(root[0]))
+    return redact_value(jsonable_encoder(answer), roots, other=SERVER_PATH)
 
 
 __all__ = ["OPERATOR_ONLY", "answer_for", "require_operator_access"]
