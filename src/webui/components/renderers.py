@@ -449,7 +449,8 @@ def built_text(build: Optional[Mapping[str, Any]]) -> Optional[str]:
 
 def sources_text(releases: Any) -> str:
     """The dataset record's sources as each declares its release: "HPO 2026-09-01 ·
-    MONDO release not declared"; "none (synthetic)" for a synthetic build."""
+    MONDO release not declared"; empty when it declares none (`sources_html`
+    says why)."""
     parts = []
     for source in releases or ():
         if not isinstance(source, Mapping):
@@ -509,6 +510,68 @@ def record_chip(item: Any) -> str:
     return status_mark(*record_words(item), as_chip=True)
 
 
+def dataset_marks_html(item: Any) -> str:
+    """**A workspace's origin and record, one form wherever they show** (the
+    run bar's identity line, `dataset_identity_html`, and the selected
+    workspace's header on Research › Datasets): "synthetic" in amber, then
+    the record's state (`record_chip`) once the manifest was read; empty when
+    neither applies."""
+    marks = []
+    if origin_of(item) == "synthetic":
+        marks.append(chip("synthetic", "amber"))
+    if record_verified(item) or _get(item, "dataset_fingerprint"):
+        marks.append(record_chip(item))
+    return "".join(marks)
+
+
+def not_trainable_chip(item: Any) -> str:
+    """"not trainable: <why>" as a grey tag, in short words
+    (`not_trainable_short`), its whole reason in its title: the run bar's
+    identity line and Research › Datasets' In use column alike."""
+    why = str(_get(item, "not_trainable") or "not trainable")
+    return chip(f"not trainable: {not_trainable_short(item)}", "grey", title=why)
+
+
+#: The sources of a synthetic build, which declares none (`sources_html`).
+SYNTHETIC_SOURCES = "none (synthetic)"
+
+
+def sources_html(item: Any) -> str:
+    """**A workspace's sources, one form wherever they show** (Research ›
+    Datasets' table and Training's dataset details): each declared release
+    (`sources_text`); `SYNTHETIC_SOURCES` for a synthetic build; else the
+    record's own missing state, "Not recorded" (no split manifest, a manifest
+    that binds no record, or a build from files that declares no release)
+    apart from "Unknown" (the record was not read): the fingerprint cell's
+    word for the same cause. Never "—", which means "no value here"."""
+    text = sources_text(_get(item, "declared_releases"))
+    if text:
+        return e(text)
+    origin = origin_of(item)
+    if origin == "synthetic":
+        return e(SYNTHETIC_SOURCES)
+    record = _get(item, "dataset_record") or {}
+    unrecorded = (origin == "files" or _get(item, "manifest") == "absent"
+                  or isinstance(record, Mapping) and record.get("binding") == "unrecorded")
+    return status_mark("neutral", NOT_RECORDED if unrecorded else UNKNOWN)
+
+
+def built_date(build: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """A recorded build's time as "2026-10-15 09:41", its zone said once in
+    its key or header ("Built (UTC)"), else None (`built_text`)."""
+    built = built_text(build)
+    return built[len("built "):-len(" UTC")] if built else None
+
+
+def pair_text(first: Any, second: Any) -> str:
+    """Two recorded counts as one value, "200 / 50" (train / val, its key or
+    header says which), each "not recorded" where the record holds none
+    (`count_text`), and one "not recorded" when neither is."""
+    if count_text(first) == count_text(second) == count_text(None):
+        return count_text(None)
+    return f"{count_text(first)} / {count_text(second)}"
+
+
 def count_text(value: Any) -> str:
     """A recorded count with thousands separators, or "not recorded" where the
     record holds none (never "—", the skill's §6)."""
@@ -517,63 +580,68 @@ def count_text(value: Any) -> str:
 
 
 def dataset_details_html(row: Mapping[str, Any], facts: Optional[Mapping[str, Any]], *,
-                         problem: Optional[str] = None) -> str:
-    """**The one body of a workspace's details** (Research › Datasets' panel and
-    Training's "Details ›" popover, each with its own header; M5-3 review
-    ARCH-4): the full dataset fingerprint with Copy, what the manifest binds (12
-    hex each, `workspaces.manifest_facts`), the split's seeds, the samples, the
-    sources, the build time, the path relative to the server's workspace root,
-    and why the workspace is not trainable. `problem` says why the manifest was
-    not read (without a path); every value is escaped."""
+                         problem: Optional[str] = None, popover: bool = False) -> str:
+    """**The one body of a workspace's details** (Research › Datasets' panel
+    and Training's "Details ›" popover, each with its own header; M5-3 review
+    ARCH-4): a summary list, one fact per row (`summary_list`), its dataset
+    fingerprint first (12 hex with Copy, `fingerprint_value`), the disease
+    split and the seeds; then what the manifest binds, the files by plain
+    names with their 12 hex (`workspaces.manifest_facts`), behind "Manifest
+    contents (N files) ›". Beside its table row (Datasets) it leaves out what
+    the row shows (built, sources, samples; the skill's §1.2); in a popover,
+    which stands alone, it says them too, and the manifest's files are listed
+    open (no disclosure inside a popover, the skill's §1.5). `problem` says
+    why the manifest was not read (without a path); every value is
+    escaped."""
     name = str(row.get("name") or "")
-    parts = []
+    rows_kv: List[Tuple[str, str]] = []
     fingerprint = row.get("dataset_fingerprint")
     if is_digest(fingerprint):
-        parts.append(
-            '<div class="shep-digest"><span class="shep-dl">Dataset fingerprint · SHA-256 of '
-            f'split_manifest.json</span><code class="shep-full">{e(fingerprint)}</code>'
-            f'{copy_button(fingerprint, "the full dataset fingerprint of " + name)}</div>')
-    rows_kv = []
-    if facts is not None:
-        bound = summary_list([(label, f"<code>{e(short_hex(digest))}</code>")
-                              for label, digest in facts["bound"]], classes="shep-kv-2")
-        parts.append('<div class="shep-card"><div class="shep-card-hd">What the manifest binds '
-                     '<span class="shep-muted">sha256, first 12 · full values in the manifest'
-                     f'</span></div>{bound}</div>')
-        split = []
-        if facts.get("allocation_seed") is not None:
-            split.append(f"allocation seed {facts['allocation_seed']}")
-        if facts.get("feature_seed") is not None:
-            split.append(f"feature seed {facts['feature_seed']}")
-        samples = f"train {count_text(row.get('train_samples'))} · val {count_text(row.get('val_samples'))}"
-        if facts.get("train_diseases") is not None:
-            samples += (f" · diseases (train / val) {count_text(facts['train_diseases'])} / "
-                        f"{count_text(facts.get('val_diseases'))}")
-        rows_kv = [("Split", e(" · ".join(split) or "not recorded")), ("Samples", e(samples))]
-    else:
+        rows_kv.append(("Dataset fingerprint", fingerprint_value(
+            fingerprint, what=f"dataset fingerprint of {name}")))
+    parts = []
+    why = None
+    if facts is None:
         why = problem or row.get("not_trainable") or "it is not readable"
         parts.append(f'<div class="shep-reason">The manifest was not read: {e(why)}</div>')
-    sources = sources_text(row.get("declared_releases"))
-    built = built_text(row.get("build"))
-    rows_kv += [
-        ("Sources", e(sources) if sources else
-         ("none (synthetic)" if origin_of(row) == "synthetic" else '<span class="shep-muted">—</span>')),
-        ("Built", e(built.replace("built ", "", 1)) if built else "not recorded"),
-        ("Path", f'<code>{e(name)}</code> <span class="shep-muted">(in the server’s '
-                 'workspace root)</span>'),
-    ]
-    if not row.get("trainable"):
+    if popover:
+        built = built_date(row.get("build"))
+        rows_kv += [("Built (UTC)", e(built) if built else NOT_RECORDED.lower()),
+                    ("Sources", sources_html(row))]
+        if facts is not None:
+            rows_kv.append(("Samples (train / val)",
+                            e(pair_text(row.get("train_samples"), row.get("val_samples")))))
+    if facts is not None:
+        if facts.get("train_diseases") is not None:
+            rows_kv.append(("Diseases (train / val)",
+                            e(pair_text(facts["train_diseases"], facts.get("val_diseases")))))
+        for key, label in (("allocation_seed", "Allocation seed"), ("feature_seed", "Feature seed")):
+            value = facts.get(key)
+            rows_kv.append((label, e(value) if value is not None else NOT_RECORDED.lower()))
+    if not row.get("trainable") and row.get("not_trainable") != why:
+        # Its own reason, unless the line above already said it.
         rows_kv.append(("Not trainable", e(row.get("not_trainable") or "not trainable")))
-    parts.append(summary_list(rows_kv))
+    if rows_kv:
+        parts.append(summary_list(rows_kv))
+    if facts is not None:
+        bound = list(facts["bound"])
+        files = summary_list([(label, fingerprint_value(digest, what=f"{label} digest",
+                                                         copy=False))
+                              for label, digest in bound], classes="shep-kv-2")
+        title = f"Manifest contents ({len(bound)} file{'' if len(bound) == 1 else 's'})"
+        parts.append(f'<div class="shep-ds-manifest"><b>{e(title)}</b>{files}</div>' if popover
+                     else f'<details class="shep-more shep-ds-manifest"><summary>{e(title)} ›'
+                          f'</summary>{files}</details>')
     return "".join(parts)
 
 
 def dataset_identity_html(item: Any, *, digits: int = SHORT_HEX, name: bool = True,
                           compact: bool = False) -> str:
     """One workspace's identity: name; "built … UTC" or "build time not recorded ·
-    sources …"; the dataset fingerprint; amber "synthetic"; the record's state
-    (`record_chip`: "record verified", or the record's own missing or
-    contradicted state); "not trainable: <why>" when it is not."""
+    sources …"; the dataset fingerprint; its origin and record
+    (`dataset_marks_html`: amber "synthetic", "record verified" or the
+    record's own missing or contradicted state); "not trainable: <why>" when
+    it is not (`not_trainable_chip`)."""
     parts = []
     if name:
         parts.append(f'<span class="shep-ds-name">{e(_get(item, "name"))}</span>')
@@ -586,16 +654,11 @@ def dataset_identity_html(item: Any, *, digits: int = SHORT_HEX, name: bool = Tr
         parts.append(f'<span class="shep-ds-built shep-muted">{e(text)}</span>')
     parts.append(fingerprint_html("dataset fingerprint", _get(item, "dataset_fingerprint"),
                                   digits=digits, help_key="dataset-fingerprint"))
-    marks = []
-    if origin_of(item) == "synthetic":
-        marks.append(chip("synthetic", "amber"))
-    if record_verified(item) or _get(item, "dataset_fingerprint"):
-        marks.append(record_chip(item))
+    marks = dataset_marks_html(item)
     if not _get(item, "trainable", False):
-        why = str(_get(item, "not_trainable") or "not trainable")
-        marks.append(chip(f"not trainable: {not_trainable_short(item)}", "grey", title=why))
+        marks += not_trainable_chip(item)
     if marks:
-        parts.append('<span class="shep-ds-marks">' + "".join(marks) + "</span>")
+        parts.append(f'<span class="shep-ds-marks">{marks}</span>')
     sep = " " if compact else '<span class="shep-sep" aria-hidden="true"> · </span>'
     return f'<span class="shep-ds">{sep.join(parts)}</span>'
 
@@ -2178,6 +2241,8 @@ __all__ = [
     "details_list",
     "SHORT_HEX",
     "SYNTHETIC_FOR_TESTING",
+    "SYNTHETIC_SOURCES",
+    "built_date",
     "built_text",
     "change_value",
     "chip",
@@ -2186,6 +2251,7 @@ __all__ = [
     "dataset_exception",
     "dataset_relation_html",
     "dataset_identity_html",
+    "dataset_marks_html",
     "distinct_names",
     "distinguishing_digits",
     "e",
@@ -2209,8 +2275,10 @@ __all__ = [
     "named_words",
     "model_row_html",
     "model_table_row_html",
+    "not_trainable_chip",
     "not_trainable_short",
     "origin_of",
+    "pair_text",
     "r10_state_parts",
     "r10_state_text",
     "r10_table_html",
@@ -2236,6 +2304,7 @@ __all__ = [
     "setting_words",
     "short_hex",
     "short_reason",
+    "sources_html",
     "sources_text",
     "summary_list",
     "trained_on",

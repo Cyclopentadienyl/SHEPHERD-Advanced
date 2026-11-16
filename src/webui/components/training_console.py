@@ -1352,13 +1352,14 @@ NO_ICON = ('<svg class="shep-no" width="14" height="14" viewBox="0 0 16 16" aria
 def details_html(ws: Mapping[str, Any]) -> str:
     """The chip's "Details ›" popover: the workspace's name and record, the
     shared details body (`renderers.dataset_details_html`, as Research ›
-    Datasets shows it), and "All datasets ›"."""
+    Datasets shows it; in a popover every fact, the manifest's files open),
+    and "All datasets ›"."""
     row = ws.get("row") or {}
     name = str(row.get("name") or "")
     head = (f'<div class="shep-pop-hd"><b>{r.e(name)}</b>{r.record_chip(row)}'
             '<button type="button" class="shep-pop-x" data-act="close" '
             'aria-label="Close the dataset details">×</button></div>')
-    return (head + r.dataset_details_html(row, ws.get("facts"))
+    return (head + r.dataset_details_html(row, ws.get("facts"), popover=True)
             + '<button type="button" class="shep-link" data-act="datasets">All datasets ›</button>')
 
 

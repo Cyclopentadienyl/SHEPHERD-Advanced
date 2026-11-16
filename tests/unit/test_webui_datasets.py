@@ -16,10 +16,12 @@ Research › Prepare › Datasets (M5-2, UI-A): the server's workspaces, read-on
   read "a path outside the workspaces root", a refused root setting is said
   without its path, and no sentence reads "the workspaces root the workspaces
   root"; the details give the path relative to the root;
-- **the details**: the full fingerprint with Copy (named with the workspace),
-  what the manifest binds with short digests, the seeds and split counts, and
-  how the workspace compares with the others ("Same graph build as …, another
-  cut", "Same dataset as …"); the manifests are read once per refresh;
+- **the details**: titled "Selected workspace" (the row beside it names it),
+  its origin and record in the run bar's form; the fingerprint as 12 hex with
+  Copy (named with the workspace), one fact per row, the manifest's files by
+  plain names behind "Manifest contents (7 files) ›", no Path row; how the
+  workspace compares with the others ("Same graph build as …, another cut",
+  "Same dataset as …"); the manifests are read once per refresh;
 - **"no split manifest"** when the file is absent, "no readable split
   manifest" when it is there but not read;
 - **long names wrap** at every size, so the "In use" column stays in view;
@@ -27,8 +29,12 @@ Research › Prepare › Datasets (M5-2, UI-A): the server's workspaces, read-on
   Research › Training; nothing on the server changes; a workspace that is not
   trainable cannot be used;
 - **everything escaped** (a workspace may be named with markup characters);
-- **the header in plain words**: its count, never "read-only" (D8's word for
-  a refused request);
+- **the header in plain words**: "Workspaces (N)", never the tab's name again
+  and never "read-only" (D8's word for a refused request); its intro defines
+  nothing, the fingerprint's ⓘ is on its column and the markers' on In use;
+- **one line a row** (R-36): Built (UTC), the fingerprint, Sources ("none
+  (synthetic)", never "—"), Train / val on one line, In use with no input-like
+  box; in a browser each row is at most 40 px at 1850 x 960;
 - **its data versions** (ops round B5): the registry's versions mapped against
   the chosen workspace's graph, read by Test's reader and compared by Test's
   comparison, each by its kind, role and the measurements its data admits
@@ -39,6 +45,7 @@ Module: tests/unit/test_webui_datasets.py
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from pathlib import Path
@@ -123,22 +130,17 @@ def test_an_unreadable_manifest_is_told_apart_from_an_absent_one(root, monkeypat
     html = dsp.table_html(data, None, None)
     assert "not trainable: no readable split manifest" in _row(html, "broken")
     assert "not trainable: no split manifest" in _row(html, "scratch_ws")
-    # The fingerprint, origin and record cells say each missing state in its
-    # own words (the WebUI skill §6), never one "—" or "not verified".
+    # The fingerprint and sources cells say each missing state in its own
+    # words (the WebUI skill §6), never one "—" or "not verified"; one word
+    # for the one cause (B0a review: the record cell said "Not read"): no
+    # manifest is "Not recorded", a manifest not read "Unknown".
     from src.webui.components import renderers as r
 
-    for name, fingerprint in (("scratch_ws", r.NOT_RECORDED), ("broken", r.UNKNOWN)):
+    for name, word in (("scratch_ws", r.NOT_RECORDED), ("broken", r.UNKNOWN)):
         row = _row(html, name)
-        assert r.status_mark("neutral", fingerprint) in row, name
-        assert '<span class="shep-muted">—</span>' not in row.split("shep-ds-use")[0], name
-        assert "not verified" not in row, name
-    # A manifest not read: its origin, record and fingerprint cells say one
-    # word for the one cause (B0a review: the record cell said "Not read").
-    broken = _row(html, "broken")
-    unknown = r.status_mark("neutral", r.UNKNOWN)
-    assert broken.count(f'<td class="shep-ds-wide">{unknown}</td>') == 2, broken  # origin, record
-    assert f"{unknown}</span></td>" in broken                                    # fingerprint
-    assert "Not read" not in broken
+        assert row.count(r.status_mark("neutral", word)) == 2, name    # fingerprint, sources
+        assert r.NO_VALUE not in row.split("shep-ds-use")[0], name
+        assert "not verified" not in row and "Not read" not in row, name
 
 
 def test_serving_is_matched_through_the_list_by_resolved_directory(root, monkeypatch):
@@ -198,19 +200,40 @@ def test_a_refused_root_setting_is_said_without_its_path(tmp_path, monkeypatch):
 
 
 def test_the_details_show_what_the_manifest_binds(root, monkeypatch):
+    """R-35: on ba6e85e the details led with the full 64-hex fingerprint
+    under "SHA-256 of split_manifest.json", then a bordered card inside the
+    panel of seven digests under snake_case keys, then two rows of facts
+    joined by " · ", and a Path row that repeated the name. Now the
+    fingerprint is 12 hex with Copy (its whole value in its title and on
+    Copy), one fact per row, the manifest's files by plain names behind
+    "Manifest contents (7 files) ›" with no inner card, and no Path row."""
     _serving(monkeypatch, None)
     data = dsp.read_datasets()
     html = dsp.details_html(data, "demo")
     fingerprint = file_sha256(root / "demo" / "split_manifest.json")
-    assert fingerprint in html and f'data-copy="{fingerprint}"' in html
-    for label in ("kg", "node_features", "edge_indices", "num_nodes", "train_samples",
-                  "val_samples", "record"):
-        assert f'<dt class="shep-k">{label}</dt><dd class="shep-v"><code>' in html, label
-    assert "allocation seed 42" in html and "feature seed" in html
-    assert "train 20 · val 5" in html
-    assert "<code>demo</code>" in html and "in the server’s workspace root" in html
-    assert "Select a dataset" in dsp.details_html(data, None)
+    assert (f'<dt class="shep-k">Dataset fingerprint</dt><dd class="shep-v"><code class="shep-fpv" '
+            f'title="{fingerprint}">{fingerprint[:12]}</code>') in html
+    assert f'data-copy="{fingerprint}"' in html and f">{fingerprint}<" not in html
     assert 'aria-label="Copy the full dataset fingerprint of demo"' in html
+    assert "shep-card" not in html and " · " not in html
+    assert "SHA-256" not in html and "split_manifest" not in html and "node_features" not in html
+    manifest = re.search(r'<details class="shep-more shep-ds-manifest"><summary>Manifest contents '
+                         r'\(7 files\) ›</summary>(.*?)</details>', html, re.S)
+    assert manifest, html
+    for label in ("Graph", "Node features", "Edge index", "Node counts", "Train samples",
+                  "Val samples", "Dataset record"):
+        assert re.search(rf'<dt class="shep-k">{label}</dt><dd class="shep-v"><code class="shep-fpv" '
+                         rf'title="[0-9a-f]{{64}}">[0-9a-f]{{12}}</code></dd>', manifest.group(1)), label
+    assert '<dt class="shep-k">Allocation seed</dt><dd class="shep-v">42</dd>' in html
+    assert re.search(r'<dt class="shep-k">Diseases \(train / val\)</dt><dd class="shep-v">'
+                     r'\d+ / \d+</dd>', html)
+    assert '<dt class="shep-k">Feature seed</dt>' in html
+    # Beside its row: no Path row (it is the name), nor what the selected row
+    # shows (built, sources, samples; the skill's §1.2).
+    for key in ("Path", "Built (UTC)", "Sources", "Samples (train / val)"):
+        assert f'<dt class="shep-k">{key}</dt>' not in html, key
+    assert "workspace root" not in html
+    assert "Select a dataset" in dsp.details_html(data, None)
 
 
 def test_the_details_say_how_a_workspace_compares_with_the_others(root, monkeypatch):
@@ -221,9 +244,9 @@ def test_the_details_say_how_a_workspace_compares_with_the_others(root, monkeypa
     html = dsp.details_html(data, "demo")
     assert ("Same dataset as <b>&lt;b&gt;odd&amp;name</b>, <b>demo_copy</b>: the same full "
             "fingerprint, so the same recorded build.") in html
-    assert ("Same graph build as <b>resampled</b> (kg, tensors and record identical), another "
-            "cut: the allocation seed differs, so the samples and the dataset fingerprints "
-            "differ.") in html
+    assert ("Same graph build as <b>resampled</b> (graph, tensors and record identical), "
+            "another cut: the allocation seed differs, so the samples and the dataset "
+            "fingerprints differ.") in html
     assert "Same graph build as" not in dsp.details_html(data, "scratch_ws")
 
 
@@ -234,7 +257,121 @@ def test_the_manifests_are_read_once_per_refresh_not_on_each_selection(root, mon
     data = dsp.read_datasets()
     monkeypatch.setattr(artifacts, "read_split_manifest",
                         lambda *a, **k: pytest.fail("a selection read a manifest"))
-    assert "allocation seed 42" in dsp.details_html(data, "demo")
+    assert '<dt class="shep-k">Allocation seed</dt><dd class="shep-v">42</dd>' in (
+        dsp.details_html(data, "demo"))
+
+
+def test_the_first_panel_is_titled_by_its_content_and_defines_nothing(root, monkeypatch):
+    """R-30 and R-34: on ba6e85e the first panel was titled "Datasets" right
+    under the selected "Datasets" tab, its intro defined the fingerprint by a
+    file name ("the SHA-256 of each workspace's split manifest
+    (split_manifest.json)"), a three-line footnote under the table explained
+    the markers and named current_data_dir and workspace_build.json, and the
+    note beside Use for training ended "Start is the gated act". Now the title
+    is "Workspaces (5)", the intro one plain line, the fingerprint's ⓘ on its
+    column, the markers' ⓘ on In use (no file or field name), and the note
+    says what the button does."""
+    from src.webui.components import help as h
+
+    _serving(monkeypatch, None)
+    data = dsp.read_datasets()
+    header = dsp.header_html(data)
+    assert '<h2>Workspaces <span class="shep-muted">(5)</span></h2>' in header
+    assert "Datasets" not in header and "read-only" not in header
+    intro = re.search(r'<p class="shep-intro">(.*?)</p>', header).group(1)
+    assert intro == dsp.INTRO and "<" not in intro
+    assert "SHA-256" not in intro and "split_manifest" not in intro and "fingerprint" not in intro
+    table = dsp.table_html(data, None, "demo")
+    head = re.search(r"<thead>(.*?)</thead>", table).group(1)
+    assert re.findall(r'data-help="([^"]+)"', head) == ["dataset-fingerprint", "datasets-in-use"]
+    assert 'data-help' not in header
+    # The footnote is gone; its words are the In use ⓘ's, without a file or
+    # field name, within the help budget (the skill's §7).
+    assert not hasattr(dsp, "FOOTNOTE")
+    text = dsp.PAGE_HELP["datasets-in-use"][1]
+    assert h.budget_problems(text) == ()
+    for internal in ("current_data_dir", "workspace_build", ".json", "Ref:"):
+        assert internal not in text, internal
+    assert "gated" not in dsp.USE_NOTE and "Start" not in dsp.USE_NOTE
+
+
+def test_a_row_is_one_line_and_in_use_is_no_input_box(root, monkeypatch):
+    """R-36: on ba6e85e a row was two or three lines (75 px at 1850 x 960):
+    "UTC" wrapped under the date, train and val were stacked, the record's
+    mark and word split, and "in your Training run bar" was a white box with
+    a grey border, the look of a text field. Now the columns are Name, Built
+    (UTC), Dataset fingerprint, Sources, Train / val and In use, each cell one
+    line; the run-bar marker is the shared OK mark (shape and word, no box);
+    "not trainable" is the run bar's grey tag; Origin and Record moved to the
+    details' header. The browser test below measures the rows."""
+    from src.webui.components import renderers as r
+
+    _serving(monkeypatch, str(root / "demo"))
+    data = dsp.read_datasets()
+    html = dsp.table_html(data, "resampled", "demo")
+    heads = [re.sub(r"<[^>]+>", "", th) for th in re.findall(r"<th[^>]*>(.*?)</th>", html)]
+    assert heads == ["Name", "Built (UTC)", "Dataset fingerprint", "Sources", "Train / val", "In use"]
+    row = next(x for x in data["rows"] if x["name"] == "resampled")
+    built = r.built_date(row["build"])
+    assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d", built)
+    cells = _row(html, "resampled")
+    assert f'<td class="shep-nowrap">{built}</td>' in cells and "UTC" not in cells
+    assert '<td class="shep-num shep-nowrap">20 / 5</td>' in cells
+    assert r.status_mark("ok", "in your Training run bar") in cells
+    for retired in ("shep-mark-outline", "shep-mark-grey", "shep-mark-serve-same", "shep-ds-wide",
+                    "shep-ds-narrow"):
+        assert retired not in html, retired
+    assert "<div" not in html.split("<tbody>")[1]                     # no second line in a cell
+    assert '<span class="shep-sub">same dataset as served</span>' in _row(html, "demo_copy")
+    scratch = next(x for x in data["rows"] if x["name"] == "scratch_ws")
+    assert r.not_trainable_chip(scratch) in _row(html, "scratch_ws")
+    assert r.not_trainable_chip(scratch) in r.dataset_identity_html(scratch)   # the run bar's form
+
+
+def test_origin_record_and_sources_have_one_form_and_the_details_name_no_row(
+        root, monkeypatch):
+    """R-53 and B51-h: on ba6e85e "synthetic" was an amber chip in the table
+    and muted text in the details header, the record "● Verified" in the
+    table and a green "● record verified" chip in the header and the run
+    bar, Sources "—" in the table and "none (synthetic)" in the details, and
+    the details header repeated the selected row's name, record and origin
+    beside it. Now origin and record show once, in the details' header, by
+    the run bar's own renderer; Sources is one renderer and "none
+    (synthetic)" is never "—"; the header names the row by its relation."""
+    from src.webui.components import renderers as r
+
+    _serving(monkeypatch, None)
+    data = dsp.read_datasets()
+    row = next(x for x in data["rows"] if x["name"] == "demo")
+    table, details = dsp.table_html(data, None, "demo"), dsp.details_html(data, "demo")
+    marks = r.dataset_marks_html(row)
+    assert marks == r.chip("synthetic", "amber") + r.record_chip(row)
+    assert marks in r.dataset_identity_html(row)                             # the run bar
+    head = re.search(r'<div class="shep-panel-hd">(.*?)</div>', details).group(1)
+    assert head == f"<h2>{dsp.DETAILS_TITLE}</h2>{marks}" and "demo" not in head
+    assert "synthetic" not in table.replace(r.SYNTHETIC_SOURCES, "")
+    for record in ("record verified", "Verified", r.record_chip(row)):
+        assert record not in table, record
+    for name in ("demo", "resampled", ODD):
+        assert f'<td class="shep-ds-src">{r.SYNTHETIC_SOURCES}</td>' in _row(table, name), name
+    assert r.SYNTHETIC_SOURCES not in details                     # the row beside it says it
+
+
+def test_what_the_run_bar_marker_means_is_said_once(root, monkeypatch):
+    """B51-h: on ba6e85e the page said three times what "in your Training run
+    bar" means (the marker, a footnote, and the note beside Use for
+    training). The note beside the button says it now; the In use ⓘ names
+    the button instead."""
+    _serving(monkeypatch, None)
+    data = dsp.read_datasets()
+    shown = (dsp.header_html(data) + dsp.table_html(data, "demo", "demo")
+             + dsp.details_html(data, "demo") + dsp.use_note_html(data, "demo"))
+    assert shown.count("browser tab") == 1 and dsp.USE_NOTE in shown
+    assert "nothing on the server" not in shown.lower()
+    table = dsp.table_html(data, "demo", "demo")
+    assert table.count("in your Training run bar") == 1                        # the marker
+    bubble = dsp.PAGE_HELP["datasets-in-use"][1]
+    assert "browser tab" not in bubble and "Use for training ›" in bubble
 
 
 def test_long_names_wrap_at_every_size_so_in_use_stays_in_view():
@@ -293,8 +430,9 @@ def test_the_page_refreshes_when_opened_and_rows_select_their_details(root, monk
     demo, ctx, fns = _page()
     refresh = fns["_refresh"]
     data, chosen, header, table, details, use, note = refresh.fn(None, None)
-    assert chosen == data["rows"][0]["name"] and "5 workspaces on the server" in header
-    assert "read-only" not in header
+    assert chosen == data["rows"][0]["name"]
+    assert '<h2>Workspaces <span class="shep-muted">(5)</span></h2>' in header
+    assert "read-only" not in header and "Datasets" not in header
     assert use["interactive"] is True and dsp.USE_NOTE in note
     select = fns["_select"]
 
@@ -303,7 +441,10 @@ def test_the_page_refreshes_when_opened_and_rows_select_their_details(root, monk
 
     key, table, details, use, note = select.fn(data, None, Event())
     assert key == "scratch_ws" and use["interactive"] is False
-    assert "Not trainable" in details
+    # Its reason once in the details: the line that says the manifest was not
+    # read, not again as a "Not trainable" row.
+    why = next(x for x in data["rows"] if x["name"] == "scratch_ws")["not_trainable"]
+    assert "The manifest was not read" in details and details.count(why) == 1
     # Disabled, with the reason beside it as visible text (M5-3).
     assert "Not available: scratch_ws is not trainable — no split manifest." in note
     assert dsp.USE_NOTE not in note
@@ -412,12 +553,22 @@ def test_the_training_popover_and_datasets_show_one_details_body(root, monkeypat
     data = dsp.read_datasets()
     row = next(x for x in data["rows"] if x["name"] == "demo")
     body = r.dataset_details_html(row, row["facts"], problem=row["facts_problem"])
-    assert "diseases (train / val)" in body and "What the manifest binds" in body
+    assert "Diseases (train / val)" in body and "Manifest contents (7 files)" in body
     assert body in dsp.details_html(data, "demo")
     state = tc.workspace_state("demo")
     assert state["facts"] == row["facts"]
-    assert r.dataset_details_html(state["row"], state["facts"]) in tc.details_html(state)
+    popover = r.dataset_details_html(state["row"], state["facts"], popover=True)
+    assert popover in tc.details_html(state)
     assert body == r.dataset_details_html(state["row"], state["facts"])
+    # The one body, by where it stands: a popover, which stands alone, says
+    # what Datasets' row shows beside its details, and lists the manifest's
+    # files open (no disclosure inside a popover, the skill's §1.5) in the
+    # same list.
+    for key in ("Built (UTC)", "Sources", "Samples (train / val)"):
+        assert f'<dt class="shep-k">{key}</dt>' in popover and key not in body, key
+    assert "<details" not in popover and "<details" in body
+    files = re.search(r'<dl class="shep-kv shep-kv-2">.*?</dl>', body, re.S).group(0)
+    assert files in popover
 
 
 def test_no_page_reaches_into_another_page_or_the_renderers_private_names():
@@ -631,3 +782,104 @@ def test_a_workspace_no_version_was_mapped_against_says_where_versions_come_from
     html = dsp.details_html(data, "demo")
     assert "No data version is mapped against this workspace’s graph yet." in html
     assert dsp.IMPORT_LINE in html
+
+
+# --------------------------------------------------------------------------- in a browser
+#: Research › Datasets in a browser at the owner's window (1850 x 960), then
+#: narrow (960 x 1080): a row chosen and put in the Training run bar ("Use for
+#: training ›", then back), each step waited for by what it draws (the row's
+#: `aria-current`, the Training tab selected, the marker drawn) and the page's
+#: queue idle (`QUEUE_JS`), never by a fixed time.
+_DATASETS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [960, 1080]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
+      && window.__shepQueue.joins.every((j) => j.event_id !== null), null, { timeout: 60000 });
+    await page.goto(process.argv[2], { waitUntil: 'load' });
+    await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+    await idle();
+    await page.click('#shep-tab-research-button');
+    await page.click('#shep-page-datasets-button');
+    await page.waitForSelector('#shep-ds-table tr[data-key="demo"]', { timeout: 60000 });
+    await idle();
+    // The name cell: a click on the row's Copy copies, it does not select.
+    await page.click('#shep-ds-table tr[data-key="demo"] td:first-child');
+    await page.waitForSelector('#shep-ds-table tr[data-key="demo"][aria-current="true"]');
+    await idle();
+    await page.waitForFunction(() => !document.querySelector('#shep-ds-use').disabled);
+    await page.click('#shep-ds-use');
+    await page.waitForSelector('#shep-page-training-button[aria-selected="true"]');
+    await idle();
+    await page.click('#shep-page-datasets-button');
+    await page.waitForFunction(() => {
+      const cell = document.querySelector('#shep-ds-table tr[data-key="demo"] td.shep-ds-use');
+      return !!cell && cell.textContent.includes('in your Training run bar');
+    }, null, { timeout: 60000 });
+    await idle();
+    out[w] = await page.evaluate(() => {
+      const drawn = (e) => e.getClientRects().length > 0;
+      const text = document.getElementById('shep-page-datasets').innerText;
+      const boxes = [...document.querySelectorAll('#shep-ds-table td.shep-ds-use *')].filter((e) => {
+        const cs = getComputedStyle(e);
+        return drawn(e) && cs.backgroundColor === 'rgb(255, 255, 255)' && parseFloat(cs.borderTopWidth) > 0;
+      }).map((e) => e.textContent);
+      const head = document.querySelector('#shep-ds-details .shep-panel-hd');
+      const sx = document.scrollingElement;
+      return {
+        rows: [...document.querySelectorAll('#shep-ds-table tr[data-key]')].map((tr) =>
+          [tr.getAttribute('data-key'), tr.getBoundingClientRect().height]),
+        boxes,
+        title: document.querySelector('#shep-ds-header h2').innerText,
+        tab: document.querySelector('#shep-page-datasets-button').innerText.trim(),
+        head: head.innerText,
+        tabMeaning: text.split('browser tab').length - 1,
+        hex64: (text.match(/\b[0-9a-f]{64}\b/g) || []).length,
+        cards: [...document.querySelectorAll('#shep-ds-details .shep-card')].filter(drawn).length,
+        sideways: sx.scrollWidth - sx.clientWidth,
+      };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_in_a_browser_rows_are_one_line_and_each_fact_is_said_once(root, tmp_path, monkeypatch):
+    """R-36, R-30, R-35 and B51-h as the dashboard draws them (Node and
+    Playwright, skipped without). On ba6e85e at 1850 x 960 a row was 62 to
+    75 px, "in your Training run bar" a white box with a grey border, the
+    first panel titled "Datasets" under the "Datasets" tab, the details
+    header "demo ● record verified synthetic" beside the selected row, the
+    full 64-hex fingerprint in a bordered card's panel, and what the run-bar
+    marker means said three times. Now every row is at most 40 px, no In use
+    mark is a white bordered box, the title is "Workspaces (5)", the details
+    header names no row, no 64 hex and no inner card are drawn, the marker's
+    meaning is said once, and the page never scrolls sideways (narrow
+    too)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    _serving(monkeypatch, None)
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_DATASETS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    wide = seen["1850"]
+    assert len(wide["rows"]) == 5 and all(h <= 40 for _key, h in wide["rows"]), wide["rows"]
+    for width, facts in seen.items():
+        assert facts["boxes"] == [], (width, facts["boxes"])
+        assert facts["title"] == "Workspaces (5)" and facts["tab"] not in facts["title"], width
+        assert facts["head"].startswith(dsp.DETAILS_TITLE) and "demo" not in facts["head"], width
+        assert facts["hex64"] == 0 and facts["cards"] == 0, width
+        assert facts["tabMeaning"] == 1, width
+        assert facts["sideways"] == 0, width

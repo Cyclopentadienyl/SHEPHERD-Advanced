@@ -102,6 +102,50 @@ def test_without_a_build_record_the_sources_releases_are_shown():
     assert "synthetic" not in html
 
 
+def test_a_workspaces_sources_counts_and_build_time_read_one_way_wherever_shown():
+    """R-53 (the WebUI ledger): Research › Datasets showed a synthetic
+    build's sources as "—" in its table and "none (synthetic)" in its
+    details. One renderer now says them (`sources_html`): each declared
+    release, "none (synthetic)", or the record's own missing state, never
+    "—"; train / val as one value (`pair_text`), the build time without its
+    zone, said once in the key (`built_date`)."""
+    assert r.sources_html(workspace()) == r.SYNTHETIC_SOURCES == "none (synthetic)"
+    declared = workspace(origin="files", releases=({"role": "hpo", "declared_version": "2026-09-01"},))
+    assert r.sources_html(declared) == "HPO 2026-09-01"
+    assert r.sources_html(workspace(origin="files")) == r.status_mark("neutral", r.NOT_RECORDED)
+    assert r.sources_html(workspace(origin=None, binding="unrecorded")) == r.status_mark(
+        "neutral", r.NOT_RECORDED)
+    assert r.sources_html(workspace(origin=None, binding=None)) == r.status_mark("neutral",
+                                                                                 r.UNKNOWN)
+    absent = {**workspace(origin=None, binding=None), "manifest": "absent"}
+    assert r.sources_html(absent) == r.status_mark("neutral", r.NOT_RECORDED)
+    assert r.sources_html(workspace(origin="files", releases=({"role": "<b>x", "declared_version":
+                                                               "1"},))) == "&lt;B&gt;X 1"
+    assert r.pair_text(200, 50) == "200 / 50" and r.pair_text(1200, None) == "1,200 / not recorded"
+    assert r.pair_text(None, None) == "not recorded"
+    assert r.built_date({"state": "recorded", "built_at": "2026-10-15T09:41:00Z"}) == (
+        "2026-10-15 09:41")
+    assert r.built_date({"state": "not_recorded", "built_at": None}) is None
+
+
+def test_origin_record_and_not_trainable_are_one_renderer_for_the_run_bar_and_datasets():
+    """R-53: the run bar's identity line and Research › Datasets' selected
+    workspace draw origin and record by one renderer (`dataset_marks_html`),
+    and "not trainable" by one (`not_trainable_chip`, its whole reason in its
+    title), so a state never reads two ways on one screen."""
+    item = workspace()
+    marks = r.dataset_marks_html(item)
+    assert marks == r.chip("synthetic", "amber") + r.record_chip(item)
+    assert marks in r.dataset_identity_html(item)
+    assert r.dataset_marks_html(workspace(origin="files")) == r.record_chip(workspace(origin="files"))
+    assert r.dataset_marks_html(workspace(origin=None, fingerprint=None, binding=None)) == ""
+    refused = workspace(trainable=False, not_trainable="files its <b>manifest</b> binds are missing")
+    chip = r.not_trainable_chip(refused)
+    assert chip == r.chip("not trainable: files its <b>manifest</b> binds are missing", "grey",
+                          title="files its <b>manifest</b> binds are missing")
+    assert "<b>" not in chip and chip in r.dataset_identity_html(refused)
+
+
 def test_marks_synthetic_verified_and_not_trainable():
     html = r.dataset_identity_html(workspace())
     assert 'shep-tag-amber">synthetic<' in html and "record verified" in html

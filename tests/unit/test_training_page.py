@@ -372,8 +372,8 @@ def test_the_chip_shows_the_dataset_and_its_details_escaped_without_a_path(root)
     assert fingerprint[:12] in html and 'data-copy="' + fingerprint + '"' in html
     assert "record verified" in html and "synthetic" in html
     assert 'data-act="details"' in html and 'data-act="datasets"' in html
-    assert "What the manifest binds" in html and "allocation seed" in html
-    assert "(in the server’s workspace root)" in html
+    assert "Manifest contents (7 files)" in html and "Allocation seed" in html
+    assert "Built (UTC)" in html and "workspace root" not in html
     assert str(root) not in html
     # Running: the select is the job's, and says so.
     assert "in use by the running job" in tc.chip_html(state, in_use=True)

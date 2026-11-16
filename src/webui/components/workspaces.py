@@ -108,10 +108,12 @@ def workspaces_root(environ: Optional[Mapping[str, str]] = None
     return None, redact(setting.problem, None)
 
 
-#: What the manifest binds, by its role names, as the details show them.
-BOUND_ROLES = (("kg", "kg"), ("node_features", "node_features"), ("edge_indices", "edge_indices"),
-               ("num_nodes", "num_nodes"), ("train_samples", "train_samples"),
-               ("val_samples", "val_samples"), ("provenance", "record"))
+#: What the manifest binds: each file's role in the manifest and its plain
+#: name, as the details show it ("Manifest contents", the WebUI skill's §5:
+#: no file or field name as a label).
+BOUND_ROLES = (("kg", "Graph"), ("node_features", "Node features"), ("edge_indices", "Edge index"),
+               ("num_nodes", "Node counts"), ("train_samples", "Train samples"),
+               ("val_samples", "Val samples"), ("provenance", "Dataset record"))
 
 
 def manifest_facts(directory: Path, root: Optional[Path]
