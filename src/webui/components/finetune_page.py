@@ -131,6 +131,7 @@ from src.webui.components.workspaces import read_workspaces, redact, workspaces_
 from src.webui.operator_access import operator_access
 from src.webui.shell import FINETUNE as PAGE
 from src.webui.shell import page_elem_id, picked, plain_html
+from src.webui.style import SIDE
 
 logger = logging.getLogger(__name__)
 
@@ -1443,7 +1444,11 @@ PAGE_CSS = f"""
 {_PAGE} #ft_stop_text {{ flex: 1 1 320px !important; }}
 {_PAGE} .shep-rb-confirm-q {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-radius: 8px; padding: 8px 12px; font-size: 15px; }}
 {_PAGE} .shep-html svg {{ display: inline-block; vertical-align: -2px; }}
-@media (min-width: 1400px) and (min-height: 760px) {{
+/* The two panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the form's
+   base summary list keeps its key column whole from 480 px; the job's card and tables fit in 440. */
+{_PAGE} #shep-ft-form {{ --shep-panel-min: 480px; }}
+{_PAGE} #shep-ft-job {{ --shep-panel-min: 440px; }}
+{SIDE} {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
   {_PAGE} #ft_form_bd, {_PAGE} #ft_job_bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
   {_PAGE} #ft_form_bd > *, {_PAGE} #ft_job_bd > * {{ flex-shrink: 0 !important; }}

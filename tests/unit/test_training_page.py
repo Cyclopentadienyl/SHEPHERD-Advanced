@@ -2561,8 +2561,11 @@ def test_the_page_styles_hold_the_reviewed_layout():
     from src.webui.style import SHELL_CSS
 
     css = tc.PAGE_CSS
-    # The build time wraps with the chip, never hidden.
-    assert not [b for _s, b in _rules(css, "shep-ds-built") if "display: none" in b]
+    # R-38: the run bar is one row at 1850 x 960 only without the build time beside the
+    # fingerprint: it is the Details popover's (one click away, `details_html`), never cut.
+    built = [(sel, b) for sel, b in _rules(css, "shep-ds-built") if "display: none" in b]
+    assert built and all(".shep-rb-chip " in sel for sel, _b in built), built
+    assert "built_text(row.get(\"build\"))" in Path(tc.r.__file__).read_text()
     # The selects: the shared field border (R-8: never a page's own, which was
     # #cdd2da at 1.52:1), the text clear of the chevron, grey while disabled.
     assert not any("border:" in b for _s, b in _rules(css, "#shep-train-dataset .wrap:has"))
@@ -2577,10 +2580,12 @@ def test_the_page_styles_hold_the_reviewed_layout():
     why = [b for s, b in _rules(css, ".shep-rb-why") if s == f"{tc._PAGE} .shep-rb-why"]
     assert any("flex-wrap: nowrap" in b for b in why) and not any("flex-wrap: wrap" in b for b in why)
     # A failed run's tail: four lines at a time when wide, never an inner scroll when narrow.
-    narrow = css[css.index("@media (max-width: 1399px), (max-height: 759px)"):]
+    from tests.unit.test_webui_shell import side, stack
+
+    narrow = stack(css)
     assert ".shep-banner-tail {{ max-height: none; overflow: visible; }}".replace(
         "{{", "{").replace("}}", "}") in narrow
-    wide = css[css.index("@media (min-width: 1400px) and (min-height: 760px)"):]
+    wide = side(css)
     assert "#shep-train-runview > #shep-train-charts { flex: 1 1 0 !important; min-height: 0 !important; overflow: hidden !important;" in wide
     # A failed run's banner takes height: the plots keep their minimum then too
     # (M5-3: one minimum per plot box replaced the charts' 240/370 px).
@@ -2675,8 +2680,9 @@ def test_extra_epochs_sits_above_every_check_result():
     body = by_id["shep-train-drawer-bd"].children
     assert body.index(row) < body.index(by_id["shep-train-compare"]) < body.index(
         by_id["continue_preview"])
-    wide = tc.PAGE_CSS[tc.PAGE_CSS.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
-    wide = wide.replace(f"{tc._PAGE} ", "")
+    from tests.unit.test_webui_shell import side
+
+    wide = side(tc.PAGE_CSS).replace(f"{tc._PAGE} ", "")
     assert ("#continue_operation, #continue_source, #continue_device { display: flex "
             "!important;") in wide
     assert "#checkpoint_dropdown .container { display: flex;" not in wide   # labels above
@@ -2704,8 +2710,8 @@ def test_the_details_popover_is_drawn_over_the_parameter_labels():
     "Batch Size", "Device" and "Seed" (Gradio's z-index 40) were drawn on the
     popover, which sits in the chip (z-index 20)."""
     assert tc.CHIP_Z_INDEX > 40
-    assert (f"#shep-train-chip {{ flex: 1 1 360px !important; position: relative; "
-            f"z-index: {tc.CHIP_Z_INDEX}; }}") in tc.PAGE_CSS
+    assert (f"#shep-train-chip {{ flex: 0 1 340px !important; min-width: 0 !important; "
+            f"position: relative; z-index: {tc.CHIP_Z_INDEX}; }}") in tc.PAGE_CSS
 
 
 def test_the_drawers_start_sits_in_its_footer_beside_its_reason():
@@ -2756,9 +2762,10 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     The floor was raised from 140 with the room B1b took back (measured in a
     browser: all four plots and their axes in view at 1850 x 960)."""
     assert tc.PLOT_MIN_HEIGHT >= 170
+    from tests.unit.test_webui_shell import side
+
     css = tc.PAGE_CSS
-    wide = css[css.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
-    wide = wide[:wide.index("\n}\n")]
+    wide = side(css)
     plot_box = tc.PLOT_MIN_HEIGHT + tc.PLOT_AXIS_ROOM
     assert f"#shep-train-charts .shep-chart-plot {{ min-height: {plot_box}px; }}" in wide
     assert "#shep-train-charts .shep-charts-grid { grid-auto-rows: minmax(min-content, 1fr); }" in wide

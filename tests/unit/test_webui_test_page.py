@@ -2631,8 +2631,10 @@ def test_the_page_is_registered_with_its_style_sheet():
     assert tp.PAGE_CSS in app.PAGE_CSS and tp.PAGE_CSS in app.dashboard_head()
     for value, unit in re.findall(r"font-size:\s*([0-9.]+)(px|rem|em)", tp.PAGE_CSS):
         assert unit == "px" and float(value) >= 14
+    from src.webui.style import SIDE, STACK
+
     selectors = [sel.strip() for head in re.findall(r"([^{}]+)\{", tp.PAGE_CSS)
-                 if not head.strip().startswith("@") for sel in head.split(",")]
+                 if not head.strip().startswith(("@", SIDE, STACK)) for sel in head.split(",")]
     assert selectors and all(sel.startswith("#shep-page-test ") for sel in selectors), selectors
 
 
@@ -3138,8 +3140,9 @@ def test_the_run_panels_foot_keeps_start_the_jobs_state_and_cancel_out_of_its_on
                 regions.append(selector.strip())
     # The body is the panel's one scroll region.
     assert regions == [".shep-test-col > .shep-test-bd"]
-    wide = tp.PAGE_CSS[tp.PAGE_CSS.index("@media (min-width: 1400px)"):]
-    wide = wide[:wide.index("@media (max-width: 1399px)")]
+    from tests.unit.test_webui_shell import side
+
+    wide = side(tp.PAGE_CSS)
     assert re.search(r"\.shep-test-col > \.shep-test-bd \{ flex: 1 1 auto !important; "
                      r"min-height: 0; overflow: auto !important;", wide)
     # The foot keeps its own height, the body taking what is left.
@@ -3149,8 +3152,9 @@ def test_the_run_panels_foot_keeps_start_the_jobs_state_and_cancel_out_of_its_on
 def test_the_import_drawer_lies_over_the_panels_at_every_size():
     """Wide, the drawer covers the panels' right side; narrow, the window. Its
     body scrolls inside it under its title either way."""
-    wide, narrow = tp.PAGE_CSS.split("@media (max-width: 1399px)")
-    wide = wide[wide.index("@media (min-width: 1400px)"):]
+    from tests.unit.test_webui_shell import side, stack
+
+    wide, narrow = side(tp.PAGE_CSS), stack(tp.PAGE_CSS)
     assert "{ position: fixed !important;" in narrow.split(".shep-test-drawer ", 1)[1]
     assert re.search(r"\.shep-test-drawer > \.shep-test-bd \{[^}]*overflow: auto", narrow)
     # Over the panels, Gradio's own field labels included (position: relative;
@@ -3191,8 +3195,9 @@ def test_add_note_sits_at_the_result_panels_foot_outside_the_scrolling_report():
     for field in ("shep-test-note-who", "shep-test-note-what", "shep-test-note-add",
                   "shep-test-note-reason"):
         assert inside(by_id["shep-test-noteform"], field), field
-    wide = tp.PAGE_CSS.split("@media (max-width: 1399px)")[0]
-    wide = wide[wide.index("@media (min-width: 1400px)"):]
+    from tests.unit.test_webui_shell import side
+
+    wide = side(tp.PAGE_CSS)
     assert re.search(r"#shep-test-noteform \{[^}]*max-height: 50%[^}]*overflow: auto", wide)
 
 

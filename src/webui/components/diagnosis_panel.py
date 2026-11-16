@@ -126,7 +126,7 @@ from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.components.renderers import STATUS_MARKS as _STATUS_MARKS
 from src.webui.components.renderers import status_mark as _status_mark
 from src.webui.operator_access import operator_access
-from src.webui.style import sticky_room_js
+from src.webui.style import SIDE, SIDE_SHORT, STACK
 
 logger = logging.getLogger(__name__)
 
@@ -3133,7 +3133,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                         with gr.Row(elem_id="shep-dx-card-hd", elem_classes=["shep-dx-card-hd"]):
                             plain_html('<span class="shep-dx-card-title">Model in use</span>'
                                        + help_button("dx-card", "Model in use"),
-                                       elem_id="shep-dx-card-title", js_on_load=STICKY_JS)
+                                       elem_id="shep-dx-card-title")
                             # "checked HH:MM:SS ↻" stay together: on a narrow column
                             # they move under the title as one, at its right.
                             with gr.Row(elem_id="shep-dx-card-when",
@@ -3549,22 +3549,16 @@ def create_diagnosis_tab(ctx: Any) -> None:
 # =============================================================================
 # The page's style sheet (the page contract: listed in `src/webui/app.py`)
 # =============================================================================
-#: The sticky block's height as ``--shep-dx-sticky-h`` on the input column's
-#: scroll region (`style.sticky_room_js`, the one script for a sticky block's
-#: room): the region's ``scroll-padding-bottom`` (`PAGE_CSS`), so a control
-#: focused in the region scrolls above the Model-in-use card and the Run row
-#: instead of under them (K6 closing smoke, 1536 x 760). Run by a component
-#: inside the block (its title), once per mount.
-STICKY_JS = sticky_room_js("#shep-dx-sticky", "#shep-dx-input-bd", "--shep-dx-sticky-h")
-
 #: The page's tab (`src.webui.shell.tab_elem_id(CLINICAL)`).
 _TAB = "#shep-tab-clinical"
 
 #: Diagnosis' layout: the input column 370 px wide from 1800 px of window, 320
 #: px from 1600, 300 px below; the candidates and the details share the rest
-#: 5:4. Wide, each panel scrolls inside and the input column's card and Run
-#: Diagnosis stick to the bottom of its scroll body, which keeps their height
-#: as its scroll padding (`STICKY_JS`); narrow, the panels stack.
+#: 5:4. Side by side (the shell's one layout decision), each panel scrolls
+#: inside; in the input column the fields are its one scroll region and the
+#: Model-in-use card and Run Diagnosis are its foot, in flow under them, never
+#: over them (R-25: a sticky card hid the HPO box's lower lines and its caret
+#: at 1536 x 760 once it held 8 lines); stacked, the panels stack.
 #: While the Load confirmation is open (UI-A's confirmation box is mounted only
 #: then) the list's footer is hidden and its rows give up their height to it
 #: (all of it below 820 px of height), so the from → to rows and the warning
@@ -3575,8 +3569,13 @@ PAGE_CSS = f"""
 @media (min-width: 1800px) {{ {_TAB} {{ --dx-in-w: 370px; }} }}
 {_TAB} #shep-dx {{ position: relative; gap: 16px; align-items: stretch; }}
 {_TAB} #shep-dx-input {{ flex: 0 0 var(--dx-in-w) !important; width: var(--dx-in-w); max-width: var(--dx-in-w); }}
-{_TAB} #shep-dx-results {{ flex: 5 1 0 !important; min-width: 0 !important; }}
-{_TAB} #shep-dx-details {{ flex: 4 1 0 !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-results {{ flex: 5 1 0 !important; }}
+{_TAB} #shep-dx-details {{ flex: 4 1 0 !important; }}
+/* The three panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the input
+   column's own width at its narrowest; the candidates' table whole from 490 px; the details. */
+{_TAB} #shep-dx-input {{ --shep-panel-min: 300px; }}
+{_TAB} #shep-dx-results {{ --shep-panel-min: 490px; }}
+{_TAB} #shep-dx-details {{ --shep-panel-min: 380px; }}
 {_TAB} .shep-dx-scroll {{ gap: 12px !important; padding: 14px 16px !important; }}
 {_TAB} .shep-dx-scroll > * {{ flex-shrink: 0 !important; }}
 {_TAB} #shep-dx-input-bd {{ padding-top: 12px !important; padding-bottom: 0 !important; gap: 0 !important; }}
@@ -3600,7 +3599,7 @@ PAGE_CSS = f"""
 {_TAB} #dx_top_k [data-testid="block-info"] {{ margin: 0; }}
 {_TAB} #dx_top_k input[type=number] {{ width: 72px; }}
 {_TAB} #shep-dx-input-bd > *, {_TAB} #shep-dx-sticky > *, {_TAB} #shep-dx-card > * {{ flex: none !important; }}
-{_TAB} .shep-dx-sticky {{ position: sticky; bottom: 0; z-index: 50; gap: 0 !important; margin: 0 -16px !important;
+{_TAB} .shep-dx-sticky {{ gap: 0 !important; margin: 0 -16px !important;
   width: calc(100% + 32px) !important; max-width: none !important; background: var(--shep-panel); }}
 {_TAB} .shep-dx-card {{ background: var(--shep-panel-2); border-top: 1px solid var(--shep-border);
   border-bottom: 1px solid var(--shep-border); padding: 5px 16px 6px !important; gap: 3px !important; }}
@@ -3765,12 +3764,14 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-foot {{ display: none !important; }}
 {_TAB} #shep-dx-change .shep-confirm .shep-ftbl th, {_TAB} #shep-dx-change .shep-confirm .shep-ftbl td {{ padding-top: 5px; padding-bottom: 5px; }}
 {_TAB} #shep-dx-change .shep-confirm .shep-ftbl tbody th {{ white-space: nowrap; }}
-@media (min-width: 1400px) and (min-height: 760px) {{
+{SIDE} {{
   {_TAB} > .column {{ height: 100%; box-sizing: border-box; }}
   {_TAB} #shep-dx {{ height: 100%; }}
   {_TAB} #shep-dx > .shep-panel {{ max-height: 100%; }}
   {_TAB} .shep-dx-scroll {{ flex: 1 1 auto !important; min-height: 0; overflow: auto; }}
-  {_TAB} #shep-dx-input-bd {{ display: flex; flex-direction: column; scroll-padding-bottom: var(--shep-dx-sticky-h, 0px); }}
+  {_TAB} #shep-dx-input-bd {{ display: flex; flex-direction: column; flex-wrap: nowrap !important; }}
+  {_TAB} #shep-dx-input-bd > #shep-dx-fields {{ flex: 0 1 auto !important; min-height: 0; overflow: auto; flex-wrap: nowrap !important; }}
+  {_TAB} #shep-dx-fields > *, {_TAB} #shep-dx-side > * {{ flex-shrink: 0 !important; }}
   {_TAB} .shep-dx-drawer {{ position: absolute !important; top: 0; bottom: 0; z-index: 20; }}
   {_TAB} #shep-dx-identity {{ right: 0; width: max(600px, calc((100% - var(--dx-in-w) - 32px) * 4 / 9 + 16px)); }}
   {_TAB} #shep-dx-change {{ left: calc(var(--dx-in-w) + 16px); right: 0; }}
@@ -3783,13 +3784,12 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx-change .shep-model-confirm-box > .row {{ flex: none !important; }}
   {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-body {{ min-height: 0 !important; }}
 }}
-@media (min-width: 1400px) and (min-height: 760px) and (max-height: 819px) {{
+{SIDE_SHORT} {{
   {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-body {{ display: none !important; }}
 }}
-@media (max-width: 1399px), (max-height: 759px) {{
+{STACK} {{
   {_TAB} #shep-dx-input, {_TAB} #shep-dx-results, {_TAB} #shep-dx-details {{ flex: 1 1 auto !important; width: 100% !important; max-width: none !important; }}
   {_TAB} .shep-dx-fields {{ display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 18px !important; }}
-  {_TAB} .shep-dx-sticky {{ position: static; }}
   {_TAB} #shep-dx-change .shep-model-body {{ flex-direction: column !important; }}
   {_TAB} #shep-dx-change .shep-model-rows, {_TAB} #shep-dx-change .shep-model-facts {{ width: 100% !important; }}
 }}
@@ -3804,7 +3804,6 @@ __all__ = [
     "FIELD_HELP",
     "PAGE_CSS",
     "SEGMENTS",
-    "STICKY_JS",
     "TASK_OUTPUTS",
     "TASK_VIEWS",
     "TOPIC_HELP",

@@ -529,7 +529,9 @@ def test_the_charts_are_two_by_two_in_the_wide_layout_and_by_their_width_in_the_
     assert "container-type: inline-size;" in css.split(".shep-charts {", 1)[1].split("}", 1)[0]
     one_column = (f"@container (max-width: {charts.TWO_COLUMNS_FROM - 1}px) "
                   "{ .shep-charts-grid { grid-template-columns: minmax(0, 1fr); } }")
-    narrow = css[css.index("@media (max-width: 1399px), (max-height: 759px)"):]
+    from tests.unit.test_webui_shell import stack
+
+    narrow = stack(css)
     assert css.count(one_column) == 1 and one_column in narrow and "height: 260px" in narrow
     assert (".shep-charts-grid { flex: 1 1 auto; min-height: 0; display: grid; "
             "grid-template-columns: repeat(2, minmax(0, 1fr));") in css

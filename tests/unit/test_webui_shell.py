@@ -361,8 +361,10 @@ def test_the_head_carries_the_style_sheets_and_both_scripts():
     extra = "#shep-page-test .x { font-size: 15px; }"
     assert extra in dashboard_head((*PAGE_CSS, extra))
     assert "#shep-ds-table" not in SHELL_CSS          # a page's rules live in its module
-    # The one-screen rule reaches the page frame: it is not left to `css`.
-    assert "@media (min-width: 1400px) and (min-height: 760px)" in head
+    # The one-screen rule reaches the page frame (keyed off the layout pass's
+    # attribute on the root element): it is not left to `css`.
+    from src.webui.style import SIDE, STACK
+    assert SIDE + " {" in head and STACK + " {" in head
     assert "@media" not in options["css"].split("@font-face")[-1]
     assert "</style>" not in SHELL_CSS + HELP_CSS
     assert "IBM Plex Sans" in options["css"]
@@ -482,10 +484,37 @@ def _last_rule(css, selector):
     return css[start + len(selector) + 2:css.index("}", start)]
 
 
-def _wide(css):
-    """The wide layout's block (``@media (min-width: 1400px) and (min-height: 760px)``)."""
-    start = css.index("@media (min-width: 1400px) and (min-height: 760px) {")
-    return css[start:css.index("\n}\n", start)]
+def blocks(css, selector):
+    """Every block of rules nested in `selector` (`style.SIDE`, ``STACK``,
+    ``SIDE_SHORT``: the layout pass's one decision), each from the selector to
+    the brace that closes it, joined."""
+    found, at = [], 0
+    while True:
+        start = css.find(selector + " {", at)
+        if start < 0:
+            return "\n".join(found)
+        depth, i = 0, start
+        while True:
+            depth += {"{": 1, "}": -1}.get(css[i], 0)
+            if depth == 0 and css[i] == "}":
+                break
+            i += 1
+        found.append(css[start:i + 1])
+        at = i + 1
+
+
+def side(css):
+    """The side-by-side rules (`style.SIDE`'s blocks)."""
+    from src.webui.style import SIDE
+
+    return blocks(css, SIDE)
+
+
+def stack(css):
+    """The stacked rules (`style.STACK`'s blocks)."""
+    from src.webui.style import STACK
+
+    return blocks(css, STACK)
 
 
 def test_a_select_value_cut_to_an_ellipsis_carries_its_whole_text_as_title():
@@ -498,7 +527,7 @@ def test_a_select_value_cut_to_an_ellipsis_carries_its_whole_text_as_title():
 
     assert "text-overflow: ellipsis" in _rule(SHELL_CSS, '.gradio-container .wrap-inner input[role="combobox"]')
     head = shell.SHELL_HEAD
-    assert "var TITLED = 'input[role=\"combobox\"], .shep-seg label';" in head
+    assert "var TITLED = 'input[role=\"combobox\"], .shep-seg label, .shep-chip-text';" in head
     assert "box.scrollWidth > box.clientWidth + 1 ? text : ''" in head
     assert "el.removeAttribute('title')" in head
     for event in ("mouseover", "focusin", "input"):
@@ -531,12 +560,10 @@ def test_a_panels_header_sticks_to_the_top_of_the_region_that_scrolls():
     """M5-3: the Test Result panel's title scrolled away with the report."""
     from src.webui.style import SHELL_CSS
 
-    wide = _wide(SHELL_CSS)
-    rule = _rule(wide, "  .shep-panel .shep-panel-hd")
+    rule = _rule(side(SHELL_CSS), "  .shep-panel .shep-panel-hd")
     assert "position: sticky" in rule and "top: 0" in rule and "background: var(--shep-panel)" in rule
-    # never at a narrow size, where the page scrolls
-    narrow = SHELL_CSS[SHELL_CSS.index("@media (max-width: 1399px), (max-height: 759px) {"):]
-    assert "position: sticky" not in narrow
+    # never stacked, where the page scrolls
+    assert "position: sticky" not in stack(SHELL_CSS)
 
 
 def test_the_wrapped_chips_sit_on_their_own_line_under_the_stage_switch():
@@ -557,10 +584,11 @@ def test_the_wrapped_chips_sit_on_their_own_line_under_the_stage_switch():
     assert "top: var(--shep-chips-top, var(--shep-row1-h));" in wrapped
 
 
-#: Opens the dashboard at 480 px, then 760, 1100 and 1850 (a resize runs the
-#: header's layout, as a load does), and reports for each stage tab what
-#: ``document.elementsFromPoint`` finds on top at its centre and four inset
-#: corners: the tab itself or something inside it, or what covers it.
+#: Opens the dashboard at 480 px, then 360, 420, 760, 1100 and 1850 (a resize
+#: runs the header's layout, as a load does), and reports for each stage tab
+#: what ``document.elementsFromPoint`` finds on top at its centre and four
+#: inset corners: the tab itself or something inside it, or what covers it;
+#: and each header chip's left and right edges.
 _HEADER_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
@@ -569,7 +597,7 @@ const { chromium } = require('playwright');
   await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#shep-chips .shep-chips', { timeout: 60000 });
   const out = {};
-  for (const width of [480, 760, 1100, 1850]) {
+  for (const width of [480, 360, 420, 760, 1100, 1850]) {
     await page.setViewportSize({ width, height: 800 });
     await page.waitForTimeout(800);
     out[width] = await page.evaluate(() => {
@@ -590,7 +618,10 @@ const { chromium } = require('playwright');
         }).filter(Boolean);
       }
       return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
-               chips: document.querySelector('#shep-chips .shep-chips').childElementCount, tabs };
+               chips: document.querySelector('#shep-chips .shep-chips').childElementCount, tabs,
+               edges: [...document.querySelectorAll('#shep-chips .shep-chip')].map((c) => {
+                 const r = c.getBoundingClientRect(); return [r.left, r.right]; }),
+               width: document.documentElement.clientWidth };
     });
   }
   console.log(JSON.stringify(out));
@@ -603,9 +634,11 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
     """B5 review: the chips' line was pinned only as source text. In a real
     browser (Node and Playwright, skipped without), the dashboard mounted as
     the service mounts it (`app.mount_options`: its CSS and head script): at
-    480, 760, 1100 and 1850 px each stage tab is what
+    360, 420, 480, 760, 1100 and 1850 px each stage tab is what
     ``document.elementsFromPoint`` finds first at its centre and corners, the
-    chips never over it; at 480 the header has wrapped onto its second line."""
+    chips never over it; at 480 the header has wrapped onto its second line;
+    every chip is inside the window (UI-02: at 360 px the D8 chip's left edge
+    was at -41 px; its words now end in a titled ellipsis inside the room)."""
     import subprocess
 
     from src.webui.app import create_gradio_app, mount_options
@@ -629,6 +662,8 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
         assert facts["chips"] > 0, width
         for tab, covered in facts["tabs"].items():
             assert covered == [], (width, tab, covered)
+        for left, right in facts["edges"]:
+            assert 0 <= left and right <= facts["width"], (width, facts["edges"])
 
 
 
@@ -1267,3 +1302,291 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     assert seen["chip"]["background"] == _rgb(tokens["--shep-amber-50"])
     assert seen["chip"]["color"] == _rgb(tokens["--shep-amber-800"])
     assert any(f["disabled"] for f in seen["fields"])
+
+
+# --------------------------------------------------------------------------- D02 and D03 (T04)
+def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_left():
+    """D02 (FL-UI-02): side by side against stacked was decided by
+    ``(min-width: 1400px) and (min-height: 760px)``, written in 13 media
+    queries and 2 ``matchMedia`` calls over 8 modules, so 1280 x 900 and
+    1920 x 700 stacked and 1440 x 1600 (portrait) did not. The shell's layout
+    pass now makes one decision (the window's shape, then whether the page's
+    panels fit by their own ``--shep-panel-min``) and writes it on the root
+    element; every style sheet and the two scripts read that attribute. No
+    media query or ``matchMedia`` on the window's size decides it any more
+    (the media queries left are content breakpoints and reduced motion).
+    What the browser does with it is
+    `test_one_layout_decision_at_every_size_and_back`'s."""
+    from src.webui.app import dashboard_head
+    from src.webui.components import models_page, training_console
+    from src.webui.style import LAYOUT_ATTR, SHORT_BELOW
+
+    head = dashboard_head()
+    for css in (head, models_page.SCROLL_JS, training_console._BANNER_JS):
+        assert not re.search(r"@media[^{]*(min-width: 1400px|max-width: 1399px|min-height: 760px|"
+                             r"max-height: 759px|max-height: 819px|max-height: 899px)", css), css[:60]
+        assert "matchMedia" not in css
+    assert "document.documentElement.getAttribute('data-shep-layout')" in models_page.SCROLL_JS
+    assert "document.documentElement.getAttribute('data-shep-layout') === 'side'" in training_console._BANNER_JS
+    js = shell.SHELL_HEAD
+    assert f"var LAYOUT = '{LAYOUT_ATTR}'" in js and f"SHORT_BELOW = {SHORT_BELOW}" in js
+    assert "var want = w > h && sideFits(shownTab()) ? 'side' : 'stack';" in js
+    assert "getPropertyValue('--shep-panel-min')" in js
+    for page_css in (head,):
+        assert side(page_css) and stack(page_css)
+    # Every page with panels side by side says what its panels need.
+    from src.webui import app
+
+    for css in app.PAGE_CSS[:6]:
+        assert "--shep-panel-min:" in css or "--shep-mp-list-min:" in css, css[:80]
+
+
+#: The dashboard as the service mounts it, an operator, through a sequence of
+#: window sizes (narrow to wide and back, portrait, square, short): on every
+#: page what the layout pass decided, how the panels sit, what the decision
+#: measured, the page's own scroll, and (at the short sizes) what covers a
+#: control when it takes focus. It waits for the page's own events (QUEUE_JS).
+_LAYOUT_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+const SIZES = [[760, 1000], [1850, 960], [1280, 900], [1920, 700], [1440, 1600], [1000, 1000],
+               [1536, 760], [1080, 1920], [1850, 960]];
+const PAGES = ['clinical', 'datasets', 'training', 'finetune', 'test', 'models', 'settings'];
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 760, height: 1000 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
+                                          && window.__shepQueue.joins.every((j) => j.event_id !== null),
+                                          null, { timeout: 30000 });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const open = async (id) => {
+    if (id === 'clinical' || id === 'settings') {
+      await page.click(`#shep-tab-${id}-button`);
+    } else {
+      if (!(await page.$('#shep-tab-research-button[aria-selected="true"]'))) {
+        await page.click('#shep-tab-research-button');
+      }
+      await page.click(`#shep-page-${id}-button`);
+    }
+    await idle(); await frames();
+  };
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  await idle();
+  const out = [];
+  for (const [w, h] of SIZES) {
+    await page.setViewportSize({ width: w, height: h });
+    for (const id of PAGES) {
+      await open(id);
+      await page.evaluate(() => window.scrollTo(0, 0)); await frames();
+      const seen = await page.evaluate(() => {
+        const outer = document.querySelector('#shep-nav > .tab-wrapper [role="tab"][aria-selected="true"]');
+        let tab = document.getElementById('shep-tab-' + outer.getAttribute('data-tab-id'));
+        if (outer.getAttribute('data-tab-id') === 'research') {
+          const inner = document.querySelector('#shep-research-nav > .tab-wrapper [role="tab"][aria-selected="true"]');
+          tab = document.getElementById('shep-page-' + inner.getAttribute('data-tab-id'));
+        }
+        const drawn = (e) => e.getClientRects().length > 0;
+        let box = [...tab.querySelectorAll('.shep-page')].find(drawn), kids = [];
+        while (box) { kids = [...box.children].filter(drawn); if (kids.length === 1 && kids[0].children.length) { box = kids[0]; } else { break; } }
+        const panels = kids.map((k) => ({ min: parseFloat(getComputedStyle(k).getPropertyValue('--shep-panel-min')) || 0,
+                                          top: Math.round(k.getBoundingClientRect().top), w: k.getBoundingClientRect().width }))
+          .filter((p) => p.min > 0);
+        const gap = box ? parseFloat(getComputedStyle(box).columnGap) || 0 : 0;
+        const se = document.scrollingElement;
+        return { layout: document.documentElement.getAttribute('data-shep-layout'),
+                 short: document.documentElement.hasAttribute('data-shep-short'),
+                 need: panels.reduce((a, p) => a + p.min, 0) + Math.max(0, panels.length - 1) * gap,
+                 width: box ? box.getBoundingClientRect().width + innerWidth - document.documentElement.clientWidth : 0,
+                 tops: panels.map((p) => p.top), narrowest: Math.min(...panels.map((p) => p.w - p.min), 0),
+                 overX: se.scrollWidth - se.clientWidth, overY: se.scrollHeight - innerHeight,
+                 runbar: (() => { const bar = document.getElementById('shep-train-runbar');
+                   if (!bar || !bar.getClientRects().length) { return null; }
+                   const items = ['shep-train-dataset', 'shep-train-chip', 'run_name', 'shep-train-start',
+                                  'shep-train-continue', 'shep-train-stop', 'shep-train-pill']
+                     .map((i) => document.getElementById(i).getBoundingClientRect());
+                   return { h: Math.round(bar.getBoundingClientRect().height),
+                            lines: new Set(items.map((r) => Math.round((r.top + r.bottom) / 2 / 24))).size }; })() };
+      });
+      if ((w === 1536 && h === 760) || (w === 1920 && h === 700)) {
+        seen.covered = await page.evaluate(async () => {
+          const tab = [...document.querySelectorAll('#shep-nav > .tabitem, #shep-research-nav > .tabitem')]
+            .filter((t) => t.getClientRects().length).pop();
+          const covered = [];
+          const controls = [...tab.querySelectorAll('button, input, textarea, [tabindex="0"]')]
+            .filter((c) => c.getClientRects().length && !c.disabled && c.offsetWidth > 2).slice(0, 60);
+          for (const c of controls) {
+            c.focus();
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+            const r = c.getBoundingClientRect();
+            if (r.bottom < 0 || r.top > innerHeight) { continue; }
+            const top = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2)[0];
+            if (!top || c.contains(top) || top.contains(c) || top.closest('#shep-help-bubble')) { continue; }
+            for (let e = top; e && e !== document.body; e = e.parentElement) {
+              const p = getComputedStyle(e).position;
+              if ((p === 'sticky' || p === 'fixed') && !e.contains(c)) { covered.push((c.id || c.textContent.trim().slice(0, 20)) + ' under ' + (e.id || e.className)); break; }
+            }
+          }
+          if (document.activeElement) { document.activeElement.blur(); }
+          return covered;
+        });
+      }
+      out.push({ size: `${w}x${h}`, page: id, ...seen });
+    }
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_one_layout_decision_at_every_size_and_back(tmp_path, monkeypatch):
+    """D02 (FL-UI-02, PTR-LAYOUT in part) in a real browser (Node and
+    Playwright, skipped without), the dashboard as the service mounts it, for
+    an operator, through narrow, wide, short, portrait and square windows and
+    back:
+
+    - no wider than tall (1440 x 1600, 1000 x 1000, 1080 x 1920, 760 x 1000):
+      every page stacked, its panels one under the other;
+    - wider: side by side exactly when the page's panels fit by their own
+      minimum widths (1280 x 900: every page but Datasets, whose table and
+      digest grid need about 1400 px; 1920 x 700: every page, a short window
+      only denser, ``data-shep-short``); side by side, the panels on one line
+      and none narrower than its minimum, and the page itself never scrolls;
+    - never a horizontal page scroll; at the short sizes (1536 x 760,
+      1920 x 700) nothing sticky or fixed over a control when it takes focus;
+    - back at 1850 x 960, the same as the first time; there the Training run
+      bar is one row (R-38)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    script = _LAYOUT_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")], timeout=900)
+    portrait = {"1440x1600", "1000x1000", "1080x1920", "760x1000"}
+    for s in seen:
+        where = (s["size"], s["page"])
+        assert s["overX"] == 0, (where, s)
+        assert s["short"] == (int(s["size"].split("x")[1]) < 900), (where, s)
+        if s["size"] in portrait:
+            want = "stack"
+        elif s["size"] == "1280x900" and s["page"] == "datasets":
+            want = "stack"
+        else:
+            want = "side"
+        assert s["layout"] == want, (where, s)
+        if want == "side":
+            assert s["need"] <= s["width"] + 0.5, (where, s)
+            assert len(set(s["tops"])) <= 1 and s["narrowest"] >= -0.5, (where, s)
+            assert s["overY"] <= 0, (where, s)
+        elif len(s["tops"]) > 1:
+            assert s["tops"] == sorted(s["tops"]) and len(set(s["tops"])) == len(s["tops"]), (where, s)
+        if s["size"] == "1280x900" and s["page"] == "datasets":
+            assert s["need"] > s["width"], s                   # its own measure, no global gate
+        assert s.get("covered", []) == [], (where, s["covered"])
+    first = [s for s in seen if s["size"] == "1850x960"]
+    assert first[:7] == first[7:], (first[:7], first[7:])
+    # R-38: at the owner's window the Training run bar is one row (it was two, 119 px).
+    (training,) = [s for s in first[:7] if s["page"] == "training"]
+    assert training["runbar"]["lines"] == 1 and training["runbar"]["h"] < 90, training["runbar"]
+
+
+#: The shared scroll cue and Compare's bounded box on a page of their own (the
+#: shell's style sheet and head script, and the Models page's style sheet):
+#: a region with more below says so until its end; a Compare taller and wider
+#: than the detail's body keeps its sideways scrollbar in view.
+_CUE_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const [css, js] = [process.argv[2], process.argv[3]].map((p) => require('fs').readFileSync(p, 'utf8'));
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
+  const rows = Array.from({ length: 300 }, (_, i) => `<tr><th scope="row">Field ${i}</th><td>${i}</td><td>${i}</td></tr>`).join('');
+  await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body>
+    <div class="shep-scroll-cue" id="cue" style="height: 200px; overflow: auto;"><div style="height: 900px"></div></div>
+    <div id="shep-page-models"><div id="shep-mp-detail" style="height: 600px; display: flex; flex-direction: column;">
+      <div id="shep-mp-detail-bd" style="flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 16px;">
+        <div class="shep-tbl-wrap shep-rs-wrap"><table class="shep-tbl shep-rs-cmp" style="min-width: 1600px"><thead><tr><th>Field</th><th>A</th><th>B</th></tr></thead><tbody>${rows}</tbody></table></div>
+      </div></div></div>
+    <script>${js}</script></body></html>`);
+  // A layout pass, as the page's own changes start one in the dashboard.
+  await page.evaluate(() => window.ShepShell.update());
+  await page.waitForFunction(() => document.getElementById('cue').hasAttribute('data-shep-more'), null, { timeout: 5000 }).catch(() => {});
+  const cue = () => page.evaluate(() => { const e = document.getElementById('cue');
+    return { more: e.hasAttribute('data-shep-more'), mask: getComputedStyle(e).maskImage !== 'none' }; });
+  const out = { top: await cue() };
+  await page.evaluate(() => { const e = document.getElementById('cue'); e.scrollTop = e.scrollHeight; });
+  await page.waitForFunction(() => !document.getElementById('cue').hasAttribute('data-shep-more'), null, { timeout: 5000 }).catch(() => {});
+  out.end = await cue();
+  for (const layout of ['side', 'stack']) {
+    out[layout] = await page.evaluate((layout) => {
+      document.documentElement.setAttribute('data-shep-layout', layout);
+      const detail = document.getElementById('shep-mp-detail'), body = document.getElementById('shep-mp-detail-bd');
+      if (layout === 'stack') {   // stacked, the detail flows in the page, which scrolls
+        detail.style.height = 'auto'; body.style.overflow = 'visible';
+      }
+      const wrap = body.querySelector('.shep-rs-wrap');
+      wrap.scrollIntoView({ block: 'start' });
+      const b = body.getBoundingClientRect(), r = wrap.getBoundingClientRect();
+      const bottom = layout === 'side' ? Math.min(b.bottom, innerHeight) : innerHeight;
+      return { wrapH: Math.round(r.height), bodyH: Math.round(b.height), sideways: wrap.scrollWidth > wrap.clientWidth,
+               barInView: r.bottom <= bottom + 1 };
+    }, layout);
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp_path):
+    """R-73: Test's Result body scrolled with no cue (overlay scrollbars draw
+    nothing at rest). A region with the shared ``shep-scroll-cue`` fades its
+    last lines while more is below and draws them whole at its end (the head
+    script keeps ``data-shep-more``); Test's Result body has the class.
+    B72-C3: Compare, 12,342 px tall, had its sideways scrollbar at its foot,
+    out of reach mid-table; it is now a box no taller than the region it is
+    read in, so its scrollbar is in view whenever the box is. Both measured
+    in a browser on a page of their own (Node and Playwright, skipped without)."""
+    from src.webui.components import models_page, test_page
+    from src.webui.style import SHELL_CSS
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    assert '"shep-test-bd", "shep-test-bd-flush", "shep-scroll-cue"' in Path(test_page.__file__).read_text()
+    css_path, js_path = tmp_path / "page.css", tmp_path / "head.js"
+    css_path.write_text(SHELL_CSS + models_page.PAGE_CSS, encoding="utf-8")
+    js_path.write_text(shell._SHELL_JS.replace("__TITLES__", "{}").replace("__RESEARCH_LABEL__", '""')
+                       .replace("__LAYOUT__", "data-shep-layout").replace("__SHORT__", "data-shep-short")
+                       .replace("__SHORT_BELOW__", "900"), encoding="utf-8")
+    seen = run_node(_CUE_JS, tmp_path, str(css_path), str(js_path))
+    assert seen["top"] == {"more": True, "mask": True}, seen
+    assert seen["end"] == {"more": False, "mask": False}, seen
+    for layout in ("side", "stack"):
+        box = seen[layout]
+        assert box["sideways"] and box["barInView"], (layout, box)
+        assert box["wrapH"] <= 900, (layout, box)
+    assert seen["side"]["wrapH"] <= seen["side"]["bodyH"], seen
+
+
+def test_the_training_parameters_fold_when_stacked_and_show_side_by_side():
+    """R-60: at 960 x 960 (stacked) the full Parameters panel pushed the run
+    view's first plot below the fold (page scroll 1386 px). Stacked, the
+    parameters start folded under their title, "Show" opening them (its
+    ``aria-expanded``, which the style sheet reads); side by side the body is
+    always shown and the toggle is not. Measured on the demo workspace at
+    960 x 960: the first plot at y 607-867, the page not scrolled."""
+    from src.webui.components import training_console as tc
+
+    assert 'aria-expanded="false" aria-controls="shep-train-params-bd"' in Path(tc.__file__).read_text()
+    assert "b.setAttribute('aria-expanded', open ? 'true' : 'false');" in tc.FOLD_JS
+    assert ('#shep-train-params:has(.shep-train-fold[aria-expanded="false"]) > #shep-train-params-bd '
+            "{ display: none !important; }") in stack(tc.PAGE_CSS)
+    assert ".shep-train-fold { display: none; }" in side(tc.PAGE_CSS)

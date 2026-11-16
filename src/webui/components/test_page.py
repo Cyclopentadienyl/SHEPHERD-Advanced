@@ -207,6 +207,7 @@ from src.webui.components.workspaces import (
 )
 from src.webui.operator_access import operator_access
 from src.webui.shell import page_elem_id, picked, plain_html
+from src.webui.style import SIDE, STACK
 
 logger = logging.getLogger(__name__)
 
@@ -3055,7 +3056,8 @@ def create_test_page(ctx: Any) -> None:
         with gr.Column(elem_classes=["shep-panel", "shep-test-col"], elem_id="shep-test-result",
                        scale=16, min_width=360):
             reports_hd = plain_html(reports_header_html({}), elem_id="shep-test-reports-hd")
-            with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush"]):
+            # Its one scroll region says when there is more below (R-73).
+            with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush", "shep-scroll-cue"]):
                 reports_list = plain_html("", elem_id="shep-test-reports", js_on_load=_REPORTS_JS)
                 result_out = plain_html(result_html({}, None, []), elem_id="shep-test-result-body")
             # The investigation note form (shown while the runs of the report's
@@ -3690,6 +3692,9 @@ _PAGE = "#" + page_elem_id(PAGE)
 #: Result panel's top (32-40 px rows, the skill's §8), in the panel's one scroll
 #: region with the result under it; its header does not stick (the region
 #: scrolls the table away under the result, and nothing sticky covers a row).
+#: The three panels' minimum widths (``--shep-panel-min``, the layout rule's
+#: measure, `src/webui/shell.py`): the version's identity line, the two
+#: checkboxes on one line, the reports' table.
 PAGE_CSS = f"""
 {_PAGE} #shep-test-row {{ position: relative; gap: 12px; }}
 {_PAGE} .shep-test-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
@@ -3765,14 +3770,17 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-more button {{ font: inherit; font-size: 15px; color: var(--shep-accent-text); background: none; border: 0; padding: 2px 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }}
 {_PAGE} .shep-panel-ft > button, {_PAGE} .shep-test-actions > button {{ white-space: nowrap; flex: none !important; }}
 {_PAGE} .shep-panel-ft > .block {{ flex: 1 1 200px !important; min-width: 0 !important; }}
-@media (min-width: 1400px) and (min-height: 760px) {{
+{_PAGE} #shep-test-cohort {{ --shep-panel-min: 315px; }}
+{_PAGE} #shep-test-run {{ --shep-panel-min: 360px; }}
+{_PAGE} #shep-test-result {{ --shep-panel-min: 515px; }}
+{SIDE} {{
   {_PAGE} .shep-test-col > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-test-noteform {{ max-height: 50%; overflow: auto !important; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-test-runft {{ flex: none !important; }}
   {_PAGE} .shep-test-drawer {{ position: absolute !important; top: 0; right: 0; bottom: 0; width: min(780px, 62%) !important; z-index: 50; display: flex; flex-direction: column; max-height: 100%; }}
   {_PAGE} .shep-test-drawer > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
 }}
-@media (max-width: 1399px), (max-height: 759px) {{
+{STACK} {{
   {_PAGE} .shep-test-tiles {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
   {_PAGE} .shep-test-drawer {{ position: fixed !important; top: 0; right: 0; bottom: 0; width: min(640px, 100%) !important; max-width: 100% !important; z-index: 60; display: flex; flex-direction: column; flex-wrap: nowrap !important; border-radius: 0 !important; }}
   {_PAGE} .shep-test-drawer > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}

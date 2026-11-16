@@ -4,8 +4,23 @@ The dashboard's look: tokens, the shell, the pages UI-A draws (M5-2).
 The approved look of the M5 mockups (round 2): IBM Plex Sans, an indigo
 accent, 15 px body text and **nothing under 14 px**; two navigation levels with
 two selection cues each; a third style for in-page segmented controls
-(``.shep-seg``); the layout rule (wide: one screen, regions scroll inside;
-narrow: everything flows, nothing scrolls inside).
+(``.shep-seg``); the layout rule (side by side: one screen, regions scroll
+inside; stacked: everything flows, nothing scrolls inside but a table wider
+than its panel, sideways).
+
+**The layout rule is one decision** (D02, the WebUI ledger's UI-02): the
+shell's head script (`src/webui/shell.py`, its layout pass) writes
+``data-shep-layout="side"`` or ``"stack"`` on the root element, and every
+style sheet keys its side-by-side and stacked rules off it, through `SIDE`
+and `STACK` (``SIDE + " { … }"``, the rules nested inside), never a media
+query on the window's size. The browser's usable area (the window's inner
+size) decides it: no wider than it is tall, stacked; wider, side by side when
+the page shown fits by its panels' own minimum widths (each panel's
+``--shep-panel-min``, set in its page's style sheet; side by side, a panel is
+never narrower), else stacked. A short window (`SHORT`, under
+`SHORT_BELOW` px tall) is density only: it never stacks, shrinks text or
+squeezes a chart. Before the first pass nothing is written, which reads as
+stacked.
 
 This style sheet goes into the page's head as a ``<style>`` element, with the
 shared ⓘ's and each page's own ``PAGE_CSS`` (`src/webui/app.py`,
@@ -38,6 +53,26 @@ from __future__ import annotations
 #: 420 px) is 151 px in IBM Plex Sans.
 BRAND_WIDTH = 156
 
+#: The root element's attribute the layout pass writes (``side`` or ``stack``,
+#: module docstring), and the selectors every style sheet nests its rules in:
+#: a rule inside `SIDE` holds side by side, inside `STACK` stacked (also
+#: before the first pass). ``:where()`` adds no specificity, as a media query
+#: added none, so a rule moved inside keeps its weight against the rules
+#: around it. Nested rules start with a selector (``#id``, ``.class``) or
+#: ``&`` (the root element itself; ``& body`` for an element name).
+LAYOUT_ATTR = "data-shep-layout"
+SIDE = ':where(html[data-shep-layout="side"])'
+STACK = ':where(html:not([data-shep-layout="side"]))'
+#: Set while the window's inner height is under `SHORT_BELOW` px: denser
+#: headers, never stacking (the density rules of Training's run view and the
+#: Diagnosis load confirmation).
+SHORT_ATTR = "data-shep-short"
+SHORT = ':where(html[data-shep-short])'
+#: Side by side and short at once (a dense header beside the plots, the load
+#: confirmation's room).
+SIDE_SHORT = ':where(html[data-shep-layout="side"][data-shep-short])'
+SHORT_BELOW = 900
+
 SHELL_CSS = """
 :root {
   --shep-bg: #f3f4f7; --shep-panel: #ffffff; --shep-panel-2: #f8f9fb;
@@ -69,6 +104,9 @@ SHELL_CSS = """
   --shep-title-size: 20px; --shep-body-size: 15px; --shep-key-size: 14px;
   --shep-weight-strong: 600;
   --shep-label-size: 14px; --shep-label-weight: 600; --shep-label-color: var(--shep-text);
+  /* The room every scroll region keeps under what it brings into view (R-25): a line of a text
+     box (21 px) and a little more. */
+  --shep-caret-room: 32px;
 }
 
 /* ---------------------------------------------------------------- page frame */
@@ -111,7 +149,10 @@ body { color: var(--shep-text); }
   font-size: 14px; line-height: 1; white-space: nowrap; border: 1px solid transparent;
   background: none; color: var(--shep-text-2); max-width: 100%;
 }
-.shep-chip-text { overflow: hidden; text-overflow: ellipsis; max-width: 360px; }
+/* A chip never runs off the window (at 360 px the D8 chip's left edge was at -41): its words end
+   in an ellipsis inside the room the header leaves, their whole text as their title. */
+.shep-chip-text { overflow: hidden; text-overflow: ellipsis; max-width: 360px; min-width: 0; }
+#shep-chips > div, #shep-chips > div > div { min-width: 0; max-width: 100%; }
 .shep-chip button.shep-i { margin: 0 -3px 0 -1px; color: inherit; }
 .shep-chip button.shep-i::before { inset: 3px; border-color: currentColor; background: transparent; }
 .shep-chip-readonly, .shep-chip-unread, .shep-chip-busy { padding: 0 4px 0 10px; }
@@ -589,12 +630,30 @@ button.shep-row {
 .shep-rt-v { display: inline-flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; }
 .shep-rt-v > span { color: var(--shep-text-2); }
 
+/* **A text box that grows as it is typed in keeps its caret in view** (R-25: at 1536 x 760 the
+   Diagnosis HPO box's caret went out of view from its sixth line on). The browser brings the caret
+   into its scroll region as a key is typed, then Gradio grows the box a line under it; every
+   scroll region (the page's, a panel's) keeps a line's room under what it brings into view, so
+   the caret stays in view while the box grows. */
+html, .shep-panel * { scroll-padding-bottom: var(--shep-caret-room); }
+/* **A scroll cue** (R-73): a region with ``shep-scroll-cue`` that has more below fades its last
+   lines out, and draws them whole again at its end (the shell's head script keeps
+   ``data-shep-more`` on it as it scrolls and as its content changes), whatever the system's
+   scrollbars (overlay ones draw nothing at rest). */
+.shep-scroll-cue[data-shep-more] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+}
+
 /* ---------------------------------------------------------------- the layout rule */
-/* Wide (>= 1400 x 760 CSS px): one screen. The selected page fills the space
-   under the header; a page taller than that scrolls inside its own panel. */
-@media (min-width: 1400px) and (min-height: 760px) {
-  html, body { height: 100%; overflow: hidden; }
-  gradio-app { height: 100vh; display: flex; flex-direction: column; }
+/* Side by side (`SIDE`, the shell's one decision): one screen. The selected
+   page fills the space under the header; a page taller than that scrolls
+   inside its own panel; a panel is never narrower than its page's
+   ``--shep-panel-min`` (the decision's own measure). */
+.shep-page { --shep-panel-min: 0px; }
+__SIDE__ {
+  &, & body { height: 100%; overflow: hidden; }
+  & gradio-app { height: 100vh; display: flex; flex-direction: column; }
   .gradio-container { height: 100vh; min-height: 0 !important; display: flex !important; flex-direction: column; }
   .gradio-container > .main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .gradio-container > .main > .wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -609,50 +668,26 @@ button.shep-row {
   #shep-research-nav > .tabitem { flex: 1 1 auto; min-height: 0; overflow: auto; }
   #shep-research-nav > .tabitem > .column { min-height: 100%; }
   .shep-page { min-height: 0; height: 100%; align-items: stretch !important; flex-wrap: nowrap !important; }
-  .shep-page > .shep-panel { min-height: 0; max-height: 100%; display: flex; flex-direction: column; }
+  .shep-page > .shep-panel { min-height: 0; max-height: 100%; display: flex; flex-direction: column; min-width: var(--shep-panel-min) !important; }
   .shep-page > .shep-panel > .block { flex: none; }
-  footer, #runtime_footer { flex: none; }
+  & footer, #runtime_footer { flex: none; }
   /* A panel's header stays where it is when its body scrolls (M5-3: the Test
      Result panel's title scrolled away with the report): a header drawn inside
      the region that scrolls sticks to that region's top. */
   .shep-panel .shep-panel-hd { position: sticky; top: 0; z-index: 6; background: var(--shep-panel); }
 }
-/* Narrow: the regions stack, the page scrolls, nothing scrolls inside. */
-@media (max-width: 1399px), (max-height: 759px) {
+/* Stacked: the regions stack, the page scrolls, nothing scrolls inside; a
+   table wider than its panel scrolls sideways in its own box (it was cut by
+   the panel, out of reach: Datasets at 760 x 1000). */
+__STACK__ {
   .shep-page { flex-direction: column !important; }
   .shep-page > .shep-panel { width: 100% !important; }
-  .shep-tbl-wrap { overflow: visible; }
+  .shep-tbl-wrap { overflow-x: auto; overflow-y: hidden; }
   .shep-tbl th { position: static; }
   .shep-tbl td { overflow-wrap: anywhere; }
 }
-""".replace("__BRAND__", str(BRAND_WIDTH))
+""".replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK)
 
 
-def sticky_room_js(sticky: str, region: str, var: str) -> str:
-    """**The room a sticky block takes in its scroll region**, for the
-    region's scroll padding (the layout rule: nothing sticky covers a focused
-    control): a component's ``js_on_load`` that writes the height of the
-    block `sticky` (a selector of the component or an ancestor of it) as the
-    CSS variable `var` on the region `region` (a selector of an ancestor of
-    the block), kept by a ResizeObserver, as the shell keeps
-    ``--shep-chips-h``. The page's style sheet gives the region
-    ``scroll-padding-top`` or ``-bottom`` from it, so a control focused in
-    the region scrolls clear of the block. Diagnosis' sticky Model-in-use
-    block uses it. Once per mount; the block may be drawn a frame later than
-    the component, so it is looked for again a few times."""
-    return r"""
-(function find(tries) {
-  var sticky = element.closest('__STICKY__');
-  var body = sticky ? sticky.closest('__REGION__') : null;
-  if (!sticky || !body) {
-    if (tries > 0) { requestAnimationFrame(function () { find(tries - 1); }); }
-    return;
-  }
-  var fit = function () { body.style.setProperty('__VAR__', sticky.offsetHeight + 'px'); };
-  if (window.ResizeObserver) { new ResizeObserver(fit).observe(sticky); }
-  fit();
-})(20);
-""".replace("__STICKY__", sticky).replace("__REGION__", region).replace("__VAR__", var)
-
-
-__all__ = ["BRAND_WIDTH", "SHELL_CSS", "sticky_room_js"]
+__all__ = ["BRAND_WIDTH", "LAYOUT_ATTR", "SHELL_CSS", "SHORT", "SHORT_ATTR", "SHORT_BELOW", "SIDE", "SIDE_SHORT",
+           "STACK"]

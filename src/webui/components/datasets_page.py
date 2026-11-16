@@ -71,6 +71,7 @@ from src.webui.components.workspaces import (
     workspace_binding,
 )
 from src.webui.shell import page_elem_id, plain_html
+from src.webui.style import SIDE
 
 logger = logging.getLogger(__name__)
 
@@ -549,7 +550,12 @@ PAGE_CSS = f"""
   {_PAGE} .shep-dstbl .shep-ds-wide {{ display: none; }}
   {_PAGE} .shep-dstbl .shep-ds-narrow {{ display: block; }}
 }}
-@media (min-width: 1400px) and (min-height: 760px) {{
+/* The two panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the table's
+   six columns (Name, Sources and In use keep 11.5, 7 and 11 em) need 860 px, the details' digest
+   grid of four columns 495; so the page sits side by side from about 1400 px of window. */
+{_PAGE} .shep-panel.shep-ds-main {{ --shep-panel-min: 860px; }}
+{_PAGE} .shep-panel.shep-ds-details {{ --shep-panel-min: 495px; }}
+{SIDE} {{
   {_PAGE} #shep-ds-table {{ flex: 0 1 auto !important; min-height: 120px; overflow: auto !important; }}
   {_PAGE} #shep-ds-table .shep-tbl-wrap {{ overflow: visible; }}
   {_PAGE} #shep-ds-details {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; }}

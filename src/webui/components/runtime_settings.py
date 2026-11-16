@@ -64,6 +64,7 @@ from src.webui.components.chips import LOCK, gated, operator_only
 from src.webui.operator_access import operator_access
 from src.webui.shell import SETTINGS as SETTINGS_PAGE
 from src.webui.shell import plain_html, tab_elem_id
+from src.webui.style import STACK
 
 #: Each allocator preset in plain words, its name beside them (the WebUI
 #: skill's §5: an internal name only beside a plain label). One entry per
@@ -525,6 +526,8 @@ PAGE_CSS = f"""
 {_PAGE} #shep-settings-cols > #shep-dl {{ flex: 55 1 640px !important; min-width: 0 !important; }}
 {_PAGE} #shep-settings-cols > .shep-settings {{ flex: 45 1 480px !important; min-width: 0 !important; }}
 {_PAGE} .shep-settings {{ max-width: 1040px; }}
+/* No wider than tall (the layout rule, `src/webui/shell.py`): one panel above the other. */
+{STACK} {{ {_PAGE} #shep-settings-cols > .shep-panel {{ flex-basis: 100% !important; }} }}
 {_PAGE} #shep-settings-bd {{ padding: 14px 16px !important; gap: 12px !important; }}
 {_PAGE} #shep-settings-ft > button {{ flex: none !important; min-width: max-content !important; white-space: nowrap; }}
 {_PAGE} #shep-settings-ft > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}

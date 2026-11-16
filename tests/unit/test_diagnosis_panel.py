@@ -596,7 +596,10 @@ def test_the_page_css_is_registered_and_scoped_to_the_page():
     assert dp.PAGE_CSS in app.PAGE_CSS
     assert dp._TAB == "#" + shell.tab_elem_id(shell.CLINICAL)
     assert dp.CLINICAL == shell.CLINICAL
-    rules = [line for line in dp.PAGE_CSS.splitlines() if "{" in line and not line.startswith(("@", "}"))]
+    from src.webui.style import SIDE, SIDE_SHORT, STACK
+
+    rules = [line for line in dp.PAGE_CSS.splitlines()
+             if "{" in line and not line.startswith(("@", "}", SIDE, SIDE_SHORT, STACK))]
     assert all(line.lstrip().startswith(dp._TAB) for line in rules), [
         line for line in rules if not line.lstrip().startswith(dp._TAB)]
 
@@ -607,15 +610,16 @@ def test_the_page_css_hides_a_view_by_its_class_and_keeps_the_confirmation_in_vi
     from → to rows and its warning sentence scrolled out of view at 1707x870,
     1440x900 and 1536x760 (checked in a browser at the wide sizes); while the
     confirmation box is mounted the list's footer is hidden and the list gives
-    up its height to it (all of it below 820 px of height)."""
+    up its height to it (all of it in a short window, `style.SIDE_SHORT`)."""
+    from src.webui.style import SIDE_SHORT
+    from tests.unit.test_webui_shell import blocks, side
+
     css = " ".join(dp.PAGE_CSS.split())
     assert f"{dp._TAB} .{dp.VIEW_OFF} {{ display: none !important; }}" in css
     confirming = f"{dp._TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box)"
     assert f"{confirming} > .shep-model-foot {{ display: none !important; }}" in css
-    wide = css.index("@media (min-width: 1400px) and (min-height: 760px) {")
-    assert css.index(f"{confirming} > .shep-model-body {{ min-height: 0 !important; }}") > wide
-    low = css.index("@media (min-width: 1400px) and (min-height: 760px) and (max-height: 819px) {")
-    assert css.index(f"{confirming} > .shep-model-body {{ display: none !important; }}") > low
+    assert f"{confirming} > .shep-model-body {{ min-height: 0 !important; }}" in side(css)
+    assert f"{confirming} > .shep-model-body {{ display: none !important; }}" in blocks(css, SIDE_SHORT)
 
 
 def test_the_stop_questions_buttons_keep_their_words_width():
@@ -628,34 +632,99 @@ def test_the_stop_questions_buttons_keep_their_words_width():
             "{ flex: 0 0 auto !important; width: auto !important; }") in css
 
 
-def test_the_sticky_card_and_run_row_never_cover_a_focused_control(monkeypatch):
-    """K6 closing smoke at 1536x760: the sticky Model-in-use card and Run row
-    (bottom 0 inside the input column's scroll region) covered a focused
-    Reference cohort select, Patient ID, Top-K or Explanations (the disease
-    model's Explanations too). The scroll region keeps a scroll padding as tall
-    as the sticky block, which a ResizeObserver writes as a CSS variable (as the
-    shell writes ``--shep-chips-h``), so focusing a control scrolls it above
-    the block. The browser re-measure is the integrator's."""
+def test_the_fields_scroll_above_the_card_and_run_row_whose_foot_never_covers_them():
+    """R-25 (and the K6 closing smoke before it, 1536x760): the Model-in-use
+    card and Run were sticky at the bottom of the input column's scroll
+    region, so once the HPO box held 6 lines or more its caret line was under
+    them, scroll padding or not (the browser brings the caret into view, then
+    Gradio grows the box a line under it). Side by side the fields are the
+    column's one scroll region and the card and Run its foot, in flow under
+    them, nothing sticky; every scroll region keeps a line's room under what
+    it brings into view (`style.py`). The sticky block's room script is gone
+    with the sticky block. What the browser draws is
+    `test_the_hpo_caret_stays_in_view_and_the_input_column_has_one_left_edge`."""
+    from src.webui import style
+    from tests.unit.test_webui_shell import side
+
     css = " ".join(dp.PAGE_CSS.split())
-    wide = css.index("@media (min-width: 1400px) and (min-height: 760px) {")
-    narrow = css.index("@media (max-width: 1399px), (max-height: 759px) {")
-    rule = (f"{dp._TAB} #shep-dx-input-bd {{ display: flex; flex-direction: column; "
-            "scroll-padding-bottom: var(--shep-dx-sticky-h, 0px); }")
-    assert wide < css.index(rule) < narrow
-    assert f"{dp._TAB} .shep-dx-sticky {{ position: sticky; bottom: 0;" in css
-    js = dp.STICKY_JS
-    assert "element.closest('#shep-dx-sticky')" in js
-    assert "sticky.closest('#shep-dx-input-bd')" in js
-    assert "body.style.setProperty('--shep-dx-sticky-h', sticky.offsetHeight + 'px')" in js
-    assert "new ResizeObserver(fit).observe(sticky)" in js
-    # Wired on a component inside the sticky block, so its observer finds it.
-    demo, _ctx = _build_tab(monkeypatch)
-    (host,) = [b for b in demo.blocks.values() if getattr(b, "js_on_load", None) == js]
-    ancestors, block = [], host
-    while block is not None:
-        ancestors.append(getattr(block, "elem_id", None))
-        block = getattr(block, "parent", None)
-    assert "shep-dx-sticky" in ancestors and "shep-dx-input-bd" in ancestors, ancestors
+    assert (f"{dp._TAB} #shep-dx-input-bd > #shep-dx-fields {{ flex: 0 1 auto !important; "
+            "min-height: 0; overflow: auto;") in side(css)
+    assert "position: sticky" not in css and "--shep-dx-sticky-h" not in css
+    assert not hasattr(dp, "STICKY_JS") and not hasattr(style, "sticky_room_js")
+    assert "html, .shep-panel * { scroll-padding-bottom: var(--shep-caret-room); }" in style.SHELL_CSS
+
+
+#: R-25 in a browser at 1536 x 760, a disease model served (a
+#: stand-in status: its card as tall as the real one): twelve lines typed into
+#: the HPO box, what `elementsFromPoint` finds on the caret's line after each;
+#: then the input column's left edges and the Options grid's columns.
+_CARET_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1536, height: 760 } })).newPage();
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  const box = '#dx_hpo_terms textarea';
+  await page.waitForSelector(box, { state: 'visible', timeout: 30000 });
+  await page.waitForFunction(() => /Disease task model/.test(document.querySelector('#shep-dx-card').textContent),
+                             null, { timeout: 30000 });
+  await page.click(box);
+  const lines = [];
+  for (let i = 1; i <= 12; i++) {
+    await page.keyboard.type(`HP:00012${String(i).padStart(2, '0')}`);
+    if (i < 12) { await page.keyboard.press('Enter'); }
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    lines.push(await page.evaluate((s) => {
+      const ta = document.querySelector(s), st = getComputedStyle(ta), r = ta.getBoundingClientRect();
+      const y = r.bottom - parseFloat(st.paddingBottom) - (parseFloat(st.lineHeight) || 21) / 2
+        - (ta.scrollHeight - ta.clientHeight - ta.scrollTop);
+      const top = document.elementsFromPoint(r.left + 20, y)[0];
+      return top === ta ? 'box' : ((top.closest('[id]') || top).id || top.tagName);
+    }, box));
+  }
+  const edges = await page.evaluate(() => {
+    const x = (s) => Math.round(document.querySelector(s).getBoundingClientRect().left);
+    const o = getComputedStyle(document.querySelector('.shep-dx-options'));
+    return { hpo: [x('#dx_hpo_terms [data-testid="block-info"]'), x('#dx_hpo_terms textarea')],
+             patient: [x('#dx_patient_id [data-testid="block-info"]'), x('#dx_patient_id input')],
+             options: x('.shep-dx-opt'), topk: [x('#dx_top_k [data-testid="block-info"]'), x('#dx_top_k input')],
+             expl: [x('#dx_explanations label > span'), x('#dx_explanations input')],
+             card: x('.shep-dx-card-title'), run: x('#shep-dx-run-btn'),
+             box: { background: o.backgroundColor, border: o.borderTopWidth } };
+  });
+  console.log(JSON.stringify({ lines, edges }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_hpo_caret_stays_in_view_and_the_input_column_has_one_left_edge(monkeypatch, tmp_path):
+    """R-25 as drawn (Node and Playwright, skipped without): at 1536 x 760
+    with a disease model served, the caret's line is the HPO box's own after
+    every one of twelve typed lines (it was the card's from the ninth on)."""
+    from src.webui import shell
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    status = _status_serving(_task_identity("disease_task"))
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (status, None))
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": True, "workspaces": [], "serving": None,
+        "item": None, "item_problem": None, "recorded": None, "trained": None,
+        "cohorts": None})
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+    from src.webui.app import mount_options
+
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_CARET_JS, tmp_path, base[:-len("gradio_api")])
+    assert seen["lines"] == ["box"] * 12, seen["lines"]
 
 
 # ------------------------------------------------- the phenotype list and the API
