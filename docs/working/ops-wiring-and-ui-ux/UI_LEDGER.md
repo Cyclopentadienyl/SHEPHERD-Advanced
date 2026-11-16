@@ -807,7 +807,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-11 One action, one operation
 
-4 rows: 1 to do, 3 code-verified.
+4 rows: 4 code-verified.
 
 #### B46-races · Brief older displays on Training/Test pill, banner, Continue drawer and job card
 
@@ -1020,7 +1020,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-116 rows: 46 to do, 17 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 12 code-verified, 31 code-verified at ba6e85e (audit).
+116 rows: 42 to do, 16 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 17 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
