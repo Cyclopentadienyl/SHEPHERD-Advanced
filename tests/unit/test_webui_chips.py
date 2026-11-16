@@ -408,9 +408,12 @@ def test_every_gated_page_labels_its_buttons_by_the_one_rule():
 
 def _every_chip() -> list:
     """Every chip state `d8_chip`, `gpu_chip_from`, `read_gpu_chip` and the
-    placeholder can show, by name. A read-only chip's reason and a holder's
-    description are another reader's words (D8's refusal, the holder
-    record), stood in for by words of no budget weight."""
+    placeholder can show, by name. A read-only chip carries D8's own refusal
+    for each condition (both deployment-mode reasons included,
+    `test_operator_access.every_refusal`); a holder's description is the
+    holder record's words, stood in for by words of no budget weight."""
+    from tests.unit.test_operator_access import every_refusal
+
     import html
     import re
 
@@ -425,8 +428,7 @@ def _every_chip() -> list:
     other = {"job_type": SERVING_JOB_TYPE, "command": SERVING_COMMAND, "pid": os.getpid() + 1}
     states = {
         "on": c.d8_chip(ENABLED),
-        **{f"read-only {condition}": c.d8_chip(OperatorAccess(False, condition, "why"))
-           for condition in sorted(c.D8_SHORT)},
+        **{f"read-only {name}": c.d8_chip(decision) for name, decision in every_refusal().items()},
         **{f"runner {job} {status}": c.gpu_chip_from({"job_type": job, "status": status},
                                                      LOCK_FREE, operator=True)
            for job in ("training", "test") for status in ("running", "stopping")},
@@ -465,7 +467,9 @@ def test_every_chip_bubble_is_within_the_help_budget(state, chip):
     (`help.budget_problems`: a lead of 100 characters at most, 80 words at
     most without the Ref line, no sentence over 25 words, codes only in one
     trailing Ref line). A read-only chip's reason is D8's own refusal, also
-    the API's, stood in for here."""
+    the API's, read here for each condition (R-9's residual: with them the
+    bubble was 99-134 words, sentences up to 49, "D8" and "M1" in its body,
+    the mode's Ref line mid-bubble)."""
     from src.webui.components import help as h
 
     assert h.budget_problems(chip.detail) == (), (state, chip.detail)

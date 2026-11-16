@@ -281,10 +281,58 @@ def test_the_conditions_are_checked_in_order():
 
 
 def test_every_refusal_says_nothing_was_done_and_names_a_condition():
+    """The refusal says its reason's plain words, "Nothing was done.", then
+    the reason's codes in one trailing "Ref:" (`reason_parts`)."""
+    from src.utils.operator_access import reason_parts
+
     decision = check(http_scope(("192.0.2.10", 8264)))
-    assert decision.refusal == f"Refused: {decision.reason} Nothing was done."
+    text, ref = reason_parts(decision.reason)
+    assert decision.refusal == f"Refused: {text} Nothing was done. Ref: {ref}"
+    assert "ssh -L" in ref and "ssh -L" not in text
     assert decision.condition in CONDITIONS
     assert decision.as_status()["enabled"] is False
+
+
+def every_refusal() -> dict:
+    """D8's refusal for every condition it can report, both deployment-mode
+    reasons included (no mode set, a mode other than M1), each from a
+    request the check refuses for that condition."""
+    return {
+        "deployment_mode (unset)": check(http_scope(), {}),
+        "deployment_mode (other)": check(http_scope(), {"SHEPHERD_DEPLOYMENT_MODE": "M3"}),
+        "unreadable_request": check(None),
+        "not_loopback": check(http_scope(("192.0.2.10", 8264))),
+        "forwarding_header": check(http_scope(headers=[("x-original-forwarded-for", CANARY)])),
+        "host_not_loopback": check(http_scope(host="evil.example:8264")),
+        "origin_mismatch": check(http_scope(headers=[("origin", "https://evil.example")])),
+        "cross_site": check(http_scope(headers=[("sec-fetch-site", "cross-site")])),
+    }
+
+
+@pytest.mark.parametrize("name, decision", every_refusal().items(), ids=list(every_refusal()))
+def test_every_refusal_reason_reads_answer_first_with_its_codes_last(name, decision):
+    """R-9's residual (the WebUI skill's §5): the D8 chip's ⓘ appends this
+    reason and the API's refusal says it, and the reasons ran to 25-59 words
+    with sentences of up to 49 ("This request was made by a page that is not
+    this dashboard: the browser reports it as sent from another site or…"),
+    "D8" and "M1" in their words and the mode's "Ref:" mid-sentence. Each is
+    now plain words, answer first, in sentences of at most 20 words with no
+    code, and its codes in one trailing "Ref:"; which condition refuses, and
+    in what order, is unchanged (the tests above)."""
+    import re
+
+    from src.utils.operator_access import reason_parts
+    from src.webui.components.help import CODE
+
+    assert decision.condition in CONDITIONS and not decision.allowed
+    text, ref = reason_parts(decision.reason)
+    assert ref, name
+    assert "Ref:" not in text and not CODE.search(text), (name, text)
+    sentences = [part for part in re.split(r"(?<=[.!?:])\s+", text) if part]
+    assert all(len(part.split()) <= 20 for part in sentences), (name, sentences)
+    assert len(text.split()) <= 30, (name, text)
+    assert CANARY not in decision.reason
+    assert decision.refusal.endswith(f"Nothing was done. Ref: {ref}")
 
 
 def test_the_check_imports_nothing_posix_only_nor_the_service():

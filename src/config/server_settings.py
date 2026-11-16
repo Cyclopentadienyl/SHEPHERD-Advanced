@@ -532,16 +532,19 @@ def _local_entry(environ: Optional[Mapping[str, str]]) -> bool:
 
 #: Why the operator controls are off with no mode set (`deployment_mode`).
 #: The value set is never repeated: a read-only page may show it.
+#: Plain words first, the codes in one trailing "Ref:" (the WebUI skill's §5;
+#: D8's reasons read the same way, `operator_access.REF_MARK`).
 MODE_NOT_SET = (
-    "Operator controls are off, so this deployment is read-only. They are on when the "
-    "service is started from its desktop entry or launch_shepherd.sh on this computer, or "
-    f"in mode {OPERATOR_DEPLOYMENT_MODE}: a verified single-workspace deployment reached on "
-    f"the machine or through SSH forwarding. Ref: {ENV_DEPLOYMENT_MODE}"
+    "Operator controls are off, so this deployment is read-only. They turn on when the "
+    "service is started from its desktop entry or launch_shepherd.sh on this computer. "
+    f"Ref: {ENV_DEPLOYMENT_MODE}={OPERATOR_DEPLOYMENT_MODE} also turns them on, for a verified "
+    "single-workspace deployment reached on the machine or through SSH forwarding"
 )
 MODE_NOT_M1 = (
     "Operator controls are off, so this deployment is read-only: the deployment mode set at "
-    f"start is not {OPERATOR_DEPLOYMENT_MODE} (the value is compared exactly), and a local "
-    f"start never overrides it. Ref: {ENV_DEPLOYMENT_MODE}"
+    "start is not the operator mode. A local start never overrides it. "
+    f"Ref: {ENV_DEPLOYMENT_MODE} is not {OPERATOR_DEPLOYMENT_MODE} (the value is compared "
+    "exactly)"
 )
 
 

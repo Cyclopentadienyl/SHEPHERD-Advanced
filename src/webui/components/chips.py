@@ -50,8 +50,8 @@ import gradio as gr
 
 from src.config.server_settings import DATA_LOCATIONS
 from src.utils.gpu_lock import SERVING_JOB_TYPE, held_by_inference, lock_state
-from src.utils.operator_access import CONDITIONS, OperatorAccess
-from src.webui.components.help import help_button
+from src.utils.operator_access import CONDITIONS, OperatorAccess, reason_parts
+from src.webui.components.help import REF_PREFIX, help_button
 
 logger = logging.getLogger(__name__)
 
@@ -180,13 +180,18 @@ class Chip(NamedTuple):
 # D8
 # ---------------------------------------------------------------------------
 def d8_chip(access: OperatorAccess) -> Chip:
-    """The D8 chip for one decision."""
+    """The D8 chip for one decision. Allowed: the controls, then what they
+    need (`D8_HOW`). Refused: the controls, then this request's own reason,
+    D8's words (also the API's refusal): what failed and what to do, its
+    codes in the bubble's one trailing Ref line (`reason_parts`), so the
+    general conditions are not said again beside the one that failed."""
     if access.allowed:
         return Chip("on", D8_ON, f"{D8_ON_LEAD}\n{D8_SCOPE}\n\n{D8_HOW}")
     short = D8_SHORT.get(access.condition, "request not readable")
+    text, ref = reason_parts(access.reason)
     return Chip("readonly", f"Read-only: {short}",
-                f"{D8_READONLY_LEAD}\n{D8_SCOPE}\n\nFor this request: {access.reason}\n\n"
-                f"{D8_HOW}")
+                f"{D8_READONLY_LEAD}\n{D8_SCOPE}\n\nFor this request: {text}\n"
+                f"{REF_PREFIX} {ref or D8_HOW.rpartition(REF_PREFIX)[2].strip()}")
 
 
 # ---------------------------------------------------------------------------

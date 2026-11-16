@@ -52,6 +52,8 @@ is a refusal, never a pass.
 **Refusals name the failed condition in words an operator can act on, and never
 repeat a header's value**: a page may show the reason, and a header's value is
 whatever the client sent. A forwarding header is named by its (fixed) name.
+Each reason is plain words first and its codes in a trailing "Ref:"
+(`REF_MARK`, `reason_parts`).
 
 **What it is not.** Loopback is not authorisation (SPEC_4 §3): several SSH
 forwards all arrive on loopback, which is why M1 names a verified
@@ -109,32 +111,55 @@ CONDITIONS: Tuple[str, ...] = (
 #: What every operator control is called in the reasons below.
 _CONTROLS = "operator controls"
 
+#: **How every reason reads** (the WebUI skill's §5; the D8 chip's ⓘ shows it
+#: and the API's refusal says it): the answer first, then what to do, in
+#: sentences of at most 20 words with no code; the codes and the exact check
+#: after it, in one trailing "Ref:" (`reason_parts` splits it off). Rewording
+#: changes no condition, its order or what it refuses.
+REF_MARK = " Ref: "
+
 _UNREADABLE = (
-    "This request's arrival could not be read, so whether it may use the operator controls "
-    "cannot be checked; it is refused (D8 fails closed)."
+    "This request could not be read, so it is refused: a request that cannot be checked "
+    "never passes. Ref: D8 fails closed"
 )
 _NOT_LOOPBACK = (
-    "This request did not arrive on a loopback address of this machine. The operator controls "
-    "work only on the machine itself, or through an SSH forward to localhost (for example "
-    "ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui)."
+    "This request did not arrive on this machine. Open the dashboard on the machine itself, "
+    "or through an SSH forward to localhost. Ref: ssh -L 8264:localhost:8264 <server>, then "
+    "http://localhost:8264/ui"
 )
 _HOST_NOT_LOOPBACK = (
-    "This request was not addressed to localhost, 127.0.0.1 or [::1] (its Host header names "
-    "another host, or there is not exactly one). Open the dashboard as http://localhost:<port>/ui "
-    "on the machine or through an SSH forward; a page reached under another name could be a "
-    "DNS-rebinding attack, so the operator controls are refused there."
+    "This request was not addressed to localhost. Open the dashboard as localhost, on the "
+    "machine or through an SSH forward. Ref: exactly one Host header naming localhost, "
+    "127.0.0.1 or [::1]; a page reached under another name could be a DNS-rebinding attack"
 )
 _ORIGIN_MISMATCH = (
-    "This request was sent by a page whose origin is not this dashboard's address (its Origin "
-    "header does not match its Host), as a request made by another website would be. Use the "
-    "operator controls from the dashboard itself."
+    "This request was sent by a page at another address, as another website would send it. "
+    "Use the operator controls from the dashboard itself. Ref: its Origin header does not "
+    "match its Host"
 )
 _CROSS_SITE = (
-    "This request was made by a page that is not this dashboard: the browser reports it as sent "
-    "from another site or another address of this machine (its Sec-Fetch-Site header is not "
-    "same-origin), as an image, script or link on another website's page would send it. Use the "
-    "operator controls from the dashboard itself, or open the address directly."
+    "The browser says a page of another website sent this request, not this dashboard. Use "
+    "the operator controls from the dashboard itself, or open the address directly. Ref: its "
+    "Sec-Fetch-Site header is not same-origin or none (another site, port or subdomain)"
 )
+
+
+def _forwarded(name: str) -> str:
+    """The forwarding refusal, naming the header by its fixed name (never its
+    value)."""
+    return ("This request came through a reverse proxy, behind which every request looks "
+            "local. Use the operator controls on the machine or through an SSH forward. Ref: "
+            f"forwarding header ({name}); deployment mode M1 excludes a reverse proxy")
+
+
+def reason_parts(reason: str) -> Tuple[str, Optional[str]]:
+    """A reason's plain words and its trailing reference (`REF_MARK`), or None
+    when it has none: the chip shows the reference as its bubble's last line
+    and a refusal says it after its "Nothing was done."
+    """
+    text, mark, ref = str(reason).partition(REF_MARK)
+    return (text, ref) if mark and ref else (str(reason), None)
+
 
 #: The ``Sec-Fetch-Site`` values condition 7 allows: the dashboard's own page,
 #: and a request the user started outside any web page (the address bar, a
@@ -157,7 +182,8 @@ class OperatorAccess(NamedTuple):
         `None` when allowed."""
         if self.allowed:
             return None
-        return f"Refused: {self.reason} Nothing was done."
+        text, ref = reason_parts(self.reason)
+        return f"Refused: {text} Nothing was done." + (f"{REF_MARK}{ref}" if ref else "")
 
     def as_status(self) -> Dict[str, Any]:
         """The decision as JSON-ready data, for a read-only status (the UI's
@@ -236,11 +262,7 @@ def _check_request(scope: Any) -> OperatorAccess:
 
     present = [name for name in FORWARDING_HEADERS if _values(headers, name)]
     if present:
-        return _refused("forwarding_header", (
-            f"This request carries a forwarding header ({present[0]}), which a reverse proxy "
-            "adds. Deployment mode M1 excludes a reverse proxy, behind which every request "
-            "arrives on loopback, so the operator controls are refused through one; use them "
-            "on the machine or through an SSH forward to localhost."))
+        return _refused("forwarding_header", _forwarded(present[0]))
 
     hosts = _values(headers, "host")
     host = hosts[0].strip() if len(hosts) == 1 else None
@@ -261,5 +283,5 @@ def _check_request(scope: Any) -> OperatorAccess:
     return ENABLED
 
 
-__all__ = ["CONDITIONS", "ENABLED", "FORWARDING_HEADERS", "LOOPBACK_HOST_NAMES",
-           "OperatorAccess", "check_operator_access"]
+__all__ = ["CONDITIONS", "ENABLED", "FORWARDING_HEADERS", "LOOPBACK_HOST_NAMES", "REF_MARK",
+           "OperatorAccess", "check_operator_access", "reason_parts"]

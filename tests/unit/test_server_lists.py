@@ -1485,8 +1485,8 @@ class TestRoutes:
     @pytest.mark.parametrize("mode, base_url, says", [
         (None, "http://127.0.0.1", "started from its desktop entry or launch_shepherd.sh"),
         ("M3", "http://127.0.0.1", "is not M1 (the value is compared exactly)"),
-        ("M1", "http://192.0.2.10", "did not arrive on a loopback address"),
-        ("M1", "http://testserver", "did not arrive on a loopback address"),
+        ("M1", "http://192.0.2.10", "did not arrive on this machine"),
+        ("M1", "http://testserver", "did not arrive on this machine"),
     ], ids=["mode-unset", "mode-m3", "lan-address", "not-an-address"])
     def test_the_checkpoint_route_is_refused_without_m1_on_loopback(
             self, checkpoint_root, monkeypatch, mode, base_url, says):

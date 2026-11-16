@@ -195,7 +195,7 @@ def test_a_read_only_request_lists_nothing_and_opens_nothing(root, serving, monk
     assert listing["problem"].startswith("Refused: ")
     operator_mode(monkeypatch)
     listing = ml.list_models("demo", gradio_request(server=("192.0.2.10", 8264)))
-    assert listing["refused"] is True and "loopback" in listing["problem"]
+    assert listing["refused"] is True and "did not arrive on this machine" in listing["problem"]
     # A listing is no act (M5-3 review UI-6): the short line every page uses.
     shown = ml.list_html(listing, None, ml.PRESETS["clinical"])
     assert "Operator controls only: request not local." in shown
