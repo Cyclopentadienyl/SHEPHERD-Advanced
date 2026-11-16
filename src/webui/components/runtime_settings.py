@@ -32,7 +32,9 @@ skill's §2), every value it shows escaped:
   the facts' "Not running yet" reads too); Restart Backend and Stop service
   each ask once in the panel's one question row (`_ask`: what it does to every
   open page and to a loaded model, then "Restart now" or "Stop service now",
-  or Cancel) before anything is asked of the backend.
+  or Cancel) before anything is asked of the backend. "Restart now" makes
+  the question's check again (`_restart_refusal`): a question left open
+  restarts nothing once Restart has turned off.
 
 Operator controls (D8, M5-1):
     Restart Backend and Apply Settings each check their own Gradio request
@@ -273,29 +275,42 @@ def _ask(asked: Optional[str] = None, said: str = "") -> tuple:
             said)
 
 
-def _on_restart_request(request: gr.Request):
-    """Restart Backend, asked once (R-12): an operator control (D8), checked
-    on this event's own request before the question is shown; refused while a
-    GPU job runs (the backend refuses then too) and while a restart would
-    change nothing (`restart_applies`). Returns `_ask`'s outputs."""
-    access = operator_access(request)
+def _restart_refusal(access: Any) -> Optional[str]:
+    """**Why Restart Backend may not run now** (R-12), as the status line's
+    mark, or None when it may: D8's answer for the event's own request
+    (`access`, an operator control) first; off while a GPU job runs (the
+    backend refuses then too, `RESTART_BUSY`) and while a restart would
+    change nothing (`restart_applies`, `RESTART_IDLE`). The one check the
+    question and the confirmed restart both make, so a question left open
+    never restarts after the saved allocator, a job or D8 has turned Restart
+    off (T06 review: "Restart now" re-exec'd the backend with the running
+    allocator saved again)."""
     if not access.allowed:
-        return _ask(said=r.status_mark("error", access.refusal))
+        return r.status_mark("error", access.refusal)
     if is_training_active():
-        return _ask(said=r.status_mark("neutral", RESTART_BUSY))
+        return r.status_mark("neutral", RESTART_BUSY)
     if not restart_applies(os.environ, load_runtime_settings()):
-        return _ask(said=r.status_mark("neutral", RESTART_IDLE))
-    return _ask(RESTART)
+        return r.status_mark("neutral", RESTART_IDLE)
+    return None
+
+
+def _on_restart_request(request: gr.Request):
+    """Restart Backend, asked once (R-12): the question shown only while a
+    restart may run (`_restart_refusal`), its reason in the status line
+    otherwise. Returns `_ask`'s outputs."""
+    refusal = _restart_refusal(operator_access(request))
+    return _ask(said=refusal) if refusal else _ask(RESTART)
 
 
 def _on_restart(request: gr.Request):
-    """The confirmed Restart Backend: an operator control (D8), checked on
-    this event's own request before the backend is asked for anything. The
-    backend's own guard refuses while a GPU job runs. Returns `_ask`'s
-    outputs, the row closed."""
-    access = operator_access(request)
-    if not access.allowed:
-        return _ask(said=r.status_mark("error", access.refusal))
+    """The confirmed Restart Backend: the question's check made again on
+    this event's own request (`_restart_refusal`) before the backend is
+    asked for anything, so the row closes with the reason instead when
+    Restart has turned off since it was asked. The backend's own guard
+    refuses while a GPU job runs. Returns `_ask`'s outputs, the row closed."""
+    refusal = _restart_refusal(operator_access(request))
+    if refusal:
+        return _ask(said=refusal)
     result = restart_backend()
     if not result.get("success"):
         return _ask(said=r.status_mark(

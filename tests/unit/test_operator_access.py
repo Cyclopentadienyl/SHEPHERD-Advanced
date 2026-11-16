@@ -843,6 +843,9 @@ def spies(monkeypatch, tmp_path):
                         lambda *a, **k: pytest.fail("a gated handler called the API over HTTP"))
     monkeypatch.setattr(rs, "restart_backend", recorder("restart", {"success": False,
                                                                     "error": "spy"}))
+    # A saved allocator waits for a restart (`restart_applies`), so the
+    # confirmed restart, which checks that again, reaches the backend.
+    monkeypatch.setattr(rs, "restart_applies", lambda env, settings: True)
     monkeypatch.setattr(rs, "save_runtime_settings", recorder("save_runtime_settings", None))
     monkeypatch.setattr(rs, "stop_backend", recorder("stop_service", {"success": False,
                                                                       "error": "spy"}))

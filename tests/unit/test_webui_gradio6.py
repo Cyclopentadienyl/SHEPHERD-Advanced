@@ -72,6 +72,47 @@ def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch, tmp_
     assert stop["interactive"] is True and apply["interactive"] is True
 
 
+def test_a_restart_question_left_open_restarts_nothing_once_restart_is_off(
+        monkeypatch, tmp_path):
+    """T06 review (R-12): "Restart now" checked D8 only, so a question asked
+    while another allocator was saved still re-exec'd the backend after the
+    running one was saved again, or while a GPU job had started: every page
+    reconnected and a loaded model stopped for a restart the page called
+    off. The confirmed restart makes the question's check again
+    (`_restart_refusal`): nothing is asked of the backend, and the row closes
+    with the reason the button shows."""
+    import src.config.runtime_presets as presets
+    import src.webui.components.runtime_settings as rs
+    from src.config.runtime_presets import allocator_env
+    from tests.fixtures.operator_access import operator_request
+
+    monkeypatch.setattr(presets, "RUNTIME_SETTINGS_FILE", tmp_path / "settings.json")
+    for name, value in allocator_env({}, {}).items():   # started under the default preset
+        monkeypatch.setenv(name, value)
+    presets.save_runtime_settings({"allocator_preset": "expandable"})
+    monkeypatch.setattr(rs, "is_training_active", lambda: False)
+    restarts = []
+    monkeypatch.setattr(rs, "restart_backend", lambda: restarts.append(1) or {"success": True})
+    row, _question, restart_now, _stop_now, _said = rs._on_restart_request(
+        operator_request(monkeypatch))
+    assert row["visible"] is True and restart_now["visible"] is True
+    # The running allocator saved again while the question is open.
+    presets.save_runtime_settings({"allocator_preset": "cuda_async"})
+    row, _question, restart_now, _stop_now, said = rs._on_restart(operator_request(monkeypatch))
+    assert restarts == [], "a restart that changes nothing reached the backend"
+    assert row["visible"] is False and restart_now["visible"] is False
+    assert rs.RESTART_IDLE in said and "shep-st-neutral" in said
+    # A GPU job started while the question was open: the same, its reason.
+    presets.save_runtime_settings({"allocator_preset": "expandable"})
+    monkeypatch.setattr(rs, "is_training_active", lambda: True)
+    said = rs._on_restart(operator_request(monkeypatch))[-1]
+    assert restarts == [] and rs.RESTART_BUSY in said
+    # Still wanted: Restart now restarts, once.
+    monkeypatch.setattr(rs, "is_training_active", lambda: False)
+    said = rs._on_restart(operator_request(monkeypatch))[-1]
+    assert restarts == [1] and "Restarting the backend" in said
+
+
 def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch, tmp_path):
     """The one gated-button rule (`chips.gated`, the WebUI skill's §3): a
     control a read-only request cannot use is disabled with the lock and the
@@ -286,7 +327,8 @@ def test_the_restart_lock_is_polled_on_the_shells_slow_timer_only_while_shown(mo
 
 #: Settings in a browser (R-12, R-13, NEW-settings-datasets-footer-1 and -2):
 #: the screen's own words read; Restart Backend clicked, cancelled, clicked and
-#: confirmed; then the running allocator saved again with Apply Settings. Each
+#: confirmed; then asked again and, with the question open, the running
+#: allocator saved again with Apply Settings, and Restart now clicked. Each
 #: step waits for what it asked to be drawn, never for a fixed time.
 _SETTINGS_JS = r"""
 const { chromium } = require('playwright');
@@ -323,14 +365,25 @@ const { chromium } = require('playwright');
     document.querySelector('#runtime_restart_status').innerText));
   out.afterConfirm = { status: await text('#runtime_restart_status'),
                        questionShown: await shown('#runtime_confirm') };
-  // The running allocator saved again: nothing waits, so Restart is off and
-  // says why beside it.
+  // Asked once more (the status line clears), and with the question open the
+  // running allocator saved again: nothing waits, so Restart is off and says
+  // why beside it.
+  await page.click('#runtime_restart');
+  await page.waitForSelector('#runtime_restart_now', { state: 'visible' });
+  await page.waitForFunction(() => document.querySelector('#runtime_restart_status').innerText.trim() === '');
   await page.click('#allocator_preset input');
   await page.click('ul[role=listbox] li:has-text("Driver memory pool")');
   await page.click('#runtime_apply');
   await page.waitForSelector('#runtime_restart[disabled]', { timeout: 30000 });
   out.idle = { reason: await text('#runtime_restart_lock'),
                stopEnabled: await page.evaluate(() => !document.querySelector('#runtime_stop').disabled) };
+  // The question left open: Restart now restarts nothing and closes the row
+  // with the reason (T06 review).
+  await page.click('#runtime_restart_now');
+  await page.waitForFunction(() => document.querySelector('#runtime_restart_status').innerText.trim() !== '');
+  await page.waitForSelector('#runtime_confirm', { state: 'hidden' });
+  out.stale = { status: await text('#runtime_restart_status'),
+                questionShown: await shown('#runtime_confirm') };
   await browser.close();
   console.log(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -343,7 +396,8 @@ def test_settings_asks_before_a_restart_and_says_each_fact_once_in_a_browser(
     nothing waiting for it. Now it asks in the panel's question row (every
     open page reconnects; a loaded model is stopped first) with Restart now
     and Cancel, nothing is asked of the backend before Restart now, and with
-    the running allocator saved Restart is off, the reason beside it. R-13 and
+    the running allocator saved Restart is off, the reason beside it; a
+    question left open then restarts nothing (T06 review). R-13 and
     NEW-settings-datasets-footer-1: torch.compile's visible line leads with
     the warning and where it is read is said once on the screen.
     NEW-settings-datasets-footer-2: no standing restart note, no internal
@@ -376,5 +430,9 @@ def test_settings_asks_before_a_restart_and_says_each_fact_once_in_a_browser(
     assert seen["confirmButtons"] == [True, False], seen
     assert seen["afterConfirm"]["questionShown"] is False, seen
     assert "Restarting the backend" in seen["afterConfirm"]["status"]
-    assert restarts == [1], "the backend was asked other than once, by Restart now"
     assert rs.RESTART_IDLE in seen["idle"]["reason"] and seen["idle"]["stopEnabled"], seen
+    # T06 review: the question left open while Restart turned off restarts
+    # nothing; its row closes with the reason the button shows.
+    assert rs.RESTART_IDLE in seen["stale"]["status"], seen
+    assert seen["stale"]["questionShown"] is False, seen
+    assert restarts == [1], "the backend was asked other than once, by Restart now"
