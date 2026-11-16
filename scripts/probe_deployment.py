@@ -3795,11 +3795,17 @@ GATED_EVENTS: Tuple[Tuple[str, str, Tuple[Any, ...], str], ...] = (
 #: in every process it starts, and all are put back afterwards; an operator's
 #: shell that holds the deployment's settings changes nothing here, and the
 #: deployment's own lock, root and registry are never used.
+#: The local start's mark (`SHEPHERD_LOCAL_ENTRY`) is one of them: a probe run
+#: from a terminal of the local start would otherwise give its read-only
+#: service the local default mode. The saved settings file is not: the probe
+#: names one of its own for its whole run (`_probes_own_settings_file`) and
+#: each service it starts one of that service's own (`_ProbeServer`).
 _M5_SETTINGS: Tuple[str, ...] = (
     "SHEPHERD_DEPLOYMENT_MODE", "SHEPHERD_WORKSPACES_ROOT", "SHEPHERD_REGISTRY",
     "SHEPHERD_INTAKE_DIR", "SHEPHERD_TRAINING_EVIDENCE_DIRS",
     "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND", "SHEPHERD_BIND_HOST", "SHEPHERD_DEVICE",
     "SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH", "SHEPHERD_DATA_DIR",
+    "SHEPHERD_LOCAL_ENTRY",
 )
 #: How long M5's waits allow: a service to answer, a job to take the GPU lock,
 #: a training job to reach its first epoch, and a test run to end.
@@ -3819,6 +3825,14 @@ PROBE_GPU_LOCK_ROOT = "probe-gpu-lock"
 #: W1 and RW1 say of the deployment's lock (`_deployment_gpu_lock`); None
 #: otherwise.
 _OPERATOR_LOCK_SETTINGS: Optional[Dict[str, str]] = None
+#: The saved settings file the operator's environment locates while the
+#: probe's own is named in its place (`_probes_own_settings_file`), for what W1
+#: and RW1 say of the deployment's lock only (`_deployment_gpu_lock`); None
+#: otherwise. Nothing the probe runs reads it.
+_OPERATOR_SETTINGS_FILE: Optional[str] = None
+#: The probe's own saved settings file, under the work directory; never
+#: written, so nothing is saved for anything the probe runs.
+PROBE_SETTINGS_FILE = "probe-settings/deployment.json"
 #: A process that takes the GPU lock and keeps it until it is killed: W7's
 #: holder, through the lock's own entry point (`take_gpu_lock`). It also ends
 #: when its standard input closes, so a probe that dies cannot leave it behind.
@@ -3908,10 +3922,57 @@ def _probes_own_gpu_lock(work: Path):
             os.environ[WORKSPACES_ROOT_ENV] = saved
 
 
+@contextlib.contextmanager
+def _probes_own_settings_file(work: Path):
+    """`<work>/probe-settings/deployment.json`, a file that does not exist, as
+    the saved deployment settings file of this process and every process it
+    starts while this is open, then the operator's setting put back (UI-06).
+
+    Since 2026-11-16 a data location the environment does not set is read
+    from the saved settings file, by default the account's
+    (`src/config/deployment_settings.py`), so a probe that unsets the
+    operator's settings (`_deployment_settings`) would read the deployment's
+    saved workspaces folder and registry instead. With a file of its own, the
+    probe's settings are its own or unset, as before. The operator's file is
+    kept for `_deployment_gpu_lock` only."""
+    global _OPERATOR_SETTINGS_FILE
+    from src.config.deployment_settings import ENV_SETTINGS_FILE, settings_location
+
+    saved = os.environ.get(ENV_SETTINGS_FILE)
+    operator = settings_location(os.environ).path
+    _OPERATOR_SETTINGS_FILE = None if operator is None else str(operator)
+    os.environ[ENV_SETTINGS_FILE] = str(work / PROBE_SETTINGS_FILE)
+    try:
+        yield
+    finally:
+        _OPERATOR_SETTINGS_FILE = None
+        if saved is None:
+            os.environ.pop(ENV_SETTINGS_FILE, None)
+        else:
+            os.environ[ENV_SETTINGS_FILE] = saved
+
+
+def _operator_lock_environ() -> Optional[Dict[str, str]]:
+    """The settings the deployment's GPU lock is read with: the operator's
+    root while the probe's own is named (`_OPERATOR_LOCK_SETTINGS`), else this
+    process's environment; with the operator's saved settings file while the
+    probe's own is named (`_OPERATOR_SETTINGS_FILE`). None: this process's
+    environment as it is."""
+    if _OPERATOR_LOCK_SETTINGS is None and _OPERATOR_SETTINGS_FILE is None:
+        return None
+    from src.config.deployment_settings import ENV_SETTINGS_FILE
+
+    environ = dict(os.environ if _OPERATOR_LOCK_SETTINGS is None else _OPERATOR_LOCK_SETTINGS)
+    if _OPERATOR_SETTINGS_FILE is not None:
+        environ[ENV_SETTINGS_FILE] = _OPERATOR_SETTINGS_FILE
+    return environ
+
+
 def _deployment_gpu_lock() -> Dict[str, bool]:
     """The GPU lock the operator's own settings name (kept by
     `_probes_own_gpu_lock`, or this process's environment when no probe lock
-    is named): whether one is configured, whether a job holds it now, and
+    is named, with the operator's saved settings file,
+    `_operator_lock_environ`): whether one is configured, whether a job holds it now, and
     whether its setting is set but cannot be used (`unreadable`; a root not
     set is not configured, not unreadable). M5's probes run on their own lock,
     so a managed job holding the deployment's is not refused by them; this
@@ -3919,7 +3980,7 @@ def _deployment_gpu_lock() -> Dict[str, bool]:
     (its description names a host, which the report never carries)."""
     from src.utils.gpu_lock import lock_state
 
-    state = lock_state(_OPERATOR_LOCK_SETTINGS)
+    state = lock_state(_operator_lock_environ())
     held_by = state.get("held_by")
     if held_by:
         print(f"   the deployment's GPU lock is held by {held_by} while M5's probes run on "
@@ -4091,8 +4152,9 @@ class _ProbeServer:
     serving `src.api.main:app` on 127.0.0.1 with `--no-proxy-headers` (the
     launcher's own constants), the bound host passed in as
     `SHEPHERD_BIND_HOST` for startup's bind check, and this probe's M5
-    settings (`_M5_SETTINGS`). Its Gradio files, temporary files and log stay
-    under `directory`. A fresh interpreter, so the dashboard is mounted as the
+    settings (`_M5_SETTINGS`), with a saved settings file of its own that does
+    not exist. Its Gradio files, temporary files and log stay under
+    `directory`. A fresh interpreter, so the dashboard is mounted as the
     service mounts it, whatever this process imported first. Requests are
     plain HTTP to its port; it is stopped by this probe's own PID.
     """
@@ -4114,8 +4176,13 @@ class _ProbeServer:
     def environment(self) -> Dict[str, str]:
         from src.config.server_settings import ENV_BIND_HOST
 
+        from src.config.deployment_settings import ENV_SETTINGS_FILE
+
         env = {key: value for key, value in os.environ.items() if key not in _M5_SETTINGS}
         env.update({key: value for key, value in self.settings.items() if value is not None})
+        # A saved settings file of its own, which does not exist (UI-06): its
+        # settings are the probe's or unset, never the account's saved ones.
+        env[ENV_SETTINGS_FILE] = str(self.directory / "settings" / "deployment.json")
         env[ENV_BIND_HOST] = "127.0.0.1"
         env["GRADIO_TEMP_DIR"] = str(self.gradio_dir)
         env["TMPDIR"] = str(self.directory / "tmp")
@@ -9602,6 +9669,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         return 2
     work.mkdir(parents=True, exist_ok=True)
+    with _probes_own_settings_file(work):
+        return _run(args, work)
+
+
+def _run(args: argparse.Namespace, work: Path) -> int:
+    """`main` once its work directory exists, under the probe's own saved
+    settings file (`_probes_own_settings_file`)."""
     report_path = args.report or (work / "probe_report.json")
 
     print("=" * 66)

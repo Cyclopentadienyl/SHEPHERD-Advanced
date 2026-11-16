@@ -575,6 +575,7 @@ def test_the_m5_settings_cover_every_deployment_setting(probe):
 
     names = {setting.variable for setting in server_settings.all_settings()}
     names |= {WORKSPACES_ROOT_ENV, server_settings.ENV_BIND_HOST,
+              server_settings.ENV_LOCAL_ENTRY,
               server_settings.ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND, "SHEPHERD_DEVICE",
               "SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH", "SHEPHERD_DATA_DIR"}
     assert names <= set(probe._M5_SETTINGS)
@@ -615,7 +616,9 @@ def test_the_service_is_started_as_the_launcher_starts_it(probe, tmp_path, monke
 
     monkeypatch.setenv("SHEPHERD_KG_PATH", "/deployment/kg.json")
     monkeypatch.setenv("SHEPHERD_DEPLOYMENT_MODE", "M1")
+    monkeypatch.setenv("SHEPHERD_LOCAL_ENTRY", "1")
     monkeypatch.setenv("SHEPHERD_ALLOC_SOURCE", "preset")
+    monkeypatch.setenv("SHEPHERD_SETTINGS_FILE", "/home/operator/.config/deployment.json")
     started = {}
 
     class _Popen:
@@ -637,6 +640,11 @@ def test_the_service_is_started_as_the_launcher_starts_it(probe, tmp_path, monke
     assert env["SHEPHERD_BIND_HOST"] == "127.0.0.1"
     assert env["SHEPHERD_WORKSPACES_ROOT"] == "/probe/root"
     assert "SHEPHERD_KG_PATH" not in env and "SHEPHERD_DEPLOYMENT_MODE" not in env
+    # UI-06: never the local start's default, and a saved settings file of its own.
+    assert "SHEPHERD_LOCAL_ENTRY" not in env
+    assert env["SHEPHERD_SETTINGS_FILE"] == str(tmp_path / "service" / "settings"
+                                                / "deployment.json")
+    assert not Path(env["SHEPHERD_SETTINGS_FILE"]).exists()
     assert env["SHEPHERD_ALLOC_SOURCE"] == "preset"
     assert env["GRADIO_TEMP_DIR"] == str(tmp_path / "service" / "gradio")
     assert env["TMPDIR"] == str(tmp_path / "service" / "tmp")
@@ -1594,6 +1602,42 @@ def test_the_probe_s_own_lock_is_named_and_the_operator_s_is_still_stated(probe,
         assert probe._deployment_gpu_lock() == {"configured": False, "held": False,
                                                 "unreadable": False}
     assert WORKSPACES_ROOT_ENV not in os.environ
+
+
+def test_the_probe_names_a_settings_file_of_its_own_and_reads_the_operator_s_for_w1_only(
+        probe, tmp_path, monkeypatch):
+    """Item 11 of UI-06: while the probe runs, this process and every process
+    it starts read a saved settings file of the probe's own, which does not
+    exist; the operator's saved workspaces folder is read only to say whether
+    a job holds the deployment's lock (W1, RW1), never used."""
+    import json
+
+    from src.config import server_settings
+    from src.config.deployment_settings import ENV_SETTINGS_FILE, FORMAT
+    from src.utils.gpu_lock import LOCK_FILE_NAME, WORKSPACES_ROOT_ENV, GpuLock
+
+    deployment_root = tmp_path / "deployment-workspaces"
+    deployment_root.mkdir()
+    operator_file = tmp_path / "operator" / "deployment.json"
+    operator_file.parent.mkdir()
+    operator_file.write_text(json.dumps({"format": FORMAT,
+                                         "applied": {"workspaces_root": str(deployment_root)}}))
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(operator_file))
+    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+    work = tmp_path / "work"
+    work.mkdir()
+    with probe._probes_own_settings_file(work):
+        assert os.environ[ENV_SETTINGS_FILE] == str(work / probe.PROBE_SETTINGS_FILE)
+        assert not (work / probe.PROBE_SETTINGS_FILE).exists()
+        assert server_settings.workspaces_root().unset, "the operator's saved root was used"
+        with GpuLock(deployment_root / LOCK_FILE_NAME, job_type="training",
+                     command="deployment-job").acquire():
+            assert probe._deployment_gpu_lock() == {"configured": True, "held": True,
+                                                    "unreadable": False}
+            with probe._probes_own_gpu_lock(work):
+                assert probe._deployment_gpu_lock()["held"] is True
+    assert os.environ[ENV_SETTINGS_FILE] == str(operator_file)
+    assert probe._OPERATOR_SETTINGS_FILE is None
 
 
 # --------------------------------------------------------------------------- W12 (ops round A3b)
