@@ -3510,7 +3510,8 @@ configuration 是 base 摘要中的事實，不是欄位（完整的 spec 在其
 附上參考值）：finetune 在其 base 的 split 上訓練，並保留其 graph side。start 的拒絕（一個值，或 runner
 對 base 的檢查）以 runner 的原話顯示在 Start 旁，每個設定以其欄位名稱稱呼；Start 會拒絕的值
 （例如清空的任務設定）在編輯時也會顯示在 Start 旁：「▲ Start would refuse: Task loss weight must
-be set.」（NEW-training-finetune-6）。表單夠寬時（部署視窗）分成兩欄：左邊是 base，右邊是子模型的
+be set.」（NEW-training-finetune-6）；按下 Start 後，同一行改為它的拒絕「✕ Not started: Task loss
+weight must be set.」，旁邊不再多一則通知。表單夠寬時（部署視窗）分成兩欄：左邊是 base，右邊是子模型的
 設定、Device 與 Run name，因此什麼都不展開時能完整顯示（B27-1）；工作面板的 **Stop** 只在本頁啟動的
 子模型執行或停止中時才顯示（NEW-training-finetune-7），與 Training 的 run bar 相同。
 **Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
@@ -3627,7 +3628,9 @@ gatv2/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑�
 「● Same dataset as the run bar」（指紋在 run bar；在詳細資料表下方的一行文字）。兩種操作都在
 自己的 run 目錄中訓練。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時從參數的 Device
 開始，Check checkpoint 與啟動使用的就是它。**3. Check** 的 Check checkpoint 是一般按鈕，旁邊寫著
-「Optional: it shows the plan. The start checks first anyway.」（啟動會先檢查；R-48），在 1850 x 960
+「Optional: it shows the plan. The start checks first anyway.」（Continue 時；啟動會先檢查；R-48），
+Branch 時則是「Needed to change a setting: it shows them and the plan. Without it, the branch keeps
+the parent’s settings.」（要修改的設定只在檢查之後出現），在 1850 x 960
 下抽屜打開時第 3 步就在畫面中。主機沒有 CUDA 裝置時，每個 Device 欄位（參數、抽屜、Fine-tune）
 都在標籤下說明「No CUDA device here: auto and cuda are refused; choose cpu.」，Check checkpoint 或
 任何啟動的拒絕都用頁面的用語：「Device auto needs CUDA, which is not available here; choose cpu
@@ -3654,7 +3657,9 @@ from」；曲線屬於所檢視的 run，與抽屜
 continued」、「Finished · 5000 of 5000 epochs completed. To train further, use Continue…」（Continue
 抽屜打開時不含最後一句）、「Stopped early (…) · 40 of 60 epochs completed. It cannot be
 continued.」、「Running · epoch 12 of 100」（只用於工作自己的 run）或「No checkpoint saved, so
-nothing can be continued」（只留下其他檔案的 run，例如 `best.pt`，會從那個檔案讀取）；沒有 run 目錄的
+nothing can be continued」（只留下其他檔案的 run，例如 `best.pt`，會從那個檔案讀取，並在前面
+寫出檔名，因為那是該檔案的狀態，不是 run 的結尾：「best.pt: 2 of 4 epochs completed · can be
+continued」）；沒有 run 目錄的
 run（在建立 run 目錄之前就被拒絕）會如實說明：沒有 checkpoint、沒有日誌，也沒有可畫的圖。
 **Details ›** 收著較少看的資訊：run 的資料夾（相對於 workspace 根目錄）、它的 checkpoint 與日誌在該
 資料夾中的位置（執行中為最新的 checkpoint）、checkpoint 的模型指紋（12 個十六進位字元；Copy 會複製
@@ -3664,7 +3669,7 @@ Copy；run 所在的 workspace 不是 run bar 所選的時候也列在這裡。�
 2 × 2，較窄時排成一欄：Loss（train，以及以虛線表示的
 validation：記錄下來的 `val_loss` 或 `val_lp_loss`，不論是哪種 run）、該 run 的驗證值與其伴隨
 指標，以及對數軸的 learning rate（「Learning rate (log scale)」；0 或缺少的值為空隙）。只有一條
-序列、而標題已說明它的圖不顯示圖例。中間兩張依 run 記錄的內容而定：base 畫 LP accuracy，再畫
+序列的圖不顯示圖例，由標題說明那條序列：只記錄訓練 loss 的 run 畫「Loss (train)」。中間兩張依 run 記錄的內容而定：base 畫 LP accuracy，再畫
 ROC-AUC 與 AP；任務模型畫 pooled MRR，再畫 pooled top-k。驗證只記錄 loss 的日誌會在第一張說明
 （「This run logs only its loss: the Loss chart draws it.」）。驗證項目兩種數值都沒有、也不只有
 loss 的日誌（例如沒有 model spec 的檔案）在那裡不畫任何序列，標題為「No other figure charted:

@@ -3524,7 +3524,9 @@ differs from the reference with the reference's value): a finetune trains on its
 and keeps its graph side. A refusal of the start (a value, or the runner's check against the
 base) is shown beside Start in the runner's words, each setting by its field's name; a value
 Start would refuse (an emptied task setting) is said beside Start as you edit it too, "▲ Start
-would refuse: Task loss weight must be set." (NEW-training-finetune-6). Where the form is wide
+would refuse: Task loss weight must be set." (NEW-training-finetune-6); a click on Start then
+turns that same line into its refusal, "✕ Not started: Task loss weight must be set.", with no
+second notice beside it. Where the form is wide
 enough (the deployment window) it is two columns, the base on the left and its children's
 settings, Device and Run name on the right, so it fits with nothing expanded (B27-1); the job
 panel's **Stop** is drawn only while a child of this page's start runs or stops (NEW-training-
@@ -3590,8 +3592,10 @@ parent recorded against the workspace's current one: "● Same dataset as the ru
 ✕ of a refusal when it differs, since the start refuses another dataset (with
 the listed workspace it matches, or "matches no listed workspace"). **3. Check** (Check
 checkpoint, a normal button, with the drawer's **Device** above it) shows what the operation
-would do; beside it, "Optional: it shows the plan. The start checks first anyway.", since the
-start checks first (R-48). At 1850 x 960 the drawer opens with step 3 in view (NEW-training-
+would do; beside it, with Continue, "Optional: it shows the plan. The start checks first
+anyway.", since the start checks first (R-48); with Branch, "Needed to change a setting: it shows
+them and the plan. Without it, the branch keeps the parent’s settings.", since the settings to
+change appear only after a check. At 1850 x 960 the drawer opens with step 3 in view (NEW-training-
 finetune-2). A refused check leads with
 the same ✕ ("Cannot continue.", "Cannot branch."). Each setting and value is said in words, never
 as the code's own form. **With Continue** the check gives the plan's sentence, naming the
@@ -3715,7 +3719,9 @@ whatever the drawer chose); and the run's state in a few words, with at most one
 further, use Continue…" (without its last sentence while the Continue drawer is open), "Stopped
 early (…) · 40 of 60 epochs completed. It cannot be continued.", "Running · epoch 12 of 100"
 (said only of the job's own run), or "No checkpoint saved, so nothing can be continued" (a run
-that kept only another file, a `best.pt` say, is read from that file); a run that has no run
+that kept only another file, a `best.pt` say, is read from that file, and the line names it
+first, since it is that file's state, not the run's end: "best.pt: 2 of 4 epochs completed · can
+be continued"); a run that has no run
 directory (refused before it made its run directory) says so, with no checkpoint, no log and
 nothing to chart. **Details ›** holds what is read less often: the run's folder (relative to the
 workspaces root), its checkpoint and its log by their place in that folder (the newest
@@ -3728,7 +3734,8 @@ Below the header, one figure of four charts sharing the epoch axis, labelled onc
 below: Loss (train, and validation dashed: a logged `val_loss` or
 `val_lp_loss`, whatever the run), the run's validation figure and its companions, and the
 learning rate on a log axis ("Learning rate (log scale)"; a 0 or a missing value is a gap). A
-chart of one series its title names has no legend key. The middle two follow what the run
+chart of one series has no legend key, and its title names the series: a run that logs only its
+training loss draws "Loss (train)". The middle two follow what the run
 logged: a base charts LP accuracy, then ROC-AUC and AP; a task model pooled MRR, then pooled
 top-k. A log whose validation holds only its loss says so under the first of them ("This run
 logs only its loss: the Loss chart draws it."). A log whose validation entries hold neither
