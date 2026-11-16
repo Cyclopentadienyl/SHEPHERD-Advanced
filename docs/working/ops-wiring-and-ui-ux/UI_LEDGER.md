@@ -33,7 +33,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-01 Navigation hierarchy
 
-4 rows: 4 to do.
+4 rows: 1 partly done, 3 code-verified.
 
 #### NEW-shell-nav-theme-1 · Chosen in-page radio fill is exactly the level-1 switch's fill
 
@@ -77,7 +77,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-02 Orientation and scrolling
 
-16 rows: 4 to do, 5 partly done, 1 outside this round's scope (owner to decide), 6 code-verified at ba6e85e (audit).
+16 rows: 3 partly done, 1 outside this round's scope (owner to decide), 6 code-verified, 6 code-verified at ba6e85e (audit).
 
 #### FL-UI-02 · Layout picks side-by-side vs stacked from fixed 1400x760 sizes, not the window's shape
 
@@ -245,7 +245,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-03 Field-row alignment
 
-2 rows: 2 to do.
+2 rows: 2 code-verified.
 
 #### FL-UI-03 · Fine-tune's Refresh sits 15 px below the Run and Checkpoint selects
 
@@ -690,7 +690,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-10 Contrast, type scale, focus and targets from shared tokens
 
-17 rows: 5 to do, 7 partly done, 5 code-verified at ba6e85e (audit).
+17 rows: 2 partly done, 10 code-verified, 5 code-verified at ba6e85e (audit).
 
 #### NEW-settings-datasets-footer-3 · Disabled Settings fields look like enabled ones for a read-only viewer
 
@@ -1066,7 +1066,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-116 rows: 42 to do, 16 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 17 code-verified, 31 code-verified at ba6e85e (audit).
+116 rows: 41 to do, 17 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 17 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
