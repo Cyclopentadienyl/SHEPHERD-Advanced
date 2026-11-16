@@ -50,12 +50,14 @@ serves inference.
   If any read `MISSING`, you are on slow fallback kernels — re-run the deploy
   PyG-extension step before training.
 - **The service's settings**, as the [deployment guide](../deployment-guide.en.md)
-  §4.12 states them: the dashboard lists the subdirectories of
-  `SHEPHERD_WORKSPACES_ROOT` as datasets, and its Start is an operator control,
-  refused unless `SHEPHERD_DEPLOYMENT_MODE=M1`. Every training run, from the
-  dashboard or from a shell, takes the GPU lock `SHEPHERD_WORKSPACES_ROOT` names
-  and is refused while it is unset, so give the shell where you run
-  `train_model.py` the service's root too (§4.11).
+  §4.12 states them: the dashboard lists the subdirectories of its workspaces
+  folder as datasets, chosen in ⚙ Settings › Data locations (or set at start
+  with `SHEPHERD_WORKSPACES_ROOT`), and its Start is an operator control, on for
+  a start from the desktop entry or `launch_shepherd.sh` on this computer (or
+  with `SHEPHERD_DEPLOYMENT_MODE=M1`). Every training run, from the dashboard
+  or from a shell, takes the GPU lock that folder names and is refused while
+  none is set; a shell of the same account reads the folder saved in Settings,
+  so `train_model.py` there takes the service's lock (§4.11).
 
 Pick a workspace name up front (used in every step), directly under the
 service's workspaces root, so the Training page lists it:
@@ -286,9 +288,11 @@ first: the similarity contract must be defined before the interface is reused.
 
 ## Step 3 — Launch & run inference
 
-The launcher reads no environment file: set the service's settings first, in
-this shell or in the systemd unit ([deployment guide](../deployment-guide.en.md)
-§4.12; for Step 2, at least `SHEPHERD_DEPLOYMENT_MODE` and
+The launcher needs nothing set first: the data locations are chosen in
+⚙ Settings › Data locations and reused at the next start
+([deployment guide](../deployment-guide.en.md) §4.12), and a start on this
+computer turns the operator controls on for it. A variable set in this shell
+or in the systemd unit still wins (for Step 2, `SHEPHERD_DEPLOYMENT_MODE` and
 `SHEPHERD_WORKSPACES_ROOT`).
 
 ```bash

@@ -1643,12 +1643,13 @@ registry 是**由你建立**的目錄，每個指令都以**位於 repository �
 經由指向該目錄的連結給出的 `--registry` 會被接受；registry 的副本，或經由 bind mount 或另一個
 掛載點到達的同一個目錄，則是另一個 registry，在讀取其中任何東西之前就會被拒絕。
 `measure_scorer.py --cohort` 只在獲准開始時解析一次 `--registry`，之後都經由那個目錄讀寫：在它取得
-GPU 鎖或啟動裝置期間被改指向別處的連結，不會讓這次執行搬到別的目錄。這個變數未設定時，
-每個這類指令都會被拒絕，並說明要像服務的環境那樣設定它。請在執行指令的 shell 中，從服務讀取的
-同一個檔案設定它（§4.11）：
+GPU 鎖或啟動裝置期間被改指向別處的連結，不會讓這次執行搬到別的目錄。該指令沒有任何 registry
+時（其環境中沒有 `SHEPHERD_REGISTRY`，Settings › Data locations 中也沒有儲存），每個這類指令都會
+被拒絕。由執行服務的帳號執行的指令會像服務一樣讀取 Settings 中儲存的 registry（自 2026-11-16 起，
+§4.12）；否則請為它把 `SHEPHERD_REGISTRY` 設為服務的值（§4.11）：
 
 ```
-measure_scorer: refused: --cohort measures a version of the deployment's registry only, and SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot be told. Set SHEPHERD_REGISTRY in this environment to the value the service's environment gives it (deployment guide §4.11: one file that both the service and this shell read). [...] Nothing was read or written.
+measure_scorer: refused: --cohort measures a version of the deployment's registry only, and no results registry is set here, so which registry is the deployment's cannot be told. Choose it in Settings › Data locations, which the service and the commands of the same account read, or set SHEPHERD_REGISTRY for this command to the service's value. [...] Nothing was read or written.
 ```
 
 registry 之下的目錄也會檢查。每一個目錄（`sources/`、`versions/`、版本目錄、其 `reports/` 與每個
@@ -2487,8 +2488,8 @@ server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。�
 
 | 設定 | 鎖檔 |
 |---|---|
-| `SHEPHERD_WORKSPACES_ROOT=/絕對路徑的根目錄` | `<根目錄>/.shepherd-gpu.lock`：**根目錄是這把鎖唯一的名稱**（自 2026-10-22 的根因修正輪起）；沒有其他設定能指名一把鎖 |
-| 未設定 | **未設定鎖**：所有受管理的工作都會被拒絕（自 8242b47 的審查起）：CLI 在讀取任何東西之前以結束碼 1 結束，服務拒絕每一次啟動，並各自說明如何設定這把鎖 |
+| 生效中的 workspace 根目錄：`SHEPHERD_WORKSPACES_ROOT=/絕對路徑的根目錄`，否則是 Settings › Data locations 中儲存的 workspaces 資料夾（自 2026-11-16 起，§4.12） | `<根目錄>/.shepherd-gpu.lock`：**根目錄是這把鎖唯一的名稱**（自 2026-10-22 的根因修正輪起）；沒有其他設定能指名一把鎖 |
+| 沒有 | **未設定鎖**：所有受管理的工作都會被拒絕（自 8242b47 的審查起）：CLI 在讀取任何東西之前以結束碼 1 結束，服務拒絕每一次啟動，並各自說明如何設定這把鎖 |
 
 **`SHEPHERD_GPU_LOCK_FILE` 不再被讀取**（自 2026-10-22 的根因修正輪起）。它會在根目錄旁或取代
 根目錄指名一個自己的鎖檔，所以設定了它的服務與只設定根目錄的 shell 都算已設定，卻鎖住兩個檔案、
@@ -2528,17 +2529,20 @@ version does not have: num_workers."；自 K8-7 起，`num_workers` 與舊的模
 之後發生的錯誤則是一次失敗的執行，以 "Training failed:" 連同 traceback 記錄；在那之前發生、並非
 拒絕的意外錯誤也是如此。
 
-**請在服務與執行 CLI 的 shell 中設定同一個根目錄**（例如你在 systemd unit 中設定的
-`Environment=` 行（§4.12；unit 的範本為根目錄與 registry 各留有一行註解掉的設定）——unit 本身不讀取
-任何環境檔——或一個同時由 unit 的 `EnvironmentFile=` 與你的 shell 讀取的檔案）。看不到根目錄的
-CLI 會被拒絕，結束碼 1，不寫出任何東西（`train_model:
-refused: SHEPHERD_WORKSPACES_ROOT is not set, so the GPU lock is not configured ...`）；
-`setup_demo.py --train-model` 透過同一個訓練器訓練，同樣如此。**請給 shell 與服務相同的
-workspace 根目錄**：每個指定了這個根目錄的行程——服務、你的 shell 與其中的 CLI——都取
-`<根目錄>/.shepherd-gpu.lock`，沒有其他東西能指名一把鎖。單靠環境變數無法解決的情況（每個行程
-讀的是自己的環境）：指定了另一個根目錄的行程，取的是另一把鎖。
+**服務與執行 CLI 的 shell 讀取同一個根目錄。** 自 2026-11-16 起，最簡單的方式是在 ⚙ Settings ›
+Data locations 中選擇一次（§4.12）：服務、同一帳號的 shell 與服務啟動的工作都讀取那個儲存檔，任何
+環境都不必設定。啟動時的變數在設定了它的行程中仍然優先：對於以 systemd unit 的 `Environment=`
+行設定的服務（§4.12；unit 的範本為根目錄與 registry 各留有一行註解掉的設定），請給你的 shell 相同的
+值（一個同時由 unit 的 `EnvironmentFile=` 與你的 shell 讀取的檔案）。看不到根目錄的 CLI 會被拒絕，
+結束碼 1，不寫出任何東西（`train_model: refused: No workspaces folder is set, so the GPU lock is not
+configured ... Choose the folder in Settings › Data locations ... Ref: SHEPHERD_WORKSPACES_ROOT`）；
+`setup_demo.py --train-model` 透過同一個訓練器訓練，同樣如此。每個讀到同一個根目錄的行程——服務、
+你的 shell 與其中的 CLI——都取 `<根目錄>/.shepherd-gpu.lock`，沒有其他東西能指名一把鎖。單一設定
+無法解決的情況（每個行程讀的是自己的設定）：環境中指定了另一個根目錄的行程，取的是另一把鎖。儲存的
+根目錄只在沒有人持有舊鎖時才會改變（Apply，§4.12），取鎖者取得鎖之後也會確認位置沒有改變。
+`python scripts/deployment_settings.py show` 印出 shell 讀到的內容，可與 Settings 比對。
 
-**那個 shell 中也必須設定 `SHEPHERD_REGISTRY`**（自 M5 審查起，BACKLOG 37）：
+**那個 shell 中也必須有 `SHEPHERD_REGISTRY`（或 Settings 中儲存的 registry）**（自 M5 審查起，BACKLOG 37）：
 `measure_scorer.py --cohort`、`--record` 與 `record_evaluation.py --report` 只在它所指名的
 registry 中運作，它未設定時一律拒絕（§4.9）。`EnvironmentFile=` 的讀法和 shell 不同：systemd
 會保留值中間的空白，也會保留不是出現在值開頭的引號（systemd.exec(5)），所以像
@@ -2688,22 +2692,36 @@ route 會啟動測試執行。兩個 CLI 的
 
 ---
 
-## 4.12 伺服器設定與伺服器的清單（自 M5-1 起，2026-10-20）
+## 4.12 伺服器設定與伺服器的清單（自 M5-1 起，2026-10-20；自 2026-11-16 起在 Settings 中選擇）
 
-M5 的控制項只作用於伺服器列出的項目，從不作用於請求指定的路徑（`docs/working/PLAN_TEST_RESULTS.md` 的 D7 與 D8；D8 決定誰可以觸發操作者控制項，§4.13）。伺服器列出什麼，以及
-操作者控制項所依賴的部署模式，都來自**服務的環境變數**。請在啟動服務的地方設定它們（執行
-`launch_shepherd.sh` 的 shell，或 systemd unit 中的 `Environment=` 行），然後重啟服務。每個
-設定都在使用時讀取。沒有任何請求、表單或儲存的 UI 檔案能設定它們。缺少或被拒絕的設定會關閉
-需要它的功能，並說明原因。**沒有任何東西會退回預設目錄**，repository 的 `data/workspaces/`
-也一樣。
+M5 的控制項只作用於伺服器列出的項目，從不作用於請求指定的路徑（`docs/working/PLAN_TEST_RESULTS.md` 的 D7 與 D8；D8 決定誰可以觸發操作者控制項，§4.13）。伺服器列出什麼，來自它的
+**資料位置**：workspaces 資料夾、結果 registry、匯入資料夾與訓練證據資料夾。**請在儀表板的
+⚙ Settings › Data locations 中選擇它們**（見下文）：它們儲存在 repository 之外的一個小檔案中，
+下次啟動時會再讀取。每個設定都在使用時讀取，順序如下：
+
+1. **服務的環境變數**，已設定且不為空時（見下表）：這是啟動時的設定，永遠優先。請在啟動服務的
+   地方設定它（執行 `launch_shepherd.sh` 的 shell，或 systemd unit 中的 `Environment=` 行），
+   然後重啟服務。以這種方式設定的部署照舊運作；
+2. 否則是 **Settings › Data locations 中儲存的值**（它已套用的值，見下文）；
+3. 否則什麼都沒有：需要它的功能關閉並說明原因。**沒有任何東西會退回預設目錄**，repository 的
+   `data/workspaces/` 也一樣。
+
+部署模式從不儲存：明確設定的 `SHEPHERD_DEPLOYMENT_MODE`，否則是本機啟動的預設（§4.13）。*歷史：
+從 M5-1 到 2026-11-16，這些設定只來自環境變數（「沒有任何請求、表單或儲存的 UI 檔案能設定它們」）。
+owner 在 2026-11-16 撤回了這條規則：它讓雙擊啟動無法使用。明確設定的變數仍然優先。*
+
+下表每個變數都是 Settings 中所儲存位置（括號內的名稱）的啟動時設定；值的規則兩者相同，儲存的值
+在每次讀取時都會像變數一樣再檢查一次。
 
 | 變數 | 值 | 未設定或被拒絕時 |
 |---|---|---|
-| `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值） | 唯讀：每個操作者控制項都被拒絕（D8，§4.13） |
-| `SHEPHERD_WORKSPACES_ROOT` | 一個已存在目錄的絕對路徑；其子目錄就是各個 workspace，其正下方的 `.shepherd-gpu.lock` 就是 GPU 鎖（§4.11） | 不列出任何 workspace，也沒有 GPU 鎖：每個訓練與測試執行都會被拒絕 |
-| `SHEPHERD_REGISTRY` | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外；服務與各指令唯一從中登錄報告、在其中進行 `--cohort` 量測的 registry | 不列出任何 cohort 版本；每次登錄與 `--cohort` 量測都被拒絕 |
-| `SHEPHERD_INTAKE_DIR` | 位於 repository 之外的已存在目錄，你把要匯入的 `shepherd-cases/1` 檔案放在這裡；絕對路徑 | 不提供任何匯入來源 |
-| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | 選填：R10 證據目錄，與 `--training-evidence` 接收的相同，以 `:` 分隔（Windows 為 `;`）；每一個都必須是已存在的絕對路徑 | 無；已知不是目錄的項目會讓整個設定被拒絕；無法檢查的項目會保留並附註 |
+| `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值）；不儲存 | 本機啟動的預設（從桌面項目或 `launch_shepherd.sh` 以 loopback 綁定啟動時為 `M1`，§4.13），否則唯讀：每個操作者控制項都被拒絕（D8，§4.13） |
+| `SHEPHERD_WORKSPACES_ROOT`（`workspaces_root`，Workspaces folder） | 一個已存在目錄的絕對路徑；其子目錄就是各個 workspace，其正下方的 `.shepherd-gpu.lock` 就是 GPU 鎖（§4.11） | 不列出任何 workspace，也沒有 GPU 鎖：每個訓練與測試執行都會被拒絕 |
+| `SHEPHERD_REGISTRY`（`registry`，Results registry） | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外；服務與各指令唯一從中登錄報告、在其中進行 `--cohort` 量測的 registry | 不列出任何 cohort 版本；每次登錄與 `--cohort` 量測都被拒絕 |
+| `SHEPHERD_INTAKE_DIR`（`intake_dir`，Import folder） | 位於 repository 之外的已存在目錄，你把要匯入的 `shepherd-cases/1` 檔案放在這裡；絕對路徑 | 不提供任何匯入來源 |
+| `SHEPHERD_TRAINING_EVIDENCE_DIRS`（`training_evidence_dirs`，一個清單：Training evidence folders） | 選填：R10 證據目錄，與 `--training-evidence` 接收的相同，以 `:` 分隔（Windows 為 `;`）；每一個都必須是已存在的絕對路徑 | 無；已知不是目錄的項目會讓整個設定被拒絕；無法檢查的項目會保留並附註 |
+
+若服務是從會設定它們的 shell 或 unit 啟動（每一個都優先於 Settings 中儲存的值）：
 
 ```bash
 export SHEPHERD_DEPLOYMENT_MODE=M1
@@ -2715,8 +2733,9 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 - **`M1`** 是 SPEC_4 的單一 workspace 部署：在本機上，或經由 SSH forwarding 存取，由 owner 或
   指定的技術人員操作（`docs/working/PLAN_TEST_RESULTS.md` §4.9 問題 3）。它是操作者控制項檢查的條件之一，而不是授權。其餘條件由
   D8 在處理每個請求時檢查。不要在 reverse proxy 後面、或在其他人也能登入的機器上設定它。
-- **部署模式由 D8 套用**（§4.13）：每個操作者控制項在處理請求的當下都會讀取它；未設定或任何
-  其他值時，每個控制項都被拒絕，部署對它們而言是唯讀的。診斷、狀態頁面與唯讀清單不受影響。
+- **部署模式由 D8 套用**（§4.13）：每個操作者控制項在處理請求的當下都會讀取它；未設定（本機
+  啟動以外）或任何其他值時，每個控制項都被拒絕，部署對它們而言是唯讀的。診斷、狀態頁面與唯讀
+  清單不受影響。
 - **workspace 根目錄可以位於 repository 內**，一般使用的 `data/workspaces/` 就是如此，但必須
   由你明確指定。相對路徑、不存在的目錄與檔案都會被拒絕。
 - **GPU 鎖跟著 workspace 根目錄走**（§4.11）：鎖是 `<根目錄>/.shepherd-gpu.lock`，這是這把鎖
@@ -2734,6 +2753,62 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   只保留一次。服務帳號無法檢查的項目（無權進入的上層目錄、I/O 錯誤）是選用的證據，因此會保留：
   Test 頁面以琥珀色標出它，Start 仍可使用。R10 無法查看它：在別處找到的範圍仍是找到；在別處都
   找不到的範圍為 `unverifiable`，並指出它。相對路徑、不存在的目錄與檔案仍會讓整個設定被拒絕。
+
+### 在 Settings › Data locations 中選擇（自 2026-11-16 起）
+
+從桌面項目或 `launch_shepherd.sh` 啟動儀表板，開啟 ⚙ Settings。**Data locations** 面板每個位置
+一列（Workspaces folder、Results registry、Import folder、Training evidence folders）：誰需要它、
+目前生效的值與來源（「Saved in Settings」、「Set when the service started」），以及一個路徑框，
+附帶：
+
+- **Check**：以工作讀取時相同的規則檢查這個值（絕對路徑、已存在的目錄、兩個病人層級的位置須在
+  repository 之外），顯示解析後的路徑，以及伺服器自己的清單在其中找到什麼（「1 workspace」）；
+- **Save**：儲存並立即套用（見下文）；被拒絕的值不會儲存任何東西，並說明原因；
+- **Create suggested folder**，用於尚未設定的必要資料夾：服務帳號 home 下的
+  `~/SHEPHERD-data/workspaces`、`~/SHEPHERD-data/registry` 或 `~/SHEPHERD-data/import`，只在按下
+  時建立（registry 與匯入資料夾為 `0700`），然後儲存。不猜測任何東西：不會把舊資料夾或 slot
+  當成資料提供。
+
+這些是伺服器機器上的資料夾（從桌面啟動時就是這台電腦）。這裡不會擋住其他頁面：沒有 workspaces
+資料夾時，只有需要它的清單與工作關閉；沒有 registry 時，只有 cohort 版本、cohort 量測與登錄關閉；
+沒有模型時，只有診斷關閉。每個動作都是操作者控制項（§4.13），Check 也是。
+
+**儲存的值放在哪裡**：設定了 `SHEPHERD_SETTINGS_FILE` 時就是它（絕對路徑：A/B slot、測試、部署
+探針；launcher 的 `--settings-file PATH` 會設定它），否則是帳號的使用者設定檔：
+
+| 平台 | 檔案 |
+|---|---|
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/shepherd-advanced/deployment.json` |
+| macOS | `~/Library/Application Support/shepherd-advanced/deployment.json` |
+| Windows | `%LOCALAPPDATA%\shepherd-advanced\deployment.json` |
+
+它整檔寫入（暫存檔、flush、改名覆蓋；`0600`，其資料夾 `0700`），並持有旁邊的一把鎖，所以兩個
+頁面同時儲存不會交錯。它有 `applied` 部分，服務、同一帳號手動執行的指令與服務啟動的工作都讀它；
+以及 `saved` 部分，最新的選擇；兩者只在有變更等待時不同。
+
+**Apply** 是唯一改變使用中位置的步驟。Save 會立即嘗試它，服務每次啟動也會。只有在沒有任何東西
+可能使用舊位置時才會進行：job runner 中沒有工作，且沒有人持有舊 workspaces 資料夾所指名的 GPU 鎖
+（手動執行的指令、這個服務的 CUDA 推論）。否則變更保持等待：面板說明原因（「▲ Saved, not in effect
+yet …」）並提供 **Apply**，下次啟動時也會套用。所以工作看到的位置不會在它執行中改變，GPU 鎖也不會
+分裂。
+
+**啟動時的設定優先**：由環境變數設定的列顯示「Set when the service started」；它的路徑框與 Save 只
+改變儲存的值，顯示為「Saved, applies when the start-up setting is removed」。沒有任何東西會把環境
+變數的值寫進檔案。
+
+**讀不出的儲存檔**（不是 JSON、結構錯誤、其他格式）絕不會被當成空的：所有會來自它的位置都關閉並指出
+這個檔案，面板顯示一個 ✕ 提示與 **Replace the unreadable file (a copy is kept)**，它會把檔案改名為旁邊的
+`deployment.json.unreadable-<UTC 時間>`；在那之前 Save 關閉。無法開啟的檔案（權限、磁碟）要在原處
+修正，絕不改名。
+
+**對唯讀的瀏覽器**，每個路徑都顯示「Set (path hidden)」，來源照樣顯示，每個路徑框與按鈕都上鎖，旁邊
+寫著「Operator controls only: <原因>」。
+
+**從 shell 與經由 HTTP 看到相同的檢視**：`python scripts/deployment_settings.py show`（`--json` 輸出
+欄位）以相同的解析印出該 shell 讀到的內容，讓 shell、服務與工作可以比對；
+`GET /api/v1/settings/deployment` 回答服務的檢視（開放、唯讀；對 D8 不允許的請求，每個路徑都隱藏）。
+明確給出設定的指令（為該指令設定上表的變數）絕不會因為 Settings 尚未設定而被拒絕；同一帳號的指令
+在沒有設定任何變數時讀取儲存的值（§4.11）。
 
 ### 伺服器列出什麼
 
@@ -2868,16 +2943,20 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 
 ### 操作者要設定什麼
 
-在啟動服務的地方設定 `SHEPHERD_DEPLOYMENT_MODE=M1`（§4.12；systemd unit 中是被註解掉的那行
-`Environment=`），然後重啟服務。未設定或任何其他值時，每個操作者控制項都被拒絕，部署對它們而言是
-唯讀的。診斷、查詢、狀態頁面與唯讀清單照常運作。
+在這台電腦上啟動時什麼都不必設定（自 2026-11-16 起）：桌面項目與 `launch_shepherd.sh`（Windows 為
+`launch_shepherd.cmd`）以 `--local-entry` 啟動 launcher，在 loopback 綁定下，它把部署模式 `M1`
+作為**本機啟動的預設**交給服務。在啟動服務的地方明確設定的 `SHEPHERD_DEPLOYMENT_MODE`（§4.12；
+systemd unit 中是被註解掉的那行 `Environment=`）仍然決定一切：恰好是 `M1` 時啟用，任何其他值（例如
+`read-only`）都是唯讀，本機啟動絕不會把它升級。以其他方式啟動（systemd unit、手動執行 `uvicorn` 或
+`python -m src.api.main`）且未設定模式的服務是唯讀的。唯讀部署中每個操作者控制項都被拒絕。診斷、查詢、
+狀態頁面與唯讀清單照常運作。本機預設不改變下文 D8 的任何檢查：每個請求仍會被檢查，沒有任何路由能略過。
 
 ### 哪些控制項會被檢查
 
 | 位置 | 控制項 |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/stop`、`POST /api/v1/training/start`、`POST /api/v1/training/finetune`、`POST /api/v1/training/branch`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints`、`GET /api/v1/workspaces/{name}/family` |
-| 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）與 Stop inference（它的詢問與確認；自 ops-wiring 這一輪起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training：Start、Stop（它的確認會讀取該 run 最後的 checkpoint）、Continue…（它列出 parent）、parent 清單的 Refresh、Check checkpoint，以及 Continue Training 或 Start branch |
+| 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）與 Stop inference（它的詢問與確認；自 ops-wiring 這一輪起）。⚙ Settings：Restart Backend、Apply Settings 與 Stop service（它的詢問與確認；自 2026-11-16 起）；Data locations 的 Check、Save、Create suggested folder、Apply 與 Replace the unreadable file（自 2026-11-16 起；§4.12）。Research › Training：Start、Stop（它的確認會讀取該 run 最後的 checkpoint）、Continue…（它列出 parent）、parent 清單的 Refresh、Check checkpoint，以及 Continue Training 或 Start branch |
 
 三份 checkpoint 清單（含家族檢視）與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
 （C3），因此它們與控制項一樣受檢查。為了顯示而開啟 checkpoint 的讀取也一樣：Diagnosis 卡片的
@@ -2887,7 +2966,8 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 Commit）、Start test、Cancel、Register this report、Add note 與模型清單使用同一個檢查，Research ›
 Models 的 checkpoint 清單、Load 與 Results 分段（讀取、顯示、比較與匯出結果，自 research comparison
 Stage 8b 起；§4.14）也一樣。其餘一切保持開放：診斷、HPO 與疾病查詢、pipeline 狀態與儲存的 UI 路徑、訓練狀態與指標、
-workspace 與 cohort 清單、已記錄的結果，以及系統頁面。
+workspace 與 cohort 清單、已記錄的結果、系統頁面，以及 `GET /api/v1/settings/deployment`（§4.12），
+它對 D8 不允許的請求隱藏每個路徑。
 
 ### 什麼時候允許一個請求
 
@@ -3050,7 +3130,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | Chip | 意義 |
 |---|---|
 | `Operator controls: on (this machine)` | D8 允許這個瀏覽器的請求 |
-| `Read-only: deployment mode not set to M1` | `SHEPHERD_DEPLOYMENT_MODE` 不完全等於 `M1` |
+| `Read-only: deployment mode not set to M1` | 服務不是從這台電腦上的桌面項目或 `launch_shepherd.sh` 啟動，且 `SHEPHERD_DEPLOYMENT_MODE` 不是 `M1`；或啟動時把它設成了其他值，本機啟動絕不覆蓋它（§4.13） |
 | `Read-only: request not local` | 請求不是經由本機的 loopback 抵達：請使用轉發到 `localhost` 的 SSH forward |
 | `Read-only: forwarded by a proxy` | 請求帶有 proxy 會加上的標頭 |
 | `Read-only: not addressed to localhost` | 瀏覽器使用的主機名稱不是 `localhost`、`127.0.0.1` 或 `[::1]` |
@@ -3073,7 +3153,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | `GPU: inference (pid 41822, since 09:58 UTC)` | 另一個服務的 CUDA 推論持有這把鎖（同一個 workspaces root 上的另一台伺服器） |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | 某個不是本服務啟動的行程持有 GPU 鎖（正式的 CLI，或同一把鎖上另一台伺服器的 job runner）；chip 只顯示其持有者紀錄所寫的內容：指令、pid 與開始時間 |
 | `GPU job: lock held, holder not described` | 鎖被持有，但沒有任何仍在執行的行程被描述為持有者 |
-| `GPU jobs: refused, lock not configured` | 沒有設定 GPU 鎖（指名它的 `SHEPHERD_WORKSPACES_ROOT` 沒有設定），因此在設定之前每個訓練與測試執行都會被拒絕（§4.11） |
+| `GPU jobs: refused, no workspaces folder` | 沒有設定 workspaces 資料夾，所以沒有 GPU 鎖，在 ⚙ Settings › Data locations 中選擇一個之前，每個訓練與測試執行都會被拒絕（§4.11、§4.12）。*2026-11-16 以前它寫作「refused, lock not configured」並指名 `SHEPHERD_WORKSPACES_ROOT`* |
 | `GPU jobs: not read`（灰色） | 無法讀取狀態。鎖的設定無法使用時，ⓘ 會說明，但只對 D8 允許的瀏覽器顯示路徑 |
 
 ### 說明：ⓘ 按鈕
@@ -3849,7 +3929,12 @@ build; start a new run.」）。Load 不會寫入任何使用紀錄。頁面在�
 
 ### ⚙ Settings 與執行環境那一行
 
-**Settings**（自 ops-wiring 這一輪的 B5 起是一個面板）先說明正在執行的與已儲存的：**Allocator
+**Settings** 自 2026-11-16 起有兩個面板：左邊（窄版時在上方）的 **Data locations**，在這裡選擇、
+檢查、儲存並套用 workspaces 資料夾、結果 registry、匯入資料夾與訓練證據資料夾（§4.12）；右邊的
+**Runtime settings**。第一次啟動時寫「○ Nothing is set yet …」，並為每個必要的列提供建議資料夾；其他
+頁面照常開啟，需要某個資料夾的頁面會在自己的位置說明，並指向 Settings › Data locations。
+
+**Runtime settings**（自 ops-wiring 這一輪的 B5 起是一個面板）先說明正在執行的與已儲存的：**Allocator
 now**，這個後端啟動時使用的 CUDA 記憶體配置器，從它自己的環境讀出（啟動時已儲存的 preset、啟動
 環境中設定的配置器（附上變數名稱），或沒有設定：PyTorch 的預設）；**Allocator saved**，下次啟動
 會套用的 preset，兩者不同時寫「▲ Not running yet: Restart Backend applies it」，啟動環境中設定的
@@ -3860,8 +3945,12 @@ now**，這個後端啟動時使用的 CUDA 記憶體配置器，從它自己的
 以文字說明、名稱寫在旁邊：Driver memory pool（`cuda_async`，預設）、Expandable segments、Native
 rounded、Native no tuning；後端啟動時讀取一次）與 **Compile the model (torch.compile)**（實驗性；
 尚未以目前唯一建置的架構 GATv2 量測過）。接著是 **Apply Settings**（儲存兩者；尚未儲存的變更會寫在
-它們下方）與 **Restart Backend**（GPU 工作執行時停用，原因寫在旁邊；重啟會先停止服務，如 §4.11）。
-對唯讀的瀏覽器，這兩個欄位不能更改，兩個按鈕會顯示鎖，"Operator controls only: <原因>" 寫在旁邊。
+它們下方）、**Restart Backend**（GPU 工作執行時停用，原因寫在旁邊；重啟會先停止服務，如 §4.11）與
+**Stop service**（自 2026-11-16 起：從桌面項目啟動的服務沒有可以停止它的終端機）。Stop service 先詢問
+一次（「Stop the service? …」，Stop service now 或 Cancel），GPU 工作執行時停用，然後經由後端有序的停止
+（SIGTERM 啟動的那一個）停止後端；記錄中會寫明（「Stopping the service (pid N): asked for by Stop service
+in Settings.」）。再從桌面項目或 `launch_shepherd.sh` 啟動它。對唯讀的瀏覽器，這兩個欄位不能更改，
+每個按鈕都會顯示鎖，"Operator controls only: <原因>" 寫在旁邊。
 
 **執行環境那一行**在每個頁面的底部，先寫問題的後果，再寫原因：「▲ No CUDA device visible: GPU
 training is unavailable. torch is built for CUDA 13.0; check the driver and CUDA libraries.」（失去某項

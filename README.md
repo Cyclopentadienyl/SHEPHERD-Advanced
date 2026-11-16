@@ -59,17 +59,21 @@ make validate          # or: uv run python scripts/validate_installation.py
 ## Run
 
 ```bash
-bash launch_shepherd.sh          # Linux
-launch_shepherd.cmd              # Windows
+bash launch_shepherd.sh                            # Linux, from any directory
+bash launch_shepherd.sh --install-desktop-entry    # Linux: a desktop entry to start it by double click
+launch_shepherd.cmd                                # Windows
 ```
 
-Both start the FastAPI service with the Gradio dashboard mounted on it. Neither reads an
-environment file: give the service its settings in the shell that runs the launcher, or in the
-systemd unit, as [deployment guide §4.12](deployment-guide.en.md) states them. Without them the
-service starts read-only and lists nothing to train or test: the operator controls (Start, Load,
-a test run) need `SHEPHERD_DEPLOYMENT_MODE=M1`, every training and test run needs
-`SHEPHERD_WORKSPACES_ROOT`, the GPU lock's one name (§4.11), and the Test page needs
-`SHEPHERD_REGISTRY`, the deployment's registry (and `SHEPHERD_INTAKE_DIR` to import a cohort).
+Both start the FastAPI service with the Gradio dashboard mounted on it and open it in the
+browser. **Nothing needs to be set first** (since 2026-11-16): a start on this computer turns the
+operator controls on for this machine, and the data locations are chosen in the dashboard's
+⚙ Settings › Data locations, saved outside the repository and reused at the next start
+([deployment guide §4.12](deployment-guide.en.md)): the Workspaces folder (every training and
+test run needs it: it names the GPU lock, §4.11), the Results registry (the Test page's cohort
+measurements and registration) and the Import folder. Until a folder is chosen only what needs it
+is off, and the page says so. Settings › Stop service stops the service. A variable set where the
+service starts still wins, for a systemd unit or a scripted start: `SHEPHERD_DEPLOYMENT_MODE`,
+`SHEPHERD_WORKSPACES_ROOT`, `SHEPHERD_REGISTRY`, `SHEPHERD_INTAKE_DIR` (§4.12).
 
 | | |
 |---|---|

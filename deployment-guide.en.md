@@ -335,7 +335,9 @@ by hand.
    `--config <settings.yaml>`), in a shell where the GPU lock is configured: it refuses without
    one (§4.11). Then its task models on the dashboard's Research › Prepare › Fine-tune, or
    `--stage finetune --task <task> --finetune-from <base run>/checkpoints/last.pt`
-3. Launch: `./launch_shepherd.sh`
+3. Launch: `./launch_shepherd.sh` (from any directory; `--install-desktop-entry` adds a desktop
+   entry that starts it by double click), then choose the data folders in ⚙ Settings › Data
+   locations (§4.12)
 
 There is no shortest-path step: a task model never reads `shortest_paths.pt`, and neither does
 the GB10 acceptance probe.
@@ -1275,13 +1277,14 @@ accepted, while a copy of the registry, or the same directory reached through a 
 another mount, is another registry and is refused before anything in it is read. A
 `measure_scorer.py --cohort` run resolves `--registry` once, when it is allowed to start, and
 reads and writes through that directory: a link retargeted while the run takes the GPU lock or
-starts the device does not move it. With the
-variable unset, every such command is refused, saying to set it as the service's environment
-sets it. Set it in the shell where you run the commands, from the same file the service reads
-(§4.11):
+starts the device does not move it. With no
+registry set for that command (no `SHEPHERD_REGISTRY` in its environment and none saved in
+Settings › Data locations), every such command is refused. A command run by the account that runs
+the service reads the registry saved in Settings, as the service does (since 2026-11-16, §4.12);
+otherwise set `SHEPHERD_REGISTRY` for it to the service's value (§4.11):
 
 ```
-measure_scorer: refused: --cohort measures a version of the deployment's registry only, and SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot be told. Set SHEPHERD_REGISTRY in this environment to the value the service's environment gives it (deployment guide §4.11: one file that both the service and this shell read). [...] Nothing was read or written.
+measure_scorer: refused: --cohort measures a version of the deployment's registry only, and no results registry is set here, so which registry is the deployment's cannot be told. Choose it in Settings › Data locations, which the service and the commands of the same account read, or set SHEPHERD_REGISTRY for this command to the service's value. [...] Nothing was read or written.
 ```
 
 The directories below it are checked too. Each one (`sources/`, `versions/`, a version's
@@ -2294,8 +2297,8 @@ One lock file per deployment, whatever the workspace, named by the workspaces ro
 
 | Settings | Lock file |
 |---|---|
-| `SHEPHERD_WORKSPACES_ROOT=/absolute/root` | `<root>/.shepherd-gpu.lock`: **the root is the lock's one name** (since the root-cause round of 2026-10-22); no other setting names a lock |
-| not set | **not configured**: every managed job is refused (since the review of 8242b47): the CLIs exit 1 before anything is read, the service refuses every start, each saying how to configure the lock |
+| a workspaces root in effect: `SHEPHERD_WORKSPACES_ROOT=/absolute/root`, else the workspaces folder saved in Settings › Data locations (since 2026-11-16, §4.12) | `<root>/.shepherd-gpu.lock`: **the root is the lock's one name** (since the root-cause round of 2026-10-22); no other setting names a lock |
+| none | **not configured**: every managed job is refused (since the review of 8242b47): the CLIs exit 1 before anything is read, the service refuses every start, each saying how to configure the lock |
 
 **`SHEPHERD_GPU_LOCK_FILE` is no longer read** (since the root-cause round of 2026-10-22). It
 named a lock file of its own, beside the root or instead of it, so a service configured with it
@@ -2342,18 +2345,24 @@ settings such as `conv_type` and `hidden_dim` are such settings, and `--conv-typ
 "Training failed:" with its traceback, and so is an unexpected error before it, one that is no
 refusal.
 
-**Set the root for the service and in the shell where you run the CLIs** (for example, the
-`Environment=` lines you set in the systemd unit (§4.12; its template has a commented line for
-the root and one for the registry), which reads no environment file of its own, or one file that
-both the unit's `EnvironmentFile=` and your shell read). A CLI that sees no root
-is refused, exit 1, with nothing written (`train_model: refused: SHEPHERD_WORKSPACES_ROOT is not
-set, so the GPU lock is not configured ...`); so is `setup_demo.py --train-model`, which trains
-through the same trainer. **Give the shell the service's workspaces root**: every process that
-names the root takes `<root>/.shepherd-gpu.lock`, the service, your shell and its CLIs alike,
-and nothing else names a lock. What one environment variable cannot settle, since each process
-reads its own: a process that names another root takes another lock.
+**The service and the shell where you run the CLIs read the same root.** Since 2026-11-16 the
+simplest way is to choose it once in ⚙ Settings › Data locations (§4.12): the service, a shell
+of the same account and the jobs the service starts read the saved file, with nothing set in any
+environment. A start-time variable still wins in the process that has it: for a service
+configured with `Environment=` lines in the systemd unit (§4.12; its template has a commented
+line for the root and one for the registry), give your shell the same value (one file that both
+the unit's `EnvironmentFile=` and your shell read). A CLI that sees no root is refused, exit 1,
+with nothing written (`train_model: refused: No workspaces folder is set, so the GPU lock is not
+configured ... Choose the folder in Settings › Data locations ... Ref: SHEPHERD_WORKSPACES_ROOT`);
+so is `setup_demo.py --train-model`, which trains through the same trainer. Every process that
+reads the same root takes `<root>/.shepherd-gpu.lock`, the service, your shell and its CLIs
+alike, and nothing else names a lock. What one setting cannot settle, since each process reads
+its own: a process whose environment names another root takes another lock. A saved root is
+changed only while nothing holds the old lock (Apply, §4.12), and a taker checks after taking it
+that the location still holds. `python scripts/deployment_settings.py show` prints what a shell
+reads, to compare with Settings.
 
-**`SHEPHERD_REGISTRY` is required in that shell as well** (since the M5 review, BACKLOG 37):
+**`SHEPHERD_REGISTRY` (or the registry saved in Settings) is required in that shell as well** (since the M5 review, BACKLOG 37):
 `measure_scorer.py --cohort`, `--record` and `record_evaluation.py --report` work only in the
 registry it names and refuse while it is unset (§4.9). An `EnvironmentFile=` is not read the way
 a shell reads it: systemd keeps interior whitespace and keeps quotes that do not open the value
@@ -2540,23 +2549,41 @@ Since M5-2, Research › Test starts and cancels test runs from the dashboard th
 
 ---
 
-## 4.12 Server settings and the server's lists (since M5-1, 2026-10-20)
+## 4.12 Server settings and the server's lists (since M5-1, 2026-10-20; chosen in Settings since 2026-11-16)
 
 M5's controls act on what the server lists, never on a path a request names (`docs/working/PLAN_TEST_RESULTS.md` D7 and D8; D8 decides who may trigger an operator control, §4.13). What the
-server lists, and the deployment mode its operator controls depend on, come from **environment
-variables of the service**. Set them where the service starts (the shell that runs
-`launch_shepherd.sh`, or `Environment=` lines in the systemd unit) and restart it. Each is read
-when it is used. No request, form or saved UI file can set one. A missing or refused setting
-turns off what needs it and says why. **Nothing falls back to a default directory**, the
-repository's `data/workspaces/` included.
+server lists comes from its **data locations**: the workspaces folder, the results registry, the
+import folder and the training evidence folders. **Choose them in the dashboard's ⚙ Settings ›
+Data locations** (below): they are saved in one small file outside the repository and read again
+at the next start. Each is read when it is used, in this order:
+
+1. **an environment variable of the service** that is set and not empty (the table below): a
+   start-time setting, which always wins. Set it where the service starts (the shell that runs
+   `launch_shepherd.sh`, or `Environment=` lines in the systemd unit) and restart it. A deployment
+   configured this way works as before;
+2. else **the value saved in Settings › Data locations** (its applied value, below);
+3. else nothing: what needs it is off and says why. **Nothing falls back to a default
+   directory**, the repository's `data/workspaces/` included.
+
+The deployment mode is never saved: an explicit `SHEPHERD_DEPLOYMENT_MODE`, else the local
+start's default (§4.13). *History: from M5-1 until 2026-11-16 these settings came only from the
+environment ("no request, form or saved UI file can set one"). The owner withdrew that rule on
+2026-11-16: it made a start by double click unusable. An explicit variable still wins.*
+
+Each variable below is a start-time setting of the location saved in Settings under the name in
+brackets; the rules for a value are the same either way, and a saved value is checked again at
+each read, as a variable is.
 
 | Variable | Value | Unset or refused |
 |---|---|---|
-| `SHEPHERD_DEPLOYMENT_MODE` | `M1`, exactly (`m1`, ` M1` or `M2` are other values) | read-only: every operator control is refused (D8, §4.13) |
-| `SHEPHERD_WORKSPACES_ROOT` | absolute path of an existing directory; its subdirectories are the workspaces, and `.shepherd-gpu.lock` directly under it is the GPU lock (§4.11) | no workspace is listed, and no GPU lock: every training and test run is refused |
-| `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository; the only registry reports are registered from and `--cohort` runs measure in, for the service and the commands alike | no cohort version is listed; every registration and `--cohort` measurement is refused |
-| `SHEPHERD_INTAKE_DIR` | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
-| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | optional: R10 evidence directories, as `--training-evidence` takes them, separated by `:` (`;` on Windows); each absolute and existing | none; an entry known not to be a directory refuses the whole setting; one that cannot be checked is kept and noted |
+| `SHEPHERD_DEPLOYMENT_MODE` | `M1`, exactly (`m1`, ` M1` or `M2` are other values); not saved | the local start's default (`M1` from the desktop entry or `launch_shepherd.sh` with a loopback bind, §4.13), else read-only: every operator control is refused (D8, §4.13) |
+| `SHEPHERD_WORKSPACES_ROOT` (`workspaces_root`, the Workspaces folder) | absolute path of an existing directory; its subdirectories are the workspaces, and `.shepherd-gpu.lock` directly under it is the GPU lock (§4.11) | no workspace is listed, and no GPU lock: every training and test run is refused |
+| `SHEPHERD_REGISTRY` (`registry`, the Results registry) | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository; the only registry reports are registered from and `--cohort` runs measure in, for the service and the commands alike | no cohort version is listed; every registration and `--cohort` measurement is refused |
+| `SHEPHERD_INTAKE_DIR` (`intake_dir`, the Import folder) | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
+| `SHEPHERD_TRAINING_EVIDENCE_DIRS` (`training_evidence_dirs`, a list: the Training evidence folders) | optional: R10 evidence directories, as `--training-evidence` takes them, separated by `:` (`;` on Windows); each absolute and existing | none; an entry known not to be a directory refuses the whole setting; one that cannot be checked is kept and noted |
+
+For a service started from a shell or a unit that sets them (each one wins over the value saved
+in Settings):
 
 ```bash
 export SHEPHERD_DEPLOYMENT_MODE=M1
@@ -2570,8 +2597,9 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   conditions an operator control checks, not an authorisation. D8 checks each request it handles
   for the others. Do not set it behind a reverse proxy or on a machine other people can log in to.
 - **The deployment mode is applied by D8** (§4.13), on every operator control at the moment it
-  handles a request: unset or any other value, each one is refused and the deployment is
-  read-only for them. Diagnosis, the status pages and the read-only lists work either way.
+  handles a request: unset (outside a local start) or any other value, each one is refused and
+  the deployment is read-only for them. Diagnosis, the status pages and the read-only lists work
+  either way.
 - **The workspaces root may be inside the repository**, as the usual `data/workspaces/` is, but
   only when you name it. A relative path, a missing directory and a file are refused.
 - **The GPU lock follows the workspaces root** (§4.11): the lock is `<root>/.shepherd-gpu.lock`,
@@ -2593,6 +2621,70 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   page names it in amber, and Start stays enabled. R10 cannot look in it: a scope found
   elsewhere stays found, and one found nowhere else reads `unverifiable`, naming it. A relative
   path, a missing directory and a file still refuse the setting.
+
+### Choosing them in Settings › Data locations (since 2026-11-16)
+
+Start the dashboard from its desktop entry or with `launch_shepherd.sh` and open ⚙ Settings. The
+**Data locations** panel has one row per location (Workspaces folder, Results registry, Import
+folder, Training evidence folders): what needs it, what is in effect and where it came from
+("Saved in Settings", "Set when the service started"), and a path box with:
+
+- **Check**: the value by the same rule a job's read applies (absolute, an existing directory,
+  outside the repository for the two patient-level ones), the resolved path and what the
+  server's own lists find in it ("1 workspace");
+- **Save**: saves it and applies it at once (below); a refused value saves nothing and says why;
+- **Create suggested folder**, for a required folder that is not set: `~/SHEPHERD-data/workspaces`,
+  `~/SHEPHERD-data/registry` or `~/SHEPHERD-data/import` under the service account's home,
+  created only by that click (the registry and the import folder `0700`), then saved. Nothing
+  is guessed: no old folder or slot is offered as data.
+
+These are folders on the server machine (this computer when started from its desktop). Nothing
+here blocks another page: with no workspaces folder only the lists and jobs that need one are
+off; with no registry only cohort versions, cohort measurements and registration; with no model
+only diagnosis. Every act is an operator control (§4.13), Check included.
+
+**Where the saved values are kept**: `SHEPHERD_SETTINGS_FILE` when it is set (an absolute path: an
+A/B slot, a test, the deployment probe; the launcher's `--settings-file PATH` sets it), else the
+account's user configuration file:
+
+| Platform | File |
+|---|---|
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/shepherd-advanced/deployment.json` |
+| macOS | `~/Library/Application Support/shepherd-advanced/deployment.json` |
+| Windows | `%LOCALAPPDATA%\shepherd-advanced\deployment.json` |
+
+It is written whole (a temporary file, flushed, renamed over it; `0600`, its folder `0700`) under a
+lock beside it, so two pages saving at once cannot interleave. It holds an `applied` part, which
+the service, a command run by hand by the same account and a job the service starts all read,
+and a `saved` part, the latest choice; they differ only while a change waits.
+
+**Apply** is the one step that changes what is in use. Save tries it at once, and so does each
+start of the service. It goes ahead only while nothing could be using the old locations: no job
+in the job runner and no holder of the GPU lock the old workspaces folder names (a command run by
+hand, this service's CUDA inference). Otherwise the change stays pending: the panel says why
+("▲ Saved, not in effect yet …") with **Apply**, and it also applies at the next start. So a
+job's view of the locations never changes under it, and the GPU lock is never split.
+
+**A start-time setting wins**: a row set by an environment variable reads "Set when the service
+started"; its box and Save change only the saved value, which reads "Saved, applies when the
+start-up setting is removed". Nothing writes an environment value into the file.
+
+**A saved file that cannot be read** (not JSON, the wrong shape, another format) is never read as
+empty: every location that would come from it is off, naming the file, and the panel shows one ✕
+notice with **Replace the unreadable file (a copy is kept)**, which renames it to
+`deployment.json.unreadable-<UTC time>` beside it; Save is off until then. A file that cannot be
+opened (permissions, the disk) is fixed where it is and never renamed.
+
+**For a read-only browser** every path reads "Set (path hidden)", the sources stay, and every box
+and button is locked with "Operator controls only: <reason>".
+
+**The same view from a shell and over HTTP**: `python scripts/deployment_settings.py show`
+(`--json` for the fields) prints what that shell reads, by the same resolution, so a shell, the
+service and a job can be compared; `GET /api/v1/settings/deployment` answers the service's view
+(open and read-only; for a request D8 does not allow, every path is hidden). A command whose
+settings are given explicitly (the variables above, set for that command) is never refused
+because Settings was not set up; a command of the same account with none set reads the saved
+values (§4.11).
 
 ### What the server lists
 
@@ -2754,17 +2846,23 @@ changed together, and a deployment may need to act on each:
 
 ### What an operator sets
 
-Set `SHEPHERD_DEPLOYMENT_MODE=M1` where the service starts (§4.12; in the systemd unit, the
-commented `Environment=` line) and restart it. Unset or any other value, every operator control
-is refused and the deployment is read-only for them. Diagnosis, the lookups, the status pages and
-the read-only lists keep working.
+Nothing, for a start on this computer (since 2026-11-16): the desktop entry and
+`launch_shepherd.sh` (`launch_shepherd.cmd` on Windows) start the launcher with `--local-entry`,
+and with a loopback bind it gives the service the deployment mode `M1` as **the local start's
+default**. An explicit `SHEPHERD_DEPLOYMENT_MODE` where the service starts (§4.12; in the systemd
+unit, the commented `Environment=` line) still decides: exactly `M1` enables, and any other value
+(`read-only`, say) is read-only and never upgraded by a local start. A service started otherwise
+(the systemd unit, `uvicorn` or `python -m src.api.main` by hand) with no mode set is read-only.
+For a read-only deployment every operator control is refused. Diagnosis, the lookups, the status
+pages and the read-only lists keep working. The local default changes nothing in D8's checks
+below: each request is still checked, and no route skips them.
 
 ### Which controls are checked
 
 | Where | Controls |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/stop`, `POST /api/v1/training/start`, `POST /api/v1/training/finetune`, `POST /api/v1/training/branch`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints`, `GET /api/v1/workspaces/{name}/family` |
-| Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2) and Stop inference (its question and its confirmation; since the ops-wiring round). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint, and Continue Training or Start branch |
+| Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2) and Stop inference (its question and its confirmation; since the ops-wiring round). ⚙ Settings: Restart Backend, Apply Settings and Stop service (its question and its confirmation; since 2026-11-16); Data locations' Check, Save, Create suggested folder, Apply and Replace the unreadable file (since 2026-11-16; §4.12). Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint, and Continue Training or Start branch |
 
 The three checkpoint lists (the family view among them), and Check checkpoint, open checkpoint files, which SPEC_4 classes as
 checkpoint inspection (C3), so they are checked like the controls. So are the reads that open a
@@ -2777,7 +2875,9 @@ Register this report, Add note and its model list, and Research › Models for i
 list, its Load and its Results segment (reading, showing, comparing and exporting the results,
 since research comparison Stage 8b; §4.14). Everything else stays open:
 diagnosis, the HPO and disease lookups, the pipeline status and the saved UI paths, the training
-status and metrics, the workspace and cohort lists, the recorded results and the system pages.
+status and metrics, the workspace and cohort lists, the recorded results and the system pages,
+and `GET /api/v1/settings/deployment` (§4.12), which hides every path from a request D8 does not
+allow.
 
 ### When a request is allowed
 
@@ -2964,7 +3064,7 @@ backend (§4.13).
 | Chip | Meaning |
 |---|---|
 | `Operator controls: on (this machine)` | D8 allows this browser's requests |
-| `Read-only: deployment mode not set to M1` | `SHEPHERD_DEPLOYMENT_MODE` is not exactly `M1` |
+| `Read-only: deployment mode not set to M1` | The service was not started from its desktop entry or `launch_shepherd.sh` on this computer, and `SHEPHERD_DEPLOYMENT_MODE` is not `M1`; or it was set at start to another value, which a local start never overrides (§4.13) |
 | `Read-only: request not local` | The request did not arrive on this machine's loopback: use an SSH forward to `localhost` |
 | `Read-only: forwarded by a proxy` | The request carries a header a proxy adds |
 | `Read-only: not addressed to localhost` | The browser used another host name than `localhost`, `127.0.0.1` or `[::1]` |
@@ -2988,7 +3088,7 @@ lock before its words, and has "Operator controls only: <reason>" beside it.
 | `GPU: inference (pid 41822, since 09:58 UTC)` | Another service's CUDA inference holds the lock (another server on the same workspaces root) |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | A process this service did not start holds the GPU lock (a formal CLI, or another server's job runner on the same lock); the chip says what its holder record says: the command, the pid and the start |
 | `GPU job: lock held, holder not described` | The lock is held, but no running process is described as its holder |
-| `GPU jobs: refused, lock not configured` | No GPU lock is configured (`SHEPHERD_WORKSPACES_ROOT`, which names it, is not set), so every training and test run is refused until it is set (§4.11) |
+| `GPU jobs: refused, no workspaces folder` | No workspaces folder is set, so the GPU lock is not configured and every training and test run is refused until one is chosen in ⚙ Settings › Data locations (§4.11, §4.12). *Until 2026-11-16 it read "refused, lock not configured" and named `SHEPHERD_WORKSPACES_ROOT`* |
 | `GPU jobs: not read` (grey) | The state could not be read. When the lock setting cannot be used, the ⓘ says so, naming the path only to a browser D8 allows |
 
 ### Help: the ⓘ buttons
@@ -3970,7 +4070,14 @@ returns to the row.
 
 ### ⚙ Settings and the runtime line
 
-**Settings** (one panel since the ops-wiring round's B5) says first what runs and what is
+**Settings** has two panels since 2026-11-16: **Data locations** on the left (above at a narrow
+width), where the workspaces folder, the results registry, the import folder and the training
+evidence folders are chosen, checked, saved and applied (§4.12), and **Runtime settings** on the
+right. A first start says "○ Nothing is set yet …" and offers a suggested folder for each
+required row; every other page opens as usual, and a page that needs a folder says so in its own
+place, pointing to Settings › Data locations.
+
+**Runtime settings** (one panel since the ops-wiring round's B5) says first what runs and what is
 saved: **Allocator now**, the CUDA memory allocator this backend started with, read from its
 own environment (the saved preset at its start, an allocator set in the launch environment,
 named with its variable, or none: PyTorch's default); **Allocator saved**, the preset the next
@@ -3984,10 +4091,15 @@ saved values each time the page is opened: **Memory allocator** (each preset in 
 beside: Driver memory pool (`cuda_async`, the default), Expandable segments, Native rounded,
 Native with no tuning; read once when the backend starts) and **Compile the model
 (torch.compile)** (experimental; not yet measured with GATv2, the one architecture built today).
-Then **Apply Settings** (saves both; a change not yet saved is said under them) and **Restart
+Then **Apply Settings** (saves both; a change not yet saved is said under them), **Restart
 Backend** (off while a GPU job runs, said beside it; a restart stops serving first, as in
-§4.11). For a read-only browser the fields cannot be changed and both buttons show the lock,
-with "Operator controls only: <reason>" beside them.
+§4.11) and **Stop service** (since 2026-11-16: a service started from its desktop entry has no
+terminal to stop it from). Stop service asks once ("Stop the service? …", Stop service now or
+Cancel), is off while a GPU job runs, and then stops the backend through its orderly stop, the
+one a SIGTERM starts; the log names it ("Stopping the service (pid N): asked for by Stop service in
+Settings."). Start it again from its desktop entry or `launch_shepherd.sh`. For a read-only
+browser the fields cannot be changed and every button shows the lock, with "Operator controls
+only: <reason>" beside them.
 
 **The runtime line** at the foot of every page leads with what a problem costs, then its cause:
 "▲ No CUDA device visible: GPU training is unavailable. torch is built for CUDA 13.0; check the

@@ -28,6 +28,12 @@ set one"). The owner withdrew that rule on 2026-11-16 because it made a start
 by double click unusable; an environment-configured deployment keeps working
 unchanged, since an explicit variable still wins.*
 
+Every data location is shown in one view -- in effect, its source, the saved
+value, pending or not, its problem -- by Settings › Data locations,
+``GET /api/v1/settings/deployment`` and ``scripts/deployment_settings.py
+show`` (`src/utils/deployment_view.py`), which read through the readers here
+and `configured` (this read point's raw answer), never a reader of their own.
+
 | Variable | Saved as | What it is | Unset |
 |---|---|---|---|
 | `SHEPHERD_DEPLOYMENT_MODE` | not saved | SPEC_4's deployment mode; only the exact value `M1` enables operator controls, which D8's check then allows request by request (below). Unset, the local start's default applies | read-only |

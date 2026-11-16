@@ -575,6 +575,26 @@ Data versions and Keeping items keep, as of Stage 6.)*
   handlers asks D8 first, since reading the results opens every workspace's checkpoints. A
   default order for task records stays the owner's.
 - **Who may act.** D8's one check governs every operator operation (`src/utils/operator_access.py`).
+  *(2026-11-16, UI-06:)* its first condition, the deployment mode, is an explicit
+  `SHEPHERD_DEPLOYMENT_MODE` (exactly `M1` enables; any other value is read-only and never
+  upgraded), else the local start's default: `M1` when the launcher's `--local-entry` (the
+  desktop entry, `launch_shepherd.sh`, `launch_shepherd.cmd`) set `SHEPHERD_LOCAL_ENTRY=1` for a
+  loopback bind; else read-only. The request checks that follow are unchanged and apply to every
+  control; no route skips them.
+- **Where the data locations come from** (2026-11-16, UI-06; the owner withdrew M5-1's
+  "environment only" rule). The workspaces root, the registry, the intake directory and the
+  evidence directories are read at each use through one read point
+  (`src/config/server_settings.py`, `_resolve`): an explicit environment variable (a start-time
+  setting, which wins), else the applied value of the saved settings file chosen in Settings ›
+  Data locations (`src/config/deployment_settings.py`, outside the repository), else nothing:
+  the feature is off with its reason, never a default path. A saved value is checked by the same
+  rules as an environment value, at each read. Every write is an operator control under the
+  file's lock (`src/utils/settings_store.py`); Apply changes what is in use only while no job and
+  no holder of the old GPU lock could be using the old locations. The service, a command of the
+  same account and a job the service starts read the same applied values; the workspaces root
+  stays the GPU lock's one name. One view of them all: Settings, `GET
+  /api/v1/settings/deployment` and `scripts/deployment_settings.py show`
+  (`src/utils/deployment_view.py`).
 
 ### 4.0 One path per concern
 
@@ -1215,7 +1235,9 @@ two about the data (questions 3 and 4).
   (`src/config/server_settings.py`), at each use and never from a request. Both are checked by
   the registry's one rule (`check_registry_root`, which `validate_registry` applies to
   `--registry` too: absolute, existing, outside the repository). Unset or refused, their
-  features are off and say why; no default path is assumed.
+  features are off and say why; no default path is assumed. *(2026-11-16, UI-06: or, with the
+  variable unset, from the value saved in Settings › Data locations, checked by the same rule;
+  "Current rules" above, "Where the data locations come from".)*
 - **Every run on the acceptance cohort is in its usage history** (D4): when it ran, on which
   checkpoint, and its result. Condition 6 is the institution's rule. The history makes its
   observance visible; it does not pretend to enforce it.
@@ -1313,7 +1335,8 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
   call that started the event under the queue and with `queue=False` alike) call it, and
   nothing else decides. An operator control is allowed only when all hold, and the first that
   fails is named:
-  - `SHEPHERD_DEPLOYMENT_MODE` is exactly `M1` (read at each check);
+  - `SHEPHERD_DEPLOYMENT_MODE` is exactly `M1` (read at each check); *(2026-11-16, UI-06: or,
+    unset, the local start's default `M1`, "Current rules", "Who may act")*;
   - the request can be read (an HTTP or WebSocket scope with a host and port `server`, and
     headers as byte pairs): anything unreadable, or an exception while reading, is refused;
   - `scope["server"]` is a loopback address (127.0.0.0/8, `::1` or an IPv4-mapped form);
@@ -1898,7 +1921,9 @@ contract and BACKLOG stay the record, and no new planning document is added.
 - **Deployment:** mode M1 (§4.9 question 3; D8 above). *Its setting (M5-1, 2026-10-20):*
   `SHEPHERD_DEPLOYMENT_MODE`, read at each use. D8's check applies it (D8, "As implemented"):
   only the exact value `M1` enables operator controls, and unset or anything else is read-only
-  for them.
+  for them. *(2026-11-16, UI-06: unset, a local start from the desktop entry or
+  `launch_shepherd.sh` with a loopback bind gives `M1`; an explicit value still decides and is
+  never upgraded; "Current rules", "Who may act".)*
 - **The default bind is `127.0.0.1`** (the reviewer's decisions, relayed by the owner, 2026-10-19; SPEC_4 B1, §3.1). Another address
   stays possible by explicit configuration, under SPEC_4's rules, and never lifts D8's checks on
   operator controls; a deployment that relied on the old `0.0.0.0` default gets migration notes.

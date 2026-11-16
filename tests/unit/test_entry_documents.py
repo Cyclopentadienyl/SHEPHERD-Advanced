@@ -13,11 +13,14 @@ it requires. What these pin, through the code itself:
   built app (`create_gradio_app`), the research groups the shell states, the
   Training page's labels and buttons; the retired names appear nowhere;
 - **a section that gives a command needing the service's settings points to
-  the deployment guide for them**, naming the variable: the launcher (§4.12),
-  a script that takes the GPU lock (`take_gpu_lock` in its source; §4.11, the
-  workspaces root), a registration or a `--cohort` measurement (§4.11, the
-  registry). The rules themselves stay in the guide, in one place, and the
-  guide's sections cited hold them;
+  the deployment guide for them**: the launcher to Settings › Data locations,
+  where they are chosen, and to §4.12 (since UI-06, 2026-11-16: a start needs
+  nothing set first; until then the launcher's section had to name
+  `SHEPHERD_DEPLOYMENT_MODE` and `SHEPHERD_WORKSPACES_ROOT`), a script that
+  takes the GPU lock (`take_gpu_lock` in its source; §4.11, the workspaces
+  root), a registration or a `--cohort` measurement (§4.11, the registry),
+  naming the variable. The rules themselves stay in the guide, in one place,
+  and the guide's sections cited hold them;
 - **the playbook's safety net is the load's refusal** (contract M2.4): the
   refusals it quotes are what serving raises for a checkpoint of another graph
   and for one with no record; the structural fingerprint, which it used to call
@@ -310,7 +313,9 @@ def _needs(body: str) -> Dict[str, set]:
     stating it."""
     needs: Dict[str, set] = {}
     if _launches(body):
-        needs.setdefault("§4.12", set()).update({ss.ENV_DEPLOYMENT_MODE, ss.ENV_WORKSPACES_ROOT})
+        # A start needs nothing set first (UI-06): the section says where the
+        # data locations are chosen, and points to the guide's rules.
+        needs.setdefault("§4.12", set()).add(ss.DATA_LOCATIONS)
     for script, argv in _script_commands(body):
         if _takes_the_gpu_lock(script):
             needs.setdefault("§4.11", set()).add(ss.ENV_WORKSPACES_ROOT)
@@ -341,6 +346,9 @@ def test_the_guide_s_sections_cited_state_those_settings(guide):
     assert ss.ENV_WORKSPACES_ROOT in sections["4.11"] and ss.ENV_REGISTRY in sections["4.11"]
     for variable in (ss.ENV_DEPLOYMENT_MODE, ss.ENV_WORKSPACES_ROOT, ss.ENV_REGISTRY):
         assert variable in sections["4.12"], variable
+    # Where they are chosen since UI-06, and the saved file's place.
+    assert "Settings › Data locations" in sections["4.12"]
+    assert "deployment.json" in sections["4.12"] and "SHEPHERD_SETTINGS_FILE" in sections["4.12"]
 
 
 # ---------------------------------------------------------------------------
