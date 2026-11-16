@@ -102,8 +102,8 @@ it cannot apply as it reads. From a change of Order or Task until the rows are
 drawn for it, "Applying …" is said beside the switch (`PENDING_JS`); a failed
 answer says what was not applied.
 
-**Narrow** (below 1400 × 760), choosing a row scrolls to its detail, which has a
-"Back to the list" button (`SCROLL_JS`).
+**Stacked** (the shell's one layout decision, ``data-shep-layout``), choosing a
+row scrolls to its detail, which has a "Back to the list" button (`SCROLL_JS`).
 
 Module: src/webui/components/models_page.py
 """

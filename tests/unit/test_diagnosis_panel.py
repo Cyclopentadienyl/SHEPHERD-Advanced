@@ -610,7 +610,11 @@ def test_the_page_css_hides_a_view_by_its_class_and_keeps_the_confirmation_in_vi
     from → to rows and its warning sentence scrolled out of view at 1707x870,
     1440x900 and 1536x760 (checked in a browser at the wide sizes); while the
     confirmation box is mounted the list's footer is hidden and the list gives
-    up its height to it (all of it in a short window, `style.SIDE_SHORT`)."""
+    up its height to it (all of it in a short window, `style.SIDE_SHORT`,
+    under 900 px: decided there, not at the 820 px it had before the one
+    layout decision, as from 820 to 899 px the rows' share held no whole
+    row: 68, 108 and 128 px with the demo's rows at 1600 x 820, 1600 x 860
+    and 1850 x 880)."""
     from src.webui.style import SIDE_SHORT
     from tests.unit.test_webui_shell import blocks, side
 

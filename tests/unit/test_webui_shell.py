@@ -1318,6 +1318,12 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
 
     for css in app.PAGE_CSS[:6]:
         assert "--shep-panel-min:" in css or "--shep-mp-list-min:" in css, css[:80]
+    # Nor does a module still describe the gate, or the sticky card R-25
+    # removed (the T04 review: Diagnosis', Models' and the charts' docstrings
+    # still named 1400 x 760, and the load confirmation's comment 820 px).
+    stale = re.compile(r"1400 [×x] 760|wide at 1400|below 820 px|sticky at its bottom")
+    for path in sorted(Path(shell.__file__).parent.rglob("*.py")):
+        assert not stale.search(path.read_text(encoding="utf-8")), path
 
 
 #: What the layout pass decided at a stop of the shared walk (`ui_walk`), on

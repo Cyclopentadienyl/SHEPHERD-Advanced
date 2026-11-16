@@ -6,10 +6,11 @@ Diagnosis (clinical): the dashboard's first screen (M5-2, UI-B).
 these phenotypes, and what produced the answer.
 
 **Layout** (the page contract, `src/webui/shell.py`; this module's ``PAGE_CSS``):
-wide (at least 1400 × 760 CSS px) one screen in three panels — the input column
-| the candidates | the selected candidate's details — each long region
-scrolling inside its own panel; narrow, the panels stack and only the page
-scrolls.
+side by side (the shell's one layout decision, ``data-shep-layout``: a window
+wider than tall in which the three panels fit by their own minimum widths, each
+``--shep-panel-min`` here) one screen in three panels — the input column | the
+candidates | the selected candidate's details — each long region scrolling
+inside its own panel; stacked, the panels stack and only the page scrolls.
 
 - **The input column**: HPO terms, **the served task's own input** (K6
   decision 15: "Candidate genes" for a gene task model, "Reference cohort" for
@@ -18,9 +19,10 @@ scrolls.
   `diagnosis_card.served_task`), Patient ID (a blank field is sent as no id,
   so the API gives the result its own), Options (Top-K, and Explanations for
   a disease task model only, `asks_explanations`), then the
-  **"Model in use" card** and Run Diagnosis, the last item of the column's
-  scroll body and sticky at its bottom: they follow Options when there is room
-  and pin when the column overflows. The card (`diagnosis_card`) is the one
+  **"Model in use" card** and Run Diagnosis, the column's foot: side by side
+  the fields above them are the column's one scroll region and the card and
+  Run sit in flow under it, never over a field (R-25: a sticky card hid the
+  HPO box's lower lines and caret). The card (`diagnosis_card`) is the one
   place the served identity appears; the header's "Serving now" strip and the
   Model Configuration accordion (paths, Load/Reload, Save Config, Reset) are
   gone, their gated operations living on in the shared Load
@@ -3562,9 +3564,13 @@ _TAB = "#shep-tab-clinical"
 #: label and control in the input column starts at the panel's one inner edge,
 #: and Options is a label over a key/control list, no box of its own (R-24).
 #: While the Load confirmation is open (UI-A's confirmation box is mounted only
-#: then) the list's footer is hidden and its rows give up their height to it
-#: (all of it below 820 px of height), so the from → to rows and the warning
-#: sentence are never scrolled out of view.
+#: then) the list's footer is hidden and its rows give up their height to it,
+#: all of it in a short window (`style.SIDE_SHORT`, under 900 px of height), so
+#: the from → to rows and the warning sentence are never scrolled out of view.
+#: Decided at 900 (it was 820 before the one layout decision): from 820 to 899
+#: px the rows' share holds no whole row (measured 68 px at 1600 x 820, 108 at
+#: 1600 x 860, 128 at 1850 x 880: a cut slice of the first row), and the
+#: confirmation is whole either way.
 PAGE_CSS = f"""
 {_TAB} {{ --dx-in-w: 300px; }}
 @media (min-width: 1600px) {{ {_TAB} {{ --dx-in-w: 320px; }} }}

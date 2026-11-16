@@ -88,13 +88,16 @@ SIGNIFICANT = 6
 #: mounts, and over the hidden figure while the module marks it busy (`CHART_CSS`).
 LOADING = "Charts loading…"
 
-#: In the narrow layout (the page scrolls; each plot a fixed height), the
-#: figure's charts are 2 × 2 from this width of its own, one column below (the
-#: WebUI skill's §2: about 1000 px; a container query, so it follows the
-#: figure, not the window). The wide layout's figure (at least about 895 px
-#: wide at 1400 px) has the window's height, not its own: it stays 2 × 2, as
-#: one column there would leave two of the four plots wholly out of view
-#: (1440 x 900: a body of 419 px for 1018 px of one column).
+#: Stacked (the page scrolls; each plot a fixed height), the figure's charts
+#: are 2 × 2 from this width of its own, one column below (the WebUI skill's
+#: §2: about 1000 px; a container query, so it follows the figure, not the
+#: window). Side by side (the shell's one layout decision) the figure (at least
+#: about 826 px wide: Training's run view at its minimum, 860 px, at 1280 px of
+#: window) has the window's height, not its own: it stays 2 × 2, as one column
+#: there would leave two of the four plots wholly out of view (1440 x 900: a
+#: body of 419 px for 1018 px of one column). A run view too short for one row
+#: of plots scrolls as a whole instead, the figure at its own height
+#: (`training_console.RUN_VIEW_ONE_ROW`).
 TWO_COLUMNS_FROM = 960
 
 
