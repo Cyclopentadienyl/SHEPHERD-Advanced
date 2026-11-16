@@ -627,8 +627,18 @@ def test_an_apply_waits_while_a_job_holds_the_runner_s_slot(locations, runner, t
     assert not outcome.applied and outcome.pending
     assert "training is running in this service's job runner" in outcome.message
     assert outcome.message.endswith("press Apply then, or it applies at the next start.")
+    # The view says the reason Apply gave, from the same check (T06): the
+    # runner's own words, read without acting.
+    busy = runner.busy_reason()
+    assert busy.startswith("training is running in this service's job runner (job ")
+    assert busy in outcome.message
+    assert locations.view().pending_reason == (
+        f"{busy[:1].upper()}{busy[1:]}, so the change applies when it ends: press Apply then, "
+        "or it applies at the next start.")
     assert server_settings.workspaces_root().value == old
     runner.end_active_job()
+    assert runner.busy_reason() is None
+    assert locations.view().pending_reason == "Press Apply, or it applies at the next start."
     assert locations.apply_saved().applied
     assert server_settings.workspaces_root().value == new
 

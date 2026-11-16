@@ -1042,14 +1042,30 @@ class TrainingManager:
         nothing run. `action` must not wait for anything this runner's lock
         guards."""
         with self._lock:
-            if self._closed_by is not None:
-                return ("the backend is stopping or restarting", None)
-            active = self._active
-            if active is not None and active.status in BUSY_STATUSES:
-                doing = "is running" if active.status == "running" else "is still stopping"
-                return (f"{active.kind.noun.lower()} {doing} in this service's job runner "
-                        f"(job {active.job_id})", None)
+            busy = self._idle_refusal_locked()
+            if busy is not None:
+                return (busy, None)
             return (None, action())
+
+    def busy_reason(self) -> Optional[str]:
+        """Why `run_while_idle` would not run its action now, in its words, or
+        None: **the one check** an Apply of the data locations makes, read
+        without acting, so a page says the reason Apply would give (T06)."""
+        with self._lock:
+            return self._idle_refusal_locked()
+
+    def _idle_refusal_locked(self) -> Optional[str]:
+        """The slot closed (a stop or a restart) or a job holding it (running
+        or stopping), as a clause; None when it is open and idle. Called under
+        the lock."""
+        if self._closed_by is not None:
+            return "the backend is stopping or restarting"
+        active = self._active
+        if active is not None and active.status in BUSY_STATUSES:
+            doing = "is running" if active.status == "running" else "is still stopping"
+            return (f"{active.kind.noun.lower()} {doing} in this service's job runner "
+                    f"(job {active.job_id})")
+        return None
 
     def _slot_refusal_locked(self, wanted: JobType) -> Optional[str]:
         """Why `wanted` cannot start now, or None. Called under the lock.

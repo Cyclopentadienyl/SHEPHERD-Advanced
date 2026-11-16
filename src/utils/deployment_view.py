@@ -16,9 +16,12 @@ compared. This module is that one view; it reads nothing of its own:
   (`server_settings.configured`);
 - what is **saved** and **pending** (saved in Settings, not applied yet) is the
   saved file's (`src.config.deployment_settings.read_saved`);
-- whether a pending change can be applied now is read from the GPU lock
-  (`src.utils.gpu_lock.lock_state`); Apply itself decides, with the job
-  runner's slot too (`src/api/services/data_locations.py`).
+- why a pending change is not applied yet is **the check Apply makes**, read
+  without acting: the job runner's slot, when the caller has one
+  (`runner_busy`: the service passes its runner's answer,
+  `data_locations.view`), then every GPU lock the old values name
+  (`settings_store.lock_refusal`), in Apply's words; Apply itself decides
+  (`src/api/services/data_locations.py`).
 
 **Overridden**: a location the environment sets while the saved file holds a
 value of its own. The environment's value is in effect; the saved one applies
@@ -192,23 +195,24 @@ def _text(value: Any) -> Any:
     return str(value)
 
 
-def _pending_reason(environ: Optional[Mapping[str, str]], pending: Tuple[str, ...],
-                    held: Tuple[str, ...]) -> str:
+def _pending_reason(environ: Optional[Mapping[str, str]], saved_file: Any,
+                    pending: Tuple[str, ...], held: Tuple[str, ...],
+                    runner_busy: Optional[str]) -> str:
     """Why a saved change is not applied yet: for one a start-up setting
     holds back, that setting (`settings_store.held_back_words`); for any
-    other, as far as the GPU lock tells, a holder of the lock in use (a job,
-    a command started by hand, this service's CUDA inference), else nothing
-    but Apply. Apply checks the job runner's slot too, and says so."""
-    from src.utils.gpu_lock import lock_state
-    from src.utils.settings_store import APPLIES_LATER, held_back_words
+    other, what the check Apply makes would find now, in its words (T06):
+    the job runner busy (`runner_busy`, the caller's runner's answer), else a
+    GPU lock the old values name held or unreadable
+    (`settings_store.lock_refusal`), else nothing but Apply."""
+    from src.utils.settings_store import APPLIES_LATER, held_back_words, lock_refusal
 
     reasons = []
     if any(key not in held for key in pending):
-        state = lock_state(environ)
-        if state.get("held_by"):
-            reasons.append(f"The GPU lock is held by {state['held_by']}, so {APPLIES_LATER}.")
+        blocker = runner_busy or lock_refusal(saved_file, environ)
+        if blocker:
+            reasons.append(f"{blocker[:1].upper()}{blocker[1:]}, so {APPLIES_LATER}.")
         else:
-            reasons.append("Saved, not applied yet: press Apply, or it applies at the next start.")
+            reasons.append("Press Apply, or it applies at the next start.")
     if held:
         words = held_back_words(held)
         reasons.append(f"Not applied here: {words}." if reasons else
@@ -216,9 +220,11 @@ def _pending_reason(environ: Optional[Mapping[str, str]], pending: Tuple[str, ..
     return " ".join(reasons)
 
 
-def deployment_view(environ: Optional[Mapping[str, str]] = None) -> DeploymentView:
+def deployment_view(environ: Optional[Mapping[str, str]] = None, *,
+                    runner_busy: Optional[str] = None) -> DeploymentView:
     """Every data location as `environ` (the process's when None) reads it
-    now (module docstring)."""
+    now (module docstring). `runner_busy`: why the caller's job runner would
+    refuse an Apply now (its `busy_reason`), given by a caller that has one."""
     from src.utils.settings_store import held_back
 
     saved_file = deployment_settings.read_saved(environ)
@@ -256,7 +262,8 @@ def deployment_view(environ: Optional[Mapping[str, str]] = None) -> DeploymentVi
         mode=server_settings.deployment_mode(environ),
         gpu_lock=server_settings.gpu_lock_location(environ),
         pending=pending,
-        pending_reason=_pending_reason(environ, pending, held) if pending else None,
+        pending_reason=(_pending_reason(environ, saved_file, pending, held, runner_busy)
+                        if pending else None),
         held=held,
     )
 

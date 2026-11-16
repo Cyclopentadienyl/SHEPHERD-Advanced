@@ -30,6 +30,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Request
 
+from src.api.services import data_locations
 from src.api.services.training_manager import TrainingManager
 from src.utils import deployment_view
 from src.utils.operator_access import check_operator_access
@@ -93,7 +94,9 @@ def get_deployment_settings(request: Request) -> Dict[str, Any]:
     deployment mode and the GPU lock; the pending keys this service's
     start-up settings hold back (``held_back``: they apply at a start without
     them). The same view as Settings and ``scripts/deployment_settings.py
-    show`` (`src.utils.deployment_view`).
+    show`` (`src.utils.deployment_view`), read by this service
+    (`data_locations.view`: why a pending change waits is the check Apply
+    makes, this job runner's slot included).
 
     Read-only and open, like the operator-access status: for a request D8
     does not allow (`check_operator_access`), every path is null, a refused
@@ -103,7 +106,6 @@ def get_deployment_settings(request: Request) -> Dict[str, Any]:
     setting: Save, Apply and Replace are operator controls of the Settings
     page."""
     access = check_operator_access(request.scope)
-    answer = deployment_view.as_dict(deployment_view.deployment_view(),
-                                     paths_shown=access.allowed)
+    answer = deployment_view.as_dict(data_locations.view(), paths_shown=access.allowed)
     answer["operator_access"] = access.as_status()
     return answer

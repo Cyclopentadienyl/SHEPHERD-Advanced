@@ -28,8 +28,10 @@ it shows escaped:
   so a command run by hand never reads it before the service does.
 - **Pending**: a saved change waits while something could use the old
   locations (a GPU job, a command run by hand: `data_locations.apply_saved`).
-  One notice says why, with **Apply**; it also applies at the next start. A
-  change a start-up setting holds back is said in its row only.
+  One notice says why, from the same check Apply makes (`data_locations.view`:
+  the job runner busy, then a GPU lock the old values name), with **Apply**;
+  it also applies at the next start. A change a start-up setting holds back
+  is said in its row only.
 - **An unreadable settings file**: one ✕ notice naming the file, with
   "Replace the unreadable file (a copy is kept)"; Save is off and Create is
   hidden until then (said once, in the notice). Folders set at start still
@@ -331,7 +333,7 @@ def _panel(request: gr.Request, *, results: Optional[Mapping[str, str]] = None,
     the panel's (`PANEL_PARTS`). `results` holds a row's outcome line,
     `status` the panel's; `clear` names the row whose box a save emptied."""
     access = operator_access(request)
-    view = deployment_view.deployment_view()
+    view = data_locations.view()
     results = results or {}
     out: List[Any] = []
     for item in view.fields:
@@ -419,6 +421,18 @@ def check_words(key: str, text: Any) -> str:
     return said
 
 
+#: An act's outcome when the panel's notice already says why a change waits
+#: (each fact once: the notice reads the same check Apply makes).
+WAITS_ABOVE = "Saved, not in effect yet: the notice above says why"
+
+
+def _waiting_words(message: str) -> str:
+    """A pending apply's outcome: the notice's reference when the notice says
+    why (a change Apply could apply waits), else the outcome's own words (a
+    change only a start-up setting holds back, said by no notice)."""
+    return r.status_mark("warn", WAITS_ABOVE if data_locations.view().applicable else message)
+
+
 def _outcome_words(done: Any, key: Optional[str] = None) -> str:
     """A save's (and its apply's) outcome as one status line."""
     save, apply = done.save, done.apply
@@ -426,7 +440,7 @@ def _outcome_words(done: Any, key: Optional[str] = None) -> str:
         reason = save.refusals.get(key) if key else None
         return r.status_mark("error", f"Not saved: {reason}" if reason else save.message)
     if key is not None:
-        item = deployment_view.deployment_view().field(key)
+        item = data_locations.view().field(key)
         if item.source == server_settings.SOURCE_ENVIRONMENT:
             # Not applied either while it differs (`settings_store.held_back`),
             # so no other process reads it before the setting is removed.
@@ -435,7 +449,7 @@ def _outcome_words(done: Any, key: Optional[str] = None) -> str:
     if apply is not None and apply.applied:
         return r.status_mark("ok", "Saved and in effect")
     if apply is not None and apply.pending:
-        return r.status_mark("warn", apply.message)
+        return _waiting_words(apply.message)
     return r.status_mark("ok", "Saved")
 
 
@@ -513,7 +527,9 @@ def _on_apply_saved(request: gr.Request):
     if not access.allowed:
         return _refused(request, access)
     outcome = data_locations.apply_saved()
-    kind = "ok" if outcome.applied else ("warn" if outcome.pending else "neutral")
+    if outcome.pending and not outcome.applied:
+        return _panel(request, status=_waiting_words(outcome.message))
+    kind = "ok" if outcome.applied else "neutral"
     return _panel(request, status=r.status_mark(kind, outcome.message))
 
 

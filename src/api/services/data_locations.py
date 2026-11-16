@@ -15,7 +15,11 @@ locked writes (`src/utils/settings_store.py`) and the job runner's slot:
   `settings_store.apply_saved`). Otherwise the change stays pending, with the
   reason, and applies when Apply is pressed again or at the next start;
 - `replace_unreadable`: rename a saved file whose content cannot be read,
-  keeping it, so Settings can save again.
+  keeping it, so Settings can save again;
+- `view`: the one view of the data locations (`src.utils.deployment_view`)
+  as this service reads it, its pending reason from the same check `apply_saved`
+  makes (the job runner's slot, then the old values' GPU locks), so Settings
+  and the route say the reason Apply would give.
 
 The service reads its settings at each use (`src.config.server_settings`), so
 an applied change needs no restart; a restart reads the file again, since
@@ -31,10 +35,10 @@ from typing import Any, Mapping, NamedTuple, Optional
 
 from src.api.services.training_manager import training_manager
 from src.config import deployment_settings
-from src.utils import settings_store
+from src.utils import deployment_view, settings_store
 from src.utils.settings_store import ApplyOutcome, RepairOutcome, SaveOutcome
 
-__all__ = ["SaveAndApply", "apply_saved", "replace_unreadable", "save_and_apply"]
+__all__ = ["SaveAndApply", "apply_saved", "replace_unreadable", "save_and_apply", "view"]
 
 
 class SaveAndApply(NamedTuple):
@@ -58,6 +62,13 @@ def apply_saved(environ: Optional[Mapping[str, str]] = None) -> ApplyOutcome:
         return ApplyOutcome(False, False, "Nothing was applied: no saved change waits.")
     return ApplyOutcome(False, True, (
         f"Saved, not applied yet: {busy}, so {settings_store.APPLIES_LATER}."))
+
+
+def view(environ: Optional[Mapping[str, str]] = None) -> deployment_view.DeploymentView:
+    """The data locations as this service reads them, with why a pending
+    change waits from the check `apply_saved` makes: this runner's slot
+    first (`busy_reason`, its words), then the GPU locks (module docstring)."""
+    return deployment_view.deployment_view(environ, runner_busy=training_manager.busy_reason())
 
 
 def save_and_apply(values: Mapping[str, Any],

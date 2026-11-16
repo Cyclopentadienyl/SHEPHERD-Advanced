@@ -81,6 +81,9 @@ __all__ = [
     "apply_saved",
     "held_back",
     "held_back_words",
+    "lock_busy_words",
+    "lock_refusal",
+    "lock_unchecked_words",
     "replace_unreadable",
     "save",
 ]
@@ -220,6 +223,37 @@ def held_back(current: deployment_settings.SavedFile,
     return tuple(held)
 
 
+def lock_busy_words(path: Any, holder: str) -> str:
+    """A GPU lock the old values name, held: the clause an Apply refuses
+    with and the view says (`lock_refusal`)."""
+    return f"the GPU lock {path} is held by {holder}"
+
+
+def lock_unchecked_words(path: Any, error: Any) -> str:
+    """A GPU lock the old values name that cannot be checked, as a clause."""
+    return f"the GPU lock {path} cannot be checked ({error})"
+
+
+def lock_refusal(current: deployment_settings.SavedFile,
+                 environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """**Why an Apply would find a GPU lock busy now**, read without taking
+    any: every lock the old values name (`_old_lock_files`, the ones
+    `apply_saved` takes), each probed for an instant (`gpu_lock.probe`), in
+    Apply's words (`lock_busy_words`, `lock_unchecked_words`); None when each
+    is free. The view of the data locations says this (T06): before, it read
+    the lock in effect only."""
+    from src.utils.gpu_lock import probe
+
+    for lock_file in _old_lock_files(current, environ):
+        try:
+            holder = probe(lock_file)
+        except OSError as exc:
+            return lock_unchecked_words(lock_file, exc)
+        if holder is not None:
+            return lock_busy_words(lock_file, holder)
+    return None
+
+
 def held_back_words(keys: Any) -> str:
     """Why `keys` (`held_back`) are not applied here, as a clause."""
     names = [server_settings.FIELD_NAMES[key] for key in keys]
@@ -261,12 +295,12 @@ def apply_saved(environ: Optional[Mapping[str, str]] = None) -> ApplyOutcome:
                                          command=APPLY_COMMAND).acquire(grace=0))
                 except GpuLockBusy as exc:
                     return ApplyOutcome(False, True, (
-                        f"Saved, not applied yet: the GPU lock {exc.path} is held by "
-                        f"{exc.holder}, so {APPLIES_LATER}."))
+                        f"Saved, not applied yet: {lock_busy_words(exc.path, exc.holder)}, "
+                        f"so {APPLIES_LATER}."))
                 except OSError as exc:
                     return ApplyOutcome(False, True, (
-                        f"Saved, not applied yet: the GPU lock {lock_file} cannot be checked "
-                        f"({exc}), so {APPLIES_LATER}."))
+                        f"Saved, not applied yet: {lock_unchecked_words(lock_file, exc)}, "
+                        f"so {APPLIES_LATER}."))
             write_json_atomic(place, deployment_settings.compose(
                 current.document, applied=applied))
     except FileLockBusy as exc:

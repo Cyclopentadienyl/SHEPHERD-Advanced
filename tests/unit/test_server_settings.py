@@ -1306,7 +1306,7 @@ class TestTheOneViewOfTheDataLocations:
         intake = view.field("intake_dir")
         assert intake.unset and intake.source is None and intake.value is None
         assert view.pending == ("workspaces_root",)
-        assert view.pending_reason.startswith("Saved, not applied yet: press Apply")
+        assert view.pending_reason == "Press Apply, or it applies at the next start."
         assert view.gpu_lock.value == folders["workspaces"].resolve() / ss.GPU_LOCK_FILE_NAME
         assert not view.nothing_set
 
@@ -1328,7 +1328,7 @@ class TestTheOneViewOfTheDataLocations:
         assert as_dict(view, paths_shown=False)["held_back"] == ["workspaces_root"]
         alone = deployment_view(environ)                        # no start-up setting here
         assert alone.held == () and alone.applicable == ("workspaces_root",)
-        assert alone.pending_reason.startswith("Saved, not applied yet: press Apply")
+        assert alone.pending_reason == "Press Apply, or it applies at the next start."
 
     def test_a_refused_value_is_shown_with_what_was_set_never_as_not_set(
             self, saved_file, tmp_path):

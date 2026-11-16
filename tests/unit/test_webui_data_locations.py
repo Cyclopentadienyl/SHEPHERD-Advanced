@@ -58,9 +58,13 @@ def dl(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(home))
 
     class Idle:
-        @staticmethod
-        def run_while_idle(fn):
-            return None, fn()
+        busy = None
+
+        def run_while_idle(self, fn):
+            return (self.busy, None) if self.busy else (None, fn())
+
+        def busy_reason(self):
+            return self.busy
 
     monkeypatch.setattr(service, "training_manager", Idle())
     return module
@@ -247,16 +251,54 @@ def test_a_change_waits_while_the_old_gpu_lock_is_held_and_apply_applies_it(dl, 
     _parts(dl, dl._on_save("workspaces_root", str(old), request))
     with GpuLock(old / LOCK_FILE_NAME, job_type="training", command="by hand").acquire():
         rows, panel = _parts(dl, dl._on_save("workspaces_root", str(new), request))
-        assert "Saved, not applied yet" in rows["workspaces_root"]["result"]["value"]
+        # The reason is said once, in the notice; the save's line points to it.
+        assert dl.WAITS_ABOVE in rows["workspaces_root"]["result"]["value"]
         assert "Saved, not in effect yet" in rows["workspaces_root"]["state"]["value"]
         assert "Saved, not in effect yet: Workspaces folder" in panel["notice"]["value"]
-        assert "The GPU lock is held by" in panel["notice"]["value"]
+        assert (f"The GPU lock {old.resolve() / LOCK_FILE_NAME} is held by a training job (by "
+                "hand") in panel["notice"]["value"]
         assert panel["apply"]["visible"] is True and panel["apply"]["interactive"] is True
         assert server_settings.workspaces_root().value == old.resolve()
         rows, panel = _parts(dl, dl._on_apply_saved(request))
-        assert "not applied yet" in panel["status"]["value"]
+        assert dl.WAITS_ABOVE in panel["status"]["value"]
+        assert "is held by a training job" in panel["notice"]["value"]
     rows, panel = _parts(dl, dl._on_apply_saved(request))
     assert "Applied" in panel["status"]["value"] and panel["apply"]["visible"] is False
+    assert server_settings.workspaces_root().value == new.resolve()
+
+
+def test_the_pending_notice_says_the_reason_apply_would_give(dl, monkeypatch, tmp_path):
+    """T03 review leftover: the notice read the GPU lock only, so while this
+    service's job runner held a job whose process had not taken the lock yet
+    (or was stopping after it gave it back), or the backend was stopping, it
+    said "press Apply" beside a Save and an Apply refused for that job. It now
+    says the reason from the same check Apply makes (`data_locations.view`:
+    the runner's slot, then the old values' GPU locks), in Apply's words."""
+    from src.api.services import data_locations as service
+
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    request = operator_request(monkeypatch)
+    _parts(dl, dl._on_save("workspaces_root", str(old), request))
+    busy = "training is running in this service's job runner (job training-1)"
+    monkeypatch.setattr(service.training_manager, "busy", busy)
+    rows, panel = _parts(dl, dl._on_save("workspaces_root", str(new), request))
+    said = ("Training is running in this service&#x27;s job runner (job training-1), so the "
+            "change applies when it ends: press Apply then, or it applies at the next start.")
+    assert said in panel["notice"]["value"], panel["notice"]["value"]
+    assert "Press Apply, or it applies" not in panel["notice"]["value"]
+    assert dl.WAITS_ABOVE in rows["workspaces_root"]["result"]["value"]
+    rows, panel = _parts(dl, dl._on_apply_saved(request))
+    assert said in panel["notice"]["value"] and dl.WAITS_ABOVE in panel["status"]["value"]
+    # The route says the same reason (read-only: no path in it to hide).
+    from src.utils.deployment_view import as_dict
+
+    assert as_dict(service.view(), paths_shown=False)["pending_reason"] == said.replace(
+        "&#x27;", "'")
+    monkeypatch.setattr(service.training_manager, "busy", None)
+    rows, panel = _parts(dl, dl._on_apply_saved(request))
+    assert "Applied" in panel["status"]["value"]
     assert server_settings.workspaces_root().value == new.resolve()
 
 
