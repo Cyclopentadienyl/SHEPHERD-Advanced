@@ -220,6 +220,57 @@ def test_write_exports_reuses_single_dir():
     assert os.path.dirname(p1) == os.path.dirname(p2)
 
 
+def test_download_files_live_one_lifetime_then_are_deleted(monkeypatch, tmp_path):
+    """B56: the download directory was never cleaned ("periodic cleanup is
+    future work"), so a result's CSV and report, a patient's terms in them,
+    stayed in the system's temporary directory for good, and so did Gradio's
+    copies of them. Now each file lives `exports.LIFETIME_SECONDS` after it
+    was written: older ones go before every write, a directory an earlier
+    process left (a crash, an exec) loses its expired files and goes once
+    empty, the process's own directory goes at exit, and Gradio's copies are
+    swept on the same lifetime (the dashboard's ``delete_cache``)."""
+    import atexit
+    import time
+    from pathlib import Path
+
+    from src.webui import exports
+    from src.webui.app import create_gradio_app
+
+    monkeypatch.setattr(exports.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(exports, "_EXPORT_DIR", None)
+    registered = []
+    monkeypatch.setattr(atexit, "register", lambda fn, *a, **k: registered.append((fn, a, k)))
+    # An earlier process's directory: one expired file, one still in its life.
+    left = tmp_path / f"{exports.PREFIX}earlier"
+    left.mkdir()
+    old_time = time.time() - exports.LIFETIME_SECONDS - 60
+    (left / "expired.csv").write_text("x")
+    os.utime(left / "expired.csv", (old_time, old_time))
+    gone = tmp_path / f"{exports.PREFIX}gone"
+    gone.mkdir()
+    (gone / "expired.md").write_text("x")
+    os.utime(gone / "expired.md", (old_time, old_time))
+    (left / "recent.csv").write_text("x")
+
+    csv_path, md_path = dp._write_exports(_sample_result())
+    mine = Path(csv_path).parent
+    assert mine.parent == tmp_path and mine.name.startswith(exports.PREFIX)
+    assert not (left / "expired.csv").exists() and (left / "recent.csv").exists()
+    assert not gone.exists()
+    # The process's own directory goes at exit.
+    (fn, args, kwargs), = registered
+    assert args == (mine,) and kwargs == {"ignore_errors": True}
+    # A file past its lifetime is deleted before the next write; a fresh one stays.
+    os.utime(csv_path, (old_time, old_time))
+    later = exports.write_new("results_x", "csv", "a,b\n")
+    assert not Path(csv_path).exists() and Path(md_path).exists() and later.exists()
+    assert exports.prune(mine, now=time.time() + exports.LIFETIME_SECONDS + 1) == 2
+    # Gradio's copies of the same files are swept on the same lifetime.
+    assert create_gradio_app().delete_cache == (exports.SWEEP_SECONDS, exports.LIFETIME_SECONDS)
+    fn(*args, **kwargs)
+    assert not mine.exists()
+
+
 def test_export_basename_falls_back_when_ids_missing():
     base = dp._export_basename({"candidates": []})
     assert base == "diagnosis_webui_patient_run"

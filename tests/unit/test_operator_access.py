@@ -399,6 +399,27 @@ def test_every_state_changing_route_takes_the_one_dependency():
     assert not any(path == "/api/v1/pipeline/config" for _, path in gated | open_routes)
 
 
+@pytest.mark.parametrize("path", [
+    "/api/v1/hpo/search?q=seiz", "/api/v1/hpo/HP:0001250", "/api/v1/hpo/HP:0001250/ancestors",
+    "/api/v1/hpo/HP:0001250/descendants", "/api/v1/disease/MONDO:0007947",
+    "/api/v1/disease/MONDO:0007947/phenotypes", "/api/v1/disease/MONDO:0007947/genes",
+])
+def test_a_route_that_is_not_built_refuses_plainly_and_makes_nothing_up(path):
+    """B56: these open routes answered fixed mock tables (Seizure, Marfan
+    syndrome, SCN1A, FBN1) as if they were the ontology's and the graph's,
+    while no page, script or test called them. Each now refuses with 501 and
+    one sentence saying it is not built and what to use instead
+    (`src.api.routes.not_built`), and answers nothing made up."""
+    with _app_client() as client:
+        answer = client.get(path)
+    assert answer.status_code == 501, answer.text
+    detail = answer.json()["error"]       # the service's one error shape
+    assert " is not built: this service answers no made-up data in its place. " in detail
+    assert "POST /api/v1/diagnose" in detail
+    for made_up in ("Seizure", "Marfan", "SCN1A", "FBN1", "Phenotypic abnormality"):
+        assert made_up not in answer.text, made_up
+
+
 class _Served:
     """A pipeline a test serves, never run."""
 

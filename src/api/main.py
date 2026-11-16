@@ -8,7 +8,7 @@ Absolute Path: /home/user/SHEPHERD-Advanced/src/api/main.py
 
 Purpose:
     Main FastAPI application entry point providing:
-    - REST API endpoints for diagnosis, HPO search, disease info
+    - REST API endpoints for diagnosis, models, training and results
     - Health check and readiness probes
     - CORS and security middleware
     - OpenAPI documentation
@@ -20,8 +20,9 @@ Endpoints:
                               - What is served; load a model; stop inference
                                 (src/api/routes/pipeline.py, the lifecycle in
                                 `AppState`)
-    GET  /api/v1/hpo/search   - Search HPO terms
-    GET  /api/v1/disease/{id} - Get disease information
+    GET  /api/v1/hpo/..., /api/v1/disease/...
+                              - Not built: each answers 501, never made-up
+                                data (src/api/routes/not_built.py)
     GET  /api/v1/evaluations/loaded-model
                               - The loaded checkpoint's recorded results
                                 (read-only; contract M4)

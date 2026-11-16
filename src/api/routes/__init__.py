@@ -8,8 +8,8 @@ Absolute Path: /home/user/SHEPHERD-Advanced/src/api/routes/__init__.py
 
 Routes:
     - diagnose: Disease diagnosis endpoints
-    - search: HPO term search endpoints
-    - disease: Disease information endpoints
+    - search, disease: HPO term and disease detail paths, not built: each
+      answers 501, never made-up data (not_built)
     - training: Training control and monitoring endpoints
     - system: System resource monitoring endpoints
     - pipeline: Pipeline status and reload (imported by src/api/main.py directly)

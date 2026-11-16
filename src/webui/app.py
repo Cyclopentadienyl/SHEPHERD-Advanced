@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 import gradio as gr
 
 from src.utils.version_checker import DEGRADED, NOTICE, format_runtime_line, probe_runtime
-from src.webui import shell
+from src.webui import exports, shell
 from src.webui.components import (
     datasets_page,
     diagnosis_panel,
@@ -241,6 +241,10 @@ def create_gradio_app() -> gr.Blocks:
         analytics_enabled=False,
         # The layout follows the browser's usable width, not a fixed cap.
         fill_width=True,
+        # Gradio serves each download from a copy in its cache: deleted on the
+        # download files' own lifetime (`src/webui/exports.py`, B56), never
+        # left for good.
+        delete_cache=exports.CACHE_SWEEP,
         # Theme and CSS are not set here: Gradio 6 drops them from a mounted
         # Blocks, with only a warning. `mount_dashboard` passes them.
     ) as app:
