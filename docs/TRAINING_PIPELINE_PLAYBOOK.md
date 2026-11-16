@@ -120,7 +120,7 @@ here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspa
 
 ## Step 2 — Train (Research › Prepare › Training, then Fine-tune)
 
-1. Launch the app with the service's settings (see Step 3) and open `/ui` →
+1. Launch the app (Step 3: nothing needs to be set first) and open `/ui` →
    **Research (pre-clinical)** › Prepare › **Training**.
 2. Choose your workspace, `$WS`'s last part (`hpo_2026_v1`), in the run bar's
    **Dataset** list.
@@ -239,8 +239,10 @@ as its parent".
 **Stop** asks first and says how much progress is lost; a stopped run shows
 **Stopped** and the latest checkpoint it can be continued from.
 
-> CLI (no UI), in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (the
-> GPU lock's one name; [deployment guide](../deployment-guide.en.md) §4.11):
+> CLI (no UI), run as the account that runs the service: it reads the workspaces
+> folder chosen in ⚙ Settings › Data locations and takes the GPU lock that folder
+> names ([deployment guide](../deployment-guide.en.md) §4.11; Ref:
+> `SHEPHERD_WORKSPACES_ROOT`, which wins when it is set):
 > `scripts/train_model.py --data-dir "$WS" --stage base [--run-name NAME]`, or
 > `--config <yaml>`; then each task model with
 > `--stage finetune --task <task> --finetune-from <the base's checkpoint>`,

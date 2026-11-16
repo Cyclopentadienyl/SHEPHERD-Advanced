@@ -23,19 +23,27 @@ Environment=PYTHONUNBUFFERED=1
 # The operator controls (reload, configuration save, restart, training, the
 # checkpoint lists) are enabled only by the exact value M1, set by the operator
 # who runs this machine as SPEC_4's deployment mode M1; unset, the service is
-# read-only for them. M1 is necessary, not sufficient: training, test runs and
-# the checkpoint lists also need the workspaces root below, and the Test page
-# the registry. Deployment guide §4.12 and §4.13.
+# read-only for them (this unit starts the launcher without --local-entry, so
+# the local start's default does not apply). M1 is necessary, not sufficient:
+# training, test runs and the checkpoint lists also need the workspaces folder,
+# and the Test page the registry. Deployment guide §4.12 and §4.13.
 #Environment=SHEPHERD_DEPLOYMENT_MODE=M1
+# The data locations are chosen in the dashboard's Settings › Data locations
+# and saved in this account's settings file, which this service, a shell of
+# the same account and the jobs the service starts all read; nothing needs to
+# be set here. A line below sets one at start instead and wins over the saved
+# value (Settings shows it as set at start). Deployment guide §4.12.
 # The workspaces root, absolute: its subdirectories are the workspaces listed,
-# and its .shepherd-gpu.lock is the deployment's only GPU lock; while it is
-# unset every training and test run is refused.
+# and its .shepherd-gpu.lock is the deployment's only GPU lock; while neither
+# this line nor Settings names one, every training and test run is refused.
 #Environment=SHEPHERD_WORKSPACES_ROOT=/absolute/workspaces/root
 # The cohort registry: absolute, existing, outside the repository, with no
 # spaces or quotes.
 #Environment=SHEPHERD_REGISTRY=/absolute/registry
-# The shell where you run train_model.py or measure_scorer.py needs the same
-# two values (deployment guide §4.11 and §4.12).
+# A value set here is not in your shell: give the shell where you run
+# train_model.py or measure_scorer.py the same value (one EnvironmentFile= that
+# both read), or choose the locations in Settings instead (deployment guide
+# §4.11 and §4.12).
 # Started through the launcher, the same path launch_shepherd.sh takes, so the
 # service gets what a manual start gets: the allocator preset saved in Runtime
 # Settings (the rule Restart Backend applies) and the attention settings.
