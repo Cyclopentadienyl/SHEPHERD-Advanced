@@ -3761,7 +3761,10 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change button.shep-row > .shep-tag {{ margin-left: 6px; }}
 {_TAB} #shep-dx-change-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
 {_TAB} #shep-dx-change .shep-model-head {{ gap: 8px 14px !important; }}
-{_TAB} #shep-dx-change .shep-model-head > * {{ min-width: 0 !important; }}
+/* The head is a field row (D03): the workspace select keeps its own minimum width (Gradio's
+   min(160px, 100%)), so a drawer too narrow for the row wraps it rather than squeezing the box
+   (at 1280 x 900 it drew 26 px, its label cut to "W"); only the words beside it may shrink. */
+{_TAB} #shep-dx-change .shep-model-head > :not(.form) {{ min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-body {{ gap: 14px !important; align-items: flex-start !important; flex-wrap: nowrap !important; }}
 {_TAB} #shep-dx-change .shep-model-rows {{ flex: 3 1 0 !important; min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-facts {{ flex: 2 1 0 !important; min-width: 0 !important; }}

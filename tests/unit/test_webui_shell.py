@@ -1356,6 +1356,10 @@ _WALK_SIZES = ((760, 1000, False), (1850, 960, True), (1280, 900, True), (1920, 
                (1440, 1600, True), (1000, 1000, False), (1536, 760, True), (1080, 1920, False),
                (960, 1080, True), (390, 844, True), (1850, 960, False))
 
+#: The Diagnosis load drawer, opened at a stop of the walk (`browser.UI_WALK_JS`).
+_CHANGE_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
+                  "close": "#shep-dx-change-close button"}
+
 
 def _walk_stops():
     from tests.fixtures.browser import UI_PAGES
@@ -1364,6 +1368,11 @@ def _walk_stops():
              for page in UI_PAGES for w, h, checked in _WALK_SIZES]
     for stop in stops[len(_WALK_SIZES) - 1::len(_WALK_SIZES)]:
         stop["options"] = True                   # each page's selects, once, at its last stop
+    # The Diagnosis load drawer open, its head a field row (D03): side by side
+    # from 1280 px its workspace select was squeezed to 26 px, its label cut
+    # to "W" (the T04 review), and to 71 px on a phone; and in a short window.
+    stops += [{"size": [w, h], "page": "clinical", "open": _CHANGE_DRAWER}
+              for w, h in ((1280, 900), (1366, 620), (390, 844))]
     # A page opened at a size, not only resized to it: at 1280 x 900 Datasets
     # (its own minimum is wider) between two pages that fit.
     stops += [{"size": [1280, 900], "page": page, "check": False}
@@ -1455,7 +1464,9 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     `browser.focusWalk`, `browser.ui_problems`) on every page at every
     representative window (`browser.UI_SIZES`: 1850 x 960, 1280 x 900,
     1920 x 700, 1440 x 1600, 960 x 1080, a 390 x 844 phone; and 1536 x 760),
-    the service on the demo workspace for an operator (`ui_walk`):
+    and with the Diagnosis load drawer open at 1280 x 900, 1366 x 620 and 390 x 844 (its focus walk
+    inside the drawer), the service on the demo workspace for an operator
+    (`ui_walk`):
 
     - no horizontal page scroll; one scroll region per area (none inside
       another, the page included; never two in one panel);
@@ -1464,7 +1475,7 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
       open list it leaves behind, aside), its focus cue at 3:1;
     - no text under 14 px, only the type scale's sizes and weights, nothing
       upper case; every enabled field's border at 3:1; one field-label style
-      per page;
+      per page, and no label cut by its own field;
     - the Prepare / Evaluate captions above their tabs' line, outside the
       tabs' hit area, taking no pointer, at 14 px or more;
     - no choice or select option with more than one " · ".
@@ -1472,7 +1483,9 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     accent buttons' a faint grey) on every page and on Diagnosis' Top-K and
     Explanations ⓘ, which their own bubble covered (since the Options grid,
     b405973); on c1e57c6 it also fails on the captions on the tabs' line, the
-    type scale and the field borders."""
+    type scale and the field borders. On eafa8a2 it fails on the drawer's
+    Workspace label (its select squeezed to 26 px at 1280 x 900, 71 px at
+    390 x 844)."""
     from tests.fixtures.browser import UI_PAGES, UI_SIZES, ui_problems
 
     checked = [s for s in ui_walk if "check" in s]
@@ -1481,13 +1494,17 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     assert ui_problems(ui_walk) == []
     # What the check looked at, so that an empty list means something.
     for s in checked:
-        assert s["focus"]["n"] >= 10, (s["page"], s["size"], s["focus"])
+        assert s["focus"]["n"] >= (5 if s.get("open") else 10), (s["page"], s["size"], s["focus"])
         research = s["page"] not in ("clinical", "settings")
         assert len(s["check"]["captions"]) == (2 if research else 0), (s["page"], s["size"])
     options = {s["page"]: s["options"] for s in ui_walk if "options" in s}
     assert all(options[page] for page in ("training", "finetune", "test", "models", "settings")), options
+    drawer = [s for s in checked if s.get("open") == "#shep-dx-change"]
+    assert {s["size"] for s in drawer} == {"1280x900", "1366x620", "390x844"}
+    for s in drawer:                                  # its head's select measured
+        assert "Workspace" in {label["text"] for label in s["check"]["labels"]}, s
     labels = {s["page"]: {label["text"] for label in s["check"]["labels"]}
-              for s in checked if s["size"] == "1850x960"}
+              for s in checked if s["size"] == "1850x960" and not s.get("open")}
     assert labels["clinical"] >= {"Model in use", "Options", "HPO terms"}
     assert labels["training"] >= {"Dataset", "Run name", "Epochs"}
 

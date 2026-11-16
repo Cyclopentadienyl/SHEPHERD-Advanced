@@ -31,7 +31,8 @@ Gradio's effective styles, never the style sheet's text:
   contrast against what is behind it, and whether it is disabled;
 - ``labels(root)``: every visible field label, Gradio's (``block-info``) and
   the pages' own (`renderers.FIELD_ROWS` keys and the classes listed in
-  ``LABELS``), with its text and style (size, weight, colour, case);
+  ``LABELS``), with its text and style (size, weight, colour, case) and
+  whether the field it names cuts it (it runs past that block's box);
 - ``pseudo(el, which)``: a ``::before`` or ``::after`` box from its computed
   position, in page coordinates, with its content and type;
 - ``topAt(x, y)``: what ``document.elementsFromPoint`` finds first there;
@@ -45,14 +46,15 @@ one window of the page shown, ``check()`` (no sideways page scroll, its scroll
 regions with their panel and the regions they are inside, ``typeScale``,
 ``fields``, ``labels``, the research tabs' group captions against their tabs'
 line and hit area, the words of its radios and segments) and
-``focusWalk()``: each control drawn focused as a keyboard focuses it, what is
-over its centre (another control's own overlay, the help bubble or an open
-list it leaves behind, aside) and its focus cue's contrast. `walk_ui` drives
-one browser through a list of stops (`UI_WALK_JS`: a page at a window size;
-the page's requests answered and its drawing still before it measures; the
-selects' options read where a stop asks), and `ui_problems` turns what it saw
-into one line per broken rule. The representative windows are `UI_SIZES`, the
-pages `UI_PAGES`.
+``focusWalk(scope)``: each control drawn (in ``scope`` when given), focused as
+a keyboard focuses it, what is over its centre (another control's own
+overlay, the help bubble or an open list it leaves behind, aside) and its
+focus cue's contrast. `walk_ui` drives one browser through a list of stops
+(`UI_WALK_JS`: a page at a window size, with a drawer of it opened where a
+stop asks; the page's requests answered and its drawing still before it
+measures; the selects' options read where a stop asks), and `ui_problems`
+turns what it saw into one line per broken rule. The representative windows
+are `UI_SIZES`, the pages `UI_PAGES`.
 
 Module: tests/fixtures/browser.py
 """
@@ -213,10 +215,20 @@ LOOK_JS = r"""
     });
   const LABELS = 'span[data-testid="block-info"], .shep-kv-field > .shep-k, .shep-rb-k, .shep-ft-k, ' +
                  '.shep-dx-card-title, .shep-dx-opt';
+  /* A label is cut when it runs past the field it names: the nearest block
+     drawn as a box (a block drawn with display: contents is its parent's). */
+  const cutBy = (e) => {
+    let b = e.parentElement && e.parentElement.closest('.block');
+    while (b && getComputedStyle(b).display === 'contents') { b = b.parentElement && b.parentElement.closest('.block'); }
+    if (!b) { return false; }
+    const r = e.getBoundingClientRect(), k = b.getBoundingClientRect();
+    return r.right > k.right + 1 || r.left < k.left - 1;
+  };
   const labels = (root) => [...(root || document).querySelectorAll(LABELS)]
     .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 4 && r.height > 4 && shown(e); })
     .map((e) => { const s = getComputedStyle(e);
-      return { text: e.textContent.trim(), style: [s.fontSize, s.fontWeight, s.color, s.textTransform] }; });
+      return { text: e.textContent.trim(), style: [s.fontSize, s.fontWeight, s.color, s.textTransform],
+               cut: cutBy(e) }; });
   const pseudo = (el, which) => {
     const s = getComputedStyle(el, which), r = el.getBoundingClientRect();
     const left = parseFloat(s.left), top = parseFloat(s.top);
@@ -325,8 +337,9 @@ LOOK_JS = r"""
     return out;
   };
   const FOCUSABLE = 'a[href], button, input, textarea, select, summary, [tabindex]';
-  const focusWalk = async () => {
-    const controls = [...document.querySelectorAll(FOCUSABLE)].filter((c) => c.tabIndex >= 0 && !c.disabled
+  const focusWalk = async (scope) => {
+    const root = (scope && document.querySelector(scope)) || document;
+    const controls = [...root.querySelectorAll(FOCUSABLE)].filter((c) => c.tabIndex >= 0 && !c.disabled
       && drawn(c) && c.offsetWidth > 2 && c.offsetHeight > 2 && shown(c) && !c.closest('#shep-help-texts'));
     const covered = [], cues = [];
     for (const c of controls) {
@@ -378,7 +391,10 @@ UI_PAGES = ("clinical", "datasets", "training", "finetune", "test", "models", "s
 #: says ``"check": false`` it also records ``check()``, a screenshot (with a
 #: directory for them) and ``focusWalk()`` (after one Tab press, so focus is
 #: a keyboard's); a stop with ``options`` then opens each select drawn and
-#: reads its options' words.
+#: reads its options' words. A stop with ``open`` (``{"click": opener,
+#: "shown": drawer, "close": its close}``) opens that drawer before it
+#: measures, walks focus inside it only (the panels it covers are not its
+#: measure) and closes it again after.
 UI_WALK_JS = r"""
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -405,6 +421,13 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__;
     return -1;
   });
   const button = (id) => (id === 'clinical' || id === 'settings' ? `#shep-tab-${id}-button` : `#shep-page-${id}-button`);
+  // A stop's drawer (`stop.open`: its opener, the drawer and its close): opened
+  // once the page is shown, its requests answered; closed again after the stop.
+  const drawer = async (spec, open) => {
+    await page.click(open ? spec.click : spec.close, { force: true });
+    await page.waitForSelector(spec.shown, { state: open ? 'visible' : 'hidden' });
+    await idle();
+  };
   const open = async (id) => {
     if (!(id === 'clinical' || id === 'settings')
         && !(await page.$('#shep-tab-research-button[aria-selected="true"]'))) {
@@ -453,16 +476,20 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__;
     await page.setViewportSize({ width: w, height: h });
     if (stop.page !== shown) { await open(stop.page); shown = stop.page; }
     await page.evaluate(() => window.scrollTo(0, 0));
+    if (stop.open) { await drawer(stop.open, true); }
     const seen = { size: `${w}x${h}`, page: stop.page, frames: await settle() };
+    if (stop.open) { seen.open = stop.open.shown; }
     if (EXTRA) { seen.extra = await page.evaluate(EXTRA); }
     if (stop.check !== false) {
       seen.check = await page.evaluate(() => window.__shepLook.check());
-      if (shots) { await page.screenshot({ path: `${shots}/${stop.page}_${w}x${h}.png` }); }
+      const name = `${stop.page}${stop.open ? '_' + stop.open.shown.replace(/[^\w-]/g, '') : ''}_${w}x${h}`;
+      if (shots) { await page.screenshot({ path: `${shots}/${name}.png` }); }
       await page.keyboard.press('Tab');
-      seen.focus = await page.evaluate(() => window.__shepLook.focusWalk());
+      seen.focus = await page.evaluate((scope) => window.__shepLook.focusWalk(scope), stop.open ? stop.open.shown : null);
       await page.evaluate(() => window.scrollTo(0, 0));
     }
     if (stop.options) { seen.options = await options(); }
+    if (stop.open) { await drawer(stop.open, false); }
     out.push(seen);
   }
   console.log(JSON.stringify(out));
@@ -475,8 +502,9 @@ def walk_ui(page_url: str, tmp_path: Path, stops: list[dict[str, Any]], *,
             extra_js: str | None = None, shots: Path | None = None,
             timeout: int = 1500) -> list[dict[str, Any]]:
     """Walk the dashboard at `page_url` through `stops` (each ``{"size":
-    [w, h], "page": id}``, with ``"check": false`` or ``"options": true``
-    where wanted; in order, `UI_WALK_JS`) and return what each stop recorded.
+    [w, h], "page": id}``, with ``"check": false``, ``"options": true`` or
+    ``"open": {...}`` where wanted; in order, `UI_WALK_JS`) and return what
+    each stop recorded.
     `extra_js` is a function's source the page runs at each stop (its value is
     the stop's ``extra``); `shots`, a directory for a screenshot of each
     checked stop (``<page>_<w>x<h>.png``)."""
@@ -506,7 +534,8 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
     - text under 14 px, a size or weight outside the type scale, text drawn
       upper case;
     - an enabled field's border, or a control's focus cue, under 3:1;
-    - field labels drawn in more than one style on a page;
+    - field labels drawn in more than one style on a page, or a label its
+      field cuts (a box squeezed under its label's width);
     - a group caption on its tabs' line, over a tab, hit-tested as a tab,
       taking the pointer, or under 14 px;
     - a choice or a select's option with more than one " · "."""
@@ -546,6 +575,9 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
         styles = {tuple(label["style"]) for label in check["labels"]}
         if len(styles) > 1:
             found(f"field labels in {len(styles)} styles: {sorted(styles)}")
+        for label in check["labels"]:
+            if label.get("cut"):
+                found(f"field label {label['text']!r} cut by its field")
         for cap in check["captions"]:
             if (cap["bottom"] > cap["line"] + 0.5 or cap["onTab"] or (cap["hit"] or {}).get("tab")
                     or cap["pointer"] != "none" or cap["size"] < 14):
