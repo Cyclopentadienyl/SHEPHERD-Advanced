@@ -1100,3 +1100,91 @@ class TestWithinBoundsWhatIsRead:
         reads = self._reads(monkeypatch)
         read_run_checkpoints(workspace)
         assert sorted(reads) == ["far.pt", "inside.pt", "link.pt"]
+
+
+class TestLinksUnderRuns:
+    """BACKLOG 69 L3, L4: a broken link or a link loop where a layout or a run
+    directory would be was skipped without a word, and an alias of a listed
+    directory listed every file twice. Each is now one entry saying what it
+    is, and every file is listed once."""
+
+    def _layout(self, tmp_path):
+        workspace = tmp_path / "ws"
+        real = workspace / "runs" / "gatv2" / "20261001-000000_a_111111"
+        _write_checkpoint(real / "checkpoints" / "last.pt", {"epoch": 1})
+        _write_checkpoint(real / "checkpoints" / "model-01.pt", {"epoch": 0})
+        return workspace, real
+
+    def test_a_broken_link_and_a_loop_are_each_said_once(self, tmp_path):
+        from src.utils.checkpoint_paths import list_runs, read_run_checkpoints
+
+        workspace, real = self._layout(tmp_path)
+        runs = workspace / "runs"
+        (runs / "gatv2" / "broken-link").symlink_to("/nonexistent-target")
+        (runs / "gatv2" / "loop-link").symlink_to(runs / "gatv2" / "loop-link")
+        (runs / "gone").symlink_to(tmp_path / "removed")
+        unlisted = []
+        assert list_runs(workspace, unlisted=unlisted) == [real]
+        said = {Path(entry[1]).name: entry[2] for entry in unlisted}
+        assert said == {
+            "broken-link": ("runs/gatv2/broken-link cannot be listed (a link whose target does "
+                            "not exist), so no file in it is read"),
+            "gone": ("runs/gone cannot be listed (a link whose target does not exist), so no "
+                     "run in it is read"),
+            "loop-link": ("runs/gatv2/loop-link cannot be listed (a link that loops back on "
+                          "itself), so no file in it is read"),
+        }
+        entries = read_run_checkpoints(workspace, within=workspace)
+        problems = [e.problem for e in entries if e.problem]
+        assert sorted(problems) == sorted(said.values())     # once each
+        assert sum(e.sha256 is not None for e in entries) == 2
+
+    def test_an_alias_of_a_layout_or_a_run_lists_each_file_once(self, tmp_path):
+        from src.utils.checkpoint_paths import list_runs, read_run_checkpoints
+
+        workspace, real = self._layout(tmp_path)
+        runs = workspace / "runs"
+        (runs / "alias").symlink_to("gatv2")
+        (runs / "gatv2" / "20261002-000000_again_222222").symlink_to(real.name)
+        (runs / "gatv2" / "broken-link").symlink_to("/nonexistent-target")
+        unlisted = []
+        assert list_runs(workspace, unlisted=unlisted) == [real]
+        # What the alias holds is said once, under the directory it names.
+        broken = [entry for entry in unlisted if "broken-link" in entry[2]]
+        assert [entry[2] for entry in broken] == [
+            "runs/gatv2/broken-link cannot be listed (a link whose target does not exist), so "
+            "no file in it is read"]
+        unlisted = [entry for entry in unlisted if entry not in broken]
+        assert sorted(entry[2] for entry in unlisted) == [
+            ("runs/alias is a link to runs/gatv2, whose runs are listed there once, so it is "
+             "not listed again"),
+            ("runs/gatv2/20261002-000000_again_222222 is a link to "
+             "runs/gatv2/20261001-000000_a_111111, whose runs are listed there once, so it is "
+             "not listed again")]
+        entries = read_run_checkpoints(workspace, within=workspace)
+        files = [e for e in entries if e.sha256 is not None]
+        assert sorted(e.key for e in files) == [
+            "gatv2/20261001-000000_a_111111/last.pt", "gatv2/20261001-000000_a_111111/model-01.pt"]
+        assert len({e.sha256 for e in files}) == len(files) == 2
+        # An alias asked for by its own name lists the runs it holds.
+        assert [p.parent.name for p in list_runs(workspace, "alias")] == ["alias"]
+
+    def test_only_the_runs_asked_for_are_read(self, tmp_path, monkeypatch):
+        """`run_keys` (BACKLOG 39): a list that shows the latest runs opens
+        their files only; an entry that cannot be listed is still listed."""
+        import src.utils.checkpoint_io as checkpoint_io
+        from src.utils.checkpoint_paths import read_run_checkpoints
+
+        workspace, real = self._layout(tmp_path)
+        other = workspace / "runs" / "gatv2" / "20261002-000000_b_222222"
+        _write_checkpoint(other / "checkpoints" / "last.pt", {"epoch": 2})
+        (workspace / "runs" / "gone").symlink_to(tmp_path / "removed")
+        reads = []
+        original = checkpoint_io.read_checkpoint
+        monkeypatch.setattr(checkpoint_io, "read_checkpoint",
+                            lambda path, **kw: reads.append(Path(path).parent.parent.name)
+                            or original(path, **kw))
+        entries = read_run_checkpoints(workspace, within=workspace,
+                                       run_keys={f"gatv2/{other.name}"})
+        assert reads == [other.name]
+        assert [e.key for e in entries] == [f"gatv2/{other.name}/last.pt", "gone"]

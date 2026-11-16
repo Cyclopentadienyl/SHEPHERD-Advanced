@@ -102,6 +102,7 @@ __all__ = [
     "list_family",
     "list_intake_files",
     "list_workspaces",
+    "listed_runs",
     "locate_checkpoint",
     "record_matches",
     "resolve_checkpoint",
@@ -667,6 +668,7 @@ def list_checkpoints(
     workspace: Any, architecture: Optional[str] = None, *,
     task: Optional[str] = None, learning_stage: Optional[str] = None,
     run: Optional[str] = None, environ: Optional[Mapping[str, str]] = None,
+    run_keys: Optional[Any] = None,
 ) -> Listing:
     """The checkpoints of a listed workspace's runs, in the listing's order
     (latest run first, newest file first), each from one read of its file
@@ -686,7 +688,10 @@ def list_checkpoints(
     (`listed_record`, `record_matches`); a file without a readable record
     names neither, so either filter leaves it out. `run` lists that run
     directory's files alone (`read_run_checkpoints`' `run`): only they are
-    opened.
+    opened. `run_keys`, run identities (`CheckpointItem.run_key`, from
+    `listed_runs`), lists those runs' files alone, so a list that shows the
+    latest runs opens theirs only (BACKLOG 39, M5-3 UI-2); every entry that
+    cannot be listed is still listed.
     """
     from src.kg.artifacts import read_split_manifest
     from src.models.bundle.record import listed_record
@@ -704,7 +709,9 @@ def list_checkpoints(
     except (ValueError, OSError):
         fingerprint = None
     try:
-        entries = read_run_checkpoints(path, conv_type, within=path, run=run)
+        entries = read_run_checkpoints(path, conv_type, within=path, run=run,
+                                       run_keys=(frozenset(run_keys) if run_keys is not None
+                                                 else None))
     except OSError as exc:  # a runs directory this account may not enter
         return Listing((), (f"the runs of the workspace {name!r} cannot be listed "
                             f"({type(exc).__name__}: {exc.strerror or exc})"))
@@ -745,6 +752,33 @@ def list_checkpoints(
             **summary,
         ))
     return Listing(tuple(item for item in items if record_matches(item, task, learning_stage)))
+
+
+def listed_runs(workspace: Any, *, environ: Optional[Mapping[str, str]] = None
+                ) -> Tuple[Tuple[str, int], ...]:
+    """A listed workspace's runs, latest first, as ``(run identity, files)``
+    (`CheckpointItem.run_key`; how many checkpoint files its listing names),
+    **without opening a file** (`list_run_checkpoints`, the read-free form):
+    what a list that shows the latest runs reads first, by `list_checkpoints`'
+    `run_keys`. A directory that cannot be listed is no run here.
+
+    Raises:
+        ServerListRefused: the workspace is not listed, or its runs cannot be
+            listed.
+    """
+    from src.utils.checkpoint_paths import list_run_checkpoints, run_key
+
+    name, path = _find_workspace(workspace, environ)
+    try:
+        listed = list_run_checkpoints(path)
+    except OSError as exc:
+        raise ServerListRefused(f"the runs of the workspace {name!r} cannot be listed "
+                                f"({type(exc).__name__}: {exc.strerror or exc})") from None
+    runs: Dict[str, int] = {}
+    for run_dir, _path in listed:
+        key = run_key(run_dir)
+        runs[key] = runs.get(key, 0) + 1
+    return tuple(runs.items())
 
 
 def _check_record_filter(task: Optional[str], learning_stage: Optional[str]) -> None:
