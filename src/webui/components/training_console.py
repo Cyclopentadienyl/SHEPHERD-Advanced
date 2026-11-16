@@ -4750,21 +4750,25 @@ def create_training_tab(ctx: Any) -> None:
                  *branch_shown],
         show_progress="hidden").then(**view_step).then(
         None, js=SHOW_CHECK_JS, queue=False).then(**ctx.chip_refresh)
+    # None of the drawer's own listeners shows Gradio's progress timer on what
+    # it writes (R-59): each answers at once, and a timer flashing over the
+    # run select or the check reads as work being done.
     continue_source.change(fn=_toggle_continue_source, inputs=[continue_source],
                            outputs=[continue_run, checkpoint_dropdown, refresh_ckpt_btn,
-                                    parent_details, manual_checkpoint])
+                                    parent_details, manual_checkpoint], show_progress="hidden")
     # A changed selection, source or operation makes the last check, and what
     # was entered for it, stale: it is cleared (contract M3a review of
     # 094b90d, P2-2). `.change` fires on updates from other events too
     # (Refresh), so the run list and the typed path clear only when they are
     # the source.
     continue_source.change(fn=_on_continue_selection_changed, inputs=[],
-                           outputs=check_cleared)
+                           outputs=check_cleared, show_progress="hidden")
     checkpoint_dropdown.change(fn=_on_listed_changed, inputs=[continue_source],
-                               outputs=check_cleared)
+                               outputs=check_cleared, show_progress="hidden")
     manual_checkpoint.change(fn=_on_manual_changed, inputs=[continue_source],
-                             outputs=check_cleared)
-    continue_device.change(fn=_on_continue_device_changed, inputs=[], outputs=[continue_preview])
+                             outputs=check_cleared, show_progress="hidden")
+    continue_device.change(fn=_on_continue_device_changed, inputs=[], outputs=[continue_preview],
+                           show_progress="hidden")
     # The session's record of the chosen parent (the drawer's start).
     chosen_inputs = [continue_source, checkpoint_dropdown, manual_checkpoint, parents, ws, mode]
     for component in (continue_source, checkpoint_dropdown, manual_checkpoint):

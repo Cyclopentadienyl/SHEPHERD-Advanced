@@ -265,6 +265,24 @@ def test_the_page_uses_the_shells_timers_without_the_queue_and_none_of_its_own()
     assert ticks["_poll_resources"].targets == [(ctx.timer_slow._id, "tick")]
 
 
+def test_no_listener_of_the_continue_drawers_controls_shows_a_progress_timer():
+    """R-59: the drawer's listeners answer at once; Gradio's progress timer
+    ("processing | 0.1/0.1s") flashed over the run select, the parent's
+    details and the check when the source, the listed or typed checkpoint or
+    the drawer's Device changed. Every listener of those controls (and of the
+    run select and the operation) shows none."""
+    demo, _ctx, by_id = _page()
+    controls = {by_id[name]._id: name for name in (
+        "continue_source", "continue_run", "checkpoint_dropdown", "manual_checkpoint",
+        "continue_device", "continue_operation")}
+    shown = sorted({(controls[block], event, fn.name) for fn in demo.fns.values()
+                    for block, event in fn.targets
+                    if block in controls and fn.show_progress != "hidden"})
+    assert shown == []
+    assert {name for fn in demo.fns.values() for block, _event in fn.targets
+            if block in controls for name in [controls[block]]} == set(controls.values())
+
+
 def test_a_tick_while_another_page_is_shown_reads_nothing(monkeypatch):
     monkeypatch.setattr(tc.training_manager, "get_status",
                         lambda: pytest.fail("a tick on another page read the status"))
