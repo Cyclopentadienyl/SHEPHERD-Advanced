@@ -62,13 +62,14 @@ function makeHost(modulePath, initialToken) {
   }
   // ---- DOM: the template's parts the module reads
   const msg = el("div"); msg._text = "Charts loading…";
-  const grid = el("div"), zoom = el("span"), cue = el("button");
-  zoom.hidden = true; cue.hidden = true;
+  const grid = el("div"), zoom = el("span"), cue = el("button"), stale = el("span");
+  zoom.hidden = true; cue.hidden = true; stale.hidden = true;
   const root = el("div"); const listeners = {};
   root.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
   Object.assign(root.attrs, { "data-series-fn": "series", "data-csv-fn": "csv", "data-empty": "No run to show yet." });
   root.querySelector = (s) => ({ ".shep-charts-msg": msg, ".shep-charts-grid": grid,
-                                 ".shep-charts-zoom": zoom, ".shep-charts-new": cue })[s] || null;
+                                 ".shep-charts-zoom": zoom, ".shep-charts-new": cue,
+                                 ".shep-charts-stale": stale })[s] || null;
   const element = el("div"); element.querySelector = (s) => (s === ".shep-charts" ? root : null);
   // ---- uPlot stub
   function UPlot(opts, data) {
@@ -154,7 +155,8 @@ function makeHost(modulePath, initialToken) {
       return { run: v ? v.run : null, rev: v ? v.rev : null, charts: v ? v.order.length : 0,
                epochs: v && v.order.length ? v.charts[v.order[0]].n : 0,
                message: msg.hidden ? "" : msg.textContent,
-               zoom: zoom.hidden ? "" : zoom.textContent, pending: h.pending() };
+               zoom: zoom.hidden ? "" : zoom.textContent, pending: h.pending(),
+               stale: !stale.hidden };
     },
     timers() { return timers.size; },
   };
@@ -479,6 +481,31 @@ S.failed_new_epochs_keep_the_run = async () => {       // the run drawn, newer r
   const after = h.state();
   return { ok: s.run === "ws/A" && s.epochs === 2 && s.message === "" && !s.pending && after.epochs === 3,
            s, after };
+};
+S.gave_up_on_new_epochs_says_so_over_the_curves = async () => {
+  // B41: the run drawn, its newer rows fail RETRY_MAX times: its curves stay,
+  // and the toolbar's note says they could not be loaded (it was silent);
+  // never while it still retries, gone once a reply is drawn or no run is.
+  const h = await shown("ws/A", 2, 2);
+  h.setToken(tok("ws/A", 3)); await settle();
+  await h.fail(h.series()[1]);
+  const retrying = h.state();
+  await h.failEvery(25);
+  const gaveUp = h.state(), timers = h.timers();
+  h.setToken(tok("ws/A", 4)); await settle();
+  const asking = h.state();
+  await h.answer(h.last(), payload("ws/A", 4, 4));
+  const back = h.state();
+  h.setToken(tok("ws/A", 5)); await settle();
+  await h.fail(h.last()); await h.failEvery(25);
+  const again = h.state();
+  h.setToken(tok(null, 0, "No run to show yet.")); await settle();
+  const cleared = h.state();
+  return { ok: !retrying.stale && retrying.epochs === 2 && retrying.message === "" &&
+               gaveUp.stale && gaveUp.run === "ws/A" && gaveUp.epochs === 2 && gaveUp.message === "" &&
+               !gaveUp.pending && timers === 0 && asking.stale && !back.stale && back.epochs === 4 &&
+               again.stale && again.epochs === 4 && !cleared.stale && cleared.run === null,
+           retrying, gaveUp, timers, asking, back, again, cleared };
 };
 S.retry_cancelled_by_switch = async () => {            // B failed (retry waiting), A asked: no B call later
   const h = await shown("ws/A", 2, 2);

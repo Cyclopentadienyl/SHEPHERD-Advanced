@@ -591,6 +591,15 @@
     msg.hidden = !text;
   }
 
+  // The run drawn whose newer epochs could not be loaded after RETRY_MAX
+  // tries (B41): its curves stay as they were, and the toolbar's note (the
+  // template's, `charts.STALE`) says over them that they stop there, until a
+  // reply for it is drawn or another run is (or none).
+  function setStale(inst, on) {
+    var note = inst.root.querySelector(".shep-charts-stale");
+    if (note && note.hidden !== !on) { note.hidden = !on; }
+  }
+
   // ------------------------------------------------------------ data
   function sameSpecs(inst, specs) {
     if (specs.length !== inst.order.length) { return false; }
@@ -794,6 +803,7 @@
     inst.run = null; inst.rev = null;
     inst.x = null; inst.xManual = false; inst.frozenLast = null;
     buildCards(inst, []);
+    setStale(inst, false);
     updateToolbar(inst);
   }
 
@@ -834,6 +844,7 @@
       }
       if (d.run !== inst.run) { enterRun(inst, d.run); }   // a new run: fit it, or bring back its view
       inst.rev = d.rev;
+      setStale(inst, false);
       apply(inst, d);
       if (inst.pendingYs) {
         var ys = inst.pendingYs;
@@ -850,6 +861,8 @@
       if (again) { inst.retryTimer = setTimeout(function () { refresh(inst, true); }, RETRY_MS); }
       if (inst.run === null) {
         setMessage(inst, again ? "The charts could not be loaded. Trying again…" : "The charts could not be loaded.");
+      } else if (!again) {
+        setStale(inst, true);                               // the run drawn stops at what was loaded
       }
     });
   }

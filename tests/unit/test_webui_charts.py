@@ -159,6 +159,21 @@ def test_the_toolbar_offers_reset_export_zoom_and_the_gestures():
     assert 'aria-describedby="shep-help-text-training-charts"' in template
 
 
+def test_the_toolbar_says_when_newer_epochs_could_not_be_loaded():
+    """B41: a drawn run whose newer epochs fail RETRY_MAX times stayed at its
+    older epochs with no word; the toolbar's note says so over the curves,
+    as the shared amber ▲ with its words, hidden until the module shows it
+    (the host's scenario `gave_up_on_new_epochs_says_so_over_the_curves`)."""
+    template = _figure().html_template
+    note = template.split('<span class="shep-charts-stale" role="status" hidden>', 1)[1]
+    assert note.startswith(charts.status_mark("warn", charts.STALE))
+    assert template.index("shep-charts-stale") < template.index('<span class="shep-charts-tools">')
+    assert charts.STALE == "Newer epochs could not be loaded: reload the page to try again."
+    css = charts.CHART_CSS
+    assert ".shep-charts-stale[hidden] { display: none; }" in css
+    assert ".shep-charts[aria-busy=\"true\"] .shep-charts-stale" in css
+
+
 # --------------------------------------------------------------------------- the data
 def test_values_are_rounded_and_what_is_not_a_finite_number_is_a_gap():
     assert charts.rounded(0.123456789) == 0.123457
@@ -473,6 +488,8 @@ REPLY_SCENARIOS = [
     "rejected_call_after_clear_is_ignored", "rejected_call_after_switch_back_is_ignored",
     "failed_switch_does_not_keep_old_run",
     "retry_budget_is_per_token", "failed_new_epochs_keep_the_run", "retry_cancelled_by_switch",
+    # the run drawn that cannot get its newer epochs says so over its curves (B41)
+    "gave_up_on_new_epochs_says_so_over_the_curves",
     # nothing drawn: nothing of the last run stays, and its last view is kept; an empty
     # chart says its own line, a figure with nothing its one (BACKLOG 69)
     "cleared_hides_zoom_note", "cleared_keeps_last_zoom_of_run",

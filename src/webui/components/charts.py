@@ -41,7 +41,9 @@ values as gaps) or, for Export CSV, ``{"filename", "csv"}``.
 answers the newest request and the token the component holds now, so a late
 reply never brings back a run after the selection was cleared or changed. A
 failed call (6.30's client answers it with ``undefined``) is retried, never
-read as "no longer listed". While the reply for a run other than the one
+read as "no longer listed"; when the run drawn cannot get its newer epochs
+after the module's last retry, its curves stay and the toolbar says so
+(`STALE`, B41). While the reply for a run other than the one
 drawn is outstanding, the module marks the figure ``aria-busy="true"`` and
 `CHART_CSS` hides the figure with ``visibility`` (never ``display``, which
 would give the ResizeObserver 0 x 0 and leave a new run's charts uncreated)
@@ -60,6 +62,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 import gradio as gr
 
 from src.webui.components.help import help_button
+from src.webui.components.renderers import status_mark
 from src.webui.style import STACK
 
 #: The parent app serves this directory at ``/static`` (`src/api/main.py`).
@@ -87,6 +90,12 @@ SIGNIFICANT = 6
 #: What the figure says while it loads: the template's line until the module
 #: mounts, and over the hidden figure while the module marks it busy (`CHART_CSS`).
 LOADING = "Charts loading…"
+
+#: What the toolbar says over the curves of the run drawn when its newer
+#: epochs could not be loaded after the module's last retry (B41: the chart
+#: stayed at its older epochs with no word): a condition to watch, the shared
+#: amber mark, and the next step.
+STALE = "Newer epochs could not be loaded: reload the page to try again."
 
 #: Stacked (the page scrolls; each plot a fixed height), the figure's charts
 #: are 2 × 2 from this width of its own, one column below (the WebUI skill's
@@ -207,8 +216,9 @@ GESTURES = "Wheel: zoom · drag: pan · double-click: reset"
 
 def figure_template(*, series_fn: str, csv_fn: Optional[str], help_key: Optional[str],
                     help_title: str, empty: str) -> str:
-    """The component's static template: the toolbar, the grid the module
-    fills, the "new epochs" overlay and a message line (`LOADING` at first)."""
+    """The component's static template: the toolbar (with the note `STALE`,
+    hidden until the module shows it), the grid the module fills, the "new
+    epochs" overlay and a message line (`LOADING` at first)."""
     from html import escape
 
     help_html = help_button(help_key, help_title) if help_key else ""
@@ -219,6 +229,7 @@ def figure_template(*, series_fn: str, csv_fn: Optional[str], help_key: Optional
         f'data-csv-fn="{escape(csv_fn or "")}" data-empty="{escape(empty)}">'
         '<div class="shep-charts-bar">'
         '<span class="shep-charts-zoom" hidden></span>'
+        f'<span class="shep-charts-stale" role="status" hidden>{status_mark("warn", STALE)}</span>'
         '<span class="shep-charts-tools">'
         f'{help_html}'
         f'<button type="button" class="shep-charts-btn" data-chart-act="reset">{_HOME}'
@@ -265,7 +276,7 @@ def chart_figure(*, key: str, elem_id: str, series_fn: Callable[[Any], Any],
 #: figure too (two classes): Gradio's own ``.gradio-container-<version>
 #: button { padding: 0; font-size: 100% }`` outranks a single class. While
 #: the module marks the figure busy (``aria-busy="true"``) its grid, overlay,
-#: zoom note and message are hidden with ``visibility`` and the body says
+#: zoom and `STALE` notes and message are hidden with ``visibility`` and the body says
 #: `LOADING` (filled in for ``@LOADING@``); in the narrow layout the body keeps
 #: room for that line. **A plot box is sized by the layout alone**
 #: (``contain: size``): the canvas drawn into it never counts toward its size,
@@ -278,6 +289,8 @@ CHART_CSS = """
 .shep-charts-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 0 8px; min-height: 40px; }
 .shep-charts-zoom { display: inline-flex; align-items: center; height: 28px; padding: 0 8px; border-radius: 6px; background: var(--shep-accent-50); border: 1px solid var(--shep-accent-100); color: var(--shep-accent-text); font-size: 14px; white-space: nowrap; }
 .shep-charts-zoom[hidden] { display: none; }
+.shep-charts-stale { display: inline-flex; align-items: center; min-height: 28px; font-size: 14px; }
+.shep-charts-stale[hidden] { display: none; }
 .shep-charts-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .shep-charts .shep-charts-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--shep-border-2); background: #fff; color: var(--shep-text); font-size: 14px; font-weight: 400; cursor: pointer; white-space: nowrap; }
 .shep-charts .shep-charts-btn:hover, .shep-charts .shep-charts-icon:hover { background: var(--shep-panel-2); }
@@ -315,7 +328,7 @@ CHART_CSS = """
 .shep-charts-new[hidden] { display: none; }
 .shep-charts-msg { position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
 .shep-charts-msg[hidden] { display: none; }
-.shep-charts[aria-busy="true"] .shep-charts-grid, .shep-charts[aria-busy="true"] .shep-charts-new, .shep-charts[aria-busy="true"] .shep-charts-zoom, .shep-charts[aria-busy="true"] .shep-charts-msg { visibility: hidden; }
+.shep-charts[aria-busy="true"] .shep-charts-grid, .shep-charts[aria-busy="true"] .shep-charts-new, .shep-charts[aria-busy="true"] .shep-charts-zoom, .shep-charts[aria-busy="true"] .shep-charts-stale, .shep-charts[aria-busy="true"] .shep-charts-msg { visibility: hidden; }
 .shep-charts[aria-busy="true"] .shep-charts-body::after { content: "@LOADING@"; position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
 @STACK@ {
   .shep-charts { height: auto; }
@@ -336,6 +349,7 @@ __all__ = [
     "GESTURES",
     "LOADING",
     "SIGNIFICANT",
+    "STALE",
     "STATIC_DIR",
     "UPLOT_VERSION",
     "VENDORED",
