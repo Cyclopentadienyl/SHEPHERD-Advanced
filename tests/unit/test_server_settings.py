@@ -977,6 +977,223 @@ class TestTheLocalStartsDefaultMode:
         assert ss.deployment_mode(environ).value is None
 
 
+class TestSavingApplyingAndRepairing:
+    """`src/utils/settings_store.py`: every write under the file's lock, by
+    the one atomic writer; a save checks each value; an apply only while no
+    GPU lock the old values name is held; an unreadable file is never
+    overwritten. The job runner's half of the apply is test_backend_control's."""
+
+    @pytest.fixture
+    def store(self):
+        from src.utils import settings_store
+
+        return settings_store
+
+    def test_a_save_writes_saved_only_and_an_apply_makes_it_applied(
+            self, store, saved_file, folders):
+        import json
+
+        path, environ = saved_file
+        saved = store.save({"workspaces_root": str(folders["workspaces"]),
+                            "training_evidence_dirs": [str(folders["evidence-a"])]}, environ)
+        assert saved.saved, saved.message
+        document = json.loads(path.read_text())
+        assert document["format"] == FORMAT and document["applied"] == {}
+        assert document["saved"] == {"workspaces_root": str(folders["workspaces"]),
+                                     "training_evidence_dirs": [str(folders["evidence-a"])]}
+        assert ss.workspaces_root(environ).unset                  # nothing applied yet
+        applied = store.apply_saved(environ)
+        assert applied.applied and not applied.pending, applied.message
+        assert ss.workspaces_root(environ).value == folders["workspaces"].resolve()
+        assert ds.read_saved(environ).pending == ()
+        assert store.apply_saved(environ).applied is False          # nothing pending now
+
+    def test_the_file_is_private_and_its_new_directory_too(self, store, tmp_path, folders):
+        import stat as stat_module
+
+        path = tmp_path / "fresh" / "config" / "deployment.json"
+        assert store.save({"registry": str(folders["registry"])},
+                          {ENV_SETTINGS_FILE: str(path)}).saved
+        assert stat_module.S_IMODE(path.stat().st_mode) == 0o600
+        assert stat_module.S_IMODE(path.parent.stat().st_mode) == 0o700
+        assert stat_module.S_IMODE(path.parent.parent.stat().st_mode) == 0o700
+
+    def test_one_refused_value_refuses_the_whole_save_with_a_reason_per_field(
+            self, store, saved_file, folders):
+        path, environ = saved_file
+        outcome = store.save({"workspaces_root": str(folders["workspaces"]),
+                              "registry": str(REPO_ROOT / "data"),
+                              "intake_dir": "relative/intake", "colour": "blue"}, environ)
+        assert not outcome.saved and not path.exists()
+        assert set(outcome.refusals) == {"registry", "intake_dir", "colour"}
+        assert "inside the repository" in outcome.refusals["registry"]
+        assert "not an absolute path" in outcome.refusals["intake_dir"]
+
+    def test_a_save_keeps_other_keys_and_unknown_ones(self, store, saved_file, folders):
+        import json
+
+        path, environ = saved_file
+        _write_saved(path, {"registry": str(folders["registry"]), "future": 1},
+                     saved={"registry": str(folders["registry"]), "future": 1}, extra_top="kept")
+        assert store.save({"intake_dir": str(folders["intake"])}, environ).saved
+        document = json.loads(path.read_text())
+        assert document["extra_top"] == "kept" and document["saved"]["future"] == 1
+        assert document["saved"]["registry"] == str(folders["registry"])
+        assert document["saved"]["intake_dir"] == str(folders["intake"])
+        assert store.save({"registry": None}, environ).saved          # cleared
+        assert "registry" not in json.loads(path.read_text())["saved"]
+
+    def test_an_unreadable_file_is_never_overwritten_and_is_renamed_only_by_repair(
+            self, store, saved_file, folders):
+        path, environ = saved_file
+        path.parent.mkdir(parents=True)
+        path.write_text("{ not json")
+        for outcome in (store.save({"registry": str(folders["registry"])}, environ),
+                        store.apply_saved(environ)):
+            assert "cannot be read" in outcome.message
+        assert path.read_text() == "{ not json"
+        repaired = store.replace_unreadable(environ)
+        assert repaired.replaced and repaired.kept.read_text() == "{ not json"
+        assert repaired.kept.name.startswith("deployment.json.unreadable-")
+        assert str(repaired.kept) in repaired.message and not path.exists()
+        assert store.save({"registry": str(folders["registry"])}, environ).saved
+        assert store.replace_unreadable(environ).replaced is False      # readable now
+
+    def test_a_file_that_cannot_be_opened_is_never_renamed(self, store, saved_file,
+                                                           monkeypatch):
+        path, environ = saved_file
+        path.parent.mkdir(parents=True)
+        path.write_text("{}")
+        real = Path.read_bytes
+        monkeypatch.setattr(Path, "read_bytes", lambda self: (
+            (_ for _ in ()).throw(PermissionError(13, "Permission denied", str(self)))
+            if self == path else real(self)))
+        outcome = store.replace_unreadable(environ)
+        assert not outcome.replaced and "never renamed" in outcome.message
+        assert path.exists() and list(path.parent.glob("*.unreadable-*")) == []
+
+    def test_an_apply_waits_while_a_gpu_lock_the_old_values_name_is_held(
+            self, store, saved_file, folders):
+        """A command started by hand holds the lock under the applied root:
+        the change stays pending, saying why, and applies once it ends."""
+        from src.utils.gpu_lock import GpuLock
+
+        path, environ = saved_file
+        _write_saved(path, {"workspaces_root": str(folders["workspaces"])},
+                     saved={"workspaces_root": str(folders["other"])})
+        old_lock = folders["workspaces"].resolve() / ss.GPU_LOCK_FILE_NAME
+        with GpuLock(old_lock, job_type="training", command="train_model.py by hand").acquire():
+            outcome = store.apply_saved(environ)
+            assert not outcome.applied and outcome.pending
+            assert "train_model.py by hand" in outcome.message
+            assert "press Apply then, or it applies at the next start" in outcome.message
+            assert ss.workspaces_root(environ).value == folders["workspaces"].resolve()
+        assert store.apply_saved(environ).applied
+        assert ss.workspaces_root(environ).value == folders["other"].resolve()
+
+    def test_an_apply_waits_for_the_lock_in_effect_too(self, store, saved_file, folders):
+        """With the root set at start, the registry still comes from the file:
+        a job under the environment's lock keeps it until it ends."""
+        from src.utils.gpu_lock import GpuLock
+
+        path, environ = saved_file
+        env = {**environ, ss.ENV_WORKSPACES_ROOT: str(folders["workspaces"])}
+        _write_saved(path, {"registry": str(folders["registry"])},
+                     saved={"registry": str(folders["other"])})
+        lock = folders["workspaces"].resolve() / ss.GPU_LOCK_FILE_NAME
+        with GpuLock(lock, job_type="test", command="measure_scorer.py").acquire():
+            assert store.apply_saved(env).pending
+        assert store.apply_saved(env).applied
+
+    def test_a_crash_between_the_write_and_the_replace_leaves_the_old_file(
+            self, saved_file, folders):
+        """The one writer stages the new bytes beside the file and replaces it
+        last: a process killed before the replace leaves the old file whole
+        (and a stray staging file, which no reader opens)."""
+        import subprocess
+        import sys
+
+        path, environ = saved_file
+        _write_saved(path, {"registry": str(folders["registry"])})
+        old = path.read_bytes()
+        script = (
+            "import os, sys\n"
+            "from src.config import atomic_json\n"
+            "os.replace = lambda *a: os._exit(9)\n"
+            "atomic_json.write_json_atomic(sys.argv[1], {'format': 'x', 'applied': {}})\n")
+        done = subprocess.run([sys.executable, "-c", script, str(path)], cwd=REPO_ROOT,
+                              capture_output=True, timeout=120)
+        assert done.returncode == 9, done.stderr
+        assert path.read_bytes() == old
+        assert ss.cohort_registry(environ).value == folders["registry"].resolve()
+        assert [p.name for p in path.parent.iterdir() if p.name.endswith(".tmp")]
+
+    def test_a_failed_write_removes_its_staging_file(self, saved_file, folders, monkeypatch):
+        from src.config import atomic_json
+
+        path, environ = saved_file
+        _write_saved(path, {"registry": str(folders["registry"])})
+        old = path.read_bytes()
+
+        def refuse(*args):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(atomic_json.os, "replace", refuse)
+        with pytest.raises(OSError):
+            atomic_json.write_json_atomic(path, {"format": FORMAT})
+        assert path.read_bytes() == old and sorted(path.parent.iterdir()) == [path]
+
+    def test_concurrent_saves_never_lose_a_value(self, store, saved_file, folders):
+        """Two pages saving at once: each read-modify-write is under the
+        file's lock, so both values are kept and the file is always whole."""
+        import threading
+
+        path, environ = saved_file
+        keys = {"workspaces_root": "workspaces", "registry": "registry", "intake_dir": "intake"}
+        errors = []
+
+        def save(key, folder):
+            for _ in range(15):
+                outcome = store.save({key: str(folders[folder])}, environ)
+                if not outcome.saved:
+                    errors.append(outcome.message)
+
+        threads = [threading.Thread(target=save, args=item) for item in keys.items()]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=120)
+        assert errors == []
+        read = ds.read_file(path)
+        assert read.problem is None
+        assert read.saved == {key: str(folders[folder]) for key, folder in keys.items()}
+
+
+class TestATakerFollowsAnApply:
+    """The GPU lock's location is read again once the lock is held, so a
+    taker that read the old root just before an apply never runs under it."""
+
+    def test_a_location_changed_while_it_was_taken_is_followed(self, tmp_path, monkeypatch):
+        from src.utils import gpu_lock
+
+        old, new = tmp_path / "old.lock", tmp_path / "new.lock"
+        answers = iter([old, new, new, new])
+        monkeypatch.setattr(gpu_lock, "lock_location", lambda environ=None: next(answers))
+        with gpu_lock.take_gpu_lock("training", "train_model.py") as lock:
+            assert lock.path == new and gpu_lock.probe(new) is not None
+            assert gpu_lock.probe(old) is None, "the old lock was kept"
+
+    def test_a_location_that_keeps_changing_is_refused(self, tmp_path, monkeypatch):
+        from src.utils import gpu_lock
+
+        counter = iter(range(100))
+        monkeypatch.setattr(gpu_lock, "lock_location",
+                            lambda environ=None: tmp_path / f"{next(counter)}.lock")
+        with pytest.raises(gpu_lock.GpuLockMisconfigured, match="changed 3 times"):
+            gpu_lock.take_gpu_lock("training", "train_model.py")
+        assert all(gpu_lock.probe(p) is None for p in tmp_path.glob("*.lock"))
+
+
 class TestAChildAndAHandCommandReadTheSameSettings:
 
     def test_a_process_without_the_variables_reads_the_applied_values_and_lock(

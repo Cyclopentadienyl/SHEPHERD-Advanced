@@ -11,8 +11,11 @@ the WebUI or the API start through the job runner
 service while it serves a model on CUDA** (`src/api/main.py`, the serving
 lifecycle: decided by the resolved device, held from before a candidate is
 read until inference is stopped, described as `SERVING_JOB_TYPE` with how to
-stop it and no path). A busy lock is refused, naming its holder; nothing is
-queued. **A program entry takes it**, in its `main`, before it reads its
+stop it and no path). **Applying a saved change of the data locations takes
+it too**, without waiting and only for the instant of its write
+(`src/utils/settings_store.py`, UI-06): every lock the old values name, so the
+workspaces folder never changes under a job that holds one. A busy lock is
+refused, naming its holder; nothing is queued. **A program entry takes it**, in its `main`, before it reads its
 inputs or writes anything (the service: its load, before any candidate); the
 production code it calls takes none (`train()`, measure_scorer's run,
 `build_pipeline`), so a caller that trains, measures or builds a pipeline
@@ -22,10 +25,13 @@ training probes are such callers: they take no lock, so its acceptance is run
 while no managed GPU job runs.
 
 **Where it is.** **The workspaces root is the lock's one name**:
-`.shepherd-gpu.lock` directly under `SHEPHERD_WORKSPACES_ROOT`, so two
-workspaces share one lock and every process that names the deployment's root
-takes the same file; no other setting names a lock. The rule is the server
-settings' (`server_settings.gpu_lock_location`). **With no root set the lock
+`.shepherd-gpu.lock` directly under the workspaces root in effect
+(`SHEPHERD_WORKSPACES_ROOT`, else the saved workspaces folder, since
+2026-11-16), so two workspaces share one lock and every process that names the
+deployment's root takes the same file; no other setting names a lock. The rule
+is the server settings' (`server_settings.gpu_lock_location`). A saved root
+changes only while nothing holds the old lock, and a taker reads the location
+again once it holds the lock (`take_gpu_lock`). **With no root set the lock
 is not configured and every managed job is refused** (review of 8242b47,
 P2-4): a formal CLI exits before it reads anything and the runner refuses a
 start, each saying how to configure it; nothing runs without excluding the
@@ -123,6 +129,9 @@ SERVING_COMMAND = f"the SHEPHERD service's CUDA inference: {STOP_INFERENCE}"
 #: decides.
 GRACE_SECONDS = 1.0
 _RETRY_SECONDS = 0.05
+#: How many times `take_gpu_lock` follows a location that changed while it
+#: was taken (an apply of a saved workspaces folder) before it refuses.
+_LOCATION_TRIES = 3
 
 
 class GpuLockBusy(OSError):
@@ -386,17 +395,38 @@ def take_gpu_lock(job_type: str, command: str, *, log: logging.Logger | None = N
     **Never a run without it** (review of 8242b47, P2-4): with the lock not
     configured, or a setting unusable, this raises before anything is read.
 
+    **The location is read again once the lock is held** (UI-06): a saved
+    workspaces folder changes only while its apply holds the old lock
+    (`settings_store.apply_saved`), so a taker that read the old location just
+    before an apply, and took the old lock just after it, finds the new
+    location here, gives the old lock back and takes the new one. It never
+    runs under a lock no other process takes any more.
+
     Raises:
         GpuLockBusy: another process holds it.
         GpuLockNotConfigured: no workspaces root is set.
-        GpuLockMisconfigured: the workspaces root is set but unusable.
+        GpuLockMisconfigured: the workspaces root is set but unusable, or its
+            location kept changing while it was taken.
         OSError: the lock file cannot be opened or locked.
     """
     log = log or logger
-    path = lock_location(environ)
-    lock = GpuLock(path, job_type=job_type, command=command).acquire()
-    log.info("GPU lock %s held until this run ends.", path)
-    return lock
+    for _ in range(_LOCATION_TRIES):
+        path = lock_location(environ)
+        lock = GpuLock(path, job_type=job_type, command=command).acquire()
+        try:
+            still = lock_location(environ)
+        except BaseException:
+            lock.release()
+            raise
+        if still == path:
+            log.info("GPU lock %s held until this run ends.", path)
+            return lock
+        lock.release()
+        log.info("GPU lock %s: the workspaces folder changed to the one of %s while it was "
+                 "taken; taking that one.", path, still)
+    raise GpuLockMisconfigured(
+        f"the GPU lock's location changed {_LOCATION_TRIES} times while it was taken (the "
+        "workspaces folder was being changed); nothing was run. Try again.")
 
 
 def lock_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:

@@ -746,17 +746,23 @@ def test_the_program_entries_take_the_lock_and_the_module_names_each_one():
     from the checkout. **The service is one** since the ops round's A3a: its
     serving lifecycle takes it for CUDA inference, in the load's one hold
     (`AppState._hold_gpu_for`), never in `build_pipeline` or the shared build
-    it calls, so the probe's in-process builds hold no lock either."""
+    it calls, so the probe's in-process builds hold no lock either. **So is
+    the apply of saved data locations** (UI-06), for the instant of its write
+    and in its one function (`settings_store.apply_saved`), so no job runs
+    under the old lock while the workspaces folder changes."""
     repo = Path(__file__).resolve().parents[2]
     takers = _lock_takers(repo, "scripts")
     assert takers == ["scripts/measure_scorer.py", "scripts/setup_demo.py",
                       "scripts/train_model.py"]
     in_src = [name for name in _lock_takers(repo, "src") if name != "src/utils/gpu_lock.py"]
-    assert in_src == ["src/api/main.py"], f"production code takes the lock itself: {in_src}"
+    assert in_src == ["src/api/main.py", "src/utils/settings_store.py"], (
+        f"production code takes the lock itself: {in_src}")
     for name in takers + in_src:
         assert f"`{name}" in gpu_lock.__doc__, f"{name} is not named as a taker"
     assert _functions_calling(repo / "src/api/main.py", {"take_gpu_lock", "GpuLock"}) == [
         "_hold_gpu_for"]
+    assert _functions_calling(repo / "src/utils/settings_store.py",
+                              {"take_gpu_lock", "GpuLock"}) == ["apply_saved"]
 
 
 def test_held_by_inference_is_the_one_rule_naming_the_serving_holder(root):

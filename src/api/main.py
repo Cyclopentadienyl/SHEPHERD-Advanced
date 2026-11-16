@@ -860,6 +860,9 @@ async def lifespan(app: FastAPI):
     # (`TrainingManager.serving_refusal`), and an in-process client's earlier
     # lifespan left it closed.
     _open_the_gpu_slot()
+    # **A saved change of the data locations applies at the start** (UI-06),
+    # before anything reads them, when nothing holds the old GPU lock.
+    _apply_saved_settings()
     try:
         # Attempt eager initialization if a pipeline is configured. A graph
         # alone or a checkpoint alone counts: `build_pipeline` refuses either,
@@ -1120,6 +1123,25 @@ def _open_the_gpu_slot() -> None:
     from src.api.services.training_manager import training_manager
 
     training_manager.open()
+
+
+def _apply_saved_settings() -> None:
+    """At startup: a saved change of the data locations made the applied one
+    (`data_locations.apply_saved`: refused while a command started by hand
+    holds the old GPU lock, and then still pending, as the log says). Never
+    stops the start: whatever fails is logged, and the settings in use are the
+    ones the file already applies."""
+    from src.api.services.data_locations import apply_saved
+
+    try:
+        outcome = apply_saved()
+    except Exception as exc:  # noqa: BLE001 - a start never fails on this
+        logger.error("The saved data locations could not be applied at startup: %s", exc)
+        return
+    if outcome.applied:
+        logger.info(outcome.message)
+    elif outcome.pending:
+        logger.warning(outcome.message)
 
 
 def _check_startup_bind() -> None:

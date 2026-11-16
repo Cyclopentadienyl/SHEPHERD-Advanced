@@ -1033,6 +1033,24 @@ class TrainingManager:
             if closed_by is None:
                 self._stop_signalled = False
 
+    def run_while_idle(self, action: Callable[[], Any]) -> Tuple[Optional[str], Any]:
+        """Run `action` **under the runner's lock while its slot is open and no
+        job holds it** (UI-06: applying saved data locations,
+        `data_locations.apply_saved`), as `close_if_idle` checks the slot: a
+        start either took the slot before, and `action` does not run, or comes
+        after it has returned. ``(None, action())``, or ``(why, None)`` with
+        nothing run. `action` must not wait for anything this runner's lock
+        guards."""
+        with self._lock:
+            if self._closed_by is not None:
+                return ("the backend is stopping or restarting", None)
+            active = self._active
+            if active is not None and active.status in BUSY_STATUSES:
+                doing = "is running" if active.status == "running" else "is still stopping"
+                return (f"{active.kind.noun.lower()} {doing} in this service's job runner "
+                        f"(job {active.job_id})", None)
+            return (None, action())
+
     def _slot_refusal_locked(self, wanted: JobType) -> Optional[str]:
         """Why `wanted` cannot start now, or None. Called under the lock.
 

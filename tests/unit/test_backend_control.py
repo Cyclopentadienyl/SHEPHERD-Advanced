@@ -573,3 +573,102 @@ def test_the_restart_words_say_a_loaded_model_is_stopped_and_not_loaded_again(mo
     monkeypatch.setattr(rs, "restart_backend", lambda: {"success": True})
     said = rs._on_restart(operator_request(monkeypatch))
     assert rs.RESTART_STOPS_SERVING in said["value"]
+
+
+# --------------------------------------------------------------------------- data locations (UI-06)
+def _pending_root_change(tmp_path, monkeypatch):
+    """A saved settings file of the test's own, read by this process, whose
+    saved workspaces folder waits to be applied; the environment names none."""
+    import json
+
+    from src.config.deployment_settings import ENV_SETTINGS_FILE, FORMAT
+
+    old, new = tmp_path / "old-root", tmp_path / "new-root"
+    old.mkdir()
+    new.mkdir()
+    path = tmp_path / "settings" / "deployment.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"format": FORMAT, "applied": {"workspaces_root": str(old)},
+                                "saved": {"workspaces_root": str(new)}}))
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(path))
+    monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    return old.resolve(), new.resolve()
+
+
+@pytest.fixture
+def locations(monkeypatch, runner):
+    """The data locations service with the test's own runner."""
+    import src.api.services.data_locations as dl
+
+    monkeypatch.setattr(dl, "training_manager", runner)
+    return dl
+
+
+def test_an_apply_waits_while_a_job_holds_the_runner_s_slot(locations, runner, tmp_path,
+                                                             monkeypatch):
+    """No job in the runner's slot, checked under its lock as a restart's
+    `close_if_idle` checks it: the job read the old locations, so the change
+    stays pending and says when it applies."""
+    from src.config import server_settings
+
+    old, new = _pending_root_change(tmp_path, monkeypatch)
+    assert _start(runner, tmp_path)["success"]
+    outcome = locations.apply_saved()
+    assert not outcome.applied and outcome.pending
+    assert "training is running in this service's job runner" in outcome.message
+    assert outcome.message.endswith("press Apply then, or it applies at the next start.")
+    assert server_settings.workspaces_root().value == old
+    runner.end_active_job()
+    assert locations.apply_saved().applied
+    assert server_settings.workspaces_root().value == new
+
+
+def test_a_save_tries_the_apply_at_once(locations, tmp_path, monkeypatch):
+    from src.config import server_settings
+
+    old, new = _pending_root_change(tmp_path, monkeypatch)
+    other = tmp_path / "third"
+    other.mkdir()
+    done = locations.save_and_apply({"workspaces_root": str(other)})
+    assert done.save.saved and done.apply.applied
+    assert server_settings.workspaces_root().value == other.resolve()
+
+
+def test_a_save_refused_tries_no_apply(locations, tmp_path, monkeypatch):
+    _pending_root_change(tmp_path, monkeypatch)
+    done = locations.save_and_apply({"registry": "relative"})
+    assert not done.save.saved and done.apply is None
+
+
+def test_the_backend_start_applies_a_pending_change(locations, tmp_path, monkeypatch):
+    """The startup's apply (`src.api.main._apply_saved_settings`), before the
+    configured load; a hand command holding the old lock leaves it pending
+    and the start goes on."""
+    import src.api.main as api
+    from src.config import server_settings
+    from src.utils.gpu_lock import LOCK_FILE_NAME, GpuLock
+
+    old, new = _pending_root_change(tmp_path, monkeypatch)
+    with GpuLock(old / LOCK_FILE_NAME, job_type="training", command="by hand").acquire():
+        api._apply_saved_settings()
+        assert server_settings.workspaces_root().value == old
+    api._apply_saved_settings()
+    assert server_settings.workspaces_root().value == new
+    source = __import__("inspect").getsource(api.lifespan)
+    assert source.index("_open_the_gpu_slot()") < source.index("_apply_saved_settings()") < (
+        source.index("initialize_pipeline()"))
+
+
+def test_a_restart_reads_the_saved_file_again_never_a_derived_environment(
+        tmp_path, monkeypatch):
+    """Nothing writes a resolved data location into the environment, so the
+    restart's environment names none and the new process reads the file."""
+    _pending_root_change(tmp_path, monkeypatch)
+    from src.config import server_settings
+
+    assert server_settings.workspaces_root().source == server_settings.SOURCE_SAVED
+    env = bc.resolve_restart_env(dict(os.environ))
+    for variable in ("SHEPHERD_WORKSPACES_ROOT", "SHEPHERD_REGISTRY", "SHEPHERD_INTAKE_DIR",
+                     "SHEPHERD_TRAINING_EVIDENCE_DIRS", "SHEPHERD_DEPLOYMENT_MODE"):
+        assert variable not in env
+    assert env["SHEPHERD_SETTINGS_FILE"] == os.environ["SHEPHERD_SETTINGS_FILE"]
