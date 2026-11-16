@@ -35,7 +35,7 @@ skill's §2), every value it shows escaped:
   or Cancel) before anything is asked of the backend. "Restart now" makes
   the question's check again (`_restart_refusal`): a question left open
   restarts nothing once Restart has turned off, and Apply and the slow timer
-  close it then with the reason (`_restart_question_closed`).
+  close it then, the reason beside Restart (`_restart_question_closed`).
 
 Operator controls (D8, M5-1):
     Restart Backend and Apply Settings each check their own Gradio request
@@ -312,15 +312,16 @@ def _on_restart_request(request: gr.Request):
 def _restart_question_closed(question: Any, request: gr.Request) -> tuple:
     """The question row once Restart has turned off (R-12's residual): a
     Restart question left open (`question`, the row's question as drawn) is
-    closed with the reason, by the one check the question and "Restart now"
-    make (`_restart_refusal`), when Apply saved the running allocator again or
-    the slow timer finds Restart off (another tab's Apply, a GPU job); a Stop
-    question, a closed row and a Restart still wanted are left as they are.
-    Returns `_ask`'s outputs."""
+    closed, by the one check the question and "Restart now" make
+    (`_restart_refusal`), when Apply saved the running allocator again or the
+    slow timer finds Restart off (another tab's Apply, a GPU job). The
+    reason is not said again: the same answer shows it beside Restart
+    (`_refresh_restart_lock`). A Stop question, a closed row and a Restart
+    still wanted are left as they are. Returns `_ask`'s outputs."""
     if question != _question_html(RESTART):
         return (gr.update(),) * 5
     refusal = _restart_refusal(operator_access(request))
-    return _ask(said=refusal) if refusal else (gr.update(),) * 5
+    return _ask() if refusal else (gr.update(),) * 5
 
 
 def _on_restart(request: gr.Request):

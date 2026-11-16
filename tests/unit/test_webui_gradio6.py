@@ -119,8 +119,9 @@ def test_an_open_restart_question_closes_once_restart_turns_off(monkeypatch, tmp
     Apply, or by another tab and read on the slow timer; a GPU job started),
     until Restart now (which refused) or Cancel. Apply's last step and the
     slow timer now make the question's own check (`_restart_refusal`) and
-    close it with the reason; a Stop question, a closed row and a Restart
-    still wanted are left as they are."""
+    close it, the reason shown once, beside Restart, by the same answer; a
+    Stop question, a closed row and a Restart still wanted are left as they
+    are."""
     import src.config.runtime_presets as presets
     import src.webui.components.runtime_settings as rs
     from src.config.runtime_presets import allocator_env
@@ -144,11 +145,13 @@ def test_an_open_restart_question_closes_once_restart_turns_off(monkeypatch, tmp
         presets.save_runtime_settings({"allocator_preset": save})
         monkeypatch.setattr(rs, "is_training_active", lambda busy=busy: busy)
         for fn in (rs._after_apply, lambda q, req: rs._poll_restart_lock("settings", q, req)):
-            row, question, restart_now, stop_now, said = fn(
-                restart_question, operator_request(monkeypatch))[5:]
+            out = fn(restart_question, operator_request(monkeypatch))
+            _apply, button, note, _access, _stop = out[:5]
+            row, question, restart_now, stop_now, said = out[5:]
             assert (row["visible"], restart_now["visible"], stop_now["visible"]) == (
                 False, False, False)
-            assert question["value"] == "" and reason in said
+            assert question["value"] == "" and said == ""
+            assert button["interactive"] is False and reason in note["value"]
             # A Stop question and a closed row are left as they are.
             assert list(fn(stop_question, operator_request(monkeypatch))[5:]) == unchanged
             assert list(fn("", operator_request(monkeypatch))[5:]) == unchanged
@@ -432,7 +435,7 @@ const fs = require('fs');
   await asked();
   save('cuda_async');
   await page.waitForSelector('#runtime_confirm', { state: 'hidden', timeout: 30000 });
-  out.timer = { status: await text('#runtime_restart_status'),
+  out.timer = { status: await text('#runtime_restart_status'), reason: await text('#runtime_restart_lock'),
                 restartDisabled: await page.evaluate(() => document.querySelector('#runtime_restart').disabled) };
   // Saved as before: Restart is on again; asked, and with the question open
   // the running allocator saved again with Apply Settings: Restart is off and
@@ -447,7 +450,7 @@ const fs = require('fs');
   await page.waitForSelector('#runtime_confirm', { state: 'hidden', timeout: 30000 });
   out.idle = { reason: await text('#runtime_restart_lock'),
                stopEnabled: await page.evaluate(() => !document.querySelector('#runtime_stop').disabled) };
-  out.stale = { status: await text('#runtime_restart_status'),
+  out.stale = { status: await text('#runtime_restart_status'), reason: await text('#runtime_restart_lock'),
                 questionShown: await shown('#runtime_confirm') };
   await browser.close();
   console.log(JSON.stringify(out));
@@ -504,9 +507,10 @@ def test_settings_asks_before_a_restart_and_says_each_fact_once_in_a_browser(
     assert "Restarting the backend" in seen["afterConfirm"]["status"]
     assert rs.RESTART_IDLE in seen["idle"]["reason"] and seen["idle"]["stopEnabled"], seen
     # R-12's residual: the question left open while Restart turned off
-    # closes with the reason the button shows, on the slow timer's read and
-    # after Apply; nothing more is asked of the backend.
-    assert rs.RESTART_IDLE in seen["timer"]["status"] and seen["timer"]["restartDisabled"], seen
-    assert rs.RESTART_IDLE in seen["stale"]["status"], seen
-    assert seen["stale"]["questionShown"] is False, seen
+    # closes on the slow timer's read and after Apply, the reason said once,
+    # beside Restart; nothing more is asked of the backend.
+    for step in ("timer", "stale"):
+        assert rs.RESTART_IDLE in seen[step]["reason"], seen
+        assert rs.RESTART_IDLE not in seen[step]["status"], seen
+    assert seen["timer"]["restartDisabled"] and seen["stale"]["questionShown"] is False, seen
     assert restarts == [1], "the backend was asked other than once, by Restart now"
