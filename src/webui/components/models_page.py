@@ -96,7 +96,11 @@ refresh keeps a selection still listed in the same workspace (a row picked after
 the Load stays picked, M5-3 review UI-3); one it did not keep is selected again
 after a Load while its row is shown, so Close returns to its detail. One listener
 (`_sync`) answers a new listing, a selection and the controls, so its answers
-for one session never overlap.
+for one session never overlap; each shapes the list from the controls as they
+read, whichever of them asked (UI-05), and never writes a control back unless
+it cannot apply as it reads. From a change of Order or Task until the rows are
+drawn for it, "Applying …" is said beside the switch (`PENDING_JS`); a failed
+answer says what was not applied.
 
 **Narrow** (below 1400 × 760), choosing a row scrolls to its detail, which has a
 "Back to the list" button (`SCROLL_JS`).

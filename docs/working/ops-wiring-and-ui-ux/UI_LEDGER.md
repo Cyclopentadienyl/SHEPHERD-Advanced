@@ -364,16 +364,18 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-05 The ordering switch's events
 
-1 rows: 1 to do.
+1 rows: 1 code-verified.
 
 #### FL-UI-05 · By family is selected while the table and count line read newest first
 
-- **State**: to do · found by the owner · severity unrated (fix list) · page: models
+- **State**: code-verified · found by the owner · severity unrated (fix list) · page: models
 - **Problem**: In the owner's screenshot, Order shows 'By family' selected, yet the count line reads 'newest first · 16 checkpoints in 8 runs'. The table has no family titles and no Lineage column, and the Base row comes after the fine-tunes. Not reproduced here: on the shared demo (one family, 4 files), within 400 ms of choosing By family the table showed 'Family from run demo-base · 2026-11-16 09:13 (4 files)' and a Lineage column, and it stayed so at 4 s (c3-models-byfamily.json). The cause is unknown. Inferred candidates: more runs or families, a slow answer, or a redraw lost in transit.
 - **At ba6e85e**: Fix list rev 1 only, marked 'cause to be reproduced'. Not reproduced on the shared demo.
 - **Done when**: After switching Order (including repeated and fast switches), the control, count line wording, family titles/Lineage column and row order all match the chosen order; while pending or failed the page says so.
+- **Cause (reproduced in T02)**: the page's one listener (`_sync`, "always_last") reshaped the list only when the event that fired was a control, and Gradio 6.30 runs a deferred call again with the values gathered then but the first trigger's id. On a CPU demo copy at ba6e85e, with the selection's `_sync` join delayed by `page.route`: a row chosen, then By family, ended with the switch on By family, the count line "newest first", no family title, no Lineage. A fast By family then Newest first ended on By family: every answer wrote the controls back, so the late answer set the switch back and the deferred call read it. A Task chosen while a selection answered was dropped the same way.
+- **Fix**: every answer shapes the view from the controls as they read and writes it when the list does not hold it (`same_view`, the view an input), whichever trigger asked; a control's value is written only where it cannot apply as it reads; a failed answer changes nothing and says under the options what was not applied (the error's kind only). D05: "Applying By family…" / "Applying Task: Disease…" beside the switch until the rows drawn say they answer the controls (`model_list.view_marker`, the view's `shaped_for`); no page lock.
 - **Sources**: the owner's fix list rev 1 (2026-11-16)
-- **Closed at**: —
+- **Closed at**: 4e419fb (with d2d02f6 for the Task select's one request). Tests: `test_webui_models_page.py::test_a_control_changed_while_the_page_answers_is_applied_and_one_pick_is_one_request` (browser, the dashboard as mounted, one `_sync` answer held: a row then By family; By family then Newest first, the second answer held until the first one's rows are drawn; a row then Task Disease; each ends with the switch, the count line, the groups and Lineage agreeing with the last change and the line cleared, "Applying …" said while pending; on ba6e85e all fail: By family dropped, the switch set back, Disease dropped), and the unit cases `test_an_answer_writes_a_control_back_only_where_it_cannot_apply`, `test_an_answer_that_fails_says_what_was_not_applied_and_changes_nothing`, `test_the_rows_say_the_view_they_were_drawn_for_and_another_workspace_drops_it`. Seen on a CPU demo workspace at 1850×960 and 960×1080: the line under the switch at 14 px, gone once applied, no sideways scroll. The other "who fired" listeners were checked: no other always_last listener reads its trigger (the Diagnosis drawer's Task is a Radio whose one listener writes the view only).
 
 ### UI-06 Launch and configuration in the GUI
 
@@ -795,7 +797,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-11 One action, one operation
 
-4 rows: 2 to do, 2 partly done.
+4 rows: 1 to do, 3 code-verified.
 
 #### B46-races · Brief older displays on Training/Test pill, banner, Continue drawer and job card
 
@@ -803,35 +805,39 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: A tick crossing a render can show an older pill; banner dismissal; Continue drawer can show the previous workspace's list/check; Test job card briefly older.
 - **At ba6e85e**: The demo has one workspace and no running job, so the brief older displays cannot be produced (a tick crossing a render on the pill, a banner dismissal, the Continue drawer's previous-workspace list or check, the Test job card). Per the record, the pill is still written by both the fast poll and the renders. The record keeps these as an open, non-blocking follow-up.
 - **Done when**: With two workspaces and a running job, a test that crosses a poll tick with a render or switches workspace never shows an older pill, a re-shown dismissed banner, the previous workspace's Continue list/check, or an older Test job card.
+- **T02**: not attempted. The pill's two writers (the fast poll and the renders, `POLL_KEYS`) are the Training page's documented render/poll contract; ending the race needs one writer or an ordering stamp there, and the reproduction needs two workspaces and a running job. The select-event fix of RJ-G6 does not change it.
 - **Sources**: BL:1004 (item 46)
 - **Closed at**: —
 
 #### RJ-G6 · One dropdown pick sends its .input event twice
 
-- **State**: to do · found by the 2026-10-25 review · severity unrated (research principle) · page: shell
+- **State**: code-verified · found by the 2026-10-25 review · severity unrated (research principle) · page: shell
 - **Problem**: Research G6 recorded from Gradio 6.30's source, not yet confirmed in a browser, that an option pick dispatches 'input' and then blur dispatches it again. It named the repo's .input wiring on dropdowns, and R-61's fix asked to 'switch model.input to .change or .select (G6)'. Reproduced now on the shared server by counting queue joins. One pick on Test's Run select sent shep-test-model-run.input twice, and one pick on Training's Viewing select sent shep-train-view-run.input twice (c2-dropdown-events.json). The wiring is unchanged: test_page.py:3289, 3313, 3342, 3344, 3362; training_console.py:4651, 4657; finetune_page.py:1316; model_list.py:1781.
 - **At ba6e85e**: Recorded only in review.json's research. No later record or test names it. Reproduced at ba6e85e.
 - **Done when**: A browser test counting queue joins shows exactly one request per option pick on Test's Run select and every other dropdown wired with .input.
+- **Cause (measured in T02 on a bare Gradio 6.30 page)**: a single-select Dropdown sends `input` on every blur and once more for an option clicked (2 per pointer pick, 1 per keyboard pick, 1 for a focus that chose nothing). Its `select` is not sent for a pick made with the arrow keys and Enter, and `change` follows the server's own writes too (Test writes its selects back on purpose), so neither is the choice's event; its `blur` comes once per option chosen and never from a write. A multiselect and a Radio send `input` once per change.
+- **Fix**: `shell.picked(control)`, the one place that names a choice's event (a single-select Dropdown's blur, any other control's input), wired at every select choice: the shared list's workspace, Models' Task, Test's workspace, version, checkpoint and run, Training's dataset and Viewing, Fine-tune's dataset, Diagnosis' reference cohort, the Results segment's filters. No debounce; two real picks are two requests.
 - **Sources**: docs/working/webui-ux-review-2026-10-25/review.json research[1].principles[5] (G6-dropdown-events); docs/working/webui-ux-review-2026-10-25/review.json audits[2].findings[0] (fix: 'Also switch model.input to .change or .select (G6)')
-- **Closed at**: —
+- **Closed at**: d2d02f6. Tests: `test_webui_shell.py::test_every_select_choice_in_the_dashboard_is_its_one_event_per_pick` (the whole dashboard: no single-select Dropdown choice on `input`; the named selects on blur), `test_webui_shell.py::test_one_pick_of_a_select_is_one_request_and_the_pages_write_is_none` (browser, Gradio's own page: pointer 1, keys 1, the server's write 0, a Radio pick 1), and the Models browser test above (one Task pick by pointer and by keys: 1 request each; 2 for the pointer pick on ba6e85e). Seen in the dashboard on a CPU demo workspace, counting queue joins: Test's Run select and Training's Viewing select, 1 request per pointer pick and 1 per keyboard pick (2 and 1 on ba6e85e). The training touch record (Textbox, Number, Checkbox, Radio) is unchanged.
 
 #### OPS-R1 · 'Set by you' can name what Reset cleared in a key burst; pressed dropdown pick not held
 
-- **State**: partly done · found by the 2026-10-25 review · severity P2 · page: training
+- **State**: code-verified · found by the 2026-10-25 review · severity P2 · page: training
 - **Problem**: A field emptied as the first edit was not recorded, so Start sent the reference; then a click could beat the edit's record.
 - **At ba6e85e**: Emptying Neighbours per hop as the first edit (Ctrl+A, then Backspace) is recorded: the line reads 'Set by you: Epochs 3 (reference 200) / Not valid: Neighbours per hop needs at least 1 item(s).', and Reset clears it (seen). The held-click synchronisation (TOUCH_HEAD, LANDED_JS) was not exercised.
 - **Done when**: A unit/browser test that types two keys and presses Reset in one burst ends with a 'Set by you' line naming nothing Reset cleared, and a dropdown option chosen by a press is recorded before an immediate Start click sends the form.
+- **T02**: no code change; both cases are browser tests of the R1 fix that the audit did not run. The forms' choice fields are Radios (the touch record holds no Dropdown), so "an option chosen by a press" is the radio case.
 - **Sources**: OPS:367; OPS:368; OPS:371; OPS:372
-- **Closed at**: —
+- **Closed at**: the R1 fix before ba6e85e (146cfca, 2810853, 30ba727), rerun at e72d4a0: `test_training_touch_record.py::test_a_late_line_answer_never_records_the_field_again_after_reset` (the Training page as mounted: two keys with the line held, Reset, the line let go: "Set by you: nothing", Start sends no setting) and `::test_a_click_made_while_an_edit_is_pending_waits_for_its_record` (a radio's option pressed and Start pressed at once: Start held until the edit is recorded, then one request with the key and the value); the file's 11 tests pass, and the OPS-R2 null tests (`test_settings_projection.py`, `test_training_fields.py`, `test_webui_renderers.py`, `test_webui_finetune_page.py`, `test_training_console_resume.py`) pass.
 
 #### R-59 · Five Training listeners still flash Gradio progress timers
 
-- **State**: partly done · found by the 2026-10-25 review · severity low · page: training
+- **State**: code-verified · found by the 2026-10-25 review · severity low · page: training
 - **Problem**: Progress timers flashed on several Training handlers.
 - **At ba6e85e**: Two of the seven listeners left with their controls (randomize_seed, conv_type). Five still have no show_progress='hidden': continue_source.change twice (training_console.py:4752, :4760), checkpoint_dropdown.change (:4762), manual_checkpoint.change (:4764) and continue_device.change (:4766). In the browser, visible Gradio progress text ('processing | 0.1/0.1s', 'queue: 1/1 | 0.1/0.1s') appeared on continue_run, checkpoint_dropdown, the parent details, manual_checkpoint and continue_preview when switching the checkpoint source, changing the drawer's Device or choosing a checkpoint.
 - **Done when**: continue_source (both), checkpoint_dropdown, manual_checkpoint and continue_device .change listeners have show_progress='hidden', checked by a unit test over the listener config, and no timer flashes on those changes.
 - **Sources**: UX:261 (appendix 59); RJ audits[1].findings[25]
-- **Closed at**: —
+- **Closed at**: e72d4a0. Test: `test_training_page.py::test_no_listener_of_the_continue_drawers_controls_shows_a_progress_timer` (every listener of the drawer's source, run, checkpoint, path, Device and operation; on ba6e85e it names the five). Seen in the browser on a CPU demo workspace, a mutation observer counting visible Gradio progress text in the drawer while the source was switched, a path typed, a listed checkpoint chosen and Device changed twice: 54 visible timer texts on ba6e85e (on continue_preview, continue_run, checkpoint_dropdown, the parent's details, manual_checkpoint), none now.
 
 ### UI-12 What bound and verified mean
 
