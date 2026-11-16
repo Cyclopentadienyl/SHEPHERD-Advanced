@@ -244,3 +244,98 @@ def test_train_model_is_refused_before_anything_is_written(monkeypatch, tmp_path
                 assert setup_demo.main() == 1
             assert "is held by a test job (measure_scorer.py" in caplog.text
     assert "Nothing was written." in caplog.text and not output.exists()
+
+
+# --------------------------------------------------------------------------- where it goes
+def _save_root(root: Path) -> None:
+    """Choose `root` in Settings › Data locations: saved and applied by the
+    store the panel's Save writes through (the test's own settings file)."""
+    from src.config.deployment_settings import KEY_WORKSPACES_ROOT
+    from src.utils import settings_store
+
+    root.mkdir(parents=True, exist_ok=True)
+    assert settings_store.save({KEY_WORKSPACES_ROOT: str(root)}).saved
+    assert settings_store.apply_saved().applied
+
+
+@pytest.mark.parametrize("chosen", ["saved in Settings", "set for this command"])
+def test_the_default_output_is_demo_in_the_workspaces_folder_in_effect(
+        monkeypatch, tmp_path, capsys, chosen):
+    """T08 (first run): with the workspaces folder saved in Settings and
+    nothing exported, `--train-model` took the GPU lock in that folder but
+    wrote the workspace to the repository's `data/workspaces/demo`, so
+    Datasets listed nothing. The default is now `demo` in the folder in
+    effect, by the one resolver (a variable set for the command wins), and
+    the training it runs takes the lock in that same folder. Run from an
+    empty directory so the old relative default lands there, not in the
+    checkout."""
+    from src.utils.gpu_lock import LOCK_FILE_NAME, WORKSPACES_ROOT_ENV, probe
+
+    root = tmp_path / "SHEPHERD-data" / "workspaces"
+    if chosen == "saved in Settings":
+        monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+        _save_root(root)
+    else:
+        root.mkdir(parents=True)
+        monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
+    started = tmp_path / "cwd"
+    started.mkdir()
+    monkeypatch.chdir(started)
+    seen = {}
+
+    def _trained(workspace, num_epochs, device):
+        seen["workspace"], seen["held_by"] = Path(workspace), probe(root / LOCK_FILE_NAME)
+        return Path(workspace) / "runs" / "gatv2" / "demo-disease" / "checkpoints" / "last.pt"
+
+    monkeypatch.setattr(setup_demo, "train_demo_model", _trained)
+    monkeypatch.setattr(sys, "argv", ["setup_demo.py", "--train-model", "--device", "cpu"])
+    assert setup_demo.main() == 0
+    assert seen["workspace"] == root.resolve() / "demo"
+    assert "a training job (setup_demo.py --train-model" in seen["held_by"]
+    assert (root / "demo" / "split_manifest.json").is_file()
+    assert list(started.iterdir()) == [], "nothing is written beside where it was started"
+    assert f"Workspace: {root.resolve() / 'demo'}" in capsys.readouterr().out
+    # The server's own list of the folder in effect now names it.
+    from src.api.services.server_lists import list_workspaces
+
+    assert "demo" in [item.name for item in list_workspaces().items]
+
+
+@pytest.mark.parametrize("train", [True, False], ids=["train-model", "workspace-only"])
+def test_with_no_workspaces_folder_in_effect_the_default_is_refused(monkeypatch, tmp_path,
+                                                                     caplog, train):
+    """With no folder in effect and no `--output-dir` there is nowhere the
+    dashboard reads, so the demo is refused before anything is written (and
+    before the lock), naming why in the setting's own words; nothing falls
+    back to the repository's `data/workspaces/demo`. `--help` says the rule."""
+    import logging
+
+    from src.config.server_settings import WORKSPACES_ROOT_NOT_SET
+    from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
+
+    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+    started = tmp_path / "cwd"
+    started.mkdir()
+    monkeypatch.chdir(started)
+    monkeypatch.setattr(setup_demo, "write_workspace",
+                        lambda *a, **k: pytest.fail("wrote with no folder in effect"))
+    monkeypatch.setattr(sys, "argv", ["setup_demo.py", *(["--train-model"] if train else [])])
+    with caplog.at_level(logging.ERROR):
+        assert setup_demo.main() == 1
+    flat = " ".join(caplog.text.split())
+    assert ("setup_demo: refused: the demo is written to the workspaces folder in effect (the "
+            "one the dashboard lists), and there is none.") in flat
+    assert " ".join(WORKSPACES_ROOT_NOT_SET.split()) in flat
+    assert "--output-dir" in flat and "Nothing was written." in flat
+    assert list(started.iterdir()) == []
+
+
+def test_help_says_where_the_demo_goes(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["setup_demo.py", "--help"])
+    with pytest.raises(SystemExit):
+        setup_demo.main()
+    flat = " ".join(capsys.readouterr().out.split())
+    assert ("default: demo in the workspaces folder in effect, the one the dashboard lists: "
+            "chosen in Settings › Data locations, or SHEPHERD_WORKSPACES_ROOT set for this "
+            "command; with neither, the demo is refused unless this is given") in flat
+    assert "data/workspaces/demo" not in flat

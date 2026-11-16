@@ -24,6 +24,20 @@ Usage:
     # Custom output directory:
     python scripts/setup_demo.py --output-dir data/demo
 
+**Where it writes** (`default_output_dir`, T08): `demo` in the workspaces
+folder in effect, resolved by the one resolver every process uses
+(`server_settings.workspaces_root`: `SHEPHERD_WORKSPACES_ROOT` set for this
+command, else the folder saved in Settings › Data locations). That is the
+folder the dashboard lists and the one whose GPU lock `--train-model` takes,
+so the data and the lock go to one place. With no folder in effect (none
+chosen, or the one chosen is refused) it is refused with exit 1 and nothing
+written, with or without `--train-model`, naming why and the suggested
+folder; nothing falls back to the repository's `data/workspaces/`. An
+explicit `--output-dir` always wins. *History: until T08 the default was the
+repository's `data/workspaces/demo` whatever folder was chosen, so a demo
+trained under the saved folder's lock was written where the dashboard did not
+look.*
+
 Output files:
     <output_dir>/kg.json              - Knowledge graph
     <output_dir>/node_features.pt     - Node feature tensors
@@ -66,7 +80,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 # Add project root to path
 project_root = Path(__file__).resolve().parent.parent
@@ -80,6 +94,7 @@ from src.core.types import (
     NodeID,
     NodeType,
 )
+from src.config import server_settings
 from src.kg.graph import KnowledgeGraph
 from src.kg.workspace import SampleBudget, write_workspace
 
@@ -96,6 +111,9 @@ DEMO_NUM_TRAIN = 200
 DEMO_NUM_VAL = 50
 DEMO_VAL_DISEASE_FRACTION = 0.2
 DEMO_SEED = 42
+#: The demo workspace's folder in the workspaces folder in effect
+#: (`default_output_dir`).
+DEMO_WORKSPACE = "demo"
 
 
 # =============================================================================
@@ -373,6 +391,27 @@ def serving_device(training_device: str) -> str:
     return "cuda" if requested == "auto" else requested
 
 
+def default_output_dir(environ: Optional[Mapping[str, str]] = None
+                       ) -> Tuple[Optional[Path], Optional[str]]:
+    """**Where the demo goes when `--output-dir` is not given**: `demo` in
+    the workspaces folder in effect, by the one resolver
+    (`server_settings.workspaces_root`: the variable set for this command,
+    else the folder saved in Settings › Data locations), the folder the
+    dashboard lists and whose GPU lock `--train-model` takes. With none in
+    effect (not chosen, refused, or a saved file that cannot be read), None
+    and that setting's own words for why; no other folder is assumed."""
+    root = server_settings.workspaces_root(environ)
+    if root.value is None:
+        return None, root.problem
+    return root.value / DEMO_WORKSPACE, None
+
+
+#: The refusal with no `--output-dir` and no workspaces folder in effect.
+NO_OUTPUT_DIR = ("setup_demo: refused: the demo is written to the workspaces folder in effect "
+                 "(the one the dashboard lists), and there is none. {why} Or name the folder "
+                 "for this demo with --output-dir. Nothing was written.")
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -383,8 +422,11 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="data/workspaces/demo",
-        help="Output directory (default: data/workspaces/demo)",
+        default=None,
+        help=f"Output directory (default: {DEMO_WORKSPACE} in the workspaces folder in effect, "
+             "the one the dashboard lists: chosen in Settings › Data locations, or "
+             "SHEPHERD_WORKSPACES_ROOT set for this command; with neither, the demo is "
+             "refused unless this is given)",
     )
     parser.add_argument(
         "--train-model",
@@ -408,7 +450,15 @@ def main():
     )
     args = parser.parse_args()
 
-    output_dir = Path(args.output_dir)
+    # **Where the demo goes** (`default_output_dir`), decided before the lock
+    # and before anything is written: the lock and the data go to one folder.
+    if args.output_dir is not None:
+        output_dir = Path(args.output_dir)
+    else:
+        output_dir, why = default_output_dir()
+        if output_dir is None:
+            logger.error(NO_OUTPUT_DIR.format(why=why))
+            return 1
 
     # **A managed GPU job takes the deployment's GPU lock** before anything is
     # written, and keeps it until training ends (src/utils/gpu_lock.py).
