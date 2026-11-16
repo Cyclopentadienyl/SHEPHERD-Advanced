@@ -545,10 +545,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dsvtbl td {{ overflow-wrap: anywhere; }}
 {_PAGE} .shep-dsvtbl .shep-more p {{ margin: 4px 0 0; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} #shep-ds-details .shep-v, {_PAGE} #shep-ds-details .shep-panel-hd h2 {{ overflow-wrap: anywhere; min-width: 0; }}
-@media (max-width: 1799px) {{
-  {_PAGE} .shep-dstbl .shep-ds-wide {{ display: none; }}
-  {_PAGE} .shep-dstbl .shep-ds-narrow {{ display: block; }}
-}}
 @media (min-width: 1400px) and (min-height: 760px) {{
   {_PAGE} #shep-ds-table {{ flex: 0 1 auto !important; min-height: 120px; overflow: auto !important; }}
   {_PAGE} #shep-ds-table .shep-tbl-wrap {{ overflow: visible; }}

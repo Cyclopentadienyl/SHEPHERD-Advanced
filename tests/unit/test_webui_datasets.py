@@ -321,6 +321,8 @@ def test_a_row_is_one_line_and_in_use_is_no_input_box(root, monkeypatch):
     for retired in ("shep-mark-outline", "shep-mark-grey", "shep-mark-serve-same", "shep-ds-wide",
                     "shep-ds-narrow"):
         assert retired not in html, retired
+    for retired in ("shep-ds-wide", "shep-ds-narrow"):      # nor a rule of the page's own sheet
+        assert retired not in dsp.PAGE_CSS, retired
     assert "<div" not in html.split("<tbody>")[1]                     # no second line in a cell
     assert '<span class="shep-sub">same dataset as served</span>' in _row(html, "demo_copy")
     scratch = next(x for x in data["rows"] if x["name"] == "scratch_ws")
