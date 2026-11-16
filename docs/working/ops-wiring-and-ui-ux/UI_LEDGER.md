@@ -379,7 +379,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-06 Launch and configuration in the GUI
 
-10 rows: 2 to do, 3 partly done, 1 awaiting owner acceptance, 4 code-verified at ba6e85e (audit).
+10 rows: 1 awaiting owner acceptance, 5 code-verified, 4 code-verified at ba6e85e (audit).
 
 #### FL-SVC · Service stopped during manual acceptance with no recorded reason
 
@@ -882,7 +882,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-13 Path redaction and path exposure
 
-5 rows: 3 code-verified, 1 to do, 1 code-verified at ba6e85e (audit).
+5 rows: 1 to do, 3 code-verified, 1 code-verified at ba6e85e (audit).
 
 #### B53 · Open read routes name server paths the pages hide
 
@@ -934,7 +934,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-14 Reload restores the page and valid selections
 
-4 rows: 3 code-verified, 1 outside this round's scope (owner to decide).
+4 rows: 1 outside this round's scope (owner to decide), 3 code-verified.
 
 #### B32-UI8 · Every open page lands on Diagnosis after a reconnect reload
 
@@ -978,7 +978,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-15 Diagnosis input changes and result identity
 
-3 rows: 2 code-verified, 1 partly done.
+3 rows: 1 partly done, 2 code-verified.
 
 #### B73 · Genes box edited without a keypress keeps the old diagnosis result
 
@@ -1014,7 +1014,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-116 rows: 51 to do, 23 partly done, 1 awaiting hardware, 3 outside this round's scope (owner to decide), 4 not applicable, 3 code-verified, 31 code-verified at ba6e85e (audit).
+116 rows: 46 to do, 17 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 12 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
