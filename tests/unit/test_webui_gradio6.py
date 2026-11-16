@@ -36,22 +36,25 @@ def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch):
     assert len(on_select) == 1
     assert [o.elem_id for o in on_select[0].outputs] == [
         "runtime_apply", "runtime_restart", "runtime_restart_lock", "runtime_access_reason",
-        "allocator_preset", "torch_compile", "runtime_facts"]
+        "runtime_stop", "allocator_preset", "torch_compile", "runtime_facts"]
 
     from tests.fixtures.operator_access import operator_request
 
     monkeypatch.setattr(rs, "is_training_active", lambda: True)
-    apply, button, note, reason, alloc, compile_, _facts = on_select[0].fn(
+    apply, button, note, reason, stop, alloc, compile_, _facts = on_select[0].fn(
         operator_request(monkeypatch))
     assert apply["interactive"] is True and button["interactive"] is False
+    # Stop service follows Restart's lock: off while a GPU job runs, no lock.
+    assert (stop["value"], stop["interactive"]) == (rs.STOP_LABEL, False)
     assert note["visible"] is True and reason["visible"] is False
     assert rs.RESTART_BUSY in note["value"] and "shep-st-neutral" in note["value"]
     assert alloc["interactive"] is True and compile_["interactive"] is True
     # Off while training runs, but not refused: no lock (the WebUI skill's §3).
     assert (apply["value"], button["value"]) == (rs.APPLY_LABEL, rs.RESTART_LABEL)
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
-    apply, button, note, reason, *_fields = on_select[0].fn(operator_request(monkeypatch))
+    apply, button, note, reason, stop, *_fields = on_select[0].fn(operator_request(monkeypatch))
     assert button["interactive"] is True and note["visible"] is False
+    assert stop["interactive"] is True
 
 
 def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch, tmp_path):
@@ -66,9 +69,10 @@ def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch, 
     monkeypatch.setattr(presets, "RUNTIME_SETTINGS_FILE", tmp_path / "settings.json")
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
-    apply, button, note, reason, alloc, compile_, _facts = rs._on_open(gradio_request())
+    apply, button, note, reason, stop, alloc, compile_, _facts = rs._on_open(gradio_request())
     assert (apply["value"], apply["interactive"]) == (f"🔒 {rs.APPLY_LABEL}", False)
     assert (button["value"], button["interactive"]) == (f"🔒 {rs.RESTART_LABEL}", False)
+    assert (stop["value"], stop["interactive"]) == (f"🔒 {rs.STOP_LABEL}", False)
     assert reason["visible"] is True and reason["value"] == (
         '<div class="shep-reason"><span aria-hidden="true">🔒</span><span>Operator controls '
         "only: deployment mode not set to M1.</span></div>")
@@ -238,11 +242,13 @@ def test_the_restart_lock_is_polled_on_the_shells_slow_timer_only_while_shown(mo
     assert poll.targets == [(slow._id, "tick")] and poll.queue is False
     assert isinstance(poll.inputs[0], gr.State)
     assert [o.elem_id for o in poll.outputs] == [
-        "runtime_apply", "runtime_restart", "runtime_restart_lock", "runtime_access_reason"]
+        "runtime_apply", "runtime_restart", "runtime_restart_lock", "runtime_access_reason",
+        "runtime_stop"]
     from tests.fixtures.operator_access import operator_request
 
     monkeypatch.setattr(rs, "is_training_active", lambda: pytest.fail("read on another page"))
-    assert poll.fn("clinical", operator_request(monkeypatch)) == (gr.update(),) * 4
+    assert poll.fn("clinical", operator_request(monkeypatch)) == (gr.update(),) * 5
     monkeypatch.setattr(rs, "is_training_active", lambda: True)
-    apply, button, note, _reason = poll.fn("settings", operator_request(monkeypatch))
+    apply, button, note, _reason, stop = poll.fn("settings", operator_request(monkeypatch))
     assert button["interactive"] is False and note["visible"] is True
+    assert stop["interactive"] is False

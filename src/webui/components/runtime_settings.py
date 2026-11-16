@@ -50,7 +50,7 @@ from typing import Any, Mapping, Optional
 
 import gradio as gr
 
-from src.api.services.backend_control import is_training_active, restart_backend
+from src.api.services.backend_control import is_training_active, restart_backend, stop_backend
 from src.config.runtime_presets import (
     ALLOCATOR_PRESETS,
     load_runtime_settings,
@@ -58,6 +58,7 @@ from src.config.runtime_presets import (
     running_allocator,
     save_runtime_settings,
 )
+from src.webui.components import data_locations
 from src.webui.components import renderers as r
 from src.webui.components.chips import LOCK, gated, operator_only
 from src.webui.operator_access import operator_access
@@ -92,9 +93,22 @@ RESTART_STOPS_SERVING = (
     "loaded again unless the service's start-up configures one (SHEPHERD_CHECKPOINT_PATH)."
 )
 
-#: Why Restart is off while a GPU job runs (the backend refuses it too: a
-#: re-exec would orphan the job's process), said beside the button.
-RESTART_BUSY = "Restart is off while a GPU job (training or a test run) runs."
+#: Why Restart and Stop service are off while a GPU job runs (the backend
+#: refuses both too: a re-exec or a stop would end the job's process), said
+#: beside the buttons.
+RESTART_BUSY = "Restart and Stop service are off while a GPU job (training or a test run) runs."
+
+#: Stop service (UI-06e): a service started from its desktop entry has no
+#: terminal to stop it from. Asked once before it stops
+#: (`_on_stop_service_request`), then stopped through the backend's orderly
+#: stop (`backend_control.stop_backend`).
+STOP_LABEL = "Stop service"
+STOP_CONFIRM_LABEL = "Stop service now"
+STOP_QUESTION = (
+    "Stop the service? The dashboard and the API stop on this computer, and every open page "
+    "loses its connection. Start it again from its desktop entry or launch_shepherd.sh.")
+STOP_DONE = ("Stopping the service. This page stops answering in a moment; start it again from "
+             "its desktop entry or launch_shepherd.sh.")
 
 #: The acceleration area: a fact, never a toggle that does nothing; said in
 #: brackets after its "Not implemented yet" mark.
@@ -258,7 +272,39 @@ def _on_change(alloc, compile_on):
     return r.status_mark("warn", "Not saved: Apply Settings saves the fields above")
 
 
-#: The two operator controls' words, shown with no lock while D8 allows the
+def _on_stop_service_request(request: gr.Request):
+    """Stop service, asked once: an operator control (D8), checked on this
+    event's own request before the question is shown; refused while a GPU
+    job runs (the backend refuses then too). Returns the question row's
+    visibility and the status line."""
+    access = operator_access(request)
+    if not access.allowed:
+        return gr.update(visible=False), r.status_mark("error", access.refusal)
+    if is_training_active():
+        return gr.update(visible=False), r.status_mark("neutral", RESTART_BUSY)
+    return gr.update(visible=True), ""
+
+
+def _on_stop_service(request: gr.Request):
+    """The confirmed Stop service: an operator control (D8), checked on this
+    event's own request before the backend is asked; the backend refuses
+    while a GPU job or a model load runs (`stop_backend`) and logs who asked."""
+    access = operator_access(request)
+    if not access.allowed:
+        return gr.update(visible=False), r.status_mark("error", access.refusal)
+    result = stop_backend()
+    if not result.get("success"):
+        return gr.update(visible=False), r.status_mark(
+            "error", f"Not stopped: {result.get('error') or 'cannot stop right now.'}")
+    return gr.update(visible=False), r.status_mark("stopping", STOP_DONE)
+
+
+def _on_stop_service_cancel():
+    """Cancel: the question closes; nothing was asked of the backend."""
+    return gr.update(visible=False), ""
+
+
+#: The operator controls' words, shown with no lock while D8 allows the
 #: request (`chips.gated`).
 APPLY_LABEL = "Apply Settings"
 RESTART_LABEL = "Restart Backend"
@@ -283,6 +329,7 @@ def _refresh_restart_lock(request: gr.Request):
                                          f'{r.status_mark("neutral", RESTART_BUSY)}</div>'
                                          if locked else "")),
         gr.update(visible=not access.allowed, value=reason),
+        gr.update(**gated(STOP_LABEL, access.allowed, interactive=not locked)),
     )
 
 
@@ -307,7 +354,7 @@ def _poll_restart_lock(location, request: gr.Request):
     of its own that ticked on every page once Settings had been opened). The
     fields are left as they are, so an open select is never redrawn."""
     if location != SETTINGS_PAGE:
-        return (gr.update(),) * 4
+        return (gr.update(),) * 5
     return _refresh_restart_lock(request)
 
 
@@ -378,6 +425,17 @@ def create_runtime_settings_tab(ctx: Any) -> None:
     settings = load_runtime_settings()
     saved_alloc, saved_compile = _saved(settings)
 
+    with gr.Row(elem_id="shep-settings-cols"):
+        # Data locations (UI-06) on the left, Runtime settings on the right;
+        # narrow, one above the other.
+        data_locations.create_data_locations_panel(ctx)
+        controls = _runtime_panel(ctx, settings, saved_alloc, saved_compile)
+    _wire_runtime_panel(ctx, *controls)
+
+
+def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
+                   saved_compile: bool) -> tuple:
+    """The Runtime settings panel's components (`create_runtime_settings_tab`)."""
     with gr.Column(elem_classes=["shep-panel", "shep-settings"], elem_id="shep-settings"):
         plain_html('<div class="shep-panel-hd"><h2>Runtime settings</h2>'
                    '<span class="shep-panel-right">this server’s hardware</span></div>'
@@ -402,10 +460,20 @@ def create_runtime_settings_tab(ctx: Any) -> None:
                                   elem_id="runtime_apply")
             restart_btn = gr.Button(RESTART_LABEL, variant="secondary", interactive=False,
                                     scale=0, elem_id="runtime_restart")
-            # Why Restart is off (a GPU job runs) and why both are (D8),
-            # beside them.
+            stop_btn = gr.Button(STOP_LABEL, variant="secondary", interactive=False, scale=0,
+                                 elem_id="runtime_stop")
+            # Why Restart and Stop are off (a GPU job runs) and why all are
+            # (D8), beside them.
             restart_lock_note = plain_html("", visible=False, elem_id="runtime_restart_lock")
             access_note = plain_html("", visible=False, elem_id="runtime_access_reason")
+        with gr.Row(visible=False, elem_classes=["shep-panel-ft"],
+                    elem_id="runtime_stop_confirm") as stop_confirm:
+            plain_html(f'<p class="shep-sub">{r.e(STOP_QUESTION)}</p>',
+                       elem_id="runtime_stop_question")
+            stop_now = gr.Button(STOP_CONFIRM_LABEL, variant="primary", scale=0,
+                                 elem_id="runtime_stop_now")
+            stop_cancel = gr.Button("Cancel", variant="secondary", scale=0,
+                                    elem_id="runtime_stop_cancel")
         with gr.Column(elem_id="shep-settings-out"):
             status = plain_html("", elem_id="runtime_status")
             restart_status = plain_html("", elem_id="runtime_restart_status")
@@ -413,8 +481,16 @@ def create_runtime_settings_tab(ctx: Any) -> None:
                        f"API and this page) so a newly saved memory allocator takes effect. "
                        f"{RESTART_STOPS_SERVING} The page reconnects by itself a few seconds "
                        "after a restart.</p>", elem_id="runtime_restart_note")
+    return (facts, allocator, torch_compile, apply_btn, restart_btn, stop_btn,
+            restart_lock_note, access_note, stop_confirm, stop_now, stop_cancel, status,
+            restart_status)
 
-    lock_outputs = [apply_btn, restart_btn, restart_lock_note, access_note]
+
+def _wire_runtime_panel(ctx: Any, facts, allocator, torch_compile, apply_btn, restart_btn,
+                        stop_btn, restart_lock_note, access_note, stop_confirm, stop_now,
+                        stop_cancel, status, restart_status) -> None:
+    """The Runtime settings panel's events (`create_runtime_settings_tab`)."""
+    lock_outputs = [apply_btn, restart_btn, restart_lock_note, access_note, stop_btn]
     ctx.timer_slow.tick(fn=_poll_restart_lock, inputs=[ctx.location], outputs=lock_outputs,
                         queue=False, show_progress="hidden")
     ctx.on_page_open(SETTINGS_PAGE, {"fn": _on_open,
@@ -431,6 +507,12 @@ def create_runtime_settings_tab(ctx: Any) -> None:
                      show_progress="hidden")
     apply_btn.click(fn=_on_apply, inputs=[allocator, torch_compile],
                     outputs=[status, facts]).then(**ctx.chip_refresh)
+    stop_btn.click(fn=_on_stop_service_request, outputs=[stop_confirm, restart_status],
+                   show_progress="hidden")
+    stop_now.click(fn=_on_stop_service, outputs=[stop_confirm, restart_status],
+                   show_progress="hidden")
+    stop_cancel.click(fn=_on_stop_service_cancel, outputs=[stop_confirm, restart_status],
+                      show_progress="hidden")
 
 
 _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
@@ -439,6 +521,9 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: ``PAGE_CSS``): one panel at a readable width, its body padded, its
 #: actions one row with their reasons beside them.
 PAGE_CSS = f"""
+{_PAGE} #shep-settings-cols {{ gap: 16px !important; align-items: flex-start; flex-wrap: wrap; }}
+{_PAGE} #shep-settings-cols > #shep-dl {{ flex: 55 1 640px !important; min-width: 0 !important; }}
+{_PAGE} #shep-settings-cols > .shep-settings {{ flex: 45 1 480px !important; min-width: 0 !important; }}
 {_PAGE} .shep-settings {{ max-width: 1040px; }}
 {_PAGE} #shep-settings-bd {{ padding: 14px 16px !important; gap: 12px !important; }}
 {_PAGE} #shep-settings-ft > button {{ flex: none !important; min-width: max-content !important; white-space: nowrap; }}
@@ -447,11 +532,15 @@ PAGE_CSS = f"""
 {_PAGE} #shep-settings-out .shep-note {{ margin: 0; }}
 {_PAGE} #runtime_status:has(.html-container:empty),
 {_PAGE} #runtime_restart_status:has(.html-container:empty) {{ display: none !important; }}
-"""
+{_PAGE} #runtime_stop_confirm > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}
+{_PAGE} #runtime_stop_confirm > button {{ flex: none !important; min-width: max-content !important; }}
+{_PAGE} #runtime_stop_confirm p {{ margin: 0; }}
+""" + data_locations.PAGE_CSS
 
 
 __all__ = ["ACCELERATION", "ALLOCATOR_CHOICES", "ALLOCATOR_WORDS", "COMPILE_READ", "FIELD_HELP",
            "FIELD_INFO",
            "PAGE_CSS",
-           "RESTART_BUSY", "RESTART_STOPS_SERVING", "allocator_words", "create_runtime_settings_tab",
+           "RESTART_BUSY", "RESTART_STOPS_SERVING", "STOP_CONFIRM_LABEL", "STOP_DONE",
+           "STOP_LABEL", "STOP_QUESTION", "allocator_words", "create_runtime_settings_tab",
            "facts_html", "running_html", "saved_html"]

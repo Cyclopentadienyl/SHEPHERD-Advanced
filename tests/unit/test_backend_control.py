@@ -570,7 +570,7 @@ def test_the_restart_words_say_a_loaded_model_is_stopped_and_not_loaded_again(mo
     assert "is stopped first" in rs.RESTART_STOPS_SERVING
     assert "not loaded again unless the service's start-up configures one" in (
         rs.RESTART_STOPS_SERVING)
-    assert "RESTART_STOPS_SERVING" in inspect.getsource(rs.create_runtime_settings_tab)
+    assert "RESTART_STOPS_SERVING" in inspect.getsource(rs._runtime_panel)
     monkeypatch.setattr(rs, "restart_backend", lambda: {"success": True})
     said = rs._on_restart(operator_request(monkeypatch))
     assert rs.RESTART_STOPS_SERVING in said["value"]

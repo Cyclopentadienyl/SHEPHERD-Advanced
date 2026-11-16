@@ -612,7 +612,12 @@ GATED_HANDLERS = {
     # A3b; the confirmed one calls the one stop, `run_stop`, in process).
     "src.webui.components.diagnosis_panel": ("_on_change_model", "_on_stop_inference_request",
                                              "_on_stop_inference"),
-    "src.webui.components.runtime_settings": ("_on_restart", "_on_apply"),
+    "src.webui.components.runtime_settings": ("_on_restart", "_on_apply",
+                                               "_on_stop_service_request", "_on_stop_service"),
+    # Settings › Data locations (UI-06): Check reads a server folder, the
+    # others write the saved settings or create a folder.
+    "src.webui.components.data_locations": ("_on_check", "_on_save", "_on_create",
+                                            "_on_apply_saved", "_on_replace_unreadable"),
     "src.webui.components.training_console": (
         "_on_start", "_on_stop", "_on_resume", "_on_check_continue", "_refresh_checkpoints",
         "_save_training_config", "_on_stop_request", "_on_continue_open"),
@@ -752,6 +757,19 @@ def spies(monkeypatch, tmp_path):
     monkeypatch.setattr(rs, "restart_backend", recorder("restart", {"success": False,
                                                                     "error": "spy"}))
     monkeypatch.setattr(rs, "save_runtime_settings", recorder("save_runtime_settings", None))
+    monkeypatch.setattr(rs, "stop_backend", recorder("stop_service", {"success": False,
+                                                                      "error": "spy"}))
+    from src.api.services import data_locations as locations
+    from src.webui.components import data_locations as dl
+
+    monkeypatch.setattr(dl, "check_words", recorder("check", "spy"))
+    monkeypatch.setattr(dl, "create_folder", recorder("create_folder", (None, "spy")))
+    monkeypatch.setattr(locations, "save_and_apply", recorder("save_and_apply", locations.SaveAndApply(
+        locations.SaveOutcome(False, "spy"), None)))
+    monkeypatch.setattr(locations, "apply_saved", recorder("apply_saved", locations.ApplyOutcome(
+        False, False, "spy")))
+    monkeypatch.setattr(locations, "replace_unreadable", recorder(
+        "replace_unreadable", locations.RepairOutcome(False, "spy")))
     monkeypatch.setattr(training_manager, "start_training",
                         recorder("start_training", {"success": False, "error": "spy"}))
     monkeypatch.setattr(training_manager, "start_finetune",
@@ -784,6 +802,7 @@ def spies(monkeypatch, tmp_path):
 
 
 def _dashboard_calls():
+    from src.webui.components import data_locations as dl
     from src.webui.components import diagnosis_panel as dp
     from src.webui.components import finetune_page as fp
     from src.webui.components import results_segment as results
@@ -811,6 +830,16 @@ def _dashboard_calls():
         (dp._on_stop_inference, [None], None),
         (rs._on_restart, [], "restart"),
         (rs._on_apply, ["cuda_async", False], "save_runtime_settings"),
+        # Stop service: the question reads the job state (a job runs here, so
+        # it asks nothing); the confirmed stop asks the backend.
+        (rs._on_stop_service_request, [], None),
+        (rs._on_stop_service, [], "stop_service"),
+        # Settings › Data locations: each act reaches its one service.
+        (dl._on_check, ["workspaces_root", "/srv/x"], "check"),
+        (dl._on_save, ["workspaces_root", "/srv/x"], "save_and_apply"),
+        (dl._on_create, ["registry"], "create_folder"),
+        (dl._on_apply_saved, [], "apply_saved"),
+        (dl._on_replace_unreadable, [], "replace_unreadable"),
         (tc._on_start, None, None),
         (tc._on_stop, [{}], "stop_training"),
         (tc._on_stop_request, [{}], None),                 # asks, reading nothing
