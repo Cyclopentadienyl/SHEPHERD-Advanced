@@ -2716,7 +2716,9 @@ def test_the_page_styles_hold_the_reviewed_layout():
     # fingerprint: it is the Details popover's (one click away, `details_html`), never cut.
     built = [(sel, b) for sel, b in _rules(css, "shep-ds-built") if "display: none" in b]
     assert built and all(".shep-rb-chip " in sel for sel, _b in built), built
-    assert "built_text(row.get(\"build\"))" in Path(tc.r.__file__).read_text()
+    popover = tc.details_html({"row": {"name": "demo", "build": {
+        "state": "recorded", "built_at": "2026-10-15T09:41:00Z"}}, "facts": None})
+    assert "Built (UTC)" in popover and "2026-10-15 09:41" in popover
     # The selects: the shared field border (R-8: never a page's own, which was
     # #cdd2da at 1.52:1), the text clear of the chevron, grey while disabled.
     assert not any("border:" in b for _s, b in _rules(css, "#shep-train-dataset .wrap:has"))

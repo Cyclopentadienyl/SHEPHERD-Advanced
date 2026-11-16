@@ -316,7 +316,7 @@ def test_a_row_is_one_line_and_in_use_is_no_input_box(root, monkeypatch):
     built = r.built_date(row["build"])
     assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d", built)
     cells = _row(html, "resampled")
-    assert f'<td class="shep-nowrap">{built}</td>' in cells and "UTC" not in cells
+    assert f'<td class="shep-nowrap shep-ds-date">{built}</td>' in cells and "UTC" not in cells
     assert '<td class="shep-num shep-nowrap">20 / 5</td>' in cells
     assert r.status_mark("ok", "in your Training run bar") in cells
     for retired in ("shep-mark-outline", "shep-mark-grey", "shep-mark-serve-same", "shep-ds-wide",
@@ -907,14 +907,15 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.waitForSelector('#shep-ds-table tr[data-key="demo"]', { timeout: 60000 });
   await idle();
   const out = [];
-  for (let w = 1380; w <= 1560; w += 10) {
+  for (let w = 1400; w <= 1560; w += 10) {
     await page.setViewportSize({ width: w, height: 960 });
     // The shell lays the page out in the frame after a resize (`update`): two frames on, it has.
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     out.push(await page.evaluate((w) => {
       const wrap = document.querySelector('#shep-ds-table .shep-tbl-wrap');
       return [w, document.documentElement.getAttribute('data-shep-layout'),
-              wrap.scrollWidth - wrap.clientWidth];
+              wrap.scrollWidth - wrap.clientWidth,
+              document.querySelector('#shep-ds-table table').getBoundingClientRect().width];
     }, w));
   }
   console.log(JSON.stringify(out));
@@ -928,9 +929,11 @@ def test_in_a_browser_the_table_never_scrolls_sideways_once_side_by_side(root, t
     widths fit (`--shep-panel-min`). The table's panel minimum is its
     narrowest drawn width: below it, the windows just past the switch drew
     the table side by side and scrolling sideways in its own box (860 px
-    against a 853 px table with its margins: 28 px of scroll at 1410 px).
-    Swept across the switch, a side-by-side table never scrolls sideways,
-    and the page is still stacked below it and side by side above it."""
+    against a 853 px table with its margins: 28 px of scroll at 1410 px),
+    and a build date in proportional figures moved that width with the
+    minute it names (1 px over at 890 px). Swept across the switch, a
+    side-by-side table never scrolls sideways, and the page is still
+    stacked below it and side by side above it."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -941,6 +944,6 @@ def test_in_a_browser_the_table_never_scrolls_sideways_once_side_by_side(root, t
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_SWITCH_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
-    layouts = [layout for _w, layout, _over in seen]
+    layouts = [layout for _w, layout, _over, *_rest in seen]
     assert layouts[0] == "stack" and layouts[-1] == "side", seen
-    assert [(w, over) for w, layout, over in seen if layout == "side" and over > 0] == [], seen
+    assert [(w, over) for w, layout, over, *_rest in seen if layout == "side" and over > 0] == [], seen

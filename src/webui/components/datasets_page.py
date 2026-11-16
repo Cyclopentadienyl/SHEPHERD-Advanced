@@ -239,7 +239,7 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
             f'<tr class="{"shep-on" if on else ""}" data-key="{r.e(name)}" tabindex="0"'
             f'{CURRENT if on else ""}>'
             f'<td class="shep-ds-name shep-w600">{r.e(name)}</td>'
-            f'<td class="shep-nowrap">{r.e(built) if built else r.NOT_RECORDED.lower()}</td>'
+            f'<td class="shep-nowrap shep-ds-date">{r.e(built) if built else r.NOT_RECORDED.lower()}</td>'
             f'<td class="shep-nowrap">{fp_cell}</td>'
             f'<td class="shep-ds-src">{r.sources_html(row)}</td>'
             f'<td class="shep-num shep-nowrap">'
@@ -531,6 +531,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dstbl td.shep-ds-name {{ min-width: 11.5em; }}
 {_PAGE} .shep-dstbl td.shep-ds-src {{ min-width: 7em; }}
 {_PAGE} .shep-dstbl td.shep-ds-use {{ min-width: 11em; }}
+/* The build date in tabular figures: every date is one width, so the table's narrowest width
+   (and the panel minimum below) does not move with the minute a workspace was built. */
+{_PAGE} .shep-dstbl td.shep-ds-date {{ font-variant-numeric: tabular-nums; }}
 /* One line a row at the owner's window, at most 40 px (R-36): the 28 px Copy
    keeps its size and target, its 2 px above and below the text's line laid
    into the cell's padding. */
@@ -547,11 +550,11 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dsvtbl .shep-more p {{ margin: 4px 0 0; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} #shep-ds-details .shep-v, {_PAGE} #shep-ds-details .shep-panel-hd h2 {{ overflow-wrap: anywhere; min-width: 0; }}
 /* The two panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the table's
-   six columns (Name, Sources and In use keep 11.5, 7 and 11 em) are 853 px at their narrowest,
-   890 with the wrap's margins and the panel's edges; the details' digest grid of four columns
-   495; so the page sits side by side from about 1440 px of window, and its table never scrolls
-   sideways there. */
-{_PAGE} .shep-panel.shep-ds-main {{ --shep-panel-min: 890px; }}
+   six columns (Name, Sources and In use keep 11.5, 7 and 11 em; the date in tabular figures) are
+   876 px at their narrowest, 912 with the wrap's margins and the panel's edges; the details'
+   digest grid of four columns 495; so the page sits side by side from about 1460 px of window,
+   and its table never scrolls sideways there (wider train/val counts than the demo's still can). */
+{_PAGE} .shep-panel.shep-ds-main {{ --shep-panel-min: 912px; }}
 {_PAGE} .shep-panel.shep-ds-details {{ --shep-panel-min: 495px; }}
 {SIDE} {{
   {_PAGE} #shep-ds-table {{ flex: 0 1 auto !important; min-height: 120px; overflow: auto !important; }}
