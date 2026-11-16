@@ -145,20 +145,24 @@ while another page is shown (``ctx.location``).
 **The run bar and the run view are one projection of the session's
 selection, written only by a queued render** (`render`, the pieces of
 `VIEW_KEYS`: the run bar's workspace, ``ws`` and ``ctx.training_workspace``;
-the select's value, the chip, the run viewed's header, its Viewing select
-and its chart token, Start, Continue…, Stop and their reason, the drawer's
-line): every listener that writes them, or the selection they are drawn
-from, is in one queued group of one (``ctx.training_workspace_writes``),
+the select's value, the chip, the status pill, a failed job's banner, the
+run viewed's header, its Viewing select and its chart token, Start,
+Continue…, Stop and their reason, the drawer's line): every listener that
+writes them, the selection they are drawn from (``ws``, ``mode``, the run
+viewed's choice, the banners dismissed) or the Continue drawer's list,
+choice and check drawn from it, is in one queued group of one
+(``ctx.training_workspace_writes``),
 first asked first run, each from what the one before it wrote: the page open,
 then its render; the select; the Viewing select's choice (``viewing``, which
 only it writes), then its render; Datasets' "Use for training ›" and the
 change of ``ctx.training_workspace`` it makes; the render after every action,
 and the render the fast poll hands a change over to. So a workspace or a run
 chosen while a render waits is applied after it, and no piece drawn from an
-older selection is applied after one drawn from a newer. **The fast poll writes only the
-status pill** (`POLL_KEYS`, the job runner's state alone, on every tick, as
-the renders do), the header's chips and a hand-off: it renders the page as it
-is now and compares it with
+older selection, or an older read of the job, is applied after one drawn from
+a newer (B46-races: the pill, a dismissed banner, the drawer's list or check
+of the workspace before each had a writer outside the group). **The fast
+poll writes no piece**, only the header's chips and a hand-off: it renders
+the page as it is now and compares it with
 what the session was last sent; when a piece differs (new epochs, a job that
 started or ended, the GPU slot, a running job's workspace to follow), it gives
 a hidden component a new value (`CHANGED_ID`), whose ``.change`` runs the
@@ -2661,19 +2665,16 @@ VIEW_KEYS = ("ws", "dataset", "chip", "pill", "reason", "start", "cont", "stop",
 #: written by a render only when it changed them (a running job's dataset:
 #: `render`'s ``ws_changed``).
 SELECTION_KEYS = ("ws", "training_workspace")
-#: The one piece the fast poll writes (`_poll`), on every tick, besides the
-#: renders: the status pill, drawn from the job runner alone, never from the
-#: session's selection. A tick that crosses a render can show an older pill
-#: until the next tick.
-POLL_KEYS = ("pill",)
-#: Every other piece but the selection's own, which a queued render alone
-#: writes (they are drawn from the session's selection, ``ws``, ``mode``
-#: where it shapes them: the drawer, Stop's confirmation; the banner and the
-#: run name with them; and the run view's choice, ``viewing``, for the
-#: Viewing select, the header and the chart token): when the poll finds one
-#: of them not what the session was last sent, it hands the change over
-#: (`CHANGED_ID`).
-HANDED_KEYS = tuple(key for key in VIEW_KEYS if key not in SELECTION_KEYS + POLL_KEYS)
+#: Every other piece, which a queued render alone writes (they are drawn
+#: from the session's selection, ``ws``, ``mode`` where it shapes them: the
+#: drawer, Stop's confirmation; the banners dismissed; and the run view's
+#: choice, ``viewing``, for the Viewing select, the header and the chart
+#: token; the status pill from the job runner alone, read at the render's
+#: turn): when the poll finds one of them not what the session was last
+#: sent, it hands the change over (`CHANGED_ID`). The poll writes none of
+#: them (B46-races: it wrote the pill, and a tick that crossed a render
+#: brought back the pill it read before the render's).
+HANDED_KEYS = tuple(key for key in VIEW_KEYS if key not in SELECTION_KEYS)
 #: The reads a render keeps per session that are throttled by time, not by a
 #: file's change (the GPU lock's probe, `LOCK_READ_SECONDS`; the workspace's
 #: runs, `LATEST_READ_SECONDS`): the fast poll keeps its own (``polled``, which
@@ -2907,16 +2908,16 @@ def _render_changed(ws, mode, cache, dismissed, viewing, polled, request: gr.Req
 
 def _poll(location, ws, mode, cache, dismissed, viewing, polled, request: gr.Request):
     """The shell's fast timer (``queue=False``), while Training is shown: the
-    status pill (`POLL_KEYS`) on every tick, the header's chips on the tick
-    that sees the GPU slot change (`chips_on_change`), the hand-off, and its
-    own record (``polled``: its reads kept by time and the GPU slot it saw);
-    nothing while another page is shown.
+    header's chips on the tick that sees the GPU slot change
+    (`chips_on_change`), the hand-off, and its own record (``polled``: its
+    reads kept by time and the GPU slot it saw); nothing while another page
+    is shown.
 
-    It writes no piece drawn from the session's selection, and no cache (a
-    tick's answer is applied whenever it arrives, also after a render that
-    read a newer selection): it renders the page as it is now and compares
-    it with what the session was last sent, the cache's record, which only
-    the renders write. When a piece of `HANDED_KEYS` is not what was sent,
+    It writes no piece and no cache (a tick's answer is applied whenever it
+    arrives, also after a render that read a newer selection or a newer
+    state of the job): it renders the page as it is now and compares it with
+    what the session was last sent, the cache's record, which only the
+    renders write. When a piece of `HANDED_KEYS` is not what was sent,
     the GPU slot is not what the last render saw, or a training job runs in
     another workspace than the session's (``ws_changed``), it gives the
     hand-off token (`CHANGED_ID`) a new value, naming what it found, and the
@@ -2929,7 +2930,7 @@ def _poll(location, ws, mode, cache, dismissed, viewing, polled, request: gr.Req
     reads them no more often than a render does; it and the render it hands
     over to take each where it is newer than the last render's
     (`_with_polled`)."""
-    idle = (gr.update(),) * 4
+    idle = (gr.update(),) * 3
     if location != TRAINING:
         return idle
     before = cache or {}
@@ -2952,7 +2953,7 @@ def _poll(location, ws, mode, cache, dismissed, viewing, polled, request: gr.Req
     handoff = {"changed": changed, "at": time.monotonic_ns()} if changed else gr.update()
     own = {key: rendered["cache"][key] for key in POLL_READS if key in rendered["cache"]}
     own["gpu_seen"] = seen
-    return pieces["pill"], handoff, chips, own
+    return handoff, chips, own
 
 
 # =============================================================================
@@ -3056,11 +3057,14 @@ def notice_html(text: Any, *, mark: Optional[str]) -> str:
 
 
 def _on_banner_click(dismissed, cache, evt: gr.EventData):
-    """Dismiss: this session hides this banner until its content changes."""
+    """Dismiss: this session hides this banner until its content changes.
+    It records the dismissal only; the render after it, the banner's one
+    writer, hides it (B46-races: a render that crossed the click brought the
+    banner back)."""
     key = (cache or {}).get("banner_key")
     if event_act(evt) != "dismiss" or not key:
-        return gr.update(), gr.update()
-    return [*(dismissed or []), key][-20:], ""
+        return gr.update()
+    return [*(dismissed or []), key][-20:]
 
 
 def _workspace_path(name: Any) -> Path:
@@ -4692,14 +4696,13 @@ def create_training_tab(ctx: Any) -> None:
         "show_progress": "hidden", **in_order}).then(**view_step)
 
     # The shell's timers (outside gr.Tabs), read-only polls without the queue.
-    # The fast one writes the status pill (`POLL_KEYS`) and the chips, and hands
-    # every other change to a queued render in the group. That render reads
+    # The fast one writes the chips, and hands every change of a piece (the
+    # pill's included) to a queued render in the group. That render reads
     # everything at its turn, so the token's default trigger ("always_last") is
     # the one wanted: tokens given while one render waits need one more render,
     # not one each.
     ctx.timer_fast.tick(_poll, inputs=[ctx.location, *view_inputs, polled],
-                        outputs=[*(view_outputs[VIEW_KEYS.index(key)] for key in POLL_KEYS),
-                                 changed, ctx.chips, polled],
+                        outputs=[changed, ctx.chips, polled],
                         queue=False, show_progress="hidden")
     changed.change(**{**view_step, "fn": _render_changed, "inputs": [*view_inputs, polled]})
     ctx.timer_slow.tick(_poll_resources, inputs=[ctx.location], outputs=[resources],
@@ -4723,7 +4726,7 @@ def create_training_tab(ctx: Any) -> None:
     chosen_step = {"fn": _on_parent_chosen,
                    "inputs": [continue_source, checkpoint_dropdown, manual_checkpoint, parents, ws,
                               mode], "outputs": [mode, compare, parent_details],
-                   "show_progress": "hidden"}
+                   "show_progress": "hidden", **in_order}
     # The drawer's record of the Branch fields the operator edited, the
     # browser's, as the base form's (`touched_record`).
     branch_touched = touched_record("shep-train-branch-touched")
@@ -4735,7 +4738,7 @@ def create_training_tab(ctx: Any) -> None:
                                   show_progress="hidden", **in_order, **every_one).then(
         _relist_parents, inputs=[ws, mode],
         outputs=[parents, continue_run, checkpoint_dropdown, parents_note, compare,
-                 *check_cleared], show_progress="hidden").then(**chosen_step).then(
+                 *check_cleared], show_progress="hidden", **in_order).then(**chosen_step).then(
         **view_step).then(**ctx.chip_refresh)
     def _on_chip_click(evt: gr.EventData):
         """The chip's "All datasets ›": Research › Datasets."""
@@ -4747,46 +4750,48 @@ def create_training_tab(ctx: Any) -> None:
 
     chip.click(_on_chip_click, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
     reason.click(_on_reason_click, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
-    banner.click(_on_banner_click, inputs=[dismissed, cache], outputs=[dismissed, banner],
-                 show_progress="hidden")
+    banner.click(_on_banner_click, inputs=[dismissed, cache], outputs=[dismissed],
+                 show_progress="hidden", **in_order).then(**view_step)
 
     # Start, Stop.
     # Start also closes a Stop confirmation left from an earlier job.
     start_btn.click(_on_start, inputs=[ws, run_name, device, touched, *base_fields],
                     outputs=[notice],
                     show_progress="hidden").then(
-        close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden").then(
-        **view_step).then(**ctx.chip_refresh)
+        close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden",
+        **in_order).then(**view_step).then(**ctx.chip_refresh)
     stop_btn.click(_on_stop_request, inputs=[mode], outputs=[stop_text, mode],
-                   show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
+                   show_progress="hidden", **in_order).then(**view_step).then(**ctx.chip_refresh)
     stop_confirm_btn.click(_on_stop, inputs=[mode], outputs=[notice, mode],
-                           show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
+                           show_progress="hidden", **in_order).then(**view_step).then(
+        **ctx.chip_refresh)
     stop_keep_btn.click(close_stop_question, inputs=[mode], outputs=[mode],
-                        show_progress="hidden").then(**view_step)
+                        show_progress="hidden", **in_order).then(**view_step)
 
     # Continue… (its operation Continue each time it opens).
     cont_btn.click(_on_continue_open, inputs=[ws, mode],
                    outputs=[notice, mode, parents, continue_run, checkpoint_dropdown,
                             parents_note, continue_operation, *check_cleared],
-                   show_progress="hidden").then(
+                   show_progress="hidden", **in_order).then(
         _continue_device, inputs=[device], outputs=[continue_device],
-        show_progress="hidden").then(**chosen_step).then(**view_step).then(**ctx.chip_refresh)
+        show_progress="hidden", **in_order).then(**chosen_step).then(**view_step).then(
+        **ctx.chip_refresh)
     for closer in (cancel_btn, close_btn):
         closer.click(_on_continue_close, inputs=[mode], outputs=[mode],
-                     show_progress="hidden").then(**view_step)
+                     show_progress="hidden", **in_order).then(**view_step)
     # Refresh, then the chosen option's file as the list holds it now: a
     # kept option fires no selection event, so the record, the details and
     # the check follow it here (`_on_refreshed`), then the drawer's start.
     refresh_ckpt_btn.click(_refresh_checkpoints, inputs=[ws, mode, checkpoint_dropdown],
                            outputs=[parents, continue_run, checkpoint_dropdown, parents_note],
-                           show_progress="hidden").then(
+                           show_progress="hidden", **in_order).then(
         _on_refreshed, inputs=chosen_step["inputs"],
-        outputs=[*chosen_step["outputs"], *check_cleared], show_progress="hidden").then(
-        **view_step).then(**ctx.chip_refresh)
+        outputs=[*chosen_step["outputs"], *check_cleared], show_progress="hidden",
+        **in_order).then(**view_step).then(**ctx.chip_refresh)
     # A run chosen: its checkpoints (the checkpoint select's change then
     # clears the last check and records the parent, as for any choice).
     continue_run.change(_model_list().on_run_chosen, inputs=[continue_run, parents, checkpoint_dropdown],
-                        outputs=[checkpoint_dropdown], show_progress="hidden")
+                        outputs=[checkpoint_dropdown], show_progress="hidden", **in_order)
     # Check checkpoint and the start take the operation, the parent, the
     # device, what continuing takes (Extra epochs and its rate) and what a
     # branch takes (the Branch fields and the record of those edited).
@@ -4797,7 +4802,7 @@ def create_training_tab(ctx: Any) -> None:
         inputs=[continue_operation, continue_source, checkpoint_dropdown, manual_checkpoint,
                 continue_device, *taken],
         outputs=[continue_preview, extend_epochs, extend_lr, mode, compare, *branch_shown],
-        show_progress="hidden").then(**view_step).then(
+        show_progress="hidden", **in_order).then(**view_step).then(
         None, js=SHOW_CHECK_JS, queue=False).then(**ctx.chip_refresh)
     resume_btn.click(
         _on_resume,
@@ -4806,37 +4811,42 @@ def create_training_tab(ctx: Any) -> None:
                 branch_touched, *branch_fields],
         outputs=[drawer_notice, continue_preview, extend_epochs, extend_lr, mode,
                  *branch_shown],
-        show_progress="hidden").then(**view_step).then(
+        show_progress="hidden", **in_order).then(**view_step).then(
         None, js=SHOW_CHECK_JS, queue=False).then(**ctx.chip_refresh)
     # None of the drawer's own listeners shows Gradio's progress timer on what
     # it writes (R-59): each answers at once, and a timer flashing over the
-    # run select or the check reads as work being done.
+    # run select or the check reads as work being done. Each runs in the run
+    # bar's group (B46-races): the list, the choice and the check are drawn
+    # from the session's workspace, so one drawn from the workspace before is
+    # never applied after a newer one.
     continue_source.change(fn=_toggle_continue_source, inputs=[continue_source],
                            outputs=[continue_run, checkpoint_dropdown, refresh_ckpt_btn,
-                                    parent_details, manual_checkpoint], show_progress="hidden")
+                                    parent_details, manual_checkpoint], show_progress="hidden",
+                           **in_order)
     # A changed selection, source or operation makes the last check, and what
     # was entered for it, stale: it is cleared (contract M3a review of
     # 094b90d, P2-2). `.change` fires on updates from other events too
     # (Refresh), so the run list and the typed path clear only when they are
     # the source.
     continue_source.change(fn=_on_continue_selection_changed, inputs=[],
-                           outputs=check_cleared, show_progress="hidden")
+                           outputs=check_cleared, show_progress="hidden", **in_order)
     checkpoint_dropdown.change(fn=_on_listed_changed, inputs=[continue_source],
-                               outputs=check_cleared, show_progress="hidden")
+                               outputs=check_cleared, show_progress="hidden", **in_order)
     manual_checkpoint.change(fn=_on_manual_changed, inputs=[continue_source],
-                             outputs=check_cleared, show_progress="hidden")
+                             outputs=check_cleared, show_progress="hidden", **in_order)
     continue_device.change(fn=_on_continue_device_changed, inputs=[], outputs=[continue_preview],
-                           show_progress="hidden")
+                           show_progress="hidden", **in_order)
     # The session's record of the chosen parent (the drawer's start).
     chosen_inputs = [continue_source, checkpoint_dropdown, manual_checkpoint, parents, ws, mode]
     for component in (continue_source, checkpoint_dropdown, manual_checkpoint):
         component.change(_on_parent_chosen, inputs=chosen_inputs,
                          outputs=[mode, compare, parent_details],
-                         show_progress="hidden").then(**view_step)
+                         show_progress="hidden", **in_order).then(**view_step)
     # The operation chosen: the session's record, then the chosen parent's
     # record and details for it, then the drawer's start and the run bar.
     continue_operation.change(_on_operation, inputs=[continue_operation, mode],
-                              outputs=[mode, *check_cleared], show_progress="hidden").then(
+                              outputs=[mode, *check_cleared], show_progress="hidden",
+                              **in_order).then(
         **chosen_step).then(**view_step)
     # The Branch fields: each edit recorded in the browser first (decision
     # S2: what is sent is what the operator touched), then (chained after
@@ -4845,7 +4855,7 @@ def create_training_tab(ctx: Any) -> None:
     for name, field in zip(BRANCH_FIELDS, branch_fields, strict=True):
         record_touches(field, name, branch_touched).then(
             _on_branch_edited, inputs=[mode], outputs=[continue_preview, mode],
-            show_progress="hidden", trigger_mode="always_last").then(**view_step)
+            show_progress="hidden", trigger_mode="always_last", **in_order).then(**view_step)
     branch_by_name = dict(zip(BRANCH_FIELDS, branch_fields, strict=True))
     branch_dependent, branch_guards = rule_fields(BRANCH_FIELDS)
     gr.on(triggers=[branch_by_name[name].change for name in branch_guards],

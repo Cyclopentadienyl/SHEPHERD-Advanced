@@ -289,7 +289,7 @@ def test_a_tick_while_another_page_is_shown_reads_nothing(monkeypatch):
     monkeypatch.setattr(tc.training_manager, "get_system_resources",
                         lambda: pytest.fail("a tick on another page read the resources"))
     out = tc._poll("clinical", {}, {}, {}, [], {}, {}, gradio_request())
-    assert len(out) == len(tc.POLL_KEYS) + 3 and all(u == gr.update() for u in out)
+    assert len(out) == 3 and all(u == gr.update() for u in out)
     assert tc._poll_resources("datasets") == gr.update()
 
 
@@ -937,30 +937,32 @@ def test_a_tick_never_writes_the_sessions_selection_unless_it_changed_it():
     assert out["ws"] == {"name": "a"} and out["training_workspace"] == "a"
 
 
-def test_a_tick_writes_only_the_pill_and_hands_every_other_change_over(
+def test_a_tick_writes_no_piece_and_hands_every_change_over(
         root, monkeypatch, operator):
-    """P2-NEW-1: the fast tick writes the status pill (on every tick: it is
-    drawn from the job runner alone), the chips and its own record, never a
-    piece drawn from the selection and never the cache. It hands a change
-    over only when what it renders now is not what the session was last
-    sent: nothing after a render; new epochs of the run shown, yes."""
+    """P2-NEW-1 and B46-races: the fast tick writes the chips and its own
+    record, never a piece (the status pill included: a tick that crossed a
+    render brought back the pill it read before) and never the cache. It
+    hands a change over only when what it renders now is not what the
+    session was last sent: nothing after a render; new epochs of the run
+    shown, yes."""
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
     demo, _ctx, by_id = _page()
     poll = next(fn for fn in demo.fns.values() if fn.name == "_poll")
-    assert poll.outputs[0] is by_id["shep-train-pill"] and tc.POLL_KEYS == ("pill",)
+    assert poll.outputs[0] is by_id[tc.CHANGED_ID] and "pill" in tc.HANDED_KEYS
     cache_state = poll.inputs[3]                               # the renders' record
     assert isinstance(cache_state, gr.State) and cache_state not in poll.outputs
     assert not {by_id[k] for k in ("shep-train-dataset", "shep-train-chip", "shep-train-start",
-                                   "shep-train-charts", "shep-train-run-head")} & set(poll.outputs)
+                                   "shep-train-charts", "shep-train-run-head",
+                                   "shep-train-pill")} & set(poll.outputs)
     ws = tc.workspace_state("demo")
     cache = tc._render_view(ws, {}, {}, [], {}, operator)[-1]
-    pill, handoff, _chips, polled = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, {}, operator)
-    assert pill.startswith('<div class="shep-pill') and handoff == gr.update()
+    handoff, _chips, polled = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, {}, operator)
+    assert handoff == gr.update()
     again = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, polled, operator)
-    assert again[0] == pill and again[1] == gr.update()       # the pill on every tick
+    assert again[0] == gr.update()
     log = root / "demo" / "runs" / "gatv2" / "20261018-142000_run_d41f8b" / "logs" / "train_20261018_142000.json"
     log.write_text(json.dumps(_metrics(7)))                    # a new epoch, nobody acted
-    _pill, handoff, _chips, _polled = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, polled, operator)
+    handoff, _chips, _polled = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, polled, operator)
     assert handoff["changed"] == ["charts"]
 
 
@@ -1001,18 +1003,18 @@ def test_the_header_chips_follow_the_gpu_slot_on_the_tick_that_sees_it_change(
                         lambda: {"status": "running", "inputs": {"version_label": "v"}})
     demo, ctx, _by_id = _page()
     poll_fn = next(fn for fn in demo.fns.values() if fn.fn is tc._poll)
-    assert poll_fn.outputs[2] is ctx.chips
+    assert poll_fn.outputs[1] is ctx.chips
     ws = tc.workspace_state("demo")
     first = tc._poll(shell.TRAINING, ws, {}, {}, [], {}, {}, operator)
-    assert first[2] == "<chips>" and len(read) == 1         # nothing seen before: read
+    assert first[1] == "<chips>" and len(read) == 1         # nothing seen before: read
     same = tc._poll(shell.TRAINING, ws, {}, {}, [], {}, first[-1], operator)
-    assert same[2] == gr.update() and len(read) == 1         # unchanged: nothing sent
+    assert same[1] == gr.update() and len(read) == 1         # unchanged: nothing sent
     status["gpu"] = {"job": {"job_type": "test", "status": "running",
                              "start_time": "2026-10-21T18:25:13"}}
     started = tc._poll(shell.TRAINING, ws, {}, {}, [], {}, same[-1], operator)
-    assert started[2] == "<chips>" and len(read) == 2        # a test run took the slot
+    assert started[1] == "<chips>" and len(read) == 2        # a test run took the slot
     later = tc._poll(shell.TRAINING, ws, {}, {}, [], {}, started[-1], operator)
-    assert later[2] == gr.update() and len(read) == 2        # its elapsed time is no change
+    assert later[1] == gr.update() and len(read) == 2        # its elapsed time is no change
 
 
 def test_a_running_jobs_dataset_is_shown_and_the_select_disabled(root, monkeypatch, operator):
@@ -1158,7 +1160,7 @@ def test_every_write_of_the_run_bars_workspace_is_in_one_queued_group_of_one():
     changed = by_id[tc.CHANGED_ID]
     polled = poll.inputs[-1]
     assert poll.queue is False
-    assert poll.outputs == [by_id["shep-train-pill"], changed, ctx.chips, polled]
+    assert poll.outputs == [changed, ctx.chips, polled]
     assert not isinstance(changed, gr.State)
     assert [fn.name for fn in demo.fns.values() if polled in fn.outputs] == ["_poll"]
     handed = [fn for fn in demo.fns.values() if (changed._id, "change") in fn.targets]
@@ -1172,7 +1174,7 @@ def test_every_write_of_the_run_bars_workspace_is_in_one_queued_group_of_one():
 def test_the_poll_hands_a_running_jobs_workspace_over_and_writes_no_selection(
         root, monkeypatch, operator):
     """F7: a tick that finds a training job running in another workspace
-    than the session's writes no selection (it writes the pill, `POLL_KEYS`)
+    than the session's writes no selection (it writes no piece at all)
     and gives the hand-off token a new value each time, naming the change;
     the queued render follows the job. With the job no longer running and
     the page as the session was sent it, a tick hands nothing over and a
@@ -1182,12 +1184,11 @@ def test_the_poll_hands_a_running_jobs_workspace_over_and_writes_no_selection(
     cache = tc._render_view(ws, {}, {}, [], {}, operator)[-1]
     job.status = dict(RUNNING)
     out = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, {}, operator)
-    assert len(out) == len(tc.POLL_KEYS) + 3 and "ws" not in tc.POLL_KEYS
-    assert "training_workspace" not in tc.POLL_KEYS
-    handoff = out[1]
+    assert len(out) == 3
+    handoff = out[0]
     assert "ws" in handoff["changed"] and "dataset" in handoff["changed"]
     again = tc._poll(shell.TRAINING, ws, {}, cache, [], {}, out[-1], operator)
-    assert again[1]["at"] != handoff["at"], "each hand-off is a new value"
+    assert again[0]["at"] != handoff["at"], "each hand-off is a new value"
     view = dict(zip(tc.VIEW_KEYS, tc._render_changed(ws, {}, cache, [], {}, out[-1], operator)[:-1],
                     strict=True))
     assert view["ws"]["name"] == "resampled" == view["training_workspace"]
@@ -1195,7 +1196,7 @@ def test_the_poll_hands_a_running_jobs_workspace_over_and_writes_no_selection(
     rendered = tc._render_view(ws, {}, {}, [], {}, operator)
     view = dict(zip(tc.VIEW_KEYS, rendered[:-1], strict=True))
     assert view["ws"] == gr.update() and view["training_workspace"] == gr.update()
-    assert tc._poll(shell.TRAINING, ws, {}, rendered[-1], [], {}, {}, operator)[1] == gr.update()
+    assert tc._poll(shell.TRAINING, ws, {}, rendered[-1], [], {}, {}, operator)[0] == gr.update()
 
 
 def test_a_late_tick_never_writes_back_the_workspace_it_started_from(root, monkeypatch):
@@ -1268,6 +1269,155 @@ def test_a_late_tick_never_writes_back_the_workspace_it_started_from(root, monke
         assert browser.wait(browser.join(hand_over, [None] * len(hand_over.inputs)))
         assert browser.state(ws)["name"] == "resampled"
         assert browser.state(ctx.training_workspace) == "resampled"
+        browser.close()
+
+
+#: The Training page's session state and every piece drawn from it, by
+#: elem_id where it has one (B46-races): the run bar and the run view (the
+#: pill and a failed job's banner included) and the Continue drawer's list,
+#: choice and check.
+DRAWN_FROM_THE_SELECTION = (
+    "shep-train-dataset", "shep-train-chip", "shep-train-pill", "shep-train-reason",
+    "shep-train-start", "shep-train-continue", "shep-train-stop", "shep-train-resume",
+    "shep-train-runbar", "shep-train-page", "shep-train-banner", "shep-train-run-head",
+    "shep-train-view-run", "shep-train-charts", "shep-train-drawer-why",
+    "shep-train-parents-note", "continue_run", "checkpoint_dropdown", "manual_checkpoint",
+    "shep-train-parent-details", "shep-train-compare", "continue_preview", "extend_epochs",
+    "extend_lr", "shep-train-drawer-notice", "shep-train-branch", "continue_operation")
+
+
+def test_every_writer_of_the_selection_or_a_piece_drawn_from_it_is_in_the_group():
+    """B46-races, the contract: the session's selection (``ws``, ``mode``,
+    the run viewed's choice, the banners dismissed, what it was sent) and
+    every piece drawn from it, the status pill, a failed job's banner and the
+    Continue drawer's list, choice and check included, have one kind of
+    writer: a queued listener of `shell.TRAINING_SELECTION_CONCURRENCY`, one
+    at a time, first asked first run. So no answer drawn from an older
+    selection or an older read of the job is applied after a newer one. The
+    fast poll writes none of them (only the chips, its own record and the
+    hand-off). On the old wiring the poll wrote the pill, Dismiss the banner,
+    and the drawer's listing, its Refresh and its check ran each in its own
+    group."""
+    demo, ctx, named, by_id = _datasets_and_training()
+    poll = named["_poll"]
+    ws, mode, cache, dismissed, viewing = poll.inputs[1:6]
+    session = {ws, ctx.training_workspace, mode, cache, dismissed, viewing}
+    drawn = {by_id[elem_id] for elem_id in DRAWN_FROM_THE_SELECTION}
+    writers = [fn for fn in demo.fns.values() if (session | drawn) & set(fn.outputs)]
+    outside = sorted({fn.name for fn in writers
+                      if (fn.concurrency_id, fn.concurrency_limit)
+                      != (shell.TRAINING_SELECTION_CONCURRENCY, 1) or fn.queue is False})
+    assert outside == [], outside
+    assert not (session | drawn) & set(poll.outputs)
+
+
+def _waiting_in_group(demo, event_id) -> bool:
+    """Whether the queued event `event_id` waits in the run bar's group."""
+    group = demo._queue.event_queue_per_concurrency_id.get(shell.TRAINING_SELECTION_CONCURRENCY)
+    return group is not None and any(event._id == event_id for event in list(group.queue))
+
+
+def test_a_tick_that_crosses_a_render_never_brings_back_an_older_pill(root, monkeypatch):
+    """B46-races, through the page served by Gradio, one session: the fast
+    tick's read of the job runner is held (the job running); meanwhile the
+    job ends and a render draws the page (its pill "Completed"); released,
+    the tick answers. The browser applies the answers as they come: on the
+    old wiring the tick's own pill ("Running", read before the render's) was
+    applied last and stayed until the next tick. Now the tick writes no
+    pill; a change it finds is handed over, and the render it runs draws the
+    job as it is then."""
+    job = _job_in_resampled(root, monkeypatch)
+    demo, ctx, named, by_id = _datasets_and_training()
+    poll, opened = named["_poll"], named["_open"]
+    render = _after(demo, opened, "_render_view")
+    changed = by_id[tc.CHANGED_ID]
+    hand_over = next(fn for fn in demo.fns.values() if (changed._id, "change") in fn.targets)
+    with served(demo) as base:
+        browser = ServedSession(base, demo)
+        assert browser.wait(browser.join(opened, [None, None]))
+        browser.set_state(ctx.location, shell.TRAINING)
+        job.status = dict(RUNNING)
+        first = browser.join(render, [None] * len(render.inputs))
+        assert browser.wait(first)
+        job.hold.set()
+        answers = []
+        ticking = threading.Thread(
+            target=lambda: answers.append(browser.predict(poll, [None] * len(poll.inputs))),
+            daemon=True)
+        ticking.start()
+        assert job.entered.wait(30), "the tick's read did not start"
+        job.status = dict(ENDED)
+        later = browser.join(render, [None] * len(render.inputs))
+        assert browser.wait(later)
+        job.release.set()
+        ticking.join(30)
+        (tick,) = answers
+        shown = _shown([_answered(browser, render, first), _answered(browser, render, later),
+                        (poll, tick)])
+        assert 'data-state="completed"' in shown["shep-train-pill"]["value"], \
+            "the tick brought back the pill it read before the render's"
+        # Its hand-off, if any, runs a render that reads the job at its turn.
+        token = tick[poll.outputs.index(changed)]
+        if isinstance(token, dict) and token.get("__type__") != "update":
+            handed = browser.join(hand_over, [None] * len(hand_over.inputs))
+            assert browser.wait(handed)
+            shown = _shown([_answered(browser, hand_over, handed)], shown)
+        assert 'data-state="completed"' in shown["shep-train-pill"]["value"]
+        browser.close()
+
+
+def test_a_workspace_chosen_while_the_drawer_lists_never_shows_the_previous_list(
+        root, monkeypatch):
+    """B46-races, through the pages served by Gradio, one session: Continue…
+    is opened on ``demo`` and its listing is held; meanwhile ``resampled``
+    is chosen in the run bar, and the change of the session's workspace and
+    the drawer's relisting follow (asked as the browser asks them). On the old
+    wiring the listing ran in a group of its own: the relisting ran first
+    (the drawer not yet open, it listed nothing) and the held listing, let go,
+    was applied last, so the drawer listed ``demo``'s runs under a run bar on
+    ``resampled``. In the run bar's group every one of them runs in the order
+    asked: the drawer lists ``resampled``."""
+    job = _job_in_resampled(root, monkeypatch)
+    operator_mode(monkeypatch)
+    held, entered = threading.Event(), threading.Event()
+
+    def listing(ws):
+        name = (ws or {}).get("name")
+        if name == "demo":
+            entered.set()
+            assert held.wait(30), "never let go"
+        return {}, f"listed {name}"
+
+    monkeypatch.setattr(tc, "_list_parents", listing)
+    demo, ctx, named, by_id = _datasets_and_training()
+    opened, choose, follow = named["_open"], named["_on_dataset"], named["_on_training_workspace"]
+    cont = named["_on_continue_open"]
+    relist = _after(demo, follow, "_relist_parents")
+    del job
+    with served(demo) as base:
+        browser = ServedSession(base, demo)
+        assert browser.wait(browser.join(opened, [None, None]))
+        assert browser.wait(browser.join(choose, ["demo", None]))
+        opening = browser.join(cont, [None] * len(cont.inputs))
+        assert entered.wait(30), "the listing did not start"
+        asked = [(choose, browser.join(choose, ["resampled", None])),
+                 (follow, browser.join(follow, [None] * len(follow.inputs))),
+                 (relist, browser.join(relist, [None] * len(relist.inputs)))]
+        last = asked[-1][1]
+        # The listing is let go once the relisting has run (each in a group of
+        # its own) or waits behind it in the run bar's group.
+        for _ in range(3000):
+            if last in browser.done or _waiting_in_group(demo, last):
+                break
+            threading.Event().wait(0.01)
+        held.set()
+        assert browser.wait(opening, *(event for _fn, event in asked))
+        fns = {opening: cont, **{event: fn for fn, event in asked}}
+        shown = _shown([_answered(browser, fns[event], event) for event in browser.order
+                        if event in fns])
+        assert browser.state(named["_poll"].inputs[1])["name"] == "resampled"
+        assert "listed resampled" in shown["shep-train-parents-note"]["value"], \
+            "the drawer listed the previous workspace's runs"
         browser.close()
 
 
@@ -1607,8 +1757,9 @@ def test_the_banner_is_dismissed_for_this_session_until_its_content_changes(root
     class Evt:
         _data = {"act": "dismiss"}
 
-    dismissed, banner = tc._on_banner_click([], rendered["cache"], Evt())
-    assert dismissed == [key] and banner == ""
+    dismissed = tc._on_banner_click([], rendered["cache"], Evt())
+    assert dismissed == [key]
+    # The render after the click, the banner's one writer, hides it.
     again = tc.render(tc.workspace_state("demo"), {}, {}, dismissed, operator)
     assert again["pieces"]["banner"] == ""
     other_session = tc.render(tc.workspace_state("demo"), {}, {}, [], operator)

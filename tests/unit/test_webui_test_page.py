@@ -2098,11 +2098,13 @@ def test_the_page_is_read_when_shown_and_polled_only_while_shown(monkeypatch):
 
 
 def test_the_poll_reads_and_writes_nothing_drawn_from_the_selection():
-    """F6: the poll writes the job's title row, its details, Cancel and
-    Cancel's reason, what the session saw of the job and the hand-off; never
-    Start or its reason, which are drawn from the selection (a tick that read
-    the selection before a choice wrote Start back for the selection it read),
-    and it is given no part of the selection to draw them from."""
+    """F6 and B46-races: the poll writes what the session saw of the job and
+    the hand-offs; never Start or its reason, which are drawn from the
+    selection (a tick that read the selection before a choice wrote Start
+    back for the selection it read), and it is given no part of the
+    selection to draw them from; nor the job's card, which the selection's
+    group draws again on the hand-off (`test_the_job_card_has_one_kind_of_
+    writer_the_selections_group`)."""
     demo, _ctx, _registry = _page_component()
     poll = _named(demo, "_poll")
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
@@ -2113,8 +2115,8 @@ def test_the_poll_reads_and_writes_nothing_drawn_from_the_selection():
     selection += _named(demo, "_on_report").outputs[:2] + [_named(demo, "_on_model_reload")
                                                            .outputs[0]]
     assert not [b for b in poll.inputs if b in selection]
-    assert [by_id[i] for i in ("shep-test-job-head", "shep-test-job", "shep-test-cancel",
-                               "shep-test-cancel-reason")] == poll.outputs[1:5]
+    assert not {by_id[i] for i in ("shep-test-job-head", "shep-test-job", "shep-test-cancel",
+                                   "shep-test-cancel-reason")} & set(poll.outputs)
     writers = [fn for fn in demo.fns.values() if {start, reason} & set(fn.outputs)]
     assert {"_on_model", "_on_measurement", "_after_act",
             "_after_job_change"} <= {fn.name for fn in writers}
@@ -2157,8 +2159,8 @@ def test_a_poll_hands_the_store_read_over_only_when_the_job_changed(site, monkey
     assert reads == [] and unchanged[-2] == gr.update()
     ended = poll.fn("test", page, {"job_id": "test-1", "status": "running", "gpu": GPU_NONE},
                     _readonly())
-    assert reads == [] and ended[0] == {"job_id": "test-1", "status": "completed",
-                                        "gpu": GPU_NONE}
+    assert reads == [] and {k: ended[0][k] for k in ("job_id", "status", "gpu")} == {
+        "job_id": "test-1", "status": "completed", "gpu": GPU_NONE}
     assert ended[-2]["seen"] == {"job_id": "test-1", "status": "running"}
     assert ended[-2]["now"] == {"job_id": "test-1", "status": "completed"}
     again = poll.fn("test", page, {"job_id": "test-1", "status": "running", "gpu": GPU_NONE},
@@ -2454,6 +2456,100 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
         assert browser.state(reports_state)["label"] == LABEL
         assert shown() == LABEL, "the select shows one version and the session holds another's"
         assert browser.state(selected_report) == site.run_id
+        browser.close()
+
+
+def test_the_job_card_has_one_kind_of_writer_the_selections_group():
+    """B46-races, the contract: the job's title row, its details, Cancel and
+    Cancel's reason (`job_outputs`) are written only by queued listeners of
+    the selection's group, one at a time, first asked first run (the page
+    open, the read after an act, the poll's hand-offs). The slow poll
+    (``queue=False``) writes none of them: on the old wiring it wrote the
+    card too, so a tick that read the job before an act's read and answered
+    after it brought back the older card for 5 s."""
+    demo, _ctx, _registry = _page_component()
+    poll = _named(demo, "_poll")
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    card = {by_id[elem_id] for elem_id in ("shep-test-job-head", "shep-test-job",
+                                           "shep-test-cancel", "shep-test-cancel-reason")}
+    writers = [fn for fn in demo.fns.values() if card & set(fn.outputs)]
+    assert writers and not card & set(poll.outputs)
+    outside = sorted({fn.name for fn in writers
+                      if (fn.concurrency_id, fn.concurrency_limit)
+                      != (tp.SELECTION_CONCURRENCY, 1) or fn.queue is False})
+    assert outside == [], outside
+
+
+def test_a_tick_that_crosses_an_acts_read_never_brings_back_an_older_job_card(
+        site, monkeypatch):
+    """B46-races, through the page served by Gradio, one session: the slow
+    tick's read of the job is held (the run going); meanwhile the run ends
+    and an act's read (as after Cancel) draws the card ("Completed").
+    Released, the tick answers last. On the old wiring its own card, the
+    running one it read before, was applied after the act's and stayed for a
+    tick (5 s). Now the tick writes no card: it hands a change over, and the
+    card is drawn again in the selection's group from the job as it is."""
+    job = {"status": "running", "job_id": "test-7", "inputs": {}, "log": [], "outcome": None,
+           "elapsed_seconds": 12}
+    hold, entered, release = threading.Event(), threading.Event(), threading.Event()
+
+    def read_job(**_kwargs):
+        now = dict(job)
+        if hold.is_set():
+            hold.clear()
+            entered.set()
+            assert release.wait(30), "never released"
+        return now
+
+    monkeypatch.setattr(tp, "read_job", read_job)
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
+    demo, ctx, _registry = _page_component()
+    refresh, poll = _named(demo, "_refresh"), _named(demo, "_poll")
+    after_act = next(fn for fn in demo.fns.values() if fn.name == "_after_act")
+    head = next(b for b in demo.blocks.values() if getattr(b, "elem_id", None)
+                == "shep-test-job-head")
+
+    def card_of(fn, data):
+        return data[fn.outputs.index(head)] if head in fn.outputs else None
+
+    with served(demo) as base:
+        browser = ServedSession(base, demo)
+        assert browser.wait(browser.join(refresh, [None] * 6))
+        browser.set_state(ctx.location, tp.PAGE)
+        hold.set()
+        answers = []
+        ticking = threading.Thread(
+            target=lambda: answers.append(browser.predict(poll, [None] * len(poll.inputs))),
+            daemon=True)
+        ticking.start()
+        assert entered.wait(30), "the tick's read did not start"
+        job.update(status="completed", end_time="2026-11-16T10:00:00+00:00",
+                   elapsed_seconds=None)
+        act = browser.join(after_act, [None] * len(after_act.inputs))
+        assert browser.wait(act)
+        release.set()
+        ticking.join(30)
+        (tick,) = answers
+        shown = None
+        for fn, data in ((after_act, browser.done[act]["output"]["data"]), (poll, tick)):
+            value = card_of(fn, data)
+            if value is not None and not (isinstance(value, dict)
+                                          and value.get("__type__") == "update"):
+                shown = value
+        assert shown is not None and "Completed" in shown and "elapsed" not in shown, \
+            "the tick brought back the card it read before the act's"
+        # What the tick handed over draws the card from the job as it is.
+        for fn in demo.fns.values():
+            if fn.queue is not False and any(
+                    (block._id, "change") in fn.targets for block in poll.outputs
+                    if isinstance(block, gr.JSON)) and head in fn.outputs:
+                token = tick[poll.outputs.index(next(
+                    block for block in poll.outputs if (block._id, "change") in fn.targets))]
+                if isinstance(token, dict) and token.get("__type__") != "update":
+                    event = browser.join(fn, [None] * (len(fn.inputs) - 1) + [token])
+                    assert browser.wait(event)
+                    drawn = card_of(fn, browser.done[event]["output"]["data"])
+                    assert drawn is None or "update" in str(drawn) or "Completed" in drawn
         browser.close()
 
 

@@ -263,7 +263,7 @@ def test_the_select_writes_only_the_view_choice_in_the_run_bars_ordered_group():
         for f in (f for f in fns if f.name == name):
             assert viewing in f.inputs, name
             assert (select in f.outputs) == (name != "_poll"), name
-    assert "view" in tc.HANDED_KEYS and "view" not in tc.POLL_KEYS + tc.SELECTION_KEYS
+    assert "view" in tc.HANDED_KEYS and "view" not in tc.SELECTION_KEYS
     assert "snap" not in tc.VIEW_KEYS and "shep-train-run-snap" not in by_id
 
 

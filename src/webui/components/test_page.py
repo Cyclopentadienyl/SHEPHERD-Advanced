@@ -169,6 +169,7 @@ Module: src/webui/components/test_page.py
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -1771,8 +1772,9 @@ def job_inputs_html(job: Mapping[str, Any]) -> str:
     determinism and device settings (the Result's keys for them) and its R10
     evidence (by its own kind, the runner's choice: none for a KG edge set or
     a generated split). Drawn from the job alone, never from the selection
-    (the poll writes the card, `_job_outputs`), so a run keeps its own
-    identity while another model or version is chosen: these rows are the
+    (the card, `_job_outputs`, drawn again on each change the poll finds),
+    so a run keeps its own identity while another model or version is
+    chosen: these rows are the
     run's, which can differ from the selection's (the skill's §1.2)."""
     inputs = job.get("inputs") or {}
     started = utc_time(job.get("start_time"))
@@ -3098,6 +3100,9 @@ def create_test_page(ctx: Any) -> None:
     # component, not a State, because the answer to a queue=False request
     # dispatches a component's .change and never a State's.
     job_changed = gr.JSON(value=None, visible=False, elem_id="shep-test-job-changed")
+    # The poll's hand-off of a job card that changed (its elapsed time, its
+    # state), drawn again in the selection's group (B46-races).
+    card_changed = gr.JSON(value=None, visible=False, elem_id="shep-test-job-card-changed")
 
     # ------------------------------------------------------------------ helpers
     def _models_for(page: Mapping[str, Any], current: Mapping[str, Any], name: Optional[str],
@@ -3178,9 +3183,11 @@ def create_test_page(ctx: Any) -> None:
             key if find_model(models, key) is not None else None,
         ]
 
-    # Start and its reason depend on the selection: only the selection's group
-    # writes them. The job's title row, its details and Cancel depend on the
-    # job alone: the poll writes them too.
+    # Start and its reason depend on the selection, the job's title row, its
+    # details and Cancel on the job alone: only the selection's group writes
+    # any of them, the poll's hand-offs included (B46-races: when the poll
+    # wrote the card too, a tick that read the job before an act's read and
+    # answered after it brought back the older card).
     start_outputs = [start, start_reason]
     job_outputs = [job_head, job_out, cancel, cancel_reason]
     run_outputs = [run_select, model, model_reload, model_info, measurement, evidence, fixed,
@@ -3515,31 +3522,38 @@ def create_test_page(ctx: Any) -> None:
         .then(**ctx.chip_refresh)
 
     def _poll(location, page, seen, request: gr.Request):
-        """The job, read again while this page is shown: the job's title row,
-        its details, Cancel and what this session saw of the job
-        (``job_state``, which only this poll writes, one tick after the other:
-        a timer's tick is not sent while the one before is pending). Nothing
-        it writes is drawn from the selection: when the job or the GPU line
-        (Start's first reason) is not what it saw on its last tick, it hands
-        the read over to `_after_job_change`, in the selection's group, naming
-        what it saw then and what it sees now. So each change is handed over
-        once."""
+        """The job, read again while this page is shown: what this session
+        saw of the job (``job_state``, which only this poll writes, one tick
+        after the other: a timer's tick is not sent while the one before is
+        pending) and the hand-offs. It writes no piece: when the job or the
+        GPU line (Start's first reason) is not what it saw on its last tick,
+        it hands the read over to `_after_job_change`, naming what it saw then
+        and what it sees now (so each change is handed over once); when the
+        job's card (its title row, details and Cancel) is not the one it saw,
+        to `_job_card_now` (a running job's elapsed time, every tick). Both
+        run in the selection's group, so no card read before an act's is
+        applied after it."""
         if location != PAGE or not page:
             return [gr.update()] * (len(poll_outputs) + 1)
         job = read_job()
         gpu = _gpu(page)
         seen = seen or {}
-        new_seen = {"job_id": job.get("job_id"), "status": job.get("status"), "gpu": list(gpu)}
+        card = json.dumps(_job_outputs(page, job, gpu), sort_keys=True, default=str)
+        new_seen = {"job_id": job.get("job_id"), "status": job.get("status"), "gpu": list(gpu),
+                    "card": card}
+        moved = {k: new_seen[k] for k in ("job_id", "status", "gpu")} != {
+            k: seen.get(k) for k in ("job_id", "status", "gpu")}
         # Each hand-off is a new value (its own time), so its .change always fires.
         handoff = ({"seen": {"job_id": seen.get("job_id"), "status": seen.get("status")},
                     "now": {"job_id": job.get("job_id"), "status": job.get("status")},
-                    "at": time.monotonic_ns()} if new_seen != seen else gr.update())
+                    "at": time.monotonic_ns()} if moved else gr.update())
+        redraw = {"at": time.monotonic_ns()} if card != seen.get("card") else gr.update()
         # The GPU line is the header's GPU chip read now: when it is not
         # what this poll saw last, the chips are read again on this tick.
-        return [new_seen, *_job_outputs(page, job, gpu), handoff,
-                chips_on_change(seen.get("gpu"), new_seen["gpu"], request)]
+        return [new_seen, redraw, handoff, chips_on_change(seen.get("gpu"), new_seen["gpu"],
+                                                           request)]
 
-    poll_outputs = [job_state, *job_outputs, job_changed]
+    poll_outputs = [job_state, card_changed, job_changed]
     poll_inputs = [ctx.location, page_state, job_state]
 
     # The slow timer only: a listener on a shell timer sends a request on every
@@ -3548,6 +3562,16 @@ def create_test_page(ctx: Any) -> None:
     # time are read every 5 s; Start, Cancel and Register read it at once.
     ctx.timer_slow.tick(_poll, inputs=poll_inputs, outputs=[*poll_outputs, ctx.chips],
                         queue=False, show_progress="hidden")
+
+    def _job_card_now(page, _change, request: gr.Request):
+        """The poll's card hand-off, in the selection's group: the job's
+        title row, details and Cancel read again now (`_job_outputs`)."""
+        if not page:
+            return [gr.update()] * len(job_outputs)
+        return _job_outputs(page, read_job(), _gpu(page))
+
+    card_changed.change(_job_card_now, inputs=[page_state, card_changed], outputs=job_outputs,
+                        show_progress="hidden", **one_at_a_time)
 
     def _after_job_change(page, models, binding, ws, key, protocol, current_report, reports,
                           change, request: gr.Request):
