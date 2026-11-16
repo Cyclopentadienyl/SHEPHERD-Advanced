@@ -3279,28 +3279,29 @@ directory under `runs/` that holds it (since K8-4r; any directory's name since K
 ### Research › Prepare › Datasets
 
 The workspaces the server lists under `SHEPHERD_WORKSPACES_ROOT` (§4.12), which the page only reads:
-the same list Training, Fine-tune, Test and Models choose from. The header gives the count ("2
-workspaces on the server"). Each row shows the name; when it
-was built (UTC, from `workspace_build.json`), or "build time not recorded" with its sources'
-declared releases; the **dataset fingerprint**, the first 12 hex digits of the SHA-256 of its
-`split_manifest.json` (Copy gives all 64, and more digits are shown when two workspaces share
-the first 12); the origin (`synthetic` in amber); whether the dataset record is verified; the
-train and validation sample counts. The markers:
+the same list Training, Fine-tune, Test and Models choose from. The first panel is titled with the
+count ("Workspaces (2)"). Each row is one line: the name; when it was built ("Built (UTC)", from
+`workspace_build.json`), or "not recorded"; the **dataset fingerprint**, the first 12 hex digits of
+the SHA-256 of its `split_manifest.json` (Copy gives all 64, and more digits are shown when two
+workspaces share the first 12; its ⓘ says what it is); the sources, each declared release, or "none
+(synthetic)" for a synthetic build; the train and validation sample counts ("200 / 50"). The
+**In use** column's markers (its ⓘ says what each means):
 
 - **serving reads this workspace**: the pipeline is serving from it;
 - **same dataset as served**: another workspace with the same full fingerprint;
-- **in your Training run bar**: this browser tab's choice for Training;
+- **● in your Training run bar**: this browser tab's choice for Training;
 - **not trainable: <why>**: listed, but training would refuse it, with the reason: `no split
   manifest` when the workspace has no `split_manifest.json`, `no readable split manifest` when
   it has one that cannot be read, or the list's own reason (for example a workspace that is a
   link to a directory outside the root: "… resolves outside the workspaces root").
 
 A long name or source list wraps in its cell, so the "In use" column stays in view. Selecting a
-row shows its details: the full fingerprint with Copy, what the manifest binds (short digests),
-the seeds and split counts, the sources and the build record, the workspace's path relative to
-the server's workspace root, its data versions (below), and how it compares with the other listed
-workspaces: "Same dataset as …" (the same full fingerprint) or "Same graph build as … (kg,
-tensors and record identical), another cut: the allocation seed differs …". No absolute server path is shown, to any browser:
+row shows its details under "Selected workspace": its origin (`synthetic` in amber) and whether
+its dataset record is verified, as Training's run bar shows them; the fingerprint (12 hex digits
+with Copy), the disease split and the seeds, one fact a row; the manifest's files with their
+digests under **Manifest contents (7 files) ›**; its data versions (below); and how it compares
+with the other listed workspaces: "Same dataset as …" (the same full fingerprint) or "Same graph
+build as … (graph, tensors and record identical), another cut: the allocation seed differs …". No absolute server path is shown, to any browser:
 a path under the root is shown relative to it, any other one reads "a path outside the
 workspaces root", and a refused `SHEPHERD_WORKSPACES_ROOT` is said without its path. The page
 reads the manifests and the registry when it is opened, not on each selection.
@@ -3319,7 +3320,8 @@ checked; with none mapped yet it says where a version is imported: Test's **Impo
 version…** or `scripts/import_cohort.py` on the server (this page imports nothing).
 
 **Use for training ›** opens Research › Training with that workspace chosen in its run bar, for
-this browser tab only. Nothing changes on the server; Start is still the control D8 checks. A
+this browser tab only (the line beside it says so). Nothing changes on the server; Start is still
+the control D8 checks. A
 workspace that is not trainable cannot be used, and the line beside the button says why ("Not
 available: scratch_ws is not trainable — no split manifest."). Choosing another dataset in the run
 bar moves the "in your Training run bar" marker to it.
@@ -3342,9 +3344,9 @@ a run.
   name (one that cannot be trained also says why), its identity said once, by the chip beside the
   select. Choosing one reads its manifest and record, and the chip shows when it was built, the
   dataset fingerprint
-  (Copy gives all 64), `synthetic`, whether the record is verified and **Details ›** (what the
-  manifest binds, the seeds and counts, the sources, the path relative to the workspaces root,
-  **All datasets ›**). The page opens on the workspace Datasets' **Use for training ›** chose,
+  (Copy gives all 64), `synthetic`, whether the record is verified and **Details ›** (the
+  fingerprint, the build time, the sources, the counts and seeds, one a row, the manifest's files
+  with their digests, **All datasets ›**). The page opens on the workspace Datasets' **Use for training ›** chose,
   else this tab's earlier choice, else the running job's, else the one serving reads (when it is
   trainable), else the first trainable one. While a training job runs, the select is disabled and
   shows that job's dataset: "in use by the running job".

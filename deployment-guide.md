@@ -3310,27 +3310,29 @@ run，不論目錄名稱為何，所以放在其他名稱之下的模型也會�
 
 ### Research › Prepare › Datasets
 
-伺服器在 `SHEPHERD_WORKSPACES_ROOT` 下列出的 workspace 清單（§4.12；頁首寫出數量，例如「2
-workspaces on the server」）：也就是 Training、
-Fine-tune、Test 與 Models 選擇時使用的同一份清單。每一列顯示名稱；建置時間（UTC，來自
-`workspace_build.json`），或「build time not recorded」加上各來源宣告的版本；**資料集指紋**，
-即其 `split_manifest.json` 的 SHA-256 的前 12 個十六進位數字（Copy 會複製完整的 64 個；兩個
-workspace 前 12 個相同時會顯示更多位數）；來源（`synthetic` 以琥珀色顯示）；資料集紀錄是否通過
-驗證；train 與 validation 的樣本數。標記：
+伺服器在 `SHEPHERD_WORKSPACES_ROOT` 下列出的 workspace 清單（§4.12；第一個面板的標題寫出數量，
+例如「Workspaces (2)」）：也就是 Training、
+Fine-tune、Test 與 Models 選擇時使用的同一份清單。每一列只有一行：名稱；建置時間（「Built
+(UTC)」，來自 `workspace_build.json`），或「not recorded」；**資料集指紋**，即其
+`split_manifest.json` 的 SHA-256 的前 12 個十六進位數字（Copy 會複製完整的 64 個；兩個 workspace
+前 12 個相同時會顯示更多位數；它的 ⓘ 說明這是什麼）；來源，即各來源宣告的版本，合成的建置為
+「none (synthetic)」；train 與 validation 的樣本數（「200 / 50」）。**In use** 欄的標記（它的 ⓘ
+說明每個標記的意思）：
 
 - **serving reads this workspace**：pipeline 正從它提供服務；
 - **same dataset as served**：另一個完整指紋相同的 workspace；
-- **in your Training run bar**：這個瀏覽器分頁為 Training 選擇的 workspace；
+- **● in your Training run bar**：這個瀏覽器分頁為 Training 選擇的 workspace；
 - **not trainable: <原因>**：有列出，但訓練會拒絕它，並附上原因：workspace 沒有
   `split_manifest.json` 時為 `no split manifest`，有但無法讀取時為 `no readable split
   manifest`，否則為清單本身給出的原因（例如一個連結到根目錄之外目錄的 workspace：「… resolves
   outside the workspaces root」）。
 
-較長的名稱或來源清單會在儲存格內換行，因此「In use」欄一直保持在視野內。選取一列會顯示它的細節：
-完整指紋與 Copy、manifest 綁定的內容（短 digest）、種子與切分數量、來源與建置紀錄、workspace
-相對於伺服器 workspace 根目錄的路徑、它的資料版本（見下文），以及它與其他列出的 workspace 的比較：「Same dataset as …」
-（完整指紋相同）或「Same graph build as … (kg, tensors and record identical), another cut: the
-allocation seed differs …」。對任何瀏覽器都不會顯示伺服器的絕對路徑：根目錄之下的路徑以相對於
+較長的名稱或來源清單會在儲存格內換行，因此「In use」欄一直保持在視野內。選取一列會在「Selected
+workspace」下顯示它的細節：它的來源（`synthetic` 以琥珀色顯示）與資料集紀錄是否通過驗證，與
+Training 的 run bar 顯示的方式相同；指紋（12 個十六進位數字與 Copy）、疾病的切分與種子，每列一項；
+manifest 的檔案與各自的 digest 在 **Manifest contents (7 files) ›** 之下；它的資料版本（見下文）；
+以及它與其他列出的 workspace 的比較：「Same dataset as …」（完整指紋相同）或「Same graph build as
+… (graph, tensors and record identical), another cut: the allocation seed differs …」。對任何瀏覽器都不會顯示伺服器的絕對路徑：根目錄之下的路徑以相對於
 根目錄的方式顯示，其他路徑寫作「a path outside the workspaces root」，被拒絕的
 `SHEPHERD_WORKSPACES_ROOT` 會說明被拒絕但不顯示它的路徑。頁面在打開時讀取 manifest，而不是每次
 選取時讀取；registry 也是如此。
@@ -3346,7 +3348,7 @@ workspace 會說明它未被檢查；還沒有任何版本對應到它時，會�
 **Import a new version…**，或在伺服器上執行 `scripts/import_cohort.py`（這個頁面不匯入任何東西）。
 
 **Use for training ›** 會打開 Research › Training，並在它的 run bar 中選好該 workspace，只對
-這個瀏覽器分頁有效。伺服器上什麼都不會改變；Start 仍是 D8 檢查的控制項。不可訓練的 workspace
+這個瀏覽器分頁有效（按鈕旁的說明會這樣寫）。伺服器上什麼都不會改變；Start 仍是 D8 檢查的控制項。不可訓練的 workspace
 無法使用，按鈕旁的說明會寫出原因（「Not available: scratch_ws is not trainable — no split
 manifest.」）。在 run bar 中改選另一個資料集，「in your Training run bar」標記會隨之移到那一個。
 
@@ -3365,7 +3367,7 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
 - **Dataset**：伺服器的 workspace 清單，與 Datasets 的相同；每個選項就是 workspace 的名稱
   （無法訓練的另附原因），它的身分只由選單旁的 chip 說一次。選擇一個時會讀取它的 manifest 與
   紀錄，chip 顯示建置時間、資料集指紋（Copy 會複製完整的 64 個）、`synthetic`、紀錄是否通過驗證，以及
-  **Details ›**（manifest 綁定的內容、種子與數量、來源、相對於 workspace 根目錄的路徑、
+  **Details ›**（指紋、建置時間、來源、數量與種子，每列一項，manifest 的檔案與各自的 digest，
   **All datasets ›**）。頁面打開時選的是 Datasets 的 **Use for training ›** 所選的 workspace，
   否則是這個分頁先前的選擇，否則是執行中工作的，否則是 serving 讀取的那一個（它可訓練時），
   否則是第一個可訓練的。訓練工作執行期間，選單會停用並顯示該工作的資料集：「in use by the
