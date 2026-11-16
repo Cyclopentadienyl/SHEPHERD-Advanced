@@ -40,7 +40,11 @@ registry's report store (`tests/fixtures/model_records.py`):
   listing and once after every Load (a Load that changed nothing listed
   included), selects the same checkpoint again after a Load, redraws on its
   controls and its selection, all through one listener; the dataset identity
-  under the workspace select; escaping.
+  under the workspace select; escaping;
+- **in a browser** (UI-05, UI-11): a control changed while the listener
+  answers something else is applied (the switch, the count line, the groups
+  and Lineage agree), a fast second change wins, "Applying …" is said while a
+  change is pending, and one pick of the Task select is one request.
 
 Module: tests/unit/test_webui_models_page.py
 """
@@ -442,8 +446,10 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
     listing, data = _read(world, monkeypatch)
     ctl = mp.controls(data, mp.NEWEST, None)
     view = mp.shape(listing, data, ctl)
-    assert view == {"task": "all", "note": mp.LOAD_NOTE}
+    assert view == {"task": "all", "note": mp.LOAD_NOTE, "shaped_for": "newest|all"}
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
+    # The rows say what they were drawn for (the "Applying …" line compares it).
+    assert html.endswith('<span class="shep-view-for" hidden data-for="newest|all"></span>')
     for key, kind in ((_key(world, "model-05.pt"), "Record not readable"),
                       (_key(world, "broken.pt"), "Record unknown"),
                       (bundle_key("base"), "Base"), (bundle_key("gene"), "Gene")):
@@ -451,7 +457,8 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
         assert row.split("</tr>")[0].count(f'<div class="shep-sub shep-row-kind">{kind}</div>') \
             == 1, key
     ctl = mp.controls(data, mp.NEWEST, "disease")
-    assert mp.shape(listing, data, ctl) == {"task": "disease", "note": mp.LOAD_NOTE}
+    assert mp.shape(listing, data, ctl) == {"task": "disease", "note": mp.LOAD_NOTE,
+                                            "shaped_for": "newest|disease"}
     assert mp.controls(data, mp.NEWEST, "gatv2")["task"] == "all"
 
 
@@ -1298,7 +1305,9 @@ def test_the_order_switch_reaches_by_family_with_no_version_offering_ordering(
 
     data, switch = open_as(operator_request(monkeypatch))
     assert data["readonly"] is False
-    assert (switch["value"], switch["interactive"]) == (mp.BY_FAMILY, True)
+    # By family applies as it reads: its value is not written (an answer that
+    # ends after the operator changed it again must not set it back, UI-05).
+    assert switch["interactive"] is True and "value" not in switch
     _served_read_only(world, monkeypatch)
     data, switch = open_as(gradio_request())
     assert data["readonly"] is True
@@ -1733,27 +1742,25 @@ def _sync_states(demo):
     sync = _fn(demo, "_sync")
     listing, data, stale, last, phase = sync.inputs[:5]
     return {"fn": sync, "listing": listing, "data": data, "stale": stale, "last": last,
-            "phase": phase, "selected": sync.inputs[-2]}
+            "phase": phase, "selected": sync.inputs[-3], "view": sync.inputs[-1]}
 
 
-def _sync(states, monkeypatch, listing, data, *, trigger, stale=False, last=None, phase="idle",
-          order=mp.NEWEST, task=mp.ALL_TASKS, selected=None, seg=mp.RECORDS):
+#: `_sync`'s `current` when a test does not name it: the list already holds the
+#: view of the controls the call is given.
+HELD = object()
+
+
+def _sync(states, monkeypatch, listing, data, *, current=HELD, stale=False, last=None,
+          phase="idle", order=mp.NEWEST, task=mp.ALL_TASKS, selected=None, seg=mp.RECORDS):
     sync = states["fn"]
-    out = sync.fn(listing, data, stale, last, phase, order, task, selected, seg,
-                  operator_request(monkeypatch), gr.EventData(trigger, None))
+    if current is HELD:
+        current = mp.shape(listing, data, mp.controls(data, order, task))
+    out = sync.fn(listing, data, stale, last, phase, order, task, selected, seg, current,
+                  operator_request(monkeypatch))
     assert len(out) == len(sync.outputs)
     by = dict(zip(map(id, sync.outputs), out, strict=True))
     return {name: by[id(states[name])] for name in ("stale", "last", "selected", "data")} | {
         "page": out[3:], "by": by}
-
-
-def _session_copy(block):
-    """A control as an event names it once the page has updated it: Gradio
-    keeps a new instance in the session (`Blocks.postprocess_data`), built from
-    the same constructor arguments, with another ``_id``."""
-    copy = block.__class__(**{**block.constructor_args, "render": False})
-    assert copy._id != block._id and copy.elem_id == block.elem_id
-    return copy
 
 
 def test_a_listing_already_read_is_not_read_again(world, monkeypatch):
@@ -1765,26 +1772,115 @@ def test_a_listing_already_read_is_not_read_again(world, monkeypatch):
     listing, data = _read(world, monkeypatch)
     monkeypatch.setattr(mp, "read_page", lambda listing: pytest.fail("read again"))
     key = _key(world, "model-05.pt")
-    # A selection: the detail only, nothing read; the selection is remembered.
-    out = _sync(states, monkeypatch, listing, data, trigger=states["selected"], order=mp.NEWEST,
-                selected=key)
+    # A selection, the list holding the controls' view: the detail only (and
+    # the line under the options, as it reads), nothing read; the selection is
+    # remembered.
+    out = _sync(states, monkeypatch, listing, data, order=mp.NEWEST, selected=key)
     assert out["data"] == gr.update() and out["selected"] == gr.update()
     assert out["stale"] == gr.update() and out["last"] == {"workspace": "demo", "key": key}
     others = [o for o in states["fn"].outputs[3:] if o not in detail]
-    assert all(out["by"][id(o)] == gr.update() for o in others)
+    assert out["by"][id(by_id["shep-mp-options"])] == ""
+    assert all(out["by"][id(o)] == gr.update() for o in others
+               if o is not by_id["shep-mp-options"])
     assert world["shas"]["model-05.pt"] in out["by"][id(by_id["shep-mp-detail-top"])]
-    # A control (as the session holds it): the view drawn again from the data
-    # held, nothing read.
-    out = _sync(states, monkeypatch, listing, data,
-                trigger=_session_copy(by_id["shep-mp-order"]), order=mp.BY_FAMILY)
+    # Order reads By family while the list holds Newest first's view: the view
+    # shaped again from the data held, nothing read. Whichever trigger asked:
+    # the call carries none (Gradio 6.30 runs a deferred call again with the
+    # first trigger's id, UI-05).
+    newest = mp.shape(listing, data, mp.controls(data, mp.NEWEST, mp.ALL_TASKS))
+    out = _sync(states, monkeypatch, listing, data, current=newest, order=mp.BY_FAMILY,
+                selected=key)
     view = out["page"][1]
     assert out["data"] == gr.update() and view["column"] == mp.LINEAGE_COLUMN
+    assert view["shaped_for"] == "family|all"
+    # The switch's value is not written back: it reads By family already.
+    assert "value" not in out["by"][id(by_id["shep-mp-order"])]
+    assert out["by"][id(by_id["shep-mp-task"])] == gr.update()
     # A listing not read yet: read once.
     changed = {**listing, "served_sha": world["shas"]["model-05.pt"]}
     calls = []
     monkeypatch.setattr(mp, "read_page", lambda listing: calls.append(1) or data)
-    _sync(states, monkeypatch, changed, data, trigger=states["listing"], order=mp.NEWEST)
+    _sync(states, monkeypatch, changed, data, order=mp.NEWEST)
     assert calls == [1]
+
+
+def test_an_answer_writes_a_control_back_only_where_it_cannot_apply(world, monkeypatch):
+    """UI-05's fast switch: an answer that ends after the operator changed a
+    control again must not set it back (its next call reads the value set
+    back and the operator's change is lost). A value is written only where it
+    cannot apply as it reads: an unknown task (All), By family for a
+    read-only request (Newest first)."""
+    demo, _ctx = _page()
+    states = _sync_states(demo)
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    listing, data = _read(world, monkeypatch)
+    out = _sync(states, monkeypatch, listing, data, current=None, order=mp.BY_FAMILY,
+                task="disease")
+    order, task = out["by"][id(by_id["shep-mp-order"])], out["by"][id(by_id["shep-mp-task"])]
+    assert "value" not in order and order["interactive"] is True and task == gr.update()
+    assert out["page"][1]["shaped_for"] == "family|disease"
+    out = _sync(states, monkeypatch, listing, data, current=None, task="gatv2")
+    assert out["by"][id(by_id["shep-mp-task"])]["value"] == mp.ALL_TASKS
+    _served_read_only(world, monkeypatch)
+    refused = ml.list_models("demo", gradio_request(), family=True)
+    sync = states["fn"]
+    answer = sync.fn(refused, None, False, None, "idle", mp.BY_FAMILY, mp.ALL_TASKS, None,
+                     mp.RECORDS, None, gradio_request())
+    order = dict(zip(map(id, sync.outputs), answer, strict=True))[id(by_id["shep-mp-order"])]
+    assert (order["value"], order["interactive"]) == (mp.NEWEST, False)
+
+
+def test_an_answer_that_fails_says_what_was_not_applied_and_changes_nothing(world, monkeypatch):
+    """D05: a failure says why, under the options, for the controls it was
+    asked with (the "Applying …" line compares ``data-failed-for``); the list,
+    the selection and the detail keep what they show. Its words name the
+    error's kind, never its message (a path can be in it). Gradio drops a
+    deferred call after a failed one, so the failure never escapes."""
+    demo, _ctx = _page()
+    states = _sync_states(demo)
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    listing, data = _read(world, monkeypatch)
+
+    def broken(*_args, **_kwargs):
+        raise OSError("/srv/secret/path cannot be read")
+
+    monkeypatch.setattr(mp, "shape", broken)
+    out = _sync(states, monkeypatch, listing, data, current=None, order=mp.BY_FAMILY)
+    line = out["by"][id(by_id["shep-mp-options"])]
+    assert 'data-failed-for="family|all"' in line and "shep-st-error" in line
+    assert _words(line) == ("✕ Not applied: By family. The page could not shape the list "
+                            "(OSError), so it still shows what it showed before.")
+    assert "/srv" not in line
+    assert all(value == gr.update() for o, value in zip(states["fn"].outputs, out["by"].values(),
+                                                         strict=True)
+               if o is not by_id["shep-mp-options"])
+    assert mp.controls_words({"order": mp.NEWEST, "task": "disease"}) == \
+        "Newest first, Task: Disease"
+
+
+def test_the_rows_say_the_view_they_were_drawn_for_and_another_workspace_drops_it(
+        world, monkeypatch):
+    """The shared list's rows carry the view's ``shaped_for`` (escaped), an
+    empty list's too; another workspace's listing is drawn with the view's
+    filter only and not as shaped for anything, so the page's "Applying …"
+    line shows until the page shapes the view for it."""
+    listing, data = _read(world, monkeypatch)
+    family = mp.shape(listing, data, mp.controls(data, mp.BY_FAMILY, mp.ALL_TASKS))
+    assert family["shaped_for"] == "family|all" and "keys" in family
+    other = ml.view_for_listing(family, {"workspace": "elsewhere"}, listing)
+    assert "shaped_for" not in other and "keys" not in other and other["note"] == mp.LOAD_NOTE
+    assert ml.view_for_listing(family, listing, listing) is family
+    newest = mp.shape(listing, data, mp.controls(data, mp.NEWEST, "gene"))
+    assert ml.view_for_listing(newest, {"workspace": "elsewhere"}, listing) is newest
+    assert ml.view_marker({"shaped_for": '"><img src=x onerror=alert(1)>'}) == (
+        '<span class="shep-view-for" hidden data-for="&quot;&gt;&lt;img src=x '
+        'onerror=alert(1)&gt;"></span>')
+    assert ml.view_marker(None) == "" and ml.view_marker({"task": "all"}) == ""
+    empty = ml.list_html({**listing, "items": []}, None, ml.PRESETS["research"], view=newest)
+    assert empty.endswith(ml.view_marker(newest))
+    refused = ml.list_html({**listing, "refused": True}, None, ml.PRESETS["research"],
+                           view=newest)
+    assert "shep-view-for" not in refused
 
 
 def test_after_a_load_the_page_reads_again_and_selects_the_same_checkpoint(world, monkeypatch):
@@ -1828,12 +1924,12 @@ def test_after_a_load_the_page_reads_again_and_selects_the_same_checkpoint(world
     monkeypatch.setattr(mp, "read_page", lambda listing: reads.append(1) or real(listing))
     last = {"workspace": "demo", "key": key}
     # Still loading: nothing is read yet, and the page stays stale.
-    out = _sync(states, monkeypatch, after, data, trigger=states["selected"], stale=True,
+    out = _sync(states, monkeypatch, after, data, stale=True,
                 last=last, phase="loading")
     assert reads == [] and out["stale"] == gr.update() and out["selected"] == gr.update()
     # The Load has finished (the refresh cleared the selection): read once, the
     # same checkpoint selected again, its usage history with the new entry.
-    out = _sync(states, monkeypatch, after, data, trigger=states["selected"], stale=True,
+    out = _sync(states, monkeypatch, after, data, stale=True,
                 last=last, seg=mp.USAGE)
     assert reads == [1] and out["stale"] is False
     assert out["selected"] == key and out["last"] == last
@@ -1849,15 +1945,15 @@ def test_after_a_load_the_page_reads_again_and_selects_the_same_checkpoint(world
     view = out["page"][1]
     assert "redraw" in view and view["note"] == mp.LOAD_NOTE
     # The selection it set comes back as a change: the detail only, no read.
-    again = _sync(states, monkeypatch, after, out["data"], trigger=states["selected"],
+    again = _sync(states, monkeypatch, after, out["data"], current=out["page"][1],
                   last=last, selected=key)
     assert reads == [1] and again["data"] == gr.update() and again["selected"] == gr.update()
     # A checkpoint the view no longer shows is not selected again.
-    out = _sync(states, monkeypatch, after, data, trigger=states["selected"], stale=True,
+    out = _sync(states, monkeypatch, after, data, stale=True,
                 last=last, task="gene")
     assert reads == [1, 1] and out["selected"] == gr.update() and "redraw" not in out["page"][1]
     # By family shows it (among its family's rows): selected again.
-    out = _sync(states, monkeypatch, after, data, trigger=states["selected"], stale=True,
+    out = _sync(states, monkeypatch, after, data, stale=True,
                 last=last, order=mp.BY_FAMILY)
     assert out["selected"] == key and out["page"][1]["column"] == mp.LINEAGE_COLUMN
 
@@ -1870,10 +1966,11 @@ def test_controls_selection_and_segments_are_wired(world, monkeypatch):
     # One listener answers a new listing, a selection and the controls, so its
     # answers for one session never overlap; the last trigger always runs.
     # A pick of the Task select is one request (`shell.picked`: its blur), the
-    # Order radio's its input.
+    # Order radio's its input; the view the list holds is read with them.
     assert {(demo.blocks[t[0]], t[1]) for t in sync.targets} == {
         (states["listing"], "change"), (states["selected"], "change"),
         (by_id["shep-mp-order"], "input"), (by_id["shep-mp-task"], "blur")}
+    assert states["view"] in sync.inputs
     assert not {"shep-mp-version", "shep-mp-metric", "shep-mp-scoring",
                 "shep-mp-independence"} & set(by_id)
     assert sync.trigger_mode == "always_last"
@@ -1896,6 +1993,204 @@ def test_controls_selection_and_segments_are_wired(world, monkeypatch):
     # column only; its content is its own gated handlers'.
     records, usage, results = segment.fn(mp.RESULTS)
     assert (records["visible"], usage["visible"], results["visible"]) == (False, False, True)
+
+
+#: Research › Models in a browser, the page's queue watched (`QUEUE_JS`): each
+#: case holds an answer of the page's one listener (`_sync`, its join held by
+#: ``page.route`` until the case lets it go), changes a control meanwhile, and
+#: reads the page once the rows say they were drawn for what the case asked
+#: (`model_list.view_marker`), a drawing the page shows only after the answers
+#: it waits for. Then a Task pick by pointer and one by keys, nothing else
+#: running: the listener's requests each sent (all sent before its first
+#: answer is drawn).
+_MODELS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+const TASKS = { All: 'all', Base: 'base', Disease: 'disease', Gene: 'gene' };
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const out = {};
+  // The rows drawn for `token` ("<order>|<task>"): true once they are, false
+  // when they are not within `ms` (the case then reads what the page shows).
+  const drawn = (page, token, ms = 20000) => page.waitForFunction((t) => {
+    const m = document.querySelector('#shep-models-research-rows .shep-view-for');
+    return !!m && m.getAttribute('data-for') === t;
+  }, token, { timeout: ms }).then(() => true, () => false);
+  const open = async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 });
+    const page = await ctx.newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await page.click('#shep-tab-research-button', { timeout: 60000 });
+    await page.click('#shep-page-models-button');
+    await page.waitForSelector('#shep-mp-order input[value="family"]:not([disabled])', { timeout: 60000 });
+    await page.waitForSelector('#shep-models-research-rows table');
+    // A page that draws no marker (before UI-05) is read once its queue is idle.
+    await drawn(page, 'newest|all', (await page.$('#shep-mp-pending')) ? 30000 : 2000);
+    await page.waitForFunction(() => window.__shepQueue.inflight === 0);
+    const cfg = await page.evaluate(async (b) => (await fetch(b + 'config')).json(), base);
+    const sync = cfg.dependencies.find((d) => d.api_name === '_sync');
+    return { ctx, page, ids: { sync: sync.id, selected: sync.targets[1][0] } };
+  };
+  const read = (page) => page.evaluate(() => {
+    const radio = document.querySelector('#shep-mp-order input[type=radio]:checked');
+    const pending = document.querySelector('#shep-mp-pending .shep-mp-pending.shep-on .shep-st-w');
+    return {
+      order: radio ? radio.value : null,
+      task: document.querySelector('#shep-mp-task input').value,
+      count: document.querySelector('#shep-models-research-count').innerText.trim(),
+      lineage: [...document.querySelectorAll('#shep-models-research-rows thead th')].some((t) => t.innerText.trim() === 'Lineage'),
+      groups: [...document.querySelectorAll('#shep-models-research-rows tr.shep-grp')].map((t) => t.innerText.trim()),
+      pending: pending ? pending.innerText.trim() : '',
+    };
+  });
+  // Holds the joins `preds` name, the first of each in turn, until each one's
+  // `release()`; `held` once it is held.
+  const hold = async (page, ...preds) => {
+    const gates = preds.map(() => { const g = {}; g.held = new Promise((r) => { g.mark = r; }); g.open = new Promise((r) => { g.release = r; }); return g; });
+    let next = 0;
+    await page.route('**/queue/join*', async (route) => {
+      let body = {};
+      try { body = route.request().postDataJSON() || {}; } catch (e) { body = {}; }
+      if (next < preds.length && preds[next](body)) {
+        const g = gates[next++];
+        g.mark();
+        await g.open;
+      }
+      await route.continue();
+    });
+    return gates;
+  };
+  const pendingSays = (page, words) => page.waitForFunction((w) => {
+    const el = document.querySelector('#shep-mp-pending .shep-mp-pending.shep-on .shep-st-w');
+    return !!el && el.innerText.trim() === w;
+  }, words, { timeout: 10000 }).then(() => words, () => null);
+  const pickTask = async (page, label) => {
+    await page.click('#shep-mp-task input');
+    await page.click(`ul[role=listbox] li:has-text("${label}")`);
+  };
+  const joins = (page, ids) => page.evaluate((id) => window.__shepQueue.count(id), ids.sync);
+
+  // A: a row chosen, its answer held; By family meanwhile.
+  {
+    const { ctx, page, ids } = await open();
+    const [h] = await hold(page, (b) => b.fn_index === ids.sync && b.trigger_id === ids.selected);
+    await page.click('#shep-models-research-rows tbody tr[data-key] >> nth=1');
+    await h.held;
+    await page.click('#shep-mp-order label:has-text("By family")');
+    const during = await pendingSays(page, 'Applying By family…');
+    h.release();
+    const settled = await drawn(page, 'family|all');
+    out.selection_then_family = { during, settled, after: await read(page) };
+    await ctx.close();
+  }
+  // B: By family, its answer held; Newest first at once. The second answer
+  // is held too, until the first one's rows are drawn.
+  {
+    const { ctx, page, ids } = await open();
+    const [first, second] = await hold(page, (b) => b.fn_index === ids.sync && b.data[5] === 'family',
+                                        (b) => b.fn_index === ids.sync);
+    await page.click('#shep-mp-order label:has-text("By family")');
+    await first.held;
+    await page.click('#shep-mp-order label:has-text("Newest first")');
+    first.release();
+    await second.held;
+    await page.waitForFunction(() => document.querySelector('#shep-models-research-count').innerText.startsWith('in the groups below'), null, { timeout: 30000 });
+    const between = await read(page);
+    second.release();
+    const settled = await drawn(page, 'newest|all');
+    out.family_then_newest = { between, settled, after: await read(page) };
+    await ctx.close();
+  }
+  // C: a row chosen, its answer held; the Task select's Disease meanwhile.
+  {
+    const { ctx, page, ids } = await open();
+    const [h] = await hold(page, (b) => b.fn_index === ids.sync && b.trigger_id === ids.selected);
+    await page.click('#shep-models-research-rows tbody tr[data-key] >> nth=1');
+    await h.held;
+    await pickTask(page, 'Disease');
+    const during = await pendingSays(page, 'Applying Task: Disease…');
+    h.release();
+    const settled = await drawn(page, 'newest|disease');
+    out.selection_then_task = { during, settled, after: await read(page) };
+    await ctx.close();
+  }
+  // D: one pick of the Task select by pointer, then one by keys.
+  {
+    const { ctx, page, ids } = await open();
+    let before = await joins(page, ids);
+    await pickTask(page, 'Base');
+    const pointerSettled = await drawn(page, 'newest|base');
+    const pointer = (await joins(page, ids)) - before;
+    before = await joins(page, ids);
+    await page.click('#shep-mp-task input');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    const keysSettled = await page.waitForFunction((tasks) => {
+      const v = document.querySelector('#shep-mp-task input').value;
+      const m = document.querySelector('#shep-models-research-rows .shep-view-for');
+      return v !== 'Base' && v in tasks && !!m && m.getAttribute('data-for') === 'newest|' + tasks[v];
+    }, TASKS, { timeout: 20000 }).then(() => true, () => false);
+    const keys = (await joins(page, ids)) - before;
+    out.task_picks = { pointer, keys, settled: pointerSettled && keysSettled,
+                       after_keys: (await read(page)).task };
+    await ctx.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_control_changed_while_the_page_answers_is_applied_and_one_pick_is_one_request(
+        tmp_path, world, monkeypatch):
+    """UI-05 and UI-11 on the page as the dashboard mounts it. On ba6e85e, By
+    family chosen while the listener answered a row's selection was dropped
+    (the switch read By family, the count line "newest first", no family
+    title, no Lineage: Gradio ran the deferred call again with the first
+    trigger's id, and the page judged by who fired); a fast By family then
+    Newest first ended By family (the late answer set the switch back); one
+    Task pick sent two requests. Now every case ends with the switch, the
+    count line, the groups and Lineage in agreement with the operator's last
+    change, "Applying …" said while it was pending, and one request per
+    pick, by pointer and by keys."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_request(monkeypatch)
+    _add_bundles(world)
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_MODELS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+
+    family = seen["selection_then_family"]
+    after = family["after"]
+    assert after["order"] == mp.BY_FAMILY and after["count"].startswith("in the groups below"), \
+        family
+    assert after["lineage"] is True and after["pending"] == ""
+    assert any(g.startswith("Family from run") for g in after["groups"]), after
+    assert family["during"] == "Applying By family…" and family["settled"], family
+    newest = seen["family_then_newest"]
+    # While the second answer waits: the switch reads Newest first (the first
+    # answer did not set it back), the rows By family's, and the line says so.
+    between, after = newest["between"], newest["after"]
+    assert after["order"] == mp.NEWEST and after["count"].startswith("newest first"), newest
+    assert between["order"] == mp.NEWEST and between["lineage"] is True, between
+    assert between["pending"] == "Applying Newest first…", between
+    assert after["lineage"] is False and after["groups"] == [] and after["pending"] == ""
+    assert newest["settled"], newest
+    task = seen["selection_then_task"]
+    assert task["after"]["task"] == "Disease" and "Disease" in task["after"]["count"], task
+    assert task["after"]["pending"] == "" and task["settled"]
+    assert task["during"] == "Applying Task: Disease…", task
+    picks = seen["task_picks"]
+    assert (picks["pointer"], picks["keys"]) == (1, 1), picks
+    assert picks["settled"], picks
+    assert picks["after_keys"] not in ("Base", ""), picks
 
 
 def test_the_page_registers_its_help_and_every_i_it_draws(world, monkeypatch):

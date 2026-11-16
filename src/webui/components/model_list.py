@@ -53,10 +53,14 @@ those rows instead (a family view's, its context rows included); ``"groups":
 (checkpoints in no group follow under ``"rest_title"``); ``"column"`` and
 ``"cells": {key: html}`` add one column the page fills (HTML it built with the
 shared renderers, which escape); ``"note"`` is plain text beside the Load
-button. What a view names by key (``keys``, ``groups``, ``cells``) belongs to
-the workspace it was read from: another workspace's listing is drawn with the
-view's filter, column and note only (`view_for_listing`) until the page
-shapes its view again. Models groups the list this way (its families and their
+button; ``"shaped_for"`` (a short string, the page's own words for the control
+values it shaped the view for) is said by the rows drawn with it
+(`view_marker`), so the page can tell rows that answer its controls from rows
+drawn before (Models' "Applying …" line). What a view names by key (``keys``,
+``groups``, ``cells``) belongs to the workspace it was read from: another
+workspace's listing is drawn with the view's filter, column and note only, and
+not as shaped for anything (`view_for_listing`), until the page shapes its view
+again. Models groups the list this way (its families and their
 lineage column). ``create_model_list(head=…, foot=…)`` places a page's own
 components (a filter, links) in the list's header and footer rows.
 
@@ -657,12 +661,25 @@ def view_for_listing(view: Any, previous: Any, listing: Mapping[str, Any]) -> An
     by key (a family's rows, an order's groups, the page's cells) was read from
     the `previous` listing's workspace, so for another workspace's listing it
     is left out and the view's filter, column and note apply. Another
-    workspace's keys would hide every row of this one."""
+    workspace's keys would hide every row of this one. Rows drawn so are not
+    what the page shaped the view for, so its ``shaped_for`` goes too
+    (`view_marker`): the page's controls are not applied until it shapes the
+    view for this listing."""
     current = _view(view)
     if (isinstance(previous, Mapping) and previous.get("workspace") == listing.get("workspace")) \
             or not any(part in current for part in _KEYED_VIEW_PARTS):
         return view
-    return {k: v for k, v in current.items() if k not in _KEYED_VIEW_PARTS}
+    return {k: v for k, v in current.items() if k not in (*_KEYED_VIEW_PARTS, "shaped_for")}
+
+
+def view_marker(view: Any) -> str:
+    """What the rows say they were drawn for: the view's ``shaped_for`` as a
+    hidden element (``span.shep-view-for``, its ``data-for``, escaped);
+    nothing for a view that names nothing."""
+    shaped = _view(view).get("shaped_for")
+    if not isinstance(shaped, str) or not shaped:
+        return ""
+    return f'<span class="shep-view-for" hidden data-for="{r.e(shaped)}"></span>'
 
 
 def refused_line(listing: Mapping[str, Any]) -> str:
@@ -733,11 +750,18 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
     """The list as the preset draws it: rows (the drawer: "In use now" pinned,
     runs newest first, the latest runs then "Show older runs") or a table
     (Models: every checkpoint, the model in use marked on its own row); the
-    view's filter or rows, groups and extra column when it gives them."""
+    view's filter or rows, groups and extra column when it gives them, and
+    what the view was shaped for (`view_marker`), an empty list's too."""
     if listing.get("refused"):
         # A listing is no act: the short line every page uses for an operator
         # control off for this request, not "Refused … Nothing was done."
         return f'<div class="shep-reason shep-reason-grey">{r.e(refused_line(listing))}</div>'
+    return _list_body(listing, selected, preset, show_older=show_older,
+                      view=view) + view_marker(view)
+
+
+def _list_body(listing: Mapping[str, Any], selected: Optional[str], preset: Preset, *,
+               show_older: bool, view: Any) -> str:
     items = shown_items(listing, view, preset)
     if not items:
         return _no_items_html(listing, view, preset)
@@ -1638,7 +1662,8 @@ class ModelList:
       open confirmation (`gr.State`);
     - ``view``: `gr.State`, None or the page's view of the list
       (``task``, ``keys``, ``groups``, ``rest_title``, ``column``, ``cells``,
-      ``note``: the module docstring); the list redraws on its ``.change``;
+      ``note``, ``shaped_for``: the module docstring); the list redraws on its
+      ``.change``;
     - ``phase``: `gr.State`, ``"idle"``, ``"confirming"`` or ``"loading"``
       (Diagnosis disables Run Diagnosis while it is not idle);
     - ``refresh``: keyword arguments for an event that (re)reads the list:
@@ -1964,5 +1989,6 @@ __all__ = [
     "start_wait_js",
     "task_filter",
     "view_for_listing",
+    "view_marker",
     "workspace_line_html",
 ]

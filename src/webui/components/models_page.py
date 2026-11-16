@@ -1247,14 +1247,30 @@ def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str,
     if data.get("readonly"):
         return {"note": ""}
     task = ctl.get("task") or ALL_TASKS
-    newest: Dict[str, Any] = {"task": task, "note": LOAD_NOTE}
+    newest: Dict[str, Any] = {"task": task, "note": LOAD_NOTE, "shaped_for": shaped_for(ctl)}
     if ctl.get("order") == BY_FAMILY:
         family = family_view(listing, task)
         if family is None:
             return {**newest, "refused": FAMILY_NOT_READ}
         return {"task": task, "keys": family["keys"], "groups": family["groups"],
-                "column": LINEAGE_COLUMN, "cells": family["cells"], "note": LOAD_NOTE}
+                "column": LINEAGE_COLUMN, "cells": family["cells"], "note": LOAD_NOTE,
+                "shaped_for": shaped_for(ctl)}
     return newest
+
+
+def shaped_for(ctl: Mapping[str, Any]) -> str:
+    """The controls a view was shaped for, as its rows say it
+    (`model_list.view_marker`) and the "Applying …" line compares
+    (`PENDING_JS`): ``"<order>|<task>"``."""
+    return f"{ctl.get('order') or NEWEST}|{ctl.get('task') or ALL_TASKS}"
+
+
+def same_view(current: Any, view: Mapping[str, Any]) -> bool:
+    """Whether the shared list already holds `view`: the redraw token one
+    answer adds (`_sync`, a selection made again) means nothing else."""
+    if not isinstance(current, Mapping):
+        return False
+    return {k: v for k, v in current.items() if k != "redraw"} == dict(view)
 
 
 # ---------------------------------------------------------------------------
@@ -1287,6 +1303,102 @@ def options_html(data: Mapping[str, Any], refused: Optional[str] = None) -> str:
         return ""
     return (f'<div class="shep-reason shep-amber-t">Not ordered, so the list stays newest '
             f'first: {r.e(r.short_reason(refused, 240))}</div>')
+
+
+#: Each control value in the words its option shows.
+_ORDER_WORDS = {value: label for label, value in ORDER_CHOICES}
+_TASK_WORDS = {value: label for label, value in TASK_CHOICES}
+
+
+def controls_words(ctl: Mapping[str, Any]) -> str:
+    """The controls as their options read: "By family", "By family, Task:
+    Disease" (the task named when it is not every task)."""
+    words = _ORDER_WORDS.get(ctl.get("order"), str(ctl.get("order")))
+    task = ctl.get("task") or ALL_TASKS
+    return words if task == ALL_TASKS else f"{words}, Task: {_TASK_WORDS.get(task, task)}"
+
+
+#: Under the order options when the page's answer failed: what was not
+#: applied and why (the error's kind, never its message, which can name a
+#: server path); the list keeps what it showed.
+NOT_APPLIED = ("Not applied: {wanted}. The page could not shape the list ({error}), so it "
+               "still shows what it showed before.")
+
+
+def failed_html(ctl: Mapping[str, Any], error: BaseException) -> str:
+    """The failure line for the controls `ctl` (its ``data-failed-for`` is
+    what `PENDING_JS` compares, as the rows' `shaped_for`)."""
+    words = NOT_APPLIED.format(wanted=controls_words(ctl), error=type(error).__name__)
+    return (f'<div class="shep-mp-failed" data-failed-for="{r.e(shaped_for(ctl))}">'
+            f'{r.status_mark("error", words)}</div>')
+
+
+#: The "Applying …" line under the order options (the owner's decision D05):
+#: the running mark and its words, filled by `PENDING_JS`, never by the server.
+PENDING_HTML = (f'<div class="shep-mp-pending" role="status" aria-live="polite">'
+                f'{r.status_mark("running", "")}</div>')
+
+#: **The "Applying …" line**: shown from the moment the operator changes Order
+#: or Task until the rows drawn say they answer the controls as they read now
+#: (the rows' `model_list.view_marker`, the view's `shaped_for`), so the
+#: switch, the count line and the rows never disagree without a word. A
+#: failed answer for the controls shown says why instead (`failed_html`). It
+#: compares what the page shows (the checked Order, the Task select's option)
+#: on every change of the page (a mutation observer and the controls' own
+#: events); while a Task is typed into its filter, the last option chosen
+#: counts. Nothing is shown before rows are first drawn for the controls (the
+#: page not yet read, or read-only). Attached once per page load.
+PENDING_JS = r"""
+if (!window.__shepModelsPending) {
+  window.__shepModelsPending = true;
+  var ORDERS = __ORDERS__, TASKS = __TASKS__;
+  var seen = false, lastTask = 'all', queued = false;
+  var check = function () {
+    queued = false;
+    var line = document.getElementById('shep-mp-pending');
+    if (!line) { return; }
+    var box = line.querySelector('.shep-mp-pending'), words = line.querySelector('.shep-st-w');
+    if (!box || !words) { return; }
+    var radio = document.querySelector('#shep-mp-order input[type=radio]:checked');
+    var taskInput = document.querySelector('#shep-mp-task input');
+    var marker = document.querySelector('#shep-models-research-rows .shep-view-for');
+    var failed = document.querySelector('#shep-mp-options [data-failed-for]');
+    if (taskInput && Object.prototype.hasOwnProperty.call(TASKS, taskInput.value)) {
+      lastTask = TASKS[taskInput.value];
+    }
+    var order = radio ? radio.value : null;
+    var wanted = order + '|' + lastTask;
+    var drawn = marker ? marker.getAttribute('data-for') : null;
+    if (drawn) { seen = true; }
+    var pending = seen && order !== null && drawn !== wanted
+      && !(failed && failed.getAttribute('data-failed-for') === wanted);
+    var text = '';
+    if (pending) {
+      var parts = drawn ? drawn.split('|') : [null, null];
+      var named = [];
+      if (!drawn || parts[0] !== order) { named.push(ORDERS[order] || order); }
+      if ((drawn && parts[1] !== lastTask) || (!drawn && lastTask !== 'all')) {
+        var label = Object.keys(TASKS).find(function (k) { return TASKS[k] === lastTask; });
+        named.push('Task: ' + (label || lastTask));
+      }
+      text = 'Applying ' + named.join(', ') + '…';
+    }
+    if (words.textContent !== text) { words.textContent = text; }
+    box.classList.toggle('shep-on', pending);
+  };
+  var soon = function () {
+    if (!queued) { queued = true; window.requestAnimationFrame(check); }
+  };
+  new MutationObserver(soon).observe(document.body, {
+    childList: true, subtree: true, attributes: true,
+    attributeFilter: ['class', 'data-for', 'data-failed-for']});
+  ['click', 'input', 'change', 'keyup', 'focusout'].forEach(function (kind) {
+    document.addEventListener(kind, soon, true);
+  });
+  soon();
+}
+""".replace("__ORDERS__", json.dumps(_ORDER_WORDS)).replace(
+    "__TASKS__", json.dumps({label: value for label, value in TASK_CHOICES}))
 
 
 def _served_line(listing: Mapping[str, Any]) -> str:
@@ -1627,6 +1739,7 @@ def create_models_page(ctx: Any) -> None:
                                           container=False)
                 plain_html(help_button("models-ordering", "Order"), elem_id="shep-mp-order-i")
             parts["options"] = plain_html("", elem_id="shep-mp-options")
+            plain_html(PENDING_HTML, elem_id="shep-mp-pending", js_on_load=PENDING_JS)
         return parts
 
     def foot() -> Any:
@@ -1651,9 +1764,6 @@ def create_models_page(ctx: Any) -> None:
         handle = ctx.create_model_list("research", head=head, foot=foot)
 
     control_inputs = [parts["order"], parts["task"]]
-    #: By element id: once the page has updated a control, Gradio keeps a new
-    #: instance of it in the session (another ``_id``), which an event names.
-    control_ids = {c.elem_id for c in control_inputs}
     page_outputs = [data_state, handle.view, parts["task"], parts["order"], parts["options"],
                     parts["lhd"], parts["wsline"], parts["detail_hd"], parts["detail_top"],
                     parts["seg"], parts["records"], parts["usage"],
@@ -1677,12 +1787,18 @@ def create_models_page(ctx: Any) -> None:
                     new_data: bool) -> Tuple[Any, ...]:
         ctl = controls(data, *ctl_values)
         view = shape(listing, data, ctl)
+        order, task = ctl_values
         return (
             data if new_data else gr.update(),
             view,
-            gr.update(value=ctl["task"]),
+            # A control's value is written only where it cannot apply as it
+            # reads (an unknown task; By family for a read-only request): an
+            # answer that ends after the operator changed it again must not
+            # set it back (UI-05).
+            gr.update(value=ctl["task"]) if ctl["task"] != task else gr.update(),
             # Always offered to an operator; off for a read-only request.
-            gr.update(value=ctl["order"], interactive=not data.get("readonly")),
+            gr.update(interactive=not data.get("readonly"),
+                      **({"value": ctl["order"]} if ctl["order"] != order else {})),
             options_html(data, view.get("refused")),
             left_header_html(listing, data, condition),
             ml.workspace_line_html(listing),
@@ -1721,13 +1837,8 @@ def create_models_page(ctx: Any) -> None:
     handle.reload_button.click(_load_started, inputs=None, outputs=[stale_state], queue=False,
                                show_progress="hidden")
 
-    def _sync(listing, data, stale, last, phase, order, task, selected, seg_value,
-              request: gr.Request, evt: gr.EventData):
-        """A new listing (a workspace chosen, the refresh after a Load), a
-        selection, or a control changed. The page reads its own data again for
-        a listing it has not read, and once after a Load has finished (the
-        listing may be unchanged); after a Load it selects the last checkpoint
-        again while its row is shown, when the shared refresh did not keep it."""
+    def _answer(listing, data, stale, last, phase, order, task, selected, seg_value, current,
+                request):
         ctl_values = (order, task)
         settled = phase != "loading"
         after_load = bool(stale) and settled
@@ -1746,10 +1857,19 @@ def create_models_page(ctx: Any) -> None:
                   ({"workspace": listing.get("workspace"), "key": key} if key is not None
                    else gr.update()),
                   again if again is not None else gr.update())
-        by_control = getattr(getattr(evt, "target", None), "elem_id", None) in control_ids
-        if not (fresh or again is not None or by_control):
-            ctl = controls(data, *ctl_values)
-            return (*states, *(gr.update() for _ in page_outputs[:-6]),
+        ctl = controls(data, *ctl_values)
+        view = shape(listing, data, ctl)
+        # The list is shaped by the controls as they read now, whichever
+        # trigger asked: Gradio 6.30 runs a deferred call ("always_last") again
+        # with the values gathered then but the first trigger's id, so a
+        # control changed while another answer ran must not be judged by who
+        # fired (UI-05).
+        if not (fresh or again is not None or not same_view(current, view)):
+            # The line under the options too: a failure said there is gone
+            # once an answer applies the controls.
+            return (*states, *(gr.update() for _ in page_outputs[:4]),
+                    options_html(data, view.get("refused")),
+                    *(gr.update() for _ in page_outputs[5:-6]),
                     *detail_updates(listing, data, key, ctl, seg_value))
         condition = operator_access(request).condition
         out = list(outputs_for(listing, data, ctl_values, key, seg_value, condition,
@@ -1760,9 +1880,32 @@ def create_models_page(ctx: Any) -> None:
             out[1] = {**out[1], "redraw": time.monotonic_ns()}
         return (*states, *out)
 
-    gr.on([handle.listing.change, handle.selected.change, *(picked(c) for c in control_inputs)],
+    def _sync(listing, data, stale, last, phase, order, task, selected, seg_value, current,
+              request: gr.Request):
+        """A new listing (a workspace chosen, the refresh after a Load), a
+        selection, or a control changed. The page reads its own data again for
+        a listing it has not read, and once after a Load has finished (the
+        listing may be unchanged); after a Load it selects the last checkpoint
+        again while its row is shown, when the shared refresh did not keep it.
+        The list's view is shaped from the controls as they read now and is
+        written when it is not the one the list holds (`current`). An answer
+        that fails changes nothing and says, under the options, what was not
+        applied (a deferred call is dropped by Gradio after a failed one, so
+        the failure must not escape)."""
+        try:
+            return _answer(listing, data, stale, last, phase, order, task, selected, seg_value,
+                           current, request)
+        except Exception as exc:  # noqa: BLE001 - the page says it and keeps what it shows
+            logger.exception("The Models page could not answer")
+            ctl = controls(data if isinstance(data, Mapping) else {}, order, task)
+            return (gr.update(), gr.update(), gr.update(),
+                    *(gr.update() for _ in page_outputs[:4]), failed_html(ctl, exc),
+                    *(gr.update() for _ in page_outputs[5:]))
+
+    gr.on([handle.listing.change, handle.selected.change,
+           *(picked(c) for c in control_inputs)],
           _sync, inputs=[handle.listing, data_state, stale_state, last_state, handle.phase,
-                         *control_inputs, handle.selected, parts["seg"]],
+                         *control_inputs, handle.selected, parts["seg"], handle.view],
           outputs=[stale_state, last_state, handle.selected, *page_outputs],
           show_progress="hidden", trigger_mode="always_last")
 
@@ -1829,6 +1972,9 @@ PAGE_CSS = f"""
   padding-right: 24px !important;
 }}
 {_PAGE} #shep-mp-controls {{ grid-area: ctl; gap: 8px !important; }}
+/* The "Applying …" line takes no room while nothing is pending (`PENDING_JS`). */
+{_PAGE} #shep-mp-pending:not(:has(.shep-mp-pending.shep-on)) {{ display: none !important; }}
+{_PAGE} .shep-mp-pending {{ font-size: 14px; }}
 {_PAGE} #shep-models-research-count {{ grid-area: count; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} {_LIST} > .shep-model-main > .shep-model-body {{
   min-height: 0; background: none; border: 0; border-radius: 0 0 10px 10px;
