@@ -127,8 +127,9 @@ target, mixed state, a needed warning that cannot be seen, or a control that can
   for Test and Models, R10 as a table, tiles without the repeated "Mode C", a readable workspace and run name in the
   Result;
 - Models and Datasets: details as summary lists, an empty state with its next step;
-- Training: a one-row run bar, Continue's buttons in the drawer's footer, a higher chart floor (about 200 px), the
-  chart palette's two colours below 3:1, checkpoint words "best" (decision 4);
+- Training: a one-row run bar, a higher chart floor (about 200 px), the chart palette's two colours below 3:1,
+  checkpoint words "best" (decision 4) *(2026-11-16: Continue's buttons, listed here until then, sit in the
+  drawer's footer since `7649fa0`)*;
 - a UI audit in the repository (screenshots, geometry, repeats, axe offline);
 - from the recheck at `f9202b6` (the owner's screenshots 04_1, 06_1 and 06_2): (A) under "Settings taken from this
   checkpoint" the note and the summary table have different side padding: one shared padding for that block, its

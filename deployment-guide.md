@@ -3392,14 +3392,15 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   `Stopped`（灰色）或 `FAILED`（紅色），最多一個 " · "：狀態與進行到哪裡；其後以較淡的字顯示
   epoch 執行中的 batch 與工作已執行的時間（「batch 340/812, 00:14:32 elapsed」）。它的標記是儀表板
   共用的狀態標記，形狀與文字搭配顏色：閒置或停止時是灰色 ○，只有工作執行中才是藍色的轉圈，
-  啟動或停止中是 ■，完成是綠色 ●，只有失敗才是紅色 ✕。失敗或停止的 run 永遠不會是綠色。不論
-  run 檢視顯示哪個 run，狀態標籤永遠是訓練工作的。
-- **Run name**，接著是**一行原因**，說明某個動作為何停用：「Stop disabled: no training is
-  running.」、對唯讀瀏覽器顯示 D8 的原因（「Operator controls only: request not local」），或
+  啟動或停止中是 ■，完成是綠色 ●，只有失敗才是紅色 ✕。失敗或停止的 run 永遠不會是綠色。閒置是
+  正常狀態，所以它的狀態標籤是一般的淡色文字，不是膠囊。不論 run 檢視顯示哪個 run，狀態標籤永遠
+  是訓練工作的。
+- **Run name**，接著是**一行原因**，說明畫出的某個動作為何停用：對唯讀瀏覽器顯示 D8 的原因（「Operator controls only: request not local」），或
   占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (pid …,
   since …)」，或在 CUDA 上服務模型時的「GPU: inference (this service); stop it with Stop
-  inference on Diagnosis」；無論哪種情況，job runner 都會自己拒絕啟動）。
-- **Start、Continue…、Stop。** Stop 會先詢問：「Stop training now? The job stops. The
+  inference on Diagnosis」；無論哪種情況，job runner 都會自己拒絕啟動）。畫出的動作都沒有停用時，
+  沒有原因行。
+- **Start、Continue…、Stop。** Stop 只在訓練工作執行中或停止中才畫出。它會先詢問：「Stop training now? The job stops. The
   checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none
   yet, this run cannot be continued. Once it has stopped, the page says where it can be
   continued from.」，按鈕為 **■ Stop training** 與 **Keep training**。詢問不提任何 epoch：
@@ -3640,23 +3641,30 @@ dataset」、執行中還沒有 checkpoint 時的「dataset recorded at the firs
 checkpoint 時的「dataset not recorded (no checkpoint)」）；Continue… 打開且選了清單上的 checkpoint
 時，這是「the run continued from」還是「not the run continued from」（選 Branch 時為「branched
 from」；曲線屬於所檢視的 run，與抽屜
-選了什麼無關）；以及 run 的狀態：「195 of 1000 epochs completed · can be continued」、「Finished ·
-5000 of 5000 epochs completed · to train further, use Continue…」、「Stopped early (…) · … ·
-cannot be continued」、「Running · epoch 12 of 100」（只用於工作自己的 run）或「No checkpoint saved,
-so nothing can be continued」；沒有 run 目錄的 run（在建立 run 目錄之前就被拒絕）會如實說明：沒有
-checkpoint、沒有日誌，也沒有可畫的圖。**Details ›** 收著較少看的資訊：run 的目錄名稱、它的
-checkpoint（相對於 workspace 根目錄；執行中為最新的一個）、日誌，以及它使用的資料集指紋（Copy 會
-複製完整的 64 個）；run 所在的 workspace 不是 run bar 所選的時候也列在這裡。標題下是一張共用 epoch
-軸的四格圖：視窗至少 1400 × 760 時排成 2 × 2；較小的視窗中，圖區本身寬度約 1000 px 以上時排成
+選了什麼無關）；以及 run 的狀態，最多一個「 · 」：「195 of 1000 epochs completed · can be
+continued」、「Finished · 5000 of 5000 epochs completed. To train further, use Continue…」（Continue
+抽屜打開時不含最後一句）、「Stopped early (…) · 40 of 60 epochs completed. It cannot be
+continued.」、「Running · epoch 12 of 100」（只用於工作自己的 run）或「No checkpoint saved, so
+nothing can be continued」（只留下其他檔案的 run，例如 `best.pt`，會從那個檔案讀取）；沒有 run 目錄的
+run（在建立 run 目錄之前就被拒絕）會如實說明：沒有 checkpoint、沒有日誌，也沒有可畫的圖。
+**Details ›** 收著較少看的資訊：run 的資料夾（相對於 workspace 根目錄）、它的 checkpoint 與日誌在該
+資料夾中的位置（執行中為最新的 checkpoint）、checkpoint 的模型指紋（12 個十六進位字元；Copy 會複製
+完整的 64 個），以及它使用的資料集：與 run bar 相同時寫「same as the run bar」，否則是它的指紋與
+Copy；run 所在的 workspace 不是 run bar 所選的時候也列在這裡。標題下是一張共用 epoch 軸的四格圖，
+軸名只在圖下標一次（「Epoch (shared axis)」）：視窗至少 1400 × 760 時排成 2 × 2；較小的視窗中，圖區本身寬度約 1000 px 以上時排成
 2 × 2，較窄時排成一欄：Loss（train，以及以虛線表示的
 validation：記錄下來的 `val_loss` 或 `val_lp_loss`，不論是哪種 run）、該 run 的驗證值與其伴隨
-指標，以及對數軸的 learning rate（0 或缺少的值為空隙）。中間兩張依 run 記錄的內容而定：base 畫
-LP accuracy，再畫 ROC-AUC 與 AP；任務模型畫 pooled MRR，再畫 pooled top-k。驗證項目兩種數值都
-沒有的日誌（例如沒有 model spec 的檔案）在那裡不畫任何序列，標題為「No other figure charted:
+指標，以及對數軸的 learning rate（「Learning rate (log scale)」；0 或缺少的值為空隙）。只有一條
+序列、而標題已說明它的圖不顯示圖例。中間兩張依 run 記錄的內容而定：base 畫 LP accuracy，再畫
+ROC-AUC 與 AP；任務模型畫 pooled MRR，再畫 pooled top-k。驗證只記錄 loss 的日誌會在第一張說明
+（「This run logs only its loss: the Loss chart draws it.」）。驗證項目兩種數值都沒有、也不只有
+loss 的日誌（例如沒有 model spec 的檔案）在那裡不畫任何序列，標題為「No other figure charted:
 Export CSV has every logged figure」與「No further figure charted」（自 K8-7b，2026-11-08 起；
 它的 MRR 與 Hits@K 圖已移除），它的 Loss 與 learning rate 圖則與任何 run 一樣畫出。每張圖的繪圖區
 至少 170 px：在 1850 × 960 下四張圖連同座標軸都放得下；較小的視窗則讓圖在圖表工具列下方捲動，
-工具列自成一列，從不蓋住任何圖。沒有資料的圖以自己的一行文字取代繪圖區與座標軸標籤（執行中的工作
+工具列自成一列，從不蓋住任何圖。所檢視的 run 拿不到較新的 epoch 時（頁面重試約一分鐘後序列請求仍
+失敗），它的曲線保留，工具列顯示「▲ Newer epochs could not be loaded: reload the page to try
+again.」。沒有資料的圖以自己的一行文字取代繪圖區（執行中的工作
 還沒驗證時是「Drawn once the run logs its first validation.」；已結束而沒有驗證的 run 是「This run
 logged no validation.」；日誌裡沒有的數值是「Not recorded in this run's log.」），整個圖區沒有可畫的
 東西時，說明會出現什麼、下一步做什麼：「No run in this workspace yet: its curves appear here after

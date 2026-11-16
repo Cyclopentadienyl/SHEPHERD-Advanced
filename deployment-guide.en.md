@@ -3376,14 +3376,14 @@ a run.
   00:14:32 elapsed"). Its mark is the dashboard's one status mark, the shape and the word with the
   colour: a grey ○ while idle or stopped, the blue spinner only while a job runs, ■ while it starts
   or stops, a green ● when it completed, the red ✕ only when it failed. A failed or stopped run is
-  never green. The pill is always the training job's, whatever run the run view shows.
-- **Run name**, then **one reason line** saying why an action is disabled: "Stop disabled: no
-  training is running.", D8's reason for a read-only browser ("Operator controls only: request
-  not local"), or the GPU job holding the slot ("GPU job: test run (…) · Open Test ›",
+  never green. Idle is the normal state, so its pill is plain muted text, not a lozenge. The pill
+  is always the training job's, whatever run the run view shows.
+- **Run name**, then **one reason line** saying why an action drawn is disabled: D8's reason for
+  a read-only browser ("Operator controls only: request not local"), or the GPU job holding the slot ("GPU job: test run (…) · Open Test ›",
   "GPU job: train_model.py (pid …, since …)", or "GPU: inference (this service); stop it with
   Stop inference on Diagnosis" while a model is served on CUDA; the job runner refuses a start
-  itself either way).
-- **Start, Continue…, Stop.** Stop asks first: "Stop training now? The job stops. The
+  itself either way). With nothing drawn disabled there is no reason line.
+- **Start, Continue…, Stop.** Stop is drawn only while a training job runs or stops. It asks first: "Stop training now? The job stops. The
   checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none yet,
   this run cannot be continued. Once it has stopped, the page says where it can be continued
   from." with **■ Stop training** and **Keep training**. The question names no epoch: the job
@@ -3694,27 +3694,36 @@ first checkpoint" while it runs without one yet, or "dataset not recorded (no ch
 it has ended without one); while Continue… is open with a listed checkpoint chosen, whether this
 is "the run continued from" or "not the run continued from" ("branched from" with Branch; the
 curves are the run viewed's,
-whatever the drawer chose); and the run's state in a few words: "195 of 1000 epochs completed ·
-can be continued", "Finished · 5000 of 5000 epochs completed · to train further, use Continue…",
-"Stopped early (…) · … · cannot be continued", "Running · epoch 12 of 100" (said only of the
-job's own run), or "No checkpoint saved, so nothing can be continued"; a run that has no run
+whatever the drawer chose); and the run's state in a few words, with at most one " · ": "195 of
+1000 epochs completed · can be continued", "Finished · 5000 of 5000 epochs completed. To train
+further, use Continue…" (without its last sentence while the Continue drawer is open), "Stopped
+early (…) · 40 of 60 epochs completed. It cannot be continued.", "Running · epoch 12 of 100"
+(said only of the job's own run), or "No checkpoint saved, so nothing can be continued" (a run
+that kept only another file, a `best.pt` say, is read from that file); a run that has no run
 directory (refused before it made its run directory) says so, with no checkpoint, no log and
-nothing to chart. **Details ›** holds what is read less often: the run's directory, its
-checkpoint (relative to the workspaces root; the newest one while it runs), its logs and the
-dataset fingerprint it used (Copy gives all 64); its workspace when it is not the run bar's.
-Below the header, one figure of four charts sharing the epoch axis: 2 × 2 in a window of at least
+nothing to chart. **Details ›** holds what is read less often: the run's folder (relative to the
+workspaces root), its checkpoint and its log by their place in that folder (the newest
+checkpoint while it runs), the checkpoint's model fingerprint (12 hex digits; Copy gives all 64),
+and the dataset it used: "same as the run bar" when it is, else its fingerprint with Copy; its
+workspace when it is not the run bar's.
+Below the header, one figure of four charts sharing the epoch axis, labelled once under them
+("Epoch (shared axis)"): 2 × 2 in a window of at least
 1400 × 760, and in a smaller one 2 × 2 from about 1000 px of the figure's own width, one column
 below: Loss (train, and validation dashed: a logged `val_loss` or
 `val_lp_loss`, whatever the run), the run's validation figure and its companions, and the
-learning rate on a log axis (a 0 or a missing value is a gap). The middle two follow what the
-run logged: a base charts LP accuracy, then ROC-AUC and AP; a task model pooled MRR, then pooled
-top-k. A log whose validation entries hold neither figure (a file without a model spec, say)
-draws no series there, under the titles "No other figure charted: Export CSV has every logged
+learning rate on a log axis ("Learning rate (log scale)"; a 0 or a missing value is a gap). A
+chart of one series its title names has no legend key. The middle two follow what the run
+logged: a base charts LP accuracy, then ROC-AUC and AP; a task model pooled MRR, then pooled
+top-k. A log whose validation holds only its loss says so under the first of them ("This run
+logs only its loss: the Loss chart draws it."). A log whose validation entries hold neither
+figure nor its loss alone (a file without a model spec, say) draws no series there, under the titles "No other figure charted: Export CSV has every logged
 figure" and "No further figure charted" (since K8-7b, 2026-11-08; its MRR and Hits@K charts are
 gone), and its Loss and learning-rate charts are drawn as for any run. Each plot keeps a plot
 area of at least 170 px: at 1850 × 960 the four fit with their axes; a smaller window scrolls
-the plots under the chart toolbar, which is a row of its own and never covers a plot. An empty
-chart says its own line in place of its plot and axis label ("Drawn once the run logs its first
+the plots under the chart toolbar, which is a row of its own and never covers a plot. When the
+run drawn cannot get its newer epochs (the series request still failing after the page's
+retries, about a minute), its curves stay and the toolbar says "▲ Newer epochs could not be
+loaded: reload the page to try again.". An empty chart says its own line in place of its plot ("Drawn once the run logs its first
 validation." while the running job has not validated yet; "This run logged no validation." for a
 run that ended without one; "Not recorded in this run's log." for a figure the log does not
 hold), and a figure with nothing to draw says what will appear and what to do: "No run in this
