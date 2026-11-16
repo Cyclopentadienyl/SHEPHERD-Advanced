@@ -625,16 +625,18 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-09 R10 train/test overlap presentation
 
-2 rows: 1 to do, 1 code-verified at ba6e85e (audit).
+2 rows: 1 code-verified, 1 code-verified at ba6e85e (audit).
 
 #### R-63 · R10 train/test overlap buried in two run-on dot-joined paragraphs
 
-- **State**: to do · found by the 2026-10-25 review · severity high · page: test
+- **State**: code-verified · found by the 2026-10-25 review · severity high · page: test
 - **Problem**: The R10 overlap was two neutral paragraphs.
 - **At ba6e85e**: R10 is still two key-value rows. Each holds one run-on sentence joined with ' · ' and keeps the stutter. For example: 'inputs (evidence found): Training disease overlap: overlap — 3 of 5 distinct test diseases; 7 test cases with one of them · Training phenotype-set overlap: overlap — 2 of 10 test cases'. It is plain dark text (computed colour rgb(29,34,48)) with no mark or colour, although 3 of 5 test diseases were seen in training. There is no table. Models' recorded results show the same paragraphs.
 - **Done when**: Test and Models show R10 as a table (training/validation x disease/phenotype set) with a status mark on each overlap cell and no repeated 'overlap: overlap' stutter.
+- **Reproduced in T02**: on a CPU demo copy at the round's base (0f4ae91, these renderers unchanged since ba6e85e), a disease measurement of the demo's child on a supplied cohort with R10 evidence found read on Test and on Models 'R10, training inputs (evidence found): Training disease overlap: overlap — 3 of 5 distinct test diseases; 7 test cases with one of them · Training phenotype-set overlap: overlap — 2 of 10 test cases', no table and no mark.
+- **Fix**: the one R10 rendering is a table (`renderers.r10_table_html`): a row per scope (Training, Validation) with its evidence state under it, a column per label (Disease overlap, Phenotype-set overlap), each cell its state by the shared mark and its count, denominator, unit and cases, or its unverifiable reason, read by the one reading of a label's state (`r10_state_parts`; `r10_state_text` joins it as before). An overlap is amber ▲ and blocks nothing; "none" keeps the caveats' words with its count and no green mark; an unverifiable cell has no number. The governed words are unchanged (skill §13, 2026-10-25). Test shows it under 'Train/test overlap (R10)' with the R10 labels' ⓘ; Models' record and Models › Results' fold show the same table.
 - **Sources**: UX:265 (appendix 63); RJ audits[2].findings[2]; UX:68 (section 3 high #7); UX:71-72; UX:127; UX:153-157 (decision 3); BL:1010 (52); SK:63; SK:189-193
-- **Closed at**: —
+- **Closed at**: 751b8d7. Tests: `test_webui_models_page.py::test_a_records_r10_is_a_table_with_a_mark_on_each_overlap_and_no_stutter`, `::test_unverifiable_is_a_word_and_never_a_count`, `::test_a_records_r10_reads_in_its_states_words_never_a_count`, `test_webui_test_page.py::test_unverifiable_is_a_word_never_a_count`, `::test_a_kept_reports_r10_reads_in_its_states_words_never_a_count`, `::test_the_r10_help_sits_beside_the_r10_lines` (each fails on 0f4ae91: no R10 table). Seen on the CPU demo copy at 1850×960, 1536×864 and 960×1080: Test's Result and Models' record show the table, three overlap cells amber ▲ (rgb(122,70,0)) with '3 of 5 distinct test diseases; 7 test cases with one of them', '2 of 10 test cases', '1 of 5 …; 2 test cases …', the fourth 'None in the inputs this checkpoint records (not evidence about data outside them) 0 of 10 test cases' unmarked; no sideways page scroll; nested in Models' record the table's header is not sticky (computed position static).
 
 #### B68-R10 · Refused R10 evidence setting shown amber with no mark
 
@@ -841,24 +843,27 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-12 What bound and verified mean
 
-3 rows: 2 to do, 1 code-verified at ba6e85e (audit).
+3 rows: 2 code-verified, 1 code-verified at ba6e85e (audit).
 
 #### B72-T3 · Tampered pairs.bin or split record still listed as 'Bound', refused only at Start
 
-- **State**: to do · found by an internal review · page: test
+- **State**: code-verified · found by an internal review · page: test
 - **Problem**: list_versions reads cohort.json alone.
 - **At ba6e85e**: list_versions still reads cohort.json and nothing else. Reproduced on my isolated copy: I changed one byte of demo-kg-1's pairs.bin. The version still read '● Bound to this graph' and Start was enabled with no reason. The run then failed at start: 'measure_scorer: refused: …pairs.bin is not the pairs file … cohort.json binds (its bytes are c35c7d4a53b1..., the version binds 28e2b12861ba...)'. The table got a grey 'Failed' row. (I restored the byte afterwards.)
 - **Done when**: After changing one byte of a version's pairs.bin (or contradicting its split record), the version list no longer reads 'Bound to this graph' and Start is disabled with a reason naming the mismatch.
+- **Reproduced in T02**: on a copy of a CPU demo registry (0f4ae91, listing unchanged since ba6e85e), one byte of demo-kg-1's pairs.bin changed: `binding_state` 'bound', the Data panel '● Bound to this graph', Start enabled with no reason.
+- **Fix**: `cohort_registry.kept_contents` checks the files a version keeps (pairs.bin, samples.json, a generated split's kept split manifest and fixture) by `check_references`' one comparison, now one function (`_located_state`), so a kept split manifest whose blocks contradict the version's copies differs too; it is remembered by the version's directory and cohort.json digest with each file's stat identity, so a listing that finds the files as they were hashes nothing (a file changed within 2 s of a check, missing or unreadable is checked again). The WebUI's listing asks for it (`list_cohort_versions(contents=True)`: Test, Datasets, the Diagnosis reference cohorts); the open route hashes nothing (its `contents` is null). `workspaces.binding_state` says the facts apart: 'changed' (a kept file other bytes or gone: never bound), 'bound' (the record names this graph and the files were checked; Test adds 'files checked <time>'), 'unknown' (the files cannot be checked now). The run's own content and fingerprint refusals are unchanged.
 - **Sources**: BL:1030
-- **Closed at**: —
+- **Closed at**: 49d281e. Tests: `test_cohort_registry.py::test_a_version_whose_kept_file_changed_is_told_apart_by_its_bytes`, `::test_a_check_of_unchanged_files_is_answered_without_hashing_them`, `test_webui_test_page.py::test_a_version_whose_kept_file_changed_is_not_bound_and_start_says_why` (samples.json of a supplied cohort), `test_webui_datasets.py::test_the_versions_not_listed_under_a_workspace_are_counted_by_why`, `test_diagnosis_panel.py::test_the_reference_cohort_options_are_short_unique_and_keep_the_full_label` (each fails on 0f4ae91; the Datasets one lists the changed version as bound). Seen on the CPU demo copy at 1850×960, one byte of demo-kg-1's pairs.bin changed: Graph '✕ Not bound: its files changed after the import' (rgb(165,34,34)), under the list '✕ Not measured: the version's pairs.bin holds 436875cb1c34..., not the 28e2b12861ba... recorded. …', Start disabled with 'Disabled: the data version's files changed after its import (see Data).'; on the untouched registry '● Bound to this graph files checked <UTC time>' and Start enabled. A generated split's contradicted split record is covered by the shared comparison's own tests, not seen in the browser (the demo has no generated version).
 
 #### NEW-models-results-5 · 'metadata not readable' shown for entries that were never read
 
-- **State**: to do · found by the 2026-11-16 audit · page: models
+- **State**: code-verified · found by the 2026-11-16 audit · page: models
 - **At ba6e85e**: The visible words 'metadata not readable · cannot be loaded' also appear for entries that were never read, such as a directory or run whose name is not text ('bad\xff · RUNS'), so the words claim a read that did not happen (renderers.py:1241). Evidence: (audit evidence, not kept in the repository)
 - **Done when**: An entry whose name is not valid text (e.g. 'bad\xff') reads a wording that does not claim a read happened; 'metadata not readable' appears only after a failed read, checked by unit test.
+- **Fix**: `renderers.unreadable_words`: "not read" for an entry with neither a digest nor a size (`ListedCheckpoint`: never opened), "metadata not readable" for a file whose read was made and failed or gave no record; the shared list's row, the Models table and detail and the Test page's model say it alike.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: 2112605. Test: `test_webui_renderers.py::test_an_entry_never_read_does_not_claim_a_failed_read` (fails on 0f4ae91: the 'bad\xff' entry reads 'metadata not readable'). Checked by unit test only, not in the browser.
 
 #### B72-T2 · Version mapped against another graph shown as amber chip without mark
 
@@ -988,7 +993,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-116 rows: 53 to do, 24 partly done, 1 awaiting hardware, 3 outside this round's scope (owner to decide), 4 not applicable, 31 code-verified at ba6e85e (audit).
+116 rows: 52 to do, 23 partly done, 1 awaiting hardware, 3 outside this round's scope (owner to decide), 4 not applicable, 2 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
@@ -1687,12 +1692,12 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### NEW-test-6 · Relation keys are full sentences that wrap to 3 lines in a 12em column
 
-- **State**: to do · found by the 2026-11-16 audit · page: test
+- **State**: code-verified · found by the 2026-11-16 audit · page: test
 - **Duplicate of**: R-72+B72 (closed with it)
 - **At ba6e85e**: The Result's relation keys are full sentences in a 12em key column ('R2 generated split's samples match the workspace manifest' wraps to 3 lines), so each relation row is 2–3 lines tall. Seen: (audit evidence, not kept in the repository)
 - **Done when**: At 1850x960 each Result relation row is one line tall (short keys, detail in the value).
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: 751b8d7, with R-72+B72: the relations are one list of their own under one 'Relations' key across the Result (`renderers.relations_html`, its key column up to 32em), so a relation's name keeps its line. Measured on a CPU demo copy: each of the five relation rows' key and value one line tall (20 px at a 20 px line) at 1850×960, 1536×864 and 960×1080.
 
 #### R-79 · Test run options: detached info icon, wrapping checkbox, shared info, two 'Register' names
 
@@ -1750,12 +1755,13 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### R-72+B72 · Relation rows still lead with their code (R1, R2...) on Test and Models
 
-- **State**: partly done · found by the 2026-10-25 review · severity medium · page: test
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: test
 - **Problem**: Test's version details and Relations, and Models' 'Relations:' line (~30 ' · ' facts), were run-on dot strings.
 - **At ba6e85e**: The run-on chains are gone: the cohort version is a summary list, and each relation is its own row with a shared mark. The finding's title is '…run-on dot strings that lead with codes', and its fix put the meaning first with the code after ('Graph files match manifest (R1) ✓'). The relation rows still open with their codes: 'R1 graph files match the workspace manifest', 'R2 generated split's samples…', 'R3 model trained on this graph', 'R5 dataset record bound to this graph'. This is by design in the one renderer (renderers.py:1828-1829: label = f"{name} {display}"), on Test and on Models. See own-r1-unreg-after.txt lines 135-141 and p-models-row0.txt in the checkers' out directories. That breaks skill §5's front-loading: the first two words carry the code. The same Models record block still runs a 24-metric ' · ' chain and an 'Environment: … · Dataset: … · Registered …' chain (p-models-row0.txt lines 59-60). That part belongs to R-82's partly verdict. This is a minor residual, but it is the substance the title names.
 - **Done when**: Each relation row on Test and Models starts with its meaning and shows the code after it (e.g. 'Graph files match manifest (R1)'), and its key does not wrap to 3 lines.
+- **Fix**: `renderers.relation_rows` puts the meaning first and the code after ('Graph files match the workspace manifest (R1)', 'Model trained on this graph (R3)'; a relation without words its recorded name, 'Data version bound to this graph' as before), and `renderers.relations_html` is their one list on Test (under one 'Relations' key across the Result) and Models (under each record), its key column holding the whole name on one line. Models' 24-metric chain and its Environment line stay R-82's.
 - **Sources**: UX:274 (appendix 72); RJ audits[2].findings[8]; BL:1030 (item 72 Models)
-- **Closed at**: —
+- **Closed at**: 751b8d7. Tests: `test_webui_renderers.py::test_the_research_table_row_has_its_columns_and_escapes`, `test_webui_models_page.py::test_the_detail_keeps_validation_and_mode_c_apart`, `test_webui_test_page.py::test_the_result_shows_aggregates_and_states_never_a_case_or_a_path` (fail on 0f4ae91: 'R3 model trained …'). Seen on a CPU demo copy at 1850×960: Test and Models read 'Graph files match the workspace manifest (R1) ● Verified' … 'Data version bound to this graph ● Verified', each row one line.
 
 #### K7-P3 · Register offered for kept Mode D report; no-model refusal named wrong control
 
