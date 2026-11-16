@@ -519,6 +519,31 @@ def test_the_model_in_use_is_not_read_while_the_app_is_built(monkeypatch):
     assert len(bodies) == 1 and "Checking the model in use" in bodies[0].value
 
 
+def test_the_cards_title_help_explains_the_card_and_its_reread_is_a_full_target(monkeypatch):
+    """R-10 and R-29: the 'Model in use' ⓘ sits in the card's title, and its
+    pinned bubble covered 55% of the card and 39% of Run Diagnosis (320 x 551
+    px at 181,401, the card at 17,534 to 385,685): the card is a help region
+    (`help.REGION_CLASS`), so the shared bubble keeps the whole card
+    uncovered (measured 0 px² at 1850 x 960 and 960 x 1080; the browser test
+    of the region is `test_webui_help.py`'s). The card's ↻ measured 23.3 x 16
+    px; it is the skill's 24 x 24 target, its negative margin keeping the
+    title row's height."""
+    from src.webui.components.help import HIT_TARGET, REGION_CLASS
+
+    demo, _ctx = _build_tab(monkeypatch)
+    card_box = next(b for b in demo.blocks.values()
+                    if getattr(b, "elem_id", None) == "shep-dx-card")
+    assert REGION_CLASS in card_box.elem_classes
+    title = next(b for b in demo.blocks.values()
+                 if getattr(b, "elem_id", None) == "shep-dx-card-title")
+    assert 'data-help="dx-card"' in title.value
+    css = " ".join(dp.PAGE_CSS.split())
+    rule = css[css.index(f"{dp._TAB} button.shep-dx-reread {{"):]
+    rule = rule[:rule.index("}")]
+    assert HIT_TARGET >= 24 and "padding: 0 4px" not in rule
+    assert f"min-width: {HIT_TARGET}px; min-height: {HIT_TARGET}px; margin: -4px 0;" in rule
+
+
 def test_after_a_stop_the_card_points_back_to_research(monkeypatch):
     """B4 (2): after a stop the card's "Back to research ›" (its state
     Stopped, from the backend) opens Research › Training, as the header's

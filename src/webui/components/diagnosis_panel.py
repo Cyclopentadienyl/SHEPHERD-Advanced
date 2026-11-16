@@ -112,7 +112,7 @@ from src.utils import csv_cells
 from src.utils.server_address import ServerAddressUnknownError, api_base_url
 from src.webui.components import diagnosis_card as card
 from src.webui.components.chips import D8_SHORT
-from src.webui.components.help import help_button, text_id
+from src.webui.components.help import HIT_TARGET, REGION_CLASS, help_button, text_id
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import OPTION_CHARS
@@ -3118,7 +3118,10 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                                                  elem_id="dx_explanations",
                                                                  min_width=0)
                 with gr.Column(elem_id="shep-dx-sticky", elem_classes=["shep-dx-sticky"]):
-                    with gr.Column(elem_id="shep-dx-card", elem_classes=["shep-dx-card"]):
+                    # Its title's ⓘ explains the whole card: its bubble is placed
+                    # outside the card (`help.REGION_CLASS`).
+                    with gr.Column(elem_id="shep-dx-card",
+                                   elem_classes=["shep-dx-card", REGION_CLASS]):
                         with gr.Row(elem_id="shep-dx-card-hd", elem_classes=["shep-dx-card-hd"]):
                             plain_html('<span class="shep-dx-card-title">Model in use</span>'
                                        + help_button("dx-card", "Model in use"),
@@ -3601,7 +3604,9 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-card-title {{ white-space: nowrap; }}
 {_TAB} .shep-dx-card-title {{ font-size: 14px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--shep-text-2); }}
 {_TAB} .shep-dx-checked {{ font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }}
-{_TAB} button.shep-dx-reread {{ border: 0; background: none; color: var(--shep-accent-text); font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1; }}
+{_TAB} button.shep-dx-reread {{ border: 0; background: none; color: var(--shep-accent-text); font-size: 16px; cursor: pointer; padding: 0; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; min-width: {HIT_TARGET}px; min-height: {HIT_TARGET}px; margin: -4px 0; border-radius: 6px; }}
+{_TAB} button.shep-dx-reread:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 0; }}
 {_TAB} .shep-dx-card-bd {{ display: flex; flex-direction: column; gap: 1px; font-size: 15px; line-height: 1.3; }}
 {_TAB} .shep-dx-card-bd p {{ margin: 0; }}
 {_TAB} .shep-dx-name {{ font-weight: 600; }}

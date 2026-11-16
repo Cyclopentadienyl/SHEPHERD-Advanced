@@ -10,14 +10,23 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   its title is the field's label; no component keeps ordinary help in
   ``info=``, which holds only what must stay visible (a field's format, unit
   or "off"); every ⓘ the shared renderers draw names a registered text;
-- **the browser side** fills the bubble with ``textContent`` and is given to
-  the mount's ``head`` (Gradio 6 drops a head given to ``gr.Blocks``); in a
-  real headless browser (Node and Playwright, skipped without): a hover
-  previews after a delay as a tooltip, a click pins a dialog named by its
-  title, the pinned bubble never covers the field it explains (beside, then
-  above, then below) at a wide and a narrow window, its width stays within
-  the budget, the ⓘ's hit target is at least 24 × 24 px, and a hostile text
-  shows as literal text.
+- **the text grammar and its budget** (`help_lines`, `budget_problems`, the
+  WebUI skill's §7): every text the built dashboard registers has a lead of
+  about 90 characters, a few items, at most 80 words, no sentence over 25
+  words and its codes only in a trailing "Ref:" line; the Test and Models
+  texts at most three items, the train/test overlap text its two
+  definitions in about 55 words; and every editable field of Training's
+  Model accordion has help;
+- **the browser side** builds the bubble's parts with ``createElement`` and
+  ``textContent`` and is given to the mount's ``head`` (Gradio 6 drops a
+  head given to ``gr.Blocks``); in a real headless browser (Node and
+  Playwright, skipped without): a hover previews after a delay as a tooltip
+  without "Esc to close", a click pins a dialog named by its title with it,
+  the pinned bubble never covers the field it explains (beside, then above,
+  then below), a card heading's ⓘ never covers its card, at a wide and a
+  narrow window, its width stays within the budget, the ⓘ's hit target is at
+  least 24 × 24 px, the lead is bold, "- " lines are one list and a "Term:"
+  is bold, and a hostile text shows as literal text in each part.
 
 Module: tests/unit/test_webui_help.py
 """
@@ -94,9 +103,11 @@ def test_the_browser_side_reads_texts_as_text_and_goes_to_the_mount():
 
     head = mount_options()["head"]
     assert h.HELP_HEAD in head
-    # The bubble is filled with textContent: no help text is parsed as HTML.
-    assert "textContent = textOf(btn)" in h.HELP_HEAD
-    assert "innerHTML = textOf" not in h.HELP_HEAD
+    # The bubble's parts are made and filled with textContent: no help text
+    # is parsed as HTML (the one innerHTML is the ⓘ's own icon).
+    assert "fill(b.querySelector('.shep-bubble-bd'), textOf(btn))" in h.HELP_HEAD
+    assert h.HELP_HEAD.count("innerHTML") == 1 and "btn.innerHTML = '<svg" in h.HELP_HEAD
+    assert "insertAdjacentHTML" not in h.HELP_HEAD and "outerHTML" not in h.HELP_HEAD
     for behaviour in ("mouseover", "focusin", "'click'", "Escape", "MutationObserver",
                       "aria-expanded", "aria-describedby"):
         assert behaviour in h.HELP_HEAD, behaviour
@@ -138,6 +149,45 @@ def test_the_bubble_is_a_tooltip_previewing_and_a_dialog_when_pinned():
     assert "['right', 'left', 'above', 'below']" in head and "overlaps(" in head
 
 
+# --------------------------------------------------------------------------- the text grammar
+def test_a_help_text_reads_as_a_lead_items_terms_and_a_ref_line():
+    """The grammar the bubble shows (and the script reads by the same
+    patterns): the first line is the lead, "- " lines are items, a short
+    capitalised "Term: " is bold, a trailing "Ref:" line holds the codes; a
+    blank line only separates; a lead is never split into a term."""
+    lines = h.help_lines("Default: the lead, never a term.\n\n- Item one\n"
+                         "- Term: an item with a term\nPlain words: a sentence's colon, "
+                         "too long to be a term here: x\nReference: 200.\nRef: SHEPHERD_X")
+    assert [(line.kind, line.term) for line in lines] == [
+        ("lead", None), ("item", None), ("item", "Term"), ("para", "Plain words"),
+        ("para", "Reference"), ("ref", "Ref")]
+    assert lines[0].text == "Default: the lead, never a term."
+    assert lines[2].text == "an item with a term" and lines[-1].text == "SHEPHERD_X"
+    assert h.help_lines("one line") == (h.HelpLine("lead", "one line"),)
+    assert h.help_lines("lowercase: not a term\nauto: not one either")[1].term is None
+    assert f"new RegExp({json.dumps(h.TERM_PATTERN)})" in h.HELP_HEAD
+    assert f"BULLET = {json.dumps(h.BULLET)}" in h.HELP_HEAD
+
+
+def test_the_budget_names_what_a_text_runs_over():
+    assert h.budget_problems("A short lead.\n- one\n- two\nRef: D5; SHEPHERD_DEVICE") == ()
+    long_lead = h.budget_problems("x" * 101)
+    assert long_lead and "lead of 101 characters" in long_lead[0]
+    assert any("81 words" in p for p in h.budget_problems("Lead.\n" + "word " * 80))
+    assert any("a sentence of 26 words" in p
+               for p in h.budget_problems("Lead.\n" + "word " * 25 + "end."))
+    assert any("5 list items" in p for p in h.budget_problems("Lead.\n" + "- a\n" * 5))
+    for code in ("SHEPHERD_DEVICE", "(D5)", "R10", "README C6", "repo@e95433a", "train.py",
+                 "mode M1"):
+        assert any("a code outside the Ref line" in p
+                   for p in h.budget_problems(f"Lead.\nIt names {code} here.")), code
+    assert any("'•' bullet" in p for p in h.budget_problems("Lead.\n• old bullet"))
+    assert any("not the last line" in p for p in h.budget_problems("Lead.\nRef: x\nmore"))
+    # A governed note shown elsewhere as one line keeps its words, a sentence a line.
+    assert h.sentence_lines("One. Two words? Three!") == "One.\nTwo words?\nThree!"
+    assert h.sentence_lines(None) is None
+
+
 # --------------------------------------------------------------------------- in a real browser
 HOSTILE = "<img src=x onerror=window.__pwned=true> & more"
 HOST = Path(__file__).resolve().parent.parent / "fixtures" / "help_host.cjs"
@@ -147,9 +197,13 @@ def _page(tmp_path: Path) -> Path:
     registry = h.HelpRegistry()
     # As Gradio 6 draws a field: the component's block (its elem_id), its
     # <label> a "block" too, the title in it.
-    registry.field("fld", "Epochs", "How many passes. " + HOSTILE)
+    registry.field("fld", "Epochs", f"How many passes. {HOSTILE}\n\n- Smoke test: 2-5 {HOSTILE}"
+                   f"\n- Every pass sees each pair once.\nDefault: 200, {HOSTILE}\n"
+                   "Ref: SHEPHERD_X hparams.py:18")
     registry.topic("kv-help", "A key", "What the key means. " + HOSTILE)
     registry.topic("row-help", "A row", "What the row says.")
+    registry.topic("card-help", "A card", "What the card shows.\n\n- Its state.\n- When it "
+                   "is read.\n- Why it can be grey.")
     page = f"""<!doctype html><html><head><meta charset="utf-8">
 <style>:root {{ --shep-accent: #5558e3; --shep-accent-50: #eef0ff; --shep-accent-text: #3a3dbd;
 --shep-border: #e1e4ea; --shep-border-2: #cdd2da; --shep-text: #1d2230; --shep-muted: #5b6270; }}
@@ -163,6 +217,12 @@ body {{ margin: 0; font: 15px sans-serif; }}
 <span class="shep-v">its value, long enough to fill the row</span></div>
 <table id="tbl" style="margin: 24px 40px; width: calc(100% - 80px)"><tr>
 <td>A row{h.help_button("row-help", "A row")}</td><td>its cells</td></tr></table>
+<div id="card" class="{h.REGION_CLASS}" style="margin: 24px 40px; width: 340px; padding: 8px;
+border: 1px solid #ccc"><div style="display: flex"><div class="shep-card-title"
+style="flex: 0 0 auto"><span>A card</span>{h.help_button("card-help", "A card")}</div>
+<span style="margin-left: auto">read 12:00</span></div><p>Its state, read now, and long lines
+that fill the card's width so a bubble beside its title would cover them.</p>
+<p>More of the card.</p></div>
 <div style="height: 1400px"></div>
 {registry.texts_html()}</body></html>"""
     path = tmp_path / "help.html"
@@ -175,10 +235,13 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
     one (420 × 800), for a field's ⓘ, a key-value row's and a table row's: a
     hover opens nothing before the delay and a tooltip after it; a click pins
     a dialog named by the help's title; the bubble's rect does not intersect
-    the field's (measured here, by the test's own rule) and is not under the
-    field's centre (``document.elementsFromPoint``); it is at most 320 px
-    wide; the ⓘ's hit target is at least 24 × 24; a hostile text is literal
-    text and runs nothing; Esc closes it back to a tooltip."""
+    field's (measured here, by the test's own rule) and is not under the
+    field's centre (``document.elementsFromPoint``); a card heading's ⓘ (a
+    region, R-10) never covers its card; it is at most 320 px wide; the ⓘ's
+    hit target is at least 24 × 24; "Esc to close" shows only pinned
+    (R-29); the field's text shows a bold lead, its "- " lines as one list,
+    a bold "Term:" and a muted Ref line (R-9), a hostile text in each part is
+    literal text and runs nothing; Esc closes it back to a tooltip."""
     found = node_with_playwright()
     if found is None:
         pytest.skip("Node with Playwright is not installed")
@@ -189,13 +252,16 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
     sizes = json.loads(result.stdout)
     assert set(sizes) == {"1850x960", "420x800"}
     for size, targets in sizes.items():
+        assert set(targets) == {"field", "kv", "row", "region"}
         for which, seen in targets.items():
             where = f"{size} {which}"
             assert seen["hit"]["width"] >= 24 and seen["hit"]["height"] >= 24, where
             assert seen["early"] is False and seen["hover"] == "tooltip", where
+            assert seen["hoverFooter"] is False and seen["pinnedFooter"] is True, where
             pinned = seen["pinned"]
             assert not pinned["hidden"] and pinned["role"] == "dialog", where
-            assert pinned["labelledby"] and pinned["title"] in ("Epochs", "A key", "A row"), where
+            assert pinned["labelledby"] and pinned["title"] in ("Epochs", "A key", "A row",
+                                                                "A card"), where
             b, f = pinned["bubble"], pinned["field"]
             assert not (b["left"] < f["right"] and f["left"] < b["right"]
                         and b["top"] < f["bottom"] and f["top"] < b["bottom"]), (where, b, f)
@@ -206,6 +272,21 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
             if which in ("field", "kv"):
                 assert HOSTILE in pinned["text"], where
             assert seen["closed"] is True, where
+            parts = pinned["parts"]
+            assert parts[0]["tag"] == "p" and parts[0]["cls"] == "shep-bubble-lead", where
+            assert int(parts[0]["weight"]) >= 600, where
+        # The structured text, part by part: each hostile text literal in it.
+        field = targets["field"]["pinned"]["parts"]
+        assert [(p["tag"], p["cls"]) for p in field] == [
+            ("p", "shep-bubble-lead"), ("ul", "shep-bubble-list"), ("p", ""),
+            ("p", "shep-bubble-ref")], size
+        assert field[0]["text"] == f"How many passes. {HOSTILE}"
+        assert field[1]["items"] == [f"Smoke test: 2-5 {HOSTILE}", "Every pass sees each pair once."]
+        assert field[1]["terms"] == [{"text": "Smoke test:", "weight": field[1]["terms"][0]["weight"]}]
+        assert int(field[1]["terms"][0]["weight"]) >= 600
+        assert field[2]["text"] == f"Default: 200, {HOSTILE}" and field[2]["terms"][0]["text"] == "Default:"
+        assert field[3]["text"] == "Ref: SHEPHERD_X hparams.py:18"
+        assert [p["tag"] for p in targets["region"]["pinned"]["parts"]] == ["p", "ul"]
 
 
 _DESCRIBED_JS = r"""
@@ -369,3 +450,4 @@ def test_every_renderer_help_key_is_registered(built):
     assert set(keys) >= {"dataset-fingerprint", "validation-trainer", "model-fingerprint"}
     for key in keys:
         assert key in registry, key
+

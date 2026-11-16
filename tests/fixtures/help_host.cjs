@@ -1,12 +1,14 @@
 // Drives the shared help bubble (src/webui/components/help.py's HELP_HEAD and
 // HELP_CSS) in a real headless browser, on a page the test builds: a
-// registered field (a Gradio-like ".block" with its title), a key-value row
-// and a table row, each with its ⓘ. For each ⓘ, at each window size, it
-// reports what a hover does before and after the open delay, what a click
-// pins (the bubble's role and name, its text, any element its text made),
-// the bubble's rect and the explained field's rect, measured here by the
-// test's own rule (not the bubble's), and what document.elementsFromPoint
-// finds at the field's centre.
+// registered field (a Gradio-like ".block" with its title), a key-value row,
+// a table row and a card's heading (a region marked "shep-help-region"),
+// each with its ⓘ. For each ⓘ, at each window size, it reports what a hover
+// does before and after the open delay (and whether its preview shows the
+// "Esc to close" footer), what a click pins (the bubble's role and name, its
+// text, its body's parts as the bubble built them, any element its text
+// made, the footer), the bubble's rect and the explained field's rect,
+// measured here by the test's own rule (not the bubble's), and what
+// document.elementsFromPoint finds at the field's centre.
 //
 // usage: node tests/fixtures/help_host.cjs <page.html>
 // prints {"<width>x<height>": {"<which>": {...}}} as JSON;
@@ -20,6 +22,7 @@ const TARGETS = {
   field: { button: "#fld button.shep-i", field: "#fld" },
   kv: { button: ".shep-kv button.shep-i", field: null },
   row: { button: "#tbl tr button.shep-i", field: "#tbl tr" },
+  region: { button: "#card .shep-card-title button.shep-i", field: "#card" },
 };
 
 (async () => {
@@ -42,12 +45,24 @@ const TARGETS = {
           const b = document.getElementById("shep-help-bubble");
           return !!b && !b.hidden;
         });
-        await page.waitForTimeout(500);
+        // The preview opens after the delay: waited for by what it shows.
+        await page.waitForFunction(() => {
+          const b = document.getElementById("shep-help-bubble");
+          return !!b && !b.hidden;
+        });
+        const footerShown = (b) => {
+          const ft = b.querySelector(".shep-bubble-ft");
+          return !!ft && !ft.hidden && getComputedStyle(ft).display !== "none"
+            && ft.getBoundingClientRect().height > 0;
+        };
         const hover = await page.evaluate(() => {
           const b = document.getElementById("shep-help-bubble");
           return b && !b.hidden ? b.getAttribute("role") : null;
         });
+        const hoverFooter = await page.evaluate(`(${footerShown})(document.getElementById("shep-help-bubble"))`);
         await button.click();
+        await page.waitForFunction(() => document.getElementById("shep-help-bubble").getAttribute("role") === "dialog");
+        const pinnedFooter = await page.evaluate(`(${footerShown})(document.getElementById("shep-help-bubble"))`);
         const pinned = await page.evaluate((fieldSel) => {
           const b = document.getElementById("shep-help-bubble");
           const box = (r) => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom });
@@ -68,6 +83,13 @@ const TARGETS = {
             labelledby: b.getAttribute("aria-labelledby"),
             title: (document.getElementById(b.getAttribute("aria-labelledby") || "") || {}).textContent || null,
             text: b.querySelector(".shep-bubble-bd").textContent,
+            parts: Array.from(b.querySelector(".shep-bubble-bd").children).map((el) => ({
+              tag: el.tagName.toLowerCase(), cls: el.className, text: el.textContent,
+              weight: getComputedStyle(el).fontWeight,
+              items: Array.from(el.querySelectorAll(":scope > li")).map((li) => li.textContent),
+              terms: Array.from(el.querySelectorAll("strong")).map((t) => ({
+                text: t.textContent, weight: getComputedStyle(t).fontWeight })),
+            })),
             made: b.querySelectorAll("img, script").length,
             pwned: window.__pwned === true,
             bubble: box(r), field,
@@ -83,8 +105,9 @@ const TARGETS = {
           return b.hidden && b.getAttribute("role") === "tooltip";
         });
         await page.mouse.move(1, 1);
-        await page.waitForTimeout(350);
-        size[which] = { hit: { width: hit.width, height: hit.height }, early, hover, pinned, closed };
+        await page.waitForFunction(() => document.getElementById("shep-help-bubble").hidden);
+        size[which] = { hit: { width: hit.width, height: hit.height }, early, hover, hoverFooter,
+                        pinnedFooter, pinned, closed };
       }
       out[`${width}x${height}`] = size;
       await page.close();

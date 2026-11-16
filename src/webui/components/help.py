@@ -52,8 +52,18 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   the side with more room with its height capped (a long text scrolls
   inside); at most 320 px wide (`BUBBLE_MAX_WIDTH`), the ⓘ's hit target at
   least 24 × 24 px;
-- fills the bubble with ``textContent`` only: no help text is ever parsed as
-  HTML in the browser.
+- fills the bubble by the help text's grammar (`help_lines`, the WebUI
+  skill's §7): its first line is the lead, shown bold; a line that starts
+  with "- " is an item of one list; a line led by a short term and ": "
+  shows the term bold ("Default: 0"); a trailing "Ref: …" line holds the
+  codes and source references, set apart; any other line is a paragraph.
+  Every part is an element made with ``createElement`` and filled with
+  ``textContent``: no help text is ever parsed as HTML in the browser;
+- a ⓘ that is not a field's, a table row's or a key-value row's and sits
+  inside a region marked `REGION_CLASS` (a card it heads) places its bubble
+  outside that whole region when one of the four sides fits, else outside
+  the line it sits in, as any other ⓘ;
+- shows "Esc to close" only on a pinned bubble (a dialog); a preview has none.
 
 The same script copies a full value from a ``button.shep-copy`` (``data-copy``)
 to the clipboard: the shared renderers show 12 hex digits and copy all 64.
@@ -80,6 +90,117 @@ TEXT_ID_PREFIX = "shep-help-text-"
 BUBBLE_MAX_WIDTH = 320
 HOVER_OPEN_MS = 300
 HIT_TARGET = 24
+
+#: The class of a region whose heading's ⓘ explains the whole region (a
+#: card): its bubble is placed outside the region, not only outside the line
+#: the ⓘ sits in (`fieldRect`'s ``regionRect``).
+REGION_CLASS = "shep-help-region"
+
+#: **A help text's grammar**, read the same way by `help_lines` and by the
+#: bubble's script (the patterns are given to it as written here): the first
+#: line is the lead; a line starting with `BULLET` is a list item; a line (or
+#: an item) led by a short capitalised term, then ": ", shows the term bold;
+#: a line starting with `REF_PREFIX` holds the codes and source references.
+#: A blank line only separates.
+BULLET = "- "
+TERM_PATTERN = r"^([A-Z][^:.!?]{0,31}):\s+(\S.*)$"
+REF_PREFIX = "Ref:"
+_TERM = re.compile(TERM_PATTERN)
+
+
+@dataclass(frozen=True)
+class HelpLine:
+    """One line of a help text as the bubble shows it: its `kind` ("lead",
+    "item", "para" or "ref"), its `term` (shown bold, without its ": "), and
+    the rest of its text."""
+
+    kind: str
+    text: str
+    term: Optional[str] = None
+
+
+def help_lines(text: str) -> Tuple[HelpLine, ...]:
+    """A help text's lines by the grammar the bubble shows (`TERM_PATTERN`)."""
+    out = []
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        if not out:
+            out.append(HelpLine("lead", line))
+            continue
+        kind = "para"
+        if line.startswith(BULLET):
+            kind, line = "item", line[len(BULLET):].strip()
+        elif line.startswith(REF_PREFIX):
+            kind = "ref"
+        found = _TERM.match(line)
+        out.append(HelpLine(kind, found.group(2), found.group(1)) if found
+                   else HelpLine(kind, line))
+    return tuple(out)
+
+
+def sentence_lines(text: Optional[str]) -> Optional[str]:
+    """A text written as one paragraph (a governed note shown elsewhere as a
+    line) with each sentence on a line of its own, so the bubble's lead is its
+    first sentence; its words are unchanged. None stays None."""
+    if text is None:
+        return None
+    return "\n".join(part for part in _SENTENCE_END.split(text.strip()) if part)
+
+
+@dataclass(frozen=True)
+class HelpBudget:
+    """The WebUI skill's §7 budget, as the test over every registered text
+    reads it: a lead of about 90 characters (`lead_chars` the most), a few
+    items, about 60-80 words in all without the Ref line, no sentence over
+    25 words, and internal codes (`CODE`) only in the trailing Ref line."""
+
+    lead_chars: int = 100
+    words: int = 80
+    sentence_words: int = 25
+    items: int = 4
+
+
+HELP_BUDGET = HelpBudget()
+
+#: Internal codes a help text names only in its trailing Ref line (the WebUI
+#: skill's §5): setting names, decision, review and README codes, a source
+#: commit or file, and a deployment mode's code.
+CODE = re.compile(r"SHEPHERD_[A-Z_]+|\b[DR]\d{1,2}\b|\bREADME\b|@[0-9a-f]{7,}|"
+                  r"\b\w+\.py\b|\bMode [A-Z]\b|\bM\d\b")
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def budget_problems(text: str, budget: HelpBudget = HELP_BUDGET) -> Tuple[str, ...]:
+    """What in `text` is over the budget (`HelpBudget`), in words; none for
+    a text within it."""
+    lines = help_lines(text)
+    problems = []
+    if not lines:
+        return ("no text",)
+    if len(lines[0].text) > budget.lead_chars:
+        problems.append(f"lead of {len(lines[0].text)} characters (at most {budget.lead_chars})")
+    body = [line for line in lines if line.kind != "ref"]
+    words = sum(len(f"{line.term or ''} {line.text}".split()) for line in body)
+    if words > budget.words:
+        problems.append(f"{words} words (at most {budget.words})")
+    items = sum(line.kind == "item" for line in lines)
+    if items > budget.items:
+        problems.append(f"{items} list items (at most {budget.items})")
+    for line in body:
+        whole = f"{line.term}: {line.text}" if line.term else line.text
+        for sentence in _SENTENCE_END.split(whole):
+            if len(sentence.split()) > budget.sentence_words:
+                problems.append(f"a sentence of {len(sentence.split())} words: {sentence[:40]}…")
+        if CODE.search(whole):
+            problems.append(f"a code outside the Ref line: {CODE.search(whole).group(0)}")
+        if whole.startswith("•"):
+            problems.append("a '•' bullet (items start with '- ')")
+    refs = [i for i, line in enumerate(lines) if line.kind == "ref"]
+    if refs and refs != [len(lines) - 1]:
+        problems.append("a Ref line that is not the last line")
+    return tuple(problems)
 
 #: The ⓘ glyph: an inline SVG, so no font or network is needed.
 _I_ICON = ('<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" '
@@ -211,6 +332,7 @@ _HELP_JS = r"""
   if (window.ShepHelp) { return; }
   var SEL = 'button.shep-i';
   var MAX_W = __MAX_W__, HOVER_MS = __HOVER_MS__, GAP = 10, EDGE = 8;
+  var REGION = '__REGION__', BULLET = __BULLET__, REF = __REF__, TERM = new RegExp(__TERM__);
   var bubble = null, anchor = null, anchorKey = null, pinned = false;
   var hideTimer = null, openTimer = null, previewFor = null;
 
@@ -224,6 +346,37 @@ _HELP_JS = r"""
       if (el) { return el.textContent; }
     }
     return '';
+  }
+  // A help text's grammar (help.py's help_lines): the first line is the lead,
+  // "- " lines one list, a short "Term:" shown bold, a trailing "Ref:" line
+  // set apart. Every part is made here and filled with textContent.
+  function termInto(el, line) {
+    var m = TERM.exec(line);
+    if (!m) { el.textContent = line; return; }
+    var t = document.createElement('strong');
+    t.className = 'shep-bubble-term'; t.textContent = m[1] + ':';
+    el.appendChild(t); el.appendChild(document.createTextNode(' ' + m[2]));
+  }
+  function fill(bd, text) {
+    while (bd.firstChild) { bd.removeChild(bd.firstChild); }
+    var lines = String(text || '').split('\n'), list = null, lead = true;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (!line) { continue; }
+      if (lead) {
+        var p0 = document.createElement('p'); p0.className = 'shep-bubble-lead';
+        p0.textContent = line; bd.appendChild(p0); lead = false; continue;
+      }
+      if (line.indexOf(BULLET) === 0) {
+        if (!list) { list = document.createElement('ul'); list.className = 'shep-bubble-list'; bd.appendChild(list); }
+        var li = document.createElement('li');
+        termInto(li, line.slice(BULLET.length).trim()); list.appendChild(li); continue;
+      }
+      list = null;
+      var p = document.createElement('p');
+      if (line.indexOf(REF) === 0) { p.className = 'shep-bubble-ref'; }
+      termInto(p, line); bd.appendChild(p);
+    }
   }
   function titleOf(btn) {
     return btn.getAttribute('data-help-title') ||
@@ -260,11 +413,20 @@ _HELP_JS = r"""
   // only its label), else its table row, else its key-value row (the key
   // cell and the value beside it), else the line the ⓘ sits in.
   function box(r) { return {left: r.left, top: r.top, right: r.right, bottom: r.bottom}; }
-  function fieldRect(btn) {
+  function ownField(btn) {
     var el = btn.classList.contains('shep-i-field') &&
       document.getElementById(btn.getAttribute('data-help') || '');
-    el = (el && el.contains(btn)) ? el : null;
-    el = el || btn.closest('tr');
+    return (el && el.contains(btn)) ? el : null;
+  }
+  // A ⓘ that is no field's, table row's or key-value row's, inside a region
+  // marked REGION (a card it heads): the region, kept uncovered when a side fits.
+  function regionRect(btn) {
+    if (ownField(btn) || btn.closest('tr') || btn.closest('.shep-k')) { return null; }
+    var region = btn.closest('.' + REGION);
+    return region ? box(region.getBoundingClientRect()) : null;
+  }
+  function fieldRect(btn) {
+    var el = ownField(btn) || btn.closest('tr');
     if (!el) {
       var key = btn.closest('.shep-k');
       if (key) {
@@ -288,7 +450,7 @@ _HELP_JS = r"""
       if (again) { anchor = again; anchor.setAttribute('aria-expanded', 'true'); }
       else { close(false); return; }
     }
-    var a = anchor.getBoundingClientRect(), f = fieldRect(anchor);
+    var a = anchor.getBoundingClientRect(), f = fieldRect(anchor), region = regionRect(anchor);
     var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
     var width = Math.max(220, Math.min(MAX_W, vw - 2 * EDGE));
     bubble.style.maxWidth = width + 'px';
@@ -297,23 +459,28 @@ _HELP_JS = r"""
     var cx = a.left + a.width / 2, cy = a.top + a.height / 2;
     function x(left, w) { return Math.min(Math.max(EDGE, left), vw - w - EDGE); }
     function y(top, h) { return Math.min(Math.max(EDGE, top), vh - h - EDGE); }
-    function at(side, w, h) {
-      if (side === 'right') { return {side: side, left: f.right + GAP, top: y(cy - 24, h), w: w, h: h}; }
-      if (side === 'left') { return {side: side, left: f.left - GAP - w, top: y(cy - 24, h), w: w, h: h}; }
-      if (side === 'above') { return {side: side, left: x(cx - 24, w), top: f.top - GAP - h, w: w, h: h}; }
-      return {side: side, left: x(cx - 24, w), top: f.bottom + GAP, w: w, h: h};
+    function at(side, w, h, g) {
+      g = g || f;
+      if (side === 'right') { return {side: side, left: g.right + GAP, top: y(cy - 24, h), w: w, h: h}; }
+      if (side === 'left') { return {side: side, left: g.left - GAP - w, top: y(cy - 24, h), w: w, h: h}; }
+      if (side === 'above') { return {side: side, left: x(cx - 24, w), top: g.top - GAP - h, w: w, h: h}; }
+      return {side: side, left: x(cx - 24, w), top: g.bottom + GAP, w: w, h: h};
     }
-    function fits(p) {
+    function fits(p, g) {
       return p.left >= EDGE && p.top >= EDGE && p.left + p.w <= vw - EDGE &&
         p.top + p.h <= vh - EDGE &&
-        !overlaps({left: p.left, top: p.top, right: p.left + p.w, bottom: p.top + p.h}, f);
+        !overlaps({left: p.left, top: p.top, right: p.left + p.w, bottom: p.top + p.h}, g);
     }
     // Beside the field, then above it, then below it: the first that fits
-    // the window and leaves the field uncovered.
+    // the window and leaves the field uncovered; a region's ⓘ tries the
+    // whole region first.
     var sides = ['right', 'left', 'above', 'below'], chosen = null;
-    for (var i = 0; i < sides.length && !chosen; i++) {
-      var p = at(sides[i], bw, bh);
-      if (fits(p)) { chosen = p; }
+    var guards = region ? [region, f] : [f];
+    for (var k = 0; k < guards.length && !chosen; k++) {
+      for (var i = 0; i < sides.length && !chosen; i++) {
+        var p = at(sides[i], bw, bh, guards[k]);
+        if (fits(p, guards[k])) { chosen = p; }
+      }
     }
     if (!chosen) {
       // Narrower beside it, on the side with room for 220 px or more.
@@ -346,6 +513,8 @@ _HELP_JS = r"""
   function setRole() {
     if (!bubble) { return; }
     bubble.setAttribute('role', pinned ? 'dialog' : 'tooltip');
+    // "Esc to close" is a pinned bubble's: a preview closes as the pointer leaves.
+    bubble.querySelector('.shep-bubble-ft').hidden = !pinned;
     if (pinned) { bubble.setAttribute('aria-labelledby', 'shep-help-bubble-title'); }
     else { bubble.removeAttribute('aria-labelledby'); }
   }
@@ -357,7 +526,7 @@ _HELP_JS = r"""
     pinned = pin ? true : pinned;
     var b = ensureBubble();
     b.querySelector('.shep-bubble-title').textContent = titleOf(btn);
-    b.querySelector('.shep-bubble-bd').textContent = textOf(btn);
+    fill(b.querySelector('.shep-bubble-bd'), textOf(btn));
     setRole();
     b.hidden = false;
     btn.setAttribute('aria-expanded', 'true');
@@ -384,9 +553,11 @@ _HELP_JS = r"""
     anchor = null; anchorKey = null; pinned = false;
     setRole();
   }
+  // A hide the last ⓘ's pointer left behind never cancels another ⓘ's
+  // preview that is waiting to open: that one replaces the bubble instead.
   function scheduleHide() {
     clearTimeout(hideTimer);
-    hideTimer = setTimeout(function () { if (!pinned) { close(false); } }, 250);
+    hideTimer = setTimeout(function () { if (!pinned && !previewFor) { close(false); } }, 250);
   }
   document.addEventListener('mouseover', function (e) {
     var btn = closestHelp(e.target);
@@ -528,7 +699,11 @@ _HELP_JS = r"""
 #: The help control's script, for the mount's ``head=`` (`src/webui/app.py`).
 HELP_HEAD = "<script>" + (_HELP_JS.replace("__I_ICON__", _I_ICON.replace("'", "\\'"))
                           .replace("__MAX_W__", str(BUBBLE_MAX_WIDTH))
-                          .replace("__HOVER_MS__", str(HOVER_OPEN_MS))) + "</script>"
+                          .replace("__HOVER_MS__", str(HOVER_OPEN_MS))
+                          .replace("__REGION__", REGION_CLASS)
+                          .replace("__BULLET__", json.dumps(BULLET))
+                          .replace("__REF__", json.dumps(REF_PREFIX))
+                          .replace("__TERM__", json.dumps(TERM_PATTERN))) + "</script>"
 
 
 #: The look of the ⓘ and its bubble (part of the dashboard's CSS). The ⓘ's
@@ -575,8 +750,16 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
   margin-left: auto; width: 26px; height: 26px; border: 0; background: none; color: var(--shep-muted);
   display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 18px; cursor: pointer;
 }
-.shep-bubble-bd { white-space: pre-line; overflow-wrap: anywhere; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
+.shep-bubble-bd { overflow-wrap: anywhere; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
+.shep-bubble-bd > p, .shep-bubble-bd > ul { margin: 0; }
+.shep-bubble-bd > * + * { margin-top: 6px; }
+.shep-bubble-lead, .shep-bubble-term { font-weight: 600; }
+.shep-bubble-list { padding: 0 0 0 18px; list-style: disc outside; }
+.shep-bubble-list > li { margin: 0; padding: 0; }
+.shep-bubble-list > li + li { margin-top: 2px; }
+.shep-bubble-bd > .shep-bubble-ref { font-size: 14px; color: var(--shep-muted); }
 .shep-bubble-hd, .shep-bubble-ft { flex: none; }
+.shep-bubble-ft[hidden] { display: none; }
 .shep-bubble-ft { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--shep-border); font-size: 14px; color: var(--shep-muted); }
 .shep-kbd {
   display: inline-block; font-size: 14px; padding: 0 6px; border: 1px solid var(--shep-border-2);
@@ -602,12 +785,23 @@ def as_json_for_script(value: object) -> str:
 __all__ = [
     "HELP_CSS",
     "HELP_HEAD",
+    "BULLET",
+    "CODE",
+    "HELP_BUDGET",
+    "HelpBudget",
     "HelpEntry",
+    "HelpLine",
     "HelpRegistry",
+    "REF_PREFIX",
+    "REGION_CLASS",
+    "TERM_PATTERN",
     "TEXT_ID_PREFIX",
     "as_json_for_script",
+    "budget_problems",
     "copy_button",
     "help_button",
+    "help_lines",
+    "sentence_lines",
     "registered_keys_in",
     "text_id",
 ]
