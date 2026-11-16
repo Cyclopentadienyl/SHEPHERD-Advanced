@@ -2256,8 +2256,18 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
         return (r.status_mark("neutral", f"dataset {r.CANNOT_BE_VERIFIED.lower()}: the run "
                                          "bar's dataset has no fingerprint"), row)
     if recorded == current:
-        return r.status_mark("ok", "same dataset as the run bar", as_chip=True), row
+        # A normal state, so quiet (R-57; the skill's §6): the mark and its
+        # word, no tag.
+        return r.status_mark("ok", "same dataset as the run bar"), row
     return r.warn_chip("not the selected dataset"), row
+
+
+#: The icon before "the run continued from" (or branched from) in the run
+#: view's header: an arrow from a parent, drawn in the text's colour.
+_FROM_ICON = ('<svg class="shep-rv-from-ic" width="14" height="14" viewBox="0 0 16 16" '
+              'aria-hidden="true" focusable="false"><path d="M4 2.5V8a3 3 0 0 0 3 3h5.5" '
+              'fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9.5 8l3 3-3 3" '
+              'fill="none" stroke="currentColor" stroke-width="1.6"/></svg>')
 
 
 def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: bool,
@@ -2285,9 +2295,11 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
     said = f'<span class="shep-rv-rel">{r.e(relation)}</span>' if relation else ""
     if continuing:
         done = OPERATION_VERBS[operation][1]
-        said += (f'<span class="shep-tag shep-tag-accent">the run {done} from</span>'
+        # A relation, not a state to watch and not a link (R-57): plain grey
+        # text, the run continued from led by its icon.
+        said += (f'<span class="shep-rv-from">{_FROM_ICON}the run {done} from</span>'
                  if continuing == label else
-                 f'<span class="shep-tag shep-tag-grey">not the run {done} from</span>')
+                 f'<span class="shep-rv-from">not the run {done} from</span>')
     rows = [("Run", f"<code>{r.e(label)}</code>")]
     if run.get("workspace") and run.get("workspace") != ws.get("name"):
         # Said here only when it is not the run bar's (which names its own).
@@ -4968,6 +4980,8 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-run-head {{ flex: 1 1 540px !important; }}
 {_PAGE} .shep-rv-hd {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }}
 {_PAGE} .shep-rv-rel {{ font-size: 15px; font-weight: 600; color: var(--shep-text); }}
+{_PAGE} .shep-rv-from {{ display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--shep-text-2); }}
+{_PAGE} .shep-rv-from-ic {{ flex: none; }}
 {_PAGE} #shep-train-view-run .options {{ min-width: min(28rem, calc(100vw - 48px)); }}
 {_PAGE} #shep-train-view-run .options li {{ min-width: 100%; }}
 /* Details, at the header's end: its popover opens under it, aligned to the right. */

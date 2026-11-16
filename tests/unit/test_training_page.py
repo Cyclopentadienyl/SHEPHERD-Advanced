@@ -824,8 +824,10 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
     same = tc.run_head_html(run, ws, operator=True,
                             snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
     assert "same dataset as the run bar" in same and "a" * 12 in same     # the tag; Details
-    # By the shared OK mark, never a check glyph of the page's own (B5).
-    assert r.status_mark("ok", "same dataset as the run bar", as_chip=True) in same
+    # By the shared OK mark, never a check glyph of the page's own (B5), and
+    # quiet: a normal state is the mark and its word, never a tag (R-57).
+    assert r.status_mark("ok", "same dataset as the run bar") in same
+    assert "shep-tag" not in same
     other = tc.run_head_html(run, ws, operator=True,
                              snapshot={"readable": True, "dataset_fingerprint": "a" * 12 + "b" * 52})
     # 12 equal digits are not equal: a condition to watch, by the one mark (▲, amber).
