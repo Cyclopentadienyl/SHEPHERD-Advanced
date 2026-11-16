@@ -42,11 +42,11 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.api.operator_access import OPERATOR_ONLY
+from src.api.operator_access import OPERATOR_ONLY, answer_for
 from src.api.routes.diagnose import ServedIdentity
 from src.core.types import SCORING_MODE_TASKS, TASK_SCORING_MODES
 from src.utils.fingerprint import ReadOutside
@@ -396,9 +396,11 @@ def _refused(message: str, files: Dict[str, Any], **extra: Any) -> PipelineReloa
 
 
 @router.get("/pipeline/status", response_model=PipelineStatusResponse)
-async def get_pipeline_status() -> PipelineStatusResponse:
-    """Get current pipeline status."""
-    return _live_status()
+async def get_pipeline_status(request: Request) -> Any:
+    """What is served now (`_live_status`). An open route: a request D8 does
+    not allow gets it with no absolute server path (`answer_for`: the served
+    workspace's and checkpoint's are replaced), an operator as it is."""
+    return answer_for(request, _live_status())
 
 
 @router.post("/pipeline/reload", response_model=PipelineReloadResponse,

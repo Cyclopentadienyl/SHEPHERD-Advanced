@@ -784,17 +784,11 @@ def _facts_of(entry: Any) -> Any:
 
 def _redacted(value: Any) -> Any:
     """`value` with every text in it, an object's keys included, through the
-    one D7 redaction (`redact_paths`, no root named: any absolute path is
-    replaced); every other value as it is."""
-    from src.utils.path_redaction import redact_paths
+    one D7 redaction (`path_redaction.redact_value`, no root named: any
+    absolute path is replaced); every other value as it is."""
+    from src.utils.path_redaction import redact_value
 
-    if isinstance(value, str):
-        return redact_paths(value, (), other=_SERVER_PATH)
-    if isinstance(value, Mapping):
-        return {_redacted(key): _redacted(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_redacted(item) for item in value]
-    return value
+    return redact_value(value, (), other=_SERVER_PATH)
 
 
 def _identity_items(identity: Any) -> Tuple[Optional[str], List[Tuple[str, Optional[str]]]]:

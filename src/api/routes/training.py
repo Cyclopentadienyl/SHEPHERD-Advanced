@@ -42,13 +42,13 @@ import logging
 import re
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import (
     BaseModel, ConfigDict, Field, ValidationInfo, ValidatorFunctionWrapHandler, field_validator,
     model_validator,
 )
 
-from src.api.operator_access import OPERATOR_ONLY
+from src.api.operator_access import OPERATOR_ONLY, answer_for
 from src.api.services.training_manager import FinetuneInputs, training_manager
 from src.utils.run_plan import RUN_SETTINGS, new_run_settings
 
@@ -637,9 +637,12 @@ def stop_training() -> Dict[str, Any]:
 
 
 @router.get("/training/status", response_model=TrainingStatusResponse)
-async def get_training_status() -> Dict[str, Any]:
-    """Get current training status with latest metrics."""
-    return training_manager.get_status()
+async def get_training_status(request: Request) -> Dict[str, Any]:
+    """The current training job's status with its latest metrics. An open
+    route: a request D8 does not allow gets it with no absolute server path
+    (`answer_for`: the GPU lock's, the run directory, the paths in its
+    configuration and messages are replaced), an operator as it is."""
+    return answer_for(request, training_manager.get_status())
 
 
 @router.get("/training/metrics")

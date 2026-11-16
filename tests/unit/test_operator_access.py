@@ -604,6 +604,43 @@ def test_the_deployment_settings_route_hides_every_path_from_a_request_d8_refuse
         assert answer["settings_file"]["path"] is None
 
 
+def test_the_open_status_routes_name_no_server_path_to_a_request_d8_does_not_allow(
+        monkeypatch, tmp_path):
+    """UI-13 (BACKLOG 53): a read-only request (one carrying
+    ``X-Forwarded-For``, or not on loopback) read the pages' redaction around:
+    ``GET /training/status`` answered the GPU lock's absolute path and
+    ``GET /pipeline/status`` the served workspace's and checkpoint's. It gets
+    each as "a server path" now, the answer's shape and every other value as
+    they were; an operator's request gets the paths it acts on."""
+    from src.api.main import app_state
+
+    root = tmp_path / "Jane (MRN 1) ws"
+    root.mkdir()
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
+    snapshot = app_state.snapshot
+    monkeypatch.setattr(app_state, "snapshot", lambda: {
+        **snapshot(), "data_dir": str(root / "demo"),
+        "checkpoint_path": str(root / "demo" / "runs" / "r" / "last.pt")})
+    operator_mode(monkeypatch)
+    lock = str(root / ".shepherd-gpu.lock")
+    for read_only in (_app_client(headers={"X-Forwarded-For": "192.0.2.7"}),
+                      _app_client("http://192.0.2.10")):
+        training = read_only.get("/api/v1/training/status")
+        pipeline = read_only.get("/api/v1/pipeline/status")
+        assert training.status_code == pipeline.status_code == 200
+        assert training.json()["gpu"]["lock"]["path"] == "a server path"
+        assert training.json()["gpu"]["lock"]["configured"] is True
+        assert pipeline.json()["current_data_dir"] == "a server path"
+        assert pipeline.json()["current_checkpoint_path"] == "a server path"
+        for answer in (training, pipeline):
+            assert str(tmp_path) not in answer.text and "MRN" not in answer.text
+    operator = _app_client()
+    assert operator.get("/api/v1/training/status").json()["gpu"]["lock"]["path"] == lock
+    status = operator.get("/api/v1/pipeline/status").json()
+    assert status["current_data_dir"] == str(root / "demo")
+    assert status["current_checkpoint_path"] == str(root / "demo" / "runs" / "r" / "last.pt")
+
+
 # --------------------------------------------------------------------------- the dashboard
 #: Every state-changing Gradio handler, by module and name. Each takes a
 #: positional `gr.Request` (the one way Gradio passes it) and calls the helper.

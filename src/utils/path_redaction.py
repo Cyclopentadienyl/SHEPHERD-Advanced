@@ -17,7 +17,10 @@ Module: src/utils/path_redaction.py
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Sequence, Tuple
+from typing import Any, Dict, Mapping, Sequence, Tuple
+
+#: The words every surface uses for a server path it does not name.
+SERVER_PATH = "a server path"
 
 #: **The one pattern for an absolute path in a text** (M5-3 review
 #: ARCH-7: Datasets and Test had a copy each): POSIX (``/…``) or a drive letter
@@ -101,4 +104,21 @@ def redact_paths(text: Any, roots: Sequence[Tuple[str, str]], *, other: str) -> 
     return flat
 
 
-__all__ = ["redact_paths"]
+def redact_value(value: Any, roots: Sequence[Tuple[str, str]], *, other: str) -> Any:
+    """`value`, an answer's JSON-ready data, with every text in it through
+    `redact_paths`, an object's keys included; every other value as it is (a
+    tuple is answered as a list). The one form for a structure: a recorded
+    component's facts (`run_environment.recorded_components`) and what an open
+    read route answers a request D8 does not allow
+    (`src.api.operator_access.answer_for`)."""
+    if isinstance(value, str):
+        return redact_paths(value, roots, other=other)
+    if isinstance(value, Mapping):
+        return {redact_value(key, roots, other=other): redact_value(item, roots, other=other)
+                for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_value(item, roots, other=other) for item in value]
+    return value
+
+
+__all__ = ["SERVER_PATH", "redact_paths", "redact_value"]

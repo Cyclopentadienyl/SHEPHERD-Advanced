@@ -20,6 +20,13 @@ and cohort versions, the recorded results, diagnosis) stay open.
 The refusal's body names the condition that failed (`OperatorAccess.refusal`)
 and repeats no header value.
 
+**What an open read route answers** (`answer_for`, BACKLOG 53, D7): the status
+routes (``GET /pipeline/status``, ``GET /training/status``) answer a request D8
+allows as they are, every path an operator acts on included (the GPU lock's,
+the run directory, the served workspace and checkpoint); any other request,
+the same answer with every absolute server path replaced by "a server path".
+The pages read the same values in process and show paths their own way.
+
 Module: src/api/operator_access.py
 """
 from __future__ import annotations
@@ -27,8 +34,10 @@ from __future__ import annotations
 from typing import Any, List
 
 from fastapi import Depends, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
 
 from src.utils.operator_access import check_operator_access
+from src.utils.path_redaction import SERVER_PATH, redact_value
 
 
 async def require_operator_access(request: Request) -> None:
@@ -48,4 +57,23 @@ async def require_operator_access(request: Request) -> None:
 OPERATOR_ONLY: List[Any] = [Depends(require_operator_access)]
 
 
-__all__ = ["OPERATOR_ONLY", "require_operator_access"]
+#: This service's own routes, which a reason may name ("… or POST
+#: /api/v1/pipeline/reload"): a route, never a server path, so an answer keeps
+#: it as it is (`answer_for`).
+_ROUTES = (("/api/v1/", "/api/v1/"),)
+
+
+def answer_for(request: Request, answer: Any) -> Any:
+    """`answer` as an open read route gives it to `request`: as it is when D8
+    allows the request (an operator acts on these paths: a GPU lock's holder,
+    a run directory), and otherwise as JSON-ready data with every absolute
+    server path in every text replaced, an object's keys included
+    (`path_redaction.redact_value`; no directory named, this service's own
+    routes kept, `_ROUTES`). The answer's shape and every other value stay,
+    so its response model still holds."""
+    if check_operator_access(request.scope).allowed:
+        return answer
+    return redact_value(jsonable_encoder(answer), _ROUTES, other=SERVER_PATH)
+
+
+__all__ = ["OPERATOR_ONLY", "answer_for", "require_operator_access"]
