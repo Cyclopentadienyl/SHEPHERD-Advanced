@@ -2527,9 +2527,9 @@ def _has_value(values: Sequence[Any]) -> bool:
     return any(charts.rounded(v) is not None for v in values)
 
 
-#: A chart's own line when it has nothing to draw, in place of its plot and
-#: axis label (BACKLOG 69: it kept its whole height, its axis label alone
-#: under an empty box), by cause: before the running job's first validation,
+#: A chart's own line when it has nothing to draw, in place of its plot
+#: (BACKLOG 69: it kept its whole height, an axis label alone under an empty
+#: box; the epoch label is the figure's since R-54), by cause: before the running job's first validation,
 #: what its two validation charts will draw and when; a run that ended with
 #: no validation logged (stopped or failed before its first, or validating
 #: less often than it trained), that it logged none; a figure this run's log
