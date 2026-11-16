@@ -167,8 +167,11 @@ ALLOWED = {
     # Research comparison Stage 4b (E3): a reference's state, the digest of the
     # file found at a location the caller gives compared with the digest the
     # version records. A state shown, never an input: nothing is parsed,
-    # recorded or written from it. Owner: the results service (Stage 8).
-    ("src/evaluation/cohort_registry.py", "check_references", "file_sha256"):
+    # recorded or written from it. Owner: the results service (Stage 8). Since
+    # UI-12 (2026-11-16) the one comparison is `_located_state`, shared by
+    # `check_references` and `kept_contents` (whether a version's own kept
+    # files still hold the bytes its record binds, for "bound").
+    ("src/evaluation/cohort_registry.py", "_located_state", "file_sha256"):
         (1, _NOT_INPUT.format(what="a version reference's state (verified, differs, missing), "
                                    "the bytes at a given location against the recorded "
                                    "digest")),
@@ -176,14 +179,14 @@ ALLOWED = {
     # its digest compared with the recorded one, then the same bytes parsed
     # and its blocks compared with the version's copies of them. Owner: the
     # results service (Stage 8).
-    ("src/evaluation/cohort_registry.py", "check_references", "read_once"):
+    ("src/evaluation/cohort_registry.py", "_located_state", "read_once"):
         (1, _NOT_INPUT.format(what="a generated split's kept split manifest or kept fixture "
                                    "record (Stage 5b), read once for a reference's state: its "
                                    "digest against the recorded one, and its blocks against "
                                    "the version's copies")),
     ("src/evaluation/cohort_registry.py", "_split_manifest_copies_differ", "json.loads"):
         (1, _NOT_INPUT.format(what="the kept split manifest's blocks, parsed from the bytes of "
-                                   "check_references' one read_once, against the version's "
+                                   "_located_state's one read_once, against the version's "
                                    "copies of them")),
     ("src/ontology/loader.py", "OntologyLoader.load", "hashlib.sha256"):
         (1, "KG build, unchanged by M2.1 (BACKLOG 19.13): the digest of the handle that "
@@ -250,6 +253,12 @@ ALLOWED = {
     ("src/config/deployment_settings.py", "parse", "json.loads"):
         (1, _NOT_INPUT.format(what="the saved deployment settings: where the data locations "
                                    "are (UI-06), each checked by its directory rule when read")),
+    ("src/utils/launch_instance.py", "read_info", "json.loads"):
+        (1, _NOT_INPUT.format(what="the launcher's own instance info file (its id, pid, port "
+                                   "and URL), to open a configuration that already runs")),
+    ("src/utils/launch_instance.py", "instance_key", "hashlib.sha256"):
+        (1, "the launcher's name for one configuration: a hash of two path strings (the "
+            "repository root and the saved settings file), never of a file's bytes"),
     ("src/utils/gpu_lock.py", "read_holder", "json.loads"):
         (1, _NOT_INPUT.format(what="the GPU lock holder's own description, for the "
                                    "\"held by\" message (M5); the lock is the flock")),
