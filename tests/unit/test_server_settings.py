@@ -104,7 +104,11 @@ class TestTheWorkspacesRoot:
         assert setting.problem.startswith("No workspaces folder is set")
         assert "Settings › Data locations" in setting.problem
         assert setting.problem.endswith("Ref: SHEPHERD_WORKSPACES_ROOT")
-        assert "no default" in setting.problem
+        assert "No default is assumed" in setting.problem
+        # T08: the one folder Settings suggests, never the repository's.
+        assert ("Create suggested folder makes SHEPHERD-data/workspaces in the service "
+                "account's home folder") in setting.problem
+        assert "repository" not in setting.problem
 
     def test_an_existing_absolute_directory_is_resolved(self, tmp_path):
         (tmp_path / "real").mkdir()

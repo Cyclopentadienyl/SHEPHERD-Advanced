@@ -35,7 +35,7 @@ import pytest
 gr = pytest.importorskip("gradio")
 
 from src.config import server_settings  # noqa: E402
-from src.config.deployment_settings import ENV_SETTINGS_FILE  # noqa: E402
+from src.config.deployment_settings import ENV_SETTINGS_FILE, SUGGESTED  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_request  # noqa: E402
 
 KEYS = ("workspaces_root", "registry", "intake_dir", "training_evidence_dirs")
@@ -119,7 +119,7 @@ def test_a_first_start_says_nothing_is_set_and_offers_the_suggested_folders(dl, 
         assert "Not set" in row["state"]["value"], key
         assert row["create"]["visible"] is True and row["create"]["interactive"] is True
         assert row["create"]["value"] == dl.CREATE_LABEL
-        assert f"~/SHEPHERD-data/{dl.SUGGESTED[key]}" in row["suggest"]["value"]
+        assert f"~/SHEPHERD-data/{SUGGESTED[key]}" in row["suggest"]["value"]
         assert row["box"]["interactive"] is True and row["save"]["interactive"] is True
         assert ">Set to<" in row["key"]["value"]
     evidence = rows["training_evidence_dirs"]
@@ -132,6 +132,34 @@ def test_a_first_start_says_nothing_is_set_and_offers_the_suggested_folders(dl, 
     # Nothing was created or saved by opening the page.
     assert not (os.path.exists(os.environ[ENV_SETTINGS_FILE])
                 or os.path.exists(os.path.join(os.environ["HOME"], "SHEPHERD-data")))
+
+
+def test_the_not_set_words_name_the_folder_settings_suggests(dl, monkeypatch):
+    """T08 (first run): the pages that need a workspaces folder said "for
+    example this repository's data/workspaces" while Settings offered Create
+    suggested folder ~/SHEPHERD-data/workspaces: two folders for one choice.
+    The words Datasets shows with no folder set (the server's own reason,
+    `read_workspaces`) and setup_demo.py's refusal (which quotes them) now
+    name the folder the panel offers, drawn from one statement in the config
+    layer, and no other."""
+    import re
+
+    from src.webui.components.workspaces import read_workspaces
+
+    rows, _panel = _parts(dl, dl._on_locations_open(operator_request(monkeypatch)))
+    offered = re.sub(r"<[^>]+>", "", rows["workspaces_root"]["suggest"]["value"])
+    assert offered == "~/SHEPHERD-data/workspaces"
+    said = read_workspaces()["problem"]
+    assert "No workspaces folder is set" in said
+    # The same folder, in words the page's path redaction leaves whole.
+    assert "SHEPHERD-data/workspaces in the service account's home folder" in said
+    assert offered[len("~/"):] in said and "path outside" not in said
+    assert "data/workspaces" not in said.replace("SHEPHERD-data/workspaces", "")
+    assert "repository" not in said
+    # The Create button makes that very folder, under this account's home.
+    _parts(dl, dl._on_create("workspaces_root", operator_request(monkeypatch)))
+    assert (os.path.join(os.environ["HOME"], "SHEPHERD-data", "workspaces")
+            == str(server_settings.workspaces_root().value))
 
 
 def test_create_makes_the_suggested_folder_on_its_click_saves_and_applies_it(dl, monkeypatch):

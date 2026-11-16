@@ -93,6 +93,18 @@ PATH_KEYS: Tuple[str, ...] = (KEY_WORKSPACES_ROOT, KEY_REGISTRY, KEY_INTAKE_DIR)
 LIST_KEYS: Tuple[str, ...] = (KEY_TRAINING_EVIDENCE_DIRS,)
 KEYS: Tuple[str, ...] = PATH_KEYS + LIST_KEYS
 
+#: **The suggested folder of each required data location** (T08: one source):
+#: ``~/SHEPHERD-data/<name>`` under the account's home (`suggested_folder`),
+#: the folder Settings › Data locations' Create suggested folder offers and
+#: alone creates (on its click), and the one the words that say the folder is
+#: not set name (`suggested_words`: `server_settings.WORKSPACES_ROOT_NOT_SET`,
+#: which setup_demo.py's refusal quotes). The optional evidence folders have
+#: none. *History: until T08 the not-set words suggested the repository's
+#: data/workspaces while Settings offered ~/SHEPHERD-data/workspaces.*
+SUGGESTED_ROOT = "SHEPHERD-data"
+SUGGESTED: Dict[str, str] = {KEY_WORKSPACES_ROOT: "workspaces", KEY_REGISTRY: "registry",
+                             KEY_INTAKE_DIR: "import"}
+
 __all__ = [
     "APP_DIRECTORY",
     "ENV_SETTINGS_FILE",
@@ -107,6 +119,8 @@ __all__ = [
     "LOCK_SUFFIX",
     "Location",
     "PATH_KEYS",
+    "SUGGESTED",
+    "SUGGESTED_ROOT",
     "SavedFile",
     "UNREADABLE_SUFFIX",
     "compose",
@@ -116,8 +130,37 @@ __all__ = [
     "read_file",
     "read_saved",
     "settings_location",
+    "suggested_folder",
+    "suggested_words",
     "utc_stamp",
 ]
+
+
+def suggested_folder(key: str, home: Optional[Path] = None) -> Optional[Path]:
+    """The suggested folder of `key` (``~/SHEPHERD-data/<name>``, `SUGGESTED`)
+    under `home` (the account's, ``Path.home()``, when None), or None: the
+    optional evidence folders have none, and neither has an account with no
+    absolute home directory. A path only: nothing here creates it."""
+    if key not in SUGGESTED:
+        return None
+    try:
+        home = Path.home() if home is None else home
+    except (RuntimeError, KeyError):
+        return None
+    if not home.is_absolute():
+        return None
+    return home / SUGGESTED_ROOT / SUGGESTED[key]
+
+
+def suggested_words(key: str) -> str:
+    """`key`'s suggested folder as a sentence names it ("SHEPHERD-data/workspaces
+    in the service account's home folder"), the same for every account, so a
+    text a read-only page may show names no home directory. Not written
+    ``~/SHEPHERD-data/…``: the one path redaction (`src.utils.path_redaction`)
+    reads the part after ``~`` as an absolute server path and replaces it, so
+    Datasets would show "~a path outside the workspaces root". `key` is one of
+    `SUGGESTED`."""
+    return f"{SUGGESTED_ROOT}/{SUGGESTED[key]} in the service account's home folder"
 
 
 class Location(NamedTuple):

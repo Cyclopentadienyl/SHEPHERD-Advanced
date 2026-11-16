@@ -597,10 +597,13 @@ _check_intake_directory = partial(check_operator_directory, what="the intake dir
                                   holds=PATIENT_LEVEL_DATA, outside_repository=True)
 
 #: Why nothing is listed with no workspaces folder set (`workspaces_root`).
+#: It names the one suggested folder Settings offers
+#: (`deployment_settings.suggested_words`), never another.
 WORKSPACES_ROOT_NOT_SET = (
-    "No workspaces folder is set, so the server lists no workspace. Choose it in "
-    f"{DATA_LOCATIONS}: the folder whose subfolders are the workspaces (for example this "
-    f"repository's data/workspaces); no default is assumed. Ref: {ENV_WORKSPACES_ROOT}"
+    "No workspaces folder is set, so the server lists no workspace. Choose the folder whose "
+    f"subfolders are the workspaces in {DATA_LOCATIONS}; its Create suggested folder makes "
+    f"{deployment_settings.suggested_words(KEY_WORKSPACES_ROOT)}. No default is assumed. "
+    f"Ref: {ENV_WORKSPACES_ROOT}"
 )
 
 

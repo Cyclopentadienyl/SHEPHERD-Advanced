@@ -17,9 +17,11 @@ it shows escaped:
   differs from what is in effect (pending, or overridden); a path box with
   **Check** (the same rule a job's read applies, the resolved path and what it
   holds: "2 workspaces") and **Save**; for a required folder that is not set,
-  **Create suggested folder**, naming it (``~/SHEPHERD-data/workspaces``),
-  created only on that click (0700 for the registry and the import folder,
-  which hold patient-level data); never a guessed old folder or a slot's.
+  **Create suggested folder**, naming it (``~/SHEPHERD-data/workspaces``:
+  `deployment_settings.suggested_folder`, the one suggestion the not-set
+  words name too), created only on that click (0700 for the registry and the
+  import folder, which hold patient-level data); never a guessed old folder
+  or a slot's.
   The variable is named only under "Advanced: source ›".
 - **Overridden** (Syncthing's form): a row the environment sets keeps its box
   and Save, which change the saved value only; its Saved line says it applies
@@ -71,6 +73,7 @@ from src.config.deployment_settings import (
     KEY_TRAINING_EVIDENCE_DIRS,
     KEY_WORKSPACES_ROOT,
     KEYS,
+    suggested_folder,
 )
 from src.utils import deployment_view
 from src.utils.deployment_view import DeploymentView, FieldView
@@ -109,11 +112,6 @@ EVIDENCE_PLACEHOLDER = "One folder path on the server per line"
 #: The evidence row with nothing set: what that means.
 EVIDENCE_NONE = "None set: the check reads the measured workspace only"
 
-#: The suggested folder of each required location, under the server
-#: account's home (`suggested_folder`): created only by its button.
-SUGGESTED_ROOT = "SHEPHERD-data"
-SUGGESTED = {KEY_WORKSPACES_ROOT: "workspaces", KEY_REGISTRY: "registry",
-             KEY_INTAKE_DIR: "import"}
 #: The folders that hold patient-level data: created 0700 (only the account
 #: that runs the service can open them), as the deployment guide asks.
 PRIVATE_KEYS = (KEY_REGISTRY, KEY_INTAKE_DIR)
@@ -136,21 +134,6 @@ PANEL_PARTS = ("notice", "repair", "apply", "status", "where")
 # ---------------------------------------------------------------------------
 # What a row says
 # ---------------------------------------------------------------------------
-def suggested_folder(key: str, home: Optional[Path] = None) -> Optional[Path]:
-    """The folder Create suggests for `key` (``~/SHEPHERD-data/<name>``), or
-    None: the optional evidence folders have none, and neither has an account
-    with no home directory."""
-    if key not in SUGGESTED:
-        return None
-    try:
-        home = Path.home() if home is None else home
-    except (RuntimeError, KeyError):
-        return None
-    if not home.is_absolute():
-        return None
-    return home / SUGGESTED_ROOT / SUGGESTED[key]
-
-
 def _tilde(path: Path) -> str:
     """`path` with the account's home shown as ``~``."""
     try:
@@ -486,7 +469,7 @@ def _on_save(key: str, text: Any, request: gr.Request):
 
 
 def create_folder(key: str) -> Tuple[Optional[Path], str]:
-    """Create `key`'s suggested folder (`suggested_folder`), 0700 for a
+    """Create `key`'s suggested folder (`deployment_settings.suggested_folder`), 0700 for a
     patient-level one and for ``~/SHEPHERD-data`` itself when this creates it;
     a folder already there is used as it is. Returns it, or None and why."""
     path = suggested_folder(key)
@@ -665,6 +648,6 @@ PAGE_CSS = f"""
 
 __all__ = ["APPLY_LABEL", "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET", "OVERRIDDEN",
            "PAGE_CSS", "PANEL_PARTS", "PATH_HIDDEN", "PRIVATE_KEYS", "REPAIR_LABEL",
-           "ROW_PARTS", "SAVE_LABEL", "SOURCE_WORDS", "SUGGESTED", "UNKNOWN", "UNREADABLE",
+           "ROW_PARTS", "SAVE_LABEL", "SOURCE_WORDS", "UNKNOWN", "UNREADABLE",
            "check_words", "create_data_locations_panel", "create_folder", "holds_words",
-           "name_html", "notice_html", "state_html", "suggested_folder", "where_html"]
+           "name_html", "notice_html", "state_html", "where_html"]
