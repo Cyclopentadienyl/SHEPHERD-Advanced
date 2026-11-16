@@ -147,15 +147,17 @@ def served(demo: Any, **mount: Any) -> Iterator[str]:
 def served_service(root: Path, settings: dict[str, str]) -> Iterator[str]:
     """The service itself (``uvicorn src.api.main:app``: its lifespan, the API
     the Diagnosis page calls back, the dashboard at ``/ui``) in a process of its
-    own on a free loopback port, run from the repository; yields the
-    dashboard's page URL once it answers.
+    own on the loopback port it binds (``--port 0``, the port read from its
+    start line: a port picked here and then given to it could be taken in
+    between by another test's server, which would answer in its place), run
+    from the repository; yields the dashboard's page URL once it answers.
 
     Its environment is this one with every ``SHEPHERD_*`` and ``GRADIO_*``
     variable removed and `settings` set, and a home, configuration, state and
     settings file of its own under `root` (never the account's); its output
     goes to ``root / "service.log"``, which the assertion that it did not start
     quotes. Stopped (terminated, then killed) on exit."""
-    import socket
+    import re
     import subprocess
     import sys
     import urllib.request
@@ -168,20 +170,23 @@ def served_service(root: Path, settings: dict[str, str]) -> Iterator[str]:
                XDG_STATE_HOME=str(root / "state"), SHEPHERD_STATE_DIR=str(root / "state"),
                SHEPHERD_SETTINGS_FILE=str(root / "settings" / "deployment.json"))
     env.update(settings)
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    log = open(root / "service.log", "wb")
+    path = root / "service.log"
+    log = open(path, "wb")
     process = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "src.api.main:app", "--host", "127.0.0.1", "--port", str(port)],
+        [sys.executable, "-m", "uvicorn", "src.api.main:app", "--host", "127.0.0.1", "--port", "0"],
         cwd=Path(__file__).resolve().parents[2], env=env, stdout=log, stderr=subprocess.STDOUT)
-    page = f"http://127.0.0.1:{port}/ui/"
     direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        deadline = time.monotonic() + 180
+        deadline, page = time.monotonic() + 180, None
         while True:
-            assert process.poll() is None, (root / "service.log").read_text(errors="replace")[-4000:]
+            assert process.poll() is None, path.read_text(errors="replace")[-4000:]
             assert time.monotonic() < deadline, "the service did not answer in 180 s"
+            if page is None:
+                started = re.search(r"Uvicorn running on http://127\.0\.0\.1:(\d+)", path.read_text(errors="replace"))
+                page = started and f"http://127.0.0.1:{started.group(1)}/ui/"
+            if page is None:
+                time.sleep(0.2)
+                continue
             try:
                 with direct.open(page, timeout=5) as answer:
                     if answer.status == 200:

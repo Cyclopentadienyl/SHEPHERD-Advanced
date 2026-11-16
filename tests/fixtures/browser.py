@@ -422,8 +422,11 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__;
     await idle();
   };
   const options = async () => {
-    const words = [];
-    for (const input of await page.$$('input[role="combobox"]')) {
+    // Each select by a locator, found again at each act: a page's answer can
+    // draw a select anew between two of them.
+    const words = [], selects = page.locator('input[role="combobox"]');
+    for (let i = 0, n = await selects.count(); i < n; i++) {
+      const input = selects.nth(i);
       if (!(await input.isVisible()) || !(await input.isEnabled())) { continue; }
       const list = await input.getAttribute('aria-controls');
       await input.click({ force: true });
