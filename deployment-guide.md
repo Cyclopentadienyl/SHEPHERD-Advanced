@@ -1559,8 +1559,10 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 > 看得出來。**現在會被拒絕。** CPU 開發機必須設定
 > `SHEPHERD_DEVICE=cpu`（reload 時送 `"device": "cpu"`，或留 null 讓這個變數生效）。
 > 字面上的 `auto` 以前會傳到 torch 才失敗，現在與未設定是同一個要求。WebUI 沒有裝置
-> 選擇器。`scripts/setup_demo.py --train-model` 印出的 serving 指令會指名它訓練的疾病子模型
-> （自 K7 起先訓練一個 base，再訓練一個疾病子模型），並帶上訓練時用的裝置。
+> 選擇器。`scripts/setup_demo.py --train-model` 結束時說明如何在儀表板中開啟示範資料，並在
+> Diagnosis › Load a model… 載入它訓練的疾病子模型（自 K7 起先訓練一個 base，再訓練一個疾病子
+> 模型）；以 `--device cpu` 訓練的示範會說明儀表板此時必須以 `SHEPHERD_DEVICE=cpu` 啟動。只啟動 API
+> 來服務它的指令放在後面的「Ref:」，帶上訓練時用的裝置（自 T08 起；以前只印出這個指令）。
 
 ### 驗收檢查的推論生命週期：W12（自 ops-wiring 這一輪起）
 
@@ -2540,7 +2542,10 @@ Data locations 中選擇一次（§4.12）：服務、同一帳號的 shell 與�
 值（一個同時由 unit 的 `EnvironmentFile=` 與你的 shell 讀取的檔案）。看不到根目錄的 CLI 會被拒絕，
 結束碼 1，不寫出任何東西（`train_model: refused: No workspaces folder is set, so the GPU lock is not
 configured ... Choose the folder in Settings › Data locations ... Ref: SHEPHERD_WORKSPACES_ROOT`）；
-`setup_demo.py --train-model` 透過同一個訓練器訓練，同樣如此。每個讀到同一個根目錄的行程——服務、
+`setup_demo.py --train-model` 透過同一個訓練器訓練，同樣如此。setup_demo.py 把示範資料寫進這個
+根目錄，成為 `<根目錄>/demo`（除非 `--output-dir` 指名另一個資料夾），因此儀表板會列出它，資料也與
+訓練所取的鎖在同一處；沒有生效中的根目錄時，不論有沒有 `--train-model` 都會被拒絕，不寫出任何東西
+（自 T08 起：以前不論選了哪個資料夾，都寫到 repository 的 `data/workspaces/demo`）。每個讀到同一個根目錄的行程——服務、
 你的 shell 與其中的 CLI——都取 `<根目錄>/.shepherd-gpu.lock`，沒有其他東西能指名一把鎖。單一設定
 無法解決的情況（每個行程讀的是自己的設定）：環境中指定了另一個根目錄的行程，取的是另一把鎖。儲存的
 根目錄只在沒有人持有舊鎖時才會改變（Apply，§4.12），取鎖者取得鎖之後也會確認位置沒有改變。
@@ -2760,7 +2765,8 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 
 ### 在 Settings › Data locations 中選擇（自 2026-11-16 起）
 
-從桌面項目或 `launch_shepherd.sh` 啟動儀表板，開啟 ⚙ Settings。**Data locations** 面板每個位置
+從桌面項目或 `launch_shepherd.sh` 啟動儀表板，開啟 ⚙ Settings（同一個設定再啟動一次，不會啟動第二個
+服務：它會開啟正在執行的那個；那台電腦上開不了瀏覽器時，則印出要開啟的網址）。**Data locations** 面板每個位置
 一列（Workspaces folder、Results registry、Import folder、Training evidence folders）：誰需要它、
 目前生效的值與來源（「Saved in Settings」、「Set when the service started」），以及一個路徑框，
 附帶：
@@ -2771,7 +2777,9 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 - **Create suggested folder**，用於尚未設定的必要資料夾：服務帳號 home 下的
   `~/SHEPHERD-data/workspaces`、`~/SHEPHERD-data/registry` 或 `~/SHEPHERD-data/import`，只在按下
   時建立（registry 與匯入資料夾為 `0700`），然後儲存。不猜測任何東西：不會把舊資料夾或 slot
-  當成資料提供。
+  當成資料提供。需要某個尚未設定之資料夾的頁面，指名的是同一個資料夾（「its Create suggested folder
+  makes SHEPHERD-data/workspaces in the service account's home folder」），出自
+  `src/config/deployment_settings.py` 的同一處陳述。
 
 這些是伺服器機器上的資料夾（從桌面啟動時就是這台電腦）。這裡不會擋住其他頁面：沒有 workspaces
 資料夾時，只有需要它的清單與工作關閉；沒有 registry 時，只有 cohort 版本、cohort 量測與登錄關閉；

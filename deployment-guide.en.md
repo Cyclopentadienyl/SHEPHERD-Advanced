@@ -1171,9 +1171,12 @@ device the model's parameters are on (`cuda:0`, not just `cuda`). The status's
 > `"device": "cpu"` with a reload, or leave it null so that variable applies).
 > A literal `auto`, which used to reach torch and fail there, is the same
 > request as unset. The WebUI has no device selector.
-> `scripts/setup_demo.py --train-model` prints its serving command, naming the
-> disease child it trained (a base, then one disease child, since K7), with the
-> device they were trained on.
+> `scripts/setup_demo.py --train-model` ends with how to open the demo in the
+> dashboard and load the disease child it trained (a base, then one disease child,
+> since K7) in Diagnosis › Load a model…; a demo trained with `--device cpu` says the
+> dashboard must then be started with `SHEPHERD_DEVICE=cpu`. The command serving it
+> from the API alone follows as a "Ref:", with the device they were trained on (since T08;
+> it used to print only that command).
 
 ### What the acceptance checks of the inference lifecycle: W12 (since the ops-wiring round)
 
@@ -2357,7 +2360,11 @@ line for the root and one for the registry), give your shell the same value (one
 the unit's `EnvironmentFile=` and your shell read). A CLI that sees no root is refused, exit 1,
 with nothing written (`train_model: refused: No workspaces folder is set, so the GPU lock is not
 configured ... Choose the folder in Settings › Data locations ... Ref: SHEPHERD_WORKSPACES_ROOT`);
-so is `setup_demo.py --train-model`, which trains through the same trainer. Every process that
+so is `setup_demo.py --train-model`, which trains through the same trainer. setup_demo.py writes
+the demo into that root, as `<root>/demo` (unless `--output-dir` names another folder), so the
+dashboard lists it and its data sit beside the lock its training took; with no root in effect it
+is refused with or without `--train-model`, nothing written (since T08: it used to write the
+repository's `data/workspaces/demo` whatever folder was chosen). Every process that
 reads the same root takes `<root>/.shepherd-gpu.lock`, the service, your shell and its CLIs
 alike, and nothing else names a lock. What one setting cannot settle, since each process reads
 its own: a process whose environment names another root takes another lock. A saved root is
@@ -2627,7 +2634,9 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 
 ### Choosing them in Settings › Data locations (since 2026-11-16)
 
-Start the dashboard from its desktop entry or with `launch_shepherd.sh` and open ⚙ Settings. The
+Start the dashboard from its desktop entry or with `launch_shepherd.sh` and open ⚙ Settings (a
+second start of the same configuration starts no second service: it opens the running one, or,
+when no browser can be opened on that computer, prints the address to open). The
 **Data locations** panel has one row per location (Workspaces folder, Results registry, Import
 folder, Training evidence folders): what needs it, what is in effect and where it came from
 ("Saved in Settings", "Set when the service started"), and a path box with:
@@ -2639,7 +2648,9 @@ folder, Training evidence folders): what needs it, what is in effect and where i
 - **Create suggested folder**, for a required folder that is not set: `~/SHEPHERD-data/workspaces`,
   `~/SHEPHERD-data/registry` or `~/SHEPHERD-data/import` under the service account's home,
   created only by that click (the registry and the import folder `0700`), then saved. Nothing
-  is guessed: no old folder or slot is offered as data.
+  is guessed: no old folder or slot is offered as data. A page that needs a folder not set names
+  the same one ("its Create suggested folder makes SHEPHERD-data/workspaces in the service
+  account's home folder"), from one statement in `src/config/deployment_settings.py`.
 
 These are folders on the server machine (this computer when started from its desktop). Nothing
 here blocks another page: with no workspaces folder only the lists and jobs that need one are

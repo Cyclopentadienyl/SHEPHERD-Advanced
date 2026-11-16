@@ -65,7 +65,9 @@ launch_shepherd.cmd                                # Windows
 ```
 
 Both start the FastAPI service with the Gradio dashboard mounted on it and open it in the
-browser. **Nothing needs to be set first** (since 2026-11-16): a start on this computer turns the
+browser; on a computer where no browser can be opened they print the address to open instead,
+and a second start opens the service already running rather than starting another. **Nothing
+needs to be set first** (since 2026-11-16): a start on this computer turns the
 operator controls on for this machine, and the data locations are chosen in the dashboard's
 ⚙ Settings › Data locations, saved outside the repository and reused at the next start
 ([deployment guide §4.12](deployment-guide.en.md)): the Workspaces folder (every training and
