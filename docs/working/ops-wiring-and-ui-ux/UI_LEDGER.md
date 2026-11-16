@@ -1921,30 +1921,30 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### B41 · Chart is silent when a drawn run cannot get its newer epochs
 
-- **State**: to do · found by an internal review · page: training
+- **State**: code-verified · found by an internal review · page: training
 - **Problem**: After 20 retries an ended run stays at older epochs with no message.
 - **At ba6e85e**: From the code; the demo cannot make the series server function fail. After RETRY_MAX (20) failed retries, setMessage runs only when inst.run === null (shep_charts.js:819-827). A drawn run that cannot get its newer epochs therefore stays at its older epochs with no message.
 - **Done when**: When the series function fails RETRY_MAX times for a drawn run, the chart shows a line over the curves such as 'Newer epochs could not be loaded.' (covered by a JS unit test).
 - **Sources**: BL:999 (item 41); PTR:2380-2381
-- **Closed at**: —
+- **Closed at**: 40eff69. When the series function fails RETRY_MAX (20) times for the run drawn, its curves stay and the figure's toolbar shows the shared amber ▲ with "Newer epochs could not be loaded: reload the page to try again." (`charts.STALE`, a static note the module shows or hides; never over a plot); it goes once a reply for that run, another run or none is drawn. Test: the JS unit test `tests/fixtures/chart_host.cjs` scenario `gave_up_on_new_epochs_says_so_over_the_curves` (run by `test_webui_charts.py::test_a_reply_is_drawn_only_for_what_the_token_asks_for_now`; fails on aad658c: the note never shows), `test_webui_charts.py::test_the_toolbar_says_when_newer_epochs_could_not_be_loaded`. Seen on the CPU demo at 1850x960 with the series request refused by the browser (Playwright route) after a new epoch was logged: 21 failed calls, the 4 epochs kept, the note at y 271-299 above the plots; at aad658c the same 21 calls left nothing said. Screens: scratchpad/t06b/run-view/shots/before/b41_gave_up_1850x960.png, scratchpad/t06b/run-view/shots/after/b41_gave_up_1850x960.png (no narrow pair: the note is in the toolbar's own row, which wraps).
 
 #### B69-T2 · Run with only best.pt reads 'dataset not recorded (no checkpoint)'
 
-- **State**: to do · found by an internal review · severity cosmetic · page: training
+- **State**: code-verified · found by an internal review · severity cosmetic · page: training
 - **Problem**: The header reads last.pt only.
 - **At ba6e85e**: From the code; not seen, because the demo has no run with only best.pt. _snapshot_for reads checkpoints/last.pt only (training_console.py:2179-2195). With none, the header says 'dataset not recorded (no checkpoint)' (:2241-2243), and the state line also says 'No checkpoint saved, so nothing can be continued' (:2361-2362), even though best.pt exists and the drawer lists it.
 - **Done when**: For a run with only best.pt, the run-view header names the dataset and the state line does not say no checkpoint was saved, verified by a unit test of _snapshot_for on such a run.
 - **Sources**: BL:1027
-- **Closed at**: —
+- **Closed at**: 7795d37. The one reader of a run's latest state reads the file `checkpoint_paths.latest_saved` names: its `last.pt`, else its newest listed checkpoint file (`select_checkpoint_in_dir`'s fallback), or none; `TrainingManager.latest_snapshot` and the run view's `_snapshot_for` (its cache keyed on that file) both use it, so the stop's outcome says the same. Test: `test_training_page.py::test_a_run_that_kept_only_best_pt_names_its_dataset_and_its_state` (a real best.pt through `_snapshot_for`; fails on aad658c: no snapshot). Seen on the CPU demo (a base run's copy keeping only `best.pt`): before "dataset not recorded (no checkpoint)" and "No checkpoint saved, so nothing can be continued"; after "● same dataset as the run bar" and "Finished · 4 of 4 epochs completed. To train further, use Continue…". Screens: scratchpad/t06b/run-view/shots/before/bestonly_1850x960.png, scratchpad/t06b/run-view/shots/after/bestonly_1850x960.png (and _960x1080).
 
 #### B72-RV1 · Run view state line carries two ' · ' and says 'use Continue…' with drawer open
 
-- **State**: to do · found by an internal review · page: training
+- **State**: code-verified · found by an internal review · page: training
 - **Problem**: Two separators in the state line.
 - **At ba6e85e**: The run view's state line, now inside the header, still carries two ' · ': 'Finished · 1 of 1 epochs completed · to train further, use Continue…' (training_console.py:2367). The stopped-early form does the same (:2370). The line also says 'use Continue…' while the Continue drawer is open and the Continue… button is hidden.
 - **Done when**: The run view's finished and stopped-early state lines contain at most one ' · ', and do not say 'use Continue…' while the Continue drawer is open.
 - **Sources**: BL:1030
-- **Closed at**: —
+- **Closed at**: 487b00e. The state line says the state and how far the run got, then a sentence: "Finished · 4 of 4 epochs completed. To train further, use Continue…", "Stopped early (patience) · 40 of 60 epochs completed. It cannot be continued.", read-only "Completed · epoch 4 of 4. Checkpoint details are an operator control"; with the Continue drawer open the finished line ends after its count (the render passes the session's drawer). Tests: `test_training_page.py::test_the_state_line_has_one_separator_and_no_continue_hint_with_the_drawer_open`, `test_training_console_runview.py::test_the_header_drops_use_continue_while_the_continue_drawer_is_open` (through the render); both fail on aad658c. Seen on the CPU demo at 1850x960 and 960x1080: closed, "Finished · 4 of 4 epochs completed. To train further, use Continue…"; drawer open, "Finished · 4 of 4 epochs completed". Screens: scratchpad/t06b/run-view/shots/before/disease_1850x960.png, scratchpad/t06b/run-view/shots/before/drawer_open_1850x960.png, scratchpad/t06b/run-view/shots/after/disease_1850x960.png, scratchpad/t06b/run-view/shots/after/drawer_open_1850x960.png (and _960x1080).
 
 #### NEW-help-1 · 17 model-spec fields in Training's Model accordion have no help
 
@@ -1965,64 +1965,64 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### NEW-training-finetune-3 · State line says 'use Continue…' while the Continue drawer is open
 
-- **State**: to do · found by the 2026-11-16 audit · page: training
+- **State**: code-verified · found by the 2026-11-16 audit · page: training
 - **Duplicate of**: B72-RV1 (closed with it)
 - **At ba6e85e**: The run view's state line says 'to train further, use Continue…' while the Continue drawer is open and the Continue… button is hidden (training_console.py:2367; drawer-1850x960-1-open.png)
 - **Done when**: With the Continue drawer open, the run view's state line does not mention 'use Continue…'.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: 487b00e, closed with B72-RV1: with the Continue drawer open the state line has no "use Continue…" (`test_training_console_runview.py::test_the_header_drops_use_continue_while_the_continue_drawer_is_open`; seen: scratchpad/t06b/run-view/shots/after/drawer_open_1850x960.png).
 
 #### NEW-training-finetune-4 · Run view reads '1 of 1 epochs completed'
 
-- **State**: to do · found by the 2026-11-16 audit · page: training
+- **State**: code-verified · found by the 2026-11-16 audit · page: training
 - **At ba6e85e**: '1 of 1 epochs completed' in the run view's state line: _epochs_done does not apply the singular (training_console.py:2316-2319)
 - **Done when**: A unit test of _epochs_done gives '1 of 1 epoch completed' for one epoch and 'epochs' for more.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: 487b00e. `_epochs_done` takes the unit's number from the total ("1 of 1 epoch completed", "3 of 60 epochs completed") and, with no total, the one epoch words of every page (`renderers.epoch_words`: "1 epoch completed", "epochs not recorded" instead of "None epochs completed"). Test: `test_training_page.py::test_epochs_done_says_one_epoch_and_more_epochs` (fails on aad658c).
 
 #### NEW-training-finetune-8 · Skill says 140 px chart floor while code uses 170
 
-- **State**: to do · found by the 2026-11-16 audit · page: training
+- **State**: code-verified · found by the 2026-11-16 audit · page: training
 - **Duplicate of**: R-38+owner (closed with it)
 - **At ba6e85e**: Training page footer and the skill disagree on the chart floor: SKILL.md:41 says 'today 140 px plot area', the code's PLOT_MIN_HEIGHT is 170 (training_console.py:4806)
 - **Done when**: SKILL.md's chart floor value matches PLOT_MIN_HEIGHT in training_console.py.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: verified, closed with R-38+owner (497f583 set the skill's line to the code's floor). SKILL.md:41 names `PLOT_MIN_HEIGHT`, 170 px of plot area, the value in `training_console.py` (`PLOT_MIN_HEIGHT = 170`); c482f98 updates only what the owner's window measures since R-54 moved the epoch label under the grid: the four plot areas 198 px each at 1850x960 (were 209/209/190/190; measured on the CPU demo, plot boxes 245 px less the 47 px axis room), the same numbers as the `PLOT_MIN_HEIGHT` comment (6d8a46a).
 
 #### NEW-training-finetune-9 · Record gaps: UX:130, B72-CD4 and unnamed appendix items lack notes
 
-- **State**: to do · found by the 2026-11-16 audit · page: training
+- **State**: code-verified · found by the 2026-11-16 audit · page: training
 - **At ba6e85e**: Record gaps: UX:130 still lists 'Continue's buttons in the drawer's footer' as Later, although 7649fa0 put them there; B72-CD4 (extend_epochs) was fixed by 7649fa0's page_words, but no dated BACKLOG 72 note says so. The appendix items with no named record (R-39, R-41, R-59, R-60, B72-RV1) are kept open only by UX:116's blanket 'the rest of the appendix' and BACKLOG 52's 'its appendix holds all 83 findings'; no stage or schedule names them
 - **Done when**: UX:130 no longer lists Continue's footer buttons as Later, BACKLOG 72 has a dated note for B72-CD4 citing 7649fa0, and R-39, R-41, R-59, R-60, B72-RV1 are each named in a scheduled record.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: c482f98. UX:130 (WEBUI_UX_REVIEW_2026-10-25.md, Later improvements, Training) no longer lists Continue's buttons in the drawer's footer, with a dated note that they sit there since 7649fa0 (seen: the drawer's footer holds 4. Start, ▸ Continue Training and Cancel); BACKLOG 72 has a dated 2026-11-16 note for B72-CD4 citing 7649fa0's `page_words`; BACKLOG 52 has a dated note naming R-39, R-41, R-59, R-60 and B72-RV1 as rows of this ledger, the scheduled record (the rev 2 plan names its rows by ID), with their states: R-59 and R-60 closed earlier (e72d4a0, 497f583), R-39, R-41 and B72-RV1 closed by T06 (5715ccc, 85d82fd, 487b00e).
 
 #### R-39 · 'No training is running' said three times, once in a button-shaped pill
 
-- **State**: to do · found by the 2026-10-25 review · severity medium · page: training
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: training
 - **Problem**: While idle the same sentence appeared three times, once in a button-shaped pill.
 - **At ba6e85e**: When idle, the same fact appears three times. The header chip says 'GPU jobs: none'. The run-bar pill says '○ Idle · no training job since the server started' (training_console.py:1515-1516), still drawn as a bordered, fully rounded lozenge (CSS :4866: 1px border, radius 999px, 30 px tall) beside the 40 px buttons. The reason line says 'Stop disabled: no training is running.' (:1700-1702) next to a visible, disabled '■ Stop'.
 - **Done when**: While idle the Training page states the idle fact once, as plain muted text (no bordered rounded pill), and Stop is hidden or has no reason line.
 - **Sources**: UX:241 (appendix 39); RJ audits[1].findings[3]; RJ audits[1].overall
-- **Closed at**: —
+- **Closed at**: 5715ccc. While no training job runs or stops, Stop is not drawn (`run_bar_view`'s `stop_shown`; the run bar class `shep-rb-nojob`) and no reason line is given when nothing drawn is disabled; the idle pill (the shared grey ○ and its words) is plain muted text: transparent border, no tint, no lozenge padding, weight 400. The header chip "GPU jobs: none" (the shell's, the GPU slot) is unchanged. Tests: `test_training_page.py::test_the_idle_fact_is_said_once_as_plain_muted_text_and_stop_is_not_drawn` (through the render and the style sheet; fails on aad658c), `::test_the_run_bars_actions_and_their_one_reason`. Seen on the CPU demo at 1850x960 and 960x1080: pill border 1px solid rgba(0,0,0,0) and no background (before 1px solid with rgb(248,249,251), radius 999px), reason line empty (before "Stop disabled: no training is running."), Stop not drawn (before a disabled ■ Stop). Screens: scratchpad/t06b/run-view/shots/before/idle_valloss_1850x960.png, scratchpad/t06b/run-view/shots/after/idle_valloss_1850x960.png (and _960x1080). `test_one_layout_decision_at_every_size_and_back` counted the hidden Stop as a second run-bar line; its count reads drawn items only since 127dbe4 (it passes, the bar one 74 px row at 1850x960). The shared check (`test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check`, every page at every representative size) after 6d8a46a reports only "1366x620 settings: focused #dl_box_training_evidence_dirs textarea under #runtime_footer", which aad658c reports alike (Settings, not this row's).
 
 #### R-41 · Run details popover repeats folder/fingerprint, lacks model fingerprint, nests help bubble
 
-- **State**: to do · found by the 2026-10-25 review · severity medium · page: training
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: training
 - **Problem**: The Run details popover repeated facts, lacked the model fingerprint and nested a help bubble.
 - **At ba6e85e**: The Run details popover now uses the shared summary list (training_console.py:2290-2311, renderers.summary_list), but its content has the same three problems. The run folder appears twice: as Run 'gatv2/20261116-091309_demo-disease_269dc9' and inside Checkpoint 'demo/runs/gatv2/20261116-091309_demo-disease_269dc9/checkpoints/last.pt'. Logs is a sentence ('the run directory's logs/'), not a value. 'Dataset used' shows 50bef1bf5f9f with Copy, which repeats the run bar's fingerprint while the header already says 'same dataset as the run bar', and it carries an ⓘ (help_button), so a help bubble opens from inside the popover. There is no model fingerprint row, although the drawer names the same file by 63d8975e5d6c.
 - **Done when**: The Run details popover names the run folder and dataset fingerprint once (or 'same as the run bar'), shows the model's 12-hex fingerprint with Copy, gives Logs a value and contains no nested info bubble.
 - **Sources**: UX:243 (appendix 41); RJ audits[1].findings[8]; RJ audits[1].overall
-- **Closed at**: —
+- **Closed at**: 85d82fd. The popover is one summary list with no ⓘ: Run folder (workspace-relative, once), Checkpoint and Logs by their place in it ("checkpoints/last.pt", "logs/train_20261116_204731.json"; "none written" with no log), Model fingerprint (12 hex digits with Copy: the SHA-256 of the bytes the snapshot's one read parsed, `latest_snapshot`'s new `sha256`), Dataset used "same as the run bar" when it is (its fingerprint with Copy when it is not); the ⓘ and its help text `training-used-dataset` are removed (their facts are visible words). A read-only request sees the folder and the log, never the checkpoint or the model fingerprint. Test: `test_training_page.py::test_the_run_details_name_the_folder_once_the_model_and_the_log_with_no_bubble` (a real checkpoint and log; fails on aad658c). Seen on the CPU demo at 1850x960 and 960x1080: rows Run folder demo/runs/gatv2/20261116-204731_demo-disease_ca4364, Checkpoint checkpoints/last.pt, Model fingerprint ef7a78d4661b (the drawer names the same file so), Logs logs/train_20261116_204731.json, Dataset used same as the run bar; 0 help buttons, 1 Copy (before: the folder twice, Logs a sentence, 50bef1bf5f9f with Copy and an ⓘ). Screens: scratchpad/t06b/run-view/shots/before/details_1850x960.png, scratchpad/t06b/run-view/shots/after/details_1850x960.png (and _960x1080).
 
 #### B69-T1 · val_loss-only run's middle charts show the generic empty message
 
-- **State**: partly done · found by an internal review · severity cosmetic · page: training
+- **State**: code-verified · found by an internal review · severity cosmetic · page: training
 - **Problem**: Generic 'No other figure charted'; blank charts at full height with an orphan axis label narrow.
 - **At ba6e85e**: From the code only: the demo has no run whose log holds only val_loss. An empty chart now hides its plot and axis label (shep_charts.js:606-609 toggles shep-chart-empty; 30f7249), so blank charts no longer keep full height or leave an orphan axis label. A plain val_loss log is still the kind 'other' (training_console.py:2412-2421). Its two middle charts are still titled with the generic 'No other figure charted: Export CSV has every logged figure' and 'No further figure charted' (:2406-2407), with no line of their own (empty is None for 'other', :2497-2498).
 - **Done when**: For a run whose log holds only val_loss, the empty charts say the run logs only its loss (not the generic 'No other figure charted'), checked by a renderer unit test with such a log.
 - **Sources**: BL:1027
-- **Closed at**: —
+- **Closed at**: 4c9c754. A log whose validation holds only its loss (`VALIDATION_LOSS_KEYS`: val_loss, val_lp_loss, beside epoch and time) is the kind "loss": its two middle charts are titled as any run's ("Validation figure (Trainer)", "More validation figures (Trainer)") and say "This run logs only its loss: the Loss chart draws it." and "Not recorded in this run's log."; a log of other uncharted figures keeps the generic state. Test: `test_training_page.py::test_a_plain_val_loss_log_draws_both_loss_series_and_its_values_unchanged` (the renderer with such a log; fails on aad658c). Seen on the CPU demo (a run whose log holds only val_loss) at 1850x960 and 960x1080: before "No other figure charted: Export CSV has every logged figure" and "No further figure charted"; after the two lines above. Screens: scratchpad/t06b/run-view/shots/before/idle_valloss_1850x960.png, scratchpad/t06b/run-view/shots/after/idle_valloss_1850x960.png.
 
 #### R-32 · Device default 'auto' is refused on a CUDA-less host with no warning before Start
 
@@ -2044,12 +2044,12 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### R-54 · One-series chart legends repeat their title; '(log)' and x label repeated
 
-- **State**: partly done · found by the 2026-10-25 review · severity low · page: training
+- **State**: code-verified · found by the 2026-10-25 review · severity low · page: training
 - **Problem**: Chart titles used jargon; one-series legends repeated their title.
 - **At ba6e85e**: Chart titles follow the run's kind (30f7249; training_console.py:2385-2410). A base reads 'LP accuracy (validation, Trainer)' and 'ROC-AUC and AP (validation, Trainer)'; a task model reads 'Pooled MRR (validation, Trainer)' and 'Pooled top-k (validation, Trainer)'; the fourth is 'Learning rate (log)'. 'Trainer top-20' and 'Hits@K' are gone, and naming the Trainer is now a skill rule (§8). Single-series legends still repeat their titles ('pooled MRR', 'LP accuracy', 'learning rate'), because keysHtml draws a key for every series (shep_charts.js:400-405). 'epoch (shared axis)' still sits under both bottom charts.
 - **Done when**: A chart with one series shows no legend, the learning-rate title says '(log scale)', and the epoch x label appears once per chart grid.
 - **Sources**: UX:256 (appendix 54); RJ audits[1].findings[20]
-- **Closed at**: —
+- **Closed at**: d50f6b4 and 6d8a46a. A chart of one series its title names has no legend key ("LP accuracy", "pooled MRR", "learning rate"); one deliberate difference from the Done-when's wording: one series its title does not name keeps its key (a task model's Loss chart draws only "train", and the key says which loss it is). The learning-rate title is "Learning rate (log scale)". The epoch axis is labelled once per chart grid, under it, by the figure (`figure_payload`'s `x_label`, "Epoch (shared axis)"); the per-chart label and its CSS are gone; the grid keeps its rows' height so the label stays under the last row (6d8a46a: with the drawer open the rows had run over it). Tests: chart_host.cjs scenarios `a_chart_of_one_series_its_title_names_draws_no_key` and `one_epoch_label_under_the_grid_while_a_chart_has_epochs` (both fail on aad658c's module), `test_training_page.py::test_the_series_function_returns_the_four_charts_of_a_listed_run`, `::test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row`. Seen on the CPU demo: one label, its top at the last card's bottom with no card overlapped at 1850x960 (drawer closed and open), 1536x760 and 960x1080; the four plot areas 198 px each at 1850x960 (209/209/190/190 before). Screens: scratchpad/t06b/run-view/shots/before/disease_1850x960.png, scratchpad/t06b/run-view/shots/after/disease_1850x960.png, scratchpad/t06b/run-view/shots/after/drawer_open_label_1850x960.png (and _960x1080). The shared check (`test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check`, every page at every representative size) after 6d8a46a reports only "1366x620 settings: focused #dl_box_training_evidence_dirs textarea under #runtime_footer", which aad658c reports alike (Settings, not this row's).
 
 #### B52-H · Run view could chart only the current run
 
