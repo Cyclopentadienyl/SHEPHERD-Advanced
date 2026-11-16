@@ -809,8 +809,11 @@ def test_the_series_function_returns_the_four_charts_of_a_listed_run(root):
     assert payload["run"] == run_id and payload["rev"] == 12
     by_id = {c["id"]: c for c in payload["charts"]}
     assert list(by_id) == ["loss", "mrr", "hits", "lr"]
-    # A finetune logs no validation loss, so its Loss chart draws training only.
+    # A finetune logs no validation loss, so its Loss chart draws training
+    # only, and says so in its title: a chart of one series draws no legend
+    # key (R-54; the T06 review: its key "train" was the one left).
     assert [s["label"] for s in by_id["loss"]["series"]] == ["train"]
+    assert by_id["loss"]["title"] == "Loss (train)"
     assert by_id["mrr"]["title"] == "Pooled MRR (validation, Trainer)"
     assert [s["label"] for s in by_id["hits"]["series"]] == ["top-1", "top-3", "top-10"]
     assert by_id["lr"]["yScale"] == "log" and by_id["loss"]["yScale"] == "linear"
@@ -822,6 +825,36 @@ def test_the_series_function_returns_the_four_charts_of_a_listed_run(root):
     assert payload["xLabel"] == tc.SHARED_AXIS == "Epoch (shared axis)"
     assert not [c for c in payload["charts"] if "xLabel" in c]
     json.dumps(payload)
+
+
+def test_every_chart_of_one_series_is_titled_by_it():
+    """R-54: a chart of one series draws no legend key (the charts module's
+    `keyed`), so its title is what names the series: the Trainer's figure and
+    the learning rate by their own titles; the Loss chart of a log with only
+    the training loss "Loss (train)" (it kept a key "train" under "Loss", the
+    T06 review), with both losses "Loss" and a key each; companions with one
+    of theirs logged, that one ("ROC-AUC", "Pooled top-10")."""
+    base = {"train": [{"epoch": 0, "total": 0.9, "learning_rate": 1e-3}],
+            "validation": [{"epoch": 0, "val_lp_accuracy": 0.6, "val_lp_roc_auc": 0.7,
+                            "val_lp_loss": 0.8}]}
+    task = {"train": [{"epoch": 0, "train_loss": 0.9, "learning_rate": 1e-3}],
+            "validation": [{"epoch": 0, "val_pooled_mrr": 0.2, "val_pooled_top10": 0.4}]}
+    seen = {}
+    for name, history in (("base", base), ("task", task)):
+        for chart in tc.training_charts(history):
+            seen[name, chart["id"]] = chart["title"]
+            labels = [s["label"] for s in chart["series"]]
+            if len(labels) == 1:
+                assert labels[0].lower() in chart["title"].lower(), (name, chart)
+    assert seen == {
+        ("base", "loss"): "Loss", ("base", "mrr"): "LP accuracy (validation, Trainer)",
+        ("base", "hits"): "ROC-AUC (validation, Trainer)", ("base", "lr"): "Learning rate (log scale)",
+        ("task", "loss"): "Loss (train)", ("task", "mrr"): "Pooled MRR (validation, Trainer)",
+        ("task", "hits"): "Pooled top-10 (validation, Trainer)",
+        ("task", "lr"): "Learning rate (log scale)"}
+    # Both companions logged: the chart's own title, a key each.
+    both = {**base, "validation": [{**base["validation"][0], "val_lp_average_precision": 0.5}]}
+    assert tc.training_charts(both)[2]["title"] == "ROC-AUC and AP (validation, Trainer)"
 
 
 def test_a_top_k_that_appears_later_joins_its_chart():

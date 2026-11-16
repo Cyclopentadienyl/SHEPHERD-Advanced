@@ -408,15 +408,13 @@
   // re-mounts, as the colours are.
   //
   // A chart draws keys only where they tell something (R-54): a chart of one
-  // series its title already names ("LP accuracy" under "LP accuracy
-  // (validation, Trainer)", "learning rate" under "Learning rate (log
-  // scale)") draws none; one series its title does not name keeps its key
-  // (Loss's "train": which loss the line is).
+  // series draws none, whatever its title, since its title names the series
+  // (the server's titles: "LP accuracy (validation, Trainer)", "Learning
+  // rate (log scale)", "Loss (train)" for a training loss alone); two or
+  // more draw a key each. (The T06 review: one series its title did not
+  // start with, Loss's "train", kept a key.)
   function keyed(spec) {
-    var series = spec.series || [];
-    if (series.length !== 1) { return series.length > 0; }
-    var title = String(spec.title || "").toLowerCase(), label = String(series[0].label).toLowerCase();
-    return !label || title.indexOf(label) !== 0;
+    return (spec.series || []).length > 1;
   }
   function hiddenOf(inst, chartId) {
     var byKey = HIDDEN[inst.key] || (HIDDEN[inst.key] = {});
@@ -648,8 +646,7 @@
       var recreate = st.u && (st.yLog !== log || labels.join("\u0001") !== st.labels.join("\u0001"));
       st.yLog = log;
       st.dropped = 0;
-      var retitled = st.title !== spec.title;
-      if (retitled) {                                    // another run's kind: its own title
+      if (st.title !== spec.title) {                     // another run's kind, or "Loss (train)"
         var title = st.card.querySelector(".shep-chart-title");
         if (title) { title.textContent = String(spec.title || ""); }
       }
@@ -657,8 +654,8 @@
       st.data = [Array.prototype.slice.call(spec.x || [])].concat((spec.series || []).map(function (s) {
         return sanitize(st, Array.prototype.slice.call(s.values || []));
       }));
-      if (retitled || labels.join("\u0001") !== st.labels.join("\u0001")) {
-        st.labels = labels;                              // its keys by its title too (`keyed`)
+      if (labels.join("\u0001") !== st.labels.join("\u0001")) {
+        st.labels = labels;                              // its keys by its series (`keyed`)
         st.card.querySelector(".shep-chart-keys").innerHTML = keysHtml(inst, spec);
       }
       st.card.classList.toggle("shep-chart-empty", !st.data[0].length);

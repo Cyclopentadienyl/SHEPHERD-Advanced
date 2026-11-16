@@ -168,7 +168,8 @@ function settle() { return new Promise((r) => setImmediate(r)); }
 function payload(run, rev, epochs) {
   const x = Array.from({ length: epochs }, (_, i) => i + 1);
   return { run, rev, xLabel: "Epoch (shared axis)", charts: [
-    { id: "loss", title: "Loss", x, series: [{ label: "train", values: x.map((i) => 1 / i) }], yScale: "linear" },
+    { id: "loss", title: "Loss", x, series: [{ label: "train", values: x.map((i) => 1 / i) },
+                                             { label: "validation", values: x.map((i) => 2 / i) }], yScale: "linear" },
     { id: "lr", title: "Learning rate", x, series: [{ label: "learning rate", values: x.map(() => 1e-3) }], yScale: "log" },
   ] };
 }
@@ -620,24 +621,26 @@ S.legend_key_hides_and_shows_its_series = async () => {
                rebuilt === false && keys.includes('aria-pressed="false"') && shownAgain === true &&
                other === true, drawn, hidden, rebuilt, keys, shownAgain, other };
 };
-S.a_chart_of_one_series_its_title_names_draws_no_key = async () => {
+S.a_chart_of_one_series_draws_no_key = async () => {
   // R-54: "learning rate" under "Learning rate (log scale)" repeated the
-  // title; one series the title does not name ("train" under "Loss") keeps
-  // its key, which says which loss it is; two series keep theirs. Another
-  // run's title with the same labels redraws the keys by its own title.
+  // title. A chart of one series draws no key, whatever its title (the T06
+  // review: "train" under "Loss" kept one; the server titles it "Loss
+  // (train)"); two series keep theirs. Another run whose Loss logs only its
+  // training loss redraws that chart's keys: none.
   const h = await shown("ws/A", 2, 2);
   const inst = h.win.ShepCharts._inst.training, K = h.win.ShepCharts._keys;
-  const card = (id) => inst.charts[id].card._html.includes('class="shep-chart-key"');
-  const first = { loss: card("loss"), lr: card("lr") };
-  const two = K.html(inst, { id: "loss", title: "Loss", series: [{ label: "train" }, { label: "validation" }] });
+  const keys = (id) => (inst.charts[id].card._html.match(/class="shep-chart-key"/g) || []).length;
+  const first = { loss: keys("loss"), lr: keys("lr") };
+  const one = (title) => K.html(inst, { id: "loss", title, series: [{ label: "train" }] });
   const named = K.html(inst, { id: "mrr", title: "Pooled MRR (validation, Trainer)", series: [{ label: "pooled MRR" }] });
   h.setToken(tok("ws/B", 3)); await settle();
-  const other = payload("ws/B", 3, 3); other.charts[1].title = "Rate";
+  const other = payload("ws/B", 3, 3);
+  other.charts[0].title = "Loss (train)"; other.charts[0].series = other.charts[0].series.slice(0, 1);
   await h.answer(h.series()[1], other);
-  const keysPart = inst.charts.lr.card.querySelector(".shep-chart-keys")._html;
-  return { ok: first.loss && !first.lr && (two.match(/shep-chart-key"/g) || []).length === 2 &&
-               named === "" && keysPart.includes("learning rate"),
-           first, two: two.length, named, keysPart };
+  const lossKeys = inst.charts.loss.card.querySelector(".shep-chart-keys")._html;
+  return { ok: first.loss === 2 && first.lr === 0 && one("Loss") === "" && one("Loss (train)") === "" &&
+               named === "" && lossKeys === "",
+           first, one: [one("Loss"), one("Loss (train)")], named, lossKeys };
 };
 
 (async () => {

@@ -2504,6 +2504,18 @@ VALIDATION_CHARTS = {
     "loss": ("Validation figure (Trainer)", (), "More validation figures (Trainer)", ()),
     "none": ("Validation figure (Trainer)", (), "More validation figures (Trainer)", ()),
 }
+#: **A chart left with one series draws no legend key** (R-54; the charts
+#: module's `keyed`), so its title names that series where the chart's own
+#: title would not: the Loss chart of a run that logs only its training loss
+#: (a task model's) "Loss (train)" (the T06 review: its key said "train"), and
+#: the companions with one of theirs logged, "ROC-AUC (validation, Trainer)",
+#: "Pooled top-10 (validation, Trainer)". The Trainer's figure and the
+#: learning rate are one series their titles name.
+ONE_SERIES_TITLES = {
+    "loss": "Loss ({})",
+    "base": "{} (validation, Trainer)",
+    "finetune": "Pooled {} (validation, Trainer)",
+}
 
 
 def validation_kind(validation: Sequence[Mapping[str, Any]]) -> str:
@@ -2586,16 +2598,20 @@ def training_charts(history: Mapping[str, Any], *, live: bool = False) -> List[D
     the run is `live`, the training job's run still logging, else
     `NO_VALIDATION_LOGGED`; `LOSS_ONLY_LOGGED` for a log whose validation is
     its loss alone; `NOT_IN_THE_LOG`; the generic state's titles say it
-    themselves). Their shared epoch axis is labelled once, by the figure
+    themselves). A chart left with one series, which draws no legend key, is
+    titled by it where its own title is not (`ONE_SERIES_TITLES`). Their
+    shared epoch axis is labelled once, by the figure
     (`training_chart_series`)."""
     train = [e for e in history.get("train") or [] if isinstance(e, Mapping)]
     val = [e for e in history.get("validation") or [] if isinstance(e, Mapping)]
     specs = []
 
-    def spec(chart_id, title, columns, *, y_scale="linear", empty=NOT_IN_THE_LOG):
+    def spec(chart_id, title, columns, *, y_scale="linear", empty=NOT_IN_THE_LOG, one=None):
         epochs = sorted(set().union(*[set(c) for _label, c in columns])) if columns else []
         series = [(label, [col.get(x) for x in epochs]) for label, col in columns]
         series = [(label, values) for label, values in series if _has_value(values)]
+        if one and len(series) == 1:
+            title = one.format(series[0][0])
         return charts.chart_spec(chart_id, title, epochs if series else [],
                                  series, y_scale=y_scale, empty=None if series else empty)
 
@@ -2610,10 +2626,12 @@ def training_charts(history: Mapping[str, Any], *, live: bool = False) -> List[D
                "loss": LOSS_ONLY_LOGGED, "other": None}.get(kind, NOT_IN_THE_LOG)
     specs.append(spec("loss", CHART_TITLES["loss"],
                       [("train", _by_epoch(train, "total", "train_loss")),
-                       ("validation", _by_epoch(val, *VALIDATION_LOSS_KEYS))]))
+                       ("validation", _by_epoch(val, *VALIDATION_LOSS_KEYS))],
+                      one=ONE_SERIES_TITLES["loss"]))
     specs.append(spec("mrr", figure_title, columns(figure), empty=waiting))
     specs.append(spec("hits", others_title, columns(others),
-                      empty=NOT_IN_THE_LOG if kind == "loss" else waiting))
+                      empty=NOT_IN_THE_LOG if kind == "loss" else waiting,
+                      one=ONE_SERIES_TITLES.get(kind)))
     specs.append(spec("lr", CHART_TITLES["lr"],
                       [("learning rate", _by_epoch(train, "learning_rate"))], y_scale="log"))
     return specs

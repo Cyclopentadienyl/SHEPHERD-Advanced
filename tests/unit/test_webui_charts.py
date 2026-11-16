@@ -323,7 +323,7 @@ def test_each_legend_key_shows_its_series_own_dash_pattern():
         "const inst={key:'k-'+Date.now()};"
         "const html=K.html(inst,{id:'hits',series:labels.map(l=>({label:l}))});"
         "console.log(JSON.stringify({html,dashes:K.dashes,"
-        "  evil:K.html(inst,{id:'x',series:[{label:'<img src=x onerror=1>'}]})}));")
+        "  evil:K.html(inst,{id:'x',series:[{label:'<img src=x onerror=1>'},{label:'b'}]})}));")
     res = json.loads(out)
     keys = res["html"].split('<button type="button" class="shep-chart-key"')[1:]
     assert len(keys) == 5
@@ -334,6 +334,7 @@ def test_each_legend_key_shows_its_series_own_dash_pattern():
         assert (found and found.group(1)) == (" ".join(map(str, dash)) if dash else None), key
         patterns.append(found and found.group(1))
     assert len(set(patterns)) == 5 and 'aria-hidden="true"' in keys[0]
+    # Escaped (two series: a chart of one draws no key, R-54).
     assert "<img" not in res["evil"] and "&lt;img" in res["evil"]
 
 
@@ -512,7 +513,7 @@ REPLY_SCENARIOS = [
     "another_runs_titles_replace_the_last_ones",
     # a legend key hides its series and shows it again, kept when the chart is rebuilt (R-33);
     # a chart of one series its title names draws no key (R-54)
-    "legend_key_hides_and_shows_its_series", "a_chart_of_one_series_its_title_names_draws_no_key",
+    "legend_key_hides_and_shows_its_series", "a_chart_of_one_series_draws_no_key",
 ]
 
 
