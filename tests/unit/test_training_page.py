@@ -707,9 +707,10 @@ def test_a_plain_val_loss_log_draws_both_loss_series_and_its_values_unchanged(ro
     """R1 (the reviewer's K8 closeout review, adopted by the owner): a plain log
     with epoch, train_loss, learning_rate and val_loss (no model spec, no
     stage's selection figure, no MRR or Hits@K) still draws the Loss chart with
-    its train and validation series, its values and its CSV as logged. Its
-    middle two charts say no figure is charted for it; nothing reads it as a
-    run without validation."""
+    its train and validation series, its values and its CSV as logged; nothing
+    reads it as a run without validation. B69-T1: its middle two charts say the
+    run logs only its loss (they read the generic "No other figure charted:
+    Export CSV has every logged figure" and "No further figure charted")."""
     log = {"train": [{"epoch": 0, "train_loss": 1.0, "learning_rate": 0.001}],
            "validation": [{"epoch": 0, "val_loss": 0.8}]}
     charts = {c["id"]: c for c in tc.training_charts(log)}
@@ -717,9 +718,16 @@ def test_a_plain_val_loss_log_draws_both_loss_series_and_its_values_unchanged(ro
     assert charts["loss"]["x"] == [1]
     assert [s["values"] for s in charts["loss"]["series"]] == [[1.0], [0.8]]
     assert charts["lr"]["series"][0]["values"] == [0.001]
-    assert tc.validation_kind(log["validation"]) == "other"
+    assert tc.validation_kind(log["validation"]) == "loss"
     assert charts["mrr"]["series"] == [] and charts["hits"]["series"] == []
-    assert charts["mrr"]["title"] == tc.VALIDATION_CHARTS["other"][0]
+    assert charts["mrr"]["title"] == "Validation figure (Trainer)"
+    assert charts["hits"]["title"] == "More validation figures (Trainer)"
+    assert charts["mrr"]["empty"] == tc.LOSS_ONLY_LOGGED == (
+        "This run logs only its loss: the Loss chart draws it.")
+    assert charts["hits"]["empty"] == tc.NOT_IN_THE_LOG
+    assert not [c["title"] for c in charts.values() if "charted" in c["title"]]
+    # A base's LP loss alone, beside its epoch and time, is its loss alone too.
+    assert tc.validation_kind([{"epoch": 0, "timestamp": "t", "val_lp_loss": 0.7}]) == "loss"
     assert tc._metrics_csv_text(log).splitlines() == [
         "epoch,split,learning_rate,train_loss,val_loss",
         "1,train,0.001,1.0,", "1,validation,,,0.8"]

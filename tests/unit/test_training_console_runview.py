@@ -333,8 +333,11 @@ def test_an_empty_chart_says_its_own_line_and_draws_no_plot_or_axis_label():
         {"train": [{"epoch": 0, "train_loss": 1.0}], "validation": []})}
     assert no_lr["lr"]["empty"] == tc.NOT_IN_THE_LOG == "Not recorded in this run’s log."
     other = {c["id"]: c for c in tc.training_charts(
-        {"train": [{"epoch": 0, "train_loss": 1.0}], "validation": [{"epoch": 0, "val_loss": 1}]})}
+        {"train": [{"epoch": 0, "train_loss": 1.0}], "validation": [{"epoch": 0, "val_mrr": 1}]})}
     assert "empty" not in other["mrr"] and "charted" in other["mrr"]["title"]  # its title says it
+    loss_only = {c["id"]: c for c in tc.training_charts(
+        {"train": [{"epoch": 0, "train_loss": 1.0}], "validation": [{"epoch": 0, "val_loss": 1}]})}
+    assert loss_only["mrr"]["empty"] == tc.LOSS_ONLY_LOGGED      # B69-T1: its own cause
     drawn = {c["id"]: c for c in tc.training_charts(_metrics(3))}
     assert not [c for c in drawn.values() if "empty" in c]
 

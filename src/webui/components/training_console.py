@@ -2408,15 +2408,21 @@ CHART_TITLES = {
 #: The four charts' one epoch axis, labelled once under the grid
 #: (`charts.figure_payload`'s ``x_label``; R-54: each bottom chart said it).
 SHARED_AXIS = "Epoch (shared axis)"
+#: The validation loss a run's log may hold, the Loss chart's second series:
+#: a task model's ``val_loss``, a base's ``val_lp_loss``.
+VALIDATION_LOSS_KEYS = ("val_loss", "val_lp_loss")
 _POOLED_TOP = re.compile(r"^val_pooled_top(\d+)$")
 #: The middle two charts by the run's kind, read from the keys its validation
 #: log holds (`validation_kind`): ``(the figure's title, its series, the
 #: companions' title, theirs)``, each series ``(label, key)``; the companions
 #: by cut-off are filled from the log (`_k_series`). A run that has logged no
 #: validation yet is "none": its two charts wait, titled by what they will
-#: show for any run. A log with validation entries but neither stage's figure
-#: is "other": its two charts say no other figure is charted and that Export
-#: CSV has every one, and draw no series; its Loss chart, learning rate and
+#: show for any run. A log whose validation holds its loss alone is "loss":
+#: its two charts are titled as for "none" and say the run logs only its loss
+#: (B69: they read the generic "No other figure charted"). A log with
+#: validation entries but neither stage's figure nor its loss alone is
+#: "other": its two charts say no other figure is charted and that Export CSV
+#: has every one, and draw no series; its Loss chart, learning rate and
 #: Export CSV (every key) are as for any run.
 VALIDATION_CHARTS = {
     "base": ("LP accuracy (validation, Trainer)", (("LP accuracy", "val_lp_accuracy"),),
@@ -2426,19 +2432,25 @@ VALIDATION_CHARTS = {
                  "Pooled top-k (validation, Trainer)", _POOLED_TOP),
     "other": ("No other figure charted: Export CSV has every logged figure", (),
               "No further figure charted", ()),
+    "loss": ("Validation figure (Trainer)", (), "More validation figures (Trainer)", ()),
     "none": ("Validation figure (Trainer)", (), "More validation figures (Trainer)", ()),
 }
 
 
 def validation_kind(validation: Sequence[Mapping[str, Any]]) -> str:
     """Which run a validation log is, by its keys: "finetune" (pooled MRR),
-    "base" (LP accuracy), "other" for validation entries holding neither (no
-    figure this build charts there), or "none" before the first validation."""
+    "base" (LP accuracy), "loss" for validation entries holding only its
+    loss (`VALIDATION_LOSS_KEYS`, beside their epoch and time), "other" for
+    entries holding none of these (no figure this build charts there), or
+    "none" before the first validation."""
     keys = {str(key) for entry in validation for key in entry}
     if "val_pooled_mrr" in keys:
         return "finetune"
     if "val_lp_accuracy" in keys:
         return "base"
+    figures = keys - {"epoch", "timestamp"}
+    if figures and figures <= set(VALIDATION_LOSS_KEYS):
+        return "loss"
     return "other" if keys - {"epoch"} else "none"
 
 
@@ -2486,6 +2498,10 @@ def _has_value(values: Sequence[Any]) -> bool:
 WAITING_FOR_VALIDATION = "Drawn once the run logs its first validation."
 NO_VALIDATION_LOGGED = "This run logged no validation."
 NOT_IN_THE_LOG = f"{r.NOT_RECORDED} in this run’s log."
+#: A run whose validation logs only its loss (`validation_kind` "loss"): its
+#: Trainer figure's chart says so and where the loss is drawn; the chart of
+#: its companions, that they are not in its log (`NOT_IN_THE_LOG`).
+LOSS_ONLY_LOGGED = "This run logs only its loss: the Loss chart draws it."
 
 
 def training_charts(history: Mapping[str, Any], *, live: bool = False) -> List[Dict[str, Any]]:
@@ -2499,8 +2515,9 @@ def training_charts(history: Mapping[str, Any], *, live: bool = False) -> List[D
     is left out, so no chart draws a figure the run does not log; a chart
     left with none says why in its own line (`WAITING_FOR_VALIDATION` while
     the run is `live`, the training job's run still logging, else
-    `NO_VALIDATION_LOGGED`; `NOT_IN_THE_LOG`; the generic state's titles say
-    it themselves). Their shared epoch axis is labelled once, by the figure
+    `NO_VALIDATION_LOGGED`; `LOSS_ONLY_LOGGED` for a log whose validation is
+    its loss alone; `NOT_IN_THE_LOG`; the generic state's titles say it
+    themselves). Their shared epoch axis is labelled once, by the figure
     (`training_chart_series`)."""
     train = [e for e in history.get("train") or [] if isinstance(e, Mapping)]
     val = [e for e in history.get("validation") or [] if isinstance(e, Mapping)]
@@ -2521,12 +2538,13 @@ def training_charts(history: Mapping[str, Any], *, live: bool = False) -> List[D
     if not isinstance(others, tuple):
         others = _k_series(val, others, "top-")
     waiting = {"none": WAITING_FOR_VALIDATION if live else NO_VALIDATION_LOGGED,
-               "other": None}.get(kind, NOT_IN_THE_LOG)
+               "loss": LOSS_ONLY_LOGGED, "other": None}.get(kind, NOT_IN_THE_LOG)
     specs.append(spec("loss", CHART_TITLES["loss"],
                       [("train", _by_epoch(train, "total", "train_loss")),
-                       ("validation", _by_epoch(val, "val_loss", "val_lp_loss"))]))
+                       ("validation", _by_epoch(val, *VALIDATION_LOSS_KEYS))]))
     specs.append(spec("mrr", figure_title, columns(figure), empty=waiting))
-    specs.append(spec("hits", others_title, columns(others), empty=waiting))
+    specs.append(spec("hits", others_title, columns(others),
+                      empty=NOT_IN_THE_LOG if kind == "loss" else waiting))
     specs.append(spec("lr", CHART_TITLES["lr"],
                       [("learning rate", _by_epoch(train, "learning_rate"))], y_scale="log"))
     return specs
