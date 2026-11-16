@@ -101,7 +101,9 @@ def _runtime_footer() -> str:
 #: so the page needs no network) and the polled panels' loading flash. Passed
 #: to the mount (`mount_dashboard`).
 DASHBOARD_CSS = """
-    /* IBM Plex Sans — local font files (offline-safe) */
+    /* IBM Plex Sans — local font files (offline-safe), the type scale's two
+       weights (400, 600; the WebUI skill's §2, R-17): a 500 or 700 asked for
+       anywhere (Gradio's own CSS) is drawn in the nearest of these. */
     @font-face {
         font-family: 'IBM Plex Sans';
         src: url('/static/fonts/ibm-plex-sans-400.woff2') format('woff2');
@@ -111,22 +113,8 @@ DASHBOARD_CSS = """
     }
     @font-face {
         font-family: 'IBM Plex Sans';
-        src: url('/static/fonts/ibm-plex-sans-500.woff2') format('woff2');
-        font-weight: 500;
-        font-style: normal;
-        font-display: swap;
-    }
-    @font-face {
-        font-family: 'IBM Plex Sans';
         src: url('/static/fonts/ibm-plex-sans-600.woff2') format('woff2');
         font-weight: 600;
-        font-style: normal;
-        font-display: swap;
-    }
-    @font-face {
-        font-family: 'IBM Plex Sans';
-        src: url('/static/fonts/ibm-plex-sans-700.woff2') format('woff2');
-        font-weight: 700;
         font-style: normal;
         font-display: swap;
     }
@@ -194,9 +182,12 @@ def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
 
 DASHBOARD_HEAD = dashboard_head()
 
-#: Text sizes of the theme: nothing under 14 px, body 15 px (the approved look).
+#: Text sizes of the theme: nothing under 14 px, body 15 px (the approved look),
+#: and only the type scale's three sizes (the WebUI skill's §2, R-17): keys and
+#: meta 14, body and values 15 (a large button's text, Gradio's ``lg``, too),
+#: a region's title 20 (a Markdown heading's ``xl`` and ``xxl``).
 TEXT_SIZE = gr.themes.Size(name="shepherd", xxs="14px", xs="14px", sm="14px", md="15px",
-                           lg="16px", xl="20px", xxl="24px")
+                           lg="15px", xl="20px", xxl="20px")
 
 
 def _dashboard_theme() -> gr.themes.Base:

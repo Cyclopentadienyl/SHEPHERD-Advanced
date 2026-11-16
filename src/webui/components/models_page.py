@@ -102,8 +102,8 @@ it cannot apply as it reads. From a change of Order or Task until the rows are
 drawn for it, "Applying …" is said beside the switch (`PENDING_JS`); a failed
 answer says what was not applied.
 
-**Narrow** (below 1400 × 760), choosing a row scrolls to its detail, which has a
-"Back to the list" button (`SCROLL_JS`).
+**Stacked** (the shell's one layout decision, ``data-shep-layout``), choosing a
+row scrolls to its detail, which has a "Back to the list" button (`SCROLL_JS`).
 
 Module: src/webui/components/models_page.py
 """
@@ -141,6 +141,7 @@ from src.webui.components.help import copy_button, help_button
 from src.webui.components.served_status import read_status, served_checkpoint_sha
 from src.webui.operator_access import operator_access
 from src.webui.shell import page_elem_id, picked, plain_html
+from src.webui.style import SIDE, STACK
 
 logger = logging.getLogger(__name__)
 
@@ -264,10 +265,9 @@ BACK_BUTTON = ('<button type="button" class="shep-btn shep-mp-back">↑ Back to 
 SCROLL_JS = r"""
 if (!window.__shepModelsScroll) {
   window.__shepModelsScroll = true;
-  var narrow = window.matchMedia('(max-width: 1399px), (max-height: 759px)');
   var pick = function (e) {
     var rows = document.getElementById('shep-models-research-rows');
-    if (!narrow.matches || !rows || !e.target.closest || !rows.contains(e.target)) { return; }
+    if (document.documentElement.getAttribute('data-shep-layout') === 'side' || !rows || !e.target.closest || !rows.contains(e.target)) { return; }
     if (e.target.closest('button, a')) { return; }
     var row = e.target.closest('tr[data-key]');
     if (!row || row.getAttribute('aria-disabled') === 'true') { return; }
@@ -2077,10 +2077,15 @@ PAGE_CSS = f"""
 {_PAGE} .shep-rs-top {{ overflow-x: auto; overflow-y: hidden; }}
 {_PAGE} .shep-rs-top-w {{ height: 1px; }}
 {_PAGE} .shep-rs-cmp col.shep-rs-cfield {{ width: 14em; }}
+/* Compare in a box no taller than the region it is read in (B72-C3: 12,342 px tall, its sideways
+   scrollbar sat at its foot, out of reach mid-table): the table scrolls both ways inside it, its
+   sideways scrollbar at the box's foot in view whenever the box is, its header row (the shared
+   table's sticky header) on top. Side by side the box is as tall as the detail's body (a size
+   container); stacked, the window. */
+{_PAGE} .shep-rs-wrap:has(> .shep-rs-cmp) {{ overflow: auto; max-height: calc(100vh - 32px); }}
 /* Every metric as recorded (R2): a closed native disclosure, its summary a 24 px
-   target that shows the keyboard focus (skill §10). */
+   target that shows the keyboard focus (skill §10; the ring is the shell's, style.py). */
 {_PAGE} .shep-mp-fold > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
-{_PAGE} .shep-mp-fold > summary:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 2px; }}
 {_PAGE} .shep-mp-fold[open] > summary {{ margin-bottom: 2px; }}
 {_PAGE} .shep-mp-delta {{ font-size: 14px; margin-top: 4px; }}
 {_PAGE} .shep-mp-refusal {{ display: flex; flex-direction: column; gap: 6px; margin: 12px 0;
@@ -2106,14 +2111,21 @@ PAGE_CSS = f"""
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-models-research-count,
 {_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-main > .shep-model-body {{ display: none !important; }}
 {_PAGE} {_LIST}:has(.shep-mp-ro) {{ grid-template-columns: minmax(0, 30fr) minmax(0, 70fr); }}
-@media (min-width: 1400px) and (min-height: 760px) {{
+/* The list's and the detail's minimum widths (the layout rule's measure, `src/webui/shell.py`):
+   the list's table whole from 450 px; side by side, the grid's columns never go under them. */
+{_PAGE} {_LIST} {{ --shep-mp-list-min: 450px; --shep-mp-detail-min: 480px; }}
+{_PAGE} {_LIST} > .shep-model-main {{ --shep-panel-min: var(--shep-mp-list-min); }}
+{_PAGE} {_LIST} > .shep-model-foot {{ --shep-panel-min: var(--shep-mp-detail-min); }}
+{SIDE} {{
+  {_PAGE} {_LIST} {{ grid-template-columns: minmax(var(--shep-mp-list-min), 46fr) minmax(var(--shep-mp-detail-min), 54fr); }}
   {_PAGE} > .column {{ height: 100%; }}
   {_PAGE} .shep-models {{ height: 100%; min-height: 0; }}
   {_PAGE} {_LIST} {{ height: 100%; min-height: 0; }}
-  /* The panel scrolls as a whole only when its header and the rows' floor do not both fit. */
+  /* The panel scrolls as a whole only when its header alone does not fit (below about 480 px of window). */
   {_PAGE} {_LIST} > .shep-model-main {{ height: 100%; overflow-y: auto; }}
   {_PAGE} #shep-mp-detail {{ overflow: hidden; display: flex !important; flex-direction: column; flex-wrap: nowrap !important; }}
-  {_PAGE} #shep-mp-detail-bd {{ flex: 1 1 auto !important; overflow: auto !important; }}
+  {_PAGE} #shep-mp-detail-bd {{ flex: 1 1 auto !important; overflow: auto !important; container-type: size; }}
+  {_PAGE} .shep-rs-wrap:has(> .shep-rs-cmp) {{ max-height: calc(100cqh - 24px); }}
   /* The table's header sticks to the top of the region the rows scroll in. */
   {_PAGE} #shep-models-research-rows .shep-tbl-wrap {{ overflow: visible; }}
   /* Words break only where they must (a column is never narrower than its
@@ -2138,12 +2150,14 @@ PAGE_CSS = f"""
      covers a row (the closing check: a sticky title over the panel's scroll
      region hid three to six rows below 1000 px tall). The header row's items
      are laid out in the panel's own grid (the row itself draws no box). The
-     rows keep a floor of about four rows; a header taller than the rest
-     scrolls the panel, its title with it. */
+     rows take what the header leaves (``minmax(0, 1fr)``): a floor of 160 px
+     made the panel scroll around the rows' own region below about 660 px of
+     window, two scroll regions in one panel (1366 x 620, 1280 x 600); only a
+     header taller than the panel scrolls the panel, its title with it. */
   {_PAGE} {_LIST} > .shep-model-main {{
     display: grid !important; align-items: start; align-content: start; gap: 10px 10px !important;
     grid-template-columns: minmax(0, 1fr) 170px;
-    grid-template-rows: repeat(5, max-content) minmax(160px, 1fr);
+    grid-template-rows: repeat(5, max-content) minmax(0, 1fr);
     grid-template-areas: "lhd lhd" "ws task" "wsline wsline" "ctl ctl" "count count" "body body";
     padding: 0 16px !important;
   }}
@@ -2155,7 +2169,7 @@ PAGE_CSS = f"""
   {_PAGE} #shep-models-research-rows {{ overflow: auto !important; min-height: 0; max-height: 100%; }}
   {_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-main {{ row-gap: 0 !important; }}
 }}
-@media (max-width: 1399px), (max-height: 759px) {{
+{STACK} {{
   {_PAGE} {_LIST} {{
     grid-template-columns: minmax(0, 1fr); grid-template-rows: auto;
     grid-template-areas: "main" "foot" "confirm"; row-gap: 0 !important;

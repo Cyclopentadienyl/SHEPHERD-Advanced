@@ -55,6 +55,7 @@ import pytest
 gr = pytest.importorskip("gradio")
 
 from src.utils.fingerprint import file_sha256  # noqa: E402
+from src.webui import style  # noqa: E402
 from src.webui.components import datasets_page as dsp  # noqa: E402
 
 ODD = "<b>odd&name"
@@ -323,6 +324,8 @@ def test_a_row_is_one_line_and_in_use_is_no_input_box(root, monkeypatch):
         assert retired not in html, retired
     for retired in ("shep-ds-wide", "shep-ds-narrow"):      # nor a rule of the page's own sheet
         assert retired not in dsp.PAGE_CSS, retired
+    for retired in ("shep-mark-outline", "shep-mark-grey", "shep-mark-serve-same"):  # nor a shared one
+        assert retired not in style.SHELL_CSS, retired
     assert "<div" not in html.split("<tbody>")[1]                     # no second line in a cell
     assert '<span class="shep-sub">same dataset as served</span>' in _row(html, "demo_copy")
     scratch = next(x for x in data["rows"] if x["name"] == "scratch_ws")
@@ -885,3 +888,59 @@ def test_in_a_browser_rows_are_one_line_and_each_fact_is_said_once(root, tmp_pat
         assert facts["hex64"] == 0 and facts["cards"] == 0, width
         assert facts["tabMeaning"] == 1, width
         assert facts["sideways"] == 0, width
+
+
+_SWITCH_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
+    && window.__shepQueue.joins.every((j) => j.event_id !== null), null, { timeout: 60000 });
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+  await idle();
+  await page.click('#shep-tab-research-button');
+  await page.click('#shep-page-datasets-button');
+  await page.waitForSelector('#shep-ds-table tr[data-key="demo"]', { timeout: 60000 });
+  await idle();
+  const out = [];
+  for (let w = 1380; w <= 1560; w += 10) {
+    await page.setViewportSize({ width: w, height: 960 });
+    // The shell lays the page out in the frame after a resize (`update`): two frames on, it has.
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out.push(await page.evaluate((w) => {
+      const wrap = document.querySelector('#shep-ds-table .shep-tbl-wrap');
+      return [w, document.documentElement.getAttribute('data-shep-layout'),
+              wrap.scrollWidth - wrap.clientWidth];
+    }, w));
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})();
+"""
+
+
+def test_in_a_browser_the_table_never_scrolls_sideways_once_side_by_side(root, tmp_path, monkeypatch):
+    """The layout rule puts Datasets side by side when its panels' minimum
+    widths fit (`--shep-panel-min`). The table's panel minimum is its
+    narrowest drawn width: below it, the windows just past the switch drew
+    the table side by side and scrolling sideways in its own box (860 px
+    against a 853 px table with its margins: 28 px of scroll at 1410 px).
+    Swept across the switch, a side-by-side table never scrolls sideways,
+    and the page is still stacked below it and side by side above it."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    _serving(monkeypatch, None)
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_SWITCH_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    layouts = [layout for _w, layout, _over in seen]
+    assert layouts[0] == "stack" and layouts[-1] == "side", seen
+    assert [(w, over) for w, layout, over in seen if layout == "side" and over > 0] == [], seen

@@ -1,14 +1,15 @@
 // Drives the shared help bubble (src/webui/components/help.py's HELP_HEAD and
 // HELP_CSS) in a real headless browser, on a page the test builds: a
-// registered field (a Gradio-like ".block" with its title), a key-value row,
-// a table row and a card's heading (a region marked "shep-help-region"),
-// each with its ⓘ. For each ⓘ, at each window size, it reports what a hover
-// does before and after the open delay (and whether its preview shows the
-// "Esc to close" footer), what a click pins (the bubble's role and name, its
-// text, its body's parts as the bubble built them, any element its text
-// made, the footer), the bubble's rect and the explained field's rect,
-// measured here by the test's own rule (not the bubble's), and what
-// document.elementsFromPoint finds at the field's centre.
+// registered field (a Gradio-like ".block" with its title), one drawn as a
+// grid row ("display: contents" on its block, as Diagnosis' Options), a
+// key-value row, a table row and a card's heading (a region marked
+// "shep-help-region"), each with its ⓘ. For each ⓘ, at each window size, it
+// reports what a hover does before and after the open delay (and whether its
+// preview shows the "Esc to close" footer), what a click pins (the bubble's
+// role and name, its text, its body's parts as the bubble built them, any
+// element its text made, the footer), the bubble's rect and the explained
+// field's rect, measured here by the test's own rule (not the bubble's), and
+// what document.elementsFromPoint finds at the field's centre.
 //
 // usage: node tests/fixtures/help_host.cjs <page.html>
 // prints {"<width>x<height>": {"<which>": {...}}} as JSON;
@@ -20,6 +21,7 @@ const { chromium } = require("playwright");
 const SIZES = [[1850, 960], [420, 800]];
 const TARGETS = {
   field: { button: "#fld button.shep-i", field: "#fld" },
+  grid: { button: "#gfld button.shep-i", field: "#gfld > label" },
   kv: { button: ".shep-kv button.shep-i", field: null },
   row: { button: "#tbl tr button.shep-i", field: "#tbl tr" },
   region: { button: "#card .shep-card-title button.shep-i", field: "#card" },

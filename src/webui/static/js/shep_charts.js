@@ -71,7 +71,9 @@
   "use strict";
   if (window.ShepCharts) { return; }
 
-  var PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#b07d00", "#8a5cd0", "#d04a8a"];
+  // Every colour at least 3:1 on the plot's white (R-33: the orange #eb6834
+  // and the aqua #1baf7a were 3.2:1 and 2.8:1); the same hues, a step darker.
+  var PALETTE = ["#2a78d6", "#d95926", "#199e70", "#b07d00", "#8a5cd0", "#d04a8a"];
   var DASHES = [null, [7, 4], [2, 3], [9, 3, 2, 3], [4, 4], [1, 2]];
   var WHEEL_STEP = 0.0015;
   var KEY_ZOOM = 0.8;
@@ -83,6 +85,7 @@
 
   var INST = {};      // key -> the mounted instance
   var COLORS = {};    // key -> chart id -> {label: colour slot}; kept across re-mounts
+  var HIDDEN = {};    // key -> chart id -> {label: true} for a series hidden by its key
   var created = 0, destroyed = 0;
 
   // ------------------------------------------------------------ formatting
@@ -397,11 +400,31 @@
       (dash ? ' stroke-dasharray="' + dash.join(" ") + '"' : "") + "/></svg>";
   }
 
+  // A legend key is a toggle (R-33): pressed, its series is drawn; clicked,
+  // Enter or Space, the series is hidden or shown again, so a line under
+  // another can be isolated. The choice is kept per chart and label, across
+  // re-mounts, as the colours are.
+  function hiddenOf(inst, chartId) {
+    var byKey = HIDDEN[inst.key] || (HIDDEN[inst.key] = {});
+    return byKey[chartId] || (byKey[chartId] = {});
+  }
   function keysHtml(inst, spec) {
+    var hidden = hiddenOf(inst, spec.id);
     return (spec.series || []).map(function (s) {
-      var slot = colourSlot(inst, spec.id, String(s.label));
-      return '<span class="shep-chart-key">' + swatchHtml(slot) + esc(s.label) + "</span>";
+      var label = String(s.label), slot = colourSlot(inst, spec.id, label);
+      return '<button type="button" class="shep-chart-key" data-chart-key="' + esc(label) +
+        '" aria-pressed="' + (hidden[label] ? "false" : "true") + '" title="Show or hide ' + esc(label) +
+        '">' + swatchHtml(slot) + esc(label) + "</button>";
     }).join("");
+  }
+  function toggleSeries(inst, btn) {
+    var st = chartOf(inst, btn), label = btn.getAttribute("data-chart-key");
+    if (!st || label == null) { return; }
+    var hidden = hiddenOf(inst, st.id), hide = !hidden[label];
+    if (hide) { hidden[label] = true; } else { delete hidden[label]; }
+    btn.setAttribute("aria-pressed", hide ? "false" : "true");
+    var idx = st.labels.indexOf(label);
+    if (st.u && idx >= 0) { st.u.setSeries(idx + 1, { show: !hide }); }
   }
 
   function cardHtml(inst, spec) {
@@ -454,6 +477,7 @@
       var slot = colourSlot(inst, st.id, label);
       var dash = DASHES[slot % DASHES.length];
       var s = { label: label, stroke: PALETTE[slot % PALETTE.length], width: 2, spanGaps: true,
+                show: !hiddenOf(inst, st.id)[label],
                 points: { size: 5 }, value: function (u, v) { return fmt(v); } };
       if (dash) { s.dash = dash; }
       series.push(s);
@@ -708,6 +732,8 @@
       if (handled) { e.preventDefault(); applyView(inst); }
     });
     on("click", function (e) {
+      var key = e.target && e.target.closest ? e.target.closest("[data-chart-key]") : null;
+      if (key && root.contains(key)) { toggleSeries(inst, key); return; }
       var btn = e.target && e.target.closest ? e.target.closest("[data-chart-act]") : null;
       if (!btn || !root.contains(btn)) { return; }
       var act = btn.getAttribute("data-chart-act");

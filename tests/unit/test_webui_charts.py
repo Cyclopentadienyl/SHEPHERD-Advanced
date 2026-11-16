@@ -239,6 +239,19 @@ def test_colours_are_assigned_by_label_and_the_second_is_dashed():
     assert re.search(r"var DASHES = \[null, \[", js)
 
 
+def test_the_chart_series_colours_show_at_three_to_one_on_the_plot():
+    """R-33: two of the palette's colours, the orange #eb6834 and the aqua
+    #1baf7a, measured 3.2:1 and 2.8:1 on the plot's white; every series
+    colour is at least 3:1 now."""
+    from tests.unit.test_webui_button_contrast import contrast
+
+    js = MODULE_JS
+    palette = re.findall(r"#[0-9a-fA-F]{6}", re.search(r"var PALETTE = \[([^\]]+)\]", js).group(1))
+    assert len(palette) == 6 and "#1baf7a" not in palette and "#eb6834" not in palette
+    for colour in palette:
+        assert contrast(colour, "#ffffff") >= 3.0, colour
+
+
 NODE = shutil.which("node")
 
 
@@ -285,7 +298,7 @@ def test_each_legend_key_shows_its_series_own_dash_pattern():
         "console.log(JSON.stringify({html,dashes:K.dashes,"
         "  evil:K.html(inst,{id:'x',series:[{label:'<img src=x onerror=1>'}]})}));")
     res = json.loads(out)
-    keys = res["html"].split('<span class="shep-chart-key">')[1:]
+    keys = res["html"].split('<button type="button" class="shep-chart-key"')[1:]
     assert len(keys) == 5
     patterns = []
     for slot, key in enumerate(keys):
@@ -466,6 +479,8 @@ REPLY_SCENARIOS = [
     "empty_chart_says_its_line_and_the_blank_figure_its_one",
     # another run's charts are titled by its own specs
     "another_runs_titles_replace_the_last_ones",
+    # a legend key hides its series and shows it again, kept when the chart is rebuilt (R-33)
+    "legend_key_hides_and_shows_its_series",
 ]
 
 
@@ -514,7 +529,9 @@ def test_the_charts_are_two_by_two_in_the_wide_layout_and_by_their_width_in_the_
     assert "container-type: inline-size;" in css.split(".shep-charts {", 1)[1].split("}", 1)[0]
     one_column = (f"@container (max-width: {charts.TWO_COLUMNS_FROM - 1}px) "
                   "{ .shep-charts-grid { grid-template-columns: minmax(0, 1fr); } }")
-    narrow = css[css.index("@media (max-width: 1399px), (max-height: 759px)"):]
+    from tests.unit.test_webui_shell import stack
+
+    narrow = stack(css)
     assert css.count(one_column) == 1 and one_column in narrow and "height: 260px" in narrow
     assert (".shep-charts-grid { flex: 1 1 auto; min-height: 0; display: grid; "
             "grid-template-columns: repeat(2, minmax(0, 1fr));") in css

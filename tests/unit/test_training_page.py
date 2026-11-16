@@ -824,8 +824,10 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
     same = tc.run_head_html(run, ws, operator=True,
                             snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
     assert "same dataset as the run bar" in same and "a" * 12 in same     # the tag; Details
-    # By the shared OK mark, never a check glyph of the page's own (B5).
-    assert r.status_mark("ok", "same dataset as the run bar", as_chip=True) in same
+    # By the shared OK mark, never a check glyph of the page's own (B5), and
+    # quiet: a normal state is the mark and its word, never a tag (R-57).
+    assert r.status_mark("ok", "same dataset as the run bar") in same
+    assert "shep-tag" not in same
     other = tc.run_head_html(run, ws, operator=True,
                              snapshot={"readable": True, "dataset_fingerprint": "a" * 12 + "b" * 52})
     # 12 equal digits are not equal: a condition to watch, by the one mark (▲, amber).
@@ -2707,11 +2709,18 @@ def _rules(css, needle):
 
 
 def test_the_page_styles_hold_the_reviewed_layout():
+    from src.webui.style import SHELL_CSS
+
     css = tc.PAGE_CSS
-    # The build time wraps with the chip, never hidden.
-    assert not [b for _s, b in _rules(css, "shep-ds-built") if "display: none" in b]
-    # The selects: a border, the text clear of the chevron, grey while disabled.
-    assert any("border: 1px solid" in b for _s, b in _rules(css, "#shep-train-dataset .wrap:has"))
+    # R-38: the run bar is one row at 1850 x 960 only without the build time beside the
+    # fingerprint: it is the Details popover's (one click away, `details_html`), never cut.
+    built = [(sel, b) for sel, b in _rules(css, "shep-ds-built") if "display: none" in b]
+    assert built and all(".shep-rb-chip " in sel for sel, _b in built), built
+    assert "built_text(row.get(\"build\"))" in Path(tc.r.__file__).read_text()
+    # The selects: the shared field border (R-8: never a page's own, which was
+    # #cdd2da at 1.52:1), the text clear of the chevron, grey while disabled.
+    assert not any("border:" in b for _s, b in _rules(css, "#shep-train-dataset .wrap:has"))
+    assert "body .gradio-container .wrap:has(> .wrap-inner)" in SHELL_CSS
     assert any("padding-right: 30px" in b for _s, b in _rules(css, "#checkpoint_dropdown input"))
     assert any("padding-right: 30px" in b for _s, b in _rules(css, "#continue_run input"))
     assert any("grey" in b for _s, b in _rules(css, "input:disabled"))
@@ -2722,10 +2731,12 @@ def test_the_page_styles_hold_the_reviewed_layout():
     why = [b for s, b in _rules(css, ".shep-rb-why") if s == f"{tc._PAGE} .shep-rb-why"]
     assert any("flex-wrap: nowrap" in b for b in why) and not any("flex-wrap: wrap" in b for b in why)
     # A failed run's tail: four lines at a time when wide, never an inner scroll when narrow.
-    narrow = css[css.index("@media (max-width: 1399px), (max-height: 759px)"):]
+    from tests.unit.test_webui_shell import side, stack
+
+    narrow = stack(css)
     assert ".shep-banner-tail {{ max-height: none; overflow: visible; }}".replace(
         "{{", "{").replace("}}", "}") in narrow
-    wide = css[css.index("@media (min-width: 1400px) and (min-height: 760px)"):]
+    wide = side(css)
     assert "#shep-train-runview > #shep-train-charts { flex: 1 1 0 !important; min-height: 0 !important; overflow: hidden !important;" in wide
     # A failed run's banner takes height: the plots keep their minimum then too
     # (M5-3: one minimum per plot box replaced the charts' 240/370 px).
@@ -2743,7 +2754,10 @@ def test_the_continue_drawer_fits_and_says_the_plan_once():
     assert ("#shep-train-drawer-why:not(:has(.shep-drawer-why)), "
             f"{tc._PAGE} #shep-train-drawer-notice:not(:has(.shep-notice-t)) "
             "{ display: none !important; }") in tc.PAGE_CSS
-    assert "#shep-train-drawer-bd .block.padded { padding-top: 4px !important;" in tc.PAGE_CSS
+    # Its blocks as dense as its field row's measure says (D03: one token for both).
+    assert "#shep-train-drawer-bd { gap: 8px !important; --shep-field-pad-b: 4px; }" in tc.PAGE_CSS
+    assert ("#shep-train-drawer-bd .block.padded { padding-top: var(--shep-field-pad-b) !important; "
+            "padding-bottom: var(--shep-field-pad-b) !important; }") in tc.PAGE_CSS
     preview = {"parent": "/w/demo/runs/gatv2/r/checkpoints/last.pt", "ok": True,
                "action": "Extend training by 30 epochs at a fixed rate of 1e-05 (epochs 151-180, "
                          "new target 180)", "sha256": "c" * 64, "inherited": {}}
@@ -2820,8 +2834,9 @@ def test_extra_epochs_sits_above_every_check_result():
     body = by_id["shep-train-drawer-bd"].children
     assert body.index(row) < body.index(by_id["shep-train-compare"]) < body.index(
         by_id["continue_preview"])
-    wide = tc.PAGE_CSS[tc.PAGE_CSS.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
-    wide = wide.replace(f"{tc._PAGE} ", "")
+    from tests.unit.test_webui_shell import side
+
+    wide = side(tc.PAGE_CSS).replace(f"{tc._PAGE} ", "")
     assert ("#continue_operation, #continue_source, #continue_device { display: flex "
             "!important;") in wide
     assert "#checkpoint_dropdown .container { display: flex;" not in wide   # labels above
@@ -2847,10 +2862,13 @@ def test_the_details_popover_holds_the_manifest_digests():
 def test_the_details_popover_is_drawn_over_the_parameter_labels():
     """M5-3 review: at 1280 x 720 and 1080 x 1920 the labels "Learning Rate",
     "Batch Size", "Device" and "Seed" (Gradio's z-index 40) were drawn on the
-    popover, which sits in the chip (z-index 20)."""
+    popover, which sits in the chip (z-index 20). The chip is never narrower
+    than its widest part (D08: stacked at 960 and 1440 px wide its box shrank
+    to 242 px under the 292 px fingerprint line, whose Copy and ⓘ ran past it,
+    so the ⓘ's bubble, placed beside the box, covered the ⓘ)."""
     assert tc.CHIP_Z_INDEX > 40
-    assert (f"#shep-train-chip {{ flex: 1 1 360px !important; position: relative; "
-            f"z-index: {tc.CHIP_Z_INDEX}; }}") in tc.PAGE_CSS
+    assert (f"#shep-train-chip {{ flex: 0 1 340px !important; min-width: min-content !important; "
+            f"position: relative; z-index: {tc.CHIP_Z_INDEX}; }}") in tc.PAGE_CSS
 
 
 def test_the_drawers_start_sits_in_its_footer_beside_its_reason():
@@ -2899,11 +2917,16 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     scrolled), nothing is drawn over an axis, and no drawn chart's axis label
     is hidden to make room (an empty chart's goes with its plot: BACKLOG 69).
     The floor was raised from 140 with the room B1b took back (measured in a
-    browser: all four plots and their axes in view at 1850 x 960)."""
+    browser: all four plots and their axes in view at 1850 x 960). A run view
+    too short for one row of plots (`RUN_VIEW_ONE_ROW`, a container query on
+    the page row's own height: 288 px at 1280 x 600, where the body was 106 px
+    and a focused plot's centre sat under the resources line) scrolls as a
+    whole instead, its plots and the resources line in flow, nothing sticky."""
     assert tc.PLOT_MIN_HEIGHT >= 170
+    from tests.unit.test_webui_shell import side
+
     css = tc.PAGE_CSS
-    wide = css[css.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
-    wide = wide[:wide.index("\n}\n")]
+    wide = side(css)
     plot_box = tc.PLOT_MIN_HEIGHT + tc.PLOT_AXIS_ROOM
     assert f"#shep-train-charts .shep-chart-plot {{ min-height: {plot_box}px; }}" in wide
     assert "#shep-train-charts .shep-charts-grid { grid-auto-rows: minmax(min-content, 1fr); }" in wide
@@ -2911,7 +2934,13 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     assert ("#shep-train-runview > #shep-train-charts { flex: 1 1 0 !important; min-height: 0 "
             "!important; overflow: hidden !important;") in wide
     assert "#shep-train-runview > #resource_display { flex: none !important; }" in wide
-    assert "position: sticky; bottom" not in css and "#shep-train-runview { overflow-y" not in css
+    assert "position: sticky; bottom" not in css and "#shep-train-runview { overflow-y" not in wide
+    assert "#shep-train-page { container: shep-train-page / size; }" in wide
+    short = css.split(f"@container shep-train-page (max-height: {tc.RUN_VIEW_ONE_ROW}px) {{", 1)[1].split("\n}", 1)[0]
+    assert "#shep-train-runview { overflow-y: auto !important; }" in short
+    assert "#shep-train-runview > #shep-train-charts { flex: none !important; }" in short
+    assert "#shep-train-charts .shep-charts-body { flex: none; overflow-y: visible; }" in short
+    assert "sticky" not in short and tc.RUN_VIEW_ONE_ROW >= tc.PLOT_MIN_HEIGHT + tc.PLOT_AXIS_ROOM
     assert "#shep-train-charts .shep-charts-bar { flex: none; min-height: 34px; padding-bottom: 4px; }" in wide
     assert ("#shep-train-charts .shep-charts-body { flex: 1 1 0; min-height: 0; overflow-y: auto; }"
             in wide)

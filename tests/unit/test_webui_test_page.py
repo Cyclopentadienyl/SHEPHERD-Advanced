@@ -1091,6 +1091,9 @@ def test_a_result_of_another_or_no_mode_is_shown_as_recorded(site):
         "Mode C, not described by this version")
     fixed = tp.fixed_html({})
     assert "Mode C" not in fixed and "Mode D" not in fixed and "Measurement" not in fixed
+    # The server's fixed rows sit among the Run panel's fields: their keys are
+    # drawn as its field labels (R-16, one label style per page).
+    assert fixed.startswith(f'<dl class="shep-kv {tp.r.FIELD_ROWS}">')
 
 
 def test_a_run_without_a_report_says_none_was_kept(site):
@@ -1320,6 +1323,7 @@ def test_an_evidence_directory_that_cannot_be_checked_never_disables_start(site,
             "in it: inputs found nowhere else read unverifiable, naming it.</span></span></div>"
             "</dd>") in row
     assert str(site.root) not in row and "<denied>" not in row
+    assert row.startswith(f'<dl class="shep-kv {tp.r.FIELD_ROWS}">')         # a field's label (R-16)
     manager = FakeManager()
     result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
                                protocol="disease", manager=manager)
@@ -2745,8 +2749,10 @@ def test_the_page_is_registered_with_its_style_sheet():
     assert tp.PAGE_CSS in app.PAGE_CSS and tp.PAGE_CSS in app.dashboard_head()
     for value, unit in re.findall(r"font-size:\s*([0-9.]+)(px|rem|em)", tp.PAGE_CSS):
         assert unit == "px" and float(value) >= 14
+    from src.webui.style import SIDE, STACK
+
     selectors = [sel.strip() for head in re.findall(r"([^{}]+)\{", tp.PAGE_CSS)
-                 if not head.strip().startswith("@") for sel in head.split(",")]
+                 if not head.strip().startswith(("@", SIDE, STACK)) for sel in head.split(",")]
     assert selectors and all(sel.startswith("#shep-page-test ") for sel in selectors), selectors
 
 
@@ -3253,8 +3259,9 @@ def test_the_run_panels_foot_keeps_start_the_jobs_state_and_cancel_out_of_its_on
                 regions.append(selector.strip())
     # The body is the panel's one scroll region.
     assert regions == [".shep-test-col > .shep-test-bd"]
-    wide = tp.PAGE_CSS[tp.PAGE_CSS.index("@media (min-width: 1400px)"):]
-    wide = wide[:wide.index("@media (max-width: 1399px)")]
+    from tests.unit.test_webui_shell import side
+
+    wide = side(tp.PAGE_CSS)
     assert re.search(r"\.shep-test-col > \.shep-test-bd \{ flex: 1 1 auto !important; "
                      r"min-height: 0; overflow: auto !important;", wide)
     # The foot keeps its own height, the body taking what is left.
@@ -3264,8 +3271,9 @@ def test_the_run_panels_foot_keeps_start_the_jobs_state_and_cancel_out_of_its_on
 def test_the_import_drawer_lies_over_the_panels_at_every_size():
     """Wide, the drawer covers the panels' right side; narrow, the window. Its
     body scrolls inside it under its title either way."""
-    wide, narrow = tp.PAGE_CSS.split("@media (max-width: 1399px)")
-    wide = wide[wide.index("@media (min-width: 1400px)"):]
+    from tests.unit.test_webui_shell import side, stack
+
+    wide, narrow = side(tp.PAGE_CSS), stack(tp.PAGE_CSS)
     assert "{ position: fixed !important;" in narrow.split(".shep-test-drawer ", 1)[1]
     assert re.search(r"\.shep-test-drawer > \.shep-test-bd \{[^}]*overflow: auto", narrow)
     # Over the panels, Gradio's own field labels included (position: relative;
@@ -3306,8 +3314,9 @@ def test_add_note_sits_at_the_result_panels_foot_outside_the_scrolling_report():
     for field in ("shep-test-note-who", "shep-test-note-what", "shep-test-note-add",
                   "shep-test-note-reason"):
         assert inside(by_id["shep-test-noteform"], field), field
-    wide = tp.PAGE_CSS.split("@media (max-width: 1399px)")[0]
-    wide = wide[wide.index("@media (min-width: 1400px)"):]
+    from tests.unit.test_webui_shell import side
+
+    wide = side(tp.PAGE_CSS)
     assert re.search(r"#shep-test-noteform \{[^}]*max-height: 50%[^}]*overflow: auto", wide)
 
 

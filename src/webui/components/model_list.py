@@ -1755,11 +1755,15 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         main = (gr.Column(elem_classes=["shep-model-main"]) if chosen.layout == "table"
                 else contextlib.nullcontext())
         with main:
-            with gr.Row(elem_classes=["shep-model-head"]):
+            # A row of fields (the drawer's head) lines up on the boxes (D03,
+            # `style.py`'s `.shep-field-row`); the table preset lays its head out
+            # in its page's grid.
+            head_classes = ["shep-model-head"] + (["shep-field-row"] if chosen.layout != "table" else [])
+            with gr.Row(elem_classes=head_classes):
                 workspace = gr.Dropdown(label="Workspace", choices=[], value=None,
                                         elem_id=f"{elem_id}-workspace", interactive=True,
                                         scale=3)
-                count = plain_html("", elem_id=f"{elem_id}-count")
+                count = plain_html("", elem_id=f"{elem_id}-count", elem_classes=["shep-field-aside"])
                 head_extra = head() if head is not None else None
             with gr.Row(elem_classes=["shep-model-body"]):
                 rows = plain_html(

@@ -78,6 +78,7 @@ from src.webui.components.workspaces import (
     workspace_binding,
 )
 from src.webui.shell import page_elem_id, plain_html
+from src.webui.style import SIDE
 
 logger = logging.getLogger(__name__)
 
@@ -545,7 +546,14 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dsvtbl td {{ overflow-wrap: anywhere; }}
 {_PAGE} .shep-dsvtbl .shep-more p {{ margin: 4px 0 0; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} #shep-ds-details .shep-v, {_PAGE} #shep-ds-details .shep-panel-hd h2 {{ overflow-wrap: anywhere; min-width: 0; }}
-@media (min-width: 1400px) and (min-height: 760px) {{
+/* The two panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the table's
+   six columns (Name, Sources and In use keep 11.5, 7 and 11 em) are 853 px at their narrowest,
+   890 with the wrap's margins and the panel's edges; the details' digest grid of four columns
+   495; so the page sits side by side from about 1440 px of window, and its table never scrolls
+   sideways there. */
+{_PAGE} .shep-panel.shep-ds-main {{ --shep-panel-min: 890px; }}
+{_PAGE} .shep-panel.shep-ds-details {{ --shep-panel-min: 495px; }}
+{SIDE} {{
   {_PAGE} #shep-ds-table {{ flex: 0 1 auto !important; min-height: 120px; overflow: auto !important; }}
   {_PAGE} #shep-ds-table .shep-tbl-wrap {{ overflow: visible; }}
   {_PAGE} #shep-ds-details {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; }}

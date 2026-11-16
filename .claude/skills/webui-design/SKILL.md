@@ -38,7 +38,8 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
 - **One scroll region per area.** Header and status rows are in flow, the content row takes `minmax(0, 1fr)` and is
   the only thing that scrolls. Nothing sticky or fixed may cover a chart's plot or axes, a table row or a focused
   control; a status line is a row of its own (the run view: header, charts, resources).
-- **Charts are never squeezed.** Each plot keeps a floor (today 140 px plot area; about 200 px is a later target),
+- **Charts are never squeezed.** Each plot keeps a floor (`PLOT_MIN_HEIGHT`, 170 px of plot area; about 200 px
+  at the owner's window, where the four plots measure 209/209/190/190 px),
   2 × 2 when the chart area is about 1000 px wide or more, one column below; when the floor does not fit, the chart
   region scrolls. Lines meet 3:1 against the plot; series differ by more than colour, and the legend and tooltip
   swatches draw each series' own dash pattern.
@@ -181,6 +182,11 @@ checks that already passed for the same code.
 | Layout or scrolling | geometry measured in the browser at the owner's window (about 1850 × 960) and the narrow layout: no horizontal page scroll, one scroll region, nothing sticky over a chart axis or a focused control (`document.elementsFromPoint`), the same after narrow → wide; a screenshot of each |
 | A broad layout change across pages | the above at more sizes (1920 × 1080, 1536 × 760, 960 × 1080, 1080 × 1920), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
 | A repeated fact (rule 1.2) | count the fingerprint, run id or name in one screen's visible text; more than one needs a reason |
+
+The layout, scrolling, type, border and focus rows are measured on every page at the representative sizes by one
+shared check, which a layout, token or navigation change runs rather than a script of its own:
+`tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check` (`walk_ui` and
+`ui_problems` in `tests/fixtures/browser.py`; its screenshots in the test's temporary `ui-walk*/shots`).
 
 ## 13. Decided
 

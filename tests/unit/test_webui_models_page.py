@@ -2335,12 +2335,16 @@ def test_the_list_panel_has_one_scroll_region_at_every_wide_height():
     1536 x 760. Now every wide height has the one structure the tall layout
     had: the header rows in flow (the header row draws no box, its items the
     panel's grid items), the rows' region the panel's last grid row and the
-    one thing that scrolls (its table's header sticking to its own top), with
-    a floor of about four rows; no title sticks, so nothing measures one."""
-    wide = mp.PAGE_CSS[mp.PAGE_CSS.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
-    wide = wide[:wide.index("@media (max-width: 1399px)")]
+    one thing that scrolls (its table's header sticking to its own top),
+    taking what the header leaves; no title sticks, so nothing measures one.
+    The rows' floor of 160 px is gone (T04 review): below about 660 px of
+    window it made the panel scroll around the rows' own region, two regions
+    in one panel at 1366 x 620 and 1280 x 600 (the shared walk measures it)."""
+    from tests.unit.test_webui_shell import side
+
+    wide = side(mp.PAGE_CSS)
     assert "> .shep-model-main > .shep-model-head { display: contents !important; }" in wide
-    assert "grid-template-rows: repeat(5, max-content) minmax(160px, 1fr);" in wide
+    assert "grid-template-rows: repeat(5, max-content) minmax(0, 1fr);" in wide
     assert "#shep-models-research-rows { overflow: auto !important; min-height: 0;" in wide
     assert "> .shep-model-main { height: 100%; overflow-y: auto; }" in wide
     assert "#shep-mp-hd { position: sticky" not in mp.PAGE_CSS
@@ -2389,8 +2393,9 @@ def test_the_table_fits_its_frame_beside_a_classic_scrollbar():
     table (602 px: its columns' longest words and 10 px a side) ran 13 px past
     its 589 px frame; with 7 px a side it is 572 px (measured in a browser with
     the scrollbar forced classic)."""
-    wide = mp.PAGE_CSS[mp.PAGE_CSS.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
-    wide = wide[:wide.index("@media", 10)].replace(f"{mp._PAGE} ", "")
+    from tests.unit.test_webui_shell import side
+
+    wide = side(mp.PAGE_CSS).replace(f"{mp._PAGE} ", "")
     assert ".shep-mtbl th, .shep-mtbl td { padding-left: 7px; padding-right: 7px; }" in wide
 
 

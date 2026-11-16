@@ -131,6 +131,7 @@ from src.webui.components.workspaces import read_workspaces, redact, workspaces_
 from src.webui.operator_access import operator_access
 from src.webui.shell import FINETUNE as PAGE
 from src.webui.shell import page_elem_id, picked, plain_html
+from src.webui.style import SIDE
 
 logger = logging.getLogger(__name__)
 
@@ -1189,7 +1190,7 @@ def create_finetune_page(ctx: Any) -> None:
                 # Run → Checkpoint, two cascading selects side by side (the
                 # skill's §4), then the list's Refresh; on a narrow form they
                 # wrap, one under the other.
-                with gr.Row(elem_classes=["shep-ft-parent-row"]):
+                with gr.Row(elem_classes=["shep-ft-parent-row", "shep-field-row"]):
                     run_select = gr.Dropdown(label="Run", choices=[], value=None,
                                              elem_id="ft_run")
                     checkpoint = gr.Dropdown(label="Checkpoint", choices=[], value=None,
@@ -1386,9 +1387,7 @@ _PAGE = "#" + page_elem_id(PAGE)
 #: tokens.
 PAGE_CSS = f"""
 {_PAGE} .shep-ft-bd {{ padding: 8px 16px 12px !important; gap: 8px !important; }}
-{_PAGE} .shep-ft-parent-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
 {_PAGE} #ft_run, {_PAGE} #ft_checkpoint {{ flex: 1 1 300px !important; min-width: 0 !important; }}
-{_PAGE} #ft_refresh {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
 {_PAGE} .shep-ft-settings {{ flex-wrap: wrap !important; gap: 8px 16px !important; }}
 {_PAGE} .shep-ft-ds {{ font-size: 15px; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }}
 {_PAGE} .shep-ft-ds-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
@@ -1431,19 +1430,23 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-card {{ display: flex; flex-direction: column; gap: 10px; font-size: 15px; }}
 {_PAGE} .shep-ft-empty {{ margin: 0; color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-from {{ margin: 0; overflow-wrap: anywhere; }}
-{_PAGE} .shep-ft-k {{ font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2); margin-right: 8px; }}
+{_PAGE} .shep-ft-k {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); margin-right: 8px; }}
 {_PAGE} .shep-ft-table {{ width: 100%; border-collapse: collapse; font-size: 15px; }}
 {_PAGE} .shep-ft-table th {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 8px; border-bottom: 1px solid var(--shep-border); white-space: nowrap; }}
 {_PAGE} .shep-ft-table td {{ padding: 8px; border-bottom: 1px solid var(--shep-border); vertical-align: top; min-width: 0; }}
 {_PAGE} .shep-ft-table code.shep-ident {{ max-width: 40ch; }}
 {_PAGE} .shep-ft-links {{ margin: 0; }}
-{_PAGE} .shep-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; font-weight: 500; }}
+{_PAGE} .shep-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; font-weight: 400; }}
 {_PAGE} .shep-link:hover {{ text-decoration: underline; }}
 {_PAGE} #ft_confirm_row {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
 {_PAGE} #ft_stop_text {{ flex: 1 1 320px !important; }}
 {_PAGE} .shep-rb-confirm-q {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-radius: 8px; padding: 8px 12px; font-size: 15px; }}
 {_PAGE} .shep-html svg {{ display: inline-block; vertical-align: -2px; }}
-@media (min-width: 1400px) and (min-height: 760px) {{
+/* The two panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the form's
+   base summary list keeps its key column whole from 480 px; the job's card and tables fit in 440. */
+{_PAGE} #shep-ft-form {{ --shep-panel-min: 480px; }}
+{_PAGE} #shep-ft-job {{ --shep-panel-min: 440px; }}
+{SIDE} {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
   {_PAGE} #ft_form_bd, {_PAGE} #ft_job_bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
   {_PAGE} #ft_form_bd > *, {_PAGE} #ft_job_bd > * {{ flex-shrink: 0 !important; }}

@@ -6,10 +6,11 @@ Diagnosis (clinical): the dashboard's first screen (M5-2, UI-B).
 these phenotypes, and what produced the answer.
 
 **Layout** (the page contract, `src/webui/shell.py`; this module's ``PAGE_CSS``):
-wide (at least 1400 × 760 CSS px) one screen in three panels — the input column
-| the candidates | the selected candidate's details — each long region
-scrolling inside its own panel; narrow, the panels stack and only the page
-scrolls.
+side by side (the shell's one layout decision, ``data-shep-layout``: a window
+wider than tall in which the three panels fit by their own minimum widths, each
+``--shep-panel-min`` here) one screen in three panels — the input column | the
+candidates | the selected candidate's details — each long region scrolling
+inside its own panel; stacked, the panels stack and only the page scrolls.
 
 - **The input column**: HPO terms, **the served task's own input** (K6
   decision 15: "Candidate genes" for a gene task model, "Reference cohort" for
@@ -18,9 +19,10 @@ scrolls.
   `diagnosis_card.served_task`), Patient ID (a blank field is sent as no id,
   so the API gives the result its own), Options (Top-K, and Explanations for
   a disease task model only, `asks_explanations`), then the
-  **"Model in use" card** and Run Diagnosis, the last item of the column's
-  scroll body and sticky at its bottom: they follow Options when there is room
-  and pin when the column overflows. The card (`diagnosis_card`) is the one
+  **"Model in use" card** and Run Diagnosis, the column's foot: side by side
+  the fields above them are the column's one scroll region and the card and
+  Run sit in flow under it, never over a field (R-25: a sticky card hid the
+  HPO box's lower lines and caret). The card (`diagnosis_card`) is the one
   place the served identity appears; the header's "Serving now" strip and the
   Model Configuration accordion (paths, Load/Reload, Save Config, Reset) are
   gone, their gated operations living on in the shared Load
@@ -123,9 +125,10 @@ from src.webui.components.renderers import resources_html as _resources_html
 from src.webui.exports import export_dir, file_slug
 from src.webui.components.renderers import summary_list as _summary_list
 from src.webui.components.renderers import short_hex as _short_hex
+from src.webui.components.renderers import STATUS_MARKS as _STATUS_MARKS
 from src.webui.components.renderers import status_mark as _status_mark
 from src.webui.operator_access import operator_access
-from src.webui.style import sticky_room_js
+from src.webui.style import SIDE, SIDE_SHORT, STACK
 
 logger = logging.getLogger(__name__)
 
@@ -295,12 +298,31 @@ SIMILARITY_NOTE = f"{SIMILARITY_RANKS} {SIMILARITY_CAVEAT}"
 REFERENCE_CONTEXT_NOTE = ("Recorded by the reference cohort: context, never an input of this "
                           "query.")
 
-# Evidence label (the API's evidence_label) → (emoji, CSS color)
-LABEL_STYLES = {
-    "Strong path support": ("🟢", "#22c55e"),
-    "Weak path support": ("🟡", "#eab308"),
-    "Insufficient evidence": ("⚪", "#9ca3af"),
+#: Each evidence label's (the API's evidence_label) status mark, by the one
+#: indicator's rows (`renderers.status_mark`, the WebUI skill's §6; R-1c):
+#: strong path support ● OK, weak ▲ to watch, insufficient evidence ○
+#: neutral, in the status tokens in the page and by the same shapes in the
+#: report, never a raw hex or a colour emoji. A label not listed has no mark.
+EVIDENCE_MARKS = {
+    "Strong path support": "ok",
+    "Weak path support": "warn",
+    "Insufficient evidence": "neutral",
 }
+
+
+def _evidence_shape(label: Any) -> str:
+    """The report's mark for an evidence label: its status shape, or ""."""
+    kind = EVIDENCE_MARKS.get(label)
+    return _STATUS_MARKS[kind][0] if kind else ""
+
+
+def _evidence_mark(label: Any, *, strong: bool = False) -> str:
+    """The page's mark for an evidence label: the status mark with the label
+    as its word (in the strong weight with `strong`), or the escaped label
+    alone when it has none."""
+    kind = EVIDENCE_MARKS.get(label)
+    words = f"<b>{_e(label)}</b>" if strong else _e(label)
+    return _status_mark(kind, words, words_html=True) if kind else words
 
 
 # =============================================================================
@@ -539,8 +561,7 @@ def _format_results_table(candidates: List[Dict], kind: Optional[str] = None) ->
     for c in candidates:
         cells = [str(c.get("rank")), f"**{c.get('disease_name')}**", _num(_score(c, kind))]
         label = c.get("evidence_label") or "—"
-        emoji, _ = LABEL_STYLES.get(label, ("", "#888"))
-        cells.append(f"{emoji} {label}".strip())
+        cells.append(" ".join(part for part in (_evidence_shape(label), label) if part))
         rows.append("| " + " | ".join(cells) + " |")
     header = ("| " + " | ".join(columns) + " |\n"
               + "|" + "|".join(":----:" if c == "Rank" else "---" for c in columns) + "|\n")
@@ -597,10 +618,9 @@ def _format_evidence_detail(candidate: Dict) -> str:
     mode = pkg.get("mode") or "unknown"
     summary = pkg.get("summary") or ""
     label = pkg.get("evidence_label") or "—"
-    emoji, _color = LABEL_STYLES.get(label, ("", "#888"))
 
     parts = [
-        f"### {emoji} {label}",
+        "### " + " ".join(part for part in (_evidence_shape(label), label) if part),
         "",
         f"> {summary}",
         "",
@@ -1643,13 +1663,6 @@ MATCHING_NOTE = (
     "list does not mean no clinical overlap."
 )
 
-_DOT_CLASS = {
-    "Strong path support": "strong",
-    "Weak path support": "weak",
-    "Insufficient evidence": "none",
-}
-
-
 # =============================================================================
 # The result, as the page shows it
 # =============================================================================
@@ -1797,9 +1810,10 @@ def banners_html(result: Mapping[str, Any]) -> str:
     for headline, _detail in _identity_banners(kind, identity):
         key = _BANNER_KEYS.get(headline, "")
         tone = "red" if key == "not_reported" else "amber"
-        out.append(f'<div class="shep-dx-banner shep-dx-banner-{tone}" role="note">'
-                   f'<span class="shep-dx-banner-ic" aria-hidden="true">⚠</span>'
-                   f'<b>{_e(headline)}</b>'
+        # The shared mark (B72-N7): ✕ for an error, ▲ for a condition to watch.
+        mark = _status_mark("error" if tone == "red" else "warn", f"<b>{_e(headline)}</b>",
+                            words_html=True)
+        out.append(f'<div class="shep-dx-banner shep-dx-banner-{tone}" role="note">{mark}'
                    f'{help_button(f"dx-banner-{key}", headline) if key else ""}</div>')
     return "".join(out)
 
@@ -1826,8 +1840,7 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
                  f'<span class="shep-dx-clamp" title="{name}">{name}</span></td>'
                  f'<td class="shep-num">{_num(_score(c, kind))}</td>')
         label = c.get("evidence_label") or "—"
-        cells += (f'<td><span class="shep-dx-dot shep-dx-dot-{_DOT_CLASS.get(label, "none")}"'
-                  f' aria-hidden="true"></span>{_e(label)}</td>')
+        cells += f'<td>{_evidence_mark(label)}</td>'
         # A plain table's selected row is `aria-current` (the skill's §8).
         rows.append(f'<tr data-key="{_e(rank)}" tabindex="0"'
                     f'{selected_class if on else ""}>{cells}</tr>')
@@ -1911,8 +1924,9 @@ def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
     (what the Score column holds, visible text), a patients-like-me result's
     reference cohort version, and the table."""
     warnings = result.get("warnings") or []
-    note = (f'<p class="shep-dx-warnings">⚠ Warnings: {_e("; ".join(str(w) for w in warnings))}'
-            '</p>' if warnings else "")
+    note = (f'<p class="shep-dx-warnings">'
+            f'{_status_mark("warn", "Warnings: " + "; ".join(str(w) for w in warnings))}</p>'
+            if warnings else "")
     kind = _result_kind(result)
     label = (f'<p class="shep-dx-kind">{_e(kind_label(result))}</p>'
              if kind is not None else "")
@@ -1999,8 +2013,7 @@ def evidence_html(candidate: Mapping[str, Any], explanations: bool = True) -> st
                "candidate.")
         return f'<p class="shep-muted">{_e(why)}</p>'
     label = candidate.get("evidence_label") or pkg.get("evidence_label") or "—"
-    parts = [f'<p class="shep-dx-ev-label"><span class="shep-dx-dot shep-dx-dot-'
-             f'{_DOT_CLASS.get(label, "none")}" aria-hidden="true"></span><b>{_e(label)}</b></p>']
+    parts = [f'<p class="shep-dx-ev-label">{_evidence_mark(label, strong=True)}</p>']
     if pkg.get("summary"):
         parts.append(f'<blockquote class="shep-dx-quote">{_e(pkg.get("summary"))}</blockquote>')
     mode = pkg.get("mode")
@@ -3138,7 +3151,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                         with gr.Row(elem_id="shep-dx-card-hd", elem_classes=["shep-dx-card-hd"]):
                             plain_html('<span class="shep-dx-card-title">Model in use</span>'
                                        + help_button("dx-card", "Model in use"),
-                                       elem_id="shep-dx-card-title", js_on_load=STICKY_JS)
+                                       elem_id="shep-dx-card-title")
                             # "checked HH:MM:SS ↻" stay together: on a narrow column
                             # they move under the title as one, at its right.
                             with gr.Row(elem_id="shep-dx-card-when",
@@ -3221,14 +3234,14 @@ def create_diagnosis_tab(ctx: Any) -> None:
                     # The Task control: its `.input` sets the shared list's view.
                     links["task"] = gr.Radio(choices=list(TASK_VIEWS), value="all",
                                              label="Task", show_label=False, container=False,
-                                             elem_classes=["shep-seg"],
+                                             elem_classes=["shep-seg", "shep-field-aside"],
                                              elem_id="shep-dx-change-task")
                     # Each "›" keeps to the word before it (a no-break space):
                     # at 1440 x 900 the last one was left alone on a line.
                     links["compare"] = plain_html(
                         f'<button type="button" class="shep-dx-link" data-key="models">'
                         f'{COMPARE_LINK}</button>', elem_id="shep-dx-compare",
-                        js_on_load=MODEL_LIST_JS)
+                        elem_classes=["shep-field-aside"], js_on_load=MODEL_LIST_JS)
                     # The chosen workspace's identity, once, under the select,
                     # as Training, Fine-tune, Models and Test say theirs (the
                     # shared list's line, `model_list.workspace_line_html`).
@@ -3554,58 +3567,70 @@ def create_diagnosis_tab(ctx: Any) -> None:
 # =============================================================================
 # The page's style sheet (the page contract: listed in `src/webui/app.py`)
 # =============================================================================
-#: The sticky block's height as ``--shep-dx-sticky-h`` on the input column's
-#: scroll region (`style.sticky_room_js`, the one script for a sticky block's
-#: room): the region's ``scroll-padding-bottom`` (`PAGE_CSS`), so a control
-#: focused in the region scrolls above the Model-in-use card and the Run row
-#: instead of under them (K6 closing smoke, 1536 x 760). Run by a component
-#: inside the block (its title), once per mount.
-STICKY_JS = sticky_room_js("#shep-dx-sticky", "#shep-dx-input-bd", "--shep-dx-sticky-h")
-
 #: The page's tab (`src.webui.shell.tab_elem_id(CLINICAL)`).
 _TAB = "#shep-tab-clinical"
 
 #: Diagnosis' layout: the input column 370 px wide from 1800 px of window, 320
 #: px from 1600, 300 px below; the candidates and the details share the rest
-#: 5:4. Wide, each panel scrolls inside and the input column's card and Run
-#: Diagnosis stick to the bottom of its scroll body, which keeps their height
-#: as its scroll padding (`STICKY_JS`); narrow, the panels stack.
+#: 5:4. Side by side (the shell's one layout decision), each panel scrolls
+#: inside; in the input column the fields are its one scroll region and the
+#: Model-in-use card and Run Diagnosis are its foot, in flow under them, never
+#: over them (R-25: a sticky card hid the HPO box's lower lines and its caret
+#: at 1536 x 760 once it held 8 lines); stacked, the panels stack. Every
+#: label and control in the input column starts at the panel's one inner edge,
+#: and Options is a label over a key/control list, no box of its own (R-24).
 #: While the Load confirmation is open (UI-A's confirmation box is mounted only
-#: then) the list's footer is hidden and its rows give up their height to it
-#: (all of it below 820 px of height), so the from → to rows and the warning
-#: sentence are never scrolled out of view.
+#: then) the list's footer is hidden and its rows give up their height to it,
+#: all of it in a short window (`style.SIDE_SHORT`, under 900 px of height), so
+#: the from → to rows and the warning sentence are never scrolled out of view.
+#: Decided at 900 (it was 820 before the one layout decision): from 820 to 899
+#: px the rows' share holds no whole row (measured 68 px at 1600 x 820, 108 at
+#: 1600 x 860, 128 at 1850 x 880: a cut slice of the first row), and the
+#: confirmation is whole either way.
 PAGE_CSS = f"""
 {_TAB} {{ --dx-in-w: 300px; }}
 @media (min-width: 1600px) {{ {_TAB} {{ --dx-in-w: 320px; }} }}
 @media (min-width: 1800px) {{ {_TAB} {{ --dx-in-w: 370px; }} }}
 {_TAB} #shep-dx {{ position: relative; gap: 16px; align-items: stretch; }}
 {_TAB} #shep-dx-input {{ flex: 0 0 var(--dx-in-w) !important; width: var(--dx-in-w); max-width: var(--dx-in-w); }}
-{_TAB} #shep-dx-results {{ flex: 5 1 0 !important; min-width: 0 !important; }}
-{_TAB} #shep-dx-details {{ flex: 4 1 0 !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-results {{ flex: 5 1 0 !important; }}
+{_TAB} #shep-dx-details {{ flex: 4 1 0 !important; }}
+/* The three panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the input
+   column's own width at its narrowest; the candidates' table whole from 490 px; the details. */
+{_TAB} #shep-dx-input {{ --shep-panel-min: 300px; }}
+{_TAB} #shep-dx-results {{ --shep-panel-min: 490px; }}
+{_TAB} #shep-dx-details {{ --shep-panel-min: 380px; }}
 {_TAB} .shep-dx-scroll {{ gap: 12px !important; padding: 14px 16px !important; }}
 {_TAB} .shep-dx-scroll > * {{ flex-shrink: 0 !important; }}
 {_TAB} #shep-dx-input-bd {{ padding-top: 12px !important; padding-bottom: 0 !important; gap: 0 !important; }}
 {_TAB} .shep-dx-fields, {_TAB} .shep-dx-side {{ gap: 8px !important; }}
-{_TAB} #shep-dx-fields {{ padding-bottom: 8px; }}
+{_TAB} #shep-dx-fields {{ padding: 0 2px 8px; margin: 0 -2px; }}
 {_TAB} #shep-dx-fields > .form {{ background: none !important; border: 0 !important; box-shadow: none !important; }}
-{_TAB} #shep-dx-fields .block.padded {{ padding: 6px 8px !important; }}
+{_TAB} #shep-dx-fields .block.padded {{ padding: 6px 0 !important; }}
 {_TAB} #shep-dx-fields [data-testid="block-info"] {{ margin-bottom: 4px !important; }}
 {_TAB} #shep-dx-options .form {{ display: contents !important; }}
 {_TAB} #shep-dx-options .block.padded {{ padding: 0 !important; }}
 {_TAB} #dx_top_k input[type=number] {{ height: 34px; padding: 4px 8px; }}
-{_TAB} .shep-dx-options {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important;
-  border: 1px solid var(--shep-border); border-radius: 8px; background: var(--shep-panel-2); padding: 8px 10px !important; }}
-{_TAB} .shep-dx-options > * {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
-{_TAB} .shep-dx-options .form {{ display: flex !important; flex-direction: row !important; flex-wrap: wrap; align-items: center;
-  gap: 8px 14px; background: none !important; border: 0 !important; box-shadow: none !important; }}
-{_TAB} .shep-dx-options .block {{ padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important;
-  width: auto !important; flex: 0 0 auto !important; overflow: visible !important; }}
-{_TAB} .shep-dx-opt {{ font-size: 14px; color: var(--shep-text-2); font-weight: 500; }}
-{_TAB} #dx_top_k label.container {{ display: flex; align-items: center; gap: 6px; }}
-{_TAB} #dx_top_k [data-testid="block-info"] {{ margin: 0; }}
+/* Options (R-24): its label over its controls, no box of its own; each control a row of one grid,
+   its key, its ⓘ and its control in three columns (the keys as wide as the longest), the
+   checkbox's words in the key column as Top-K's are. The blocks between the grid and each
+   control's label draw no box (display: contents); the label takes the grid's columns. */
+{_TAB} .shep-dx-options {{ display: grid !important; grid-template-columns: max-content auto 1fr; align-items: center !important;
+  gap: 6px 8px !important; padding: 6px 0 !important; }}
+{_TAB} #shep-dx-options-label {{ grid-column: 1 / -1; }}
+{_TAB} .shep-dx-options #dx_top_k, {_TAB} .shep-dx-options #shep-dx-expl-box:not(.shep-dx-off),
+{_TAB} .shep-dx-options #dx_explanations {{ display: contents !important; }}
+{_TAB} .shep-dx-options :is(#dx_top_k, #dx_explanations) > label {{ grid-column: 1 / -1; display: grid !important;
+  grid-template-columns: subgrid; align-items: center; gap: 0 8px; margin: 0; padding: 0; }}
+{_TAB} #dx_explanations label > span {{ margin: 0 !important; font-size: var(--shep-label-size);
+  font-weight: var(--shep-label-weight); color: var(--shep-label-color); }}
+{_TAB} :is(#dx_top_k, #dx_explanations) label > :is(span, [data-testid="block-info"]) {{ grid-column: 1; grid-row: 1; margin: 0 !important; }}
+{_TAB} :is(#dx_top_k, #dx_explanations) label > button.shep-i {{ grid-column: 2; grid-row: 1; }}
+{_TAB} :is(#dx_top_k, #dx_explanations) label > input {{ grid-column: 3; grid-row: 1; justify-self: start; margin: 0; }}
+{_TAB} .shep-dx-opt {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); }}
 {_TAB} #dx_top_k input[type=number] {{ width: 72px; }}
 {_TAB} #shep-dx-input-bd > *, {_TAB} #shep-dx-sticky > *, {_TAB} #shep-dx-card > * {{ flex: none !important; }}
-{_TAB} .shep-dx-sticky {{ position: sticky; bottom: 0; z-index: 50; gap: 0 !important; margin: 0 -16px !important;
+{_TAB} .shep-dx-sticky {{ gap: 0 !important; margin: 0 -16px !important;
   width: calc(100% + 32px) !important; max-width: none !important; background: var(--shep-panel); }}
 {_TAB} .shep-dx-card {{ background: var(--shep-panel-2); border-top: 1px solid var(--shep-border);
   border-bottom: 1px solid var(--shep-border); padding: 5px 16px 6px !important; gap: 3px !important; }}
@@ -3615,11 +3640,10 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-card-when {{ margin-left: auto !important; flex-wrap: nowrap !important; gap: 4px !important;
   align-items: center !important; }}
 {_TAB} .shep-dx-card-title {{ white-space: nowrap; }}
-{_TAB} .shep-dx-card-title {{ font-size: 14px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--shep-text-2); }}
+{_TAB} .shep-dx-card-title {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); }}
 {_TAB} .shep-dx-checked {{ font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }}
-{_TAB} button.shep-dx-reread {{ border: 0; background: none; color: var(--shep-accent-text); font-size: 16px; cursor: pointer; padding: 0; line-height: 1;
+{_TAB} button.shep-dx-reread {{ border: 0; background: none; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; padding: 0; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center; min-width: {HIT_TARGET}px; min-height: {HIT_TARGET}px; margin: -4px 0; border-radius: 6px; }}
-{_TAB} button.shep-dx-reread:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 0; }}
 {_TAB} .shep-dx-card-bd {{ display: flex; flex-direction: column; gap: 1px; font-size: 15px; line-height: 1.3; }}
 {_TAB} .shep-dx-card-bd p {{ margin: 0; }}
 {_TAB} .shep-dx-name {{ font-weight: 600; }}
@@ -3641,12 +3665,12 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-why-more > .shep-dx-line {{ margin-top: 2px; color: var(--shep-grey-800); }}
 {_TAB} button.shep-dx-back {{ min-height: 24px; }}
 {_TAB} .shep-dx-change {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 2px; padding: 4px 8px; }}
-{_TAB} button.shep-dx-x {{ margin-left: auto; border: 0; background: none; color: var(--shep-amber-800); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }}
+{_TAB} button.shep-dx-x {{ margin-left: auto; border: 0; background: none; color: var(--shep-amber-800); font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }}
 {_TAB} button.shep-dx-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font: inherit; cursor: pointer; }}
 {_TAB} button.shep-dx-link:hover {{ text-decoration: underline; }}
 {_TAB} .shep-dx-card-actions {{ justify-content: space-between !important; align-items: center !important; flex-wrap: wrap !important; gap: 8px !important; margin-top: 2px; }}
 {_TAB} .shep-dx-card-actions > * {{ flex: 0 0 auto !important; width: auto !important; }}
-{_TAB} #shep-dx-details-btn {{ border: 0 !important; background: none !important; box-shadow: none !important; color: var(--shep-accent-text) !important; padding: 0 2px !important; font-weight: 500; }}
+{_TAB} #shep-dx-details-btn {{ border: 0 !important; background: none !important; box-shadow: none !important; color: var(--shep-accent-text) !important; padding: 0 2px !important; font-weight: 400; }}
 {_TAB} #shep-dx-change-btn {{ margin-left: auto; }}
 {_TAB} .shep-dx-stop-row {{ flex-wrap: wrap !important; gap: 8px !important; justify-content: flex-end !important; }}
 /* The question's buttons keep their words' width (Gradio gives a scale-0
@@ -3681,7 +3705,7 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-banner-amber {{ background: var(--shep-amber-50); border: 1px solid var(--shep-amber-100); border-left: 4px solid var(--shep-amber-600); color: var(--shep-amber-800); }}
 {_TAB} .shep-dx-banner-red {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-left: 4px solid var(--shep-red-700); color: var(--shep-red-700); }}
 {_TAB} .shep-dx-warnings {{ font-size: 14px; color: var(--shep-amber-800); margin: 0 0 8px; overflow-wrap: anywhere; }}
-{_TAB} .shep-dx-echo {{ font-size: 14px; color: var(--shep-text-2); margin: 2px 0 0; padding: 0 8px; overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-echo {{ font-size: 14px; color: var(--shep-text-2); margin: 2px 0 0; padding: 0; overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-used {{ margin: 0 0 8px; overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-why {{ color: var(--shep-text-2); }}
 {_TAB} .shep-dx-tbl-wrap {{ margin: 0; }}
@@ -3697,13 +3721,9 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-tbl tbody tr[data-key] {{ cursor: pointer; }}
 {_TAB} .shep-dx-tbl tbody tr.shep-on td.shep-dx-dis {{ color: var(--shep-accent-text); font-weight: 600; }}
 {_TAB} .shep-dx-clamp {{ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
-{_TAB} .shep-dx-dot {{ display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }}
-{_TAB} .shep-dx-dot-strong {{ background: #1f9d55; }}
-{_TAB} .shep-dx-dot-weak {{ background: #d69e00; }}
-{_TAB} .shep-dx-dot-none {{ background: #8a909b; }}
 {_TAB} .shep-dx-empty {{ margin: auto; max-width: 440px; text-align: center; color: var(--shep-text-2); padding: 24px 8px; }}
 {_TAB} .shep-dx-empty p {{ margin: 4px 0; }}
-{_TAB} .shep-dx-empty-h {{ font-size: 16px; font-weight: 600; color: var(--shep-text); }}
+{_TAB} .shep-dx-empty-h {{ font-size: 15px; font-weight: 600; color: var(--shep-text); }}
 {_TAB} .shep-dx-notice p {{ margin: 0 0 6px; }}
 {_TAB} .shep-dx-error {{ color: var(--shep-red-700); overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-warn {{ color: var(--shep-amber-800); }}
@@ -3733,10 +3753,10 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-drawer {{ box-shadow: 0 10px 30px rgba(20, 24, 40, .14); }}
 {_TAB} .shep-dx-drawer-hd {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important; padding: 10px 16px !important; border-bottom: 1px solid var(--shep-border); }}
 {_TAB} .shep-dx-drawer-hd > * {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
-{_TAB} .shep-dx-drawer-hd h2 {{ font-size: 16px; font-weight: 600; margin: 0; display: inline; }}
+{_TAB} .shep-dx-drawer-hd h2 {{ font-size: var(--shep-title-size); font-weight: 600; margin: 0; display: inline; }}
 {_TAB} .shep-dx-drawer-note {{ margin-left: 10px; font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} #shep-dx-identity-close, {_TAB} #shep-dx-change-close {{ margin-left: auto; }}
-{_TAB} button.shep-dx-close {{ border: 0; background: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--shep-text-2); padding: 0 4px; }}
+{_TAB} button.shep-dx-close {{ border: 0; background: none; font-size: 20px; line-height: 1; cursor: pointer; color: var(--shep-text-2); padding: 0 4px; }}
 {_TAB} .shep-dx-boundary {{ margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--shep-border); font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} .shep-dx-boundary p {{ margin: 0 0 6px; }}
 {_TAB} .shep-dx-digests {{ display: flex; flex-direction: column; gap: 8px; }}
@@ -3763,8 +3783,11 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change button.shep-row > .shep-row-sub {{ display: block; margin-top: 2px; }}
 {_TAB} #shep-dx-change button.shep-row > .shep-tag {{ margin-left: 6px; }}
 {_TAB} #shep-dx-change-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
-{_TAB} #shep-dx-change .shep-model-head {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
-{_TAB} #shep-dx-change .shep-model-head > * {{ min-width: 0 !important; }}
+{_TAB} #shep-dx-change .shep-model-head {{ gap: 8px 14px !important; }}
+/* The head is a field row (D03): the workspace select keeps its own minimum width (Gradio's
+   min(160px, 100%)), so a drawer too narrow for the row wraps it rather than squeezing the box
+   (at 1280 x 900 it drew 26 px, its label cut to "W"); only the words beside it may shrink. */
+{_TAB} #shep-dx-change .shep-model-head > :not(.form) {{ min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-body {{ gap: 14px !important; align-items: flex-start !important; flex-wrap: nowrap !important; }}
 {_TAB} #shep-dx-change .shep-model-rows {{ flex: 3 1 0 !important; min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-facts {{ flex: 2 1 0 !important; min-width: 0 !important; }}
@@ -3776,12 +3799,14 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-foot {{ display: none !important; }}
 {_TAB} #shep-dx-change .shep-confirm .shep-ftbl th, {_TAB} #shep-dx-change .shep-confirm .shep-ftbl td {{ padding-top: 5px; padding-bottom: 5px; }}
 {_TAB} #shep-dx-change .shep-confirm .shep-ftbl tbody th {{ white-space: nowrap; }}
-@media (min-width: 1400px) and (min-height: 760px) {{
+{SIDE} {{
   {_TAB} > .column {{ height: 100%; box-sizing: border-box; }}
   {_TAB} #shep-dx {{ height: 100%; }}
   {_TAB} #shep-dx > .shep-panel {{ max-height: 100%; }}
   {_TAB} .shep-dx-scroll {{ flex: 1 1 auto !important; min-height: 0; overflow: auto; }}
-  {_TAB} #shep-dx-input-bd {{ display: flex; flex-direction: column; scroll-padding-bottom: var(--shep-dx-sticky-h, 0px); }}
+  {_TAB} #shep-dx-input-bd {{ display: flex; flex-direction: column; flex-wrap: nowrap !important; }}
+  {_TAB} #shep-dx-input-bd > #shep-dx-fields {{ flex: 0 1 auto !important; min-height: 0; overflow: auto; flex-wrap: nowrap !important; }}
+  {_TAB} #shep-dx-fields > *, {_TAB} #shep-dx-side > * {{ flex-shrink: 0 !important; }}
   {_TAB} .shep-dx-drawer {{ position: absolute !important; top: 0; bottom: 0; z-index: 20; }}
   {_TAB} #shep-dx-identity {{ right: 0; width: max(600px, calc((100% - var(--dx-in-w) - 32px) * 4 / 9 + 16px)); }}
   {_TAB} #shep-dx-change {{ left: calc(var(--dx-in-w) + 16px); right: 0; }}
@@ -3794,13 +3819,12 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx-change .shep-model-confirm-box > .row {{ flex: none !important; }}
   {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-body {{ min-height: 0 !important; }}
 }}
-@media (min-width: 1400px) and (min-height: 760px) and (max-height: 819px) {{
+{SIDE_SHORT} {{
   {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-body {{ display: none !important; }}
 }}
-@media (max-width: 1399px), (max-height: 759px) {{
+{STACK} {{
   {_TAB} #shep-dx-input, {_TAB} #shep-dx-results, {_TAB} #shep-dx-details {{ flex: 1 1 auto !important; width: 100% !important; max-width: none !important; }}
   {_TAB} .shep-dx-fields {{ display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 18px !important; }}
-  {_TAB} .shep-dx-sticky {{ position: static; }}
   {_TAB} #shep-dx-change .shep-model-body {{ flex-direction: column !important; }}
   {_TAB} #shep-dx-change .shep-model-rows, {_TAB} #shep-dx-change .shep-model-facts {{ width: 100% !important; }}
 }}
@@ -3815,7 +3839,6 @@ __all__ = [
     "FIELD_HELP",
     "PAGE_CSS",
     "SEGMENTS",
-    "STICKY_JS",
     "TASK_OUTPUTS",
     "TASK_VIEWS",
     "TOPIC_HELP",

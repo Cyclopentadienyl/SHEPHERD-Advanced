@@ -230,6 +230,7 @@ from src.webui.components.workspaces import (
     workspaces_root,
 )
 from src.webui.operator_access import operator_access
+from src.webui.style import SIDE, SIDE_SHORT, STACK
 
 logger = logging.getLogger(__name__)
 
@@ -1446,7 +1447,7 @@ function fitTail() {
   d.setAttribute('data-fit', '');
   var chosen = element.getAttribute('data-tail');
   var wide = false;
-  try { wide = window.matchMedia('(min-width: 1400px) and (min-height: 760px)').matches; } catch (err) { /* keep it open */ }
+  wide = document.documentElement.getAttribute('data-shep-layout') === 'side';
   d.open = chosen ? chosen === 'open' : !(wide && window.innerHeight < __OPEN__);
 }
 element.addEventListener('click', function (e) {
@@ -2262,8 +2263,18 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
         return (r.status_mark("neutral", f"dataset {r.CANNOT_BE_VERIFIED.lower()}: the run "
                                          "bar's dataset has no fingerprint"), row)
     if recorded == current:
-        return r.status_mark("ok", "same dataset as the run bar", as_chip=True), row
+        # A normal state, so quiet (R-57; the skill's §6): the mark and its
+        # word, no tag.
+        return r.status_mark("ok", "same dataset as the run bar"), row
     return r.warn_chip("not the selected dataset"), row
+
+
+#: The icon before "the run continued from" (or branched from) in the run
+#: view's header: an arrow from a parent, drawn in the text's colour.
+_FROM_ICON = ('<svg class="shep-rv-from-ic" width="14" height="14" viewBox="0 0 16 16" '
+              'aria-hidden="true" focusable="false"><path d="M4 2.5V8a3 3 0 0 0 3 3h5.5" '
+              'fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9.5 8l3 3-3 3" '
+              'fill="none" stroke="currentColor" stroke-width="1.6"/></svg>')
 
 
 def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: bool,
@@ -2291,9 +2302,11 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
     said = f'<span class="shep-rv-rel">{r.e(relation)}</span>' if relation else ""
     if continuing:
         done = OPERATION_VERBS[operation][1]
-        said += (f'<span class="shep-tag shep-tag-accent">the run {done} from</span>'
+        # A relation, not a state to watch and not a link (R-57): plain grey
+        # text, the run continued from led by its icon.
+        said += (f'<span class="shep-rv-from">{_FROM_ICON}the run {done} from</span>'
                  if continuing == label else
-                 f'<span class="shep-tag shep-tag-grey">not the run {done} from</span>')
+                 f'<span class="shep-rv-from">not the run {done} from</span>')
     rows = [("Run", f"<code>{r.e(label)}</code>")]
     if run.get("workspace") and run.get("workspace") != ws.get("name"):
         # Said here only when it is not the run bar's (which names its own).
@@ -4484,9 +4497,15 @@ def create_training_tab(ctx: Any) -> None:
             # ------------------------------------------------------- parameters
             with gr.Column(elem_id="shep-train-params", elem_classes=["shep-panel"], scale=10,
                            min_width=360):
+                # Stacked, the parameters start folded under their title, so the
+                # run view's charts follow the run bar on the first screen (R-60);
+                # side by side the body is always shown and the toggle is not.
                 plain_html('<div class="shep-panel-hd"><h2>Parameters</h2>'
-                           '<span class="shep-panel-right">for the next base run</span></div>',
-                           elem_id="shep-train-params-hd")
+                           '<span class="shep-panel-right">for the next base run</span>'
+                           '<button type="button" class="shep-link shep-train-fold" '
+                           'aria-expanded="false" aria-controls="shep-train-params-bd">'
+                           'Show</button></div>',
+                           elem_id="shep-train-params-hd", js_on_load=FOLD_JS)
                 with gr.Column(elem_id="shep-train-params-bd", elem_classes=["shep-train-bd"]):
                     # What a new base takes (decision S1), each field starting at
                     # the value the run takes without it: the common settings
@@ -4565,7 +4584,7 @@ def create_training_tab(ctx: Any) -> None:
                     # run, epoch, file, kind and fingerprint, read as a wall of text):
                     # the run, then its checkpoint, each in a few words; the chosen
                     # file's details in a table under them.
-                    with gr.Row(elem_classes=["shep-train-parent-row"]):
+                    with gr.Row(elem_classes=["shep-train-parent-row", "shep-field-row"]):
                         continue_run = gr.Dropdown(label=STEP_RUN, choices=[], value=None,
                                                    elem_id="continue_run")
                         refresh_ckpt_btn = gr.Button("Refresh", size="sm", scale=0,
@@ -4867,31 +4886,63 @@ def create_training_tab(ctx: Any) -> None:
     mode.change(continues_html, inputs=[mode], outputs=[continues], show_progress="hidden")
 
 
+#: The parameters' fold, stacked (R-60): "Show" opens the body, "Hide" folds it again; the
+#: state is the button's own ``aria-expanded``, which the style sheet reads.
+FOLD_JS = r"""
+element.addEventListener('click', function (e) {
+  var b = e.target.closest ? e.target.closest('.shep-train-fold') : null;
+  if (!b) { return; }
+  var open = b.getAttribute('aria-expanded') !== 'true';
+  b.setAttribute('aria-expanded', open ? 'true' : 'false');
+  b.textContent = open ? 'Hide' : 'Show';
+});
+"""
+
 #: This page's element id (`shell.page_elem_id`), the scope of `PAGE_CSS`.
 _PAGE = f"#shep-page-{TRAINING}"
 
-#: The smallest plot area the run view draws at a wide size (M5-3: about 70 to
+#: The smallest plot area the run view draws side by side (M5-3: about 70 to
 #: 100 px at 1536 x 760), and the room uPlot takes around it in the plot's box
-#: (the epoch axis, 30 px, and its margins). 140 until B1b; raised toward the
-#: skill's 200 with the room the state line's own row and the run bar's blank
-#: took: the most at which the owner's window (1850 x 960) still shows all
-#: four plots with their axes (its chart body holds 519 px; 200 needs 566), so
-#: only a smaller window, or a banner, scrolls the plots.
+#: (the epoch axis, 30 px, and its margins). 140 until B1b; 170 since, the most
+#: at which the owner's window (1850 x 960) showed all four plots with their
+#: axes under a two-row run bar. With the run bar one row (R-38) the chart body
+#: there holds 565 px and the four plot areas measure 209, 209, 190 and 190 px
+#: (a floor of 200 would need 566), so only a smaller window, or a banner,
+#: scrolls the plots.
 PLOT_MIN_HEIGHT = 170
 PLOT_AXIS_ROOM = 47
+#: The run view's height (side by side) that holds its header, the charts'
+#: toolbar, one row of plots and the resources line: the header at its tallest
+#: (102 px, three lines at 1280 px wide), the toolbar's row (44), a plot card
+#: (its title and keys, `PLOT_MIN_HEIGHT` and `PLOT_AXIS_ROOM`: 241), the
+#: resources line (38) and the panel's border. A shorter run view (a short
+#: laptop window: 288 px at 1280 x 600) scrolls as a whole with its plots in
+#: flow, so a plot is never clipped by a body shorter than itself (T04 review:
+#: the plots' body was 106 px there, a focused plot's centre under the
+#: resources line), one scroll region either way.
+RUN_VIEW_ONE_ROW = 430
 
 #: This page's style sheet (the page contract: listed in `src/webui/app.py`'s
 #: ``PAGE_CSS``), with the chart component's. Nothing under 14 px.
 PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-train {{ gap: 12px !important; }}
-{_PAGE} #shep-train-runbar {{ background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px; padding: 10px 16px !important; gap: 8px !important; flex: none; }}
+/* The run bar is one row (R-38): its two rows' items are the bar's own, in one line that wraps only
+   when the window is too narrow for it, the dataset's identity, the reason and the job's state each
+   wrapping their words onto a second line of the row rather than the row onto a second line; the
+   state last; the Stop question and a notice each a line of their own. The dataset's build time is
+   in its Details › (the bar keeps the fingerprint and the marks). */
+{_PAGE} #shep-train-runbar {{ background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px; padding: 8px 16px !important; flex: none;
+  flex-direction: row !important; flex-wrap: wrap !important; align-items: center !important; gap: 8px 14px !important; }}
+{_PAGE} #shep-train-runbar > .shep-rb-row1, {_PAGE} #shep-train-runbar > .shep-rb-row2 {{ display: contents !important; }}
+{_PAGE} #shep-train-runbar > .shep-rb-confirm, {_PAGE} #shep-train-notice {{ flex: 1 1 100% !important; order: 2; }}
+{_PAGE} #shep-train-notice:not(:has(.shep-notice-t)) {{ display: none !important; }}
+{_PAGE} .shep-rb-chip .shep-ds-built, {_PAGE} .shep-rb-chip .shep-ds-built + .shep-sep {{ display: none; }}
 {_PAGE} .shep-rb-row {{ align-items: center !important; gap: 10px 14px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-rb-row > * {{ min-width: 0; }}
 {_PAGE} .shep-rb-row > .block {{ width: auto !important; }}
 {_PAGE} #shep-train-dataset, {_PAGE} #run_name, {_PAGE} #shep-train-view-run {{ flex: 0 0 auto !important; width: auto !important; }}
 {_PAGE} #shep-train-dataset > div:not(.wrap), {_PAGE} #run_name > label, {_PAGE} #shep-train-view-run > div:not(.wrap) {{ display: flex !important; align-items: center; gap: 8px; }}
-{_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"], {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: 96px !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2) !important; }}
-{_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ width: auto !important; }}
+{_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"], {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: auto !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color) !important; }}
 {_PAGE} #shep-train-dataset .wrap {{ width: clamp(220px, 16vw, 320px); min-width: 0 !important; }}
 /* A run's option is 40 characters at most (`renderers.OPTION_CHARS`), its end the start time that
    tells same-name runs apart, and the closed select is the header's one name for the run viewed: its
@@ -4906,18 +4957,17 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #shep-train-view-run .icon-wrap {{ flex: none !important; }}
 /* The two selects drawn as fields: a border, the text clear of the chevron, grey while disabled
    (a value too long ends in the shell's titled ellipsis, the rule for every select). */
-{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner), {_PAGE} #shep-train-view-run .wrap:has(> .wrap-inner), {_PAGE} #continue_run .wrap:has(> .wrap-inner), {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner) {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px !important; background: #fff !important; box-shadow: none !important; }}
-{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner):focus-within, {_PAGE} #shep-train-view-run .wrap:has(> .wrap-inner):focus-within, {_PAGE} #continue_run .wrap:has(> .wrap-inner):focus-within, {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner):focus-within {{ border-color: var(--shep-accent) !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner), {_PAGE} #shep-train-view-run .wrap:has(> .wrap-inner), {_PAGE} #continue_run .wrap:has(> .wrap-inner), {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner) {{ border-radius: 8px !important; background: #fff !important; }}
 {_PAGE} #shep-train-dataset input, {_PAGE} #shep-train-view-run input, {_PAGE} #continue_run input, {_PAGE} #checkpoint_dropdown input {{ padding-right: 30px !important; }}
 {_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #shep-train-view-run .icon-wrap, {_PAGE} #continue_run .icon-wrap, {_PAGE} #checkpoint_dropdown .icon-wrap {{ color: var(--shep-text-2) !important; }}
-{_PAGE} #shep-train-dataset .wrap:has(input:disabled), {_PAGE} #shep-train-view-run .wrap:has(input:disabled), {_PAGE} #continue_run .wrap:has(input:disabled), {_PAGE} #checkpoint_dropdown .wrap:has(input:disabled) {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(input:disabled), {_PAGE} #shep-train-view-run .wrap:has(input:disabled), {_PAGE} #continue_run .wrap:has(input:disabled), {_PAGE} #checkpoint_dropdown .wrap:has(input:disabled) {{ background: var(--shep-disabled-bg) !important; border-color: var(--shep-disabled-border) !important; }}
 {_PAGE} #shep-train-dataset input:disabled, {_PAGE} #shep-train-view-run input:disabled, {_PAGE} #continue_run input:disabled, {_PAGE} #checkpoint_dropdown input:disabled {{ color: var(--shep-grey-600) !important; -webkit-text-fill-color: var(--shep-grey-600); cursor: not-allowed; }}
 {_PAGE} #shep-train-dataset .wrap:has(input:disabled) .icon-wrap, {_PAGE} #shep-train-view-run .wrap:has(input:disabled) .icon-wrap {{ color: var(--shep-grey-600) !important; }}
-{_PAGE} #run_name .input-container {{ width: 260px; }}
-{_PAGE} #run_name input {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px; padding: 6px 10px !important; background: #fff; }}
+{_PAGE} #run_name .input-container {{ width: 200px; }}
+{_PAGE} #run_name input {{ border-radius: 8px; padding: 6px 10px !important; background: #fff; }}
 {_PAGE} #run_name input:disabled {{ background: var(--shep-grey-50); color: var(--shep-muted); }}
 {_PAGE} .shep-rb-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; white-space: nowrap; }}
-{_PAGE} #shep-train-chip {{ flex: 1 1 360px !important; position: relative; z-index: {CHIP_Z_INDEX}; }}
+{_PAGE} #shep-train-chip {{ flex: 0 1 340px !important; min-width: min-content !important; position: relative; z-index: {CHIP_Z_INDEX}; }}
 {_PAGE} .shep-rb-chip {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 15px; position: relative; }}
 /* The identity's parts wrap one by one (never hidden): "built …", the fingerprint, then the marks with "Details ›". */
 {_PAGE} .shep-rb-chip > .shep-ds {{ display: contents; }}
@@ -4925,7 +4975,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-chip > .shep-ds > .shep-sep {{ margin: 0 -2px; }}
 {_PAGE} .shep-rb-chip > .shep-ds > .shep-sep:has(+ .shep-ds-marks) {{ display: none; }}
 {_PAGE} .shep-rb-inuse {{ color: var(--shep-text-2); font-size: 14px; }}
-{_PAGE} .shep-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; font-weight: 500; }}
+{_PAGE} .shep-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; font-weight: 400; }}
 {_PAGE} .shep-link:hover {{ text-decoration: underline; }}
 {_PAGE} .shep-pop {{ position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; width: min({DETAILS_POPOVER_WIDTH}px, calc(100vw - 48px)); background: #fff; border: 1px solid var(--shep-border-2); border-radius: 10px; box-shadow: 0 10px 28px rgba(20,24,40,.16); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; font-size: 15px; }}
 {_PAGE} .shep-pop[hidden] {{ display: none; }}
@@ -4935,7 +4985,8 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-pop .shep-kv-2 {{ grid-template-columns: max-content max-content max-content max-content; font-size: 14px; gap: 2px 12px; }}
 {_PAGE} .shep-pop .shep-v {{ overflow-wrap: anywhere; }}
 {_PAGE} .shep-pop .shep-link {{ align-self: flex-start; }}
-{_PAGE} #shep-train-pill {{ margin-left: auto; flex: none !important; }}
+{_PAGE} #shep-train-pill {{ order: 1; flex: 0 1 180px !important; min-width: 0 !important; }}
+{_PAGE} #shep-train-pill .shep-pill {{ white-space: normal; height: auto; min-height: 30px; padding: 4px 12px; line-height: 1.25; }}
 {_PAGE} .shep-pill {{ display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; font-size: 14px; font-weight: 600; white-space: nowrap; border: 1px solid var(--shep-border-2); background: var(--shep-panel-2); color: var(--shep-text-2); }}
 {_PAGE} .shep-pill-sub {{ font-weight: 400; }}
 /* The pill's tint by its kind; its mark and word are the shared status mark's (`job_status_html`),
@@ -4944,7 +4995,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-pill-ok {{ background: var(--shep-green-50); border-color: var(--shep-green-200); color: var(--shep-green-800); }}
 {_PAGE} .shep-pill-grey {{ background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-grey-800); }}
 {_PAGE} .shep-pill-red {{ background: var(--shep-red-50); border-color: var(--shep-red-200); color: var(--shep-red-700); }}
-{_PAGE} #shep-train-reason {{ flex: 1 1 260px !important; }}
+{_PAGE} #shep-train-reason {{ flex: 1 1 120px !important; min-width: 0 !important; }}
 {_PAGE} .shep-rb-reason {{ display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }}
 {_PAGE} .shep-rb-why {{ display: inline-flex; align-items: flex-start; gap: 6px; flex-wrap: nowrap; font-size: 15px; color: var(--shep-text-2); text-align: right; }}
 {_PAGE} .shep-rb-why > svg, {_PAGE} .shep-rb-why > .shep-tag {{ flex: none; margin-top: 3px; }}
@@ -4962,7 +5013,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-continues {{ display: none !important; }}
 {_PAGE} .shep-rb-drawer #shep-train-continue, {_PAGE} .shep-rb-drawer #shep-train-stop {{ display: none !important; }}
 {_PAGE} .shep-rb-drawer #shep-train-continues {{ display: block !important; flex: 0 1 auto !important; }}
-{_PAGE} .shep-rb-k {{ font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2); margin-right: 8px; }}
+{_PAGE} .shep-rb-k {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); margin-right: 8px; }}
 {_PAGE} .shep-rb-confirm {{ display: none !important; }}
 {_PAGE} .shep-rb-confirming .shep-rb-confirm {{ display: flex !important; }}
 {_PAGE} .shep-rb-confirming .shep-rb-row2 {{ display: none !important; }}
@@ -4992,9 +5043,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-drawer-hd {{ flex-wrap: nowrap !important; }}
 {_PAGE} #shep-train-drawer-title {{ flex: 1 1 auto !important; }}
 {_PAGE} #shep-train-drawer-title .html-container > div {{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }}
-{_PAGE} #shep-train-drawer-title h2 {{ font-size: 16px; font-weight: 600; margin: 0; }}
+{_PAGE} #shep-train-drawer-title h2 {{ font-size: var(--shep-title-size); font-weight: 600; margin: 0; }}
 {_PAGE} .shep-x-btn {{ font-size: 0 !important; width: 32px; height: 32px; min-width: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important; }}
-{_PAGE} .shep-x-btn::before {{ content: "×"; font-size: 22px; color: var(--shep-muted); }}
+{_PAGE} .shep-x-btn::before {{ content: "×"; font-size: 20px; color: var(--shep-muted); }}
 /* The dataset comparison and the check result sit in the drawer's one container, the panel:
    a tint and the status mark's lead set them apart, never a border of their own (the skill's
    §2: no bordered box inside a box). A result that can continue has no tint. */
@@ -5037,6 +5088,8 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-run-head {{ flex: 1 1 540px !important; }}
 {_PAGE} .shep-rv-hd {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }}
 {_PAGE} .shep-rv-rel {{ font-size: 15px; font-weight: 600; color: var(--shep-text); }}
+{_PAGE} .shep-rv-from {{ display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--shep-text-2); }}
+{_PAGE} .shep-rv-from-ic {{ flex: none; }}
 {_PAGE} #shep-train-view-run .options {{ min-width: min(28rem, calc(100vw - 48px)); }}
 {_PAGE} #shep-train-view-run .options li {{ min-width: 100%; }}
 /* Details, at the header's end: its popover opens under it, aligned to the right. */
@@ -5049,7 +5102,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rv-res b {{ color: var(--shep-text); margin-right: 8px; }}
 {_PAGE} .shep-lock {{ flex: none; }}
 {_PAGE} .shep-html svg {{ display: inline-block; vertical-align: -2px; }}
-{_PAGE} .shep-train-parent-row {{ align-items: flex-end !important; flex-wrap: nowrap !important; }}
+{_PAGE} .shep-train-parent-row {{ flex-wrap: nowrap !important; }}
 {_PAGE} #continue_run {{ flex: 1 1 auto !important; min-width: 0 !important; }}
 /* An open list at least as wide as its few words need (Gradio sizes the list and each entry to
    the box, inline), so an option reads on one line; still fixed and opaque, as Gradio draws it,
@@ -5060,7 +5113,6 @@ PAGE_CSS = charts.CHART_CSS + f"""
    (`parent_details_html`). */
 {_PAGE} #shep-train-parent-details:not(:has(.shep-ckpt)) {{ display: none !important; }}
 {_PAGE} .shep-ckpt .shep-kv {{ font-size: 14px; gap: 4px 14px; }}
-{_PAGE} #shep-train-refresh {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
 /* Extra epochs (when shown) beside Check checkpoint, above what the check says. */
 {_PAGE} .shep-train-check-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
 {_PAGE} .shep-train-check-row > * {{ flex: 0 0 auto !important; width: auto !important; }}
@@ -5090,7 +5142,12 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-train-setby-row {{ align-items: flex-start !important; flex-wrap: nowrap !important; gap: 8px 12px !important; }}
 {_PAGE} #shep-train-setby {{ flex: 1 1 auto !important; min-width: 0 !important; }}
 {_PAGE} #shep-train-reset {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
-@media (min-width: 1400px) and (min-height: 760px) {{
+/* The panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the form, or the
+   Continue drawer in its place; the run view, whose four plots keep about 400 px each. */
+{_PAGE} #shep-train-params {{ --shep-panel-min: 360px; }}
+{_PAGE} #shep-train-drawer {{ --shep-panel-min: 400px; }}
+{_PAGE} #shep-train-runview {{ --shep-panel-min: 860px; }}
+{SIDE} {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
   {_PAGE} #shep-train {{ flex: 1 1 auto; min-height: 0; height: 100%; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-train-page {{ flex: 1 1 auto; min-height: 0; height: auto; }}
@@ -5102,8 +5159,8 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-params-bd .form > .block input[type="number"], {_PAGE} #shep-train-params-bd .form > .block input[type="text"] {{ padding-top: 6px !important; padding-bottom: 6px !important; }}
   /* The Continue drawer as dense: it fits at 1920 x 1080 with Extra epochs on screen, as
      drawn (M5-3: 821 px of content in 684); a shorter window scrolls its body inside. */
-  {_PAGE} #shep-train-drawer-bd {{ gap: 8px !important; }}
-  {_PAGE} #shep-train-drawer-bd .block.padded {{ padding-top: 4px !important; padding-bottom: 4px !important; }}
+  {_PAGE} #shep-train-drawer-bd {{ gap: 8px !important; --shep-field-pad-b: 4px; }}
+  {_PAGE} #shep-train-drawer-bd .block.padded {{ padding-top: var(--shep-field-pad-b) !important; padding-bottom: var(--shep-field-pad-b) !important; }}
   {_PAGE} #shep-train-drawer-bd [data-testid="block-info"] {{ margin-bottom: 4px !important; padding-top: 2px !important; padding-bottom: 2px !important; }}
   {_PAGE} #shep-train-drawer-bd .wrap label {{ padding-top: 4px !important; padding-bottom: 4px !important; }}
   {_PAGE} #shep-train-drawer-bd input[type="number"], {_PAGE} #shep-train-drawer-bd input[type="text"] {{ padding-top: 6px !important; padding-bottom: 6px !important; }}
@@ -5152,24 +5209,30 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-runview > #resource_display {{ flex: none !important; }}
   {_PAGE} #shep-train-charts > .html-container {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
   {_PAGE} #shep-train-charts > .html-container > div {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
-  {_PAGE} .shep-rb-row1 {{ flex-wrap: nowrap !important; }}
-  {_PAGE} #shep-train-chip {{ flex: 1 1 auto !important; }}
   {_PAGE} #shep-train-charts .shep-charts {{ flex: 1 1 auto; }}
+  /* The run view's room, read by its own height (`RUN_VIEW_ONE_ROW`, below), never the window's. */
+  {_PAGE} #shep-train-page {{ container: shep-train-page / size; }}
 }}
-@media (min-width: 1400px) and (min-height: 760px) and (max-height: 899px) {{
+/* A run view too short for one row of plots scrolls as a whole, its plots in flow (the plots'
+   body no longer a region of its own): each plot can be brought wholly into view, nothing drawn
+   over it (the header is not sticky, the resources line ends the scroll). */
+@container shep-train-page (max-height: {RUN_VIEW_ONE_ROW}px) {{
+  {_PAGE} #shep-train-runview {{ overflow-y: auto !important; }}
+  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: none !important; }}
+  {_PAGE} #shep-train-charts .shep-charts-body {{ flex: none; overflow-y: visible; }}
+}}
+{SIDE_SHORT} {{
   {_PAGE} #shep-train-rv-top {{ min-height: 40px; padding-top: 4px !important; padding-bottom: 4px !important; }}
   {_PAGE} .shep-rv-res {{ padding-top: 6px; padding-bottom: 6px; }}
 }}
-@media (max-width: 1399px), (max-height: 759px) {{
+{_PAGE} .shep-train-fold {{ margin-left: 12px; font-size: 15px; min-height: 24px; }}
+{SIDE} {{ {_PAGE} .shep-train-fold {{ display: none; }} }}
+{STACK} {{
+  {_PAGE} #shep-train-params:has(.shep-train-fold[aria-expanded="false"]) > #shep-train-params-bd {{ display: none !important; }}
   {_PAGE} #shep-train-chip {{ flex: 1 1 240px !important; }}
   {_PAGE} .shep-rb-reason {{ justify-content: flex-start; }}
   {_PAGE} .shep-rb-why {{ text-align: left; }}
   {_PAGE} .shep-banner-tail {{ max-height: none; overflow: visible; }}
-}}
-@media (max-width: 1199px) {{
-  {_PAGE} #shep-train-reason {{ flex: 1 1 100% !important; order: 10; }}
-  {_PAGE} #shep-train-start {{ margin-left: auto; }}
-  {_PAGE} #run_name .input-container {{ width: 200px; }}
 }}
 """
 

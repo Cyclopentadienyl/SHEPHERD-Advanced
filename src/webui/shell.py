@@ -12,18 +12,28 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
 
 - **Level 1** (``#shep-nav``): "Diagnosis (clinical)" (the first screen),
   "Research (pre-clinical)", and "⚙ Settings" (``alignment="right"``). Drawn as a
-  segmented control: the selected stage is filled in the accent colour and bold.
-  Settings, selected, has a light fill, a 3 px underline and bold.
+  segmented control: the selected stage is filled in the accent colour with
+  white text in the strong weight, and so is Settings when it is selected (one
+  look for level 1's selected item, which no other level has, R-20).
 - **Level 2** (``#shep-research-nav``, inside Research): Datasets · Training ·
-  Fine-tune · Test · Models under the group labels PREPARE and EVALUATE with a
-  divider. The
-  labels are CSS generated content with empty alternative text and
-  ``pointer-events: none``: not clickable and not part of a tab's name; the
-  tablist's ``aria-label`` gives the grouping to a screen reader. The selected
-  page has a 3 px underline and is bold, at normal size. The default inner page is
-  Training.
+  Fine-tune · Test · Models, 32 px tabs in two groups, each under its caption
+  ("Prepare", "Evaluate"; D01, R-22): the captions sit on a tier of their own
+  above their group's first tab, aligned with its text, in the strong weight
+  and the muted colour, with a divider between the groups. They are CSS
+  generated content with empty alternative text and ``pointer-events: none``:
+  outside every tab's box, not clickable, not focusable, not part of a tab's
+  name; the tablist's ``aria-label`` gives the grouping to a screen reader.
+  The selected page has a 3 px accent underline, the accent text and the
+  strong weight; a tab under the pointer has a grey fill and a grey underline.
+  When both groups do not fit on one line, the Evaluate group moves whole onto
+  a line of its own with no divider at its start (``shep-rnav-wrapped``, set
+  by the head script's layout pass). The default inner page is Training.
+- Every tab of both levels shows keyboard focus as a 2 px ring in the focus
+  token (``--shep-focus-ring``); hover, selected and focus cues are tokens in
+  `src/webui/style.py`.
 - In-page tabs use a third style: give a ``gr.Radio`` the class ``shep-seg``
-  (a grey track with a raised white segment), never a ``gr.Tabs``.
+  (a grey track with a raised white segment), never a ``gr.Tabs``. A form's
+  own radio is a fourth look, a tinted option with its filled dot.
 - Both levels use ``overflow_behavior="wrap"``: no tab ever goes into an overflow
   menu. Row 1 holds the brand, the D8 chip, the GPU chip and Settings: the brand
   and the chips are drawn over the level-1 tab row, and when they do not fit on
@@ -41,11 +51,23 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   case data, a path, a choice or anything that starts, loads or registers;
   the page opened reads its state as any opening does (a running job is read
   back, never started).
-- **The layout rule** (the mockup's README): wide (at least 1400 × 760 CSS px)
-  the page never scrolls, the selected page fills the space under the header and
-  a region too long scrolls inside its own panel (a page that is taller than the
-  space scrolls inside it rather than the page); narrow, everything flows and the
-  page scrolls, with no region scrolling inside.
+- **The layout rule, one decision** (D02, the WebUI ledger's UI-02): the head
+  script's layout pass writes ``data-shep-layout`` on the root element, and
+  every style sheet keys its side-by-side and stacked rules off it
+  (`src/webui/style.py`'s ``SIDE`` and ``STACK``; no media query on the
+  window's size anywhere). The browser's usable area, the window's inner
+  size, decides: no wider than tall, ``stack``; wider, ``side`` when the page
+  shown fits by its panels' own minimum widths (each panel's
+  ``--shep-panel-min`` in its page's style sheet, read from the panels as
+  drawn: the shown ``.shep-page`` row's shown children, under any wrapper
+  that holds one alone, with the gaps between them), else ``stack``. Side by
+  side the page never scrolls, the selected page fills the space under the
+  header and a region too long scrolls inside its own panel; stacked,
+  everything flows and the page scrolls, with no region scrolling inside
+  (a table wider than its panel scrolls sideways in its own box). A short
+  window (``data-shep-short``, under ``style.SHORT_BELOW`` px tall) only
+  makes headers denser: height never stacks a page. A page with no
+  ``.shep-page`` row (Settings) is decided by the window's shape alone.
 
 The page contract (UI-B, UI-C and UI-D edit only their own modules)
 ------------------------------------------------------------------
@@ -157,9 +179,11 @@ handler that must tell which component fired compares ``elem_id``, never the
 object or its ``_id``.
 
 **Layout classes.** A page's top ``gr.Row`` takes ``elem_classes=["shep-page"]``
-and each of its columns ``["shep-panel"]``: wide (at least 1400 × 760 CSS px)
-the row fills the space under the header and each panel scrolls inside its own
-region; narrow, the panels stack and only the page scrolls. ``shep-panel-hd``,
+and each of its columns ``["shep-panel"]``, with its minimum width as
+``--shep-panel-min`` in the page's style sheet (what its content needs;
+the layout pass sums them): side by side the row fills the space under the
+header and each panel scrolls inside its own region; stacked, the panels
+stack and only the page scrolls. ``shep-panel-hd``,
 ``shep-panel-bd`` and ``shep-panel-ft`` are a panel's header, body and footer
 (`src/webui/style.py`). In-page tabs: a ``gr.Radio`` with the class
 ``shep-seg``.
@@ -196,6 +220,7 @@ import gradio as gr
 from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
 from src.webui.components.help import HelpRegistry, as_json_for_script
 from src.webui.components.renderers import RENDERER_HELP
+from src.webui.style import LAYOUT_ATTR, SHORT_ATTR, SHORT_BELOW
 
 BRAND = "SHEPHERD-Advanced"
 
@@ -605,8 +630,74 @@ _SHELL_JS = r"""
   // own, under the stage switch however many lines it takes (at 480 px its
   // two tabs take two): the chips sit where that line starts, measured, so
   // they never cover a tab.
+  // Row 2 holds the research pages in two groups, each under its caption.
+  // When both groups do not fit on one line, the Evaluate group goes whole
+  // onto a line of its own (`shep-rnav-wrapped`), measured from the tabs'
+  // own widths, so the measure does not depend on the state it sets. A row
+  // not shown (Research closed) keeps the state it had.
+  function researchLayout(shell) {
+    var row = document.querySelector('#shep-research-nav > .tab-wrapper > .tab-container');
+    if (!row || !row.clientWidth) { return; }
+    var tabs = row.querySelectorAll(':scope > button[role="tab"]'), s = getComputedStyle(row);
+    var need = (parseFloat(s.paddingLeft) || 0) + (parseFloat(s.paddingRight) || 0)
+      + (parseFloat(getComputedStyle(shell).getPropertyValue('--shep-group-gap')) || 0);
+    for (var i = 0; i < tabs.length; i++) { need += tabs[i].offsetWidth; }
+    shell.classList.toggle('shep-rnav-wrapped', need > row.clientWidth);
+  }
+  // **The one layout decision** (the layout rule, module docstring): the
+  // window's inner size first (no wider than tall: stacked), then whether the
+  // page shown fits side by side by its panels' own minimum widths. Read from
+  // the style sheets (each panel's --shep-panel-min) and the window, never
+  // from the state it sets, so a pass never undoes the one before it; a
+  // scrollbar the stacked page shows is counted back (side by side has none).
+  var LAYOUT = '__LAYOUT__', SHORT = '__SHORT__', SHORT_BELOW = __SHORT_BELOW__;
+  function shownTab() {
+    var outer = selected('shep-nav') || 'clinical';
+    if (outer === RESEARCH) {
+      return document.getElementById('shep-page-' + (selected('shep-research-nav') || DEFAULT_PAGE));
+    }
+    return document.getElementById('shep-tab-' + outer);
+  }
+  function drawn(el) { return el.getClientRects().length > 0; }
+  function sideFits(tab) {
+    var rows = tab ? tab.querySelectorAll('.shep-page') : [], box = null, kids = [];
+    for (var i = 0; i < rows.length && !box; i++) { if (drawn(rows[i])) { box = rows[i]; } }
+    if (!box) { return true; }
+    for (;;) {
+      kids = Array.prototype.filter.call(box.children, drawn);
+      if (kids.length === 1 && kids[0].children.length) { box = kids[0]; } else { break; }
+    }
+    var s = getComputedStyle(box), n = 0;
+    var need = (parseFloat(s.paddingLeft) || 0) + (parseFloat(s.paddingRight) || 0);
+    for (var j = 0; j < kids.length; j++) {
+      var min = parseFloat(getComputedStyle(kids[j]).getPropertyValue('--shep-panel-min')) || 0;
+      if (min > 0) { need += min; n += 1; }
+    }
+    if (n > 1) { need += (n - 1) * (parseFloat(s.columnGap) || 0); }
+    var bar = window.innerWidth - document.documentElement.clientWidth;
+    return need <= box.getBoundingClientRect().width + bar + 0.5;
+  }
+  function orientation() {
+    var root = document.documentElement, w = window.innerWidth, h = window.innerHeight;
+    var want = w > h && sideFits(shownTab()) ? 'side' : 'stack';
+    if (root.getAttribute(LAYOUT) !== want) { root.setAttribute(LAYOUT, want); }
+    if (root.hasAttribute(SHORT) !== (h < SHORT_BELOW)) { root.toggleAttribute(SHORT, h < SHORT_BELOW); }
+  }
+  // The scroll cue (`style.py`'s .shep-scroll-cue): a region with more below says so.
+  function cue(el) {
+    var more = el.scrollHeight - el.scrollTop - el.clientHeight > 1;
+    if (el.hasAttribute('data-shep-more') !== more) { el.toggleAttribute('data-shep-more', more); }
+  }
+  document.addEventListener('scroll', function (e) {
+    var t = e.target;
+    if (t && t.classList && t.classList.contains('shep-scroll-cue')) { cue(t); }
+  }, true);
   function layout() {
+    orientation();
+    var cues = document.querySelectorAll('.shep-scroll-cue');
+    for (var c = 0; c < cues.length; c++) { cue(cues[c]); }
     var shell = document.getElementById('shep-shell');
+    if (shell) { researchLayout(shell); }
     var row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
     var chips = document.querySelector('#shep-chips .shep-chips');
     var brand = document.querySelector('#shep-brand .shep-brand');
@@ -631,7 +722,7 @@ _SHELL_JS = r"""
   // value without an event to listen for, so each element is looked at again
   // on each layout pass (after the page changes) and when the pointer or the
   // focus reaches it.
-  var TITLED = 'input[role="combobox"], .shep-seg label';
+  var TITLED = 'input[role="combobox"], .shep-seg label, .shep-chip-text';
   function titleOne(el) {
     var box = el, text;
     if (el.tagName === 'INPUT') { text = el.value || ''; }
@@ -657,8 +748,10 @@ _SHELL_JS = r"""
     queued = true;
     requestAnimationFrame(function () { queued = false; title(); labels(); layout(); titles(); });
   }
+  // A page shown, a panel shown or hidden (a drawer; Gradio's hidden class),
+  // the page's own class that changes its panels: each lays the page out again.
   new MutationObserver(update).observe(document.documentElement,
-    {childList: true, subtree: true, attributes: true, attributeFilter: ['aria-selected']});
+    {childList: true, subtree: true, attributes: true, attributeFilter: ['aria-selected', 'class']});
   window.addEventListener('resize', update);
   if (window.ResizeObserver) {
     var ro = new ResizeObserver(update);
@@ -679,6 +772,8 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__DEFAULT__", DEFAULT_RESEARCH_PAGE)
               .replace("__KEPT__", KEPT_PAGE)
               .replace("__RESEARCH_LABEL__", as_json_for_script(RESEARCH_TABLIST_LABEL))
+              .replace("__LAYOUT__", LAYOUT_ATTR).replace("__SHORT__", SHORT_ATTR)
+              .replace("__SHORT_BELOW__", str(SHORT_BELOW))
               + "</script>")
 
 

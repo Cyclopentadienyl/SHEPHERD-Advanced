@@ -200,6 +200,9 @@ def _page(tmp_path: Path) -> Path:
     registry.field("fld", "Epochs", f"How many passes. {HOSTILE}\n\n- Smoke test: 2-5 {HOSTILE}"
                    f"\n- Every pass sees each pair once.\nDefault: 200, {HOSTILE}\n"
                    "Ref: SHEPHERD_X hparams.py:18")
+    # A field drawn as a grid row: its block "display: contents", its label's
+    # cells (title, ⓘ, box) the grid's columns (Diagnosis' Options, b405973).
+    registry.field("gfld", "Top-K", "How many candidates.")
     registry.topic("kv-help", "A key", "What the key means. " + HOSTILE)
     registry.topic("row-help", "A row", "What the row says.")
     registry.topic("card-help", "A card", "What the card shows.\n\n- Its state.\n- When it "
@@ -213,6 +216,10 @@ body {{ margin: 0; font: 15px sans-serif; }}
 <div class="block" id="fld" style="margin: 40px; width: 300px; padding: 16px; border: 1px solid #ccc">
 <label class="block" style="display: block"><span data-testid="block-info">Epochs</span><input>
 </label></div>
+<div style="display: grid; grid-template-columns: max-content auto 1fr; margin: 24px 40px; width: 336px">
+<div class="block" id="gfld" style="display: contents"><label class="block"
+style="grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center">
+<span data-testid="block-info">Top-K</span><input type="number" style="width: 72px"></label></div></div>
 <div class="shep-kv"><span class="shep-k">A key{h.help_button("kv-help", "A key")}</span>
 <span class="shep-v">its value, long enough to fill the row</span></div>
 <table id="tbl" style="margin: 24px 40px; width: calc(100% - 80px)"><tr>
@@ -232,7 +239,9 @@ that fill the card's width so a bubble beside its title would cover them.</p>
 
 def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_path):
     """In a real browser, at the deployment window (1850 × 960) and a narrow
-    one (420 × 800), for a field's ⓘ, a key-value row's and a table row's: a
+    one (420 × 800), for a field's ⓘ, a grid-row field's (its block
+    ``display: contents``, so it has no box of its own: the bubble covered
+    the ⓘ and the field, D08), a key-value row's and a table row's: a
     hover opens nothing before the delay and a tooltip after it; a click pins
     a dialog named by the help's title; the bubble's rect does not intersect
     field's (measured here, by the test's own rule) and is not under the
@@ -252,7 +261,7 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
     sizes = json.loads(result.stdout)
     assert set(sizes) == {"1850x960", "420x800"}
     for size, targets in sizes.items():
-        assert set(targets) == {"field", "kv", "row", "region"}
+        assert set(targets) == {"field", "grid", "kv", "row", "region"}
         for which, seen in targets.items():
             where = f"{size} {which}"
             assert seen["hit"]["width"] >= 24 and seen["hit"]["height"] >= 24, where
@@ -260,8 +269,8 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
             assert seen["hoverFooter"] is False and seen["pinnedFooter"] is True, where
             pinned = seen["pinned"]
             assert not pinned["hidden"] and pinned["role"] == "dialog", where
-            assert pinned["labelledby"] and pinned["title"] in ("Epochs", "A key", "A row",
-                                                                "A card"), where
+            assert pinned["labelledby"] and pinned["title"] in ("Epochs", "Top-K", "A key",
+                                                                "A row", "A card"), where
             b, f = pinned["bubble"], pinned["field"]
             assert not (b["left"] < f["right"] and f["left"] < b["right"]
                         and b["top"] < f["bottom"] and f["top"] < b["bottom"]), (where, b, f)

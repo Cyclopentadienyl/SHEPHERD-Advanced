@@ -642,7 +642,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-key {{ font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-dl-set > .block:not(.shep-dl-keycell) {{ flex: 1 1 auto !important; min-width: 0 !important; }}
 {_PAGE} .shep-dl-set > .block.shep-dl-keycell {{ flex: 0 0 8em !important; min-width: 8em !important; }}
-{_PAGE} .shep-dl-set input, {_PAGE} .shep-dl-set textarea {{ border: 1px solid var(--shep-grey-500) !important; border-radius: 6px !important; padding: 8px 12px !important; font-size: 15px; }}
+{_PAGE} .shep-dl-set input, {_PAGE} .shep-dl-set textarea {{ border: 1px solid var(--shep-control-border) !important; border-radius: 6px !important; padding: 8px 12px !important; font-size: 15px; }}
 {_PAGE} .shep-dl-set input:focus-visible, {_PAGE} .shep-dl-set textarea:focus-visible {{ outline: 2px solid var(--shep-accent-600) !important; outline-offset: 1px; }}
 {_PAGE} .shep-dl-set input:disabled, {_PAGE} .shep-dl-set textarea:disabled {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
 {_PAGE} .shep-dl-set > button, {_PAGE} .shep-dl-create > button {{ flex: none !important; min-width: max-content !important; }}

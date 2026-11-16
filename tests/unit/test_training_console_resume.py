@@ -1268,6 +1268,11 @@ def test_the_run_bar_and_the_run_view_say_branched_for_branch():
                              continuing="gatv2/r0", operation=tc.BRANCH)
     assert ">the run branched from<" in same and ">not the run branched from<" in other
     assert "continued" not in same + other
+    # A relation, never a tag that looks clickable (R-57): plain grey text,
+    # the parent led by its icon.
+    assert "shep-tag-accent" not in same + other and 'shep-tag-grey">not the run' not in other
+    assert 'class="shep-rv-from"><svg class="shep-rv-from-ic"' in same
+    assert "shep-rv-from-ic" not in other
 
 
 def test_the_branch_fields_are_the_settings_a_branch_may_change_through_the_one_field():

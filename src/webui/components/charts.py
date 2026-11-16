@@ -60,6 +60,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 import gradio as gr
 
 from src.webui.components.help import help_button
+from src.webui.style import STACK
 
 #: The parent app serves this directory at ``/static`` (`src/api/main.py`).
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -87,13 +88,16 @@ SIGNIFICANT = 6
 #: mounts, and over the hidden figure while the module marks it busy (`CHART_CSS`).
 LOADING = "Charts loading…"
 
-#: In the narrow layout (the page scrolls; each plot a fixed height), the
-#: figure's charts are 2 × 2 from this width of its own, one column below (the
-#: WebUI skill's §2: about 1000 px; a container query, so it follows the
-#: figure, not the window). The wide layout's figure (at least about 895 px
-#: wide at 1400 px) has the window's height, not its own: it stays 2 × 2, as
-#: one column there would leave two of the four plots wholly out of view
-#: (1440 x 900: a body of 419 px for 1018 px of one column).
+#: Stacked (the page scrolls; each plot a fixed height), the figure's charts
+#: are 2 × 2 from this width of its own, one column below (the WebUI skill's
+#: §2: about 1000 px; a container query, so it follows the figure, not the
+#: window). Side by side (the shell's one layout decision) the figure (at least
+#: about 826 px wide: Training's run view at its minimum, 860 px, at 1280 px of
+#: window) has the window's height, not its own: it stays 2 × 2, as one column
+#: there would leave two of the four plots wholly out of view (1440 x 900: a
+#: body of 419 px for 1018 px of one column). A run view too short for one row
+#: of plots scrolls as a whole instead, the figure at its own height
+#: (`training_console.RUN_VIEW_ONE_ROW`).
 TWO_COLUMNS_FROM = 960
 
 
@@ -275,13 +279,13 @@ CHART_CSS = """
 .shep-charts-zoom { display: inline-flex; align-items: center; height: 28px; padding: 0 8px; border-radius: 6px; background: var(--shep-accent-50); border: 1px solid var(--shep-accent-100); color: var(--shep-accent-text); font-size: 14px; white-space: nowrap; }
 .shep-charts-zoom[hidden] { display: none; }
 .shep-charts-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.shep-charts .shep-charts-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--shep-border-2); background: #fff; color: var(--shep-text); font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.shep-charts .shep-charts-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--shep-border-2); background: #fff; color: var(--shep-text); font-size: 14px; font-weight: 400; cursor: pointer; white-space: nowrap; }
 .shep-charts .shep-charts-btn:hover, .shep-charts .shep-charts-icon:hover { background: var(--shep-panel-2); }
 .shep-charts .shep-charts-btn:disabled { opacity: .6; cursor: progress; }
 .shep-charts-modebar { display: inline-flex; border: 1px solid var(--shep-border-2); border-radius: 8px; overflow: hidden; }
 .shep-charts .shep-charts-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 32px; border: 0; background: #fff; color: var(--shep-text-2); cursor: pointer; }
 .shep-charts-icon + .shep-charts-icon { border-left: 1px solid var(--shep-border-2); }
-.shep-charts-btn:focus-visible, .shep-charts-icon:focus-visible, .shep-chart-plot:focus-visible, .shep-charts-new:focus-visible { outline: 2px solid var(--shep-accent); outline-offset: 2px; }
+.shep-charts-btn:focus-visible, .shep-charts-icon:focus-visible, .shep-chart-plot:focus-visible, .shep-charts-new:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: 2px; }
 .shep-charts-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .shep-charts-grid { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 10px 22px; }
 .shep-charts-n1 .shep-charts-grid { grid-template-columns: minmax(0, 1fr); }
@@ -289,7 +293,11 @@ CHART_CSS = """
 .shep-chart-hd { display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; min-height: 24px; }
 .shep-chart-title { font-weight: 600; font-size: 15px; color: var(--shep-text); }
 .shep-chart-keys { display: inline-flex; gap: 4px 14px; flex-wrap: wrap; }
-.shep-chart-key { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }
+.shep-charts .shep-chart-key { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 4px; margin: 0 -4px; border: 0; border-radius: 4px; background: none; font: inherit; font-size: 14px; color: var(--shep-text-2); white-space: nowrap; cursor: pointer; }
+.shep-charts .shep-chart-key:hover { background: var(--shep-panel-2); }
+.shep-charts .shep-chart-key[aria-pressed="false"] { color: var(--shep-muted); text-decoration: line-through; }
+.shep-charts .shep-chart-key[aria-pressed="false"] .shep-sw { opacity: .35; }
+.shep-charts .shep-chart-key:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: 1px; }
 .shep-sw { display: inline-block; flex: none; vertical-align: middle; }
 .shep-chart-plot { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; border-radius: 4px; contain: size; }
 .shep-chart-plot .u-wrap { cursor: crosshair; touch-action: none; }
@@ -309,7 +317,7 @@ CHART_CSS = """
 .shep-charts-msg[hidden] { display: none; }
 .shep-charts[aria-busy="true"] .shep-charts-grid, .shep-charts[aria-busy="true"] .shep-charts-new, .shep-charts[aria-busy="true"] .shep-charts-zoom, .shep-charts[aria-busy="true"] .shep-charts-msg { visibility: hidden; }
 .shep-charts[aria-busy="true"] .shep-charts-body::after { content: "@LOADING@"; position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
-@media (max-width: 1399px), (max-height: 759px) {
+@STACK@ {
   .shep-charts { height: auto; }
   .shep-charts-grid { grid-auto-rows: auto; }
   @container (max-width: @COLUMNS@px) { .shep-charts-grid { grid-template-columns: minmax(0, 1fr); } }
@@ -318,7 +326,8 @@ CHART_CSS = """
   .shep-charts-msg { position: static; padding: 24px 0; }
   .shep-charts[aria-busy="true"] .shep-charts-body { min-height: 72px; }
 }
-""".replace("@LOADING@", LOADING).replace("@COLUMNS@", str(TWO_COLUMNS_FROM - 1))
+""".replace("@LOADING@", LOADING).replace("@COLUMNS@", str(TWO_COLUMNS_FROM - 1)).replace(
+    "@STACK@", STACK)
 
 
 __all__ = [
