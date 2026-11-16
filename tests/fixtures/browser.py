@@ -12,10 +12,12 @@ Moved here from the help tests, so the shell's tests use the same.
 **What a page asks of the server** (`QUEUE_JS`, a page init script): every
 queue join the page sends (its listener's ``fn_index``, ``trigger_id`` and
 ``event_id``) and every event's completion on the page's event stream, as
-``window.__shepQueue``: ``joins``, ``done`` (event ids answered) and
-``inflight`` (joined, not yet answered). A test counts the requests one act
-sent and waits for what it asked to be answered, never for a fixed time.
-`run_node` runs a script and reads the JSON it prints.
+``window.__shepQueue``: ``joins``, ``done`` (event ids answered),
+``inflight`` (joined, not yet answered), ``direct`` (a ``queue=False``
+listener's requests not yet answered) and ``idle()`` (nothing unanswered). A
+test counts the requests one act sent and waits for what it asked to be
+answered, never for a fixed time. `run_node` runs a script and reads the JSON
+it prints.
 
 **What a page draws, measured where the browser draws it** (`LOOK_JS`, a page
 init script; T04, the WebUI's shared tokens): ``window.__shepLook`` reads
@@ -35,6 +37,22 @@ Gradio's effective styles, never the style sheet's text:
 - ``topAt(x, y)``: what ``document.elementsFromPoint`` finds first there;
 - ``ratio(a, b)`` and ``behind(el)``: WCAG contrast of two computed colours,
   and the first opaque background behind an element.
+
+``typeScale`` also lists every visible text under 14 px, a glyph included.
+
+**The shared UI measurement check** (D08, INT-AUDIT): `LOOK_JS` also measures
+one window of the page shown, ``check()`` (no sideways page scroll, its scroll
+regions with their panel and the regions they are inside, ``typeScale``,
+``fields``, ``labels``, the research tabs' group captions against their tabs'
+line and hit area, the words of its radios and segments) and
+``focusWalk()``: each control drawn focused as a keyboard focuses it, what is
+over its centre (another control's own overlay, the help bubble or an open
+list it leaves behind, aside) and its focus cue's contrast. `walk_ui` drives
+one browser through a list of stops (`UI_WALK_JS`: a page at a window size;
+the page's requests answered and its drawing still before it measures; the
+selects' options read where a stop asks), and `ui_problems` turns what it saw
+into one line per broken rule. The representative windows are `UI_SIZES`, the
+pages `UI_PAGES`.
 
 Module: tests/fixtures/browser.py
 """
@@ -70,15 +88,23 @@ def node_with_playwright() -> tuple[str, dict[str, str]] | None:
 #: ``page.addInitScript`` before the page loads.
 QUEUE_JS = r"""
 (() => {
-  const q = window.__shepQueue = {joins: [], done: {}, inflight: 0};
+  const q = window.__shepQueue = {joins: [], done: {}, inflight: 0, direct: 0};
   /* The listener `fnIndex`'s joins, and how many of them were answered. */
   q.count = (fnIndex) => q.joins.filter((j) => j.fn_index === fnIndex).length;
   q.answered = (fnIndex) => q.joins.filter((j) => j.fn_index === fnIndex && j.event_id !== null
                                             && j.event_id in q.done).length;
+  /* Nothing asked is unanswered: every join, and every listener that skips the
+     queue (``queue=False``, answered by its own request). */
+  q.idle = () => q.inflight === 0 && q.direct === 0 && q.joins.every((j) => j.event_id !== null);
   const original = window.fetch;
   window.fetch = function (input, init) {
     const url = typeof input === 'string' ? input : (input && input.url) || String(input);
     const sent = original.apply(this, arguments);
+    if (url.includes('/run/predict')) {
+      q.direct += 1;
+      sent.finally(() => { q.direct -= 1; }).catch(() => {});
+      return sent;
+    }
     if (url.includes('/queue/join')) {
       /* Counted when it is asked, before any answer: a second request an act
          sends is counted before the first one's answer is read. */
@@ -156,20 +182,23 @@ LOOK_JS = r"""
     return s.visibility !== 'hidden' && s.display !== 'none' && +s.opacity > 0.05;
   };
   const typeScale = (root) => {
-    const pairs = {}, upper = [];
+    const pairs = {}, upper = [], small = [];
     const walk = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT);
     for (let n = walk.nextNode(); n; n = walk.nextNode()) {
       const t = n.textContent.trim();
-      if (!t || !/[A-Za-z0-9]/.test(t)) { continue; }
+      if (!t) { continue; }
       const el = n.parentElement;
       if (!el || !shown(el) || el.closest('.sr-only, .shep-vh, script, style, [hidden]')) { continue; }
-      const s = getComputedStyle(el), k = parseFloat(s.fontSize) + '/' + s.fontWeight;
+      const s = getComputedStyle(el);
+      if (parseFloat(s.fontSize) < 14) { small.push(s.fontSize + ' ' + t.slice(0, 30)); }
+      if (!/[A-Za-z0-9]/.test(t)) { continue; }
+      const k = parseFloat(s.fontSize) + '/' + s.fontWeight;
       const p = pairs[k] || (pairs[k] = { n: 0, ex: [] });
       p.n += 1;
       if (p.ex.length < 4 && !p.ex.includes(t.slice(0, 30))) { p.ex.push(t.slice(0, 30)); }
       if (s.textTransform === 'uppercase') { upper.push(t.slice(0, 30)); }
     }
-    return { pairs, upper };
+    return { pairs, upper, small };
   };
   const FIELDS = 'input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file])' +
                  ':not([role=combobox]), textarea, .wrap:has(> .wrap-inner)';
@@ -200,9 +229,328 @@ LOOK_JS = r"""
     return t ? { tag: t.tagName, id: t.id, role: t.getAttribute('role'),
                  tab: !!t.closest('[role="tab"]'), cls: String(t.className).slice(0, 60) } : null;
   };
-  window.__shepLook = { parse, ratio, behind, shown, typeScale, fields, labels, pseudo, topAt };
+  /* The shared UI measurement check (D08): `check`, `focusWalk`. */
+  const drawn = (e) => e.getClientRects().length > 0;
+  const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const named = (e) => {
+    if (e === document.scrollingElement) { return 'page'; }
+    const holder = e.id ? null : e.closest('[id]'), cls = typeof e.className === 'string' ? e.className.trim() : '';
+    return (e.id ? '#' + e.id : (holder ? '#' + holder.id + ' ' : '') + e.tagName.toLowerCase()
+            + (cls ? '.' + cls.split(/\s+/).filter((c) => !c.startsWith('svelte-')).slice(0, 2).join('.') : ''));
+  };
+  /* The page shown (level 1, or the research tab within it) and its panels:
+     the children of its innermost one-child box. */
+  const shownPage = () => {
+    const outer = document.querySelector('#shep-nav > .tab-wrapper [role="tab"][aria-selected="true"]');
+    if (!outer) { return { tab: null, box: null, panels: [] }; }
+    let tab = document.getElementById('shep-tab-' + outer.getAttribute('data-tab-id'));
+    if (outer.getAttribute('data-tab-id') === 'research') {
+      const inner = document.querySelector('#shep-research-nav > .tab-wrapper [role="tab"][aria-selected="true"]');
+      tab = inner && document.getElementById('shep-page-' + inner.getAttribute('data-tab-id'));
+    }
+    let box = tab && [...tab.querySelectorAll('.shep-page')].find(drawn), kids = [];
+    while (box) {
+      kids = [...box.children].filter(drawn);
+      if (kids.length === 1 && kids[0].children.length) { box = kids[0]; } else { break; }
+    }
+    return { tab, box, panels: kids };
+  };
+  /* An overlay a control opens and closes on its own: the help bubble (when
+     its ⓘ is not `c`) and a select's open list (when not `c`'s). */
+  const passing = (e, c) => (e.closest('#shep-help-bubble')
+                             && !(c.matches('.shep-i') && c.getAttribute('aria-expanded') === 'true'))
+    || (!!e.closest('ul.option-list, .options:has(> ul.option-list)') && !(c.closest('.block') || c).contains(e));
+  /* Every region that scrolls vertically (the page itself when it does),
+     with the panel it is in and the regions it is inside. */
+  const regions = () => {
+    const se = document.scrollingElement, found = [];
+    if (se.scrollHeight > se.clientHeight + 1) { found.push(se); }
+    for (const e of document.body.querySelectorAll('*')) {
+      if (e.scrollHeight <= e.clientHeight + 1 || !drawn(e)) { continue; }
+      if (e.matches('textarea, select') || e.closest('#shep-help-bubble, ul.option-list')) { continue; }
+      if (/(auto|scroll)/.test(getComputedStyle(e).overflowY) && shown(e)) { found.push(e); }
+    }
+    const { panels } = shownPage();
+    return found.map((e) => {
+      const k = e === se ? -1 : panels.findIndex((p) => p.contains(e));
+      const fixed = e !== se && getComputedStyle(e).position === 'fixed';
+      return { name: named(e), area: k < 0 ? 'page' : 'panel ' + (k + 1),
+               inside: found.filter((o) => o !== e && (o === se ? !fixed : o.contains(e))).map(named) };
+    });
+  };
+  /* The research tabs' group captions (a tab's ::before with content): where
+     they sit against their tabs' line and what is under their centre. */
+  const captions = () => {
+    const tabs = [...document.querySelectorAll('#shep-research-nav > .tab-wrapper [role="tab"]')].filter(drawn);
+    const boxes = tabs.map((t) => t.getBoundingClientRect());
+    return tabs.map((t, i) => ({ t, r: boxes[i], c: pseudo(t, '::before') }))
+      .filter(({ c }) => c.display !== 'none' && !['none', 'normal', '""', ''].includes(c.content) && c.width > 0)
+      .map(({ t, r, c }) => ({
+        tab: t.id, text: c.content, size: parseFloat(c.fontSize), pointer: c.pointerEvents,
+        bottom: c.top + c.height, line: Math.min(...boxes.filter((b) => Math.abs(b.top - r.top) < 2).map((b) => b.top)),
+        onTab: boxes.some((b) => c.left < b.right && c.left + c.width > b.left && c.top < b.bottom && c.top + c.height > b.top),
+        hit: topAt(c.left + c.width / 2, c.top + c.height / 2) }));
+  };
+  /* What a choice drawn in the page says: a radio's or a segment's words. */
+  const choices = () => [...document.querySelectorAll('label:has(> input[type=radio]), .shep-seg label, [role=radio]')]
+    .filter((e) => drawn(e) && shown(e)).map((e) => e.textContent.trim());
+  /* What one window of the page shows: no sideways page scroll, its scroll
+     regions, its text, its fields, its labels, its captions, its choices. */
+  const check = () => {
+    const se = document.scrollingElement;
+    return { overX: se.scrollWidth - se.clientWidth, regions: regions(), type: typeScale(), fields: fields(),
+             labels: labels(), captions: captions(), choices: choices() };
+  };
+  /* Each control drawn, focused as a keyboard focuses it (the caller pressed
+     a key first, so a script's focus is :focus-visible): is anything but an
+     overlay of another control over its centre, and is its focus cue (what
+     its focus changes: outline, shadow, border or fill, its own or its
+     select's box) at 3:1 against what is behind it? An `auto` outline is
+     the browser's own ring, not a token: 0. */
+  const look = (e) => { const s = getComputedStyle(e);
+    return { outline: s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0
+               ? [s.outlineStyle, s.outlineColor].join('|') : '',
+             shadow: s.boxShadow, border: parseFloat(s.borderTopWidth) > 0 ? s.borderTopColor : '', fill: s.backgroundColor }; };
+  const cue = (before, after, e) => {
+    const bg = behind(e.parentElement), out = [];
+    if (after.outline && after.outline !== before.outline) {
+      const [style, colour] = after.outline.split('|');
+      out.push(style === 'auto' ? 0 : ratio(colour, bg));
+    }
+    if (after.shadow !== before.shadow && after.shadow !== 'none') {
+      const c = parse(after.shadow); if (c && c.a > 0.5) { out.push(ratio(c, bg)); }
+    }
+    if (after.border && after.border !== before.border) { out.push(ratio(after.border, bg)); }
+    if (after.fill !== before.fill) { const c = parse(after.fill); if (c && c.a > 0.5) { out.push(ratio(c, bg)); } }
+    return out;
+  };
+  const FOCUSABLE = 'a[href], button, input, textarea, select, summary, [tabindex]';
+  const focusWalk = async () => {
+    const controls = [...document.querySelectorAll(FOCUSABLE)].filter((c) => c.tabIndex >= 0 && !c.disabled
+      && drawn(c) && c.offsetWidth > 2 && c.offsetHeight > 2 && shown(c) && !c.closest('#shep-help-texts'));
+    const covered = [], cues = [];
+    for (const c of controls) {
+      const box = c.closest('.wrap:has(> .wrap-inner)') || c;
+      const before = [look(c), look(box)];
+      c.focus();
+      if (document.activeElement !== c) { continue; }
+      if (c.matches('.shep-i')) { await frame(); }        // its bubble placed
+      // Its focus cue drawn to the end (Gradio's buttons move every property).
+      await Promise.all([...c.getAnimations(), ...(box === c ? [] : box.getAnimations())]
+        .map((a) => a.finished.catch(() => null)));
+      const r = c.getBoundingClientRect(), what = named(c) + ' "' +
+        (c.getAttribute('aria-label') || c.textContent || c.value || '').trim().slice(0, 24) + '"';
+      if (r.bottom <= 0 || r.top >= innerHeight || r.right <= 0 || r.left >= innerWidth) {
+        covered.push(what + ' out of view'); continue;
+      }
+      const top = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2).find((e) => !passing(e, c));
+      if (top && !c.contains(top) && !top.contains(c)) { covered.push(what + ' under ' + named(top)); }
+      const ratios = [...cue(before[0], look(c), c), ...(box === c ? [] : cue(before[1], look(box), box))];
+      if (!ratios.length || Math.max(...ratios) < 3) { cues.push(what + ' ' + (ratios.length ? Math.max(...ratios) : 'none')); }
+    }
+    if (document.activeElement && document.activeElement !== document.body) { document.activeElement.blur(); }
+    // The overlays the walk opened close on their own (the bubble's hide, a list's fade).
+    for (let i = 0; i < 60; i++) {
+      const bubble = document.getElementById('shep-help-bubble');
+      if ((!bubble || bubble.hidden) && !document.querySelector('ul.option-list')) { break; }
+      await frame();
+    }
+    return { n: controls.length, covered, cues };
+  };
+  window.__shepLook = { parse, ratio, behind, shown, typeScale, fields, labels, pseudo, topAt,
+                        shownPage, regions, captions, choices, check, focusWalk };
 })();
 """
+
+
+#: The representative windows (D08): the owner's, 1280 wide, short and wide,
+#: portrait, a narrow column and a phone.
+UI_SIZES = ((1850, 960), (1280, 900), (1920, 700), (1440, 1600), (960, 1080), (390, 844))
+
+#: Every page, by the id its tab button carries (``shep-tab-<id>-button`` for
+#: level 1, ``shep-page-<id>-button`` under Research).
+UI_PAGES = ("clinical", "datasets", "training", "finetune", "test", "models", "settings")
+
+#: The walk (`walk_ui`): one browser, one page, the stops in order. A stop
+#: sets the window, opens its page if another is shown (a click, the tab
+#: selected, the page's requests answered), waits until what the page draws
+#: holds still for two frames and records the caller's `extra`; unless it
+#: says ``"check": false`` it also records ``check()``, a screenshot (with a
+#: directory for them) and ``focusWalk()`` (after one Tab press, so focus is
+#: a keyboard's); a stop with ``options`` then opens each select drawn and
+#: reads its options' words.
+UI_WALK_JS = r"""
+const { chromium } = require('playwright');
+const fs = require('fs');
+const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__;
+(async () => {
+  const stops = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: stops[0].size[0], height: stops[0].size[1] } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.addInitScript(LOOK_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(),
+                                          null, { timeout: 60000 });
+  const settle = () => page.evaluate(async () => {
+    const sign = () => { const { panels } = window.__shepLook.shownPage(), se = document.scrollingElement;
+      return [document.documentElement.getAttribute('data-shep-layout'), se.scrollWidth, se.scrollHeight,
+              ...panels.map((p) => { const r = p.getBoundingClientRect(); return [r.left, r.top, r.width, r.height].join(','); })].join('|'); };
+    let last = null;
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const now = sign();
+      if (now === last) { return i; }
+      last = now;
+    }
+    return -1;
+  });
+  const button = (id) => (id === 'clinical' || id === 'settings' ? `#shep-tab-${id}-button` : `#shep-page-${id}-button`);
+  const open = async (id) => {
+    if (!(id === 'clinical' || id === 'settings')
+        && !(await page.$('#shep-tab-research-button[aria-selected="true"]'))) {
+      await page.click('#shep-tab-research-button', { force: true });
+      await page.waitForSelector('#shep-tab-research-button[aria-selected="true"]');
+    }
+    await page.click(button(id), { force: true });
+    await page.waitForSelector(button(id) + '[aria-selected="true"]').catch(async (e) => {
+      throw new Error(`${id} not opened: ` + JSON.stringify(await page.evaluate((s) => {
+        const b = document.querySelector(s), r = b.getBoundingClientRect();
+        return { at: [r.left, r.top, r.width, r.height], scrollY,
+                 top: document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2).slice(0, 3)
+                   .map((x) => x.id || String(x.className).slice(0, 40)) }; }, button(id))) + ' ' + e.message);
+    });
+    await idle();
+  };
+  const options = async () => {
+    const words = [];
+    for (const input of await page.$$('input[role="combobox"]')) {
+      if (!(await input.isVisible()) || !(await input.isEnabled())) { continue; }
+      const list = await input.getAttribute('aria-controls');
+      await input.click({ force: true });
+      const opened = await page.waitForSelector(`#${list} [role=option]`, { timeout: 5000 }).then(() => true, () => false);
+      if (opened) {
+        words.push(...await page.$$eval(`#${list} [role=option]`,
+                                        (os) => os.map((o) => o.getAttribute('aria-label') || o.textContent.trim())));
+      }
+      await page.keyboard.press('Escape');
+      await page.evaluate(() => document.activeElement && document.activeElement.blur());
+      await page.waitForSelector(`#${list}`, { state: 'detached', timeout: 5000 }).catch(() => {});
+      await idle();
+    }
+    return words;
+  };
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  await idle();
+  const shots = process.argv[4] || null;
+  const out = [];
+  let shown = null;
+  for (const stop of stops) {
+    const [w, h] = stop.size;
+    await page.setViewportSize({ width: w, height: h });
+    if (stop.page !== shown) { await open(stop.page); shown = stop.page; }
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const seen = { size: `${w}x${h}`, page: stop.page, frames: await settle() };
+    if (EXTRA) { seen.extra = await page.evaluate(EXTRA); }
+    if (stop.check !== false) {
+      seen.check = await page.evaluate(() => window.__shepLook.check());
+      if (shots) { await page.screenshot({ path: `${shots}/${stop.page}_${w}x${h}.png` }); }
+      await page.keyboard.press('Tab');
+      seen.focus = await page.evaluate(() => window.__shepLook.focusWalk());
+      await page.evaluate(() => window.scrollTo(0, 0));
+    }
+    if (stop.options) { seen.options = await options(); }
+    out.push(seen);
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def walk_ui(page_url: str, tmp_path: Path, stops: list[dict[str, Any]], *,
+            extra_js: str | None = None, shots: Path | None = None,
+            timeout: int = 1500) -> list[dict[str, Any]]:
+    """Walk the dashboard at `page_url` through `stops` (each ``{"size":
+    [w, h], "page": id}``, with ``"check": false`` or ``"options": true``
+    where wanted; in order, `UI_WALK_JS`) and return what each stop recorded.
+    `extra_js` is a function's source the page runs at each stop (its value is
+    the stop's ``extra``); `shots`, a directory for a screenshot of each
+    checked stop (``<page>_<w>x<h>.png``)."""
+    script = (UI_WALK_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__LOOK_JS__", json.dumps(LOOK_JS))
+              .replace("__EXTRA_JS__", extra_js or "null"))
+    plan = tmp_path / "stops.json"
+    plan.write_text(json.dumps(stops), encoding="utf-8")
+    args = [page_url, str(plan)] + ([str(shots)] if shots else [])
+    return run_node(script, tmp_path, *args, timeout=timeout)
+
+
+#: The type scale (the WebUI skill §2): region title, body, keys; two weights.
+TYPE_SIZES, TYPE_WEIGHTS = {"14", "15", "20"}, {"400", "600"}
+
+
+def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
+    """What the shared UI measurement check finds in a walk (`walk_ui`), one
+    line per problem, ``"<size> <page>: <what>"``; empty when every stop
+    passes:
+
+    - the page scrolls sideways;
+    - a scroll region inside another one (the page included), or two in one
+      panel: one scroll region per area;
+    - a focused control out of view, or with anything but another control's
+      own overlay over its centre;
+    - text under 14 px, a size or weight outside the type scale, text drawn
+      upper case;
+    - an enabled field's border, or a control's focus cue, under 3:1;
+    - field labels drawn in more than one style on a page;
+    - a group caption on its tabs' line, over a tab, hit-tested as a tab,
+      taking the pointer, or under 14 px;
+    - a choice or a select's option with more than one " · "."""
+    problems: list[str] = []
+    for stop in (s for s in seen if "check" in s):
+        where, check = f"{stop['size']} {stop['page']}", stop["check"]
+
+        def found(what: str, where: str = where) -> None:
+            problems.append(f"{where}: {what}")
+
+        if check["overX"] > 0:
+            found(f"the page scrolls sideways by {check['overX']} px")
+        areas: dict[str, list[str]] = {}
+        for region in check["regions"]:
+            areas.setdefault(region["area"], []).append(region["name"])
+            if region["inside"]:
+                found(f"scroll region {region['name']} inside {region['inside']}")
+        for area, names in areas.items():
+            if len(names) > 1:
+                found(f"{len(names)} scroll regions in {area}: {names}")
+        for what in stop["focus"]["covered"]:
+            found(f"focused {what}")
+        for what in stop["focus"]["cues"]:
+            found(f"focus cue under 3:1: {what}")
+        type_ = check["type"]
+        for text in type_["small"]:
+            found(f"text under 14 px: {text}")
+        for pair, facts in type_["pairs"].items():
+            size, weight = pair.split("/")
+            if size not in TYPE_SIZES or weight not in TYPE_WEIGHTS:
+                found(f"{pair} outside the type scale: {facts['ex']}")
+        if type_["upper"]:
+            found(f"text drawn upper case: {type_['upper'][:4]}")
+        for field in check["fields"]:
+            if not field["disabled"] and field["ratio"] < 3:
+                found(f"field border {field['ratio']}:1 ({field['id']})")
+        styles = {tuple(label["style"]) for label in check["labels"]}
+        if len(styles) > 1:
+            found(f"field labels in {len(styles)} styles: {sorted(styles)}")
+        for cap in check["captions"]:
+            if (cap["bottom"] > cap["line"] + 0.5 or cap["onTab"] or (cap["hit"] or {}).get("tab")
+                    or cap["pointer"] != "none" or cap["size"] < 14):
+                found(f"group caption {cap['text']} is not apart from the tabs: {cap}")
+        for words in (*check["choices"], *stop.get("options", ())):
+            if words.count(" · ") > 1:
+                found(f"more than one ' · ' in {words!r}")
+    return problems
 
 
 def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any:
@@ -219,4 +567,5 @@ def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any
     return json.loads(result.stdout)
 
 
-__all__ = ["LOOK_JS", "QUEUE_JS", "node_with_playwright", "run_node"]
+__all__ = ["LOOK_JS", "QUEUE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES", "UI_WALK_JS",
+           "node_with_playwright", "run_node", "ui_problems", "walk_ui"]

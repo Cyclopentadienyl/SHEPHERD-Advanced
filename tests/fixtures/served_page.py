@@ -13,6 +13,9 @@ Gradio's, so a test of it goes through Gradio's own queue and routes:
   speaks to the queue (`join`, `wait`) and to a ``queue=False`` listener such
   as a shell timer's tick (`predict`); `state(block)` reads the session's
   ``gr.State`` as the server holds it.
+- `served_service(root, settings)`: the service itself in a process of its
+  own (its lifespan, its API, the dashboard), for a browser test of the whole
+  app on a workspace (the shared UI measurement check).
 
 Moved here from the Test page's tests, so the Training page's use the same.
 
@@ -22,10 +25,12 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import threading
 import time
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 
@@ -136,3 +141,59 @@ def served(demo: Any, **mount: Any) -> Iterator[str]:
     finally:
         server.should_exit = True
         thread.join(10)
+
+
+@contextlib.contextmanager
+def served_service(root: Path, settings: dict[str, str]) -> Iterator[str]:
+    """The service itself (``uvicorn src.api.main:app``: its lifespan, the API
+    the Diagnosis page calls back, the dashboard at ``/ui``) in a process of its
+    own on a free loopback port, run from the repository; yields the
+    dashboard's page URL once it answers.
+
+    Its environment is this one with every ``SHEPHERD_*`` and ``GRADIO_*``
+    variable removed and `settings` set, and a home, configuration, state and
+    settings file of its own under `root` (never the account's); its output
+    goes to ``root / "service.log"``, which the assertion that it did not start
+    quotes. Stopped (terminated, then killed) on exit."""
+    import socket
+    import subprocess
+    import sys
+    import urllib.request
+
+    root = Path(root)
+    for name in ("home", "config", "state", "settings"):
+        (root / name).mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("SHEPHERD_", "GRADIO_"))}
+    env.update(HOME=str(root / "home"), XDG_CONFIG_HOME=str(root / "config"),
+               XDG_STATE_HOME=str(root / "state"), SHEPHERD_STATE_DIR=str(root / "state"),
+               SHEPHERD_SETTINGS_FILE=str(root / "settings" / "deployment.json"))
+    env.update(settings)
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    log = open(root / "service.log", "wb")
+    process = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "src.api.main:app", "--host", "127.0.0.1", "--port", str(port)],
+        cwd=Path(__file__).resolve().parents[2], env=env, stdout=log, stderr=subprocess.STDOUT)
+    page = f"http://127.0.0.1:{port}/ui/"
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        deadline = time.monotonic() + 180
+        while True:
+            assert process.poll() is None, (root / "service.log").read_text(errors="replace")[-4000:]
+            assert time.monotonic() < deadline, "the service did not answer in 180 s"
+            try:
+                with direct.open(page, timeout=5) as answer:
+                    if answer.status == 200:
+                        break
+            except OSError:
+                time.sleep(0.2)
+        yield page
+    finally:
+        process.terminate()
+        try:
+            process.wait(30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(10)
+        log.close()

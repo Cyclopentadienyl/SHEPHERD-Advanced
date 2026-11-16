@@ -26,7 +26,13 @@ The dashboard's shell (M5-2, UI-A): navigation, the page contract, the head.
 - **one choice, one request** (UI-11): a select's choice is wired through
   `shell.picked` everywhere in the dashboard, and in a browser one pick of a
   Dropdown, by pointer or by keys, is one request and the page's own write of
-  its value is none.
+  its value is none;
+- **the shared UI measurement check** (D08, INT-AUDIT; `tests/fixtures/browser.py`):
+  the service on the demo workspace, one browser through every page at the
+  representative sizes and back (`ui_walk`): the layout decision at each, and
+  the check's rules (no sideways page scroll, one scroll region per area,
+  nothing over a focused control, text and type scale, borders and focus at
+  3:1, the group captions apart from the tabs, one " · " per option).
 
 Module: tests/unit/test_webui_shell.py
 """
@@ -1076,7 +1082,7 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
                hScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth };
     }, tabs);
   };
-  const out = { pages: {} };
+  const out = {};
   await page.goto(base, { waitUntil: 'load' });
   await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
   await idle();
@@ -1084,16 +1090,9 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
     const s = getComputedStyle(c), d = getComputedStyle(c.querySelector('.shep-dot') || c);
     return { state: c.getAttribute('data-state'), background: s.backgroundColor, border: s.borderTopColor,
              dot: d.backgroundColor, ring: d.borderTopColor }; }));
-  for (const id of ['clinical', 'datasets', 'training', 'finetune', 'test', 'models', 'settings']) {
-    await open(id);
-    await page.mouse.move(2, 950);
-    out.pages[id] = await page.evaluate(() => ({ type: window.__shepLook.typeScale(),
-                                                fields: window.__shepLook.fields(),
-                                                labels: window.__shepLook.labels() }));
-    if (id === 'settings') {
-      out.settingsSelected = await css('#shep-tab-settings-button', ['background-color', 'color', 'font-weight']);
-    }
-  }
+  await open('settings');
+  await page.mouse.move(2, 950);
+  out.settingsSelected = await css('#shep-tab-settings-button', ['background-color', 'color', 'font-weight']);
   await open('training');
   await page.mouse.move(2, 950);
   out.wide = await row();
@@ -1186,14 +1185,10 @@ def test_the_research_navigation_and_shared_tokens_as_drawn(tmp_path, monkeypatc
     - **R-20**: level 1's selected item (Research, and Settings) is the accent
       fill with white text; a form's chosen radio (Training's Device) is not;
     - **R-31**: a closed accordion's chevron points right, an open one down;
-    - **R-21**: a normal header chip is plain text, its mark in a status token;
-    - **R-17 / R-16**: on every page the visible text is 14, 15 or 20 px at
-      400 or 600, and none is drawn upper case;
-    - **R-16**: on every page each field's label (Gradio's, and the pages'
-      own: Training's run bar, Fine-tune's keys, Diagnosis' card title and
-      Options, Test's fixed rows) is drawn in one style;
-    - **R-8**: every visible field's border is at least 3:1 against what is
-      behind it."""
+    - **R-21**: a normal header chip is plain text, its mark in a status token.
+    The type scale (R-17), one field-label style per page (R-16) and every
+    field's border at 3:1 (R-8), on every page at every representative size,
+    are the shared check's (`test_every_page_at_every_size_passes_the_ui_measurement_check`)."""
     from src.webui import style
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import LOOK_JS, QUEUE_JS, node_with_playwright, run_node
@@ -1255,22 +1250,6 @@ def test_the_research_navigation_and_shared_tokens_as_drawn(tmp_path, monkeypatc
         assert chip["background"] == "rgba(0, 0, 0, 0)" and chip["border"] == "rgba(0, 0, 0, 0)"
     on = next(c for c in seen["chips"] if c["state"] == "on")
     assert on["dot"] == _rgb(tokens["--shep-green-800"])
-
-    for name, facts in seen["pages"].items():
-        sizes = {key.split("/")[0] for key in facts["type"]["pairs"]}
-        weights = {key.split("/")[1] for key in facts["type"]["pairs"]}
-        assert sizes <= {"14", "15", "20"}, (name, facts["type"]["pairs"])
-        assert weights <= {"400", "600"}, (name, facts["type"]["pairs"])
-        assert facts["type"]["upper"] == [], (name, facts["type"]["upper"])
-        weak = [f for f in facts["fields"] if not f["disabled"] and f["ratio"] < 3.0]
-        assert weak == [], (name, weak)
-        styles = {tuple(label["style"]) for label in facts["labels"]}
-        assert len(styles) <= 1, (name, facts["labels"])
-    assert sum(len(f["fields"]) for f in seen["pages"].values()) >= 10
-    assert {label["text"] for label in seen["pages"]["clinical"]["labels"]} >= {
-        "Model in use", "Options", "HPO terms"}
-    assert {label["text"] for label in seen["pages"]["training"]["labels"]} >= {
-        "Dataset", "Run name", "Epochs"}
 
 
 def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_path, monkeypatch):
@@ -1341,160 +1320,176 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
         assert "--shep-panel-min:" in css or "--shep-mp-list-min:" in css, css[:80]
 
 
-#: The dashboard as the service mounts it, an operator, through a sequence of
-#: window sizes (narrow to wide and back, portrait, square, short): on every
-#: page what the layout pass decided, how the panels sit, what the decision
-#: measured, the page's own scroll, and (at the short sizes) what covers a
-#: control when it takes focus. It waits for the page's own events (QUEUE_JS).
-_LAYOUT_JS = r"""
-const { chromium } = require('playwright');
-const QUEUE_JS = __QUEUE_JS__;
-const SIZES = [[760, 1000], [1850, 960], [1280, 900], [1920, 700], [1440, 1600], [1000, 1000],
-               [1536, 760], [1080, 1920], [1850, 960]];
-const PAGES = ['clinical', 'datasets', 'training', 'finetune', 'test', 'models', 'settings'];
-(async () => {
-  const browser = await chromium.launch();
-  const page = await (await browser.newContext({ viewport: { width: 760, height: 1000 } })).newPage();
-  await page.addInitScript(QUEUE_JS);
-  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
-                                          && window.__shepQueue.joins.every((j) => j.event_id !== null),
-                                          null, { timeout: 30000 });
-  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-  const open = async (id) => {
-    if (id === 'clinical' || id === 'settings') {
-      await page.click(`#shep-tab-${id}-button`);
-    } else {
-      if (!(await page.$('#shep-tab-research-button[aria-selected="true"]'))) {
-        await page.click('#shep-tab-research-button');
-      }
-      await page.click(`#shep-page-${id}-button`);
-    }
-    await idle(); await frames();
-  };
-  await page.goto(process.argv[2], { waitUntil: 'load' });
-  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
-  await idle();
-  const out = [];
-  for (const [w, h] of SIZES) {
-    await page.setViewportSize({ width: w, height: h });
-    for (const id of PAGES) {
-      await open(id);
-      await page.evaluate(() => window.scrollTo(0, 0)); await frames();
-      const seen = await page.evaluate(() => {
-        const outer = document.querySelector('#shep-nav > .tab-wrapper [role="tab"][aria-selected="true"]');
-        let tab = document.getElementById('shep-tab-' + outer.getAttribute('data-tab-id'));
-        if (outer.getAttribute('data-tab-id') === 'research') {
-          const inner = document.querySelector('#shep-research-nav > .tab-wrapper [role="tab"][aria-selected="true"]');
-          tab = document.getElementById('shep-page-' + inner.getAttribute('data-tab-id'));
-        }
-        const drawn = (e) => e.getClientRects().length > 0;
-        let box = [...tab.querySelectorAll('.shep-page')].find(drawn), kids = [];
-        while (box) { kids = [...box.children].filter(drawn); if (kids.length === 1 && kids[0].children.length) { box = kids[0]; } else { break; } }
-        const panels = kids.map((k) => ({ min: parseFloat(getComputedStyle(k).getPropertyValue('--shep-panel-min')) || 0,
-                                          top: Math.round(k.getBoundingClientRect().top), w: k.getBoundingClientRect().width }))
-          .filter((p) => p.min > 0);
-        const gap = box ? parseFloat(getComputedStyle(box).columnGap) || 0 : 0;
-        const se = document.scrollingElement;
-        return { layout: document.documentElement.getAttribute('data-shep-layout'),
-                 short: document.documentElement.hasAttribute('data-shep-short'),
-                 need: panels.reduce((a, p) => a + p.min, 0) + Math.max(0, panels.length - 1) * gap,
-                 width: box ? box.getBoundingClientRect().width + innerWidth - document.documentElement.clientWidth : 0,
-                 tops: panels.map((p) => p.top), narrowest: Math.min(...panels.map((p) => p.w - p.min), 0),
-                 overX: se.scrollWidth - se.clientWidth, overY: se.scrollHeight - innerHeight,
-                 runbar: (() => { const bar = document.getElementById('shep-train-runbar');
-                   if (!bar || !bar.getClientRects().length) { return null; }
-                   const items = ['shep-train-dataset', 'shep-train-chip', 'run_name', 'shep-train-start',
-                                  'shep-train-continue', 'shep-train-stop', 'shep-train-pill']
-                     .map((i) => document.getElementById(i).getBoundingClientRect());
-                   return { h: Math.round(bar.getBoundingClientRect().height),
-                            lines: new Set(items.map((r) => Math.round((r.top + r.bottom) / 2 / 24))).size }; })() };
-      });
-      if ((w === 1536 && h === 760) || (w === 1920 && h === 700)) {
-        seen.covered = await page.evaluate(async () => {
-          const tab = [...document.querySelectorAll('#shep-nav > .tabitem, #shep-research-nav > .tabitem')]
-            .filter((t) => t.getClientRects().length).pop();
-          const covered = [];
-          const controls = [...tab.querySelectorAll('button, input, textarea, [tabindex="0"]')]
-            .filter((c) => c.getClientRects().length && !c.disabled && c.offsetWidth > 2).slice(0, 60);
-          for (const c of controls) {
-            c.focus();
-            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-            const r = c.getBoundingClientRect();
-            if (r.bottom < 0 || r.top > innerHeight) { continue; }
-            const top = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2)[0];
-            if (!top || c.contains(top) || top.contains(c) || top.closest('#shep-help-bubble')) { continue; }
-            for (let e = top; e && e !== document.body; e = e.parentElement) {
-              const p = getComputedStyle(e).position;
-              if ((p === 'sticky' || p === 'fixed') && !e.contains(c)) { covered.push((c.id || c.textContent.trim().slice(0, 20)) + ' under ' + (e.id || e.className)); break; }
-            }
-          }
-          if (document.activeElement) { document.activeElement.blur(); }
-          return covered;
-        });
-      }
-      out.push({ size: `${w}x${h}`, page: id, ...seen });
-    }
+#: What the layout pass decided at a stop of the shared walk (`ui_walk`), on
+#: the page shown: the decision and the short flag, what the decision measured
+#: (the panels' own minimum widths with their gaps, against the room), how the
+#: panels sit, the page's own scroll both ways, and Training's run bar.
+_LAYOUT_FACTS_JS = r"""() => {
+  const { box, panels: kids } = window.__shepLook.shownPage();
+  const panels = kids.map((k) => ({ min: parseFloat(getComputedStyle(k).getPropertyValue('--shep-panel-min')) || 0,
+                                    top: Math.round(k.getBoundingClientRect().top), w: k.getBoundingClientRect().width }))
+    .filter((p) => p.min > 0);
+  const gap = box ? parseFloat(getComputedStyle(box).columnGap) || 0 : 0;
+  const se = document.scrollingElement;
+  const bar = document.getElementById('shep-train-runbar');
+  let runbar = null;
+  if (bar && bar.getClientRects().length) {
+    const items = ['shep-train-dataset', 'shep-train-chip', 'run_name', 'shep-train-start',
+                   'shep-train-continue', 'shep-train-stop', 'shep-train-pill']
+      .map((i) => document.getElementById(i).getBoundingClientRect());
+    runbar = { h: Math.round(bar.getBoundingClientRect().height),
+               lines: new Set(items.map((r) => Math.round((r.top + r.bottom) / 2 / 24))).size };
   }
-  console.log(JSON.stringify(out));
-  await browser.close();
-})().catch((e) => { console.error(e); process.exit(1); });
-"""
+  return { layout: document.documentElement.getAttribute('data-shep-layout'),
+           short: document.documentElement.hasAttribute('data-shep-short'),
+           need: panels.reduce((a, p) => a + p.min, 0) + Math.max(0, panels.length - 1) * gap,
+           width: box ? box.getBoundingClientRect().width + innerWidth - document.documentElement.clientWidth : 0,
+           tops: panels.map((p) => p.top), narrowest: Math.min(...panels.map((p) => p.w - p.min), 0),
+           overX: se.scrollWidth - se.clientWidth, overY: se.scrollHeight - innerHeight, runbar };
+}"""
+
+#: The walk's windows, narrow to wide and back on each page: the shared
+#: check's representative sizes (`UI_SIZES`), checked, and the layout's other
+#: shapes (a narrow column, a square, a portrait screen), laid out only;
+#: 1536 x 760, short and the owner's laptop, checked too.
+_WALK_SIZES = ((760, 1000, False), (1850, 960, True), (1280, 900, True), (1920, 700, True),
+               (1440, 1600, True), (1000, 1000, False), (1536, 760, True), (1080, 1920, False),
+               (960, 1080, True), (390, 844, True), (1850, 960, False))
 
 
-def test_one_layout_decision_at_every_size_and_back(tmp_path, monkeypatch):
-    """D02 (FL-UI-02, PTR-LAYOUT in part) in a real browser (Node and
-    Playwright, skipped without), the dashboard as the service mounts it, for
-    an operator, through narrow, wide, short, portrait and square windows and
-    back:
+def _walk_stops():
+    from tests.fixtures.browser import UI_PAGES
 
-    - no wider than tall (1440 x 1600, 1000 x 1000, 1080 x 1920, 760 x 1000):
-      every page stacked, its panels one under the other;
-    - wider: side by side exactly when the page's panels fit by their own
-      minimum widths (1280 x 900: every page but Datasets, whose table and
-      digest grid need about 1400 px; 1920 x 700: every page, a short window
-      only denser, ``data-shep-short``); side by side, the panels on one line
-      and none narrower than its minimum, and the page itself never scrolls;
-    - never a horizontal page scroll; at the short sizes (1536 x 760,
-      1920 x 700) nothing sticky or fixed over a control when it takes focus;
-    - back at 1850 x 960, the same as the first time; there the Training run
-      bar is one row (R-38)."""
-    from src.webui.app import create_gradio_app, mount_options
-    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
-    from tests.fixtures.operator_access import operator_mode
-    from tests.fixtures.served_page import served
+    stops = [{"size": [w, h], "page": page, "check": checked}
+             for page in UI_PAGES for w, h, checked in _WALK_SIZES]
+    for stop in stops[len(_WALK_SIZES) - 1::len(_WALK_SIZES)]:
+        stop["options"] = True                   # each page's selects, once, at its last stop
+    # A page opened at a size, not only resized to it: at 1280 x 900 Datasets
+    # (its own minimum is wider) between two pages that fit.
+    stops += [{"size": [1280, 900], "page": page, "check": False}
+              for page in ("training", "datasets", "finetune")]
+    return stops
+
+
+@pytest.fixture(scope="module")
+def ui_walk(tmp_path_factory, _suite_gpu_lock):
+    """The shared UI measurement walk, once for this module: the service in a
+    process of its own (`served_page.served_service`, mode M1, an operator) on
+    the demo workspace with a base and a disease child trained on it where the
+    server lists them (`trained_children.train_children`, 1 epoch each on the
+    CPU), the disease child served (the Diagnosis card as an operator sees
+    it); one browser through `_walk_stops` (`browser.walk_ui`), the layout
+    facts at every stop, the shared check and a screenshot at the checked ones
+    (under the module's ``ui-walk*/shots``)."""
+    from tests.fixtures.browser import node_with_playwright, walk_ui
+    from tests.fixtures.registered_cohort import write_demo_workspace
+    from tests.fixtures.served_page import served_service
+    from tests.fixtures.trained_children import train_children
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
-    operator_mode(monkeypatch)
-    script = _LAYOUT_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
-    with served(create_gradio_app(), **mount_options()) as base:
-        seen = run_node(script, tmp_path, base[:-len("gradio_api")], timeout=900)
-    portrait = {"1440x1600", "1000x1000", "1080x1920", "760x1000"}
-    for s in seen:
-        where = (s["size"], s["page"])
-        assert s["overX"] == 0, (where, s)
-        assert s["short"] == (int(s["size"].split("x")[1]) < 900), (where, s)
-        if s["size"] in portrait:
-            want = "stack"
-        elif s["size"] == "1280x900" and s["page"] == "datasets":
+    root = tmp_path_factory.mktemp("ui-walk")
+    demo = write_demo_workspace(root / "workspaces" / "demo")
+    served = train_children(demo, ("disease",))["disease"]
+    (root / "registry").mkdir()
+    (root / "shots").mkdir()
+    settings = {"SHEPHERD_WORKSPACES_ROOT": str(root / "workspaces"),
+                "SHEPHERD_REGISTRY": str(root / "registry"), "SHEPHERD_DEPLOYMENT_MODE": "M1",
+                "SHEPHERD_DEVICE": "cpu", "SHEPHERD_KG_PATH": str(demo / "kg.json"),
+                "SHEPHERD_CHECKPOINT_PATH": str(served), "SHEPHERD_DATA_DIR": str(demo)}
+    with served_service(root / "service", settings) as page:
+        return walk_ui(page, root, _walk_stops(), extra_js=_LAYOUT_FACTS_JS, shots=root / "shots")
+
+
+def test_one_layout_decision_at_every_size_and_back(ui_walk):
+    """D02 (FL-UI-02, PTR-LAYOUT in part) in a real browser (Node and
+    Playwright, skipped without), the service on the demo workspace, for an
+    operator, every page through narrow, wide, short, portrait, square and
+    phone windows and back (the shared walk, `ui_walk`):
+
+    - no wider than tall (1440 x 1600, 1000 x 1000, 1080 x 1920, 760 x 1000,
+      960 x 1080, 390 x 844): every page stacked, its panels one under the
+      other;
+    - wider: side by side exactly when the page's panels fit by their own
+      minimum widths (1280 x 900: every page but Datasets, whose table and
+      digest grid need about 1400 px, whether resized to it or opened at it
+      between two pages that fit; 1920 x 700: every page, a short window only
+      denser, ``data-shep-short``); side by side, the panels on one line and
+      none narrower than its minimum, and the page itself never scrolls;
+    - never a horizontal page scroll;
+    - back at 1850 x 960, the same as the first time; there the Training run
+      bar is one row (R-38).
+    Nothing covering a focused control, at every size, is the shared check's
+    (`test_every_page_at_every_size_passes_the_ui_measurement_check`)."""
+    portrait = {"1440x1600", "1000x1000", "1080x1920", "760x1000", "960x1080", "390x844"}
+    for s in ui_walk:
+        where, facts = (s["size"], s["page"]), s["extra"]
+        assert facts["overX"] == 0, (where, facts)
+        assert facts["short"] == (int(s["size"].split("x")[1]) < 900), (where, facts)
+        if s["size"] in portrait or (s["size"] == "1280x900" and s["page"] == "datasets"):
             want = "stack"
         else:
             want = "side"
-        assert s["layout"] == want, (where, s)
+        assert facts["layout"] == want, (where, facts)
         if want == "side":
-            assert s["need"] <= s["width"] + 0.5, (where, s)
-            assert len(set(s["tops"])) <= 1 and s["narrowest"] >= -0.5, (where, s)
-            assert s["overY"] <= 0, (where, s)
-        elif len(s["tops"]) > 1:
-            assert s["tops"] == sorted(s["tops"]) and len(set(s["tops"])) == len(s["tops"]), (where, s)
+            assert facts["need"] <= facts["width"] + 0.5, (where, facts)
+            assert len(set(facts["tops"])) <= 1 and facts["narrowest"] >= -0.5, (where, facts)
+            assert facts["overY"] <= 0, (where, facts)
+        elif len(facts["tops"]) > 1:
+            assert facts["tops"] == sorted(facts["tops"]) and len(set(facts["tops"])) == len(facts["tops"]), (where, facts)
         if s["size"] == "1280x900" and s["page"] == "datasets":
-            assert s["need"] > s["width"], s                   # its own measure, no global gate
-        assert s.get("covered", []) == [], (where, s["covered"])
-    first = [s for s in seen if s["size"] == "1850x960"]
-    assert first[:7] == first[7:], (first[:7], first[7:])
+            assert facts["need"] > facts["width"], s                  # its own measure, no global gate
+    wide = [s for s in ui_walk if s["size"] == "1850x960"]
+    for page in {s["page"] for s in wide}:
+        first, *_, last = [s["extra"] for s in wide if s["page"] == page]
+        assert first == last, (page, first, last)
+    assert [(s["page"], s["extra"]["layout"]) for s in ui_walk[-3:]] == [
+        ("training", "side"), ("datasets", "stack"), ("finetune", "side")]
     # R-38: at the owner's window the Training run bar is one row (it was two, 119 px).
-    (training,) = [s for s in first[:7] if s["page"] == "training"]
-    assert training["runbar"]["lines"] == 1 and training["runbar"]["h"] < 90, training["runbar"]
+    (training, *_) = [s for s in wide if s["page"] == "training"]
+    assert training["extra"]["runbar"]["lines"] == 1 and training["extra"]["runbar"]["h"] < 90, training
+
+
+def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
+    """D08 (INT-AUDIT): the shared UI measurement check (`browser.check`,
+    `browser.focusWalk`, `browser.ui_problems`) on every page at every
+    representative window (`browser.UI_SIZES`: 1850 x 960, 1280 x 900,
+    1920 x 700, 1440 x 1600, 960 x 1080, a 390 x 844 phone; and 1536 x 760),
+    the service on the demo workspace for an operator (`ui_walk`):
+
+    - no horizontal page scroll; one scroll region per area (none inside
+      another, the page included; never two in one panel);
+    - every control drawn, focused as a keyboard focuses it, in view with
+      nothing over it (another control's own overlay, a help bubble or an
+      open list it leaves behind, aside), its focus cue at 3:1;
+    - no text under 14 px, only the type scale's sizes and weights, nothing
+      upper case; every enabled field's border at 3:1; one field-label style
+      per page;
+    - the Prepare / Evaluate captions above their tabs' line, outside the
+      tabs' hit area, taking no pointer, at 14 px or more;
+    - no choice or select option with more than one " · ".
+    It failed before T04's measure part on the browser's own focus ring (the
+    accent buttons' a faint grey) on every page and on Diagnosis' Top-K and
+    Explanations ⓘ, which their own bubble covered (since the Options grid,
+    b405973); on c1e57c6 it also fails on the captions on the tabs' line, the
+    type scale and the field borders."""
+    from tests.fixtures.browser import UI_PAGES, UI_SIZES, ui_problems
+
+    checked = [s for s in ui_walk if "check" in s]
+    assert {(s["page"], s["size"]) for s in checked} >= {
+        (page, f"{w}x{h}") for page in UI_PAGES for w, h in UI_SIZES}
+    assert ui_problems(ui_walk) == []
+    # What the check looked at, so that an empty list means something.
+    for s in checked:
+        assert s["focus"]["n"] >= 10, (s["page"], s["size"], s["focus"])
+        research = s["page"] not in ("clinical", "settings")
+        assert len(s["check"]["captions"]) == (2 if research else 0), (s["page"], s["size"])
+    options = {s["page"]: s["options"] for s in ui_walk if "options" in s}
+    assert all(options[page] for page in ("training", "finetune", "test", "models", "settings")), options
+    labels = {s["page"]: {label["text"] for label in s["check"]["labels"]}
+              for s in checked if s["size"] == "1850x960"}
+    assert labels["clinical"] >= {"Model in use", "Options", "HPO terms"}
+    assert labels["training"] >= {"Dataset", "Run name", "Epochs"}
 
 
 #: The four field rows' boxes and actions as drawn (D03): Fine-tune's base

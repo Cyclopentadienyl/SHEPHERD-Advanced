@@ -183,6 +183,11 @@ checks that already passed for the same code.
 | A broad layout change across pages | the above at more sizes (1920 × 1080, 1536 × 760, 960 × 1080, 1080 × 1920), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
 | A repeated fact (rule 1.2) | count the fingerprint, run id or name in one screen's visible text; more than one needs a reason |
 
+The layout, scrolling, type, border and focus rows are measured on every page at the representative sizes by one
+shared check, which a layout, token or navigation change runs rather than a script of its own:
+`tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check` (`walk_ui` and
+`ui_problems` in `tests/fixtures/browser.py`; its screenshots in the test's temporary `ui-walk*/shots`).
+
 ## 13. Decided
 
 - **Decided (2026-10-25):** the 14 px floor stays; the PREPARE / EVALUATE group labels are set apart by position,
