@@ -4287,6 +4287,9 @@ widened.
 - As built at K5: the allowed root is the workspaces root (`SHEPHERD_WORKSPACES_ROOT`). A parent
   not listed in the child's workspace is looked up in the other listed workspaces. Only the run
   the child records is read, and its files are matched by SHA-256.
+  *(2026-11-16, UI-06, `dd5f162`..`97824cd`: the workspaces root is the one in effect,
+  `SHEPHERD_WORKSPACES_ROOT` when it is set at start, else the workspaces folder saved in Settings ›
+  Data locations, read by the same reader.)*
 - "Parent unavailable" says why: the run no longer holds those bytes (rewritten or removed), or
   no listed workspace has the run.
 

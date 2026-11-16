@@ -51,6 +51,11 @@ apart from comments in `src/api/routes/evaluations.py`.
 - The real service configuration (`SHEPHERD_WORKSPACES_ROOT`, `SHEPHERD_REGISTRY`,
   `SHEPHERD_INTAKE_DIR`, `SHEPHERD_DEPLOYMENT_MODE=M1`) and the WebUI's manual acceptance: next, by
   the deployment guide's §4.11–§4.14. The layout and browser sessions are outside the probe.
+  *(2026-11-16, UI-06, `dd5f162`..`97824cd`: a service's data locations are now chosen in Settings › Data
+  locations and saved outside the repository, the variables above being start-time settings that
+  win, and a start from the desktop entry or `launch_shepherd.sh` on a loopback bind gives `M1`
+  for requests made on that computer (deployment guide §4.12). What this run shows is
+  unchanged.)*
 - Any other dependency set: the evidence holds for the packages installed here. `torch_geometric`
   was 2.8.1, where M4's run had 2.8.0.post1, so M4's evidence does not carry over to this
   environment, and the PyG version is to be pinned before a formal release (BACKLOG 50).

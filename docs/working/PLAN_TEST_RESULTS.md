@@ -1018,6 +1018,12 @@ disagreement block, contested states and investigation notes are phase 2.
   offers no register-later command. The command line reads the variable from its own shell, so
   a command run with it set to another directory on purpose uses that one: the rule catches a
   registry reached by mistake, as D2 says of the store's other rules, and is not tamper-proof.
+  *(2026-11-16, UI-06, `dd5f162`..`97824cd`: the deployment's registry is `SHEPHERD_REGISTRY` when it is
+  set, else the Results registry saved in Settings › Data locations, which the command line of
+  the same account reads too, so a fresh shell of that account is no longer refused for want of
+  it; with neither set, the refusal says to choose it there or to set the variable for the
+  command to the service's value. "Current rules" above, "Where the data locations come
+  from".)*
 - **The report that was shown** (the M5 review's P2-1; implemented 2026-10-22, not yet
   reviewed). `register_report(..., expected_report_sha256=...)` compares the digest shown on
   the one read it registers, before the bytes are decoded (M4's compare-before-parse,
