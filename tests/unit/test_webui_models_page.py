@@ -1608,12 +1608,53 @@ def test_read_only_shows_the_model_in_use_from_the_ledger_and_opens_no_checkpoin
             and mp.NO_LOAD_HERE in records)
     assert str(world["root"]) not in records and str(world["registry"]) not in records
     header = mp.left_header_html(listing, data, "deployment_mode")
-    assert "Model list unavailable: read-only, deployment mode not set to M1." in header
     assert e(mp.D8_CONDITIONS) in header and "shep-mp-ro" in header
     assert "Nothing was done" not in header and "Refused" not in header      # said once (UI-6)
-    assert "read-only, request not local." in mp.left_header_html(listing, data, "not_loopback")
+    for condition in ("deployment_mode", "not_loopback", "forwarding_header"):
+        _says_the_refusal_as_every_page_does(mp.left_header_html(listing, data, condition),
+                                             condition)
     ctl = mp.controls(data, mp.BY_FAMILY, None)
     assert ctl["order"] == mp.NEWEST and mp.shape(listing, data, ctl) == {"note": ""}
+
+
+def _says_the_refusal_as_every_page_does(header, condition):
+    """The read-only list's reason in the words every page gives a control D8
+    refuses (`chips.operator_only`, after the lock), then why in plain words,
+    its codes in the one trailing Ref line (the WebUI skill's §5). At the T08
+    bare start it read "Listing opens checkpoint files, which SPEC_4 classes
+    as checkpoint inspection (C3), so the list is served only where the
+    operator controls are (D8)", "🔒 Checkpoint list: operator controls only
+    (D8 · SPEC_4 C3)" and "Operator controls need this deployment set to M1,
+    …" (`scratchpad/t08pre/shots/s7-xff-07-models.png`)."""
+    from src.webui.components.chips import LOCK, operator_only
+
+    words = _visible_words(header)
+    lead = f"{LOCK} {operator_only(condition)}."
+    assert words.startswith("Checkpoints ") and lead in words, words
+    plain, ref = words.split(lead, 1)[1].split("Ref:", 1)
+    assert not re.search(r"\bD8\b|SPEC_4|\bC3\b|\bM1\b|SHEPHERD_", plain), plain
+    assert plain.count(" · ") == 0 and ref.strip().startswith("D8") and "SPEC_4 C3" in ref
+    assert header.rstrip().endswith(f'{e(mp.LIST_REFUSED_REF)}</p></div>'), header
+
+
+def test_the_list_panel_is_titled_by_its_content_and_count(world, monkeypatch):
+    """R-30 (Models' half): the first panel was titled "Models" under the
+    selected "Models" tab; it is titled by what it holds, the saved files the
+    workspace's listing holds and the runs they are in ("Checkpoints (8 in 5
+    runs)"), whatever the list shows of them (the count line under it says
+    that: a filter, a search); "Checkpoints" alone before a list is read and
+    for a read-only request, whose list is not read."""
+    listing, data = _read(world, monkeypatch)
+    files = [i for i in listing["items"] if r.entry_place(i) is None]
+    runs = {ml.item_run_key(i) for i in files}
+    assert (len(files), len(runs)) == (8, 5)
+    header = mp.left_header_html(listing, data)
+    assert "<h2>Checkpoints (8 in 5 runs)</h2>" in header and ">Models<" not in header
+    assert "<h2>Checkpoints</h2>" in mp.left_header_html({}, {})
+    one = {**listing, "items": [files[0]]}
+    assert "<h2>Checkpoints (1 in 1 run)</h2>" in mp.left_header_html(one, data)
+    refused = {"refused": True, "items": [], "condition": "not_loopback"}
+    assert "<h2>Checkpoints</h2>" in mp.left_header_html(refused, {}, "not_loopback")
 
 
 def test_a_route_records_regime_is_read_from_its_environment_class():

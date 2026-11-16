@@ -141,8 +141,8 @@ from src.evaluation.caveats import (
 from src.utils.run_environment import native_identity_text
 from src.webui.components import model_list as ml
 from src.webui.components import renderers as r
-from src.webui.components.chips import D8_SHORT, LOCK
-from src.webui.components.help import copy_button, help_button
+from src.webui.components.chips import LOCK, operator_only
+from src.webui.components.help import REF_PREFIX, copy_button, help_button
 from src.webui.components.served_status import read_status, served_checkpoint_sha
 from src.webui.operator_access import operator_access
 from src.webui.shell import page_elem_id, picked, plain_html
@@ -205,14 +205,18 @@ LOAD_NOTE = ("Reloads the pipeline and asks once, from → to, as Change model d
 
 READONLY_TITLE = "Recorded results of the model in use"
 READONLY_WHERE = "from the ledger beside the loaded checkpoint · opens no checkpoint"
-#: D8's three conditions, named together for a read-only request.
-D8_CONDITIONS = ("Operator controls need this deployment set to M1, a request on this "
-                 "machine's loopback (here or through SSH forwarding), and no forwarding "
-                 "header.")
-LIST_IS_C3 = ("Listing opens checkpoint files, which SPEC_4 classes as checkpoint inspection "
-              "(C3), so the list is served only where the operator controls are (D8).")
-#: Shown only for a listing D8 refused, so it leads with the lock (a refusal).
-LIST_C3_LINE = f"{LOCK} Checkpoint list: operator controls only (D8 · SPEC_4 C3)"
+#: **A read-only request's list, refused in the words every page uses**
+#: (`chips.operator_only`, "Operator controls only: forwarded by a proxy.",
+#: after the lock), then why in plain words, its codes in one trailing Ref
+#: line (the WebUI skill's §5): why there is no list, and D8's conditions
+#: named together, as the D8 chip's ⓘ says them (`chips.D8_HOW`).
+LIST_NOT_SHOWN = ("The checkpoint list is not shown: listing it opens the checkpoint files, "
+                  "which is an operator control.")
+D8_CONDITIONS = ("Operator controls need a service started on this machine and a request "
+                 "that arrives on its loopback, directly or through an SSH forward, with no "
+                 "forwarding header.")
+LIST_REFUSED_REF = (f"{REF_PREFIX} D8; SPEC_4 C3 (checkpoint inspection); deployment mode M1 "
+                    "(SHEPHERD_DEPLOYMENT_MODE)")
 NO_LOAD_HERE = ("No validation figures here: they need the checkpoint files; Load is an "
                 "operator control.")
 RECORDS_MODEL_CHANGED = ("The model in use changed while its recorded results were read; open "
@@ -1266,22 +1270,39 @@ def same_view(current: Any, view: Mapping[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 # The page's HTML (pure)
 # ---------------------------------------------------------------------------
-def access_short(listing: Mapping[str, Any], condition: Optional[str]) -> str:
-    return D8_SHORT.get(condition or "", "request not readable")
+def list_title(listing: Mapping[str, Any]) -> str:
+    """**The list panel's title, by its content and count** (R-30: it was
+    "Models", the selected tab's name above it): "Checkpoints (20 in 10
+    runs)", the saved files the workspace's listing holds and the runs they
+    are in (an entry it could not list is not a file, `renderers.entry_place`,
+    and the count line says it apart); "Checkpoints" before a list is read or
+    where none is (a read-only request, an empty workspace). The count line
+    under it says what the list shows of them (a filter, a search), so the two
+    can differ."""
+    files = [i for i in listing.get("items") or [] if r.entry_place(i) is None]
+    if listing.get("refused") or not files:
+        return "Checkpoints"
+    runs = len({ml.item_run_key(i) for i in files})
+    return f"Checkpoints ({len(files)} in {runs} run{'s' if runs != 1 else ''})"
 
 
 def left_header_html(listing: Mapping[str, Any], data: Mapping[str, Any],
                      condition: Optional[str] = None) -> str:
-    """The list panel's header; for a read-only request, why there is no list
-    (D8's three conditions named together) instead."""
+    """The list panel's header, titled by its content (`list_title`); for a
+    read-only request, why there is no list instead: "Operator controls only:
+    <D8's short reason>." after the lock, as every page says a control D8
+    refuses (`chips.operator_only`), then why and D8's conditions in plain
+    words, the codes in a trailing Ref line (`LIST_REFUSED_REF`)."""
+    title = f"<h2>{r.e(list_title(listing))}</h2>"
     if listing.get("refused"):
-        short = access_short(listing, condition)
-        return (f'<div class="shep-panel-hd"><h2>Models</h2></div>'
-                f'<div class="shep-mp-ro" role="status"><div class="shep-mp-refusal">'
-                f'<b>Model list unavailable: read-only, {r.e(short)}.</b>'
-                f'<span>{r.e(LIST_IS_C3)}</span><span>{r.e(LIST_C3_LINE)}</span></div>'
-                f'<div class="shep-reason">{r.e(D8_CONDITIONS)}</div></div>')
-    return ('<div class="shep-panel-hd"><h2>Models</h2><span class="shep-panel-right">listed '
+        reason = operator_only(condition or listing.get("condition"))
+        return (f'<div class="shep-panel-hd">{title}</div>'
+                f'<div class="shep-mp-ro" role="status">'
+                f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
+                f'<span>{r.e(reason)}.</span></div>'
+                f'<p class="shep-mp-p">{r.e(LIST_NOT_SHOWN)} {r.e(D8_CONDITIONS)}</p>'
+                f'<p class="shep-mp-p shep-mp-ref">{r.e(LIST_REFUSED_REF)}</p></div>')
+    return (f'<div class="shep-panel-hd">{title}<span class="shep-panel-right">listed '
             'by the server (operator controls only)</span></div>')
 
 
@@ -2088,10 +2109,11 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-fold > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
 {_PAGE} .shep-mp-fold[open] > summary {{ margin-bottom: 2px; }}
 {_PAGE} .shep-mp-delta {{ font-size: 14px; margin-top: 4px; }}
-{_PAGE} .shep-mp-refusal {{ display: flex; flex-direction: column; gap: 6px; margin: 12px 0;
-  border: 1px solid var(--shep-grey-200); background: var(--shep-grey-50); border-radius: 8px;
-  padding: 12px 14px; font-size: 15px; color: var(--shep-grey-800); }}
+/* A read-only request's reason (`left_header_html`): the lock and D8's words, why, then the Ref
+   line, muted. */
 {_PAGE} .shep-mp-ro {{ padding: 0 16px 8px; }}
+{_PAGE} #shep-mp-hd .shep-mp-ro {{ display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }}
+{_PAGE} #shep-mp-hd .shep-mp-ref {{ font-size: 14px; color: var(--shep-muted); }}
 {_PAGE} .shep-mtbl td.shep-num .shep-sub {{ text-align: right; }}
 {_PAGE} .shep-mp-ident {{ font-size: 15px; }}
 /* A record's relations, a row each under its detail row's words (`renderers.relations_html`). */
@@ -2176,6 +2198,8 @@ __all__ = [
     "BY_FAMILY",
     "D8_CONDITIONS",
     "FAMILY_TITLE",
+    "LIST_NOT_SHOWN",
+    "LIST_REFUSED_REF",
     "LOAD_NOTE",
     "NEWEST",
     "ORDER_CHOICES",
@@ -2190,6 +2214,7 @@ __all__ = [
     "family_view",
     "identity_html",
     "left_header_html",
+    "list_title",
     "listing_key",
     "options_html",
     "parent_html",
