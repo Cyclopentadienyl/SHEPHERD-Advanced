@@ -475,6 +475,35 @@ def test_a_failed_or_stopped_run_is_never_green():
         assert "shep-pill-ok" not in html
 
 
+def test_the_idle_fact_is_said_once_as_plain_muted_text_and_stop_is_not_drawn(root, operator,
+                                                                               monkeypatch):
+    """R-39: while idle the page said it three times: the header chip ("GPU
+    jobs: none", the shell's), the status pill as a bordered, fully rounded
+    lozenge beside the 40 px buttons, and the reason line "Stop disabled: no
+    training is running." beside a visible, disabled ■ Stop. Now the pill is
+    the run bar's one idle fact, plain muted text with its grey ○, and Stop
+    is not drawn while no training job runs or stops (nor its reason)."""
+    monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
+    monkeypatch.setattr(tc.training_manager, "get_status", lambda: {"status": "idle"})
+    pieces = tc.render(tc.workspace_state("demo"), {}, {}, [], operator)["pieces"]
+    assert "shep-rb-nojob" in pieces["runbar"]
+    assert "Stop" not in pieces["reason"] and "no training" not in pieces["reason"]
+    assert pieces["pill"].count("no training job since the server started") == 1
+    assert 'class="shep-pill shep-pill-idle"' in pieces["pill"]
+    css = tc.PAGE_CSS
+    assert (f"{tc._PAGE} .shep-rb-nojob #shep-train-stop {{ display: none !important; }}") in css
+    idle = css.split(f"{tc._PAGE} #shep-train-pill .shep-pill-idle {{", 1)[1].split("}", 1)[0]
+    for rule in ("border-color: transparent;", "background: none;", "padding-left: 0;",
+                 "font-weight: 400;", "color: var(--shep-muted);"):
+        assert rule in idle, rule
+    # A running job draws Stop again, with no "nojob" class.
+    for status in ({"status": "running", "job_id": "j", "current_epoch": 1, "total_epochs": 2},
+                   {"status": "stopping", "job_id": "j"}):
+        assert _view(status)["stop_shown"] is True, status
+    for status in ({"status": "completed"}, {"status": "failed"}, {"status": "stopped"}):
+        assert _view(status)["stop_shown"] is False, status
+
+
 def _view(status=None, ws=None, mode=None, access=None, active=None, gpu=None):
     ws = ws if ws is not None else {"row": {"name": "demo", "trainable": True,
                                             "dataset_fingerprint": "a" * 64}}
@@ -485,7 +514,8 @@ def _view(status=None, ws=None, mode=None, access=None, active=None, gpu=None):
 def test_the_run_bars_actions_and_their_one_reason():
     idle = _view()
     assert (idle["start"], idle["cont"], idle["stop"]) == (True, True, False)
-    assert "Stop disabled: no training is running." in idle["reason"]
+    # R-39: with no job, Stop is not drawn, so no reason line says it is disabled.
+    assert idle["reason"] == "" and idle["stop_shown"] is False
 
     running = _view({"status": "running", "current_epoch": 3, "total_epochs": 12})
     assert (running["start"], running["cont"], running["stop"]) == (False, False, True)

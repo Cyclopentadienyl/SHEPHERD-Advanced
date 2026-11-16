@@ -1649,17 +1649,21 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
                  gpu: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     """What the run bar's actions and the drawer's start are and why, as one
     decision for the tick and every action: ``start``, ``cont``, ``stop`` and
-    ``resume`` (interactive or not), ``reason`` (the run bar's, escaped HTML:
-    one line), ``drawer_reason`` (the drawer footer's, beside its start, in
-    its words: "Start branch disabled: …"; the skill's §9) and ``progress``
-    (a fraction while running, else None)."""
+    ``resume`` (interactive or not), ``stop_shown`` (Stop is drawn only while
+    a training job runs or stops: with none, the status pill says so once
+    and Stop has nothing to stop, R-39), ``reason`` (the run bar's, escaped
+    HTML: one line, empty when nothing is disabled that is drawn),
+    ``drawer_reason`` (the drawer footer's, beside its start, in its words:
+    "Start branch disabled: …"; the skill's §9) and ``progress`` (a fraction
+    while running, else None)."""
     s = status.get("status") or "idle"
     training_busy = s in ("running", "stopping")
     drawer = bool(mode.get("drawer"))
     row = ws.get("row") or {}
     action = start_label(mode).removeprefix("▸ ")
     view: Dict[str, Any] = {"start": False, "cont": False, "stop": False, "resume": False,
-                            "progress": None, "drawer_reason": ""}
+                            "stop_shown": training_busy, "progress": None, "reason": "",
+                            "drawer_reason": ""}
     epoch, total = status.get("current_epoch"), status.get("total_epochs")
     if s == "running" and isinstance(epoch, int) and isinstance(total, int) and total > 0:
         view["progress"] = max(0.0, min(1.0, epoch / total))
@@ -1705,8 +1709,8 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
         disabled(f"{row.get('name')} is not trainable: {r.not_trainable_short(row)}.")
         return view
     if not drawer:
+        # Nothing drawn is disabled: Stop is not drawn while no job runs.
         view["start"] = view["cont"] = True
-        view["reason"] = line(NO_ICON, "Stop disabled: no training is running.")
         return view
     # The drawer is open: its start's reason is beside it, in its footer.
     why = continue_refusal(mode.get("parent") or {}, ws, operation=operation_of(mode))
@@ -2841,6 +2845,8 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
     classes = ["shep-runbar"]
     if mode.get("drawer"):
         classes.append("shep-rb-drawer")
+    if not view["stop_shown"]:
+        classes.append("shep-rb-nojob")
     if confirming(status, mode):
         classes.append("shep-rb-confirming")
     page = ["shep-page", "shep-train-page"] + (["shep-train-drawer-open"] if mode.get("drawer") else [])
@@ -5045,6 +5051,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-pill-ok {{ background: var(--shep-green-50); border-color: var(--shep-green-200); color: var(--shep-green-800); }}
 {_PAGE} .shep-pill-grey {{ background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-grey-800); }}
 {_PAGE} .shep-pill-red {{ background: var(--shep-red-50); border-color: var(--shep-red-200); color: var(--shep-red-700); }}
+/* Idle is the normal state, so quiet (R-39; the skill's §6): its grey ○ and words as plain muted
+   text, no bordered, rounded lozenge beside the buttons. */
+{_PAGE} #shep-train-pill .shep-pill-idle {{ border-color: transparent; background: none; padding-left: 0; padding-right: 0; font-weight: 400; color: var(--shep-muted); }}
 {_PAGE} #shep-train-reason {{ flex: 1 1 120px !important; min-width: 0 !important; }}
 {_PAGE} .shep-rb-reason {{ display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }}
 {_PAGE} .shep-rb-why {{ display: inline-flex; align-items: flex-start; gap: 6px; flex-wrap: nowrap; font-size: 15px; color: var(--shep-text-2); text-align: right; }}
@@ -5062,6 +5071,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-row > button:disabled {{ background: var(--shep-grey-50) !important; border: 1px solid var(--shep-grey-200) !important; color: var(--shep-grey-600) !important; opacity: 1 !important; box-shadow: none !important; cursor: not-allowed; }}
 {_PAGE} #shep-train-continues {{ display: none !important; }}
 {_PAGE} .shep-rb-drawer #shep-train-continue, {_PAGE} .shep-rb-drawer #shep-train-stop {{ display: none !important; }}
+/* No training job runs or stops: Stop has nothing to stop and is not drawn (R-39: a visible,
+   disabled Stop beside "Stop disabled: no training is running."). */
+{_PAGE} .shep-rb-nojob #shep-train-stop {{ display: none !important; }}
 {_PAGE} .shep-rb-drawer #shep-train-continues {{ display: block !important; flex: 0 1 auto !important; }}
 {_PAGE} .shep-rb-k {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); margin-right: 8px; }}
 {_PAGE} .shep-rb-confirm {{ display: none !important; }}
