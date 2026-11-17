@@ -668,10 +668,15 @@ def test_a_version_without_a_gene_fixture_is_refused_gene_and_plm_as_a_data_gap(
     before = _tree(registry)
     absent = tmp_path / "absent.pt"
     row = {"label": "gen-val", "kind": "generated", "counts": counts}
-    for protocol in ("gene", "patients_like_me"):
+    # Each measurement named by its words, a code whose words differ in a
+    # trailing "Ref:" (B72-T1).
+    for protocol, words, ref in (("gene", "gene", ""),
+                                 ("patients_like_me", "patients-like-me",
+                                  " Ref: patients_like_me.")):
         gap = protocols.inputs_refusal(protocol, "generated", counts)
         assert gap.startswith("this generated split version keeps no functional gene fixture, "
-                              f"which the {protocol} measurement scores")
+                              f"which the {words} measurement scores")
+        assert gap.endswith("which keeps the fixture with it." + ref)
         assert "not a judgment of its role" in gap and "test" not in gap
         with pytest.raises(ValueError) as refused:
             measure_scorer.read_measurement_inputs(

@@ -760,8 +760,10 @@ def test_both_arms_are_measured_registered_listed_and_exported_with_their_freeze
     # A2: "Graph backbone: none" read as no graph backbone).
     from src.webui.components.results_segment import compare_html
 
+    # Shown under Differences only (the default view), the two arms differing;
+    # a code breaks only after its own separators (B72-C4: "graph_<wbr>side").
     markup = compare_html([rows["control"], rows["full"]], True)
-    assert ("Graph backbone</th><td>Frozen (<code>graph_side</code>)</td>"
+    assert ("Graph backbone</th><td>Frozen (<code>graph_<wbr>side</code>)</td>"
             "<td>Trained (<code>none</code>)</td></tr>") in markup
     assert shown["decoded"][(
         "Training settings", "Effective setting · Loaders › Train › Recipe › Decoded from parent "

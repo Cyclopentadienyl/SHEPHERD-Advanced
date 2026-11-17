@@ -355,7 +355,12 @@ def test_the_diagnosis_page_and_exports_read_both_kinds(trained, tmp_path, monke
     reference = patients["reference_cohort"]
     table = dp.results_body_html(patients, 1)
     assert table.count("<tr data-key=") == len(patients["candidates"]) > 0
-    assert f"version <code>{reference['version_sha256'][:12]}</code>" in table
+    # The version by the one digest value (B72-N3), its whole value the title,
+    # said once in the table.
+    version = reference["version_sha256"]
+    assert (f'version <code class="shep-fpv" title="{version}">{version[:12]}</code>'
+            in table)
+    assert table.count(version) == 1
     first = patients["candidates"][0]
     details = dp.details_outputs(patients, first["rank"])["details_html"]["value"]
     assert all(f"<code>{term}</code>" in details for term in first["phenotypes"])
