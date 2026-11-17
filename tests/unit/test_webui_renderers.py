@@ -972,14 +972,17 @@ def test_a_status_mark_is_colour_shape_and_word_with_the_word_always_shown(kind,
 #: Each status mark drawn in a page with the shell's style sheet, as text and
 #: as a chip, in 14 and 15 px text: its ``innerText``, the text a copy of it
 #: takes, its shape's box and its word's, and the name a screen reader gives
-#: it (the accessibility tree's text of the mark).
+#: it (the accessibility tree's text of the mark). Reduced motion holds the
+#: spinner still (the style sheet's own rule): turning, its box is the turned
+#: square's, up to 17 px wide, so the gap measured depended on the frame.
 _MARKS_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
   const out = {};
   for (const [w, h] of [[1850, 960], [390, 844]]) {
-    const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
+    const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1,
+                                                   reducedMotion: 'reduce' })).newPage();
     await page.goto('file://' + process.argv[2]);
     out[`${w}x${h}`] = await page.evaluate(() => [...document.querySelectorAll('[data-mark]')].map((p) => {
       const m = p.firstElementChild;
