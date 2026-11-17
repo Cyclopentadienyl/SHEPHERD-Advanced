@@ -1169,6 +1169,29 @@ class TestLinksUnderRuns:
         # An alias asked for by its own name lists the runs it holds.
         assert [p.parent.name for p in list_runs(workspace, "alias")] == ["alias"]
 
+    def test_a_run_link_into_another_layout_is_named_as_the_run_it_is(self, tmp_path):
+        """A run directory that is a link to a run of another layout is that
+        run's alias, said of the link itself: its layout directory is a real
+        one whose own runs are listed, never "a link to" the other layout
+        (each such link said once, by its own name)."""
+        from src.utils.checkpoint_paths import list_runs
+
+        workspace, real = self._layout(tmp_path)
+        runs = workspace / "runs"
+        other = runs / "sage" / "20261003-000000_s_333333"
+        _write_checkpoint(other / "checkpoints" / "last.pt", {"epoch": 1})
+        (runs / "gatv2" / "20261004-000000_copy_444444").symlink_to(other)
+        (runs / "gatv2" / "20261005-000000_again_555555").symlink_to(other)
+        unlisted = []
+        assert sorted(list_runs(workspace, unlisted=unlisted)) == sorted([real, other])
+        assert sorted(entry[2] for entry in unlisted) == [
+            ("runs/gatv2/20261004-000000_copy_444444 is a link to "
+             "runs/sage/20261003-000000_s_333333, whose runs are listed there once, so it is "
+             "not listed again"),
+            ("runs/gatv2/20261005-000000_again_555555 is a link to "
+             "runs/sage/20261003-000000_s_333333, whose runs are listed there once, so it is "
+             "not listed again")]
+
     def test_only_the_runs_asked_for_are_read(self, tmp_path, monkeypatch):
         """`run_keys` (BACKLOG 39): a list that shows the latest runs opens
         their files only; an entry that cannot be listed is still listed."""

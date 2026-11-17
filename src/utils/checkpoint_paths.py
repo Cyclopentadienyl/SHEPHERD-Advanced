@@ -629,9 +629,13 @@ def _without_aliases(base: Path, runs: List[Path]
     run reached through a link to one listed otherwise (a layout directory or
     a run directory that is a link inside ``runs/``) is left out, the run kept
     under the path that holds no link (else the first by name), and each link
-    named once as an `unlisted` entry (`_alias_problem`): a layout directory's
-    alias once for all its runs. A run that resolves nowhere else listed is
-    kept, for the reader's boundary check to say what it is."""
+    named once as an `unlisted` entry (`_alias_problem`), by the run directory
+    it is listed under: a layout directory's alias is left out before
+    (`_layouts_once`), so what differs here is the run, whatever layout it
+    sits in (a link into another layout names that run, never its layout
+    directory, which is a real one whose own runs are listed). A run that
+    resolves nowhere else listed is kept, for the reader's boundary check to
+    say what it is."""
     real_base = os.path.realpath(base)
     by_real: Dict[str, List[Path]] = {}
     for run in runs:
@@ -646,10 +650,7 @@ def _without_aliases(base: Path, runs: List[Path]
         for run in same:
             if run == keep:
                 continue
-            # The link is the layout directory where that is what differs, else the run.
-            link, target = ((run.parent, keep.parent) if run.parent.name != keep.parent.name
-                            else (run, keep))
-            named.setdefault(link, (link, link, _alias_problem(base, link, target)))
+            named.setdefault(run, (run, run, _alias_problem(base, run, keep)))
     return kept, list(named.values())
 
 
