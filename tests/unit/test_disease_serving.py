@@ -112,8 +112,10 @@ def test_the_diagnosis_page_and_exports_read_the_kind(trained):
     table = dp.candidates_table_html(result["candidates"], 1, DISEASE_TASK)
     assert "Score" in table and "Model term" not in table and "Evidence" in table
     assert dp._num(first["score"]) in table
-    assert f"Score <b>{dp._num(first['score'])}</b>" in dp.details_header_html(
-        first, DISEASE_TASK)
+    # R-1b (T06-D): the details header names the candidate (#rank, name, id) and says
+    # no score; the table above says it, once.
+    header = dp.details_header_html(first, DISEASE_TASK)
+    assert first["disease_name"] in header and dp._num(first["score"]) not in header
 
     rows = list(csv.DictReader(io.StringIO(dp._build_results_csv(result))))
     assert {"score", "evidence_label"} <= set(rows[0]) and "served_score" not in rows[0]
