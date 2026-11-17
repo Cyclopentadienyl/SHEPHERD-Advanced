@@ -577,10 +577,12 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
             if not response.success:
                 # The service log is the operator surface that may name paths:
                 # the open record of a refusal points here (`RELOAD_REFUSED`),
-                # so every refused reload says why here, once.
+                # so every refused reload says why here, once. A refusal
+                # decided before any path is read (the device, the GPU lock)
+                # is recorded in its own words (`ServingLoad.refusal`).
                 logger.warning("Reload refused: %s", response.message)
                 shown = request.expected_checkpoint_sha256
-                app_state.record_refusal(LOAD_REFUSED, load.lock_refusal or RELOAD_REFUSED,
+                app_state.record_refusal(LOAD_REFUSED, load.refusal or RELOAD_REFUSED,
                                          shown[:12] if shown else None)
     except LifecycleBusy as busy:
         return _refused(f"{busy}{_still_serving()}", {})
@@ -608,24 +610,24 @@ def _reload(request: PipelineReloadRequest, load: Any) -> PipelineReloadResponse
     # candidate in the run layout. The same resolution `build_pipeline` applies
     # (the request, then SHEPHERD_DEVICE, then `auto`), and the request is still
     # passed on as given, so the served identity records what was asked for.
-    from src.api.main import ServingRefused
-    from src.config.serving_device import requested_serving_device
-    from src.inference.pipeline import PipelineBuildError, resolve_serving_device
-
-    try:
-        resolved = resolve_serving_device(requested_serving_device(device))
-    except PipelineBuildError as exc:
-        return _refused(f"{str(exc).rstrip('.')}.{_still_serving()}", files)
-
+    #
     # **The GPU lock, by that device, before any candidate is read** (I2, I3):
     # CUDA holds the deployment's one lock, the one already held when a CUDA
     # model is served (CUDA to CUDA), and reads the job runner's slot after
     # taking it; a busy or unconfigured lock, or a job in the slot, refuses
-    # here. The CPU takes none.
+    # here. The CPU takes none. Both are the lifecycle's one step
+    # (`ServingLoad.settle`), which keeps either refusal's words, which name
+    # no path, for the open record of it.
+    from src.api.main import ServingRefused, split_ref
+    from src.config.serving_device import requested_serving_device
+    from src.inference.pipeline import PipelineBuildError
+
     try:
-        load.hold(resolved)
-    except ServingRefused as refused:
-        return _refused(f"{refused.reason}{_still_serving()}", files)
+        load.settle(requested_serving_device(device))
+    except (PipelineBuildError, ServingRefused) as refused:
+        # Its Ref, if any, stays last (the WebUI skill's §5).
+        words, ref = split_ref(str(refused))
+        return _refused(f"{words}.{_still_serving()}{' ' + ref if ref else ''}", files)
 
     # **Neither a task nor a path names nothing to serve** (SG2): refused here,
     # after the file and device checks (the file report stays) and before the

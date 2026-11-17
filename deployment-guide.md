@@ -1548,10 +1548,14 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 
 > Serving device 'auto' requires CUDA, which is not available here. Hardware
 > acceleration is a hard requirement for deployment and CUDA is currently the
-> only supported backend, so serving does not substitute the CPU for it. Set
-> SHEPHERD_DEVICE=cpu (or send device 'cpu' with a reload) explicitly for
-> development; the served identity records the device asked for and the one in
-> effect.
+> only supported backend, so serving does not substitute the CPU for it. On a
+> development host, start the service with the CPU device (Settings › Stop
+> service). Ref: SHEPHERD_DEVICE=cpu, or device 'cpu' in a reload request
+> (deployment guide §4.8)
+
+這段訊息不含任何路徑，所以在沒有模型服務時，它也是 Diagnosis 卡片、其 Details 與
+`GET /api/v1/pipeline/status` 對被拒絕的載入所說的原因，與 GPU 鎖的拒絕相同；可能含伺服器
+路徑的拒絕只出現在操作者的 reload 回應與服務日誌中。
 
 **部署必須有硬體加速，目前唯一支援的後端是 CUDA（NVIDIA）。** 這是目前的範圍，不是永久的
 架構限制。torch 的 ROCm 版本也把裝置稱為 `cuda`，但這裡沒有驗證過。其他加速硬體會在實際目標

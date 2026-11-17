@@ -1163,10 +1163,15 @@ leaves the served pipeline serving. The refusal reads:
 
 > Serving device 'auto' requires CUDA, which is not available here. Hardware
 > acceleration is a hard requirement for deployment and CUDA is currently the
-> only supported backend, so serving does not substitute the CPU for it. Set
-> SHEPHERD_DEVICE=cpu (or send device 'cpu' with a reload) explicitly for
-> development; the served identity records the device asked for and the one in
-> effect.
+> only supported backend, so serving does not substitute the CPU for it. On a
+> development host, start the service with the CPU device (Settings › Stop
+> service). Ref: SHEPHERD_DEVICE=cpu, or device 'cpu' in a reload request
+> (deployment guide §4.8)
+
+It names no path, so while nothing is served it is also the reason the Diagnosis
+card, its Details and `GET /api/v1/pipeline/status` give for the refused load,
+as the GPU lock's refusal is; a refusal whose words can name a server path is
+said only in the operator's reload response and the service log.
 
 **Hardware acceleration is required for deployment, and CUDA (NVIDIA) is currently the only
 supported backend.** That is the present scope, not a permanent limit. torch's ROCm builds also
