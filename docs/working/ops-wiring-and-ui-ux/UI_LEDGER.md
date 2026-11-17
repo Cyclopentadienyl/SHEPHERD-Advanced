@@ -28,6 +28,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **The 35 new findings** (`NEW-` IDs): 18 restate a recorded row (`Duplicate of` names it), 17 are new problems. They overlap the counts above and are not added to them.
 - **Overstated records**: eight rows a record called done that were only partly done (three verdicts overturned by the second reviewer: R-18+R-40+R-75+B68+B72, R-66+B51f, R-72+B72; and R-25+K6, RC-B, B72-N7, R-16+R-76+B72, R-53).
 - **By state at the base**: 97 to do, 49 partly done, 59 already done, 1 awaiting hardware, 5 not applicable, 7 outside this round's scope.
+- **At the head (2026-11-17, `c958ff3`)**: 249 rows: the base's 218, one opened by the T08 suite (T08-help-1), the T08 flow's twelve (T08-flow-1 to T08-flow-12) and the verification round's eighteen (V-1 to V-18); by state: 1 to do, 11 partly done, 161 code-verified, 59 code-verified at ba6e85e (audit), 1 awaiting hardware, 2 awaiting owner acceptance, 5 not applicable, 9 outside this round's scope (owner to decide). Rows written before the rebase cite commit IDs from before it: see [Commit IDs rewritten by the rebase](#commit-ids-rewritten-by-the-rebase-2026-11-17).
 
 ## Rows by task
 
@@ -790,6 +791,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
 - **Re-checked (T04 measure, a569948)**: the read-only test passes; the shared walk is an operator's, so a read-only viewer's fields are not in it.
 - **Closed at**: d3203dd (the look) and 80b2518 (the reason). For a read-only viewer the "🔒 Operator controls only: deployment mode not set to M1." line is now the Runtime settings panel's body line between its facts and the allocator select it turns off, said once in the panel (the buttons keep their locks); it was in the buttons' row under the two fields and their accordions. Both Settings panels draw it through one line, `data_locations.reason_line` (the Data locations panel already said its own above its rows). Seen in Chromium on a server without M1 (after) and on 5137694: at 1850x960 the reason at 316-336 px above the select at 348 (before 659-700 px, under the select at 316-426), at 760x1000 434-454 px above the select at 466 (before 827-848). The look half as recorded at d3203dd. Test: tests/unit/test_webui_shell.py::test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge (the reason in the panel body, between the facts and the select, once, not in the buttons' row; fails on 5137694). Screens: scratchpad/t06d/shell-settings-audit/shots/before/settings_readonly_1850x960.png, scratchpad/t06d/shell-settings-audit/shots/after/settings_readonly_1850x960.png (and _760x1000).
+- **Noted (T08 flow, 2026-11-17)**: for a read-only viewer the "Operator controls only: …" reason is this panel's body line (the T06-D decision); with the accordions open it is about 735 px above Apply, Restart Backend and Stop service at 1850×960, so the reason is not beside those buttons. Kept as decided; the owner may ask for a reason beside the actions too (scratchpad/t08/C, the read-only Settings shots).
 
 #### NEW-shell-nav-theme-4 · Diagnosis identity banners and warnings line draw their own ⚠ glyph
 
@@ -1275,6 +1277,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: Patients-like-me rows show reference patients' ids, terms, diagnoses; D7 says aggregates only for an institutional cohort.
 - **At ba6e85e**: From the code: a patients-like-me result's rows show Research ID, Similarity, Diagnosis and Causal genes, and its details list every recorded HPO term. D7 is still undecided. The demo cannot show it: there is no patients-like-me model and the registry is empty.
 - **Done when**: The owner's D7 decision is recorded, and the patients-like-me result follows it (e.g. only aggregates for an institutional cohort), verified by a renderer unit test on a sample result.
+- **Sources**: BL:62 (item 62); PTR D7 (aggregates only for an institutional cohort, undecided); the reviewer's recommendation of 2026-10-29 (outside this repository), restated under Owner's choice
 - **Why this state**: a policy decision of the owner's (PLAN_TEST_RESULTS D7, BACKLOG 62), not implemented here by the T06 brief. Checked in the code at T06 (2026-11-16): unchanged. A patients-like-me result's table shows Rank, Research ID, Similarity, Diagnosis and Causal genes (`diagnosis_panel.py`), its details every recorded HPO term, and the CSV and the report carry the same; `POST /api/v1/diagnose` (open to every request that can run a diagnosis) may name any registered cohort version as the reference (`routes/diagnose.py`, `_reference_cohort`), whatever its role; nothing enforces "synthetic only".
 - **Owner's choice** (one, before any institutional cohort is named as a reference): (a) **patient-level rows allowed**: D7 is amended to let a named reference cohort's patients be shown, with who may see them and which fields may be exported; no code changes, but every browser that runs a query sees each reference patient's research id, terms and diagnosis or gene, and so do the CSV and report. (b) **aggregates only for an institutional cohort**: the result for such a cohort shows counts and similarity distributions per diagnosis or gene, never a research id or a patient's terms; the table, details, CSV, report and the API's answer change (`diagnosis_panel`'s patients-like-me renderer and exports, `routes/diagnose.py`), with a renderer test on a sample result; synthetic reference cohorts may keep rows. (c) **such a cohort may not be a reference**: `_reference_cohort` refuses a version whose role is institutional (or anything but an approved reference role), and the Diagnosis select offers only those; rows stay as they are for the cohorts that may be references. The reviewer's 2026-10-29 recommendation, not a decision: (c) for the institutional acceptance cohort, then a separate reference cohort approved with its purpose, roles and exportable fields, and D7 amended to match.
 
@@ -1381,6 +1384,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Problem**: At the recheck the owner asked why the table still showed an SP column.
 - **At ba6e85e**: The disease table reads Rank, Disease, Score, Evidence: there is no SP column. That is because a disease task model serves no SP (K8-4, f4a8c0f). No facet list exists, so no other score can be added as an opt-in column or filter. Inferred from code (the demo has no gene model): a gene task model's table shows 'Model similarity' and 'SP similarity' columns by default beside Score.
 - **Done when**: The gene task table shows Rank, Gene, Score, Evidence by default, with Model similarity and SP similarity available only as opt-in columns/filters from a facet list.
+- **Sources**: the owner's recheck (fix list rev 1, 2026-11-16); `docs/DISEASE_SCORER_POLICY.md` §1.1–§1.3 (work item B-1b, conditions C1–C10)
 - **Why this state**: score facets are work item B-1b (`docs/DISEASE_SCORER_POLICY.md` §1.1–§1.3, conditions C1–C10), the owner's policy, decided in direction but not scheduled, with its selection limit, storage and export bounds and latency target still [OPEN] (§1.3); the T06 brief leaves it to the owner. Checked in the code at T06 (2026-11-16): unchanged. The disease table has no SP column (K8-4); a gene result's table shows Model similarity and SP similarity beside Score by default (`diagnosis_panel.py`), and its details and CSV carry both.
 - **Owner's choice**: (a) **schedule B-1b for the gene table**: default columns Rank, Gene, Score, Evidence; Model similarity and SP similarity offered only from a facet list as opt-in columns or filters under C1–C10 (the canonical rank kept, "showing n of m" while filtered, an unavailable SP a state of its own, filtering and counts over the whole selected set); needs §1.3's open values decided first, and changes the gene table, its facet controls and their tests (the CSV keeps every column). (b) **keep today's columns** until B-1b is scheduled: nothing changes; the row stays open. (c) **an interim without facets**: the two component columns leave the table and stay in the candidate's details and the CSV; a renderer change only, no filter, so it does not meet C1–C10 and B-1b stays open.
 
@@ -2113,6 +2117,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Fix**: `renderers.relation_rows` puts the meaning first and the code after ('Graph files match the workspace manifest (R1)', 'Model trained on this graph (R3)'; a relation without words its recorded name, 'Data version bound to this graph' as before), and `renderers.relations_html` is their one list on Test (under one 'Relations' key across the Result) and Models (under each record), its key column holding the whole name on one line. Models' 24-metric chain and its Environment line stay R-82's.
 - **Sources**: UX:274 (appendix 72); RJ audits[2].findings[8]; BL:1030 (item 72 Models)
 - **Closed at**: 751b8d7. Tests: `test_webui_renderers.py::test_the_research_table_row_has_its_columns_and_escapes`, `test_webui_models_page.py::test_the_detail_keeps_validation_and_mode_c_apart`, `test_webui_test_page.py::test_the_result_shows_aggregates_and_states_never_a_case_or_a_path` (fail on 0f4ae91: 'R3 model trained …'). Seen on a CPU demo copy at 1850×960: Test and Models read 'Graph files match the workspace manifest (R1) ● Verified' … 'Data version bound to this graph ● Verified', each row one line.
+- **Test removed (2026-11-17)**: `test_webui_renderers.py::test_the_research_table_row_has_its_columns_and_escapes`, cited above, went with the research table it drew (`11bbe99`, the run tree in its place). The relation rows' meaning first and code after are checked by `test_webui_models_page.py::test_the_detail_keeps_validation_and_mode_c_apart` (cited above: 'Model trained on this graph (R3)') and `test_webui_test_page.py::test_a_kg_edge_set_or_generated_split_result_never_says_cohort` (each relation a row of its own, its name whole).
 
 #### K7-P3 · Register offered for kept Mode D report; no-model refusal named wrong control
 
@@ -2221,6 +2226,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Done when**: When the series function fails RETRY_MAX times for a drawn run, the chart shows a line over the curves such as 'Newer epochs could not be loaded.' (covered by a JS unit test).
 - **Sources**: BL:999 (item 41); PTR:2380-2381
 - **Closed at**: 40eff69. When the series function fails RETRY_MAX (20) times for the run drawn, its curves stay and the figure's toolbar shows the shared amber ▲ with "Newer epochs could not be loaded: reload the page to try again." (`charts.STALE`, a static note the module shows or hides; never over a plot); it goes once a reply for that run, another run or none is drawn. Test: the JS unit test `tests/fixtures/chart_host.cjs` scenario `gave_up_on_new_epochs_says_so_over_the_curves` (run by `test_webui_charts.py::test_a_reply_is_drawn_only_for_what_the_token_asks_for_now`; fails on aad658c: the note never shows), `test_webui_charts.py::test_the_toolbar_says_when_newer_epochs_could_not_be_loaded`. Seen on the CPU demo at 1850x960 with the series request refused by the browser (Playwright route) after a new epoch was logged: 21 failed calls, the 4 epochs kept, the note at y 271-299 above the plots; at aad658c the same 21 calls left nothing said. Screens: scratchpad/t06b/run-view/shots/before/b41_gave_up_1850x960.png, scratchpad/t06b/run-view/shots/after/b41_gave_up_1850x960.png (no narrow pair: the note is in the toolbar's own row, which wraps).
+- **Test renamed (2026-11-17)**: `test_webui_charts.py::test_the_toolbar_says_when_newer_epochs_could_not_be_loaded`, cited above, is `…_could_not_be_loaded_and_the_axis_once` since `f9c26c1` (R-54: the epoch axis named once); the note's check is unchanged.
 
 #### B69-T2 · Run with only best.pt reads 'dataset not recorded (no checkpoint)'
 
@@ -2452,3 +2458,47 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Decided (integrator, 2026-11-17)**: Start may send a composition its own press ended. The press takes focus, the browser ends the composition with what it holds (Chromium, as observed), the field then shows that text, and Start sends what the field shows. This is the rule already decided for every pending edit: Start waits for it and carries it (OPS-R1, the r1b round). A26 asks that touched, null and the submitted value stay right, and they do: the value sent is the field's value, and a field's own check still refuses a value it does not take (Neighbours per hop). Holding Start while a composition is open would be a new behaviour with new words beside Start; the brief's "not submitted as a half value" read more into A26 than it says. The owner may still ask for the hold.
 - **Corrected (the review of e1dda3e, 2026-11-17)**: the Decided line above (and 8ddb05f's message) calls this a rule already in force; it is not. OPS-R1's held click (`TOUCH_HEAD`, the r1b round) covers only the fields `record_touches` marks (`TOUCH_CLASS`): the Training base form, Fine-tune and the Continue drawer's Branch fields. Run name is not one of them (`training_console.py`, `run_name`: no `record_touches`), so the touch script never counts its input nor holds a click for it. Start sends "bai" because the press ended the composition before the click (Chromium, as observed) and the field then held that text, not because Start waited for an edit. OPS-R1's Done when (the "Set by you" line after a Reset burst, a pressed option) and the r1b round decide nothing about compositions, and A26's "results stay right" does not say which value is right for an open one. So sending what the press ended is a new choice, and it is what Run name does today. The owner's question stays as the Done when puts it: hold Start while a composition is open (Run name would then need a hold it does not have today), or send what the press ended. Recorded, not chosen; the State is unchanged.
 - **Closed at**: —
+
+## Commit IDs rewritten by the rebase (2026-11-17)
+
+Rows written before the branch was rebased cite 37 commits by their IDs from before it; each is the same change as the commit beside it under "On the branch", found by its subject (one match each). The rows keep the IDs they were written with; read them through this table.
+
+| Cited | On the branch | Subject |
+|---|---|---|
+| `40eff69` | `9a02f97` | Charts: a drawn run that cannot get its newer epochs says so over its curves |
+| `d50f6b4` | `f9c26c1` | Charts: a key only where it tells series apart, the epoch axis named once |
+| `92084f4` | `0e9974f` | Continue drawer: its prompt, one closer, the path behind a link, step 3 in view |
+| `d50b993` | `9f7fab7` | Continue drawer: step 3's prompt says what the check is for each operation |
+| `49d281e` | `ea8f363` | Data versions: bound needs the kept files read as their record's bytes (UI-12) |
+| `620056f` | `6d52ca9` | Diagnosis: every edit of the genes box clears the result shown (UI-15, B73) |
+| `b22829f` | `04b228b` | Diagnosis: say what the HPO box reads, what a result used, and the rule (UI-15) |
+| `26b3501` | `1cc3658` | Diagnosis: the HPO box's live line starts where its field's text starts (UI-15) |
+| `c482f98` | `07c7559` | Docs: the run view's words in the guides, the chart floor, record gaps |
+| `c2588b4` | `7854213` | Fine-tune: Start's refusal of the form's values is the line beside Start |
+| `a37d09f` | `1d33b5b` | Fine-tune: the form in two columns, a refusal beside Start, Stop only for a job |
+| `2112605` | `510a795` | Model lists: an entry never opened does not claim a failed read (NEW-models-results-5) |
+| `4e419fb` | `2864636` | Models: Order and Task shape the list from the values read, said while pending (UI-05) |
+| `32a286e` | `9452faa` | Path redaction: a bracketed spaced name goes whole, the sentence keeps its colon (UI-13) |
+| `6f6b19e` | `21146ac` | Path redaction: a root's text inside a longer path is that path's own (UI-13, B53) |
+| `f9512cf` | `7ac05c8` | Refusals in a request's words: a missing value "must be set", Device not --device |
+| `5715ccc` | `cec32a0` | Run bar while idle: the state once, as plain muted text; Stop not drawn |
+| `85d82fd` | `bc5b905` | Run details: the folder once, the model fingerprint, a log, no nested bubble |
+| `7795d37` | `f5463bb` | Run snapshot: read a run's latest saved file, not last.pt alone |
+| `48a7ac3` | `fbbe2d8` | Run view: a state read from a file other than last.pt names that file |
+| `487b00e` | `87ac22c` | Run view: one " · " in the state line, no Continue hint with the drawer open |
+| `127dbe4` | `21b8867` | Shared UI walk: a run-bar item that is not drawn is not a line of it |
+| `1869e36` | `1601b7d` | Shared UI walk: read each control's focus cue from it unfocused |
+| `1c44b82` | `b0453ad` | Shell: a reload comes back on the page shown; location writes keep their order (UI-14) |
+| `ee6d0aa` | `064944e` | Status routes: a request D8 does not allow gets no server path (UI-13, BACKLOG 53) |
+| `751b8d7` | `a4031d7` | Test and Models: R10 as its table, relations meaning first (UI-09, R-72) |
+| `a9366d8` | `8ebc681` | Tests: the field-row checks follow the two-column Fine-tune form and the dense form |
+| `32a59b8` | `99a8088` | Training charts: a chart of one series draws no key, its title names it |
+| `4c9c754` | `7434a96` | Training charts: a run whose validation logs only its loss says so |
+| `6d8a46a` | `7d6ab02` | Training charts: the grid keeps its rows' height, the epoch label under them |
+| `e72d4a0` | `f2a2fc7` | Training: the Continue drawer's listeners show no progress timer (R-59) |
+| `54d5f4b` | `e57db21` | WebUI ledger: T06-B continue-finetune rows closed with their evidence |
+| `b2732ea` | `036fda9` | WebUI ledger: T06-B run view rows closed with their evidence |
+| `0f4ae91` | `fa8c52f` | WebUI ledger: UI-05 and UI-11 rows after T02's event fixes |
+| `0a0e300` | `3243ac8` | WebUI ledger: UI-13, UI-14, UI-15 and R-6 after T02's shell and Diagnosis fixes |
+| `137b637` | `2d77587` | WebUI: one Device field with the host's note, one Stop rule, one dense form |
+| `d2d02f6` | `7a5e78b` | WebUI: one pick of a select is one request (UI-11, review G6) |
