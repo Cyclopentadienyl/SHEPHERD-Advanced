@@ -3153,3 +3153,60 @@ def test_an_order_switched_before_the_first_answer_is_announced(tmp_path):
     seen = run_node(_PENDING_EARLY_JS, tmp_path, str(page))
     assert seen == {"before": "", "clicked": "Applying By family…", "shaped": ""}, seen
 
+
+#: Models for a read-only viewer: Load this model and its reason's boxes.
+_LOAD_REASON_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[390, 844], [960, 1080], [1850, 960]]) {
+    const page = await browser.newPage({ viewport: { width: w, height: h } });
+    await page.goto(process.argv[2]);
+    await page.click('#shep-tab-research-button');
+    await page.click('#shep-page-models-button');
+    await page.waitForFunction(() => {
+      const r = document.querySelector('#shep-models-research-reason');
+      return r && /Operator controls only/.test(r.innerText);
+    }, null, { timeout: 60000 });
+    await page.locator('#shep-models-research-load').scrollIntoViewIfNeeded();
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const box = (s) => { const r = document.querySelector(s).getBoundingClientRect();
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; };
+      const words = document.querySelector('#shep-models-research-reason .shep-reason, #shep-models-research-reason');
+      const range = document.createRange(); range.selectNodeContents(words);
+      const lines = new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+      return { load: box('#shep-models-research-load'), reason: box('#shep-models-research-reason'), lines };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
+        tmp_path, world, monkeypatch):
+    """Verification of fcc3dea (V-RB2-4): for a read-only viewer at 390x844
+    the reason beside Load this model was an 84 px column eight lines tall,
+    its left edge inside the button's box: the foot is one grid row (load,
+    reason, note) at every width. On a phone's column each takes a row of
+    its own; wider, the reason stays beside the button. Fails on fcc3dea."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    monkeypatch.setenv("SHEPHERD_DEPLOYMENT_MODE", "read-only")
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_LOAD_REASON_JS, tmp_path, base[:-len("gradio_api")])
+    for size, at in seen.items():
+        load, reason = at["load"], at["reason"]
+        apart = reason["left"] >= load["right"] or reason["top"] >= load["bottom"]
+        assert apart and reason["width"] >= 200 and at["lines"] <= 3, (size, at)
+    phone = seen["390x844"]
+    assert phone["reason"]["top"] >= phone["load"]["bottom"], phone
+    for size in ("960x1080", "1850x960"):
+        assert seen[size]["reason"]["left"] >= seen[size]["load"]["right"], seen[size]

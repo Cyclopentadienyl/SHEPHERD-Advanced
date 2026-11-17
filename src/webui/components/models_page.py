@@ -2062,6 +2062,18 @@ PAGE_CSS = f"""
   {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(5, max-content); grid-template-areas: "lhd" "ws" "wsline" "task" "ctl"; }}
   {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; }}
 }}
+/* A phone's column: Load, its reason and the note each a row of their own
+   (one row squeezed the reason into an 84 px column; verification of
+   fcc3dea, V-RB2-4). */
+@media (max-width: 599px) {{
+  {_PAGE} {_LIST} > .shep-model-foot {{
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto auto;
+    grid-template-areas: "detail" "load" "reason" "note";
+  }}
+  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ justify-self: start; }}
+  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ padding: 0 16px; }}
+  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note {{ padding: 4px 16px 12px; }}
+}}
 """
 
 
