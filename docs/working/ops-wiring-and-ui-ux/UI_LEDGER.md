@@ -78,7 +78,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-02 Orientation and scrolling
 
-16 rows: 2 partly done, 1 outside this round's scope (owner to decide), 7 code-verified, 6 code-verified at ba6e85e (audit).
+16 rows: 1 partly done, 1 outside this round's scope (owner to decide), 8 code-verified, 6 code-verified at ba6e85e (audit).
 
 #### FL-UI-02 · Layout picks side-by-side vs stacked from fixed 1400x760 sizes, not the window's shape
 
@@ -703,7 +703,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-10 Contrast, type scale, focus and targets from shared tokens
 
-17 rows: 2 partly done, 10 code-verified, 5 code-verified at ba6e85e (audit).
+17 rows: 1 partly done, 11 code-verified, 5 code-verified at ba6e85e (audit).
 
 #### NEW-settings-datasets-footer-3 · Disabled Settings fields look like enabled ones for a read-only viewer
 
@@ -1045,7 +1045,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-15 Diagnosis input changes and result identity
 
-3 rows: 1 partly done, 2 code-verified.
+3 rows: 3 code-verified.
 
 #### B73 · Genes box edited without a keypress keeps the old diagnosis result
 
@@ -1081,7 +1081,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-116 rows: 29 to do, 12 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 34 code-verified, 31 code-verified at ba6e85e (audit).
+116 rows: 20 to do, 13 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 42 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
