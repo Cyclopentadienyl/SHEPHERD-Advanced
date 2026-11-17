@@ -653,6 +653,37 @@ def deployment_device() -> Optional[str]:
         "(scripts/measure_scorer.py --device), so it cannot be given the deployment's device.")
 
 
+#: A test run's refusal of a device this host cannot give
+#: (`_test_device_refusal`), in a request's words for a page with no Device
+#: field of its own: whose device it is and what an operator can do, the
+#: variable only in the trailing Ref (the WebUI skill's §5).
+TEST_DEVICE_UNAVAILABLE = (
+    "Test runs measure on this service's device, {device}, which needs CUDA, and CUDA is "
+    "not available here. The Test page has no Device of its own: the device is the one the "
+    "service was started with. On a development host, stop the service (Settings › Stop "
+    "service) and start it with the CPU device. Nothing was started. "
+    "Ref: SHEPHERD_DEVICE=cpu (deployment guide §4.8)")
+
+
+def _test_device_refusal(device: Optional[str]) -> Optional[str]:
+    """Why a test run cannot measure on the deployment's `device` (None:
+    `auto`) on this host, or None: **the rule every start resolves its
+    device by** (`resolve_training_device`, as `_training_device` asks it for
+    a training start; a measurement's own `--device` resolves alike, auto
+    meaning CUDA and refused without it), asked before anything is listed,
+    made or spawned. T08 flow: a test start on a host without CUDA and no
+    device set was spawned and failed ("Process exited with code 1"), its
+    reason only in the run's output."""
+    from src.utils.training_device import TrainingDeviceUnavailable, resolve_training_device
+
+    requested = device or "auto"
+    try:
+        resolve_training_device(requested)
+    except TrainingDeviceUnavailable:
+        return TEST_DEVICE_UNAVAILABLE.format(device=requested)
+    return None
+
+
 def build_test_argv(inputs: TestRunInputs, device: Optional[str], outcome: Path) -> List[str]:
     """measure_scorer's command line for a test run, from `inputs` only, and
     `outcome`, the new file in the job's own directory where the run says what
@@ -1702,9 +1733,11 @@ class TrainingManager:
 
         `inputs` come from the server's lists and settings; the caller gates
         the call with D8 first. Whoever the caller is, the protocol asked is
-        judged on the listed record and version (`reports_dir()`) before the
-        slot is taken, a directory made or anything spawned: a refusal answers
-        its reason and "Nothing was started.". The run checks the model and
+        judged on the listed record and version (`reports_dir()`), and the
+        deployment's device by the rule every start resolves its device by
+        (`_test_device_refusal`), before the slot is taken, a directory made
+        or anything spawned: a refusal answers its reason and "Nothing was
+        started.". The run checks the model and
         the cohort itself when it starts, against the digests chosen, never
         trusting a preview. It is given a job directory of its own (removed
         once the run has ended and been read), where it writes its outcome
@@ -1718,6 +1751,10 @@ class TrainingManager:
             device = deployment_device()
         except ValueError as exc:
             return {"success": False, "error": f"{exc} Nothing was started.",
+                    "status": self.get_job_status_word("test")}
+        refusal = _test_device_refusal(device)
+        if refusal:
+            return {"success": False, "error": refusal,
                     "status": self.get_job_status_word("test")}
 
         with self._lock:

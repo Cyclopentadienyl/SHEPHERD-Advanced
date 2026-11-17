@@ -480,3 +480,65 @@ def test_a_cpu_demo_says_to_stop_the_running_dashboard_before_its_cpu_start(
     assert "start it as SHEPHERD_DEVICE=cpu bash launch_shepherd.sh, or the load" not in flat
     start, load = flat.index("1. Start the dashboard"), flat.index("2. Diagnosis › Load a model…")
     assert start < flat.index(said) < load
+
+
+@pytest.mark.parametrize("where", ["saved in Settings", "set for this command"])
+def test_a_demo_with_no_model_leads_with_training_it_in_the_dashboard(
+        monkeypatch, capsys, tmp_path, where):
+    """T08 flow (T08-flow-7): without `--train-model` the last lines said only
+    "No model was trained …" and the command-line training steps; the
+    dashboard, which lists the demo from the folder in effect, was never
+    named, though the owner works there (the trained demo's steps lead with
+    it since T08's first run). The no-model steps now lead with the
+    dashboard too: start it, which lists the demo (or which folder to choose
+    there), train on Research › Training then Research › Fine-tune, load in
+    Diagnosis; the command line follows as the other route, unchanged. The
+    CPU line keeps the form the trained steps have (stop the running
+    dashboard, then start it with SHEPHERD_DEVICE=cpu: a second start only
+    opens it)."""
+    from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
+
+    root = tmp_path / "SHEPHERD-data" / "workspaces"
+    if where == "saved in Settings":
+        monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+        _save_root(root)
+        listed = ("It lists the workspace demo: it is in the workspaces folder saved in "
+                  "Settings › Data locations.")
+    else:
+        root.mkdir(parents=True)
+        monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
+        listed = (f"It lists the workspace demo once its workspaces folder is {root.resolve()}: "
+                  "this command was given that folder by SHEPHERD_WORKSPACES_ROOT, so choose "
+                  "the same folder in Settings › Data locations if it is not saved there.")
+    started = tmp_path / "cwd"
+    started.mkdir()
+    monkeypatch.chdir(started)
+    monkeypatch.setattr(setup_demo, "train_demo_model",
+                        lambda *a: pytest.fail("trained without --train-model"))
+    monkeypatch.setattr(sys, "argv", ["setup_demo.py"])
+    assert setup_demo.main() == 0
+    printed = capsys.readouterr().out
+    last = printed[printed.index("No model was trained"):]
+    flat = " ".join(last.split())
+    assert ("Train the demo in the dashboard, then load its disease model: 1. Start the "
+            "dashboard: its desktop entry, or bash launch_shepherd.sh (launch_shepherd.cmd on "
+            f"Windows). {listed}") in flat
+    cpu = ("On a host without CUDA, train its models with Device cpu; their load is then "
+           "refused unless the dashboard runs with SHEPHERD_DEVICE=cpu (development hosts only; "
+           "deployment guide §4.8). A dashboard already running keeps the device it was "
+           "started with, and a second start only opens it. So stop it first (Settings › "
+           "Stop service), then start it as SHEPHERD_DEVICE=cpu bash launch_shepherd.sh.")
+    train = ("2. Research › Training: train a base on the workspace demo; then Research › "
+             "Fine-tune: its disease model from that base.")
+    load = "3. Diagnosis › Load a model…: that disease model."
+    for said in (cpu, train, load):
+        assert said in flat
+    # The dashboard first, then the command line as the other route.
+    dashboard = flat.index("1. Start the dashboard")
+    assert dashboard < flat.index(cpu) < flat.index(train) < flat.index(load)
+    assert load in flat[:flat.index("Or train on the command line")]
+    cli = flat.index("Or train on the command line")
+    assert cli < flat.index("python scripts/setup_demo.py --train-model")
+    assert cli < flat.index("python scripts/train_model.py")
+    assert "# on a host without CUDA, add --device cpu to each: auto refuses there" in printed
+    assert "uvicorn" not in printed

@@ -1205,7 +1205,10 @@ def held(probe, monkeypatch, tmp_path):
     from src.api.services.training_manager import JOB_TYPES, TrainingManager
     from src.utils.gpu_lock import lock_state
 
-    monkeypatch.delenv("SHEPHERD_DEVICE", raising=False)
+    # The device the probe's phase names (`_m5_demo`'s settings: cpu on a host
+    # without CUDA), which a test start resolves before the slot (T08 flow),
+    # so the busy slot is what is checked here on any host.
+    monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     monkeypatch.setattr(training_manager, "build_test_argv", lambda *args: list(_TEST_RUN))
     manager = TrainingManager()
     with manager._lock:

@@ -166,6 +166,9 @@ def test_once_the_backend_stops_no_job_starts_by_any_route(monkeypatch, tmp_path
     for the other connections."""
     import src.api.main as api
 
+    # The device a development host sets: a test start resolves it before the
+    # slot (T08 flow), so on any host the closed slot is what refuses here.
+    monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     manager = tm.TrainingManager()
     monkeypatch.setattr(tm, "training_manager", manager)
     spawned = _Popens()

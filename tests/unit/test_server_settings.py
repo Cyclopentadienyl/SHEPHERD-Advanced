@@ -1418,6 +1418,44 @@ class TestTheOneViewOfTheDataLocations:
         root = next(f for f in answer["fields"] if f["key"] == "workspaces_root")
         assert root["problem"].startswith("Workspaces folder is not known")
 
+    @pytest.mark.parametrize("case", ["mode not set", "mode not M1", "no workspaces folder",
+                                      "workspaces folder refused", "settings file refused",
+                                      "held back"])
+    def test_the_text_form_says_every_reason_the_json_form_carries(self, saved_file, folders,
+                                                                   tmp_path, case):
+        """T08 flow (T08-flow-8): ``deployment_settings.py show`` read
+        "Deployment mode: read-only (source: not set)" with no reason, while
+        its ``--json`` (the route's view) said why ("They turn on when the
+        service is started from its desktop entry or launch_shepherd.sh on this
+        computer."); the GPU lock's problem was dropped the same way ("GPU lock:
+        not configured"). The one view says the same facts in each form: every
+        reason the JSON form carries (a problem, a note, why a change waits) is
+        in the text form."""
+        from src.utils.deployment_view import as_dict, deployment_view, text_lines
+
+        path, environ = saved_file
+        _write_saved(path, {"workspaces_root": str(folders["workspaces"])})
+        if case == "mode not M1":
+            environ = {**environ, ss.ENV_DEPLOYMENT_MODE: "read-only"}
+        elif case == "no workspaces folder":
+            _write_saved(path, {})
+        elif case == "workspaces folder refused":
+            environ = {**environ, ss.ENV_WORKSPACES_ROOT: str(tmp_path / "gone")}
+        elif case == "settings file refused":
+            environ = {ENV_SETTINGS_FILE: "clinic/deployment.json"}
+        elif case == "held back":
+            _write_saved(path, {}, saved={"workspaces_root": str(folders["other"])})
+            environ = {**environ, ss.ENV_WORKSPACES_ROOT: str(folders["workspaces"])}
+        view = deployment_view(environ)
+        answer = as_dict(view, paths_shown=True)
+        assert answer["deployment_mode"]["problem"], "each case is read in a plain shell"
+        reasons = [answer["settings_file"]["problem"], answer["deployment_mode"]["problem"],
+                   answer["gpu_lock"]["problem"], answer["pending_reason"],
+                   *(field[key] for field in answer["fields"] for key in ("problem", "note"))]
+        text = "\n".join(text_lines(view))
+        for reason in filter(None, reasons):
+            assert reason in text, reason
+
     def test_the_cli_prints_the_same_view_a_service_reads(self, saved_file, folders):
         """A shell of the account, with no `SHEPHERD_*` data location set, and
         the service read the same values: the CLI's ``--json`` is the route's
