@@ -390,6 +390,12 @@ def test_a_cut_never_splits_a_character_drawn_from_several_code_points():
         for head in (0, 4, 6, 8):
             cut = r.middle_cut(name, room, head=head)
             assert len(cut) <= room and not _split_sequences(cut), (room, head, cut)
+    # The one cut under it, at every start a caller may try (Diagnosis'
+    # cohort options try each).
+    for keep in range(len(name)):
+        for head in range(keep + 1):
+            cut = r.cut_at(name, head, keep)
+            assert len(cut) <= keep + 1 and not _split_sequences(cut), (keep, head, cut)
     for what in (f"run-{FAMILY}-end", f"run-{FAMILY * 3}-end", f"{FAMILY}{FLAG}caf{ACCENTED}" * 3):
         for rest in (None, "r" * 20, "r" * 37, f"{FAMILY}-{'r' * 40}"):
             for mark in ("", " (2)"):

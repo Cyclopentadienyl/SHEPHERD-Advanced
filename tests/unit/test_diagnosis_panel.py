@@ -2284,6 +2284,27 @@ def test_long_reference_cohort_labels_show_the_part_that_tells_them_apart():
     assert texts[3] == "…15_hospital_a_rare_dis… · another graph"
 
 
+def test_a_cohort_option_never_cuts_inside_a_character_drawn_from_several_code_points():
+    """B72-N4 on the Reference cohort options, which try every middle cut
+    (`renderers.cut_at`, the shared cut) and a cut led by where two labels
+    differ: a ZWJ family emoji (five code points, one character) stays whole
+    beside a "…" or is left out whole. Before, the options' own cut sliced by
+    code point: the middle cut kept a lone MAN ("cohort-aaaaaaaaaaaa👨…") and
+    the cut led by "v1" ended on MAN and a joiner."""
+    family = "\U0001F468‍\U0001F469‍\U0001F467"
+    alone = "cohort-" + "a" * 12 + family + "b" * 30
+    told = ["a" * 25 + f"-v{i}-" + "b" * 33 + family + "c" * 20 for i in (1, 2)]
+    expected = {alone: "cohort-" + "a" * 12 + "…" + "b" * 20,
+                told[0]: "…v1-" + "b" * 33 + "…", told[1]: "…v2-" + "b" * 33 + "…"}
+    for labels in ([alone], told):
+        options, _chosen = dp.cohort_choices(_cohorts(*(_version(label) for label in labels)),
+                                             None)
+        _assert_options_tell_versions_apart(options)
+        for text, label in options:
+            assert family in text or not set(family) & set(text), text
+            assert text == expected[label], text
+
+
 def test_the_reference_cohort_options_are_short_unique_and_keep_the_full_label():
     """5: every option at most 40 characters, unique, with at most one
     separator; the values are the full labels; "another graph" and "cannot

@@ -120,8 +120,10 @@ from src.webui.components.help import HIT_TARGET, REGION_CLASS, help_button, tex
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import OPTION_CHARS
+from src.webui.components.renderers import cut_at as _cut_at
 from src.webui.components.renderers import e as _e
 from src.webui.components.renderers import fingerprint_value as _fingerprint_value
+from src.webui.components.renderers import grapheme_ends as _grapheme_ends
 from src.webui.components.renderers import is_digest as _is_digest
 from src.webui.components.renderers import resources_html as _resources_html
 from src.webui.exports import export_dir, file_slug
@@ -2571,20 +2573,27 @@ def _shared_start(label: str, other: str) -> int:
 def _led_by_difference(label: str, other: str, room: int) -> Optional[str]:
     """`label` within `room` characters, from the start of the token where it
     first differs from `other` (skill §8: the distinguishing token first), a
-    "…" for each side cut; None when `other` begins with all of `label`."""
+    "…" for each side cut, each cut between two grapheme clusters
+    (`renderers.grapheme_ends`, B72-N4); None when `other` begins with all of
+    `label`."""
     differs = _shared_start(label, other)
     if differs >= len(label):
         return None
+    ends = _grapheme_ends(label)
     start = differs
     while start and label[start - 1].isalnum():
         start -= 1
+    start = min(end for end in ends if end >= start)
     if len(label) - start <= room - (1 if start else 0):
         return ("…" if start else "") + label[start:]
     width = room - (2 if start else 1)
     if differs >= start + width:    # a token longer than the room: its differing character stays
         width = room - 2
-        start = differs + 1 - width
-    return ("…" if start else "") + label[start:start + width] + "…"
+        start = min(end for end in ends if end >= differs + 1 - width)
+    stop = max(end for end in ends if end <= start + width)
+    if stop <= start:              # one character longer than the room
+        return None
+    return ("…" if start else "") + label[start:stop] + "…"
 
 
 def _option_text(label: str, mark: str, others: List[str], taken: set) -> str:
@@ -2595,13 +2604,15 @@ def _option_text(label: str, mark: str, others: List[str], taken: set) -> str:
     differs from another label (the one sharing its longest start first);
     cut elsewhere. A label no shortening tells apart keeps the middle cut,
     moved until unique; the full label is under the select once it is chosen
-    (`cohort_info`)."""
+    (`cohort_info`). Every cut is between two grapheme clusters (B72-N4): the
+    middle cuts are `renderers.cut_at`'s."""
     room = OPTION_CHARS - len(mark)
     keep = room - 1
     first = (keep + 1) // 2
+    ends = _grapheme_ends(label)
 
     def cut(head: int) -> str:
-        return label[:head] + "…" + label[len(label) - (keep - head):]
+        return _cut_at(label, head, keep, ends)
 
     if len(label) <= room:
         candidates: List[Optional[str]] = [label]

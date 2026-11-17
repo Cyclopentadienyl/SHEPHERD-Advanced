@@ -399,24 +399,32 @@ def grapheme_ends(text: str) -> List[int]:
     return ends
 
 
-def middle_cut(text: str, room: int, *, head: int = 0) -> str:
-    """`text` in at most `room` characters: whole where it fits, else cut in
-    its middle with an ellipsis, so its start and its end stay (where a copy
-    or a version differs: "…copy_b.pt", "…67-v1.pt"), its start at least
-    `head` characters long where the room allows (`fit_apart`: through where
-    two alike names differ). Cut only between two grapheme clusters
-    (`grapheme_ends`, B72-N4): a character drawn from several code points (a
+def cut_at(text: str, head: int, keep: int, ends: Optional[List[int]] = None) -> str:
+    """`text` as its start of up to `head` characters, an ellipsis, then its
+    end, `keep` characters of it in all at most (`head` at most `keep`). Cut
+    only between two grapheme clusters (`grapheme_ends`, or `ends` when the
+    caller has them, B72-N4): a character drawn from several code points (a
     ZWJ emoji sequence, a flag, a letter and its accent) stays whole on its
     side of the "…" or is left out whole, the end given the room the start
-    could not use. Never longer than `text`."""
+    could not use. The one cut of `middle_cut` and of Diagnosis' cohort
+    options (`diagnosis_panel._option_text`), which try every `head`."""
+    ends = grapheme_ends(text) if ends is None else ends
+    first = max(end for end in ends if end <= head)
+    last = min(end for end in ends if len(text) - end <= keep - first)
+    return text[:first] + "…" + text[last:]
+
+
+def middle_cut(text: str, room: int, *, head: int = 0) -> str:
+    """`text` in at most `room` characters: whole where it fits, else cut in
+    its middle with an ellipsis (`cut_at`, between grapheme clusters), so its
+    start and its end stay (where a copy or a version differs: "…copy_b.pt",
+    "…67-v1.pt"), its start at least `head` characters long where the room
+    allows (`fit_apart`: through where two alike names differ). Never longer
+    than `text`."""
     if len(text) <= room:
         return text
     keep = max(room, 1) - 1
-    first = max(keep // 2, min(head, keep))
-    ends = grapheme_ends(text)
-    first = max(end for end in ends if end <= first)
-    last = min(end for end in ends if len(text) - end <= keep - first)
-    return text[:first] + "…" + text[last:]
+    return cut_at(text, max(keep // 2, min(head, keep)), keep)
 
 
 def _fitted(what: str, rest: Optional[str], mark: str = "",
@@ -2332,6 +2340,7 @@ __all__ = [
     "best_saves",
     "clock_utc",
     "count_text",
+    "cut_at",
     "dataset_details_html",
     "details_list",
     "SHORT_HEX",
