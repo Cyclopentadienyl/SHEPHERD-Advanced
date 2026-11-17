@@ -1981,6 +1981,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Done when**: Every location writer writes only for the page shown as it was sent and never over a later write; tests fail on fcc3dea; RB1's reload probe finds no load ending on Diagnosis.
 - **Sources**: the verification of fcc3dea, part RB1 (V-RB1-1)
 - **Closed at**: 9b66b1a. Each writer is given, by its js (`shell.SENT_JS`, `ShepShell.sent`), the page the browser shows as it is sent and when, and writes only for its own page and no earlier than the write applied last (`shell._written`, a written-at State in the same group). Tests: `test_webui_shell.py::test_a_location_writer_writes_only_for_the_page_shown_as_it_was_sent` and `::test_a_mount_time_select_that_arrives_late_never_moves_the_location` (browser: Diagnosis' mount-time select held until Models is answered); both fail on fcc3dea. RB1's probe (t1h_location, 18 loads of Training on the served dashboard): 6 ended on Diagnosis at fcc3dea, 0 after (scratchpad/verify/fix/r2/loc/json/t1h-before.json, t1h-after.json). `test_webui_shell.py`: 54 passed, the UI walk included.
+- **Re-checked (review of 5033d29, 2026-11-17)**: t1h-after.json's header said "commit": "fcc3dea", its probe's fixed label; it measured the fix worktree at 02347b4 with the change committed as 9b66b1a (its after.log serves /home/user/shep-wt-ui). The file now says so (`commit`, `commit_note`); the numbers above stand.
 
 **UI-16, test**
 
@@ -2196,6 +2197,15 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At fcc3dea**: Seen by part RB2 (scratchpad/verify/rb2/run2/json/a33-ro-beside.json; shots/a33-ro-beside-test-shep-test-model-reload_390x844.png). Settings' one reason per panel, also measured there, is a recorded decision (80b2518, NEW-settings-datasets-footer-3; T06-D), not this row.
 - **Done when**: The ↻'s refusal is visible beside it at every window, or the owner records it as the Run panel's one reason.
 - **Sources**: the verification of fcc3dea, part RB2 (V-RB2-3)
+- **Closed at**: —
+
+#### V-18 · Three copies of "auto means CUDA"; measure_scorer takes cuda:N on a host without CUDA
+
+- **State**: to do · found by the verification of fcc3dea, recorded by the review of 5033d29 · severity low · page: test
+- **Problem**: The rule "auto means CUDA, refused without it" has three copies: `training_device` (training, the job runner, the Test start's check), `measure_scorer._resolve_device` and `pipeline.resolve_serving_device`. They differ on cuda:N: the measurement's copy refuses only auto and cuda, so `measure_scorer --device cuda:0` on a host without CUDA fails late, in torch.
+- **At fcc3dea**: scripts/measure_scorer.py `_resolve_device` (~1032–1066, `requested == "cuda"` only); training's `wants_cuda` and serving refuse cuda:N too. The Test page is safe: its start's check (the job runner, 4d485c7) is stricter than the measurement it guards; only the command line fails late. Pre-existing copies. Evidence: scratchpad/verify/aud/shared_sources_fcc3dea.md §1 and §7.
+- **Done when**: One device rule (training_device's) decides auto, cuda and cuda:N for training, measurement and serving, each refusing in its own words before anything is read; a test of `measure_scorer --device cuda:0` refused up front on a host without CUDA.
+- **Sources**: the verification of fcc3dea, part AUD (V-AUD-6); the review of 5033d29 (R-4: the finding was in no row)
 - **Closed at**: —
 
 **UI-16, training**
