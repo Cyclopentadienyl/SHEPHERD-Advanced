@@ -2855,9 +2855,9 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
     trained_label = FACTS_TRAINED_FP + (f" · {', '.join(facts.trained_on_names)}"
                                         if facts.trained_on_names else "")
     # A listed file trained on the chosen workspace's current dataset: by that
-    # relation, the dataset said once, under the list's workspace select.
-    trained_row = (("Trained on", e(CURRENT_DATASET)) if facts.current_dataset
-                   else (trained_label, data_fp))
+    # relation, said once, in Data (T08-flow-5: Identity said it too); the
+    # dataset itself is said under the list's workspace select.
+    trained_rows = ([] if facts.current_dataset else [(trained_label, data_fp)])
     identity = summary_list([
         ("Model", e(facts.name_line)),
         *([("Task", e(facts.task))] if facts.task else []),
@@ -2865,7 +2865,7 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
         ("Run", f"<code>{e(facts.run)}</code>" if facts.run else "—"),
         ("Checkpoint file", location or "—"),
         (FACTS_MODEL_FP, model_fp),
-        trained_row,
+        *trained_rows,
         *facts.served_rows,
     ], wide=(FACTS_MODEL_FP, trained_label, *(label for label, _value in facts.served_rows)))
     uses_text = f"{NOT_A_MEDICAL_DEVICE} {SYNTHETIC_FOR_TESTING}"

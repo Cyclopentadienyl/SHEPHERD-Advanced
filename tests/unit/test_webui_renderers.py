@@ -314,6 +314,39 @@ def test_model_facts_has_its_five_sections_always_open_with_warnings_first():
     assert SHA in plain and FP_A in plain           # Identity: the full digests, with Copy
 
 
+def test_model_facts_say_a_file_trained_on_the_current_dataset_once():
+    """T08-flow-5 (rule 1.2): the Load drawer's and Models' Model Facts of a
+    listed file trained on the selected workspace's current dataset said
+    "Trained on the selected workspace's current dataset" twice, Identity's
+    last row and the Data section's only one (5 of 5 files in the T08 flow).
+    Said once now, in Data, where what it was trained on is read; Identity
+    keeps the model's own identity. A file trained on another dataset keeps
+    its dataset fingerprint whole with its Copy in Identity, and Data says
+    which workspaces hold it."""
+    from html import unescape
+
+    def words(markup):
+        return unescape(text_of(markup))
+
+    facts = r.facts_from_checkpoint(checkpoint(), [workspace()], listed=True)
+    html = r.model_facts_html(facts)
+    plain = words(html)
+    assert plain.count(r.CURRENT_DATASET) == 1, plain
+    data = html[html.index('data-sec="data"'):html.index('data-sec="evidence"')]
+    assert r.CURRENT_DATASET in words(data)
+    identity = html[html.index('data-sec="identity"'):html.index('data-sec="uses"')]
+    assert "Trained on" not in words(identity) and FP_A not in plain
+    # Diagnosis' drawer draws the same facts without Uses: still once.
+    assert words(r.model_facts_html(facts, uses=False)).count(r.CURRENT_DATASET) == 1
+    # Another dataset: its fingerprint whole in Identity, its workspaces in Data.
+    other = r.facts_from_checkpoint({**checkpoint(fingerprint=FP_B),
+                                     "trained_on_this_dataset": False},
+                                    [workspace(), workspace("o", FP_B)], listed=True)
+    html = r.model_facts_html(other)
+    assert r.CURRENT_DATASET not in words(html) and FP_B in words(html)
+    assert "Trained ono" in words(html[html.index('data-sec="data"'):])
+
+
 def test_model_facts_warns_of_a_dataset_no_listed_workspace_holds():
     facts = r.facts_from_checkpoint(checkpoint(fingerprint="9b1f04e6d2c8" + "0" * 52),
                                     [workspace()])
