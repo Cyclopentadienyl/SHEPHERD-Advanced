@@ -48,6 +48,7 @@ Module: tests/unit/test_webui_model_list.py
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -2112,3 +2113,77 @@ def test_a_search_unfolds_what_it_found(root, serving, monkeypatch):
     assert not dict((k, h) for _c, k, h in _rows(rows) if k)[_key("model-03.pt")]
     assert count.startswith("1 run matches") and searched.outputs == [handle.fold, handle.rows,
                                                                        handle.count]
+
+
+def _selected_item(run, filename, completed, figure, top):
+    """A listed task-model file as the server lists it (the T08 flow's
+    b-ft-full-disease and b-ft-frozen-disease runs): its progress, whether a
+    record of its run names it among the best-k, its Trainer validation
+    figure and the run's recorded selection."""
+    digest = hashlib.sha256(f"{run}/{filename}".encode()).hexdigest()
+    return {"workspace": "demo", "architecture": "gatv2", "run": run, "filename": filename,
+            "sha256": digest, "checkpoint_kind": "training_state", "epoch": completed - 1,
+            "completed_epochs": completed, "in_best_k": top,
+            "validation": {"metric": "val_pooled_mrr", "value": figure},
+            "selection": {"monitor": "val_pooled_mrr", "mode": "max"}, "problem": None,
+            "record": "model", "learning_stage": "finetune", "task": "disease",
+            "operation": "finetune", "key": f"gatv2/{run}/{filename}",
+            "run_key": f"gatv2/{run}"}
+
+
+def test_the_tree_names_tied_best_and_top_k_saves_as_its_selects_do():
+    """T08-flow-4 (the WebUI skill §8): the tree's rows say what each file is
+    by the words its Run → Checkpoint option leads with, one rule
+    (`_checkpoint_entries`): the two files tied at the run's best recorded
+    pooled MRR both read "Best pooled MRR" and two top-k saves "Top-k save",
+    their Epochs telling them apart; a file's name only where two files would
+    read exactly alike (what and how far they trained). The T08 flow saw
+    "model-01-0.8400.pt" and "model-00-0.8400.pt" where Test's and Fine-tune's
+    selects said "Best pooled MRR". A search that shows one file of a run
+    never makes it its run's best (it was named among the files shown)."""
+    full, frozen, twins = ("20261117-071255_b-ft-full-disease_263055",
+                           "20261117-071330_b-ft-frozen-disease_cf68f3",
+                           "20261117-071400_b-ft-twins-disease_aaaaaa")
+    items = [_selected_item(full, "last.pt", 3, 0.39, False),
+             _selected_item(full, "model-02-0.3900.pt", 3, 0.39, True),
+             _selected_item(full, "model-01-0.8400.pt", 2, 0.84, True),
+             _selected_item(full, "model-00-0.8400.pt", 1, 0.84, True),
+             _selected_item(frozen, "last.pt", 3, 0.27, False),
+             _selected_item(frozen, "model-02-0.2700.pt", 3, 0.27, True),
+             _selected_item(frozen, "model-01-0.3333.pt", 2, 0.3333, True),
+             _selected_item(frozen, "model-00-0.4467.pt", 1, 0.4467, True),
+             _selected_item(twins, "last.pt", 4, 0.9, False),
+             _selected_item(twins, "model-03-0.1.pt", 4, 0.1, True),
+             _selected_item(twins, "model-03-0.2.pt", 4, 0.2, True)]
+    listing = {"items": items, "workspaces": []}
+    expected = {
+        (full, "last.pt"): ["Latest save", "3"],
+        (full, "model-02-0.3900.pt"): ["Top-k save", "3"],
+        (full, "model-01-0.8400.pt"): ["Best pooled MRR", "2"],
+        (full, "model-00-0.8400.pt"): ["Best pooled MRR", "1"],
+        (frozen, "last.pt"): ["Latest save", "3"],
+        (frozen, "model-02-0.2700.pt"): ["Top-k save", "3"],
+        (frozen, "model-01-0.3333.pt"): ["Top-k save", "2"],
+        (frozen, "model-00-0.4467.pt"): ["Best pooled MRR", "1"],
+        (twins, "last.pt"): ["Latest save", "4"],
+        # Alike in what they are and how far they trained: their names.
+        (twins, "model-03-0.1.pt"): ["model-03-0.1.pt", "4"],
+        (twins, "model-03-0.2.pt"): ["model-03-0.2.pt", "4"]}
+    for preset in ("research", "clinical"):
+        html = ml.list_html(listing, None, ml.PRESETS[preset], show_older=True)
+        for (run, name), (what, epochs) in expected.items():
+            cells = [_visible(cell).strip()
+                     for cell in _cells(_row_of_key(html, f"gatv2/{run}/{name}"))]
+            assert [cells[0], cells[3]] == [what, epochs], (preset, run, name, cells)
+        # The selects' options lead with the same words (one rule).
+        for run in (full, frozen, twins):
+            parents = {item["key"]: item for item in items if item["run"] == run}
+            for label, key in ml.checkpoint_choices(parents, list(parents)):
+                run_, name = key.split("/")[1:]
+                assert label.startswith(expected[(run_, name)][0] + " · "), (label, key)
+        # A search shows one file of a run: still called what it is.
+        found = ml.list_html(listing, None, ml.PRESETS[preset], show_older=True,
+                             search="model-02-0.3900")
+        assert [_visible(c).strip() for c in _cells(
+            _row_of_key(found, f"gatv2/{full}/model-02-0.3900.pt"))][0] == "Top-k save"
+        assert found.count('class="shep-tree-file') == 1

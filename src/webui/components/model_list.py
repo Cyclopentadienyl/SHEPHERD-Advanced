@@ -369,26 +369,35 @@ def checkpoint_words(item: Mapping[str, Any], *, best: bool = False) -> str:
     return r.fit_option(*_checkpoint_parts(item, best))
 
 
-def checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[Tuple[str, str]]:
-    """A run's checkpoints as options, in `keys`' order: their words
-    (`checkpoint_words`, the run's best saves by its recorded selection named
-    so, ties all); two that would read alike are named by their file instead
-    (unique in a run, `renderers.fit_option` keeping both its ends), and
-    files whose shortened names still read alike are numbered in the list's
-    order, "(2)"; still one separator and `renderers.OPTION_CHARS` at most.
-    No two options read the same (the WebUI skill §8); each value is the
-    file's key, whatever the words; the chosen file's full name is in its
-    details."""
+def _checkpoint_entries(parents: Mapping[str, Any],
+                        keys: Sequence[str]) -> Dict[str, Tuple[str, str]]:
+    """**The one rule of what a run's files are called**, by key in `keys`'
+    order: each file's two parts (`_checkpoint_parts`: what it is, how far it
+    trained), the run's best saves by its recorded selection named so
+    (`renderers.best_saves`, ties all); only files whose two parts read
+    exactly alike are named by their file instead. `keys` are all of one
+    run's files, so a file's words never depend on which of them a page
+    shows. The Run → Checkpoint select (`checkpoint_choices`) and the model
+    tree's rows (`_file_names`) both read it."""
     best = r.best_saves({key: parents[key] for key in keys})
     parts = {key: _checkpoint_parts(parents[key], key in best) for key in keys}
     seen = Counter(r.fit_option(*part) for part in parts.values())
-    entries = []
-    for key in keys:
-        what, rest = parts[key]
-        if seen[r.fit_option(what, rest)] > 1:
-            what = str(parents[key].get("filename"))
-        entries.append((what, rest, key))
-    return r.fit_options(entries)
+    return {key: ((str(parents[key].get("filename")) if seen[r.fit_option(*part)] > 1
+                   else part[0]), part[1]) for key, part in parts.items()}
+
+
+def checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[Tuple[str, str]]:
+    """A run's checkpoints as options, in `keys`' order: their words
+    (`_checkpoint_entries`: `checkpoint_words`, the run's best saves by its
+    recorded selection named so, ties all; two that would read alike named by
+    their file instead, unique in a run, `renderers.fit_option` keeping both
+    its ends), and files whose shortened names still read alike are numbered
+    in the list's order, "(2)"; still one separator and
+    `renderers.OPTION_CHARS` at most. No two options read the same (the WebUI
+    skill §8); each value is the file's key, whatever the words; the chosen
+    file's full name is in its details."""
+    return r.fit_options([(what, rest, key) for key, (what, rest)
+                          in _checkpoint_entries(parents, keys).items()])
 
 
 def pair_words(parents: Mapping[str, Any]) -> Dict[str, Tuple[str, str]]:
@@ -1070,17 +1079,15 @@ def _epochs_cell(items: Sequence[Mapping[str, Any]]) -> str:
     return f'<span class="shep-muted">{r.e(r.epoch_words(items[0] if items else {}))}</span>'
 
 
-def _file_names(listing: Mapping[str, Any], keys: Sequence[str]) -> Dict[str, str]:
-    """Each file of one run by what it is (`checkpoint_choices`' words: "Latest
-    save", "Best pooled MRR" by the run's recorded selection, "Top-k save",
-    else its name; two that read alike by their names), without how far it
-    trained, which the Epochs column says."""
-    parents = {key: find_item(listing, key) for key in keys}
-    best = r.best_saves(parents)
-    parts = {key: _checkpoint_parts(parents[key], key in best) for key in keys}
-    seen = Counter(what for what, _rest in parts.values())
-    return {key: (str(parents[key].get("filename")) if seen[parts[key][0]] > 1 else parts[key][0])
-            for key in keys}
+def _file_names(items: Mapping[str, Any], keys: Sequence[str]) -> Dict[str, str]:
+    """Each file of one run by what it is, the words its Run → Checkpoint
+    option leads with (`_checkpoint_entries`: "Latest save", "Best pooled
+    MRR" by the run's recorded selection, ties all, "Top-k save", else its
+    name; a file's name only where two files would read exactly alike, how far
+    they trained included), without how far it trained, which the Epochs
+    column says. `keys` are every file the listing lists in the run, so a
+    filter or a search never changes what a shown file is called."""
+    return {key: what for key, (what, _rest) in _checkpoint_entries(items, keys).items()}
 
 
 def _fold_button(node: str, opened: bool, label: str) -> str:
@@ -1119,6 +1126,7 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
     workspaces = listing.get("workspaces") or []
     served = listing.get("served_sha")
     items = {item_key(i): i for i in listing.get("items") or []}
+    run_files = runs_of(items)
     shown_keys = [k for g in tree.groups for run in g.runs for k in run.files]
     digits = r.distinguishing_digits(items[k].get("sha256") for k in shown_keys)
     # Each run by its whole words (the table has room for them: no option's
@@ -1185,7 +1193,7 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                 f'{run.note}{ctx}</td>'
                 f'<td class="shep-num">{_epochs_cell([items[k] for k in run.files])}</td>'
                 f'<td class="shep-num">{r.e(files)}</td><td></td></tr>')
-            words = _file_names(listing, run.files)
+            words = _file_names(items, run_files[run.key])
             for key in run.files:
                 item = items[key]
                 file_hidden = "" if group_open and run_open else " hidden"
