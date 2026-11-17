@@ -185,9 +185,6 @@ RECORDS, USAGE, RESULTS = "records", "usage", "results"
 #: words); how many runs and saved files it holds is said beside it.
 FAMILY_TITLE = "Family from {run}"
 FAMILY_NOT_READ = "the family view was not read with this list"
-#: A model record's operation (`record.OPERATIONS`) as the lineage says it.
-OPERATION_WORDS = {"new": "New run", "resume": "Resumed run", "extend": "Extended run",
-                   "branch": "Branch", "finetune": "Finetune"}
 #: A branch that changed no setting of its parent (`parent_changes` `{}`;
 #: ops-wiring round, decisions B1, B4): a new run from its parent's weights.
 SAME_SETTINGS = "Same settings as its parent"
@@ -1470,7 +1467,9 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
         else:
             relation = r.status_mark("neutral", r.UNKNOWN)
         family = item.get("family_id")
-        rows += [("Operation", r.e(OPERATION_WORDS.get(operation, operation or "not read"))),
+        # The tree's own words for its run (`renderers.operation_words`: a
+        # fine-tune full, frozen or partly frozen), one spelling on the screen.
+        rows += [("Operation", r.e(r.operation_words(item))),
                  ("Parent", parent_html(item, row)),
                  *([("Settings changed", changes_html(item.get("parent_changes")))]
                    if operation == "branch" else []),

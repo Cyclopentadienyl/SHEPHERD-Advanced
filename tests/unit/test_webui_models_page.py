@@ -1414,7 +1414,19 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert keys == ["Fingerprint", "File", "Dataset", "Kind", "Operation", "Parent", "Family",
                     "Encoder", "Relation to the paper", "Validation"]
     text = _text(ident)
-    assert "Disease" in text and "Finetune" in text and "GATv2" in text
+    assert "Disease" in text and "GATv2" in text
+    # The operation in the shared tree's words, as the run's own row in the
+    # list beside it says it: one spelling on the screen (it read "Finetune"
+    # beside the row's "Fine-tune, full", and never said full or frozen).
+    disease_run = BUNDLES["disease"][0]
+    for item in listing["items"]:
+        if item.get("run") == disease_run:
+            item["weight_transfer"] = {"trainable": "all"}
+    said = mp.detail_parts(listing, data, bundle_key("disease"), ctl)["top"]
+    operation = _text(re.search(r">Operation</dt>(.*?)</dd>", said, re.S).group(1)).strip()
+    row = _cells(_run_row(ml.list_html(listing, None, ml.PRESETS["research"]),
+                          f"gatv2/{disease_run}"))
+    assert operation == row[2] == "Fine-tune, full", (operation, row)
     # The parent's run in the one run words, its name first (the review of
     # B0b: "run 2026-10-01 00:00" dropped it), one " · "; the family, the
     # same run, by its relation to the Parent row (rule 1.2: the browser

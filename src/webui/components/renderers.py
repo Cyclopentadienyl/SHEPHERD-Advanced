@@ -1003,8 +1003,9 @@ def model_kind_text(item: Any) -> str:
     return f"{kind} · {words}" if words else kind
 
 
-#: **A run's operation in a word** (the shared model list's run rows, D04),
-#: from its record's `operation`: a run started from nothing, one resumed, one
+#: **A run's operation in a word** (the shared model list's run rows, D04,
+#: and the Models detail's Operation row: one spelling on a screen), from its
+#: record's `operation`: a run started from nothing, one resumed, one
 #: extended, a branch and a fine-tune of a parent.
 RUN_OPERATION_WORDS = {"new": "New run", "resume": "Resume", "extend": "Extend",
                        "branch": "Branch", "finetune": "Fine-tune"}
@@ -1012,14 +1013,15 @@ RUN_OPERATION_WORDS = {"new": "New run", "resume": "Resume", "extend": "Extend",
 
 def operation_words(item: Any) -> str:
     """**What a run did, in a few words** (the shared model list's run rows,
-    D04): `RUN_OPERATION_WORDS` of its record's operation, and for a
-    fine-tune what its weight transfer records frozen, in one of three words
-    (`run_plan.recorded_frozen_parts`, the one reading of that record):
-    "Fine-tune, full" (nothing frozen), "Fine-tune, frozen" (the graph side,
-    `recipe.FROZEN_PARTS["graph_side"]`), "Fine-tune, partly frozen" (any
-    other parts); a fine-tune that records no transfer is "Fine-tune". A
-    model record that names no operation says "Not recorded", a record not
-    readable or not read "Unknown" (the skill's §6), never a dash."""
+    D04, and the Models detail's Operation row): `RUN_OPERATION_WORDS` of its
+    record's operation, and for a fine-tune what its weight transfer records
+    frozen, in one of three words (`run_plan.recorded_frozen_parts`, the one
+    reading of that record): "Fine-tune, full" (nothing frozen), "Fine-tune,
+    frozen" (the graph side, `recipe.FROZEN_PARTS["graph_side"]`), "Fine-tune,
+    partly frozen" (any other parts); a fine-tune that records no transfer is
+    "Fine-tune". A model record that names no operation says "Not recorded", a
+    record not readable or not read "Unknown" (the skill's §6), never a
+    dash."""
     if _get(item, "record") != "model":
         return UNKNOWN
     operation = _get(item, "operation")
