@@ -179,6 +179,8 @@ checks that already passed for the same code.
 
 | Change | Checks |
 |---|---|
+| A new screen or a changed layout (before it is built) | a static mockup first, its small sources committed with a README that says who checked it (self-checked or owner-approved; e.g. `docs/working/ops-wiring-and-ui-ux/mockups/`); without the owner's approval it is never called accepted (B27-P) |
+| Any visible change (when it is delivered) | before and after screenshots of what changed, at the owner's window (about 1850 × 960) and a narrow size, named in the delivery and in the ledger row it closes (B27-P) |
 | Wording, a label, an option or help text | the unit test that pins it (options: unique, short, one separator; help: the lead answers the question) |
 | A colour or theme token | the contrast test of the tokens it touches |
 | A widget or renderer (HTML, JS) | a unit or Node test of what it renders, escaping included; one look in the real app |
@@ -189,7 +191,11 @@ checks that already passed for the same code.
 The layout, scrolling, type, border and focus rows are measured on every page at the representative sizes by one
 shared check, which a layout, token or navigation change runs rather than a script of its own:
 `tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check` (`walk_ui` and
-`ui_problems` in `tests/fixtures/browser.py`; its screenshots in the test's temporary `ui-walk*/shots`).
+`ui_problems` in `tests/fixtures/browser.py`; its screenshots in the test's temporary `ui-walk*/shots`). The same
+walk counts each fingerprint drawn in a screen's visible text (`repeat_problems`), and walks PLAN_TEST_RESULTS §6's
+other sizes with Diagnosis' largest Top-K answered on long disease names, and every page as a read-only viewer
+(`acceptance_walk`). axe-core is not installed here: those rows' accessibility checks are the walk's own
+measurements until it is.
 
 ## 13. Decided
 

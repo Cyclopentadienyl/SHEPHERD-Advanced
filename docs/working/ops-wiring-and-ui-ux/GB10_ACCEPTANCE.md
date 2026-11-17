@@ -248,7 +248,7 @@ workspaces root and registry, so the probe's own files stay as they were:
    process), not a UI step.
 4. **Diagnosis, the other tasks**: load the gene child (`probe-rc-gene`) and run one query with candidate genes, then
    the patients-like-me child (`probe-rc-patients-like-me`) and one query; each result names its model and carries the
-   synthetic banner ("SYNTHETIC WORKSPACE: not a clinical result.", `renderers.IDENTITY_BANNERS`).
+   synthetic banner ("Synthetic workspace: not a clinical result.", `renderers.IDENTITY_BANNERS`).
 
 **What the run does not cover, already known**: AMP, its scaler or `torch.compile` with a freeze (L7.disease_frozen
 is fp32 only, and says so); Restart Backend with a CUDA model loaded (CPU tests only,

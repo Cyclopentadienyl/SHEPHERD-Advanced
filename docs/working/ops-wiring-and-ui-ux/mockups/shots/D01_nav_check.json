@@ -1,0 +1,713 @@
+{
+ "normal": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "row1H": 47,
+  "row2H": 55,
+  "headerAndTabsH": 102,
+  "tabRows": 1,
+  "wrappedClass": false,
+  "hScroll": false,
+  "tabs": [
+   {
+    "id": "datasets",
+    "h": 32,
+    "y": 69,
+    "x": 16,
+    "w": 85,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "training",
+    "h": 32,
+    "y": 69,
+    "x": 101,
+    "w": 81,
+    "selected": true,
+    "hover": false,
+    "focus": false,
+    "text": "15px/700 rgb(58, 61, 189) 8.13:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "3px rgb(85, 88, 227) 5.4:1 on its fill, 5.4:1 on the bar",
+    "outline": "none"
+   },
+   {
+    "id": "finetune",
+    "h": 32,
+    "y": 69,
+    "x": 182,
+    "w": 91,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "test",
+    "h": 32,
+    "y": 69,
+    "x": 306,
+    "w": 53,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "models",
+    "h": 32,
+    "y": 69,
+    "x": 359,
+    "w": 74,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   }
+  ],
+  "captions": [
+   {
+    "text": "\"Prepare\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     58,
+     58
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   },
+   {
+    "text": "\"Evaluate\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     348,
+     58
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   }
+  ]
+ },
+ "normal_page": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 1.52,
+  "minContrastAt": "· rgb(205, 210, 218)",
+  "scrollers": [],
+  "headerAndTabsH": 102
+ },
+ "hover": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "row1H": 47,
+  "row2H": 55,
+  "headerAndTabsH": 102,
+  "tabRows": 1,
+  "wrappedClass": false,
+  "hScroll": false,
+  "tabs": [
+   {
+    "id": "datasets",
+    "h": 32,
+    "y": 69,
+    "x": 16,
+    "w": 85,
+    "selected": false,
+    "hover": true,
+    "focus": false,
+    "text": "15px/500 rgb(29, 34, 48) 14.29:1",
+    "bg": "rgb(242, 243, 245)",
+    "line": "3px rgb(115, 122, 135) 3.89:1 on its fill, 4.32:1 on the bar",
+    "outline": "none"
+   },
+   {
+    "id": "training",
+    "h": 32,
+    "y": 69,
+    "x": 101,
+    "w": 81,
+    "selected": true,
+    "hover": false,
+    "focus": false,
+    "text": "15px/700 rgb(58, 61, 189) 8.13:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "3px rgb(85, 88, 227) 5.4:1 on its fill, 5.4:1 on the bar",
+    "outline": "none"
+   },
+   {
+    "id": "finetune",
+    "h": 32,
+    "y": 69,
+    "x": 182,
+    "w": 91,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "test",
+    "h": 32,
+    "y": 69,
+    "x": 306,
+    "w": 53,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "models",
+    "h": 32,
+    "y": 69,
+    "x": 359,
+    "w": 74,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   }
+  ],
+  "captions": [
+   {
+    "text": "\"Prepare\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     58,
+     58
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   },
+   {
+    "text": "\"Evaluate\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     348,
+     58
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   }
+  ]
+ },
+ "focus": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "row1H": 47,
+  "row2H": 55,
+  "headerAndTabsH": 102,
+  "tabRows": 1,
+  "wrappedClass": false,
+  "hScroll": false,
+  "tabs": [
+   {
+    "id": "datasets",
+    "h": 32,
+    "y": 69,
+    "x": 16,
+    "w": 85,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "training",
+    "h": 32,
+    "y": 69,
+    "x": 101,
+    "w": 81,
+    "selected": true,
+    "hover": false,
+    "focus": false,
+    "text": "15px/700 rgb(58, 61, 189) 8.13:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "3px rgb(85, 88, 227) 5.4:1 on its fill, 5.4:1 on the bar",
+    "outline": "none"
+   },
+   {
+    "id": "finetune",
+    "h": 32,
+    "y": 69,
+    "x": 182,
+    "w": 91,
+    "selected": false,
+    "hover": false,
+    "focus": true,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "2px rgb(68, 71, 207) 6.89:1 inside, 6.89:1 on the bar"
+   },
+   {
+    "id": "test",
+    "h": 32,
+    "y": 69,
+    "x": 306,
+    "w": 53,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "models",
+    "h": 32,
+    "y": 69,
+    "x": 359,
+    "w": 74,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   }
+  ],
+  "captions": [
+   {
+    "text": "\"Prepare\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     58,
+     58
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   },
+   {
+    "text": "\"Evaluate\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     348,
+     58
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   }
+  ],
+  "active": "shep-page-finetune-button focus-visible=true"
+ },
+ "narrow_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "row1H": 96,
+  "row2H": 55,
+  "headerAndTabsH": 151,
+  "tabRows": 1,
+  "wrappedClass": false,
+  "hScroll": false,
+  "tabs": [
+   {
+    "id": "datasets",
+    "h": 32,
+    "y": 118,
+    "x": 16,
+    "w": 85,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "training",
+    "h": 32,
+    "y": 118,
+    "x": 101,
+    "w": 81,
+    "selected": true,
+    "hover": false,
+    "focus": false,
+    "text": "15px/700 rgb(58, 61, 189) 8.13:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "3px rgb(85, 88, 227) 5.4:1 on its fill, 5.4:1 on the bar",
+    "outline": "none"
+   },
+   {
+    "id": "finetune",
+    "h": 32,
+    "y": 118,
+    "x": 182,
+    "w": 91,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "test",
+    "h": 32,
+    "y": 118,
+    "x": 306,
+    "w": 53,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "models",
+    "h": 32,
+    "y": 118,
+    "x": 359,
+    "w": 74,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   }
+  ],
+  "captions": [
+   {
+    "text": "\"Prepare\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     58,
+     107
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   },
+   {
+    "text": "\"Evaluate\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     348,
+     107
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   }
+  ]
+ },
+ "narrow_420": {
+  "viewport": [
+   420,
+   900
+  ],
+  "row1H": 172,
+  "row2H": 109,
+  "headerAndTabsH": 281,
+  "tabRows": 2,
+  "wrappedClass": true,
+  "hScroll": false,
+  "tabs": [
+   {
+    "id": "datasets",
+    "h": 32,
+    "y": 194,
+    "x": 16,
+    "w": 85,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "training",
+    "h": 32,
+    "y": 194,
+    "x": 101,
+    "w": 81,
+    "selected": true,
+    "hover": false,
+    "focus": false,
+    "text": "15px/700 rgb(58, 61, 189) 8.13:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "3px rgb(85, 88, 227) 5.4:1 on its fill, 5.4:1 on the bar",
+    "outline": "none"
+   },
+   {
+    "id": "finetune",
+    "h": 32,
+    "y": 194,
+    "x": 182,
+    "w": 91,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "test",
+    "h": 32,
+    "y": 248,
+    "x": 16,
+    "w": 53,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "models",
+    "h": 32,
+    "y": 248,
+    "x": 69,
+    "w": 74,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   }
+  ],
+  "captions": [
+   {
+    "text": "\"Prepare\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     58,
+     183
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   },
+   {
+    "text": "\"Evaluate\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     58,
+     237
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   }
+  ]
+ },
+ "back_wide": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "row1H": 47,
+  "row2H": 55,
+  "headerAndTabsH": 102,
+  "tabRows": 1,
+  "wrappedClass": false,
+  "hScroll": false,
+  "tabs": [
+   {
+    "id": "datasets",
+    "h": 32,
+    "y": 69,
+    "x": 16,
+    "w": 85,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "training",
+    "h": 32,
+    "y": 69,
+    "x": 101,
+    "w": 81,
+    "selected": true,
+    "hover": false,
+    "focus": false,
+    "text": "15px/700 rgb(58, 61, 189) 8.13:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "3px rgb(85, 88, 227) 5.4:1 on its fill, 5.4:1 on the bar",
+    "outline": "none"
+   },
+   {
+    "id": "finetune",
+    "h": 32,
+    "y": 69,
+    "x": 182,
+    "w": 91,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "test",
+    "h": 32,
+    "y": 69,
+    "x": 306,
+    "w": 53,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   },
+   {
+    "id": "models",
+    "h": 32,
+    "y": 69,
+    "x": 359,
+    "w": 74,
+    "selected": false,
+    "hover": false,
+    "focus": false,
+    "text": "15px/500 rgb(67, 74, 88) 8.9:1",
+    "bg": "rgba(0, 0, 0, 0)",
+    "line": "none",
+    "outline": "none"
+   }
+  ],
+  "captions": [
+   {
+    "text": "\"Prepare\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     58,
+     58
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   },
+   {
+    "text": "\"Evaluate\" / \"\"",
+    "font": "14px/600",
+    "transform": "none",
+    "color": "rgb(91, 98, 112)",
+    "contrast": 6.13,
+    "pointerEvents": "none",
+    "centre": [
+     348,
+     58
+    ],
+    "under": "tablist",
+    "isTab": false,
+    "cursor": "auto"
+   }
+  ]
+ }
+}

@@ -104,6 +104,7 @@ import requests
 
 from src.core.types import (
     DISEASE_TASK,
+    DataSource,
     GENE_TASK,
     PATIENTS_LIKE_ME,
     RESULT_KINDS,
@@ -113,13 +114,16 @@ from src.evaluation.caveats import TASK_NAMES
 from src.utils import csv_cells
 from src.utils.server_address import ServerAddressUnknownError, api_base_url
 from src.webui.components import diagnosis_card as card
+from src.webui.components import served_status
 from src.webui.components.chips import D8_SHORT
 from src.webui.components.help import HIT_TARGET, REGION_CLASS, help_button, text_id
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import OPTION_CHARS
+from src.webui.components.renderers import cut_at as _cut_at
 from src.webui.components.renderers import e as _e
 from src.webui.components.renderers import fingerprint_value as _fingerprint_value
+from src.webui.components.renderers import grapheme_ends as _grapheme_ends
 from src.webui.components.renderers import is_digest as _is_digest
 from src.webui.components.renderers import resources_html as _resources_html
 from src.webui.exports import export_dir, file_slug
@@ -546,9 +550,11 @@ def _score(candidate: Mapping[str, Any], kind: Optional[str]) -> Any:
 # =============================================================================
 # Formatting helpers — diagnosis results
 # =============================================================================
-def _format_results_table(candidates: List[Dict], kind: Optional[str] = None) -> str:
+def _format_results_table(candidates: List[Dict], kind: Optional[str] = None,
+                          result: Optional[Mapping[str, Any]] = None) -> str:
     """Format candidates as a Markdown table (the exported report), its columns
-    the kind's: the task head's score for a disease task model."""
+    the kind's: the task head's score and Phenotypes k/N (`phenotype_match`,
+    from `result`'s query) for a disease task model."""
     if kind is None:
         return f"*{KIND_NOT_REPORTED}*"
     if not candidates:
@@ -556,10 +562,12 @@ def _format_results_table(candidates: List[Dict], kind: Optional[str] = None) ->
     if kind in TASK_ROW_KINDS:
         return _format_task_table(candidates, kind)
 
-    columns = ["Rank", "Disease", "Score", "Evidence"]
+    columns = ["Rank", "Disease", "Score", "Phenotypes", "Evidence"]
     rows = []
     for c in candidates:
-        cells = [str(c.get("rank")), f"**{c.get('disease_name')}**", _num(_score(c, kind))]
+        match = phenotype_match(result, c) if isinstance(result, Mapping) else None
+        cells = [str(c.get("rank")), f"**{c.get('disease_name')}**", _num(_score(c, kind)),
+                 f"{match[0]} / {match[1]}" if match else "not reported"]
         label = c.get("evidence_label") or "—"
         cells.append(" ".join(part for part in (_evidence_shape(label), label) if part))
         rows.append("| " + " | ".join(cells) + " |")
@@ -608,9 +616,12 @@ def _format_task_table(candidates: List[Mapping[str, Any]], kind: str) -> str:
     return header + "\n".join("| " + " | ".join(row) + " |" for row in rows) + "\n\n" + note
 
 
-def _format_evidence_detail(candidate: Dict) -> str:
+def _format_evidence_detail(candidate: Dict, names: Optional[Mapping[str, str]] = None) -> str:
     """Format a candidate's evidence package in Markdown (the exported report;
-    the page draws it as escaped HTML, `evidence_html`)."""
+    the page draws it as escaped HTML, `evidence_html`): its label, the
+    server's summary, then the shortest path and the direct paths (each step
+    name first, its id after: `_md_term`), with no retired pipeline's mode
+    name (R-3)."""
     pkg = candidate.get("evidence_package")
     if not pkg:
         return "*No evidence package available. Run with `include_explanations=true`.*"
@@ -627,18 +638,12 @@ def _format_evidence_detail(candidate: Dict) -> str:
     ]
 
     if mode == "direct_path":
-        paths = pkg.get("direct_paths", [])
-        min_hops = pkg.get("min_path_length", "?")
-        parts.append(f"**Mode A — Direct Path Evidence** (shortest: {min_hops} hops)")
+        paths = sorted((p for p in pkg.get("direct_paths") or [] if isinstance(p, list)), key=len)
+        parts.append(f"- **Shortest path**: {_hops(pkg.get('min_path_length'))}")
+        parts.append(f"- **Direct paths**: {len(paths)}")
         parts.append("")
         for i, path in enumerate(paths[:5], 1):
-            path_str = " → ".join(
-                _node_display_name(n) for n in path
-            )
-            parts.append(f"{i}. `{path_str}`")
-
-    elif mode == "insufficient":
-        parts.append("**No usable evidence found.** This candidate should be validated via independent clinical judgment.")
+            parts.append(f"{i}. " + " → ".join(_md_term(n, names or {}) for n in path))
 
     # Supporting genes
     genes = candidate.get("supporting_genes", [])
@@ -649,12 +654,17 @@ def _format_evidence_detail(candidate: Dict) -> str:
     return "\n".join(parts)
 
 
+#: A node's source tags (`DataSource`), the part of a node id a reader drops.
+_NODE_SOURCES = frozenset(source.value for source in DataSource)
+
+
 def _node_display_name(node_str: str) -> str:
-    """Convert 'mondo:MONDO:0011073' to 'MONDO:0011073' for readability."""
-    if ":" in node_str:
-        parts = node_str.split(":", 1)
-        return parts[1] if len(parts) == 2 else node_str
-    return node_str
+    """A node id without its source tag, for readability: 'mondo:MONDO:0011073'
+    reads 'MONDO:0011073', 'disgenet:CDKL5' 'CDKL5'. A tag is dropped when it
+    is a known source or a namespaced id follows it, so a term as a request
+    spells it ('HP:0001250') is kept whole."""
+    source, sep, local = node_str.partition(":")
+    return local if sep and local and (source in _NODE_SOURCES or ":" in local) else node_str
 
 
 def _format_full_explanation(candidate: Dict) -> str:
@@ -1123,6 +1133,25 @@ _CSV_TASK_COLUMNS = {
 }
 
 
+#: **The query's phenotypes as the result used them** (R-5), the same on every
+#: row, after the candidate columns and before the served ones: the ids used
+#: ("; "-joined), and each entry not used with its reason ("Hypotonia (not an
+#: HPO id, not sent)"), as the page's "Used" and "Not used" rows and the
+#: report's lines (`phenotype_account`). ``not_reported`` in both for a
+#: response that gave no account; "Not used" is empty when every entry was.
+_CSV_QUERY_COLUMNS = ["phenotypes_used", "phenotypes_not_used"]
+
+
+def _query_csv_values(result: Mapping[str, Any]) -> Dict[str, str]:
+    account = phenotype_account(result)
+    if account is None:
+        return dict.fromkeys(_CSV_QUERY_COLUMNS, IDENTITY_NOT_REPORTED)
+    used, left = account
+    return {"phenotypes_used": _csv_text("; ".join(used)),
+            "phenotypes_not_used": _csv_text("; ".join(f"{entry} ({reason})"
+                                                       for entry, reason in left))}
+
+
 def _candidate_csv_columns(kind: Optional[str]) -> List[str]:
     """The kind's candidate columns, in order: a task kind's own
     (`_CSV_TASK_COLUMNS`); for a disease kind, its score columns, the evidence
@@ -1281,13 +1310,16 @@ def _clean_disease_id(disease_id: Any) -> str:
 
 def _build_results_csv(result: Dict[str, Any]) -> str:
     """One row per candidate — the tabular summary, for spreadsheet analysis —
-    in the result kind's columns (`_candidate_csv_columns`), with what produced
-    the result (`_SERVED_CSV_COLUMNS`) repeated on each row."""
+    in the result kind's columns (`_candidate_csv_columns`), with the query's
+    phenotypes as used (`_CSV_QUERY_COLUMNS`) and what produced the result
+    (`_SERVED_CSV_COLUMNS`) repeated on each row."""
     kind = _result_kind(result)
     served = _served_csv_values(result)
     whole = _result_csv_values(result) if kind in _CSV_TASK_COLUMNS else {}
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=_candidate_csv_columns(kind) + _SERVED_CSV_COLUMNS,
+    query = _query_csv_values(result)
+    writer = csv.DictWriter(buf, fieldnames=(_candidate_csv_columns(kind) + _CSV_QUERY_COLUMNS
+                                             + _SERVED_CSV_COLUMNS),
                             extrasaction="ignore")
     writer.writeheader()
     for c in result.get("candidates", []) if kind is not None else []:
@@ -1316,6 +1348,7 @@ def _build_results_csv(result: Dict[str, Any]) -> str:
             "num_direct_paths": len(pkg.get("direct_paths") or []) if pkg else "",
             "matching_phenotypes": _csv_text("; ".join(c.get("matching_phenotypes") or [])),
             "supporting_genes": _csv_text("; ".join(c.get("supporting_genes") or [])),
+            **query,
             **served,
         })
     return buf.getvalue()
@@ -1350,9 +1383,11 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
         if value not in (None, ""):
             lines.append(f"- **{key}**: {value}")
     account = phenotype_account(result)
+    names = _names(result)
     if account is not None:
         used, left = account
-        lines.append(f"- **Phenotypes used**: {', '.join(used) or 'none'}")
+        lines.append(f"- **Phenotypes used**: "
+                     f"{', '.join(_md_term(t, names) for t in used) or 'none'}")
         if left:
             lines.append("- **Phenotypes not used**: "
                          + "; ".join(f"{entry} ({reason})" for entry, reason in left))
@@ -1376,7 +1411,7 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
     lines += ["", "## Ranked candidates", ""]
     if result_kind is not None:     # else the table line below says why
         lines += [f"*{kind_label(result).rstrip('.')}.*", ""]
-    lines += [_format_results_table(candidates, result_kind)]
+    lines += [_format_results_table(candidates, result_kind, result)]
     if result_kind == GENE_TASK:     # the table holds every value of a gene
         return "\n".join(lines)
     lines += ["", "## Per-candidate detail"]
@@ -1395,10 +1430,15 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
             f"`{_clean_disease_id(c.get('disease_id', ''))}` · score {_num(score)}",
             "",
         ]
+        match = phenotype_match(result, c)
+        if match:
+            found = [_md_term(t, names) for t in c.get("matching_phenotypes") or []]
+            lines += [f"**Phenotypes annotated to this disease** ({match[0]} of {match[1]} "
+                      f"used): {', '.join(found) or 'none'}", ""]
         lines += [
             "**Evidence**",
             "",
-            _format_evidence_detail(c),
+            _format_evidence_detail(c, names),
             "",
             "**Full explanation**",
             "",
@@ -1575,6 +1615,14 @@ TOPIC_HELP = {
         "a reference patient's recorded terms.\n"
         "- What produced it: the CSV's served_ columns, the report's identity section.",
     ),
+    "dx-phenotypes": (
+        "Phenotypes",
+        "How many of the query's phenotypes, as used, the graph annotates directly to this "
+        "disease.\n\n"
+        "- The exact term only: not ancestors or descendants, not gene-mediated.\n"
+        "- 0 does not mean no clinical overlap.\n"
+        "- Matching phenotypes, in the candidate's details, names each.",
+    ),
     "dx-candidate": (
         "Candidate details",
         "Select a row of Diagnosis results to show that candidate here.\n\n"
@@ -1687,17 +1735,16 @@ def task_view(task: Any) -> Dict[str, str]:
 
 
 def results_header_html(result: Optional[Mapping[str, Any]]) -> str:
-    """"Diagnosis results" and, at its right, how many candidates, how long and
-    when it was produced; nothing at its right before a result (the panel's
-    body says "No result yet", once)."""
+    """"Diagnosis results" and, at its right, how many candidates and when it
+    was produced; nothing at its right before a result (the panel's body says
+    "No result yet", once). How long the inference took is not the
+    clinician's: the report keeps it ("Inference time (ms)"; R-23)."""
     if not isinstance(result, Mapping):
         right = ""
     else:
         n = len(result.get("candidates") or [])
-        ms = result.get("inference_time_ms")
-        took = f" · {ms:.1f} ms" if isinstance(ms, (int, float)) else ""
         right = (f'<span class="shep-panel-right"><b>{n} candidate{"s" if n != 1 else ""}</b>'
-                 f'{_e(took)} · produced {_e(card.hhmmss(_produced_at(result)))}</span>')
+                 f' · produced {_e(card.hhmmss(_produced_at(result)))}</span>')
     return f'<div class="shep-panel-hd"><h2>Diagnosis results</h2>{right}</div>'
 
 
@@ -1802,6 +1849,20 @@ def badge_html(result: Optional[Mapping[str, Any]], state: Mapping[str, Any]) ->
 _BANNER_KEYS = {headline: key for key, (headline, _detail) in IDENTITY_BANNERS.items()}
 
 
+def synthetic_banner_shown(result: Optional[Mapping[str, Any]], state: Mapping[str, Any]) -> bool:
+    """Whether the results show a synthetic banner **from the identity the card
+    shows** (`compare_with_served`: the same served identity, part by part):
+    then the card leaves out its "synthetic data" chip, said once by the
+    banner (R-26). A result from another model, or one not compared, keeps
+    the chip, which then speaks of what is served now."""
+    if not isinstance(result, Mapping):
+        return False
+    kind, identity = _identity_of(result)
+    if IDENTITY_BANNERS["synthetic"] not in _identity_banners(kind, identity):
+        return False
+    return compare_with_served(result, state)["state"] == "equal"
+
+
 def banners_html(result: Mapping[str, Any]) -> str:
     """The result's identity banners: each headline visible, its detail behind
     the ⓘ (the banners' own words, `renderers.IDENTITY_BANNERS`)."""
@@ -1818,12 +1879,102 @@ def banners_html(result: Mapping[str, Any]) -> str:
     return "".join(out)
 
 
+def used_terms(result: Mapping[str, Any]) -> Optional[List[str]]:
+    """The query's phenotypes as the result used them: the server's account
+    (``phenotype_input.used``), else the distinct ids the page sent (an older
+    response); None when neither is known."""
+    account = phenotype_account(result)
+    if account is not None:
+        return account[0]
+    sent = result.get("_query_phenotypes")
+    return list(dict.fromkeys(str(t) for t in sent)) if isinstance(sent, list) else None
+
+
+def phenotype_match(result: Mapping[str, Any], candidate: Mapping[str, Any]
+                    ) -> Optional[Tuple[int, int]]:
+    """**k of N** (R-1d), computed here from the query and the candidate's
+    ``matching_phenotypes``: k the query's phenotypes as used that the graph
+    annotates directly to this disease, N the query's phenotypes as used
+    (`used_terms`); None when the result says neither (no API change)."""
+    used = used_terms(result)
+    if used is None:
+        return None
+    found = {str(p) for p in candidate.get("matching_phenotypes") or []}
+    return len([t for t in used if t in found]), len(used)
+
+
+#: The k/N cell's words, for its title and the report.
+def _match_words(match: Tuple[int, int]) -> str:
+    return f"{match[0]} of the {match[1]} phenotypes used are annotated to this disease"
+
+
+def _names(result: Optional[Mapping[str, Any]]) -> Mapping[str, str]:
+    """The served graph's names the page read for this result (`_names`,
+    `served_status.node_names`): bound to the result's own graph digest."""
+    names = result.get("_names") if isinstance(result, Mapping) else None
+    return names if isinstance(names, Mapping) else {}
+
+
+def _name_for(names: Mapping[str, str], term: Any) -> Optional[str]:
+    """A term's or a path node's name: by its own spelling, else by its
+    display id ("hpo:HP:0001250" read as "HP:0001250")."""
+    text = str(term)
+    return names.get(text) or names.get(_node_display_name(text))
+
+
+def term_html(term: Any, names: Mapping[str, str]) -> str:
+    """A term **name first, its id muted** (R-3, R-5): "Seizure HP:0001250";
+    the id alone, as code, when the graph gave no name. Escaped."""
+    shown = _node_display_name(str(term))
+    name = _name_for(names, term)
+    if not name or name == shown:
+        return f'<code>{_e(shown)}</code>'
+    return f'{_e(name)} <span class="shep-dx-id">{_e(shown)}</span>'
+
+
+def _md_term(term: Any, names: Mapping[str, str]) -> str:
+    """The report's form of `term_html`: "Seizure (HP:0001250)", escaped."""
+    shown = _node_display_name(str(term))
+    name = _name_for(names, term)
+    if not name or name == shown:
+        return _md_text(shown)
+    return f"{_md_text(name)} ({_md_text(shown)})"
+
+
+def _wanted_names(result: Mapping[str, Any]) -> List[str]:
+    """Every term and path node a result names, for `served_status.node_names`:
+    the query's phenotypes, the ones used, each candidate's matching
+    phenotypes and path nodes, and a reference patient's recorded terms."""
+    keys: List[str] = [str(t) for t in result.get("_query_phenotypes") or []]
+    account = result.get("phenotype_input")
+    if isinstance(account, Mapping):
+        keys += [str(t) for t in account.get("used") or []]
+    for c in result.get("candidates") or []:
+        if not isinstance(c, Mapping):
+            continue
+        keys += [str(t) for t in c.get("matching_phenotypes") or []]
+        keys += [str(t) for t in c.get("phenotypes") or []]
+        keys += [str(n) for path in _paths(c) for n in path]
+    return list(dict.fromkeys(keys))
+
+
+def result_names(result: Mapping[str, Any]) -> Dict[str, str]:
+    """The served graph's names of the terms `result` names, while the graph
+    served is the result's own (its ``served_identity.graph.kg_sha256``);
+    ``{}`` otherwise, and the page shows ids alone."""
+    _kind, identity = _identity_of(result)
+    digest = _field(_field(identity, "graph"), "kg_sha256")
+    return served_status.node_names(digest, _wanted_names(result))
+
+
 def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
-                          kind: Optional[str]) -> str:
+                          kind: Optional[str], result: Optional[Mapping[str, Any]] = None
+                          ) -> str:
     """The ranked candidates in the kind's columns; a row is selected by click,
     or by Enter or Space when focused. Every value is escaped; a long name is
     clamped to two lines with the full name in its title. A disease task model
-    shows its head's score."""
+    shows its head's score and **Phenotypes k/N** (`phenotype_match`, R-1d)
+    from `result`'s query."""
     if kind is None:
         return f'<div class="shep-reason">{_e(KIND_NOT_REPORTED)}</div>'
     if not candidates:
@@ -1836,16 +1987,22 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
         rank = c.get("rank")
         on = rank == selected
         name = _e(c.get("disease_name"))
+        match = phenotype_match(result, c) if isinstance(result, Mapping) else None
+        matched = (f'<td class="shep-num" title="{_e(_match_words(match))}">'
+                   f'{match[0]}\u2009/\u2009{match[1]}</td>' if match else
+                   '<td class="shep-num"><span class="shep-muted">not reported</span></td>')
         cells = (f'<td class="shep-num">{_e(rank)}</td><td class="shep-dx-dis">'
                  f'<span class="shep-dx-clamp" title="{name}">{name}</span></td>'
-                 f'<td class="shep-num">{_num(_score(c, kind))}</td>')
+                 f'<td class="shep-num">{_num(_score(c, kind))}</td>{matched}')
         label = c.get("evidence_label") or "—"
-        cells += f'<td>{_evidence_mark(label)}</td>'
+        cells += f'<td class="shep-dx-evcell">{_evidence_mark(label)}</td>'
         # A plain table's selected row is `aria-current` (the skill's §8).
         rows.append(f'<tr data-key="{_e(rank)}" tabindex="0"'
                     f'{selected_class if on else ""}>{cells}</tr>')
     head = ('<th scope="col" class="shep-num">Rank</th><th scope="col">Disease</th>'
             f'<th scope="col" class="shep-num">Score{help_button("dx-score", "Score")}</th>'
+            f'<th scope="col" class="shep-num">Phenotypes'
+            f'{help_button("dx-phenotypes", "Phenotypes")}</th>'
             '<th scope="col">Evidence</th>')
     return ('<div class="shep-tbl-wrap shep-dx-tbl-wrap"><table class="shep-tbl shep-dx-tbl" '
             f'aria-label="Ranked candidates"><thead><tr>{head}</tr></thead><tbody>'
@@ -1932,18 +2089,21 @@ def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
              if kind is not None else "")
     return banners_html(result) + note + phenotypes_used_html(result) + label + \
         reference_line_html(result) + \
-        candidates_table_html(result.get("candidates") or [], selected, kind)
+        candidates_table_html(result.get("candidates") or [], selected, kind, result)
 
 
 def phenotypes_used_html(result: Mapping[str, Any]) -> str:
     """The query's phenotypes as the result used them (`phenotype_account`):
-    "Used (n)" and, when any was not, "Not used (n)" with each one's reason;
-    "" for a result with no account."""
+    "Used (n)", each **name first, its id muted** (`term_html`, R-5), and,
+    when any was not, "Not used (n)" with each one's reason; "" for a result
+    with no account."""
     account = phenotype_account(result)
     if account is None:
         return ""
     used, left = account
-    rows = [(f"Used ({len(used)})", _e(", ".join(used)) or "none")]
+    names = _names(result)
+    rows = [(f"Used ({len(used)})",
+             ", ".join(term_html(term, names) for term in used) or "none")]
     if left:
         rows.append((f"Not used ({len(left)})", ", ".join(
             f"{_e(entry)} <span class=\"shep-dx-why\">({_e(reason)})</span>"
@@ -1975,27 +2135,21 @@ def segment_choices(candidate: Optional[Mapping[str, Any]]) -> List[Tuple[str, s
 
 def details_header_html(candidate: Optional[Mapping[str, Any]],
                         kind: Optional[str] = None) -> str:
-    """The selected candidate's name, id and its kind's values: the score
-    alone for a disease task model."""
+    """The selected candidate as **#rank, name and id only** (R-1b): its
+    scores are its table row's, beside it, said once; a reference patient's
+    research id is its name, "Reference patient" its kind."""
     if candidate is None:
         return '<div class="shep-panel-hd"><h2>Candidate details</h2></div>'
     if kind == GENE_TASK:
-        return (f'<div class="shep-panel-hd shep-dx-det-hd"><h2><span class="shep-dx-rank">'
-                f'#{_e(candidate.get("rank"))}</span> {_e(candidate.get("gene_name"))}</h2>'
-                f'<p class="shep-dx-det-sub"><code>{_e(candidate.get("gene_id"))}</code> Score '
-                f'<b>{_num(candidate.get("score"))}</b></p></div>')
-    if kind == PATIENTS_LIKE_ME:
-        return (f'<div class="shep-panel-hd shep-dx-det-hd"><h2><span class="shep-dx-rank">'
-                f'#{_e(candidate.get("rank"))}</span> {_e(candidate.get("case_id"))}</h2>'
-                f'<p class="shep-dx-det-sub">Reference patient · Similarity '
-                f'<b>{_num(candidate.get("similarity"))}</b></p></div>')
-    values = ""
-    if kind is not None:
-        values = f" Score <b>{_num(_score(candidate, kind))}</b>"
+        name, sub = candidate.get("gene_name"), f'<code>{_e(candidate.get("gene_id"))}</code>'
+    elif kind == PATIENTS_LIKE_ME:
+        name, sub = candidate.get("case_id"), "Reference patient"
+    else:
+        name = candidate.get("disease_name")
+        sub = f'<code>{_e(_clean_disease_id(candidate.get("disease_id")))}</code>'
     return (f'<div class="shep-panel-hd shep-dx-det-hd"><h2><span class="shep-dx-rank">'
-            f'#{_e(candidate.get("rank"))}</span> {_e(candidate.get("disease_name"))}</h2>'
-            f'<p class="shep-dx-det-sub"><code>{_e(_clean_disease_id(candidate.get("disease_id")))}'
-            f'</code>{values}</p></div>')
+            f'#{_e(candidate.get("rank"))}</span> {_e(name)}</h2>'
+            f'<p class="shep-dx-det-sub">{sub}</p></div>')
 
 
 def details_empty_html() -> str:
@@ -2003,9 +2157,18 @@ def details_empty_html() -> str:
             'explanation, matching phenotypes and paths appear here.</p></div>')
 
 
+def _hops(value: Any) -> str:
+    return f"{value} hop{'s' if value != 1 else ''}" if isinstance(value, int) \
+        and not isinstance(value, bool) else "not stated"
+
+
 def evidence_html(candidate: Mapping[str, Any], explanations: bool = True) -> str:
-    """The candidate's evidence package, escaped: its label and summary, the
-    path evidence (or that there is none usable), and the supporting genes."""
+    """The candidate's evidence package as an explanation (the skill's §4,
+    R-3): the answer first (its label, with its mark), then its facts as
+    one summary list, each said once (NEW-diagnosis-2: the shortest path's
+    length is its row's), with no retired pipeline's mode name; the server's
+    narrative folded under "Written summary ›". Evidence found by no path
+    has no facts to list: its narrative is the answer's sentence."""
     pkg = candidate.get("evidence_package")
     if not pkg:
         why = ("Explanations were off for this run (Options), so no evidence package was asked "
@@ -2014,60 +2177,102 @@ def evidence_html(candidate: Mapping[str, Any], explanations: bool = True) -> st
         return f'<p class="shep-muted">{_e(why)}</p>'
     label = candidate.get("evidence_label") or pkg.get("evidence_label") or "—"
     parts = [f'<p class="shep-dx-ev-label">{_evidence_mark(label, strong=True)}</p>']
-    if pkg.get("summary"):
-        parts.append(f'<blockquote class="shep-dx-quote">{_e(pkg.get("summary"))}</blockquote>')
-    mode = pkg.get("mode")
-    if mode == "direct_path":
-        n = len(pkg.get("direct_paths") or [])
-        hops = pkg.get("min_path_length")
-        hop_text = f"{hops} hop{'s' if hops != 1 else ''}" if isinstance(hops, int) else "not stated"
-        parts.append('<h3 class="shep-dx-h">Mode A — Direct path evidence</h3>'
-                     f'<p>Shortest: {_e(hop_text)} · {n} direct path{"s" if n != 1 else ""}, '
-                     'listed under <button type="button" class="shep-dx-link" data-key="seg:paths">'
-                     'Paths ›</button></p>')
-    elif mode == "insufficient":
-        parts.append('<p><b>No usable evidence found.</b> This candidate should be validated via '
-                     'independent clinical judgment.</p>')
+    summary = pkg.get("summary")
     genes = candidate.get("supporting_genes") or []
+    rows: List[Tuple[str, str]] = []
+    if pkg.get("mode") == "direct_path":
+        n = len(pkg.get("direct_paths") or [])
+        rows += [("Shortest path", _e(_hops(pkg.get("min_path_length")))),
+                 ("Direct paths", f'{n} · <button type="button" class="shep-dx-link" '
+                  'data-key="seg:paths">listed under Paths ›</button>')]
+    elif summary:
+        parts.append(f'<p class="shep-dx-ev-why">{_e(summary)}</p>')
+        summary = None
     if genes:
-        parts.append('<h3 class="shep-dx-h">Supporting genes</h3><p class="shep-dx-genes">'
-                     + "".join(f'<span class="shep-dx-gene">{_e(g)}</span>' for g in genes) + "</p>")
+        rows.append(("Supporting genes", '<span class="shep-dx-genes">' + "".join(
+            f'<span class="shep-dx-gene">{_e(g)}</span>' for g in genes) + "</span>"))
+    if rows:
+        parts.append(_summary_list(rows, classes="shep-dx-ev"))
+    if summary:
+        parts.append('<details class="shep-more shep-dx-ev-more"><summary>Written summary ›'
+                     f'</summary><p>{_e(summary)}</p></details>')
     return "".join(parts)
 
 
-def phenotypes_html(candidate: Mapping[str, Any]) -> str:
-    found = candidate.get("matching_phenotypes") or []
-    listed = ("".join(f'<li><code>{_e(p)}</code></li>' for p in found) if found else "")
-    body = (f'<ul class="shep-dx-list">{listed}</ul>' if found else
-            '<p class="shep-muted">None of the query\'s phenotypes is annotated directly to this '
-            'disease.</p>')
+def phenotypes_html(candidate: Mapping[str, Any],
+                    result: Optional[Mapping[str, Any]] = None) -> str:
+    """The query's phenotypes as used, **split by whether the graph annotates
+    each directly to this disease**, with the counts, each name first and its
+    id muted (R-3): "Annotated to this disease (k)", "Not annotated (n)"
+    (`used_terms`; with no account of the query, the matches alone). Then the
+    API's definition of a match."""
+    names = _names(result)
+    found = [str(p) for p in candidate.get("matching_phenotypes") or []]
+    used = used_terms(result) if isinstance(result, Mapping) else None
+    rest = [t for t in used if t not in set(found)] if used is not None else None
+
+    def listed(terms: List[str]) -> str:
+        return ('<ul class="shep-dx-list">'
+                + "".join(f"<li>{term_html(t, names)}</li>" for t in terms) + "</ul>")
+
+    if found:
+        body = (f'<p class="shep-dx-sub-h"><b>Annotated to this disease ({len(found)})</b></p>'
+                + listed(found))
+    else:
+        body = ('<p class="shep-muted">None of the query\'s phenotypes is annotated directly to '
+                'this disease.</p>')
+    if rest:
+        body += (f'<p class="shep-dx-sub-h"><b>Not annotated ({len(rest)})</b></p>'
+                 + listed(rest))
     return body + f'<p class="shep-note">{_e(MATCHING_NOTE)}</p>'
 
 
-def paths_html(candidate: Mapping[str, Any]) -> str:
-    paths = _paths(candidate)
+#: How many paths are shown at once; the rest one click away (R-3).
+PATHS_SHOWN = 3
+
+
+def _path_html(path: List[str], names: Mapping[str, str]) -> str:
+    """One path as its steps' chips, each name first and its id muted."""
+    return ('<li class="shep-dx-path">' + ' <span class="shep-dx-arrow" aria-label="to">→</span> '
+            .join(f'<span class="shep-dx-step">{term_html(node, names)}</span>' for node in path)
+            + "</li>")
+
+
+def paths_html(candidate: Mapping[str, Any],
+               result: Optional[Mapping[str, Any]] = None) -> str:
+    """The candidate's direct paths, **shortest first**: the `PATHS_SHOWN`
+    shortest as chips of named steps (each name first, its id muted), the rest
+    under "More paths (n) ›" (R-3). The order among paths of one length is
+    the server's."""
+    paths = sorted(_paths(candidate), key=len)
     if not paths:
         return '<p class="shep-muted">No path is listed for this candidate.</p>'
-    items = "".join(
-        "<li>" + ' <span class="shep-dx-arrow" aria-label="to">→</span> '.join(
-            f"<code>{_e(_node_display_name(str(node)))}</code>" for node in path) + "</li>"
-        for path in paths)
-    return f'<ol class="shep-dx-paths">{items}</ol>'
+    names = _names(result)
+    shown = "".join(_path_html(path, names) for path in paths[:PATHS_SHOWN])
+    html_ = f'<ol class="shep-dx-paths">{shown}</ol>'
+    rest = paths[PATHS_SHOWN:]
+    if rest:
+        more = "".join(_path_html(path, names) for path in rest)
+        html_ += (f'<details class="shep-more shep-dx-paths-more"><summary>More paths '
+                  f'({len(rest)}) ›</summary><ol class="shep-dx-paths" start="{PATHS_SHOWN + 1}">'
+                  f'{more}</ol></details>')
+    return html_
 
 
 def task_details_html(candidate: Mapping[str, Any], kind: str,
                       result: Mapping[str, Any]) -> str:
-    """A gene's or a reference patient's values beyond the header's, as one
-    key-value list (`renderers.summary_list`), every value escaped: a gene's model
-    and SP similarities, its mean hop distance and the model's SP bounds; a
-    reference patient's recorded diagnosis, causal genes and every recorded HPO
-    term, with the note that they are reference context, never an input."""
+    """A gene's or a reference patient's values beyond its table row's, as
+    one key-value list (`renderers.summary_list`), every value escaped: a
+    gene's mean hop distance and the model's SP bounds; a reference patient's
+    recorded diagnosis, causal genes and every recorded HPO term (name first,
+    id muted: `term_html`), with the note that they are reference context,
+    never an input."""
     if kind == GENE_TASK:
+        # Its score, model and SP similarities are its table row's, said once
+        # there (R-1b); here what the row does not show.
         bounds = result.get("sp_bounds")
         bounds = bounds if isinstance(bounds, (list, tuple)) and len(bounds) == 2 else (None, None)
-        rows = [("Model similarity", _num(candidate.get("embsim"))),
-                ("SP similarity", _num(candidate.get("sp_similarity"))),
-                ("Mean hop distance", _num(candidate.get("mean_distance"))),
+        rows = [("Mean hop distance", _num(candidate.get("mean_distance"))),
                 ("SP bounds (the model's own)", f"{_num(bounds[0])} to {_num(bounds[1])}")]
         return _summary_list(rows)
     genes = [str(g) for g in candidate.get("causal_genes") or [] if str(g).strip()]
@@ -2078,7 +2283,7 @@ def task_details_html(candidate: Mapping[str, Any], kind: str,
             ("Causal genes", "".join(f'<span class="shep-dx-gene">{_e(g)}</span> ' for g in genes)
              .strip() or _not_recorded()),
             (f"Recorded HPO terms ({len(terms)})",
-             " ".join(f"<code>{_e(t)}</code>" for t in terms) or _not_recorded())]
+             ", ".join(term_html(t, _names(result)) for t in terms) or _not_recorded())]
     return (_summary_list(rows)
             + f'<p class="shep-note">{_e(REFERENCE_CONTEXT_NOTE)}</p>')
 
@@ -2144,9 +2349,9 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
     if segment == "evidence":
         html_ = evidence_html(candidate, explanations)
     elif segment == "phenotypes":
-        html_ = phenotypes_html(candidate)
+        html_ = phenotypes_html(candidate, result)
     elif segment == "paths":
-        html_ = paths_html(candidate)
+        html_ = paths_html(candidate, result)
     explanation = candidate.get("explanation")
     if segment == "explanation" and not explanation:
         why = ("No explanation was returned for this candidate." if explanations
@@ -2188,7 +2393,7 @@ def result_identity_html(result: Optional[Mapping[str, Any]], state: Mapping[str
     (the skill's §1.2): a part that differs carries what is in use now under
     its own value ("In use now: …"), the difference beside it, never a second
     copy of the result's value in a table of its own. Then the claim boundary
-    and the medical-device line."""
+    (the medical-device line is the results footer's, R-26)."""
     if not isinstance(result, Mapping):
         return '<p class="shep-muted">Run a diagnosis to see what produced its result.</p>'
     kind, identity = _identity_of(result)
@@ -2225,15 +2430,16 @@ def result_identity_html(result: Optional[Mapping[str, Any]], state: Mapping[str
 
 
 def _boundary_html(sentences: Iterable[str]) -> str:
-    """The claim boundary as the identity drawer shows it, then the
-    medical-device line. Each sentence is the report's, word for word, except
-    that its ✓ is drawn as the mark the drawer shows a verified part by
-    (`_part_html`, the card's served facts): the sentence names the mark the
-    reader sees."""
+    """The claim boundary as the identity drawer shows it. Each sentence is
+    the report's, word for word, except that its ✓ is drawn as the mark the
+    drawer shows a verified part by (`_part_html`, the card's served facts):
+    the sentence names the mark the reader sees. **No medical-device line**:
+    the results footer says it, in view beside the drawer (R-26); the report
+    keeps it under its own boundary."""
     mark = _status_mark("ok", "verified")
     shown = "".join(f"<p>{_e(sentence).replace(_VERIFIED_MARK, mark)}</p>"
                     for sentence in sentences)
-    return f'<div class="shep-dx-boundary">{shown}<p><b>{_e(NOT_A_MEDICAL_DEVICE)}</b></p></div>'
+    return f'<div class="shep-dx-boundary">{shown}</div>' if shown else ""
 
 
 def result_digests_html(result: Optional[Mapping[str, Any]]) -> str:
@@ -2269,10 +2475,11 @@ def result_digests_html(result: Optional[Mapping[str, Any]]) -> str:
             f'{_summary_list(shown, wide=[label for label, _value in shown])}</div>')
 
 
-def model_identity_html(state: Mapping[str, Any], section: str = "identity") -> str:
+def model_identity_html(state: Mapping[str, Any], section: Optional[str] = None) -> str:
     """The identity drawer's "Model in use": Model Facts of the served model
-    (`diagnosis_card.served_facts_html`), then the claim boundary for what is
-    loaded and the medical-device line."""
+    (`diagnosis_card.served_facts_html`, every section open, `section` the
+    one it was opened at, scrolled into view), then the claim boundary for
+    what is loaded."""
     status = state.get("status")
     sentences: list[str] = []
     if isinstance(status, Mapping) and status.get("initialized"):
@@ -2280,13 +2487,16 @@ def model_identity_html(state: Mapping[str, Any], section: str = "identity") -> 
         kind = _SERVED if isinstance(identity, dict) else IDENTITY_NOT_REPORTED
         sentences = _claim_boundary_lines(kind, identity if isinstance(identity, dict) else None,
                                           IDENTITY_NOTHING_CHECKED_LOADED)
-    return card.served_facts_html(state, open_section=section) + _boundary_html(sentences)
+    return card.served_facts_html(state, focus=section) + _boundary_html(sentences)
 
 
 def identity_outputs(view: Mapping[str, Any], state: Mapping[str, Any],
                      result: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     """The identity drawer as `view` asks: open or closed, on "Model in use"
-    (opened at a section) or "This result"."""
+    (opened at a section) or "This result". Model in use carries the view's
+    ``opened`` token (``data-shep-open``): its page scrolls the drawer once
+    for each token (`FACTS_FOCUS_JS`), so each request to open it is drawn
+    as asked and a redraw of the same opening moves nothing."""
     if not view.get("open"):
         return {"identity_drawer": gr.update(visible=False)}
     on_model = view.get("seg", "model") == "model"
@@ -2296,7 +2506,8 @@ def identity_outputs(view: Mapping[str, Any], state: Mapping[str, Any],
         "identity_drawer": gr.update(visible=True),
         "identity_seg": gr.update(value="model" if on_model else "result"),
         "id_model": view_update(on_model, *_HTML_VIEW,
-                                value=model_identity_html(state, view.get("section") or "identity")
+                                value=f'<div data-shep-open="{_e(str(view.get("opened", "")))}">'
+                                + model_identity_html(state, view.get("section")) + "</div>"
                                 if on_model else None),
         "id_result_html": view_update(not on_model, *_HTML_VIEW,
                                       value=None if on_model
@@ -2362,20 +2573,27 @@ def _shared_start(label: str, other: str) -> int:
 def _led_by_difference(label: str, other: str, room: int) -> Optional[str]:
     """`label` within `room` characters, from the start of the token where it
     first differs from `other` (skill §8: the distinguishing token first), a
-    "…" for each side cut; None when `other` begins with all of `label`."""
+    "…" for each side cut, each cut between two grapheme clusters
+    (`renderers.grapheme_ends`, B72-N4); None when `other` begins with all of
+    `label`."""
     differs = _shared_start(label, other)
     if differs >= len(label):
         return None
+    ends = _grapheme_ends(label)
     start = differs
     while start and label[start - 1].isalnum():
         start -= 1
+    start = min(end for end in ends if end >= start)
     if len(label) - start <= room - (1 if start else 0):
         return ("…" if start else "") + label[start:]
     width = room - (2 if start else 1)
     if differs >= start + width:    # a token longer than the room: its differing character stays
         width = room - 2
-        start = differs + 1 - width
-    return ("…" if start else "") + label[start:start + width] + "…"
+        start = min(end for end in ends if end >= differs + 1 - width)
+    stop = max(end for end in ends if end <= start + width)
+    if stop <= start:              # one character longer than the room
+        return None
+    return ("…" if start else "") + label[start:stop] + "…"
 
 
 def _option_text(label: str, mark: str, others: List[str], taken: set) -> str:
@@ -2386,13 +2604,15 @@ def _option_text(label: str, mark: str, others: List[str], taken: set) -> str:
     differs from another label (the one sharing its longest start first);
     cut elsewhere. A label no shortening tells apart keeps the middle cut,
     moved until unique; the full label is under the select once it is chosen
-    (`cohort_info`)."""
+    (`cohort_info`). Every cut is between two grapheme clusters (B72-N4): the
+    middle cuts are `renderers.cut_at`'s."""
     room = OPTION_CHARS - len(mark)
     keep = room - 1
     first = (keep + 1) // 2
+    ends = _grapheme_ends(label)
 
     def cut(head: int) -> str:
-        return label[:head] + "…" + label[len(label) - (keep - head):]
+        return _cut_at(label, head, keep, ends)
 
     if len(label) <= room:
         candidates: List[Optional[str]] = [label]
@@ -2571,7 +2791,8 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
     view = view or {}
     fresh: Dict[str, Any] = {
         "card_time": card.time_html(state, produced),
-        "card_body": card.body_html(state, produced),
+        "card_body": card.body_html(state, produced,
+                                    synthetic_said=synthetic_banner_shown(result, state)),
         "change_btn": button,
         "stop_btn": card.stop_button(state),
         "change_reason": card.change_reason_html(state),
@@ -2733,6 +2954,9 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
         return _no_result_outputs(f'<p class="shep-dx-error"><b>Error:</b> {error}</p>')
     result["_query_phenotypes"] = hpo_ids
     result["_query_not_ids"] = not_ids(phenotype_text)
+    # The terms' names, from the served graph while it is the result's own
+    # (by its digest): read once, kept with the result (R-3, R-5).
+    result["_names"] = result_names(result)
     if genes is not None:
         result["_query_candidate_genes"] = genes
     result["_explanations"] = explanations
@@ -2815,17 +3039,20 @@ def select_candidate(result: Any, segment: Any, key: Any) -> Dict[str, Any]:
 
 
 def open_identity(state: Any, result: Any, seg: str = "model",
-                  section: str = "identity", phase: Any = "idle") -> Dict[str, Any]:
-    """Details › (Model in use, at Identity), Recorded results › (at Evidence) or
-    the badge (This result): the identity drawer, in the details column's
-    slot; the change-model drawer closes. While a model change is open (its
+                  section: Optional[str] = None, phase: Any = "idle") -> Dict[str, Any]:
+    """Details › (Model in use, at its top), Recorded results › (at Evidence,
+    scrolled into view: every section is open) or the badge (This result):
+    the identity drawer, in the details column's
+    slot; the change-model drawer closes. Each request is an opening of its
+    own (``opened``, `identity_outputs`), so it is drawn as asked whether the
+    drawer was open or not. While a model change is open (its
     confirmation, or a reload running: `phase` not idle) the change drawer
     stays and the identity drawer does not open: the confirmation, and the
     reload's outcome, are never hidden behind it (Run Diagnosis says to finish
     or cancel the change first)."""
     if phase not in (None, "idle"):
         return {"change_drawer": gr.update(visible=True)}
-    view = {"open": True, "seg": seg, "section": section}
+    view = {"open": True, "seg": seg, "section": section, "opened": time.monotonic_ns()}
     state = state if isinstance(state, Mapping) else card.new_state()
     return {"identity_view": view, "change_drawer": gr.update(visible=False),
             **identity_outputs(view, state, result)}
@@ -3067,6 +3294,34 @@ def reset_change(closed: Any) -> Dict[str, Any]:
 # =============================================================================
 # Tab builder (called by the shell)
 # =============================================================================
+#: Model in use drawn as each opening asks (R-28), once for each opening's
+#: token (`identity_outputs`' ``data-shep-open``): opened at a section
+#: (`renderers.model_facts_html`'s ``data-shep-focus``, "Recorded results ›" at
+#: Evidence), that section scrolled into view inside the drawer, since every
+#: section is open and the one asked for may be below the drawer's fold;
+#: opened at none (Details ›), the drawer's scroll region at its top, where
+#: Warnings lead. Checked when the view mounts (a closed drawer opening mounts
+#: it with its content) and on each redraw after: Gradio patches the open
+#: drawer's view in place, so a new token may be an attribute's change alone.
+#: A redraw of the same opening (the card's reads, a diagnosis) keeps its
+#: token and moves nothing the reader scrolled.
+FACTS_FOCUS_JS = r"""
+var shepOpened = null;
+var shepFocus = function () {
+  var at = element.querySelector('[data-shep-open]');
+  if (!at || at.getAttribute('data-shep-open') === shepOpened) { return; }
+  shepOpened = at.getAttribute('data-shep-open');
+  var sec = at.querySelector('[data-shep-focus]');
+  var region = element.closest('.shep-dx-scroll');
+  if (sec) { sec.scrollIntoView({block: 'start'}); }
+  else if (region) { region.scrollTop = 0; }
+};
+new MutationObserver(shepFocus).observe(element, {childList: true, subtree: true, attributes: true,
+                                                  attributeFilter: ['data-shep-open']});
+requestAnimationFrame(shepFocus);
+"""
+
+
 def _close_html(what: str) -> str:
     return (f'<button type="button" class="shep-dx-close" data-key="close" aria-label="Close the '
             f'{_e(what)}" title="Close">×</button>')
@@ -3220,7 +3475,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
             with gr.Column(elem_id="shep-dx-identity-bd", elem_classes=["shep-dx-scroll"]):
                 # The views are shown and hidden by a class, never `visible`
                 # (`view_update`).
-                id_model = plain_html("", elem_id="shep-dx-id-model", js_on_load=MODEL_LIST_JS)
+                id_model = plain_html("", elem_id="shep-dx-id-model",
+                                      js_on_load=MODEL_LIST_JS + FACTS_FOCUS_JS)
                 id_result_html = plain_html("", elem_id="shep-dx-id-result",
                                             elem_classes=[VIEW_OFF])
         with gr.Column(visible=False, elem_id="shep-dx-change",
@@ -3406,7 +3662,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                     show_progress="hidden")
 
     def _open_details(state, result, phase):
-        return mapped(open_identity(state, result, "model", "identity", phase))
+        return mapped(open_identity(state, result, "model", phase=phase))
 
     details_btn.click(_open_details, inputs=[card_state, results_state, handle.phase],
                       outputs=outputs(*identity_names), show_progress="hidden")
@@ -3420,7 +3676,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 outputs=outputs(*identity_names), show_progress="hidden")
 
     def _switch_identity(state, result, seg, view):
-        new_view = {**(view or {}), "open": True, "seg": seg, "section": "identity"}
+        new_view = {**(view or {}), "open": True, "seg": seg, "section": None,
+                    "opened": time.monotonic_ns()}
         return mapped({"identity_view": new_view, **identity_outputs(new_view, state, result)})
 
     identity_seg.input(_switch_identity,
@@ -3601,9 +3858,11 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-results {{ flex: 5 1 0 !important; }}
 {_TAB} #shep-dx-details {{ flex: 4 1 0 !important; }}
 /* The three panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the input
-   column's own width at its narrowest; the candidates' table whole from 490 px; the details. */
+   column's own width at its narrowest; the candidates' table whole from 532 px (its five
+   columns' min-content, 495 px measured with the Phenotypes k/N column and the evidence label
+   wrapping, plus the region's padding and border); the details. */
 {_TAB} #shep-dx-input {{ --shep-panel-min: 300px; }}
-{_TAB} #shep-dx-results {{ --shep-panel-min: 490px; }}
+{_TAB} #shep-dx-results {{ --shep-panel-min: 532px; }}
 {_TAB} #shep-dx-details {{ --shep-panel-min: 380px; }}
 {_TAB} .shep-dx-scroll {{ gap: 12px !important; padding: 14px 16px !important; }}
 {_TAB} .shep-dx-scroll > * {{ flex-shrink: 0 !important; }}
@@ -3715,8 +3974,14 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-why {{ color: var(--shep-text-2); }}
 {_TAB} .shep-dx-tbl-wrap {{ margin: 0; }}
 {_TAB} .shep-dx-tbl td, {_TAB} .shep-dx-tbl th {{ white-space: nowrap; }}
-{_TAB} .shep-dx-tbl td.shep-dx-dis {{ white-space: normal; width: 100%; min-width: 9em; }}
+/* A disease name breaks anywhere it must (an unbroken token of a long name, 40 characters and
+   more, widened the table past its panel at 1440 x 900, Phenotypes and Evidence out of view in
+   its sideways scroll: PTR-LAYOUT); its words still break between words first. */
+{_TAB} .shep-dx-tbl td.shep-dx-dis {{ white-space: normal; width: 100%; min-width: 9em; overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-tbl td.shep-dx-wrap {{ white-space: normal; min-width: 7em; overflow-wrap: anywhere; }}
+/* The evidence label wraps before the table scrolls sideways (beside the
+   Phenotypes k/N column, R-1d): on one line wherever the panel has room. */
+{_TAB} .shep-dx-tbl td.shep-dx-evcell {{ white-space: normal; min-width: 6.5em; }}
 {_TAB} .shep-dx-ref code {{ font-family: var(--shep-mono); }}
 {_TAB} .shep-dx-task-box {{ gap: 0 !important; }}
 {_TAB} #shep-dx-change-task {{ flex: 0 0 auto !important; width: auto !important; }}
@@ -3745,8 +4010,15 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-seg {{ padding: 10px 16px 0 !important; }}
 {_TAB} .shep-dx-off {{ display: none !important; }}
 {_TAB} .shep-dx-ev-label {{ margin: 0 0 8px; }}
-{_TAB} .shep-dx-quote {{ margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--shep-border-2); background: var(--shep-panel-2); color: var(--shep-text-2); overflow-wrap: anywhere; }}
-{_TAB} .shep-dx-h {{ font-size: 15px; font-weight: 600; margin: 10px 0 4px; }}
+/* The evidence as an explanation (R-3): the answer, its facts as one summary
+   list, the server's narrative folded; a term's name first, its id muted. */
+{_TAB} .shep-dx-ev {{ margin: 0 0 8px; }}
+{_TAB} .shep-dx-ev-why {{ margin: 0 0 8px; color: var(--shep-text-2); overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-ev-more p {{ margin: 4px 0 0; color: var(--shep-text-2); overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-id {{ font-family: var(--shep-mono); font-size: 14px; color: var(--shep-muted); }}
+{_TAB} #shep-dx-details-body p.shep-dx-sub-h {{ margin: 8px 0 4px; font-size: 14px; }}
+{_TAB} .shep-dx-step {{ display: inline-block; border: 1px solid var(--shep-border); border-radius: 6px; padding: 1px 6px; background: var(--shep-panel-2); }}
+{_TAB} .shep-dx-paths-more > summary {{ margin: 2px 0 6px; }}
 {_TAB} .shep-dx-genes {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }}
 {_TAB} .shep-dx-gene {{ font-family: var(--shep-mono); font-size: 14px; border: 1px solid var(--shep-accent-100); background: var(--shep-accent-50); border-radius: 6px; padding: 2px 8px; }}
 {_TAB} .shep-dx-list, {_TAB} .shep-dx-paths {{ margin: 0 0 8px; padding-left: 22px; }}
@@ -3783,7 +4055,6 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-result-id .shep-dx-now-k {{ font-weight: 600; }}
 /* The drawers' Model Facts take the one summary list's columns
    (`renderers.summary_list`: a digest's long label on a line of its own). */
-{_TAB} .shep-dx-drawer .shep-facts-sum {{ overflow-wrap: anywhere; }}
 {_TAB} #shep-dx-change-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
 {_TAB} #shep-dx-change .shep-model-head {{ gap: 8px 14px !important; }}
 /* The search and what the list shows, on a line of their own under the head (R-27). */

@@ -400,7 +400,9 @@ def test_a_read_older_than_the_result_is_stale(root):
     body = card.body_html(state, produced)
     assert "read 10:14:05" in body and "older than this result" in body
     assert card.card_mode(state, (NOW - timedelta(seconds=30)).isoformat()) == "current"
-    assert "checked 10:14:05" in card.time_html(state)
+    assert "10:14:05" in card.time_html(state)
+    # Stale, the title row says nothing: the body's "read …" is the read's time, once.
+    assert card.time_html(state, produced) == ""
 
 
 def test_a_read_later_in_the_same_second_as_the_result_is_current(root):
@@ -409,7 +411,7 @@ def test_a_read_later_in_the_same_second_as_the_result_is_current(root):
     state = _state(root, now=NOW.replace(microsecond=700_000))
     produced = NOW.replace(microsecond=300_000).isoformat()
     assert card.card_mode(state, produced) == "current"
-    assert "checked 10:14:05" in card.time_html(state, produced)
+    assert "10:14:05 UTC" in card.time_html(state, produced)
 
 
 def test_another_served_identity_sets_the_change_notice(root):
@@ -493,7 +495,7 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
                          open_checkpoints=True)
     body = card.body_html(shown)
     assert "Recorded results: ledger not readable" in body and "no ledger" not in body
-    assert "checked 13:14:05" in card.time_html(shown)
+    assert "13:14:05" in card.time_html(shown)
     # What the checkpoint records is kept (it was not opened again).
     assert shown["facts"]["trained"] == first["facts"]["trained"]
     assert shown["facts"]["item"]["dataset_fingerprint"] == root["recorded"]
@@ -591,7 +593,7 @@ def test_names_are_escaped(root, tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- Details
 def test_details_add_what_a_served_model_has_to_model_facts(root):
     html = card.served_facts_html(_state(root))
-    identity = html[html.index('data-sec="identity"'):html.index('data-sec="uses"')]
+    identity = _section(html, "identity")
     for text in ("Knowledge graph served (kg.json)", "Dataset record served (kg.provenance.json)",
                  "origin synthetic", "6,569 params", root["recorded"]):
         assert text in identity
@@ -612,22 +614,28 @@ def test_details_add_what_a_served_model_has_to_model_facts(root):
     assert "structural fingerprint" not in html
     warnings = html[html.index('data-sec="warnings"'):]
     # A disease model uses no SP table: no warning that it lacks one.
-    assert "SYNTHETIC WORKSPACE" in warnings and "NO SHORTEST-PATH TABLE" not in warnings
+    assert "Synthetic workspace: not a clinical result." in warnings
+    assert "shortest-path table" not in warnings.lower()
     assert ('<dt class="shep-k">Shortest paths</dt><dd class="shep-v">not used by this task</dd>'
             in _section(html, "data"))
-    assert "TRAINED ON A DATASET NO LISTED WORKSPACE HOLDS" in warnings
+    assert r.TRAINED_ON_UNLISTED in warnings
+    # R-28, R-26: every section is open, Warnings first; no Uses section (the
+    # results footer says the device line; the synthetic banner, testing only).
+    assert "<details" not in html and 'data-sec="uses"' not in html
+    assert r.NOT_A_MEDICAL_DEVICE not in html and r.SYNTHETIC_FOR_TESTING not in html
+    assert html.index('data-sec="warnings"') < html.index('data-sec="identity"')
 
 
 def _section(html, key):
     start = html.index(f'data-sec="{key}"')
-    return html[start:html.index("</details>", start)]
+    return html[start:html.index("</section>", start)]
 
 
 def test_details_for_a_read_only_request_say_not_shown_never_not_recorded(root,
                                                                           no_checkpoint_opened):
     html = card.served_facts_html(_state(root, operator=False))
     assert card.TRAINED_NOT_SHOWN in html
-    assert "DATASET NOT RECORDED" not in html
+    assert r.DATASET_NOT_RECORDED not in html
     assert "Trained on not recorded" not in html
     # Seen in review: the Data section kept "dataset fingerprint not recorded".
     for key in ("identity", "data"):
@@ -651,7 +659,7 @@ def test_details_before_the_checkpoint_is_read_say_not_read_yet(root, no_checkpo
             f'{r.e(card.TRAINED_NOT_READ_YET)}</dd>') in data
     assert ('<dt class="shep-k">Dataset fingerprint</dt><dd class="shep-v">'
             '<span class="shep-muted">not read yet</span></dd>') in data
-    assert "DATASET NOT RECORDED" not in html
+    assert r.DATASET_NOT_RECORDED not in html
 
 
 def test_details_say_not_recorded_when_the_checkpoint_records_no_dataset(root):
@@ -668,12 +676,16 @@ def test_details_say_not_recorded_when_the_checkpoint_records_no_dataset(root):
     assert state["facts"]["trained"] == {"state": "read", "fingerprint": None, "problem": None}
     html = card.served_facts_html(state)
     assert "not recorded" in _section(html, "identity") and "not recorded" in _section(html, "data")
-    assert "DATASET NOT RECORDED" in html
+    assert r.DATASET_NOT_RECORDED in html
 
 
 def test_details_open_at_the_section_asked_for(root):
-    html = card.served_facts_html(_state(root), open_section="evidence")
-    assert 'data-sec="evidence" open' in html and 'data-sec="identity" open' not in html
+    """R-28: every section is open, so "Recorded results ›" (at Evidence)
+    marks the section the page scrolls into view; Details › marks none."""
+    html = card.served_facts_html(_state(root), focus="evidence")
+    assert '<section class="shep-facts-sec" data-sec="evidence" data-shep-focus="true">' in html
+    assert html.count("data-shep-focus") == 1 and "<details" not in html
+    assert "data-shep-focus" not in card.served_facts_html(_state(root))
 
 
 def test_details_of_a_failed_read_say_what_is_last_known(root):
@@ -692,7 +704,7 @@ def test_the_cards_times_are_utc_and_say_so_on_a_server_in_another_zone(root):
     chip's "since 15:50 UTC" and the Test job's UTC times."""
     with local_zone("Asia/Taipei"):
         state = _state(root, now=datetime(2026, 10, 21, 23, 50, 35))
-        assert "checked 15:50:35 UTC" in card.time_html(state)
+        assert "Status read at 15:50:35 UTC" in card.time_html(state)
         assert card.hhmmss("2026-10-21T23:50:30") == "15:50:30 UTC"
         later = card.advance(state, _status(root, "model-12.pt", NEWER), None,
                              now=datetime(2026, 10, 21, 23, 52, 0), operator=True,

@@ -223,8 +223,11 @@ def _since(started_at: Any) -> Optional[str]:
 
 
 def _command(value: Any) -> str:
-    text = " ".join(str(value or "unknown command").split())
-    return text if len(text) <= _COMMAND_LIMIT else text[:_COMMAND_LIMIT - 1] + "…"
+    """A holder record's command on one line, cut where a cell's reason is
+    (`renderers.short_reason`: between two characters as drawn)."""
+    from src.webui.components.renderers import short_reason
+
+    return short_reason(value or "unknown command", _COMMAND_LIMIT)
 
 
 def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],

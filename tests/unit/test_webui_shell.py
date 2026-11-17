@@ -1151,14 +1151,25 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
   await page.waitForSelector('#shep-chips .shep-chip-readonly', { timeout: 60000 });
   await page.click('#shep-tab-settings-button');
   await page.waitForSelector('#allocator_preset input:disabled', { timeout: 30000 });
-  await page.waitForFunction(() => window.__shepQueue.inflight === 0, null, { timeout: 30000 });
+  // The page's open answered: D8's reason drawn for this request.
+  await page.waitForSelector('#runtime_access_reason .shep-reason', { state: 'visible', timeout: 30000 });
+  await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
   console.log(JSON.stringify(await page.evaluate(() => {
     const s = (sel) => { const c = getComputedStyle(document.querySelector(sel));
       return { background: c.backgroundColor, border: c.borderTopColor, color: c.color }; };
+    const box = (sel) => { const r = document.querySelector(sel).getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
+    const panel = document.getElementById('shep-settings');
     return { chip: s('#shep-chips .shep-chip-readonly'),
              fields: window.__shepLook.fields(document.getElementById('shep-tab-settings')),
              select: s('#allocator_preset .wrap:has(> .wrap-inner)'), value: s('#allocator_preset input'),
-             box: s('#torch_compile input[type=checkbox]'), label: s('#torch_compile label') };
+             box: s('#torch_compile input[type=checkbox]'), label: s('#torch_compile label'),
+             reason: { text: document.querySelector('#runtime_access_reason').innerText.trim(),
+                       at: box('#runtime_access_reason .shep-reason'),
+                       inBody: !!document.querySelector('#shep-settings-bd #runtime_access_reason') },
+             facts: box('#runtime_facts'), allocator: box('#allocator_preset'), footer: box('#shep-settings-ft'),
+             footerText: document.getElementById('shep-settings-ft').innerText,
+             said: (panel.innerText.match(/Operator controls only/g) || []).length };
   })));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -1257,7 +1268,11 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     D8 refuses (no deployment mode): Settings' allocator select and
     torch.compile checkbox are drawn off (the disabled fill, border and grey
     words, the select's value at 4.5:1 on it), not like the enabled ones an
-    operator sees; the header's read-only chip is the amber lozenge."""
+    operator sees; the header's read-only chip is the amber lozenge. The
+    "Operator controls only: …" reason is said once in the panel, next to
+    the fields it turns off: in the panel's body, between the facts and the
+    allocator select, not in the buttons' row under the two fields and their
+    accordions (where it was: NEW-settings-datasets-footer-3)."""
     from src.webui import style
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import LOOK_JS, QUEUE_JS, node_with_playwright, run_node
@@ -1281,6 +1296,87 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     assert seen["chip"]["background"] == _rgb(tokens["--shep-amber-50"])
     assert seen["chip"]["color"] == _rgb(tokens["--shep-amber-800"])
     assert any(f["disabled"] for f in seen["fields"])
+    reason, allocator = seen["reason"], seen["allocator"]
+    assert reason["text"].split() == ["🔒", *"Operator controls only: deployment mode not set to M1.".split()], reason
+    assert reason["inBody"] and seen["said"] == 1, seen
+    assert seen["facts"]["bottom"] <= reason["at"]["top"] + 0.5, seen
+    assert reason["at"]["bottom"] <= allocator["top"] + 0.5 <= reason["at"]["bottom"] + 24, seen
+    assert "Operator controls only" not in seen["footerText"], seen
+
+
+#: Settings' scroll region (its level-1 tab item, side by side) with the
+#: evidence folders box placed partly under the region's foot, as a walk or a
+#: reader's scrolling can leave it, then focused as a keyboard focuses it:
+#: where the box is and what is over its centre, at each overlap.
+_PARTLY_HIDDEN_FOCUS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1366, height: 620 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  await page.click('#shep-tab-settings-button');
+  const box = '#dl_box_training_evidence_dirs textarea';
+  await page.waitForSelector(box + ':enabled', { timeout: 30000 });
+  await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  await page.keyboard.press('Tab');
+  const seen = [];
+  for (const overlap of [6, 10, 20, 30]) {
+    seen.push(await page.evaluate(async ([sel, overlap]) => {
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const ta = document.querySelector(sel);
+      let region = ta.parentElement;
+      while (region && !(/(auto|scroll)/.test(getComputedStyle(region).overflowY)
+                         && region.scrollHeight > region.clientHeight + 1)) { region = region.parentElement; }
+      if (document.activeElement) { document.activeElement.blur(); }
+      const foot = region.getBoundingClientRect().bottom;
+      region.scrollTop += ta.getBoundingClientRect().top - (foot - overlap);
+      await frame();
+      const placed = foot - ta.getBoundingClientRect().top;
+      ta.focus();
+      await frame();
+      const r = ta.getBoundingClientRect();
+      const top = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2)[0];
+      return { overlap, placed, region: region.id || region.className, foot, top: r.top, bottom: r.bottom,
+               focused: document.activeElement === ta,
+               over: top === ta || ta.contains(top) ? 'itself' : (top.closest('[id]') || {}).id };
+    }, [box, overlap]));
+  }
+  console.log(JSON.stringify(seen));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_box_partly_under_a_pages_region_foot_is_focused_whole_into_view(tmp_path, monkeypatch):
+    """The shared walk's open problem on Settings at 1366 x 620 (T06-D): side by
+    side, Settings scrolls in its level-1 tab item, and a text box partly under
+    that region's foot was focused by bringing its first line just into view,
+    its centre left under the runtime line below ("focused
+    #dl_box_training_evidence_dirs textarea under #runtime_footer"): the
+    caret's room under what a scroll region brings into view (R-25) was set on
+    the page and on the panels, not on a page's own region. In a real
+    browser, for an operator, the evidence folders box placed 6 to 30 px
+    into the region's foot and focused is wholly inside the region, nothing
+    over its centre. On the code before (5137694) it stays at 561-619 px,
+    under the runtime line at 588."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import DEPLOYMENT_MODE
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    monkeypatch.setenv(DEPLOYMENT_MODE, "M1")
+    script = _PARTLY_HIDDEN_FOCUS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")])
+    for s in seen:
+        assert s["region"] == "shep-tab-settings" and abs(s["placed"] - s["overlap"]) < 1, s
+        assert s["focused"] and s["over"] == "itself", s
+        assert s["bottom"] <= s["foot"] + 0.5, s
 
 
 # --------------------------------------------------------------------------- D02 and D03 (T04)
@@ -1660,6 +1756,231 @@ def test_the_continue_drawer_and_the_fine_tune_form_fit_the_owners_window(ui_wal
         for part in ("device", "runName", "more"):
             assert form[part] and form[part][1] <= form["bottom"] <= form["footer"], (part, form)
         assert form["stop"] is None, form
+
+
+# --------------------------------------------------------------------------- PTR-LAYOUT and INT-AUDIT (T06-D)
+#: Pages whose one fingerprint is said twice on purpose, with the reason, in
+#: the shared walk's repeat count (`browser.repeat_problems`): Datasets'
+#: selected workspace (its table row and its details beside it: B51-h,
+#: recorded, not changed here); Models' model in use (its row and the Load
+#: box's "in use for diagnosis" line, the page the shared model list's lane
+#: changes). Every other screen says each fingerprint once.
+_SAID_TWICE = {"datasets": 2, "models": 2}
+
+#: Diagnosis' largest Top-K (20) on the long-named workspace
+#: (`registered_cohort.write_long_named_workspace`: 25 diseases, 20 of them
+#: with names of 120 to 190 characters).
+_LONG_DIAGNOSIS = {"hpo": "HP:0001250\nHP:0001263", "top_k": 20, "rows": 20}
+
+#: What the acceptance walk reads at each stop besides the shared check: the
+#: header's first chip (D8's), the layout decision, Diagnosis' results as
+#: drawn (whether the table has a box, its rows, those with a long name, and
+#: its width against its box's), and the card's Change model… as drawn (its
+#: words, whether it is disabled, and the reason beside it if one is drawn).
+_ACCEPTANCE_FACTS_JS = r"""() => {
+  const chip = document.querySelector('#shep-chips .shep-chip');
+  const table = document.querySelector('#shep-dx-results-body table');
+  const rows = table ? [...table.querySelectorAll('tbody tr[data-key]')] : [];
+  const change = document.querySelector('#shep-dx-change-btn');
+  const why = document.querySelector('#shep-dx-change-why');
+  const drawn = (e) => !!e && e.getClientRects().length > 0;
+  return { chip: chip ? chip.innerText.trim() : null,
+           layout: document.documentElement.getAttribute('data-shep-layout'),
+           shown: drawn(table),
+           rows: rows.length, long: rows.filter((r) => /, type \d+/.test(r.innerText)).length,
+           table: table ? [table.scrollWidth, table.parentElement.clientWidth] : null,
+           change: drawn(change) ? { text: change.innerText.trim(), off: change.disabled,
+                                     why: drawn(why) ? why.innerText.trim() : '' } : null };
+}"""
+
+
+def _acceptance_stops():
+    """Every page at PLAN_TEST_RESULTS §6's sizes the representative windows
+    leave out (`browser.PTR_SIZES`), then Diagnosis answered with its largest
+    Top-K at the owner's window, the acceptance sizes, a short laptop, a
+    narrow column and a phone (the diagnosis asked at the first of them)."""
+    from tests.fixtures.browser import PTR_SIZES, UI_PAGES
+
+    stops = [{"size": [w, h], "page": page} for page in UI_PAGES for w, h in PTR_SIZES]
+    answered = [{"size": [w, h], "page": "clinical", "tag": "results"}
+                for w, h in ((1850, 960), *PTR_SIZES, (1366, 620), (960, 1080), (390, 844))]
+    answered[0]["diagnose"] = _LONG_DIAGNOSIS
+    return stops + answered
+
+
+#: The read-only viewer's windows: on a high-DPI screen (2 device pixels per
+#: CSS pixel) the owner's window, the acceptance sizes a high-DPI screen gives
+#: (a 3840 x 2160 one at 200 % is 1920 x 1080) and a phone; at 1 the two
+#: largest, whose screens are their CSS size.
+_READ_ONLY_HIGH_DPI = ((1850, 960), (1920, 1080), (1280, 720), (1440, 900), (1707, 870), (1080, 1920),
+                       (960, 540), (390, 844))
+_READ_ONLY_LARGE = ((2560, 1600), (3840, 2160))
+
+
+def _read_only_stops(sizes):
+    """Every page, for a viewer D8 refuses, at `sizes`; then Diagnosis
+    answered with its largest Top-K on the long names at each of them (the
+    diagnosis asked at the first): the diagnose route asks for no operator,
+    and such a viewer's Diagnosis is drawn apart (Change model locked, its
+    reason beside it)."""
+    from tests.fixtures.browser import UI_PAGES
+
+    stops = [{"size": [w, h], "page": page, "tag": "readonly"} for page in UI_PAGES for w, h in sizes]
+    answered = [{"size": [w, h], "page": "clinical", "tag": "results"} for w, h in sizes]
+    answered[0]["diagnose"] = _LONG_DIAGNOSIS
+    return stops + answered
+
+
+def _answered_problems(answered, *, refused=False):
+    """What is wrong with Diagnosis' answered stops (`_ACCEPTANCE_FACTS_JS`):
+    each draws the results table with the 20 results, 16 or more with a long
+    name, and side by side the table is no wider than its box. Change model…
+    is drawn by the gated-button rule: for a viewer D8 refuses (`refused`),
+    disabled with the lock and "Operator controls only: …" beside it; for an
+    operator, usable, with no lock and no reason."""
+    from src.webui.components.chips import LOCK, OPERATOR_ONLY
+
+    problems = []
+    for s in answered:
+        facts = s["extra"]
+        if not facts["shown"] or facts["rows"] != 20 or facts["long"] < 16:
+            problems.append((s["size"], "rows", facts))
+        if facts["layout"] == "side" and facts["table"][0] > facts["table"][1] + 1:
+            problems.append((s["size"], "table wider than its box", facts))
+        change = facts["change"] or {}
+        locked = (change.get("off") is True and change.get("text", "").startswith(LOCK)
+                  and change.get("why", "").startswith(f"{LOCK} {OPERATOR_ONLY}"))
+        unlocked = (change.get("off") is False and not change.get("text", LOCK).startswith(LOCK)
+                    and change.get("why") == "")
+        if not (locked if refused else unlocked):
+            problems.append((s["size"], "Change model", change))
+    return problems
+
+
+@pytest.fixture(scope="module")
+def acceptance_walk(tmp_path_factory, _suite_gpu_lock):
+    """PLAN_TEST_RESULTS §6's layout acceptance, the parts the shared walk
+    (`ui_walk`) leaves out (PTR-LAYOUT, INT-AUDIT), on the same check: the
+    service (mode M1) on the long-named workspace, a base and its disease
+    child trained on it and the child served; one browser as an operator
+    through `_acceptance_stops` (Diagnosis answered with 20 long-named
+    candidates), and one as a read-only viewer, every request forwarded
+    (`browser.READ_ONLY_HEADERS`: D8 refuses it, the page as such a viewer
+    sees it), through `_read_only_stops` (every page, then Diagnosis answered
+    with the same 20 long-named candidates) at `_READ_ONLY_HIGH_DPI` on a
+    high-DPI screen (2 device pixels per CSS pixel) and at `_READ_ONLY_LARGE`.
+    Screenshots under the module's ``acceptance-walk*/shots`` and
+    ``shots-read-only``."""
+    from tests.fixtures.browser import READ_ONLY_HEADERS, node_with_playwright, walk_ui
+    from tests.fixtures.registered_cohort import write_long_named_workspace
+    from tests.fixtures.served_page import served_service
+    from tests.fixtures.trained_children import train_children
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    root = tmp_path_factory.mktemp("acceptance-walk")
+    demo = write_long_named_workspace(root / "workspaces" / "demo")
+    served = train_children(demo, ("disease",))["disease"]
+    for name in ("registry", "shots", "shots-read-only", "operator", "read-only", "read-only-large"):
+        (root / name).mkdir()
+    settings = {"SHEPHERD_WORKSPACES_ROOT": str(root / "workspaces"),
+                "SHEPHERD_REGISTRY": str(root / "registry"), "SHEPHERD_DEPLOYMENT_MODE": "M1",
+                "SHEPHERD_DEVICE": "cpu", "SHEPHERD_KG_PATH": str(demo / "kg.json"),
+                "SHEPHERD_CHECKPOINT_PATH": str(served), "SHEPHERD_DATA_DIR": str(demo)}
+    with served_service(root / "service", settings) as page:
+        operator = walk_ui(page, root / "operator", _acceptance_stops(),
+                           extra_js=_ACCEPTANCE_FACTS_JS, shots=root / "shots")
+        read_only = walk_ui(page, root / "read-only", _read_only_stops(_READ_ONLY_HIGH_DPI),
+                            extra_js=_ACCEPTANCE_FACTS_JS, shots=root / "shots-read-only",
+                            headers=READ_ONLY_HEADERS, device_scale=2)
+        read_only += walk_ui(page, root / "read-only-large", _read_only_stops(_READ_ONLY_LARGE),
+                             extra_js=_ACCEPTANCE_FACTS_JS, shots=root / "shots-read-only",
+                             headers=READ_ONLY_HEADERS)
+    return {"operator": operator, "read_only": read_only}
+
+
+def test_the_acceptance_sizes_and_twenty_long_named_results_pass_the_ui_measurement_check(
+        acceptance_walk):
+    """PTR-LAYOUT: every page at 1440 x 900, 1280 x 720, 1707 x 870,
+    1920 x 1080, 2560 x 1600, 3840 x 2160, 1080 x 1920 and 960 x 540 (200 %
+    zoom), and Diagnosis with its largest Top-K answered (20 candidates, 16
+    of them with a long name) at those, at 1850 x 960, 1366 x 620,
+    960 x 1080 and 390 x 844, pass the shared check (`browser.ui_problems`: no sideways page scroll, one
+    scroll region per area, every control focused in view with nothing over
+    it, the type scale, borders and focus cues). Side by side the results
+    table is no wider than its box: a long name's 46-character token widened
+    it to 723 px in a 562 px box at 1440 x 900 (699 at 1707 x 870, 520 at
+    1366 x 620), Phenotypes and Evidence out of view in its sideways scroll,
+    whose bar was under the twentieth row; stacked, a table wider than its
+    panel scrolls sideways in its own box (the layout rule). Change model…
+    is usable, with no lock and no reason (a read-only viewer's is locked:
+    `test_a_read_only_viewers_walk_passes_the_ui_measurement_check`)."""
+    from tests.fixtures.browser import PTR_SIZES, UI_PAGES, ui_problems
+
+    seen = acceptance_walk["operator"]
+    assert {(s["page"], s["size"]) for s in seen if "check" in s} >= {
+        (page, f"{w}x{h}") for page in UI_PAGES for w, h in PTR_SIZES}
+    assert ui_problems(seen) == []
+    answered = [s for s in seen if s.get("tag") == "results"]
+    assert len(answered) == 4 + len(PTR_SIZES)
+    assert _answered_problems(answered) == []
+
+
+def test_a_read_only_viewers_walk_passes_the_ui_measurement_check(acceptance_walk):
+    """INT-AUDIT and PTR-LAYOUT: the shared walk as a viewer D8 refuses
+    (every request forwarded by a proxy, on a service in mode M1): every page
+    at the owner's window, every acceptance size and a phone, the smaller on
+    a high-DPI screen, passes the shared check, the D8 chip says
+    read-only and why, and the walk focused the controls such a viewer can
+    use (the disabled ones are not focusable). Diagnosis answered with 20
+    long-named results passes it too at each of those sizes, its results
+    table no wider than its box side by side, Change model… locked with its
+    reason beside it: such a viewer can diagnose (the diagnose route asks for
+    no operator), and their page differs from an operator's by that lock."""
+    from tests.fixtures.browser import UI_PAGES, ui_problems
+
+    seen = acceptance_walk["read_only"]
+    sizes = (*_READ_ONLY_HIGH_DPI, *_READ_ONLY_LARGE)
+    assert {(s["page"], s["size"]) for s in seen if "check" in s} == {
+        (page, f"{w}x{h}") for page in UI_PAGES for w, h in sizes}
+    assert ui_problems(seen) == []
+    for s in seen:
+        assert s["extra"]["chip"].startswith("Read-only: forwarded by a proxy"), (s["page"], s["extra"])
+        assert s["focus"]["n"] >= 3, (s["page"], s["size"], s["focus"])
+    answered = [s for s in seen if s.get("tag") == "results"]
+    assert sorted(s["size"] for s in answered) == sorted(f"{w}x{h}" for w, h in sizes)
+    assert _answered_problems(answered, refused=True) == []
+
+
+def test_each_fingerprint_is_said_once_on_a_screen(ui_walk):
+    """INT-AUDIT's repeat count (the skill's §1.2 and §12, B27-5), on the
+    shared walk (`ui_walk`): on every page at every size each fingerprint
+    drawn is said once in the page's visible text, except where
+    `_SAID_TWICE` gives the second place's reason. The Diagnosis load drawer
+    is counted apart: its dataset fingerprint is said by its workspace line
+    and by each row on this base (B27-5; the shared model list's lane says
+    it once)."""
+    from tests.fixtures.browser import repeat_problems
+
+    counted = [s for s in ui_walk if "repeats" in s and s.get("open") != "#shep-dx-change"]
+    assert {s["page"] for s in counted if s["repeats"]} >= {
+        "clinical", "datasets", "training", "finetune", "test", "models"}
+    assert repeat_problems(counted, _SAID_TWICE) == []
+
+
+def test_each_fingerprint_is_said_once_with_twenty_results_and_for_a_read_only_viewer(
+        acceptance_walk):
+    """The same repeat count on the acceptance walk: Diagnosis answered (the
+    result's own identity said against the model in use where they differ,
+    not again where they are the same: the result's model fingerprint and the
+    card's once), every page at the acceptance sizes, and every page a
+    read-only viewer sees."""
+    from tests.fixtures.browser import repeat_problems
+
+    seen = acceptance_walk["operator"] + acceptance_walk["read_only"]
+    answered = [s for s in seen if s.get("tag") == "results"]
+    assert all(s["repeats"] for s in answered)
+    assert repeat_problems(seen, _SAID_TWICE) == []
 
 
 #: The four field rows' boxes and actions as drawn (D03): Fine-tune's base

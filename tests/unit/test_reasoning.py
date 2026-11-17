@@ -392,6 +392,11 @@ class TestExplanationGenerator:
         assert "Ranking: Disease task model: every disease ranked" in labelled
         # A paragraph of its own: Markdown joins lines one newline apart.
         assert ")\n\nRanking: Disease task model" in labelled
+        # NEW-diagnosis-1: no device notice of its own; the result's surfaces
+        # say the device statement once each (the page's footer, the report).
+        for text in (explanation, labelled):
+            assert "computational prediction" not in text
+            assert "healthcare professionals" not in text and "\n---" not in text
 
 # =============================================================================
 # Test Explanation Factory Function

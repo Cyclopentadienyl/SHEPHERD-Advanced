@@ -198,7 +198,7 @@ def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(trained_disease_
     assert served.checkpoint.state == "verified"
     body = card.body_html(state)
     assert f">{served.checkpoint.sha256[:12]}</code>" in body and "synthetic data" in body
-    assert "SYNTHETIC WORKSPACE: not a clinical result." in details
+    assert "Synthetic workspace: not a clinical result." in details
     assert panel.IDENTITY_CLAIM_BOUNDARY.replace(
         "✓", r.status_mark("ok", "verified")) in details
 

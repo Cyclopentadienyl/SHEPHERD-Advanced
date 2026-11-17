@@ -29,6 +29,7 @@ from __future__ import annotations
 import html
 import math
 import re
+import unicodedata
 from collections import Counter
 from datetime import datetime, timezone
 from typing import (Any, Callable, Dict, Hashable, Iterable, List, Mapping, NamedTuple,
@@ -64,19 +65,27 @@ NOT_A_MEDICAL_DEVICE = (
 SYNTHETIC_FOR_TESTING = "Synthetic workspaces are for testing only."
 
 #: (headline, detail) for each state a reader must not miss: the Diagnosis tab's
-#: banners and Model Facts' warnings say them in these words.
+#: banners and Model Facts' warnings say them in these words. Headlines are in
+#: sentence case (the skill's §5, R-26): the banner's mark and tone make them
+#: stand out, never capitals.
 IDENTITY_BANNERS = {
     "not_reported": (
-        "WHAT PRODUCED THIS RESULT WAS NOT REPORTED.",
+        "What produced this result was not reported.",
         "The API's response carried no served identity.\n"
         "So these candidates cannot be attributed to a model, graph or table.",
     ),
     "synthetic": (
-        "SYNTHETIC WORKSPACE: not a clinical result.",
+        "Synthetic workspace: not a clinical result.",
         "The served workspace's dataset record gives its origin as synthetic.\n"
         "A generated stand-in, not a clinical knowledge graph: results are for testing only.",
     ),
 }
+#: Model Facts' other warning headlines (`facts_from_checkpoint`), in the
+#: banners' sentence case; named, so a caller tells them apart by the constant,
+#: never by their spelling.
+METADATA_NOT_READABLE = "Metadata not readable: this checkpoint cannot be loaded."
+TRAINED_ON_UNLISTED = "Trained on a dataset no listed workspace holds."
+DATASET_NOT_RECORDED = "Dataset not recorded."
 
 #: The help texts the renderers' ⓘ name; the shell registers them.
 RENDERER_HELP = {
@@ -325,17 +334,97 @@ OPTION_CHARS = 40
 _WHAT_ROOM = 5
 
 
+def _glues(ch: str) -> bool:
+    """Whether `ch` joins the character before it (UAX #29's GB9 and GB9a):
+    a combining or spacing mark, a variation selector, a zero-width joiner or
+    non-joiner, an emoji skin tone or a tag character (a subdivision flag)."""
+    cp = ord(ch)
+    return (unicodedata.category(ch) in ("Mn", "Me", "Mc") or ch in "‌‍"
+            or 0x1F3FB <= cp <= 0x1F3FF or 0xE0020 <= cp <= 0xE007F)
+
+
+def _jamo(ch: str) -> str:
+    """A Hangul jamo's or syllable's part in a syllable block (UAX #29's L,
+    V, T, LV, LVT), or "" for any other character."""
+    cp = ord(ch)
+    if 0x1100 <= cp <= 0x115F or 0xA960 <= cp <= 0xA97C:
+        return "L"
+    if 0x1160 <= cp <= 0x11A7 or 0xD7B0 <= cp <= 0xD7C6:
+        return "V"
+    if 0x11A8 <= cp <= 0x11FF or 0xD7CB <= cp <= 0xD7FB:
+        return "T"
+    if 0xAC00 <= cp <= 0xD7A3:
+        return "LV" if (cp - 0xAC00) % 28 == 0 else "LVT"
+    return ""
+
+
+#: Which Hangul part may follow which in one syllable block (UAX #29's GB6-GB8).
+_JAMO_NEXT = {"L": {"L", "V", "LV", "LVT"}, "LV": {"V", "T"}, "V": {"V", "T"},
+              "LVT": {"T"}, "T": {"T"}}
+
+
+def _regional(ch: str) -> bool:
+    """A regional indicator (two make a flag)."""
+    return 0x1F1E6 <= ord(ch) <= 0x1F1FF
+
+
+def grapheme_ends(text: str) -> List[int]:
+    """**Where `text` may be cut without splitting what a reader sees as one
+    character** (a grapheme cluster, UAX #29): every offset between two
+    clusters, 0 and ``len(text)`` included. By the rules a name can meet: CR
+    LF; a mark, a variation selector, a skin tone or a tag character with
+    what it follows; a Hangul syllable block; flags as pairs of regional
+    indicators; and nothing after a zero-width joiner (an emoji sequence such
+    as the family 👨‍👩‍👧, five code points, is one character). The standard
+    library has no grapheme segmentation (``unicodedata`` gives categories,
+    not UAX #29's break properties), so this is written here from them; it
+    never cuts where UAX #29 would not, and may keep a rarer sequence
+    together where UAX #29 would cut it, which only moves a cut to a
+    neighbouring cluster."""
+    ends, flags = [0], 0
+    for i in range(1, len(text)):
+        before, ch = text[i - 1], text[i]
+        flags = flags + 1 if _regional(before) else 0
+        if before == "\r" and ch == "\n":
+            continue
+        if unicodedata.category(before) in ("Cc", "Zl", "Zp") \
+                or unicodedata.category(ch) in ("Cc", "Zl", "Zp"):
+            ends.append(i)
+        elif _glues(ch) or before == "‍" or _jamo(ch) in _JAMO_NEXT.get(_jamo(before), ()):
+            continue
+        elif not (_regional(ch) and flags % 2):
+            ends.append(i)
+    if text:
+        ends.append(len(text))
+    return ends
+
+
+def cut_at(text: str, head: int, keep: int, ends: Optional[List[int]] = None) -> str:
+    """`text` as its start of up to `head` characters, an ellipsis, then its
+    end, `keep` characters of it in all at most (`head` at most `keep`). Cut
+    only between two grapheme clusters (`grapheme_ends`, or `ends` when the
+    caller has them, B72-N4): a character drawn from several code points (a
+    ZWJ emoji sequence, a flag, a letter and its accent) stays whole on its
+    side of the "…" or is left out whole, the end given the room the start
+    could not use. The one cut of `middle_cut` and of Diagnosis' cohort
+    options (`diagnosis_panel._option_text`), which try every `head`."""
+    ends = grapheme_ends(text) if ends is None else ends
+    first = max(end for end in ends if end <= head)
+    last = min(end for end in ends if len(text) - end <= keep - first)
+    return text[:first] + "…" + text[last:]
+
+
 def middle_cut(text: str, room: int, *, head: int = 0) -> str:
     """`text` in at most `room` characters: whole where it fits, else cut in
-    its middle with an ellipsis, so its start and its end stay (where a copy
-    or a version differs: "…copy_b.pt", "…67-v1.pt"), its start at least
-    `head` characters long where the room allows (`fit_apart`: through where
-    two alike names differ). Never longer than `text`."""
+    its middle with an ellipsis (`cut_at`, between grapheme clusters), so its
+    start and its end stay (where a copy or a version differs: "…copy_b.pt",
+    "…67-v1.pt"), its start at least `head` characters long where the room
+    allows (`fit_apart`: through where two alike names differ). Never longer
+    than `text`."""
     if len(text) <= room:
         return text
     keep = max(room, 1) - 1
-    first = max(keep // 2, min(head, keep))
-    return text[:first] + "…" + text[len(text) - (keep - first):]
+    return cut_at(text, max(keep // 2, min(head, keep)), keep)
 
 
 def _fitted(what: str, rest: Optional[str], mark: str = "",
@@ -667,7 +756,9 @@ def short_reason(text: Any, limit: int = 80) -> str:
     """A reason shortened for a cell, on one line; the full text goes in
     ``title`` or a details panel."""
     flat = " ".join(str(text or "").split())
-    return flat if len(flat) <= limit else flat[:limit - 1] + "…"
+    if len(flat) <= limit:
+        return flat
+    return flat[:max(end for end in grapheme_ends(flat) if end <= limit - 1)] + "…"
 
 
 def reason_lead(text: Any) -> str:
@@ -1388,14 +1479,13 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
     if synthetic and not listed:
         warnings.append(IDENTITY_BANNERS["synthetic"])
     if _get(item, "problem") is not None:
-        warnings.append(("METADATA NOT READABLE: this checkpoint cannot be loaded.",
-                         str(_get(item, "problem"))))
+        warnings.append((METADATA_NOT_READABLE, str(_get(item, "problem"))))
     if is_digest(fingerprint) and not names:
-        warnings.append(("TRAINED ON A DATASET NO LISTED WORKSPACE HOLDS.",
+        warnings.append((TRAINED_ON_UNLISTED,
                          "The dataset fingerprint this checkpoint records equals no listed "
                          "workspace's: its workspace was rebuilt or removed since."))
     if not is_digest(fingerprint) and _get(item, "problem") is None:
-        warnings.append(("DATASET NOT RECORDED.",
+        warnings.append((DATASET_NOT_RECORDED,
                          "This checkpoint records no dataset fingerprint, so what it was "
                          "trained on cannot be told."))
     serving_rows: Tuple[Tuple[str, str], ...] = ()
@@ -2121,19 +2211,25 @@ FACTS_TRAINED_FP = ("Trained on: dataset fingerprint (split_manifest.json, from 
                     "record)")
 
 
-def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> str:
-    """Model Facts: 1 Identity, 2 Uses, 3 Data, 4 Evidence (each a disclosure
-    with a one-line summary) and 5 Warnings, always open. Identity, Data and
-    Evidence are each one summary list (`summary_list`: one row per fact,
-    the skill's §4, §5); a trained-on dataset whose
-    checkpoint was not read says why (`ModelFacts.trained_on_unread`), never
-    "not recorded"."""
-    def section(key: str, number: int, title: str, summary: str, body: str) -> str:
-        opened = " open" if key == open_section else ""
-        return (f'<details class="shep-facts-sec" data-sec="{key}"{opened}>'
-                f'<summary><span class="shep-facts-n">{number}</span> {e(title)}'
-                f'<span class="shep-facts-sum">{summary}</span></summary>'
-                f'<div class="shep-facts-bd">{body}</div></details>')
+def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
+                     uses: bool = True) -> str:
+    """Model Facts, **every section always open** (R-28: no disclosure inside
+    the drawer that shows them, the skill's §1.5): Warnings first when there
+    are any, then Identity, Uses, Data and Evidence; "No warnings." last when
+    there are none. Identity, Data and Evidence are each one summary list
+    (`summary_list`: one row per fact, the skill's §4, §5); a trained-on
+    dataset whose checkpoint was not read says why
+    (`ModelFacts.trained_on_unread`), never "not recorded".
+
+    `focus` marks the section a caller opened the facts at
+    (``data-shep-focus``: its page scrolls it into view). Without `uses`
+    there is no Uses section: for a page whose own line says the device
+    statement, always in view, and whose banner says a synthetic workspace is
+    for testing (Diagnosis' identity drawer, over its results footer; R-26)."""
+    def section(key: str, title: str, body: str, extra: str = "") -> str:
+        marked = ' data-shep-focus="true"' if key == focus else ""
+        return (f'<section class="shep-facts-sec{extra}" data-sec="{key}"{marked}>'
+                f'<h4>{e(title)}</h4><div class="shep-facts-bd">{body}</div></section>')
 
     location = ""
     if facts.checkpoint_file:
@@ -2184,21 +2280,18 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
         ("Recorded results",
          e(recorded_tests_text(facts.recorded).removeprefix("Recorded results: "))),
     ], helps={"Validation": ("validation-trainer", "Validation (Trainer)")}) + facts.evidence_more
+    body = (section("identity", "Identity", identity)
+            + (section("uses", "Uses", f"<p>{e(uses_text)}</p>") if uses else "")
+            + section("data", "Data", summary_list(data_rows))
+            + section("evidence", "Evidence", evidence))
     if facts.warnings:
-        warnings = "".join(warning_html(h, d) for h, d in facts.warnings)
-    else:
-        warnings = '<p class="shep-muted">No warnings.</p>'
-    return (
-        '<div class="shep-facts">'
-        + section("identity", 1, "Identity", "", identity)
-        + section("uses", 2, "Uses", f" · {e(uses_text)}", f"<p>{e(uses_text)}</p>")
-        + section("data", 3, "Data", "", summary_list(data_rows))
-        + section("evidence", 4, "Evidence", "", evidence)
-        + '<section class="shep-facts-sec shep-facts-warn" data-sec="warnings">'
-          '<h4><span class="shep-facts-n">5</span> Warnings</h4>'
-          f'<div class="shep-facts-bd">{warnings}</div></section>'
-        + "</div>"
-    )
+        warned = section("warnings", "Warnings",
+                         "".join(warning_html(h, d) for h, d in facts.warnings),
+                         " shep-facts-warn")
+        return f'<div class="shep-facts">{warned}{body}</div>'
+    return (f'<div class="shep-facts">{body}'
+            + section("warnings", "Warnings", '<p class="shep-muted">No warnings.</p>')
+            + "</div>")
 
 
 __all__ = [
@@ -2208,6 +2301,9 @@ __all__ = [
     "FIELD_ROWS",
     "FROZEN_BACKBONE_WORDS",
     "IDENTITY_BANNERS",
+    "DATASET_NOT_RECORDED",
+    "METADATA_NOT_READABLE",
+    "TRAINED_ON_UNLISTED",
     "ModelFacts",
     "ALL_NEIGHBOURS",
     "NOT_A_MEDICAL_DEVICE",
@@ -2230,6 +2326,7 @@ __all__ = [
     "best_saves",
     "clock_utc",
     "count_text",
+    "cut_at",
     "dataset_details_html",
     "details_list",
     "SHORT_HEX",
@@ -2258,6 +2355,7 @@ __all__ = [
     "fit_option",
     "fit_options",
     "freeze_words",
+    "grapheme_ends",
     "ident_html",
     "is_digest",
     "metric_words",

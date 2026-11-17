@@ -1749,7 +1749,10 @@ def _diagnosis_cases():
     """Results whose CSV was pinned on the tree before the cell rules moved
     (`tests/fixtures/diagnosis_csv_pin.json`): each task kind, both identity
     kinds, a response without one, and values a rule changes (formula starts,
-    digests and not, null, empty, booleans, an unrounded float)."""
+    digests and not, null, empty, booleans, an unrounded float). The pin
+    gained the query's two columns, ``phenotypes_used`` and
+    ``phenotypes_not_used`` (R-5), before the served ones; every other cell
+    was checked unchanged when it was written again."""
     from tests.unit import test_diagnosis_panel as t
 
     out = {"disease_synthetic": t._sample_result(),

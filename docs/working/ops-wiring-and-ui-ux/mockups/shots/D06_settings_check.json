@@ -1,0 +1,656 @@
+{
+ "first_start_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Apply Settings rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(107, 114, 128)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 4.83
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    63,
+    991,
+    737
+   ],
+   "runtime": [
+    1023,
+    63,
+    811,
+    711
+   ]
+  }
+ },
+ "first_start_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 6.26,
+  "minContrastAt": "Check rgb(83, 90, 102)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(107, 114, 128)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 4.83
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    112,
+    728,
+    950
+   ],
+   "runtime": [
+    16,
+    1078,
+    728,
+    731
+   ]
+  }
+ },
+ "configured_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Apply Settings rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(107, 114, 128)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 4.83
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    63,
+    991,
+    626
+   ],
+   "runtime": [
+    1023,
+    63,
+    811,
+    711
+   ]
+  }
+ },
+ "configured_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 6.26,
+  "minContrastAt": "Check rgb(83, 90, 102)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(107, 114, 128)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 4.83
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    112,
+    728,
+    918
+   ],
+   "runtime": [
+    16,
+    1046,
+    728,
+    731
+   ]
+  }
+ },
+ "overridden_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Apply Settings rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(107, 114, 128)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 4.83
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    63,
+    991,
+    683
+   ],
+   "runtime": [
+    1023,
+    63,
+    811,
+    711
+   ]
+  }
+ },
+ "overridden_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 6.26,
+  "minContrastAt": "Check rgb(83, 90, 102)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(107, 114, 128)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 4.83
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    112,
+    728,
+    950
+   ],
+   "runtime": [
+    16,
+    1078,
+    728,
+    731
+   ]
+  }
+ },
+ "pending_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Apply Settings rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(107, 114, 128)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 4.83
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    63,
+    991,
+    634
+   ],
+   "runtime": [
+    1023,
+    63,
+    811,
+    711
+   ]
+  }
+ },
+ "pending_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 6.26,
+  "minContrastAt": "Apply rgb(83, 90, 102)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(107, 114, 128)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 4.83
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    112,
+    728,
+    876
+   ],
+   "runtime": [
+    16,
+    1004,
+    728,
+    731
+   ]
+  }
+ },
+ "unreadable_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Apply Settings rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(107, 114, 128)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 4.83
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    63,
+    991,
+    682
+   ],
+   "runtime": [
+    1023,
+    63,
+    811,
+    711
+   ]
+  }
+ },
+ "unreadable_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 6.26,
+  "minContrastAt": "Check rgb(83, 90, 102)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(107, 114, 128)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 4.83
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    112,
+    728,
+    928
+   ],
+   "runtime": [
+    16,
+    1056,
+    728,
+    731
+   ]
+  }
+ },
+ "readonly_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Read-only: deployment mode not set to M1",
+  "minContrast": 6.13,
+  "minContrastAt": "(the saved preset when this backend star rgb(91, 98, 112)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(217, 220, 226)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.37
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    63,
+    991,
+    643
+   ],
+   "runtime": [
+    1023,
+    63,
+    811,
+    711
+   ]
+  }
+ },
+ "readonly_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "Read-only: deployment mode not set to M1",
+  "minContrast": 6.26,
+  "minContrastAt": "🔒 Check rgb(83, 90, 102)",
+  "scrollers": [],
+  "headerAndTabsH": null,
+  "covered": {
+   "#mk-ws-in": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-reg-in": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "contrast": {
+   "path box border": {
+    "color": "rgb(217, 220, 226)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.37
+   },
+   "row divider": {
+    "color": "rgb(225, 228, 234)",
+    "against": "rgb(255, 255, 255)",
+    "ratio": 1.27
+   }
+  },
+  "panel": {
+   "dl": [
+    16,
+    112,
+    728,
+    886
+   ],
+   "runtime": [
+    16,
+    1014,
+    728,
+    732
+   ]
+  }
+ },
+ "first_start_models_1850": {
+  "replaced": true,
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 102
+ },
+ "first_start_models_760": {
+  "replaced": true,
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 151
+ }
+}

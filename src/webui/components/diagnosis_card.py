@@ -78,7 +78,9 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   "Operator controls only: …" beside them). Only the served file is opened, on a queued refresh, once per
   served model per session (what it records is kept while the served
   identity is the same); the timer's read never opens a checkpoint;
-- the mode chip, only when true: amber "synthetic data";
+- the mode chip, only when true: amber "synthetic data", left out while a
+  result's synthetic banner from the same served identity is shown beside the
+  card (`body_html`'s ``synthetic_said``: said once, R-26);
 - "Recorded results: <state>" from the ledger beside the checkpoint and the
   cohort versions' report stores, by the shared model list's own reader
   (`model_list.recorded_tests_for`): a state, never a number of a result, the
@@ -752,10 +754,15 @@ def stop_button(state: Mapping[str, Any]) -> Dict[str, Any]:
 # Rendering the card
 # ---------------------------------------------------------------------------
 def time_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
-    """The title row's right side: "checked HH:MM:SS UTC" while the card is current."""
+    """The title row's right side while the card is current: "current", the
+    read's time in its title only, so the visible text stays the same from
+    one 5 s read to the next (R-23). Not current, nothing: the card's body
+    says when it was last read ("last known …", "read … older than this
+    result"), once."""
     if card_mode(state, produced_at) != "current":
         return ""
-    return f'<span class="shep-dx-checked">checked {r.e(hhmmss(state.get("good_at")))}</span>'
+    return (f'<span class="shep-dx-checked" title="Status read at '
+            f'{r.e(hhmmss(state.get("good_at")))}; read again every 5 s">current</span>')
 
 
 def _trained_html(facts: Mapping[str, Any]) -> str:
@@ -778,10 +785,10 @@ def _trained_html(facts: Mapping[str, Any]) -> str:
             f'{r.e(why)}</span></span>')
 
 
-def _chips(status: Mapping[str, Any], *, grey: bool) -> List[str]:
+def _chips(status: Mapping[str, Any], *, grey: bool, synthetic_said: bool = False) -> List[str]:
     identity = status.get("served_identity") or {}
     chips: List[Tuple[str, str]] = []
-    if _part(identity, "dataset_record", "origin") == "synthetic":
+    if _part(identity, "dataset_record", "origin") == "synthetic" and not synthetic_said:
         chips.append(("synthetic data", "amber"))
     return [r.chip(text, "grey shep-tag-dashed" if grey else kind_) for text, kind_ in chips]
 
@@ -853,9 +860,12 @@ def _recorded_html(facts: Mapping[str, Any], *, grey: bool) -> str:
             '</span>')
 
 
-def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
+def body_html(state: Mapping[str, Any], produced_at: Any = None, *,
+              synthetic_said: bool = False) -> str:
     """The card's body: the change notice, a grey state row when the card is
-    not current, then what is served."""
+    not current, then what is served. `synthetic_said`: a result's synthetic
+    banner from this same served identity is shown beside the card, so the
+    card's "synthetic data" chip is left out (R-26: said once)."""
     mode = card_mode(state, produced_at)
     if mode == "checking":
         return '<div class="shep-dx-card-bd"><p class="shep-muted">Checking the model in use…</p></div>'
@@ -925,7 +935,7 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
                      f'<p class="shep-dx-line">{_trained_html(facts)}</p>')
     else:
         lines.append('<p class="shep-dx-line shep-muted">The status did not say what is served.</p>')
-    chips = _chips(status, grey=grey)
+    chips = _chips(status, grey=grey, synthetic_said=synthetic_said)
     tail = []
     if chips:
         tail.append('<span class="shep-dx-chips">' + "".join(chips) + "</span>")
@@ -1005,9 +1015,13 @@ def _serving_rows(status: Mapping[str, Any], facts: Mapping[str, Any],
     return tuple(rows)
 
 
-def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity") -> str:
+def served_facts_html(state: Mapping[str, Any], *, focus: Optional[str] = None) -> str:
     """The identity drawer's "Model in use": Model Facts of the served model
-    (the last known, said so when the card is not current)."""
+    (the last known, said so when the card is not current), every section
+    open, `focus` the one it was opened at (`renderers.model_facts_html`).
+    No Uses section: the page's results footer says the device statement,
+    always in view beside the drawer, and the synthetic banner (Warnings)
+    says a synthetic workspace is for testing (R-26)."""
     status = state.get("status")
     if status is None:
         why = state.get("problem") or "it has not been read yet"
@@ -1060,7 +1074,7 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
         serving_workspace=serving_row)
     item_warnings = [w for w in model_facts.warnings
                      if w[0] != r.IDENTITY_BANNERS["synthetic"][0]
-                     and (shown or not w[0].startswith("DATASET NOT RECORDED"))]
+                     and (shown or w[0] != r.DATASET_NOT_RECORDED)]
     meta = status.get("checkpoint_meta") if isinstance(status.get("checkpoint_meta"), dict) else {}
     params = meta.get("params")
     name_line = model_facts.name_line if facts.get("item") else \
@@ -1087,7 +1101,7 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
         trained_on_unread=unread,
         evidence_more=('<p><button type="button" class="shep-dx-link" '
                        'data-key="models">Full records: Research › Models ›</button></p>'))
-    return note + r.model_facts_html(model_facts, open_section=open_section)
+    return note + r.model_facts_html(model_facts, focus=focus, uses=False)
 
 
 __all__ = [

@@ -1,0 +1,374 @@
+{
+ "D04_models_default_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 102,
+  "covered": {
+   "#shep-models-research-load": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 8,
+   "files": 0,
+   "fams": 2
+  }
+ },
+ "D04_models_default_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 151,
+  "covered": {
+   "#shep-models-research-load": [
+    "nothing",
+    "nothing",
+    "nothing"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 8,
+   "files": 0,
+   "fams": 2
+  }
+ },
+ "D04_models_run-expanded-file-selected_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 102,
+  "covered": {
+   "#shep-models-research-load": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 6,
+   "files": 2,
+   "fams": 2
+  }
+ },
+ "D04_models_run-expanded-file-selected_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "2 families, 8 runs, 16 saved files (2 sh",
+  "minContrast": 8.02,
+  "minContrastAt": "Newest first rgb(67, 74, 88)",
+  "scrollers": [],
+  "headerAndTabsH": 151,
+  "covered": {
+   "#shep-models-research-load": [
+    "nothing",
+    "nothing",
+    "nothing"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 6,
+   "files": 2,
+   "fams": 2
+  }
+ },
+ "D04_models_search-name_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 102,
+  "covered": {
+   "#shep-models-research-load": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 7,
+   "files": 2,
+   "fams": 2
+  }
+ },
+ "D04_models_search-name_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 151,
+  "covered": {
+   "#shep-models-research-load": [
+    "nothing",
+    "nothing",
+    "nothing"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 7,
+   "files": 2,
+   "fams": 2
+  }
+ },
+ "D04_models_search-fingerprint_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 102,
+  "covered": {
+   "#shep-models-research-load": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 3,
+   "files": 1,
+   "fams": 1
+  }
+ },
+ "D04_models_search-fingerprint_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 151,
+  "covered": {
+   "#shep-models-research-load": [
+    "nothing",
+    "nothing",
+    "nothing"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 3,
+   "files": 1,
+   "fams": 1
+  }
+ },
+ "D04_models_selected-outside-filter_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 102,
+  "covered": {
+   "#shep-models-research-load": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 2,
+   "files": 0,
+   "fams": 1
+  }
+ },
+ "D04_models_selected-outside-filter_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 151,
+  "covered": {
+   "#shep-models-research-load": [
+    "nothing",
+    "nothing",
+    "nothing"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 2,
+   "files": 0,
+   "fams": 1
+  }
+ },
+ "D05_models_order-pending_1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 102,
+  "covered": {
+   "#shep-models-research-load": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 8,
+   "files": 0,
+   "fams": 1
+  }
+ },
+ "D05_models_order-pending_760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Research (pre-clinical) rgb(255, 255, 255)",
+  "scrollers": [],
+  "headerAndTabsH": 151,
+  "covered": {
+   "#shep-models-research-load": [
+    "nothing",
+    "nothing",
+    "nothing"
+   ],
+   "#mk-q": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "tree": {
+   "runs": 8,
+   "files": 0,
+   "fams": 1
+  }
+ }
+}

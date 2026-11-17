@@ -235,14 +235,11 @@ class ExplanationGenerator:
                         sections.append(f"- {self._format_path(path, kg)}")
                     sections.append("")
 
-        # Disclaimer
-        sections.append(
-            "---\n"
-            "*Note: This is a computational prediction for clinical review. "
-            "Final diagnosis should be made by qualified healthcare professionals "
-            "based on comprehensive clinical evaluation.*"
-        )
-
+        # No disclaimer of its own (NEW-diagnosis-1): the explanation is one
+        # candidate's, shown beside its result, and the result's surfaces say
+        # the device statement once each (the WebUI's results footer, the
+        # report's identity section: `renderers.NOT_A_MEDICAL_DEVICE`); a note
+        # in every candidate's text was a third wording, repeated per row.
         return "\n".join(sections)
 
     def _find_matching_phenotypes(

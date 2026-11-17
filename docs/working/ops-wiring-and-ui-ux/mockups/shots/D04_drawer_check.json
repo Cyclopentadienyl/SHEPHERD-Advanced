@@ -1,0 +1,143 @@
+{
+ "760": {
+  "viewport": [
+   760,
+   1000
+  ],
+  "hScroll": false,
+  "docScroll": true,
+  "minFont": 14,
+  "minFontAt": "operator controls · one model is served ",
+  "minContrast": 5.4,
+  "minContrastAt": "Load this model rgb(255, 255, 255)",
+  "scrollers": [
+   {
+    "id": "shep-models-clinical-rows",
+    "h": 274,
+    "sh": 495
+   },
+   {
+    "id": "shep-models-clinical-facts",
+    "h": 252,
+    "sh": 649
+   }
+  ],
+  "headerAndTabsH": null,
+  "covered": {
+   "#shep-models-clinical-load": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#shep-dx-change-cancel": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-dq": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "regions": [
+   {
+    "id": "shep-models-clinical-rows",
+    "top": 327,
+    "h": 274,
+    "sh": 495,
+    "scrolls": true
+   },
+   {
+    "id": "shep-models-clinical-facts",
+    "top": 615,
+    "h": 252,
+    "sh": 649,
+    "scrolls": true
+   }
+  ],
+  "load": {
+   "top": 890,
+   "bottom": 930,
+   "inView": true
+  },
+  "detailsScrolled": {
+   "listTop": [
+    327.09375,
+    327.09375
+   ],
+   "loadTop": [
+    890.21875,
+    890.21875
+   ]
+  }
+ },
+ "1850": {
+  "viewport": [
+   1850,
+   960
+  ],
+  "hScroll": false,
+  "docScroll": false,
+  "minFont": 14,
+  "minFontAt": "Operator controls: on (this machine)",
+  "minContrast": 5.4,
+  "minContrastAt": "Diagnosis (clinical) rgb(255, 255, 255)",
+  "scrollers": [
+   {
+    "id": "shep-models-clinical-facts",
+    "h": 536,
+    "sh": 824
+   }
+  ],
+  "headerAndTabsH": null,
+  "covered": {
+   "#shep-models-clinical-load": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#shep-dx-change-cancel": [
+    "self",
+    "self",
+    "self"
+   ],
+   "#mk-dq": [
+    "self",
+    "self",
+    "self"
+   ]
+  },
+  "regions": [
+   {
+    "id": "shep-models-clinical-rows",
+    "top": 302,
+    "h": 536,
+    "sh": 536,
+    "scrolls": false
+   },
+   {
+    "id": "shep-models-clinical-facts",
+    "top": 302,
+    "h": 536,
+    "sh": 824,
+    "scrolls": true
+   }
+  ],
+  "load": {
+   "top": 861,
+   "bottom": 901,
+   "inView": true
+  },
+  "detailsScrolled": {
+   "listTop": [
+    301.59375,
+    301.59375
+   ],
+   "loadTop": [
+    861,
+    861
+   ]
+  }
+ }
+}

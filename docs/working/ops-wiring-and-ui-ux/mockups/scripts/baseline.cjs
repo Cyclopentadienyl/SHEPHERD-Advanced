@@ -1,0 +1,24 @@
+const { chromium } = require('playwright');
+const BASE = 'http://127.0.0.1:8871/ui/';
+const OUT = process.argv[2];
+(async () => {
+  const b = await chromium.launch();
+  const ctx = await b.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 });
+  const p = await ctx.newPage();
+  await p.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await p.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+  await p.waitForTimeout(2500);
+  await p.screenshot({ path: OUT + '/base_diagnosis.png' });
+  await p.click('#shep-tab-research-button');
+  await p.waitForSelector('#shep-page-models-button', { state: 'visible' });
+  await p.waitForTimeout(800);
+  await p.screenshot({ path: OUT + '/base_training.png' });
+  await p.click('#shep-page-models-button');
+  await p.waitForTimeout(2500);
+  await p.screenshot({ path: OUT + '/base_models.png' });
+  await p.click('#shep-tab-settings-button');
+  await p.waitForTimeout(1500);
+  await p.screenshot({ path: OUT + '/base_settings.png' });
+  await p.screenshot({ path: OUT + '/base_settings_full.png', fullPage: true });
+  await b.close();
+})().catch(e => { console.error(e); process.exit(1); });

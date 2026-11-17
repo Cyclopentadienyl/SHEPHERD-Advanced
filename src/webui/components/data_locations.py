@@ -248,7 +248,10 @@ def where_html(view: DeploymentView, *, shown: bool) -> str:
 # ---------------------------------------------------------------------------
 # The panel as one read draws it
 # ---------------------------------------------------------------------------
-def _reason_line(text: str) -> str:
+def reason_line(text: str) -> str:
+    """**A refusal's line beside what it turns off** on Settings (D8's
+    reason, the lock before it): one per panel, above the fields it
+    disables, in this panel and in Runtime settings alike."""
     return (f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
             f"<span>{r.e(text)}</span></div>")
 
@@ -258,7 +261,7 @@ def notice_html(view: DeploymentView, access: Any) -> str:
     a pending change and why, or a first start; nothing otherwise."""
     shown = access.allowed
     if not shown:
-        return _reason_line(f"{operator_only(access.condition)}. {PATHS_OPERATOR_ONLY}")
+        return reason_line(f"{operator_only(access.condition)}. {PATHS_OPERATOR_ONLY}")
     if view.file.problem:
         then = (REPAIR_THEN if view.file.repairable else
                 "It cannot be opened: correct its permissions or the disk where it is; it is "
@@ -650,4 +653,4 @@ __all__ = ["APPLY_LABEL", "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET",
            "PAGE_CSS", "PANEL_PARTS", "PATH_HIDDEN", "PRIVATE_KEYS", "REPAIR_LABEL",
            "ROW_PARTS", "SAVE_LABEL", "SOURCE_WORDS", "UNKNOWN", "UNREADABLE",
            "check_words", "create_data_locations_panel", "create_folder", "holds_words",
-           "name_html", "notice_html", "state_html", "where_html"]
+           "name_html", "notice_html", "reason_line", "state_html", "where_html"]

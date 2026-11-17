@@ -132,6 +132,52 @@ def write_demo_workspace(data_dir: Path, *, feature_seed: int = DEFAULT_FEATURE_
     return data_dir
 
 
+#: The words of the long disease names `write_long_named_workspace` adds: a
+#: name as long as the long ones a real ontology holds (about 120 to 190
+#: characters), one with an unbroken 40-character token.
+LONG_NAME_PARTS = (
+    "Autosomal recessive early-onset epileptic encephalopathy with developmental delay, "
+    "hypotonia, cortical visual impairment and progressive microcephaly",
+    "X-linked intellectual disability syndrome with macrocephaly, seizures, sleep "
+    "disturbance and autistic behaviour, Snyder-Robinson-like variant",
+    "Neurodevelopmental disorder with regression, abnormal movements, loss of speech and "
+    "seizures (NEDRMLS)-HyperphosphorylatedTauopathyAssociatedVariant",
+)
+
+
+def write_long_named_workspace(data_dir: Path, *, extra: int = 20) -> Path:
+    """The demo graph with `extra` more diseases, each with a long name
+    (`LONG_NAME_PARTS` and its number), as a complete workspace like
+    `write_demo_workspace`: enough diseases for Diagnosis' largest Top-K (20)
+    to fill its results with long names (PLAN_TEST_RESULTS §6's layout
+    acceptance, PTR-LAYOUT). Each added disease is linked to two of the
+    demo's phenotypes and one of its genes, so it is ranked like the others;
+    the ids are this fixture's own (MONDO:99000NN)."""
+    from scripts.setup_demo import build_demo_kg
+    from src.core.types import DataSource, Edge, EdgeType, Node, NodeID, NodeType
+    from src.kg.workspace import SampleBudget, write_workspace
+
+    kg = build_demo_kg()
+    phenotypes = sorted(n.id.local_id for n in kg.iter_nodes(NodeType.PHENOTYPE))
+    genes = sorted(n.id.local_id for n in kg.iter_nodes(NodeType.GENE))
+    for i in range(extra):
+        mondo = f"MONDO:99000{i:02d}"
+        name = f"{LONG_NAME_PARTS[i % len(LONG_NAME_PARTS)]}, type {i + 1}"
+        disease = NodeID(source=DataSource.MONDO, local_id=mondo)
+        kg.add_node(Node(id=disease, node_type=NodeType.DISEASE, name=name,
+                         attributes={"mondo_id": mondo, "name": name}))
+        for hpo in (phenotypes[i % len(phenotypes)], phenotypes[(i + 3) % len(phenotypes)]):
+            kg.add_edge(Edge(source_id=NodeID(source=DataSource.HPO, local_id=hpo),
+                             target_id=disease, edge_type=EdgeType.PHENOTYPE_OF_DISEASE,
+                             weight=0.5))
+        kg.add_edge(Edge(source_id=NodeID(source=DataSource.DISGENET, local_id=genes[i % len(genes)]),
+                         target_id=disease, edge_type=EdgeType.GENE_ASSOCIATED_WITH_DISEASE,
+                         weight=0.5))
+    write_workspace(kg, data_dir, feature_dim=8, feature_seed=DEFAULT_FEATURE_SEED,
+                    samples=SampleBudget(num_train=20, num_val=5, val_disease_fraction=0.2))
+    return data_dir
+
+
 def _terms(data_dir: Path) -> tuple[List[str], List[str]]:
     """The workspace graph's phenotype and disease ids, in node order."""
     from src.kg.graph import KnowledgeGraph

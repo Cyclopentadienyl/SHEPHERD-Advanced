@@ -202,12 +202,12 @@ def test_the_score_is_named_for_what_it_is_and_the_csv_names_the_kinds_fields():
     result = _sample_result()
     md = dp._build_results_report_md(result)
     table = md.split("## Ranked candidates")[1].split("## Per-candidate detail")[0]
-    assert "| Rank | Disease | Score | Evidence |" in table
+    assert "| Rank | Disease | Score | Phenotypes | Evidence |" in table
     assert dp.SCORE_NOTE in table and "not a calibrated disease probability" in dp.SCORE_NOTE
     assert "· score -0.280" in md and "· confidence" not in md
     page = dp.results_body_html(result, 1) + dp.details_header_html(
         result["candidates"][0], "disease_task/v1")
-    assert "Confidence" not in page and "> Score <b>-0.280</b>" in page
+    assert "Confidence" not in page and page.count("-0.280") == 1   # its row's, once (R-1b)
     assert 'data-help="dx-score"' in page and "dx-score" in dp.TOPIC_HELP
     header = dp._build_results_csv(result).splitlines()[0]
     assert header.startswith("result_kind,rank,disease_id,disease_name,score,evidence_label")
@@ -779,7 +779,10 @@ def test_the_fields_scroll_above_the_card_and_run_row_whose_foot_never_covers_th
             "min-height: 0; overflow: auto;") in side(css)
     assert "position: sticky" not in css and "--shep-dx-sticky-h" not in css
     assert not hasattr(dp, "STICKY_JS") and not hasattr(style, "sticky_room_js")
-    assert "html, .shep-panel * { scroll-padding-bottom: var(--shep-caret-room); }" in style.SHELL_CSS
+    # Every scroll region, a page's own tab region side by side included
+    # (Settings at 1366 x 620, commit 7bdffd1).
+    assert ("html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem { "
+            "scroll-padding-bottom: var(--shep-caret-room); }") in " ".join(style.SHELL_CSS.split())
     assert f"{dp._TAB} #shep-dx-fields .block.padded {{ padding: 6px 0 !important; }}" in css
     options = css[css.index(f"{dp._TAB} .shep-dx-options {{"):]
     options = options[:options.index("}")]
@@ -1141,6 +1144,8 @@ _KIND_CSV_COLUMNS = {
         "reference_cohort_version_sha256", "reference_cohort_samples_sha256",
         "reference_cohort_patients"],
 }
+#: The query's phenotypes as used, on every row, before the served columns (R-5).
+_QUERY_COLUMNS = ["phenotypes_used", "phenotypes_not_used"]
 _SERVED_COLUMNS = [
     "served_scoring_mode", "served_checkpoint_state", "served_checkpoint_sha256",
     "served_kg_state", "served_kg_sha256", "served_split_manifest_sha256",
@@ -1240,7 +1245,7 @@ def test_every_identity_row_is_filled_and_never_unknown(name):
 
 
 @pytest.mark.parametrize("name, banner", [
-    ("verified_synthetic", "SYNTHETIC WORKSPACE: not a clinical result."),
+    ("verified_synthetic", "Synthetic workspace: not a clinical result."),
 ])
 def test_report_banners_state_each_non_normal_state_in_words(name, banner):
     section = _report_section(dp._build_results_report_md(_result_with(_IDENTITIES[name]())))
@@ -1261,7 +1266,7 @@ def test_a_response_without_an_identity_is_not_called_a_demo():
 
     section = _report_section(dp._build_results_report_md(result))
 
-    assert "> **WHAT PRODUCED THIS RESULT WAS NOT REPORTED.**" in section
+    assert "> **What produced this result was not reported.**" in section
     assert "DEMO" not in section
     assert all(row[1] == "not\\_reported" for row in _table_rows(section))
 
@@ -1376,7 +1381,7 @@ def test_csv_keeps_one_header_and_appends_the_identity_after_the_candidates():
 
     width = len(_KIND_CSV_COLUMNS["disease_task/v1"])
     assert header[:width] == _KIND_CSV_COLUMNS["disease_task/v1"]
-    assert header[width:] == _SERVED_COLUMNS
+    assert header[width:] == _QUERY_COLUMNS + _SERVED_COLUMNS
     assert len(records) == 2 and all(len(row) == len(header) for row in rows)
     assert header not in rows[1:]  # exactly one header row, no preamble
     # The identity block by its own names: `score` is a candidate column.
@@ -1468,7 +1473,7 @@ def test_the_page_shows_what_produced_the_result(monkeypatch, status_read):
 
     body = out["results_body"]
     # The banner, above the table; its detail behind the shared ⓘ.
-    assert body.index("SYNTHETIC WORKSPACE: not a clinical result.") < body.index("<table")
+    assert body.index("Synthetic workspace: not a clinical result.") < body.index("<table")
     assert 'aria-describedby="shep-help-text-dx-banner-synthetic"' in body
     # "This result" (the identity drawer): the result's own rows, as the
     # report reads them, one summary list (B4: B0c's details), a part a row,
@@ -1481,7 +1486,8 @@ def test_the_page_shows_what_produced_the_result(monkeypatch, status_read):
     assert f'title="{CHECKPOINT_SHA}">{CHECKPOINT_SHA[:12]}</code>' in shown
     # No ✓ anywhere on the page: the boundary names the mark the drawer shows.
     assert r.status_mark("ok", "verified") in shown and "✓" not in shown
-    assert _on_page(_CLAIM_BOUNDARY) in shown and _NOT_A_DEVICE in shown
+    # The device line is the results footer's, in view beside the drawer (R-26).
+    assert _on_page(_CLAIM_BOUNDARY) in shown and _NOT_A_DEVICE not in shown
     # This fixture's status serves nothing: compared with nothing, never as
     # ten parts that differ (B4), the result keeping its own identity.
     assert "<b>Not compared:</b> Nothing is served now" in shown and "<table" not in shown
@@ -2023,8 +2029,9 @@ def test_the_views_start_as_their_first_update_leaves_them(monkeypatch):
 # -------------------------------------------------- the model in use (identity drawer)
 def test_the_model_in_use_shows_the_boundary_for_what_is_loaded():
     html = dp.model_identity_html(_card(_status_serving(_served_identity())))
-    assert _on_page(_CLAIM_BOUNDARY) in html and _NOT_A_DEVICE in html
-    assert _on_page(_NOTHING_CHECKED_LOADED) not in html and "SYNTHETIC WORKSPACE" in html
+    assert _on_page(_CLAIM_BOUNDARY) in html and _NOT_A_DEVICE not in html
+    assert _on_page(_NOTHING_CHECKED_LOADED) not in html
+    assert "Synthetic workspace: not a clinical result." in html
     # The sentence names the mark the served facts show a verified part by.
     assert "✓" not in html and r.status_mark("ok", "verified") in html.split("shep-dx-boundary")[0]
 
@@ -2323,6 +2330,27 @@ def test_long_reference_cohort_labels_show_the_part_that_tells_them_apart():
     assert texts[3] == "…15_hospital_a_rare_dis… · another graph"
 
 
+def test_a_cohort_option_never_cuts_inside_a_character_drawn_from_several_code_points():
+    """B72-N4 on the Reference cohort options, which try every middle cut
+    (`renderers.cut_at`, the shared cut) and a cut led by where two labels
+    differ: a ZWJ family emoji (five code points, one character) stays whole
+    beside a "…" or is left out whole. Before, the options' own cut sliced by
+    code point: the middle cut kept a lone MAN ("cohort-aaaaaaaaaaaa👨…") and
+    the cut led by "v1" ended on MAN and a joiner."""
+    family = "\U0001F468‍\U0001F469‍\U0001F467"
+    alone = "cohort-" + "a" * 12 + family + "b" * 30
+    told = ["a" * 25 + f"-v{i}-" + "b" * 33 + family + "c" * 20 for i in (1, 2)]
+    expected = {alone: "cohort-" + "a" * 12 + "…" + "b" * 20,
+                told[0]: "…v1-" + "b" * 33 + "…", told[1]: "…v2-" + "b" * 33 + "…"}
+    for labels in ([alone], told):
+        options, _chosen = dp.cohort_choices(_cohorts(*(_version(label) for label in labels)),
+                                             None)
+        _assert_options_tell_versions_apart(options)
+        for text, label in options:
+            assert family in text or not set(family) & set(text), text
+            assert text == expected[label], text
+
+
 def test_the_reference_cohort_options_are_short_unique_and_keep_the_full_label():
     """5: every option at most 40 characters, unique, with at most one
     separator; the values are the full labels; "another graph" and "cannot
@@ -2537,7 +2565,10 @@ def test_a_gene_result_shows_its_genes_and_their_values():
     assert "Mean hop distance" in details and ">1.500<" in details
     assert "1.000 to 6.840" in details
     assert "#1</span> SCN1A</h2>" in out["details_hd"]
-    assert "<code>disgenet:SCN1A</code> Score <b>0.610</b>" in out["details_hd"]
+    # The header is #rank, name and id only; the scores are the row's (R-1b).
+    assert '<p class="shep-dx-det-sub"><code>disgenet:SCN1A</code></p>' in out["details_hd"]
+    assert "0.610" not in out["details_hd"] + details and "0.400" not in details
+    assert "Model similarity" not in details and "SP similarity" not in details
     _assert_views_switch_by_class(out)
     assert dp.select_candidate(result, "evidence", "2")["selected"] == 2
 
@@ -2559,10 +2590,11 @@ def test_a_patients_like_me_result_shows_reference_patients_and_its_version():
     assert VERSION_SHA not in body and SAMPLES_SHA not in body
     out = dp.details_outputs(result, 1)
     details = out["details_html"]["value"]
-    assert "<code>HP:0001250</code> <code>HP:0001263</code>" in details
+    assert "<code>HP:0001250</code>, <code>HP:0001263</code>" in details
     assert "Recorded HPO terms (2)" in details and dp.REFERENCE_CONTEXT_NOTE in details
     assert "<code>MONDO:0011073</code>" in details
-    assert "#1</span> case-07</h2>" in out["details_hd"] and "<b>-0.120</b>" in out["details_hd"]
+    assert "#1</span> case-07</h2>" in out["details_hd"] and "-0.120" not in out["details_hd"]
+    assert '<p class="shep-dx-det-sub">Reference patient</p>' in out["details_hd"]
     second = dp.details_outputs(result, 2)["details_html"]["value"]
     assert second.count("not recorded") == 2
     digests = dp.result_digests_html(result)
@@ -2622,14 +2654,14 @@ def test_each_task_kinds_csv_holds_its_own_columns_before_the_served_ones():
     """10: the kind's columns, then what the result carries for every row, then
     the unchanged served columns; numbers to four places, digests sha256:."""
     header, (first, second), rows = _csv_records(dp._build_results_csv(_gene_result()))
-    assert header == _KIND_CSV_COLUMNS["gene_task/v1"] + _SERVED_COLUMNS
+    assert header == _KIND_CSV_COLUMNS["gene_task/v1"] + _QUERY_COLUMNS + _SERVED_COLUMNS
     assert (first["gene_id"], first["score"], first["embsim"]) == ("disgenet:SCN1A", "0.6100",
                                                                    "0.4000")
     assert (first["sp_bounds_lower"], first["sp_bounds_upper"]) == ("1.0000", "6.8400")
     assert second["sp_bounds_upper"] == "6.8400" and second["score"] == "-0.2000"
     assert first["served_scoring_mode"] == "gene_task" and first["served_eta"] == "0.5"
     header, (first, second), _ = _csv_records(dp._build_results_csv(_patients_result()))
-    assert header == _KIND_CSV_COLUMNS["patients_like_me/v1"] + _SERVED_COLUMNS
+    assert header == _KIND_CSV_COLUMNS["patients_like_me/v1"] + _QUERY_COLUMNS + _SERVED_COLUMNS
     assert first["reference_cohort_version_sha256"] == f"sha256:{VERSION_SHA}"
     assert first["reference_cohort_samples_sha256"] == f"sha256:{SAMPLES_SHA}"
     assert (first["reference_cohort_label"], first["reference_cohort_patients"]) == (
@@ -3057,3 +3089,514 @@ def test_the_results_banners_and_warnings_draw_the_shared_marks_not_their_own():
     assert 'class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲' in (
         dp.banners_html(result))
     assert not _RAW_HEX.search(dp.banners_html(result))
+
+
+# ----------------------------------------- T06-D: the results and details, each fact once
+def _visible(html):
+    """An HTML fragment's visible words: closed disclosures and tags dropped,
+    spaces folded (what a reader sees before opening anything)."""
+    text = re.sub(r"<details.*?</details>", " ", html, flags=re.S)
+    return " ".join(re.sub(r"<[^>]+>", " ", text).replace("&#x27;", "'").split())
+
+
+def _paths_result():
+    """The disease row of `_sample_result` with five direct paths of 1 to 4
+    hops, as the API sends them (shortest first by the evidence panel), and
+    the graph's names read for its terms."""
+    result = _sample_result()
+    first = result["candidates"][0]
+    first["evidence_package"] = {
+        "mode": "direct_path", "evidence_label": "Strong path support", "min_path_length": 1,
+        "summary": "Direct knowledge-graph evidence found (shortest path = 1 hop).",
+        "direct_paths": [
+            ["hpo:HP:0001263", "mondo:MONDO:0011073"],
+            ["hpo:HP:0001250", "disgenet:SCN1A", "mondo:MONDO:0011073"],
+            ["hpo:HP:0001263", "disgenet:SCN1A", "mondo:MONDO:0011073"],
+            ["hpo:HP:0001250", "disgenet:SCN1A", "hpo:HP:0001263", "mondo:MONDO:0011073"],
+            ["hpo:HP:0001263", "disgenet:SCN1A", "hpo:HP:0001250", "disgenet:CDKL5",
+             "mondo:MONDO:0011073"]]}
+    first["matching_phenotypes"] = ["HP:0001263"]
+    first["supporting_genes"] = ["SCN1A", "CDKL5"]
+    result["_names"] = {"HP:0001250": "Seizure", "HP:0001263": "Global developmental delay",
+                        "hpo:HP:0001250": "Seizure", "hpo:HP:0001263": "Global developmental delay",
+                        "mondo:MONDO:0011073": "Dravet syndrome", "disgenet:SCN1A": "SCN1A",
+                        "disgenet:CDKL5": "CDKL5"}
+    return result
+
+
+def test_the_table_counts_each_candidates_phenotypes_k_of_n():
+    """R-1d: the table was Rank, Disease, Score, Evidence: how many of the
+    query's phenotypes a disease is annotated with was only in the selected
+    row's details. A Phenotypes column says k/N, computed here from the
+    query as used and the row's matching phenotypes (no API change), with
+    its words in the cell's title and its ⓘ; the report's table the same."""
+    result = _sample_result()
+    assert dp.phenotype_match(result, result["candidates"][0]) == (1, 2)
+    assert dp.phenotype_match(result, result["candidates"][1]) == (0, 2)
+    # No account of the query: the distinct ids sent; neither: not reported.
+    older = {**result, "phenotype_input": None, "_query_phenotypes": ["HP:0001250"] * 2}
+    assert dp.phenotype_match(older, result["candidates"][0]) == (1, 1)
+    bare = {k: v for k, v in result.items() if k not in ("phenotype_input", "_query_phenotypes")}
+    assert dp.phenotype_match(bare, result["candidates"][0]) is None
+    body = dp.results_body_html(result, 1)
+    heads = re.findall(r'<th scope="col"[^>]*>([^<]+)', body)
+    assert heads == ["Rank", "Disease", "Score", "Phenotypes", "Evidence"]
+    assert 'data-help="dx-phenotypes"' in body and "dx-phenotypes" in dp.TOPIC_HELP
+    cells = re.findall(r'<td class="shep-num" title="([^"]+)">([^<]+)</td>', body)
+    assert cells == [("1 of the 2 phenotypes used are annotated to this disease", "1 / 2"),
+                     ("0 of the 2 phenotypes used are annotated to this disease", "0 / 2")]
+    assert "not reported" in dp.results_body_html(bare, 1)
+    table = dp._build_results_report_md(result).split("## Ranked candidates")[1]
+    assert "| 1 | **Dravet syndrome** | -0.280 | 1 / 2 |" in table
+
+
+def test_the_details_header_is_rank_name_and_id_and_each_score_is_said_once():
+    """R-1b: the details header repeated the selected row's score beside it
+    ("MONDO:0012091 Score -2.844"), and a gene's details its model and SP
+    similarities. The header is #rank, name and id only, for every kind; each
+    score string of the selected row is on the page once outside the
+    identity drawer and the exports (the table, the header and every details
+    view the page draws)."""
+    result = _paths_result()
+    for segment in ("evidence", "phenotypes", "paths"):
+        out = dp.details_outputs(result, 1, segment)
+        page = _visible(dp.results_body_html(result, 1) + out["details_hd"]
+                        + out["details_html"]["value"])
+        assert page.count("-0.280") == 1, segment
+    hd = dp.details_header_html(result["candidates"][0], "disease_task/v1")
+    assert _visible(hd) == "#1 Dravet syndrome MONDO:0011073"
+    gene = _gene_result()
+    out = dp.details_outputs(gene, 1)
+    page = _visible(dp.results_body_html(gene, 1) + out["details_hd"]
+                    + out["details_html"]["value"])
+    for value in ("0.610", "0.400", "0.820"):        # score, model and SP similarity
+        assert page.count(value) == 1, value
+    assert _visible(out["details_hd"]) == "#1 SCN1A disgenet:SCN1A"
+    patients = _patients_result()
+    out = dp.details_outputs(patients, 1)
+    page = _visible(dp.results_body_html(patients, 1) + out["details_hd"]
+                    + out["details_html"]["value"])
+    assert page.count("-0.120") == 1
+    assert _visible(out["details_hd"]) == "#1 case-07 Reference patient"
+
+
+def test_evidence_is_an_answer_then_facts_with_the_narrative_folded():
+    """R-3 and NEW-diagnosis-2: the Evidence view quoted the summary
+    ("shortest path = 1 hop"), then "Mode A — Direct path evidence" (a
+    retired pipeline's mode) and "Shortest: 1 hop · 5 direct paths": the
+    shortest path twice. Now the label answers, the facts are one summary
+    list (Shortest path, Direct paths, Supporting genes), the server's
+    narrative is folded under "Written summary ›", and the shortest path's
+    length is said once on the view as shown. Evidence with no path keeps
+    its narrative as the answer's sentence, once."""
+    result = _paths_result()
+    html = dp.evidence_html(result["candidates"][0])
+    assert "Mode" not in html and "<blockquote" not in html
+    assert _visible(html) == ("● Strong path support Shortest path 1 hop Direct paths 5 · "
+                              "listed under Paths › Supporting genes SCN1A CDKL5")
+    assert re.findall(r'<dt class="shep-k">([^<]+)</dt>', html) == [
+        "Shortest path", "Direct paths", "Supporting genes"]
+    assert ('<details class="shep-more shep-dx-ev-more"><summary>Written summary ›</summary>'
+            '<p>Direct knowledge-graph evidence found (shortest path = 1 hop).</p></details>') in html
+    assert _visible(html).count("1 hop") == 1
+    none = dp.evidence_html(result["candidates"][1])
+    assert _visible(none) == "○ Insufficient evidence No usable evidence"
+    assert "validated via independent clinical judgment" not in none
+    md = dp._format_evidence_detail(result["candidates"][0], result["_names"])
+    assert "Mode A" not in md and "- **Shortest path**: 1 hop" in md
+    assert "1. Global developmental delay (HP:0001263) → Dravet syndrome (MONDO:0011073)" in md
+
+
+def test_matching_phenotypes_are_split_annotated_or_not_name_first():
+    """R-3: the Matching phenotypes view listed bare ids ("HP:0001263"). It
+    splits the query's phenotypes as used by whether the graph annotates each
+    directly to this disease, with the counts, each name first and its id
+    muted; an id the graph gave no name stays an id."""
+    result = _paths_result()
+    html = dp.phenotypes_html(result["candidates"][0], result)
+    assert _visible(html).startswith(
+        "Annotated to this disease (1) Global developmental delay HP:0001263 "
+        "Not annotated (1) Seizure HP:0001250 ")
+    assert ('Global developmental delay <span class="shep-dx-id">HP:0001263</span>') in html
+    assert dp._e(dp.MATCHING_NOTE) in html
+    nameless = {**result, "_names": {}}
+    assert "<li><code>HP:0001263</code></li>" in dp.phenotypes_html(
+        result["candidates"][0], nameless)
+    second = dp.phenotypes_html(result["candidates"][1], result)
+    assert "None of the query" in second and "Not annotated (2)" in second
+    hostile = {**result, "_names": {"HP:0001263": "<img src=x onerror=alert(1)>"}}
+    assert "<img" not in dp.phenotypes_html(result["candidates"][0], hostile)
+
+
+def test_paths_show_the_three_shortest_named_and_the_rest_behind_more():
+    """R-3: the Paths view listed every path by bare ids
+    ("HP:0001250 → CDKL5 → MONDO:0012091"). The three shortest are chips of
+    named steps, shortest first; the other two are under "More paths (2) ›";
+    a gene, whose name is its symbol, says it once."""
+    result = _paths_result()
+    html = dp.paths_html(result["candidates"][0], result)
+    shown = html.split("<details")[0]
+    assert shown.count('<li class="shep-dx-path">') == 3
+    assert ('<span class="shep-dx-step">Global developmental delay <span class="shep-dx-id">'
+            'HP:0001263</span></span>') in shown
+    assert '<span class="shep-dx-step"><code>SCN1A</code></span>' in shown
+    assert "More paths (2) ›</summary>" in html and 'start="4"' in html
+    assert _visible(html).count("→") == 1 + 2 + 2
+    # Drawn shortest first even when the response lists them otherwise.
+    shuffled = _paths_result()
+    pkg = shuffled["candidates"][0]["evidence_package"]
+    pkg["direct_paths"] = pkg["direct_paths"][::-1]
+    again = dp.paths_html(shuffled["candidates"][0], shuffled).split("<details")[0]
+    steps = [item.count('class="shep-dx-step"') for item in again.split("</li>")[:-1]]
+    assert steps == [2, 3, 3]
+
+
+def test_a_run_names_its_terms_from_its_own_graph_only(served):
+    """R-5 and R-3: names came only with explanations, in their text. A run
+    reads the served graph's names of the terms its result names
+    (`served_status.node_names`), only while the graph served is the
+    result's own by its digest: the "Used" row says each name first, its id
+    muted; another digest reads no name, and the page shows ids."""
+    from src.webui.components import served_status
+
+    out = _run(f"{SEIZURE}, {DELAY}, Hypotonia")
+    result = out["results_state"]
+    names = result["_names"]
+    digest = result["served_identity"]["graph"]["kg_sha256"]
+    assert names == served_status.node_names(digest, dp._wanted_names(result))
+    assert set(names) >= {SEIZURE, DELAY}
+    used = out["results_body"].split("Used (2)</dt>")[1].split("</dd>")[0]
+    assert (f'{dp._e(names[SEIZURE])} <span class="shep-dx-id">{SEIZURE}</span>') in used
+    assert served_status.node_names("0" * 64, [SEIZURE]) == {}
+    assert served_status.node_names(None, [SEIZURE]) == {}
+
+
+def test_the_csv_and_report_carry_the_used_and_not_used_split():
+    """R-5: the CSV had no used / not-used split, and the report listed ids
+    alone. The CSV's two query columns hold the ids used and each entry not
+    used with its reason, on every row; the report names each used term."""
+    result = {**_audit_result(), "_names": {"HP:0001250": "Seizure"}}
+    _header, records, _rows = _csv_records(dp._build_results_csv(result))
+    assert {(r["phenotypes_used"], r["phenotypes_not_used"]) for r in records} == {(
+        "HP:0001250; HP:0001263",
+        "Hypotonia (not an HPO id, not sent); HP:9999999 (not in the model's graph); "
+        "HP:0001250 (a repeat, scored once)")}
+    none = _csv_records(dp._build_results_csv({**result, "phenotype_input": None}))[1]
+    assert none[0]["phenotypes_used"] == none[0]["phenotypes_not_used"] == "not_reported"
+    md = dp._build_results_report_md(result)
+    assert "- **Phenotypes used**: Seizure (HP:0001250), HP:0001263" in md
+    assert ("**Phenotypes annotated to this disease** (1 of 2 used): Seizure (HP:0001250)"
+            in md)
+
+
+def test_the_results_header_says_no_milliseconds_and_the_report_keeps_them():
+    """R-23: the header read "5 candidates · 63.1 ms · produced 09:50:54 UTC"
+    (two " · "). The time taken is not the clinician's: the header says the
+    count and when, one " · "; the report keeps "Inference time (ms)"."""
+    hd = dp.results_header_html({**_sample_result(), "timestamp": "2026-07-07T16:00:00"})
+    assert " ms" not in hd and "123.4" not in hd
+    assert _visible(hd) == "Diagnosis results 2 candidates · produced 16:00:00 UTC"
+    assert "- **Inference time (ms)**: 123.4" in dp._build_results_report_md(_sample_result())
+
+
+def test_the_card_time_reads_the_same_on_every_poll():
+    """R-23: the card read "checked 09:48:12 UTC", then "checked 09:48:27
+    UTC" 12 s later: its visible text changed on every 5 s read. Current, it
+    reads "current", the read's time in its title only."""
+    first = _card(_status_serving(_served_identity()), at="2026-07-07T16:00:00")
+    later = _card(_status_serving(_served_identity()), at="2026-07-07T16:00:05", state=first)
+    a, b = dp.card.time_html(first), dp.card.time_html(later)
+    assert a != b and _visible(a) == _visible(b) == "current"
+    assert 'title="Status read at 16:00:05 UTC; read again every 5 s"' in b
+
+
+def test_the_card_drops_its_synthetic_chip_while_the_results_banner_says_it():
+    """R-26: "synthetic" was said by the card's chip, the results banner and
+    the drawer at once. While a result's synthetic banner from the identity
+    the card shows is on screen, the card leaves its chip out; a result from
+    another model (or none) keeps it, as it speaks of what is served now."""
+    state = _card(_status_serving(_served_identity()))
+    result = _sample_result()
+    assert dp.compare_with_served(result, state)["state"] == "equal"
+    assert dp.synthetic_banner_shown(result, state)
+    shown = dp.card_outputs(state, result, "idle")["card_body"]
+    assert "synthetic data" not in shown
+    assert "synthetic data" in dp.card_outputs(state, None, "idle")["card_body"]
+    other = _result_with(_served_identity(origin="files"))
+    assert not dp.synthetic_banner_shown(other, state)
+    assert "synthetic data" in dp.card_outputs(state, other, "idle")["card_body"]
+
+
+def test_the_identity_drawer_leaves_the_device_line_to_the_footer():
+    """R-26 and NEW-diagnosis-1: with the identity drawer open, the device line
+    was on screen twice or three times (the results footer, Model Facts'
+    Uses, the drawer's boundary). The drawer's two views say it nowhere: the
+    footer, always in view beside them, says it once; the report keeps its
+    own; Model in use has no Uses section, its sections all open."""
+    state = _card(_status_serving(_served_identity()))
+    result = _sample_result()
+    drawer = dp.identity_outputs({"open": True, "seg": "model"}, state, result)["id_model"]
+    assert dp.NOT_A_MEDICAL_DEVICE not in drawer["value"]
+    assert "<details" not in drawer["value"] and 'data-sec="uses"' not in drawer["value"]
+    this = dp.identity_outputs({"open": True, "seg": "result"}, state, result)["id_result_html"]
+    assert dp.NOT_A_MEDICAL_DEVICE not in this["value"]
+    assert _NOT_A_DEVICE in dp._build_results_report_md(result)
+    focused = dp.open_identity(state, result, "model", "evidence")["id_model"]["value"]
+    assert 'data-sec="evidence" data-shep-focus="true"' in focused
+    assert "data-shep-focus" not in dp.open_identity(state, result)["id_model"]["value"]
+
+
+def test_each_opening_of_model_in_use_is_a_request_of_its_own():
+    """R-28: Details › and "Recorded results ›" each draw Model in use with a
+    token of their own (``data-shep-open``), so its view scrolls on every
+    request, the drawer already open or not, and the card's redraws of the
+    same opening (its reads, a diagnosis) carry the same token and move
+    nothing."""
+    state = _card(_status_serving(_served_identity()))
+    result = _sample_result()
+    token = re.compile(r'^<div data-shep-open="(\d+)">')
+    first = dp.open_identity(state, result, "model", "evidence")
+    again = dp.open_identity(state, result, "model", "evidence")
+    details = dp.open_identity(state, result)
+    tokens = [token.match(out["id_model"]["value"]).group(1) for out in (first, again, details)]
+    assert len(set(tokens)) == 3, tokens
+    assert first["identity_view"]["opened"] == int(tokens[0])
+    redrawn = dp.identity_outputs(first["identity_view"], state, result)["id_model"]["value"]
+    assert redrawn == first["id_model"]["value"]
+    untold = dp.identity_outputs({"open": True, "seg": "model"}, state, result)["id_model"]
+    assert untold["value"].startswith('<div data-shep-open="">')
+
+
+#: R-28's two openers in a browser (1440 x 900, a stand-in disease model
+#: served), each read once what is drawn holds still: Details ›, then
+#: "Recorded results ›" with the drawer open, then again after the reader
+#: scrolled back up; the drawer closed, "Recorded results ›", then Details ›.
+#: The drawer's scroll region (top, room) and where Evidence and the first
+#: section are against it, after each.
+_OPENERS_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForFunction(() => /Disease task model/.test((document.querySelector('#shep-dx-card') || {}).textContent || ''),
+                             null, { timeout: 30000 });
+  const read = () => page.evaluate(() => {
+    const bd = document.querySelector('#shep-dx-identity-bd'), box = bd.getBoundingClientRect();
+    const at = (s) => (s ? Math.round(s.getBoundingClientRect().top - box.top) : null);
+    return { top: Math.round(bd.scrollTop), room: bd.scrollHeight - bd.clientHeight,
+             evidence: at(document.querySelector('#shep-dx-id-model [data-sec="evidence"]')),
+             first: at(document.querySelector('#shep-dx-id-model [data-sec]')) };
+  });
+  // Until the drawer's region and its content hold still for two frames.
+  const still = () => page.evaluate(async () => {
+    let last = null;
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const bd = document.querySelector('#shep-dx-identity-bd');
+      const now = [bd.scrollTop, bd.scrollHeight, document.querySelector('#shep-dx-id-model').innerHTML].join('|');
+      if (now === last) { return i; }
+      last = now;
+    }
+    return -1;
+  });
+  const opened = async (click, focus) => {
+    const token = await page.evaluate(() => {
+      const t = document.querySelector('#shep-dx-id-model [data-shep-open]');
+      return t ? t.getAttribute('data-shep-open') : null; });
+    await page.click(click);
+    await page.waitForFunction(([before, focus]) => {
+      const view = document.querySelector('#shep-dx-id-model');
+      const t = view && view.offsetParent && view.querySelector('[data-shep-open]');
+      const drawn = t ? t.getAttribute('data-shep-open') !== before
+                      : view && view.offsetParent && view.querySelector('[data-sec]');
+      return drawn && !!view.querySelector('[data-sec="evidence"][data-shep-focus]') === focus;
+    }, [token, focus], { timeout: 20000 });
+    await still();
+    return read();
+  };
+  const details = () => opened('#shep-dx-details-btn', false);
+  const recorded = () => opened('#shep-dx-card-body button[data-key="evidence"]', true);
+  const seen = {};
+  seen.details = await details();
+  seen.then_recorded = await recorded();
+  await page.evaluate(() => { document.querySelector('#shep-dx-identity-bd').scrollTop = 0; });
+  await still();
+  seen.recorded_again = await recorded();
+  await page.click('#shep-dx-identity-close button[data-key="close"]');
+  await page.waitForSelector('#shep-dx-identity', { state: 'hidden' });
+  seen.recorded_closed = await recorded();
+  seen.then_details = await details();
+  // The reader scrolls to the drawer's end; the card's next status read
+  // (its time's markup changes with each read) moves nothing.
+  await page.evaluate(() => { const bd = document.querySelector('#shep-dx-identity-bd'); bd.scrollTop = bd.scrollHeight; });
+  await still();
+  const time = await page.evaluate(() => document.querySelector('#shep-dx-card-time .shep-dx-checked').outerHTML);
+  await page.waitForFunction((h) => { const el = document.querySelector('#shep-dx-card-time .shep-dx-checked');
+                                      return el && el.outerHTML !== h; }, time, { timeout: 30000 });
+  await still();
+  seen.after_a_read = await read();
+  console.log(JSON.stringify(seen));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_details_opens_model_in_use_at_its_top_and_recorded_results_at_evidence(monkeypatch,
+                                                                              tmp_path):
+    """R-28 as drawn (Node and Playwright, skipped without), with the drawer's
+    region taller than its view: Details › shows Model in use from its top
+    (Warnings first) and "Recorded results ›" scrolls Evidence to the top of
+    the drawer's view, whichever was asked first and with the drawer open or
+    closed, and again after the reader scrolled; the card's status read after
+    the reader scrolled moves nothing (a redraw is no new opening). Before,
+    only a drawer opened from closed scrolled (on its mount): Details › then
+    Recorded results ›
+    left Evidence below the fold, and Recorded results › then Details › left
+    the drawer scrolled at Evidence, Warnings above its top."""
+    from src.webui import shell
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    status = _status_serving(_task_identity("disease_task"))
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (status, None))
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": True, "workspaces": [], "serving": None,
+        "item": None, "item_problem": None, "recorded": None, "trained": None,
+        "cohorts": None})
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_OPENERS_JS, tmp_path, base[:-len("gradio_api")])
+    room = seen["details"]["room"]
+    assert room > 0, seen                 # the drawer has more than its view holds
+    for step in ("details", "then_details"):
+        assert seen[step]["top"] == 0 and seen[step]["first"] <= 16, (step, seen)
+    for step in ("then_recorded", "recorded_again", "recorded_closed"):
+        drawn = seen[step]
+        assert drawn["top"] > 0, (step, seen)
+        assert abs(drawn["evidence"]) <= 2 or drawn["top"] == drawn["room"], (step, seen)
+    assert seen["after_a_read"]["top"] == room, seen      # a redraw is no new opening
+#: fixture: the real application and pipeline, explanations on): a query run;
+#: then what one screen says, view by view, with the counts a reader sees
+#: (`innerText`, so a closed disclosure's words are not counted).
+_ONCE_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#dx_hpo_terms textarea', { state: 'visible', timeout: 30000 });
+  await page.waitForFunction(() => /Disease task model/.test(document.querySelector('#shep-dx-card').textContent),
+                             null, { timeout: 30000 });
+  await page.fill('#dx_hpo_terms textarea', process.argv[3]);
+  await page.click('#shep-dx-run-btn');
+  await page.waitForFunction(() => /#1/.test(document.querySelector('#shep-dx-details-hd').textContent),
+                             null, { timeout: 60000 });
+  const body = () => page.evaluate(() => document.body.innerText);
+  const count = (text, s) => text.split(s).length - 1;
+  const seen = {};
+  let text = await body();
+  const score = (await page.innerText('#shep-dx-results-body tbody tr:first-child td:nth-child(3)')).trim();
+  seen.evidence = { score: count(text, score), mode: count(text, 'Mode A'),
+                    shortest: count(text, 'shortest path =') + count(text, 'Shortest path'),
+                    device: count(text, 'Not a certified medical device'),
+                    ms: /\d ms\b/.test(await page.innerText('#shep-dx-results-hd')),
+                    kn: await page.innerText('#shep-dx-results-body tbody tr:first-child td:nth-child(4)'),
+                    head: await page.innerText('#shep-dx-details-hd') };
+  const seg = async (name) => {
+    await page.click(`#shep-dx-seg label:has-text("${name}")`);
+    await page.waitForFunction((n) => {
+      const r = document.querySelector('#shep-dx-seg input:checked');
+      return r && r.closest('label').textContent.includes(n);
+    }, name, { timeout: 20000 });
+  };
+  await seg('Explanation');
+  await page.waitForFunction(() => !document.querySelector('#shep-dx-explanation').classList.contains('shep-dx-off')
+                             && document.querySelector('#shep-dx-explanation').innerText.trim().length > 0,
+                             null, { timeout: 20000 });
+  text = await body();
+  seen.explanation = { device: count(text, 'Not a certified medical device'),
+                       note: count(text, 'computational prediction') };
+  // The identity drawer at Model in use, then This result.
+  await page.click('#shep-dx-details-btn');
+  await page.waitForFunction(() => document.querySelector('#shep-dx-id-model [data-sec="identity"]'),
+                             null, { timeout: 20000 });
+  text = await body();
+  seen.model = { device: count(text, 'Not a certified medical device'),
+                 caps: count(text, 'SYNTHETIC WORKSPACE'),
+                 details: await page.evaluate(() => document.querySelectorAll('#shep-dx-id-model details').length),
+                 order: await page.evaluate(() => [...document.querySelectorAll('#shep-dx-id-model [data-sec]')].map((d) => d.dataset.sec)),
+                 chip: count(await page.innerText('#shep-dx-card'), 'synthetic data') };
+  await page.click('#shep-dx-identity-seg label:has-text("This result")');
+  await page.waitForFunction(() => !document.querySelector('#shep-dx-id-result').classList.contains('shep-dx-off'),
+                             null, { timeout: 20000 });
+  text = await body();
+  seen.result = { device: count(text, 'Not a certified medical device') };
+  // The card's time across one 5 s read (its markup changes with the read's
+  // time): the words a reader sees stay the same.
+  const time = '#shep-dx-card-time .shep-dx-checked';
+  const read = (s) => { const el = document.querySelector(s); return [el.outerHTML, el.innerText.trim()]; };
+  const before = await page.evaluate(read, time);
+  await page.waitForFunction(([s, h]) => { const el = document.querySelector(s); return el && el.outerHTML !== h; },
+                             [time, before[0]], { timeout: 30000 });
+  const after = await page.evaluate(read, time);
+  seen.time = { before, after };
+  console.log(JSON.stringify(seen));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_in_a_browser_each_notice_score_and_path_length_is_said_once(served, monkeypatch,
+                                                                      tmp_path):
+    """T06-D as drawn (Node and Playwright, skipped without), on the real
+    application serving a disease child: the row's score is on screen once
+    (R-1b); no "Mode A" and the shortest path's length once (R-3,
+    NEW-diagnosis-2); the device line once, the results footer's, with the
+    Explanation view open (NEW-diagnosis-1) and with the identity drawer open
+    at either view (R-26); no capitals in a banner and no "synthetic data"
+    chip beside the result's own synthetic banner (R-26); Model Facts' sections
+    all open, Warnings first (R-28); a k/N cell (R-1d); no milliseconds in the
+    header, and the card's words the same across a status read (R-23). On the
+    code before T06-D each count was 2 or more, or the cell absent."""
+    from src.webui import shell
+    from src.webui.app import mount_options
+    from src.webui.components import served_status
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served as served_page
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    # The card reads what the real application serves (the `served` fixture's
+    # pipeline), not the stand-in status `status_read` answers with.
+    monkeypatch.setattr(dp.card, "read_status_within",
+                        lambda *a, **k: served_status.read_status())
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+    with served_page(demo, **mount_options()) as base:
+        seen = run_node(_ONCE_JS, tmp_path, base[:-len("gradio_api")], f"{SEIZURE}, {DELAY}")
+    evidence = seen["evidence"]
+    assert evidence["score"] == 1 and evidence["mode"] == 0, seen
+    assert evidence["shortest"] <= 1 and evidence["device"] == 1 and not evidence["ms"], seen
+    assert re.fullmatch(r"\d+ / 2", evidence["kn"].strip()), seen
+    assert evidence["score"] == 1 and "Score" not in evidence["head"], seen
+    assert seen["explanation"] == {"device": 1, "note": 0}, seen
+    model = seen["model"]
+    assert model["device"] == 1 and model["caps"] == 0 and model["details"] == 0, seen
+    assert model["order"][0] == "warnings" and "uses" not in model["order"], seen
+    assert model["chip"] == 0, seen
+    assert seen["result"]["device"] == 1, seen
+    (html1, words1), (html2, words2) = seen["time"]["before"], seen["time"]["after"]
+    assert html1 != html2 and words1 == words2 == "current", seen

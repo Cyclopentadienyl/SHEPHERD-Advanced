@@ -254,15 +254,29 @@ def test_in_use_marks_the_row():
 
 
 # --------------------------------------------------------------------------- Model Facts
-def test_model_facts_has_its_five_sections_and_warnings_always_open():
+def test_model_facts_has_its_five_sections_always_open_with_warnings_first():
+    """R-28: Model Facts were an accordion inside the drawer that shows them
+    (Identity open, Uses, Data and Evidence collapsed), so most facts were a
+    second click away. Every section is open now, Warnings first when there
+    are any, its headline in sentence case (R-26)."""
     facts = r.facts_from_checkpoint(checkpoint(), [workspace()],
                                     recorded=r.RecordedTests("none"),
                                     serving_workspace=workspace())
     html = r.model_facts_html(facts)
-    for number, title in enumerate(("Identity", "Uses", "Data", "Evidence"), start=1):
-        assert f'<span class="shep-facts-n">{number}</span> {title}' in html
-    assert '<details class="shep-facts-sec" data-sec="identity" open>' in html
+    assert "<details" not in html and "<summary" not in html
+    order = [html.index(f'data-sec="{key}"')
+             for key in ("warnings", "identity", "uses", "data", "evidence")]
+    assert order == sorted(order), order
+    for title in ("Warnings", "Identity", "Uses", "Data", "Evidence"):
+        assert f"<h4>{title}</h4>" in html
     assert '<section class="shep-facts-sec shep-facts-warn" data-sec="warnings">' in html
+    assert "data-shep-focus" not in html
+    assert '<section class="shep-facts-sec" data-sec="data" data-shep-focus="true">' in (
+        r.model_facts_html(facts, focus="data"))
+    # Without Uses (a page that says the device line itself): the rest stays.
+    without = r.model_facts_html(facts, uses=False)
+    assert 'data-sec="uses"' not in without and r.NOT_A_MEDICAL_DEVICE not in without
+    assert 'data-sec="data"' in without
     plain = text_of(html)
     assert ("Not a certified medical device; decision support for a qualified clinician. "
             "Synthetic workspaces are for testing only.") in plain
@@ -275,7 +289,7 @@ def test_model_facts_has_its_five_sections_and_warnings_always_open():
     assert '<dl class="shep-kv">' in data and "Trained ondemo" in text_of(data)
     assert ('<dt class="shep-k">Serving</dt><dd class="shep-v">reads workspace demo: the same '
             'dataset</dd>') in data
-    assert "SYNTHETIC WORKSPACE: not a clinical result." in plain
+    assert "Synthetic workspace: not a clinical result." in plain
     assert "runs/gatv2/20261017-091500_run_3fa9c1/checkpoints/model-05-0.2410.pt" in plain
     assert SHA in plain and FP_A in plain           # Identity: the full digests, with Copy
 
@@ -284,10 +298,14 @@ def test_model_facts_warns_of_a_dataset_no_listed_workspace_holds():
     facts = r.facts_from_checkpoint(checkpoint(fingerprint="9b1f04e6d2c8" + "0" * 52),
                                     [workspace()])
     plain = text_of(r.model_facts_html(facts))
-    assert "TRAINED ON A DATASET NO LISTED WORKSPACE HOLDS." in plain
+    assert r.TRAINED_ON_UNLISTED in plain and r.TRAINED_ON_UNLISTED == (
+        "Trained on a dataset no listed workspace holds.")
     assert "Trained onmatches no listed workspace" in plain
     facts = r.facts_from_checkpoint(checkpoint(fingerprint=FP_B), [workspace("o", FP_B, "files")])
-    assert "No warnings." in text_of(r.model_facts_html(facts))
+    html = r.model_facts_html(facts)
+    # No warning: Warnings says so, last.
+    assert "No warnings." in text_of(html)
+    assert html.index('data-sec="evidence"') < html.index('data-sec="warnings"')
 
 
 def test_the_medical_device_line_is_the_one_diagnosis_uses():
@@ -295,6 +313,21 @@ def test_the_medical_device_line_is_the_one_diagnosis_uses():
 
     assert dp.NOT_A_MEDICAL_DEVICE is r.NOT_A_MEDICAL_DEVICE
     assert dp._IDENTITY_BANNERS is r.IDENTITY_BANNERS
+
+
+def test_every_warning_headline_is_in_sentence_case():
+    """R-26: the banners were in capitals ("SYNTHETIC WORKSPACE: not a
+    clinical result."); their mark and tone make them stand out. Every
+    headline the banners and Model Facts' Warnings draw starts with one
+    capital and has no word in capitals, its words otherwise kept."""
+    import re
+
+    headlines = [head for head, _detail in r.IDENTITY_BANNERS.values()]
+    headlines += [r.METADATA_NOT_READABLE, r.TRAINED_ON_UNLISTED, r.DATASET_NOT_RECORDED]
+    for head in headlines:
+        assert head[0].isupper() and not re.search(r"\b[A-Z]{2,}\b", head), head
+    assert r.IDENTITY_BANNERS["synthetic"][0] == "Synthetic workspace: not a clinical result."
+    assert r.IDENTITY_BANNERS["not_reported"][0] == "What produced this result was not reported."
 
 
 @pytest.mark.parametrize("name", ['<script>alert(1)</script>', 'a"b&c'])
@@ -333,6 +366,52 @@ def test_an_option_is_never_longer_than_the_rule_and_never_lengthens_its_token()
                 assert len(option) <= r.OPTION_CHARS and option.count(" · ") <= 1, option
                 token = option.split(" · ")[0].removesuffix(mark)
                 assert len(token) <= len(what) or token == what, option
+
+
+#: A ZWJ family emoji (MAN, ZWJ, WOMAN, ZWJ, GIRL): five code points, one
+#: character on screen.
+FAMILY = "\U0001F468‍\U0001F469‍\U0001F467"
+#: A flag (two regional indicators) and a letter with a combining accent.
+FLAG, ACCENTED = "\U0001F1EF\U0001F1F5", "é"
+
+
+def _split_sequences(text):
+    """What is left of `text` once every whole family, flag and accented
+    letter is taken out: any part of one left over means a cut split it."""
+    left = text.replace(FAMILY, "").replace(FLAG, "").replace(ACCENTED, "")
+    return [ch for ch in left if ch in FAMILY + FLAG + "́"]
+
+
+def test_a_cut_never_splits_a_character_drawn_from_several_code_points():
+    """B72-N4: `middle_cut` sliced by code point, so a name holding the ZWJ
+    family emoji cut to 20 characters kept a lone GIRL after the ellipsis,
+    and `fit_option` gave "run-👨‍👩…👩‍👧-end · …", a split sequence. Every cut
+    (`middle_cut`, so `fit_option` and `fit_options`; `short_reason`) is
+    made between two grapheme clusters (`grapheme_ends`): a family, a flag
+    and a letter with its accent each stay whole on its side of the "…" or
+    are left out whole, and every option stays within `OPTION_CHARS`."""
+    name = f"run-{FAMILY}-{'x' * 30}{FAMILY}-end"
+    assert r.middle_cut(name, 20) == f"run-{FAMILY}…x{FAMILY}-end"
+    for room in range(1, len(name) + 1):
+        for head in (0, 4, 6, 8):
+            cut = r.middle_cut(name, room, head=head)
+            assert len(cut) <= room and not _split_sequences(cut), (room, head, cut)
+    # The one cut under it, at every start a caller may try (Diagnosis'
+    # cohort options try each).
+    for keep in range(len(name)):
+        for head in range(keep + 1):
+            cut = r.cut_at(name, head, keep)
+            assert len(cut) <= keep + 1 and not _split_sequences(cut), (keep, head, cut)
+    for what in (f"run-{FAMILY}-end", f"run-{FAMILY * 3}-end", f"{FAMILY}{FLAG}caf{ACCENTED}" * 3):
+        for rest in (None, "r" * 20, "r" * 37, f"{FAMILY}-{'r' * 40}"):
+            for mark in ("", " (2)"):
+                option = r.fit_option(what, rest, mark)
+                assert len(option) <= r.OPTION_CHARS and not _split_sequences(option), option
+    labels = [label for label, _v in r.fit_options([(f"a{FAMILY * 12}b", None, 1),
+                                                     (f"a{FAMILY * 12}c", None, 2)])]
+    assert len(set(labels)) == 2 and not any(_split_sequences(label) for label in labels), labels
+    assert r.short_reason("a" * 78 + FAMILY + "b", 80) == "a" * 78 + "…"
+    assert r.grapheme_ends(f"{ACCENTED}{FLAG}\U0001F1FA\U0001F1F8\r\n한") == [0, 2, 4, 6, 8, 9]
 
 
 #: The full fine-tune and its frozen-backbone control of the round's
