@@ -670,6 +670,15 @@ def short_reason(text: Any, limit: int = 80) -> str:
     return flat if len(flat) <= limit else flat[:limit - 1] + "…"
 
 
+def reason_lead(text: Any) -> str:
+    """**A reason's plain words, without its trailing reference**: a refused
+    read says "the file cannot be read as a checkpoint; Ref: <the loader's
+    words>" (`checkpoint_paths.refusal_line`; the WebUI skill's §5, an
+    internal code only after a plain label), and a row says the words before
+    the reference; the whole reason is its details'."""
+    return " ".join(str(text or "").partition("; Ref: ")[0].split())
+
+
 #: Why a workspace without a readable manifest is not trainable, in short words:
 #: by whether its ``split_manifest.json`` is absent (an item's ``manifest``,
 #: which the page reading the list adds) or present but not readable.
@@ -757,16 +766,22 @@ class RecordedTests(NamedTuple):
     unreadable: int = 0
 
 
+#: A checkpoint with no ledger beside it, as its recorded results say (R-27).
+NO_LEDGER_WORDS = "none kept"
+
+
 def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
     """"Recorded results: 3 · 1 not readable; runs differ for 1; comparison
     incomplete for 1": states, never a number of a result; a record that
     cannot be read is never counted as one (K8-6e.1) and a record whose
     comparison is incomplete is never shown as agreeing. "none in ledger"
-    only when the ledger holds neither. One " · " (the skill's §5)."""
+    only when the ledger holds neither; with no ledger beside the file, "none
+    kept" (R-27: never the internal word "no ledger"). One " ·
+    " (the skill's §5)."""
     if recorded is None:
         return "Recorded results: not read"
     if recorded.state == "no_ledger":
-        return "Recorded results: no ledger"
+        return f"Recorded results: {NO_LEDGER_WORDS}"
     if recorded.state == "not_read":
         return "Recorded results: ledger not readable"
     if recorded.state == "none" or (recorded.count == 0 and not recorded.unreadable):
@@ -988,6 +1003,60 @@ def model_kind_text(item: Any) -> str:
     return f"{kind} · {words}" if words else kind
 
 
+#: **A run's operation in a word** (the shared model list's run rows, D04,
+#: and the Models detail's Operation row: one spelling on a screen), from its
+#: record's `operation`: a run started from nothing, one resumed, one
+#: extended, a branch and a fine-tune of a parent.
+RUN_OPERATION_WORDS = {"new": "New run", "resume": "Resume", "extend": "Extend",
+                       "branch": "Branch", "finetune": "Fine-tune"}
+
+
+def operation_words(item: Any) -> str:
+    """**What a run did, in a few words** (the shared model list's run rows,
+    D04, and the Models detail's Operation row): `RUN_OPERATION_WORDS` of its
+    record's operation, and for a fine-tune what its weight transfer records
+    frozen, in one of three words (`run_plan.recorded_frozen_parts`, the one
+    reading of that record): "Fine-tune, full" (nothing frozen), "Fine-tune,
+    frozen" (the graph side, `recipe.FROZEN_PARTS["graph_side"]`), "Fine-tune,
+    partly frozen" (any other parts); a fine-tune that records no transfer is
+    "Fine-tune". A model record that names no operation says "Not recorded", a
+    record not readable or not read "Unknown" (the skill's §6), never a
+    dash."""
+    if _get(item, "record") != "model":
+        return UNKNOWN
+    operation = _get(item, "operation")
+    if not isinstance(operation, str) or not operation:
+        return NOT_RECORDED
+    words = RUN_OPERATION_WORDS.get(operation, operation)
+    if operation != "finetune":
+        return words
+    frozen = recorded_frozen_parts(_get(item, "weight_transfer"))
+    if frozen is None:
+        return words
+    if not frozen:
+        return f"{words}, full"
+    if frozen == tuple(sorted(FROZEN_PARTS["graph_side"])):
+        return f"{words}, frozen"
+    return f"{words}, partly frozen"
+
+
+def entry_place(item: Any) -> Optional[str]:
+    """**Where an entry the listing could not list sits, in words** (BACKLOG
+    69 L1): a directory under ``runs/`` ("a folder in runs/") or a run
+    directory ("a run folder in runs/gatv2/"), told by its identity (an
+    entry for a directory is keyed as its run, `CheckpointItem.key` and
+    `run_key`; one directly under ``runs/`` by its own name alone), never by
+    upper-casing a directory's name as if it named an architecture. None for
+    a file, which its run and its own name place."""
+    key, run_key = _get(item, "key"), _get(item, "run_key")
+    if not isinstance(key, str) or key != run_key:
+        return None
+    layout = str(_get(item, "architecture") or "")
+    if key.startswith(f"{layout}/"):
+        return f"a run folder in runs/{layout}/"
+    return "a folder in runs/"
+
+
 def configuration_text(item: Any) -> str:
     """A listed model's configuration (README §5, axis 1): its encoder and
     whether its spec is the reference recipe, "GATv2 · reference recipe" or
@@ -1171,50 +1240,6 @@ def unreadable_words(item: Any) -> str:
     return "metadata not readable" if read else "not read"
 
 
-def model_row_html(item: Any, workspaces: Sequence[Any], *,
-                   recorded: Optional[RecordedTests] = None, in_use: bool = False,
-                   selected: bool = False, digits: int = SHORT_HEX, key: str = "",
-                   in_use_label: str = "In use", name: Optional[str] = None) -> str:
-    """One checkpoint as a row of the shared model list: its name (`name`,
-    where a heading above names its run: the file's own words; else the name
-    line, `model_name_line`), "model fingerprint" 12 hex, what it was trained
-    on, the synthetic chip and the recorded tests' state. An unreadable
-    checkpoint is greyed: "metadata not readable · cannot be loaded", or
-    "not read · …" for an entry never opened (`unreadable_words`)."""
-    problem = _get(item, "problem")
-    unreadable = problem is not None or not is_digest(_get(item, "sha256"))
-    classes = ["shep-row"]
-    if selected:
-        classes.append("shep-row-on")
-    if unreadable:
-        classes.append("shep-row-dis")
-    tag = f' {chip(in_use_label, "accent")}' if in_use else ""
-    head = (f'<span class="shep-row-main">{e(name if name is not None else model_name_line(item))}'
-            f'</span>{tag}')
-    if unreadable:
-        why = problem or "its digest was not read"
-        body = (f'<span class="shep-row-sub">{e(_get(item, "filename"))} · '
-                f'<span title="{e(why)}">{e(unreadable_words(item))} · cannot be loaded</span>'
-                '</span>')
-        return (f'<button type="button" class="{" ".join(classes)}" data-key="{e(key)}" '
-                f'aria-disabled="true" aria-pressed="false">{head}{body}</button>')
-    fingerprint = _get(item, "dataset_fingerprint")
-    sub = [fingerprint_html("model fingerprint", _get(item, "sha256"), digits=digits, copy=False),
-           trained_on_html(fingerprint, workspaces, digits=digits)]
-    if is_synthetic_training(fingerprint, workspaces):
-        sub.append(chip("synthetic", "amber"))
-    tests = f'<span class="shep-row-sub">{e(recorded_tests_text(recorded))}</span>'
-    return (f'<button type="button" class="{" ".join(classes)}" data-key="{e(key)}" '
-            f'aria-pressed="{"true" if selected else "false"}">{head}'
-            f'<span class="shep-row-sub">{" · ".join(sub)}</span>{tests}</button>')
-
-
-def recorded_tests_cell(recorded: Optional[RecordedTests]) -> str:
-    """The recorded tests' state for a table cell (`recorded_tests_text`
-    without its label): never a number of a result."""
-    return recorded_tests_text(recorded).replace("Recorded results: ", "", 1)
-
-
 def validation_cell(validation: Any, *, read: bool = True) -> str:
     """A checkpoint's own validation figure for the "Validation (Trainer)"
     column, escaped: its value over the figure's name (`VALIDATION_LABELS`),
@@ -1228,11 +1253,6 @@ def validation_cell(validation: Any, *, read: bool = True) -> str:
     metric, value = str(validation.get("metric")), float(validation["value"])
     label = VALIDATION_LABELS.get(metric, f"Validation {metric} (Trainer)")
     return f'{value:.4f}<div class="shep-sub">{e(label)}</div>'
-
-
-#: The research table's fixed columns (Models): an extra column a page fills
-#: goes before the recorded tests. One or two words each (the skill's §8).
-MODEL_TABLE_COLUMNS = ("Model", "Fingerprint", "Validation (Trainer)", "Recorded results")
 
 
 def dataset_exception(item: Any) -> str:
@@ -1292,55 +1312,6 @@ def warning_html(head: str, detail: str) -> str:
             f'<span>{e(detail)}</span></p>')
 
 
-def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
-                         recorded: Optional[RecordedTests] = None, in_use: bool = False,
-                         selected: bool = False, digits: int = SHORT_HEX, key: str = "",
-                         in_use_label: str = "In use", extra: Optional[str] = None,
-                         run: Optional[str] = None) -> str:
-    """One checkpoint as a row of the research table (Models): its run by the
-    one run words (`run_words`, an option's length; `run`, the words the
-    table's other runs are told apart from, `run_names`) over how far it trained
-    (`epoch_words`); its model fingerprint's 12 hex digits (`fingerprint_value`,
-    the whole value its title; its Copy is in the file's details), and under
-    them its dataset only where it is not the workspace's current one
-    (`dataset_exception`, with "synthetic" where a listed synthetic workspace
-    holds it); the Trainer's validation figure, an optional cell the page
-    fills (`extra`, HTML it built with these renderers) and the recorded
-    tests' state. An unreadable checkpoint is greyed: "metadata not readable ·
-    cannot be loaded" ("not read · …" for an entry never opened,
-    `unreadable_words`), its recorded tests Unknown (its digest, by which they
-    are found, was not read)."""
-    problem = _get(item, "problem")
-    unreadable = problem is not None or not is_digest(_get(item, "sha256"))
-    classes = [c for c, on in (("shep-on", selected), ("shep-row-dis", unreadable)) if on]
-    tag = f' {chip(in_use_label, "accent")}' if in_use else ""
-    name = e(run if run is not None else run_words(_get(item, "architecture"), _get(item, "run")))
-    model = (f'<div class="shep-w600">{name}</div><div class="shep-sub">'
-             f'{e(epoch_words(item))}</div>{tag}')
-    # A plain table's selected row is `aria-current`, never `aria-selected`
-    # (the skill's §8).
-    attrs = (f'class="{" ".join(classes)}" data-key="{e(key)}" tabindex="0"'
-             + (' aria-current="true"' if selected else "")
-             + (' aria-disabled="true"' if unreadable else ""))
-    extra_cell = "" if extra is None else f"<td>{extra}</td>"
-    if unreadable:
-        why = problem or "its digest was not read"
-        return (f'<tr {attrs}><td>{model}</td><td colspan="2"><span class="shep-sub">'
-                f'{e(_get(item, "filename"))} · <span title="{e(why)}">'
-                f'{e(unreadable_words(item))} · cannot be loaded</span></span></td>{extra_cell}'
-                f'<td>{status_mark("neutral", UNKNOWN)}</td></tr>')
-    exception = dataset_exception(item)
-    if exception and is_synthetic_training(_get(item, "dataset_fingerprint"), workspaces):
-        exception += " " + chip("synthetic", "amber")
-    dataset = f'<div class="shep-sub">{exception}</div>' if exception else ""
-    fingerprint = fingerprint_value(_get(item, "sha256"), what="model fingerprint",
-                                    digits=digits, copy=False)
-    return (f'<tr {attrs}><td>{model}</td><td>{fingerprint}{dataset}</td>'
-            f'<td class="shep-num">{validation_cell(_get(item, "validation"), read=record_read(item))}'
-            f'</td>{extra_cell}'
-            f'<td>{e(recorded_tests_cell(recorded))}</td></tr>')
-
-
 # ---------------------------------------------------------------------------
 # Model Facts
 # ---------------------------------------------------------------------------
@@ -1388,13 +1359,23 @@ class ModelFacts(NamedTuple):
     #: HTML under Evidence's rows (the Diagnosis card's link to the full
     #: records on Models), escaped by its builder.
     evidence_more: str = ""
+    #: A listed file trained on the chosen workspace's current dataset
+    #: (`facts_from_checkpoint`'s `listed`): its list says that dataset once,
+    #: under the workspace select, so the facts name it by that relation
+    #: (`CURRENT_DATASET`), never its fingerprint again (the skill's §1.2).
+    current_dataset: bool = False
 
 
 def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
                           recorded: Optional[RecordedTests] = None,
-                          serving_workspace: Any = None) -> ModelFacts:
+                          serving_workspace: Any = None, listed: bool = False) -> ModelFacts:
     """Model Facts for a checkpoint the server listed. `serving_workspace` is the
-    listed workspace the pipeline serves now, if any, for the Data line."""
+    listed workspace the pipeline serves now, if any, for the Data line.
+    `listed`: the facts of a file chosen in a list of the chosen workspace's
+    files (the Diagnosis load drawer, Models), not of the model served: no
+    synthetic banner, which speaks of the served workspace (the list's
+    workspace line says "synthetic"), and a file trained on that workspace's
+    current dataset is said so by its relation (`ModelFacts.current_dataset`)."""
     fingerprint = _get(item, "dataset_fingerprint")
     names = trained_on(fingerprint, workspaces)
     matched = [w for w in workspaces if _get(w, "name") in names]
@@ -1404,7 +1385,7 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
     architecture, run, filename = (_get(item, "architecture"), _get(item, "run"),
                                    _get(item, "filename"))
     warnings = []
-    if synthetic:
+    if synthetic and not listed:
         warnings.append(IDENTITY_BANNERS["synthetic"])
     if _get(item, "problem") is not None:
         warnings.append(("METADATA NOT READABLE: this checkpoint cannot be loaded.",
@@ -1447,6 +1428,7 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
         configuration=(configuration_text(item) if _get(item, "record") is not None
                        else None),
         validation_read=record_read(item),
+        current_dataset=listed and _get(item, "trained_on_this_dataset") is True,
     )
 
 
@@ -2167,6 +2149,10 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
     # mockup draws it, so the full fingerprint and its Copy keep one line.
     trained_label = FACTS_TRAINED_FP + (f" · {', '.join(facts.trained_on_names)}"
                                         if facts.trained_on_names else "")
+    # A listed file trained on the chosen workspace's current dataset: by that
+    # relation, the dataset said once, under the list's workspace select.
+    trained_row = (("Trained on", e(CURRENT_DATASET)) if facts.current_dataset
+                   else (trained_label, data_fp))
     identity = summary_list([
         ("Model", e(facts.name_line)),
         *([("Task", e(facts.task))] if facts.task else []),
@@ -2174,7 +2160,7 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
         ("Run", f"<code>{e(facts.run)}</code>" if facts.run else "—"),
         ("Checkpoint file", location or "—"),
         (FACTS_MODEL_FP, model_fp),
-        (trained_label, data_fp),
+        trained_row,
         *facts.served_rows,
     ], wide=(FACTS_MODEL_FP, trained_label, *(label for label, _value in facts.served_rows)))
     uses_text = f"{NOT_A_MEDICAL_DEVICE} {SYNTHETIC_FOR_TESTING}"
@@ -2184,11 +2170,12 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
                else NOT_RECORDED.lower())
     # The dataset fingerprint once more, short and without its Copy: Identity
     # shows it whole with its Copy.
-    data_rows = [("Trained on", e(trained) + (" " + chip("synthetic", "amber")
-                                              if facts.synthetic else "")),
-                 ("Dataset fingerprint",
-                  fingerprint_value(facts.trained_on_fingerprint, copy=False,
-                                    missing=unread[1] if unread else NOT_RECORDED.lower()))]
+    data_rows = ([("Trained on", e(CURRENT_DATASET))] if facts.current_dataset else
+                 [("Trained on", e(trained) + (" " + chip("synthetic", "amber")
+                                               if facts.synthetic else "")),
+                  ("Dataset fingerprint",
+                   fingerprint_value(facts.trained_on_fingerprint, copy=False,
+                                     missing=unread[1] if unread else NOT_RECORDED.lower()))])
     if facts.sources:
         data_rows.append(("Sources", e(facts.sources)))
     data_rows.extend(facts.serving_rows)
@@ -2221,7 +2208,6 @@ __all__ = [
     "FIELD_ROWS",
     "FROZEN_BACKBONE_WORDS",
     "IDENTITY_BANNERS",
-    "MODEL_TABLE_COLUMNS",
     "ModelFacts",
     "ALL_NEIGHBOURS",
     "NOT_A_MEDICAL_DEVICE",
@@ -2277,11 +2263,13 @@ __all__ = [
     "metric_words",
     "model_facts_html",
     "model_kind_text",
+    "NO_LEDGER_WORDS",
+    "operation_words",
+    "entry_place",
+    "RUN_OPERATION_WORDS",
     "model_spec_html",
     "model_name_line",
     "named_words",
-    "model_row_html",
-    "model_table_row_html",
     "not_trainable_chip",
     "not_trainable_short",
     "origin_of",
@@ -2289,6 +2277,7 @@ __all__ = [
     "r10_state_parts",
     "r10_state_text",
     "r10_table_html",
+    "reason_lead",
     "record_chip",
     "record_kind_text",
     "record_read",
@@ -2296,7 +2285,6 @@ __all__ = [
     "relation_rows",
     "relations_html",
     "recorded_count_text",
-    "recorded_tests_cell",
     "recorded_tests_text",
     "resources_html",
     "run_name",

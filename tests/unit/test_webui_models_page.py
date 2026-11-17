@@ -252,6 +252,45 @@ def _add_bundles(world, *, orphan_parent_run=None):
     return shas
 
 
+def _add_child(world, run, parent_sha, parent_run):
+    """One more disease fine-tune, a file of `run` whose recorded parent is
+    `parent_sha` of `parent_run` (in the base's family: a lineage one run
+    deeper than the base's children)."""
+    from src.utils.checkpoint_io import write_checkpoint
+    from tests.unit import test_task_first_selection as bundles
+
+    fingerprint = file_sha256(world["workspace"] / "split_manifest.json")
+    path = world["workspace"] / "runs" / "gatv2" / run / "checkpoints" / "last.pt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sha = write_checkpoint({**bundles._record_payload(
+        "disease", logs={"val_pooled_mrr": 0.43},
+        parent={"sha256": parent_sha, "run": parent_run}),
+        "checkpoint_kind": "weights", "training_input_digests": {"split_manifest": fingerprint},
+        "epoch": 3}, path)
+    os.utime(path, (time.time() - 19 * 3600,) * 2)
+    world["paths"][f"{run}/last.pt"] = path
+    return sha
+
+
+def _run_row(html, run):
+    """The tree's summary row of the run `run` (``architecture/run``)."""
+    at = html.index(f'data-fold="r:{run}"')
+    start = html.rfind("<tr", 0, at)
+    return html[start:html.index("</tr>", at)]
+
+
+def _file_row(html, key):
+    """The tree's row of the file `key`."""
+    at = html.index(f'data-key="{key}"')
+    start = html.rfind("<tr", 0, at)
+    return html[start:html.index("</tr>", at)]
+
+
+def _cells(row):
+    """A table row's cells as the words they show (tags dropped)."""
+    return [re.sub(r"<[^>]+>", "", cell) for cell in re.findall(r"<td[^>]*>(.*?)</td>", row)]
+
+
 def _read(world, monkeypatch):
     listing = ml.list_models("demo", operator_request(monkeypatch), family=True)
     return listing, mp.read_page(listing)
@@ -450,12 +489,18 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
     # The rows say what they were drawn for (the "Applying …" line compares it).
     assert html.endswith('<span class="shep-view-for" hidden data-for="newest|all"></span>')
+    # Each run's summary row says what its files are (D04: a run's files share
+    # their record), its files folded under it.
+    # A run whose files read differently says what its readable file is; the
+    # one never read says so in its own row.
     for key, kind in ((_key(world, "model-05.pt"), "Record not readable"),
-                      (_key(world, "broken.pt"), "Record unknown"),
+                      (_key(world, "broken.pt"), "Record not readable"),
                       (bundle_key("base"), "Base"), (bundle_key("gene"), "Gene")):
-        row = html[html.index(f'data-key="{key}"'):]
-        assert row.split("</tr>")[0].count(f'<div class="shep-sub shep-row-kind">{kind}</div>') \
-            == 1, key
+        run = key.rsplit("/", 1)[0]
+        assert f"<td>{kind}</td>" in _run_row(html, run), key
+        assert ' hidden><td><div class="shep-tree-name shep-tree-leaf' in _file_row(html, key)
+    assert "Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded" in (
+        _file_row(html, _key(world, "broken.pt")))
     ctl = mp.controls(data, mp.NEWEST, "disease")
     assert mp.shape(listing, data, ctl) == {"task": "disease", "note": mp.LOAD_NOTE,
                                             "shaped_for": "newest|disease"}
@@ -1107,7 +1152,8 @@ def test_no_record_is_dropped_or_set_apart_for_its_family_dataset_or_cohort(worl
     assert len({item["dataset_fingerprint"] for item in items.values()}) == 2
     for order in (mp.NEWEST, mp.BY_FAMILY):
         ctl = {"task": mp.ALL_TASKS, "order": order}
-        shown = ml.shown_items(listing, mp.shown_view(listing, ctl))
+        tree = ml.tree_view(listing, mp.shape(listing, data, ctl), ml.PRESETS["research"])
+        shown = [ml.find_item(listing, k) for k in tree.matched]
         for key, (_sha, _path) in models.items():
             assert items[key] in shown, (order, key)
             detail = mp.detail_parts(listing, data, key, ctl)
@@ -1253,58 +1299,60 @@ def test_the_task_and_order_options_are_short_unique_and_plain():
 
 
 def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkeypatch):
-    """By family: one group per family,
-    the base first and its children under it, indented, each with its kind,
-    operation and exact parent; a child whose parent is not available says so
-    in amber with ▲ and its words, escaped; under All the records not readable
+    """By family (D04, RC-D: this round's lineage view): one group per
+    family, titled by its root run's name, each its own row group; its runs
+    in lineage order, each under the run of the exact parent file its files
+    record (by SHA-256 on the server, never a name), indented by depth, with
+    its task and operation; a child whose parent is not available says so in
+    amber with ▲ and its words, escaped; under All the records not readable
     (the files without a model spec among them) and the records not read
-    follow as two groups; a task's view keeps its base as a context row."""
-    shas = _add_bundles(world, orphan_parent_run=EVIL)
+    follow as two groups; a task's view keeps its base as a context run, said
+    in words."""
+    _add_bundles(world, orphan_parent_run=EVIL)
     listing, data = _read(world, monkeypatch)
     ctl = mp.controls(data, mp.BY_FAMILY, None)
     assert ctl["order"] == mp.BY_FAMILY
     view = mp.shape(listing, data, ctl)
-    assert view["column"] == mp.LINEAGE_COLUMN
+    assert "column" not in view and "cells" not in view
     titles = [g["title"] for g in view["groups"]]
     # A file whose record was never read is under its own word, "Record
     # unknown" (`record_kind_text`), never under "Record not readable"; the files
     # without a model spec, refused by the record reader, under the word each
     # of their rows leads with (K6 closing review: no page word of its own).
     refused_word = r.record_kind_text({"record": "refused"})
-    # A family by its root run in the one run words (`renderers.run_words`:
-    # its name first, as the Run select names it), one " · ".
-    assert titles == ["Family from run base · 2026-10-01 00:00 (3 files)",
-                      "Family from run disease · 2026-10-04 00:00 (1 file)",
-                      refused_word, "Record unknown"]
+    # A family by its root run's name; its runs and files are counted beside it.
+    assert titles == ["Family from base", "Family from disease", refused_word,
+                      "Record unknown"]
     assert not hasattr(mp, "GROUP_HISTORY")
     assert {r.record_kind_text(ml.find_item(listing, key))
             for key in view["groups"][2]["keys"]} == {refused_word}
     assert view["groups"][0]["keys"] == [bundle_key("base"), bundle_key("disease"),
                                          bundle_key("gene")]
+    assert [(run["run"].split("/")[1], run["depth"]) for run in view["groups"][0]["runs"]] == [
+        ("20261001-000000_base_aaaaaa", 0), ("20261002-000000_disease_bbbbbb", 1),
+        ("20261003-000000_gene_cccccc", 1)]
+    assert view["parents"][bundle_key("gene")] == bundle_key("base")
     assert view["groups"][3]["keys"] == [_key(world, "broken.pt")]
     assert len(view["groups"][2]["keys"]) == 7                       # every ShepherdGNN file
-    cells = view["cells"]
-    child = cells[bundle_key("disease")]
-    # The kind is the row's own (the shared list's Model cell), never said
-    # again in the Lineage cell; a file with no lineage says its state's own
-    # word (the skill's §6: Unknown for a record not read or not readable),
-    # never a bare dash. The parent's digest is the one digest value.
-    assert child.startswith('<div class="shep-mp-lin shep-mp-d1"><div class="shep-sub">Finetune')
-    assert (f"Finetune of {r.fingerprint_value(shas['base'], what='parent fingerprint', copy=False)}"
-            in child)
-    assert 'class="shep-mp-lin shep-mp-d0"' in cells[bundle_key("base")]
-    assert "New run" in cells[bundle_key("base")]
-    orphan = cells["gatv2/20261004-000000_disease_dddddd/last.pt"]
-    assert ('<span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">parent unavailable: '
-            in orphan)
-    assert EVIL not in orphan and html_lib.escape(EVIL) in orphan
-    assert cells[_key(world, "model-05.pt")] == (
-        f'<div class="shep-mp-lin shep-mp-d0">{r.status_mark("neutral", r.UNKNOWN)}</div>')
-    assert "—" not in cells[_key(world, "model-05.pt")]
-    # The shared list draws them: groups in order, the Lineage column.
+    (orphan,) = view["groups"][1]["runs"]
+    assert ('<span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">'
+            '▲</span><span class="shep-st-w">parent unavailable: ') in orphan["note"]
+    assert EVIL not in orphan["note"] and html_lib.escape(EVIL) in orphan["note"]
+    # The shared list draws them: each group its own row group, in order.
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
-    assert ">Lineage</th>" in html and EVIL not in html
-    assert html.index("Family from run base · 2026-10-01") < html.index(f">{refused_word}<")
+    assert EVIL not in html and ">Lineage</th>" not in html
+    bodies = re.findall(r"<tbody[^>]*>(.*?)</tbody>", html)
+    assert len(bodies) == 4 and all(b.count('scope="rowgroup"') == 1 for b in bodies)
+    assert html.index("Family from base") < html.index(f">{refused_word}<")
+    assert "3 runs, 3 saved files" in bodies[0]
+    child = _run_row(html, "gatv2/20261002-000000_disease_bbbbbb")
+    assert 'class="shep-tree-name shep-d1"' in child and _cells(child)[1:3] == ["Disease", "Fine-tune"]
+    base = _run_row(html, "gatv2/20261001-000000_base_aaaaaa")
+    assert 'class="shep-tree-name shep-d0"' in base and _cells(base)[1:3] == ["Base", "New run"]
+    # A file with no lineage says its state's own word (Unknown), never a dash.
+    refused = _run_row(html, _key(world, "model-05.pt").rsplit("/", 1)[0])
+    assert _cells(refused)[1:3] == [refused_word, "Unknown"]
+    assert "—" not in refused
     # A record this build refused and a file never read: two groups, each
     # titled with its own word (skill §6: missing states are never merged).
     broken = ml.find_item(listing, _key(world, "broken.pt"))
@@ -1318,14 +1366,15 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     assert groups["Record unknown"] == [_key(world, "broken.pt")]
     assert groups["Record not readable"][-1] == ml.item_key(refused)
     assert _key(world, "broken.pt") not in groups["Record not readable"]
-    # A task's view: its base as a context row, grey, ○ and its words.
+    # A task's view: its base as a context run, quieter, ○ and its words.
     ctl = mp.controls(data, mp.BY_FAMILY, "gene")
     view = mp.shape(listing, data, ctl)
     assert [g["keys"] for g in view["groups"]] == [[bundle_key("base"), bundle_key("gene")]]
-    assert ('<div class="shep-sub">' + mp.r.status_mark("neutral", "Context: parent of a shown "
-                                                        "file") + '</div>'
-            ) in view["cells"][bundle_key("base")]
-    assert mp.shown_view(listing, ctl) == {"keys": [bundle_key("base"), bundle_key("gene")]}
+    assert view["context"] == [bundle_key("base")]
+    html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
+    base = _run_row(html, "gatv2/20261001-000000_base_aaaaaa")
+    assert "shep-ctx" in base and mp.r.status_mark("neutral", "Parent of a shown run") in base
+    assert "shep-ctx" not in _run_row(html, "gatv2/20261003-000000_gene_cccccc")
     # No filter sets the files without a model spec apart (an unknown filter
     # is All); the marks are the shared status marks, in their status tokens.
     assert mp.controls(data, mp.BY_FAMILY, "history")["task"] == mp.ALL_TASKS
@@ -1349,7 +1398,7 @@ def test_the_order_switch_reaches_by_family_with_no_version_offering_ordering(
     assert order.interactive is False
 
     def open_as(request):
-        out = opened.fn("demo", False, None, None, None, mp.BY_FAMILY, mp.ALL_TASKS,
+        out = opened.fn("demo", False, None, None, None, "", {}, mp.BY_FAMILY, mp.ALL_TASKS,
                         mp.RECORDS, "idle", request)
         by = dict(zip(map(id, opened.outputs), out, strict=True))
         return next(v for v in out if isinstance(v, dict) and "listing_key" in v), by[id(order)]
@@ -1385,7 +1434,19 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert keys == ["Fingerprint", "File", "Dataset", "Kind", "Operation", "Parent", "Family",
                     "Encoder", "Relation to the paper", "Validation"]
     text = _text(ident)
-    assert "Disease" in text and "Finetune" in text and "GATv2" in text
+    assert "Disease" in text and "GATv2" in text
+    # The operation in the shared tree's words, as the run's own row in the
+    # list beside it says it: one spelling on the screen (it read "Finetune"
+    # beside the row's "Fine-tune, full", and never said full or frozen).
+    disease_run = BUNDLES["disease"][0]
+    for item in listing["items"]:
+        if item.get("run") == disease_run:
+            item["weight_transfer"] = {"trainable": "all"}
+    said = mp.detail_parts(listing, data, bundle_key("disease"), ctl)["top"]
+    operation = _text(re.search(r">Operation</dt>(.*?)</dd>", said, re.S).group(1)).strip()
+    row = _cells(_run_row(ml.list_html(listing, None, ml.PRESETS["research"]),
+                          f"gatv2/{disease_run}"))
+    assert operation == row[2] == "Fine-tune, full", (operation, row)
     # The parent's run in the one run words, its name first (the review of
     # B0b: "run 2026-10-01 00:00" dropped it), one " · "; the family, the
     # same run, by its relation to the Parent row (rule 1.2: the browser
@@ -1462,8 +1523,6 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
                     # the run directory and whole fingerprint one Details › away
                     "Run directory", "Whole fingerprint"]
     assert mp.SAME_SETTINGS in _text(html)
-    row = {"depth": 1, "parent_state": "listed"}
-    assert mp.SAME_SETTINGS in _text(mp.lineage_cell_html(branch, row))
     changed = {**branch, "parent_changes": {"seed": {"parent": 1, "new": 5},
                                             "scheduler_type": {"parent": "cosine", "new": "none"},
                                             "early_stopping_patience": {"parent": 10,
@@ -1478,10 +1537,7 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     settings = _text(html[html.index(">Settings changed<"):])
     settings = settings[:settings.index("Family")]
     assert "'" not in settings and "None" not in _text(html)
-    lineage = mp.lineage_cell_html(changed, row)
-    assert "Changed: " in _text(lineage) and "Seed" in _text(lineage) and EVIL not in lineage
     assert "Settings changed" not in mp.identity_html(item, None)
-    assert "Changed" not in mp.lineage_cell_html(item, row)
     # Load is off for the base, with its reason (the shared list's).
     assert ml.load_refusal(ml.find_item(listing, bundle_key("base"))) == ml.BASE_REFUSAL
 
@@ -1585,12 +1641,53 @@ def test_read_only_shows_the_model_in_use_from_the_ledger_and_opens_no_checkpoin
             and mp.NO_LOAD_HERE in records)
     assert str(world["root"]) not in records and str(world["registry"]) not in records
     header = mp.left_header_html(listing, data, "deployment_mode")
-    assert "Model list unavailable: read-only, deployment mode not set to M1." in header
     assert e(mp.D8_CONDITIONS) in header and "shep-mp-ro" in header
     assert "Nothing was done" not in header and "Refused" not in header      # said once (UI-6)
-    assert "read-only, request not local." in mp.left_header_html(listing, data, "not_loopback")
+    for condition in ("deployment_mode", "not_loopback", "forwarding_header"):
+        _says_the_refusal_as_every_page_does(mp.left_header_html(listing, data, condition),
+                                             condition)
     ctl = mp.controls(data, mp.BY_FAMILY, None)
     assert ctl["order"] == mp.NEWEST and mp.shape(listing, data, ctl) == {"note": ""}
+
+
+def _says_the_refusal_as_every_page_does(header, condition):
+    """The read-only list's reason in the words every page gives a control D8
+    refuses (`chips.operator_only`, after the lock), then why in plain words,
+    its codes in the one trailing Ref line (the WebUI skill's §5). At the T08
+    bare start it read "Listing opens checkpoint files, which SPEC_4 classes
+    as checkpoint inspection (C3), so the list is served only where the
+    operator controls are (D8)", "🔒 Checkpoint list: operator controls only
+    (D8 · SPEC_4 C3)" and "Operator controls need this deployment set to M1,
+    …" (`scratchpad/t08pre/shots/s7-xff-07-models.png`)."""
+    from src.webui.components.chips import LOCK, operator_only
+
+    words = _visible_words(header)
+    lead = f"{LOCK} {operator_only(condition)}."
+    assert words.startswith("Checkpoints ") and lead in words, words
+    plain, ref = words.split(lead, 1)[1].split("Ref:", 1)
+    assert not re.search(r"\bD8\b|SPEC_4|\bC3\b|\bM1\b|SHEPHERD_", plain), plain
+    assert plain.count(" · ") == 0 and ref.strip().startswith("D8") and "SPEC_4 C3" in ref
+    assert header.rstrip().endswith(f'{e(mp.LIST_REFUSED_REF)}</p></div>'), header
+
+
+def test_the_list_panel_is_titled_by_its_content_and_count(world, monkeypatch):
+    """R-30 (Models' half): the first panel was titled "Models" under the
+    selected "Models" tab; it is titled by what it holds, the saved files the
+    workspace's listing holds and the runs they are in ("Checkpoints (8 in 5
+    runs)"), whatever the list shows of them (the count line under it says
+    that: a filter, a search); "Checkpoints" alone before a list is read and
+    for a read-only request, whose list is not read."""
+    listing, data = _read(world, monkeypatch)
+    files = [i for i in listing["items"] if r.entry_place(i) is None]
+    runs = {ml.item_run_key(i) for i in files}
+    assert (len(files), len(runs)) == (8, 5)
+    header = mp.left_header_html(listing, data)
+    assert "<h2>Checkpoints (8 in 5 runs)</h2>" in header and ">Models<" not in header
+    assert "<h2>Checkpoints</h2>" in mp.left_header_html({}, {})
+    one = {**listing, "items": [files[0]]}
+    assert "<h2>Checkpoints (1 in 1 run)</h2>" in mp.left_header_html(one, data)
+    refused = {"refused": True, "items": [], "condition": "not_loopback"}
+    assert "<h2>Checkpoints</h2>" in mp.left_header_html(refused, {}, "not_loopback")
 
 
 def test_a_route_records_regime_is_read_from_its_environment_class():
@@ -1752,21 +1849,21 @@ def test_the_page_is_read_when_shown_and_shapes_the_shared_list(world, monkeypat
     assert not {"shep-mp-version", "shep-mp-metric", "shep-mp-scoring"} & set(inputs)
     stale = _sync_states(demo)["stale"]
     assert stale in opened.outputs
-    out = opened.fn("demo", False, None, None, None, mp.BY_FAMILY, mp.ALL_TASKS, mp.RECORDS,
-                    "idle", operator_request(monkeypatch))
+    out = opened.fn("demo", False, None, None, None, "", {}, mp.BY_FAMILY, mp.ALL_TASKS,
+                    mp.RECORDS, "idle", operator_request(monkeypatch))
     assert len(out) == len(opened.outputs)
     by_output = dict(zip(map(id, opened.outputs), out, strict=True))
     listing = out[0]
     data = next(v for v in out if isinstance(v, dict) and "listing_key" in v)
     assert data["listing_key"] == mp.listing_key(listing)
     views = [v for v in out if isinstance(v, dict) and "groups" in v]
-    assert views and views[0]["column"] == mp.LINEAGE_COLUMN
+    assert views and views[0]["groups"] and views[0]["shaped_for"] == "family|all"
     assert by_output[id(by_id["shep-mp-order"])]["interactive"] is True
     assert by_output[id(stale)] is False                   # read now: nothing is stale
     assert by_output[id(by_id["shep-mp-wsline"])] == mp.ml.workspace_line_html(listing)
     # Shown while a Load runs: read now, and again once the Load has finished.
-    out = opened.fn("demo", False, None, None, None, mp.NEWEST, None, mp.RECORDS, "loading",
-                    operator_request(monkeypatch))
+    out = opened.fn("demo", False, None, None, None, "", {}, mp.NEWEST, None, mp.RECORDS,
+                    "loading", operator_request(monkeypatch))
     assert dict(zip(map(id, opened.outputs), out, strict=True))[id(stale)] == gr.update()
 
 
@@ -1842,7 +1939,7 @@ def test_a_listing_already_read_is_not_read_again(world, monkeypatch):
     out = _sync(states, monkeypatch, listing, data, current=newest, order=mp.BY_FAMILY,
                 selected=key)
     view = out["page"][1]
-    assert out["data"] == gr.update() and view["column"] == mp.LINEAGE_COLUMN
+    assert out["data"] == gr.update() and "groups" in view
     assert view["shaped_for"] == "family|all"
     # The switch's value is not written back: it reads By family already.
     assert "value" not in out["by"][id(by_id["shep-mp-order"])]
@@ -1999,14 +2096,14 @@ def test_after_a_load_the_page_reads_again_and_selects_the_same_checkpoint(world
     again = _sync(states, monkeypatch, after, out["data"], current=out["page"][1],
                   last=last, selected=key)
     assert reads == [1] and again["data"] == gr.update() and again["selected"] == gr.update()
-    # A checkpoint the view no longer shows is not selected again.
+    # A checkpoint the view does not show is selected again too (D04: a filter
+    # never changes what is selected); the list says it is outside the filter.
     out = _sync(states, monkeypatch, after, data, stale=True,
                 last=last, task="gene")
-    assert reads == [1, 1] and out["selected"] == gr.update() and "redraw" not in out["page"][1]
-    # By family shows it (among its family's rows): selected again.
+    assert reads == [1, 1] and out["selected"] == key and "redraw" in out["page"][1]
     out = _sync(states, monkeypatch, after, data, stale=True,
                 last=last, order=mp.BY_FAMILY)
-    assert out["selected"] == key and out["page"][1]["column"] == mp.LINEAGE_COLUMN
+    assert out["selected"] == key and "groups" in out["page"][1]
 
 
 def test_controls_selection_and_segments_are_wired(world, monkeypatch):
@@ -2091,8 +2188,8 @@ const TASKS = { All: 'all', Base: 'base', Disease: 'disease', Gene: 'gene' };
       order: radio ? radio.value : null,
       task: document.querySelector('#shep-mp-task input').value,
       count: document.querySelector('#shep-models-research-count').innerText.trim(),
-      lineage: [...document.querySelectorAll('#shep-models-research-rows thead th')].some((t) => t.innerText.trim() === 'Lineage'),
-      groups: [...document.querySelectorAll('#shep-models-research-rows tr.shep-grp')].map((t) => t.innerText.trim()),
+      lineage: [...document.querySelectorAll('#shep-models-research-rows tr.shep-grp .shep-grp-t')].some((t) => t.innerText.trim().startsWith('Family from')),
+      groups: [...document.querySelectorAll('#shep-models-research-rows tr.shep-grp .shep-grp-t')].map((t) => t.innerText.trim()),
       pending: pending ? pending.innerText.trim() : '',
     };
   });
@@ -2127,7 +2224,7 @@ const TASKS = { All: 'all', Base: 'base', Disease: 'disease', Gene: 'gene' };
   {
     const { ctx, page, ids } = await open();
     const [h] = await hold(page, (b) => b.fn_index === ids.sync && b.trigger_id === ids.selected);
-    await page.click('#shep-models-research-rows tbody tr[data-key] >> nth=1');
+    await page.click('#shep-models-research-rows tbody tr[data-key]:not([hidden]) >> nth=1');
     await h.held;
     await page.click('#shep-mp-order label:has-text("By family")');
     const during = await pendingSays(page, 'Applying By family…');
@@ -2147,7 +2244,7 @@ const TASKS = { All: 'all', Base: 'base', Disease: 'disease', Gene: 'gene' };
     await page.click('#shep-mp-order label:has-text("Newest first")');
     first.release();
     await second.held;
-    await page.waitForFunction(() => document.querySelector('#shep-models-research-count').innerText.startsWith('in the groups below'), null, { timeout: 30000 });
+    await drawn(page, 'family|all', 30000);
     const between = await read(page);
     second.release();
     const settled = await drawn(page, 'newest|all');
@@ -2158,7 +2255,7 @@ const TASKS = { All: 'all', Base: 'base', Disease: 'disease', Gene: 'gene' };
   {
     const { ctx, page, ids } = await open();
     const [h] = await hold(page, (b) => b.fn_index === ids.sync && b.trigger_id === ids.selected);
-    await page.click('#shep-models-research-rows tbody tr[data-key] >> nth=1');
+    await page.click('#shep-models-research-rows tbody tr[data-key]:not([hidden]) >> nth=1');
     await h.held;
     await pickTask(page, 'Disease');
     const during = await pendingSays(page, 'Applying Task: Disease…');
@@ -2220,16 +2317,15 @@ def test_a_control_changed_while_the_page_answers_is_applied_and_one_pick_is_one
 
     family = seen["selection_then_family"]
     after = family["after"]
-    assert after["order"] == mp.BY_FAMILY and after["count"].startswith("in the groups below"), \
-        family
+    assert after["order"] == mp.BY_FAMILY and after["count"].startswith("1 family, "), family
     assert after["lineage"] is True and after["pending"] == ""
-    assert any(g.startswith("Family from run") for g in after["groups"]), after
+    assert any(g.startswith("Family from base") for g in after["groups"]), after
     assert family["during"] == "Applying By family…" and family["settled"], family
     newest = seen["family_then_newest"]
     # While the second answer waits: the switch reads Newest first (the first
     # answer did not set it back), the rows By family's, and the line says so.
     between, after = newest["between"], newest["after"]
-    assert after["order"] == mp.NEWEST and after["count"].startswith("newest first"), newest
+    assert after["order"] == mp.NEWEST and "famil" not in after["count"], newest
     assert between["order"] == mp.NEWEST and between["lineage"] is True, between
     assert between["pending"] == "Applying Newest first…", between
     assert after["lineage"] is False and after["groups"] == [] and after["pending"] == ""
@@ -2258,7 +2354,8 @@ def test_the_page_registers_its_help_and_every_i_it_draws(world, monkeypatch):
     detail = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)
     rendered = ("".join(detail[k] for k in ("top", "records", "usage"))
                 + mp.options_html(data, view.get("refused"))
-                + "".join(view["cells"].values()) + mp.ml.workspace_line_html(listing))
+                + ml.list_html(listing, None, ml.PRESETS["research"], view=view)
+                + mp.ml.workspace_line_html(listing))
     assert 'data-help="models-contested"' in rendered         # the contested record's ⓘ
     from src.webui.components.renderers import RENDERER_HELP
 
@@ -2343,7 +2440,8 @@ def test_the_list_panel_has_one_scroll_region_at_every_wide_height():
     from tests.unit.test_webui_shell import side
 
     wide = side(mp.PAGE_CSS)
-    assert "> .shep-model-main > .shep-model-head { display: contents !important; }" in wide
+    assert ("> .shep-model-main > .shep-model-head,\n  #shep-page-models #shep-models-research "
+            "> .shep-model-main > .shep-model-tools { display: contents !important; }") in wide
     assert "grid-template-rows: repeat(5, max-content) minmax(0, 1fr);" in wide
     assert "#shep-models-research-rows { overflow: auto !important; min-height: 0;" in wide
     assert "> .shep-model-main { height: 100%; overflow-y: auto; }" in wide
@@ -2392,11 +2490,16 @@ def test_the_table_fits_its_frame_beside_a_classic_scrollbar():
     """M5-3: at 1440 x 900 with a classic (non-overlay) 15 px scrollbar the
     table (602 px: its columns' longest words and 10 px a side) ran 13 px past
     its 589 px frame; with 7 px a side it is 572 px (measured in a browser with
-    the scrollbar forced classic)."""
+    the scrollbar forced classic). The rule is the shared tree's, in the shared
+    style sheet, so the Diagnosis load drawer's tree is as narrow (it kept
+    Gradio's 10 px there and ran 601 px in its 524 px list at 1280 x 900);
+    two classes outrank Gradio's own ``.gradio-container-… th``."""
+    from src.webui.style import SHELL_CSS
     from tests.unit.test_webui_shell import side
 
-    wide = side(mp.PAGE_CSS).replace(f"{mp._PAGE} ", "")
-    assert ".shep-mtbl th, .shep-mtbl td { padding-left: 7px; padding-right: 7px; }" in wide
+    rule = ".shep-tbl.shep-mtbl th, .shep-tbl.shep-mtbl td { padding-left: 7px; padding-right: 7px; }"
+    assert rule in side(SHELL_CSS)
+    assert ".shep-mtbl th" not in mp.PAGE_CSS
 
 
 # --------------------------------------------------------------------------- K8-6r.2
@@ -2606,12 +2709,192 @@ def test_one_screen_says_each_fingerprint_and_the_dataset_once(world, monkeypatc
     assert item["run"] not in screen                     # the directory: provenance only
     words = r.run_words(item["architecture"], item["run"])
     row = re.search(rf'<tr [^>]*data-key="{re.escape(key)}".*?</tr>', table, re.S).group(0)
-    # its row and the detail's title (the run's other files each name it in their own rows)
-    assert _visible_words(row + detail["header"] + detail["top"]).count(words) == 2
+    run = _run_row(table, ml.item_run_key(item))
+    # its run's row (its files under it say what each is, not the run again)
+    # and the detail's title
+    assert words not in _visible_words(row)
+    assert _visible_words(run + row + detail["header"] + detail["top"]).count(words) == 2
     # The table's Fingerprint column: a model's 12 hex only, the header one word.
     assert ">Fingerprint</th>" in table and "Fingerprints:" not in table
-    cell = re.search(rf'data-key="{re.escape(key)}"[^>]*>.*?</td><td>(.*?)</td>', table,
-                     re.S).group(1)
+    cell = re.findall(r"<td>(.*?)</td>", row, re.S)[-1]
     assert cell == r.fingerprint_value(sha, what="model fingerprint", copy=False,
                                        digits=r.distinguishing_digits(
                                            i.get("sha256") for i in listing["items"]))
+
+
+def test_a_refresh_keeps_the_selection_and_its_detail(world, monkeypatch):
+    """D04: the page read again when shown (a refresh) keeps a selection still
+    listed, and draws its detail, never the empty one beside a list that
+    still marks it (seen on the multi-family demo: the row stayed selected and
+    the detail said "Details")."""
+    demo, _ctx = _page()
+    opened = _fn(demo, "_open")
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    request = operator_request(monkeypatch)
+    out = opened.fn("demo", False, None, None, None, "", {}, mp.BY_FAMILY, mp.ALL_TASKS,
+                    mp.RECORDS, "idle", request)
+    listing, key = out[0], _key(world, "model-05.pt")
+    out = opened.fn("demo", False, None, listing, key, "", {}, mp.BY_FAMILY, mp.ALL_TASKS,
+                    mp.RECORDS, "idle", request)
+    by = dict(zip(map(id, opened.outputs), out, strict=True))
+    assert out[1] == key
+    assert f'data-key="{key}"' in by[id(by_id["shep-mp-detail-hd"])]
+    assert world["shas"]["model-05.pt"] in by[id(by_id["shep-mp-detail-top"])]
+
+
+_TREE_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__, TREE_JS = __TREE_JS__;
+const ROWS = '#shep-models-research-rows';
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 });
+  const page = await ctx.newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.addInitScript(TREE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  const drawn = (t) => page.waitForFunction((x) => {
+    const m = document.querySelector('#shep-models-research-rows .shep-view-for');
+    return !!m && m.getAttribute('data-for') === x;
+  }, t, { timeout: 30000 });
+  const tree = () => page.evaluate((r) => window.__shepTree(r), ROWS);
+  const count = () => page.$eval('#shep-models-research-count', (e) => e.innerText.trim());
+  // A run's toggle, by its run directory (its node is "r:<layout>/<run>").
+  const fold = async (run) => {
+    const b = await page.evaluateHandle((p) => [...document.querySelectorAll('#shep-models-research-rows button.shep-fold')]
+      .find((x) => x.getAttribute('data-fold') === 'r:gatv2/' + p), run);
+    if (!b.asElement()) {
+      throw new Error('no toggle for ' + run + ': ' + await page.evaluate(() => [...document.querySelectorAll('#shep-models-research-rows button.shep-fold')].map((x) => x.getAttribute('data-fold') + (x.offsetParent ? '' : ' (hidden)')).join(', ')));
+    }
+    await b.asElement().click();
+  };
+  const pick = async (part) => {
+    await page.click(`${ROWS} tr[data-key*="${part}"]:not([hidden])`);
+    await page.waitForFunction((p) => !!document.querySelector(`#shep-models-research-rows tr[aria-current="true"][data-key*="${p}"]`), part);
+    await idle();
+  };
+  const task = async (label) => {
+    await page.click('#shep-mp-task input');
+    await page.click(`ul[role=listbox] li:text-is("${label}")`);
+    await drawn('family|' + label.toLowerCase());
+    await idle();
+  };
+  const out = {};
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.click('#shep-page-models-button');
+  await drawn('newest|all');
+  await page.click('#shep-mp-order label:has-text("By family")');
+  await drawn('family|all');
+  await idle();
+  out.folded = await tree();
+  out.count = await count();
+  // A fold toggle unfolds at once in the page, before any answer.
+  await fold('20261001-000000_base_aaaaaa');
+  out.unfolded_at_once = await tree();
+  await idle();
+  await fold('20261002-000000_disease_bbbbbb');
+  await pick('disease_bbbbbb');
+  out.selected = await tree();
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  // A smaller side-by-side window (a UI_SIZES size), the page still side by side.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await frames();
+  await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') === 'side');
+  out.mid = await tree();
+  // The narrow layout: the shell stacks the page two frames after a resize.
+  await page.setViewportSize({ width: 760, height: 1000 });
+  await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') !== 'side');
+  await frames();
+  out.narrow = await tree();
+  await page.setViewportSize({ width: 1850, height: 960 });
+  await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') === 'side');
+  await frames();
+  // Search by name: the selection outside it is said, never changed.
+  await page.click('#shep-models-research-search input, #shep-models-research-search textarea');
+  await page.keyboard.type('GENE');
+  await page.waitForFunction(() => document.querySelector('#shep-models-research-count').innerText.includes('GENE'));
+  await idle();
+  out.searched = { tree: await tree(), count: await count() };
+  await page.click('#shep-models-research-search-clear');
+  await page.waitForFunction(() => !document.querySelector('#shep-models-research-count').innerText.includes('“'));
+  await idle();
+  out.cleared = { tree: await tree(), count: await count() };
+  await task('Gene');
+  out.gene = { tree: await tree(), count: await count(),
+               detail: await page.$eval('#shep-mp-detail-hd h2', (e) => e.getAttribute('data-key')) };
+  await task('All');
+  // Read again when shown: the selection, its detail and the folds stay.
+  await page.click('#shep-page-test-button');
+  await idle();
+  await page.click('#shep-page-models-button');
+  await page.waitForFunction(() => !!document.querySelector('#shep-mp-detail-hd h2[data-key]'), null, { timeout: 30000 });
+  await idle();
+  out.refreshed = { tree: await tree(),
+                    detail: await page.$eval('#shep-mp-detail-hd h2', (e) => e.getAttribute('data-key')) };
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_tree_folds_searches_filters_and_keeps_the_selection_in_a_browser(
+        tmp_path, world, monkeypatch):
+    """D04 on the page as the dashboard mounts it, by real events: By family
+    draws each run folded; a run's toggle unfolds its files at once in the
+    page; a file is chosen; a search by name ignoring case keeps what it
+    found and the run it comes from, and says the selection is outside it,
+    never dropping it; Clear brings every row back; the Task filter the same;
+    shown again (a refresh), the selection, its detail and the folds stay."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, TREE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_request(monkeypatch)
+    shas = _add_bundles(world)
+    _add_child(world, "20261004-000000_demo-disease-extend_eeeeee", shas["disease"],
+               BUNDLES["disease"][0])
+    script = (_TREE_PAGE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__TREE_JS__", json.dumps(TREE_JS)))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")])
+
+    def files(tree, part):
+        return [f for f in tree["files"] if part in f["key"]]
+
+    def run(tree, part):
+        return next(r for r in tree["runs"] if part in r["node"])
+
+    folded = seen["folded"]
+    assert folded["groups"][0]["title"] == "Family from base" and folded["groups"][0]["open"]
+    assert not any(f["shown"] for f in files(folded, "gatv2/"))          # each run folded
+    assert run(folded, "base_aaaaaa")["shown"] and not run(folded, "base_aaaaaa")["open"]
+    assert seen["count"].startswith("1 family, ") and " · " not in seen["count"]
+    assert all(f["shown"] for f in files(seen["unfolded_at_once"], "base_aaaaaa"))
+    chosen = files(seen["selected"], "disease_bbbbbb")
+    assert any(f["selected"] for f in chosen) and all(f["shown"] for f in chosen)
+    # The table fits its frame, side by side and stacked, and no word is cut
+    # over two lines (it was 48 px wider than its frame at 1850 x 960, and
+    # "Disease" broke as "Dise/ase" at 760 x 1000; at 1280 x 900, with a lineage
+    # two runs deep under a long run name, 125 px wider, its Fingerprint cut).
+    for size in ("selected", "mid", "narrow"):
+        assert seen[size]["fit"]["over"] <= 0 and seen[size]["fit"]["split"] == [], (size, seen[size]["fit"])
+    searched = seen["searched"]
+    assert searched["count"] == "1 run matches “GENE”, with 1 run they come from"
+    assert [f["key"] for f in searched["tree"]["files"]] == [bundle_key("base"),
+                                                             bundle_key("gene")]
+    assert run(searched["tree"], "base_aaaaaa")["context"]
+    assert "Selected model not shown by this filter (search “GENE”)" in searched["tree"]["outside"]
+    cleared = seen["cleared"]
+    assert cleared["tree"]["outside"] is None and "“" not in cleared["count"]
+    assert any(f["selected"] for f in files(cleared["tree"], "disease_bbbbbb"))
+    gene = seen["gene"]
+    assert gene["count"].startswith("Gene: 1 of ") and "Task: Gene" in gene["tree"]["outside"]
+    assert gene["detail"] == bundle_key("disease")                     # its details kept
+    refreshed = seen["refreshed"]
+    assert refreshed["detail"] == bundle_key("disease")
+    assert any(f["selected"] and f["shown"] for f in files(refreshed["tree"], "disease_bbbbbb"))
+    assert run(refreshed["tree"], "base_aaaaaa")["open"]               # the operator's fold

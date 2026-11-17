@@ -475,7 +475,7 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
     from src.utils import checkpoint_io
 
     first = _state(root)
-    assert "Recorded results: no ledger" in card.body_html(first)
+    assert "Recorded results: none kept" in card.body_html(first)
     ledger = root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "evaluations.json"
     ledger.write_text("{not json")
 
@@ -487,7 +487,7 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
     # The timer reads the status alone: its answer is the first read's.
     ticked = card.advance(first, _status(root), None, now=later, operator=True, d8_short=None,
                           open_checkpoints=False)
-    assert "Recorded results: no ledger" in card.body_html(ticked)
+    assert "Recorded results: none kept" in card.body_html(ticked)
     # Diagnosis shown again (a queued refresh, not ↻): the ledger is read again.
     shown = card.advance(ticked, _status(root), None, now=later, operator=True, d8_short=None,
                          open_checkpoints=True)
@@ -509,7 +509,7 @@ def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
     # A disease model uses no SP table, so it is not missing one.
     assert "synthetic data" in body and "no SP table" not in body
     assert "no trained model" not in body and "unverified" not in body
-    assert "Recorded results: no ledger" in body
+    assert "Recorded results: none kept" in body
 
 
 def test_a_served_frozen_backbone_child_is_named_as_such_on_the_card_and_in_the_drawer(root):
@@ -774,7 +774,6 @@ def test_one_file_reads_the_same_completed_epochs_on_every_page(root):
                 "validation": None, "dataset_fingerprint": None, "problem": None,
                 "record": "model", "learning_stage": "finetune", "task": "disease", **meta}
         assert r.model_name_line(item) == line                       # Models' detail header
-        assert f'<div class="shep-sub">{words}</div>' in r.model_table_row_html(item, [])  # row
         assert ml.checkpoint_words(item) == f"Latest save · {words}"  # Training, Fine-tune
         _run, checkpoint = ml.parents_update(tp.model_parents({"items": [item]}),  # Test
                                              tp.item_key(item), first=False)

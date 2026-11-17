@@ -606,26 +606,67 @@ table.shep-r10 .shep-r10-n { font-size: 14px; font-weight: 400; color: var(--she
 .shep-tbl tr.shep-grp th { position: static; background: var(--shep-panel-2); font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 10px; border-bottom: 1px solid var(--shep-border); }
 .shep-tbl tbody tr.shep-row-dis td { background: var(--shep-grey-50); color: var(--shep-muted); cursor: default; }
 
-/* the shared model list */
-.shep-list { display: flex; flex-direction: column; border: 1px solid var(--shep-border); border-radius: 8px; overflow: hidden; }
-.shep-list-hd { padding: 6px 12px; background: var(--shep-panel-2); border-bottom: 1px solid var(--shep-border); font-size: 14px; color: var(--shep-text-2); }
+/* the shared model list: a note under a list (the Test page's), "Show older runs" under the
+   tree (`model_list.older_html`) */
 .shep-list-note { padding: 6px 12px; font-size: 14px; color: var(--shep-muted); border-bottom: 1px solid #edf0f3; }
 button.shep-row {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; width: 100%;
   padding: 8px 12px; border: 0; border-bottom: 1px solid #edf0f3; background: #fff; font: inherit; color: inherit; cursor: pointer;
 }
 .shep-row:hover { background: var(--shep-panel-2); }
-.shep-row-on { background: var(--shep-accent-50) !important; box-shadow: inset 4px 0 0 var(--shep-accent); }
 .shep-row-dis { background: var(--shep-grey-50); color: var(--shep-muted); cursor: default; }
-.shep-row-main { font-weight: 600; }
 /* The shared list's line under its workspace select (`model_list.workspace_line_html`). */
 .shep-ws-line { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 14px; color: var(--shep-text-2); }
-.shep-row-sub { font-size: 14px; color: var(--shep-text-2); }
 .shep-row-more { align-items: center; color: var(--shep-accent-text); font-weight: 400; }
 .shep-mtbl-wrap { margin: 0; }
-.shep-mtbl td { overflow-wrap: anywhere; }
+/* Words in the list's table break only where they must, in either layout (a column is
+   never narrower than its longest word, so "Disease" stays one word); a table wider
+   than its frame scrolls in it rather than squeezing a word. */
+.shep-tbl.shep-mtbl td { overflow-wrap: break-word; }
 .shep-mtbl-wrap + .shep-row-more { border: 1px solid var(--shep-border); border-top: 0; border-radius: 0 0 8px 8px; }
+/* The shared list's tree (D04, `model_list._tree_html`): each group its own row group,
+   its runs under it, indented by lineage, each run's saved files under it, folded by a
+   24 x 24 toggle (the skill's §10 target) whose glyph is its cue (aria-expanded says
+   its state); a row the search or a filter keeps only for a shown run is quieter, and
+   says so in words. Every row is drawn; a folded one is `hidden`. */
+.shep-mtree tr[hidden] { display: none; }
+.shep-mtree .shep-fold {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 24px; height: 24px; margin: 0 4px 0 -2px; padding: 0; border: 1px solid transparent;
+  border-radius: 4px; background: none; color: var(--shep-text); font-size: 14px; cursor: pointer;
+}
+.shep-mtree .shep-fold:hover { border-color: var(--shep-grey-500); }
+.shep-mtree .shep-fold:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: -2px; }
+/* A toggle focused under the table's sticky header scrolls clear of it, as a row does
+   (`model_list.MODEL_LIST_JS` keeps the header's height in `--shep-tbl-head-h`). */
+.shep-mtree .shep-fold { scroll-margin-top: calc(var(--shep-tbl-head-h, 0px) + 4px); }
+.shep-mtree tr.shep-grp th { padding: 4px 10px; color: var(--shep-text); }
+.shep-mtree tr.shep-grp th > * { vertical-align: middle; }
+.shep-mtree .shep-grp-n { float: right; line-height: 24px; font-weight: 400; color: var(--shep-text-2); }
+.shep-mtree .shep-tree-name { display: flex; align-items: center; min-height: 24px; }
+.shep-mtree .shep-tree-label { min-width: 0; overflow-wrap: break-word; }
+.shep-mtree .shep-d1 { padding-left: 22px; } .shep-mtree .shep-d2 { padding-left: 44px; }
+.shep-mtree .shep-d3 { padding-left: 66px; } .shep-mtree .shep-d4 { padding-left: 88px; }
+.shep-mtree .shep-tree-leaf { margin-left: 26px; }
+.shep-mtree tr.shep-tree-run { cursor: pointer; }
+.shep-mtree tr.shep-tree-run:hover td { background: var(--shep-panel-2); }
+.shep-mtree tr.shep-ctx td { color: var(--shep-text-2); }
+.shep-mtree tr.shep-ctx .shep-w600 { font-weight: 400; }
+.shep-mtree td.shep-num { white-space: nowrap; }
+/* A count is one figure; words in its place ("epochs not recorded") wrap as words do. */
+.shep-mtree td.shep-num .shep-muted { white-space: normal; }
+/* A saved file's name, then its In-use chip, under it when the column is narrow. */
+.shep-mtree .shep-tree-leaf { flex-wrap: wrap; column-gap: 6px; }
+/* The shared list's search line (D04): "Search" beside its box, as a field row says it, and
+   its Clear after it. */
+.shep-search-row { flex-wrap: nowrap !important; align-items: center !important; gap: 8px !important; min-width: 0; }
+.shep-search-row > * { min-width: 0 !important; }
+.shep-search-row > :first-child, .shep-search-row > button { flex: none !important; width: auto !important; }
+.shep-search-lbl { font-size: 15px; color: var(--shep-text-2); white-space: nowrap; }
+.shep-list-outside { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 8px; font-size: 14px; color: var(--shep-text-2); }
 .shep-facts-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
+/* Its "↑ Back to the list" (`model_list.BACK_TO_LIST`), shown stacked only, at the title's end. */
+.shep-facts-title > .shep-back-list { display: none; margin-left: auto; font-weight: 400; }
 .shep-facts { display: flex; flex-direction: column; gap: 8px; }
 .shep-facts-sec { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
 .shep-facts-sec > summary, .shep-facts-sec > h4 { padding: 8px 12px; font-weight: 600; font-size: 15px; cursor: pointer; margin: 0; }
@@ -715,6 +756,12 @@ __SIDE__ {
   .shep-form-dense [data-testid="block-info"] { margin-bottom: 4px !important; padding-top: 2px !important; padding-bottom: 2px !important; }
   .shep-form-dense .wrap label { padding-top: 4px !important; padding-bottom: 4px !important; }
   .shep-form-dense input[type="number"], .shep-form-dense input[type="text"] { padding-top: 6px !important; padding-bottom: 6px !important; }
+  /* The shared model list's tree (`model_list._tree_html`, on Models and in the Diagnosis load
+     drawer) 7 px a side, so it fits the region it is given whole: at 10 px its columns' longest
+     words and a 12-hex digest made it 602 px in a 589 px frame (Models at 1440 x 900, M5-3), and
+     601 px in the drawer's 524 px list at 1280 x 900, cut at its Fingerprint column. Two classes:
+     Gradio's own `.gradio-container-… th` (10 px) comes later and outranks one. */
+  .shep-tbl.shep-mtbl th, .shep-tbl.shep-mtbl td { padding-left: 7px; padding-right: 7px; }
 }
 /* Stacked: the regions stack, the page scrolls, nothing scrolls inside; a
    table wider than its panel scrolls sideways in its own box (it was cut by
@@ -725,6 +772,7 @@ __STACK__ {
   .shep-tbl-wrap { overflow-x: auto; overflow-y: hidden; }
   .shep-tbl th { position: static; }
   .shep-tbl td { overflow-wrap: anywhere; }
+  .shep-facts-title > .shep-back-list { display: inline-flex; align-items: center; }
 }
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK)
 

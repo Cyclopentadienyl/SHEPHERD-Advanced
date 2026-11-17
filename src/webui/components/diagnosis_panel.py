@@ -3078,6 +3078,12 @@ def _event_key(evt: Any) -> Optional[str]:
     return key if isinstance(key, str) else None
 
 
+#: Under the drawer's list, beside Load (R-27): what Load does next, in plain
+#: words; the confirmation then shows what changes.
+CHANGE_NOTE = ("Choose a model, then Load: you see what changes and confirm it before every "
+               "session is served it. Results already produced keep their own identity.")
+
+
 def create_diagnosis_tab(ctx: Any) -> None:
     """Build Diagnosis (clinical), the first screen (the page contract:
     `src/webui/shell.py`). The card is read on page load, each time the page
@@ -3251,9 +3257,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 def _foot() -> Any:
                     links["cancel"] = gr.Button("Cancel", size="sm", scale=0, min_width=0,
                                                 elem_id="shep-dx-change-cancel")
-                    plain_html('<span class="shep-note">Load reloads the pipeline and asks once, '
-                               'from → to. Replaces what every session is served; results already '
-                               'produced keep their own identity.</span>',
+                    # The next step in plain words (R-27), never "from → to".
+                    plain_html(f'<span class="shep-note">{_e(CHANGE_NOTE)}</span>',
                                elem_id="shep-dx-change-note")
                     return links["cancel"]
 
@@ -3779,22 +3784,35 @@ PAGE_CSS = f"""
 /* The drawers' Model Facts take the one summary list's columns
    (`renderers.summary_list`: a digest's long label on a line of its own). */
 {_TAB} .shep-dx-drawer .shep-facts-sum {{ overflow-wrap: anywhere; }}
-{_TAB} #shep-dx-change button.shep-row {{ display: block; }}
-{_TAB} #shep-dx-change button.shep-row > .shep-row-sub {{ display: block; margin-top: 2px; }}
-{_TAB} #shep-dx-change button.shep-row > .shep-tag {{ margin-left: 6px; }}
 {_TAB} #shep-dx-change-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
 {_TAB} #shep-dx-change .shep-model-head {{ gap: 8px 14px !important; }}
+/* The search and what the list shows, on a line of their own under the head (R-27). */
+{_TAB} #shep-dx-change .shep-model-tools {{ gap: 8px 14px !important; }}
+{_TAB} #shep-models-clinical-count {{ flex: 1 1 12em !important; }}
 /* The head is a field row (D03): the workspace select keeps its own minimum width (Gradio's
    min(160px, 100%)), so a drawer too narrow for the row wraps it rather than squeezing the box
    (at 1280 x 900 it drew 26 px, its label cut to "W"); only the words beside it may shrink. */
 {_TAB} #shep-dx-change .shep-model-head > :not(.form) {{ min-width: 0 !important; }}
+/* **The list and the chosen model's details, two regions** (UI-07: they shared one scroll, so
+   reading the details moved the list). Each has its minimum width (`--shep-panel-min`, the
+   layout rule's measure): the tree whole from 616 px (614 px measured with a model of every task,
+   "Patients-like-me" its Task column's widest word, and a 12-hex digest; 566 px on the
+   multi-family demo; a longer run name scrolls the list sideways in its own region), the
+   details' summary lists from 222 px (a key and its value, each wrapping). Side
+   by side the drawer covers the candidates and the details panels, whose own minimums are no
+   narrower, so whenever the page is side by side the two regions fit beside each other (summed
+   by `test_diagnosis_panel.py`); each scrolls on its own, Load in the foot under both. Stacked,
+   the page flows: the list, then the details, then Load; choosing a row brings its details into
+   view and "↑ Back to the list" returns to the row (`model_list.FACTS_JS`). */
 {_TAB} #shep-dx-change .shep-model-body {{ gap: 14px !important; align-items: flex-start !important; flex-wrap: nowrap !important; }}
-{_TAB} #shep-dx-change .shep-model-rows {{ flex: 3 1 0 !important; min-width: 0 !important; }}
-{_TAB} #shep-dx-change .shep-model-facts {{ flex: 2 1 0 !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-change .shep-model-body > .shep-model-rows {{ --shep-panel-min: 616px; flex: 3 1 0 !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-change .shep-model-body > .shep-model-facts {{ --shep-panel-min: 222px; flex: 2 1 0 !important; min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-foot {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important;
   border-top: 1px solid var(--shep-border); padding-top: 10px !important; }}
-{_TAB} #shep-dx-change .shep-model-foot > * {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
-{_TAB} #shep-dx-change-note {{ flex: 1 1 280px !important; }}
+/* Load and Cancel keep their words' width; the note beside them takes the rest and wraps (it
+   took its one line's width, 926 px, and was cut past the drawer's edge from 1280 x 900 down). */
+{_TAB} #shep-dx-change .shep-model-foot > :not(#shep-dx-change-note) {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-change .shep-model-foot > #shep-dx-change-note {{ flex: 1 1 280px !important; min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-confirm-box > .row > button {{ flex: 0 0 auto !important; white-space: nowrap; }}
 {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-foot {{ display: none !important; }}
 {_TAB} #shep-dx-change .shep-confirm .shep-ftbl th, {_TAB} #shep-dx-change .shep-confirm .shep-ftbl td {{ padding-top: 5px; padding-bottom: 5px; }}
@@ -3813,7 +3831,14 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx-identity-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto; }}
   {_TAB} #shep-dx-change-bd {{ flex: 1 1 auto !important; min-height: 0; display: flex; flex-direction: column; }}
   {_TAB} #shep-dx-change .shep-model-list {{ flex: 1 1 auto !important; min-height: 0; display: flex !important; flex-direction: column; }}
-  {_TAB} #shep-dx-change .shep-model-body {{ flex: 1 1 0 !important; min-height: 120px; overflow: auto; }}
+  {_TAB} #shep-dx-change .shep-model-body {{ flex: 1 1 0 !important; min-height: 120px; overflow: hidden; align-items: stretch !important; }}
+  {_TAB} #shep-dx-change .shep-model-body > .shep-model-rows,
+  {_TAB} #shep-dx-change .shep-model-body > .shep-model-facts {{
+    min-width: var(--shep-panel-min) !important; min-height: 0; max-height: 100%;
+    overflow: auto !important; overscroll-behavior: contain;
+  }}
+  /* The tree's header row sticks to the top of the rows' own region (no box scrolling inside it). */
+  {_TAB} #shep-dx-change .shep-model-rows .shep-tbl-wrap {{ overflow: visible; }}
   {_TAB} #shep-dx-change .shep-model-confirm-box {{ flex: 0 1 auto !important; min-height: 0; overflow: hidden; }}
   {_TAB} #shep-models-clinical-confirm {{ flex: 0 1 auto !important; min-height: 0; overflow: auto !important; }}
   {_TAB} #shep-dx-change .shep-model-confirm-box > .row {{ flex: none !important; }}
@@ -3826,7 +3851,7 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx-input, {_TAB} #shep-dx-results, {_TAB} #shep-dx-details {{ flex: 1 1 auto !important; width: 100% !important; max-width: none !important; }}
   {_TAB} .shep-dx-fields {{ display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 18px !important; }}
   {_TAB} #shep-dx-change .shep-model-body {{ flex-direction: column !important; }}
-  {_TAB} #shep-dx-change .shep-model-rows, {_TAB} #shep-dx-change .shep-model-facts {{ width: 100% !important; }}
+  {_TAB} #shep-dx-change .shep-model-body > * {{ width: 100% !important; flex: none !important; }}
 }}
 @media (max-width: 760px) {{
   {_TAB} .shep-dx-fields {{ grid-template-columns: minmax(0, 1fr); }}

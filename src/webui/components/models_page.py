@@ -13,15 +13,17 @@ its one record per checkpoint: no order ranks a model by a test score.
 (`ctx.create_model_list("research")`, `src/webui/components/model_list.py`): the
 workspace select (its options are the names; the chosen workspace's dataset
 identity is said once, under it, by the shared list's line,
-`model_list.workspace_line_html`), the table (each row its run by the one run words and how far it trained,
-its model fingerprint's 12 hex digits only, the dataset only as an exception
-mark where it is not the workspace's current one, `renderers.dataset_exception`,
-the Trainer's validation figure, the recorded tests' state),
+`model_list.workspace_line_html`), the tree (each run by the one run words,
+its task, operation, epochs completed and saved files; each file by what it
+is, how far it trained and its model fingerprint's 12 hex digits, the dataset
+only as an exception mark where it is not the workspace's current one,
+`renderers.dataset_exception`; the Trainer's validation figure and the
+recorded tests are the detail's),
 "In use (Diagnosis)" on the served row, and the one gated Load with its
 confirmation. This module never
 lists a checkpoint, never reloads and never writes a usage history entry itself:
 it shapes the list through the handle's ``view`` (a task filter, its rows and
-groups, one extra column, the note beside Load).
+groups, the note beside Load).
 
 **Task and order (README §8: "Models with the family and a task filter").**
 The Task select (All, Base, Disease, Gene, Patients-like-me) is the
@@ -29,12 +31,14 @@ shared list's one filter vocabulary (`model_list.TASK_FILTERS`); a file whose
 record was refused or not read is listed under All only. Every row says what
 its file is (the shared list's first line, `renderers.model_kind_text`: the
 frozen-backbone control reads "Disease · frozen graph backbone"), under every
-order. The Order switch offers Newest first and By family. By
-family draws the families of the listing's family view
-(`model_list.family_views`, from the one listing), each parent before its
-children, with a Lineage column (the operation and the exact parent file,
-indented by depth; a task's base kept as a context row; a parent that is not
-available said in amber, "▲ parent unavailable: …"), and under All the
+order. The Order switch offers Newest first and By family; under either the
+shared list draws its tree (D04: every run a summary row, its files folded
+under it; search, folds and a selection kept, `model_list`). By family draws
+the families of the listing's family view (`model_list.family_views`, from
+the one listing, `family_view`), each run under the run of the exact parent
+file its files record, indented by depth, with its operation (this round's
+lineage view, RC-D; a task's base kept as a context run; a parent that is
+not available said in amber, "▲ parent unavailable: …"), and under All the
 records not read and the records not readable (a file without a model spec
 among them) as groups after them. Every record is shown in the detail with its own metrics, as
 recorded (`RECORD_COLUMNS` names the two shown in columns for a measurement this
@@ -115,6 +119,7 @@ import logging
 import math
 import re
 import time
+from collections import Counter
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -136,8 +141,8 @@ from src.evaluation.caveats import (
 from src.utils.run_environment import native_identity_text
 from src.webui.components import model_list as ml
 from src.webui.components import renderers as r
-from src.webui.components.chips import D8_SHORT, LOCK
-from src.webui.components.help import copy_button, help_button
+from src.webui.components.chips import LOCK, operator_only
+from src.webui.components.help import REF_PREFIX, copy_button, help_button
 from src.webui.components.served_status import read_status, served_checkpoint_sha
 from src.webui.operator_access import operator_access
 from src.webui.shell import page_elem_id, picked, plain_html
@@ -175,14 +180,11 @@ RECORDS, USAGE, RESULTS = "records", "usage", "results"
 #: By family's groups and extra column (the files whose record was refused or
 #: never read are each grouped under their own `record_kind_text` word, the
 #: one their rows lead with).
-#: A family's group title on Models' By family order: its root run in the
-#: one run words (`renderers.run_words`, which hold the title's one " · ").
-FAMILY_TITLE = "Family from run {run} ({count} file{s})"
-LINEAGE_COLUMN = "Lineage"
+#: A family's group title on Models' By family order: its root run by its
+#: name (`renderers.run_parts`; two roots that read alike by their whole run
+#: words); how many runs and saved files it holds is said beside it.
+FAMILY_TITLE = "Family from {run}"
 FAMILY_NOT_READ = "the family view was not read with this list"
-#: A model record's operation (`record.OPERATIONS`) as the lineage says it.
-OPERATION_WORDS = {"new": "New run", "resume": "Resumed run", "extend": "Extended run",
-                   "branch": "Branch", "finetune": "Finetune"}
 #: A branch that changed no setting of its parent (`parent_changes` `{}`;
 #: ops-wiring round, decisions B1, B4): a new run from its parent's weights.
 SAME_SETTINGS = "Same settings as its parent"
@@ -200,14 +202,18 @@ LOAD_NOTE = ("Reloads the pipeline and asks once, from → to, as Change model d
 
 READONLY_TITLE = "Recorded results of the model in use"
 READONLY_WHERE = "from the ledger beside the loaded checkpoint · opens no checkpoint"
-#: D8's three conditions, named together for a read-only request.
-D8_CONDITIONS = ("Operator controls need this deployment set to M1, a request on this "
-                 "machine's loopback (here or through SSH forwarding), and no forwarding "
-                 "header.")
-LIST_IS_C3 = ("Listing opens checkpoint files, which SPEC_4 classes as checkpoint inspection "
-              "(C3), so the list is served only where the operator controls are (D8).")
-#: Shown only for a listing D8 refused, so it leads with the lock (a refusal).
-LIST_C3_LINE = f"{LOCK} Checkpoint list: operator controls only (D8 · SPEC_4 C3)"
+#: **A read-only request's list, refused in the words every page uses**
+#: (`chips.operator_only`, "Operator controls only: forwarded by a proxy.",
+#: after the lock), then why in plain words, its codes in one trailing Ref
+#: line (the WebUI skill's §5): why there is no list, and D8's conditions
+#: named together, as the D8 chip's ⓘ says them (`chips.D8_HOW`).
+LIST_NOT_SHOWN = ("The checkpoint list is not shown: listing it opens the checkpoint files, "
+                  "which is an operator control.")
+D8_CONDITIONS = ("Operator controls need a service started on this machine and a request "
+                 "that arrives on its loopback, directly or through an SSH forward, with no "
+                 "forwarding header.")
+LIST_REFUSED_REF = (f"{REF_PREFIX} D8; SPEC_4 C3 (checkpoint inspection); deployment mode M1 "
+                    "(SHEPHERD_DEPLOYMENT_MODE)")
 NO_LOAD_HERE = ("No validation figures here: they need the checkpoint files; Load is an "
                 "operator control.")
 RECORDS_MODEL_CHANGED = ("The model in use changed while its recorded results were read; open "
@@ -1122,101 +1128,98 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> st
     return where
 
 
-def changes_html(changes: Any, *, values: bool = True) -> str:
+def changes_html(changes: Any) -> str:
     """What a branch changed from its parent, from its listed record
     (`parent_changes`, decision B4): `SAME_SETTINGS` for ``{}``; else each
     setting changed, by its words (`renderers.field_words`), with its
     parent's value and its own (`renderers.change_value`: the one
-    value-words rule, never Python's repr) (`values`), or by name alone;
-    "not read" when the list holds none."""
+    value-words rule, never Python's repr); "not read" when the list holds
+    none."""
     if not isinstance(changes, Mapping):
         return '<span class="shep-muted">not read</span>'
     if not changes:
         return r.e(SAME_SETTINGS)
     names = sorted(str(name) for name in changes)
-    if not values:
-        return "Changed: " + r.e(", ".join(r.field_words(name) for name in names))
     return "; ".join(f"{r.e(r.field_words(name))} {r.change_value(name, changes[name])}"
                      for name in names)
 
 
-def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
-    """A row's Lineage cell in By family: its operation and the exact parent
-    file (or that the parent is not available, in amber, or that it is only a
-    context row), and for a branch what it changed, by name, or that it kept
-    its parent's settings (`changes_html`), indented by its depth in the
-    family; a state's own word for a file with no lineage (a record not readable or not
-    read: Unknown; a model record naming no operation: Not recorded). Its
-    kind is the row's own line (the shared list's Model cell)."""
-    depth = min(int(row.get("depth") or 0), 3)
-    lines = []
-    operation = item.get("operation")
-    sha = item.get("parent_sha256")
-    if operation and r.is_digest(sha):
-        where = (f' in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
-                 if row.get("parent_state") == "elsewhere" else "")
-        lines.append(f'<div class="shep-sub">{r.e(OPERATION_WORDS.get(operation, operation))} of '
-                     f'{r.fingerprint_value(sha, what="parent fingerprint", copy=False)}'
-                     f'{where}</div>')
-    elif operation:
-        lines.append(f'<div class="shep-sub">{r.e(OPERATION_WORDS.get(operation, operation))}'
-                     '</div>')
-    if operation == "branch":
-        lines.append(f'<div class="shep-sub">'
-                     f'{changes_html(item.get("parent_changes"), values=False)}</div>')
-    if row.get("parent_state") == "unavailable":
-        lines.append('<div class="shep-sub">' + r.status_mark("warn",
-            "parent unavailable: " + r.short_reason(row.get("parent_problem") or "not found"))
-            + "</div>")
-    if row.get("context"):
-        lines.append('<div class="shep-sub">'
-                     + r.status_mark("neutral", "Context: parent of a shown file") + '</div>')
-    # No lineage to show: a record not readable or not read holds none this
-    # build reads (Unknown); a model record that names no operation, none
-    # recorded (the skill's §6, never a bare dash).
-    body = "".join(lines) or r.status_mark(
-        "neutral", r.NOT_RECORDED if item.get("record") == "model" else r.UNKNOWN)
-    return f'<div class="shep-mp-lin shep-mp-d{depth}">{body}</div>'
+def _run_note(row: Mapping[str, Any]) -> str:
+    """What a run's place adds under its operation, from the family view's row
+    of its topmost file: its exact parent file in another listed workspace
+    (named), or not available, in amber with why (`renderers.status_mark`)."""
+    state = row.get("parent_state")
+    if state == "elsewhere":
+        return (f'<div class="shep-sub">Parent in workspace '
+                f'<b>{r.e(row.get("parent_workspace"))}</b></div>')
+    if state == "unavailable":
+        return ('<div class="shep-sub">' + r.status_mark("warn", "parent unavailable: " + (
+            r.short_reason(row.get("parent_problem") or "not found"))) + "</div>")
+    return ""
 
 
 def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any]]:
-    """By family's rows for the Task filter, from the listing's family view
-    (`model_list.family_views`, one listing): ``keys`` (context rows
-    included), ``groups`` (one per family, parent first, in the view's order;
-    under All the files whose record was not read and those whose record is
-    not readable, each group under its own `record_kind_text` word) and the
-    Lineage ``cells``. None when the listing carries no family view."""
+    """By family's tree for the Task filter (D04), from the listing's family
+    view (`model_list.family_views`, one listing): ``groups``, one per family
+    in the view's order, titled by its root run's name ("Family from
+    demo-base", `FAMILY_TITLE`), each with its runs in lineage order, **each
+    run under the run of the exact parent file its files record** (the
+    family view's parent keys, matched by SHA-256 on the server, never by a
+    name; another file of the same run is not its parent) with its depth and
+    what its parent's place adds (`_run_note`); under All the files whose
+    record was not read and those whose record is not readable, each group
+    under its own `record_kind_text` word. ``keys`` are the rows (context rows
+    included), ``context`` the rows kept only because a shown row descends
+    from them, ``parents`` each row's exact parent file (a search keeps a
+    match's ancestors by them). None when the listing carries no family
+    view."""
     views = listing.get("family")
     if not isinstance(views, Mapping) or "all" not in views:
         return None
     rows = views.get(task) or []
     items = {ml.item_key(i): i for i in listing.get("items") or []}
     groups: Dict[Tuple[Any, Any], Dict[str, Any]] = {}
-    cells: Dict[str, str] = {}
+    run_of = {key: ml.item_run_key(item) for key, item in items.items()}
+    depth: Dict[str, int] = {}
+    parents: Dict[str, str] = {}
+    context: List[str] = []
     for row in rows:
         key = row.get("key")
         if key not in items:
             continue
         kind = row.get("group")
+        name = (row.get("family_id") if kind == "family"
+                # The server groups every file without a usable record as
+                # "refused", and a record never read and a record refused say
+                # different things (skill §6), each under its own word.
+                else r.record_kind_text(items[key]))
+        group = groups.setdefault((kind, name), {"keys": [], "runs": {}})
+        group["keys"].append(key)
+        if row.get("context"):
+            context.append(key)
+        parent = row.get("parent")
+        if parent in items:
+            parents[key] = parent
+        run = run_of[key]
+        if run not in group["runs"]:
+            # A run sits under the run of its first file's exact parent file
+            # (the family view lists each parent before its children).
+            parent_run = run_of.get(parent) if parent in items else None
+            level = depth.get(parent_run, -1) + 1 if parent_run and parent_run != run else 0
+            depth[run] = level
+            group["runs"][run] = {"run": run, "depth": level, "note": _run_note(row)}
+    titles = Counter(name for kind, name in groups if kind == "family")
+    ordered = []
+    for (kind, name), group in groups.items():
         if kind == "family":
-            name = row.get("family_id")
+            what = r.run_parts(None, name)[0]
+            title = FAMILY_TITLE.format(run=what if titles[name] == 1 else r.run_words(None, name))
         else:
-            # The server groups every file without a usable record as
-            # "refused", and a record never read and a record refused say
-            # different things (skill §6), each under its own word.
-            name = r.record_kind_text(items[key])
-        group = (kind, name)
-        groups.setdefault(group, {"group": group, "keys": []})["keys"].append(key)
-        cells[key] = lineage_cell_html(items[key], row)
-    for group in groups.values():
-        kind, name = group.pop("group")
-        count = len(group["keys"])
-        group["title"] = (FAMILY_TITLE.format(run=r.run_words(None, name), count=count,
-                                              s="s" if count != 1 else "")
-                          if kind == "family" else name)
-    ordered = list(groups.values())
+            title = name
+        ordered.append({"node": ml.group_node(name), "title": title, "family": kind == "family",
+                        "keys": group["keys"], "runs": list(group["runs"].values())})
     return {"keys": [key for group in ordered for key in group["keys"]], "groups": ordered,
-            "cells": cells}
+            "context": context, "parents": parents}
 
 
 def family_row(listing: Mapping[str, Any], key: str) -> Optional[Mapping[str, Any]]:
@@ -1226,24 +1229,14 @@ def family_row(listing: Mapping[str, Any], key: str) -> Optional[Mapping[str, An
     return next((row for row in rows or [] if row.get("key") == key), None)
 
 
-def shown_view(listing: Mapping[str, Any], ctl: Mapping[str, Any]) -> Dict[str, Any]:
-    """Which rows the controls show (the shared list's ``view`` without its
-    order): By family's rows, context rows included, else the Task filter's."""
-    if ctl.get("order") == BY_FAMILY:
-        family = family_view(listing, ctl.get("task") or ALL_TASKS)
-        if family is not None:
-            return {"keys": family["keys"]}
-    return {"task": ctl.get("task")}
-
-
 def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str, Any]
           ) -> Dict[str, Any]:
     """The shared list's ``view`` for these controls.
 
-    Newest first: the Task filter and the Load note (each row's kind is the
-    shared list's own line). By family: the families' groups and rows
-    (`family_view`) with their Lineage column; without a family view, newest
-    first and why (``refused``)."""
+    Newest first: the Task filter and the Load note; the shared list draws
+    every run, latest first, its files folded. By family: the families' tree
+    (`family_view`); without a family view, newest first and why
+    (``refused``)."""
     if data.get("readonly"):
         return {"note": ""}
     task = ctl.get("task") or ALL_TASKS
@@ -1252,9 +1245,7 @@ def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str,
         family = family_view(listing, task)
         if family is None:
             return {**newest, "refused": FAMILY_NOT_READ}
-        return {"task": task, "keys": family["keys"], "groups": family["groups"],
-                "column": LINEAGE_COLUMN, "cells": family["cells"], "note": LOAD_NOTE,
-                "shaped_for": shaped_for(ctl)}
+        return {"task": task, **family, "note": LOAD_NOTE, "shaped_for": shaped_for(ctl)}
     return newest
 
 
@@ -1276,22 +1267,39 @@ def same_view(current: Any, view: Mapping[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 # The page's HTML (pure)
 # ---------------------------------------------------------------------------
-def access_short(listing: Mapping[str, Any], condition: Optional[str]) -> str:
-    return D8_SHORT.get(condition or "", "request not readable")
+def list_title(listing: Mapping[str, Any]) -> str:
+    """**The list panel's title, by its content and count** (R-30: it was
+    "Models", the selected tab's name above it): "Checkpoints (20 in 10
+    runs)", the saved files the workspace's listing holds and the runs they
+    are in (an entry it could not list is not a file, `renderers.entry_place`,
+    and the count line says it apart); "Checkpoints" before a list is read or
+    where none is (a read-only request, an empty workspace). The count line
+    under it says what the list shows of them (a filter, a search), so the two
+    can differ."""
+    files = [i for i in listing.get("items") or [] if r.entry_place(i) is None]
+    if listing.get("refused") or not files:
+        return "Checkpoints"
+    runs = len({ml.item_run_key(i) for i in files})
+    return f"Checkpoints ({len(files)} in {runs} run{'s' if runs != 1 else ''})"
 
 
 def left_header_html(listing: Mapping[str, Any], data: Mapping[str, Any],
                      condition: Optional[str] = None) -> str:
-    """The list panel's header; for a read-only request, why there is no list
-    (D8's three conditions named together) instead."""
+    """The list panel's header, titled by its content (`list_title`); for a
+    read-only request, why there is no list instead: "Operator controls only:
+    <D8's short reason>." after the lock, as every page says a control D8
+    refuses (`chips.operator_only`), then why and D8's conditions in plain
+    words, the codes in a trailing Ref line (`LIST_REFUSED_REF`)."""
+    title = f"<h2>{r.e(list_title(listing))}</h2>"
     if listing.get("refused"):
-        short = access_short(listing, condition)
-        return (f'<div class="shep-panel-hd"><h2>Models</h2></div>'
-                f'<div class="shep-mp-ro" role="status"><div class="shep-mp-refusal">'
-                f'<b>Model list unavailable: read-only, {r.e(short)}.</b>'
-                f'<span>{r.e(LIST_IS_C3)}</span><span>{r.e(LIST_C3_LINE)}</span></div>'
-                f'<div class="shep-reason">{r.e(D8_CONDITIONS)}</div></div>')
-    return ('<div class="shep-panel-hd"><h2>Models</h2><span class="shep-panel-right">listed '
+        reason = operator_only(condition or listing.get("condition"))
+        return (f'<div class="shep-panel-hd">{title}</div>'
+                f'<div class="shep-mp-ro" role="status">'
+                f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
+                f'<span>{r.e(reason)}.</span></div>'
+                f'<p class="shep-mp-p">{r.e(LIST_NOT_SHOWN)} {r.e(D8_CONDITIONS)}</p>'
+                f'<p class="shep-mp-p shep-mp-ref">{r.e(LIST_REFUSED_REF)}</p></div>')
+    return (f'<div class="shep-panel-hd">{title}<span class="shep-panel-right">listed '
             'by the server (operator controls only)</span></div>')
 
 
@@ -1459,7 +1467,9 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
         else:
             relation = r.status_mark("neutral", r.UNKNOWN)
         family = item.get("family_id")
-        rows += [("Operation", r.e(OPERATION_WORDS.get(operation, operation or "not read"))),
+        # The tree's own words for its run (`renderers.operation_words`: a
+        # fine-tune full, frozen or partly frozen), one spelling on the screen.
+        rows += [("Operation", r.e(r.operation_words(item))),
                  ("Parent", parent_html(item, row)),
                  *([("Settings changed", changes_html(item.get("parent_changes")))]
                    if operation == "branch" else []),
@@ -1489,7 +1499,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     if data.get("readonly"):
         return readonly_parts(data)
     item = ml.find_item(listing, key)
-    if item is None or item not in ml.shown_items(listing, shown_view(listing, ctl)):
+    if item is None:
         return {"header": ('<div class="shep-panel-hd"><h2>Details</h2>'
                            f'<span class="shep-panel-right">{_served_line(listing)}</span></div>'),
                 "top": ('<p class="shep-muted shep-mp-p">Select a model to see its fingerprints, '
@@ -1509,12 +1519,11 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
         top = (f'<div class="shep-reason">{r.e(item.get("filename"))} · '
                f'{r.e(r.unreadable_words(item))} · cannot be loaded: {r.e(why)}</div>')
         return {"header": header, "top": top, "records": "", "usage": "", "seg": None}
-    facts = r.facts_from_checkpoint(item, workspaces)
-    # Model Facts' warnings, but its synthetic banner: that one speaks of "the
-    # served workspace", which a listed checkpoint need not be; the workspace
-    # line and the Dataset row say synthetic for this checkpoint.
-    warnings = "".join(r.warning_html(h, d) for h, d in facts.warnings
-                       if (h, d) != r.IDENTITY_BANNERS["synthetic"])
+    # Model Facts' warnings for a listed file (`listed`: no synthetic banner,
+    # which speaks of "the served workspace"; the workspace line and the
+    # Dataset row say synthetic for this checkpoint).
+    facts = r.facts_from_checkpoint(item, workspaces, listed=True)
+    warnings = "".join(r.warning_html(h, d) for h, d in facts.warnings)
     top = (identity_html(item, family_row(listing, ml.item_key(item)), workspaces=workspaces)
            + warnings)
     ledger = (data.get("ledgers") or {}).get(ml.item_key(item))
@@ -1812,15 +1821,17 @@ def create_models_page(ctx: Any) -> None:
 
     shared_refresh = handle.refresh["fn"]
 
-    def _open(name, older, current_view, previous, key, order, task, seg_value, phase,
-              request: gr.Request):
-        shared = shared_refresh(name, older, current_view, previous, key, request)
+    def _open(name, older, current_view, previous, key, query, fold, order, task, seg_value,
+              phase, request: gr.Request):
+        shared = shared_refresh(name, older, current_view, previous, key, request, query, fold)
         listing = shared[0]
         data = read_for(listing)
         condition = operator_access(request).condition
         # Read now; a Load still running reads again once it has finished.
         stale = False if phase != "loading" else gr.update()
-        return (*shared, stale, *outputs_for(listing, data, (order, task), None, seg_value,
+        # The detail of the selection the refresh kept (D04: a refresh keeps a
+        # still-valid selection), not the empty detail.
+        return (*shared, stale, *outputs_for(listing, data, (order, task), shared[1], seg_value,
                                              condition, new_data=True))
 
     ctx.on_page_open("models", {
@@ -1849,9 +1860,10 @@ def create_models_page(ctx: Any) -> None:
         key, again = selected, None
         if key is None and after_load and isinstance(last, Mapping) \
                 and last.get("workspace") == listing.get("workspace"):
-            item = ml.find_item(listing, last.get("key"))
-            shown = shown_view(listing, controls(data, *ctl_values))
-            if item is not None and item in ml.shown_items(listing, shown):
+            # Selected again while it is listed, whatever the controls show
+            # (D04: a filter never changes what is selected; the list says
+            # when it does not show it).
+            if ml.find_item(listing, last.get("key")) is not None:
                 key = again = last["key"]
         states = (False if fresh and settled else gr.update(),
                   ({"workspace": listing.get("workspace"), "key": key} if key is not None
@@ -1957,8 +1969,8 @@ PAGE_CSS = f"""
      longest option, "Patients-like-me" (the workspace option is its name; the
      identity line under it says its fingerprint and "synthetic", once). */
   grid-template-columns: minmax(0, 1fr) 170px;
-  grid-template-rows: repeat(5, max-content);
-  grid-template-areas: "lhd lhd" "ws task" "wsline wsline" "ctl ctl" "count count";
+  grid-template-rows: repeat(4, max-content);
+  grid-template-areas: "lhd lhd" "ws task" "wsline wsline" "ctl ctl";
   background: none; border: 0; padding: 0 16px 8px !important; margin: 0 !important;
 }}
 {_PAGE} {_LIST} > .shep-model-main > .shep-model-head > * {{ min-width: 0 !important; }}
@@ -1976,6 +1988,14 @@ PAGE_CSS = f"""
 {_PAGE} #shep-mp-pending:not(:has(.shep-mp-pending.shep-on)) {{ display: none !important; }}
 {_PAGE} .shep-mp-pending {{ font-size: 14px; }}
 {_PAGE} #shep-models-research-count {{ grid-area: count; font-size: 14px; color: var(--shep-text-2); }}
+/* The shared list's search line (D04): the box and its Clear, then what the list shows. */
+{_PAGE} {_LIST} > .shep-model-main > .shep-model-tools {{
+  flex: none; display: grid !important; grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "srch" "count"; gap: 8px 10px !important; align-items: center;
+  background: none; border: 0; padding: 0 16px 8px !important; margin: 0 !important;
+}}
+{_PAGE} {_LIST} > .shep-model-main > .shep-model-tools > * {{ min-width: 0 !important; }}
+{_PAGE} #shep-models-research-searchrow {{ grid-area: srch; }}
 {_PAGE} {_LIST} > .shep-model-main > .shep-model-body {{
   min-height: 0; background: none; border: 0; border-radius: 0 0 10px 10px;
   padding: 0 16px 12px !important; margin: 0 !important; flex-wrap: nowrap !important;
@@ -2088,17 +2108,12 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-fold > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
 {_PAGE} .shep-mp-fold[open] > summary {{ margin-bottom: 2px; }}
 {_PAGE} .shep-mp-delta {{ font-size: 14px; margin-top: 4px; }}
-{_PAGE} .shep-mp-refusal {{ display: flex; flex-direction: column; gap: 6px; margin: 12px 0;
-  border: 1px solid var(--shep-grey-200); background: var(--shep-grey-50); border-radius: 8px;
-  padding: 12px 14px; font-size: 15px; color: var(--shep-grey-800); }}
+/* A read-only request's reason (`left_header_html`): the lock and D8's words, why, then the Ref
+   line, muted. */
 {_PAGE} .shep-mp-ro {{ padding: 0 16px 8px; }}
+{_PAGE} #shep-mp-hd .shep-mp-ro {{ display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }}
+{_PAGE} #shep-mp-hd .shep-mp-ref {{ font-size: 14px; color: var(--shep-muted); }}
 {_PAGE} .shep-mtbl td.shep-num .shep-sub {{ text-align: right; }}
-/* By family's Lineage cell: a child sits one step in from its parent; a
-   parent that is not available is a condition to watch, a context row a
-   neutral state (`renderers.status_mark`, skill §6). */
-{_PAGE} .shep-mp-lin.shep-mp-d1 {{ padding-left: 12px; }}
-{_PAGE} .shep-mp-lin.shep-mp-d2 {{ padding-left: 24px; }}
-{_PAGE} .shep-mp-lin.shep-mp-d3 {{ padding-left: 36px; }}
 {_PAGE} .shep-mp-ident {{ font-size: 15px; }}
 /* A record's relations, a row each under its detail row's words (`renderers.relations_html`). */
 {_PAGE} .shep-mp-rel {{ margin: 0 0 6px; font-size: 14px; }}
@@ -2109,11 +2124,19 @@ PAGE_CSS = f"""
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-mp-wsline,
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-mp-controls,
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-models-research-count,
+{_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-main > .shep-model-tools,
 {_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-main > .shep-model-body {{ display: none !important; }}
 {_PAGE} {_LIST}:has(.shep-mp-ro) {{ grid-template-columns: minmax(0, 30fr) minmax(0, 70fr); }}
 /* The list's and the detail's minimum widths (the layout rule's measure, `src/webui/shell.py`):
-   the list's table whole from 450 px; side by side, the grid's columns never go under them. */
-{_PAGE} {_LIST} {{ --shep-mp-list-min: 450px; --shep-mp-detail-min: 480px; }}
+   side by side, the grid's columns never go under them. The list's is the shared tree's
+   (`model_list._tree_html`) whole with its widest common rows, By family: a lineage two runs deep
+   under a 19-character run name, a record not readable (its Task words) and a file that records
+   no completed epochs ("recorded epoch 2") make it 656 px, and its frame's borders and padding
+   36 more (the Models browser test's world; the multi-family demo's is 609). At 450 px, the old
+   table's, the tree was cut at its Fingerprint column at 1280 x 900 (the demo's Newest first
+   565 px in a 531 px frame, By family 609) and at 1366 x 620 (By family). A longer name or a
+   deeper lineage scrolls the rows sideways in their own region. */
+{_PAGE} {_LIST} {{ --shep-mp-list-min: 692px; --shep-mp-detail-min: 480px; }}
 {_PAGE} {_LIST} > .shep-model-main {{ --shep-panel-min: var(--shep-mp-list-min); }}
 {_PAGE} {_LIST} > .shep-model-foot {{ --shep-panel-min: var(--shep-mp-detail-min); }}
 {SIDE} {{
@@ -2128,14 +2151,6 @@ PAGE_CSS = f"""
   {_PAGE} .shep-rs-wrap:has(> .shep-rs-cmp) {{ max-height: calc(100cqh - 24px); }}
   /* The table's header sticks to the top of the region the rows scroll in. */
   {_PAGE} #shep-models-research-rows .shep-tbl-wrap {{ overflow: visible; }}
-  /* Words break only where they must (a column is never narrower than its
-     longest word, so "contested" stays one word); the table scrolls in its
-     region rather than squeezing a word. */
-  {_PAGE} .shep-mtbl td {{ overflow-wrap: break-word; }}
-  /* The table fits its frame at 1440 x 900 with a classic 15 px scrollbar beside it (M5-3:
-     at 10 px a side its columns' longest words, "run 2026-10-21 18:03", a 12-hex digest,
-     "Validation", "non-deterministic", "contested", made it 602 px in a 589 px frame). */
-  {_PAGE} .shep-mtbl th, {_PAGE} .shep-mtbl td {{ padding-left: 7px; padding-right: 7px; }}
   /* The confirmation: its table scrolls inside, its buttons stay in view
      under it however short the window. */
   {_PAGE} {_LIST} > .shep-model-confirm-box {{
@@ -2156,12 +2171,13 @@ PAGE_CSS = f"""
      header taller than the panel scrolls the panel, its title with it. */
   {_PAGE} {_LIST} > .shep-model-main {{
     display: grid !important; align-items: start; align-content: start; gap: 10px 10px !important;
-    grid-template-columns: minmax(0, 1fr) 170px;
+    grid-template-columns: minmax(0, 1fr) auto 170px;
     grid-template-rows: repeat(5, max-content) minmax(0, 1fr);
-    grid-template-areas: "lhd lhd" "ws task" "wsline wsline" "ctl ctl" "count count" "body body";
+    grid-template-areas: "lhd lhd lhd" "ws ws task" "wsline wsline wsline" "srch ctl ctl" "count count count" "body body body";
     padding: 0 16px !important;
   }}
-  {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ display: contents !important; }}
+  {_PAGE} {_LIST} > .shep-model-main > .shep-model-head,
+  {_PAGE} {_LIST} > .shep-model-main > .shep-model-tools {{ display: contents !important; }}
   {_PAGE} {_LIST} > .shep-model-main > .shep-model-body {{
     grid-area: body; padding: 0 0 12px !important;
     align-self: stretch; min-height: 0; overflow: hidden; display: flex !important;
@@ -2177,7 +2193,7 @@ PAGE_CSS = f"""
   {_PAGE} {_LIST}:has(.shep-mp-ro) {{ grid-template-columns: minmax(0, 1fr); }}
   {_PAGE} {_LIST} > .shep-model-main {{ margin-bottom: 16px !important; }}
   {_PAGE} {_LIST} > .shep-model-confirm-box {{ grid-area: confirm; margin-top: 16px !important; overflow: visible; }}
-  {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(6, max-content); grid-template-areas: "lhd" "ws" "wsline" "task" "ctl" "count"; }}
+  {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(5, max-content); grid-template-areas: "lhd" "ws" "wsline" "task" "ctl"; }}
   {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; }}
 }}
 """
@@ -2188,7 +2204,8 @@ __all__ = [
     "BY_FAMILY",
     "D8_CONDITIONS",
     "FAMILY_TITLE",
-    "LINEAGE_COLUMN",
+    "LIST_NOT_SHOWN",
+    "LIST_REFUSED_REF",
     "LOAD_NOTE",
     "NEWEST",
     "ORDER_CHOICES",
@@ -2203,7 +2220,7 @@ __all__ = [
     "family_view",
     "identity_html",
     "left_header_html",
-    "lineage_cell_html",
+    "list_title",
     "listing_key",
     "options_html",
     "parent_html",
@@ -2214,6 +2231,5 @@ __all__ = [
     "record_view",
     "records_block_html",
     "shape",
-    "shown_view",
     "usage_entries",
 ]

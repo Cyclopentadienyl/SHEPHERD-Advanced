@@ -52,7 +52,8 @@ overlay, the help bubble or an open list it leaves behind, aside) and its
 focus cue's contrast. `walk_ui` drives one browser through a list of stops
 (`UI_WALK_JS`: a page at a window size, with a drawer of it opened where a
 stop asks; the page's requests answered and its drawing still before it
-measures; the selects' options read where a stop asks), and `ui_problems`
+measures; the selects' options read where a stop asks; a drawer opened, and
+a row of it chosen, where a stop asks), and `ui_problems`
 turns what it saw into one line per broken rule. The representative windows
 are `UI_SIZES`, the pages `UI_PAGES`.
 
@@ -273,7 +274,9 @@ LOOK_JS = r"""
                              && !(c.matches('.shep-i') && c.getAttribute('aria-expanded') === 'true'))
     || (!!e.closest('ul.option-list, .options:has(> ul.option-list)') && !(c.closest('.block') || c).contains(e));
   /* Every region that scrolls vertically (the page itself when it does),
-     with the panel it is in and the regions it is inside. */
+     with the area it is in (its panel, or an area the page marks inside one,
+     `.shep-area`: the Diagnosis load drawer's list and its chosen model's
+     details, side by side) and the regions it is inside. */
   const regions = () => {
     const se = document.scrollingElement, found = [];
     if (se.scrollHeight > se.clientHeight + 1) { found.push(se); }
@@ -286,7 +289,9 @@ LOOK_JS = r"""
     return found.map((e) => {
       const k = e === se ? -1 : panels.findIndex((p) => p.contains(e));
       const fixed = e !== se && getComputedStyle(e).position === 'fixed';
-      return { name: named(e), area: k < 0 ? 'page' : 'panel ' + (k + 1),
+      const own = k < 0 ? null : e.closest('.shep-area');
+      const sub = own && own !== panels[k] && panels[k].contains(own) ? ' ' + named(own) : '';
+      return { name: named(e), area: k < 0 ? 'page' : 'panel ' + (k + 1) + sub,
                inside: found.filter((o) => o !== e && (o === se ? !fixed : o.contains(e))).map(named) };
     });
   };
@@ -400,9 +405,10 @@ UI_PAGES = ("clinical", "datasets", "training", "finetune", "test", "models", "s
 #: directory for them) and ``focusWalk()`` (after one Tab press, so focus is
 #: a keyboard's); a stop with ``options`` then opens each select drawn and
 #: reads its options' words. A stop with ``open`` (``{"click": opener,
-#: "shown": drawer, "close": its close}``) opens that drawer before it
-#: measures, walks focus inside it only (the panels it covers are not its
-#: measure) and closes it again after.
+#: "shown": drawer, "close": its close}``, and ``"pick"``/``"picked"``: a
+#: row to choose in it and what shows it was chosen) opens that drawer
+#: before it measures, chooses that row, walks focus inside the drawer only
+#: (the panels it covers are not its measure) and closes it again after.
 UI_WALK_JS = r"""
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -435,6 +441,13 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__;
     await page.click(open ? spec.click : spec.close, { force: true });
     await page.waitForSelector(spec.shown, { state: open ? 'visible' : 'hidden' });
     await idle();
+    if (open && spec.pick) {
+      await page.waitForSelector(spec.pick, { state: 'visible' });
+      await page.click(spec.pick);
+      await page.waitForSelector(spec.picked, { state: 'attached' });
+      await idle();
+      await page.evaluate(() => window.scrollTo(0, 0));
+    }
   };
   const open = async (id) => {
     if (!(id === 'clinical' || id === 'settings')
@@ -536,7 +549,8 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
 
     - the page scrolls sideways;
     - a scroll region inside another one (the page included), or two in one
-      panel: one scroll region per area;
+      area (a panel, or an area a page marks inside one, ``shep-area``): one
+      scroll region per area;
     - a focused control out of view, or with anything but another control's
       own overlay over its centre;
     - text under 14 px, a size or weight outside the type scale, text drawn
@@ -596,6 +610,62 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
     return problems
 
 
+#: **What the shared model list's tree shows, read where the browser draws it**
+#: (D04, `model_list._tree_html`; a page init script): ``window.__shepTree(root)``
+#: gives its groups (each title, whether unfolded, its runs and files drawn),
+#: its runs (words, whether unfolded) and its files (key, words, selected),
+#: each drawn or folded away by what the page shows (`hidden`, a box), the
+#: count line beside it, and a selection the list says it does not show.
+TREE_JS = r"""
+(() => {
+  window.__shepTree = (root) => {
+    const el = document.querySelector(root);
+    if (!el) { return null; }
+    const shown = (t) => !t.hidden && t.getBoundingClientRect().height > 0;
+    const text = (t) => (t ? t.innerText.replace(/\s+/g, ' ').trim() : null);
+    const opened = (b) => !!b && b.getAttribute('aria-expanded') === 'true';
+    return {
+      groups: [...el.querySelectorAll('tbody[data-node]')].map((body) => ({
+        node: body.getAttribute('data-node'),
+        title: text(body.querySelector('.shep-grp-t')),
+        open: opened(body.querySelector('tr.shep-grp button.shep-fold')),
+        runs: [...body.querySelectorAll('tr.shep-tree-run')].filter(shown).length,
+        files: [...body.querySelectorAll('tr[data-key]')].filter(shown).length,
+      })),
+      runs: [...el.querySelectorAll('tr.shep-tree-run')].map((tr) => ({
+        node: tr.getAttribute('data-fold'), words: text(tr.querySelector('td')),
+        shown: shown(tr), open: opened(tr.querySelector('button.shep-fold')),
+        context: tr.classList.contains('shep-ctx'),
+      })),
+      files: [...el.querySelectorAll('tr[data-key]')].map((tr) => ({
+        key: tr.getAttribute('data-key'), words: text(tr.querySelector('td')),
+        shown: shown(tr), selected: tr.getAttribute('aria-current') === 'true',
+      })),
+      outside: text(el.querySelector('.shep-list-outside')),
+      fit: fit(el.querySelector('table.shep-mtree')),
+    };
+  };
+  // Whether the tree fits its frame (its width against its wrapper's), and every
+  // word a shown row splits over two lines (D8: a narrow frame never cuts a word).
+  const fit = (table) => {
+    if (!table) { return null; }
+    const wrap = table.closest('.shep-tbl-wrap');
+    const split = [];
+    const walk = document.createTreeWalker(table, NodeFilter.SHOW_TEXT);
+    for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+      for (const m of node.data.matchAll(/\S+/g)) {
+        const range = document.createRange();
+        range.setStart(node, m.index);
+        range.setEnd(node, m.index + m[0].length);
+        if (range.getClientRects().length > 1) { split.push(m[0]); }
+      }
+    }
+    return { over: Math.round(table.getBoundingClientRect().width - wrap.clientWidth), split };
+  };
+})();
+"""
+
+
 def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any:
     """Run a Node script (Playwright resolvable, `node_with_playwright`; the
     caller skips without it) and return the JSON it prints."""
@@ -610,5 +680,6 @@ def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any
     return json.loads(result.stdout)
 
 
-__all__ = ["LOOK_JS", "QUEUE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES", "UI_WALK_JS",
+__all__ = ["LOOK_JS", "QUEUE_JS", "TREE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES",
+           "UI_WALK_JS",
            "node_with_playwright", "run_node", "ui_problems", "walk_ui"]

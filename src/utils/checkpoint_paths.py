@@ -38,6 +38,7 @@ Module: src/utils/checkpoint_paths.py
 from __future__ import annotations
 
 import copy
+import errno
 import math
 import os
 import re
@@ -47,7 +48,18 @@ import time
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Dict,
+    List,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Tuple,
+    Union,
+)
 
 ScoreFn = Callable[[Path], Optional[float]]
 #: Whether a candidate file may be selected (automatic selection's record rule).
@@ -511,23 +523,46 @@ def list_runs(data_dir: PathLike, conv_type: Optional[str] = None, *,
     `unlisted` the same way, shown with backslash escapes (`_shown_name`,
     ``bad\\xff``) and identified by its bytes (`listing_key`), and nothing in
     it is read (BACKLOG 66).
+
+    **A link under ``runs/`` is never skipped without a word** (BACKLOG 69):
+    a link whose target does not exist, or that loops, where a layout
+    directory or a run directory would be, is one `unlisted` entry saying
+    which (`_link_problem`). **A link to a directory this listing lists
+    already** (another name, inside ``runs/``, for a layout directory or a
+    run) is one `unlisted` entry saying where its runs are listed
+    (`_alias_problem`), and its runs are not listed again: each file is one
+    entry, under the path that holds no link, so nothing is counted twice.
     """
     base = Path(data_dir) / RUNS_DIRNAME
     runs: List[Path] = []
     if not base.is_dir():
         return runs
     refused: List[Tuple[Path, Path, str]] = []
-    for directory in base.iterdir():
-        if conv_type is not None and directory.name != conv_type:
-            continue
+    layouts = [d for d in base.iterdir() if conv_type is None or d.name == conv_type]
+    # A layout directory that is another name for one listed (a link to it) is
+    # named once and not walked, so nothing under it is said twice.
+    layouts, aliases = _layouts_once(base, layouts)
+    refused.extend(aliases)
+    for directory in layouts:
         try:
             if not directory.is_dir():
+                broken = _link_problem(directory)
+                if broken is not None:
+                    refused.append((directory, directory, unlisted_problem(
+                        directory.relative_to(base), broken)))
                 continue
             if text_problem(directory.name) is not None:
                 refused.append((directory, directory, unlisted_problem(
                     directory.relative_to(base), _NAME_NOT_TEXT)))
                 continue
-            found = [p for p in directory.iterdir() if p.is_dir()]
+            found = []
+            for entry in directory.iterdir():
+                broken = None if entry.is_dir() else _link_problem(entry)
+                if broken is not None:
+                    refused.append((entry, entry, unlisted_problem(entry.relative_to(base),
+                                                                   broken)))
+                elif entry.is_dir():
+                    found.append(entry)
         except OSError as exc:  # a directory this account may not enter
             # Its kind and the system's words, never the path it names.
             refused.append((directory, directory, unlisted_problem(
@@ -540,9 +575,95 @@ def list_runs(data_dir: PathLike, conv_type: Optional[str] = None, *,
             else:
                 refused.append((run, run, unlisted_problem(run.relative_to(base),
                                                            _NAME_NOT_TEXT)))
+    runs, aliases = _without_aliases(base, runs)
+    refused.extend(aliases)
     if unlisted is not None:
         unlisted.extend(sorted(refused, key=lambda entry: listed_names(entry[0], entry[1])))
     return sorted(runs, key=lambda r: (_run_recency(r), r.name, r.parent.name), reverse=True)
+
+
+def _layouts_once(base: Path, layouts: List[Path]
+                  ) -> Tuple[List[Path], List[Tuple[Path, Path, str]]]:
+    """`layouts` (directories under ``runs/``) with each directory walked once:
+    one that is a link to another listed one (its real path is that one's) is
+    left out and named once as an `unlisted` entry (`_alias_problem`); of two
+    names for one directory, the one that is not a link is kept (else the
+    first by name). An entry whose real path cannot be had is kept, for the
+    listing to say what it is."""
+    by_real: Dict[str, List[Path]] = {}
+    for directory in layouts:
+        try:
+            real = os.path.realpath(directory) if directory.is_dir() else str(directory)
+        except OSError:
+            real = str(directory)
+        by_real.setdefault(real, []).append(directory)
+    kept: List[Path] = []
+    named: List[Tuple[Path, Path, str]] = []
+    for same in by_real.values():
+        plain = sorted((d for d in same if not d.is_symlink()), key=lambda d: d.name)
+        keep = (plain or sorted(same, key=lambda d: d.name))[0]
+        kept.append(keep)
+        named.extend((d, d, _alias_problem(base, d, keep)) for d in same if d != keep)
+    return kept, named
+
+
+def _link_problem(entry: Path) -> Optional[str]:
+    """Why a link under ``runs/`` where a directory would be cannot be listed:
+    its target does not exist, or it loops; None for anything else that is
+    not a directory (a plain file, a link to a file), which holds no run."""
+    if not entry.is_symlink():
+        return None
+    try:
+        os.stat(entry)
+    except FileNotFoundError:
+        return "a link whose target does not exist"
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            return "a link that loops back on itself"
+        return f"a link that cannot be followed ({type(exc).__name__})"
+    return None
+
+
+def _alias_problem(base: Path, alias: Path, listed: Path) -> str:
+    """What the listing says of a link it does not list again: the listed
+    directory its runs are listed under, both named under ``runs/`` as shown."""
+    def shown(path: Path) -> str:
+        return "/".join(_shown_name(part)
+                        for part in (RUNS_DIRNAME, *path.relative_to(base).parts))
+
+    return (f"{shown(alias)} is a link to {shown(listed)}, whose runs are listed there once, "
+            "so it is not listed again")
+
+
+def _without_aliases(base: Path, runs: List[Path]
+                     ) -> Tuple[List[Path], List[Tuple[Path, Path, str]]]:
+    """`runs` with each run directory listed once, by where it really is: a
+    run reached through a link to one listed otherwise (a layout directory or
+    a run directory that is a link inside ``runs/``) is left out, the run kept
+    under the path that holds no link (else the first by name), and each link
+    named once as an `unlisted` entry (`_alias_problem`), by the run directory
+    it is listed under: a layout directory's alias is left out before
+    (`_layouts_once`), so what differs here is the run, whatever layout it
+    sits in (a link into another layout names that run, never its layout
+    directory, which is a real one whose own runs are listed). A run that
+    resolves nowhere else listed is kept, for the reader's boundary check to
+    say what it is."""
+    real_base = os.path.realpath(base)
+    by_real: Dict[str, List[Path]] = {}
+    for run in runs:
+        by_real.setdefault(os.path.realpath(run), []).append(run)
+    kept: List[Path] = []
+    named: Dict[Path, Tuple[Path, Path, str]] = {}
+    for real, same in by_real.items():
+        direct = [run for run in same
+                  if os.path.join(real_base, run.parent.name, run.name) == real]
+        keep = sorted(direct or same, key=lambda run: (run.parent.name, run.name))[0]
+        kept.append(keep)
+        for run in same:
+            if run == keep:
+                continue
+            named.setdefault(run, (run, run, _alias_problem(base, run, keep)))
+    return kept, list(named.values())
 
 
 def unlisted_problem(under: Path, why: str) -> str:
@@ -567,9 +688,17 @@ def run_architecture(run_dir: PathLike) -> str:
     return Path(run_dir).parent.name
 
 
+def run_key(run_dir: PathLike) -> str:
+    """A run directory's identity (`listing_key` of its layout directory's
+    name and its own: ``architecture/run`` for names that are text), as
+    `ListedCheckpoint.run_key` gives it for each of its files."""
+    return listing_key((Path(run_dir).parent.name, Path(run_dir).name))
+
+
 def list_run_checkpoints(
     data_dir: PathLike, conv_type: Optional[str] = None, *, run: Optional[str] = None,
     unlisted: Optional[List[Tuple[Path, Path, str]]] = None,
+    run_keys: Optional[Collection[str]] = None,
 ) -> List[Tuple[Path, Path]]:
     """Every checkpoint in a workspace's runs, as ``(run_dir, checkpoint)``:
     runs most recently trained first (`list_runs`, `conv_type` and `unlisted`
@@ -584,12 +713,19 @@ def list_run_checkpoints(
     **A checkpoint file whose name is not valid text** (BACKLOG 66) is not
     listed by name: it is appended to `unlisted` as ``(run_dir, file,
     problem)`` (`unlisted_problem`, shown with backslash escapes) and never
-    read, chosen or resolved; its run's other files are listed."""
+    read, chosen or resolved; its run's other files are listed.
+
+    `run_keys`, run identities (`run_key`), lists those runs' files alone, in
+    the same order (a list that shows the latest runs first and reads the
+    others only when asked, `server_lists.list_checkpoints`); every entry
+    that cannot be listed is still in `unlisted`."""
     base = Path(data_dir) / RUNS_DIRNAME
     refused: List[Tuple[Path, Path, str]] = []
     entries: List[Tuple[Path, Path]] = []
     for run_dir in list_runs(data_dir, conv_type, unlisted=refused):
         if run is not None and run_dir.name != run:
+            continue
+        if run_keys is not None and run_key(run_dir) not in run_keys:
             continue
         named, unnamed = _run_files(run_dir)
         files = sorted(named, key=lambda p: (_mtime(p), p.name), reverse=True)
@@ -729,7 +865,7 @@ class ListedCheckpoint(NamedTuple):
         under ``runs/`` is its own group."""
         if self.under is not None:
             return listing_key(self.under[:2])
-        return listing_key((Path(self.run_dir).parent.name, Path(self.run_dir).name))
+        return run_key(self.run_dir)
 
 
 #: How much of a problem's text a reason keeps (`problem_line`): its first line,
@@ -1323,9 +1459,11 @@ def _with_best_k(entries: List[ListedCheckpoint]) -> List[ListedCheckpoint]:
 def read_run_checkpoints(
     data_dir: PathLike, conv_type: Optional[str] = None, *,
     within: Optional[PathLike] = None, run: Optional[str] = None,
+    run_keys: Optional[Collection[str]] = None,
 ) -> List[ListedCheckpoint]:
-    """The listing (`list_run_checkpoints`, same order, `run` as there), each
-    file read once, and again only when it changes.
+    """The listing (`list_run_checkpoints`, same order, `run` and `run_keys`
+    as there: only those runs' files are read), each file read once, and
+    again only when it changes.
 
     Each file is loaded through `read_checkpoint` with `weights_only=True`
     (tensors and plain data only, contract decision 10) on the CPU, and what
@@ -1384,7 +1522,8 @@ def read_run_checkpoints(
     base = Path(data_dir) / RUNS_DIRNAME
     entries: List[ListedCheckpoint] = []
     unlisted: List[Tuple[Path, Path, str]] = []
-    for run_dir, path in list_run_checkpoints(data_dir, conv_type, run=run, unlisted=unlisted):
+    for run_dir, path in list_run_checkpoints(data_dir, conv_type, run=run, unlisted=unlisted,
+                                              run_keys=run_keys):
         problem = checkpoint_not_read(run_dir, path, bound) if bound is not None else None
         if problem is not None:
             entries.append(ListedCheckpoint(run_dir, path, problem=problem))
