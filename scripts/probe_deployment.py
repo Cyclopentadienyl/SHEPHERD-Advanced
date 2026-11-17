@@ -3693,7 +3693,10 @@ def _serve_and_view(data_dir: Path, checkpoint: Path, expected_sha256: str,
 
 
 #: A record's group description when the one report its key has in the store is the one
-#: it was built from (`GET /api/v1/evaluations/loaded-model`, `contest`).
+#: it was built from (`GET /api/v1/evaluations/loaded-model`, `contest`): its state, the
+#: metrics that differ and the runs that carry them. The answer's `contest` holds the
+#: group's investigation notes beside it (`notes`, `notes_readable`: BACKLOG 40), which
+#: record what was looked at and describe nothing, so the check reads these fields only.
 UNCONTESTED = {"state": "uncontested", "differing": [], "runs": []}
 
 
@@ -3724,8 +3727,9 @@ def _the_view_shows(answer: Dict[str, Any], record: Dict[str, Any], ledger_sha25
     # The review's P2-6, seen end to end (root-cause round, INT-1): the route
     # reads the probe's registry, so the record's state is from its store.
     contest = view.get("contest") or {}
-    assert contest == UNCONTESTED, (
-        f"the view shows the record's group description as {contest.get('state')}, not "
+    described = {field: contest.get(field) for field in UNCONTESTED}
+    assert described == UNCONTESTED, (
+        f"the view shows the record's group description as {described['state']}, not "
         "uncontested")
     return {"state": answer["state"], "checkpoint_sha256": answer["checkpoint_sha256"],
             "records": len(shown), "source_artifact_digest": view["source_artifact_digest"],

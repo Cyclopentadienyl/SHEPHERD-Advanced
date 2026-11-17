@@ -1216,15 +1216,31 @@ def test_the_m4_evidence_checks_fire(tmp_path):
     with pytest.raises(AssertionError, match="2 records, not one"):
         probe._the_record(tmp_path, SimpleNamespace(sha256="r"), "c", version)
 
+    from src.api.routes.evaluations import RecordContest
+
+    def contest(state, differing=(), **notes):
+        """A group description as the loaded-model route answers it today
+        (`RecordContest`, the group's investigation notes beside it: BACKLOG
+        40), so the check is shown on the answer's own shape."""
+        return RecordContest(state=state, differing=list(differing), runs=[],
+                             **notes).model_dump(mode="json")
+
     view = {"source_artifact_digest": "r", "registration": {"sequence": 1},
             "cohort": {"label": "l", "role": "o"}, "n_ranked": 1,
             "r10": {"validation": {"evidence": {"state": "found"}}},
             "environment_class": "CPU", "run_id": record["run_id"], "historical_overlap": [],
-            "contest": {"state": "uncontested", "differing": [], "runs": []}}
+            "contest": contest("uncontested")}
     answer = {"state": "records", "checkpoint_sha256": "c", "ledger": {"sha256": "L"},
               "records": [view], "records_not_shown": 0}
     shown = probe._the_view_shows(answer, record, "L", ("validation",))
     assert (shown["records"], shown["contest_state"]) == (1, "uncontested")
+    # A note kept for the group, or notes that cannot all be read, describe
+    # nothing: the group is still uncontested.
+    noted = contest("uncontested", notes=[{"who": "w", "at": "t", "what": "x"}],
+                    notes_readable=False)
+    shown = probe._the_view_shows(dict(answer, records=[dict(view, contest=noted)]), record,
+                                  "L", ("validation",))
+    assert shown["contest_state"] == "uncontested"
     for broken, message in (
         (dict(answer, records=[dict(view, source_artifact_digest="x")]), "another report"),
         (dict(answer, state="no_records", records=[]), "state is no_records"),
@@ -1235,11 +1251,9 @@ def test_the_m4_evidence_checks_fire(tmp_path):
         (dict(answer, records=[dict(view, r10={"validation": {"evidence": {"state":
                                                                          "search_incomplete"}}})]),
          "evidence as search_incomplete, not found"),
-        (dict(answer, records=[dict(view, contest={"state": "cannot_be_checked",
-                                                   "differing": [], "runs": []})]),
+        (dict(answer, records=[dict(view, contest=contest("cannot_be_checked"))]),
          "group description as cannot_be_checked"),
-        (dict(answer, records=[dict(view, contest={"state": "contested", "differing": ["mrr"],
-                                                   "runs": []})]),
+        (dict(answer, records=[dict(view, contest=contest("contested", ["mrr"]))]),
          "group description as contested"),
         (dict(answer, records=[{k: v for k, v in view.items() if k != "contest"}]),
          "group description as None"),
