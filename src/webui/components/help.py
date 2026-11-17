@@ -47,6 +47,13 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   a click outside close it; it stays open while the reader's pointer moves
   in the bubble (a bubble that only came under a resting pointer, as it
   follows its ⓘ on a scroll, keeps no preview open);
+- does not draw a bubble whose ⓘ is out of view (outside the window, or
+  outside the visible part of a region it scrolls in: as Floating UI's
+  ``hide`` reads its reference's clipping ancestors) and lets clicks reach
+  what is under it; it stays open and is drawn again where it belongs when
+  its ⓘ is back in view. Focus inside it then moves to its ⓘ without
+  scrolling; Esc closes it and still reaches the page. Closing never scrolls
+  the page: focus returns to a ⓘ with ``preventScroll``;
 - places it so it **never covers the field it explains** (the field's
   component, by its ``elem_id``; else the table row, the key-value row's key
   and value, or the line the ⓘ sits in): beside that field, then above it, then below it, the first that fits
@@ -464,12 +471,49 @@ _HELP_JS = r"""
   function overlaps(a, b) {
     return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
   }
+  // Whether a ⓘ is out of view: not drawn, or wholly outside the window or
+  // the visible part of a region it scrolls in (an ancestor that clips its
+  // overflow; one that does not hold an absolutely or fixed positioned box
+  // does not clip it), as Floating UI's `hide` reads its reference.
+  var CLIPS = /auto|scroll|hidden|clip|overlay/;
+  function holdsFixed(s) {
+    return s.transform !== 'none' || s.perspective !== 'none' || s.filter !== 'none' ||
+      /paint|layout|strict|content/.test(s.contain || '') || /transform|perspective|filter/.test(s.willChange || '');
+  }
+  function outOfView(el) {
+    var r = el.getBoundingClientRect();
+    if (!r.width && !r.height) { return true; }
+    var c = {left: 0, top: 0, right: document.documentElement.clientWidth,
+             bottom: document.documentElement.clientHeight};
+    var pos = getComputedStyle(el).position;
+    for (var n = el.parentElement; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      var s = getComputedStyle(n);
+      if (pos === 'fixed' ? !holdsFixed(s) : pos === 'absolute' && s.position === 'static' && !holdsFixed(s)) {
+        continue;
+      }
+      if (s.display !== 'contents' && s.display !== 'inline') {
+        var b = n.getBoundingClientRect(), left = b.left + n.clientLeft, top = b.top + n.clientTop;
+        if (CLIPS.test(s.overflowX)) { c.left = Math.max(c.left, left); c.right = Math.min(c.right, left + n.clientWidth); }
+        if (CLIPS.test(s.overflowY)) { c.top = Math.max(c.top, top); c.bottom = Math.min(c.bottom, top + n.clientHeight); }
+      }
+      pos = s.position === 'fixed' || s.position === 'absolute' ? s.position : 'static';
+    }
+    return r.bottom <= c.top || r.top >= c.bottom || r.right <= c.left || r.left >= c.right;
+  }
   function place() {
     if (!bubble || bubble.hidden || !anchor) { return; }
     if (!anchor.isConnected) {
       var again = anchorKey && document.querySelector(SEL + '[data-help="' + anchorKey + '"]');
       if (again) { anchor = again; anchor.setAttribute('aria-expanded', 'true'); }
       else { close(false); return; }
+    }
+    // Its ⓘ out of view: not drawn and no click's target, still open; focus
+    // inside it goes to its ⓘ, the page unmoved.
+    var away = outOfView(anchor);
+    bubble.style.visibility = away ? 'hidden' : '';
+    if (away) {
+      if (bubble.contains(document.activeElement)) { anchor.focus({preventScroll: true}); }
+      return;
     }
     var a = anchor.getBoundingClientRect(), f = fieldRect(anchor), region = regionRect(anchor);
     var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
@@ -561,18 +605,21 @@ _HELP_JS = r"""
     previewFor = btn;
     openTimer = setTimeout(function () { previewFor = null; if (btn.isConnected) { open(btn, false); } }, HOVER_MS);
   }
+  // Focus inside the bubble goes back to its ⓘ once it is closed, without
+  // scrolling the page to it; that focus opens nothing (`returning`): the
+  // reader closed it (before, it opened a preview with no ⓘ to follow,
+  // which stayed drawn where it was when the page scrolled).
+  var returning = null;
   function close(returnFocus) {
     clearTimeout(hideTimer);
     clearTimeout(openTimer); previewFor = null;
-    if (bubble) { bubble.hidden = true; }
-    if (anchor) {
-      anchor.setAttribute('aria-expanded', 'false');
-      if (returnFocus && anchor.isConnected && bubble && bubble.contains(document.activeElement)) {
-        anchor.focus();
-      }
-    }
+    var back = returnFocus && anchor && anchor.isConnected && bubble &&
+      bubble.contains(document.activeElement) ? anchor : null;
+    if (bubble) { bubble.hidden = true; bubble.style.visibility = ''; }
+    if (anchor) { anchor.setAttribute('aria-expanded', 'false'); }
     anchor = null; anchorKey = null; pinned = false;
     setRole();
+    if (back) { returning = back; back.focus({preventScroll: true}); returning = null; }
   }
   // A hide the last ⓘ's pointer left behind never cancels another ⓘ's
   // preview that is waiting to open: that one replaces the bubble instead.
@@ -594,7 +641,7 @@ _HELP_JS = r"""
   });
   document.addEventListener('focusin', function (e) {
     var btn = closestHelp(e.target);
-    if (btn) { open(btn, false); }
+    if (btn && btn !== returning) { open(btn, false); }
   });
   document.addEventListener('focusout', function (e) {
     var btn = closestHelp(e.target);
@@ -613,10 +660,13 @@ _HELP_JS = r"""
     }
     if (bubble && !bubble.hidden && !bubble.contains(e.target)) { close(false); }
   }, true);
+  // Esc closes the bubble; while its ⓘ is out of view (the bubble not drawn)
+  // the key also goes on to what the reader sees.
   document.addEventListener('keydown', function (e) {
     if ((e.key === 'Escape' || e.key === 'Esc') && bubble && !bubble.hidden) {
+      var drawn = bubble.style.visibility !== 'hidden';
       close(true);
-      e.stopPropagation();
+      if (drawn) { e.stopPropagation(); }
     }
   }, true);
   window.addEventListener('resize', place);
