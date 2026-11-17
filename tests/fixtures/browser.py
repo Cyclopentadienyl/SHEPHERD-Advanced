@@ -382,8 +382,24 @@ LOOK_JS = r"""
     }
     return { n: controls.length, covered, cues };
   };
+  /* The top of each drawn element `sel` matches, rounded: values that should
+     stand on one line (a row of result tiles) compared by their tops. */
+  const tops = (sel) => [...document.querySelectorAll(sel)].filter(drawn)
+    .map((e) => Math.round(e.getBoundingClientRect().top));
+  /* An element's own text as drawn: how many lines it takes and where its
+     last line ends (a field label's words against the control after it). */
+  const textBox = (el) => {
+    if (!el || !drawn(el)) { return null; }
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const rects = [...range.getClientRects()].filter((r) => r.width > 0);
+    if (!rects.length) { return null; }
+    const lines = new Set(rects.map((r) => Math.round(r.top)));
+    const last = rects.reduce((a, b) => (b.top > a.top + 1 || (Math.abs(b.top - a.top) <= 1 && b.right > a.right) ? b : a));
+    return { lines: lines.size, right: Math.round(last.right), top: Math.round(rects[0].top) };
+  };
   window.__shepLook = { parse, ratio, behind, shown, typeScale, fields, labels, pseudo, topAt,
-                        shownPage, regions, captions, choices, check, focusWalk };
+                        shownPage, regions, captions, choices, check, focusWalk, tops, textBox };
 })();
 """
 

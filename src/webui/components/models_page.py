@@ -1362,8 +1362,8 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
 #: (R-68, the skill's §9): a title, what will appear, and one next step;
 #: never a file's name, never "ledger". An absence is never read as "never
 #: evaluated" (`caveats.RECORD_ABSENCE`'s meaning, said in these words).
-RECORDS_NEXT = ("Next: on the Test page, choose this model and start a test with Register the "
-                "result on; its result then appears here.")
+RECORDS_NEXT = ("Next: on the Test page, choose this model and start a test with Register when "
+                "the run ends checked; its result then appears here.")
 RECORDS_NOT_EVALUATED = ("That does not mean these weights were never evaluated: a result "
                          "registered beside another copy of them is not shown here.")
 RECORDS_EMPTY = {

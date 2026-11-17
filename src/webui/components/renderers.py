@@ -2200,7 +2200,7 @@ def dataset_origin_html(origin: Any) -> str:
     return word + (f" — {e(meaning)}" if meaning else "")
 
 
-def record_coverage_html(view: Mapping[str, Any]) -> str:
+def record_coverage_html(view: Mapping[str, Any], *, version_counts: bool = True) -> str:
     """**A record's coverage, the one wording** (the Test page's result and
     Models' records alike): what it counted on its first line, how its data
     stands under it, with no chain of " · " (the skill's §5). A task record's
@@ -2208,7 +2208,14 @@ def record_coverage_html(view: Mapping[str, Any]) -> str:
     pairs scored of those stored, and its positive edges; a generated
     split's cases ranked, and its generated patients and diseases; any other
     mode's source cases and exclusions, and the cases its record counts, with
-    no claim of what they are. Every count as recorded (`recorded_count_text`)."""
+    no claim of what they are. Every count as recorded (`recorded_count_text`).
+
+    The second line is the data version's own counts (source cases and
+    exclusions, positive edges, generated patients): with `version_counts`
+    False, where the page says them already for this very version (the Test
+    page's Data panel, for a result of the selected version; R-70 / BACKLOG
+    51 (c)), it is left out, so a count is said once on the screen; a mode
+    whose first line counts nothing of its own keeps it."""
     kind, mode = record_kind(view), record_mode(view)
     counts = _get(view, "counts")
     counts = counts if isinstance(counts, Mapping) else {}
@@ -2244,6 +2251,10 @@ def record_coverage_html(view: Mapping[str, Any]) -> str:
                      f"{count(counts.get('n_excluded'))} excluded: {reasons}")
             sub = (f"{count(_get(view, 'n_ranked'))} cases counted by the record; what they "
                    "are is not described for this mode")
+            # Its first line is the version's counts: the record's own count stays.
+            return f'<div>{main}</div><div class="shep-sub">{e(sub)}</div>'
+    if not version_counts:
+        return f"<div>{main}</div>"
     return f'<div>{main}</div><div class="shep-sub">{e(sub)}</div>'
 
 
@@ -2265,11 +2276,15 @@ def _tile_note(name: str, kind: str) -> str:
 
 def record_tiles_html(view: Mapping[str, Any], metrics: Mapping[str, Any]) -> str:
     """**A task record's answer**: its tiles (`RECORD_TILES`), each its
-    figure's name (`caveats.metric_text`), its value to four decimals and
-    what it is over (`_tile_note`); "" for a record of any other mode."""
+    figure's name less the task's, which the record's label above them says
+    once (`_figure_words`: "Pooled MRR", not "Disease pooled MRR"; R-71), its
+    value to four decimals and what it is over (`_tile_note`); "" for a
+    record of any other mode. The tiles share their rows (``.shep-rec-tile``,
+    a subgrid of ``.shep-rec-tiles``), so their values stand on one line
+    however a name wraps (NEW-test-4)."""
     mode, kind = record_mode(view), record_kind(view)
     tiles = "".join(
-        f'<div class="shep-rec-tile"><div class="shep-rec-tile-l">{e(metric_text(mode, name))}'
+        f'<div class="shep-rec-tile"><div class="shep-rec-tile-l">{e(_figure_words(mode, name))}'
         f'</div><div class="shep-rec-tile-v">{e(record_number(metrics.get(name)))}</div>'
         f'<div class="shep-rec-tile-n">{e(_tile_note(name, kind))}</div></div>'
         for name in RECORD_TILES.get(mode or "", ()))
@@ -2461,19 +2476,23 @@ def record_counts_rows(view: Mapping[str, Any]) -> List[Tuple[str, str]]:
 
 
 def record_rows(view: Mapping[str, Any], metrics: Mapping[str, Any], *,
-                registration: str, dataset: Optional[str] = None) -> List[Tuple[str, str]]:
+                registration: str, dataset: Optional[str] = None,
+                version_counts: bool = True) -> List[Tuple[str, str]]:
     """**A recorded result's rows, the one list** (R-82: the Test page's
     result and each of Models' records are drawn from it, in this order):
-    its coverage, its figures by mode (`record_figure_rows`), its score
-    semantics, its relations, a supplied cohort's R10 or another kind's lines
-    (`data_kind_lines`), its environment, device, determinism and native
-    build, its dataset where the page has not said it by its relation
-    (`dataset`: the row's HTML, or None), and its registration (`registration`:
-    the row's HTML, which only the page knows: a kept report's state on the
-    Test page, a ledger record's sequence and run on Models). One row per fact
-    (the skill's §4, §5): never a chain of " · "."""
+    its coverage (`record_coverage_html`, with the version's counts unless
+    `version_counts` is False), its figures by mode (`record_figure_rows`),
+    its score semantics, its relations, a supplied cohort's R10 or another
+    kind's lines (`data_kind_lines`), its environment, device, determinism
+    and native build, its dataset where the page has not said it by its
+    relation (`dataset`: the row's HTML, or None), and its registration
+    (`registration`: the row's HTML, which only the page knows: a kept
+    report's state on the Test page, a ledger record's sequence and run on
+    Models). One row per fact (the skill's §4, §5): never a chain of " · ".
+    Which of them are drawn one click away is `record_html`'s
+    (`RECORD_DETAIL_ROWS`)."""
     relations = _get(view, "relations")
-    rows = [("Coverage", record_coverage_html(view)),
+    rows = [("Coverage", record_coverage_html(view, version_counts=version_counts)),
             *record_figure_rows(view, metrics),
             ("Score semantics", record_semantics_html(view)),
             ("Relations", relations_html(relations) if isinstance(relations, Mapping)
@@ -2490,23 +2509,41 @@ def record_rows(view: Mapping[str, Any], metrics: Mapping[str, Any], *,
     return rows
 
 
+#: **A record's engineering rows** (B52-E): how its score was computed and
+#: how the measurement ran, which no reading of the result turns on, drawn one
+#: click away under its other rows (`record_html`), with the metrics as
+#: recorded. Its environment's class, which says whether it can be set beside
+#: a CUDA run, stays in view.
+RECORD_DETAIL_ROWS = ("Score semantics", "Device", "Deterministic algorithms", "Native build")
+
+
 def record_html(view: Mapping[str, Any], metrics: Mapping[str, Any], *,
-                registration: str, dataset: Optional[str] = None) -> str:
+                registration: str, dataset: Optional[str] = None,
+                version_counts: bool = True,
+                details: Sequence[Tuple[str, str]] = ()) -> str:
     """**The one rendering of a recorded result** (R-82), the Test page's
     result and each of Models' records: its answer first (a task's tiles,
     `record_tiles_html`), then its rows as one summary list (`record_rows`;
     the relations and R10 across the list's width, R10's ⓘ beside its key),
-    then its metrics as recorded one click away (a described measurement's;
-    another mode's are its rows already). What it is of and how it is named
-    are the page's, around it."""
-    rows = record_rows(view, metrics, registration=registration, dataset=dataset)
+    then **one disclosure** ("Details ›", `details_list`; the skill's §1.5,
+    B52-E) holding its engineering rows (`RECORD_DETAIL_ROWS`: the score
+    semantics' formula, the device, determinism and the native build's
+    components with their digests) and, for a described measurement, its
+    metrics as recorded (another mode's are its rows already); `details`,
+    the page's own rows there first (the Test page's run id). What it is of
+    and how it is named are the page's, around it."""
+    rows = record_rows(view, metrics, registration=registration, dataset=dataset,
+                       version_counts=version_counts)
     mode = record_mode(view)
-    fold = (recorded_metrics_fold(metrics) if mode in TASK_NAMES or mode == LP_MODE else "")
+    shown = [row for row in rows if row[0] not in RECORD_DETAIL_ROWS]
+    more = [*details, *(row for row in rows if row[0] in RECORD_DETAIL_ROWS)]
+    if mode in TASK_NAMES or mode == LP_MODE:
+        more.append((f"Recorded metrics ({len(metrics)})", recorded_metrics_html(metrics)))
     return (f'<div class="shep-rec-body">{record_tiles_html(view, metrics)}'
-            + summary_list(rows, wide=("Relations", R10_TITLE),
+            + summary_list(shown, wide=("Relations", R10_TITLE),
                            helps={R10_TITLE: ("record-r10", R10_HELP[0])},
                            classes="shep-rec-rows")
-            + f"{fold}</div>")
+            + details_list(more, classes="shep-rec-rows") + "</div>")
 
 
 #: The words a note's time is said in: its recorded ISO time as UTC.

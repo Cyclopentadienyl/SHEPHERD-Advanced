@@ -9,8 +9,8 @@ under `runs/hgt`, listed with its record refused): the page offers the child the
 admits (disease), and Start hands the runner the inputs from the server's
 lists, the digests shown, that measurement and, apart from it, the model's
 learning stage and task the listing's model record names; once the run has
-ended, the job card says what the runner read from disk (kept, not registered
-without "Register the result") and which measurement it ran, the version's
+ended, the job card says what the run left (a kept report, whose registration
+is Result's alone) and which measurement it ran, the version's
 report store lists the new report under that measurement's own metrics, and
 the page's Register files it in the ledger beside the listed child, under
 `runs/gatv2`, after which the page reads it as registered. The base and the
@@ -28,6 +28,7 @@ Module: tests/integration/test_test_page_job.py
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -114,16 +115,19 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
     assert (job["inputs"]["learning_stage"], job["inputs"]["task"]) == ("finetune", "disease")
     assert job["outcome"]["kept"] is True and job["outcome"]["registered"] is False
     card = tp.job_html(job, tp.path_roots(), ("none", "GPU jobs: none"))
-    assert 'data-status="completed"' in card and "Report kept" in card
+    assert 'data-status="completed"' in card and tp.OUTCOME_KEPT in card
     assert "<dd class=\"shep-v\">Disease task</dd>" in card
-    assert "Not registered" in card and str(registry) not in card
+    # The card names no registration of its own (NEW-test-3): Result does.
+    assert "egistered" not in re.sub(r'<details class="[^"]*">.*?</details>', " ", card,
+                                     flags=re.S)
+    assert str(registry) not in card
 
     reports = tp.read_reports(LABEL)
     (run,) = reports["runs"]
     assert run["run_id"] == job["outcome"]["report_dir"].rsplit("/", 1)[-1]
     assert run["record"]["scoring"]["mode"] == "disease"
     result = tp.result_html(reports, run["run_id"], tp.path_roots())
-    assert "Disease pooled MRR" in result and "Mode C" not in result
+    assert 'tile-l">Pooled MRR<' in result and "Mode C" not in result
     # The reports table's row: its measurement in the page's words, its state.
     row = tp.reports_html(reports, None)
     assert "<td>Disease task</td>" in row and "registration not checked" in row
@@ -143,16 +147,21 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
     assert shown["runs"][0]["state"]["registered"] == "registered"
     assert tp.register_state(page, shown, run["run_id"]) == (False, "Already registered.")
 
-    # The M5 close-out on the GB10 (2026-10-25): registered from Result after
-    # a run that did not register, the card still read "Not registered" and
-    # said in the present tense that no ledger existed, beside Result's
-    # "Registered". The card is the run's end, said as such, and points to
-    # Result for the registration now; the two no longer disagree.
+    # The M5 close-out on the GB10 (2026-10-25) and NEW-test-3 (2026-11-16):
+    # registered from Result after a run that did not register, the card
+    # still read "Not registered" and gave the record_evaluation command
+    # beside Result's "Registered". The registration is Result's alone; the
+    # card's visible lines say what the run left and point there, and what
+    # the runner read at the run's end, with the run's own output, is one
+    # click away, said as that moment's.
     card = tp.job_html(tp.read_job(manager=manager), tp.path_roots(), ("none", ""))
     result = tp.result_html(shown, run["run_id"], tp.path_roots())
     assert "registered as record 1" in result
-    assert card.index("When the run ended:") < card.index("Not registered")
-    assert "The report's registration now is shown in Result." in card
+    visible = re.sub(r'<details class="[^"]*">.*?</details>', " ", card, flags=re.S)
+    assert tp.OUTCOME_KEPT in visible
+    for line in ("Not registered", "not registered", "record_evaluation", "<registry>",
+                 "&lt;registry&gt;"):
+        assert line not in visible, line
     assert "When the run ended, a report was kept at" in card
     assert "it was not registered (at that time: " in card
     assert "it is not registered" not in card and "there is no" not in card.split(

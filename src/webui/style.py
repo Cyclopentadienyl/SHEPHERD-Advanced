@@ -592,9 +592,13 @@ table.shep-r10 .shep-r10-n { font-size: 14px; font-weight: 400; color: var(--she
    disclosure's summary a 24 px target that shows the keyboard focus. */
 .shep-rec-label { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .shep-rec-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.shep-rec-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.shep-rec-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: auto; gap: 8px; }
 __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.shep-rec-tile { border: 1px solid var(--shep-border); border-radius: 8px; padding: 8px 10px; background: #fff; min-width: 0; }
+/* Each tile spans three of the tiles' rows (name, value, what it is over) and
+   takes them as its own (a subgrid), so every value of a row of tiles stands
+   on one line however a name wraps (NEW-test-4: 19-20 px apart at 1536 and
+   1440 wide). */
+.shep-rec-tile { border: 1px solid var(--shep-border); border-radius: 8px; padding: 8px 10px; background: #fff; min-width: 0; display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 0; align-content: start; }
 .shep-rec-tile-l, .shep-rec-tile-n { font-size: 14px; color: var(--shep-text-2); }
 .shep-rec-tile-v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .shep-rec-fold { font-size: 15px; overflow-wrap: anywhere; }

@@ -763,7 +763,18 @@ def kept_selection(previous: Any, listing: Mapping[str, Any], key: Any,
         if item is not None and item in shown_items(listing, None, preset):
             return key
     shown = [i for i in shown_items(listing, view, preset) if search_hit(i, search)]
-    return item_key(shown[0]) if len(shown) == 1 and can_load(shown[0]) else None
+    return lone_key(shown, can_load)
+
+
+def lone_key(items: Sequence[Mapping[str, Any]],
+             admits: Callable[[Mapping[str, Any]], bool]) -> Optional[str]:
+    """**A lone candidate is chosen** (R-27, the one rule): the key of the
+    only entry of `items` when `admits` takes it (the list's: it can be
+    loaded, `can_load`; the Test page's: it can be tested), else None. With
+    one choice there is nothing to choose between, so a page that otherwise
+    waits for the operator's pick does not leave a dead end; with two or more
+    nothing is chosen for them."""
+    return item_key(items[0]) if len(items) == 1 and admits(items[0]) else None
 
 
 def runs_unread(listing: Mapping[str, Any], show_older: bool) -> int:
@@ -2590,6 +2601,7 @@ __all__ = [
     "list_html",
     "list_models",
     "load_answered_js",
+    "lone_key",
     "load_closed_js",
     "load_guard",
     "load_reason_html",

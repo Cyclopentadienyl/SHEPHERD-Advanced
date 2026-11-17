@@ -1254,10 +1254,12 @@ def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box()
         "Model Facts": r.model_facts_html(facts),
         "Test result identity": result[:result.index("</dl>") + 5],
     }
+    # A supplied version's role is its option's (R-70), not a row under it.
+    assert [words for words, _value in tp.version_choices(page)] == [f"v1 · role {WORLDLY}"]
     for where, html_ in shown.items():
         assert "<dl class=\"shep-kv" in html_, where
         assert HOSTILE not in html_ and "&lt;img src=x onerror=alert(1)&gt;" in html_, where
-        assert WORLDLY in html_, where
+        assert WORLDLY in html_ or where == "Test version", where
         text = _shown_text(html_)
         assert not _REPR.search(text), (where, _REPR.search(text).group(0))
         assert not _nested_boxes(html_, bordered), (where, _nested_boxes(html_, bordered))

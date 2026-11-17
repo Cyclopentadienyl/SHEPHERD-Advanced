@@ -765,13 +765,17 @@ def test_a_task_record_keeps_its_columns_and_shows_every_metric_one_click_away()
     view = mp.record_view(records[2])
     raw = mp.records_block_html([view], {})
     # Its answer first: the task's tiles (the one record rendering, R-82).
+    # R-71: each tile's name less the task's, which the group's label says once.
     tiles = re.findall(r'shep-rec-tile-l">([^<]*)<', raw)
-    assert tiles == [metric_text("disease", name) for name in r.RECORD_TILES["disease"]]
-    assert tiles[:3] == ["Disease pooled MRR", "Disease pooled top-1", "Disease pooled top-10"]
+    assert tiles == ["Pooled MRR", "Pooled top-1", "Pooled top-10", "Coverage"]
+    assert all(metric_text("disease", name).lower() == f"disease {tile.lower()}"
+               for name, tile in zip(r.RECORD_TILES["disease"], tiles, strict=True))
     assert '<dt class="shep-k">Recorded metrics</dt>' not in raw
-    fold = re.search(r'<details class="shep-rec-fold"><summary>Recorded metrics \((\d+)\)'
-                     r'</summary>(.*?)</details>', raw)
+    # B52-E: in the record's one "Details ›", with its engineering rows.
+    fold = re.search(r'<dt class="shep-k">Recorded metrics \((\d+)\)</dt>'
+                     r'<dd class="shep-v">(.*?)</dd>', raw)
     assert fold and int(fold.group(1)) == len(DISEASE_METRICS)
+    assert raw.count('<details class="shep-more"><summary>Details ›</summary>') == 1
     assert "macro_precision@3 0.16666666666666666" in _words(fold.group(2))
     assert "pooled_top10 0.75" in _words(fold.group(2))
     assert ("Conservative pooled MRR", "0.4500 an unranked case whose truth can be assessed "
@@ -823,7 +827,7 @@ def test_the_read_only_view_shows_kept_c_and_d_records_and_a_task_record_the_sam
     assert readonly.replace(f'<p class="shep-note">{e(mp.NO_LOAD_HERE)}</p>', "") == operator
     for text in (mode_label("C"), mode_label("D"), mode_label("disease"),
                  "Score semantics served:gnn_only:eta=1.0:sp=none", "untruncated_mrr 0.5",
-                 "post_import_mrr 0.35", "Recorded metrics (", "Disease pooled MRR"):
+                 "post_import_mrr 0.35", "Recorded metrics (", "Pooled MRR"):
         assert text in _words(readonly), text
 
 
@@ -955,7 +959,7 @@ def test_test_and_models_draw_one_record_by_one_rendering_with_no_chain(world, m
     record = next(rec for entry in data["ledgers"].values() for rec in entry.get("records") or [])
     models = _rows(mp.record_block_html(mp.record_view(record), None))
     test = _rows(tp._record_html(record, {}, {}))
-    own = ("Dataset", "Registration")
+    own = ("Dataset", "Registration", "Run id")
     assert [row for row in models if row[0] not in own] == [
         row for row in test if row[0] not in own]
     keys = [key for key, _value in models]
@@ -1780,9 +1784,9 @@ def test_a_registered_task_record_shows_its_own_named_metrics(world, monkeypatch
         view = {**base, "mode": task, "metrics": metrics}
         html = mp.records_block_html([view], {})
         tiles = re.findall(r'shep-rec-tile-l">([^<]*)<', html)
-        name = {"disease": "Disease", "gene": "Gene", "patients_like_me": "Patients-like-me"}[task]
-        assert tiles[0] == f"{name} pooled MRR" and tiles[-1] == f"{name} coverage", tiles
-        assert second in tiles or task == "gene", tiles
+        # R-71: the task is named once, by the group's label, not by each tile.
+        assert tiles[0] == "Pooled MRR" and tiles[-1] == "Coverage", tiles
+        assert second.split(" ", 1)[1].capitalize() in tiles or task == "gene", tiles
         assert "0.4123" in html and value in html and "not described" not in html
         # Its other figures as rows, in E1/E5/E2's order, under the task's name
         # said once (by its label and tiles).
