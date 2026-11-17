@@ -3063,7 +3063,7 @@ def test_a_failed_runs_output_tail_is_a_disclosure_fitted_to_the_window():
     assert "<details" not in tc._render_error_block("exit 1")
     assert "window.innerHeight < 1000" in tc._BANNER_JS and "data-tail" in tc._BANNER_JS
     _demo, _ctx, by_id = _page()
-    assert by_id["shep-train-banner"].js_on_load == tc._BANNER_JS
+    assert by_id["shep-train-banner"].js_on_load == r.KEEP_OPEN_JS + tc._BANNER_JS
 
 
 def _rules(css, needle):
@@ -3330,10 +3330,11 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     hidden = [sel for sel, b in _rules(css, "shep-chart-empty") if "display: none" in b]
     assert hidden == [".shep-chart-empty .shep-chart-plot"], hidden
     _demo, _ctx, by_id = _page()
-    assert by_id["shep-train-run-head"].js_on_load == tc._POPOVER_JS
-    assert by_id["shep-train-chip"].js_on_load == tc._POPOVER_JS
-    # Drawn again by each render: kept as the reader left them (T08-flow-2).
-    assert tc._POPOVER_JS.startswith(r.KEEP_OPEN_JS)
+    # Drawn again by each render: kept as the reader left them (T08-flow-2),
+    # by the keeper every dashboard HTML runs first (`shell.plain_html`).
+    assert by_id["shep-train-run-head"].js_on_load == r.KEEP_OPEN_JS + tc._POPOVER_JS
+    assert by_id["shep-train-chip"].js_on_load == r.KEEP_OPEN_JS + tc._POPOVER_JS
+    assert r.KEEP_OPEN_JS not in tc._POPOVER_JS
     assert "--shep-rv-top-h" not in css
 
 
@@ -3482,9 +3483,9 @@ def test_the_details_popovers_stay_as_the_reader_left_them_across_redraws(tmp_pa
     with gr.Blocks() as page:
         shown = gr.State(first)
         chip = shell.plain_html(drawn(first)[0], elem_id="shep-train-chip",
-                                js_on_load=by_id["shep-train-chip"].js_on_load)
+                                js_on_load=tc._POPOVER_JS)
         head = shell.plain_html(drawn(first)[1], elem_id="shep-train-run-head",
-                                js_on_load=by_id["shep-train-run-head"].js_on_load)
+                                js_on_load=tc._POPOVER_JS)
         gr.Button("Step", elem_id="step").click(step, inputs=[shown], outputs=[chip, head, shown])
         gr.Button("Other", elem_id="other").click(other, inputs=[shown],
                                                   outputs=[chip, head, shown])
@@ -3517,3 +3518,72 @@ def test_the_details_popovers_stay_as_the_reader_left_them_across_redraws(tmp_pa
             for after in (*got["pageRedrawn"], got["space"]):
                 assert after["focus"] == "body" and not after["open"], (size, name, got)
         assert not popovers["otherRun"]["open"], (size, popovers["otherRun"])
+
+
+#: The Training page as the service mounts it: four settings typed, so the
+#: "Set by you" line names three and counts one, with its "Details ›"; the
+#: Details opened by the reader; a fifth setting typed (the reader's own act
+#: draws the line again); then the Details closed by the reader and one more
+#: edit. What the line says and whether its Details is open after each.
+_SETBY_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 })).newPage();
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.waitForSelector('#num_epochs input', { state: 'visible', timeout: 60000 });
+  const line = '#shep-train-setby';
+  const says = (words) => page.waitForFunction(([s, w]) => document.querySelector(s).innerText.includes(w),
+                                               [line, words], { timeout: 30000 });
+  const type = async (id, value) => {
+    await page.locator(`#${id} input`).click();
+    await page.keyboard.press('Control+A');
+    await page.keyboard.type(value);
+  };
+  const read = async () => page.evaluate((s) => {
+    const d = document.querySelector(`${s} details`);
+    return { open: d ? d.open : null, text: document.querySelector(s).innerText.split('\n')[0] };
+  }, line);
+  const out = {};
+  await type('num_epochs', '5');
+  await type('learning_rate', '0.001');
+  await type('batch_size', '256');
+  await type('seed', '3');
+  await says('and 1 more');
+  await page.click(`${line} details > summary`);
+  out.opened = await read();
+  await type('split_seed', '4');
+  await says('and 2 more');
+  out.redrawn = await read();
+  await page.click(`${line} details > summary`);
+  out.closed = await read();
+  await type('num_epochs', '7');
+  await says('Epochs 7');
+  out.again = await read();
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_details_the_reader_opened_stays_open_when_their_own_edit_draws_it_again(tmp_path):
+    """The verification of fcc3dea: the disclosure keeper (T08-flow-2) was
+    wired only to regions a poll or a render draws again, so a region the
+    reader's own act draws again closed what the reader had opened: the
+    "Set by you" line's Details, opened, closed under the next field the
+    operator set. Every dashboard HTML now runs the one keeper
+    (`shell.plain_html`): opened, it stays open across that edit; closed by
+    the reader, it stays closed across the next."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_SETBY_JS, tmp_path, base[:-len("gradio_api")])
+    assert seen["opened"]["open"] is True, seen
+    assert seen["redrawn"]["text"].endswith("and 2 more"), seen
+    assert seen["redrawn"]["open"] is True, seen
+    assert seen["closed"]["open"] is False, seen
+    assert "Epochs 7" in seen["again"]["text"] and seen["again"]["open"] is False, seen

@@ -1624,24 +1624,28 @@ def details_list(rows: Iterable[Tuple[str, str]], *,
     disclosure or a popover): a closed ``<details class="shep-more">`` over
     `summary_list`'s rows (`titles` and `classes` as there), wherever a line
     names a few of many (`named_words`) and the rest are one click away.
-    Where the server draws it again while it is read (a poll), its
-    ``gr.HTML`` takes `KEEP_OPEN_JS`, and the thing it is of is named around
-    it (`keep_as`)."""
+    Every dashboard ``gr.HTML`` keeps it as the reader left it when it is
+    drawn again (`KEEP_OPEN_JS`, `shell.plain_html`), and where the region
+    can show another thing, the thing it is of is named around it
+    (`keep_as`)."""
     return ('<details class="shep-more"><summary>Details ›</summary>'
             f'{summary_list(rows, titles=titles, classes=classes)}</details>')
 
 
-#: **Disclosures as the reader left them, across redraws**: the
-#: ``js_on_load`` of every ``gr.HTML`` the server draws again while it is
-#: read (a poll, a tick, a render) and that holds a disclosure, alone or
-#: before the element's own script. Gradio 6.30 draws HTML again in place and
-#: sets each element's attributes to the new HTML's, so a disclosure the
-#: reader opened was drawn closed again by the next drawing (T06-C: the Test
-#: job card's Details; T08-flow-2: Training's "Details ›" popovers). Both
-#: kinds are kept: a ``details`` (its ``open``) and a button with
-#: ``aria-expanded`` and ``aria-controls`` naming its popover in the same
-#: HTML (the button's ``aria-expanded``, the popover's ``hidden``; how it
-#: opens and closes is its own script's). The reader's own change, by any
+#: **Disclosures as the reader left them, across redraws**: the start of the
+#: ``js_on_load`` of every ``gr.HTML`` of the dashboard (`shell.plain_html`,
+#: and the chart figures), before the element's own script, whatever event
+#: draws it again (a poll, a tick, a render, or the reader's own act: a field
+#: edited, a Load, an order changed) and whatever it then holds (the
+#: verification of fcc3dea: the "Set by you" lines, the Continue drawer's
+#: preview and Models' details closed under the reader's own edits). Gradio
+#: 6.30 draws HTML again in place and sets each element's attributes to the
+#: new HTML's, so a disclosure the reader opened was drawn closed again by the
+#: next drawing (T06-C: the Test job card's Details; T08-flow-2: Training's
+#: "Details ›" popovers). Both kinds are kept: a ``details`` (its ``open``)
+#: and a button with ``aria-expanded`` and ``aria-controls`` naming its
+#: popover in the same HTML (the button's ``aria-expanded``, the popover's
+#: ``hidden``; how it opens and closes is its own script's). The reader's own change, by any
 #: means (a click, Enter or Space, Escape, a click outside, focus leaving), is
 #: told from a drawing's by a mark this script sets on each disclosure, which
 #: a drawing takes off: a change seen on a marked disclosure is the reader's,

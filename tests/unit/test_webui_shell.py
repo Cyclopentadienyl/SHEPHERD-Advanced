@@ -438,10 +438,45 @@ def test_a_page_can_be_built_alone_with_a_standalone_context():
 
 
 def test_plain_html_has_no_prose_css_and_no_default_click():
+    """No prose CSS and no default click script: only the shared disclosure
+    keeper, then the caller's own script."""
+    from src.webui.components.renderers import KEEP_OPEN_JS
+
     with gr.Blocks():
         block = shell.plain_html("<b>x</b>", elem_id="x", elem_classes="extra")
-    assert block.apply_default_css is False and block.js_on_load is None
+        own = shell.plain_html("", js_on_load="var own = 1;")
+    assert block.apply_default_css is False and block.js_on_load == KEEP_OPEN_JS
+    assert own.js_on_load == KEEP_OPEN_JS + "var own = 1;"
     assert block.elem_classes == ["shep-html", "extra"]
+
+
+def test_every_html_an_event_draws_keeps_its_disclosures_as_the_reader_left_them():
+    """Every ``gr.HTML`` of the dashboard that an event draws (any listener's
+    output: a poll's, a tick's, a render's or the reader's own act's) runs
+    the shared keeper (`renderers.KEEP_OPEN_JS`) once, before its own script,
+    so a ``details`` or an ``aria-expanded`` popover it holds stays as the
+    reader left it when it is drawn again. What a region holds is its
+    renderers' choice at run time, so every one is listed from the built app.
+    On fcc3dea 128 of the 133 had none: only the regions a poll or a render
+    draws again were wired (T08-flow-2), and those the reader's own acts draw
+    again (the "Set by you" lines, the Continue drawer's preview, Models'
+    details and records) closed a Details the reader had opened."""
+    from src.webui.app import create_gradio_app
+    from src.webui.components.renderers import KEEP_OPEN_JS
+
+    demo = create_gradio_app()
+    drawn = {block._id: block for fn in demo.fns.values() for block in fn.outputs
+             if isinstance(block, gr.HTML)}
+    names = {key: getattr(block, "elem_id", None) or f"#{key}" for key, block in drawn.items()}
+    assert len(drawn) >= 130, len(drawn)
+    unkept = sorted(names[key] for key, block in drawn.items()
+                    if not (block.js_on_load or "").startswith(KEEP_OPEN_JS))
+    assert unkept == [], unkept
+    assert [names[key] for key, block in drawn.items()
+            if block.js_on_load.count(KEEP_OPEN_JS) != 1] == []
+    # Among them, regions only the reader's own acts draw again.
+    assert {"shep-train-setby", "ft_setby", "continue_preview", "shep-mp-detail-top",
+            "shep-mp-records"} <= set(names.values())
 
 
 def test_the_dead_code_the_m5_review_found_stays_gone():

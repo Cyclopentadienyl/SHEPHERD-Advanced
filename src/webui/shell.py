@@ -219,7 +219,7 @@ import gradio as gr
 
 from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
 from src.webui.components.help import HelpRegistry, as_json_for_script
-from src.webui.components.renderers import RENDERER_HELP
+from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
 from src.webui.style import LAYOUT_ATTR, SHORT_ATTR, SHORT_BELOW
 
 BRAND = "SHEPHERD-Advanced"
@@ -263,10 +263,15 @@ def plain_html(value: Any = "", *, js_on_load: Optional[str] = None, **kwargs: A
     """A ``gr.HTML`` for HTML the dashboard renders itself: without Gradio's
     default prose CSS (which restyles tables, buttons and paragraphs inside
     it) and without its default click script; pass ``js_on_load`` for one of
-    your own (``trigger('click', {...})``)."""
+    your own (``trigger('click', {...})``). **Its disclosures stay as the
+    reader left them across every drawing** (`renderers.KEEP_OPEN_JS`, before
+    any script of its own): whatever event draws it again, a poll's, a
+    tick's, a render's or the reader's own act's (a field edited, a Load, an
+    order changed), and whatever it then holds, since what an HTML holds is
+    its renderers' choice at run time. The chart figures take the same."""
     classes = kwargs.pop("elem_classes", None) or []
     classes = [classes] if isinstance(classes, str) else list(classes)
-    return gr.HTML(value, apply_default_css=False, js_on_load=js_on_load,
+    return gr.HTML(value, apply_default_css=False, js_on_load=KEEP_OPEN_JS + (js_on_load or ""),
                    elem_classes=["shep-html", *classes], **kwargs)
 
 

@@ -64,7 +64,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 import gradio as gr
 
 from src.webui.components.help import help_button
-from src.webui.components.renderers import status_mark
+from src.webui.components.renderers import KEEP_OPEN_JS, status_mark
 from src.webui.style import STACK
 
 #: The parent app serves this directory at ``/static`` (`src/api/main.py`).
@@ -264,14 +264,17 @@ def chart_figure(*, key: str, elem_id: str, series_fn: Callable[[Any], Any],
     server functions taking the token). `key` names the figure to the module
     (its views are kept per key and run)."""
     fns = [series_fn] + ([csv_fn] if csv_fn else [])
+    # The shared disclosure keeper first, as every dashboard HTML has it
+    # (`shell.plain_html`), then the figure's mount.
     return gr.HTML(
         value=token(None, 0),
         html_template=figure_template(
             series_fn=series_fn.__name__, csv_fn=csv_fn.__name__ if csv_fn else None,
             help_key=help_key, help_title=help_title, empty=empty),
-        js_on_load=(f"if (window.ShepCharts) {{ window.ShepCharts.mount(element, props, watch, "
-                    f"server, {key!r}); }} else {{ var m = element.querySelector('.shep-charts-msg'); "
-                    f"if (m) {{ m.textContent = 'The chart library did not load.'; }} }}"),
+        js_on_load=KEEP_OPEN_JS + (
+            f"if (window.ShepCharts) {{ window.ShepCharts.mount(element, props, watch, "
+            f"server, {key!r}); }} else {{ var m = element.querySelector('.shep-charts-msg'); "
+            f"if (m) {{ m.textContent = 'The chart library did not load.'; }} }}"),
         apply_default_css=False, padding=False, container=False,
         head=CHART_HEAD, server_functions=fns, elem_id=elem_id,
         elem_classes=["shep-html", "shep-figure", *(elem_classes or [])])

@@ -3466,7 +3466,7 @@ def test_a_long_choice_ends_in_an_ellipsis_with_its_whole_text_as_title():
     assert '.gradio-container .wrap-inner input[role="combobox"] { text-overflow: ellipsis; }' \
         in style.SHELL_CSS
     assert 'input[role="combobox"]' in shell.SHELL_HEAD
-    assert not by_id["shep-test-cohort-hd"].js_on_load
+    assert by_id["shep-test-cohort-hd"].js_on_load == renderers.KEEP_OPEN_JS
     # Run → Checkpoint: each option short (at most 40 characters and one
     # separator), the distinguishing token first, so an option seldom needs
     # the ellipsis at all; a file's kind is its details' first row, never its
@@ -5549,7 +5549,7 @@ def test_the_job_cards_details_stay_as_the_reader_left_them_while_the_run_prints
         return card()
 
     with gr.Blocks() as page:
-        shown = tp.plain_html(card(), elem_id="shep-test-job", js_on_load=drawn.js_on_load)
+        shown = tp.plain_html(card(), elem_id="shep-test-job")
         gr.Button("Line", elem_id="line").click(line, outputs=[shown])
         gr.Button("End", elem_id="end").click(end, outputs=[shown])
         gr.Button("Next", elem_id="next").click(next_job, outputs=[shown])

@@ -2654,7 +2654,7 @@ def test_the_list_panel_has_one_scroll_region_at_every_wide_height():
     with gr.Blocks() as demo:
         mp.create_models_page(standalone_context(demo))
     (title,) = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-mp-hd"]
-    assert not getattr(title, "js_on_load", None)
+    assert title.js_on_load == r.KEEP_OPEN_JS
 
 
 def test_a_row_focused_under_the_tables_sticky_header_scrolls_clear_of_it():
@@ -2684,7 +2684,7 @@ def test_a_row_focused_under_the_tables_sticky_header_scrolls_clear_of_it():
     with gr.Blocks() as demo:
         mp.create_models_page(standalone_context(demo))
     (rows,) = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-models-research-rows"]
-    assert rows.js_on_load == js
+    assert rows.js_on_load == r.KEEP_OPEN_JS + js
 
 
 def test_the_table_fits_its_frame_beside_a_classic_scrollbar():

@@ -2915,10 +2915,10 @@ def create_test_page(ctx: Any) -> None:
                 # what it left, what it was given, the rest one Details away
                 # (`job_body_html`); none while no run was started. Its state
                 # is the foot's. The poll draws it again as a run prints, so
-                # its Details stays as the reader left it (`r.KEEP_OPEN_JS`),
-                # while it shows the same job (`job_body_html`'s `r.keep_as`).
-                job_out = plain_html(job_body_html({}, [], ("none", "")), elem_id="shep-test-job",
-                                     js_on_load=r.KEEP_OPEN_JS)
+                # its Details stays as the reader left it (`plain_html`'s
+                # keeper), while it shows the same job (`job_body_html`'s
+                # `r.keep_as`).
+                job_out = plain_html(job_body_html({}, [], ("none", "")), elem_id="shep-test-job")
             with gr.Column(elem_classes=["shep-test-runft"], elem_id="shep-test-runft"):
                 start = gr.Button(GATED_LABELS["start"], variant="primary",
                                   interactive=False, elem_id="shep-test-start")
@@ -2943,9 +2943,9 @@ def create_test_page(ctx: Any) -> None:
             with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush", "shep-scroll-cue"]):
                 reports_list = plain_html("", elem_id="shep-test-reports", js_on_load=_REPORTS_JS)
                 # Drawn again when the poll sees a job start or end: its
-                # disclosures stay as the reader left them for the same report.
-                result_out = plain_html(result_html({}, None, []), elem_id="shep-test-result-body",
-                                        js_on_load=r.KEEP_OPEN_JS)
+                # disclosures stay as the reader left them for the same report
+                # (`plain_html`'s keeper).
+                result_out = plain_html(result_html({}, None, []), elem_id="shep-test-result-body")
             # The investigation note form (shown while the runs of the report's
             # condition group differ, or their comparison is incomplete) is
             # outside the scrolling body: on a wide screen it

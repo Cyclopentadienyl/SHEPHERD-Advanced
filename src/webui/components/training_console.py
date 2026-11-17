@@ -1399,10 +1399,11 @@ def chip_html(ws: Optional[Mapping[str, Any]], *, in_use: bool = False) -> str:
 #: re-mounted, and a replaced value keeps the listeners, being delegated): the
 #: dataset chip's, with its "All datasets ›" cross-link, and the run view
 #: header's. Escape, a click outside or focus leaving it closes it. Both are
-#: drawn again while read (a running job's render), so it starts with the
-#: shared keeper (`renderers.KEEP_OPEN_JS`): open or closed as the reader left
-#: it while the chip shows the same workspace and the header the same run.
-_POPOVER_JS = r.KEEP_OPEN_JS + r"""
+#: drawn again while read (a running job's render), and the shared keeper
+#: every dashboard HTML runs before its own script (`shell.plain_html`,
+#: `renderers.KEEP_OPEN_JS`) keeps it open or closed as the reader left it
+#: while the chip shows the same workspace and the header the same run.
+_POPOVER_JS = r"""
 function pop() { return element.querySelector('.shep-pop'); }
 function toggle(open) {
   var p = pop(), b = element.querySelector('[data-act="details"]');
