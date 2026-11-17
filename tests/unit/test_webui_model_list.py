@@ -2011,6 +2011,50 @@ def test_the_drawer_opens_only_the_runs_it_shows_and_the_rest_on_show_older_runs
     assert shown[id(handle.listing)]["runs_unread"] == 0
 
 
+def test_a_drawer_search_says_the_older_runs_it_has_not_searched(root, serving, monkeypatch):
+    """The drawer's first listing reads its latest runs only (BACKLOG 39), so
+    its search and its Task filter see those runs only: a query that matches
+    an older run not read yet is never "no match in this workspace" (it was,
+    with no way to the run). The count and the empty list say the latest runs
+    were searched, "Show older runs" stays under them, and once clicked the
+    search finds the older run."""
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        ctx = standalone_context(demo)
+        handle = ctx.create_model_list("clinical")
+    operator_mode(monkeypatch)
+    clinical = ml.PRESETS["clinical"]
+    listing = ml.list_models("demo", gradio_request(), latest_runs=clinical.latest_runs)
+    assert listing["runs_unread"] == 3
+    html = ml.list_html(listing, None, clinical, search="cccccc")
+    assert "in this workspace" not in html
+    assert ("No model finetuned for a task matches “cccccc” in the latest runs; Show older runs "
+            "searches the rest.") in _visible(html)
+    assert "Show older runs (up to 3 more)" in html
+    assert ml.count_line(listing, clinical, False, search="cccccc") == (
+        "No run matches “cccccc” in the latest runs")
+    assert ml.count_line(listing, clinical, False, search="disease") == (
+        "2 runs match “disease” in the latest runs")
+    assert ml.count_line(listing, clinical, False, {"task": "disease"}) == (
+        "Disease: 2 of the latest 4 runs")
+    no_plm = {**listing, "items": [i for i in listing["items"] if "patients" not in i["run"]]}
+    empty = ml.list_html(no_plm, None, clinical, view={"task": "patients_like_me"})
+    assert ("No patients-like-me model is listed in the latest runs; Show older runs reads the "
+            "rest.") in _visible(empty) and "Show older runs (up to 3 more)" in empty
+    # Show older runs reads the rest, and the search finds the older run.
+    select = next(fn for fn in demo.fns.values() if fn.name == "_select")
+    out = select.fn(listing, None, False, None, "cccccc", {},
+                    gr.EventData(None, {"key": "__older__"}), gradio_request())
+    shown = dict(zip(map(id, select.outputs), out, strict=True))
+    assert "disease_cccccc" in shown[id(handle.rows)]
+    assert shown[id(handle.count)] == "1 run matches “cccccc”"
+    # Every run read: the whole workspace's words.
+    full = ml.list_models("demo", gradio_request())
+    assert "No model finetuned for a task matches “zzz” in this workspace." in _visible(
+        ml.list_html(full, None, clinical, search="zzz"))
+
+
 def test_a_search_unfolds_what_it_found(root, serving, monkeypatch):
     """A match is never folded away: the search opens a group holding one and
     a run holding a file found by its own name or fingerprint, whatever was

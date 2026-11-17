@@ -765,14 +765,30 @@ def kept_selection(previous: Any, listing: Mapping[str, Any], key: Any,
     return item_key(shown[0]) if len(shown) == 1 and can_load(shown[0]) else None
 
 
+def runs_unread(listing: Mapping[str, Any], show_older: bool) -> int:
+    """How many runs of the workspace the list has not read (the drawer's
+    first listing, BACKLOG 39: ``runs_unread``) while "Show older runs" was
+    not asked: what the list shows, searches and filters is its latest runs
+    only, and its words say so (`count_line`, the empty state)."""
+    return 0 if show_older else int(listing.get("runs_unread") or 0)
+
+
 def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Preset],
-                   search: Any = "") -> str:
+                   search: Any = "", show_older: bool = True) -> str:
+    """Why the list shows no row, in its own words per cause: the search, the
+    filter (each "in this workspace", or "in the latest runs" with what "Show
+    older runs" does, drawn under it, while runs are not read), nothing
+    listed."""
     chosen = _rows_filter(view, preset)
     query = str(search or "").strip()
+    unread = bool(runs_unread(listing, show_older))
+    what = FILTER_WORDS[chosen][1]
     if listing.get("items") and query:
-        why = f"No {FILTER_WORDS[chosen][1]} matches “{query}” in this workspace."
+        why = (f"No {what} matches “{query}” in the latest runs; Show older runs searches the "
+               "rest." if unread else f"No {what} matches “{query}” in this workspace.")
     elif listing.get("items") and chosen != "all":
-        why = f"No {FILTER_WORDS[chosen][1]} is listed in this workspace."
+        why = (f"No {what} is listed in the latest runs; Show older runs reads the rest."
+               if unread else f"No {what} is listed in this workspace.")
     else:
         why = listing.get("problem") or "No checkpoint is listed in this workspace."
     return f'<div class="shep-reason">{r.e(why)}</div>'
@@ -800,10 +816,11 @@ def _list_body(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                fold: Optional[Mapping[str, Any]] = None) -> str:
     tree = tree_view(listing, view, preset, search=search, fold=fold, selected=selected,
                      show_older=show_older)
-    if not tree.groups:
-        return outside_html(listing, tree, view) + _no_items_html(listing, view, preset, search)
-    return (outside_html(listing, tree, view) + _tree_html(listing, selected, preset, view, tree)
-            + older_html(listing, tree, show_older))
+    # "Show older runs" under an empty list too: a search or a filter that
+    # finds nothing in the latest runs may find it in the runs not read yet.
+    body = (_tree_html(listing, selected, preset, view, tree) if tree.groups
+            else _no_items_html(listing, view, preset, search, show_older))
+    return outside_html(listing, tree, view) + body + older_html(listing, tree, show_older)
 
 
 def older_html(listing: Mapping[str, Any], tree: TreeView, show_older: bool) -> str:
@@ -812,7 +829,7 @@ def older_html(listing: Mapping[str, Any], tree: TreeView, show_older: bool) -> 
     more" while some were not read yet (a run not read may hold no task model,
     a base run, so its count is the most it can add); nothing once every run
     is shown."""
-    unread = 0 if show_older else int(listing.get("runs_unread") or 0)
+    unread = runs_unread(listing, show_older)
     if not tree.cut and not unread:
         return ""
     more = f"up to {tree.cut + unread} more" if unread else str(tree.cut)
@@ -1244,7 +1261,11 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     a family view's context, the runs a shown run descends from, counted
     apart); a search says what matches ("3 runs match “disease”, with 2 runs
     they come from"). Counted against what the preset ever lists (the drawer:
-    its task models); nothing for a list with no rows."""
+    its task models); while
+    the drawer leaves runs out (not read yet, `runs_unread`, or beyond its
+    latest), a search and a filter say they saw the latest runs only ("1 run
+    matches “gene” in the latest runs", "Gene: 1 of the latest 4 runs"), never
+    the workspace's whole answer. Nothing for a list with no rows."""
     if listing.get("refused") or not listing.get("items"):
         return ""
     chosen = task_filter(view)
@@ -1262,15 +1283,20 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     context = len({run.key for g in tree.groups for run in g.runs if run.context} - set(runs))
     families = sum(g.family for g in tree.groups)
     files = len(tree.matched) - len(entries)
-    unread = 0 if show_older else int(listing.get("runs_unread") or 0)
+    unread = runs_unread(listing, show_older)
+    # Where a search looked: the latest runs only while the list leaves runs
+    # out (not read yet, or beyond its latest: "Show older runs" under it).
+    within = " in the latest runs" if unread or tree.cut else ""
     if not runs:
         if query:
-            return f"{lead}no run matches “{query}”" if lead else f"No run matches “{query}”"
+            return (f"{lead}no run matches “{query}”{within}" if lead
+                    else f"No run matches “{query}”{within}")
         return f"{lead}no checkpoint shown" if lead else "No checkpoint shown"
     if query:
-        body = f"{_counted(len(runs), 'run')} match{'es' if len(runs) == 1 else ''} “{query}”"
+        body = (f"{_counted(len(runs), 'run')} match{'es' if len(runs) == 1 else ''} "
+                f"“{query}”{within}")
     elif lead:
-        body = f"{len(runs)} of {_counted(total, 'run')}"
+        body = f"{len(runs)} of {'the latest ' if unread else ''}{_counted(total, 'run')}"
     elif tree.cut or unread:
         latest = len(runs) - tree.served_run
         of = "" if unread else f" of {latest + tree.cut + tree.served_run}"
