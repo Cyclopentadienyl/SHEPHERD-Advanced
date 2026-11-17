@@ -1995,14 +1995,20 @@ Investigation notes are not shown (BACKLOG 40):
   CPU) and the GPU; the dataset origin (a synthetic workspace is called out); the registration's
   sequence and time, its run, and the number of reports merged into it before each run had its
   own record.
-- Instead of records, a sentence: no ledger beside the loaded checkpoint; the ledger was not read,
-  with the reason, which names the file and never its directory (for example a schema 2 file,
-  below); this ledger holds no result for these weights; or "The loaded model changed while its
-  recorded results were read; refresh the page."
+- Instead of records, its cause in a titled state with the next step (since the ops-wiring and
+  UI round, naming no file and never "ledger"): "No recorded result yet" (none is registered
+  beside the loaded checkpoint) or "No recorded result for these weights" (the results beside it
+  are of other weights), each saying that this does not mean the weights were never evaluated and
+  that recording a result is an operator control; "▲ The recorded results beside the model in use
+  cannot be read, so none is shown: <reason>" (the reason names the file and never its
+  directory, for example a schema 2 file, below); or "The loaded model changed while its recorded
+  results were read; refresh the page." Each record's group shows its investigation notes, as the
+  route answers them (`contest.notes`; `contest.notes_readable` false when they cannot all be
+  read, said so).
 - **Records the shared check cannot read as results** (they do not have the shape registration
   writes, or their run identity cannot be read; since K8-6e.1) are listed under the results, or
   alone when there are none: one amber sentence with ▲ ("1 record for these weights cannot be
-  read as a result. The ledger keeps it as written.") and a table, Index · Registration · Report
+  read as a result; it is kept as written.") and a table, Index · Registration · Report
   · Reason, each with the route's `unreadable_records` values (a sequence or report digest the
   record does not carry readably reads "not readable"). They are never counted as results.
 - **The route** takes no parameters, reads the ledger beside the loaded checkpoint on every
@@ -3980,31 +3986,36 @@ only). The workspace select's options are the names; under it, the chosen worksp
 identity is said once (build time, dataset fingerprint, `synthetic`, the record's state), so a
 long workspace name that the select cuts never hides it.
 Every run is shown, newest first, from every directory under the workspace's `runs/` whatever
-its name (since K8-7b). Columns:
+its name (since K8-7b), as **the run tree** the Diagnosis tab's drawer draws too (since the
+ops-wiring and UI round's T05):
 
-- **Model**: what the file is first (Base, Disease, Gene, Patients-like-me, "Record not readable"
-  or "Record unknown", for a file that could not be read; a file without a model spec is
-  "Record not readable", with "written before the model spec: not readable by this build; start
-  a new run", and no longer "History · never run" since K8-7b), then its run in the words every
-  page names a run by (since the ops-wiring round's B3: its name, then its directory's layout,
-  "GATv2" for `gatv2`, a location, not the architecture, which the record names, and its start
-  time; an unnamed run its start time first), how far the file trained ("6 epochs completed",
-  or "recorded epoch 5" for an older file); **In use (Diagnosis)** on the checkpoint being
-  served (matched by its full model fingerprint);
-- **Fingerprint**: the model fingerprint only (12 hex digits of the checkpoint's SHA-256; since
-  the ops-wiring round's B3, "Fingerprints: model · dataset trained on" before). The dataset is
-  said once, under the workspace select: a row trained on another dataset than the workspace's
-  current one says "▲ Another dataset" there (`synthetic` in amber where a listed synthetic
-  workspace holds it), one that records none "○ Dataset not recorded";
-- **Validation (Trainer)**: the Trainer's own figure on the val samples, the metric training
-  selects by, named under its value (a base's LP accuracy, a task model's pooled MRR), read from
-  the file's logs whatever its record says; none when the logs hold neither, as for a file
-  without a model spec, whose `val_mrr` is not read (since K8-7b a history file's MRR over its
-  top 20 is no longer shown; its raw values stay in the file, and the detail says "Validation
-  (Trainer): not read (record not readable)"). It is never a test result and never shares a
-  column with one;
-- **Recorded results**: what the ledger beside the checkpoint holds, as a state ("none in
-  ledger", "no ledger", "3 · runs differ for 1", …), never a number of a result.
+- **each run is a row of its own**, named first in the words every page names a run by (its
+  name, then its directory's layout, "GATv2" for `gatv2`, a location, not the architecture, which
+  the record names, and its start time: "smoke-ft · GATv2 2026-10-17 09:15"; an unnamed run its
+  start time first), then what its files are (Base, Disease, Gene, Patients-like-me, "Record not
+  readable" or "Record unknown"; a file without a model spec is "Record not readable", with
+  "written before the model spec: not readable by this build; start a new run"), its operation
+  in words (New run, Branch, Extend, "Fine-tune, full", "Fine-tune, frozen" or "Fine-tune, partly
+  frozen"), epochs completed and how many files it saved. Its ▸ button, or a click on its row,
+  folds and unfolds its files; the latest runs are open and older ones come after "Show older
+  runs (n)";
+- **each file is a row under its run**, by what it is ("Latest save", "Best pooled MRR", a top-k
+  save) and how far it trained ("6 epochs completed", or "recorded epoch 5" for an older file),
+  with its model fingerprint (12 hex digits of the checkpoint's SHA-256). The dataset is said once,
+  under the workspace select: a file trained on another dataset than the workspace's current one
+  says "▲ Another dataset" in its row (`synthetic` in amber where a listed synthetic workspace
+  holds it), one that records none "○ Dataset not recorded". **In use (Diagnosis)** marks the file
+  being served (matched by its full model fingerprint);
+- **Search** finds a run by its name or a file by its model fingerprint's first hex digits; a
+  selection the search leaves out is said outside the list, with Clear search;
+- a file that cannot be read stays a greyed row with its state and why ("Metadata not readable:
+  the file cannot be read as a checkpoint; cannot be loaded", or "Not read" for an entry never
+  opened). It is chosen like any other row (since the ops-wiring and UI round): its details say
+  the reason whole, with the loader's reference, and Load stays off, its state beside it.
+
+The Trainer's validation figure (the metric training selects by, on the val samples) and the
+recorded results are the selected file's details (below), never a column of the list, and the
+Trainer's figure never shares a place with a test result.
 
 **Listing opens every checkpoint of the workspace**, so the list is an operator control (§4.13).
 Since M5-3 the server reads each checkpoint file once and again only when it changes (its
@@ -4020,8 +4031,14 @@ regime (device, deterministic on or off) is the one the record holds, as an oper
 this; a CPU record's environment class alone does not say it). There are no Trainer validation
 figures and no Load there.
 
-**Order: Newest first | By family.** By family (since K6) draws one group per family, the parent
-first, with a Lineage column. No order ranks a model by a test score: ordering by test score
+**Order: Newest first | By family.** By family (since K6) draws one group per family, its runs
+as a lineage tree (since the ops-wiring and UI round's T05; the Lineage column it had before is
+gone): each run under the run of the exact parent file its files record (matched by SHA-256,
+never guessed from names or times), indented by its depth, with its operation in words; a task's
+base kept as a context run; a parent in another workspace or not listed said on the run ("Parent
+in workspace …", "▲ parent unavailable: …"), and the detail naming it ("Parent: 4eebdf797543 of
+run demo-disease · 2026-11-16 20:43; listed here"). Two files of one run are one run, never two
+operations. No order ranks a model by a test score: ordering by test score
 retired in K8-6d, with its role setting, its Mode C rule and its one record per checkpoint. Every
 record stays readable in the detail below, and no model is ever chosen automatically by its test
 score.
@@ -4035,33 +4052,49 @@ box of its own), and under **Details ›** its run directory and whole fingerpri
 warning, with ▲; and three segments:
 
 - **Recorded results** ("Recorded test results" until research comparison Stage 6): every
-  record the ledger holds for these weights, of any data kind and role, each named by its
-  version's kind and role (a KG edge set's with its exposure, "exposure not recorded" with the
-  reason when its block does not read), one table per measurement mode, in the order first shown, each under its mode's label (and a task's note),
-  by one display for every mode (since K8-6e.2; before it, Mode C's records came first, then
-  Mode D's, under labels of their own). Each row gives the cohort version and its role; a task's
-  pooled MRR and its second figure named in full in the header, or, for a mode this version does
-  not describe (a kept Mode C or Mode D record included), one "Recorded metrics" column listing
-  every metric by its recorded name and value, unrounded; coverage with every exclusion; and
-  `registered #N`, or `runs differ #N` with "runs under these conditions differ" and what
-  differs (neutral; amber with ▲ and "— investigate" only when the group records deterministic
-  algorithms on, so its runs were expected to agree), or "comparison incomplete" (never shown
-  as agreeing),
-  deterministic on or off, the reports merged into it before each run had its own record when
-  there are any, and "possible overlap with record N (not recorded)" between such a record and a
-  named run; then each relation a row of its own by its full name ("R3 model trained on this
-  graph: ● Verified"; since the ops-wiring round's B3), a task record's other metrics in words,
-  R10 as states
-  (*unverifiable* is a reason, never 0), "Score semantics: …" exactly as recorded, a task
-  record's every metric as recorded behind "Recorded metrics (N)", the environment, the dataset
-  and the registration with its run ("not recorded" for a record written before each run had its
-  own record). Every record is shown;
-  none is hidden or ordered out by these descriptions. A record for these weights that cannot be
-  read as a result (since K8-6e.1) is never shown or counted as one: under the tables, "▲ 1
-  record for these weights cannot be read as a result. The ledger keeps it as written." and a
-  small table, Index · Registration · Report · Reason (a sequence or report digest it does not
-  carry readably reads "not readable"); the segment then reads "Recorded results · 3 (1 not
-  readable)". The read-only view lists the same items, from the route;
+  record the ledger holds for these weights, of any data kind and role, grouped by measurement
+  mode in the order first shown, each mode's label (and a task's note) once above its records
+  (one display for every mode since K8-6e.2). **Each record is drawn as the Test page draws a kept
+  report, by the one record rendering** (since the ops-wiring and UI round; before it, Models
+  drew a table row whose detail chained about 24 metrics and "Environment: … · Dataset: … ·
+  Registered …" with " · "): a heading with its data version (label, then its role, or a KG edge
+  set's or a generated split's kind and role, and the version fingerprint) and `registered #N`,
+  or `runs differ #N` with "runs under these conditions differ" and what differs (neutral; amber
+  with ▲ and "— investigate" only when the group records deterministic algorithms on, so its
+  runs were expected to agree), or "comparison incomplete" (never shown as agreeing), with the
+  group's investigation notes as the Test page lists them (who, when and what; "The
+  investigation notes cannot all be read …" when they cannot, never "no note is kept"; since the
+  same round). Then a task's answer as four figures (pooled MRR, two cut-offs and coverage, each
+  to four decimals, with what it is over), and its rows, one fact each, never a chain: its
+  coverage (what it counted, then the source cases and import exclusions under it); a task's
+  other figures (the conservative pooled MRR with what it counts, each cut-off family as one row
+  by k, the macro and best-positive MRR); a KG link prediction's metrics under their plain names
+  ("Accuracy (raw > 0)", "ROC-AUC", "Average precision", "Loss (the LP head's hinge)"), each to
+  four decimals with its unit and denominator said once under it, or "Not computable"; any other
+  mode's every metric as recorded in one row (a kept Mode C or Mode D record included); the score
+  semantics exactly as recorded; the relations, each a row by its full name ("Model trained on
+  this graph (R3) ● Verified"); a supplied cohort's R10 as its table (*unverifiable* is a reason,
+  never 0), or a KG edge set's exposure and its source, or a generated split's generation; a KG
+  edge set's or a generated split's counts with their units one click away; the environment,
+  the device, deterministic algorithms on or off and the native build; and the registration
+  (when, from which run, its report; "not recorded" for a record written before each run had its
+  own record, the reports merged into it and a possible overlap with a named run). A task's and a
+  KG link prediction's every metric as recorded is one click away ("Recorded metrics (N)"),
+  unrounded, as every export keeps it. **The dataset is said once, by its relation**: "Every
+  record below measured the selected workspace's dataset." where it is the workspace's (whose
+  origin the line under the workspace select says), once above the records where they share
+  another origin, and per record only where their origins differ. Every record is shown; none is
+  hidden or ordered out by these descriptions. A record for these weights that cannot be read as
+  a result (since K8-6e.1) is never shown or counted as one: under the records, "▲ 1 record for
+  these weights cannot be read as a result; it is kept as written." and a small table, Index ·
+  Registration · Report · Reason (a sequence or report digest it does not carry readably reads
+  "not readable"); the segment then reads "Recorded results · 3 (1 not readable)". With no record
+  the segment says so per cause and gives the next step, naming no file ("No recorded result
+  yet": none is registered beside this checkpoint, which does not mean these weights were never
+  evaluated; "Next: on the Test page, choose this model and start a test with Register the result
+  on"; the read-only view says recording a result is an operator control), and a segment with
+  nothing to count shows no "· 0". The read-only view lists the same items, from the route, the
+  group's notes included (`contest.notes`, `contest.notes_readable` in its answer);
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history, newest first: test runs and registrations, and any model load kept from before
   K8-6d, shown as recorded ("ordered by" its metric's name, and its scoring semantics). A test
@@ -4094,13 +4127,26 @@ warning, with ▲; and three segments:
   compared) and the environment. Every item that could not be read is listed under the tables
   with its reason, whatever the scope and filters. **Compare** puts the first five of the
   **Chosen results** side by side, one column each headed by its name and protocol,
-  **Differences only** on by default: the result, the model (stage, task, operation, parent,
+  **Differences only** on by default, the key groups first: the result, the model (stage, task, operation, parent,
   family, encoder, relation to the reference recipe, capabilities and every spec value; the
   stage, the encoder's kind and the task once, in the model's own rows, not again under the spec,
   the capabilities or the training settings), the recorded and effective training settings with
   the weight transfer and the loss identity (so two arms of one base are checked to start from
   the same downstream weights here), the data's identity and role, the measurement, the
-  environment, the exposure and every metric, as recorded, each group once. Each row is named in
+  environment, the exposure and every metric, as recorded, each group once, in the order the
+  result, the model, the data and the metrics, then the training settings, the measurement, the
+  environment, the exposure and the content references (since the ops-wiring and UI round).
+  **Differences only compares the cells a row applies to**: another protocol's metric and another
+  data kind's field are no difference, so such a row is hidden too and counted apart ("… that
+  apply to one result only"). **Each fact once** (since the same round): a fact two fields record
+  alike in every column (a digest such as the samples' in the data's identity and in its content
+  reference, a count such as a KG edge set's pairs in its identity and its counts, a loss weight
+  as a learning setting and in the loss identity) is shown in the first, the later row reading
+  "same as <the first row>"; the parent's and the family's training runs read in run words
+  ("probe-base · 2026-11-10 11:05"), the run id their tooltip. A long value (a recipe source, a
+  spec's or a capability's JSON) is one line until opened, its summary starting after what the
+  row's values share ("…disease run_*.sh script…"), and a value breaks only at a space or after
+  its own separators (/, _, @), never inside a token. Each row is named in
   words (a metric as the tables name it, a learning setting as the Training page does; its
   record key in the row's title), and a nested setting is one row per entry, so a difference
   inside it is a row of its own. No difference is computed, and each metric row is one
@@ -4124,7 +4170,10 @@ warning, with ▲; and three segments:
 
 **Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
 it covers the detail while it is open, its buttons stay in view under its table however short
-the window, and Close returns to the detail with the same checkpoint still selected). It is off,
+the window, and Close returns to the detail with the same checkpoint still selected). Beside it,
+once a row it can serve is selected, a note says what it does in plain words ("Serves this model
+for diagnosis once you confirm the change. Results already recorded keep the model they were
+made with."); nothing before a selection. It is off,
 with the reason beside it, for a base and for a file whose record cannot be read, before anything
 is read ("Record not readable: written before the model spec: not readable by this build; start
 a new run." for a file without a model spec). A Load
@@ -4261,7 +4310,8 @@ is `skip`, as before.
   operation is not observed and reads unknown. No path on the machine and no wheel, library or
   release asset file name is recorded (their SHA-256 names them); a requested source's URL is kept
   without user name, password, query or fragment. The Models and Test pages show the identity as
-  "Native build", on one line on Models and a component per line on Test; a record written before
+  "Native build", a lead and a component per line, alike on both (one record rendering since the
+  ops-wiring and UI round); a record written before
   reads "not recorded". Every recorded fact of each component (its states, fallback reason and
   source facts as well) reaches the API's record views (`components`), the results query, Models ›
   Results' Compare (one row per fact) and the export (since review fix RC-P2-1). This holds for every
