@@ -64,19 +64,27 @@ NOT_A_MEDICAL_DEVICE = (
 SYNTHETIC_FOR_TESTING = "Synthetic workspaces are for testing only."
 
 #: (headline, detail) for each state a reader must not miss: the Diagnosis tab's
-#: banners and Model Facts' warnings say them in these words.
+#: banners and Model Facts' warnings say them in these words. Headlines are in
+#: sentence case (the skill's §5, R-26): the banner's mark and tone make them
+#: stand out, never capitals.
 IDENTITY_BANNERS = {
     "not_reported": (
-        "WHAT PRODUCED THIS RESULT WAS NOT REPORTED.",
+        "What produced this result was not reported.",
         "The API's response carried no served identity.\n"
         "So these candidates cannot be attributed to a model, graph or table.",
     ),
     "synthetic": (
-        "SYNTHETIC WORKSPACE: not a clinical result.",
+        "Synthetic workspace: not a clinical result.",
         "The served workspace's dataset record gives its origin as synthetic.\n"
         "A generated stand-in, not a clinical knowledge graph: results are for testing only.",
     ),
 }
+#: Model Facts' other warning headlines (`facts_from_checkpoint`), in the
+#: banners' sentence case; named, so a caller tells them apart by the constant,
+#: never by their spelling.
+METADATA_NOT_READABLE = "Metadata not readable: this checkpoint cannot be loaded."
+TRAINED_ON_UNLISTED = "Trained on a dataset no listed workspace holds."
+DATASET_NOT_RECORDED = "Dataset not recorded."
 
 #: The help texts the renderers' ⓘ name; the shell registers them.
 RENDERER_HELP = {
@@ -1407,14 +1415,13 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
     if synthetic:
         warnings.append(IDENTITY_BANNERS["synthetic"])
     if _get(item, "problem") is not None:
-        warnings.append(("METADATA NOT READABLE: this checkpoint cannot be loaded.",
-                         str(_get(item, "problem"))))
+        warnings.append((METADATA_NOT_READABLE, str(_get(item, "problem"))))
     if is_digest(fingerprint) and not names:
-        warnings.append(("TRAINED ON A DATASET NO LISTED WORKSPACE HOLDS.",
+        warnings.append((TRAINED_ON_UNLISTED,
                          "The dataset fingerprint this checkpoint records equals no listed "
                          "workspace's: its workspace was rebuilt or removed since."))
     if not is_digest(fingerprint) and _get(item, "problem") is None:
-        warnings.append(("DATASET NOT RECORDED.",
+        warnings.append((DATASET_NOT_RECORDED,
                          "This checkpoint records no dataset fingerprint, so what it was "
                          "trained on cannot be told."))
     serving_rows: Tuple[Tuple[str, str], ...] = ()
@@ -2139,19 +2146,25 @@ FACTS_TRAINED_FP = ("Trained on: dataset fingerprint (split_manifest.json, from 
                     "record)")
 
 
-def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> str:
-    """Model Facts: 1 Identity, 2 Uses, 3 Data, 4 Evidence (each a disclosure
-    with a one-line summary) and 5 Warnings, always open. Identity, Data and
-    Evidence are each one summary list (`summary_list`: one row per fact,
-    the skill's §4, §5); a trained-on dataset whose
-    checkpoint was not read says why (`ModelFacts.trained_on_unread`), never
-    "not recorded"."""
-    def section(key: str, number: int, title: str, summary: str, body: str) -> str:
-        opened = " open" if key == open_section else ""
-        return (f'<details class="shep-facts-sec" data-sec="{key}"{opened}>'
-                f'<summary><span class="shep-facts-n">{number}</span> {e(title)}'
-                f'<span class="shep-facts-sum">{summary}</span></summary>'
-                f'<div class="shep-facts-bd">{body}</div></details>')
+def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
+                     uses: bool = True) -> str:
+    """Model Facts, **every section always open** (R-28: no disclosure inside
+    the drawer that shows them, the skill's §1.5): Warnings first when there
+    are any, then Identity, Uses, Data and Evidence; "No warnings." last when
+    there are none. Identity, Data and Evidence are each one summary list
+    (`summary_list`: one row per fact, the skill's §4, §5); a trained-on
+    dataset whose checkpoint was not read says why
+    (`ModelFacts.trained_on_unread`), never "not recorded".
+
+    `focus` marks the section a caller opened the facts at
+    (``data-shep-focus``: its page scrolls it into view). Without `uses`
+    there is no Uses section: for a page whose own line says the device
+    statement, always in view, and whose banner says a synthetic workspace is
+    for testing (Diagnosis' identity drawer, over its results footer; R-26)."""
+    def section(key: str, title: str, body: str, extra: str = "") -> str:
+        marked = ' data-shep-focus="true"' if key == focus else ""
+        return (f'<section class="shep-facts-sec{extra}" data-sec="{key}"{marked}>'
+                f'<h4>{e(title)}</h4><div class="shep-facts-bd">{body}</div></section>')
 
     location = ""
     if facts.checkpoint_file:
@@ -2197,21 +2210,18 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
         ("Recorded results",
          e(recorded_tests_text(facts.recorded).removeprefix("Recorded results: "))),
     ], helps={"Validation": ("validation-trainer", "Validation (Trainer)")}) + facts.evidence_more
+    body = (section("identity", "Identity", identity)
+            + (section("uses", "Uses", f"<p>{e(uses_text)}</p>") if uses else "")
+            + section("data", "Data", summary_list(data_rows))
+            + section("evidence", "Evidence", evidence))
     if facts.warnings:
-        warnings = "".join(warning_html(h, d) for h, d in facts.warnings)
-    else:
-        warnings = '<p class="shep-muted">No warnings.</p>'
-    return (
-        '<div class="shep-facts">'
-        + section("identity", 1, "Identity", "", identity)
-        + section("uses", 2, "Uses", f" · {e(uses_text)}", f"<p>{e(uses_text)}</p>")
-        + section("data", 3, "Data", "", summary_list(data_rows))
-        + section("evidence", 4, "Evidence", "", evidence)
-        + '<section class="shep-facts-sec shep-facts-warn" data-sec="warnings">'
-          '<h4><span class="shep-facts-n">5</span> Warnings</h4>'
-          f'<div class="shep-facts-bd">{warnings}</div></section>'
-        + "</div>"
-    )
+        warned = section("warnings", "Warnings",
+                         "".join(warning_html(h, d) for h, d in facts.warnings),
+                         " shep-facts-warn")
+        return f'<div class="shep-facts">{warned}{body}</div>'
+    return (f'<div class="shep-facts">{body}'
+            + section("warnings", "Warnings", '<p class="shep-muted">No warnings.</p>')
+            + "</div>")
 
 
 __all__ = [
@@ -2221,6 +2231,9 @@ __all__ = [
     "FIELD_ROWS",
     "FROZEN_BACKBONE_WORDS",
     "IDENTITY_BANNERS",
+    "DATASET_NOT_RECORDED",
+    "METADATA_NOT_READABLE",
+    "TRAINED_ON_UNLISTED",
     "MODEL_TABLE_COLUMNS",
     "ModelFacts",
     "ALL_NEIGHBOURS",

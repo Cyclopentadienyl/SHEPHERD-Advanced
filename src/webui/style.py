@@ -628,10 +628,7 @@ button.shep-row {
 .shep-facts-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
 .shep-facts { display: flex; flex-direction: column; gap: 8px; }
 .shep-facts-sec { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
-.shep-facts-sec > summary, .shep-facts-sec > h4 { padding: 8px 12px; font-weight: 600; font-size: 15px; cursor: pointer; margin: 0; }
-.shep-facts-sec > h4 { cursor: default; }
-.shep-facts-n { color: var(--shep-muted); margin-right: 4px; }
-.shep-facts-sum { font-weight: 400; color: var(--shep-text-2); font-size: 14px; }
+.shep-facts-sec > h4 { padding: 8px 12px 0; font-weight: 600; font-size: 15px; margin: 0; }
 .shep-facts-bd { padding: 4px 12px 10px; }
 .shep-facts-warn { border-color: var(--shep-amber-300); background: var(--shep-amber-50); }
 .shep-confirm { border: 1px solid var(--shep-accent-100); background: #fbfbff; border-radius: 10px; padding: 12px 14px; }

@@ -14,14 +14,17 @@ the listed name is found through the server's list (`resolve_workspaces`, one
 listing of the root for every name), never derived from the status's path.
 `served_key` is what is served as one comparable value (the whole served
 identity and the data directory), so a change of any part is seen.
+`node_names` gives a result the served graph's names of the terms it names,
+only while the graph served is that result's own (by its digest).
 
 Module: src/webui/components/served_status.py
 """
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -103,5 +106,49 @@ def served_key(status: Optional[Mapping[str, Any]]) -> Optional[str]:
                       sort_keys=True, default=str)
 
 
-__all__ = ["STATUS_NOT_READ", "read_status", "served_checkpoint_sha", "served_key",
-           "serving_workspace"]
+#: An HPO id as a request spells it (the Diagnosis box's canonical form).
+_HPO_ID = re.compile(r"HP:\d{7}")
+
+
+def node_names(kg_sha256: Any, ids: Iterable[str]) -> Dict[str, str]:
+    """**The served graph's names of `ids`**, keyed as given: an HPO id as a
+    request spells it ("HP:0001250") or a node as a path names it
+    ("hpo:HP:0001250", "mondo:MONDO:0012091"). Only while the graph served
+    now is the one `kg_sha256` names (a result's own
+    ``served_identity.graph.kg_sha256``: the same digest is the same bytes,
+    so these are that result's graph's names); else ``{}``, and the page shows
+    ids alone (another graph served now, nothing served, a result that names
+    no digest). An id the graph has no node for, or a node with no name, is
+    left out. Reads application state only, in this process, as `read_status`
+    does; nothing is opened or parsed."""
+    if not isinstance(kg_sha256, str) or len(kg_sha256) != 64:
+        return {}
+    try:
+        from src.api.main import app_state
+        from src.core.types import DataSource, NodeID
+
+        pipeline = app_state.snapshot()["pipeline"]
+        if pipeline is None or pipeline.served_identity().graph.kg_sha256 != kg_sha256:
+            return {}
+        graph = pipeline.kg
+        names: Dict[str, str] = {}
+        for key in dict.fromkeys(ids):
+            if not isinstance(key, str):
+                continue
+            try:
+                node_id = (NodeID(DataSource.HPO, key) if _HPO_ID.fullmatch(key)
+                           else NodeID.from_string(key))
+            except ValueError:
+                continue
+            node = graph.get_node(node_id)
+            name = getattr(node, "name", None)
+            if isinstance(name, str) and name.strip():
+                names[key] = name.strip()
+        return names
+    except Exception:  # noqa: BLE001 - names are an aid: ids are shown without them
+        logger.exception("The served graph's names could not be read")
+        return {}
+
+
+__all__ = ["STATUS_NOT_READ", "node_names", "read_status", "served_checkpoint_sha",
+           "served_key", "serving_workspace"]

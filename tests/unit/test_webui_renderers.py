@@ -248,15 +248,29 @@ def test_in_use_marks_the_row():
 
 
 # --------------------------------------------------------------------------- Model Facts
-def test_model_facts_has_its_five_sections_and_warnings_always_open():
+def test_model_facts_has_its_five_sections_always_open_with_warnings_first():
+    """R-28: Model Facts were an accordion inside the drawer that shows them
+    (Identity open, Uses, Data and Evidence collapsed), so most facts were a
+    second click away. Every section is open now, Warnings first when there
+    are any, its headline in sentence case (R-26)."""
     facts = r.facts_from_checkpoint(checkpoint(), [workspace()],
                                     recorded=r.RecordedTests("none"),
                                     serving_workspace=workspace())
     html = r.model_facts_html(facts)
-    for number, title in enumerate(("Identity", "Uses", "Data", "Evidence"), start=1):
-        assert f'<span class="shep-facts-n">{number}</span> {title}' in html
-    assert '<details class="shep-facts-sec" data-sec="identity" open>' in html
+    assert "<details" not in html and "<summary" not in html
+    order = [html.index(f'data-sec="{key}"')
+             for key in ("warnings", "identity", "uses", "data", "evidence")]
+    assert order == sorted(order), order
+    for title in ("Warnings", "Identity", "Uses", "Data", "Evidence"):
+        assert f"<h4>{title}</h4>" in html
     assert '<section class="shep-facts-sec shep-facts-warn" data-sec="warnings">' in html
+    assert "data-shep-focus" not in html
+    assert '<section class="shep-facts-sec" data-sec="data" data-shep-focus="true">' in (
+        r.model_facts_html(facts, focus="data"))
+    # Without Uses (a page that says the device line itself): the rest stays.
+    without = r.model_facts_html(facts, uses=False)
+    assert 'data-sec="uses"' not in without and r.NOT_A_MEDICAL_DEVICE not in without
+    assert 'data-sec="data"' in without
     plain = text_of(html)
     assert ("Not a certified medical device; decision support for a qualified clinician. "
             "Synthetic workspaces are for testing only.") in plain
@@ -269,7 +283,7 @@ def test_model_facts_has_its_five_sections_and_warnings_always_open():
     assert '<dl class="shep-kv">' in data and "Trained ondemo" in text_of(data)
     assert ('<dt class="shep-k">Serving</dt><dd class="shep-v">reads workspace demo: the same '
             'dataset</dd>') in data
-    assert "SYNTHETIC WORKSPACE: not a clinical result." in plain
+    assert "Synthetic workspace: not a clinical result." in plain
     assert "runs/gatv2/20261017-091500_run_3fa9c1/checkpoints/model-05-0.2410.pt" in plain
     assert SHA in plain and FP_A in plain           # Identity: the full digests, with Copy
 
@@ -278,10 +292,14 @@ def test_model_facts_warns_of_a_dataset_no_listed_workspace_holds():
     facts = r.facts_from_checkpoint(checkpoint(fingerprint="9b1f04e6d2c8" + "0" * 52),
                                     [workspace()])
     plain = text_of(r.model_facts_html(facts))
-    assert "TRAINED ON A DATASET NO LISTED WORKSPACE HOLDS." in plain
+    assert r.TRAINED_ON_UNLISTED in plain and r.TRAINED_ON_UNLISTED == (
+        "Trained on a dataset no listed workspace holds.")
     assert "Trained onmatches no listed workspace" in plain
     facts = r.facts_from_checkpoint(checkpoint(fingerprint=FP_B), [workspace("o", FP_B, "files")])
-    assert "No warnings." in text_of(r.model_facts_html(facts))
+    html = r.model_facts_html(facts)
+    # No warning: Warnings says so, last.
+    assert "No warnings." in text_of(html)
+    assert html.index('data-sec="evidence"') < html.index('data-sec="warnings"')
 
 
 def test_the_medical_device_line_is_the_one_diagnosis_uses():
@@ -289,6 +307,21 @@ def test_the_medical_device_line_is_the_one_diagnosis_uses():
 
     assert dp.NOT_A_MEDICAL_DEVICE is r.NOT_A_MEDICAL_DEVICE
     assert dp._IDENTITY_BANNERS is r.IDENTITY_BANNERS
+
+
+def test_every_warning_headline_is_in_sentence_case():
+    """R-26: the banners were in capitals ("SYNTHETIC WORKSPACE: not a
+    clinical result."); their mark and tone make them stand out. Every
+    headline the banners and Model Facts' Warnings draw starts with one
+    capital and has no word in capitals, its words otherwise kept."""
+    import re
+
+    headlines = [head for head, _detail in r.IDENTITY_BANNERS.values()]
+    headlines += [r.METADATA_NOT_READABLE, r.TRAINED_ON_UNLISTED, r.DATASET_NOT_RECORDED]
+    for head in headlines:
+        assert head[0].isupper() and not re.search(r"\b[A-Z]{2,}\b", head), head
+    assert r.IDENTITY_BANNERS["synthetic"][0] == "Synthetic workspace: not a clinical result."
+    assert r.IDENTITY_BANNERS["not_reported"][0] == "What produced this result was not reported."
 
 
 @pytest.mark.parametrize("name", ['<script>alert(1)</script>', 'a"b&c'])
