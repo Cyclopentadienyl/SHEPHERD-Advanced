@@ -1178,7 +1178,7 @@ def test_a_start_clicked_while_the_hop_list_edit_is_pending_carries_it(
 #: event with ``isComposing`` per step, then ``Input.insertText`` to commit:
 #: the last input and compositionend), no key event at all. Each case from
 #: Reset to reference (the first from the page as loaded); the steps are
-#: pinyin letters, a half value no field takes. (a) committed, the page's
+#: pinyin letters, a half value the hop field's own check refuses. (a) committed, the page's
 #: clock paused before the commit (as in `_HELD_TRAINING_JS`) and Start
 #: pressed at once: Start's requests that left and the touch script's state
 #: after 300 ms, then the clock runs; (b) committed, the form's line waited
@@ -1326,10 +1326,14 @@ def test_text_typed_through_an_input_method_is_the_operators_edit_once_committed
     committed is the operator's, as typed (the touched rules). (d) Left
     uncommitted and Start pressed: the press moves the focus and the browser
     ends the composition with what it holds; Start carries exactly that
-    value, the field's as drawn, with the key, and the field's own check
-    refuses it, so a half value never reaches a run. (e) A number box: the
-    committed value, the key and the line. The other edits (clear, cut,
-    paste, the reference retyped, Reset, a task switch, Start at once,
+    value, the field's as drawn, with the key. Here the hop field's own
+    format check refuses it, so this run is not started; a field with no
+    such check takes it as typed (the review of 5033d29: Run name left
+    composing "bai" started a run named "bai"), so this case does not show
+    that a half value never reaches a run. Whether Start may send a
+    composition its own press ended is open (UI_LEDGER V-17). (e) A number
+    box: the committed value, the key and the line. The other edits (clear,
+    cut, paste, the reference retyped, Reset, a task switch, Start at once,
     Enter) are pinned by the tests above."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.served_page import served

@@ -2426,3 +2426,12 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Done when**: The banner keeps only its size default for a newly drawn tail, the reader's choice kept by the one keeper (a hook for a default it can honour); a browser test of a failed run's tail opened and closed across drawings.
 - **Sources**: the verification of fcc3dea, part AUD (V-AUD-7)
 - **Closed at**: —
+
+#### V-17 · An input method's composition left open becomes the value Start sends
+
+- **State**: to do · found by the review of 5033d29 · severity low · page: training
+- **Problem**: A composition left uncommitted when Start is pressed is ended by the browser with what it holds (pinyin letters, say), and Start sends that as the field's value. A field with a format check refuses it (Neighbours per hop); a free-text field takes it, and the run starts with it.
+- **At fcc3dea**: In Training's Run name, the composition "b", "ba", "bai" left open and Start pressed: the browser ended it as "bai", Start sent run_name "bai" and the job runner was asked to start a run named "bai" (the review's probe on 5033d29, whose touch script is fcc3dea's: scratchpad/verify/review/probe/test_review_ime_run_name.py, ime_run_name.log). fe6a8ce's test and message said "a half value never reaches a run", which holds only for a field whose own check refuses it; the test's words now say so.
+- **Done when**: The owner or the integrator decides whether Start may send a composition its own press ended. If not, Start's held-click path (`TOUCH_HEAD`) treats an open composition as a pending edit (the press does not end it and nothing goes out until it is committed, or the refusal is said beside Start), with a browser test on Run name; if so, the decision is recorded here.
+- **Sources**: the review of 5033d29 (R-3); the verification brief's IME item (A26)
+- **Closed at**: —
