@@ -1354,7 +1354,10 @@ _LAYOUT_FACTS_JS = r"""() => {
     return r.width > 0 && r.height > 0 ? [Math.round(r.top), Math.round(r.bottom)] : null; };
   // Training's Continue drawer, open: its body, step 3's row (Check checkpoint and its prompt),
   // and what the run bar draws of its actions and says beside them (R-48, R-49,
-  // NEW-training-finetune-2).
+  // NEW-training-finetune-2). The reason is the page's own words (`.shep-rb-reason`), not
+  // the block's whole text: Gradio's status tracker in the same block can show a queued
+  // event's elapsed time ("1.5s") under load although every event writing it hides its
+  // progress, and that is Gradio's, not a reason the page says.
   let drawer = null;
   const dr = document.getElementById('shep-train-drawer');
   if (dr && dr.getClientRects().length) {
@@ -1363,7 +1366,7 @@ _LAYOUT_FACTS_JS = r"""() => {
                prompt: at(document.getElementById('shep-train-check-prompt')),
                actions: ['shep-train-start', 'shep-train-continue', 'shep-train-stop']
                  .filter((i) => at(document.getElementById(i))),
-               reason: document.getElementById('shep-train-reason').innerText.trim(),
+               reason: document.querySelector('#shep-train-reason .shep-rb-reason').innerText.trim(),
                closers: [...dr.querySelectorAll('button')].filter((b) => at(b)
                  && /^(close|cancel)$/i.test((b.getAttribute('aria-label') || b.textContent).trim())).length };
   }
