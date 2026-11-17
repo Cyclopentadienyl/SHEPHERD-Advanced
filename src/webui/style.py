@@ -660,9 +660,15 @@ button.shep-row {
 /* **A text box that grows as it is typed in keeps its caret in view** (R-25: at 1536 x 760 the
    Diagnosis HPO box's caret went out of view from its sixth line on). The browser brings the caret
    into its scroll region as a key is typed, then Gradio grows the box a line under it; every
-   scroll region (the page's, a panel's) keeps a line's room under what it brings into view, so
-   the caret stays in view while the box grows. */
-html, .shep-panel * { scroll-padding-bottom: var(--shep-caret-room); }
+   scroll region (the page's, a page's own region side by side, a panel's) keeps a line's room
+   under what it brings into view, so the caret stays in view while the box grows. A page's own
+   region side by side is its tab's (``#shep-nav`` and ``#shep-research-nav``'s tab items, the
+   layout rule below): without the room there, a box partly under that region's foot was focused
+   by bringing its first line just into view, its centre left under the runtime line below
+   (Settings' evidence folders box at 1366 x 620). */
+html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
+  scroll-padding-bottom: var(--shep-caret-room);
+}
 /* **A scroll cue** (R-73): a region with ``shep-scroll-cue`` that has more below fades its last
    lines out, and draws them whole again at its end (the shell's head script keeps
    ``data-shep-more`` on it as it scrolls and as its content changes), whatever the system's

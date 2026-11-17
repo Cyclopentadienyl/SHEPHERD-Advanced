@@ -1283,6 +1283,81 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     assert any(f["disabled"] for f in seen["fields"])
 
 
+#: Settings' scroll region (its level-1 tab item, side by side) with the
+#: evidence folders box placed partly under the region's foot, as a walk or a
+#: reader's scrolling can leave it, then focused as a keyboard focuses it:
+#: where the box is and what is over its centre, at each overlap.
+_PARTLY_HIDDEN_FOCUS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1366, height: 620 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  await page.click('#shep-tab-settings-button');
+  const box = '#dl_box_training_evidence_dirs textarea';
+  await page.waitForSelector(box + ':enabled', { timeout: 30000 });
+  await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  await page.keyboard.press('Tab');
+  const seen = [];
+  for (const overlap of [6, 10, 20, 30]) {
+    seen.push(await page.evaluate(async ([sel, overlap]) => {
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const ta = document.querySelector(sel);
+      let region = ta.parentElement;
+      while (region && !(/(auto|scroll)/.test(getComputedStyle(region).overflowY)
+                         && region.scrollHeight > region.clientHeight + 1)) { region = region.parentElement; }
+      if (document.activeElement) { document.activeElement.blur(); }
+      const foot = region.getBoundingClientRect().bottom;
+      region.scrollTop += ta.getBoundingClientRect().top - (foot - overlap);
+      await frame();
+      const placed = foot - ta.getBoundingClientRect().top;
+      ta.focus();
+      await frame();
+      const r = ta.getBoundingClientRect();
+      const top = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2)[0];
+      return { overlap, placed, region: region.id || region.className, foot, top: r.top, bottom: r.bottom,
+               focused: document.activeElement === ta,
+               over: top === ta || ta.contains(top) ? 'itself' : (top.closest('[id]') || {}).id };
+    }, [box, overlap]));
+  }
+  console.log(JSON.stringify(seen));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_box_partly_under_a_pages_region_foot_is_focused_whole_into_view(tmp_path, monkeypatch):
+    """The shared walk's open problem on Settings at 1366 x 620 (T06-D): side by
+    side, Settings scrolls in its level-1 tab item, and a text box partly under
+    that region's foot was focused by bringing its first line just into view,
+    its centre left under the runtime line below ("focused
+    #dl_box_training_evidence_dirs textarea under #runtime_footer"): the
+    caret's room under what a scroll region brings into view (R-25) was set on
+    the page and on the panels, not on a page's own region. In a real
+    browser, for an operator, the evidence folders box placed 6 to 30 px
+    into the region's foot and focused is wholly inside the region, nothing
+    over its centre. On the code before (5137694) it stays at 561-619 px,
+    under the runtime line at 588."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import DEPLOYMENT_MODE
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    monkeypatch.setenv(DEPLOYMENT_MODE, "M1")
+    script = _PARTLY_HIDDEN_FOCUS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")])
+    for s in seen:
+        assert s["region"] == "shep-tab-settings" and abs(s["placed"] - s["overlap"]) < 1, s
+        assert s["focused"] and s["over"] == "itself", s
+        assert s["bottom"] <= s["foot"] + 0.5, s
+
+
 # --------------------------------------------------------------------------- D02 and D03 (T04)
 def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_left():
     """D02 (FL-UI-02): side by side against stacked was decided by
