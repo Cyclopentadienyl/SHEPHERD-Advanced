@@ -5191,12 +5191,18 @@ PAGE_CSS = charts.CHART_CSS + f"""
 /* Idle is the normal state, so quiet (R-39; the skill's §6): its grey ○ and words as plain muted
    text, no bordered, rounded lozenge beside the buttons. */
 {_PAGE} #shep-train-pill .shep-pill-idle {{ border-color: transparent; background: none; padding-left: 0; padding-right: 0; font-weight: 400; color: var(--shep-muted); }}
-{_PAGE} #shep-train-reason {{ flex: 1 1 120px !important; min-width: 0 !important; }}
+/* A reason line (`run_bar_view`'s, the run bar's and the drawer's footer's) is never narrower than its
+   words can wrap to (its longest word and the GPU tag): where that does not fit beside the controls,
+   the line wraps to a row of its own (the skill's §2: a status line is a row of its own), never under
+   or over a control. At min-width 0 it shrank to its slot while its words ran on over Start (the
+   verification of fcc3dea, 960 x 1080: no workspaces folder, the GPU lock's reason). A word longer
+   than the whole row breaks rather than leaves the page. */
+{_PAGE} #shep-train-reason {{ flex: 1 1 120px !important; min-width: min-content !important; }}
 {_PAGE} .shep-rb-reason {{ display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }}
 {_PAGE} .shep-rb-why {{ display: inline-flex; align-items: flex-start; gap: 6px; flex-wrap: nowrap; font-size: 15px; color: var(--shep-text-2); text-align: right; }}
 {_PAGE} .shep-rb-why > svg, {_PAGE} .shep-rb-why > .shep-tag {{ flex: none; margin-top: 3px; }}
 {_PAGE} .shep-rb-why > .shep-tag {{ margin-top: 0; }}
-{_PAGE} .shep-rb-why > span:not(.shep-tag) {{ min-width: 0; text-wrap: pretty; }}
+{_PAGE} .shep-rb-why > span:not(.shep-tag) {{ min-width: 0; text-wrap: pretty; overflow-wrap: break-word; }}
 /* A reason of two sentences breaks between them (`renderers.word_groups`); a sentence wider than its line wraps inside its group without leaving one word alone (text-wrap: pretty). */
 {_PAGE} .shep-rb-why .shep-wg {{ text-wrap: pretty; }}
 {_PAGE} .shep-rb-why .shep-link {{ white-space: nowrap; }}
@@ -5271,6 +5277,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-drawer-ft > button:disabled {{ background: var(--shep-grey-50) !important; border: 1px solid var(--shep-grey-200) !important; color: var(--shep-grey-600) !important; opacity: 1 !important; box-shadow: none !important; cursor: not-allowed; }}
 {_PAGE} #shep-train-drawer-ft > .block {{ width: auto !important; }}
 {_PAGE} #shep-train-drawer-why, {_PAGE} #shep-train-drawer-notice {{ flex: 1 1 240px !important; min-width: 0 !important; }}
+{_PAGE} #shep-train-drawer-why {{ min-width: min-content !important; }}
 {_PAGE} .shep-drawer-why {{ font-size: 15px; color: var(--shep-text-2); }}
 {_PAGE} .shep-drawer-why .shep-rb-why {{ text-align: left; flex-wrap: nowrap; align-items: flex-start; }}
 {_PAGE} #shep-train-drawer-why:not(:has(.shep-drawer-why)), {_PAGE} #shep-train-drawer-notice:not(:has(.shep-notice-t)) {{ display: none !important; }}

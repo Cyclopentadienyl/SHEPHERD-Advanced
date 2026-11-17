@@ -3589,3 +3589,74 @@ def test_a_details_the_reader_opened_stays_open_when_their_own_edit_draws_it_aga
     assert seen["redrawn"]["open"] is True, seen
     assert seen["closed"]["open"] is False, seen
     assert "Epochs 7" in seen["again"]["text"] and seen["again"]["open"] is False, seen
+
+
+#: The Training page for an operator with no workspaces folder set, so the
+#: run bar's reason is the GPU lock's long refusal: at each window, once the
+#: reason says it and the page's requests are answered, what
+#: `document.elementFromPoint` finds at the centre of each run bar control
+#: drawn, and the reason's and the controls' boxes (a screenshot of each
+#: window where a third argument names its path's start).
+_RUNBAR_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[960, 1080], [1280, 900], [390, 844], [1850, 960]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.click('#shep-tab-research-button', { timeout: 60000 });
+    await page.waitForFunction(() => {
+      const r = document.querySelector('#shep-train-reason');
+      return r && r.innerText.includes('GPU lock') && window.__shepQueue.idle();
+    }, null, { timeout: 60000 });
+    if (process.argv[3]) { await page.screenshot({ path: `${process.argv[3]}_${w}x${h}.png` }); }
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const box = (el) => { const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)]; };
+      const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+      const controls = ['#shep-train-dataset input', '#run_name input', '#shep-train-start', '#shep-train-continue', '#shep-train-stop']
+        .map((sel) => [sel, document.querySelector(sel)]).filter(([, el]) => el && shown(el));
+      const reason = document.querySelector('#shep-train-reason .shep-rb-why') || document.querySelector('#shep-train-reason');
+      return { reason: box(reason), controls: controls.map(([sel, el]) => {
+        el.scrollIntoView({ block: 'center' });
+        const r = el.getBoundingClientRect(), at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return { sel, box: box(el), hit: el === at || el.contains(at), at: at ? (at.id || at.className.toString().slice(0, 40) || at.tagName) : null };
+      }) };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_no_run_bar_control_is_under_the_reason_at_any_window(monkeypatch, tmp_path):
+    """The verification of fcc3dea (pre-existing, seen by the T08 fix lane):
+    at 960 x 1080, for an operator with no workspaces folder set, the run
+    bar's reason (the GPU lock's refusal, several lines) ran over Start and
+    Continue…, and `elementFromPoint` at Start's centre found the reason's
+    text: its slot shrank below its words (its longest word and the GPU
+    tag), which ran on over the buttons. The slot is never narrower than its
+    words, so where they do not fit beside the controls the line takes a row
+    of its own (the skill's §2): at 960 x 1080, 1280 x 900, 390 x 844 and
+    1850 x 960 every run bar control drawn is the first thing at its
+    centre."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_RUNBAR_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    assert set(seen) == {"960x1080", "1280x900", "390x844", "1850x960"}, seen
+    for size, drawn in seen.items():
+        names = [control["sel"] for control in drawn["controls"]]
+        assert {"#shep-train-start", "#shep-train-continue"} <= set(names), (size, drawn)
+        covered = [control for control in drawn["controls"] if not control["hit"]]
+        assert covered == [], (size, drawn)
