@@ -179,6 +179,8 @@ checks that already passed for the same code.
 
 | Change | Checks |
 |---|---|
+| A new screen or a changed layout (before it is built) | a static mockup first, its small sources committed with a README that says who checked it (self-checked or owner-approved; e.g. `docs/working/ops-wiring-and-ui-ux/mockups/`); without the owner's approval it is never called accepted (B27-P) |
+| Any visible change (when it is delivered) | before and after screenshots of what changed, at the owner's window (about 1850 × 960) and a narrow size, named in the delivery and in the ledger row it closes (B27-P) |
 | Wording, a label, an option or help text | the unit test that pins it (options: unique, short, one separator; help: the lead answers the question) |
 | A colour or theme token | the contrast test of the tokens it touches |
 | A widget or renderer (HTML, JS) | a unit or Node test of what it renders, escaping included; one look in the real app |

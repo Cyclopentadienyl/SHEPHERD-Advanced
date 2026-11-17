@@ -1,0 +1,755 @@
+{
+ "listing_order": [
+  [
+   "gatv2/20261116-122806_demo-gene_367c36/last.pt",
+   "bb71722edfa4"
+  ],
+  [
+   "gatv2/20261116-122806_demo-gene_367c36/model-00-0.2400.pt",
+   "a7fbd9fcd31c"
+  ],
+  [
+   "gatv2/20261116-122750_demo-b-disease_39d124/last.pt",
+   "3ea087f786b5"
+  ],
+  [
+   "gatv2/20261116-122750_demo-b-disease_39d124/model-00-0.2120.pt",
+   "d95d4866ec5f"
+  ],
+  [
+   "gatv2/20261116-122745_demo-base-b_ea55fd/last.pt",
+   "7968b0249e33"
+  ],
+  [
+   "gatv2/20261116-122745_demo-base-b_ea55fd/model-00-0.5000.pt",
+   "60f6ee223336"
+  ],
+  [
+   "gatv2/20261116-122738_demo-disease-extend_19ec67/last.pt",
+   "74e90d9aa72f"
+  ],
+  [
+   "gatv2/20261116-122738_demo-disease-extend_19ec67/model-01-0.3133.pt",
+   "8f670b69d38a"
+  ],
+  [
+   "gatv2/20261116-122732_demo-disease-branch_1f6d79/last.pt",
+   "2faf462e0b76"
+  ],
+  [
+   "gatv2/20261116-122732_demo-disease-branch_1f6d79/model-00-0.3133.pt",
+   "eb36cc688bf1"
+  ],
+  [
+   "gatv2/20261116-122726_demo-disease-frozen_b28b49/last.pt",
+   "ae8c1e9701c9"
+  ],
+  [
+   "gatv2/20261116-122726_demo-disease-frozen_b28b49/model-00-0.2500.pt",
+   "110407e55015"
+  ],
+  [
+   "gatv2/20261116-122711_demo-disease_cc4fa0/last.pt",
+   "1bd6372a55cd"
+  ],
+  [
+   "gatv2/20261116-122711_demo-disease_cc4fa0/model-00-0.3133.pt",
+   "825dcd152036"
+  ],
+  [
+   "gatv2/20261116-122656_demo-base_eaaf8c/last.pt",
+   "eeadd4bcb040"
+  ],
+  [
+   "gatv2/20261116-122656_demo-base_eaaf8c/model-00-0.3750.pt",
+   "8674de49e76f"
+  ]
+ ],
+ "family_rows": [
+  {
+   "key": "gatv2/20261116-122656_demo-base_eaaf8c/last.pt",
+   "run": "20261116-122656_demo-base_eaaf8c",
+   "file": "last.pt",
+   "sha12": "eeadd4bcb040",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 0,
+   "parent": null,
+   "parent_state": null,
+   "context": false,
+   "stage": "base",
+   "task": null,
+   "operation": "new",
+   "parent_sha12": "",
+   "parent_run": null,
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": null,
+   "validation": {
+    "metric": "val_lp_accuracy",
+    "value": 0.375
+   },
+   "in_best_k": false,
+   "selection": {
+    "monitor": "val_lp_accuracy",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122806_demo-gene_367c36/last.pt",
+   "run": "20261116-122806_demo-gene_367c36",
+   "file": "last.pt",
+   "sha12": "bb71722edfa4",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 1,
+   "parent": "gatv2/20261116-122656_demo-base_eaaf8c/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "gene",
+   "operation": "finetune",
+   "parent_sha12": "eeadd4bcb040",
+   "parent_run": "20261116-122656_demo-base_eaaf8c",
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.24
+   },
+   "in_best_k": false,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122806_demo-gene_367c36/model-00-0.2400.pt",
+   "run": "20261116-122806_demo-gene_367c36",
+   "file": "model-00-0.2400.pt",
+   "sha12": "a7fbd9fcd31c",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 1,
+   "parent": "gatv2/20261116-122656_demo-base_eaaf8c/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "gene",
+   "operation": "finetune",
+   "parent_sha12": "eeadd4bcb040",
+   "parent_run": "20261116-122656_demo-base_eaaf8c",
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.24
+   },
+   "in_best_k": true,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122726_demo-disease-frozen_b28b49/last.pt",
+   "run": "20261116-122726_demo-disease-frozen_b28b49",
+   "file": "last.pt",
+   "sha12": "ae8c1e9701c9",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 1,
+   "parent": "gatv2/20261116-122656_demo-base_eaaf8c/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "disease",
+   "operation": "finetune",
+   "parent_sha12": "eeadd4bcb040",
+   "parent_run": "20261116-122656_demo-base_eaaf8c",
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.25
+   },
+   "in_best_k": false,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122726_demo-disease-frozen_b28b49/model-00-0.2500.pt",
+   "run": "20261116-122726_demo-disease-frozen_b28b49",
+   "file": "model-00-0.2500.pt",
+   "sha12": "110407e55015",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 1,
+   "parent": "gatv2/20261116-122656_demo-base_eaaf8c/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "disease",
+   "operation": "finetune",
+   "parent_sha12": "eeadd4bcb040",
+   "parent_run": "20261116-122656_demo-base_eaaf8c",
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.25
+   },
+   "in_best_k": true,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122711_demo-disease_cc4fa0/last.pt",
+   "run": "20261116-122711_demo-disease_cc4fa0",
+   "file": "last.pt",
+   "sha12": "1bd6372a55cd",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 1,
+   "parent": "gatv2/20261116-122656_demo-base_eaaf8c/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "disease",
+   "operation": "finetune",
+   "parent_sha12": "eeadd4bcb040",
+   "parent_run": "20261116-122656_demo-base_eaaf8c",
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.3133333333333333
+   },
+   "in_best_k": false,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122738_demo-disease-extend_19ec67/last.pt",
+   "run": "20261116-122738_demo-disease-extend_19ec67",
+   "file": "last.pt",
+   "sha12": "74e90d9aa72f",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 2,
+   "parent": "gatv2/20261116-122711_demo-disease_cc4fa0/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "disease",
+   "operation": "extend",
+   "parent_sha12": "1bd6372a55cd",
+   "parent_run": "20261116-122711_demo-disease_cc4fa0",
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 1,
+   "completed_epochs": 2,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.3133333333333333
+   },
+   "in_best_k": false,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122738_demo-disease-extend_19ec67/model-01-0.3133.pt",
+   "run": "20261116-122738_demo-disease-extend_19ec67",
+   "file": "model-01-0.3133.pt",
+   "sha12": "8f670b69d38a",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 2,
+   "parent": "gatv2/20261116-122711_demo-disease_cc4fa0/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "disease",
+   "operation": "extend",
+   "parent_sha12": "1bd6372a55cd",
+   "parent_run": "20261116-122711_demo-disease_cc4fa0",
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 1,
+   "completed_epochs": 2,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.3133333333333333
+   },
+   "in_best_k": true,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122732_demo-disease-branch_1f6d79/last.pt",
+   "run": "20261116-122732_demo-disease-branch_1f6d79",
+   "file": "last.pt",
+   "sha12": "2faf462e0b76",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 2,
+   "parent": "gatv2/20261116-122711_demo-disease_cc4fa0/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "disease",
+   "operation": "branch",
+   "parent_sha12": "1bd6372a55cd",
+   "parent_run": "20261116-122711_demo-disease_cc4fa0",
+   "parent_changes": {
+    "learning_rate": {
+     "parent": 1e-05,
+     "new": 3e-05
+    }
+   },
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.3133333333333333
+   },
+   "in_best_k": false,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122732_demo-disease-branch_1f6d79/model-00-0.3133.pt",
+   "run": "20261116-122732_demo-disease-branch_1f6d79",
+   "file": "model-00-0.3133.pt",
+   "sha12": "eb36cc688bf1",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 2,
+   "parent": "gatv2/20261116-122711_demo-disease_cc4fa0/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "disease",
+   "operation": "branch",
+   "parent_sha12": "1bd6372a55cd",
+   "parent_run": "20261116-122711_demo-disease_cc4fa0",
+   "parent_changes": {
+    "learning_rate": {
+     "parent": 1e-05,
+     "new": 3e-05
+    }
+   },
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.3133333333333333
+   },
+   "in_best_k": true,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122711_demo-disease_cc4fa0/model-00-0.3133.pt",
+   "run": "20261116-122711_demo-disease_cc4fa0",
+   "file": "model-00-0.3133.pt",
+   "sha12": "825dcd152036",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 1,
+   "parent": "gatv2/20261116-122656_demo-base_eaaf8c/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "disease",
+   "operation": "finetune",
+   "parent_sha12": "eeadd4bcb040",
+   "parent_run": "20261116-122656_demo-base_eaaf8c",
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.3133333333333333
+   },
+   "in_best_k": true,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122656_demo-base_eaaf8c/model-00-0.3750.pt",
+   "run": "20261116-122656_demo-base_eaaf8c",
+   "file": "model-00-0.3750.pt",
+   "sha12": "8674de49e76f",
+   "group": "family",
+   "family_id": "20261116-122656_demo-base_eaaf8c",
+   "depth": 0,
+   "parent": null,
+   "parent_state": null,
+   "context": false,
+   "stage": "base",
+   "task": null,
+   "operation": "new",
+   "parent_sha12": "",
+   "parent_run": null,
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": null,
+   "validation": {
+    "metric": "val_lp_accuracy",
+    "value": 0.375
+   },
+   "in_best_k": true,
+   "selection": {
+    "monitor": "val_lp_accuracy",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122745_demo-base-b_ea55fd/last.pt",
+   "run": "20261116-122745_demo-base-b_ea55fd",
+   "file": "last.pt",
+   "sha12": "7968b0249e33",
+   "group": "family",
+   "family_id": "20261116-122745_demo-base-b_ea55fd",
+   "depth": 0,
+   "parent": null,
+   "parent_state": null,
+   "context": false,
+   "stage": "base",
+   "task": null,
+   "operation": "new",
+   "parent_sha12": "",
+   "parent_run": null,
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": null,
+   "validation": {
+    "metric": "val_lp_accuracy",
+    "value": 0.5
+   },
+   "in_best_k": false,
+   "selection": {
+    "monitor": "val_lp_accuracy",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122750_demo-b-disease_39d124/last.pt",
+   "run": "20261116-122750_demo-b-disease_39d124",
+   "file": "last.pt",
+   "sha12": "3ea087f786b5",
+   "group": "family",
+   "family_id": "20261116-122745_demo-base-b_ea55fd",
+   "depth": 1,
+   "parent": "gatv2/20261116-122745_demo-base-b_ea55fd/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "disease",
+   "operation": "finetune",
+   "parent_sha12": "7968b0249e33",
+   "parent_run": "20261116-122745_demo-base-b_ea55fd",
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.21199999999999997
+   },
+   "in_best_k": false,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122750_demo-b-disease_39d124/model-00-0.2120.pt",
+   "run": "20261116-122750_demo-b-disease_39d124",
+   "file": "model-00-0.2120.pt",
+   "sha12": "d95d4866ec5f",
+   "group": "family",
+   "family_id": "20261116-122745_demo-base-b_ea55fd",
+   "depth": 1,
+   "parent": "gatv2/20261116-122745_demo-base-b_ea55fd/last.pt",
+   "parent_state": "listed",
+   "context": false,
+   "stage": "finetune",
+   "task": "disease",
+   "operation": "finetune",
+   "parent_sha12": "7968b0249e33",
+   "parent_run": "20261116-122745_demo-base-b_ea55fd",
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": [
+    "downstream_digest_rule",
+    "downstream_initial_sha256",
+    "frozen_forward",
+    "initialised_new",
+    "loaded_from_parent",
+    "optimizer",
+    "parts",
+    "trainable"
+   ],
+   "validation": {
+    "metric": "val_pooled_mrr",
+    "value": 0.21199999999999997
+   },
+   "in_best_k": true,
+   "selection": {
+    "monitor": "val_pooled_mrr",
+    "mode": "max"
+   },
+   "record": "model"
+  },
+  {
+   "key": "gatv2/20261116-122745_demo-base-b_ea55fd/model-00-0.5000.pt",
+   "run": "20261116-122745_demo-base-b_ea55fd",
+   "file": "model-00-0.5000.pt",
+   "sha12": "60f6ee223336",
+   "group": "family",
+   "family_id": "20261116-122745_demo-base-b_ea55fd",
+   "depth": 0,
+   "parent": null,
+   "parent_state": null,
+   "context": false,
+   "stage": "base",
+   "task": null,
+   "operation": "new",
+   "parent_sha12": "",
+   "parent_run": null,
+   "parent_changes": null,
+   "kind": "training_state",
+   "epoch": 0,
+   "completed_epochs": 1,
+   "end": "finished",
+   "frozen": null,
+   "weight_transfer_keys": null,
+   "validation": {
+    "metric": "val_lp_accuracy",
+    "value": 0.5
+   },
+   "in_best_k": true,
+   "selection": {
+    "monitor": "val_lp_accuracy",
+    "mode": "max"
+   },
+   "record": "model"
+  }
+ ],
+ "weight_transfer_example": {
+  "loaded_from_parent": [
+   "encoder",
+   "input",
+   "lp_head"
+  ],
+  "initialised_new": [
+   "patient_encoder",
+   "task_head"
+  ],
+  "trainable": "all",
+  "optimizer": "new",
+  "parts": {
+   "input": "trainable",
+   "encoder": "trainable",
+   "lp_head": "trainable",
+   "patient_encoder": "trainable",
+   "task_head": "trainable"
+  },
+  "frozen_forward": null,
+  "downstream_initial_sha256": "90e978fd10ed0bb1416be94f1f16eb1f1956688a39b346f7b012836dee20b634",
+  "downstream_digest_rule": "parts_state_sha256/1"
+ }
+}
