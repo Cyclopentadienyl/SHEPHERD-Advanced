@@ -50,11 +50,13 @@ COUNTS = {"source_cases": 3, "ranked_eligible": 3,
 
 
 @pytest.fixture(autouse=True)
-def _no_device_setting(monkeypatch):
+def _device_setting(monkeypatch):
     """Each test uses the lock tests/conftest.py gives it (the one under its
     own workspaces root), or names its own; the developer's environment never
-    decides, nor its serving device."""
-    monkeypatch.delenv("SHEPHERD_DEVICE", raising=False)
+    decides, nor its serving device: the deployment's device is ``cpu``, as a
+    development host sets it, so a test run starts on any host (a start
+    resolves it first, T08 flow); a test of the device sets its own."""
+    monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
 
 
 def _lock_under(monkeypatch, root: Path) -> None:
@@ -744,9 +746,59 @@ def test_the_operators_choices_and_the_evidence_setting_reach_the_command_line(i
 @pytest.mark.parametrize("setting, device", [(None, None), ("auto", None), ("cpu", "cpu"),
                                              ("cuda", "cuda")])
 def test_the_device_is_the_deployments(monkeypatch, setting, device):
-    if setting is not None:
+    if setting is None:
+        monkeypatch.delenv("SHEPHERD_DEVICE")
+    else:
         monkeypatch.setenv("SHEPHERD_DEVICE", setting)
     assert tm.deployment_device() == device
+
+
+@pytest.mark.parametrize("setting", [None, "auto", "cuda"])
+def test_a_test_run_on_a_device_this_host_cannot_give_is_refused_before_anything(
+        monkeypatch, tmp_path, popen, inputs, setting):
+    """T08 flow (T08-flow-11): on a host without CUDA and no device set, a
+    Test start was taken, its process spawned, and it failed ("Process exited
+    with code 1"; "--device auto requires CUDA" only in its output), while
+    Training, Continue, Branch, Fine-tune and the previews refuse such a
+    device before anything is spawned. A test start now resolves the
+    deployment's device by that one rule (`resolve_training_device`, as each
+    start's `_training_device` asks it): refused in a request's words for a
+    page with no Device field, the variable only in the trailing Ref, with no
+    job directory made, no process spawned and the GPU lock not taken; with
+    `cpu` set it starts as before."""
+    import src.utils.training_device as td
+
+    monkeypatch.setattr(td, "cuda_visible", lambda: False)      # a host without CUDA
+    if setting is None:
+        monkeypatch.delenv("SHEPHERD_DEVICE", raising=False)
+    else:
+        monkeypatch.setenv("SHEPHERD_DEVICE", setting)
+    _lock_under(monkeypatch, tmp_path / "root")
+    (tmp_path / "root").mkdir()
+    made = []
+    monkeypatch.setattr(tm.tempfile, "mkdtemp", lambda *a, **k: made.append(a) or "/nowhere")
+    process = FakeProcess(pid=1)
+    calls = popen(process)
+    manager = TrainingManager()
+    result = manager.start_test(inputs)
+    device = setting or "auto"
+    assert result == {
+        "success": False, "status": "idle",
+        "error": (f"Test runs measure on this service's device, {device}, which needs CUDA, and "
+                  "CUDA is not available here. The Test page has no Device of its own: the "
+                  "device is the one the service was started with. On a development host, stop "
+                  "the service (Settings › Stop service) and start it with the CPU device. "
+                  "Nothing was started. Ref: SHEPHERD_DEVICE=cpu (deployment guide §4.8)")}
+    assert calls.calls == [] and made == [] and manager.active_job() is None
+    assert probe(tmp_path / "root" / LOCK_FILE_NAME) is None, "no holder of the GPU lock"
+    monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")                # what a development host sets
+    monkeypatch.setattr(tm.tempfile, "mkdtemp", lambda *a, **k: str(tmp_path / "job"))
+    (tmp_path / "job").mkdir()
+    started = manager.start_test(inputs)
+    assert started["success"] is True, started
+    assert calls.calls[0][calls.calls[0].index("--device") + 1] == "cpu"
+    process.finish(0)
+    ended(manager, "test")
 
 
 def test_a_deployment_device_the_cli_cannot_take_refuses_the_start(monkeypatch, popen, inputs):

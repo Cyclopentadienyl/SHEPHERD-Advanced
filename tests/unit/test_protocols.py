@@ -180,13 +180,14 @@ class _Popens:
 def runner(monkeypatch):
     """A job runner whose spawns are `_Popens`' and whose job directories
     (`tempfile.mkdtemp` with the runner's prefix) are recorded; the
-    deployment's device is unset, so the developer's environment never
-    decides."""
+    deployment's device is ``cpu``, as a development host sets it, so the
+    developer's environment never decides and a start, which resolves the
+    device first (T08 flow), is judged on its protocol on any host."""
     pytest.importorskip("fastapi")
     import src.api.services.training_manager as tm
     from tests.fixtures.job_processes import FakeProcess
 
-    monkeypatch.delenv("SHEPHERD_DEVICE", raising=False)
+    monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     popens = _Popens()
     monkeypatch.setattr("subprocess.Popen", popens)
     job_dirs: list = []
