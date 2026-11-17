@@ -191,7 +191,11 @@ checks that already passed for the same code.
 The layout, scrolling, type, border and focus rows are measured on every page at the representative sizes by one
 shared check, which a layout, token or navigation change runs rather than a script of its own:
 `tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check` (`walk_ui` and
-`ui_problems` in `tests/fixtures/browser.py`; its screenshots in the test's temporary `ui-walk*/shots`).
+`ui_problems` in `tests/fixtures/browser.py`; its screenshots in the test's temporary `ui-walk*/shots`). The same
+walk counts each fingerprint drawn in a screen's visible text (`repeat_problems`), and walks PLAN_TEST_RESULTS §6's
+other sizes with Diagnosis' largest Top-K answered on long disease names, and every page as a read-only viewer
+(`acceptance_walk`). axe-core is not installed here: those rows' accessibility checks are the walk's own
+measurements until it is.
 
 ## 13. Decided
 

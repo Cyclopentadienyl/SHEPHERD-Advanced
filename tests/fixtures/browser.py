@@ -54,7 +54,12 @@ focus cue's contrast. `walk_ui` drives one browser through a list of stops
 stop asks; the page's requests answered and its drawing still before it
 measures; the selects' options read where a stop asks), and `ui_problems`
 turns what it saw into one line per broken rule. The representative windows
-are `UI_SIZES`, the pages `UI_PAGES`.
+are `UI_SIZES`, the pages `UI_PAGES`. The walk also counts each fingerprint
+drawn in the page's visible text (``repeats``; `repeat_problems`), can run a
+diagnosis at a stop (``diagnose``), and can walk as a read-only viewer
+(`READ_ONLY_HEADERS`) or on a high-DPI screen (``device_scale``);
+`PTR_SIZES` are PLAN_TEST_RESULTS §6's acceptance windows the representative
+ones leave out (T06-D: INT-AUDIT, PTR-LAYOUT).
 
 Module: tests/fixtures/browser.py
 """
@@ -377,8 +382,18 @@ LOOK_JS = r"""
     }
     return { n: controls.length, covered, cues };
   };
+  /* A repeated fact (the skill's §12, INT-AUDIT): each fingerprint drawn on
+     the page shown (the shared digest value's 12 hex digits,
+     `renderers.fingerprint_value`) and how many times its digits are in the
+     page's visible text, a full 64-digit value or a plain mention included. */
+  const repeats = () => {
+    const { tab } = shownPage(), root = tab || document.body, text = root.innerText;
+    const facts = new Set([...root.querySelectorAll('code.shep-fpv')].filter((e) => drawn(e) && shown(e))
+      .map((e) => e.textContent.trim()).filter((t) => /^[0-9a-f]{12}$/.test(t)));
+    return Object.fromEntries([...facts].map((f) => [f, text.split(f).length - 1]).filter(([, n]) => n > 0));
+  };
   window.__shepLook = { parse, ratio, behind, shown, typeScale, fields, labels, pseudo, topAt,
-                        shownPage, regions, captions, choices, check, focusWalk };
+                        shownPage, regions, captions, choices, check, focusWalk, repeats };
 })();
 """
 
@@ -387,6 +402,19 @@ LOOK_JS = r"""
 #: a short laptop's (1366 x 768 less the browser's own bars), portrait, a
 #: narrow column and a phone.
 UI_SIZES = ((1850, 960), (1280, 900), (1920, 700), (1366, 620), (1440, 1600), (960, 1080), (390, 844))
+
+#: PLAN_TEST_RESULTS §6's layout acceptance windows the representative ones
+#: leave out (PTR-LAYOUT): 1440 x 900, a 1280 x 720 laptop, 1707 x 870 (a
+#: 2560 x 1440 screen at 150 %), 1920 x 1080, 2560 x 1600, 3840 x 2160, a
+#: 1080 x 1920 portrait screen, and 960 x 540, a 1920 x 1080 window at 200 %
+#: zoom (zoom changes the CSS viewport; a high-DPI screen only the device
+#: pixels per CSS pixel: `walk_ui`'s ``device_scale``).
+PTR_SIZES = ((1440, 900), (1280, 720), (1707, 870), (1920, 1080), (2560, 1600), (3840, 2160),
+             (1080, 1920), (960, 540))
+
+#: A request D8 refuses as forwarded by a proxy (`walk_ui`'s ``headers``): the
+#: walk of a read-only viewer on a service in mode M1, on this machine.
+READ_ONLY_HEADERS = {"X-Forwarded-For": "203.0.113.7"}
 
 #: Every page, by the id its tab button carries (``shep-tab-<id>-button`` for
 #: level 1, ``shep-page-<id>-button`` under Research).
@@ -402,15 +430,25 @@ UI_PAGES = ("clinical", "datasets", "training", "finetune", "test", "models", "s
 #: reads its options' words. A stop with ``open`` (``{"click": opener,
 #: "shown": drawer, "close": its close}``) opens that drawer before it
 #: measures, walks focus inside it only (the panels it covers are not its
-#: measure) and closes it again after.
+#: measure) and closes it again after. A stop with ``diagnose`` (``{"hpo":
+#: terms, "top_k": n, "rows": n}``) runs a diagnosis on Diagnosis first and
+#: waits for its rows to be drawn; the result stays for the stops after it. A
+#: checked stop also records ``repeats`` (each fingerprint drawn and how many
+#: times the page's text says it, `repeat_problems`); ``tag`` names its
+#: screenshot apart. The walk's browser sends `walk_ui`'s ``headers`` with
+#: every request (`READ_ONLY_HEADERS`: a read-only viewer), at its
+#: ``device_scale``.
 UI_WALK_JS = r"""
 const { chromium } = require('playwright');
 const fs = require('fs');
-const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__;
+const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEADERS = __HEADERS__,
+      SCALE = __SCALE__;
 (async () => {
   const stops = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
   const browser = await chromium.launch();
-  const page = await (await browser.newContext({ viewport: { width: stops[0].size[0], height: stops[0].size[1] } })).newPage();
+  const page = await (await browser.newContext({ viewport: { width: stops[0].size[0], height: stops[0].size[1] },
+                                                 deviceScaleFactor: SCALE,
+                                                 ...(HEADERS ? { extraHTTPHeaders: HEADERS } : {}) })).newPage();
   await page.addInitScript(QUEUE_JS);
   await page.addInitScript(LOOK_JS);
   const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(),
@@ -452,6 +490,19 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__;
     });
     await idle();
   };
+  // A stop's diagnosis (`stop.diagnose`): its terms and Top-K entered, Run
+  // Diagnosis asked once the page's own requests are answered, and its answer
+  // drawn (the results' rows) before the stop measures.
+  const diagnose = async (spec) => {
+    await page.fill('#dx_hpo_terms textarea', spec.hpo);
+    await page.fill('#dx_top_k input', String(spec.top_k));
+    await idle();
+    await page.waitForSelector('#shep-dx-run-btn:not([disabled])', { timeout: 60000 });
+    await page.click('#shep-dx-run-btn', { force: true });
+    await page.waitForFunction((n) => document.querySelectorAll('#shep-dx-results-body tbody tr[data-key]').length >= n,
+                               spec.rows, { timeout: 120000 });
+    await idle();
+  };
   const options = async () => {
     // Each select by a locator, found again at each act: a page's answer can
     // draw a select anew between two of them.
@@ -484,13 +535,16 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__;
     await page.setViewportSize({ width: w, height: h });
     if (stop.page !== shown) { await open(stop.page); shown = stop.page; }
     await page.evaluate(() => window.scrollTo(0, 0));
+    if (stop.diagnose) { await diagnose(stop.diagnose); }
     if (stop.open) { await drawer(stop.open, true); }
     const seen = { size: `${w}x${h}`, page: stop.page, frames: await settle() };
     if (stop.open) { seen.open = stop.open.shown; }
     if (EXTRA) { seen.extra = await page.evaluate(EXTRA); }
     if (stop.check !== false) {
       seen.check = await page.evaluate(() => window.__shepLook.check());
-      const name = `${stop.page}${stop.open ? '_' + stop.open.shown.replace(/[^\w-]/g, '') : ''}_${w}x${h}`;
+      seen.repeats = await page.evaluate(() => window.__shepLook.repeats());
+      if (stop.tag) { seen.tag = stop.tag; }
+      const name = `${stop.page}${stop.tag ? '_' + stop.tag : ''}${stop.open ? '_' + stop.open.shown.replace(/[^\w-]/g, '') : ''}_${w}x${h}`;
       if (shots) { await page.screenshot({ path: `${shots}/${name}.png` }); }
       await page.keyboard.press('Tab');
       seen.focus = await page.evaluate((scope) => window.__shepLook.focusWalk(scope), stop.open ? stop.open.shown : null);
@@ -508,17 +562,22 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__;
 
 def walk_ui(page_url: str, tmp_path: Path, stops: list[dict[str, Any]], *,
             extra_js: str | None = None, shots: Path | None = None,
-            timeout: int = 1500) -> list[dict[str, Any]]:
+            timeout: int = 1500, headers: dict[str, str] | None = None,
+            device_scale: float = 1) -> list[dict[str, Any]]:
     """Walk the dashboard at `page_url` through `stops` (each ``{"size":
     [w, h], "page": id}``, with ``"check": false``, ``"options": true`` or
     ``"open": {...}`` where wanted; in order, `UI_WALK_JS`) and return what
     each stop recorded.
     `extra_js` is a function's source the page runs at each stop (its value is
     the stop's ``extra``); `shots`, a directory for a screenshot of each
-    checked stop (``<page>_<w>x<h>.png``)."""
+    checked stop (``<page>_<w>x<h>.png``); `headers`, sent with every
+    request the walk's browser makes (`READ_ONLY_HEADERS`); `device_scale`,
+    the device pixels per CSS pixel (2: a high-DPI screen)."""
     script = (UI_WALK_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
               .replace("__LOOK_JS__", json.dumps(LOOK_JS))
-              .replace("__EXTRA_JS__", extra_js or "null"))
+              .replace("__EXTRA_JS__", extra_js or "null")
+              .replace("__HEADERS__", json.dumps(headers) if headers else "null")
+              .replace("__SCALE__", json.dumps(device_scale)))
     plan = tmp_path / "stops.json"
     plan.write_text(json.dumps(stops), encoding="utf-8")
     args = [page_url, str(plan)] + ([str(shots)] if shots else [])
@@ -596,6 +655,23 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
     return problems
 
 
+def repeat_problems(seen: list[dict[str, Any]], allowed: dict[str, int] | None = None) -> list[str]:
+    """**A fact said more than once on one screen** (the WebUI skill's §1.2
+    and §12; INT-AUDIT, B27-5), from a walk (`walk_ui`): each fingerprint a
+    checked stop drew (``repeats``) said more times than once, or than
+    `allowed` gives its page (a page whose second place has a reason the
+    caller states), one line each, ``"<size> <page>: fingerprint <hex> said
+    <n> times"``; empty when every screen says each once."""
+    allowed = allowed or {}
+    problems: list[str] = []
+    for stop in (s for s in seen if "repeats" in s):
+        where = " ".join(p for p in (stop["size"], stop["page"], stop.get("tag"), stop.get("open")) if p)
+        for fact, times in stop["repeats"].items():
+            if times > allowed.get(stop["page"], 1):
+                problems.append(f"{where}: fingerprint {fact} said {times} times")
+    return problems
+
+
 def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any:
     """Run a Node script (Playwright resolvable, `node_with_playwright`; the
     caller skips without it) and return the JSON it prints."""
@@ -610,5 +686,6 @@ def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any
     return json.loads(result.stdout)
 
 
-__all__ = ["LOOK_JS", "QUEUE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES", "UI_WALK_JS",
-           "node_with_playwright", "run_node", "ui_problems", "walk_ui"]
+__all__ = ["LOOK_JS", "PTR_SIZES", "QUEUE_JS", "READ_ONLY_HEADERS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES",
+           "UI_SIZES", "UI_WALK_JS", "node_with_playwright", "repeat_problems", "run_node", "ui_problems",
+           "walk_ui"]

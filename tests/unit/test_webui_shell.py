@@ -1749,6 +1749,184 @@ def test_the_continue_drawer_and_the_fine_tune_form_fit_the_owners_window(ui_wal
         assert form["stop"] is None, form
 
 
+# --------------------------------------------------------------------------- PTR-LAYOUT and INT-AUDIT (T06-D)
+#: Pages whose one fingerprint is said twice on purpose, with the reason, in
+#: the shared walk's repeat count (`browser.repeat_problems`): Datasets'
+#: selected workspace (its table row and its details beside it: B51-h,
+#: recorded, not changed here); Models' model in use (its row and the Load
+#: box's "in use for diagnosis" line, the page the shared model list's lane
+#: changes). Every other screen says each fingerprint once.
+_SAID_TWICE = {"datasets": 2, "models": 2}
+
+#: Diagnosis' largest Top-K (20) on the long-named workspace
+#: (`registered_cohort.write_long_named_workspace`: 25 diseases, 20 of them
+#: with names of 120 to 190 characters).
+_LONG_DIAGNOSIS = {"hpo": "HP:0001250\nHP:0001263", "top_k": 20, "rows": 20}
+
+#: What the acceptance walk reads at each stop besides the shared check: the
+#: header's first chip (D8's), the layout decision, and Diagnosis' results as
+#: drawn (their rows, those with a long name, and the table's width against
+#: its box's).
+_ACCEPTANCE_FACTS_JS = r"""() => {
+  const chip = document.querySelector('#shep-chips .shep-chip');
+  const table = document.querySelector('#shep-dx-results-body table');
+  const rows = table ? [...table.querySelectorAll('tbody tr[data-key]')] : [];
+  return { chip: chip ? chip.innerText.trim() : null,
+           layout: document.documentElement.getAttribute('data-shep-layout'),
+           rows: rows.length, long: rows.filter((r) => /, type \d+/.test(r.innerText)).length,
+           table: table ? [table.scrollWidth, table.parentElement.clientWidth] : null };
+}"""
+
+
+def _acceptance_stops():
+    """Every page at PLAN_TEST_RESULTS §6's sizes the representative windows
+    leave out (`browser.PTR_SIZES`), then Diagnosis answered with its largest
+    Top-K at the owner's window, the acceptance sizes, a short laptop, a
+    narrow column and a phone (the diagnosis asked at the first of them)."""
+    from tests.fixtures.browser import PTR_SIZES, UI_PAGES
+
+    stops = [{"size": [w, h], "page": page} for page in UI_PAGES for w, h in PTR_SIZES]
+    answered = [{"size": [w, h], "page": "clinical", "tag": "results"}
+                for w, h in ((1850, 960), *PTR_SIZES, (1366, 620), (960, 1080), (390, 844))]
+    answered[0]["diagnose"] = _LONG_DIAGNOSIS
+    return stops + answered
+
+
+#: The read-only viewer's windows: on a high-DPI screen (2 device pixels per
+#: CSS pixel) the owner's window, the acceptance sizes a high-DPI screen gives
+#: (a 3840 x 2160 one at 200 % is 1920 x 1080) and a phone; at 1 the two
+#: largest, whose screens are their CSS size.
+_READ_ONLY_HIGH_DPI = ((1850, 960), (1920, 1080), (1280, 720), (1440, 900), (1707, 870), (1080, 1920),
+                       (960, 540), (390, 844))
+_READ_ONLY_LARGE = ((2560, 1600), (3840, 2160))
+
+
+def _read_only_stops(sizes):
+    """Every page, for a viewer D8 refuses, at `sizes`."""
+    from tests.fixtures.browser import UI_PAGES
+
+    return [{"size": [w, h], "page": page, "tag": "readonly"} for page in UI_PAGES for w, h in sizes]
+
+
+@pytest.fixture(scope="module")
+def acceptance_walk(tmp_path_factory, _suite_gpu_lock):
+    """PLAN_TEST_RESULTS §6's layout acceptance, the parts the shared walk
+    (`ui_walk`) leaves out (PTR-LAYOUT, INT-AUDIT), on the same check: the
+    service (mode M1) on the long-named workspace, a base and its disease
+    child trained on it and the child served; one browser as an operator
+    through `_acceptance_stops` (Diagnosis answered with 20 long-named
+    candidates), and one as a read-only viewer, every request forwarded
+    (`browser.READ_ONLY_HEADERS`: D8 refuses it, the page as such a viewer
+    sees it), through `_read_only_stops` at `_READ_ONLY_HIGH_DPI` on a
+    high-DPI screen (2 device pixels per CSS pixel) and at `_READ_ONLY_LARGE`.
+    Screenshots under the module's ``acceptance-walk*/shots`` and
+    ``shots-read-only``."""
+    from tests.fixtures.browser import READ_ONLY_HEADERS, node_with_playwright, walk_ui
+    from tests.fixtures.registered_cohort import write_long_named_workspace
+    from tests.fixtures.served_page import served_service
+    from tests.fixtures.trained_children import train_children
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    root = tmp_path_factory.mktemp("acceptance-walk")
+    demo = write_long_named_workspace(root / "workspaces" / "demo")
+    served = train_children(demo, ("disease",))["disease"]
+    for name in ("registry", "shots", "shots-read-only", "operator", "read-only", "read-only-large"):
+        (root / name).mkdir()
+    settings = {"SHEPHERD_WORKSPACES_ROOT": str(root / "workspaces"),
+                "SHEPHERD_REGISTRY": str(root / "registry"), "SHEPHERD_DEPLOYMENT_MODE": "M1",
+                "SHEPHERD_DEVICE": "cpu", "SHEPHERD_KG_PATH": str(demo / "kg.json"),
+                "SHEPHERD_CHECKPOINT_PATH": str(served), "SHEPHERD_DATA_DIR": str(demo)}
+    with served_service(root / "service", settings) as page:
+        operator = walk_ui(page, root / "operator", _acceptance_stops(),
+                           extra_js=_ACCEPTANCE_FACTS_JS, shots=root / "shots")
+        read_only = walk_ui(page, root / "read-only", _read_only_stops(_READ_ONLY_HIGH_DPI),
+                            extra_js=_ACCEPTANCE_FACTS_JS, shots=root / "shots-read-only",
+                            headers=READ_ONLY_HEADERS, device_scale=2)
+        read_only += walk_ui(page, root / "read-only-large", _read_only_stops(_READ_ONLY_LARGE),
+                             extra_js=_ACCEPTANCE_FACTS_JS, shots=root / "shots-read-only",
+                             headers=READ_ONLY_HEADERS)
+    return {"operator": operator, "read_only": read_only}
+
+
+def test_the_acceptance_sizes_and_twenty_long_named_results_pass_the_ui_measurement_check(
+        acceptance_walk):
+    """PTR-LAYOUT: every page at 1440 x 900, 1280 x 720, 1707 x 870,
+    1920 x 1080, 2560 x 1600, 3840 x 2160, 1080 x 1920 and 960 x 540 (200 %
+    zoom), and Diagnosis with its largest Top-K answered (20 candidates, 16
+    of them with a long name) at those, at 1850 x 960, 1366 x 620,
+    960 x 1080 and 390 x 844, pass the shared check (`browser.ui_problems`: no sideways page scroll, one
+    scroll region per area, every control focused in view with nothing over
+    it, the type scale, borders and focus cues). Side by side the results
+    table is no wider than its box: a long name's 46-character token widened
+    it to 723 px in a 562 px box at 1440 x 900 (699 at 1707 x 870, 520 at
+    1366 x 620), Phenotypes and Evidence out of view in its sideways scroll,
+    whose bar was under the twentieth row; stacked, a table wider than its
+    panel scrolls sideways in its own box (the layout rule)."""
+    from tests.fixtures.browser import PTR_SIZES, UI_PAGES, ui_problems
+
+    seen = acceptance_walk["operator"]
+    assert {(s["page"], s["size"]) for s in seen if "check" in s} >= {
+        (page, f"{w}x{h}") for page in UI_PAGES for w, h in PTR_SIZES}
+    assert ui_problems(seen) == []
+    answered = [s for s in seen if s.get("tag") == "results"]
+    assert len(answered) == 4 + len(PTR_SIZES)
+    for s in answered:
+        facts = s["extra"]
+        assert facts["rows"] == 20 and facts["long"] >= 16, (s["size"], facts)
+        if facts["layout"] == "side":
+            assert facts["table"][0] <= facts["table"][1] + 1, (s["size"], facts)
+
+
+def test_a_read_only_viewers_walk_passes_the_ui_measurement_check(acceptance_walk):
+    """INT-AUDIT and PTR-LAYOUT: the shared walk as a viewer D8 refuses
+    (every request forwarded by a proxy, on a service in mode M1): every page
+    at the owner's window, every acceptance size and a phone, the smaller on
+    a high-DPI screen, passes the shared check, the D8 chip says
+    read-only and why, and the walk focused the controls such a viewer can
+    use (the disabled ones are not focusable)."""
+    from tests.fixtures.browser import UI_PAGES, ui_problems
+
+    seen = acceptance_walk["read_only"]
+    assert {(s["page"], s["size"]) for s in seen if "check" in s} == {
+        (page, f"{w}x{h}") for page in UI_PAGES for w, h in (*_READ_ONLY_HIGH_DPI, *_READ_ONLY_LARGE)}
+    assert ui_problems(seen) == []
+    for s in seen:
+        assert s["extra"]["chip"].startswith("Read-only: forwarded by a proxy"), (s["page"], s["extra"])
+        assert s["focus"]["n"] >= 3, (s["page"], s["size"], s["focus"])
+
+
+def test_each_fingerprint_is_said_once_on_a_screen(ui_walk):
+    """INT-AUDIT's repeat count (the skill's §1.2 and §12, B27-5), on the
+    shared walk (`ui_walk`): on every page at every size each fingerprint
+    drawn is said once in the page's visible text, except where
+    `_SAID_TWICE` gives the second place's reason. The Diagnosis load drawer
+    is counted apart: its dataset fingerprint is said by its workspace line
+    and by each row on this base (B27-5; the shared model list's lane says
+    it once)."""
+    from tests.fixtures.browser import repeat_problems
+
+    counted = [s for s in ui_walk if "repeats" in s and s.get("open") != "#shep-dx-change"]
+    assert {s["page"] for s in counted if s["repeats"]} >= {
+        "clinical", "datasets", "training", "finetune", "test", "models"}
+    assert repeat_problems(counted, _SAID_TWICE) == []
+
+
+def test_each_fingerprint_is_said_once_with_twenty_results_and_for_a_read_only_viewer(
+        acceptance_walk):
+    """The same repeat count on the acceptance walk: Diagnosis answered (the
+    result's own identity said against the model in use where they differ,
+    not again where they are the same: the result's model fingerprint and the
+    card's once), every page at the acceptance sizes, and every page a
+    read-only viewer sees."""
+    from tests.fixtures.browser import repeat_problems
+
+    seen = acceptance_walk["operator"] + acceptance_walk["read_only"]
+    answered = [s for s in seen if s.get("tag") == "results"]
+    assert all(s["repeats"] for s in answered)
+    assert repeat_problems(seen, _SAID_TWICE) == []
+
+
 #: The four field rows' boxes and actions as drawn (D03): Fine-tune's base
 #: picker and Test's Run, at 1850 x 960 and at 1440 x 900 (where Fine-tune's
 #: two selects wrap, Checkpoint under Run).
