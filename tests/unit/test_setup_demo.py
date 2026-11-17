@@ -482,6 +482,27 @@ def test_a_cpu_demo_says_to_stop_the_running_dashboard_before_its_cpu_start(
     assert start < flat.index(said) < load
 
 
+def test_the_command_line_route_trains_the_workspace_just_written(monkeypatch, capsys,
+                                                                    tmp_path):
+    """Verification of fcc3dea (V-RA-2): with --output-dir and no
+    --train-model, the command-line route printed "python
+    scripts/setup_demo.py --train-model" with no --output-dir, which builds
+    and trains the default workspace (<root>/demo), not the one just written.
+    It now names that workspace, whichever it is. Fails on fcc3dea."""
+    from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
+
+    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+    prior = tmp_path / "existing-wsroot" / "prior"
+    monkeypatch.setattr(setup_demo, "train_demo_model",
+                        lambda *a: pytest.fail("trained without --train-model"))
+    monkeypatch.setattr(sys, "argv", ["setup_demo.py", "--output-dir", str(prior)])
+    assert setup_demo.main() == 0
+    printed = capsys.readouterr().out
+    lines = [line.strip() for line in printed.splitlines()]
+    assert f"python scripts/setup_demo.py --train-model --output-dir {prior}" in lines, printed
+    assert "python scripts/setup_demo.py --train-model" not in lines
+
+
 @pytest.mark.parametrize("where", ["saved in Settings", "set for this command"])
 def test_a_demo_with_no_model_leads_with_training_it_in_the_dashboard(
         monkeypatch, capsys, tmp_path, where):
