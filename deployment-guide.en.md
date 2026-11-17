@@ -4169,8 +4169,9 @@ warning, with ▲; and three segments:
   the run id's own last part; its Compare option and column head say the same name), the
   model (fingerprint and kind; its family under This workspace), the data
   (label, kind and role), the metrics as a record of that protocol shows them (a task's two
-  figures, unrounded where its condition group's runs differ on them; any other protocol's every
-  metric as recorded), the state (report kept, or "Report not available (ledger record
+  figures; a KG link prediction's every metric in a column under its plain name, such as
+  "ROC-AUC", to four decimals, each metric's unit said once under the table; unrounded where its
+  condition group's runs differ on them; any other protocol's every metric as recorded), the state (report kept, or "Report not available (ledger record
   only)"; registered, not registered or merged; ▲ report bytes that differ elsewhere; how its
   condition group compares), the exposure where its record holds one (a KG edge set's reading,
   a supplied cohort's R10 one click away; a generated split's is its allocation's, not

@@ -2539,27 +2539,46 @@ def _task_rows(mode: str, metrics: Mapping[str, Any]) -> List[Tuple[str, str]]:
     return rows
 
 
+def lp_metric_names(names: Iterable[Any]) -> List[Any]:
+    """**A KG link-prediction record's metrics in the order every surface
+    shows them**: the measurement's own (`caveats.LP_METRIC_WORDS`' order)
+    among `names`, then any other name in the order given, each once."""
+    names = list(dict.fromkeys(names))
+    return [*(n for n in LP_METRIC_WORDS if n in names),
+            *(n for n in names if n not in LP_METRIC_WORDS)]
+
+
+def lp_metric_words(name: Any) -> str:
+    """A KG link-prediction metric by its plain name, as a row's key or a
+    column's head (`caveats.LP_METRIC_WORDS`: "Accuracy (raw > 0)",
+    "ROC-AUC", "Average precision"); a name the measurement does not write
+    keeps its recorded name."""
+    words = LP_METRIC_WORDS.get(name, str(name))
+    return words[:1].upper() + words[1:]
+
+
+def lp_value_html(value: Any, computed: bool = True) -> str:
+    """A KG link-prediction metric's value as every surface shows it: four
+    decimals (`record_number`), or "Not computable" where its record says it
+    could not be computed (a status, never a number)."""
+    return e(record_number(value)) if computed else status_mark("neutral", "Not computable")
+
+
 def _lp_rows(view: Mapping[str, Any], metrics: Mapping[str, Any]) -> List[Tuple[str, str]]:
     """**A KG link-prediction record's figures** (B72-C2): each metric under
-    its plain name (`caveats.LP_METRIC_WORDS`: "ROC-AUC", "Average
-    precision"), its value to four decimals, and under it, once, its unit and
-    its denominator as the record's ``measured`` holds them; a metric that
-    could not be computed is that status, never a number. A name the
-    measurement does not write keeps its recorded name. The values as
-    recorded are one click away (`recorded_metrics_fold`)."""
+    its plain name (`lp_metric_words`), its value to four decimals
+    (`lp_value_html`), and under it, once, its unit and its denominator as
+    the record's ``measured`` holds them; a metric that could not be
+    computed is that status, never a number. The values as recorded are one
+    click away (`recorded_metrics_fold`). Models › Results' table reads the
+    same three (`results_segment`)."""
     statuses = _dig(view, "measured", "metrics")
     statuses = statuses if isinstance(statuses, Mapping) else {}
-    names = [*(n for n in LP_METRIC_WORDS if n in metrics or n in statuses),
-             *(n for n in metrics if n not in LP_METRIC_WORDS),
-             *(n for n in statuses if n not in LP_METRIC_WORDS and n not in metrics)]
     rows = []
-    for name in names:
-        words = LP_METRIC_WORDS.get(name, str(name))
+    for name in lp_metric_names([*metrics, *statuses]):
         status = statuses.get(name) if isinstance(statuses.get(name), Mapping) else None
-        if status is not None and status.get("status") != "computed":
-            value = status_mark("neutral", "Not computable")
-        else:
-            value = e(record_number(metrics.get(name)))
+        value = lp_value_html(metrics.get(name),
+                              status is None or status.get("status") == "computed")
         if status is not None:
             unit = status.get("unit")
             over = _dig(status, "denominator", "count")
@@ -2569,7 +2588,7 @@ def _lp_rows(view: Mapping[str, Any], metrics: Mapping[str, Any]) -> List[Tuple[
                 f"over {recorded_count_text(over)} {over_unit}"
                 if isinstance(over_unit, str) and over_unit else None) if part)
             value += f'<div class="shep-sub">{e(said)}</div>' if said else ""
-        rows.append((words[:1].upper() + words[1:], value))
+        rows.append((lp_metric_words(name), value))
     return rows
 
 
@@ -2887,6 +2906,9 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
 __all__ = [
     "CURRENT_DATASET",
     "LP_MODE",
+    "lp_metric_names",
+    "lp_metric_words",
+    "lp_value_html",
     "NOT_REPORTED",
     "ORIGIN_MEANING",
     "RECORD_TILES",

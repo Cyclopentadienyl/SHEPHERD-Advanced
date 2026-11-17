@@ -1924,6 +1924,11 @@ PAGE_CSS = f"""
     linear-gradient(to left, rgba(20, 24, 40, .12), transparent) right / 14px 100% no-repeat scroll,
     var(--shep-panel); }}
 {_PAGE} .shep-rs-wrap + .shep-mp-p {{ margin-top: 16px; }}
+/* A table's units, said once under it (B72-C2: a KG link prediction's), close to
+   its table; the next table's title 16 px below. */
+{_PAGE} .shep-rs-wrap + .shep-rs-units-h {{ margin-top: 8px; font-size: 14px; font-weight: 600; }}
+{_PAGE} .shep-rs-units {{ font-size: 14px; color: var(--shep-text-2); }}
+{_PAGE} .shep-rs-units + .shep-mp-p {{ margin-top: 16px; }}
 {_PAGE} .shep-rs-tbl td {{ overflow-wrap: break-word; vertical-align: top; }}
 {_PAGE} .shep-rs-unread td {{ overflow-wrap: anywhere; vertical-align: top; }}
 /* Compare's cells break at a value's spaces and its tokens' own separators
