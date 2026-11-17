@@ -179,6 +179,10 @@ STATUS_MARKS = {
 }
 #: The tag colour of each status colour, for a mark drawn as a chip.
 _STATUS_TAG = {"ok": "ok", "neutral": "grey", "warn": "amber", "error": "red", "info": "accent"}
+#: **The space between a mark's shape and its word** (`status_mark`): in its
+#: text, so a copy and ``innerText`` read "○ Saved", never "○Saved"; of no
+#: width (``shep-st-sp``), so the shape's own margin still draws the gap.
+MARK_SPACE = '<span class="shep-st-sp"> </span>'
 
 
 def status_mark(kind: str, words: Any, *, words_html: bool = False,
@@ -189,16 +193,23 @@ def status_mark(kind: str, words: Any, *, words_html: bool = False,
     condition's short sentence, always shown beside the shape, escaped (with
     `words_html`, HTML these renderers built and escaped, a sentence with a
     bold part or a code value). The shape is hidden from a screen reader,
-    which reads the word. Drawn as coloured text (``shep-st``), or with
-    `as_chip` as a tag: a state to watch, or one that stands apart in a row of
-    tags. No page shows a mark without its word."""
+    which reads the word. **Its text reads shape, space, word** ("○ Saved"),
+    copied or read as ``innerText``: a space (`MARK_SPACE`, no width: the
+    shape's margin draws the gap) between them, in one run of text. Drawn as
+    coloured text (``shep-st``), or with `as_chip` as a tag: a state to watch,
+    or one that stands apart in a row of tags; the tag is a flex box, whose
+    items read as lines of their own, so its shape, space and word are one
+    item (``shep-st-in``). No page shows a mark without its word."""
     shape, token = STATUS_MARKS[kind]
     mark = ('<span class="shep-spinner" aria-hidden="true"></span>' if shape is None else
             f'<span class="shep-st-shape" aria-hidden="true">{shape}</span>')
     text = str(words) if words_html else e(words)
-    classes = (f"shep-tag shep-tag-{_STATUS_TAG[token]} shep-st-chip" if as_chip
-               else f"shep-st shep-st-{token}")
-    return f'<span class="{classes}">{mark}<span class="shep-st-w">{text}</span></span>'
+    # The spinner has no text of its own, so nothing to space from.
+    said = f'{mark}{"" if shape is None else MARK_SPACE}<span class="shep-st-w">{text}</span>'
+    if as_chip:
+        return (f'<span class="shep-tag shep-tag-{_STATUS_TAG[token]} shep-st-chip">'
+                f'<span class="shep-st-in">{said}</span></span>')
+    return f'<span class="shep-st shep-st-{token}">{said}</span>'
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _HEX12 = re.compile(r"^[0-9a-f]{12}$")

@@ -450,7 +450,11 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
 .shep-st-info { color: var(--shep-status-info); }
 .shep-st-shape { display: inline-block; margin-right: 4px; font-size: 15px; line-height: 1; }
 .shep-st > .shep-spinner { margin-right: 6px; }
-.shep-st-chip .shep-st-shape { margin-right: 0; }
+/* The space between the shape and the word (`renderers.MARK_SPACE`): in the text, so a copy reads
+   "○ Saved", of no width, so the shape's margin draws the gap as before. In a chip the shape, space
+   and word are one inline run (`shep-st-in`), so the tag's flex gap is the shape's margin. */
+.shep-st-sp { font-size: 0; }
+.shep-st-chip .shep-spinner { margin-right: 4px; }
 .shep-reason { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; color: var(--shep-text-2); line-height: 1.45; }
 .shep-reason-grey { border: 1px solid var(--shep-grey-200); background: var(--shep-grey-50); border-radius: 8px; padding: 10px 12px; color: var(--shep-grey-800); }
 .shep-notice { border-radius: 6px; padding: 8px 10px; font-size: 14px; }

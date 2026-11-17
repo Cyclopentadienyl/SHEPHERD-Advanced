@@ -1420,7 +1420,7 @@ def test_an_evidence_directory_that_cannot_be_checked_never_disables_start(site,
                           protocol="disease") == (True, None)
     row = tp.evidence_html(page, "demo")
     assert ("<code>locked-evidence</code>, <code>evidence</code> (the server's setting)"
-            '<div><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">Cannot be checked: '
+            '<div><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">Cannot be checked: '
             "&lt;evidence 1&gt; (PermissionError: Permission &lt;denied&gt;). R10 cannot look "
             "in it: inputs found nowhere else read unverifiable, naming it.</span></span></div>"
             "</dd>") in row
@@ -5052,7 +5052,7 @@ def test_a_kg_or_generated_start_needs_no_evidence_setting_and_is_given_none(
         assert allowed is False and why.startswith(
             "Disabled: the evidence directories setting is refused: ")
         assert result["success"] is False and result["error"].endswith("Nothing was started.")
-        assert '<span class="shep-st shep-st-error"><span class="shep-st-shape" aria-hidden="true">✕</span><span class="shep-st-w">Refused: ' in row
+        assert '<span class="shep-st shep-st-error"><span class="shep-st-shape" aria-hidden="true">✕</span><span class="shep-st-sp"> </span><span class="shep-st-w">Refused: ' in row
         assert len(manager.started) == 2
 
 
@@ -5072,7 +5072,7 @@ def test_the_r10_row_renders_each_state_escaped():
         row = tp.evidence_html(hostile, "demo", version)
         assert HOSTILE not in row and "&lt;img src=x onerror=alert(1)&gt;" in row
         assert "/srv/x" not in row and "&lt;srv&gt;/x" in row
-        assert '<span class="shep-st shep-st-error"><span class="shep-st-shape" aria-hidden="true">✕</span><span class="shep-st-w">Refused: ' in row
+        assert '<span class="shep-st shep-st-error"><span class="shep-st-shape" aria-hidden="true">✕</span><span class="shep-st-sp"> </span><span class="shep-st-w">Refused: ' in row
     for kind in (protocols.KG_EDGES, protocols.GENERATED):
         row = tp.evidence_html(hostile, "demo", {"kind": kind})
         assert "Refused" not in row and HOSTILE not in row and "onerror" not in row

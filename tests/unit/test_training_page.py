@@ -457,7 +457,9 @@ def test_the_status_pill(status, kind, words, details):
     html = tc.pill_html(status)
     assert f"shep-pill-{kind}" in html
     assert tc.job_status_html(state, words) in html
-    read = re.sub(r'<span class="shep-st-shape" aria-hidden="true">[^<]*</span>', "", html)
+    # What a screen reader reads: the words, the shape hidden (and the space after it).
+    read = re.sub(r'<span class="shep-st-shape" aria-hidden="true">[^<]*</span>'
+                  + re.escape(r.MARK_SPACE), "", html)
     text = re.sub(r"<[^>]+>", "", read)
     assert text == (f"{words}, {details}" if details else words), text
     assert text.count(" · ") <= 1
