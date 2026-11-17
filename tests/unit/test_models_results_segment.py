@@ -997,6 +997,42 @@ def test_compare_keeps_not_applicable_not_recorded_and_none_apart(world, monkeyp
     assert "not recorded" not in "".join(_cells(markup, "Data identity · Split › Rule"))
 
 
+def test_compare_joins_two_rows_only_where_they_record_one_fact(world, monkeypatch):
+    """Review of 3b6027c: "same as <row>" joined any two fields that share an
+    entry name and its values, so a training seed of 0 read "same as Data
+    identity · Split › Seed" and the measurement's batch size and device
+    "same as Learning setting · …", the training's. Only the fields that
+    record one fact are joined (`_ONE_FACT`, besides a digest): a loss weight
+    as a learning setting and in the loss identity, a KG edge set's pairs in
+    its identity, its counts and the run's, and its edges without a negative
+    in its counts and the run's. Every other row keeps its own values."""
+    from src.webui.components import results_segment as rs
+
+    _finetune, _base, _supplied, kg = _finetune_base_supplied_kg(world, monkeypatch)
+    columns = [copy.deepcopy(kg), copy.deepcopy(kg)]
+    columns[1]["report_sha256"] = "d" * 64
+    for column in columns:
+        column["model"]["learning_settings"] = {"batch_size": 32, "seed": 0, "device": "cuda",
+                                                "lp_loss_weight": 1.0}
+        column["measurement"].update(batch_size=32, device="cuda")
+        column["data"]["counts"]["edges_without_negative"] = 2
+        column["run_counts"]["counts"]["edges_without_negative"] = 2
+    markup = rs.compare_html(columns, False)
+    for label, value in (("Learning setting · Seed", "0"), ("Data identity · Split › Seed", "0"),
+                         ("Learning setting · Batch size", "32"), ("Batch size", "32"),
+                         ("Learning setting · Device", "cuda"), ("Device", "cuda")):
+        assert _cells(markup, label) == [value, value], label
+    joined = {label: cells[0] for label in _labels(markup)
+              for cells in [_cells(markup, label)] if cells[0].startswith("same as ")}
+    assert _cells(markup, "Data counts · Edges without negative") == ["2", "2"]
+    assert joined == {
+        "Data counts · Pairs": "same as Data identity · Pairs › Rows",
+        "Loss · LP loss weight": "same as Learning setting · LP loss weight",
+        "Run counts · Counts › Pairs": "same as Data identity · Pairs › Rows",
+        "Run counts · Counts › Edges without negative":
+            "same as Data counts · Edges without negative"}, joined
+
+
 def test_compare_goes_down_into_nested_settings_and_says_the_spec_once(world, monkeypatch):
     """Browser check models-4 (skill §4: two things that differ, differences
     only; rule 1.2): a difference inside a nested setting is the row of that

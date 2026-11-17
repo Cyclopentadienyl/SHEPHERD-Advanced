@@ -66,8 +66,9 @@ named in words (`renderers.field_words`; its record key is its title).
 another protocol's metric and another data kind's field are no difference,
 so a row only one result holds is hidden and counted apart (`_hidden_note`).
 **Each fact once** (B72-C1): a row recorded alike in every column with an
-earlier row of the same fact (a digest, whichever field records it; the same
-record name in another field) says "same as <that row>" (`_same_as`); the
+earlier row of the same fact (a digest, whichever field records it; a count
+or a loss weight two fields record under one name, `_ONE_FACT`) says "same
+as <that row>" (`_same_as`); the
 parent's and the family's training runs read in run words, the id their
 title (RC-D). A long value is one folded line (`_fold`), its summary after
 what the row's values share; a value breaks only at a space or after its
@@ -1267,37 +1268,55 @@ def _applies(value: Any) -> bool:
     return value is not OTHER_PROTOCOL and value is not NOT_APPLICABLE
 
 
-def _leaf(ref: Optional[str], parts: Sequence[str]) -> Optional[str]:
-    """The record name a row says (its key's last entry; a file's "rows" are
-    its own count, named by the file), by which two fields that record one
-    fact are told to be the same (`_same_as`)."""
+#: **The fields that record one fact under one entry name** (B72-C1), by
+#: record key: a count of the data version in its counts and as the run read
+#: it (a KG edge set's pairs, positive edges, edges without a negative), and
+#: a loss setting as a learning setting and in the loss identity (a loss
+#: weight). Only these: elsewhere two fields that share an entry name record
+#: different facts (the training's seed and a split's seed; the
+#: measurement's batch size and device and the training's), each row with
+#: its own values.
+_ONE_FACT = (("count", ("data.counts.", "run_counts.counts.")),
+             ("loss", ("model.learning_settings.", "model.loss_identity.")))
+
+
+def _fact(ref: Optional[str]) -> Optional[Tuple[str, str]]:
+    """The one fact a row records where another field records it too
+    (`_ONE_FACT`; a file of the data's identity names its rows, which are its
+    count: a KG edge set's pairs file's rows are its pairs), or None, when
+    only a digest makes it one fact with another row (`_same_as`)."""
     if not ref:
         return None
-    *head, leaf = ref.split(".")
-    return head[-1] if leaf == "rows" and head else leaf
+    if ref.startswith("data.identity.") and ref.endswith(".rows"):
+        name = ref[len("data.identity."):-len(".rows")]
+        return ("count", name) if name and "." not in name else None
+    for fact, prefixes in _ONE_FACT:
+        for prefix in prefixes:
+            name = ref[len(prefix):] if ref.startswith(prefix) else ""
+            if name and "." not in name:
+                return fact, name
+    return None
 
 
-def _same_as(values: Sequence[Any], ref: Optional[str], parts: Sequence[str],
-             seen: Sequence[Tuple[Tuple[str, ...], Optional[str], Tuple[str, ...], str]]
+def _same_as(values: Sequence[Any], ref: Optional[str],
+             seen: Sequence[Tuple[Tuple[str, ...], Optional[Tuple[str, str]], str]]
              ) -> Optional[str]:
     """**A fact said once** (B72-C1): the whole name of an earlier row whose
     values are recorded alike in every column with this row's, where they
     are one fact: a digest (one content, whichever field records it: the
     graph view's digest as the split's view digest, the samples' as their
-    content reference's), or the same record name in another field (a loss
-    weight as a learning setting and in the loss identity, a count in the
-    data's counts and the run's). None otherwise, or for a row with no value
-    in any column."""
+    content reference's), or one of the facts two fields record under one
+    name (`_fact`: a loss weight as a learning setting and in the loss
+    identity, a count in the data's identity, its counts and the run's).
+    None otherwise (a training seed beside a split seed of the same value is
+    two facts), or for a row with no value in any column."""
     if not any(v is not None and v is not ABSENT and _applies(v) for v in values):
         return None
     texts = tuple(_compare_value(v) for v in values)
     digest = any(r.is_digest(v) for v in values)
-    leaf = _leaf(ref, parts)
-    for earlier, earlier_leaf, earlier_parts, label in seen:
-        if earlier != texts:
-            continue
-        if digest or (leaf is not None and leaf == earlier_leaf
-                      and earlier_parts[:1] != tuple(parts[:1])):
+    fact = _fact(ref)
+    for earlier, earlier_fact, label in seen:
+        if earlier == texts and (digest or (fact is not None and fact == earlier_fact)):
             return label
     return None
 
@@ -1395,12 +1414,12 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     hidden, unknown_hidden, single_hidden, group_shown, path_shown = 0, 0, 0, None, None
     # Each row's values, kept to say a later row of the same fact by its
     # relation to the first (`_same_as`).
-    seen: List[Tuple[Tuple[str, ...], Optional[str], Tuple[str, ...], str]] = []
+    seen: List[Tuple[Tuple[str, ...], Optional[Tuple[str, str]], str]] = []
     for group, parts, ref, values, whys in _rows(columns):
         digests = {value for value in values if r.is_digest(value)}
         full = len({r.short_hex(value) for value in digests}) < len(digests)
-        same = _same_as(values, ref, parts, seen)
-        seen.append((tuple(_compare_value(v) for v in values), _leaf(ref, parts), tuple(parts),
+        same = _same_as(values, ref, seen)
+        seen.append((tuple(_compare_value(v) for v in values), _fact(ref),
                      "the column heads" if ref == "report_sha256" else _label(parts)))
         if ref == "report_sha256" and not full and all(
                 name.endswith(f" · {r.short_hex(row.get('report_sha256'))}")
