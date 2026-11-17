@@ -1650,11 +1650,12 @@ def details_list(rows: Iterable[Tuple[str, str]], *,
 #: own click focuses, never this); only where the drawing replaced the
 #: control the reader's focus was on in it, and left focus nowhere, is focus
 #: put back on the same place, without scrolling (so Escape still reaches the
-#: popover). A disclosure is the same one while the region names the same
-#: thing (`keep_as`, on an element around it; none: the region's one thing),
-#: its summary's or its button's words are the same and so is its place among
-#: those; a choice for one no longer drawn (another run, another job) is
-#: dropped.
+#: popover); focus the reader moved away, to the page itself included (a
+#: click on text), is never brought back. A disclosure is the same one while
+#: the region names the same thing (`keep_as`, on an element around it;
+#: none: the region's one thing), its summary's or its button's words are the
+#: same and so is its place among those; a choice for one no longer drawn
+#: (another run, another job) is dropped.
 KEEP_OPEN_JS = r"""
 (function () {
   var MARK = 'data-shep-kept', chosen = {}, focused = null;
@@ -1728,7 +1729,20 @@ KEEP_OPEN_JS = r"""
       return at >= 0;
     });
   });
-  element.addEventListener('focusout', function (e) { if (e.relatedTarget) { focused = null; } });
+  // Focus that went nowhere is the reader's (a click on text or a chart),
+  // unless a drawing removed its control: the browser tells the two alike (a
+  // focusout, the control still in the page), so the place is forgotten once
+  // the script running now (a drawing's, which removes it) is done, where
+  // the control is still in the page and focus is not on it.
+  element.addEventListener('focusout', function (e) {
+    var was = focused;
+    if (e.relatedTarget) { focused = null; return; }
+    queueMicrotask(function () {
+      if (was && focused === was && was.el.isConnected && document.activeElement !== was.el) {
+        focused = null;
+      }
+    });
+  });
   new MutationObserver(keep).observe(element, {childList: true, subtree: true, attributes: true,
     attributeFilter: ['open', 'hidden', 'aria-expanded', MARK]});
   keep();

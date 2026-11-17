@@ -3391,12 +3391,24 @@ const { chromium } = require('playwright');
       await push(); seen.again = await read(id);
       await page.keyboard.press('Escape');
       seen.escaped = await read(id);
-      await push(); seen.afterEscape = await read(id);
+      await mark(); await push(); seen.afterEscape = await read(id);
       // Opened, then closed by a click outside it; a drawing leaves it closed.
       await page.click(details);
       await page.mouse.click(Math.floor(w / 2), h - 8);
       seen.outside = await read(id);
       await push(); seen.afterOutside = await read(id);
+      // Closed with Escape (focus on its button), then a click on the page
+      // itself, nothing focusable: focus is the page's, and the drawings
+      // that follow (the chip's lead coming and going) leave it there, so
+      // Space opens nothing.
+      await page.click(details);
+      await page.keyboard.press('Escape');
+      await page.mouse.click(Math.floor(w / 2), h - 8);
+      seen.leftForPage = await read(id);
+      seen.pageRedrawn = [];
+      for (let i = 0; i < 2; i++) { await push(); seen.pageRedrawn.push(await read(id)); }
+      await page.keyboard.press('Space');
+      seen.space = await read(id);
       size[id] = seen;
     }
     // Another run viewed and another dataset: the popover is drawn closed.
@@ -3428,7 +3440,12 @@ def test_the_details_popovers_stay_as_the_reader_left_them_across_redraws(tmp_pa
     open through each drawing with the focus where it was (its × , where its
     open put it); closed with Escape or a click outside it, it stays closed
     through the next; and a header drawn for another run draws it closed.
-    Fails on e0e4237, whose popovers were closed by the first drawing."""
+    Fails on e0e4237, whose popovers were closed by the first drawing. Focus
+    on a popover's button that a drawing replaces stays on it; focus the
+    reader gave the page (Escape, then a click on nothing focusable) stays
+    the page's through the next drawings, so Space opens nothing (the review
+    of 8b75d85: the keeper put focus back on the chip's button, kept from
+    before the click)."""
     from tests.fixtures.browser import node_with_playwright, run_node
 
     if node_with_playwright() is None:
@@ -3484,7 +3501,19 @@ def test_the_details_popovers_stay_as_the_reader_left_them_across_redraws(tmp_pa
                 assert got[after]["focus"] == opened["focus"], (size, name, after, got)
             assert got["opened"]["text"] != got["redrawn"]["text"], (size, name, got)
             assert not got["escaped"]["open"] and got["escaped"]["focus"].endswith(" details")
+            # Its button drawn again under the reader's focus keeps that focus:
+            # the chip's is drawn anew there (its lead went), so the keeper
+            # put focus back on the new one.
+            assert got["afterEscape"]["focus"] == got["escaped"]["focus"], (size, name, got)
+            if name == "shep-train-chip":
+                assert not got["afterEscape"]["sameFocus"], (size, name, got)
             for closed in ("afterEscape", "outside", "afterOutside"):
                 assert not got[closed]["open"] and not got[closed]["shown"], \
                     (size, name, closed, got)
+            # Focus the reader gave the page stays the page's through the
+            # drawings (review of 8b75d85: the keeper put it back on the
+            # chip's button, and Space then opened its popover).
+            assert got["leftForPage"]["focus"] == "body", (size, name, got)
+            for after in (*got["pageRedrawn"], got["space"]):
+                assert after["focus"] == "body" and not after["open"], (size, name, got)
         assert not popovers["otherRun"]["open"], (size, popovers["otherRun"])
