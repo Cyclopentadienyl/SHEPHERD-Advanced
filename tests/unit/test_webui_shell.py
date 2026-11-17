@@ -1151,14 +1151,25 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
   await page.waitForSelector('#shep-chips .shep-chip-readonly', { timeout: 60000 });
   await page.click('#shep-tab-settings-button');
   await page.waitForSelector('#allocator_preset input:disabled', { timeout: 30000 });
-  await page.waitForFunction(() => window.__shepQueue.inflight === 0, null, { timeout: 30000 });
+  // The page's open answered: D8's reason drawn for this request.
+  await page.waitForSelector('#runtime_access_reason .shep-reason', { state: 'visible', timeout: 30000 });
+  await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
   console.log(JSON.stringify(await page.evaluate(() => {
     const s = (sel) => { const c = getComputedStyle(document.querySelector(sel));
       return { background: c.backgroundColor, border: c.borderTopColor, color: c.color }; };
+    const box = (sel) => { const r = document.querySelector(sel).getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
+    const panel = document.getElementById('shep-settings');
     return { chip: s('#shep-chips .shep-chip-readonly'),
              fields: window.__shepLook.fields(document.getElementById('shep-tab-settings')),
              select: s('#allocator_preset .wrap:has(> .wrap-inner)'), value: s('#allocator_preset input'),
-             box: s('#torch_compile input[type=checkbox]'), label: s('#torch_compile label') };
+             box: s('#torch_compile input[type=checkbox]'), label: s('#torch_compile label'),
+             reason: { text: document.querySelector('#runtime_access_reason').innerText.trim(),
+                       at: box('#runtime_access_reason .shep-reason'),
+                       inBody: !!document.querySelector('#shep-settings-bd #runtime_access_reason') },
+             facts: box('#runtime_facts'), allocator: box('#allocator_preset'), footer: box('#shep-settings-ft'),
+             footerText: document.getElementById('shep-settings-ft').innerText,
+             said: (panel.innerText.match(/Operator controls only/g) || []).length };
   })));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -1257,7 +1268,11 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     D8 refuses (no deployment mode): Settings' allocator select and
     torch.compile checkbox are drawn off (the disabled fill, border and grey
     words, the select's value at 4.5:1 on it), not like the enabled ones an
-    operator sees; the header's read-only chip is the amber lozenge."""
+    operator sees; the header's read-only chip is the amber lozenge. The
+    "Operator controls only: …" reason is said once in the panel, next to
+    the fields it turns off: in the panel's body, between the facts and the
+    allocator select, not in the buttons' row under the two fields and their
+    accordions (where it was: NEW-settings-datasets-footer-3)."""
     from src.webui import style
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import LOOK_JS, QUEUE_JS, node_with_playwright, run_node
@@ -1281,6 +1296,12 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     assert seen["chip"]["background"] == _rgb(tokens["--shep-amber-50"])
     assert seen["chip"]["color"] == _rgb(tokens["--shep-amber-800"])
     assert any(f["disabled"] for f in seen["fields"])
+    reason, allocator = seen["reason"], seen["allocator"]
+    assert reason["text"].split() == ["🔒", *"Operator controls only: deployment mode not set to M1.".split()], reason
+    assert reason["inBody"] and seen["said"] == 1, seen
+    assert seen["facts"]["bottom"] <= reason["at"]["top"] + 0.5, seen
+    assert reason["at"]["bottom"] <= allocator["top"] + 0.5 <= reason["at"]["bottom"] + 24, seen
+    assert "Operator controls only" not in seen["footerText"], seen
 
 
 #: Settings' scroll region (its level-1 tab item, side by side) with the

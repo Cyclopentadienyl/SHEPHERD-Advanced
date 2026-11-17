@@ -43,10 +43,11 @@ Operator controls (D8, M5-1):
     unless D8 allows it. The page follows the one gated-button rule
     (`chips.gated`, the WebUI skill's §3) when it is opened, and the buttons
     on the shell's slow timer: no lock while D8 allows the request; for a
-    request D8 refuses, both buttons disabled with the lock, the two fields
+    request D8 refuses, the buttons disabled with the lock, the two fields
     that need the operator (the allocator and torch.compile) not interactive,
-    and the visible "Operator controls only: …" reason beside the buttons
-    (`chips.operator_only`). Restart and Stop service are also off while a
+    and the visible "Operator controls only: …" reason once, next to the
+    fields, above them (`chips.operator_only`, `data_locations.reason_line`:
+    the Data locations panel says its own the same way). Restart and Stop service are also off while a
     GPU job runs, and Restart while no saved allocator waits for it, each
     said beside them. A disabled control is a display, never the control.
 
@@ -69,7 +70,7 @@ from src.config.runtime_presets import (
 )
 from src.webui.components import data_locations
 from src.webui.components import renderers as r
-from src.webui.components.chips import LOCK, gated, operator_only
+from src.webui.components.chips import gated, operator_only
 from src.webui.operator_access import operator_access
 from src.webui.shell import SETTINGS as SETTINGS_PAGE
 from src.webui.shell import plain_html, tab_elem_id
@@ -408,8 +409,9 @@ RESTART_LABEL = "Restart Backend"
 def _refresh_restart_lock(request: gr.Request):
     """Apply, Restart and Stop service as this request may use them, by the
     one gated-button rule (`chips.gated`): for a refused request, all
-    disabled with the lock and D8's short reason beside them
-    (`chips.operator_only`; the header chip's ⓘ gives D8's whole reason);
+    disabled with the lock and D8's short reason once, above the fields it
+    turns off too (`chips.operator_only`; the header chip's ⓘ gives D8's
+    whole reason);
     Restart and Stop service also off while a GPU job runs (`RESTART_BUSY`),
     and Restart while a restart would change nothing (`restart_applies`,
     `RESTART_IDLE`), the reason beside them. A display: each button's handler
@@ -417,9 +419,8 @@ def _refresh_restart_lock(request: gr.Request):
     locked = is_training_active()
     access = operator_access(request)
     idle = not restart_applies(os.environ, load_runtime_settings())
-    reason = ("" if access.allowed else
-              f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
-              f'<span>{r.e(operator_only(access.condition))}.</span></div>')
+    reason = "" if access.allowed else data_locations.reason_line(
+        f"{operator_only(access.condition)}.")
     why = RESTART_BUSY if locked else RESTART_IDLE if idle and access.allowed else None
     return (
         gr.update(**gated(APPLY_LABEL, access.allowed)),
@@ -555,6 +556,9 @@ def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
                    elem_id="shep-settings-hd")
         with gr.Column(elem_id="shep-settings-bd"):
             facts = plain_html(facts_html(settings=settings), elem_id="runtime_facts")
+            # Why the fields and the buttons are off for this request (D8),
+            # next to the fields it turns off (NEW-settings-datasets-footer-3).
+            access_note = plain_html("", visible=False, elem_id="runtime_access_reason")
             allocator = gr.Dropdown(
                 label="Memory allocator", choices=ALLOCATOR_CHOICES, value=saved_alloc,
                 interactive=False, elem_id="allocator_preset",
@@ -573,10 +577,9 @@ def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
                                     scale=0, elem_id="runtime_restart")
             stop_btn = gr.Button(STOP_LABEL, variant="secondary", interactive=False, scale=0,
                                  elem_id="runtime_stop")
-            # Why Restart and Stop are off (a GPU job runs) and why all are
-            # (D8), beside them.
+            # Why Restart and Stop are off (a GPU job runs, nothing to apply),
+            # beside them.
             restart_lock_note = plain_html("", visible=False, elem_id="runtime_restart_lock")
-            access_note = plain_html("", visible=False, elem_id="runtime_access_reason")
         # The one question row of Restart Backend and Stop service (`_ask`):
         # the question asked, its own confirming button, Cancel.
         with gr.Row(visible=False, elem_classes=["shep-panel-ft"],
