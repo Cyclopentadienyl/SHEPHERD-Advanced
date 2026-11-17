@@ -3941,7 +3941,10 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-why {{ color: var(--shep-text-2); }}
 {_TAB} .shep-dx-tbl-wrap {{ margin: 0; }}
 {_TAB} .shep-dx-tbl td, {_TAB} .shep-dx-tbl th {{ white-space: nowrap; }}
-{_TAB} .shep-dx-tbl td.shep-dx-dis {{ white-space: normal; width: 100%; min-width: 9em; }}
+/* A disease name breaks anywhere it must (an unbroken token of a long name, 40 characters and
+   more, widened the table past its panel at 1440 x 900, Phenotypes and Evidence out of view in
+   its sideways scroll: PTR-LAYOUT); its words still break between words first. */
+{_TAB} .shep-dx-tbl td.shep-dx-dis {{ white-space: normal; width: 100%; min-width: 9em; overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-tbl td.shep-dx-wrap {{ white-space: normal; min-width: 7em; overflow-wrap: anywhere; }}
 /* The evidence label wraps before the table scrolls sideways (beside the
    Phenotypes k/N column, R-1d): on one line wherever the panel has room. */
