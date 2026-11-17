@@ -3788,6 +3788,30 @@ def test_the_test_page_and_datasets_share_one_redaction():
     assert tp.SERVER_PATH == path_redaction.SERVER_PATH
 
 
+def test_every_surface_says_a_server_path_in_the_one_words():
+    """Verification of fcc3dea (V-AUD-4): the investigation notes on Test,
+    Models and the API's record contest read a hidden path as "<path>",
+    where every other surface says `path_redaction.SERVER_PATH`; and four
+    modules each defined those words again. One definition now, read by
+    every surface. Fails on fcc3dea."""
+    import re
+    from pathlib import Path
+
+    from src.api.services import record_states
+    from src.utils import deployment_view, path_redaction
+    from src.webui.components import diagnosis_card
+
+    said = path_redaction.SERVER_PATH
+    assert record_states._open_note("seed drift; see /srv/ws/demo/notes.txt") == (
+        f"seed drift; see {said}")
+    assert diagnosis_card.SERVER_PATH == deployment_view.HIDDEN_PATH == said
+    src = Path(path_redaction.__file__).resolve().parents[1]
+    defined = re.compile(r"(?:=|other=)\s*[\"']" + re.escape(said) + r"[\"']")
+    again = sorted(str(path.relative_to(src)) for path in src.rglob("*.py")
+                   if defined.search(path.read_text(encoding="utf-8")))
+    assert again == ["utils/path_redaction.py"], again
+
+
 
 def test_the_notes_who_field_holds_a_normal_name():
     """M5-3: "Who" was 166 px wide at 1920 x 1080, so "research screenshots v2"

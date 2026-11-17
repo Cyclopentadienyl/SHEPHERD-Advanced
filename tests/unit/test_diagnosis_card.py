@@ -880,6 +880,27 @@ def test_no_registry_is_said_without_a_path(root, tmp_path, monkeypatch):
                     "<registry>/versions/x); see a server path")
 
 
+def test_a_refusal_names_a_server_directory_as_every_page_does(tmp_path, monkeypatch):
+    """Verification of fcc3dea (V-AUD-5): Diagnosis redacted with the cohort
+    registry as its only named root, so a workspace, import or evidence path
+    in a reference cohort's refusal read "a server path" here and
+    "<workspaces>/…" on the Test page and in the notes. It reads by the one
+    pair now (`workspaces.redact_server`, `workspaces.path_roots`). Fails on
+    fcc3dea."""
+    from src.webui.components import workspaces
+
+    registry, root = tmp_path / "reg", tmp_path / "ws"
+    registry.mkdir(), root.mkdir()
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
+    text = (f"{root}/demo/samples.jsonl cannot be read; {registry}/versions/x is not a "
+            "cohort; see /etc/shepherd/notes.txt")
+    said = card.redacted(text)
+    assert said == ("<workspaces>/demo/samples.jsonl cannot be read; <registry>/versions/x "
+                    "is not a cohort; see a server path")
+    assert said == workspaces.redact_server(text, workspaces.path_roots())
+
+
 # --------------------------------------------------------------------------- serving states (A3b)
 @pytest.mark.parametrize("lifecycle, state, words", [
     ({"serving": "serving", "loading": False, "in_flight": 0}, "serving", "Serving"),

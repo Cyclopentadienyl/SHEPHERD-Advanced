@@ -259,10 +259,11 @@ def _store_notes(version: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
 
 def _open_note(value: Any) -> str:
     """A note's words for an open surface: no absolute server path left (the
-    one redaction, `redact_paths`)."""
-    from src.utils.path_redaction import redact_paths
+    one redaction, `redact_paths`), each read in the words every surface uses
+    (`SERVER_PATH`)."""
+    from src.utils.path_redaction import SERVER_PATH, redact_paths
 
-    return redact_paths(value, (), other="<path>")
+    return redact_paths(value, (), other=SERVER_PATH)
 
 
 def _group_notes(read: Tuple[List[Dict[str, Any]], List[str]], key: Sequence[Any], *,

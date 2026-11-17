@@ -59,10 +59,10 @@ from src.config.deployment_settings import (
     KEY_WORKSPACES_ROOT,
     KEYS,
 )
-from src.utils.path_redaction import redact_paths
+from src.utils.path_redaction import SERVER_PATH, redact_paths
 
-#: What a hidden path reads as (the dashboard's words for one).
-HIDDEN_PATH = "a server path"
+#: What a hidden path reads as: the words every surface uses for one.
+HIDDEN_PATH = SERVER_PATH
 
 #: Each data location's plain name and what it is for (who needs it), in the
 #: order Settings shows them. The variable names appear only beside them.

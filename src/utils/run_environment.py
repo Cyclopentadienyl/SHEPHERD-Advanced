@@ -714,9 +714,6 @@ def _identity_of(entry: Any) -> Any:
 #: A native identity's facts a record holds (`COMPONENT_FIELDS`), its reason
 #: among them.
 _NATIVE_FACTS = ("state", "count", "aggregate_sha256", "reason")
-#: What a path in a recorded text is shown as (`recorded_components`): the
-#: words every surface uses for a server path it does not name.
-_SERVER_PATH = "a server path"
 
 
 def recorded_components(components: Any) -> Any:
@@ -786,9 +783,10 @@ def _redacted(value: Any) -> Any:
     """`value` with every text in it, an object's keys included, through the
     one D7 redaction (`path_redaction.redact_value`, no root named: any
     absolute path is replaced); every other value as it is."""
-    from src.utils.path_redaction import redact_value
+    # A path in a recorded text reads in the words every surface uses.
+    from src.utils.path_redaction import SERVER_PATH, redact_value
 
-    return redact_value(value, (), other=_SERVER_PATH)
+    return redact_value(value, (), other=SERVER_PATH)
 
 
 def _identity_items(identity: Any) -> Tuple[Optional[str], List[Tuple[str, Optional[str]]]]:
