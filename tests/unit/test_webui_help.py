@@ -29,7 +29,8 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   is bold, and a hostile text shows as literal text in each part; a bubble
   whose ⓘ is scrolled out of view (the window or a region) is not drawn and
   takes no click, and is drawn again with its ⓘ back (T08-help-1); a click on
-  a control under a focus preview reaches it (T08-flow-1); and, in the served
+  a control under a focus preview reaches it (T08-flow-1), and the wheel over
+  that preview still scrolls its capped text; and, in the served
   dashboard, Tab meets each checkbox's ⓘ and box in the order drawn
   (T08-flow-3).
 
@@ -838,6 +839,116 @@ def test_a_focus_preview_lets_the_click_through_to_the_control_under_it(tmp_path
         # Its focus keeps it while the pointer crosses it; focus leaving closes it.
         assert s["again"]["shown"] and s["crossed"]["shown"] and s["crossed"]["focus"] == "seed-i", (size, s)
         assert not s["left"]["shown"], (size, s)
+
+
+#: The review of 9c4580f (T08-flow-1). A field's ⓘ focused with the page
+#: scrolled part way, its preview taller than the window (its height capped,
+#: its text scrolling inside); the pointer moved over it, then the wheel turned
+#: over it: by a little, to the text's end, and once more. Each read once the
+#: text or the page moved.
+_WHEEL_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [420, 360]]) {
+    const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
+    await page.goto('file://' + process.argv[2]);
+    await page.waitForSelector('#fld button.shep-i');
+    await page.evaluate(() => window.scrollTo(0, 520));
+    await page.focus('#fld button.shep-i');
+    await page.waitForFunction(() => {
+      const b = document.getElementById('shep-help-bubble');
+      return !!b && !b.hidden;
+    });
+    const state = () => page.evaluate(() => {
+      const b = document.getElementById('shep-help-bubble'), bd = b.querySelector('.shep-bubble-bd');
+      const r = b.getBoundingClientRect();
+      return { shown: !b.hidden && b.checkVisibility({ visibilityProperty: true }),
+               role: b.getAttribute('role'), through: getComputedStyle(b).pointerEvents === 'none',
+               box: { left: r.left, top: r.top, width: r.width, height: r.height },
+               text: bd.scrollTop, room: bd.scrollHeight - bd.clientHeight, page: window.scrollY,
+               focus: document.activeElement.matches('#fld button.shep-i') };
+    });
+    const wheel = async (dy) => {
+      const before = await state();
+      await page.mouse.wheel(0, dy);
+      await page.waitForFunction((b) => {
+        const bd = document.querySelector('#shep-help-bubble .shep-bubble-bd');
+        return bd.scrollTop !== b.text || window.scrollY !== b.page;
+      }, before);
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      return state();
+    };
+    const opened = await state();
+    const box = opened.box;
+    await page.mouse.move(box.left + box.width / 2, box.top + box.height / 2, { steps: 4 });
+    const over = await state();
+    const wheeled = await wheel(120);
+    const seen = { opened, over, wheeled };
+    // On to the text's end and past it, where the wheel moved the text.
+    if (wheeled.text > opened.text) {
+      seen.end = await wheel(Math.ceil(opened.room) + 400);
+      seen.past = await wheel(120);
+    }
+    out[`${w}x${h}`] = seen;
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_wheel_over_a_focus_preview_scrolls_its_text_though_clicks_go_through(tmp_path):
+    """The review of 9c4580f (T08-flow-1): a preview focus opened lets the
+    reader's pointer through once it moves over it (its pointer events off),
+    so the wheel turned over a preview whose height was capped scrolled the
+    page behind it, never its text (420 x 360: the text at 0, the page 520 →
+    640), which the mouse could then not reach. Now, at 1850 x 960 and
+    420 x 360, a field's preview taller than the window, the pointer over it:
+    it still lets the pointer through (clicks reach the control under it),
+    the wheel over it scrolls its text and not the page, to the text's end,
+    and the page past that end (the wheel is never held). Fails on 4b5cee6
+    (the page scrolled) and on e0e4237 (the preview took the pointer)."""
+    found = node_with_playwright()
+    if found is None:
+        pytest.skip("Node with Playwright is not installed")
+    node, env = found
+    registry = h.HelpRegistry()
+    registry.field("fld", "Epochs", "How many passes over the training pairs.\n\n" + "\n".join(
+        f"- Item {i}: a long line of explanation that wraps over two lines in the bubble."
+        for i in range(40)))
+    page = tmp_path / "wheel.html"
+    page.write_text(
+        f"""<!doctype html><html><head><meta charset="utf-8">
+<style>body {{ margin: 0; font: 15px sans-serif; }} {h.HELP_CSS}</style>{h.HELP_HEAD}</head><body>
+<div style="height: 600px"></div><div style="padding: 0 40px">
+<div class="block" id="fld" style="width: 300px; padding: 16px; border: 1px solid #ccc">
+<label class="block" style="display: block"><span data-testid="block-info">Epochs</span><input></label>
+</div></div><div style="height: 1400px"></div>
+{registry.texts_html()}</body></html>""", encoding="utf-8")
+    script = tmp_path / "wheel.cjs"
+    script.write_text(_WHEEL_JS, encoding="utf-8")
+    result = subprocess.run([node, str(script), str(page)], env=env, capture_output=True,
+                            text=True, timeout=240)
+    assert result.returncode == 0, result.stderr
+    seen = json.loads(result.stdout)
+    assert set(seen) == {"1850x960", "420x360"}
+    for size, s in seen.items():
+        opened, over = s["opened"], s["over"]
+        # A focus preview whose text scrolls inside, more of it than one turn.
+        assert opened["shown"] and opened["role"] == "tooltip" and opened["focus"], (size, s)
+        assert opened["room"] > 240 and opened["text"] == 0, (size, s)
+        # The pointer over it: it lets the pointer through.
+        assert over["shown"] and over["through"], (size, s)
+        # The wheel moves its text, not the page, and the pointer still goes through.
+        assert s["wheeled"]["text"] > 0 and s["wheeled"]["page"] == opened["page"], (size, s)
+        assert s["wheeled"]["shown"] and s["wheeled"]["through"] and s["wheeled"]["focus"], (size, s)
+        assert abs(s["end"]["text"] - opened["room"]) <= 1 and s["end"]["page"] == opened["page"], \
+            (size, s)
+        # Past the text's end the page scrolls on.
+        assert s["past"]["page"] > opened["page"] and s["past"]["focus"], (size, s)
 
 
 #: T08-flow-3. The served dashboard at each window: each page opened (its

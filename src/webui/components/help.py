@@ -51,7 +51,8 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   it): the reader's pointer moving over it turns its pointer events off, so
   a click goes to the control under it, and only its focus keeps or ends it
   (a hover preview stays the pointer's, to be read on, WCAG 1.4.13; a pinned
-  bubble is a dialog);
+  bubble is a dialog); the wheel over it still scrolls its text where its
+  height is capped, then the page past the text's end;
 - does not draw a bubble whose ⓘ is out of view (outside the window, or
   outside the visible part of a region it scrolls in: as Floating UI's
   ``hide`` reads its reference's clipping ancestors) and lets clicks reach
@@ -609,11 +610,31 @@ _HELP_JS = r"""
   // Who the bubble answers to: pinned, or a preview the pointer opened, it
   // takes the pointer's events (the pointer can be moved onto it, WCAG
   // 1.4.13); a preview focus opened lets the reader's pointer through once
-  // it moves over it (`yielded`).
+  // it moves over it (`yielded`), its own wheel aside (`wheelText`).
   function claim() {
     if (!bubble) { return; }
     if (pinned || byPointer) { yielded = false; }
     bubble.style.pointerEvents = yielded ? 'none' : '';
+    if (yielded) { document.addEventListener('wheel', wheelText, {passive: false}); }
+    else { document.removeEventListener('wheel', wheelText); }
+  }
+  // A preview that lets the pointer through still scrolls its own text under
+  // the wheel (its height capped, its text scrolling inside), as one that
+  // takes the pointer does: the wheel over it moves its text while the text
+  // can move, and past its end, or with none to move, the page as before.
+  function wheelText(e) {
+    if (!yielded || !bubble || bubble.hidden || bubble.style.visibility === 'hidden' ||
+        e.ctrlKey || !e.deltaY) { return; }
+    var r = bubble.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom) {
+      return;
+    }
+    var bd = bubble.querySelector('.shep-bubble-bd');
+    var dy = e.deltaY * (e.deltaMode === 1 ? (parseFloat(getComputedStyle(bd).lineHeight) || 20)
+                         : e.deltaMode === 2 ? bd.clientHeight : 1);
+    if ((dy > 0 ? bd.scrollHeight - bd.clientHeight - bd.scrollTop : bd.scrollTop) < 1) { return; }
+    e.preventDefault();
+    bd.scrollTop += dy;
   }
   // `viaPointer`: a hover opened it. Focus on the ⓘ of a preview already
   // shown leaves it whoever's it was.
