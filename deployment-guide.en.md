@@ -3522,7 +3522,8 @@ a run.
   `logs/train_….json`), else that there is none ("no run directory, so no log" for a run refused
   before it made its run directory). The last lines of its output follow
   under "Last output (N lines)": open in a window at least 1000 px tall, closed to that one line
-  in a shorter one so the charts keep their room (opening or closing it holds for this page);
+  in a shorter one so the charts keep their room (opening or closing it holds while the banner
+  shows that failed run; the next failed run's starts by the window again);
   four lines show at a time, the rest scroll in the box (in a narrow window all of them show).
   Dismiss hides the banner for this browser tab. Every notice in the run bar shows names and
   paths as text, whatever characters a workspace or run name holds.
