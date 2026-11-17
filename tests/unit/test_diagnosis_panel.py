@@ -3279,7 +3279,144 @@ def test_the_identity_drawer_leaves_the_device_line_to_the_footer():
     assert "data-shep-focus" not in dp.open_identity(state, result)["id_model"]["value"]
 
 
-#: T06-D in a browser (1850 x 960), a real disease child served (the `served`
+def test_each_opening_of_model_in_use_is_a_request_of_its_own():
+    """R-28: Details › and "Recorded results ›" each draw Model in use with a
+    token of their own (``data-shep-open``), so its view scrolls on every
+    request, the drawer already open or not, and the card's redraws of the
+    same opening (its reads, a diagnosis) carry the same token and move
+    nothing."""
+    state = _card(_status_serving(_served_identity()))
+    result = _sample_result()
+    token = re.compile(r'^<div data-shep-open="(\d+)">')
+    first = dp.open_identity(state, result, "model", "evidence")
+    again = dp.open_identity(state, result, "model", "evidence")
+    details = dp.open_identity(state, result)
+    tokens = [token.match(out["id_model"]["value"]).group(1) for out in (first, again, details)]
+    assert len(set(tokens)) == 3, tokens
+    assert first["identity_view"]["opened"] == int(tokens[0])
+    redrawn = dp.identity_outputs(first["identity_view"], state, result)["id_model"]["value"]
+    assert redrawn == first["id_model"]["value"]
+    untold = dp.identity_outputs({"open": True, "seg": "model"}, state, result)["id_model"]
+    assert untold["value"].startswith('<div data-shep-open="">')
+
+
+#: R-28's two openers in a browser (1440 x 900, a stand-in disease model
+#: served), each read once what is drawn holds still: Details ›, then
+#: "Recorded results ›" with the drawer open, then again after the reader
+#: scrolled back up; the drawer closed, "Recorded results ›", then Details ›.
+#: The drawer's scroll region (top, room) and where Evidence and the first
+#: section are against it, after each.
+_OPENERS_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForFunction(() => /Disease task model/.test((document.querySelector('#shep-dx-card') || {}).textContent || ''),
+                             null, { timeout: 30000 });
+  const read = () => page.evaluate(() => {
+    const bd = document.querySelector('#shep-dx-identity-bd'), box = bd.getBoundingClientRect();
+    const at = (s) => (s ? Math.round(s.getBoundingClientRect().top - box.top) : null);
+    return { top: Math.round(bd.scrollTop), room: bd.scrollHeight - bd.clientHeight,
+             evidence: at(document.querySelector('#shep-dx-id-model [data-sec="evidence"]')),
+             first: at(document.querySelector('#shep-dx-id-model [data-sec]')) };
+  });
+  // Until the drawer's region and its content hold still for two frames.
+  const still = () => page.evaluate(async () => {
+    let last = null;
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const bd = document.querySelector('#shep-dx-identity-bd');
+      const now = [bd.scrollTop, bd.scrollHeight, document.querySelector('#shep-dx-id-model').innerHTML].join('|');
+      if (now === last) { return i; }
+      last = now;
+    }
+    return -1;
+  });
+  const opened = async (click, focus) => {
+    const token = await page.evaluate(() => {
+      const t = document.querySelector('#shep-dx-id-model [data-shep-open]');
+      return t ? t.getAttribute('data-shep-open') : null; });
+    await page.click(click);
+    await page.waitForFunction(([before, focus]) => {
+      const view = document.querySelector('#shep-dx-id-model');
+      const t = view && view.offsetParent && view.querySelector('[data-shep-open]');
+      const drawn = t ? t.getAttribute('data-shep-open') !== before
+                      : view && view.offsetParent && view.querySelector('[data-sec]');
+      return drawn && !!view.querySelector('[data-sec="evidence"][data-shep-focus]') === focus;
+    }, [token, focus], { timeout: 20000 });
+    await still();
+    return read();
+  };
+  const details = () => opened('#shep-dx-details-btn', false);
+  const recorded = () => opened('#shep-dx-card-body button[data-key="evidence"]', true);
+  const seen = {};
+  seen.details = await details();
+  seen.then_recorded = await recorded();
+  await page.evaluate(() => { document.querySelector('#shep-dx-identity-bd').scrollTop = 0; });
+  await still();
+  seen.recorded_again = await recorded();
+  await page.click('#shep-dx-identity-close button[data-key="close"]');
+  await page.waitForSelector('#shep-dx-identity', { state: 'hidden' });
+  seen.recorded_closed = await recorded();
+  seen.then_details = await details();
+  // The reader scrolls to the drawer's end; the card's next status read
+  // (its time's markup changes with each read) moves nothing.
+  await page.evaluate(() => { const bd = document.querySelector('#shep-dx-identity-bd'); bd.scrollTop = bd.scrollHeight; });
+  await still();
+  const time = await page.evaluate(() => document.querySelector('#shep-dx-card-time .shep-dx-checked').outerHTML);
+  await page.waitForFunction((h) => { const el = document.querySelector('#shep-dx-card-time .shep-dx-checked');
+                                      return el && el.outerHTML !== h; }, time, { timeout: 30000 });
+  await still();
+  seen.after_a_read = await read();
+  console.log(JSON.stringify(seen));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_details_opens_model_in_use_at_its_top_and_recorded_results_at_evidence(monkeypatch,
+                                                                              tmp_path):
+    """R-28 as drawn (Node and Playwright, skipped without), with the drawer's
+    region taller than its view: Details › shows Model in use from its top
+    (Warnings first) and "Recorded results ›" scrolls Evidence to the top of
+    the drawer's view, whichever was asked first and with the drawer open or
+    closed, and again after the reader scrolled; the card's status read after
+    the reader scrolled moves nothing (a redraw is no new opening). Before,
+    only a drawer opened from closed scrolled (on its mount): Details › then
+    Recorded results ›
+    left Evidence below the fold, and Recorded results › then Details › left
+    the drawer scrolled at Evidence, Warnings above its top."""
+    from src.webui import shell
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    status = _status_serving(_task_identity("disease_task"))
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (status, None))
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": True, "workspaces": [], "serving": None,
+        "item": None, "item_problem": None, "recorded": None, "trained": None,
+        "cohorts": None})
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_OPENERS_JS, tmp_path, base[:-len("gradio_api")])
+    room = seen["details"]["room"]
+    assert room > 0, seen                 # the drawer has more than its view holds
+    for step in ("details", "then_details"):
+        assert seen[step]["top"] == 0 and seen[step]["first"] <= 16, (step, seen)
+    for step in ("then_recorded", "recorded_again", "recorded_closed"):
+        drawn = seen[step]
+        assert drawn["top"] > 0, (step, seen)
+        assert abs(drawn["evidence"]) <= 2 or drawn["top"] == drawn["room"], (step, seen)
+    assert seen["after_a_read"]["top"] == room, seen      # a redraw is no new opening
 #: fixture: the real application and pipeline, explanations on): a query run;
 #: then what one screen says, view by view, with the counts a reader sees
 #: (`innerText`, so a closed disclosure's words are not counted).

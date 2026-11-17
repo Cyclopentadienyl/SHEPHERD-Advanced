@@ -2491,7 +2491,10 @@ def model_identity_html(state: Mapping[str, Any], section: Optional[str] = None)
 def identity_outputs(view: Mapping[str, Any], state: Mapping[str, Any],
                      result: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     """The identity drawer as `view` asks: open or closed, on "Model in use"
-    (opened at a section) or "This result"."""
+    (opened at a section) or "This result". Model in use carries the view's
+    ``opened`` token (``data-shep-open``): its page scrolls the drawer once
+    for each token (`FACTS_FOCUS_JS`), so each request to open it is drawn
+    as asked and a redraw of the same opening moves nothing."""
     if not view.get("open"):
         return {"identity_drawer": gr.update(visible=False)}
     on_model = view.get("seg", "model") == "model"
@@ -2501,7 +2504,8 @@ def identity_outputs(view: Mapping[str, Any], state: Mapping[str, Any],
         "identity_drawer": gr.update(visible=True),
         "identity_seg": gr.update(value="model" if on_model else "result"),
         "id_model": view_update(on_model, *_HTML_VIEW,
-                                value=model_identity_html(state, view.get("section"))
+                                value=f'<div data-shep-open="{_e(str(view.get("opened", "")))}">'
+                                + model_identity_html(state, view.get("section")) + "</div>"
                                 if on_model else None),
         "id_result_html": view_update(not on_model, *_HTML_VIEW,
                                       value=None if on_model
@@ -3028,14 +3032,16 @@ def open_identity(state: Any, result: Any, seg: str = "model",
     """Details › (Model in use, at its top), Recorded results › (at Evidence,
     scrolled into view: every section is open) or the badge (This result):
     the identity drawer, in the details column's
-    slot; the change-model drawer closes. While a model change is open (its
+    slot; the change-model drawer closes. Each request is an opening of its
+    own (``opened``, `identity_outputs`), so it is drawn as asked whether the
+    drawer was open or not. While a model change is open (its
     confirmation, or a reload running: `phase` not idle) the change drawer
     stays and the identity drawer does not open: the confirmation, and the
     reload's outcome, are never hidden behind it (Run Diagnosis says to finish
     or cancel the change first)."""
     if phase not in (None, "idle"):
         return {"change_drawer": gr.update(visible=True)}
-    view = {"open": True, "seg": seg, "section": section}
+    view = {"open": True, "seg": seg, "section": section, "opened": time.monotonic_ns()}
     state = state if isinstance(state, Mapping) else card.new_state()
     return {"identity_view": view, "change_drawer": gr.update(visible=False),
             **identity_outputs(view, state, result)}
@@ -3277,20 +3283,30 @@ def reset_change(closed: Any) -> Dict[str, Any]:
 # =============================================================================
 # Tab builder (called by the shell)
 # =============================================================================
-#: Model Facts opened at a section (`renderers.model_facts_html`'s
-#: ``data-shep-focus``, "Recorded results ›" at Evidence) scroll it into view
-#: inside the drawer once it is drawn: every section is open (R-28), so the one
-#: asked for may be below the drawer's fold. Checked when the view mounts (the
-#: drawer opening mounts it with its content) and on every redraw after.
+#: Model in use drawn as each opening asks (R-28), once for each opening's
+#: token (`identity_outputs`' ``data-shep-open``): opened at a section
+#: (`renderers.model_facts_html`'s ``data-shep-focus``, "Recorded results ›" at
+#: Evidence), that section scrolled into view inside the drawer, since every
+#: section is open and the one asked for may be below the drawer's fold;
+#: opened at none (Details ›), the drawer's scroll region at its top, where
+#: Warnings lead. Checked when the view mounts (a closed drawer opening mounts
+#: it with its content) and on each redraw after: Gradio patches the open
+#: drawer's view in place, so a new token may be an attribute's change alone.
+#: A redraw of the same opening (the card's reads, a diagnosis) keeps its
+#: token and moves nothing the reader scrolled.
 FACTS_FOCUS_JS = r"""
+var shepOpened = null;
 var shepFocus = function () {
-  var sec = element.querySelector('[data-shep-focus]');
-  if (sec && !sec.hasAttribute('data-shep-shown')) {
-    sec.setAttribute('data-shep-shown', '');
-    sec.scrollIntoView({block: 'start'});
-  }
+  var at = element.querySelector('[data-shep-open]');
+  if (!at || at.getAttribute('data-shep-open') === shepOpened) { return; }
+  shepOpened = at.getAttribute('data-shep-open');
+  var sec = at.querySelector('[data-shep-focus]');
+  var region = element.closest('.shep-dx-scroll');
+  if (sec) { sec.scrollIntoView({block: 'start'}); }
+  else if (region) { region.scrollTop = 0; }
 };
-new MutationObserver(shepFocus).observe(element, {childList: true, subtree: true});
+new MutationObserver(shepFocus).observe(element, {childList: true, subtree: true, attributes: true,
+                                                  attributeFilter: ['data-shep-open']});
 requestAnimationFrame(shepFocus);
 """
 
@@ -3644,7 +3660,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 outputs=outputs(*identity_names), show_progress="hidden")
 
     def _switch_identity(state, result, seg, view):
-        new_view = {**(view or {}), "open": True, "seg": seg, "section": None}
+        new_view = {**(view or {}), "open": True, "seg": seg, "section": None,
+                    "opened": time.monotonic_ns()}
         return mapped({"identity_view": new_view, **identity_outputs(new_view, state, result)})
 
     identity_seg.input(_switch_identity,
