@@ -26,9 +26,10 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   then below), a card heading's ⓘ never covers its card, at a wide and a
   narrow window, its width stays within the budget, the ⓘ's hit target is at
   least 24 × 24 px, the lead is bold, "- " lines are one list and a "Term:"
-  is bold, and a hostile text shows as literal text in each part; and a
-  bubble whose ⓘ is scrolled out of view (the window or a region) is not
-  drawn and takes no click, and is drawn again with its ⓘ back (T08-help-1).
+  is bold, and a hostile text shows as literal text in each part; a bubble
+  whose ⓘ is scrolled out of view (the window or a region) is not drawn and
+  takes no click, and is drawn again with its ⓘ back (T08-help-1); and a
+  click on a control under a focus preview reaches it (T08-flow-1).
 
 Module: tests/unit/test_webui_help.py
 """
@@ -705,6 +706,135 @@ def test_a_bubble_whose_i_left_view_is_not_drawn_over_other_controls(tmp_path):
             assert abs(s["again"]["bubble"][k] - s["before"]["bubble"][k]) <= 1, (case, s)
         # One click at its place reached that control; the bubble closed; nothing scrolled.
         assert s["clicks"] == 1 and s["closed"] and s["offset"] == away, (case, s)
+
+
+#: T08-flow-1 (Fine-tune: Epochs typed, Tab, the Seed ⓘ's focus preview over
+#: the Graph backbone radios). The page's clock paused, as in the resting
+#: pointer's test. At each window: a click in Epochs, a key typed, Tab: focus
+#: on Seed's ⓘ, its preview drawn; which radio it covers (``elementFromPoint``
+#: at its centre in the bubble). One mouse click there (the pointer moves from
+#: Epochs to it, as a mouse does); the clock run past the hide. Then the
+#: preview again (focus on the ⓘ) and the pointer moved across it and out of
+#: it: the preview, its focus kept, is still drawn after the hide's delay;
+#: focus leaving closes it.
+_THROUGH_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [420, 800]]) {
+    const page = await browser.newPage({ viewport: { width: w, height: h } });
+    await page.clock.install();
+    await page.goto('file://' + process.argv[2]);
+    await page.waitForSelector('#seed button.shep-i');
+    for (let i = 0; ; i++) {
+      await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 60000);
+      const at = await page.evaluate(() => Date.now());
+      await new Promise((r) => setTimeout(r, 50));
+      if (await page.evaluate(() => Date.now()) === at) { break; }
+      if (i > 4) { throw new Error('the page clock did not pause'); }
+    }
+    const state = () => page.evaluate(() => {
+      const b = document.getElementById('shep-help-bubble'), a = document.activeElement;
+      return { shown: !!b && !b.hidden && b.checkVisibility({ visibilityProperty: true }),
+               role: b ? b.getAttribute('role') : null,
+               focus: a.matches('#seed button.shep-i') ? 'seed-i' : (a.id || a.value || a.tagName),
+               checked: [...document.querySelectorAll('#backbone input')].filter((i) => i.checked).map((i) => i.value) };
+    });
+    await page.click('#ep');
+    await page.keyboard.type('3');
+    await page.keyboard.press('Tab');
+    const tabbed = await state();
+    const covered = await page.evaluate(() => {
+      const b = document.getElementById('shep-help-bubble');
+      return [...document.querySelectorAll('#backbone label')].map((l) => {
+        const r = l.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+        return { value: l.querySelector('input').value, x, y, under: b.contains(document.elementFromPoint(x, y)) };
+      }).filter((l) => l.under && !l.value.startsWith('keep'));
+    });
+    const target = covered[0];
+    if (target) { await page.mouse.click(target.x, target.y); }
+    await page.clock.runFor(1000);
+    const clicked = await state();
+    // The preview again, the pointer across it and out of it.
+    await page.focus('#seed button.shep-i');
+    const again = await state();
+    const box = await page.evaluate(() => {
+      const r = document.getElementById('shep-help-bubble').getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    });
+    await page.mouse.move(box.left + box.width / 2, box.top + box.height / 2, { steps: 6 });
+    await page.mouse.move(box.left + box.width + 30, box.top + box.height + 30, { steps: 6 });
+    await page.clock.runFor(1000);
+    const crossed = await state();
+    await page.evaluate(() => document.activeElement.blur());
+    await page.clock.runFor(1000);
+    const left = await state();
+    out[`${w}x${h}`] = { tabbed, covered, target: target || null, clicked, again, crossed, left };
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_focus_preview_lets_the_click_through_to_the_control_under_it(tmp_path):
+    """T08-flow-1: Fine-tune at 1850 x 960, Epochs typed and Tab pressed,
+    focus on the Seed field's ⓘ opened its preview (a tooltip opened by
+    focus, not by the pointer) over the Graph backbone radios; the first
+    mouse click on Frozen landed on the preview, which only closed it (the
+    radio stayed Trained). A preview the pointer did not open now lets the
+    reader's pointer through once it moves over it: one click on the control
+    under it reaches that control (its state changes) and the preview, its
+    focus gone, closes. Its focus still keeps it: the pointer moving across it
+    and out does not close it (WCAG 1.4.13, persistent). A preview the pointer
+    opened stays the pointer's (the resting pointer's test: the pointer moved
+    into it keeps it) and a pinned bubble is a dialog. At 1850 x 960 and
+    420 x 800."""
+    found = node_with_playwright()
+    if found is None:
+        pytest.skip("Node with Playwright is not installed")
+    node, env = found
+    registry = h.HelpRegistry()
+    registry.field("epochs", "Epochs", "How many passes over the training pairs.")
+    registry.field("seed", "Seed", "The random seed of the weights' start and the sampling.\n"
+                   "Reference: 33. A provisional default from the source.\n- Default: 42.")
+    radio = ('<label style="display: block; padding: 6px 0"><input type="radio" name="bb" '
+             'value="{v}"{c}> {t}</label>')
+    page = tmp_path / "through.html"
+    page.write_text(
+        f"""<!doctype html><html><head><meta charset="utf-8">
+<style>body {{ margin: 0; font: 15px sans-serif; }} {h.HELP_CSS}</style>{h.HELP_HEAD}</head><body>
+<div style="padding: 20px 40px">
+<div class="block" id="epochs" style="width: 300px; padding: 12px; border: 1px solid #ccc">
+<label class="block" style="display: block"><span data-testid="block-info">Epochs</span><input id="ep"></label></div>
+<div style="display: flex; flex-wrap: wrap; gap: 24px; margin-top: 16px; align-items: flex-start">
+<div class="block" id="seed" style="width: 300px; padding: 12px; border: 1px solid #ccc">
+<label class="block" style="display: block"><span data-testid="block-info">Seed</span><input id="sd"></label></div>
+<fieldset id="backbone" style="width: 300px; margin: 0; padding: 8px 12px; border: 1px solid #ccc">
+<legend>Graph backbone</legend>{radio.format(v="keep", c=" checked", t="Trained")}
+{radio.format(v="graph_side", c="", t="Frozen")}{radio.format(v="encoder", c="", t="Encoder only")}
+{radio.format(v="head", c="", t="Head only")}</fieldset></div></div>
+{registry.texts_html()}</body></html>""", encoding="utf-8")
+    script = tmp_path / "through.cjs"
+    script.write_text(_THROUGH_JS, encoding="utf-8")
+    result = subprocess.run([node, str(script), str(page)], env=env, capture_output=True,
+                            text=True, timeout=240)
+    assert result.returncode == 0, result.stderr
+    seen = json.loads(result.stdout)
+    assert set(seen) == {"1850x960", "420x800"}
+    for size, s in seen.items():
+        # The scene T08 met: focus on Seed's ⓘ, its preview a tooltip over a radio.
+        assert s["tabbed"]["focus"] == "seed-i" and s["tabbed"]["shown"], (size, s)
+        assert s["tabbed"]["role"] == "tooltip" and s["tabbed"]["checked"] == ["keep"], (size, s)
+        assert s["target"], (size, s)
+        # One click: that radio chosen, focus on it, the preview gone.
+        assert s["clicked"]["checked"] == [s["target"]["value"]], (size, s)
+        assert s["clicked"]["focus"] == s["target"]["value"] and not s["clicked"]["shown"], (size, s)
+        # Its focus keeps it while the pointer crosses it; focus leaving closes it.
+        assert s["again"]["shown"] and s["crossed"]["shown"] and s["crossed"]["focus"] == "seed-i", (size, s)
+        assert not s["left"]["shown"], (size, s)
 
 
 # --------------------------------------------------------------------------- the built dashboard

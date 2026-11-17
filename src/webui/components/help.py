@@ -47,6 +47,11 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   a click outside close it; it stays open while the reader's pointer moves
   in the bubble (a bubble that only came under a resting pointer, as it
   follows its ⓘ on a scroll, keeps no preview open);
+- lets the pointer through a preview the pointer did not open (focus opened
+  it): the reader's pointer moving over it turns its pointer events off, so
+  a click goes to the control under it, and only its focus keeps or ends it
+  (a hover preview stays the pointer's, to be read on, WCAG 1.4.13; a pinned
+  bubble is a dialog);
 - does not draw a bubble whose ⓘ is out of view (outside the window, or
   outside the visible part of a region it scrolls in: as Floating UI's
   ``hide`` reads its reference's clipping ancestors) and lets clicks reach
@@ -344,6 +349,9 @@ _HELP_JS = r"""
   var REGION = '__REGION__', BULLET = __BULLET__, REF = __REF__, TERM = new RegExp(__TERM__);
   var bubble = null, anchor = null, anchorKey = null, pinned = false;
   var hideTimer = null, openTimer = null, previewFor = null;
+  // `byPointer`: the pointer opened the preview (or came to its ⓘ); `yielded`:
+  // a preview focus opened let the reader's pointer through (`claim`).
+  var byPointer = false, yielded = false;
 
   function closestHelp(node) {
     return node && node.closest ? node.closest(SEL) : null;
@@ -414,9 +422,13 @@ _HELP_JS = r"""
     // bubble that came under a resting pointer (it follows its ⓘ when the
     // page scrolls) gets a "mouseenter" from the browser but no "mousemove":
     // that keeps nothing, so a preview never outlives its focus or hover
-    // and covers what the pointer rests on.
-    bubble.addEventListener('mousemove', function () { clearTimeout(hideTimer); });
-    bubble.addEventListener('mouseleave', function () { if (!pinned) { scheduleHide(); } });
+    // and covers what the pointer rests on. A preview focus opened is not
+    // the pointer's: the pointer moving over it passes through it (the
+    // control under it gets the click), and its leaving ends nothing.
+    bubble.addEventListener('mousemove', function () {
+      if (pinned || byPointer) { clearTimeout(hideTimer); } else if (!yielded) { yielded = true; claim(); }
+    });
+    bubble.addEventListener('mouseleave', function () { if (!pinned && byPointer) { scheduleHide(); } });
     x.addEventListener('click', function (e) { e.stopPropagation(); close(true); });
     document.body.appendChild(bubble);
     return bubble;
@@ -583,16 +595,30 @@ _HELP_JS = r"""
     if (pinned) { bubble.setAttribute('aria-labelledby', 'shep-help-bubble-title'); }
     else { bubble.removeAttribute('aria-labelledby'); }
   }
-  function open(btn, pin) {
+  // Who the bubble answers to: pinned, or a preview the pointer opened, it
+  // takes the pointer's events (the pointer can be moved onto it, WCAG
+  // 1.4.13); a preview focus opened lets the reader's pointer through once
+  // it moves over it (`yielded`).
+  function claim() {
+    if (!bubble) { return; }
+    if (pinned || byPointer) { yielded = false; }
+    bubble.style.pointerEvents = yielded ? 'none' : '';
+  }
+  // `viaPointer`: a hover opened it. Focus on the ⓘ of a preview already
+  // shown leaves it whoever's it was.
+  function open(btn, pin, viaPointer) {
     clearTimeout(hideTimer);
     clearTimeout(openTimer); previewFor = null;
+    if (anchor !== btn || !bubble || bubble.hidden) { byPointer = false; yielded = false; }
     if (anchor && anchor !== btn) { anchor.setAttribute('aria-expanded', 'false'); pinned = false; }
     anchor = btn; anchorKey = btn.getAttribute('data-help');
     pinned = pin ? true : pinned;
+    byPointer = byPointer || !!viaPointer;
     var b = ensureBubble();
     b.querySelector('.shep-bubble-title').textContent = titleOf(btn);
     fill(b.querySelector('.shep-bubble-bd'), textOf(btn));
     setRole();
+    claim();
     b.hidden = false;
     btn.setAttribute('aria-expanded', 'true');
     place();
@@ -603,7 +629,7 @@ _HELP_JS = r"""
     if (previewFor === btn) { return; }
     clearTimeout(openTimer);
     previewFor = btn;
-    openTimer = setTimeout(function () { previewFor = null; if (btn.isConnected) { open(btn, false); } }, HOVER_MS);
+    openTimer = setTimeout(function () { previewFor = null; if (btn.isConnected) { open(btn, false, true); } }, HOVER_MS);
   }
   // Focus inside the bubble goes back to its ⓘ once it is closed, without
   // scrolling the page to it; that focus opens nothing (`returning`): the
@@ -617,8 +643,9 @@ _HELP_JS = r"""
       bubble.contains(document.activeElement) ? anchor : null;
     if (bubble) { bubble.hidden = true; bubble.style.visibility = ''; }
     if (anchor) { anchor.setAttribute('aria-expanded', 'false'); }
-    anchor = null; anchorKey = null; pinned = false;
+    anchor = null; anchorKey = null; pinned = false; byPointer = false; yielded = false;
     setRole();
+    claim();
     if (back) { returning = back; back.focus({preventScroll: true}); returning = null; }
   }
   // A hide the last ⓘ's pointer left behind never cancels another ⓘ's
@@ -627,9 +654,12 @@ _HELP_JS = r"""
     clearTimeout(hideTimer);
     hideTimer = setTimeout(function () { if (!pinned && !previewFor) { close(false); } }, 250);
   }
+  // The pointer on the ⓘ of the preview shown makes it the pointer's too.
   document.addEventListener('mouseover', function (e) {
     var btn = closestHelp(e.target);
-    if (btn) { if (anchor !== btn || !bubble || bubble.hidden) { openSoon(btn); } else { clearTimeout(hideTimer); } }
+    if (!btn) { return; }
+    if (anchor !== btn || !bubble || bubble.hidden) { openSoon(btn); }
+    else { clearTimeout(hideTimer); byPointer = true; claim(); }
   });
   document.addEventListener('mouseout', function (e) {
     var btn = closestHelp(e.target);
