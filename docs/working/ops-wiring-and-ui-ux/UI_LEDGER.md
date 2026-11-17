@@ -1867,6 +1867,15 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: the fix lane's report on T08-flow-2 ("Seen, not fixed"); the verification brief, item 3
 - **Closed at**: 4c72a2d. Root: the keeper was wired region by region, while what an HTML holds is its renderers' choice at run time. Fix: `shell.plain_html`, the dashboard's one HTML constructor, runs `renderers.KEEP_OPEN_JS` before any script of its own, and the chart figure does the same; the per-page wiring it replaces is gone (Training's `_POPOVER_JS` prefix, the Test job card and result, the Diagnosis card). Tests: `test_webui_shell.py::test_every_html_an_event_draws_keeps_its_disclosures_as_the_reader_left_them` (all 133, the keeper once and first; fails on fcc3dea) and `test_training_page.py::test_a_details_the_reader_opened_stays_open_when_their_own_edit_draws_it_again` (browser, 1850×960: open across the next field set, closed by the reader stays closed; fails on fcc3dea). The shared UI walk passes. No visible change.
 
+#### V-2 · A status mark's text reads its shape and word with no space between
+
+- **State**: code-verified · found by the verification of fcc3dea · severity low · page: shell
+- **Problem**: A status mark's hidden shape was followed directly by its word, so copied text and `innerText` read "○Saved" and "✕Not usable"; a mark drawn as a chip read the shape and the word as two lines.
+- **At fcc3dea**: `renderers.status_mark` drew `<span class="shep-st-shape" aria-hidden="true">○</span><span class="shep-st-w">Saved</span>`; in Chromium with the shell's style sheet, `innerText` and a copy read "●Saved" (text) and "●\nSaved" (chip). The config lane's report on T08-flow-10 saw it in Settings ("○Saved. …").
+- **Done when**: Every mark, as text and as a chip, reads shape, space, word when copied and as `innerText`; a screen reader still reads only the word; the look is unchanged, shown by screens before and after at 1850×960 and a narrow size.
+- **Sources**: the config lane's report on T08-flow-10 ("Seen, not changed here"); the verification brief, item 4
+- **Closed at**: 29a4605. Root: no text between the shape and the word, and a chip's shape and word were separate flex items. Fix in the one renderer: a space of no width between them (`renderers.MARK_SPACE`; the shape's 4 px margin still draws the gap), a chip's shape, space and word one inline run (`shep-st-in`), none after the spinner; the touch script's "not sent" mark takes the same space. Test: `test_webui_renderers.py::test_a_status_marks_text_reads_shape_space_word_and_its_look_is_kept` (browser: every mark, text and chip, 14 and 15 px, at 1850×960 and 390×844: "● Saved" copied and as `innerText`, the shape aria-hidden, the gap 4 px, 6 px after the spinner; fails on fcc3dea). Every mark's gap and width measured the same before and after. Screens: scratchpad/verify/fix/item4/shots/before_status-marks_1850x960.png, _390x844.png and after_status-marks_1850x960.png, _390x844.png.
+
 **UI-16, test**
 
 #### B72-C2 · Recorded LP metrics show raw names, unrounded values, no units
