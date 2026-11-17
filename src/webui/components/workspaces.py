@@ -19,6 +19,9 @@ dashboard shows besides:
   workspaces root", and a refused root setting is said without its path
   (`ROOT_REFUSED`). Datasets is the same page for a read-only request, and the
   wording is one for every page.
+- the server directories any shown text may name (`path_roots`) and the
+  one redaction of a text that may name any of them (`redact_server`): the
+  Test page's job output and Models' notes problems read the same pair.
 
 It also holds the one way a page says whether a registered cohort version was
 mapped against a workspace's graph (`workspace_binding`, `binding_state`,
@@ -36,9 +39,9 @@ from __future__ import annotations
 import re
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from src.utils.path_redaction import redact_paths
+from src.utils.path_redaction import SERVER_PATH, redact_paths
 from src.webui.components import renderers as r
 
 #: What replaces an absolute path that is not under the workspaces root.
@@ -92,6 +95,41 @@ def shown_path(path: Any, root: Optional[Path]) -> str:
         except (OSError, RuntimeError, ValueError):
             pass
     return OUTSIDE_PATH
+
+
+def path_roots(environ: Optional[Mapping[str, str]] = None) -> List[Tuple[str, str]]:
+    """The server directories a shown text may name, with the name each is
+    shown under, longest first: the registry, the workspaces root, the intake
+    directory, each evidence directory and the repository."""
+    from src.config import server_settings
+
+    roots: List[Tuple[str, str]] = []
+    for reader, token in ((server_settings.cohort_registry, "<registry>"),
+                          (server_settings.workspaces_root, "<workspaces>"),
+                          (server_settings.intake_directory, "<intake>")):
+        try:
+            setting = reader(environ)
+        except Exception:  # noqa: BLE001 - a root not read is a path shown as "a server path"
+            continue
+        if setting.available:
+            roots.append((str(setting.value), token))
+    try:
+        evidence = server_settings.training_evidence_dirs(environ)
+        for index, directory in enumerate(evidence.value or (), start=1):
+            roots.append((str(directory), f"<evidence {index}>"))
+    except Exception:  # noqa: BLE001
+        pass
+    roots.append((str(server_settings.REPO_ROOT), "<repository>"))
+    return sorted(roots, key=lambda pair: -len(pair[0]))
+
+
+def redact_server(text: Any, roots: Sequence[Tuple[str, str]]) -> str:
+    """`text` with no absolute server path left (any server directory, not
+    only the workspaces root, which is `redact`'s): one under a named server
+    directory is shown under its name (``<registry>/versions/…``), any other
+    as `SERVER_PATH` (the dashboard's one redaction, `redact_paths`): the
+    Test page's job output and a record's notes problems alike."""
+    return redact_paths(text, roots, other=SERVER_PATH)
 
 
 def workspaces_root(environ: Optional[Mapping[str, str]] = None

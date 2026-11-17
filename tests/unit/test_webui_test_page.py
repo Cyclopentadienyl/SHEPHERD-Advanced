@@ -3768,6 +3768,10 @@ def test_the_test_page_and_datasets_share_one_redaction():
     assert tp.redact(text, []) == path_redaction.redact_paths(text, [], other=tp.SERVER_PATH)
     assert workspaces.redact(text, None) == path_redaction.redact_paths(
         text, [], other=workspaces.OUTSIDE_PATH)
+    # Models' notes problems and the Test page read one pair, in the shared
+    # module (a page reaches nothing of another page).
+    assert (tp.redact, tp.path_roots) == (workspaces.redact_server, workspaces.path_roots)
+    assert tp.SERVER_PATH == path_redaction.SERVER_PATH
 
 
 

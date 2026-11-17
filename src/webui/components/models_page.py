@@ -772,12 +772,12 @@ def record_block_html(view: Mapping[str, Any], state: Optional[Mapping[str, Any]
     group = contest_html(state, mode=r.record_mode(view), deterministic=deterministic)
     # Why the notes cannot all be read, with no absolute server path: the
     # dashboard's one redaction, as the Test page says the same problem.
-    from src.webui.components.test_page import path_roots, redact
+    from src.webui.components.workspaces import path_roots, redact_server
 
     problems = (state or {}).get("notes_problems") or []
     roots = path_roots() if any(problems) else []
     notes = r.investigation_notes_html(
-        (state or {}).get("notes") or [], problems=[redact(p, roots) for p in problems],
+        (state or {}).get("notes") or [], problems=[redact_server(p, roots) for p in problems],
         expected=(state or {}).get("state") in ("contested", "cannot_be_checked"))
     label = r.e(_get(view, "cohort", "label"))
     return (f'<section class="shep-mp-rec" aria-label="Recorded result on {label}">'

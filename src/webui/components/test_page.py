@@ -199,10 +199,12 @@ from src.webui.components.chips import operator_only as _operator_only
 from src.webui.components.help import help_button, sentence_lines
 from src.webui.components import model_list as ml
 from src.webui.components.model_list import item_key
-from src.utils.path_redaction import redact_paths
 from src.webui.components.workspaces import (
+    SERVER_PATH,
     binding_state,
     contents_reason,
+    path_roots,
+    redact_server as redact,
     version_row,
     workspace_binding,
 )
@@ -234,8 +236,6 @@ ROWS_SHOWN = 8
 #: asked, first run (`create_test_page`).
 SELECTION_CONCURRENCY = "shep-test-selection"
 
-#: What replaces an absolute path that is under no named server directory.
-SERVER_PATH = "a server path"
 #: The investigation note's fields are never narrower (px): "Who" holds a
 #: normal name whole.
 NOTE_FIELD_MIN_WIDTH = 240
@@ -422,39 +422,6 @@ run_time = r.run_time
 #: A report store run id, read here only for its checkpoint's 12 hex digits
 #: (`run_sha12`).
 _RUN_ID = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-([0-9a-f]{12})-[0-9a-f]{8}$")
-
-
-def path_roots(environ: Optional[Mapping[str, str]] = None) -> List[Tuple[str, str]]:
-    """The server directories a shown text may name, with the name each is
-    shown under, longest first: the registry, the workspaces root, the intake
-    directory, each evidence directory and the repository."""
-    from src.config import server_settings
-
-    roots: List[Tuple[str, str]] = []
-    for reader, token in ((server_settings.cohort_registry, "<registry>"),
-                          (server_settings.workspaces_root, "<workspaces>"),
-                          (server_settings.intake_directory, "<intake>")):
-        try:
-            setting = reader(environ)
-        except Exception:  # noqa: BLE001 - a root not read is a path shown as "a server path"
-            continue
-        if setting.available:
-            roots.append((str(setting.value), token))
-    try:
-        evidence = server_settings.training_evidence_dirs(environ)
-        for index, directory in enumerate(evidence.value or (), start=1):
-            roots.append((str(directory), f"<evidence {index}>"))
-    except Exception:  # noqa: BLE001
-        pass
-    roots.append((str(server_settings.REPO_ROOT), "<repository>"))
-    return sorted(roots, key=lambda pair: -len(pair[0]))
-
-
-def redact(text: Any, roots: Sequence[Tuple[str, str]]) -> str:
-    """`text` with no absolute server path left: one under a named server
-    directory is shown under its name (``<registry>/versions/…``), any other
-    as "a server path" (the dashboard's one redaction, `redact_paths`)."""
-    return redact_paths(text, roots, other=SERVER_PATH)
 
 
 #: A string literal as Python's ``repr``/``ascii`` writes one: quoted, its
