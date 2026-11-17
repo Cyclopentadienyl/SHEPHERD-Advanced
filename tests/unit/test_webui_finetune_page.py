@@ -1152,6 +1152,29 @@ def test_the_page_polls_on_the_slow_timer_without_the_queue_only_when_shown(monk
                 and b not in (ctx.timer_fast, ctx.timer_slow)]
 
 
+def test_opening_the_page_answers_starts_gate_before_reading_the_bases():
+    """Verification of fcc3dea (V-RB2-2): for a read-only viewer, Start
+    showed "▸ Start" with no lock and no reason for 3.3-3.6 s after the
+    page opened (1.5-1.8 s after its requests were answered and its drawing
+    still): its gated label came only from the card, the fifth step of the
+    opening chain, after the bases, the chosen base and the task settings.
+    The card (Start's lock and reason, D8's answer for the request, which
+    needs no base) is now the step right after the page's own. Fails on
+    fcc3dea."""
+    demo, ctx, _by_id = _page()
+    fns = list(demo.fns.values())
+    (opened,) = [fn for fn in fns if fn.fn is fp._open]
+    chain, step = [], opened
+    while True:
+        after = [fn for fn in fns if fn.trigger_after == step._id]
+        if not after:
+            break
+        (step,) = after
+        chain.append(step.fn.__name__ if step.fn is not None else None)
+    assert chain[0] == "_refresh_card", chain
+    assert chain[1:4] == ["_on_finetune_bases", "_on_base_chosen", "_on_task_view"], chain
+
+
 def test_the_page_follows_the_contract():
     from src.webui.app import PAGE_CSS, PAGES, mount_options
 
