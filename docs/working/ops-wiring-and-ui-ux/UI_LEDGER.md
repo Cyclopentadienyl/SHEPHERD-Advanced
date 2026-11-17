@@ -2432,12 +2432,13 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### V-16 · Training's failed-run banner keeps its tail's open state with a second keeper
 
-- **State**: to do · found by the verification of fcc3dea · severity low · page: training
+- **State**: code-verified · found by the verification of fcc3dea · severity low · page: training
 - **Problem**: The banner's output tail keeps the reader's choice with its own code (a `data-tail` attribute and a MutationObserver in `_BANNER_JS`) beside the one keeper (`renderers.KEEP_OPEN_JS`), which 4c72a2d also runs on it.
 - **At fcc3dea**: `training_console._BANNER_JS` (~1453–1469), there since ba6e85e. Not seen to misbehave: the two agree, the banner's script running last. It also sets the tail's default by the window (open unless the side layout is short), which the keeper cannot: retiring its choice memory alone would let that default overwrite a choice the keeper put back. Evidence: scratchpad/verify/aud/shared_sources_fcc3dea.md §1.
 - **Done when**: The banner keeps only its size default for a newly drawn tail, the reader's choice kept by the one keeper (a hook for a default it can honour); a browser test of a failed run's tail opened and closed across drawings.
 - **Sources**: the verification of fcc3dea, part AUD (V-AUD-7)
-- **Closed at**: —
+- **Fixed (verification, 5d8e6d5, 2026-11-17)**: the one keeper (`renderers.KEEP_OPEN_JS`) asks a region's default, `element.shepKeepDefault(d)` from the region's own script, for a disclosure the reader has not opened or closed, each time it is drawn; the reader's choice wins over it. The banner gives only its size rule there (closed on a side-by-side window under 1000 px tall, open otherwise) and its red block names its failed job (`keep_as`: the job id, else the run); its `data-tail`, `data-fit`, click memory and observer are gone. Before, its memory held one reader's choice for every later failure on the page, and the keeper took the banner's default for a reader's choice. Note: today's rule draws the tail closed at 1850×960 (side by side, 960 < 1000), as before. Tests: `test_training_page.py::test_a_failed_runs_output_tail_starts_by_the_window_and_keeps_the_readers_choice` (browser, the dashboard's head: drawn closed at 1850×960, open at 960×1080 and 1920×1080; the reader's choice kept through a redraw of the same failure; the next failed run at the default; fails on d8d1828, where run B took run A's choice) and `::test_a_failed_runs_output_tail_is_a_disclosure_fitted_to_the_window` (no memory or observer of the banner's own; fails on d8d1828). Screens: scratchpad/verify/fix2/v16/{before,after}/test_a_failed_runs_output_tail0/shots/banner-{drawn,chosen,redrawn,next}_{1850x960,960x1080,1920x1080}.png (a served page with the dashboard's head; not seen in the real app).
+- **Closed at**: 5d8e6d5. The reader's choice is the one keeper's, the banner's default a hook it asks (the Fixed line above).
 
 #### V-17 · An input method's composition left open becomes the value Start sends
 
