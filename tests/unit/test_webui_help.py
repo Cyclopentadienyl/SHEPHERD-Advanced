@@ -955,14 +955,21 @@ def test_the_wheel_over_a_focus_preview_scrolls_its_text_though_clicks_go_throug
 #: accordions open); for each checkbox given (one with field help) drawn on
 #: it: its row's focusable parts (its ⓘ and its box) in the order drawn (left
 #: to right), and in the order Tab reaches them from the control before them.
+#: A page is read once its panel is shown, the page's own requests are
+#: answered (`QUEUE_JS`) and every checkbox the page draws (`expected`, by
+#: the page each one is built on; Gradio mounts an accordion's fields only
+#: when it is first opened) is drawn with its ⓘ, never by a fixed time.
 _CHECKBOX_ORDER_JS = r"""
 const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
 (async () => {
-  const base = process.argv[2], ids = JSON.parse(process.argv[3]);
+  const base = process.argv[2], ids = JSON.parse(process.argv[3]), expected = JSON.parse(process.argv[4]);
   const browser = await chromium.launch();
   const out = {};
   for (const [w, h] of [[1850, 960], [960, 1080]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
+    await page.addInitScript(QUEUE_JS);
+    const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle());
     await page.goto(base);
     await page.waitForSelector('#dx_explanations button.shep-i');
     const seen = {};
@@ -971,21 +978,25 @@ const { chromium } = require('playwright');
       if (!level1 && !(await page.$('#shep-tab-research-button[aria-selected="true"]'))) {
         await page.click('#shep-tab-research-button', { force: true });
       }
-      const tab = level1 ? `#shep-tab-${id}-button` : `#shep-page-${id}-button`;
-      await page.click(tab, { force: true });
-      await page.waitForSelector(tab + '[aria-selected="true"]');
+      const panel = level1 ? `#shep-tab-${id}` : `#shep-page-${id}`;
+      await page.click(panel + '-button', { force: true });
+      await page.waitForSelector(panel + '-button[aria-selected="true"]');
+      // The page drawn: its panel shown and its own requests answered.
+      await page.waitForSelector(panel, { state: 'visible' });
+      await idle();
       // Training's Parameters, folded on a narrow window, and every accordion.
-      for (const fold of await page.$$('button.shep-train-fold[aria-expanded="false"]')) {
+      for (const fold of await page.$$(panel + ' button.shep-train-fold[aria-expanded="false"]')) {
         if (await fold.isVisible()) { await fold.click(); }
       }
-      for (const acc of await page.$$('button.label-wrap:not(.open)')) {
+      for (const acc of await page.$$(panel + ' button.label-wrap:not(.open)')) {
         if (await acc.isVisible()) { await acc.click(); }
       }
-      // Every given checkbox drawn on this page, its ⓘ added.
-      await page.waitForFunction((ids) => ids.every((k) => {
-        const b = document.getElementById(k);
-        return !b || !b.querySelector('input[type=checkbox]').getClientRects().length || !!b.querySelector('button.shep-i');
-      }), ids);
+      await idle();
+      // Every checkbox this page draws, drawn, its ⓘ added.
+      await page.waitForFunction((mine) => mine.every((k) => {
+        const b = document.getElementById(k), box = b && b.querySelector('input[type=checkbox]');
+        return !!box && box.getClientRects().length > 0 && !!b.querySelector('button.shep-i');
+      }), expected[id] || []);
       const rows = await page.evaluate((ids) => {
         const tabbable = (e) => e.tabIndex >= 0 && !e.disabled && e.getClientRects().length > 0
           && getComputedStyle(e).visibility === 'visible';
@@ -1041,7 +1052,7 @@ def test_tab_reaches_each_checkboxs_i_and_box_in_the_order_they_are_drawn(tmp_pa
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     from src.webui.app import create_gradio_app, mount_options
-    from tests.fixtures.browser import run_node
+    from tests.fixtures.browser import QUEUE_JS, run_node
     from tests.fixtures.operator_access import operator_mode
     from tests.fixtures.served_page import served
 
@@ -1049,10 +1060,26 @@ def test_tab_reaches_each_checkboxs_i_and_box_in_the_order_they_are_drawn(tmp_pa
     demo = create_gradio_app()
     texts = next(b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-help-texts")
     targets = set(re.findall(r'data-help-target="([^"]+)"', str(texts.value)))
-    helped = {b.elem_id for b in demo.blocks.values() if isinstance(b, gr.Checkbox) and b.elem_id in targets}
+    boxes = {b.elem_id: b for b in demo.blocks.values() if isinstance(b, gr.Checkbox) and b.elem_id in targets}
+    helped = set(boxes)
     assert {"dx_explanations", "use_amp", "ft_use_amp", "torch_compile"} <= helped, helped
+
+    def page_of(block):
+        """The page (its tab or research page id, as the script names it)
+        the block is built on."""
+        while block is not None:
+            block = getattr(block, "parent", None)
+            if isinstance(block, gr.Tab) and block.elem_id.startswith(("shep-page-", "shep-tab-")):
+                return block.elem_id.split("-", 2)[2]
+        raise AssertionError("not on a page")
+
+    expected: dict[str, list[str]] = {}
+    for k in sorted(helped - {"branch_use_amp"}):
+        expected.setdefault(page_of(boxes[k]), []).append(k)
+    assert set(expected) == {"clinical", "training", "finetune", "test", "settings"}, expected
     with served(demo, **mount_options()) as base:
-        seen = run_node(_CHECKBOX_ORDER_JS, tmp_path, base[:-len("gradio_api")], json.dumps(sorted(helped)),
+        seen = run_node(_CHECKBOX_ORDER_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps(sorted(helped)), json.dumps(expected),
                         timeout=600)
     assert set(seen) == {"1850x960", "960x1080"}
     for size, rows in seen.items():
