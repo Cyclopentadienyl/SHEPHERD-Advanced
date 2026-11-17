@@ -1386,7 +1386,9 @@ def chip_html(ws: Optional[Mapping[str, Any]], *, in_use: bool = False) -> str:
                                     if ws.get("choices") else "The server lists no workspace.")
         return f'<div class="shep-rb-chip">{lead}<span class="shep-muted">{r.e(why)}</span></div>'
     identity = r.dataset_identity_html(row, name=False, digits=ws.get("digits") or r.SHORT_HEX)
-    return (f'<div class="shep-rb-chip">{lead}{identity}'
+    # Its popover stays as the reader left it while the chip shows this workspace.
+    shown = r.keep_as(row.get("name") or ws.get("name"))
+    return (f'<div class="shep-rb-chip"{shown}>{lead}{identity}'
             '<button type="button" class="shep-link shep-rb-details" data-act="details" '
             'aria-expanded="false" aria-controls="shep-train-details">Details ›</button>'
             '<div class="shep-pop" id="shep-train-details" role="dialog" '
@@ -1396,8 +1398,11 @@ def chip_html(ws: Optional[Mapping[str, Any]], *, in_use: bool = False) -> str:
 #: A "Details ›" popover's behaviour, element-scoped (the element is never
 #: re-mounted, and a replaced value keeps the listeners, being delegated): the
 #: dataset chip's, with its "All datasets ›" cross-link, and the run view
-#: header's. Escape, a click outside or focus leaving it closes it.
-_POPOVER_JS = r"""
+#: header's. Escape, a click outside or focus leaving it closes it. Both are
+#: drawn again while read (a running job's render), so it starts with the
+#: shared keeper (`renderers.KEEP_OPEN_JS`): open or closed as the reader left
+#: it while the chip shows the same workspace and the header the same run.
+_POPOVER_JS = r.KEEP_OPEN_JS + r"""
 function pop() { return element.querySelector('.shep-pop'); }
 function toggle(open) {
   var p = pop(), b = element.querySelector('[data-act="details"]');
@@ -2386,7 +2391,8 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
                '<button type="button" class="shep-pop-x" data-act="close" '
                f'aria-label="Close the run details">×</button></div>{r.summary_list(rows)}'
                '</div>')
-    return (f'<div class="shep-rv-hd">{said}{tag}{state}'
+    # Its popover stays as the reader left it while the header shows this run.
+    return (f'<div class="shep-rv-hd"{r.keep_as(run.get("id") or label)}>{said}{tag}{state}'
             f'<span class="shep-rv-tools">{details}</span></div>')
 
 

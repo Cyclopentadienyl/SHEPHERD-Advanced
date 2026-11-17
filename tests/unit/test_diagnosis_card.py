@@ -931,7 +931,10 @@ def test_each_state_shows_its_words_and_the_backend_s_lead_escaped(root):
     assert r.status_mark("neutral", "Not loaded", as_chip=True) in body
     assert ('<p class="shep-dx-line shep-dx-reason">Nothing has been loaded since the service '
             "started</p>") in body
-    assert ('<details class="shep-more shep-dx-why-more"><summary>Details ›</summary>'
+    # Named by its state, so the poll's next drawing keeps it as the reader left it
+    # (`renderers.KEEP_OPEN_JS`, T08-flow-2).
+    assert (f'<details class="shep-more shep-dx-why-more"{r.keep_as("not_loaded")}>'
+            '<summary>Details ›</summary>'
             f'<p class="shep-dx-line">{r.e(NEVER_LOADED)}</p></details>') in body
     # The whole reason is one click away, never the visible lead.
     assert body.index("<summary>") < body.index("SHEPHERD_KG_PATH")

@@ -1625,45 +1625,122 @@ def details_list(rows: Iterable[Tuple[str, str]], *,
     `summary_list`'s rows (`titles` and `classes` as there), wherever a line
     names a few of many (`named_words`) and the rest are one click away.
     Where the server draws it again while it is read (a poll), its
-    ``gr.HTML`` takes `KEEP_OPEN_JS`."""
+    ``gr.HTML`` takes `KEEP_OPEN_JS`, and the thing it is of is named around
+    it (`keep_as`)."""
     return ('<details class="shep-more"><summary>Details ›</summary>'
             f'{summary_list(rows, titles=titles, classes=classes)}</details>')
 
 
 #: **Disclosures as the reader left them, across redraws**: the
-#: ``js_on_load`` of a ``gr.HTML`` the server draws again while it is read
-#: (the Test page's job card, redrawn by its poll as a run prints). Gradio
-#: 6.30 redraws HTML in place and sets each element's attributes to the new
-#: HTML's, so a ``details`` the reader opened (`details_list`'s, drawn
-#: closed) closed again on each redraw. The reader's own open or close (a
-#: click on its summary; Enter and Space send one) is kept by the summary's
-#: words and its place among the disclosures with those words, and put back
-#: after each redraw for the life of the page.
+#: ``js_on_load`` of every ``gr.HTML`` the server draws again while it is
+#: read (a poll, a tick, a render) and that holds a disclosure, alone or
+#: before the element's own script. Gradio 6.30 draws HTML again in place and
+#: sets each element's attributes to the new HTML's, so a disclosure the
+#: reader opened was drawn closed again by the next drawing (T06-C: the Test
+#: job card's Details; T08-flow-2: Training's "Details ›" popovers). Both
+#: kinds are kept: a ``details`` (its ``open``) and a button with
+#: ``aria-expanded`` and ``aria-controls`` naming its popover in the same
+#: HTML (the button's ``aria-expanded``, the popover's ``hidden``; how it
+#: opens and closes is its own script's). The reader's own change, by any
+#: means (a click, Enter or Space, Escape, a click outside, focus leaving), is
+#: told from a drawing's by a mark this script sets on each disclosure, which
+#: a drawing takes off: a change seen on a marked disclosure is the reader's,
+#: and is kept; a disclosure without it was drawn again, and gets the
+#: reader's last choice back, with no focus moved (an open by the reader's
+#: own click focuses, never this); only where the drawing replaced the
+#: control the reader's focus was on in it, and left focus nowhere, is focus
+#: put back on the same place, without scrolling (so Escape still reaches the
+#: popover). A disclosure is the same one while the region names the same
+#: thing (`keep_as`, on an element around it; none: the region's one thing),
+#: its summary's or its button's words are the same and so is its place among
+#: those; a choice for one no longer drawn (another run, another job) is
+#: dropped.
 KEEP_OPEN_JS = r"""
-var chosen = {};
-function words(d) {
-  var s = d.querySelector(':scope > summary');
-  return s ? s.textContent : '';
-}
-function keyOf(d) {
-  var all = element.querySelectorAll('details'), mine = words(d), n = 0;
-  for (var i = 0; i < all.length && all[i] !== d; i++) { if (words(all[i]) === mine) { n++; } }
-  return mine + '\u0000' + n;
-}
-element.addEventListener('click', function (e) {
-  var s = e.target.closest ? e.target.closest('summary') : null;
-  var d = s ? s.parentElement : null;
-  if (d && d.tagName === 'DETAILS' && element.contains(d)) { chosen[keyOf(d)] = !d.open; }
-});
-function keep() {
-  element.querySelectorAll('details').forEach(function (d) {
-    var want = chosen[keyOf(d)];
-    if (want !== undefined && d.open !== want) { d.open = want; }
+(function () {
+  var MARK = 'data-shep-kept', chosen = {}, focused = null;
+  var CONTROLS = 'a[href], button, input, select, textarea, summary, [tabindex]';
+  function popover(b) {
+    var p = document.getElementById(b.getAttribute('aria-controls'));
+    return p && element.contains(p) ? p : null;
+  }
+  function isOpen(d) {
+    return d.tagName === 'DETAILS' ? d.open : d.getAttribute('aria-expanded') === 'true';
+  }
+  function setOpen(d, open) {
+    if (d.tagName === 'DETAILS') { d.open = open; return; }
+    popover(d).hidden = !open;
+    d.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  function words(d) {
+    if (d.tagName === 'DETAILS') {
+      var s = d.querySelector(':scope > summary');
+      return s ? s.textContent : '';
+    }
+    return d.textContent + '\u0001' + d.getAttribute('aria-controls');
+  }
+  // A disclosure's controls in order, its summary or its button first.
+  function controls(d) {
+    var inside = Array.prototype.slice.call(
+      (d.tagName === 'DETAILS' ? d : popover(d)).querySelectorAll(CONTROLS));
+    return d.tagName === 'DETAILS' ? inside : [d].concat(inside);
+  }
+  // Each disclosure drawn, by its key: what the region names, its words, its place.
+  function disclosures() {
+    var seen = {}, all = [];
+    element.querySelectorAll('details, [aria-expanded][aria-controls]').forEach(function (d) {
+      if (d.tagName !== 'DETAILS' && !popover(d)) { return; }
+      var of = d.closest('[data-keep]'), named = of && element.contains(of);
+      var key = (named ? of.getAttribute('data-keep') : '') + '\u0000' + words(d);
+      seen[key] = (seen[key] || 0) + 1;
+      all.push({d: d, key: key + '\u0000' + seen[key]});
+    });
+    return all;
+  }
+  function keep() {
+    var drawn = {};
+    disclosures().forEach(function (x) {
+      var d = x.d;
+      drawn[x.key] = d;
+      if (!d.hasAttribute(MARK)) {
+        var want = chosen[x.key];
+        if (want !== undefined && want !== isOpen(d)) { setOpen(d, want); }
+        d.setAttribute(MARK, '');
+      } else if (d.__shepOpen !== isOpen(d)) {
+        chosen[x.key] = isOpen(d);
+      }
+      d.__shepOpen = isOpen(d);
+    });
+    Object.keys(chosen).forEach(function (k) { if (!drawn[k]) { delete chosen[k]; } });
+    // A drawing that replaced the control the reader's focus was on, and left
+    // focus nowhere, puts it back on the same place in the same disclosure.
+    var now = document.activeElement, d = focused && drawn[focused.key];
+    if (d && !focused.el.isConnected && (!now || now === document.body)
+        && (focused.at === 0 || isOpen(d))) {
+      var to = controls(d)[focused.at];
+      if (to) { to.focus({preventScroll: true}); }
+    }
+  }
+  element.addEventListener('focusin', function (e) {
+    focused = null;
+    disclosures().some(function (x) {
+      var at = controls(x.d).indexOf(e.target);
+      if (at >= 0) { focused = {el: e.target, key: x.key, at: at}; }
+      return at >= 0;
+    });
   });
-}
-new MutationObserver(keep).observe(element, {childList: true, subtree: true, attributes: true,
-                                             attributeFilter: ['open']});
+  element.addEventListener('focusout', function (e) { if (e.relatedTarget) { focused = null; } });
+  new MutationObserver(keep).observe(element, {childList: true, subtree: true, attributes: true,
+    attributeFilter: ['open', 'hidden', 'aria-expanded', MARK]});
+  keep();
+})();
 """
+
+
+def keep_as(identity: Any) -> str:
+    """The attribute naming **what a region shows** (a run, a job, a
+    workspace), put on the element around its disclosures: `KEEP_OPEN_JS`
+    keeps a disclosure as the reader left it only while it is the same."""
+    return f' data-keep="{e(identity)}"'
 
 
 def named_words(named: Sequence[str], shown: int) -> str:
@@ -2863,6 +2940,7 @@ __all__ = [
     "cut_at",
     "dataset_details_html",
     "details_list",
+    "keep_as",
     "SHORT_HEX",
     "SYNTHETIC_FOR_TESTING",
     "SYNTHETIC_SOURCES",

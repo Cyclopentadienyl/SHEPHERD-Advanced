@@ -5492,6 +5492,7 @@ const { chromium } = require('playwright');
   await toggle(); out.closed = await read();
   await redrawn('#line', 'scored batch 3'); out.line3 = await read();
   await toggle(); await redrawn('#end', 'Its report was kept'); out.ended = await read();
+  await redrawn('#next', 'next job batch 0'); out.nextJob = await read();
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -5509,14 +5510,23 @@ def test_the_job_cards_details_stay_as_the_reader_left_them_while_the_run_prints
     shows the new line; closed by the reader, a line leaves it closed; opened
     again, it stays open when the run ends and its output folds under the
     lead. Fails on f6b9289's page, whose card has no script: the first line
-    closed it."""
+    closed it. The card of the next job (another job id, the same "Details ›")
+    is drawn closed: what was kept was this job's (T08-flow-2: the card keyed
+    by its summary's words and place alone kept it open for the next job;
+    the shared keeper names the job, `renderers.keep_as`)."""
     from tests.fixtures.browser import node_with_playwright, run_node
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     demo, _ctx, _registry = _page_component()
     (drawn,) = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-test-job"]
-    job = {"status": "running", "inputs": {"version_label": LABEL, "device": "cpu"},
+    assert drawn.js_on_load == renderers.KEEP_OPEN_JS
+    (result,) = [b for b in demo.blocks.values()
+                 if getattr(b, "elem_id", None) == "shep-test-result-body"]
+    # The result is drawn again when the poll sees a job start or end.
+    assert result.js_on_load == renderers.KEEP_OPEN_JS
+    job = {"job_id": "job-1", "status": "running",
+           "inputs": {"version_label": LABEL, "device": "cpu"},
            "log": ["scored batch 0"], "elapsed_seconds": 5}
 
     def card():
@@ -5531,10 +5541,18 @@ def test_the_job_cards_details_stay_as_the_reader_left_them_while_the_run_prints
                    outcome={"kept": True, "registered": False, "summary": "Kept."})
         return card()
 
+    def next_job():
+        job.clear()
+        job.update({"job_id": "job-2", "status": "running", "elapsed_seconds": 1,
+                    "inputs": {"version_label": LABEL, "device": "cpu"},
+                    "log": ["next job batch 0"]})
+        return card()
+
     with gr.Blocks() as page:
         shown = tp.plain_html(card(), elem_id="shep-test-job", js_on_load=drawn.js_on_load)
         gr.Button("Line", elem_id="line").click(line, outputs=[shown])
         gr.Button("End", elem_id="end").click(end, outputs=[shown])
+        gr.Button("Next", elem_id="next").click(next_job, outputs=[shown])
     with served(page) as base:
         seen = run_node(_JOB_FOLD_JS, tmp_path, base[:-len("gradio_api")])
     assert seen["drawn"]["open"] is False and seen["opened"]["shown"] is True, seen
@@ -5545,3 +5563,4 @@ def test_the_job_cards_details_stay_as_the_reader_left_them_while_the_run_prints
     assert "scored batch 3" in seen["line3"]["log"], seen
     assert seen["ended"]["lead"] is True and seen["ended"]["open"] is True, seen
     assert seen["ended"]["shown"] is True and "scored batch 3" in seen["ended"]["log"], seen
+    assert seen["nextJob"]["open"] is False and seen["nextJob"]["shown"] is False, seen

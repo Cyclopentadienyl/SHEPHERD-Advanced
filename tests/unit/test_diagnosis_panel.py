@@ -568,6 +568,12 @@ def test_the_model_in_use_is_not_read_while_the_app_is_built(monkeypatch):
     demo, _ctx = _build_tab(monkeypatch)
     bodies = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-dx-card-body"]
     assert len(bodies) == 1 and "Checking the model in use" in bodies[0].value
+    # The poll draws the card again: its not-serving reason's Details stays as
+    # the reader left it (the shared keeper first, then the card's own script).
+    from src.webui.components.model_list import MODEL_LIST_JS
+    from src.webui.components.renderers import KEEP_OPEN_JS
+
+    assert bodies[0].js_on_load == KEEP_OPEN_JS + MODEL_LIST_JS
 
 
 def test_the_cards_title_help_explains_the_card_and_its_reread_is_a_full_target(monkeypatch):

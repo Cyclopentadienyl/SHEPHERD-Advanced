@@ -3332,4 +3332,159 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     _demo, _ctx, by_id = _page()
     assert by_id["shep-train-run-head"].js_on_load == tc._POPOVER_JS
     assert by_id["shep-train-chip"].js_on_load == tc._POPOVER_JS
+    # Drawn again by each render: kept as the reader left them (T08-flow-2).
+    assert tc._POPOVER_JS.startswith(r.KEEP_OPEN_JS)
     assert "--shep-rv-top-h" not in css
+
+
+#: The run view header's and the chip's "Details ›" popovers across the
+#: redraws a running job makes (the test below): a popover opened with a
+#: click, the server's next drawing pushed with no
+#: pointer or key of the reader's (an element's `click()`, which sends no
+#: pointer event, as the poll's render sends none), read after each drawing.
+_POPOVER_REDRAW_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [960, 1080]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h },
+                                                   deviceScaleFactor: 1 })).newPage();
+    // The page's State keeps its heartbeat stream open: wait for what is drawn.
+    await page.goto(base, { waitUntil: 'load' });
+    await page.waitForSelector('#shep-train-run-head [data-act="details"]');
+    await page.waitForSelector('#shep-train-chip [data-act="details"]');
+    const read = (id) => page.evaluate((id) => {
+      const el = document.querySelector('#' + id);
+      const button = el.querySelector('[data-act="details"]');
+      const pop = button && el.querySelector('#' + button.getAttribute('aria-controls'));
+      const f = document.activeElement;
+      return { open: !!pop && !pop.hidden && button.getAttribute('aria-expanded') === 'true',
+               shown: !!pop && pop.checkVisibility(),
+               focus: f && f !== document.body
+                 ? (f.closest('[id]') || f).id + ' ' + (f.getAttribute('data-act') || f.className)
+                 : 'body',
+               sameFocus: !!window.__focus && f === window.__focus,
+               text: el.innerText.replace(/\s+/g, ' ').slice(0, 160) };
+    }, id);
+    const mark = () => page.evaluate(() => { window.__focus = document.activeElement; });
+    // The server's next drawing of both: its step number in the header moves.
+    const stepNow = () => page.evaluate(() =>
+      document.querySelector('#shep-train-run-head').textContent.match(/step (\d+)/)[1]);
+    const push = async (button = '#step') => {
+      const before = await stepNow();
+      await page.evaluate((b) => document.querySelector(b).click(), button);
+      await page.waitForFunction((n) => document.querySelector('#shep-train-run-head')
+        .textContent.match(/step (\d+)/)[1] !== n, before, { timeout: 20000 });
+    };
+    const size = {};
+    for (const id of ['shep-train-run-head', 'shep-train-chip']) {
+      const seen = {};
+      const details = '#' + id + ' [data-act="details"]';
+      await page.click(details);
+      await page.waitForFunction((d) => document.querySelector(d)
+        .getAttribute('aria-expanded') === 'true', details);
+      await mark();
+      seen.opened = await read(id);
+      await push(); seen.redrawn = await read(id);
+      await push(); seen.again = await read(id);
+      await page.keyboard.press('Escape');
+      seen.escaped = await read(id);
+      await push(); seen.afterEscape = await read(id);
+      // Opened, then closed by a click outside it; a drawing leaves it closed.
+      await page.click(details);
+      await page.mouse.click(Math.floor(w / 2), h - 8);
+      seen.outside = await read(id);
+      await push(); seen.afterOutside = await read(id);
+      size[id] = seen;
+    }
+    // Another run viewed and another dataset: the popover is drawn closed.
+    await page.click('#shep-train-run-head [data-act="details"]');
+    await push('#other');
+    size.otherRun = await read('shep-train-run-head');
+    out[w + 'x' + h] = size;
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_details_popovers_stay_as_the_reader_left_them_across_redraws(tmp_path):
+    """T08-flow-2: the run view header's "Run details" closed by itself 0.5-1.5 s
+    after it was opened while a job ran, when the header was drawn again
+    ("dataset recorded at the first checkpoint" became "same dataset as the
+    run bar"), and the chip's dataset details closed in the drawing that said
+    "Completed": Gradio 6.30 draws ``gr.HTML`` again in place and sets each
+    element's attributes to the new HTML's, which draws each popover closed,
+    and the popover's open state was kept in those attributes only. In a real
+    browser (skipped without Node and Playwright), at 1850 x 960 and
+    960 x 1080, both with the page's own ``js_on_load`` and drawn by their
+    own renderers, the server pushing each next drawing as a running job's
+    render does (the header's relation and state words, the chip's "in use
+    by the running job" coming and going): a popover the reader opened stays
+    open through each drawing with the focus where it was (its × , where its
+    open put it); closed with Escape or a click outside it, it stays closed
+    through the next; and a header drawn for another run draws it closed.
+    Fails on e0e4237, whose popovers were closed by the first drawing."""
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    _demo, _ctx, by_id = _page()
+    fingerprint = "ab12" * 16
+    ws = {"name": "demo", "digits": 12, "facts": None,
+          "row": {"name": "demo", "dataset_fingerprint": fingerprint, "trainable": True}}
+    other_ws = {**ws, "name": "other", "row": {**ws["row"], "name": "other"}}
+    run = {"label": "probe-run", "path": "/nowhere/runs/probe-run"}
+    first = {"step": 0, "run": run, "ws": ws}
+
+    def drawn(shown):
+        # Even steps: the job running, its dataset first not yet recorded;
+        # odd ones: the job ended, its dataset the run bar's.
+        n = shown["step"]
+        running = n % 2 == 0
+        snapshot = None if n == 0 else {"dataset_fingerprint": fingerprint}
+        words = (f"Running · epoch {n + 1} of 40 · step {n}" if running
+                 else f"Finished · {n + 1} of 40 epochs completed · step {n}")
+        head = tc.run_head_html(shown["run"], shown["ws"], operator=True, snapshot=snapshot,
+                                live=running, state=tc._state(words),
+                                relation="the running job" if running else "the last job")
+        return tc.chip_html(shown["ws"], in_use=running), head
+
+    def step(shown):
+        shown = {**shown, "step": shown["step"] + 1}
+        return (*drawn(shown), shown)
+
+    def other(shown):
+        return step({**shown, "ws": other_ws,
+                     "run": {"label": "another-run", "path": "/nowhere/runs/another-run"}})
+
+    with gr.Blocks() as page:
+        shown = gr.State(first)
+        chip = shell.plain_html(drawn(first)[0], elem_id="shep-train-chip",
+                                js_on_load=by_id["shep-train-chip"].js_on_load)
+        head = shell.plain_html(drawn(first)[1], elem_id="shep-train-run-head",
+                                js_on_load=by_id["shep-train-run-head"].js_on_load)
+        gr.Button("Step", elem_id="step").click(step, inputs=[shown], outputs=[chip, head, shown])
+        gr.Button("Other", elem_id="other").click(other, inputs=[shown],
+                                                  outputs=[chip, head, shown])
+    with served(page) as base:
+        seen = run_node(_POPOVER_REDRAW_JS, tmp_path, base[:-len("gradio_api")])
+    for size, popovers in seen.items():
+        for name in ("shep-train-run-head", "shep-train-chip"):
+            got = popovers[name]
+            opened = got["opened"]
+            assert opened["open"] and opened["shown"] and opened["focus"].endswith(" close"), \
+                (size, name, got)
+            for after in ("redrawn", "again"):
+                assert got[after]["open"] and got[after]["shown"], (size, name, after, got)
+                assert got[after]["focus"] == opened["focus"], (size, name, after, got)
+            assert got["opened"]["text"] != got["redrawn"]["text"], (size, name, got)
+            assert not got["escaped"]["open"] and got["escaped"]["focus"].endswith(" details")
+            for closed in ("afterEscape", "outside", "afterOutside"):
+                assert not got[closed]["open"] and not got[closed]["shown"], \
+                    (size, name, closed, got)
+        assert not popovers["otherRun"]["open"], (size, popovers["otherRun"])

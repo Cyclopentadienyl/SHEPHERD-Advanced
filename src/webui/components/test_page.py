@@ -1871,7 +1871,9 @@ def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
         foot = (f'<div class="shep-test-job-ft"><span class="shep-chip shep-chip-busy">'
                 f'<span class="shep-dot" aria-hidden="true"></span>{e(words)}</span>'
                 '<span class="shep-sub">Training start is refused while this runs.</span></div>')
-    return ('<div class="shep-test-job"><h3 class="shep-test-job-title">Latest test run</h3>'
+    # Its Details stays as the reader left it while the card shows this job.
+    return (f'<div class="shep-test-job"{r.keep_as(job.get("job_id"))}>'
+            '<h3 class="shep-test-job-title">Latest test run</h3>'
             f'<div class="shep-test-job-bd">{"".join(lead)}'
             + r.summary_list(rows, classes="shep-test-ident-rows")
             + r.details_list(more, classes="shep-test-ident-rows")
@@ -2055,7 +2057,9 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
                                   workspaces=workspaces))
     parts.append(_registration_reason_html(state, roots))
     parts.append(block_html(run, roots, notes or [], notes_problems))
-    return f'<div class="shep-test-pad shep-test-result">{head}{"".join(parts)}</div>'
+    # Its disclosures stay as the reader left them while it shows this report.
+    return (f'<div class="shep-test-pad shep-test-result"{r.keep_as(run_id)}>{head}'
+            f'{"".join(parts)}</div>')
 
 
 def _registration_reason_html(state: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
@@ -2911,7 +2915,8 @@ def create_test_page(ctx: Any) -> None:
                 # what it left, what it was given, the rest one Details away
                 # (`job_body_html`); none while no run was started. Its state
                 # is the foot's. The poll draws it again as a run prints, so
-                # its Details stays as the reader left it (`r.KEEP_OPEN_JS`).
+                # its Details stays as the reader left it (`r.KEEP_OPEN_JS`),
+                # while it shows the same job (`job_body_html`'s `r.keep_as`).
                 job_out = plain_html(job_body_html({}, [], ("none", "")), elem_id="shep-test-job",
                                      js_on_load=r.KEEP_OPEN_JS)
             with gr.Column(elem_classes=["shep-test-runft"], elem_id="shep-test-runft"):
@@ -2937,7 +2942,10 @@ def create_test_page(ctx: Any) -> None:
             # Its one scroll region says when there is more below (R-73).
             with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush", "shep-scroll-cue"]):
                 reports_list = plain_html("", elem_id="shep-test-reports", js_on_load=_REPORTS_JS)
-                result_out = plain_html(result_html({}, None, []), elem_id="shep-test-result-body")
+                # Drawn again when the poll sees a job start or end: its
+                # disclosures stay as the reader left them for the same report.
+                result_out = plain_html(result_html({}, None, []), elem_id="shep-test-result-body",
+                                        js_on_load=r.KEEP_OPEN_JS)
             # The investigation note form (shown while the runs of the report's
             # condition group differ, or their comparison is incomplete) is
             # outside the scrolling body: on a wide screen it

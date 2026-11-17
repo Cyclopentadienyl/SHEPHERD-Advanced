@@ -118,7 +118,7 @@ from src.webui.components import served_status
 from src.webui.components.chips import D8_SHORT
 from src.webui.components.help import (HIT_TARGET, KEY_FIRST_CLASS, REGION_CLASS, help_button,
                                        text_id)
-from src.webui.components.renderers import IDENTITY_BANNERS
+from src.webui.components.renderers import IDENTITY_BANNERS, KEEP_OPEN_JS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import OPTION_CHARS
 from src.webui.components.renderers import cut_at as _cut_at
@@ -3430,9 +3430,11 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                     'data-key="refresh" aria-label="Read the model in use again" '
                                     'title="Read again">↻</button>', elem_id="shep-dx-reread",
                                     js_on_load=MODEL_LIST_JS)
+                        # The poll draws it again: the not-serving reason's
+                        # Details stays as the reader left it for that reason.
                         card_body = plain_html(card.body_html(card.new_state()),
                                                elem_id="shep-dx-card-body",
-                                               js_on_load=MODEL_LIST_JS)
+                                               js_on_load=KEEP_OPEN_JS + MODEL_LIST_JS)
                         with gr.Row(elem_id="shep-dx-card-actions",
                                     elem_classes=["shep-dx-card-actions"]):
                             details_btn = gr.Button("Details ›", size="sm", visible=False,
