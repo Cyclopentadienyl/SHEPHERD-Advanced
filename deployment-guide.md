@@ -3776,8 +3776,8 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   是所選模型的細節：其紀錄說明它是什麼（Base、Disease、凍結骨幹對照組為「Disease · frozen graph
   backbone」、「Record not readable」）、檔案、Trainer 的驗證數值、模型指紋（12 個十六進位數字，可
   Copy），以及它的資料集與此 workspace 的關係（「the selected workspace's current dataset」，或說明
-  是哪一個）。列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且
-  頁面對每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是 **Measurement**（自 K8-6a 起），即執行
+  是哪一個）。列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它（Run 上方的一行說明原因，↻ 顯示鎖頭），
+  而且頁面對每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是 **Measurement**（自 K8-6a 起），即執行
   以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、所選模型列出的能力符合其
   需求、且量測所選版本種類的協定（自 research comparison Stage 7 起）：finetune 模型 task head 的量測
   （Disease、Gene 或 Patients-like-me）用於 supplied cohort 或 generated split，base 與每個 finetune 的
