@@ -687,7 +687,8 @@ def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mappin
     architecture, run = _run_parts(child.get("run_dir"))
     if run:
         whole = f"{architecture}/{run}"
-        run_cell = r.ident_html(r.run_name(run) or whole, title=whole)
+        run_cell = (f'<div class="shep-ft-run">{r.ident_html(r.run_name(run) or whole, title=whole)}'
+                    "</div>")
     else:
         run_cell = ('<span class="shep-muted">not started yet</span>' if status == "queued" else
                     '<span class="shep-muted">never started</span>')
@@ -1450,6 +1451,14 @@ def create_finetune_page(ctx: Any) -> None:
 #: This page's element id (`shell.page_elem_id`), the scope of `PAGE_CSS`.
 _PAGE = "#" + page_elem_id(PAGE)
 
+#: The job card's Run column at its narrowest (seven characters of the code
+#: font): about what the other columns leave it in a 420 px card (the job
+#: panel at 1536 x 760) once a child has ended (its best saves' words and
+#: the Trainer's figure). Past it the column takes its share of the card's
+#: room; a name's token wider than that share is cut, never widening the
+#: table (the review of a6aae90).
+RUN_FLOOR = "60px"
+
 #: This page's style sheet (listed in `src/webui/app.py`'s ``PAGE_CSS``).
 #: Nothing under 14 px; status colours only through the ``--shep-status-*``
 #: tokens.
@@ -1507,12 +1516,17 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-k {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); margin-right: 8px; }}
 /* The card's table fits its card (T08-flow-6: kept on one line, its heads and its run name made
    it wider than the card, its last column cut at the panel's edge): a head of a word or two wraps
-   at its spaces, a run name after its own hyphens (never inside a token, as Compare's run ids),
-   so nothing is cut and nothing scrolls sideways; a number never breaks. */
+   at its spaces, a run name after its own hyphens (never inside a token, as Compare's run ids);
+   a number never breaks. The run's narrowest is a floor (`RUN_FLOOR`), not its longest token:
+   past it the run takes its share of the card, up to its whole name, and a token wider than that
+   share (a name with no hyphen, the whole id of a directory not named by its start time) ends in
+   the shared identifier's ellipsis, its whole id in its title, never widening the table (the
+   review of a6aae90). */
 {_PAGE} .shep-ft-table {{ width: 100%; border-collapse: collapse; font-size: 15px; }}
 {_PAGE} .shep-ft-table th {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 8px; border-bottom: 1px solid var(--shep-border); vertical-align: bottom; }}
 {_PAGE} .shep-ft-table td {{ padding: 8px; border-bottom: 1px solid var(--shep-border); vertical-align: top; min-width: 0; }}
-{_PAGE} .shep-ft-table code.shep-ident {{ white-space: normal; overflow: visible; max-width: none; }}
+{_PAGE} .shep-ft-run {{ display: grid; grid-template-columns: minmax({RUN_FLOOR}, max-content); }}
+{_PAGE} .shep-ft-run > code.shep-ident {{ white-space: normal; max-width: none; }}
 {_PAGE} .shep-ft-links {{ margin: 0; }}
 {_PAGE} .shep-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; font-weight: 400; }}
 {_PAGE} .shep-link:hover {{ text-decoration: underline; }}

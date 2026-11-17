@@ -899,17 +899,19 @@ def test_the_cards_run_is_its_name_part_with_the_whole_id_in_its_title():
     """K6 closing smoke: the Run cell cut the id at 22ch ("gatv2/20261028-14001…"),
     hiding the run's name, which only a hover showed. The cell shows the name
     part (between the start time and the 6-hex id), the whole id in its title;
-    a name (at most 40 characters, `slugify_run_name`) is shown whole, never
-    cut: since T08-flow-6 it wraps after its own hyphens where the card is
-    narrow (its 40ch cap had kept it on one line, wider than the card)."""
+    a name (at most 40 characters, `slugify_run_name`) is shown whole: since
+    T08-flow-6 it wraps after its own hyphens where the card is narrow (its
+    40ch cap had kept it on one line, wider than the card), and only a token
+    wider than what the other columns leave ends in the shared ellipsis (the
+    fit test below measures both)."""
     run = "20261028-140013_smoke-ft-patients-like-me_0e8106"
     row = fp.child_row_html(_child("patients_like_me", "completed", run), operator=False,
                             products={})
-    assert (f'<code class="shep-ident" title="gatv2/{run}">smoke-ft-patients-like-me</code>'
-            in row)
+    assert (f'<td><div class="shep-ft-run"><code class="shep-ident" title="gatv2/{run}">'
+            'smoke-ft-patients-like-me</code></div></td>' in row)
     assert "max-width: 22ch" not in fp.PAGE_CSS
-    assert (f"{fp._PAGE} .shep-ft-table code.shep-ident {{ white-space: normal; overflow: visible; "
-            "max-width: none; }") in fp.PAGE_CSS
+    assert (f"{fp._PAGE} .shep-ft-run > code.shep-ident {{ white-space: normal; max-width: none; }}"
+            in fp.PAGE_CSS)
     # A directory not named by its start time is its whole id.
     assert ">gatv2/odd-run</code>" in fp.child_row_html(
         _child("disease", "completed", "odd-run"), operator=False, products={})
@@ -1375,7 +1377,7 @@ const SIZES = [[1850, 960], [1536, 760], [960, 1080]];
         // a clipped box): its text is cut.
         const cut = [...cell.querySelectorAll('*')].filter((el) =>
           getComputedStyle(el).overflowX !== 'visible' && el.scrollWidth > el.clientWidth + 1)
-          .map((el) => el.tagName + ' ' + el.textContent.trim());
+          .map((el) => ({ what: el.tagName + ' ' + el.textContent.trim(), title: el.title }));
         return { text: cell.innerText.replace(/\s+/g, ' ').trim(), left: b.left, right: b.right, cut };
       });
       return { card: rect(card), table: rect(table), panel: rect(document.querySelector('#shep-ft-job')),
@@ -1401,7 +1403,13 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     best saves, their selection and the Trainer's figure), at 1850 x 960,
     1536 x 760 and 960 x 1080: the table sits inside its card, every cell
     inside the panel, nothing in a cell cut (no ellipsis), no sideways page
-    or panel scroll. Fails on e0e4237."""
+    or panel scroll. Fails on e0e4237. A run name with no hyphen to wrap at
+    (one word of 40 characters, the longest a name may be; its child ended,
+    with its best saves) and the whole id of a directory not named by its
+    start time made the table wider than its card again (the review of
+    a6aae90; here 716 px in 420): with them the table still fits, and only
+    those two are cut, each with its whole id in its title (the shared
+    identifier rule). Fails on 4b5cee6."""
     from src.webui.app import mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -1414,14 +1422,23 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
                       settings={"frozen_parts": "graph_side"})
     child = _child("disease", "completed", "20261117-071255_b-ft-full-disease_263055")
     done = _status(child, status="completed")
+    # A name with no hyphen (40 characters, `slugify_run_name`'s longest), ended
+    # with its best saves (the other columns at their widest), and a directory
+    # not named by its start time, shown as its whole id.
+    word, odd = f"20261117-073706_{'finetunediseasefrozenbackbonelr3e4seed42'}_91e37d", \
+        "legacy_experiment_run_with_underscores_v2"
+    word_child = _child("gene", "completed", word)
+    tokens = _status(word_child, _child("disease", "running", odd))
+    whole = (f"gatv2/{word}", f"gatv2/{odd}")
     figure = {"metric": "val_pooled_mrr", "value": 0.84}
     selection = "Selection by validation pooled MRR (Trainer), higher is better"
-    products = {f"{child['run_dir']}|completed": {
-        "best": [{"words": "Best pooled MRR · 2 epochs completed", "validation": figure,
-                  "selection": selection},
-                 {"words": "Best pooled MRR · 1 epoch completed", "validation": figure,
-                  "selection": selection}],
-        "recorded": True, "problem": None}}
+    ended = {"best": [{"words": "Best pooled MRR · 2 epochs completed", "validation": figure,
+                       "selection": selection},
+                      {"words": "Best pooled MRR · 1 epoch completed", "validation": figure,
+                       "selection": selection}],
+             "recorded": True, "problem": None}
+    products = {f"{child['run_dir']}|completed": ended,
+                f"{word_child['run_dir']}|completed": ended}
     shown = {"status": running}
     monkeypatch.setattr(fp.training_manager, "get_status", lambda: shown["status"])
     monkeypatch.setattr(fp, "products_of", lambda finetune, held: products)
@@ -1436,6 +1453,8 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
         seen["running"] = run_node(_CARD_FIT_JS, tmp_path, url, "after it ends")
         shown["status"] = done
         seen["done"] = run_node(_CARD_FIT_JS, tmp_path, url, "Best pooled MRR")
+        shown["status"] = tokens
+        seen["tokens"] = run_node(_CARD_FIT_JS, tmp_path, url, "legacy_")
     for state, sizes in seen.items():
         for size, got in sizes.items():
             where = (state, size)
@@ -1443,7 +1462,9 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
             assert got["table"]["width"] <= got["card"]["width"] + 0.5, (where, got)
             for cell in got["cells"]:
                 assert cell["right"] <= got["panel"]["right"] + 0.5, (where, cell, got["panel"])
-                assert not cell["cut"], (where, cell)
+                # Only a token too wide for its column is cut, its whole id in its title.
+                assert all(cut["title"] in whole for cut in cell["cut"]), (where, cell)
+                assert not cell["cut"] or state == "tokens", (where, cell)
             assert got["body"]["sw"] <= got["body"]["cw"], (where, got["body"])
             assert got["page"]["sw"] <= got["page"]["vw"], (where, got["page"])
     texts = " ".join(cell["text"] for cell in seen["done"]["1850x960"]["cells"])
