@@ -780,7 +780,10 @@ def record_block_html(view: Mapping[str, Any], state: Optional[Mapping[str, Any]
         (state or {}).get("notes") or [], problems=[redact_server(p, roots) for p in problems],
         expected=(state or {}).get("state") in ("contested", "cannot_be_checked"))
     label = r.e(_get(view, "cohort", "label"))
-    return (f'<section class="shep-mp-rec" aria-label="Recorded result on {label}">'
+    # Named by its registration and report (`renderers.keep_as`): a Details
+    # opened in one record is never drawn open in another model's.
+    named = r.keep_as(f'{_get(view, "registration", "sequence")} {view.get("source")}')
+    return (f'<section class="shep-mp-rec"{named} aria-label="Recorded result on {label}">'
             f'{record_heading_html(view, state)}{group}{notes}'
             + r.record_html(view, metrics, registration=registration_html(view),
                             dataset=dataset)
@@ -1295,7 +1298,7 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
     return (r.summary_list(rows, classes="shep-mp-ident",
                            helps={"Fingerprint": ("model-fingerprint", "Model fingerprint"),
                                   "Validation": ("validation-trainer", "Validation (Trainer)")})
-            + r.details_list(provenance))
+            + r.details_list(provenance, of=ml.item_key(item)))
 
 
 def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,

@@ -536,6 +536,104 @@ def test_every_html_an_event_draws_keeps_its_disclosures_as_the_reader_left_them
             "shep-mp-records"} <= set(names.values())
 
 
+def _disclosures_named(markup: str) -> list:
+    """What `renderers.KEEP_OPEN_JS` keys each disclosure of `markup` by: the
+    ``data-keep`` of the disclosure itself or of its nearest element around
+    it (``None`` where none names it), in order."""
+    from html.parser import HTMLParser
+
+    void = {"area", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"}
+
+    class Names(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.stack, self.found = [], []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            named = attrs.get("data-keep")
+            if named is None:
+                named = next((n for _t, n in reversed(self.stack) if n is not None), None)
+            if tag == "details" or ("aria-expanded" in attrs and "aria-controls" in attrs):
+                self.found.append(named)
+            if tag not in void:
+                self.stack.append((tag, attrs.get("data-keep")))
+
+        def handle_endtag(self, tag):
+            while self.stack:
+                if self.stack.pop()[0] == tag:
+                    break
+
+    parser = Names()
+    parser.feed(markup)
+    return parser.found
+
+
+def test_a_region_that_can_show_another_thing_names_what_its_disclosures_are_of():
+    """The review of 5033d29: the keeper runs on every drawn HTML (4c72a2d),
+    and keys a disclosure by what its region names (`renderers.keep_as`), its
+    words and its place; a region that names nothing is its one thing. The
+    regions that show one of many named nothing, so a "Details ›" opened for
+    one model was drawn open for the next one selected (the same for a
+    record, a candidate's "More paths", a workspace's manifest, the Continue
+    drawer's settings and a result's folds); before 4c72a2d they closed on
+    every drawing. Each such region's renderer names the thing shown, so
+    every disclosure it draws for one thing is named, drawn again for the
+    same thing by the same names, and for another thing by none of them."""
+    from src.webui.components import datasets_page as dsp
+    from src.webui.components import diagnosis_panel as dp
+    from src.webui.components import models_page as mp
+    from src.webui.components import results_segment as rs
+    from src.webui.components import training_console as tc
+
+    def model(name):
+        return {"sha256": name[0] * 64, "architecture": "gatv2", "run": f"run-{name}",
+                "filename": f"{name}.pt"}
+
+    def record(digit, sequence):
+        return {"source": digit * 64, "cohort": {"label": "cohort", "role": "test"},
+                "registration": {"sequence": sequence, "registered_at": "2026-11-17T00:00:00Z"}}
+
+    def candidate(disease):
+        paths = [["HP:1", f"G{n}", disease] for n in range(5)]
+        return dp.details_outputs({"candidates": [{"rank": 1, "disease_id": disease,
+                                                   "evidence_package": {"direct_paths": paths}}]},
+                                  1, "paths")["details_html"]["value"]
+
+    def workspace(name):
+        rows = [{"name": n, "trainable": True, "facts": {"bound": [("Graph", "a" * 64)]}}
+                for n in ("ws_a", "ws_b")]
+        return dsp.details_html({"rows": rows}, name)
+
+    def checked(run):
+        preview = {"ok": True, "parent": f"gatv2/{run}/last.pt", "sha256": run[-1] * 64,
+                   "inherited": {"learning_rate": 0.001}, "action": "continue 5 more epochs"}
+        return tc._check_html(preview, tc.CONTINUE_FROM_LIST, listed=f"gatv2/{run}/last.pt")
+
+    reference = "mims-harvard/SHEPHERD@e95433a disease run_*.sh script (lr 1e-5; README U3, U8)"
+    row = {"protocol": "disease", "result": "ok", "data": {"kind": "supplied"},
+           "exposure": {"r10": None}, "model": {"reference": reference}}
+    regions = {
+        "Models' selected checkpoint": (lambda: mp.identity_html(model("alpha"), None),
+                                        lambda: mp.identity_html(model("beta"), None)),
+        "Models' record": (lambda: mp.record_block_html(record("c", 1), None),
+                           lambda: mp.record_block_html(record("d", 2), None)),
+        "Diagnosis' selected candidate": (lambda: candidate("MONDO:1"),
+                                          lambda: candidate("MONDO:2")),
+        "Datasets' selected workspace": (lambda: workspace("ws_a"), lambda: workspace("ws_b")),
+        "the Continue drawer's check": (lambda: checked("run-a"), lambda: checked("run-b")),
+        "a result's row": (lambda: rs.protocol_table_html("disease", [row], names=["r1"]),
+                           lambda: rs.protocol_table_html("disease", [row], names=["r2"])),
+        "the results compared": (lambda: rs.compare_html([row], False, names=["r1"]),
+                                 lambda: rs.compare_html([row], False, names=["r2"])),
+    }
+    for region, (one, other) in regions.items():
+        named = _disclosures_named(one())
+        assert named and None not in named, (region, named)
+        assert _disclosures_named(one()) == named, region
+        assert set(named).isdisjoint(_disclosures_named(other())), (region, named)
+
+
 def test_the_dead_code_the_m5_review_found_stays_gone():
     """M5-3 review ARCH-6: a merge helper, a default workspace path, an
     unused import, the temporary body's style and the style of an element the

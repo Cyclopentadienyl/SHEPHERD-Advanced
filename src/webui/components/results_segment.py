@@ -625,7 +625,7 @@ def protocol_table_html(protocol: Any, rows: Sequence[Mapping[str, Any]],
     names = list(names) if names is not None else row_names(rows)
     columns = _metric_columns(protocol, rows)
     body = "".join(
-        f'<tr><td class="shep-rs-name">{_name_html(name)}</td>'
+        f'<tr{r.keep_as(name)}><td class="shep-rs-name">{_name_html(name)}</td>'
         f'<td>{_model_cell(row, family=family)}</td>'
         f'<td>{_data_cell(row)}</td>{_metrics_cells(protocol, row, columns)}'
         f'<td>{_state_cell(row)}</td><td>{_exposure_cell(row)}</td>'
@@ -1554,8 +1554,11 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     tbodies = "".join(f'<tbody>{"".join(rows_)}</tbody>' for rows_ in groups)
     cols = (f'<colgroup><col class="shep-rs-cfield"></colgroup>'
             f'<colgroup span="{len(columns)}" class="shep-rs-cvals"></colgroup>')
+    # Named by the results compared (`renderers.keep_as`): a value unfolded
+    # for these is never drawn open for others.
+    named = r.keep_as(" · ".join(heads_said))
     return (f'{note_html}{SCROLL_CUE}<div class="shep-tbl-wrap shep-rs-wrap"><table class="shep-tbl '
-            f'shep-rs-cmp" aria-label="Compare results">{cols}<thead><tr><th scope="col">Field</th>'
+            f'shep-rs-cmp"{named} aria-label="Compare results">{cols}<thead><tr><th scope="col">Field</th>'
             f'{heads}</tr></thead>{tbodies}</table></div>')
 
 

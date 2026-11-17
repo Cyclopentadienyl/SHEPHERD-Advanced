@@ -1735,7 +1735,7 @@ def test_a_kg_link_prediction_table_shows_plain_names_four_decimals_and_units_on
     assert "Recorded metrics" not in heads
     body = re.findall(r"<tbody>(.*?)</tbody>", markup, re.S)[0]
     cells = [[_text(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)]
-             for tr in re.findall(r"<tr>(.*?)</tr>", body, re.S)]
+             for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S)]
     assert [row[3:7] for row in cells] == [["0.4167", "○ Not computable", "0.5140", "0.8750"],
                                            ["0.6667", "○ Not computable", "0.5140", "0.8750"]]
     assert "lp_" not in text and "0.41666" not in text and "0.51402116" not in text

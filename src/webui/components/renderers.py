@@ -1628,7 +1628,7 @@ def summary_list(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = (),
     return f'<dl class="shep-kv{more}">{"".join(cells)}</dl>'
 
 
-def details_list(rows: Iterable[Tuple[str, str]], *,
+def details_list(rows: Iterable[Tuple[str, str]], *, of: Any = None,
                  titles: Optional[Mapping[str, str]] = None, classes: str = "") -> str:
     """**The one "Details ›" disclosure of a summary list** (the skill's
     §1.5: low-priority detail one click away, one level, never inside another
@@ -1637,9 +1637,10 @@ def details_list(rows: Iterable[Tuple[str, str]], *,
     names a few of many (`named_words`) and the rest are one click away.
     Every dashboard ``gr.HTML`` keeps it as the reader left it when it is
     drawn again (`KEEP_OPEN_JS`, `shell.plain_html`), and where the region
-    can show another thing, the thing it is of is named around it
-    (`keep_as`)."""
-    return ('<details class="shep-more"><summary>Details ›</summary>'
+    can show another thing, the thing it is of is named: `of` on the
+    disclosure itself, or `keep_as` around it."""
+    named = keep_as(of) if of is not None else ""
+    return (f'<details class="shep-more"{named}><summary>Details ›</summary>'
             f'{summary_list(rows, titles=titles, classes=classes)}</details>')
 
 
@@ -1767,8 +1768,16 @@ KEEP_OPEN_JS = r"""
 
 def keep_as(identity: Any) -> str:
     """The attribute naming **what a region shows** (a run, a job, a
-    workspace), put on the element around its disclosures: `KEEP_OPEN_JS`
-    keeps a disclosure as the reader left it only while it is the same."""
+    workspace), put on the element around its disclosures (or on one
+    itself): `KEEP_OPEN_JS` keeps a disclosure as the reader left it only
+    while it is the same. Every region that can show another thing names
+    it, since the keeper runs on every HTML (`shell.plain_html`): the
+    selected model's identity and each of its records (Models), the
+    selected candidate (Diagnosis), the selected workspace (Datasets), the
+    checkpoint the Continue drawer checked, each result row and the results
+    compared (Results), as the Test page's job and result and Training's
+    workspace and run do. Unnamed, a Details opened for one model was drawn
+    open for the next (the review of 5033d29)."""
     return f' data-keep="{e(identity)}"'
 
 

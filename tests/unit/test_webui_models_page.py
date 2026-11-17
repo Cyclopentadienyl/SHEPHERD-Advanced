@@ -2876,7 +2876,8 @@ def test_an_old_corroborated_usage_entry_is_shown_as_recorded():
 def _visible_words(markup):
     """A screen's visible words: a closed disclosure's body is not shown, so
     it is left out (its summary stays); every tag a space."""
-    shown = re.sub(r'<details class="shep-more">.*?</details>', " ", markup, flags=re.S)
+    shown = re.sub(r'<details class="shep-more"(?![^>]* open)[^>]*>.*?</details>', " ", markup,
+                   flags=re.S)
     return " ".join(_text(re.sub(r"<[^>]+>", " ", shown)).split())
 
 

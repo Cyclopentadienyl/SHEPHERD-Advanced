@@ -3966,7 +3966,13 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
         lines.append('<p class="shep-note">The start checks again against this workspace’s '
                      'data and graph.</p>')
     kind = "red" if differs else "ok"
-    return f'<div class="shep-check shep-check-{kind}">{head}{"".join(lines)}</div>'
+    # Named by the checkpoint checked (`renderers.keep_as`), its key in the
+    # list or its path as shown above (never the server's own path) and its
+    # fingerprint: its disclosures stay as the reader left them across this
+    # checkpoint's checks (a device or a branch field edited), never drawn
+    # open for another checkpoint.
+    named = r.keep_as(f'{listed or _shown_path(preview.get("parent", ""))} {preview.get("sha256")}')
+    return f'<div class="shep-check shep-check-{kind}"{named}>{head}{"".join(lines)}</div>'
 
 
 def _extra_epochs_update(preview: Mapping[str, Any], operation: str = CONTINUE):

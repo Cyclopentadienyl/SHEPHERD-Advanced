@@ -126,6 +126,7 @@ from src.webui.components.renderers import e as _e
 from src.webui.components.renderers import fingerprint_value as _fingerprint_value
 from src.webui.components.renderers import grapheme_ends as _grapheme_ends
 from src.webui.components.renderers import is_digest as _is_digest
+from src.webui.components.renderers import keep_as as _keep_as
 from src.webui.components.renderers import resources_html as _resources_html
 from src.webui.exports import export_dir, file_slug
 from src.webui.components.renderers import summary_list as _summary_list
@@ -2337,10 +2338,15 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
                 "details_html": view_update(True, *_HTML_VIEW, value=details_empty_html()),
                 "details_md": view_update(False, *_MD_VIEW), "details_ft": ""}
     kind = _result_kind(result)
+    # The candidate its disclosures are of (`renderers.keep_as`), so a
+    # "More paths" or "Written summary" opened for one candidate is never
+    # drawn open for the next one chosen.
+    named = _keep_as(" ".join(str(candidate.get(k)) for k in (
+        "rank", "disease_id", "gene_id", "case_id") if candidate.get(k) is not None))
     if kind in TASK_ROW_KINDS:
         # No segment is offered: a gene or a reference patient has no
         # evidence, explanation or path, only its values.
-        body = task_details_html(candidate, kind, result)
+        body = f"<div{named}>{task_details_html(candidate, kind, result)}</div>"
         return {"details_hd": details_header_html(candidate, kind),
                 "details_seg": view_update(False, "shep-seg"),
                 "details_html": view_update(True, *_HTML_VIEW, value=body),
@@ -2360,6 +2366,8 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
         why = ("No explanation was returned for this candidate." if explanations
                else "Explanations were off for this run (Options).")
         html_ = f'<p class="shep-muted">{why}</p>'
+    if html_ is not None:
+        html_ = f"<div{named}>{html_}</div>"
     return {
         "details_hd": details_header_html(candidate, _result_kind(result)),
         "details_seg": view_update(True, "shep-seg", value=segment,
