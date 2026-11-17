@@ -941,14 +941,42 @@ def test_differences_only_counts_each_cause_of_a_hidden_row_in_its_own_words(wor
     single = sum(1 for count in applies.values() if count == 1)
     none = sum(1 for count in applies.values() if count == 0)
     note = _text(rs.compare_html([finetune, base], True))
-    assert f"{none} that apply to no result" in note, note
-    assert (f"{single} that apply to one result only" in note) if single else (
-        "one result only" not in note), note
+    assert (f"{none} that applies to no result" if none == 1
+            else f"{none} that apply to no result") in note, note
+    assert (f"{single} that appl{'ies' if single == 1 else 'y'} to one result only" in note
+            ) if single else ("one result only" not in note), note
     assert rs._hidden_note(0, 0, 0, 2) == "Differences only: 2 rows that apply to no result are hidden."
     assert rs._hidden_note(3, 1, 2, 1) == (
         "Differences only: 3 rows recorded alike in every column they apply to, 2 that apply to "
-        "one result only, 1 that apply to no result and 1 that differ only by an Unknown "
+        "one result only, 1 that applies to no result and 1 that differs only by an Unknown "
         "explained above are hidden.")
+
+
+def test_the_hidden_rows_note_agrees_in_number_with_each_count():
+    """Verification of fcc3dea (the fix stage's own find, after V-4): the
+    note said "1 that apply to one result only" and "1 rows recorded alike";
+    each count now agrees with its words, and the verb with the whole. Fails
+    on fcc3dea."""
+    from src.webui.components import results_segment as rs
+
+    assert rs._hidden_note(1, 0) == (
+        "Differences only: 1 row recorded alike in every column it applies to is hidden.")
+    assert rs._hidden_note(0, 0, 1) == (
+        "Differences only: 1 row that applies to one result only is hidden.")
+    assert rs._hidden_note(0, 0, 0, 1) == (
+        "Differences only: 1 row that applies to no result is hidden.")
+    assert rs._hidden_note(0, 1) == (
+        "Differences only: 1 row that differs only by an Unknown explained above is hidden.")
+    assert rs._hidden_note(1, 1, 1, 1) == (
+        "Differences only: 1 row recorded alike in every column it applies to, 1 that applies "
+        "to one result only, 1 that applies to no result and 1 that differs only by an Unknown "
+        "explained above are hidden.")
+    assert rs._hidden_note(158, 0, 0, 1) == (
+        "Differences only: 158 rows recorded alike in every column they apply to and 1 that "
+        "applies to no result are hidden.")
+    assert rs._hidden_note(0, 2, 1) == (
+        "Differences only: 1 row that applies to one result only and 2 that differ only by an "
+        "Unknown explained above are hidden.")
 
 
 def test_compare_keeps_not_applicable_not_recorded_and_none_apart(world, monkeypatch):

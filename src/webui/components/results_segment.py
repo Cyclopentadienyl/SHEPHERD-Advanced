@@ -1304,18 +1304,25 @@ def _hidden_note(alike: int, unknown: int, single: int = 0, none: int = 0) -> st
     apply to one result only (another protocol's metric, another data kind's
     field: nothing to differ from), those that apply to no result (a branch's
     "Settings changed" beside results of no branch), and those whose only
-    difference is an "Unknown" explained above (`_said_above`)."""
-    parts = [f"{alike} rows recorded alike in every column they apply to" if alike else "",
-             f"{single} that apply to one result only" if single else "",
-             f"{none} that apply to no result" if none else "",
-             f"{unknown} that differ only by an Unknown explained above" if unknown else ""]
-    parts = [part for part in parts if part]
-    if not parts:
+    difference is an "Unknown" explained above (`_said_above`). Each count
+    agrees with its words ("1 row … it applies to", "1 that applies"), and
+    the verb with the whole ("is hidden" for one row alone)."""
+    counts = [(alike, ("row recorded alike in every column it applies to",
+                       "rows recorded alike in every column they apply to")),
+              (single, ("that applies to one result only", "that apply to one result only")),
+              (none, ("that applies to no result", "that apply to no result")),
+              (unknown, ("that differs only by an Unknown explained above",
+                         "that differ only by an Unknown explained above"))]
+    said_counts = [(count, words[count != 1]) for count, words in counts if count]
+    if not said_counts:
         return "Differences only: every row differs."
+    parts = [f"{count} {words}" for count, words in said_counts]
     if not alike:
-        parts[0] = parts[0].replace("that ", "rows that ", 1)
+        first = said_counts[0][0]
+        parts[0] = parts[0].replace("that ", "row that " if first == 1 else "rows that ", 1)
     said = parts[0] if len(parts) == 1 else (", ".join(parts[:-1]) + " and " + parts[-1])
-    return f"Differences only: {said} are hidden."
+    verb = "is" if len(parts) == 1 and said_counts[0][0] == 1 else "are"
+    return f"Differences only: {said} {verb} hidden."
 
 
 def _applies(value: Any) -> bool:
