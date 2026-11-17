@@ -77,7 +77,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-02 Orientation and scrolling
 
-16 rows: 3 partly done, 1 outside this round's scope (owner to decide), 6 code-verified, 6 code-verified at ba6e85e (audit).
+16 rows: 2 partly done, 1 outside this round's scope (owner to decide), 7 code-verified, 6 code-verified at ba6e85e (audit).
 
 #### FL-UI-02 · Layout picks side-by-side vs stacked from fixed 1400x760 sizes, not the window's shape
 
@@ -270,7 +270,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-04 The shared model list: folding, search, lineage
 
-14 rows: 5 to do, 6 partly done, 1 outside this round's scope (owner to decide), 2 code-verified at ba6e85e (audit).
+14 rows: 2 partly done, 1 outside this round's scope (owner to decide), 9 code-verified, 2 code-verified at ba6e85e (audit).
 
 #### B39-UI2 · Model list reads every checkpoint though it shows only four runs
 
@@ -520,7 +520,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-07 The model drawer's scrolling
 
-1 rows: 1 to do.
+1 rows: 1 code-verified.
 
 #### RC-C · Diagnosis model drawer list and details share one scroll
 
@@ -1075,7 +1075,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-116 rows: 29 to do, 14 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 32 code-verified, 31 code-verified at ba6e85e (audit).
+116 rows: 29 to do, 12 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 34 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
