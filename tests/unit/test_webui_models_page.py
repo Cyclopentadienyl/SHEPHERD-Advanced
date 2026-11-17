@@ -479,7 +479,8 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
         run = key.rsplit("/", 1)[0]
         assert f"<td>{kind}</td>" in _run_row(html, run), key
         assert ' hidden><td><div class="shep-tree-name shep-tree-leaf' in _file_row(html, key)
-    assert "metadata not readable · cannot be loaded" in _file_row(html, _key(world, "broken.pt"))
+    assert "Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded" in (
+        _file_row(html, _key(world, "broken.pt")))
     ctl = mp.controls(data, mp.NEWEST, "disease")
     assert mp.shape(listing, data, ctl) == {"task": "disease", "note": mp.LOAD_NOTE,
                                             "shaped_for": "newest|disease"}

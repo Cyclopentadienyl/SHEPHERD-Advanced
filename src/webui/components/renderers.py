@@ -670,6 +670,15 @@ def short_reason(text: Any, limit: int = 80) -> str:
     return flat if len(flat) <= limit else flat[:limit - 1] + "…"
 
 
+def reason_lead(text: Any) -> str:
+    """**A reason's plain words, without its trailing reference**: a refused
+    read says "the file cannot be read as a checkpoint; Ref: <the loader's
+    words>" (`checkpoint_paths.refusal_line`; the WebUI skill's §5, an
+    internal code only after a plain label), and a row says the words before
+    the reference; the whole reason is its details'."""
+    return " ".join(str(text or "").partition("; Ref: ")[0].split())
+
+
 #: Why a workspace without a readable manifest is not trainable, in short words:
 #: by whether its ``split_manifest.json`` is absent (an item's ``manifest``,
 #: which the page reading the list adds) or present but not readable.
@@ -2266,6 +2275,7 @@ __all__ = [
     "r10_state_parts",
     "r10_state_text",
     "r10_table_html",
+    "reason_lead",
     "record_chip",
     "record_kind_text",
     "record_read",

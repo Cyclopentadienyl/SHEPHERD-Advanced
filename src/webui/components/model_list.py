@@ -19,8 +19,9 @@ group compares (runs that differ, a comparison incomplete), from the cohort
 version's report store (`record_states.contest_states`, the one implementation
 the API's route shares): never a number of a result, and a description that
 hides, orders or refuses nothing. An
-unreadable entry is greyed "metadata not readable · cannot be loaded" ("not
-read · …" for one never opened, `renderers.unreadable_words`). "In use"
+unreadable entry is greyed "Metadata not readable: <why>; cannot be loaded"
+("Not read: …" for one never opened, `renderers.unreadable_words`), its
+name said once, in its Model cell. "In use"
 is matched by the **full** model fingerprint the status serves and marks the
 checkpoint only.
 
@@ -1190,11 +1191,15 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                 name = (f'<div class="shep-tree-name shep-tree-leaf shep-d{min(run.depth, 4)}">'
                         f'{_whole_words(words[key])}{tag}</div>')
                 if unreadable:
-                    why = item.get("problem") or "its digest was not read"
+                    # Its name is the Model cell's; its state and why, in
+                    # words on the page (never only on hover), the loader's
+                    # reference left to its details (`renderers.reason_lead`).
+                    state = r.unreadable_words(item)
+                    why = r.reason_lead(item.get("problem")) or "its digest was not read"
                     rows.append(
                         f'<tr {attrs}><td>{name}</td><td colspan="{span - 1}">'
-                        f'<span class="shep-sub" title="{r.e(why)}">{_whole_words(item.get("filename"))} · '
-                        f'{r.e(r.unreadable_words(item))} · cannot be loaded</span></td></tr>')
+                        f'<span class="shep-sub">{r.e(state[:1].upper() + state[1:])}: '
+                        f'{r.e(why)}; cannot be loaded</span></td></tr>')
                     continue
                 exception = r.dataset_exception(item)
                 if exception and r.is_synthetic_training(item.get("dataset_fingerprint"),

@@ -1156,7 +1156,8 @@ def test_the_research_preset_is_a_tree_with_in_use_on_its_own_row(root, serving,
     assert "In use (Diagnosis)" in served_row and " hidden" not in served_row
     assert research.count("In use (Diagnosis)") == 1
     assert f'data-locate="{_key("model-05.pt")}"' in research
-    assert "metadata not readable · cannot be loaded" in research
+    assert "Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded" in (
+        research)
     # Every file a row (nothing dropped by folding), the others' runs folded.
     assert research.count(" data-key=") == 9
     assert ' hidden><td><div class="shep-tree-name shep-tree-leaf' in _row_of(
@@ -1961,6 +1962,17 @@ def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, mon
     # "of N runs" too (it read "Disease: 3 of 10 runs").
     assert ml.count_line(data, research, False) == "9 runs, 10 saved files, 1 entry not listed"
     assert ml.count_line(data, research, False, {"task": "disease"}) == "Disease: 3 of 9 runs"
+    # A file whose metadata cannot be read: named once, in its Model cell; its
+    # state and reason in words on the page, the loader's reference left to
+    # its details; at most one " · ", nothing said only on hover (the skill's
+    # §2, §5, §6). It read "broken.pt | broken.pt · metadata not readable ·
+    # cannot be loaded", its reason in a title only.
+    broken = _row_of_key(html, _key("broken.pt"))
+    words = _visible(broken)
+    assert words.count("broken.pt") == 1, words
+    assert ("Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded"
+            in words), words
+    assert words.count(" · ") <= 1 and "title=" not in broken, broken
 
 
 def _row_of_key(html, key):

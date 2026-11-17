@@ -14,7 +14,7 @@ items to escaped HTML. What these pin:
   fingerprint"; "trained on" every listed workspace with the full manifest
   digest the checkpoint records, or "matches no listed workspace"; the
   synthetic chip; the recorded tests as a state, never a result's number; an
-  unreadable checkpoint greyed "metadata not readable · cannot be loaded";
+  unreadable checkpoint greyed "Metadata not readable: <why>; cannot be loaded";
 - **Model Facts**: Identity, Uses (the code's fixed statement and the synthetic
   line), Data, Evidence ("selection metric on val, not an independent test";
   recorded tests as states) and Warnings, always open;
@@ -236,7 +236,12 @@ def test_records_that_cannot_be_read_are_named_apart_from_the_results():
 def test_an_unreadable_checkpoint_is_greyed_and_cannot_be_loaded():
     html = _models_tree(checkpoint(sha=None, problem="UnpicklingError: no"))
     assert 'aria-disabled="true"' in html and "shep-row-dis" in html
-    assert "metadata not readable · cannot be loaded" in html
+    assert "Metadata not readable: UnpicklingError: no; cannot be loaded" in html
+    # A refused read's plain words on the row, the loader's reference left to
+    # its details (`renderers.reason_lead`).
+    refused = "the file cannot be read as a checkpoint; Ref: UnpicklingError: Weights only"
+    assert r.reason_lead(refused) == "the file cannot be read as a checkpoint"
+    assert "Ref:" not in _models_tree(checkpoint(sha=None, problem=refused))
 
 
 def test_in_use_marks_the_row():
@@ -481,13 +486,14 @@ def test_an_entry_never_read_does_not_claim_a_failed_read():
     never = {**checkpoint(sha=None, problem="'bad\\xff' is not text"), "size_bytes": None,
              "run": "bad\\xff", "filename": "RUNS"}
     html = _models_tree(never)
-    assert "not read · cannot be loaded" in html and "metadata not readable" not in html
+    assert "Not read: " in html and "; cannot be loaded" in html
+    assert "metadata not readable" not in html.lower()
     assert r.unreadable_words(never) == "not read"
     failed = checkpoint(sha=None, problem="UnpicklingError: …")
     loaded = checkpoint(problem="it loads as list, not a checkpoint record")
     for item in (failed, loaded):
         assert r.unreadable_words(item) == "metadata not readable"
-        assert "metadata not readable · cannot be loaded" in _models_tree(item)
+        assert "Metadata not readable: " in _models_tree(item)
 
 
 def test_one_run_reads_one_way_on_every_page():
