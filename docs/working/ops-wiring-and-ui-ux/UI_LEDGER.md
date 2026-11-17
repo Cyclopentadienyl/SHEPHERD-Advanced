@@ -2201,13 +2201,14 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### V-18 · Three copies of "auto means CUDA"; measure_scorer takes cuda:N on a host without CUDA
 
-- **State**: to do · found by the verification of fcc3dea, recorded by the review of 5033d29 · severity low · page: test
+- **State**: code-verified · found by the verification of fcc3dea, recorded by the review of 5033d29 · severity low · page: test
 - **Problem**: The rule "auto means CUDA, refused without it" has three copies: `training_device` (training, the job runner, the Test start's check), `measure_scorer._resolve_device` and `pipeline.resolve_serving_device`. They differ on cuda:N: the measurement's copy refuses only auto and cuda, so `measure_scorer --device cuda:0` on a host without CUDA fails late, in torch.
 - **At fcc3dea**: scripts/measure_scorer.py `_resolve_device` (~1032–1066, `requested == "cuda"` only); training's `wants_cuda` and serving refuse cuda:N too. The Test page is safe: its start's check (the job runner, 4d485c7) is stricter than the measurement it guards; only the command line fails late. Pre-existing copies. Evidence: scratchpad/verify/aud/shared_sources_fcc3dea.md §1 and §7.
 - **Done when**: One device rule (training_device's) decides auto, cuda and cuda:N for training, measurement and serving, each refusing in its own words before anything is read; a test of `measure_scorer --device cuda:0` refused up front on a host without CUDA.
 - **Sources**: the verification of fcc3dea, part AUD (V-AUD-6); the review of 5033d29 (R-4: the finding was in no row)
 - **Corrected (verification, d8d1828, 2026-11-17)**: the Problem's last sentence is wrong: `measure_scorer --device cuda:0` does not fail late in torch. The parser's `--device` takes only auto, cuda and cpu, so `cuda:N` is refused before `_resolve_device` runs. Run at 8ddb05f on this host (no CUDA, no SHEPHERD_DEVICE): `python scripts/measure_scorer.py --device cuda:0` printed "measure_scorer.py: error: argument --device: invalid choice: 'cuda:0' (choose from 'auto', 'cuda', 'cpu')" and exited 2 (scratchpad/verify/fix2/v18/cuda0_8ddb05f.out). What stays true: three copies of the rule, two of them asking torch themselves; the copies differ on `cuda:N` only where the measurement's command line cannot take it. The Done when's `cuda:0` test is read as: the three decide by one rule, each refusing auto and cuda (training and serving also `cuda:N`) without CUDA.
-- **Closed at**: —
+- **Fixed (verification, 808ff97, 2026-11-17)**: measurement's `_resolve_device` and serving's `resolve_serving_device` ask the one rule (`training_device.wants_cuda`, `cuda_visible`) instead of torch; each keeps its own words and guards (serving's PyTorch check first, blank meaning auto). Nothing accepted or refused changed, nor any words or `cuda_executed`. The rule's module docstring names its three askers; ARCHITECTURE's device row names the rule. Test: `test_training_device.py::test_training_measurement_and_serving_decide_by_the_one_rule` (rule made False, then True, torch saying the opposite: each refuses or takes auto and cuda, training and serving also cuda:1); fails on d8d1828.
+- **Closed at**: 808ff97. One device rule for training, measurement and serving (the Fixed line above).
 
 **UI-16, training**
 
