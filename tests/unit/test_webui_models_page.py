@@ -3105,6 +3105,93 @@ def test_the_tree_folds_searches_filters_and_keeps_the_selection_in_a_browser(
     assert run(refreshed["tree"], "base_aaaaaa")["open"]               # the operator's fold
 
 
+#: Models served whole: a file chosen, then the row of an entry the listing
+#: could not list hovered and clicked, and what the page shows after.
+_ENTRY_CLICK_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+const ROWS = '#shep-models-research-rows';
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 },
+                                                 deviceScaleFactor: 1 })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.click('#shep-page-models-button');
+  await page.waitForFunction(() => {
+    const m = document.querySelector('#shep-models-research-rows .shep-view-for');
+    return !!m && m.getAttribute('data-for') === 'newest|all';
+  }, null, { timeout: 30000 });
+  await idle();
+  await page.click(`${ROWS} tr[data-key*="model-12.pt"]`);
+  await page.waitForFunction(() => {
+    const h = document.querySelector('#shep-mp-detail-hd h2[data-key]');
+    return !!h && h.getAttribute('data-key').endsWith('model-12.pt');
+  }, null, { timeout: 30000 });
+  await idle();
+  const entry = page.locator(`${ROWS} tr.shep-row-dis`, { hasText: 'cannot be listed' });
+  const look = () => entry.evaluate((tr) => ({ bg: getComputedStyle(tr.querySelector('td')).backgroundColor,
+                                               cursor: getComputedStyle(tr.querySelector('td')).cursor }));
+  await page.mouse.move(5, 5);
+  await frames();
+  const rest = await look();
+  await entry.hover();
+  await frames();
+  const hover = await look();
+  // As a mouse clicks, whatever the row says of itself.
+  await entry.click({ force: true });
+  await frames();
+  await idle();
+  const after = await page.evaluate((R) => {
+    const rows = document.querySelector(R);
+    const tr = [...rows.querySelectorAll('tr.shep-row-dis')].find((t) => t.innerText.includes('cannot be listed'));
+    const current = [...rows.querySelectorAll('tr[aria-current="true"]')].map((t) => t.getAttribute('data-key'));
+    return { focused: document.activeElement === tr, tabIndex: tr.tabIndex,
+             keyed: tr.hasAttribute('data-key'), current,
+             entryCurrent: tr.getAttribute('aria-current'),
+             detail: document.querySelector('#shep-mp-detail-hd h2[data-key]').getAttribute('data-key'),
+             detailText: document.querySelector('#shep-mp-detail-hd h2').innerText };
+  }, ROWS);
+  console.log(JSON.stringify({ rest, hover, after }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_an_entry_it_could_not_list_is_no_choice_in_a_browser(tmp_path, world, monkeypatch):
+    """V-21 (the verification of fcc3dea, part RB2): on Models, with a run
+    folder whose name is not valid text, its row looked like a choice (the
+    hover's background, a tab stop) but a click on it chose nothing, so the
+    details stayed on the model chosen before while that row had the
+    reader's focus. An entry the listing could not list holds no model to
+    show or load: its row says what it is and why, once, and is no choice
+    (the shared tree's rule, Models and the Load drawer alike; the drawer
+    lists task models only). In a real browser (skipped without Node and
+    Playwright), Models served whole at 1850 x 960: a file chosen, the
+    entry's row hovered and clicked: no hover cue, no pointer, no focus, no
+    key; the chosen file stays the one row marked chosen and its details
+    stay drawn. Fails on 78444a6 (the row took the focus and the hover)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_request(monkeypatch)
+    (world["workspace"] / "runs" / "hgt" / os.fsdecode(b"bad\xff")).mkdir()
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_ENTRY_CLICK_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    after = seen["after"]
+    assert seen["hover"] == seen["rest"] and seen["rest"]["cursor"] == "default", seen
+    assert not after["focused"] and after["tabIndex"] < 0 and not after["keyed"], after
+    assert after["entryCurrent"] is None, after
+    assert after["current"] == [after["detail"]] and after["detail"].endswith("model-12.pt"), after
+
+
 #: The page's Order switch, Task select and "Applying …" line as Gradio draws
 #: them, and rows the shared list drew before the page shaped its view (no
 #: marker); By family clicked, then the page's own rows drawn.

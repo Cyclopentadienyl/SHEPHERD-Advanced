@@ -1122,7 +1122,10 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
     far it trained and its model fingerprint, "In use" on the served one. A
     folded row is in the table, hidden, so nothing is dropped by folding. An
     entry the listing could not list reads its own name and where it sits
-    (`renderers.entry_place`)."""
+    (`renderers.entry_place`) and why, and is no choice: a plain row, with no
+    key the page could choose, no hover and no tab stop (V-21: it looked
+    choosable, and a click on it left the details on the model chosen
+    before)."""
     workspaces = listing.get("workspaces") or []
     served = listing.get("served_sha")
     items = {item_key(i): i for i in listing.get("items") or []}
@@ -1159,13 +1162,12 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
             place = r.entry_place(first)
             if place is not None:
                 # A directory the listing could not list: its own name and
-                # where it sits, the reason in its row (BACKLOG 66, 69).
-                key = run.files[0]
+                # where it sits, the reason in its row (BACKLOG 66, 69). It
+                # holds no model to show or load, so it is no choice (V-21):
+                # no ``data-key``, the one mark of a row the page may choose.
                 why = first.get("problem") or "not read"
                 rows.append(
-                    f'<tr class="shep-tree-file shep-row-dis" data-key="{r.e(key)}" '
-                    f'data-in="{r.e(group.node)}" tabindex="0" aria-disabled="true"'
-                    f'{" aria-current=" + chr(34) + "true" + chr(34) if key == selected else ""}'
+                    f'<tr class="shep-tree-entry shep-row-dis" data-in="{r.e(group.node)}"'
                     f'{hidden}><td><span class="shep-w600">{_whole_words(first.get("run"))}</span>'
                     f'<div class="shep-sub">{r.e(place)}</div></td>'
                     # Why, in words on the page (B69 L3: said once, never only
@@ -1951,7 +1953,7 @@ element.addEventListener('click', function (e) {
     return;
   }
   var row = e.target.closest ? e.target.closest('[data-key]') : null;
-  if (!row || row.getAttribute('aria-disabled') === 'true') { return; }
+  if (!row) { return; }
   pick(row.getAttribute('data-key'));
 });
 // The selected row, or else the model in use, is located once it is drawn
@@ -1974,7 +1976,7 @@ new MutationObserver(locate).observe(element, {childList: true, subtree: true});
 locate();
 element.addEventListener('keydown', function (e) {
   var row = e.target.closest ? e.target.closest('tr[data-key]') : null;
-  if (!row || e.target !== row || row.getAttribute('aria-disabled') === 'true') { return; }
+  if (!row || e.target !== row) { return; }
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(row.getAttribute('data-key')); }
 });
 // A row focused under its table's sticky header scrolls clear of it (the

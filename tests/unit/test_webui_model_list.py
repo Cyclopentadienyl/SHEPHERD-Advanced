@@ -2057,7 +2057,7 @@ def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, mon
     assert "Another dataset" in _row_of_key(html, "gatv2/m/model-03.pt")
     cells = re.findall(r"<td>(.*?)</td>", _row_of_key(html, _key("model-03.pt")), re.S)
     assert cells[-1] == r_fingerprint(item["sha256"], listing)
-    entry = _row_of_key(html, "/626164ff")
+    (entry,) = _entry_rows(html)
     assert "bad\\xff" in entry and "a folder in runs/" in entry and "RUNS" not in entry
     assert "runs/bad\\xff cannot be listed (…)" in entry          # why, on the page
     # Counted apart, never as a run or a saved file (B69 L3), a filter's
@@ -2075,6 +2075,11 @@ def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, mon
     assert ("Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded"
             in words), words
     assert words.count(" · ") <= 1 and "title=" not in broken, broken
+
+
+def _entry_rows(html):
+    """The rows of entries the listing could not list (no key: no choice)."""
+    return re.findall(r'<tr class="shep-tree-entry[^"]*"[^>]*>.*?</tr>', html, re.S)
 
 
 def _row_of_key(html, key):

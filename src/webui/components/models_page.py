@@ -273,7 +273,7 @@ if (!window.__shepModelsScroll) {
     if (document.documentElement.getAttribute('data-shep-layout') === 'side' || !rows || !e.target.closest || !rows.contains(e.target)) { return; }
     if (e.target.closest('button, a')) { return; }
     var row = e.target.closest('tr[data-key]');
-    if (!row || row.getAttribute('aria-disabled') === 'true') { return; }
+    if (!row) { return; }
     if (e.type === 'keydown' && (e.target !== row || (e.key !== 'Enter' && e.key !== ' '))) { return; }
     var key = row.getAttribute('data-key'), detail = document.getElementById('shep-mp-detail');
     if (!detail) { return; }
