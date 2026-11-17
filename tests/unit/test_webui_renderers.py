@@ -234,14 +234,34 @@ def test_records_that_cannot_be_read_are_named_apart_from_the_results():
 
 
 def test_an_unreadable_checkpoint_is_greyed_and_cannot_be_loaded():
+    """NEW-models-results-4: an unreadable file's row is greyed and says its
+    state and reason; it is chosen like any other row (never Loaded), so its
+    details say the reason whole, the loader's reference with it, in visible
+    text: Models' detail and the drawer's facts. It was ``aria-disabled``, so
+    the details that held the reference were never reached."""
+    from src.webui.components import model_list as ml
+    from src.webui.components import models_page as mp
+
     html = _models_tree(checkpoint(sha=None, problem="UnpicklingError: no"))
-    assert 'aria-disabled="true"' in html and "shep-row-dis" in html
+    assert "shep-row-dis" in html and 'aria-disabled="true"' not in html
     assert "Metadata not readable: UnpicklingError: no; cannot be loaded" in html
     # A refused read's plain words on the row, the loader's reference left to
     # its details (`renderers.reason_lead`).
     refused = "the file cannot be read as a checkpoint; Ref: UnpicklingError: Weights only"
     assert r.reason_lead(refused) == "the file cannot be read as a checkpoint"
-    assert "Ref:" not in _models_tree(checkpoint(sha=None, problem=refused))
+    item = {**checkpoint(sha=None, problem=refused), "size_bytes": 10}
+    assert "Ref:" not in _models_tree(item)
+    listing = {"items": [item], "workspaces": [], "workspace": "demo"}
+    key = ml.item_key(item)
+    detail = mp.detail_parts(listing, {}, key, {})
+    shown = " ".join(re.sub(r"<[^>]+>", " ", detail["top"]).split())
+    assert ("State ▲ Metadata not readable: cannot be loaded Reason the file cannot be read "
+            "as a checkpoint Ref: UnpicklingError: Weights only") in shown
+    assert detail["seg"] is None and detail["records"] == ""
+    # Load stays off, its state said beside it.
+    assert ml.load_button(listing, item)["interactive"] is False
+    assert "Metadata not readable: it cannot be loaded." in ml.load_reason_html(item, listing)
+    assert "UnpicklingError" in ml.facts_html(listing, key)
 
 
 def test_in_use_marks_the_row():
@@ -1248,10 +1268,12 @@ def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box()
     assert rows["task"] == rows["task_loss_weight"] == "not taken by a base"
     assert rows["use_amp"] == "off" and rows["num_neighbors"] == "15, 10, 5"
     assert "Reference GATv2 spec" in check
-    # The result's determinism by the one value-words rule; a record
-    # without the flag holds none.
+    # The result's determinism by the one value-words rule, a row of the one
+    # record rendering (`renderers.record_rows`, R-82); a record without the
+    # flag holds none.
+    rows = result[result.index('<dl class="shep-kv shep-rec-rows">'):]
     ident = dict(re.findall(r'<dt class="shep-k">([^<]*)</dt><dd class="shep-v">([^<]*)</dd>',
-                            shown["Test result identity"]))
+                            rows))
     assert ident["Deterministic algorithms"] == "on"
     record["regime"]["deterministic_algorithms"] = False
     assert ('Deterministic algorithms</dt><dd class="shep-v">off</dd>'

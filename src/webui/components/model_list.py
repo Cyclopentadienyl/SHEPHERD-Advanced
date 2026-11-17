@@ -1184,16 +1184,19 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                 classes = ["shep-tree-file"] + (["shep-on"] if key == selected else []) + (
                     ["shep-row-dis"] if unreadable else []) + (
                     ["shep-ctx"] if key in context else [])
+                # An unreadable file is chosen like any other (never Loaded:
+                # `can_load`), so its details say its reason whole, the
+                # loader's reference with it (NEW-models-results-4).
                 attrs = (f'class="{" ".join(classes)}" data-key="{r.e(key)}" '
                          f'data-in="{r.e(node)}" tabindex="0"'
-                         + (' aria-current="true"' if key == selected else "")
-                         + (' aria-disabled="true"' if unreadable else "") + file_hidden)
+                         + (' aria-current="true"' if key == selected else "") + file_hidden)
                 name = (f'<div class="shep-tree-name shep-tree-leaf shep-d{min(run.depth, 4)}">'
                         f'{_whole_words(words[key])}{tag}</div>')
                 if unreadable:
                     # Its name is the Model cell's; its state and why, in
                     # words on the page (never only on hover), the loader's
-                    # reference left to its details (`renderers.reason_lead`).
+                    # reference left to its details (`renderers.reason_lead`;
+                    # Models' detail, the drawer's facts), one click away.
                     state = r.unreadable_words(item)
                     why = r.reason_lead(item.get("problem")) or "its digest was not read"
                     rows.append(
@@ -1374,15 +1377,22 @@ def load_reason_html(item: Optional[Mapping[str, Any]],
                      listing: Optional[Mapping[str, Any]] = None) -> str:
     """Beside the Load button, why it is off: for a listing D8 refused, its
     reason with the lock (`chips.operator_only`, the skill's §3); for the
-    selected row, when its record is never loaded (`load_refusal`); nothing
-    otherwise (an unreadable file says so in its row)."""
+    selected row, when its record is never loaded (`load_refusal`) or its
+    file was not read (its state, `renderers.unreadable_words`); nothing
+    otherwise."""
     if (listing or {}).get("refused"):
         from src.webui.components.chips import LOCK
 
         return (f'<div class="shep-reason shep-reason-grey">{LOCK} '
                 f'{r.e(refused_line(listing or {}))}</div>')
-    if not loadable(item):
+    if item is None:
         return ""
+    if not loadable(item):
+        # A file not read, or whose read failed: its state, as its row says
+        # it; why is in its details (`facts_html`, Models' detail).
+        state = r.unreadable_words(item)
+        return (f'<div class="shep-reason shep-reason-grey">'
+                f'{r.e(state[:1].upper() + state[1:])}: it cannot be loaded.</div>')
     why = load_refusal(item)
     return f'<div class="shep-reason shep-reason-grey">{r.e(why)}</div>' if why else ""
 
@@ -1431,10 +1441,14 @@ def workspace_line_html(listing: Mapping[str, Any]) -> str:
             f'{r.dataset_identity_html(row, digits=digits, name=False)}</div>')
 
 
-def note_html(view: Any) -> str:
-    """The view's note beside the Load button (plain text, escaped)."""
+def note_html(view: Any, item: Optional[Mapping[str, Any]] = None) -> str:
+    """The view's note beside the Load button (plain text, escaped), **only
+    for a selected row Load can serve** (R-78): with nothing selected, or a
+    row whose record is never loaded (its reason is said beside Load,
+    `load_reason_html`), there is nothing for it to explain."""
     note = _view(view).get("note")
-    return f'<span class="shep-note">{r.e(note)}</span>' if note else ""
+    return (f'<span class="shep-note">{r.e(note)}</span>'
+            if note and item is not None and can_load(item) else "")
 
 
 # ---------------------------------------------------------------------------
@@ -2342,7 +2356,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                 list_html(data, key, chosen, show_older=older, view=current_view, search=query,
                           fold=fold_state),
                 facts_html(data, key), gr.update(**load_button(data, item)),
-                load_reason_html(item, data), note_html(current_view), fold_state, older)
+                load_reason_html(item, data), note_html(current_view, item), fold_state, older)
 
     refresh_outputs = [listing, selected, workspace, count, rows, facts, load, reason, note, fold,
                        show_older]
@@ -2361,7 +2375,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             # The page folded or unfolded it already (`MODEL_LIST_JS`); the
             # state keeps it for the next drawing, which nothing redraws now.
             fold_state[raw["fold"]] = bool(raw.get("open"))
-            return (*keep, fold_state, gr.update(), gr.update())
+            return (*keep, fold_state, gr.update(), gr.update(), gr.update())
         key = raw.get("key")
         if key == "__older__":
             if data.get("runs_unread"):
@@ -2371,26 +2385,29 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                     list_html(data, current, chosen, show_older=True, view=current_view,
                               search=query, fold=fold_state),
                     count_line(data, chosen, True, current_view, search=query, fold=fold_state),
-                    gr.update(), gr.update(), gr.update(), fold_state, data, gr.update())
+                    gr.update(), gr.update(), gr.update(), fold_state, data, gr.update(),
+                    gr.update())
         if key == "__clear_search__":
             return (gr.update(), older,
                     list_html(data, current, chosen, show_older=older, view=current_view,
                               fold=fold_state),
                     count_line(data, chosen, older, current_view, fold=fold_state),
-                    gr.update(), gr.update(), gr.update(), fold_state, gr.update(), "")
+                    gr.update(), gr.update(), gr.update(), fold_state, gr.update(), "",
+                    gr.update())
         item = find_item(data, key)
         if item is None or item not in shown_items(data, current_view, chosen):
-            return (*keep, gr.update(), gr.update(), gr.update())
+            return (*keep, gr.update(), gr.update(), gr.update(), gr.update())
         return (key, older,
                 list_html(data, key, chosen, show_older=older, view=current_view, search=query,
                           fold=fold_state),
                 count_line(data, chosen, older, current_view, search=query, fold=fold_state),
                 facts_html(data, key), gr.update(**load_button(data, item)),
-                load_reason_html(item, data), gr.update(), gr.update(), gr.update())
+                load_reason_html(item, data), gr.update(), gr.update(), gr.update(),
+                note_html(current_view, item))
 
     rows.click(_select, inputs=[listing, selected, show_older, view, search, fold],
                outputs=[selected, show_older, rows, count, facts, load, reason, fold, listing,
-                        search],
+                        search, note],
                show_progress="hidden", trigger_mode="multiple")
 
     def _redraw(data, key, older, current_view, query, fold_state):
@@ -2404,7 +2421,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                                search=query, fold=fold_state),
                 count_line(data, chosen, older, current_view, search=query, fold=fold_state),
                 facts_html(data, key), gr.update(**load_button(data, item)),
-                load_reason_html(item, data), note_html(current_view))
+                load_reason_html(item, data), note_html(current_view, item))
 
     view.change(_redraw, inputs=[listing, selected, show_older, view, search, fold],
                 outputs=[selected, rows, count, facts, load, reason, note],

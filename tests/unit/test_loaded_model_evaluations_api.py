@@ -300,7 +300,8 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path, monkeyp
     (kept,) = (tmp_path / "reports").glob("versions/*/reports/*/report.json")
     assert view["source_artifact_digest"] == _sha(kept) == record["source_artifact_digest"]
     # D5's state, read from the version's report store (BACKLOG 36): one report.
-    assert view["contest"] == {"state": "uncontested", "differing": [], "runs": []}
+    assert view["contest"] == {"state": "uncontested", "differing": [], "runs": [],
+                               "notes": [], "notes_readable": True}
 
 
 def test_kept_c_and_d_records_are_returned_as_recorded(tmp_path):
@@ -1360,7 +1361,10 @@ def test_the_route_opens_the_ledger_the_manifests_and_the_shown_versions_reports
     assert body["records"][0]["contest"]["state"] == "uncontested"
     here = str(tmp_path.resolve())
     opened = {path: n for path, n in opens.counts.items() if n and path.startswith(here)}
+    # The shown version's investigation notes beside its reports (B40), once.
+    notes = kept.parents[1] / "notes.jsonl"
     assert opened == {str(ledger.resolve()): 1, str(kept.resolve()): 1,
+                      str(notes.resolve()): 1,
                       **{str(manifest.resolve()): 1 for manifest in manifests}}
     assert opens.opens(checkpoint) == 0
     assert opens.listed(other.directory / "reports") == 0
@@ -1528,7 +1532,48 @@ def test_a_contested_record_is_marked_with_what_differs_and_names_no_path(
                     other.parent.name: {"pooled_mrr": 0.4321}}
     assert str(tmp_path) not in json.dumps(body)
     operator = _operator_state(record)
-    assert {k: operator[k] for k in ("state", "differing", "runs")} == view["contest"]
+    assert {k: operator[k] for k in ("state", "differing", "runs")} == {
+        k: view["contest"][k] for k in ("state", "differing", "runs")}
+    assert view["contest"]["notes"] == [] and view["contest"]["notes_readable"] is True
+
+
+def test_a_contested_records_investigation_notes_are_in_the_answer_without_a_path(
+    app, served, tmp_path, monkeypatch
+):
+    """B40: the group's investigation notes, which only the Test page showed,
+    are in the answer (who, when, what; no server path), and a notes file
+    that cannot all be read says so (``notes_readable`` false), never "no
+    note is kept"; the Models page draws them by the one rendering."""
+    from src.evaluation.report_store import NOTES_FILE, add_investigation_note
+    from src.evaluation.sidecar import record_key
+    from tests.fixtures.report_store import version_of
+
+    registry, kept, record = _registered_with_registry(served, tmp_path, monkeypatch)
+    _disagreeing(kept, 0.4321)
+    version = version_of(kept)
+    add_investigation_note(version, record_key(record), who="Dr <img src=x onerror=alert(1)>",
+                           what=f"seed drift; see {tmp_path}/notes.txt")
+    (view,) = _get(app)["records"]
+    (note,) = view["contest"]["notes"]
+    assert note["who"] == "Dr <img src=x onerror=alert(1)>" and note["at"].endswith("Z")
+    assert note["what"].startswith("seed drift; see ") and str(tmp_path) not in note["what"]
+    assert view["contest"]["notes_readable"] is True
+    from src.webui.components import models_page as mp
+
+    answer = _get(app)
+    shown = mp.readonly_parts({"readonly": True, "answer": answer, "status_at": "now",
+                               "served_sha": record["checkpoint_digest"],
+                               "contest": mp.route_contest(answer)})
+    assert "Investigation notes (1)" in _text(shown["records"])
+    assert "Dr <img src=x onerror=alert(1)>" in _text(shown["records"])
+    assert "<img" not in shown["records"]
+    # A line of the notes file that is not JSON: the rest are shown, and the
+    # answer says they cannot all be read.
+    with open(version.directory / "reports" / NOTES_FILE, "a", encoding="utf-8") as handle:
+        handle.write("{not json\n")
+    (view,) = _get(app)["records"]
+    assert len(view["contest"]["notes"]) == 1 and view["contest"]["notes_readable"] is False
+    assert str(tmp_path) not in json.dumps(view)
 
 
 @pytest.mark.parametrize("value", [float("nan"), None, "0.5", {"k": 1}, 10**400, -10**400],
@@ -1577,7 +1622,8 @@ def test_a_contested_state_whose_details_cannot_be_shown_stays_contested(
 
     monkeypatch.setattr(record_states, "contest_states", broken_runs)
     (view,) = _get(app)["records"]
-    assert view["contest"] == {"state": "contested", "differing": [], "runs": []}
+    assert view["contest"] == {"state": "contested", "differing": [], "runs": [], "notes": [],
+                               "notes_readable": True}
 
 
 @pytest.mark.parametrize("case", ["no_registry", "unreadable_report", "unlisted_version"])
@@ -1605,7 +1651,11 @@ def test_a_state_that_cannot_be_read_is_cannot_be_checked_never_uncontested(
 
     (view,) = body["records"]
     expected = "uncontested" if case == "unreadable_report" else "cannot_be_checked"
-    assert view["contest"] == {"state": expected, "differing": [], "runs": []}
+    assert {k: view["contest"][k] for k in ("state", "differing", "runs")} == {
+        "state": expected, "differing": [], "runs": []}
+    # The group's notes, or that they cannot be read where the store is not.
+    assert view["contest"]["notes"] == []
+    assert view["contest"]["notes_readable"] is (case == "unreadable_report")
     assert str(tmp_path) not in json.dumps(body)
 
 
@@ -1739,8 +1789,8 @@ def test_a_mixed_ledger_lists_its_unreadable_record_the_same_way_in_every_reader
     row = f"3 #4 {bad['source_artifact_digest'][:12]} n_ranked: missing"
     for shown in (operator, readonly):
         said = _text(shown)
-        assert ("▲ 1 record for these weights cannot be read as a result. The ledger keeps it "
-                "as written.") in said
+        assert ("▲ 1 record for these weights cannot be read as a result; it is kept as "
+                "written.") in said
         assert "Index Registration Report Reason " + row in said
         assert "server's log" not in said and "not shown:" not in said
         assert 'aria-label="Records that cannot be read"' in shown

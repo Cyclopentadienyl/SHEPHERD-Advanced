@@ -185,13 +185,10 @@ from src.evaluation.caveats import (
     MEASUREMENT_NAMES,
     TASK_NAMES,
     label_words,
-    metric_text,
     mode_label,
     mode_note,
-    recorded_metric_lines,
     version_words,
 )
-from src.utils.run_environment import native_identity_lines
 from src.webui.components import renderers as r
 from src.webui.components.chips import LOCK, chips_on_change, gated
 from src.webui.components.chips import operator_only as _operator_only
@@ -243,26 +240,6 @@ NOTE_FIELD_MIN_WIDTH = 240
 POLICY_CHOICES = [("keep case", "keep"),
                   ("exclude case", "exclude")]
 
-#: The words the dataset origin is shown with.
-_ORIGIN_MEANING = {
-    "synthetic": "a generated stand-in, not a clinical knowledge graph",
-    "files": "built from identified source files",
-}
-#: The metrics shown as tiles, in order, by the record's mode (`scoring.mode`),
-#: for a measurement this build describes; each is named by
-#: `caveats.metric_text`. A task's (`src.evaluation.task_measurement`) are
-#: pooled over its positive pairs or a mean over its ranked cases, and its
-#: coverage. A record of any other mode has no tiles: its metrics as recorded
-#: are its main result (`_record_html`).
-_TILES = {
-    "disease": ("pooled_mrr", "pooled_top1", "pooled_top10", "coverage"),
-    "gene": ("pooled_mrr", "pooled_top1", "macro_recall@5", "coverage"),
-    "patients_like_me": ("pooled_mrr", "pooled_top10", "macro_recall@10", "coverage"),
-}
-#: A task record's metric families that take a cut-off k, each shown as one
-#: row (its k values in order), and its single figures shown as a row each.
-_TASK_FAMILIES = ("pooled_top", "macro_recall@", "macro_precision@")
-_TASK_ROWS = ("macro_mrr", "best_positive_mrr")
 #: Each measurement this build describes, as this page names its result: from
 #: the one vocabulary (`caveats.MEASUREMENT_NAMES`), a task's measurement by
 #: its task's name and "task" ("Disease task"), the KG link-prediction
@@ -397,7 +374,6 @@ TOPIC_HELP = {
     ),
     **{_MODE_HELP[mode]: (f"{words} result", sentence_lines(mode_note(mode)))
        for mode, words in _RESULT_WORDS.items()},
-    "test-r10": r.R10_HELP,
     "test-fixed": (
         "Fixed by the server",
         "A test run has no reason to vary these, so the job runner fixes them.\n"
@@ -590,12 +566,6 @@ def said(text: Any, tail: str) -> str:
 
 def _count(value: Any) -> str:
     return str(value) if isinstance(value, int) and not isinstance(value, bool) else "—"
-
-
-def _number(value: Any) -> str:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return "—"
-    return f"{value:.4f}"
 
 
 # ---------------------------------------------------------------------------
@@ -1884,28 +1854,6 @@ def outcome_html(outcome: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -
 # ---------------------------------------------------------------------------
 # Rendering: Result
 # ---------------------------------------------------------------------------
-def _environment(view: Mapping[str, Any]) -> str:
-    """The view's environment class (`sidecar.environment_class`, as the one
-    reader classified it) and, for a run on CUDA, its GPU and driver."""
-    text = str(view["environment_class"])
-    gpu = view["gpu"]
-    if isinstance(gpu, Mapping):
-        text += (f" · GPU {gpu.get('name') or 'name not read'}, driver "
-                 f"{gpu.get('driver') or 'not read'}")
-    return e(text)
-
-
-def _native_build(view: Mapping[str, Any]) -> str:
-    """The view's native build identity (the run environment's one
-    projection, `native_identity`, as the API's record view and Models show
-    it) in its one wording: a lead with the route and the count, then one line
-    per component (`native_identity_lines`), since the one line runs to four in
-    this column (the skill's §4: past two lines, structure); "not recorded"
-    for a run recorded before its environment named components."""
-    return "".join(f"<div>{e(line)}</div>"
-                   for line in native_identity_lines(view["native_identity"]))
-
-
 class Selection(NamedTuple):
     """**What is chosen now**, which a report's identity is said against
     (`result_identity_rows`, `reports_html`): the chosen workspace's name and
@@ -2059,78 +2007,29 @@ def _registration_reason_html(state: Mapping[str, Any], roots: Sequence[Tuple[st
     return ""
 
 
-def _tile_note(name: str, kind: str = "supplied") -> str:
-    """What a described measurement's tile figure is over: its positive pairs
-    (pooled), its ranked cases (macro) or the share of the import-eligible cases
-    ranked (coverage; a generated split's cases are not imported, so its share
-    is of the cases measured), with no count, since the record's Coverage row
-    says "n of M" once (skill rule 1.2)."""
-    if name == "coverage":
-        return ("share of import-eligible cases ranked" if kind == "supplied"
-                else "share of the cases measured that were ranked")
-    if name.startswith("pooled_"):
-        return "pooled over positive pairs"
-    if name.startswith("macro_"):
-        return "mean over the ranked cases"
-    return ""
-
-
-def _figure_words(mode: str, name: str) -> str:
-    """A task metric's words as a row under the record's label, which names
-    the task once: `caveats.metric_text`'s "Disease pooled top-k" less the
-    task's name, "Pooled top-k"."""
-    words = metric_text(mode, name)[len(TASK_NAMES[mode]) + 1:]
-    return words[:1].upper() + words[1:]
-
-
-def _task_rows(mode: str, metrics: Mapping[str, Any], tiles: Sequence[str]
-               ) -> List[Tuple[str, str]]:
-    """A task record's figures past its tiles (README E1, E2, E5): the
-    conservative pooled MRR with what it counts, one row for each family that
-    takes a cut-off k (its k values in order, a tile's left out), the macro
-    and best-positive MRR, and any other figure the record holds. No mean
-    rank: a task reports none."""
-    shown = set(tiles) | {"conservative_pooled_mrr"}
-    conservative = _number(metrics.get("conservative_pooled_mrr"))
-    rows = [(_figure_words(mode, "conservative_pooled_mrr"),
-             (conservative if conservative != "—" else "not reported")
-             + " · an unranked case whose truth can be assessed counts 0")]
-    for prefix in _TASK_FAMILIES:
-        family = sorted((int(name[len(prefix):]), name) for name in metrics
-                        if str(name).startswith(prefix) and str(name)[len(prefix):].isdigit())
-        shown.update(name for _k, name in family)
-        values = [f"k={k} {_number(metrics[name])}" for k, name in family if name not in tiles]
-        if values:
-            rows.append((_figure_words(mode, f"{prefix}k"), e(", ".join(values))))
-    for name in _TASK_ROWS:
-        if name in metrics:
-            shown.add(name)
-            rows.append((_figure_words(mode, name), e(_number(metrics[name]))))
-    other = [f"{metric_text(mode, str(k))} {_number(v)}" for k, v in sorted(metrics.items())
-             if k not in shown]
-    if other:
-        rows.append(("Other metrics", e(" · ".join(other))))
-    return rows
-
-
-def recorded_metrics_html(metrics: Mapping[str, Any]) -> str:
-    """Every metric of a record as recorded, one per line
-    (`caveats.recorded_metric_lines`: the name as written, a code, and the
-    value's JSON text, unrounded), every value escaped; "no metric recorded"
-    when it holds none."""
-    lines = recorded_metric_lines(metrics)
-    if not lines:
-        return '<span class="shep-muted">no metric recorded</span>'
-    return "".join(f"<div><code>{e(name)}</code> {e(value)}</div>" for name, value in lines)
-
-
-def _semantics_text(raw: Any) -> str:
-    """The record's `scoring.score_semantics` exactly as recorded (the view's
-    ``score_semantics``), a code, or "not recorded": never split, interpreted
-    or rebuilt."""
-    if isinstance(raw, str) and raw.strip():
-        return f"<code>{e(raw)}</code>"
-    return '<span class="shep-muted">not recorded</span>'
+def _registration_html(state: Mapping[str, Any]) -> str:
+    """A kept report's registration as the store's state says it (the
+    record's Registration row, `renderers.record_rows`): registered as which
+    record, not registered, or cannot be checked, and which ledger was read;
+    a possible overlap with a record merged before each run had its own
+    record (K8-6r.2), never said as registered."""
+    registered = state.get("registered")
+    seq = state.get("sequence")
+    beside = state.get("checked_beside")
+    where = f" (the ledger beside {e(beside)} was read)" if beside else ""
+    merged = [n for n in state.get("historical_overlap") or [] if isinstance(n, int)]
+    overlap = (f"; possible overlap with record{'s' if len(merged) != 1 else ''} "
+               f"{', '.join(str(n) for n in merged)}, merged before each run had its own record "
+               "(not recorded whether this run is one of them); registering adds this run's "
+               "own record" if merged and registered != "registered" else "")
+    return ((f"registered as record {seq}{where}" if registered == "registered"
+             and isinstance(seq, int)
+             else f"registered{where}" if registered == "registered"
+             else f"not registered{where}" if registered == "not_registered"
+             else f"cannot be checked{where}" if beside
+             else "none found beside the checkpoint the run read, or its ledger cannot be "
+                  "read (a registration beside another copy of the weights is looked for only "
+                  "with the checkpoint list, an operator control)") + e(overlap))
 
 
 def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
@@ -2140,18 +2039,21 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     """The selected report's record (`build_record`'s, through the store's
     scan) as the one reader reads it (research comparison Stage 8b): its data
     kind's result view (`record_views.result_view`, the one the results
-    service reads every kept report by, registered or not). Every field shown
-    is the view's: its mode, data (label, role, version, kind and counts),
-    the run's counts, score semantics, relations, R10 or the kind's lines (the
-    shared renderings, `renderers.r10_table_html` and `renderers.data_kind_lines`,
-    as Models shows a registered record's), environment, native build and
-    dataset origin; the measurement's device is the record's recorded
-    setting (`record_views.recorded_settings`, as the service reads it), and
-    the model is the record's key field. Only the metric values are the
-    record's own, by the names the view read (an integer stays an integer,
-    as the service keeps them, `results._metrics`). A record the reader
-    cannot read is not shown as a result: its reason, naming fields and
-    never values, as Models and the results service list it."""
+    service reads every kept report by, registered or not), **drawn by the
+    one record renderer Models draws its records by** (`renderers.record_html`,
+    R-82: the same rows in the same order). Around it, what only this page
+    knows: what the result is of, by its relation to what is chosen now
+    (`result_identity_rows`, its run id once), its measurement's label with
+    its ⓘ, and its registration as the store's state says it. The
+    measurement's device is the record's recorded setting
+    (`record_views.recorded_settings`, as the service reads it). Only the
+    metric values are the record's own, by the names the view read (an
+    integer stays an integer, as the service keeps them, `results._metrics`).
+    The dataset origin is said only where the report's dataset record is not
+    the selected workspace's, whose origin the workspace line says (the
+    skill's §1.2). A record the reader cannot read is not shown as a result:
+    its reason, naming fields and never values, as Models and the results
+    service list it."""
     from src.api.services.record_views import (
         recorded_settings,
         result_view,
@@ -2164,125 +2066,23 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
         return _reason_html("This report's record cannot be read as a result, so it is not "
                             "shown as one (Models › Results lists it with this reason): "
                             + unreadable_reason(exc))
-    cohort, counts, n_ranked = view["cohort"], view["counts"], view["n_ranked"]
     metrics = {name: record["metrics"][name] for name in view["metrics"]}
+    view["device"] = recorded_settings(record)["regime"].get("device")
     # Labelled by the record's own mode, as recorded, never by another's.
     mode = view["mode"]
-    label = mode_label(mode)
-    tile_names = _TILES.get(mode, ())
-    task = mode in TASK_NAMES
-    eligible = _count(counts.get("ranked_eligible"))
-    deterministic = view["deterministic_algorithms"]
-    device = recorded_settings(record)["regime"].get("device")
-    # The record's data kind, as the one reader read it (research comparison
-    # Stage 6): a version of another kind than a supplied cohort is named by
-    # its kind and role, and read by its own counts and exposure, never a
-    # cohort's or R10's words.
-    kind = cohort["kind"]
-    # The one value-words rule (on / off); a record without the flag holds
-    # none: "not recorded", never "not set".
-    determinism = (r.setting_words("deterministic_algorithms", deterministic)
-                   if deterministic is not None else r.NOT_RECORDED.lower())
-    # What the result is of, as the record holds it, by its relation to what
-    # is chosen now: one row per fact in the one summary list (the skill's
-    # §4, §5: never a chain of " · "), the report's run id once.
-    identity = r.summary_list([
-        ("Report", r.ident_html(run.get("run_id"))),
-        *result_identity_rows(record, view, selection, models or {}, workspaces),
-        ("Deterministic algorithms", e(determinism)),
-        ("Device", f"<code>{e(device)}</code>" if device
-         else f'<span class="shep-muted">{e(r.NOT_RECORDED.lower())}</span>'),
-    ], classes="shep-test-ident-rows")
-    tiles = "".join(
-        f'<div class="shep-test-tile"><div class="shep-test-tile-l">{e(metric_text(mode, name))}</div>'
-        f'<div class="shep-test-tile-v">{e(_number(metrics.get(name)))}</div>'
-        f'<div class="shep-test-tile-n">{e(_tile_note(name, kind))}</div>'
-        '</div>'
-        for name in tile_names)
-    excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
-    reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
-    excluded_text = (f"{e(_count(counts.get('n_excluded')))} excluded"
-                     f"{' at import' if task else ''}"
-                     f"{': ' + e(reasons) if reasons else ''}")
-    if kind == "kg_edges":
-        run = view["measured"]["counts"]
-        coverage = (f"<b>{e(_count(run.get('pairs_scored')))} of {e(_count(counts.get('pairs')))}"
-                    f"</b> stored pairs scored · {e(_count(counts.get('positive_edges')))} "
-                    f"positive edges; {e(_count(counts.get('edges_without_negative')))} without a "
-                    "negative to pair")
-    elif kind == "generated":
-        diseases = counts.get("diseases")
-        coverage = (f"<b>{e(_count(n_ranked))}</b> "
-                    + ("cases ranked by the model" if task else "counted by the record")
-                    + f" · {e(_count(counts.get('samples')))} generated patients of "
-                    f"{e(_count(diseases))} disease{'' if diseases == 1 else 's'}")
-    elif task:
-        coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases ranked "
-                    f"by the model · {e(_count(counts.get('source_cases')))} source cases; "
-                    f"{excluded_text}")
-    else:
-        # No claim of what this mode's n_ranked counts.
-        coverage = (f"{e(_count(counts.get('source_cases')))} source cases · {excluded_text}; "
-                    f"{e(_count(n_ranked))} cases counted by the record; what they are is not "
-                    "described for this mode")
-    # One display for every mode (R2): a described measurement's figures in
-    # words, every metric as recorded one click away (below); any other mode's
-    # metrics as recorded are its main result, one per line.
-    figures = (_task_rows(mode, metrics, tile_names) if task
-               else [("Recorded metrics", recorded_metrics_html(metrics))])
-    # The relations and a supplied cohort's R10 each in its one rendering,
-    # under a key of its own across the list's width, so no relation's name
-    # wraps in the 12em key column and the overlap reads as its table.
-    relations = view["relations"]
-    lines = [
-        ("Coverage", coverage),
-        *figures,
-        ("Score semantics", _semantics_text(view["score_semantics"])),
-        ("Relations", r.relations_html(relations) if isinstance(relations, Mapping)
-         else r.status_mark("neutral", r.NOT_RECORDED)),
-        *([(r.R10_TITLE, r.r10_table_html(view["r10"]))] if kind == "supplied"
-          else r.data_kind_lines(view)),
-        ("Environment", _environment(view)),
-        ("Native build", _native_build(view)),
-    ]
-    origin = view["dataset_origin"]
-    meaning = _ORIGIN_MEANING.get(origin)
-    lines.append(("Dataset", (f'<b class="shep-amber-t">{e(origin)}</b>' if origin == "synthetic"
-                              else e(origin or "not reported"))
-                  + (f" — {e(meaning)}" if meaning else "")))
-    registered = state.get("registered")
-    seq = state.get("sequence")
-    beside = state.get("checked_beside")
-    where = f" (the ledger beside {e(beside)} was read)" if beside else ""
-    # A record merged before each run had its own record may hold these bytes
-    # (K8-6r.2): said as a possible overlap, never as registered.
-    merged = [n for n in state.get("historical_overlap") or [] if isinstance(n, int)]
-    overlap = (f"; possible overlap with record{'s' if len(merged) != 1 else ''} "
-               f"{', '.join(str(n) for n in merged)}, merged before each run had its own record "
-               "(not recorded whether this run is one of them); registering adds this run's "
-               "own record" if merged and registered != "registered" else "")
-    lines.append(("Registration",
-                  (f"registered as record {seq}{where}" if registered == "registered" and isinstance(seq, int)
-                   else f"registered{where}" if registered == "registered"
-                   else f"not registered{where}" if registered == "not_registered"
-                   else f"cannot be checked{where}" if beside
-                   else "none found beside the checkpoint the run read, or its ledger cannot be "
-                        "read (a registration beside another copy of the weights is looked for only "
-                        "with the checkpoint list, an operator control)") + e(overlap)))
-    # The train/test overlap ⓘ sits beside the R10 table's key, which it explains.
-    kv = r.summary_list(lines, wide=("Relations", r.R10_TITLE),
-                        helps={r.R10_TITLE: ("test-r10", r.R10_HELP[0])},
-                        classes="shep-test-lines")
+    identity_rows = result_identity_rows(record, view, selection, models or {}, workspaces)
+    identity = r.summary_list([("Report", r.ident_html(run.get("run_id"))), *identity_rows],
+                              classes="shep-test-ident-rows")
+    # The report's dataset record is the selected workspace's: its origin is
+    # the workspace line's, said there once; any other is said here.
+    same_workspace = dict(identity_rows).get("Workspace") == e(SELECTED_WORKSPACE)
     topic = _MODE_HELP.get(mode)
     mode_help = help_button(topic, TOPIC_HELP[topic][0]) if topic else ""
-    fold = (f'<details class="shep-test-fold shep-test-recm"><summary>Recorded metrics '
-            f'({len(metrics)})</summary>{recorded_metrics_html(metrics)}</details>'
-            if task and metrics else
-            '<div class="shep-sub shep-test-recm">no metric recorded</div>' if task else "")
-    return (f'{identity}'
-            f'<div class="shep-test-label">{e(label)}{mode_help}</div>'
-            f'<div class="shep-test-tiles">{tiles}</div>{kv}'
-            f'{fold}')
+    body = r.record_html(view, metrics, registration=_registration_html(state),
+                         dataset=None if same_workspace
+                         else r.dataset_origin_html(view["dataset_origin"]))
+    return (f'{identity}<div class="shep-rec-label">{e(mode_label(mode))}{mode_help}</div>'
+            f'{body}')
 
 
 def _deterministic_group(run: Mapping[str, Any]) -> Optional[bool]:
@@ -2347,19 +2147,10 @@ def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
         wanted = dict(zip(KEY_FIELDS, key, strict=False))
         mine = [n for n in notes if n.get("key") == wanted]
         shown = bool(mine) or contest.get("state") in ("contested", "cannot_be_checked")
-        if mine:
-            items = "".join(
-                f'<li><b>{e(n.get("who"))}</b> · {e(str(n.get("at") or "").replace("T", " ").replace("Z", " UTC"))}'
-                f'<div>{e(n.get("what"))}</div></li>' for n in mine)
-            parts.append(f'<div class="shep-test-notes"><div class="shep-w600">Investigation '
-                         f'notes ({len(mine)})</div><ul>{items}</ul></div>')
-        if shown and notes_problems:
-            parts.append(_reason_html(
-                "The investigation notes cannot all be read, so a note kept for this group may "
-                "be missing here: " + "; ".join(redact(p, roots) for p in notes_problems)))
-        elif shown and not mine:
-            parts.append('<div class="shep-sub">No investigation note is kept for this '
-                         'group.</div>')
+        # The one rendering of a group's notes (Models draws them so too, B40).
+        parts.append(r.investigation_notes_html(
+            mine, problems=[redact(p, roots) for p in notes_problems] if shown else (),
+            expected=shown))
     return "".join(parts)
 
 
@@ -3723,9 +3514,8 @@ def create_test_page(ctx: Any) -> None:
 _PAGE = "#" + page_elem_id(PAGE)
 
 #: This page's style sheet (the page contract: listed in `src/webui/app.py`'s
-#: ``PAGE_CSS``), scoped to its own ids. ``.shep-test-recm``: a described
-#: measurement's metrics as recorded (R2), one click away under its figures, its
-#: summary a 24 px target that shows the keyboard focus (skill §10).
+#: ``PAGE_CSS``), scoped to its own ids. A report's record is the one record
+#: rendering's (`renderers.record_html`), styled once in `src/webui/style.py`.
 #: ``.shep-test-replist``: the reports, a compact single-select table at the
 #: Result panel's top (32-40 px rows, the skill's §8), in the panel's one scroll
 #: region with the result under it; its header does not stick (the region
@@ -3771,17 +3561,8 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-units > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
 {_PAGE} .shep-test-fold summary {{ cursor: pointer; }}
 {_PAGE} .shep-test-fold[open] summary {{ margin-bottom: 6px; }}
-{_PAGE} .shep-test-recm {{ margin-top: 12px; font-size: 15px; overflow-wrap: anywhere; }}
-{_PAGE} .shep-test-recm > summary {{ min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; color: var(--shep-text-2); }}
 {_PAGE} .shep-test-outcome {{ display: flex; flex-direction: column; gap: 6px; font-size: 15px; }}
 {_PAGE} .shep-test-chips {{ display: flex; flex-wrap: wrap; gap: 6px 8px; }}
-{_PAGE} .shep-test-label {{ font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }}
-{_PAGE} .shep-test-tiles {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }}
-{_PAGE} .shep-test-tile {{ border: 1px solid var(--shep-border); border-radius: 8px; padding: 8px 10px; background: #fff; min-width: 0; }}
-{_PAGE} .shep-test-tile-l {{ font-size: 14px; color: var(--shep-text-2); }}
-{_PAGE} .shep-test-tile-v {{ font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }}
-{_PAGE} .shep-test-tile-n {{ font-size: 14px; color: var(--shep-text-2); }}
-{_PAGE} .shep-test-notes ul {{ margin: 4px 0 0; padding-left: 18px; font-size: 15px; }}
 {_PAGE} .shep-test-noteform {{ padding: 10px 16px 8px !important; gap: 6px !important; border-top: 1px solid var(--shep-border); }}
 {_PAGE} .shep-test-noterow {{ gap: 10px !important; flex-wrap: wrap !important; align-items: flex-start !important; }}
 {_PAGE} .shep-test-noteform .shep-test-actions > .block {{ flex: 1 1 200px !important; min-width: 0 !important; }}
@@ -3816,7 +3597,6 @@ PAGE_CSS = f"""
   {_PAGE} .shep-test-drawer > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
 }}
 {STACK} {{
-  {_PAGE} .shep-test-tiles {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
   {_PAGE} .shep-test-drawer {{ position: fixed !important; top: 0; right: 0; bottom: 0; width: min(640px, 100%) !important; max-width: 100% !important; z-index: 60; display: flex; flex-direction: column; flex-wrap: nowrap !important; border-radius: 0 !important; }}
   {_PAGE} .shep-test-drawer > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
 }}

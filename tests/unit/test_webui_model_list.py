@@ -1190,7 +1190,14 @@ def test_a_pages_view_orders_and_filters_its_groups(root, serving, monkeypatch):
     assert len(bodies) == 2 and all(body.count('scope="rowgroup"') == 1 for body in bodies)
     assert 'class="shep-tree-name shep-d1"' in html     # the depth the page gives
     assert ml.count_line(listing, ml.PRESETS["research"], False, view) == "Disease: 3 of 8 runs"
-    assert ml.note_html(view) == '<span class="shep-note">A note from the page &lt;b&gt;.</span>'
+    # The page's note beside Load only for a selected row Load can serve
+    # (R-78): nothing before a selection, nor for a base, whose reason is said.
+    assert ml.note_html(view) == ""
+    servable = next(i for i in listing["items"] if ml.can_load(i))
+    assert ml.note_html(view, servable) == (
+        '<span class="shep-note">A note from the page &lt;b&gt;.</span>')
+    base = next(i for i in listing["items"] if i.get("learning_stage") == "base")
+    assert ml.loadable(base) and ml.note_html(view, base) == ""
     assert len(keys) == 9
     # A view's explicit rows (a family view's, its context rows included).
     rows = ml.shown_items(listing, {"task": "disease", "keys": [_key("base.pt"), first]})
@@ -1347,7 +1354,8 @@ def test_a_view_shaped_for_another_workspace_never_hides_this_workspaces_rows(
         assert f'data-key="{_key(name)}"' in rows, name
     assert "Family from run" not in rows and "Group" not in rows
     assert by[id(handle.count)] == "Disease: 3 of 8 runs"
-    assert by[id(handle.note)] == '<span class="shep-note">Reloads.</span>'
+    # Nothing is selected: no note beside Load (R-78).
+    assert by[id(handle.note)] == ""
     # The same workspace: the view's own rows and groups.
     listing = by[id(handle.listing)]
     mine = {**family, "keys": [_key("model-05.pt")],

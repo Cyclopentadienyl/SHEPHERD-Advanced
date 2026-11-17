@@ -213,7 +213,14 @@ def contest_states(records: Iterable[Mapping[str, Any]], versions: CohortVersion
     byte-identical runs each named, with its values of the metrics that differ,
     as its report holds them (a hand-edited report may hold null, NaN or text
     there; the description stays contested). It decides nothing. `operator`
-    False leaves out the problems' own words, which may name a server path."""
+    False leaves out the problems' own words, which may name a server path.
+
+    **With the group's investigation notes** (BACKLOG 40): ``notes``, who,
+    when and what, oldest first, as the version's store keeps them for the
+    group's key, and ``notes_problems``, why they cannot all be read (empty
+    words on an open surface), so a page or an answer never says "no note is
+    kept" when one may be. Read once per store, beside its scan; on an open
+    surface a note's words carry no absolute server path (`_open_note`)."""
     from src.evaluation.sidecar import record_key
 
     keys: Dict[str, Tuple[Any, ...]] = {}
@@ -224,6 +231,7 @@ def contest_states(records: Iterable[Mapping[str, Any]], versions: CohortVersion
             continue
         keys[key_text(key)] = key
     scans: Dict[str, StoreRead] = {}
+    notes: Dict[str, Tuple[List[Dict[str, Any]], List[str]]] = {}
     out: Dict[str, Dict[str, Any]] = {}
     for text, key in keys.items():
         digest = key[2]
@@ -231,8 +239,52 @@ def contest_states(records: Iterable[Mapping[str, Any]], versions: CohortVersion
             version, why = versions.by_digest(digest)
             scans[digest] = (StoreRead(None, why) if version is None
                              else read_report_store(version))
-        out[text] = group_state(scans[digest], key, operator=operator)
+            notes[digest] = (([], [why]) if version is None else _store_notes(version))
+        out[text] = {**group_state(scans[digest], key, operator=operator),
+                     **_group_notes(notes[digest], key, operator=operator)}
     return out
+
+
+def _store_notes(version: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Every investigation note a version's store keeps, and why any cannot
+    be read; a store whose notes cannot be read at all says so, never "none"."""
+    from src.evaluation.report_store import read_investigation_notes
+
+    try:
+        entries, problems = read_investigation_notes(version)
+    except Exception as exc:  # noqa: BLE001 - a state, never a 500
+        return [], [f"the investigation notes could not be read ({type(exc).__name__})"]
+    return [e for e in entries if isinstance(e, Mapping)], list(problems)
+
+
+def _open_note(value: Any) -> str:
+    """A note's words for an open surface: no absolute server path left (the
+    one redaction, `redact_paths`)."""
+    from src.utils.path_redaction import redact_paths
+
+    return redact_paths(value, (), other="<path>")
+
+
+def _group_notes(read: Tuple[List[Dict[str, Any]], List[str]], key: Sequence[Any], *,
+                 operator: bool) -> Dict[str, Any]:
+    """One group's notes (its key's) from its store's (`_store_notes`): who,
+    at and what each, as text; on an open surface without a server path."""
+    from src.evaluation.sidecar import KEY_FIELDS
+
+    entries, problems = read
+    wanted = dict(zip(KEY_FIELDS, key, strict=False))
+    shown = []
+    for entry in entries:
+        if entry.get("key") != wanted:
+            continue
+        note = {field: str(entry.get(field) or "") for field in ("who", "at", "what")}
+        if not operator:
+            note = {field: _open_note(value) for field, value in note.items()}
+        shown.append(note)
+    # Why the notes cannot all be read: the words on an operator's surface,
+    # one empty mark on an open one (which may not name a server path).
+    unread = _shown(problems, operator) if operator else [""] * bool(problems)
+    return {"notes": shown, "notes_problems": unread}
 
 
 def group_state(store: StoreRead, key: Sequence[Any], *, operator: bool) -> Dict[str, Any]:

@@ -945,8 +945,11 @@ def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):
     ranked = json.loads((site.reports / site.run_id / "report.json").read_text())["n_ranked"]
     assert 0 < ranked <= 10
     assert "Disease pooled MRR" in html and "Disease coverage" in html
-    assert (f"<b>{ranked} of 10</b> import-eligible cases ranked by the model · 13 source "
-            "cases; 3 excluded at import: ground truth absent 2 · phenotype unmappable 1") in html
+    # The coverage in its one wording (R-82): what it counted, then how the
+    # data stands under it, on lines of their own, never a chain of " · ".
+    assert (f"<div><b>{ranked} of 10</b> import-eligible cases ranked by the model</div>"
+            '<div class="shep-sub">13 source cases; 3 excluded at import: ground truth absent '
+            "2, phenotype unmappable 1</div>") in html
     assert "Validation MRR" not in html, "Trainer validation and a test result never share a place"
     assert "case-" not in html and str(site.root) not in html
     assert "synthetic</b> — a generated stand-in" in html
@@ -1078,10 +1081,10 @@ def test_a_result_of_another_or_no_mode_is_shown_as_recorded(site):
     raw = tp._record_html(changed, run, {})
     text = html_lib.unescape(re.sub(r"<[^>]+>", "", raw))
     assert "Mode E (a measurement mode this version does not describe)" in text
-    assert "Mode C" not in text and "shep-test-tile-l" not in raw
+    assert "Mode C" not in text and "shep-rec-tile-l" not in raw
     assert "source cases ranked" not in text and "not described for this mode" in text
     assert '<dt class="shep-k">Recorded metrics</dt>' in raw
-    assert "<div><code>untruncated_mrr</code> 0.5</div>" in raw
+    assert '<div class="shep-rec-ln"><code>untruncated_mrr</code> 0.5</div>' in raw
     unread = {**record, "scoring": {**record["scoring"], "mode": None}}
     text = html_lib.unescape(re.sub(r"<[^>]+>", "", tp._record_html(unread, run, {})))
     assert text.startswith("This report's record cannot be read as a result") and \
@@ -1657,9 +1660,9 @@ def test_a_kept_mode_d_report_is_shown_as_recorded_and_its_register_is_enabled(
     d_html = tp.result_html(reports, d_run, [])
     result = _shown(d_html)
     assert mode_label("D") in result and "Mode D (" in result
-    assert "shep-test-tile-l" not in d_html and "Mean rank" not in result
-    assert "<div><code>post_import_mrr</code> 0.35</div>" in d_html
-    assert "<div><code>reached_mean_rank</code> 2.43</div>" in d_html
+    assert "shep-rec-tile-l" not in d_html and "Mean rank" not in result
+    assert '<div class="shep-rec-ln"><code>post_import_mrr</code> 0.35</div>' in d_html
+    assert '<div class="shep-rec-ln"><code>reached_mean_rank</code> 2.43</div>' in d_html
     assert ('<dt class="shep-k">Score semantics</dt><dd class="shep-v"><code>'
             'served:gnn_only:eta=1.0:sp=none</code></dd>') in d_html
     for gone in ("η =", "import-eligible)", "reached only", "reached by the served pipeline",
@@ -1673,7 +1676,7 @@ def test_a_kept_mode_d_report_is_shown_as_recorded_and_its_register_is_enabled(
     c_result = _shown(c_html)
     assert mode_label("C") in c_result and "Mode D" not in c_result
     for label_html in (c_html, d_html):
-        label = label_html[label_html.index('class="shep-test-label"'):]
+        label = label_html[label_html.index('class="shep-rec-label"'):]
         label = label[:label.index("</div>")]
         assert "data-help" not in label, label
 
@@ -3174,7 +3177,7 @@ def test_a_run_that_ended_with_no_report_is_a_row_until_the_next():
 def test_the_r10_help_sits_beside_the_r10_lines(site):
     reports = tp.read_reports(LABEL)
     html = tp.result_html(reports, site.run_id, [])
-    label = html[html.index('class="shep-test-label"'):]
+    label = html[html.index('class="shep-rec-label"'):]
     label = label[:label.index("</div>")]
     help_label = f"Help: {renderers.R10_TITLE}"
     assert help_label not in label and "Help: Disease task result" in label
@@ -4007,22 +4010,22 @@ def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
 
     raw = tp._record_html(_task_record(mode, **{HOSTILE: 0.5}), {}, {})
     text = " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", raw)).split())
-    tiles = tp._TILES[mode]
+    tiles = renderers.RECORD_TILES[mode]
     assert len(tiles) == 4 and tiles[0] == "pooled_mrr" and tiles[-1] == "coverage"
     for name in tiles:
-        assert f'shep-test-tile-l">{html_lib.escape(metric_text(mode, name))}<' in raw
+        assert f'shep-rec-tile-l">{html_lib.escape(metric_text(mode, name))}<' in raw
     assert mode_label(mode) in text
-    assert "8 of 10 import-eligible cases ranked by the model · 13 source cases; 3 excluded " \
+    assert "8 of 10 import-eligible cases ranked by the model 13 source cases; 3 excluded " \
         "at import: ground truth absent 3" in text
     # The counts are the Coverage row's alone (rule 1.2): a tile's footer says
     # what its figure is over, never "n of M" or the n ranked again.
-    notes = re.findall(r'shep-test-tile-n">([^<]*)<', raw)
+    notes = re.findall(r'shep-rec-tile-n">([^<]*)<', raw)
     assert len(notes) == 4 and "pooled over positive pairs" in notes
     assert notes[-1] == "share of import-eligible cases ranked"
     assert not any(ch.isdigit() for note in notes for ch in note), notes
     assert text.count("8 of 10") == 1
-    assert "Conservative pooled MRR" in text and "0.2100 · an unranked case whose truth can be " \
-        "assessed counts 0" in text
+    assert "Conservative pooled MRR" in text and "0.2100 an unranked case whose truth can be " \
+        "assessed counts 0" in text and "0.2100 ·" not in text
     assert "Mean rank" not in text and "Mode C" not in text and "Mode D" not in text
     assert "Macro MRR" in text and "Best-positive MRR" in text and "Pooled top-k" in text
     # A tile's figure is not repeated in its family's row (rule 1.2).
@@ -4080,19 +4083,20 @@ def test_a_kept_mode_c_record_is_shown_as_recorded_by_the_one_display():
     raw = tp._record_html(record, {}, {})
     text = _result_text(raw)
     assert mode_label("C") in text and "approved scorer policy" not in text
-    assert "shep-test-tile-l" not in raw and "Mean rank" not in text
+    assert "shep-rec-tile-l" not in raw and "Mean rank" not in text
     recorded = raw.split('<dt class="shep-k">Recorded metrics</dt><dd class="shep-v">')[1]
     recorded = recorded.split("</dd>")[0]
-    assert re.findall(r"<div><code>([^<]*)</code> ([^<]*)</div>", recorded) == [
+    assert re.findall(r'<div class="shep-rec-ln"><code>([^<]*)</code> ([^<]*)</div>',
+                      recorded) == [
         (name, json.dumps(value)) for name, value in record["metrics"].items()]
     assert {"untruncated_mrr": "0.5", "hits@1": "0.25", "hits@10": "0.75",
             "mean_rank": "3.0"} == dict(re.findall(r"<code>([^<]*)</code> ([^<]*)<", recorded))
     assert (f"Score semantics {record['scoring']['score_semantics']}" in text
             and record["scoring"]["score_semantics"] == MODE_C_SEMANTICS_TEXT)
-    assert ("100 source cases · 20 excluded: ground truth absent 12 · phenotype unmappable 8; "
+    assert ("100 source cases; 20 excluded: ground truth absent 12, phenotype unmappable 8 "
             "80 cases counted by the record; what they are is not described for this mode"
             ) in text
-    label = raw[raw.index('class="shep-test-label"'):]
+    label = raw[raw.index('class="shep-rec-label"'):]
     assert "data-help" not in label[:label.index("</div>")]
 
 
@@ -4113,9 +4117,9 @@ def test_a_record_of_a_mode_no_build_has_words_for_is_shown_as_recorded():
         raw = tp._record_html(record, {}, {})
         text = _result_text(raw)
         assert mode_label(mode) in text and f"Mode {mode} (" in text
-        assert "shep-test-tile-l" not in raw and "Mean rank" not in text
+        assert "shep-rec-tile-l" not in raw and "Mean rank" not in text
         assert "macro_precision@3 0.16666666666666666" in text
-        assert len(re.findall(r"<div><code>", raw)) == len(record["metrics"])
+        assert len(re.findall(r'<div class="shep-rec-ln"><code>', raw)) == len(record["metrics"])
         assert "Other metrics" not in text and "Pooled top-k" not in text
 
 
@@ -4128,13 +4132,14 @@ def test_a_task_record_keeps_its_tiles_and_shows_every_metric_one_click_away():
 
     record = _kept_record(registered_report())
     raw = tp._record_html(record, {}, {})
-    assert len(re.findall(r'shep-test-tile-l">', raw)) == 4
+    assert len(re.findall(r'shep-rec-tile-l">', raw)) == 4
     assert "Conservative pooled MRR" in raw and "Pooled top-k" in raw
-    fold = re.search(r'<details class="shep-test-fold shep-test-recm"><summary>Recorded metrics '
+    fold = re.search(r'<details class="shep-rec-fold"><summary>Recorded metrics '
                      r'\((\d+)\)</summary>(.*?)</details>', raw)
     assert fold and int(fold.group(1)) == len(DISEASE_METRICS)
-    assert "<div><code>macro_precision@3</code> 0.16666666666666666</div>" in fold.group(2)
-    assert raw.index("shep-test-lines") < raw.index("shep-test-recm")
+    assert ('<div class="shep-rec-ln"><code>macro_precision@3</code> 0.16666666666666666</div>'
+            in fold.group(2))
+    assert raw.index("shep-rec-rows") < raw.index("shep-rec-fold")
     assert ('<dt class="shep-k">Score semantics</dt><dd class="shep-v"><code>'
             + e(record["scoring"]["score_semantics"]) + "</code></dd>") in raw
 
@@ -4212,14 +4217,64 @@ def test_a_kg_link_prediction_result_has_its_measurement_note():
     from src.evaluation.caveats import KG_LINK_PREDICTION_NOTE, mode_label
 
     raw = tp._record_html(_kind_record("kg_edges"), {}, {})
-    label = raw[raw.index('class="shep-test-label"'):]
+    label = raw[raw.index('class="shep-rec-label"'):]
     label = label[:label.index("</div>")]
     assert 'data-help="test-mode-kg_link_prediction"' in label
     assert tp.TOPIC_HELP["test-mode-kg_link_prediction"] == (
         "KG link prediction result", sentence_lines(KG_LINK_PREDICTION_NOTE))
     assert mode_label("kg_link_prediction") in _result_text(raw)
-    assert '<dt class="shep-k">Recorded metrics</dt>' in raw
-    assert "shep-test-tile-l" not in raw
+    assert "shep-rec-tile-l" not in raw
+
+
+def test_a_kg_link_prediction_records_metrics_read_in_plain_names_on_test_and_models():
+    """B72-C2: a KG link-prediction record showed 'lp_accuracy
+    0.3333333333333333 / lp_roc_auc …', raw names, unrounded, no units, on
+    Test and Models. Each is a row under its plain name
+    (`caveats.LP_METRIC_WORDS`: "ROC-AUC"), its value to four decimals and
+    its unit and denominator said once under it, as the record's
+    ``measured`` holds them; every value as recorded stays one click away
+    ("Recorded metrics (4)") and in every export. The same rows on both
+    pages (one rendering, R-82)."""
+    from src.evaluation.caveats import LP_METRIC_WORDS
+    from src.webui.components import models_page as mp
+
+    record = _kind_record("kg_edges")
+    raw = tp._record_html(record, {}, {})
+    import html as html_lib
+
+    rows = {html_lib.unescape(key): value for key, value in re.findall(
+        r'<dt class="shep-k">([^<]*)</dt><dd class="shep-v">(.*?)</dd>', raw)}
+    assert '<dt class="shep-k">Recorded metrics</dt>' not in raw
+    statuses = record["measured"]["metrics"]
+    for name, value in record["metrics"].items():
+        words = LP_METRIC_WORDS[name]
+        cell = rows[words[:1].upper() + words[1:]]
+        status = statuses[name]
+        if status["status"] == "computed":
+            assert cell.startswith(f"{value:.4f}<div"), (name, cell)
+        else:
+            assert "Not computable" in cell
+        assert renderers.e(status["unit"]) in cell
+        assert f"over {status['denominator']['count']} " in cell
+        assert name not in _result_text(cell)
+    fold = re.search(r'<details class="shep-rec-fold"><summary>Recorded metrics \((\d+)\)'
+                     r"</summary>(.*?)</details>", raw)
+    assert fold and int(fold.group(1)) == len(record["metrics"])
+    for name, value in record["metrics"].items():
+        assert f"<code>{name}</code> {json.dumps(value)}" in fold.group(2)
+    # Models draws the same rows for the same record (the shared rendering).
+    from src.evaluation.sidecar import append_record, empty_ledger
+
+    registered = append_record(empty_ledger(), record, registered_at="2026-10-27T12:00:00Z",
+                               run_id=f"20261027T120000Z-{record['checkpoint_digest'][:12]}-0000"
+                                      "0001")[1]["records"][0]
+    models = mp.record_block_html(mp.record_view(registered), None)
+    words = {renderers.e(w[:1].upper() + w[1:]) for w in LP_METRIC_WORDS.values()}
+    lp_rows = [key for key in re.findall(r'<dt class="shep-k">([^<]*)</dt>', raw)
+               if key in words]
+    assert len(lp_rows) == len(record["metrics"]) and lp_rows == [
+        key for key in re.findall(r'<dt class="shep-k">([^<]*)</dt>', models)
+        if key in words]
 
 
 @pytest.mark.parametrize("kind, mode", [("kg_edges", "kg_link_prediction"),

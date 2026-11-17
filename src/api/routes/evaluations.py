@@ -69,8 +69,9 @@ registry does not list, a report of the group that cannot be compared), and
 ``uncontested`` neither. They describe and decide nothing: every record is
 returned, none is hidden, ordered out or refused by them. A value that is not a
 finite number is null, and a ``contested`` description whose details fail
-validation is shown contested without them. Investigation notes are not shown
-here, nor by the Models page; only the Test page lists them (BACKLOG 40).
+validation is shown contested without them. **With the group's investigation
+notes** (``contest.notes``, BACKLOG 40; ``notes_readable`` false when they cannot
+all be read), the ones the Test page and Models show, without a server path.
 
 **Each record is read by the one reader, by its data kind**
 (`src.api.services.record_views`, moved there from this module in research
@@ -186,6 +187,16 @@ class ContestRun(_Strict):
         "the run's report still differs")
 
 
+class ContestNote(_Strict):
+    """One investigation note kept for a record's condition group (BACKLOG
+    40): who wrote it, when, and what was found, as the version's store keeps
+    it, with no absolute server path."""
+
+    who: str
+    at: str
+    what: str
+
+
 class RecordContest(_Strict):
     """How a record's condition group compares in its cohort version's report
     store, from the one implementation the dashboard shows too
@@ -209,6 +220,13 @@ class RecordContest(_Strict):
     runs: List[ContestRun] = Field(..., description="contested: every run carrying a "
                                    "differing report, byte-identical runs each named, when "
                                    "they can be shown; otherwise empty")
+    notes: List[ContestNote] = Field(
+        default_factory=list, description="The investigation notes the version's store keeps "
+        "for this record's condition group, oldest first (BACKLOG 40): they record what was "
+        "looked at and change nothing")
+    notes_readable: bool = Field(
+        True, description="false when the store's notes cannot all be read, so a note kept "
+        "for this group may be missing from notes")
 
     @model_validator(mode="after")
     def _only_a_contested_key_names_runs(self) -> "RecordContest":
@@ -377,19 +395,29 @@ def _contest_states(records: List[Dict[str, Any]]) -> Callable[[Dict[str, Any]],
             got = None
         if not isinstance(got, dict) or got.get("state") not in CONTEST_STATES:
             return RecordContest(state="cannot_be_checked", differing=[], runs=[])
+        # The group's notes (BACKLOG 40), already without a server path; any
+        # that cannot be carried is said as notes not all readable.
+        notes, readable = [], not got.get("notes_problems")
+        for note in got.get("notes") or []:
+            try:
+                notes.append(ContestNote(**note))
+            except Exception:  # noqa: BLE001 -- pydantic's ValidationError included
+                readable = False
         try:
             runs = [{"run": run.get("run"),
                      "values": {name: _finite_or_null(value)
                                 for name, value in (run.get("values") or {}).items()}}
                     for run in got.get("runs") or [] if isinstance(run, dict)]
             return RecordContest(state=got["state"], differing=got.get("differing") or [],
-                                 runs=runs)
+                                 runs=runs, notes=notes, notes_readable=readable)
         except Exception as exc:  # noqa: BLE001 -- pydantic's ValidationError included
             logger.warning("A record's group details are not shown: %s: %s",
                            type(exc).__name__, exc)
             if got["state"] == "contested":
-                return RecordContest(state="contested", differing=[], runs=[])
-            return RecordContest(state="cannot_be_checked", differing=[], runs=[])
+                return RecordContest(state="contested", differing=[], runs=[], notes=notes,
+                                     notes_readable=readable)
+            return RecordContest(state="cannot_be_checked", differing=[], runs=[], notes=notes,
+                                 notes_readable=readable)
 
     return state
 
