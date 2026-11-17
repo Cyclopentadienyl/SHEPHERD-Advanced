@@ -1298,14 +1298,16 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False,
     return f"<td>{_fold(str(value), skip=skip)}</td>"
 
 
-def _hidden_note(alike: int, unknown: int, single: int = 0) -> str:
-    """What Differences only hid, in words: the rows recorded alike in every
-    column they apply to, those that apply to one result only (another
-    protocol's metric, another data kind's field: nothing to differ from),
-    and those whose only difference is an "Unknown" explained above
-    (`_said_above`)."""
+def _hidden_note(alike: int, unknown: int, single: int = 0, none: int = 0) -> str:
+    """What Differences only hid, each cause in its own words (the skill's
+    §9): the rows recorded alike in every column they apply to, those that
+    apply to one result only (another protocol's metric, another data kind's
+    field: nothing to differ from), those that apply to no result (a branch's
+    "Settings changed" beside results of no branch), and those whose only
+    difference is an "Unknown" explained above (`_said_above`)."""
     parts = [f"{alike} rows recorded alike in every column they apply to" if alike else "",
              f"{single} that apply to one result only" if single else "",
+             f"{none} that apply to no result" if none else "",
              f"{unknown} that differ only by an Unknown explained above" if unknown else ""]
     parts = [part for part in parts if part]
     if not parts:
@@ -1466,7 +1468,8 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     # (the Field column, then one per result).
     groups: List[List[str]] = []
     body: List[str] = []
-    hidden, unknown_hidden, single_hidden, group_shown, path_shown = 0, 0, 0, None, None
+    hidden, unknown_hidden, single_hidden, none_hidden = 0, 0, 0, 0
+    group_shown, path_shown = None, None
     # Each row's values, kept to say a later row of the same fact by its
     # relation to the first (`_same_as`).
     seen: List[Tuple[Tuple[str, ...], Optional[Tuple[str, str]], str]] = []
@@ -1485,7 +1488,10 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
         applied = [(v, w) for v, w in zip(values, whys) if _applies(v)]
         texts = {_compare_value(v) + "\x01" + str(w) for v, w in applied
                  if not _said_above(v, w)}
-        if differences_only and many and len(applied) < 2:
+        if differences_only and many and not applied:
+            none_hidden += 1
+            continue
+        if differences_only and many and len(applied) == 1:
             single_hidden += 1
             continue
         if differences_only and many and len(texts) <= 1:
@@ -1529,7 +1535,7 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
         notes.append(f"{asked} were chosen; Compare shows {COMPARE_CAP} at a time, the first "
                      f"{COMPARE_CAP} chosen (Export takes them all).")
     if differences_only and many:
-        notes.append(_hidden_note(hidden, unknown_hidden, single_hidden))
+        notes.append(_hidden_note(hidden, unknown_hidden, single_hidden, none_hidden))
     elif differences_only:
         notes.append("One result: every row is shown; choose another to see differences.")
     notes.append("Values as recorded, side by side; no difference is computed, and each "

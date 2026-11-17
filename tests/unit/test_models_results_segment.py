@@ -917,6 +917,40 @@ def test_compare_says_what_a_branch_changed_from_its_parent(world, monkeypatch):
     assert "none" not in _cells(markup, "Settings changed · Learning rate › New")
 
 
+def test_differences_only_counts_each_cause_of_a_hidden_row_in_its_own_words(world,
+                                                                             monkeypatch):
+    """The skill's §9 (each cause in its own words): Differences only hides a
+    row that applies to fewer than two results, and on fcc3dea counted every
+    one as "that apply to one result only", a row that applies to none
+    included: a new base beside a fine-tune reads "Settings changed" not
+    applicable in both, and was said to apply to one. Each count is now its
+    own cause's, read from the table drawn in full: a row with one result's
+    value, and a row with none."""
+    from src.webui.components import results_segment as rs
+
+    finetune, base, _supplied, _kg = _finetune_base_supplied_kg(world, monkeypatch)
+    base["model"]["operation"] = "new"
+    finetune["model"]["operation"] = "finetune"
+    finetune["report_sha256"] = "f" * 64
+    every = rs.compare_html([finetune, base], False)
+    other = {"○ Not applicable", "another protocol"}
+    # Each row's cells that apply (a row said "same as" another is one cell: not counted).
+    applies = {label: sum(cell not in other for cell in cells) for label in _labels(every)
+               if len(cells := _cells(every, label)) == 2}
+    assert applies["Settings changed"] == 0
+    single = sum(1 for count in applies.values() if count == 1)
+    none = sum(1 for count in applies.values() if count == 0)
+    note = _text(rs.compare_html([finetune, base], True))
+    assert f"{none} that apply to no result" in note, note
+    assert (f"{single} that apply to one result only" in note) if single else (
+        "one result only" not in note), note
+    assert rs._hidden_note(0, 0, 0, 2) == "Differences only: 2 rows that apply to no result are hidden."
+    assert rs._hidden_note(3, 1, 2, 1) == (
+        "Differences only: 3 rows recorded alike in every column they apply to, 2 that apply to "
+        "one result only, 1 that apply to no result and 1 that differ only by an Unknown "
+        "explained above are hidden.")
+
+
 def test_compare_keeps_not_applicable_not_recorded_and_none_apart(world, monkeypatch):
     """Browser check models-3 (skill §6: missing states keep their own words):
     a base's weight transfer recorded as null reads "none" on every row of
