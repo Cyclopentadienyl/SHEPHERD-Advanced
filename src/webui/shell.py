@@ -410,11 +410,13 @@ def _shown(page: str) -> Callable[[], str]:
 #: **Every event that writes the session's location** (Diagnosis', Settings',
 #: Research's and each research tab's select) runs one at a time, in the order
 #: they were sent, each sent once per selection (`LOCATION_WRITES`): the
-#: second of a pair sees the location the first set (`_open_research`), and a
-#: select that a page's mount fires (Diagnosis' tab, about 1.5 s after the
-#: page loads) never writes its page over one opened after it (UI-14,
+#: second of a pair sees the location the first set (`_open_research`) (UI-14,
 #: B46-mount: it ran without the queue, so a slow answer set the location to
-#: Diagnosis while Models was shown, and Models' poll did nothing).
+#: Diagnosis while Models was shown, and Models' poll did nothing). A select
+#: that a page's mount fires (Diagnosis' tab, about 1.5 s after the page
+#: loads, later after a reload's restore) never writes its page over one
+#: opened after it: each writer writes only for the page shown as it was sent
+#: (`SENT_JS`, `_written`).
 OPEN_PAGE_CONCURRENCY = "shep-open-research-page"
 #: The keyword arguments of every location writer (`OPEN_PAGE_CONCURRENCY`).
 #: ``trigger_mode="multiple"``: with Gradio's default a select asked while
@@ -423,6 +425,15 @@ LOCATION_WRITES = {"concurrency_id": OPEN_PAGE_CONCURRENCY, "concurrency_limit":
                    "trigger_mode": "multiple"}
 #: Where the head script keeps this browser tab's page (``sessionStorage``).
 KEPT_PAGE = "shep-location"
+#: **What every location writer hands over as it is sent** (`ShepShell.sent`):
+#: the page this browser tab shows then and when ("<page> <ms>", the page's
+#: own clock), in a hidden box in front of the writer's own inputs. Ordering
+#: the writers (`LOCATION_WRITES`) is not enough: Gradio sends a tab's select
+#: when the tab mounts, and Diagnosis' mounts late, after a reload's restore
+#: (or a hand) has already opened another page (UI-14, V-RB1-1). So a writer
+#: writes only for its own page while it is the one shown, and never over a
+#: write sent after it (`_written`).
+SENT_JS = "(...args) => [window.ShepShell ? window.ShepShell.sent() : '', ...args.slice(1)]"
 
 #: The one queued group of every listener that writes a session's Training
 #: run-bar workspace (``PageContext.training_workspace`` and Training's own
@@ -462,6 +473,38 @@ def _open_page(page: str) -> Callable[[Any, Any], Tuple[Any, Any, Any]]:
         return page, page, (gr.update() if location == page else (token or 0) + 1)
     open_page.__name__ = f"_open_{page}"
     return open_page
+
+
+def _sent(value: Any) -> Tuple[Optional[str], float]:
+    """The page the browser showed when a writer was sent, and when
+    (`SENT_JS`); ``(None, 0.0)`` when the head script gave nothing."""
+    parts = value.split() if isinstance(value, str) else []
+    if len(parts) == 2:
+        try:
+            return parts[0], float(parts[1])
+        except ValueError:
+            pass
+    return None, 0.0
+
+
+def _written(writer: Callable[..., Any], ours: Callable[[str], bool],
+             outputs: int) -> Callable[..., Tuple[Any, ...]]:
+    """`writer` as a location writer: given what the browser handed over as it
+    was sent (`SENT_JS`) and the time of the last write applied, it writes
+    (its own outputs, then that time) only when the page shown then is its
+    own (`ours`) and it was sent no earlier than the write applied last; else
+    it changes nothing. A select a tab's mount sends while another page is
+    shown, or one that arrives after a later one, never moves the session's
+    location off the page shown. With no head script it writes as asked."""
+    def write(sent: Any, last: Any, *inputs: Any) -> Tuple[Any, ...]:
+        shown, at = _sent(sent)
+        if shown is not None and (not ours(shown) or at < (last or 0.0)):
+            return tuple(gr.update() for _ in range(outputs + 1))
+        answer = writer(*inputs)
+        answer = answer if isinstance(answer, tuple) else (answer,)
+        return (*answer, at if shown is not None else gr.update())
+    write.__name__ = writer.__name__
+    return write
 
 
 def _restore(kept: Any) -> Tuple[Any, Any, Any]:
@@ -536,20 +579,27 @@ def build_shell(blocks: Any, pages: Dict[str, Callable[[PageContext], None]],
     # it; `_open_research`). The events that bump a token go through the
     # queue: Gradio 6.30 dispatches a State's ``.change`` only from a queued
     # event's answer (an answer to a ``queue=False`` POST carries no changed
-    # states).
+    # states). Each writer is given the page shown as it was sent, and writes
+    # only for its own page and never over a later write (`_written`).
+    sent = gr.Textbox(visible=False, elem_id="shep-sent-page")
+    written_at = gr.State(0.0)
     for tab in (CLINICAL, SETTINGS):
-        tabs[tab].select(_shown(tab), None, [location], show_progress="hidden",
+        tabs[tab].select(_written(_shown(tab), tab.__eq__, 1), [sent, written_at],
+                         [location, written_at], show_progress="hidden", js=SENT_JS,
                          **LOCATION_WRITES)
     tokens = [page_tokens[page] for page in RESEARCH_PAGES]
-    tabs[RESEARCH].select(_open_research, [location, research_page, *tokens],
-                          [location, *tokens], show_progress="hidden", **LOCATION_WRITES)
-    for page in RESEARCH_PAGES:
-        tabs[page].select(_open_page(page), [location, page_tokens[page]],
-                          [location, research_page, page_tokens[page]], show_progress="hidden",
+    tabs[RESEARCH].select(_written(_open_research, RESEARCH_PAGES.__contains__, 1 + len(tokens)),
+                          [sent, written_at, location, research_page, *tokens],
+                          [location, *tokens, written_at], show_progress="hidden", js=SENT_JS,
                           **LOCATION_WRITES)
     # A reload comes back on the page this browser tab showed (`_restore`):
     # the head script hands over the page it kept, the answer opens it as a
     # cross-link does, and the script keeps the page shown again from then.
+    for page in RESEARCH_PAGES:
+        tabs[page].select(_written(_open_page(page), page.__eq__, 3),
+                          [sent, written_at, location, page_tokens[page]],
+                          [location, research_page, page_tokens[page], written_at],
+                          show_progress="hidden", js=SENT_JS, **LOCATION_WRITES)
     kept = gr.Textbox(visible=False, elem_id="shep-kept-page")
     blocks.load(_restore, [kept], ctx.nav_outputs, show_progress="hidden",
                 js="() => (window.ShepShell ? window.ShepShell.kept : '')").then(
@@ -615,9 +665,15 @@ _SHELL_JS = r"""
     var b = document.querySelector('#' + navId + ' > .tab-wrapper [role="tab"][aria-selected="true"]');
     return b ? b.getAttribute('data-tab-id') : null;
   }
-  function title() {
+  function shownKey() {
     var outer = selected('shep-nav') || 'clinical';
-    var key = outer === RESEARCH ? (selected('shep-research-nav') || DEFAULT_PAGE) : outer;
+    return outer === RESEARCH ? (selected('shep-research-nav') || DEFAULT_PAGE) : outer;
+  }
+  // What a location writer hands over as it is sent (`SENT_JS`): the page
+  // shown now and when, by this page's clock.
+  function sent() { return shownKey() + ' ' + performance.now(); }
+  function title() {
+    var key = shownKey();
     var want = TITLES[key];
     if (want && document.title !== want) { document.title = want; }
     if (selected('shep-nav')) { keep(key); }
@@ -766,7 +822,7 @@ _SHELL_JS = r"""
       if (chips && shell) { ro.observe(chips); ro.observe(shell); clearInterval(watch); }
     }, 200);
   }
-  window.ShepShell = {update: update, title: title, titles: titles, kept: kept,
+  window.ShepShell = {update: update, title: title, titles: titles, kept: kept, sent: sent,
                      restored: function () { restoring = false; update(); }};
 })();
 """
