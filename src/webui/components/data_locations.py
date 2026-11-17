@@ -184,7 +184,11 @@ def state_html(item: FieldView, view: DeploymentView, *, shown: bool) -> str:
         effect = r.status_mark("neutral", UNKNOWN)
     else:
         effect = r.status_mark("neutral", "Not set")
-    rows.append(("In effect", f'<span class="shep-dl-v">{effect}</span>{_source_html(item)}'))
+    # The value and its source are two facts in the text too, not only on
+    # screen (T08 flow: "…/ws-rootSaved in Settings" to a copy, find-in-page
+    # and a screen reader, the gap being the value's margin alone).
+    rows.append(("In effect", " ".join(part for part in (
+        f'<span class="shep-dl-v">{effect}</span>', _source_html(item)) if part)))
     differs = item.saved is not None and (item.pending or item.overridden
                                           or item.saved != item.configured)
     if differs:
@@ -636,7 +640,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-create:not(:has(button:not([hidden]))) {{ display: none !important; }}
 {_PAGE} .shep-dl-kv {{ gap: 4px 12px; }}
 {_PAGE} .shep-dl-kv > dt {{ width: 8em; }}
-{_PAGE} .shep-dl-v {{ margin-right: 12px; }}
+{_PAGE} .shep-dl-v {{ margin-right: 8px; }}
 {_PAGE} .shep-dl-src {{ font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }}
 {_PAGE} .shep-dl-path {{ overflow-wrap: anywhere; }}
 {_PAGE} .shep-dl-problem {{ color: var(--shep-text-2); font-size: 14px; }}

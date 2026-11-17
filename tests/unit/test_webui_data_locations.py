@@ -391,6 +391,75 @@ def test_a_read_only_request_sees_no_path_and_every_control_locked(dl, monkeypat
     assert not os.path.exists(os.path.join(os.environ["HOME"], "SHEPHERD-data"))
 
 
+def _cells_text(html: str) -> dict:
+    """A summary list's values as text, by key, read from the HTML alone (no
+    style sheet): the text nodes as they come, a ``<br>`` a line break, as
+    find-in-page, a copy and a screen reader read them; spaces collapsed."""
+    from html.parser import HTMLParser
+
+    class Cells(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.cells, self.key, self.cell, self.text = {}, None, None, []
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("dt", "dd"):
+                self.cell, self.text = tag, []
+            elif tag == "br":
+                self.text.append("\n")
+
+        def handle_endtag(self, tag):
+            if tag == "dt":
+                self.key = "".join(self.text).strip()
+            elif tag == "dd":
+                lines = "".join(self.text).split("\n")
+                self.cells[self.key] = "\n".join(" ".join(line.split()) for line in lines)
+            if tag in ("dt", "dd"):
+                self.cell = None
+
+        def handle_data(self, data):
+            if self.cell:
+                self.text.append(data)
+
+    parser = Cells()
+    parser.feed(html)
+    return parser.cells
+
+
+def test_the_value_in_effect_and_its_source_read_as_two_facts(dl, monkeypatch, tmp_path):
+    """T08 flow (T08-flow-10): the In effect cell joined the path's span and
+    its source's with nothing between them, the gap on screen being the
+    path's CSS margin, so its text read "…/existing-wsrootSaved in
+    Settings" and "…/ws-overrideSet when the service started" to a copy,
+    find-in-page and a screen reader. Read from the HTML alone, the value
+    in effect (a path, a list of them, a refused value, a hidden one) and its
+    source are two facts; the Saved row's value and its mark are too."""
+    root, registry, chosen = tmp_path / "ws-root", tmp_path / "ws-registry", tmp_path / "chosen"
+    for folder in (root, registry, chosen):
+        folder.mkdir()
+    evidence = [tmp_path / "ev-a", tmp_path / "ev-b"]
+    for folder in evidence:
+        folder.mkdir()
+    request = operator_request(monkeypatch)
+    _parts(dl, dl._on_save("workspaces_root", str(root), request))
+    _parts(dl, dl._on_save("registry", str(chosen), request))
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    monkeypatch.setenv("SHEPHERD_INTAKE_DIR", str(tmp_path / "gone"))
+    monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS", os.pathsep.join(map(str, evidence)))
+    rows, _ = _parts(dl, dl._on_locations_open(request))
+    cells = {key: _cells_text(rows[key]["state"]["value"]) for key in KEYS}
+    saved, started = "Saved in Settings", "Set when the service started"
+    assert cells["workspaces_root"]["In effect"] == f"{root.resolve()} {saved}"
+    assert cells["registry"]["In effect"] == f"{registry.resolve()} {started}"
+    assert cells["registry"]["Saved"] == f"{chosen}\n{dl.OVERRIDDEN}"
+    assert cells["intake_dir"]["In effect"].endswith(f"Not usable {tmp_path / 'gone'} {started}")
+    assert cells["training_evidence_dirs"]["In effect"] == (
+        f"{evidence[0].resolve()}\n{evidence[1].resolve()} {started}")
+    hidden = _parts(dl, dl._on_locations_open(gradio_request(server=("192.0.2.10", 8264))))[0]
+    assert _cells_text(hidden["workspaces_root"]["state"]["value"])["In effect"] == (
+        f"{dl.PATH_HIDDEN} {saved}")
+
+
 def test_every_value_the_panel_shows_is_escaped(dl, monkeypatch, tmp_path):
     hostile = "<img src=x onerror=alert(1)>"
     folder = tmp_path / hostile.replace("/", "")
