@@ -360,7 +360,28 @@ class TestSelectionKeepsTheListingsBoundary:
         path, key, reason = select_auto_run_checkpoint(workspace, not_read=not_read)
         assert (path, key) == (None, None) and len(not_read) == NOT_READ_NAMED + 4
         assert reason.count(self.REASON) == NOT_READ_NAMED
-        assert reason.endswith("; and 4 more file(s) not read")
+        assert reason.endswith("; and 4 more items not read")
+
+    def test_the_rest_not_read_are_counted_as_items_not_files(self, tmp_path):
+        """BACKLOG 69 L2: five directories under ``runs/`` that cannot be
+        listed (links whose target does not exist) are named three, then the
+        other two counted as items, never as "file(s)", which they are not;
+        one left over is "1 more item"."""
+        from src.utils.checkpoint_paths import NOT_READ_NAMED, select_auto_run_checkpoint
+
+        workspace = tmp_path / "ws"
+        layout = workspace / "runs" / "gatv2"
+        layout.mkdir(parents=True)
+        for index in range(NOT_READ_NAMED + 2):
+            (layout / f"broken-{index}").symlink_to(tmp_path / f"gone-{index}")
+        not_read = []
+        path, key, reason = select_auto_run_checkpoint(workspace, not_read=not_read)
+        assert (path, key) == (None, None) and len(not_read) == NOT_READ_NAMED + 2
+        assert all("cannot be listed" in entry for entry in not_read)
+        assert reason.endswith("; and 2 more items not read") and "file(s)" not in reason
+        (layout / f"broken-{NOT_READ_NAMED + 1}").unlink()
+        reason = select_auto_run_checkpoint(workspace)[2]
+        assert reason.endswith("; and 1 more item not read")
 
     def test_the_listing_and_the_selection_give_one_reason(self, tmp_path):
         from src.utils.checkpoint_paths import read_run_checkpoints, select_auto_run_checkpoint

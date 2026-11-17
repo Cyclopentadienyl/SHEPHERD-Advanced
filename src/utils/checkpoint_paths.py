@@ -1582,16 +1582,18 @@ NOT_READ_NAMED = 3
 
 
 def with_not_read(reason: str, outside: List[str]) -> str:
-    """A selection's reason, with the files it did not read for the boundary,
-    in the listing's words: the first `NOT_READ_NAMED`, then how many more, so
-    a runs directory linked out of the workspace gives a reason of bounded
-    length. The reload adds the files its scan's bounded reads refused the
-    same way."""
+    """A selection's reason, with the entries it did not read for the
+    boundary, in the listing's words: the first `NOT_READ_NAMED`, then how
+    many more, so a runs directory linked out of the workspace gives a reason
+    of bounded length. The reload adds the files its scan's bounded reads
+    refused the same way. The rest are counted as items (BACKLOG 69 L2):
+    directories that cannot be listed are among them, never "files"."""
     if not outside:
         return reason
     more = len(outside) - NOT_READ_NAMED
     return (f"{reason}; not read: {'; '.join(outside[:NOT_READ_NAMED])}"
-            + (f"; and {more} more file(s) not read" if more > 0 else ""))
+            + (f"; and {more} more item{'' if more == 1 else 's'} not read" if more > 0
+               else ""))
 
 
 def select_auto_run_checkpoint(
