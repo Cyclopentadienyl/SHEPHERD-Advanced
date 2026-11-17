@@ -1068,7 +1068,7 @@ OBO 的 format version 冒充 release。
   判定、綁定狀態與來源；
 - 自 contract M3c 起，served identity（§4.7）：`dataset_record` 為 `verified`、來源
   `synthetic`，出現在每一個診斷回應與 API 的 pipeline 狀態裡；
-- Diagnosis 頁面：結果上方的 `SYNTHETIC WORKSPACE: not a clinical result.` 橫幅、
+- Diagnosis 頁面：結果上方的 `Synthetic workspace: not a clinical result.` 橫幅、
   「Model in use」卡片上琥珀色的 `synthetic data` 標籤（其 Details 裡也有同一個橫幅），以及
   結果身分（「This result」）中 dataset record 那一列的 `verified · synthetic`（自 M5-2 起，
   §4.14）；
@@ -1415,16 +1415,21 @@ extend、branch）都經由同一個讀取器讀取紀錄，所以不論兩項�
 
 WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 
-- **結果上方的橫幅**，每個不可漏看的狀態一條：`SYNTHETIC WORKSPACE: not a clinical
-  result.`，以及回應沒有這個欄位時（M3c 之前的伺服器）的 `WHAT PRODUCED THIS RESULT WAS NOT
-  REPORTED.`。沒有訓練模型與 demo 的橫幅自 K7 起、沒有最短路徑表的橫幅自 K8-4 起，已隨它們
-  描述的回答一起移除。
+- **結果上方的橫幅**，每個不可漏看的狀態一條：`Synthetic workspace: not a clinical
+  result.`，以及回應沒有這個欄位時（M3c 之前的伺服器）的 `What produced this result was not
+  reported.`；自 T06 起為句首大寫（以標記與色調凸顯，不靠全大寫）。沒有訓練模型與 demo 的橫幅
+  自 K7 起、沒有最短路徑表的橫幅自 K8-4 起，已隨它們描述的回答一起移除。
 - **結果上方的標記（badge）**（自 M5-2 起）把結果的整個身分逐項與「Model in use」卡片最近一次
   讀到的使用中模型比對："Produced by the model in use"、"Produced by an earlier model or
   pipeline — N parts differ ›"，或附一個原因的 "Cannot check against the model in use yet"。
-  它的 › 會在「This result」上打開身分抽屜：每一項與目前使用中的對照、可 Copy 的完整 digest、
-  宣稱界線與 "Not a certified medical device; decision support for a qualified clinician."
-  （§4.14「Diagnosis (clinical)」）。
+  它的 › 會在「This result」上打開身分抽屜：每一項與目前使用中的對照、可 Copy 的完整 digest
+  與宣稱界線；"Not a certified medical device; decision support for a qualified clinician."
+  由結果底部說一次，抽屜打開時它就在旁邊（§4.14「Diagnosis (clinical)」）。
+- **查詢實際使用的表型**（自 T02 起；名稱自 T06 起）：警告之下，"Used (n)" 列出結果計分的表型，
+  名稱在前、id 淡色在後；"Not used (n)" 列出每個沒有使用的項目與原因（不是 HPO id、不在模型的圖中、
+  重複）。名稱取自所服務的圖，在結果到達時讀取，且只在所服務的圖就是結果自己的圖時（以其
+  `kg_sha256` 判斷）；否則頁面只顯示 id。報告（"Phenotypes used"、"Phenotypes not used"）與 CSV
+  （下文）說同樣的事。
 - **目前服務的是什麼**顯示在頁面的「Model in use」卡片上（§4.14）。自 M5-2 起，Model
   Configuration 折疊區（其路徑欄位、Load / Reload、Save Config 與 Reset）以及頁首的
   「Serving now」一行都已移除：操作者以卡片上的「Change model…」更換模型，它列出伺服器的
@@ -1434,7 +1439,8 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
   模型」（§4.11「CUDA 推論持有這把鎖」）。
 - **Markdown 報告**在候選之前有「What produced this result」段落：同樣的橫幅、一個
   Part | State | Value 表格（digest 完整寫出，`sha256:<64 hex>`）、宣稱界線與固定聲明。
-  缺少的部分寫成它的狀態與原因，絕不留白。
+  缺少的部分寫成它的狀態與原因，絕不留白。它保留推論時間（"Inference time (ms)"，頁面自 T06
+  起不再顯示），以及疾病的 "Phenotypes" k/N 與具名的直接路徑。
 - **表格上方的類型標籤**說明 Score 欄是什麼："Disease task model: every disease of the
   model's graph ranked by its Score (uncalibrated); paths only explain the rows shown"、
   "Gene task model: your candidate genes ranked by their Score (uncalibrated), the model's
@@ -1464,7 +1470,9 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 
 證據欄位為 `evidence_label`、`evidence_mode`、`evidence_summary`、`min_path_length`、
 `num_direct_paths`、`supporting_genes` 與 `matching_phenotypes`（`num_analogies` 自 K8-4 起已隨
-類比證據移除）。沒有建立證據包時（說明關閉），路徑數留空。`score` 與 `similarity` 是候選欄位，
+類比證據移除）。自 T06 起，每種類型的候選欄位之後接著查詢的兩欄：`phenotypes_used`（結果計分的
+id，以 `; ` 連接）與 `phenotypes_not_used`（每個未使用的項目與原因，全部都使用時留空），每一列
+都相同；回應沒有說明其表型時，兩欄皆為 `not_reported`。沒有建立證據包時（說明關閉），路徑數留空。`score` 與 `similarity` 是候選欄位，
 不屬於下方的身分欄位。基因結果的 SP 上下界與 patients-like-me
 結果的參考 cohort 版本，每一列都相同。
 
@@ -3205,9 +3213,10 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 **「Model in use」卡片**是輸入面板的最後一項，Run Diagnosis 緊接在它下方：兩者跟在 Options
 後面；當輸入欄位需要捲動時（例如 1536 × 760），兩者固定在面板底部。卡片顯示：
 
-- 標題列 "MODEL IN USE ⓘ · checked HH:MM:SS ↻"：目前服務的內容會為這個瀏覽器讀取——頁面打開
+- 標題列 "Model in use ⓘ · current ↻"：目前服務的內容會為這個瀏覽器讀取——頁面打開
   時、Diagnosis 顯示期間每 5 秒、每次診斷之後、更換模型之後，以及按 ↻ 時；超過 5 秒的讀取顯示
-  為 "timed out (5 s)"；
+  為 "timed out (5 s)"。卡片為最新時顯示 "current"，讀取時間在提示裡，所以文字不會每 5 秒改變
+  （自 T06 起；之前是 "checked HH:MM:SS"）；不是最新時，卡片內文說最後一次讀取的時間；
 - 模型 "2026-10-17 09:15 · GATv2, 6 epochs completed"（其 run 以唯一的 run 用語表示，有名稱的 run
   名稱在前，"smoke-ft · GATv2 2026-10-17 09:15, 6 epochs completed"；檔案訓練到哪裡，取自它的進度
   紀錄，用語與每個頁面相同；沒有進度紀錄的舊檔案說它記錄的 epoch，"recorded epoch 5"），寫在它的
@@ -3220,7 +3229,8 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
   checkpoint 檔，屬於操作者控制項（§4.13）：唯讀的瀏覽器看到 "not shown · reading the checkpoint
   is an operator control"。若另一個瀏覽器更換了模型，這張卡片會顯示 "not read yet · read it"，
   直到頁面再次打開或按下 "read it"（每 5 秒的讀取絕不打開 checkpoint）；
-- 只在成立時出現的標籤：`synthetic data`（琥珀色）。`no trained model` 與 `unverified` 標籤
+- 只在成立時出現的標籤：`synthetic data`（琥珀色）；結果顯示同一個服務身分的合成橫幅時不顯示
+  （說一次，自 T06 起）。`no trained model` 與 `unverified` 標籤
   已隨路徑推理狀態移除（K7），`no SP table` 與 `GNN not loaded` 已隨 mixture 移除（K8-4）；
 - "Recorded results: <狀態>"（§4.9），它的 › 會打開 Details 的 Evidence；"Details ›"；
   "Change model…"。紀錄的測試與 workspace 名稱會在每次顯示 Diagnosis、每次診斷後、更換模型後
@@ -3262,16 +3272,26 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 use"。目前沒有服務任何模型時（例如停止之後），它以結果自己的模型稱呼結果："Produced by model
 <12 hex> · not compared"。不論標記怎麼說，結果、它的表格、CSV 與報告都保留自己的身分：更換模型或
 停止都不會替它們改標籤。"Not a certified medical device; decision support for a qualified
-clinician." 位於結果的底部。
+clinician." 位於結果的底部，頁面只在這裡說（自 T06 起，說明文字不再附自己的註記，身分抽屜也
+留給它說）。
 
-**身分抽屜**蓋在細節面板上，有兩個檢視。"Model in use" 是所服務模型的資料，分五節（Identity，
-附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開），以及通往 Research › Models
+**結果與細節**（自 T06 起）：疾病表格為 Rank、Disease、Score、Phenotypes 與 Evidence；
+Phenotypes 是 "k / N"，即 N 個使用的表型中，圖直接標註到該疾病的 k 個。標頭說明候選數與產生時間。
+細節面板的標頭是候選的名次、名稱與 id，分數只在它的表格列。Evidence 以標籤回答，接著是事實
+（最短路徑、直接路徑與通往 Paths 的連結、支持基因），伺服器的敘述收在 "Written summary ›" 之下。
+Matching phenotypes 把使用的表型分成 "Annotated to this disease (k)" 與 "Not annotated"；Paths
+以具名步驟顯示最短的三條路徑，其餘收在 "More paths (n) ›" 之下：所服務的圖是結果自己的圖時，
+詞彙名稱在前、id 淡色在後。
+
+**身分抽屜**蓋在細節面板上，有兩個檢視。"Model in use" 是所服務模型的資料，每一節都展開（自 T06
+起：有警告時 Warnings 在最前，接著 Identity，附完整 digest 與 Copy；Data；Evidence；Uses 一節在
+這裡由結果底部那一行代替），以及通往 Research › Models
 完整紀錄的連結（結構 fingerprint 那一行自 K8-4 起已移除：checkpoint 的紀錄以 digest 綁定它的圖，
 在載入時檢查）；它的 Task 列說明模型是什麼（frozen-backbone 子模型為 "Disease · frozen graph
 backbone"）。"This result" 只顯示結果本身帶有的內容：先給答案，然後是結果自己的身分，以一個清單
 呈現、每項一列、每個值只出現一次（與目前使用中不同的部分，在自己的值下方寫 "In use now: …"），
 以及可 Copy 的完整 digest。
-"Details ›" 與 "Recorded results ›" 打開前者，標記打開後者；更換模型進行中（確認畫面打開，或正在
+"Details ›" 與 "Recorded results ›" 打開前者（"Recorded results ›" 捲到 Evidence），標記打開後者；更換模型進行中（確認畫面打開，或正在
 重新載入）時，它們不會蓋掉 Change model 抽屜。
 
 **Change model…**（沒有服務任何模型時為 "Load a model…"；操作者控制項）會打開蓋住結果與細節的

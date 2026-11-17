@@ -574,7 +574,7 @@ wherever its record is shown:
 - since contract M3c, the served identity (§4.7): `dataset_record` `verified`
   with origin `synthetic`, in every diagnosis response and in the API's
   pipeline status;
-- the Diagnosis page: a `SYNTHETIC WORKSPACE: not a clinical result.` banner
+- the Diagnosis page: a `Synthetic workspace: not a clinical result.` banner
   above the results, the amber `synthetic data` chip on the "Model in use" card
   (the banner again in its Details), and `verified · synthetic` on the dataset
   record's row of the result's identity ("This result"; since M5-2, §4.14);
@@ -1002,18 +1002,27 @@ one graph trained on different cases are not affected: each agrees with itself.
 The WebUI shows **the result's own identity**, never the status's:
 
 - **Banners above the results**, one per state that must not be missed:
-  `SYNTHETIC WORKSPACE: not a clinical result.` and `WHAT PRODUCED THIS RESULT
-  WAS NOT REPORTED.` for a response without the field (a server from before
-  M3c). The no-trained-model and demo banners are gone since K7, and the
+  `Synthetic workspace: not a clinical result.` and `What produced this result
+  was not reported.` for a response without the field (a server from before
+  M3c), in sentence case since T06 (their mark and tone make them stand out).
+  The no-trained-model and demo banners are gone since K7, and the
   no-shortest-path-table banner since K8-4, with the answers they described.
 - **A badge above the results** (since M5-2) compares the result's whole
   identity, part by part, with the model in use as the "Model in use" card last
   read it: "Produced by the model in use", "Produced by an earlier model or
   pipeline — N parts differ ›", or "Cannot check against the model in use yet"
   with its one reason. Its › opens the identity drawer on "This result": each
-  part beside what is in use now, the full digests with Copy, the claim
-  boundary and "Not a certified medical device; decision support for a
-  qualified clinician." (§4.14, "Diagnosis (clinical)").
+  part beside what is in use now, the full digests with Copy and the claim
+  boundary; "Not a certified medical device; decision support for a qualified
+  clinician." is the results footer's, in view beside the drawer, said once
+  (§4.14, "Diagnosis (clinical)").
+- **The query as used** (since T02, names since T06): under the warnings,
+  "Used (n)" lists the phenotypes the result scored, each name first and its id
+  muted, and "Not used (n)" each entry it did not, with why (not an HPO id, not
+  in the model's graph, a repeat). Names come from the served graph, read when
+  the result arrives and only while the graph served is the result's own (by its
+  `kg_sha256`); otherwise the page shows ids. The report says the same
+  ("Phenotypes used", "Phenotypes not used"), and so does the CSV (below).
 - **What is served now** is on the page's "Model in use" card (§4.14). Since
   M5-2 the Model Configuration accordion (its path fields, Load / Reload, Save
   Config and Reset) and the header's "Serving now" line are gone: an operator
@@ -1026,7 +1035,9 @@ The WebUI shows **the result's own identity**, never the status's:
 - **The Markdown report** has a "What produced this result" section before the
   candidates: the same banners, a Part | State | Value table with digests in
   full (`sha256:<64 hex>`), the claim boundary and the fixed statement. An
-  absent part is written as its state and the reason, never left blank.
+  absent part is written as its state and the reason, never left blank. It
+  keeps the inference time ("Inference time (ms)"), which the page no longer
+  shows (since T06), and a disease's "Phenotypes" k/N and named direct paths.
 - **The kind's label above the table** says what the Score column holds: "Disease
   task model: every disease of the model's graph ranked by its Score
   (uncalibrated); paths only explain the rows shown", "Gene task model: your
@@ -1059,7 +1070,11 @@ The `path_reasoning/v1` (`path_score`) and `demo/v1` rows are gone since K7, and
 
 The evidence columns are `evidence_label`, `evidence_mode`, `evidence_summary`,
 `min_path_length`, `num_direct_paths`, `supporting_genes` and `matching_phenotypes`
-(`num_analogies` is gone since K8-4, with the analogy evidence). A path count is
+(`num_analogies` is gone since K8-4, with the analogy evidence). After every kind's
+candidate columns come, since T06, the query's two: `phenotypes_used` (the ids the
+result scored, `; `-joined) and `phenotypes_not_used` (each entry not used with its
+reason, empty when every entry was), the same on every row; `not_reported` in both
+for a response that gave no account of its phenotypes. A path count is
 empty when no evidence package was built (explanations off). `score` and
 `similarity` are candidate columns, not part of the identity block below. A gene result's SP
 bounds and a patients-like-me result's reference cohort version are the same on
@@ -3153,9 +3168,12 @@ carry their own values, so the option is neither shown nor sent for them).
 it: both follow Options, and stay pinned at the panel's bottom when the inputs need to scroll (at
 1536 × 760, for example). It shows:
 
-- the title row "MODEL IN USE ⓘ · checked HH:MM:SS ↻": what is served is read for this browser
+- the title row "Model in use ⓘ · current ↻": what is served is read for this browser
   when the page opens, every 5 seconds while Diagnosis is shown, after each diagnosis, after a
-  model change and with ↻; a read that takes more than 5 seconds is "timed out (5 s)";
+  model change and with ↻; a read that takes more than 5 seconds is "timed out (5 s)". While the
+  card is current it says "current", the read's time in its tooltip, so its words do not change
+  every 5 seconds (since T06; "checked HH:MM:SS" before); not current, its body says when it was
+  last read;
 - the model, "2026-10-17 09:15 · GATv2, 6 epochs completed" (its run in the one run words, a
   named run's name first, "smoke-ft · GATv2 2026-10-17 09:15, 6 epochs completed"; how far the
   file trained, from its progress record, in the words every page uses; an older file without one
@@ -3170,9 +3188,10 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
   browser sees "not shown · reading the checkpoint is an operator control". When another browser
   has changed the model, this card says "not read yet · read it" until the page is opened again
   or "read it" is clicked (the 5-second read never opens a checkpoint);
-- a chip, only when true: `synthetic data` (amber). The `no trained model` and `unverified`
-  chips went with the path-reasoning state (K7), and `no SP table` and `GNN not loaded` with the
-  mixture (K8-4);
+- a chip, only when true: `synthetic data` (amber), left out while the results show the
+  synthetic banner of a result from this same served identity (said once, since T06). The `no
+  trained model` and `unverified` chips went with the path-reasoning state (K7), and `no SP
+  table` and `GNN not loaded` with the mixture (K8-4);
 - "Recorded results: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "Change
   model…". The recorded tests, and the workspace names, are read again each time Diagnosis is
   shown, after each diagnosis, after a model change and with ↻ (the 5-second read reads only what
@@ -3218,18 +3237,30 @@ the result, never shows "Produced by the model in use". With nothing served now 
 say) it names the result by its own model, "Produced by model <12 hex> · not compared". The
 result, its table, CSV and report keep their own identity whatever the badge says: a model
 change or a stop never relabels them. "Not a certified medical device; decision support for a
-qualified clinician." is at the foot of the results.
+qualified clinician." is at the foot of the results, the one place the page says it (an
+explanation carries no note of its own since T06, and the identity drawer leaves it there).
+
+**The results and the details** (since T06): the disease table is Rank, Disease, Score,
+Phenotypes and Evidence; Phenotypes is "k / N", k of the N phenotypes used that the graph
+annotates directly to the disease. The header says how many candidates and when they were
+produced. The details panel's header is the candidate's rank, name and id, its score being its
+row's. Evidence answers with its label, then its facts (shortest path, direct paths with a link
+to Paths, supporting genes) with the server's narrative under "Written summary ›". Matching
+phenotypes splits the phenotypes used into "Annotated to this disease (k)" and "Not annotated",
+and Paths shows the three shortest paths as named steps, the rest under "More paths (n) ›": a
+term's name first, its id muted, when the served graph is the result's own.
 
 **The identity drawer** opens over the details panel, with two views. "Model in use" is the
-served model's facts in five sections (Identity, with the full digests and Copy; Uses; Data;
-Evidence; Warnings, always open) and a link to the full records in Research › Models (the
+served model's facts, every section open (since T06: Warnings first when there are any, then
+Identity, with the full digests and Copy; Data; Evidence; the Uses section is the results
+footer's line here) and a link to the full records in Research › Models (the
 structural-fingerprint line is gone since K8-4: the checkpoint's record binds its graph by
 digest, checked at load); its Task row says what the model is ("Disease · frozen graph backbone"
 for a frozen-backbone child). "This result" shows only what the result carries: the answer first,
 then the result's own identity as one list, a part a row, each value once (a part that differs
 from what is in use now says "In use now: …" under its own value), and its full digests with
 Copy. "Details ›" and "Recorded
-results ›" open the first, the badge the second; while
+results ›" open the first ("Recorded results ›" scrolls it to Evidence), the badge the second; while
 a model change is open (its confirmation, or a reload running) they leave the Change model drawer
 in place.
 
