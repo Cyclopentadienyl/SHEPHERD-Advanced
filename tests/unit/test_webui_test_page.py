@@ -302,6 +302,20 @@ def test_a_runs_output_is_folded_in_its_one_details_and_a_failure_shown():
         assert ("Process exited with code 1" in _outside_details(html)) is (status == "failed")
 
 
+def test_every_class_the_page_styles_is_one_it_draws():
+    """No dead style: each ``shep-test-*`` class PAGE_CSS styles is named by
+    the page's code outside that style. Fails on f6b9289, whose ``.shep-test-
+    fold`` rules outlived the last element with the class (a cancelled run's
+    output and "Recorded metrics", both now the shared Details)."""
+    import inspect
+
+    source = inspect.getsource(tp)
+    start = source.index('PAGE_CSS = f"""')
+    code = source[:start] + source[source.index('"""', start + len('PAGE_CSS = f"""')) + 3:]
+    styled = set(re.findall(r"\.(shep-test-[\w-]+)", tp.PAGE_CSS))
+    assert styled and not {name for name in styled if name not in code}
+
+
 def test_the_pill_is_never_green_for_a_failed_or_cancelled_run():
     for status, kind in (("completed", "ok"), ("failed", "red"), ("cancelled", "grey"),
                          ("running", "accent")):
