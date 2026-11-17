@@ -802,11 +802,27 @@ def test_a_test_run_on_a_device_this_host_cannot_give_is_refused_before_anything
 
 
 def test_a_deployment_device_the_cli_cannot_take_refuses_the_start(monkeypatch, popen, inputs):
+    """A deployment device a test run cannot take (`cuda:1`; the CLI takes
+    auto, cuda or cpu) refuses the start before anything is spawned, in plain
+    words first (what is wrong, what the operator can do) and the variable
+    only in the trailing Ref (the WebUI skill's §5), as the start's refusal
+    of a device this host cannot give says it (`TEST_DEVICE_UNAVAILABLE`).
+    The Test page shows the same words, without "Nothing was started.", for
+    its Device. On fcc3dea the main text began "SHEPHERD_DEVICE is 'cuda:1'"."""
     monkeypatch.setenv("SHEPHERD_DEVICE", "cuda:1")
     calls = popen()
     result = TrainingManager().start_test(inputs)
-    assert result["success"] is False and "'cuda:1'" in result["error"]
-    assert result["error"].endswith("Nothing was started.") and calls.calls == []
+    assert result["success"] is False and calls.calls == []
+    words, ref = result["error"].split(" Ref: ")
+    assert words == (
+        "Test runs measure on this service's device, cuda:1, and a test run takes only auto, "
+        "cuda or cpu. The Test page has no Device of its own: start the service again with "
+        "one of those devices (Settings › Stop service). Nothing was started.")
+    assert "SHEPHERD_" not in words and "--device" not in words
+    assert ref == "SHEPHERD_DEVICE=cuda:1; scripts/measure_scorer.py --device (deployment guide §4.8)"
+    with pytest.raises(ValueError) as refused:
+        tm.deployment_device()
+    assert str(refused.value) == result["error"].replace(" Nothing was started.", "")
 
 
 @pytest.mark.parametrize("change, says", [
