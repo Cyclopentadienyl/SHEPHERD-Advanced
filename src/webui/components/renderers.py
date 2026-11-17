@@ -2098,7 +2098,7 @@ def r10_table_html(r10: Any) -> str:
             f'<tbody>{"".join(rows)}</tbody></table>')
 
 
-def data_kind_lines(view: Mapping[str, Any]) -> list:
+def data_kind_lines(view: Mapping[str, Any], *, version_counts: bool = True) -> list:
     """**The one rendering of what a result's data kind adds** (research
     comparison Stages 6 and 8b), as ``(label, escaped HTML)`` rows, from the
     one reader's view of a record (`record_views`: a ledger record's record
@@ -2109,7 +2109,9 @@ def data_kind_lines(view: Mapping[str, Any]) -> list:
     - a KG edge set's exposure in this build's words (`caveats.exposure_text`,
       the ⓘ saying `EXPOSURE_CAVEAT`'s points) and its source (definition version and
       split, or why its block does not read: fields named, never values), its
-      message-passing graph and pairs, and each metric that could not be
+      message-passing graph and pairs (their counts, the version's own, left
+      out with `version_counts` False, where the page says them for this very
+      version: `record_rows`, R-70), and each metric that could not be
       computed, as a status;
     - a generated split's generation identity, its split manifest and gene
       fixture, and how it stands to a model's training
@@ -2156,7 +2158,10 @@ def data_kind_lines(view: Mapping[str, Any]) -> list:
     pairs = cohort.get("pairs") if isinstance(cohort.get("pairs"), Mapping) else {}
     graph = (f"Message passing over the split's {passing.get('part')} part, "
              f"{recorded_count_text(passing.get('edges'))} edges; pairs {pairs.get('rule')} "
-             f"with seed {pairs.get('seed')}, {recorded_count_text(pairs.get('rows'))} rows")
+             f"with seed {pairs.get('seed')}, {recorded_count_text(pairs.get('rows'))} rows"
+             if version_counts else
+             f"Message passing over the split's {passing.get('part')} part; pairs "
+             f"{pairs.get('rule')} with seed {pairs.get('seed')}")
     measured = _get(view, "measured")
     statuses = measured.get("metrics") if isinstance(measured, Mapping) else None
     not_computed = [str(name) for name, status in (statuses or {}).items()
@@ -2498,19 +2503,23 @@ def _counts_fold(title: str, counts: Any, units: Any) -> str:
             f'{lines}</details>')
 
 
-def record_counts_rows(view: Mapping[str, Any]) -> List[Tuple[str, str]]:
+def record_counts_rows(view: Mapping[str, Any], *,
+                       version_counts: bool = True) -> List[Tuple[str, str]]:
     """A KG edge set's or a generated split's counts, each with its unit as
-    recorded, one click away (`_counts_fold`): the data version's, and a KG
-    edge set's run's; none for a supplied cohort, whose counts its Coverage
-    row says."""
+    recorded, one click away (`_counts_fold`): the data version's, unless
+    `version_counts` is False (the page says this very version's counts
+    already, `record_coverage_html`; R-70), and a KG edge set's run's, its
+    own reading, which can differ; none for a supplied cohort, whose counts
+    its Coverage row says, or where no fold is left."""
     kind = record_kind(view)
     if kind == "supplied":
         return []
-    folds = _counts_fold("Data version counts", _get(view, "counts"), _get(view, "count_units"))
+    folds = (_counts_fold("Data version counts", _get(view, "counts"), _get(view, "count_units"))
+             if version_counts else "")
     if kind == "kg_edges":
         folds += _counts_fold("Run counts", _dig(view, "measured", "counts"),
                               _dig(view, "measured", "count_units"))
-    return [("Counts", folds)]
+    return [("Counts", folds)] if folds else []
 
 
 def record_rows(view: Mapping[str, Any], metrics: Mapping[str, Any], *,
@@ -2519,7 +2528,9 @@ def record_rows(view: Mapping[str, Any], metrics: Mapping[str, Any], *,
     """**A recorded result's rows, the one list** (R-82: the Test page's
     result and each of Models' records are drawn from it, in this order):
     its coverage (`record_coverage_html`, with the version's counts unless
-    `version_counts` is False), its figures by mode (`record_figure_rows`),
+    `version_counts` is False, as are its counts' fold, `record_counts_rows`,
+    and a KG edge set's graph and pairs, `data_kind_lines`), its figures by
+    mode (`record_figure_rows`),
     its score semantics, its relations, a supplied cohort's R10 or another
     kind's lines (`data_kind_lines`), its environment, device, determinism
     and native build, its dataset where the page has not said it by its
@@ -2536,8 +2547,9 @@ def record_rows(view: Mapping[str, Any], metrics: Mapping[str, Any], *,
             ("Relations", relations_html(relations) if isinstance(relations, Mapping)
              else status_mark("neutral", NOT_RECORDED)),
             *([(R10_TITLE, r10_table_html(_get(view, "r10")))]
-              if record_kind(view) == "supplied" else data_kind_lines(view)),
-            *record_counts_rows(view),
+              if record_kind(view) == "supplied"
+              else data_kind_lines(view, version_counts=version_counts)),
+            *record_counts_rows(view, version_counts=version_counts),
             ("Environment", record_environment_html(view)),
             *record_regime_rows(view),
             ("Native build", record_native_html(view))]

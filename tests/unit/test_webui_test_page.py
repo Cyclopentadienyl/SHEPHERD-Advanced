@@ -4313,6 +4313,59 @@ def _kind_record(kind, **report):
         **report))
 
 
+def test_a_kg_edge_set_or_generated_result_of_the_selected_version_says_no_count_of_datas():
+    """R-70 (counts once when the result's version is the selected one) for
+    the two kinds whose counts the Result folds: Data's version line says a
+    KG edge set's or a generated split's counts (`_version_counts`, every
+    count by name in its "Counts and units" fold), so a result of that very
+    version leaves out its "Data version counts" fold (the shared record put
+    it back: positive_edges 8, pairs 6, edges_without_negative 2 and
+    message_passing_edges 50, or samples 5 and diseases 1, a second time on
+    one screen) and a KG edge set's graph and pairs line their counts (its
+    part, pair rule and seed stay); a KG edge set's run's own counts, which
+    can differ, stay one click away; a result of another version keeps its
+    version's counts. Fails on d6c1efa, whose Result of the selected version
+    drew the fold and "… 50 edges; … 6 rows"."""
+    from src.api.services.record_views import result_view
+
+    for kind, said in (("kg_edges", ("positive_edges", "edges_without_negative")),
+                       ("generated", ("samples", "diseases"))):
+        record = _kind_record(kind)
+        view = result_view(dict(record)).model_dump(mode="json")
+        version = {"kind": kind, "counts": view["counts"], "count_units": view["count_units"]}
+        data = _plain(tp._version_counts(version))
+        selected = tp.Selection(None, None, None, view["cohort"]["version_manifest_sha256"])
+        result = tp._record_html(record, {"run_id": "r"}, {}, selection=selected)
+        assert tp.SELECTED_VERSION in result, kind
+        assert "Data version counts" not in result, kind
+        assert ("Run counts" in result) is (kind == "kg_edges"), kind
+        for name in said:
+            # Data names it; the Result only in a KG edge set's run's counts.
+            assert name in data, (kind, name)
+            assert result.count(f"<code>{name}</code>") == (kind == "kg_edges"), (kind, name)
+        keys = re.findall(r'<dt class="shep-k[^"]*"[^>]*>([^<]*)', result)
+        assert ("Counts" in keys) is (kind == "kg_edges"), (kind, keys)
+        if kind == "kg_edges":
+            run = result[result.index("Run counts"):]
+            assert "pairs_scored" in run and "pairs_not_finite" in run
+            # Its graph and pairs line keeps their part, rule and seed, not
+            # the version's counts Data's lead gives ("… message passing
+            # over 50 edges"; "6 pairs").
+            cohort = view["cohort"]
+            counted = (f"{cohort['message_passing']['edges']} edges",
+                       f"{cohort['pairs']['rows']} rows")
+            assert all(words.split()[0] in data for words in counted)
+            assert not any(words in _plain(result) for words in counted), counted
+            line = _plain(dict(renderers.data_kind_lines(view, version_counts=False))[
+                "Graph and pairs"])
+            assert line.startswith("Message passing over the split's") and "seed" in line
+        other = tp._record_html(record, {"run_id": "r"}, {},
+                                selection=tp.Selection(None, None, None, "f" * 64))
+        assert tp.SELECTED_VERSION not in other and "Data version counts" in other, kind
+        if kind == "kg_edges":
+            assert all(words in _plain(other) for words in counted), counted
+
+
 def test_a_kg_link_prediction_report_row_names_its_measurement_first():
     """The browser check of 7e1d09e: every kept KG link-prediction row read
     "mode kg_link_prediction, not described by this version", on a page that
