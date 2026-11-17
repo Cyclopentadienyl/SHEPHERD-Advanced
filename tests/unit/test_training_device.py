@@ -224,3 +224,49 @@ def test_the_job_runner_refuses_in_a_requests_words_not_the_command_lines(no_cud
         resolve_training_device(requested)
     assert str(refused.value).startswith(f"--device {requested} requires CUDA")
     assert refused.value.words in said
+
+
+@pytest.mark.parametrize("visible", [False, True], ids=["no_cuda", "cuda"])
+def test_training_measurement_and_serving_decide_by_the_one_rule(monkeypatch, visible):
+    """UI ledger V-18: "auto means CUDA, refused without it" had three copies,
+    training's (here), measurement's (`scripts/measure_scorer.py`,
+    `_resolve_device`) and serving's (`resolve_serving_device`), the last two
+    asking torch themselves. Each now asks this module's rule (`wants_cuda`,
+    `cuda_visible`) and refuses in its own words: told the host has no CUDA,
+    each refuses `auto` and `cuda` (training and serving also `cuda:1`; the
+    measurement's command line takes only auto, cuda and cpu); told it has,
+    each accepts them. Torch is made to say the opposite, so a copy that asks
+    torch on its own decides the other way, on any host."""
+    import src.utils.training_device as td
+    from scripts import measure_scorer
+    from src.inference.pipeline import ServingDeviceUnavailable, resolve_serving_device
+
+    monkeypatch.setattr(td, "cuda_visible", lambda: visible)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: not visible)
+
+    for requested in ("auto", "cuda", "cuda:1"):
+        if visible:
+            assert td.resolve_training_device(requested) == (
+                "cuda" if requested == "auto" else requested)
+            assert resolve_serving_device(requested) == (
+                "cuda" if requested == "auto" else requested)
+        else:
+            with pytest.raises(td.TrainingDeviceUnavailable, match=r"^--device "):
+                td.resolve_training_device(requested)
+            with pytest.raises(ServingDeviceUnavailable,
+                               match=rf"^Serving device '{requested}' requires CUDA"):
+                resolve_serving_device(requested)
+    for requested in ("auto", "cuda"):
+        if visible:
+            assert measure_scorer._resolve_device(requested) == (torch.device("cuda"), True)
+        else:
+            with pytest.raises(SystemExit,
+                               match=rf"^--device {requested} requires CUDA") as refused:
+                measure_scorer._resolve_device(requested)
+            assert "cuda_executed=false" in str(refused.value.code)
+    # Serving's own guard: blank is `auto`, decided by the same rule.
+    if visible:
+        assert resolve_serving_device(" ") == "cuda"
+    else:
+        with pytest.raises(ServingDeviceUnavailable, match=r"^Serving device 'auto'"):
+            resolve_serving_device(None)
