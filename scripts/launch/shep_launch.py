@@ -43,9 +43,11 @@ from src.config.server_settings import (  # noqa: E402
     ENV_BIND_HOST,
     ENV_LOCAL_ENTRY,
     LOCAL_ENTRY,
+    MODE_OFF_STATE,
     bind_is_loopback,
     deployment_mode,
     inherited_socket_bind,
+    mode_off_why,
     network_bind,
 )
 from src.utils import launch_instance as instances  # noqa: E402
@@ -1094,9 +1096,9 @@ def main() -> int:
                 + ("(the local start)" if os.environ.get(ENV_LOCAL_ENTRY) == LOCAL_ENTRY
                    and mode.source != "environment" else "(the deployment mode set at start)"))
         else:
-            why = mode.problem
-            lead = "Operator controls are off, so "
-            log(f"Operator controls     : off. {why[len(lead):] if why.startswith(lead) else why}")
+            # The service's own reason, in its parts: the state, then why, in
+            # whole sentences (T08 flow: a cut sentence went on in lower case).
+            log(f"Operator controls     : {MODE_OFF_STATE}. {mode_off_why(mode)}")
 
     # **One instance per configuration, and the port** (plan §4.5), before
     # anything is installed: a start of a configuration that already runs

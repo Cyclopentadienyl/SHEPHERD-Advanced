@@ -687,11 +687,50 @@ def test_an_explicit_read_only_mode_is_said_and_kept_at_a_local_start(monkeypatc
                          env={"SHEPHERD_DEPLOYMENT_MODE": "read-only"})
     assert done["exec_env"]["SHEPHERD_DEPLOYMENT_MODE"] == "read-only"
     out = capsys.readouterr().out
-    assert ("Operator controls     : off. this deployment is read-only: the deployment mode set "
-            "at start is not the operator mode") in out and "never overrides it" in out
+    assert ("Operator controls     : off, so this deployment is read-only. The deployment mode "
+            "set at start is not the operator mode") in out and "never overrides it" in out
     done = _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install", "--no-browser"])
     assert "Operator controls     : on for requests made on this computer (the local start)" \
         in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("case, app_args, env, said", [
+    ("read-only set at start", [], {"SHEPHERD_DEPLOYMENT_MODE": "read-only"},
+     "off, so this deployment is read-only. The deployment mode set at start is not the "
+     "operator mode. A local start never overrides it. Ref: SHEPHERD_DEPLOYMENT_MODE is not M1 "
+     "(the value is compared exactly)"),
+    ("M1 set at start", [], {"SHEPHERD_DEPLOYMENT_MODE": "M1"},
+     "on for requests made on this computer (the deployment mode set at start)"),
+    ("local default", [], {}, "on for requests made on this computer (the local start)"),
+    ("not set, network bind", ["--host", "0.0.0.0"],
+     {"SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND": "1"},
+     "off, so this deployment is read-only. They turn on when the service is started from its "
+     "desktop entry or launch_shepherd.sh on this computer. Ref: SHEPHERD_DEPLOYMENT_MODE=M1 "
+     "also turns them on, for a verified single-workspace deployment reached on the machine or "
+     "through SSH forwarding"),
+], ids=["read-only set at start", "M1 set at start", "local default", "not set network bind"])
+def test_the_operator_controls_line_is_whole_sentences_in_every_mode(monkeypatch, capsys, case,
+                                                                     app_args, env, said):
+    """T08 flow (T08-flow-9): the launcher printed "Operator controls     : off.
+    this deployment is read-only: …": it cut the shared reason's lead
+    ("Operator controls are off, so ") off a sentence and printed the rest
+    after its own "off.". The line is now composed of the shared words' parts
+    (`server_settings.MODE_OFF_STATE` and the reason after it,
+    `mode_off_why`), so every sentence in it is whole and capitalised, and it
+    says what the service's reason says."""
+    from src.config import server_settings as ss
+
+    _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install", "--no-browser", "--",
+                                *app_args], env=env)
+    (line,) = [text for text in capsys.readouterr().out.splitlines()
+               if "Operator controls     : " in text]
+    shown = line.split("Operator controls     : ", 1)[1]
+    assert shown == said
+    assert not re.search(r"\. [a-z]", shown), shown
+    mode = ss.deployment_mode({**env, "SHEPHERD_LOCAL_ENTRY": "1",
+                               "SHEPHERD_BIND_HOST": app_args[-1] if app_args else "127.0.0.1"})
+    if mode.problem:
+        assert mode.problem == f"Operator controls are {shown}", "the service's own reason"
 
 
 def test_settings_file_names_the_service_s_saved_settings(monkeypatch, tmp_path, capsys):

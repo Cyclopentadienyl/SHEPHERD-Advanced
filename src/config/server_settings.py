@@ -207,6 +207,7 @@ __all__ = [
     "GPU_LOCK_FILE_NAME",
     "GPU_LOCK_NOT_CONFIGURED",
     "LOCAL_ENTRY",
+    "MODE_OFF_STATE",
     "OPERATOR_DEPLOYMENT_MODE",
     "SAVED_VARIABLES",
     "SOURCE_ENVIRONMENT",
@@ -228,6 +229,7 @@ __all__ = [
     "intake_directory",
     "is_directory",
     "is_loopback_ip",
+    "mode_off_why",
     "network_bind",
     "startup_bind",
     "training_evidence_dirs",
@@ -530,22 +532,41 @@ def _local_entry(environ: Optional[Mapping[str, str]]) -> bool:
             and bind_is_loopback(_environment(environ).get(ENV_BIND_HOST)))
 
 
-#: Why the operator controls are off with no mode set (`deployment_mode`).
-#: The value set is never repeated: a read-only page may show it.
-#: Plain words first, the codes in one trailing "Ref:" (the WebUI skill's §5;
-#: D8's reasons read the same way, `operator_access.REF_MARK`).
-MODE_NOT_SET = (
-    "Operator controls are off, so this deployment is read-only. They turn on when the "
-    "service is started from its desktop entry or launch_shepherd.sh on this computer. "
-    f"Ref: {ENV_DEPLOYMENT_MODE}={OPERATOR_DEPLOYMENT_MODE} also turns them on, for a verified "
-    "single-workspace deployment reached on the machine or through SSH forwarding"
+#: Why the operator controls are off (`deployment_mode`): the state, then
+#: why, in whole sentences, kept as parts so a line that names the controls
+#: itself says the same (the launcher's "Operator controls : off, so …",
+#: `mode_off_why`; T08 flow: it cut this lead off a sentence and printed the
+#: rest in lower case after its own "off."). The value set is never
+#: repeated: a read-only page may show it. Plain words first, the codes in
+#: one trailing "Ref:" (the WebUI skill's §5; D8's reasons read the same
+#: way, `operator_access.REF_MARK`).
+MODE_OFF_STATE = "off, so this deployment is read-only"
+#: Why, with no mode set.
+MODE_NOT_SET_WHY = (
+    "They turn on when the service is started from its desktop entry or launch_shepherd.sh "
+    f"on this computer. Ref: {ENV_DEPLOYMENT_MODE}={OPERATOR_DEPLOYMENT_MODE} also turns them "
+    "on, for a verified single-workspace deployment reached on the machine or through SSH "
+    "forwarding"
 )
-MODE_NOT_M1 = (
-    "Operator controls are off, so this deployment is read-only: the deployment mode set at "
-    "start is not the operator mode. A local start never overrides it. "
-    f"Ref: {ENV_DEPLOYMENT_MODE} is not {OPERATOR_DEPLOYMENT_MODE} (the value is compared "
-    "exactly)"
+#: Why, with a mode set at start that is not the operator mode.
+MODE_NOT_M1_WHY = (
+    "The deployment mode set at start is not the operator mode. A local start never "
+    f"overrides it. Ref: {ENV_DEPLOYMENT_MODE} is not {OPERATOR_DEPLOYMENT_MODE} (the value "
+    "is compared exactly)"
 )
+MODE_NOT_SET = f"Operator controls are {MODE_OFF_STATE}. {MODE_NOT_SET_WHY}"
+MODE_NOT_M1 = f"Operator controls are {MODE_OFF_STATE}. {MODE_NOT_M1_WHY}"
+
+
+def mode_off_why(mode: Setting) -> Optional[str]:
+    """Why the operator controls are off, the whole sentences that
+    `mode.problem` says after its state (`MODE_OFF_STATE`), for a line that
+    names the controls itself; None while they are on. Told apart by
+    `unset`, as a mode not set is told from one set and refused, never by
+    the words."""
+    if mode.available:
+        return None
+    return MODE_NOT_SET_WHY if mode.unset else MODE_NOT_M1_WHY
 
 
 def deployment_mode(environ: Optional[Mapping[str, str]] = None) -> Setting:
