@@ -1081,7 +1081,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-116 rows: 1 to do, 6 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 68 code-verified, 31 code-verified at ba6e85e (audit).
+116 rows: 6 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 69 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
@@ -1219,12 +1219,12 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### NEW-shell-nav-theme-5 · Load drawer rows chain three ' · ' and repeat the identity line
 
-- **State**: to do · found by the 2026-11-16 audit · page: diagnosis
+- **State**: code-verified · found by the 2026-11-16 audit · page: diagnosis
 - **Duplicate of**: R-7+B51a (closed with it)
 - **At ba6e85e**: The Diagnosis 'Load for inference' drawer's rows have three ' · ' each ('model fingerprint … · trained on demo · dataset fingerprint … · synthetic', renderers.model_row_html at renderers.py:1112-1124), against skill §5's 'at most one ' · ' in a row', and repeat the identity line that B4 placed above them (diagnosis-load-drawer-1850x960.png).
 - **Done when**: In the Diagnosis Load drawer, rows trained on the chosen workspace show at most one ' · ' and do not repeat trained-on, dataset fingerprint or synthetic stated above them.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: —
+- **Closed at**: db16eea, with R-7+B51a: the Load drawer draws the shared model list's tree and `renderers.model_row_html` is removed (state set at the T06-C integration, 2026-11-17; the row had kept "to do" after its duplicate closed).
 
 #### R-1d · Diagnosis table has no phenotype-match count (k/N)
 
