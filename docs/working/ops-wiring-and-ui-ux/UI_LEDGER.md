@@ -1793,6 +1793,15 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: OPS:363-364
 - **Closed at**: —
 
+#### V-4 · Compare's hidden-rows note counts a row that applies to no result as one that applies to one
+
+- **State**: code-verified · found by the verification of fcc3dea · severity low · page: results
+- **Problem**: Differences only hides a row that applies to fewer than two results and counted each one as "that apply to one result only", a row that applies to none included.
+- **At fcc3dea**: `results_segment.compare_html` (~1486) took `len(applied) < 2` as one cause. A new base beside a fine-tune, Differences only, reads "158 rows recorded alike in every column they apply to and 1 that apply to one result only are hidden"; that one row is "Settings changed", not applicable in both (OPS-C1's words for a result of no branch).
+- **Done when**: Each cause is counted in its own words (the skill's §9), or rows that apply to no result are left out of the count; a test.
+- **Sources**: the verification brief, item 6
+- **Closed at**: 97ee5de. A row that applies to no result is counted apart and said so ("1 that apply to no result"); the one-result count keeps its rows. Test: `test_models_results_segment.py::test_differences_only_counts_each_cause_of_a_hidden_row_in_its_own_words` (the counts read from the table drawn in full; fails on fcc3dea).
+
 **UI-16, shell**
 
 #### B27-P · No mockup before UI work and no completion screenshots for the owner
