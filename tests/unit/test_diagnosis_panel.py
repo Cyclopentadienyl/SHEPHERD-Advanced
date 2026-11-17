@@ -733,7 +733,10 @@ def test_the_fields_scroll_above_the_card_and_run_row_whose_foot_never_covers_th
             "min-height: 0; overflow: auto;") in side(css)
     assert "position: sticky" not in css and "--shep-dx-sticky-h" not in css
     assert not hasattr(dp, "STICKY_JS") and not hasattr(style, "sticky_room_js")
-    assert "html, .shep-panel * { scroll-padding-bottom: var(--shep-caret-room); }" in style.SHELL_CSS
+    # Every scroll region, a page's own tab region side by side included
+    # (Settings at 1366 x 620, commit 7bdffd1).
+    assert ("html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem { "
+            "scroll-padding-bottom: var(--shep-caret-room); }") in " ".join(style.SHELL_CSS.split())
     assert f"{dp._TAB} #shep-dx-fields .block.padded {{ padding: 6px 0 !important; }}" in css
     options = css[css.index(f"{dp._TAB} .shep-dx-options {{"):]
     options = options[:options.index("}")]
