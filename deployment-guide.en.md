@@ -3522,7 +3522,8 @@ a run.
   `logs/train_….json`), else that there is none ("no run directory, so no log" for a run refused
   before it made its run directory). The last lines of its output follow
   under "Last output (N lines)": open in a window at least 1000 px tall, closed to that one line
-  in a shorter one so the charts keep their room (opening or closing it holds for this page);
+  in a shorter one so the charts keep their room (opening or closing it holds while the banner
+  shows that failed run; the next failed run's starts by the window again);
   four lines show at a time, the rest scroll in the box (in a narrow window all of them show).
   Dismiss hides the banner for this browser tab. Every notice in the run bar shows names and
   paths as text, whatever characters a workspace or run name holds.
@@ -3872,8 +3873,8 @@ it. Three panels:
   readable"), its file, the Trainer's validation figure, its model fingerprint (12 hex digits,
   Copy) and its dataset by its relation to the workspace ("the selected workspace's current
   dataset", or which one it is). Listing them opens every checkpoint, so it is an operator
-  control: a read-only browser is not shown it, and the page lists them once per workspace (↻
-  reads the list again). Then **Measurement** (since K8-6a), the protocol the run passes as
+  control: a read-only browser is not shown it (the line above Run says why, with ↻ locked),
+  and the page lists them once per workspace (↻ reads the list again). Then **Measurement** (since K8-6a), the protocol the run passes as
   `--mode <protocol>` (§4.9): the options are the protocols this build implements whose needs
   the chosen model's listed capabilities meet and that measure the chosen version's kind (since
   research comparison Stage 7): a task head's measurement of a finetuned model (Disease, Gene or

@@ -3507,7 +3507,7 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   requires CUDA, …"），對每個瀏覽器都與輸出一樣經過遮蔽（不顯示伺服器的絕對路徑；工作區根目錄內的路徑以它在其中的位置顯示，run 自己的日誌保留全文）。run 旁邊只在有日誌時說明日誌在哪裡（它的
   `logs/train_….json`），否則說明沒有日誌（在建立 run 目錄之前就被拒絕的 run 顯示 "no run
   directory, so no log"）。接著是輸出的最後幾行，放在「Last output (N lines)」之下：視窗高度至少 1000 px 時展開，較矮的視窗則收合成這一行，讓圖表保有空間（你展開或收合
-  後，在這個頁面中會保持）；一次顯示四行，其餘在框內捲動（窄視窗中全部顯示）。Dismiss 會在這個
+  後，在橫幅顯示這次失敗的 run 時會保持；下一次失敗的 run 重新依視窗決定）；一次顯示四行，其餘在框內捲動（窄視窗中全部顯示）。Dismiss 會在這個
   瀏覽器分頁中隱藏橫幅。run bar 中的每則通知都把名稱與路徑當作文字顯示，不論 workspace 或 run
   名稱含有什麼字元。
 
@@ -3776,8 +3776,8 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   是所選模型的細節：其紀錄說明它是什麼（Base、Disease、凍結骨幹對照組為「Disease · frozen graph
   backbone」、「Record not readable」）、檔案、Trainer 的驗證數值、模型指紋（12 個十六進位數字，可
   Copy），以及它的資料集與此 workspace 的關係（「the selected workspace's current dataset」，或說明
-  是哪一個）。列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且
-  頁面對每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是 **Measurement**（自 K8-6a 起），即執行
+  是哪一個）。列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它（Run 上方的一行說明原因，↻ 顯示鎖頭），
+  而且頁面對每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是 **Measurement**（自 K8-6a 起），即執行
   以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、所選模型列出的能力符合其
   需求、且量測所選版本種類的協定（自 research comparison Stage 7 起）：finetune 模型 task head 的量測
   （Disease、Gene 或 Patients-like-me）用於 supplied cohort 或 generated split，base 與每個 finetune 的

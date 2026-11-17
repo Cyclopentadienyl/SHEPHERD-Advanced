@@ -1482,6 +1482,21 @@ def chosen_model(models: Mapping[str, Any], key: Any) -> Optional[str]:
     return ml.lone_key(models.get("items") or [], testable)
 
 
+def listing_why_html(page: Mapping[str, Any], models: Mapping[str, Any]) -> str:
+    """**Why the Run and Checkpoint lists are empty** for a request D8
+    refuses (listing the checkpoints opens them: an operator control), said
+    once above the fields it turns off, the Run row with its locked ↻ and
+    then Checkpoint: the gated-button rule's visible reason beside the ↻
+    (`chips.gated`), placed as Settings places its panel's above the fields
+    it turns off (T06-D). It was the Checkpoint field's note, 123 px under
+    the ↻ and off screen with it at 390 × 844 (UI ledger V-15). Empty for
+    an operator."""
+    if not models.get("refused"):
+        return ""
+    return _reason_html("Not listed: listing the checkpoints opens them. "
+                        + operator_only(page.get("access") or {}), kind="lock")
+
+
 def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional[str]) -> str:
     """The chosen model's details, by the shared renderers in the one summary
     list (`renderers.summary_list`), each a fact its options do not say: what
@@ -1491,11 +1506,11 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
     copyable) and how its dataset stands to the chosen workspace's
     (`renderers.dataset_relation_html`: "the selected workspace's current
     dataset", which Data says once; which one and its fingerprint where it is
-    another); or why there is no list."""
+    another); or why there is no list. A listing D8 refused is said above the
+    fields instead (`listing_why_html`), so nothing here."""
     roots = page.get("roots") or []
     if models.get("refused"):
-        return _reason_html("Not shown · listing checkpoints opens them, which is an operator "
-                            "control. " + operator_only(page.get("access") or {}), kind="lock")
+        return ""
     if models.get("problem"):
         return _reason_html(redact(models["problem"], roots))
     item = find_model(models, key)
@@ -2888,7 +2903,10 @@ def create_test_page(ctx: Any) -> None:
                 # The model as Run → Checkpoint, the shared cascading pair
                 # (`model_list.parents_update`), one under the other so each
                 # 40-character option shows whole in the column; ↻ lists the
-                # workspace's checkpoints again.
+                # workspace's checkpoints again. Above them, for a request D8
+                # refuses, why both lists are empty and ↻ is locked
+                # (`listing_why_html`), once.
+                model_why = plain_html("", elem_id="shep-test-model-why")
                 with gr.Row(elem_classes=["shep-test-model-row", "shep-field-row"]):
                     run_select = gr.Dropdown(label="Run", choices=[], value=None,
                                              elem_id="shep-test-model-run", interactive=False,
@@ -3054,6 +3072,7 @@ def create_test_page(ctx: Any) -> None:
             # the page never picks the model it measures itself.
             *ml.parents_update(model_parents(models), key, first=False, interactive=allowed),
             gated_update("reload", page, interactive=bool(ws)),
+            listing_why_html(page, models),
             model_html(page, models, key),
             radio,
             evidence_html(page, ws, find(page.get("versions") or [], "label", label)),
@@ -3073,8 +3092,8 @@ def create_test_page(ctx: Any) -> None:
     # answered after it brought back the older card).
     start_outputs = [start, start_reason]
     job_outputs = [job_head, job_out, cancel, cancel_reason]
-    run_outputs = [run_select, model, model_reload, model_info, measurement, evidence, fixed,
-                   *start_outputs, *job_outputs, record, deterministic, measurement_state,
+    run_outputs = [run_select, model, model_reload, model_why, model_info, measurement, evidence,
+                   fixed, *start_outputs, *job_outputs, record, deterministic, measurement_state,
                    model_state]
 
     def _result_outputs(page, reports, models, run_id, job, binding, ws, label, key):
@@ -3617,6 +3636,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-ident {{ font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-ident > div {{ margin: 1px 0; }}
 {_PAGE} .shep-test-model-row {{ flex-wrap: nowrap !important; gap: 8px !important; }}
+{_PAGE} #shep-test-model-why:not(:has(.shep-reason)) {{ display: none !important; }}
 {_PAGE} .shep-test-checks, {_PAGE} .shep-test-checks > .form {{ gap: 4px 18px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-checks > .form {{ background: none !important; border: 0 !important; box-shadow: none !important; }}
 {_PAGE} .shep-test-checks > .form > .block {{ flex: 0 0 auto !important; min-width: 0 !important; width: auto !important; margin: 0 !important; }}

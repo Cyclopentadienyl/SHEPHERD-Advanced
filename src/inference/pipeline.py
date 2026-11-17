@@ -100,6 +100,7 @@ from src.reasoning import (
     create_evidence_panel,
     find_matching_phenotypes,
 )
+from src.utils import training_device
 from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
 
 # Optional torch dependency for GNN inference
@@ -302,8 +303,11 @@ def require_model_source(checkpoint_path: Optional[Union[str, Path]],
 def resolve_serving_device(requested: Optional[str]) -> str:
     """The device a checkpoint is served on, or a refusal (contract M3c, §5.2).
 
-    **`auto` means CUDA, and without CUDA it refuses**, as training's
-    (`scripts/train_model.py`, `resolve_training_device`) and measurement's do.
+    **`auto` means CUDA, and without CUDA it refuses**, by the one rule that
+    training (`resolve_training_device`) and measurement
+    (`scripts/measure_scorer.py`, `_resolve_device`) ask too: which requests
+    need CUDA and whether this host has it are `src.utils.training_device`'s
+    (`wants_cuda`, `cuda_visible`); the refusal is serving's, in its own words.
     Unset (None or blank) is `auto`: that is what a deployment that names no
     device asks for. It used to become CPU silently, after the checkpoint had
     been read and the model built, so a service asked to run on the deployment's
@@ -326,8 +330,7 @@ def resolve_serving_device(requested: Optional[str]) -> str:
     if requested is None or not str(requested).strip():
         requested = "auto"
     requested = str(requested).strip()
-    wants_cuda = requested in ("auto", "cuda") or requested.startswith("cuda:")
-    if wants_cuda and not torch.cuda.is_available():
+    if training_device.wants_cuda(requested) and not training_device.cuda_visible():
         # **Plain words first, the variable only in the trailing Ref** (the
         # WebUI skill's §5): no path is read before this, so these words are
         # also what the open not-serving reason says (`ServingLoad.refusal`).

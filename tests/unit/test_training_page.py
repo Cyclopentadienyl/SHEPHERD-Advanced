@@ -3063,7 +3063,17 @@ def test_a_failed_runs_output_tail_is_a_disclosure_fitted_to_the_window():
     one = tc._render_error_block("exit 1\n\n--- Last output ---\nonly")
     assert "(1 line)" in one
     assert "<details" not in tc._render_error_block("exit 1")
-    assert "window.innerHeight < 1000" in tc._BANNER_JS and "data-tail" in tc._BANNER_JS
+    assert "window.innerHeight < 1000" in tc._BANNER_JS
+    # The banner gives its default only; the reader's choice is the one
+    # keeper's (V-16): no memory of its own, no observer of its own, and the
+    # keeper asks a region's default for a disclosure the reader left alone.
+    assert "element.shepKeepDefault = function (d)" in tc._BANNER_JS
+    for own in ("data-tail", "data-fit", "MutationObserver", ".open ="):
+        assert own not in tc._BANNER_JS, own
+    assert "element.shepKeepDefault" in r.KEEP_OPEN_JS
+    # Each failure's tail is its own disclosure: the block names its failed job.
+    assert 'data-keep="TRAIN-1"' in tc._render_error_block(
+        "exit 1\n\n--- Last output ---\nonly", run="gatv2/r", job="TRAIN-1")
     _demo, _ctx, by_id = _page()
     assert by_id["shep-train-banner"].js_on_load == r.KEEP_OPEN_JS + tc._BANNER_JS
 
@@ -3520,6 +3530,180 @@ def test_the_details_popovers_stay_as_the_reader_left_them_across_redraws(tmp_pa
             for after in (*got["pageRedrawn"], got["space"]):
                 assert after["focus"] == "body" and not after["open"], (size, name, got)
         assert not popovers["otherRun"]["open"], (size, popovers["otherRun"])
+
+
+#: A failed run's banner at three windows (the dashboard's own head decides
+#: the layout): run A's banner drawn, its output tail read; the reader's
+#: click on "Last output"; the same failure drawn again (an advisory added
+#: under it, so the HTML changes and Gradio draws it in place); run B's
+#: banner drawn. Each read says whether the tail is open; a screen of each
+#: state is saved under argv[3].
+_BANNER_TAIL_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const [base, shots] = [process.argv[2], process.argv[3]];
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [960, 1080], [1920, 1080]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h },
+                                                   deviceScaleFactor: 1 })).newPage();
+    await page.goto(base, { waitUntil: 'load' });
+    await page.waitForSelector('#fail-a');
+    await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout'));
+    const tail = '#shep-train-banner details.shep-banner-more';
+    const read = async (name) => {
+      await page.screenshot({ path: `${shots}/banner-${name}_${w}x${h}.png` });
+      return page.evaluate((t) => {
+        const d = document.querySelector(t);
+        return { open: d.open, of: d.closest('[data-keep]') && d.closest('[data-keep]').getAttribute('data-keep'),
+                 layout: document.documentElement.getAttribute('data-shep-layout'),
+                 height: window.innerHeight };
+      }, tail);
+    };
+    // A drawing pushed, read once the banner says what it was sent with.
+    const push = async (button, words) => {
+      await page.evaluate((b) => document.querySelector(b).click(), button);
+      await page.waitForFunction(([t, w]) => document.querySelector(t)
+        && document.querySelector('#shep-train-banner').innerText.includes(w), [tail, words]);
+    };
+    const seen = {};
+    await push('#fail-a', 'gatv2/run-a');
+    seen.drawn = await read('drawn');
+    await page.click(tail + ' > summary');
+    await page.waitForFunction(([t, was]) => document.querySelector(t).open !== was,
+                               [tail, seen.drawn.open]);
+    seen.chosen = await read('chosen');
+    await push('#redraw-a', 'PyG extensions');
+    seen.redrawn = await read('redrawn');
+    await push('#fail-b', 'gatv2/run-b');
+    seen.next = await read('next');
+    out[w + 'x' + h] = seen;
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_failed_runs_output_tail_starts_by_the_window_and_keeps_the_readers_choice(tmp_path):
+    """UI ledger V-16: the failed-run banner kept its tail's open state with
+    a memory of its own (a ``data-tail`` on the banner and its own
+    MutationObserver) beside the one disclosure keeper every dashboard HTML
+    runs (`renderers.KEEP_OPEN_JS`), and that memory held one reader's
+    choice for every failure after it on the page. Now the banner gives only
+    its default by the window (closed on a side-by-side window under
+    `BANNER_OPEN_HEIGHT` px tall, open otherwise) and the keeper keeps the
+    reader's choice over it while the banner names the same failed job. In
+    a real browser (skipped without Node and Playwright), with the
+    dashboard's head deciding the layout: run A's tail drawn by its default
+    at 1850 x 960 (side by side, short: closed), 960 x 1080 (stacked: open)
+    and 1920 x 1080 (side by side, tall: open); the reader opens or closes
+    it, and the same failure drawn again keeps that; run B's tail starts at
+    the default again. Fails on d8d1828, where run B's tail took run A's
+    choice."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    printed = "\n\n--- Last output ---\n" + "\n".join(f"epoch {i}: loss 0.{i}" for i in range(12))
+
+    def failed(job, run, warning=None):
+        html, _key = tc._build_error_banner_payload(
+            {"error_message": "Process exited with code 1" + printed, "job_id": job},
+            warning, run=run)
+        return html
+
+    drawings = {"fail-a": failed("TRAIN-a", "gatv2/run-a"),
+                "redraw-a": failed("TRAIN-a", "gatv2/run-a", "PyG extensions are not installed."),
+                "fail-b": failed("TRAIN-b", "gatv2/run-b")}
+    with gr.Blocks() as page:
+        banner = shell.plain_html("", elem_id="shep-train-banner", js_on_load=tc._BANNER_JS)
+        for name, html in drawings.items():
+            gr.Button(name, elem_id=name).click(lambda html=html: html, outputs=[banner])
+    shots = tmp_path / "shots"
+    shots.mkdir()
+    with served(page, **mount_options()) as base:
+        seen = run_node(_BANNER_TAIL_JS, tmp_path, base[:-len("gradio_api")], str(shots))
+    for size, default in (("1850x960", False), ("960x1080", True), ("1920x1080", True)):
+        got = seen[size]
+        assert got["drawn"]["open"] is default, (size, got)
+        assert got["chosen"]["open"] is not default, (size, got)
+        assert got["redrawn"]["open"] is not default, (size, got)
+        assert got["next"]["open"] is default, (size, got)
+        # Each failure's tail is its own disclosure: its block names its job.
+        assert got["drawn"]["of"] == "TRAIN-a" and got["next"]["of"] == "TRAIN-b", (size, got)
+    assert seen["1850x960"]["drawn"]["layout"] == "side"
+    assert seen["960x1080"]["drawn"]["layout"] == "stack"
+
+
+#: A failed run's banner whose HTML holds the failure when it mounts (its tab
+#: opened after it was written, as Training is), at three windows: once the
+#: one keeper has taken the tail in hand (its mark on it), whether it is open;
+#: a screen of each under argv[3].
+_BANNER_MOUNT_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const [base, shots] = [process.argv[2], process.argv[3]];
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [960, 1080], [1920, 1080]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h },
+                                                   deviceScaleFactor: 1 })).newPage();
+    await page.goto(base, { waitUntil: 'load' });
+    await page.waitForSelector('#other-page');
+    await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout'));
+    const unmounted = await page.evaluate(() => !document.getElementById('shep-train-banner'));
+    await page.getByRole('tab', { name: 'Training' }).click();
+    const tail = '#shep-train-banner details.shep-banner-more';
+    await page.waitForSelector(tail + '[data-shep-kept]', { state: 'attached' });
+    await page.screenshot({ path: `${shots}/banner-mounted_${w}x${h}.png` });
+    out[w + 'x' + h] = await page.evaluate(([t, u]) => ({ unmounted: u, open: document.querySelector(t).open,
+      layout: document.documentElement.getAttribute('data-shep-layout') }), [tail, unmounted]);
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_failed_runs_output_tail_drawn_as_the_banner_mounts_starts_by_the_window(tmp_path):
+    """The review of e1dda3e (V-16): the one keeper (`renderers.KEEP_OPEN_JS`)
+    took the disclosures already in a region's HTML as it mounts before the
+    region's own script had given its default (``shepKeepDefault``), so a
+    failed run's tail written before its banner mounted (Training opened
+    after the failure) was drawn as its HTML says, open, whatever the
+    window. Now the keeper's first pass runs after the region's own script:
+    the tail starts at the banner's default, closed at 1850 x 960 (side by
+    side, short) and open at 960 x 1080 and 1920 x 1080. In a real browser
+    (skipped without Node and Playwright), the dashboard's head deciding the
+    layout. Fails on e1dda3e (open at 1850 x 960); d8d1828's banner applied
+    its default by a script of its own, which 5d8e6d5 retired."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    printed = "\n\n--- Last output ---\n" + "\n".join(f"epoch {i}: loss 0.{i}" for i in range(12))
+    html, _key = tc._build_error_banner_payload(
+        {"error_message": "Process exited with code 1" + printed, "job_id": "TRAIN-a"},
+        None, run="gatv2/run-a")
+    with gr.Blocks() as page:
+        with gr.Tabs():
+            with gr.Tab("Other", id="other"):
+                gr.Markdown("Another page", elem_id="other-page")
+            with gr.Tab("Training", id="train"):
+                shell.plain_html(html, elem_id="shep-train-banner", js_on_load=tc._BANNER_JS)
+    shots = tmp_path / "shots"
+    shots.mkdir()
+    with served(page, **mount_options()) as base:
+        seen = run_node(_BANNER_MOUNT_JS, tmp_path, base[:-len("gradio_api")], str(shots))
+    for size, default in (("1850x960", False), ("960x1080", True), ("1920x1080", True)):
+        assert seen[size]["unmounted"], (size, seen)
+        assert seen[size]["open"] is default, (size, seen)
+    assert seen["1850x960"]["layout"] == "side" and seen["960x1080"]["layout"] == "stack"
 
 
 #: The Training page as the service mounts it: four settings typed, so the

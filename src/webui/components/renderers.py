@@ -1671,10 +1671,26 @@ def details_list(rows: Iterable[Tuple[str, str]], *, of: Any = None,
 #: the region names the same thing (`keep_as`, on an element around it;
 #: none: the region's one thing), its summary's or its button's words are the
 #: same and so is its place among those; a choice for one no longer drawn
-#: (another run, another job) is dropped.
+#: (another run, another job) is dropped. **A region's default**: a
+#: disclosure the reader has not opened or closed is drawn as its HTML says,
+#: unless the region's own script (which runs after this one) gives a default
+#: the HTML cannot say, one that hangs on the window: a function
+#: ``element.shepKeepDefault(d)`` answering true (open), false (closed) or
+#: undefined (as drawn), asked each time such a disclosure is drawn, the
+#: drawing the region mounts with included (this script's first pass waits
+#: for the region's own script: before, a disclosure already in the HTML as
+#: the region mounted was taken as drawn, its default never asked; the review
+#: of e1dda3e); the reader's own choice always wins over it (Training's
+#: failed-run banner: its output tail, closed on a short side-by-side window;
+#: UI ledger V-16).
 KEEP_OPEN_JS = r"""
 (function () {
   var MARK = 'data-shep-kept', chosen = {}, focused = null;
+  // The region's default for a disclosure the reader has not acted on.
+  function byDefault(d) {
+    var given = element.shepKeepDefault;
+    return typeof given === 'function' ? given(d) : undefined;
+  }
   var CONTROLS = 'a[href], button, input, select, textarea, summary, [tabindex]';
   function popover(b) {
     var p = document.getElementById(b.getAttribute('aria-controls'));
@@ -1719,7 +1735,7 @@ KEEP_OPEN_JS = r"""
       var d = x.d;
       drawn[x.key] = d;
       if (!d.hasAttribute(MARK)) {
-        var want = chosen[x.key];
+        var want = chosen[x.key] !== undefined ? chosen[x.key] : byDefault(d);
         if (want !== undefined && want !== isOpen(d)) { setOpen(d, want); }
         d.setAttribute(MARK, '');
       } else if (d.__shepOpen !== isOpen(d)) {
@@ -1761,7 +1777,9 @@ KEEP_OPEN_JS = r"""
   });
   new MutationObserver(keep).observe(element, {childList: true, subtree: true, attributes: true,
     attributeFilter: ['open', 'hidden', 'aria-expanded', MARK]});
-  keep();
+  // The drawing the region mounts with, once its own script (after this one,
+  // in the same js_on_load) has given its default.
+  queueMicrotask(keep);
 })();
 """
 
@@ -1776,8 +1794,9 @@ def keep_as(identity: Any) -> str:
     selected candidate (Diagnosis), the selected workspace (Datasets), the
     checkpoint the Continue drawer checked, each result row and the results
     compared (Results), as the Test page's job and result and Training's
-    workspace and run do. Unnamed, a Details opened for one model was drawn
-    open for the next (the review of 5033d29)."""
+    workspace, run and failed job (its banner's output tail) do. Unnamed, a
+    Details opened for one model was drawn open for the next (the review of
+    5033d29)."""
     return f' data-keep="{e(identity)}"'
 
 

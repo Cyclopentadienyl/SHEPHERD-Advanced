@@ -296,6 +296,7 @@ from src.evaluation import protocols
 from src.evaluation.caveats import COHORT_ARGUMENT_HELP, SPLIT_ARGUMENT_HELP
 from src.evaluation.cohort import GENERATED_SPLITS, CohortProvenance, resolve_cohort
 from src.evaluation.cohort_registry import RANKS_FILE, REPORT_FILE, cohort_version_block
+from src.utils import training_device
 from src.utils.gpu_lock import take_gpu_lock
 from src.utils.interrupts import interrupt_deferred
 
@@ -1047,12 +1048,16 @@ def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
     anything is read, rather than by torch when the checkpoint is loaded onto
     the device after every workspace check has run.
 
+    **Which requests need CUDA, and whether this host has it, is the one rule's**
+    (`src.utils.training_device`: `wants_cuda`, `cuda_visible`), which training
+    and serving ask too; the refusal is this command line's, in its own words.
+
     The boolean means only "this ran on CUDA". Whether the run is acceptable to
     the institution depends on which artifacts it consumed, which is checked by a
     person against the recorded digests, not here.
     """
-    if requested == "auto":
-        if not torch.cuda.is_available():
+    if training_device.wants_cuda(requested) and not training_device.cuda_visible():
+        if requested == "auto":
             raise SystemExit(
                 "--device auto requires CUDA, which is not available here.\n"
                 "Hardware acceleration is a hard requirement for deployment, CUDA "
@@ -1062,15 +1067,13 @@ def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
                 "Pass --device cpu explicitly for development; the run is then "
                 "recorded as cuda_executed=false."
             )
-        return torch.device("cuda"), True
-    if requested == "cuda" and not torch.cuda.is_available():
         raise SystemExit(
-            "--device cuda requires CUDA, which is not available here.\n"
+            f"--device {requested} requires CUDA, which is not available here.\n"
             "Pass --device cpu explicitly for development; the run is then "
             "recorded as cuda_executed=false."
         )
 
-    device = torch.device(requested)
+    device = torch.device("cuda" if requested == "auto" else requested)
     return device, device.type == "cuda"
 
 

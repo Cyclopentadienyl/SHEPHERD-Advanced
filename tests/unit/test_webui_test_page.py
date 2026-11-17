@@ -515,7 +515,9 @@ def test_a_read_only_request_sees_the_versions_and_reports_and_no_checkpoint(sit
     assert [v["label"] for v in page["versions"]] == [LABEL]
     models = tp.read_models("demo", _readonly())
     assert models["refused"] is True and models["items"] == []
-    assert "operator control" in tp.model_html(page, models, None)
+    # Why, said once above the Run and Checkpoint fields (V-15), not under them.
+    assert tp.listing_why_html(page, models).count("Operator controls only: request not local.") == 1
+    assert tp.model_html(page, models, None) == ""
     reports = tp.read_reports(LABEL)
     assert [r["run_id"] for r in reports["runs"]] == [site.run_id]
     allowed, why = tp.start_state(page, models, "demo", LABEL, None, None, ("none", ""))
@@ -3322,7 +3324,8 @@ def test_the_run_panels_foot_keeps_start_the_jobs_state_and_cancel_out_of_its_on
     assert names(run) == ["shep-test-run-hd", "shep-test-bd", "shep-test-runft"]
     body, foot = run.children[1], run.children[2]
     assert names(body)[-2:] == ["shep-test-fixed", "shep-test-job"]
-    assert names(body)[0] == "shep-test-model-row"
+    # A refused listing's reason first (empty for an operator, V-15), then the choices.
+    assert names(body)[:2] == ["shep-test-model-why", "shep-test-model-row"]
     # The card's heading names the run once, in the card (none while no run
     # was started, R-81); its state is the foot's alone.
     running = {"status": "running", "inputs": {}, "log": []}
@@ -3499,7 +3502,7 @@ def test_a_read_only_request_cannot_type_a_note(site, monkeypatch):
 
 #: Each gated button of the page and the element that holds its reason beside it.
 GATED_REASONS = {"shep-test-import-open": "shep-test-import-reason",
-                 "shep-test-model-reload": "shep-test-model-info",
+                 "shep-test-model-reload": "shep-test-model-why",
                  "shep-test-start": "shep-test-start-reason",
                  "shep-test-cancel": "shep-test-cancel-reason",
                  "shep-test-note-add": "shep-test-note-reason",
@@ -3546,6 +3549,118 @@ def test_every_gated_button_is_locked_only_when_refused_and_then_says_why(site, 
     assert tp.register_state(refused, {"runs": []}, None) == (
         False, "Operator controls only: request not local.")
     assert tp.register_state({"access": {"allowed": True}}, {"runs": []}, None) == (False, None)
+
+
+
+#: The Test page for a read-only browser (no deployment mode, so D8 refuses
+#: every request) at three windows: the ↻ beside the Run field once its lock
+#: is drawn, brought into view as a reader brings it, and the nearest visible
+#: "Operator controls only: …" text, as the verification's part RB2 measured
+#: them (scratchpad/verify/rb2/run2/pw/a33_beside.cjs): the gap between the
+#: two boxes, where the reason sits and how far it is from the ↻'s row (the
+#: Run field's label is all between them), whether each is wholly on screen
+#: (inside the window and every box that clips it), and how often the
+#: listing's refusal is said in the Run panel. A screen of each window under
+#: argv[3].
+_RELOAD_REASON_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const [base, shots] = [process.argv[2], process.argv[3]];
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [960, 1080], [390, 844]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h },
+                                                   deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(),
+                                            null, { timeout: 60000 });
+    await page.goto(base, { waitUntil: 'load' });
+    await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+    await idle();
+    await page.click('#shep-tab-research-button'); await idle();
+    await page.click('#shep-page-test-button');
+    await page.waitForSelector('#shep-page-test-button[aria-selected="true"]');
+    await idle();
+    await page.waitForFunction(() => /🔒/.test(
+      (document.getElementById('shep-test-model-reload') || {}).innerText || ''), null, { timeout: 30000 });
+    await page.waitForFunction(() => /listing/.test(
+      (document.getElementById('shep-test-run') || {}).innerText || ''), null, { timeout: 30000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out[w + 'x' + h] = await page.evaluate(() => {
+      const T = (s) => (s || '').replace(/\s+/g, ' ').trim();
+      const b = document.getElementById('shep-test-model-reload');
+      b.scrollIntoView({ block: 'nearest' });
+      const box = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; };
+      const vis = (e) => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+        return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+      // Wholly on screen: inside the window and inside every box around it that clips.
+      const whole = (e) => { const q = box(e); let x = { l: 0, t: 0, r: innerWidth, b: innerHeight };
+        for (let a = e.parentElement; a; a = a.parentElement) { const s = getComputedStyle(a);
+          if (/(auto|scroll|hidden|clip)/.test(s.overflowY + s.overflowX)) { const p = box(a);
+            x = { l: Math.max(x.l, p.l), t: Math.max(x.t, p.t), r: Math.min(x.r, p.r), b: Math.min(x.b, p.b) }; } }
+        return q.l >= x.l - 1 && q.t >= x.t - 1 && q.r <= x.r + 1 && q.b <= x.b + 1; };
+      const said = (e) => /Operator controls only:/.test(e.innerText || '');
+      const reasons = [...document.querySelectorAll('[role=tabpanel] *')]
+        .filter((e) => vis(e) && said(e) && ![...e.children].some(said));
+      const a = box(b); let best = null;
+      for (const r of reasons) { const q = box(r);
+        const dx = Math.max(0, q.l - a.r, a.l - q.r), dy = Math.max(0, q.t - a.b, a.t - q.b);
+        const vO = Math.min(a.b, q.b) - Math.max(a.t, q.t), hO = Math.min(a.r, q.r) - Math.max(a.l, q.l);
+        const where = vO > 0 ? (q.l >= a.r - 1 ? 'same row, right' : q.r <= a.l + 1 ? 'same row, left' : 'overlapping')
+          : hO > 0 ? (q.t >= a.b - 1 ? 'directly below' : 'directly above') : 'apart';
+        const gap = Math.round(Math.hypot(dx, dy));
+        if (!best || gap < best.gap) { best = { gap, where, text: T(r.innerText), whole: whole(r), bottom: q.b }; } }
+      // From the reason to the top of the ↻'s row (the Run field's label).
+      if (best) { best.toRow = Math.round(b.closest('.shep-field-row').getBoundingClientRect().top - best.bottom); }
+      const run = document.getElementById('shep-test-run').innerText;
+      return { button: T(b.innerText), disabled: b.disabled, whole: whole(b), reason: best,
+               listing: run.split('listing the checkpoints opens them').length - 1
+                 + run.split('listing checkpoints opens them').length - 1 };
+    });
+    await page.screenshot({ path: `${shots}/reload-reason_${w}x${h}.png` });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_read_only_viewer_reads_why_the_reload_is_locked_beside_it(site, tmp_path):
+    """UI ledger V-15 (the verification of fcc3dea, part RB2): for a
+    read-only browser the Test page's ↻ beside the Run field showed the lock
+    (the one gated-button rule, `chips.gated`), and its reason was the
+    Checkpoint field's note, 123 px under it, off screen with it at
+    390 x 844. The listing's refusal is now said once above the fields it
+    turns off (the Run row with its ↻, then Checkpoint), as Settings says its
+    panel's (T06-D): in a real browser (skipped without Node and
+    Playwright), served with no deployment mode (the site's) at 1850 x 960,
+    960 x 1080 and 390 x 844, the ↻ is locked and the nearest "Operator controls
+    only: …" is that refusal, on the line just above the ↻'s row (within
+    24 px of it: only the Run field's label between), both wholly on screen,
+    and the refusal is said once in the Run panel. Fails on d8d1828 (122 px
+    under the ↻, the Checkpoint field between; at 390 x 844 not wholly on
+    screen)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    shots = tmp_path / "shots"
+    shots.mkdir()
+    script = _RELOAD_REASON_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")], str(shots))
+    (tmp_path / "seen.json").write_text(json.dumps(seen, ensure_ascii=False), encoding="utf-8")
+    for size, got in seen.items():
+        reason = got["reason"]
+        assert got["button"] == f"{tp.LOCK} ↻" and got["disabled"], (size, got)
+        assert got["whole"] and reason and reason["whole"], (size, got)
+        # The line just above the ↻'s row: only the Run field's label between.
+        assert 0 <= reason["toRow"] <= 24, (size, got)
+        assert "listing the checkpoints opens them" in reason["text"], (size, got)
+        assert got["listing"] == 1, (size, got)
 
 
 def test_the_answer_asked_for_a_chosen_report_stays_with_it(site, monkeypatch):

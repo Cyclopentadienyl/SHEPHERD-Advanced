@@ -1451,26 +1451,19 @@ element.addEventListener('click', function (e) {
 #: a shorter one shows its summary line, so the charts keep their room.
 BANNER_OPEN_HEIGHT = 1000
 
-#: The banner: Dismiss (`TRIGGER_JS`) and its output tail's disclosure, sent
-#: open and closed here once per banner on a wide window under
-#: `BANNER_OPEN_HEIGHT` px; once the user opens or closes it, their choice
-#: holds for the banners that follow on this page.
+#: The banner: Dismiss (`TRIGGER_JS`) and its output tail's default, drawn
+#: closed on a side-by-side window under `BANNER_OPEN_HEIGHT` px tall (the
+#: charts keep their room) and open otherwise, given to the one disclosure
+#: keeper (`renderers.KEEP_OPEN_JS`, its ``shepKeepDefault``), which keeps
+#: the reader's own opening or closing over it while the banner names the
+#: same failed job (`keep_as`); another failed job's tail starts at the
+#: default again (UI ledger V-16).
 _BANNER_JS = TRIGGER_JS + r"""
-function fitTail() {
-  var d = element.querySelector('details.shep-banner-more:not([data-fit])');
-  if (!d) { return; }
-  d.setAttribute('data-fit', '');
-  var chosen = element.getAttribute('data-tail');
-  var wide = false;
-  wide = document.documentElement.getAttribute('data-shep-layout') === 'side';
-  d.open = chosen ? chosen === 'open' : !(wide && window.innerHeight < __OPEN__);
-}
-element.addEventListener('click', function (e) {
-  var s = e.target.closest ? e.target.closest('details.shep-banner-more > summary') : null;
-  if (s) { element.setAttribute('data-tail', s.parentElement.open ? 'closed' : 'open'); }
-});
-new MutationObserver(fitTail).observe(element, {childList: true, subtree: true});
-fitTail();
+element.shepKeepDefault = function (d) {
+  if (!d.matches('details.shep-banner-more')) { return undefined; }
+  return !(document.documentElement.getAttribute('data-shep-layout') === 'side'
+           && window.innerHeight < __OPEN__);
+};
 """.replace("__OPEN__", str(BANNER_OPEN_HEIGHT))
 
 
@@ -1911,16 +1904,19 @@ def printed_scrub(root: Optional[Path]) -> Callable[[str], str]:
 
 
 def _render_error_block(message: str, *, headline: str = "Training failed",
-                        run: Optional[str] = None, run_dir: Optional[Path] = None) -> str:
+                        run: Optional[str] = None, run_dir: Optional[Path] = None,
+                        job: Optional[str] = None) -> str:
     """The red block: the headline, the run and where its log is (only when
     there is one), Dismiss; under the headline the last error line the run
     printed (`last_error_line`), so the cause is read without scrolling; and
-    the output tail (monospace, escaped) in a disclosure, open as sent; the
-    banner's script closes it on a wide window under `BANNER_OPEN_HEIGHT` px
-    tall, where it would squeeze the charts (`_BANNER_JS`). Every text the run
-    printed goes through the one redaction of a printed line (`printed_scrub`),
-    whoever calls, the cause as the tail's lines, and then is escaped: the
-    redaction reads text, never the markup around it."""
+    the output tail (monospace, escaped) in a disclosure, open as sent; its
+    default by the window is the banner's (closed on a side-by-side window
+    under `BANNER_OPEN_HEIGHT` px tall, where it would squeeze the charts:
+    `_BANNER_JS`), and the reader's own choice the one keeper's, while the
+    block names the same failed job (`job`, else `run`: `keep_as`). Every
+    text the run printed goes through the one redaction of a printed line
+    (`printed_scrub`), whoever calls, the cause as the tail's lines, and then
+    is escaped: the redaction reads text, never the markup around it."""
     scrub = printed_scrub(workspaces_root()[0])
     first, _sep, tail = str(message).partition("\n\n--- Last output ---\n")
     every = tail.splitlines() if tail else []
@@ -1936,7 +1932,8 @@ def _render_error_block(message: str, *, headline: str = "Training failed",
             if lines else "")
     # The condition first, by the shared mark (an error's ✕, red: the skill's §6).
     said = r.status_mark("error", f"{headline}: {scrub(first.strip())}")
-    return ('<div class="shep-banner shep-banner-red" role="alert">'
+    named = r.keep_as(job or run) if (job or run) else ""
+    return (f'<div class="shep-banner shep-banner-red" role="alert"{named}>'
             f'<div class="shep-banner-hd"><span class="shep-banner-h">{said}</span>'
             f'{_log_where(run, run_dir)}'
             '<button type="button" class="shep-btn shep-banner-x" data-act="dismiss">× Dismiss</button>'
@@ -1970,7 +1967,8 @@ def _build_error_banner_payload(
     if error_msg:
         epoch = _epochs(status_info)
         headline = f"Training failed at {epoch}" if epoch else "Training failed"
-        blocks.append(_render_error_block(error_msg, headline=headline, run=run, run_dir=run_dir))
+        blocks.append(_render_error_block(error_msg, headline=headline, run=run, run_dir=run_dir,
+                                          job=status_info.get("job_id")))
         key_parts.append("ERR:" + str(error_msg))
     if pyg_warning:
         blocks.append(_render_warning_block(pyg_warning))

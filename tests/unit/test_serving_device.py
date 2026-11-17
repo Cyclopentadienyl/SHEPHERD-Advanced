@@ -261,14 +261,18 @@ def test_an_explicit_cpu_request_is_recorded_as_asked(no_cuda, child):
 def test_the_pipeline_picks_no_device_on_its_own():
     """The silent fallback (`"cuda" if torch.cuda.is_available() else "cpu"`)
     lived in `_load_model_from_checkpoint`. Only `resolve_serving_device` asks
-    torch about CUDA now; catches a method that chooses a device again."""
+    whether this host has CUDA now, by the one device rule
+    (`training_device.cuda_visible`, V-18); catches a method that chooses a
+    device again."""
     import src.inference.pipeline as pipeline_module
 
     assert "torch.cuda.is_available" not in inspect.getsource(
         DiagnosisPipeline._load_model_from_checkpoint
     )
     assert "cuda.is_available" not in inspect.getsource(DiagnosisPipeline)
-    assert "torch.cuda.is_available" in inspect.getsource(pipeline_module.resolve_serving_device)
+    assert "cuda_visible" not in inspect.getsource(DiagnosisPipeline)
+    assert "training_device.cuda_visible()" in inspect.getsource(
+        pipeline_module.resolve_serving_device)
 
 
 # ---------------------------------------------------------------------------
