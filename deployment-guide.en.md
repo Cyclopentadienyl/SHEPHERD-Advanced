@@ -3812,9 +3812,10 @@ it. Three panels:
   is the chosen version's details), then KG edge sets ("kg-test · KG edge set (test)"), then
   generated splits ("gen-val · Generated split (val)"); a long label is shortened in its middle,
   the option's value its full label. The chosen version shows its counts (a supplied
-  cohort's role and cases; a KG edge set's pairs and edges; a generated split's patients,
+  cohort's cases; a KG edge set's pairs and edges; a generated split's patients,
   diseases and fixture rows, each with the unit its manifest records under **Counts and units**;
-  a KG edge set's or a generated split's kind and role are its option's, not repeated), its
+  a version's kind and role are its option's, not repeated, a supplied cohort's role in a row of
+  its own only where a long role had to be shortened in its option), its
   version digest and whether it was mapped against this workspace's graph ("● Bound to this
   graph", or "▲ Mapped against another graph" with its refusal beside the version, "✕ Not
   measured on this workspace: …", which Start's reason points to; never in the option; since
@@ -3828,7 +3829,9 @@ it. Three panels:
   chosen run's checkpoints by what the file is and how far it trained ("Latest save · 6 epochs
   completed", "Best pooled MRR · 4 epochs completed"), each option at most 40 characters, its
   value the listing's key. Choosing a run chooses its latest save; nothing is chosen until you
-  pick a run. Under them, the chosen model's details: what its record says it is (Base,
+  pick a run, unless the workspace lists one checkpoint only and it can be tested, which is
+  chosen already (as the model list chooses a lone candidate). Under them, the chosen model's
+  details: what its record says it is (Base,
   Disease, "Disease · frozen graph backbone" for the frozen-backbone control, "Record not
   readable"), its file, the Trainer's validation figure, its model fingerprint (12 hex digits,
   Copy) and its dataset by its relation to the workspace ("the selected workspace's current
@@ -3856,9 +3859,10 @@ it. Three panels:
   the training evidence folders, §4.12), and a refused setting in red with ✕ and "Refused:" and
   its reason, which turns Start off; for a KG edge set or a generated split, "Not applicable"
   in grey with ○ and why (R10 is a supplied cohort's), and the run is given no evidence
-  directory whatever the setting says. Then **Register the result**,
+  directory whatever the setting says. Then **Register when the run ends** (the act is one,
+  Register: Result's **Register this report** registers a kept report afterwards),
   **Deterministic execution**, and the batch size and device the server fixes (the measurement's
-  default; `SHEPHERD_DEVICE`).
+  default; `SHEPHERD_DEVICE`), each with its own ⓘ.
   **Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
   workspace, version and checkpoint the server finds again in its lists, and **the full model
   fingerprint and version digest the page showed as the expected ones**: the run refuses before
@@ -3868,24 +3872,29 @@ it. Three panels:
   it with Stop inference on Diagnosis." while a model is served on CUDA), since no choice
   enables it while that lasts,
   then a choice missing or another
-  graph. The job's title row shows its state (Running, Completed, Failed in red, Cancelled in
-  grey: never green for a failed or cancelled run) and the elapsed time or its end time;
-  **Cancel**, beside the state, stops the test run only, never a training job. The job card,
-  headed "Latest test run", shows what the run was given as one
-  list, a row each (its version and its model by their own fingerprints, whatever is chosen
-  now; its measurement in its report's words; its start in UTC, as the report rows name runs;
-  under **Details ›** its workspace, Register, Deterministic algorithms, Device and R10
-  evidence) and the last 12 lines of its output
-  (folded after a cancel, whose last line says the run was cancelled, with no traceback; a
-  patient id a measurement refusal names is left out, D7). On a wide screen Start, its reason
+  graph; with the workspace's checkpoints listed and none chosen, "Disabled: choose the run, then
+  the checkpoint to test.", the one place the page asks for that choice. A measurement's refusal
+  names it by its words, its protocol name only in a trailing "Ref:" ("…which the
+  patients-like-me measurement needs. Import a source that lists causal_genes. Ref:
+  patients_like_me."). The job's title row shows its state (Running, Completed, Failed in red,
+  Cancelled in grey: never green for a failed or cancelled run) and the elapsed time or its end
+  time; with no test run since the server started it is one muted line, "No test run since the
+  server started.", and there is no job card. **Cancel**, beside the state while a run is busy
+  and not drawn otherwise, stops the test run only, never a training job. The job card, headed
+  "Latest test run", says first what an ended run left ("Its report was kept: Result shows it
+  and its registration.", or "No report kept"; a failed run's first error line), then what the
+  run was given as one list, a row each (its version and its model by their own fingerprints,
+  whatever is chosen now; its measurement in its report's words; its start in UTC, as the report
+  rows name runs), and one **Details ›** with the rest: its workspace, Register, Deterministic
+  algorithms, Device and R10 evidence, what the runner read from disk as the run ended (its
+  sentence, paths redacted; "No report was published …" when the run wrote no outcome file;
+  after a cancel, what was left), its exit status and the last 12 lines of its output (a
+  patient id a measurement refusal names is left out, D7). The card never says a registration:
+  it is Result's alone, read from the ledger now, so a report registered afterwards with
+  Register this report reads so there and nowhere reads "Not registered". On a wide screen Start, its reason
   and the job's title row stay at the panel's foot, under its one scroll region, whatever the
   job; the card follows the choices in that region. Narrow, the choices, the card, Start and the
-  title row follow one another. Once the run has ended, the card shows what the runner read
-  from disk as the run ended (headed "When the run ended:"): whether a report was kept and whether
-  it was registered then, with the runner's sentence ("No report was published …" when the run
-  wrote no outcome file; after a cancel, what was left). A report registered afterwards with
-  Register this report keeps the card's reading of the run's end, and the card points to Result,
-  which shows the report's registration now. While the page is shown it reads the job every 5 seconds; the report of a run that has
+  title row follow one another. While the page is shown it reads the job every 5 seconds; the report of a run that has
   just ended is selected, once for that run. A choice made while the page reads the version's
   store again (after the job changed, an act or an import) applies once that read has ended;
   the read never undoes it, and of several choices made meanwhile the last one stays.
@@ -3908,20 +3917,28 @@ it. Three panels:
   register reads "not registered" whichever row is selected; one whose checkpoint is listed
   only in another workspace says "registration not checked" until it is selected. Under the
   table, in the panel's one scroll region, the selected report as the record the ledger would
-  hold. What it is of is said by its relation to what is chosen now, "the selected workspace",
+  hold. What it is of is said by its relation to what is chosen now: its dataset as "the
+  selected workspace's dataset record" (a report records the dataset record it measured, never
+  the workspace it read, so any other listed workspace holding that record is named under it,
+  "demo-copy holds the same record; the report does not record which workspace was read"),
   "the selected model", "the selected version", and in full when it is not (what its model is,
   its run, its file and its fingerprint, its version's label, role and fingerprint, the listed
-  workspaces holding the dataset record it measured), so a past result keeps its own identity after
-  another checkpoint or version is chosen; its run id once. Then, by one display for every
-  mode (since K8-6e.2): a task's tiles and figures in words, with every metric as recorded one
-  click away ("Recorded metrics (N)"); a report of a mode this version does not describe, a kept
+  workspaces holding the dataset record it measured and its origin), so a past result keeps its
+  own identity after another checkpoint or version is chosen; its run id, which names the
+  model's fingerprint again, is one click away. Then, by one display for every
+  mode (since K8-6e.2): a task's tiles (each named without the task, which the label above them
+  says once, their values on one line however a name wraps) and figures in words; a report of a
+  mode this version does not describe, a kept
   Mode C or Mode D report included, under "Mode <mode> (a measurement mode this version does not
   describe)", with one "Recorded metrics" row listing every metric by its recorded name and
-  value; the score semantics exactly as recorded; coverage with each exclusion, each relation a
+  value; coverage (its source cases and exclusions said once on the screen: by Data for the
+  selected version, here for another), each relation a
   row of its own by its full name, R10 in words (*unverifiable* is never a 0), the environment,
-  the dataset origin, and whether it is registered (for an
-  operator, checked in the ledger beside the listed checkpoint holding the weights it
-  measured). Since research comparison Stage 8b the report is read by the one reader the results
+  and whether it is registered, said there once (no "Report kept" chip above it); one
+  **Details ›** holds its run id, the score semantics exactly as recorded, the device,
+  deterministic algorithms, the native build and, for a described measurement, every metric as
+  recorded ("Recorded metrics (N)"). For an operator, its registration is checked in the
+  ledger beside the listed checkpoint holding the weights it measured. Since research comparison Stage 8b the report is read by the one reader the results
   service and Models read with (its data kind's result view, registered or not): a KG edge set's
   exposure and a generated split's generation are said in the same lines as on Models, and a
   record the reader cannot read is shown with its reason (the field named, never its value),
@@ -4065,22 +4082,23 @@ warning, with ▲; and three segments:
   group's investigation notes as the Test page lists them (who, when and what; "The
   investigation notes cannot all be read …" when they cannot, never "no note is kept"; since the
   same round). Then a task's answer as four figures (pooled MRR, two cut-offs and coverage, each
-  to four decimals, with what it is over), and its rows, one fact each, never a chain: its
+  named without the task, which the group's label says once, to four decimals, with what it is
+  over, their values on one line), and its rows, one fact each, never a chain: its
   coverage (what it counted, then the source cases and import exclusions under it); a task's
   other figures (the conservative pooled MRR with what it counts, each cut-off family as one row
   by k, the macro and best-positive MRR); a KG link prediction's metrics under their plain names
   ("Accuracy (raw > 0)", "ROC-AUC", "Average precision", "Loss (the LP head's hinge)"), each to
   four decimals with its unit and denominator said once under it, or "Not computable"; any other
-  mode's every metric as recorded in one row (a kept Mode C or Mode D record included); the score
-  semantics exactly as recorded; the relations, each a row by its full name ("Model trained on
+  mode's every metric as recorded in one row (a kept Mode C or Mode D record included); the relations, each a row by its full name ("Model trained on
   this graph (R3) ● Verified"); a supplied cohort's R10 as its table (*unverifiable* is a reason,
   never 0), or a KG edge set's exposure and its source, or a generated split's generation; a KG
-  edge set's or a generated split's counts with their units one click away; the environment,
-  the device, deterministic algorithms on or off and the native build; and the registration
-  (when, from which run, its report; "not recorded" for a record written before each run had its
-  own record, the reports merged into it and a possible overlap with a named run). A task's and a
-  KG link prediction's every metric as recorded is one click away ("Recorded metrics (N)"),
-  unrounded, as every export keeps it. **The dataset is said once, by its relation**: "Every
+  edge set's or a generated split's counts with their units one click away; the environment;
+  and the registration (when, from which run, its report; "not recorded" for a record written
+  before each run had its own record, the reports merged into it and a possible overlap with a
+  named run). One **Details ›** under them holds how it was computed and ran: the score
+  semantics exactly as recorded, the device, deterministic algorithms on or off, the native
+  build and, for a task or a KG link prediction, every metric as recorded ("Recorded metrics
+  (N)"), unrounded, as every export keeps it. **The dataset is said once, by its relation**: "Every
   record below measured the selected workspace's dataset." where it is the workspace's (whose
   origin the line under the workspace select says), once above the records where they share
   another origin, and per record only where their origins differ. Every record is shown; none is
@@ -4091,8 +4109,9 @@ warning, with ▲; and three segments:
   "not readable"); the segment then reads "Recorded results · 3 (1 not readable)". With no record
   the segment says so per cause and gives the next step, naming no file ("No recorded result
   yet": none is registered beside this checkpoint, which does not mean these weights were never
-  evaluated; "Next: on the Test page, choose this model and start a test with Register the result
-  on"; the read-only view says recording a result is an operator control), and a segment with
+  evaluated; "Next: on the Test page, choose this model and start a test with Register when the
+  run ends checked"; the read-only view says recording a result is an operator control), and a
+  segment with
   nothing to count shows no "· 0". The read-only view lists the same items, from the route, the
   group's notes included (`contest.notes`, `contest.notes_readable` in its answer);
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
