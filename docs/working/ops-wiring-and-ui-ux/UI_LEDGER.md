@@ -272,7 +272,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-04 The shared model list: folding, search, lineage
 
-14 rows: 2 partly done, 1 outside this round's scope (owner to decide), 9 code-verified, 2 code-verified at ba6e85e (audit).
+14 rows: 1 partly done, 1 outside this round's scope (owner to decide), 10 code-verified, 2 code-verified at ba6e85e (audit).
 
 #### B39-UI2 · Model list reads every checkpoint though it shows only four runs
 
@@ -1081,7 +1081,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-116 rows: 20 to do, 13 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 42 code-verified, 31 code-verified at ba6e85e (audit).
+116 rows: 1 to do, 6 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 68 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
