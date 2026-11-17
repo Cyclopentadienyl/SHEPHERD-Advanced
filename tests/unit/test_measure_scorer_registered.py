@@ -459,7 +459,7 @@ def test_an_uncheckable_evidence_directory_that_alone_may_hold_the_bytes_is_sear
     absent, the same. HEAD: `ValueError` "cannot be checked", no report."""
     pytest.importorskip("gradio")
     from src.evaluation.r10 import R10_LABELS
-    from src.webui.components import models_page as mp
+    from src.webui.components import renderers as r
     from src.webui.components import test_page as tp
     from tests.unit.test_r10 import _pathlib_as_in_python_3_14, _stat_fails
 
@@ -493,7 +493,7 @@ def test_an_uncheckable_evidence_directory_that_alone_may_hold_the_bytes_is_sear
     from tests.fixtures.r10_table import r10_cells
 
     assert r10_cells(result)["Training"]["evidence"] == "evidence search incomplete"
-    assert r10_cells(mp.r10_html(record["r10"]))["Training"]["evidence"] == (
+    assert r10_cells(r.r10_table_html(record["r10"]))["Training"]["evidence"] == (
         "evidence search incomplete")
 
 

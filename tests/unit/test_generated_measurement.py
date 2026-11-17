@@ -524,7 +524,8 @@ def test_a_fixture_with_no_row_of_its_split_is_a_stated_gap(site):
         said = protocols.inputs_refusal(task, "generated", counts)
         assert said.startswith("this generated split version's functional gene fixture holds no "
                                f"row of its split (none of its patients' diseases has a gene in "
-                               f"the graph), so the {task} measurement has no case to score")
+                               f"the graph), so the {protocols._said(protocols.PROTOCOLS[task])} "
+                               "measurement has no case to score")
     assert protocols.inputs_refusal("disease", "generated", counts) is None
 
 
@@ -631,8 +632,8 @@ def test_a_damaged_kept_fixture_refuses_only_the_measurements_that_read_it(
      "the gene measurement takes a finetune model with the gene head; this checkpoint is a "
      "finetune model with the disease head."),
     (lambda s: _argv(s, "gen-val", "base", mode="kg_link_prediction"),
-     "the kg_link_prediction measurement does not measure a generated split; it measures a KG "
-     "edge set."),
+     "the KG link prediction measurement does not measure a generated split; it measures a KG "
+     "edge set. Ref: kg_link_prediction."),
     (lambda s: _argv(s, "gen-val", "disease", "--training-evidence", str(s.data_dir)),
      "--training-evidence applies to a supplied cohort version only (R10: its cases' overlap "
      "with the training and validation inputs the checkpoint records); 'gen-val' is a generated "

@@ -27,6 +27,14 @@ the record of a base with an unstated LP head was added, since every record
 the spec writes now has a protocol. The three task rows' acceptance did not
 change.
 
+B72-T1 (the WebUI ledger, 2026-11) changed this golden's sentences by that
+name in its own commit, and no judgment: every reason names a measurement and
+a task head by its plain words ("the patients-like-me measurement", "the KG
+link prediction measurement", "the patients-like-me head"; a list of them
+"disease or KG link prediction"), and the names whose words differ from them
+only in a trailing "Ref:" ("Ref: patients_like_me, kg_link_prediction."); the
+sentence for a name that is no measurement lists them so.
+
 Module: tests/unit/test_golden_p0_2_protocols.py
 """
 from __future__ import annotations

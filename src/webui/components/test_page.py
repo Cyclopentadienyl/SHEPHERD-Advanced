@@ -40,8 +40,9 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   kind (`run_evidence`, `training_manager.evidence_choice`: the server's
   setting for a supplied cohort, a refused setting a red ✕ with its words;
   "Not applicable" with why for a KG edge set or a generated split, which is
-  given none and does not need the setting), "Register the result" and
-  "Deterministic execution", the batch size and device the server fixes (D5),
+  given none and does not need the setting), "Register when the run ends"
+  and "Deterministic execution", the batch size and device the server fixes
+  (D5), each with its own ⓘ,
   "Start test" through the job runner (`TrainingManager.start_test`, given
   the measurement chosen, the model's learning stage, task and capability
   description and the version's kind from the session's listings) with the
@@ -54,13 +55,16 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   record refused (a file without a model spec among them) or not read, a measurement
   that does not measure the version's data kind, a measurement whose needs the model's
   capabilities do not meet (its task head among them), and a measurement
-  needing genes the version does not list are refused with their reason; then the job: its state, elapsed time,
-  inputs (one summary list, a row each, the run's own whatever is chosen
-  now, its settings one "Details ›" away: `job_inputs_html`), output tail,
-  "Cancel" (the runner's stop for test runs only), and
-  once it has ended, **what it left, from the runner** (its outcome file, kept
-  and registered read from disk by WP4's helper; "no report was published"
-  when there is no outcome file; a cancel says what was left);
+  needing genes the version does not list are refused with their reason; then the job:
+  its state and elapsed time in the panel's foot, "Cancel" beside them while
+  a run is busy (the runner's stop for test runs only), and its card: once it
+  has ended **what it left, first** (a kept report is Result's, which says
+  its registration; or no report kept, from the runner's outcome read from
+  disk by WP4's helper), its inputs (one summary list, a row each, the run's
+  own whatever is chosen now: `job_input_rows`), and one "Details ›" with the
+  rest: its settings, what the runner read at its end, its exit status and
+  its output's tail (B52-E). While no run was started, one muted line in the
+  foot and no card (R-81);
 - **Result**: at its top, the version's report store as a **compact
   single-select table** (`reports_html`), newest first (the newest
   `ROWS_SHOWN` and the selected one shown, "Show all N reports" for the
@@ -185,23 +189,22 @@ from src.evaluation.caveats import (
     MEASUREMENT_NAMES,
     TASK_NAMES,
     label_words,
-    metric_text,
     mode_label,
     mode_note,
-    recorded_metric_lines,
     version_words,
 )
-from src.utils.run_environment import native_identity_lines
 from src.webui.components import renderers as r
 from src.webui.components.chips import LOCK, chips_on_change, gated
 from src.webui.components.chips import operator_only as _operator_only
 from src.webui.components.help import help_button, sentence_lines
 from src.webui.components import model_list as ml
 from src.webui.components.model_list import item_key
-from src.utils.path_redaction import redact_paths
 from src.webui.components.workspaces import (
+    SERVER_PATH,
     binding_state,
     contents_reason,
+    path_roots,
+    redact_server as redact,
     version_row,
     workspace_binding,
 )
@@ -233,8 +236,6 @@ ROWS_SHOWN = 8
 #: asked, first run (`create_test_page`).
 SELECTION_CONCURRENCY = "shep-test-selection"
 
-#: What replaces an absolute path that is under no named server directory.
-SERVER_PATH = "a server path"
 #: The investigation note's fields are never narrower (px): "Who" holds a
 #: normal name whole.
 NOTE_FIELD_MIN_WIDTH = 240
@@ -243,26 +244,6 @@ NOTE_FIELD_MIN_WIDTH = 240
 POLICY_CHOICES = [("keep case", "keep"),
                   ("exclude case", "exclude")]
 
-#: The words the dataset origin is shown with.
-_ORIGIN_MEANING = {
-    "synthetic": "a generated stand-in, not a clinical knowledge graph",
-    "files": "built from identified source files",
-}
-#: The metrics shown as tiles, in order, by the record's mode (`scoring.mode`),
-#: for a measurement this build describes; each is named by
-#: `caveats.metric_text`. A task's (`src.evaluation.task_measurement`) are
-#: pooled over its positive pairs or a mean over its ranked cases, and its
-#: coverage. A record of any other mode has no tiles: its metrics as recorded
-#: are its main result (`_record_html`).
-_TILES = {
-    "disease": ("pooled_mrr", "pooled_top1", "pooled_top10", "coverage"),
-    "gene": ("pooled_mrr", "pooled_top1", "macro_recall@5", "coverage"),
-    "patients_like_me": ("pooled_mrr", "pooled_top10", "macro_recall@10", "coverage"),
-}
-#: A task record's metric families that take a cut-off k, each shown as one
-#: row (its k values in order), and its single figures shown as a row each.
-_TASK_FAMILIES = ("pooled_top", "macro_recall@", "macro_precision@")
-_TASK_ROWS = ("macro_mrr", "best_positive_mrr")
 #: Each measurement this build describes, as this page names its result: from
 #: the one vocabulary (`caveats.MEASUREMENT_NAMES`), a task's measurement by
 #: its task's name and "task" ("Disease task"), the KG link-prediction
@@ -285,6 +266,10 @@ _BUSY = ("running", "stopping")
 #: The import source select's label: the folder by the name Settings › Data
 #: locations gives it (`deployment_view.FIELD_WORDS`), where it is chosen.
 INTAKE_LABEL = "File in the import folder (server)"
+#: The run option that registers the report as the run ends (R-79): the act
+#: is "Register" on the page, here and on the Result's "Register this report"
+#: (`GATED_LABELS`); the option says when, the button which report.
+RECORD_LABEL = "Register when the run ends"
 
 FIELD_HELP = {
     "shep-test-workspace": (
@@ -307,7 +292,8 @@ FIELD_HELP = {
         "Run",
         "The workspace's training runs whose checkpoints the server lists, latest first.\n\n"
         "- Each is shown by its name or its start time.\n"
-        "- Choosing a run offers its checkpoints and chooses its latest save.\n"
+        "- Choosing a run chooses its latest save; a workspace's only testable checkpoint is "
+        "chosen already.\n"
         "- Listing opens every checkpoint, so it is an operator control.",
     ),
     "shep-test-model": (
@@ -330,10 +316,10 @@ FIELD_HELP = {
         "recorded as its report's mode.",
     ),
     "shep-test-record": (
-        "Register the result",
+        RECORD_LABEL,
         "Checked, the report is registered in the ledger beside the checkpoint when the run ends.\n\n"
         "- Unchecked: it is kept in the registry's report store, unregistered, and can be "
-        "registered later from this page.\n"
+        "registered later with Register this report.\n"
         "- A later registration takes the whole report, whatever the version's kind.\n"
         "- Every run keeps its report either way.\n"
         "Ref: D5",
@@ -397,14 +383,19 @@ TOPIC_HELP = {
     ),
     **{_MODE_HELP[mode]: (f"{words} result", sentence_lines(mode_note(mode)))
        for mode, words in _RESULT_WORDS.items()},
-    "test-r10": r.R10_HELP,
-    "test-fixed": (
-        "Fixed by the server",
-        "A test run has no reason to vary these, so the job runner fixes them.\n"
-        "- Batch size: the measurement's default.\n"
-        "- Device: the deployment's, with no fallback.\n"
-        "The measurement and deterministic execution are chosen here; both are recorded.\n"
-        "Ref: D5; the device is SHEPHERD_DEVICE",
+    "test-batch": (
+        "Batch size",
+        "The cases scored at once: the measurement's default, which the job runner fixes.\n"
+        "- A test run has no reason to vary it.\n"
+        "- It is recorded with the run.\n"
+        "Ref: D5",
+    ),
+    "test-device": (
+        "Device",
+        "Where a test run measures: the deployment's device, with no fallback.\n"
+        "- Set on the server, not on this page.\n"
+        "- Recorded with the run: a CPU run is a different measurement from a CUDA run.\n"
+        "Ref: D5; SHEPHERD_DEVICE",
     ),
     "test-evidence": (
         "R10 evidence",
@@ -431,39 +422,6 @@ run_time = r.run_time
 #: A report store run id, read here only for its checkpoint's 12 hex digits
 #: (`run_sha12`).
 _RUN_ID = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-([0-9a-f]{12})-[0-9a-f]{8}$")
-
-
-def path_roots(environ: Optional[Mapping[str, str]] = None) -> List[Tuple[str, str]]:
-    """The server directories a shown text may name, with the name each is
-    shown under, longest first: the registry, the workspaces root, the intake
-    directory, each evidence directory and the repository."""
-    from src.config import server_settings
-
-    roots: List[Tuple[str, str]] = []
-    for reader, token in ((server_settings.cohort_registry, "<registry>"),
-                          (server_settings.workspaces_root, "<workspaces>"),
-                          (server_settings.intake_directory, "<intake>")):
-        try:
-            setting = reader(environ)
-        except Exception:  # noqa: BLE001 - a root not read is a path shown as "a server path"
-            continue
-        if setting.available:
-            roots.append((str(setting.value), token))
-    try:
-        evidence = server_settings.training_evidence_dirs(environ)
-        for index, directory in enumerate(evidence.value or (), start=1):
-            roots.append((str(directory), f"<evidence {index}>"))
-    except Exception:  # noqa: BLE001
-        pass
-    roots.append((str(server_settings.REPO_ROOT), "<repository>"))
-    return sorted(roots, key=lambda pair: -len(pair[0]))
-
-
-def redact(text: Any, roots: Sequence[Tuple[str, str]]) -> str:
-    """`text` with no absolute server path left: one under a named server
-    directory is shown under its name (``<registry>/versions/…``), any other
-    as "a server path" (the dashboard's one redaction, `redact_paths`)."""
-    return redact_paths(text, roots, other=SERVER_PATH)
 
 
 #: A string literal as Python's ``repr``/``ascii`` writes one: quoted, its
@@ -590,12 +548,6 @@ def said(text: Any, tail: str) -> str:
 
 def _count(value: Any) -> str:
     return str(value) if isinstance(value, int) and not isinstance(value, bool) else "—"
-
-
-def _number(value: Any) -> str:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return "—"
-    return f"{value:.4f}"
 
 
 # ---------------------------------------------------------------------------
@@ -1155,12 +1107,13 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     """The chosen version, in the one summary list
     (`renderers.summary_list`): its counts, its digest, and whether it was
     mapped against this workspace's graph, when it was imported and from
-    what format. A supplied cohort by its role and its case counts; a KG
-    edge set or a generated split by its counts in its own units
-    (`_version_counts`), never in a supplied cohort's words: its kind and
-    role are its option's (`version_choices`), not repeated under it (skill
-    §1.2). Under it, the KG edge sets' empty state when the registry holds
-    none (`kg_edges_empty_html`)."""
+    what format. A supplied cohort by its case counts; a KG edge set or a
+    generated split by its counts in its own units (`_version_counts`),
+    never in a supplied cohort's words: its kind and role are its option's
+    (`version_choices`), not repeated under it (skill §1.2; R-70), unless
+    the option had to cut a long role, which then has a row. Under it, the
+    KG edge sets' empty state when the registry holds none
+    (`kg_edges_empty_html`)."""
     if page.get("registry_problem"):
         return ""
     empty = kg_edges_empty_html(page)
@@ -1193,10 +1146,14 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     if _kind_words(version):
         rows = [("Holds", _version_counts(version))]
     else:
-        rows = [("Role", r.ident_html(version.get("role"))),
-                ("Cases", e(f'{_count(counts.get("source_cases"))} source cases, '
-                            f'{_count(counts.get("ranked_eligible"))} ranked-eligible'
-                            + (f" ({reasons} excluded)" if reasons else "")))]
+        # Its role is its option's (R-70, BACKLOG 51 (b)); a row of its own
+        # only where the option had to cut it.
+        option = {value: words for words, value in version_choices(page)}.get(label, "")
+        role = version.get("role")
+        rows = ([] if f"role {role}" in option else [("Role", r.ident_html(role))])
+        rows.append(("Cases", e(f'{_count(counts.get("source_cases"))} source cases, '
+                                f'{_count(counts.get("ranked_eligible"))} ranked-eligible'
+                                + (f" ({reasons} excluded)" if reasons else ""))))
     fingerprint = r.fingerprint_value(version.get("manifest_sha256"), what="version fingerprint")
     rows.append(("Version fingerprint", fingerprint))
     rows.append(("Graph", mark))
@@ -1494,6 +1451,37 @@ def run_header_html() -> str:
     return '<div class="shep-panel-hd"><h2>Run</h2></div>'
 
 
+#: The empty state under the Run and Checkpoint selects when the workspace
+#: lists no checkpoint (the skill's §9).
+NO_CHECKPOINT = "This workspace has no checkpoint to test."
+#: Start's reason while the workspace lists checkpoints and none is chosen:
+#: the one place the page asks for the choice, naming its two selects
+#: (NEW-test-1: it said "choose a model", a control the page no longer has,
+#: under the selects' own "Choose the run, then the checkpoint to test.").
+CHOOSE_A_CHECKPOINT = "Disabled: choose the run, then the checkpoint to test."
+
+
+def testable(item: Mapping[str, Any]) -> bool:
+    """Whether a listed checkpoint is one this page can be asked to test at
+    all: its file was read (a digest, no problem) and its record was read
+    (`measure_refusal` refuses a record refused or not read). Whether a
+    measurement takes it on the chosen version is Start's to say."""
+    return (not item.get("problem") and r.is_digest(item.get("sha256"))
+            and item.get("record") not in ("refused", None))
+
+
+def chosen_model(models: Mapping[str, Any], key: Any) -> Optional[str]:
+    """**The checkpoint chosen** for the listing `models`: `key` while it is
+    listed; otherwise, when the workspace lists exactly one checkpoint and it
+    can be tested (`testable`), that one, by the shared list's one rule
+    (`model_list.lone_key`, R-27: a lone candidate is no dead end; RJ-61b);
+    otherwise none, until the operator picks a run. Of two or more, the page
+    never picks one itself."""
+    if find_model(models, key) is not None:
+        return key
+    return ml.lone_key(models.get("items") or [], testable)
+
+
 def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional[str]) -> str:
     """The chosen model's details, by the shared renderers in the one summary
     list (`renderers.summary_list`), each a fact its options do not say: what
@@ -1513,9 +1501,9 @@ def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional
     item = find_model(models, key)
     if item is None:
         if not models.get("items"):
-            return _reason_html("This workspace has no checkpoint to test." if models.get("workspace")
-                                else "")
-        return '<div class="shep-sub">Choose the run, then the checkpoint to test.</div>'
+            return _reason_html(NO_CHECKPOINT if models.get("workspace") else "")
+        # The instruction is Start's reason, said once (NEW-test-1, RJ-61b).
+        return ""
     if item.get("problem") or not r.is_digest(item.get("sha256")):
         return _reason_html(f"{item.get('filename')}: {r.unreadable_words(item)} · cannot be "
                             f"tested ({redact(item.get('problem') or 'no digest was read', roots)})")
@@ -1598,8 +1586,9 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
 
 
 def fixed_html(page: Mapping[str, Any]) -> str:
-    """What the server fixes for a run (D5): the batch size and the device.
-    The measurement is chosen beside them (the Measurement radio,
+    """What the server fixes for a run (D5): the batch size and the device,
+    each with its own ⓘ (R-79: one ⓘ beside Batch size explained both). The
+    measurement is chosen beside them (the Measurement radio,
     `measurement_choices`)."""
     device = page.get("device") or {}
     if device.get("problem"):
@@ -1609,7 +1598,8 @@ def fixed_html(page: Mapping[str, Any]) -> str:
         shown = (f"<code>{e(value)}</code>" + (" (requires CUDA)" if value == "auto" else ""))
     return r.summary_list([("Batch size", f"{BATCH_SIZE_SHOWN} · fixed by the server"),
                            ("Device", f"{shown} · fixed by the server")],
-                          helps={"Batch size": ("test-fixed", "Fixed by the server")},
+                          helps={"Batch size": ("test-batch", "Batch size"),
+                                 "Device": ("test-device", "Device")},
                           classes=r.FIELD_ROWS)
 
 
@@ -1735,7 +1725,9 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, "Disabled: the data version is mapped against another graph (see Data)."
     item = find_model(models, key)
     if item is None:
-        return False, "Disabled: choose a model."
+        # Its empty state or its problem is said under the selects (`model_html`).
+        return False, (CHOOSE_A_CHECKPOINT if models.get("items")
+                       else "Disabled: no checkpoint to test (see Run).")
     if item.get("problem") or not r.is_digest(item.get("sha256")):
         return False, "Disabled: this checkpoint's metadata is not readable."
     refusal = measure_refusal(item, version, protocol)
@@ -1752,34 +1744,43 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
     return True, None
 
 
+#: The job's one line while no test run was started since the server was
+#: (R-81): in the Run panel's foot, where the job's state is said, muted; no
+#: card, no pill, no Cancel.
+NO_JOB_YET = "No test run since the server started."
+
+
 def job_head_html(job: Mapping[str, Any]) -> str:
     """The job's title row, in the Run panel's foot under Start: the state and
-    its time (Cancel sits beside it)."""
+    its time (Cancel sits beside it while a run is busy); while no run was
+    started, one muted line (`NO_JOB_YET`)."""
     status = job.get("status") or "idle"
+    if status == "idle":
+        return f'<div class="shep-test-job-hd"><span class="shep-sub">{e(NO_JOB_YET)}</span></div>'
     head = f'<div class="shep-test-job-hd"><h3>Test run</h3>{_pill(status)}'
     if status in _BUSY:
         head += f'<span class="shep-sub">elapsed <b>{e(_clock(job.get("elapsed_seconds")))}</b></span>'
-    elif status != "idle":
+    else:
         ended = utc_time(job.get("end_time"))
         head += f'<span class="shep-sub">ended {e(ended or "—")}</span>'
     return head + "</div>"
 
 
-def job_inputs_html(job: Mapping[str, Any]) -> str:
-    """**What a test run was given, as its inputs recorded them**, in the one
-    summary list (the skill's §4, §5: a fact a row, never a chain of " · "):
-    what it measures, its version (label and fingerprint), its model (its
-    fingerprint, the one digest value) and its measurement
-    (`_job_measurement`), and its start; the rest one "Details ›" away (the
-    skill's §1.5, so the job's details, which follow the choices in the
-    panel's one scroll region, stay short): its workspace, its register,
-    determinism and device settings (the Result's keys for them) and its R10
-    evidence (by its own kind, the runner's choice: none for a KG edge set or
-    a generated split). Drawn from the job alone, never from the selection
-    (the card, `_job_outputs`, drawn again on each change the poll finds),
-    so a run keeps its own identity while another model or version is
-    chosen: these rows are the
-    run's, which can differ from the selection's (the skill's §1.2)."""
+def job_input_rows(job: Mapping[str, Any]) -> Tuple[List[Tuple[str, str]],
+                                                    List[Tuple[str, str]]]:
+    """**What a test run was given, as its inputs recorded them**, as rows
+    of the one summary list (the skill's §4, §5: a fact a row, never a chain
+    of " · "): what it measures, its version (label and fingerprint), its
+    model (its fingerprint, the one digest value) and its measurement
+    (`_job_measurement`), and its start; and the rows its card draws one
+    click away (`job_body_html`'s one "Details ›"): its workspace, its
+    register, determinism and device settings (the Result's keys for them)
+    and its R10 evidence (by its own kind, the runner's choice: none for a
+    KG edge set or a generated split). Drawn from the job alone, never from
+    the selection (the card, `_job_outputs`, drawn again on each change the
+    poll finds), so a run keeps its own identity while another model or
+    version is chosen: these rows are the run's, which can differ from the
+    selection's (the skill's §1.2)."""
     inputs = job.get("inputs") or {}
     started = utc_time(job.get("start_time"))
     evidence = inputs.get("evidence_dirs") or []
@@ -1804,108 +1805,90 @@ def job_inputs_html(job: Mapping[str, Any]) -> str:
             ("R10 evidence", e("the workspace" + (
                 f" + {len(evidence)} director{'ies' if len(evidence) != 1 else 'y'}"
                 if evidence else "")) if takes else r.status_mark("neutral", r.NOT_APPLICABLE))]
-    return (r.summary_list(rows, classes="shep-test-ident-rows")
-            + r.details_list(more, classes="shep-test-ident-rows"))
+    return rows, more
+
+
+#: What an ended run left, as the job card leads with it (B52-E: the result
+#: first). A kept report is the Result's, which says its registration: the
+#: card never says one of its own (NEW-test-3: one source for the
+#: registration state, which can change after the run).
+OUTCOME_KEPT = "Its report was kept: Result shows it and its registration."
+
+
+def outcome_lead_html(outcome: Mapping[str, Any]) -> str:
+    """What an ended run left, as the runner read it from disk when the run
+    ended, said first on its card (B52-E): a kept report points to Result
+    (`OUTCOME_KEPT`), which reads its registration from the ledger now; no
+    report kept, or whether one was kept cannot be checked, in its state's
+    own words (the skill's §6). Never its registration (NEW-test-3: the card
+    said "Not registered" beside Result's "Registered" once a report was
+    registered from the page); that moment's reading, with its paths, is the
+    card's Details (`job_body_html`)."""
+    kept = outcome.get("kept")
+    if kept is True:
+        return f'<div class="shep-test-outcome">{e(OUTCOME_KEPT)}</div>'
+    return ('<div class="shep-test-outcome">'
+            + r.status_mark("neutral", "No report kept" if kept is False
+                            else "Kept: cannot be checked") + "</div>")
 
 
 def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
                   gpu: Tuple[str, str]) -> str:
-    """The job's details, in the Run panel's scroll region after the choices:
-    what the run was given (`job_inputs_html`), once it has ended what it left
-    (the runner's outcome), its output tail, and while it runs the GPU line.
-    Its state is the title row's (`job_head_html`), in the panel's foot."""
+    """The job's card, in the Run panel's scroll region after the choices,
+    titled "Latest test run": **the result first** (B52-E), then what the
+    run was given (`job_input_rows`), and **one disclosure** ("Details ›",
+    `renderers.details_list`; the skill's §1.5) holding the rest: the inputs'
+    other rows, what the runner read when the run ended (its summary, paths
+    redacted), its exit status and its output's tail (redacted, case-free,
+    D7). The result is what the run left once it ended (`outcome_lead_html`)
+    and, for a failed run, its first error line; while it runs, the GPU line
+    under the card. Its state is the title row's (`job_head_html`), in the
+    panel's foot. While no run was started there is no card (R-81: the foot's
+    one muted line says so)."""
     status = job.get("status") or "idle"
     if status == "idle":
-        return ('<div class="shep-test-job-bd"><span class="shep-sub">No test run since the '
-                "server started.</span></div>")
-    body = [job_inputs_html(job)]
+        return ""
+    lead = []
     outcome = job.get("outcome")
     if status not in _BUSY and isinstance(outcome, Mapping):
-        body.append(outcome_html(outcome, roots))
+        lead.append(outcome_lead_html(outcome))
     if status == "failed" and job.get("error_message"):
         first = str(job["error_message"]).split("\n", 1)[0]
-        body.append(f'<div class="shep-test-fail">{e(redact(case_free(first), roots))}</div>')
+        lead.append(f'<div class="shep-test-fail">{e(redact(case_free(first), roots))}</div>')
+    rows, more = job_input_rows(job)
+    if status not in _BUSY and isinstance(outcome, Mapping) and outcome.get("summary"):
+        more.append(("At its end", e(redact(outcome["summary"], roots))))
     if job.get("exit_meaning") and status not in _BUSY:
-        body.append(f'<div class="shep-sub">Exit status {e(job.get("exit_code"))}: '
-                    f'{e(job["exit_meaning"])}</div>')
+        more.append(("Exit status", e(f'{job.get("exit_code")}: {job["exit_meaning"]}')))
     # The output is the run's own; a refusal in it may name a case (D7).
     lines = [redact(case_free(line), roots) for line in job.get("log") or []]
-    if lines and status == "cancelled":
-        # A cancel interrupts the run mid-step; what it printed up to then, and
-        # its last line saying it was cancelled, are not news, so they are
-        # folded (open it to read it).
-        body.append(f'<details class="shep-test-fold"><summary class="shep-sub">Output, last '
-                    f'{len(lines)} lines (the interrupted run\'s)</summary>'
-                    f'<pre class="shep-test-log">{e(chr(10).join(lines))}</pre></details>')
-    elif lines:
-        body.append(f'<div class="shep-sub">Output, last {len(lines)} lines</div>'
-                    f'<pre class="shep-test-log">{e(chr(10).join(lines))}</pre>')
+    if lines:
+        more.append((f"Output, last {len(lines)} lines",
+                     f'<pre class="shep-test-log">{e(chr(10).join(lines))}</pre>'))
     foot = ""
     _kind, words = gpu
     if status in _BUSY:
         foot = (f'<div class="shep-test-job-ft"><span class="shep-chip shep-chip-busy">'
                 f'<span class="shep-dot" aria-hidden="true"></span>{e(words)}</span>'
                 '<span class="shep-sub">Training start is refused while this runs.</span></div>')
-    return f'<div class="shep-test-job-bd">{"".join(body)}</div>' + foot
+    return ('<div class="shep-test-job"><h3 class="shep-test-job-title">Latest test run</h3>'
+            f'<div class="shep-test-job-bd">{"".join(lead)}'
+            + r.summary_list(rows, classes="shep-test-ident-rows")
+            + r.details_list(more, classes="shep-test-ident-rows")
+            + f"</div>{foot}</div>")
 
 
 def job_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
              gpu: Tuple[str, str]) -> str:
-    """The latest test run's title row and details together; the page draws
+    """The latest test run's title row and card together; the page draws
     them apart (`job_head_html` in the Run panel's foot, `job_body_html` in
     its scroll region)."""
     return job_head_html(job) + job_body_html(job, roots, gpu)
 
 
-def outcome_html(outcome: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
-    """What an ended run left, as the runner read it from disk when the run
-    ended: kept and registered (True, False or None for "cannot be checked")
-    and its summary. It is that moment's reading and says so; a report
-    registered afterwards (Register this report) reads "Registered" in Result,
-    which is where its registration now is shown (the M5 close-out,
-    2026-10-25)."""
-    kept, registered = outcome.get("kept"), outcome.get("registered")
-    chips = ['<span class="shep-sub">When the run ended:</span>']
-    chips.append(r.status_mark("ok", "Report kept", as_chip=True) if kept is True
-                 else r.chip("No report kept", "grey") if kept is False
-                 else r.chip("Kept: cannot be checked", "grey"))
-    if kept is not False:
-        chips.append(r.status_mark("ok", "Registered", as_chip=True)
-                     if registered is True
-                     else r.chip("Not registered", "neutral") if registered is False
-                     else r.chip("Registered: cannot be checked", "grey"))
-    summary = outcome.get("summary") or ""
-    now = ('<div class="shep-sub">The report\'s registration now is shown in Result.</div>'
-           if kept is True else "")
-    return (f'<div class="shep-test-outcome"><div class="shep-test-chips">{"".join(chips)}</div>'
-            f'<div>{e(redact(summary, roots))}</div>{now}</div>')
-
-
 # ---------------------------------------------------------------------------
 # Rendering: Result
 # ---------------------------------------------------------------------------
-def _environment(view: Mapping[str, Any]) -> str:
-    """The view's environment class (`sidecar.environment_class`, as the one
-    reader classified it) and, for a run on CUDA, its GPU and driver."""
-    text = str(view["environment_class"])
-    gpu = view["gpu"]
-    if isinstance(gpu, Mapping):
-        text += (f" · GPU {gpu.get('name') or 'name not read'}, driver "
-                 f"{gpu.get('driver') or 'not read'}")
-    return e(text)
-
-
-def _native_build(view: Mapping[str, Any]) -> str:
-    """The view's native build identity (the run environment's one
-    projection, `native_identity`, as the API's record view and Models show
-    it) in its one wording: a lead with the route and the count, then one line
-    per component (`native_identity_lines`), since the one line runs to four in
-    this column (the skill's §4: past two lines, structure); "not recorded"
-    for a run recorded before its environment named components."""
-    return "".join(f"<div>{e(line)}</div>"
-                   for line in native_identity_lines(view["native_identity"]))
-
-
 class Selection(NamedTuple):
     """**What is chosen now**, which a report's identity is said against
     (`result_identity_rows`, `reports_html`): the chosen workspace's name and
@@ -1930,32 +1913,63 @@ def selection_of(page: Mapping[str, Any], models: Mapping[str, Any],
                      version.get("manifest_sha256"))
 
 
+#: **A result's dataset by the one relation its record supports**
+#: (NEW-test-5): a report records the dataset record it measured
+#: (``dataset_record.sha256``), never the workspace it was read from, so a
+#: result of the selected workspace's dataset record is said to be that, not
+#: "the selected workspace's"; two workspaces built on one dataset record
+#: hold the same record, and which of them was read is not recorded.
+SELECTED_DATASET = "the selected workspace's dataset record"
+
+
+def result_dataset_html(record: Mapping[str, Any], view: Mapping[str, Any],
+                        selection: Selection, workspaces: Sequence[Mapping[str, Any]]) -> str:
+    """The Result's Dataset row: **the relation exactly as the record holds
+    it** (NEW-test-5). Its dataset record is the selected workspace's:
+    `SELECTED_DATASET`, and every other listed workspace that holds the same
+    record named under it, since the report does not say which one it read;
+    another: the listed workspaces holding it by name ("demo-copy's dataset
+    record") or that none does, then its origin as the one reader reads it
+    (the view's ``dataset_origin``, `renderers.dataset_origin_html`; the
+    selected workspace's origin is its line in Data); none recorded: so."""
+    held = record.get("dataset_record") if isinstance(record.get("dataset_record"),
+                                                      Mapping) else {}
+    dataset = held.get("sha256")
+    if not r.is_digest(dataset):
+        return r.status_mark("neutral", r.NOT_RECORDED)
+    names = [str(w.get("name")) for w in workspaces
+             if (w.get("dataset_record") or {}).get("sha256") == dataset]
+    if dataset == selection.record_sha256:
+        others = [name for name in names if name != selection.workspace]
+        said = e(SELECTED_DATASET)
+        if others:
+            said += ('<div class="shep-sub">' + e(
+                f"{', '.join(others)} hold{'s' if len(others) == 1 else ''} the same record; "
+                "the report does not record which workspace was read") + "</div>")
+        return said
+    who = (e(f"{names[0]}'s dataset record") if len(names) == 1
+           else e(f"the dataset record of {', '.join(names[:-1])} and {names[-1]}") if names
+           else r.status_mark("neutral", "No listed workspace holds its dataset record"))
+    return f'{who}<div class="shep-sub">{r.dataset_origin_html(view.get("dataset_origin"))}</div>'
+
+
 def result_identity_rows(record: Mapping[str, Any], view: Mapping[str, Any],
                          selection: Optional[Selection], models: Mapping[str, Any],
                          workspaces: Sequence[Mapping[str, Any]]) -> List[Tuple[str, str]]:
     """**What a result is of, by its relation to what is chosen now** (the
     skill's §1.2: a fact once, elsewhere by its relation; repeated only where
-    the two can differ): its workspace (the dataset record its report
-    measured, `dataset_record.sha256`), its model (`checkpoint_digest`) and
-    its version (the version manifest's digest). Each that is what is chosen
-    reads so, "the selected workspace", "the selected model", "the selected
-    version"; one that is not reads in full: the listed workspaces holding
-    its dataset record, its model by what it is, its run (whole) and its file
-    (`_other_model_html`) and its fingerprint, its version's label, role and
-    fingerprint. So a past result keeps its own identity when the selection
-    changes: it is drawn again from the record each time, never from the
-    selects."""
+    the two can differ): its dataset (the dataset record its report measured,
+    `result_dataset_html`), its model (`checkpoint_digest`) and its version
+    (the version manifest's digest). Each that is what is chosen reads so,
+    "the selected workspace's dataset record", "the selected model", "the
+    selected version"; one that is not reads in full: the listed workspaces
+    holding its dataset record, its model by what it is, its run (whole) and
+    its file (`_other_model_html`) and its fingerprint, its version's label,
+    role and fingerprint. So a past result keeps its own identity when the
+    selection changes: it is drawn again from the record each time, never
+    from the selects. Its run id, which names its model's fingerprint again,
+    is one click away (`_record_html`; R-70, BACKLOG 51 (d))."""
     selection = selection or Selection(None, None, None, None)
-    dataset = (record.get("dataset_record") or {}).get("sha256") if isinstance(
-        record.get("dataset_record"), Mapping) else None
-    if r.is_digest(dataset) and dataset == selection.record_sha256:
-        workspace = e(SELECTED_WORKSPACE)
-    else:
-        names = [str(w.get("name")) for w in workspaces if r.is_digest(dataset)
-                 and ((w.get("dataset_record") or {}).get("sha256") == dataset)]
-        workspace = (", ".join(f"<b>{e(name)}</b>" for name in names) if names
-                     else r.status_mark("neutral", "No listed workspace holds its dataset record")
-                     if r.is_digest(dataset) else r.status_mark("neutral", r.NOT_RECORDED))
     digest = record.get("checkpoint_digest")
     if _is_selected(digest, selection):
         model = e(SELECTED_MODEL)
@@ -1974,7 +1988,8 @@ def result_identity_rows(record: Mapping[str, Any], view: Mapping[str, Any],
         version = (f'{e(cohort["label"])} ({role})<div>'
                    + r.fingerprint_value(cohort["version_manifest_sha256"],
                                          what="version fingerprint") + "</div>")
-    return [("Workspace", workspace), ("Model", model), ("Version", version)]
+    return [("Dataset", result_dataset_html(record, view, selection, workspaces)),
+            ("Model", model), ("Version", version)]
 
 
 def result_html(reports: Mapping[str, Any], run_id: Optional[str],
@@ -1998,23 +2013,25 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
     job_outcome = (job or {}).get("outcome") or {}
     if job_outcome.get("report_dir") and Path(str(job_outcome["report_dir"])).name == run_id:
         chips.append(_pill(str((job or {}).get("status"))))
-    if state.get("kept") == "kept":
-        chips.append(r.status_mark("ok", "Report kept", as_chip=True))
-    else:
+    # A kept report is the normal state, which the record under says by being
+    # there: no chip (R-81). Only a report not kept, or not checked, is one.
+    if state.get("kept") != "kept":
         chips.append(r.chip("No report kept" if state.get("kept") == "not_kept"
                             else "Kept: cannot be checked", "grey"))
-    if state.get("registered") == "registered":
+    elif record is None:
+        # The registration is the record's Registration row (`_registration_html`),
+        # said once; with no record shown, here.
         seq = state.get("sequence")
         chips.append(r.status_mark("ok", "Registered" + (f" record {seq}" if isinstance(seq, int)
-                                                         else ""), as_chip=True))
-    elif state.get("kept") == "kept":
-        chips.append(r.chip("Not registered" if state.get("registered") == "not_registered"
+                                                         else ""), as_chip=True)
+                     if state.get("registered") == "registered" else
+                     r.chip("Not registered" if state.get("registered") == "not_registered"
                             else "Registration: cannot be checked from the list", "neutral"))
     contest = run.get("contest") or {}
     if contest.get("state") == "contested":
         chips.append(r.warn_chip("Runs differ — investigate") if _deterministic_group(run)
                      else r.chip("Runs differ", "grey"))
-    parts = [f'<div class="shep-test-chips">{"".join(chips)}</div>']
+    parts = [f'<div class="shep-test-chips">{"".join(chips)}</div>'] if chips else []
     if run.get("problem"):
         parts.append(_reason_html(redact(run["problem"], roots)))
     if record is None:
@@ -2059,78 +2076,29 @@ def _registration_reason_html(state: Mapping[str, Any], roots: Sequence[Tuple[st
     return ""
 
 
-def _tile_note(name: str, kind: str = "supplied") -> str:
-    """What a described measurement's tile figure is over: its positive pairs
-    (pooled), its ranked cases (macro) or the share of the import-eligible cases
-    ranked (coverage; a generated split's cases are not imported, so its share
-    is of the cases measured), with no count, since the record's Coverage row
-    says "n of M" once (skill rule 1.2)."""
-    if name == "coverage":
-        return ("share of import-eligible cases ranked" if kind == "supplied"
-                else "share of the cases measured that were ranked")
-    if name.startswith("pooled_"):
-        return "pooled over positive pairs"
-    if name.startswith("macro_"):
-        return "mean over the ranked cases"
-    return ""
-
-
-def _figure_words(mode: str, name: str) -> str:
-    """A task metric's words as a row under the record's label, which names
-    the task once: `caveats.metric_text`'s "Disease pooled top-k" less the
-    task's name, "Pooled top-k"."""
-    words = metric_text(mode, name)[len(TASK_NAMES[mode]) + 1:]
-    return words[:1].upper() + words[1:]
-
-
-def _task_rows(mode: str, metrics: Mapping[str, Any], tiles: Sequence[str]
-               ) -> List[Tuple[str, str]]:
-    """A task record's figures past its tiles (README E1, E2, E5): the
-    conservative pooled MRR with what it counts, one row for each family that
-    takes a cut-off k (its k values in order, a tile's left out), the macro
-    and best-positive MRR, and any other figure the record holds. No mean
-    rank: a task reports none."""
-    shown = set(tiles) | {"conservative_pooled_mrr"}
-    conservative = _number(metrics.get("conservative_pooled_mrr"))
-    rows = [(_figure_words(mode, "conservative_pooled_mrr"),
-             (conservative if conservative != "—" else "not reported")
-             + " · an unranked case whose truth can be assessed counts 0")]
-    for prefix in _TASK_FAMILIES:
-        family = sorted((int(name[len(prefix):]), name) for name in metrics
-                        if str(name).startswith(prefix) and str(name)[len(prefix):].isdigit())
-        shown.update(name for _k, name in family)
-        values = [f"k={k} {_number(metrics[name])}" for k, name in family if name not in tiles]
-        if values:
-            rows.append((_figure_words(mode, f"{prefix}k"), e(", ".join(values))))
-    for name in _TASK_ROWS:
-        if name in metrics:
-            shown.add(name)
-            rows.append((_figure_words(mode, name), e(_number(metrics[name]))))
-    other = [f"{metric_text(mode, str(k))} {_number(v)}" for k, v in sorted(metrics.items())
-             if k not in shown]
-    if other:
-        rows.append(("Other metrics", e(" · ".join(other))))
-    return rows
-
-
-def recorded_metrics_html(metrics: Mapping[str, Any]) -> str:
-    """Every metric of a record as recorded, one per line
-    (`caveats.recorded_metric_lines`: the name as written, a code, and the
-    value's JSON text, unrounded), every value escaped; "no metric recorded"
-    when it holds none."""
-    lines = recorded_metric_lines(metrics)
-    if not lines:
-        return '<span class="shep-muted">no metric recorded</span>'
-    return "".join(f"<div><code>{e(name)}</code> {e(value)}</div>" for name, value in lines)
-
-
-def _semantics_text(raw: Any) -> str:
-    """The record's `scoring.score_semantics` exactly as recorded (the view's
-    ``score_semantics``), a code, or "not recorded": never split, interpreted
-    or rebuilt."""
-    if isinstance(raw, str) and raw.strip():
-        return f"<code>{e(raw)}</code>"
-    return '<span class="shep-muted">not recorded</span>'
+def _registration_html(state: Mapping[str, Any]) -> str:
+    """A kept report's registration as the store's state says it (the
+    record's Registration row, `renderers.record_rows`): registered as which
+    record, not registered, or cannot be checked, and which ledger was read;
+    a possible overlap with a record merged before each run had its own
+    record (K8-6r.2), never said as registered."""
+    registered = state.get("registered")
+    seq = state.get("sequence")
+    beside = state.get("checked_beside")
+    where = f" (the ledger beside {e(beside)} was read)" if beside else ""
+    merged = [n for n in state.get("historical_overlap") or [] if isinstance(n, int)]
+    overlap = (f"; possible overlap with record{'s' if len(merged) != 1 else ''} "
+               f"{', '.join(str(n) for n in merged)}, merged before each run had its own record "
+               "(not recorded whether this run is one of them); registering adds this run's "
+               "own record" if merged and registered != "registered" else "")
+    return ((f"registered as record {seq}{where}" if registered == "registered"
+             and isinstance(seq, int)
+             else f"registered{where}" if registered == "registered"
+             else f"not registered{where}" if registered == "not_registered"
+             else f"cannot be checked{where}" if beside
+             else "none found beside the checkpoint the run read, or its ledger cannot be "
+                  "read (a registration beside another copy of the weights is looked for only "
+                  "with the checkpoint list, an operator control)") + e(overlap))
 
 
 def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
@@ -2140,18 +2108,21 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     """The selected report's record (`build_record`'s, through the store's
     scan) as the one reader reads it (research comparison Stage 8b): its data
     kind's result view (`record_views.result_view`, the one the results
-    service reads every kept report by, registered or not). Every field shown
-    is the view's: its mode, data (label, role, version, kind and counts),
-    the run's counts, score semantics, relations, R10 or the kind's lines (the
-    shared renderings, `renderers.r10_table_html` and `renderers.data_kind_lines`,
-    as Models shows a registered record's), environment, native build and
-    dataset origin; the measurement's device is the record's recorded
-    setting (`record_views.recorded_settings`, as the service reads it), and
-    the model is the record's key field. Only the metric values are the
-    record's own, by the names the view read (an integer stays an integer,
-    as the service keeps them, `results._metrics`). A record the reader
-    cannot read is not shown as a result: its reason, naming fields and
-    never values, as Models and the results service list it."""
+    service reads every kept report by, registered or not), **drawn by the
+    one record renderer Models draws its records by** (`renderers.record_html`,
+    R-82: the same rows in the same order). Around it, what only this page
+    knows: what the result is of, by its relation to what is chosen now
+    (`result_identity_rows`, its run id once), its measurement's label with
+    its ⓘ, and its registration as the store's state says it. The
+    measurement's device is the record's recorded setting
+    (`record_views.recorded_settings`, as the service reads it). Only the
+    metric values are the record's own, by the names the view read (an
+    integer stays an integer, as the service keeps them, `results._metrics`).
+    The dataset origin is said only where the report's dataset record is not
+    the selected workspace's, whose origin the workspace line says (the
+    skill's §1.2). A record the reader cannot read is not shown as a result:
+    its reason, naming fields and never values, as Models and the results
+    service list it."""
     from src.api.services.record_views import (
         recorded_settings,
         result_view,
@@ -2164,125 +2135,24 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
         return _reason_html("This report's record cannot be read as a result, so it is not "
                             "shown as one (Models › Results lists it with this reason): "
                             + unreadable_reason(exc))
-    cohort, counts, n_ranked = view["cohort"], view["counts"], view["n_ranked"]
     metrics = {name: record["metrics"][name] for name in view["metrics"]}
+    view["device"] = recorded_settings(record)["regime"].get("device")
     # Labelled by the record's own mode, as recorded, never by another's.
     mode = view["mode"]
-    label = mode_label(mode)
-    tile_names = _TILES.get(mode, ())
-    task = mode in TASK_NAMES
-    eligible = _count(counts.get("ranked_eligible"))
-    deterministic = view["deterministic_algorithms"]
-    device = recorded_settings(record)["regime"].get("device")
-    # The record's data kind, as the one reader read it (research comparison
-    # Stage 6): a version of another kind than a supplied cohort is named by
-    # its kind and role, and read by its own counts and exposure, never a
-    # cohort's or R10's words.
-    kind = cohort["kind"]
-    # The one value-words rule (on / off); a record without the flag holds
-    # none: "not recorded", never "not set".
-    determinism = (r.setting_words("deterministic_algorithms", deterministic)
-                   if deterministic is not None else r.NOT_RECORDED.lower())
-    # What the result is of, as the record holds it, by its relation to what
-    # is chosen now: one row per fact in the one summary list (the skill's
-    # §4, §5: never a chain of " · "), the report's run id once.
-    identity = r.summary_list([
-        ("Report", r.ident_html(run.get("run_id"))),
-        *result_identity_rows(record, view, selection, models or {}, workspaces),
-        ("Deterministic algorithms", e(determinism)),
-        ("Device", f"<code>{e(device)}</code>" if device
-         else f'<span class="shep-muted">{e(r.NOT_RECORDED.lower())}</span>'),
-    ], classes="shep-test-ident-rows")
-    tiles = "".join(
-        f'<div class="shep-test-tile"><div class="shep-test-tile-l">{e(metric_text(mode, name))}</div>'
-        f'<div class="shep-test-tile-v">{e(_number(metrics.get(name)))}</div>'
-        f'<div class="shep-test-tile-n">{e(_tile_note(name, kind))}</div>'
-        '</div>'
-        for name in tile_names)
-    excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
-    reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
-    excluded_text = (f"{e(_count(counts.get('n_excluded')))} excluded"
-                     f"{' at import' if task else ''}"
-                     f"{': ' + e(reasons) if reasons else ''}")
-    if kind == "kg_edges":
-        run = view["measured"]["counts"]
-        coverage = (f"<b>{e(_count(run.get('pairs_scored')))} of {e(_count(counts.get('pairs')))}"
-                    f"</b> stored pairs scored · {e(_count(counts.get('positive_edges')))} "
-                    f"positive edges; {e(_count(counts.get('edges_without_negative')))} without a "
-                    "negative to pair")
-    elif kind == "generated":
-        diseases = counts.get("diseases")
-        coverage = (f"<b>{e(_count(n_ranked))}</b> "
-                    + ("cases ranked by the model" if task else "counted by the record")
-                    + f" · {e(_count(counts.get('samples')))} generated patients of "
-                    f"{e(_count(diseases))} disease{'' if diseases == 1 else 's'}")
-    elif task:
-        coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases ranked "
-                    f"by the model · {e(_count(counts.get('source_cases')))} source cases; "
-                    f"{excluded_text}")
-    else:
-        # No claim of what this mode's n_ranked counts.
-        coverage = (f"{e(_count(counts.get('source_cases')))} source cases · {excluded_text}; "
-                    f"{e(_count(n_ranked))} cases counted by the record; what they are is not "
-                    "described for this mode")
-    # One display for every mode (R2): a described measurement's figures in
-    # words, every metric as recorded one click away (below); any other mode's
-    # metrics as recorded are its main result, one per line.
-    figures = (_task_rows(mode, metrics, tile_names) if task
-               else [("Recorded metrics", recorded_metrics_html(metrics))])
-    # The relations and a supplied cohort's R10 each in its one rendering,
-    # under a key of its own across the list's width, so no relation's name
-    # wraps in the 12em key column and the overlap reads as its table.
-    relations = view["relations"]
-    lines = [
-        ("Coverage", coverage),
-        *figures,
-        ("Score semantics", _semantics_text(view["score_semantics"])),
-        ("Relations", r.relations_html(relations) if isinstance(relations, Mapping)
-         else r.status_mark("neutral", r.NOT_RECORDED)),
-        *([(r.R10_TITLE, r.r10_table_html(view["r10"]))] if kind == "supplied"
-          else r.data_kind_lines(view)),
-        ("Environment", _environment(view)),
-        ("Native build", _native_build(view)),
-    ]
-    origin = view["dataset_origin"]
-    meaning = _ORIGIN_MEANING.get(origin)
-    lines.append(("Dataset", (f'<b class="shep-amber-t">{e(origin)}</b>' if origin == "synthetic"
-                              else e(origin or "not reported"))
-                  + (f" — {e(meaning)}" if meaning else "")))
-    registered = state.get("registered")
-    seq = state.get("sequence")
-    beside = state.get("checked_beside")
-    where = f" (the ledger beside {e(beside)} was read)" if beside else ""
-    # A record merged before each run had its own record may hold these bytes
-    # (K8-6r.2): said as a possible overlap, never as registered.
-    merged = [n for n in state.get("historical_overlap") or [] if isinstance(n, int)]
-    overlap = (f"; possible overlap with record{'s' if len(merged) != 1 else ''} "
-               f"{', '.join(str(n) for n in merged)}, merged before each run had its own record "
-               "(not recorded whether this run is one of them); registering adds this run's "
-               "own record" if merged and registered != "registered" else "")
-    lines.append(("Registration",
-                  (f"registered as record {seq}{where}" if registered == "registered" and isinstance(seq, int)
-                   else f"registered{where}" if registered == "registered"
-                   else f"not registered{where}" if registered == "not_registered"
-                   else f"cannot be checked{where}" if beside
-                   else "none found beside the checkpoint the run read, or its ledger cannot be "
-                        "read (a registration beside another copy of the weights is looked for only "
-                        "with the checkpoint list, an operator control)") + e(overlap)))
-    # The train/test overlap ⓘ sits beside the R10 table's key, which it explains.
-    kv = r.summary_list(lines, wide=("Relations", r.R10_TITLE),
-                        helps={r.R10_TITLE: ("test-r10", r.R10_HELP[0])},
-                        classes="shep-test-lines")
+    identity_rows = result_identity_rows(record, view, selection, models or {}, workspaces)
+    identity = r.summary_list(identity_rows, classes="shep-test-ident-rows")
     topic = _MODE_HELP.get(mode)
     mode_help = help_button(topic, TOPIC_HELP[topic][0]) if topic else ""
-    fold = (f'<details class="shep-test-fold shep-test-recm"><summary>Recorded metrics '
-            f'({len(metrics)})</summary>{recorded_metrics_html(metrics)}</details>'
-            if task and metrics else
-            '<div class="shep-sub shep-test-recm">no metric recorded</div>' if task else "")
-    return (f'{identity}'
-            f'<div class="shep-test-label">{e(label)}{mode_help}</div>'
-            f'<div class="shep-test-tiles">{tiles}</div>{kv}'
-            f'{fold}')
+    # The dataset is the identity's row (its origin there when it is not the
+    # selected workspace's record); the version's counts are Data's when it
+    # is the selected version (R-70, BACKLOG 51 (c)); the run id, which names
+    # the model's fingerprint again, is one click away (BACKLOG 51 (d)).
+    selected_version = dict(identity_rows).get("Version") == e(SELECTED_VERSION)
+    body = r.record_html(view, metrics, registration=_registration_html(state),
+                         version_counts=not selected_version,
+                         details=[("Run id", r.ident_html(run.get("run_id")))])
+    return (f'{identity}<div class="shep-rec-label">{e(mode_label(mode))}{mode_help}</div>'
+            f'{body}')
 
 
 def _deterministic_group(run: Mapping[str, Any]) -> Optional[bool]:
@@ -2347,19 +2217,10 @@ def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
         wanted = dict(zip(KEY_FIELDS, key, strict=False))
         mine = [n for n in notes if n.get("key") == wanted]
         shown = bool(mine) or contest.get("state") in ("contested", "cannot_be_checked")
-        if mine:
-            items = "".join(
-                f'<li><b>{e(n.get("who"))}</b> · {e(str(n.get("at") or "").replace("T", " ").replace("Z", " UTC"))}'
-                f'<div>{e(n.get("what"))}</div></li>' for n in mine)
-            parts.append(f'<div class="shep-test-notes"><div class="shep-w600">Investigation '
-                         f'notes ({len(mine)})</div><ul>{items}</ul></div>')
-        if shown and notes_problems:
-            parts.append(_reason_html(
-                "The investigation notes cannot all be read, so a note kept for this group may "
-                "be missing here: " + "; ".join(redact(p, roots) for p in notes_problems)))
-        elif shown and not mine:
-            parts.append('<div class="shep-sub">No investigation note is kept for this '
-                         'group.</div>')
+        # The one rendering of a group's notes (Models draws them so too, B40).
+        parts.append(r.investigation_notes_html(
+            mine, problems=[redact(p, roots) for p in notes_problems] if shown else (),
+            expected=shown))
     return "".join(parts)
 
 
@@ -2498,8 +2359,9 @@ def preview_summary(plan: Any, inputs: Mapping[str, Any]) -> Dict[str, Any]:
 def _source_entry(entry: Any) -> str:
     if not isinstance(entry, Mapping):
         return "not recorded"
-    return (f"digest <code>{e(str(entry.get('digest') or '')[:12])}</code>…, declared version "
-            f"{e(entry.get('declared_version') or 'none')}")
+    return ("digest " + r.fingerprint_value(entry.get("digest"), what="source digest",
+                                            copy=False)
+            + f", declared version {e(entry.get('declared_version') or 'none')}")
 
 
 def _gene_rows(genes: Any) -> List[Tuple[str, str]]:
@@ -2542,7 +2404,8 @@ def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
     graph = preview.get("graph") or {}
     rows = [
         ("Source", f'{e(source.get("filename"))} ({e(source.get("format"))}) · sha256 '
-                   f'<code class="shep-full">{e(source.get("sha256"))}</code>'),
+                   + r.fingerprint_value(source.get("sha256"), what="source fingerprint",
+                                         full=True, copy=False)),
         ("Source cases", f"<b>{e(_count(n))}</b>"),
         ("Ranked-eligible", f"<b>{e(_count(counts.get('ranked_eligible')))}</b> of {e(_count(n))}"),
         ("Excluded", f"<b>{e(_count(counts.get('n_excluded')))}</b> of {e(_count(n))}"
@@ -2560,11 +2423,14 @@ def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
                             f"normalisation v{e(mapping.get('phenotype_normalisation_version'))})"),
         ("Partial phenotypes", e(mapping.get("partial_phenotypes"))),
         *_gene_rows(counts.get("genes")),
-        ("Graph", "the workspace manifest’s digests: " + " · ".join(
-            f"{e(role)} <code>{e(str(d or '')[:12])}</code>" for role, d in graph.items())),
+        ("Graph", "the workspace manifest’s digests: " + ", ".join(
+            f"{e(role)} " + r.fingerprint_value(d, what=f"{role} digest", copy=False)
+            for role, d in graph.items())),
         ("Dataset record", ('origin <b class="shep-amber-t">synthetic</b>' if record.get("origin") == "synthetic"
                             else f"origin {e(record.get('origin'))}")
-                           + f", sha256 <code>{e(str(record.get('sha256') or '')[:12])}</code>…"),
+                           + ", sha256 " + r.fingerprint_value(record.get("sha256"),
+                                                               what="dataset record digest",
+                                                               copy=False)),
         ("HPO · MONDO", f"HPO {_source_entry(record.get('hpo'))} · MONDO {_source_entry(record.get('mondo'))}"),
     ]
     warn = ""
@@ -3036,19 +2902,18 @@ def create_test_page(ctx: Any) -> None:
                                        elem_id="shep-test-measurement", interactive=False)
                 evidence = plain_html("", elem_id="shep-test-evidence")
                 with gr.Row(elem_classes=["shep-test-checks"]):
-                    record = gr.Checkbox(label="Register the result", value=True,
+                    record = gr.Checkbox(label=RECORD_LABEL, value=True,
                                          elem_id="shep-test-record")
                     deterministic = gr.Checkbox(label="Deterministic execution", value=False,
                                                 elem_id="shep-test-deterministic")
                 fixed = plain_html("", elem_id="shep-test-fixed")
-                # The job's details at their natural height, after the
-                # choices: what it was given, what it left, its output. Their
-                # heading names the run; its state is the foot's.
-                with gr.Column(elem_classes=["shep-test-job"], elem_id="shep-test-jobcard"):
-                    plain_html('<h3 class="shep-test-job-title">Latest test run</h3>',
-                               elem_id="shep-test-job-title")
-                    job_out = plain_html(job_body_html({}, [], ("none", "")),
-                                         elem_id="shep-test-job")
+                # The job's card at its natural height, after the choices:
+                # what it left, what it was given, the rest one Details away
+                # (`job_body_html`); none while no run was started. Its state
+                # is the foot's. The poll draws it again as a run prints, so
+                # its Details stays as the reader left it (`r.KEEP_OPEN_JS`).
+                job_out = plain_html(job_body_html({}, [], ("none", "")), elem_id="shep-test-job",
+                                     js_on_load=r.KEEP_OPEN_JS)
             with gr.Column(elem_classes=["shep-test-runft"], elem_id="shep-test-runft"):
                 start = gr.Button(GATED_LABELS["start"], variant="primary",
                                   interactive=False, elem_id="shep-test-start")
@@ -3056,9 +2921,11 @@ def create_test_page(ctx: Any) -> None:
                 action_out = plain_html("", elem_id="shep-test-action")
                 with gr.Row(elem_classes=["shep-test-job-top"]):
                     job_head = plain_html(job_head_html({}), elem_id="shep-test-job-head")
+                    # Drawn only while a run is busy (R-81: an idle Cancel
+                    # nothing can use took the foot's room).
                     cancel = gr.Button(GATED_LABELS["cancel"], variant="stop",
-                                       interactive=False, elem_id="shep-test-cancel",
-                                       scale=0, size="sm")
+                                       interactive=False, visible=False,
+                                       elem_id="shep-test-cancel", scale=0, size="sm")
                 cancel_reason = plain_html("", elem_id="shep-test-cancel-reason")
         # ------------------------------------------------------------ Result
         # The reports as a compact single-select table at the panel's top, the
@@ -3154,17 +3021,19 @@ def create_test_page(ctx: Any) -> None:
 
     def _job_outputs(page, job, gpu):
         """The job's title row, Cancel and Cancel's reason (the Run panel's
-        foot) and its details (the card in the panel's body), from the job
-        alone (`job_outputs`)."""
+        foot) and its card (in the panel's body), from the job alone
+        (`job_outputs`). Cancel is drawn only while a run is busy (R-81);
+        refused, it shows the lock then, and its reason beside it
+        (`chips.gated`)."""
         roots = page.get("roots") or []
         allowed = bool((page.get("access") or {}).get("allowed"))
         status = job.get("status") or "idle"
+        busy = status in _BUSY
         can_cancel = allowed and status == "running"
-        # Refused, Cancel shows the lock whatever the job's state, so its
-        # reason is beside it whatever the job's state (`chips.gated`).
-        cancel_why = None if allowed else operator_only(page.get("access") or {})
+        cancel_why = None if allowed or not busy else operator_only(page.get("access") or {})
         return [job_head_html(job), job_body_html(job, roots, gpu),
-                gated_update("cancel", page, interactive=can_cancel),
+                gr.update(**gated(GATED_LABELS["cancel"], allowed, interactive=can_cancel),
+                          visible=busy),
                 _reason_html(cancel_why, kind="lock")]
 
     def _run_outputs(page, models, binding, ws, label, key, protocol, job, gpu):
@@ -3172,8 +3041,9 @@ def create_test_page(ctx: Any) -> None:
         radio, protocol = _measurement_outputs(page, models, label, key, protocol)
         return [
             # The shared pair; nothing chosen until the operator picks a run
-            # (`chosen_in_run` then takes its latest save): the page never
-            # measures a model it picked itself.
+            # (`chosen_in_run` then takes its latest save), but a lone
+            # checkpoint that can be tested (`chosen_model`): of two or more,
+            # the page never picks the model it measures itself.
             *ml.parents_update(model_parents(models), key, first=False, interactive=allowed),
             gated_update("reload", page, interactive=bool(ws)),
             model_html(page, models, key),
@@ -3306,7 +3176,7 @@ def create_test_page(ctx: Any) -> None:
         binding = _binding_for(page, ws)
         label = default_version(page, binding, label)
         models = _models_for(page, current_models, ws, request)
-        key = key if find_model(models, key) is not None else None
+        key = chosen_model(models, key)
         job = read_job()
         gpu = _gpu(page)
         reports, run_id = _reports(page, models, label, current_report, job, request)
@@ -3333,7 +3203,7 @@ def create_test_page(ctx: Any) -> None:
         binding = _binding_for(page, ws)
         label = default_version(page, binding, label)
         models = _models_for(page, current_models, ws, request)
-        key = key if find_model(models, key) is not None else None
+        key = chosen_model(models, key)
         job = read_job()
         reports, run_id = _reports(page, models, label, current_report, job, request)
         # An import is made against one workspace: its drawer closes, its preview goes.
@@ -3427,7 +3297,7 @@ def create_test_page(ctx: Any) -> None:
         if not page:
             return [gr.update()] * (1 + len(run_outputs) + len(result_outputs))
         models = _models_for(page, current_models, ws, request, again=True)
-        key = key if find_model(models, key) is not None else None
+        key = chosen_model(models, key)
         job = read_job()
         return [models, *_run_outputs(page, models, binding, ws, label, key, protocol, job,
                                       _gpu(page)),
@@ -3718,9 +3588,8 @@ def create_test_page(ctx: Any) -> None:
 _PAGE = "#" + page_elem_id(PAGE)
 
 #: This page's style sheet (the page contract: listed in `src/webui/app.py`'s
-#: ``PAGE_CSS``), scoped to its own ids. ``.shep-test-recm``: a described
-#: measurement's metrics as recorded (R2), one click away under its figures, its
-#: summary a 24 px target that shows the keyboard focus (skill §10).
+#: ``PAGE_CSS``), scoped to its own ids. A report's record is the one record
+#: rendering's (`renderers.record_html`), styled once in `src/webui/style.py`.
 #: ``.shep-test-replist``: the reports, a compact single-select table at the
 #: Result panel's top (32-40 px rows, the skill's §8), in the panel's one scroll
 #: region with the result under it; its header does not stick (the region
@@ -3740,8 +3609,10 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-ident {{ font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-ident > div {{ margin: 1px 0; }}
 {_PAGE} .shep-test-model-row {{ flex-wrap: nowrap !important; gap: 8px !important; }}
-{_PAGE} .shep-test-checks {{ gap: 18px !important; flex-wrap: wrap !important; }}
-{_PAGE} .shep-test-checks > .block {{ flex: 0 1 auto !important; min-width: 0 !important; width: auto !important; }}
+{_PAGE} .shep-test-checks, {_PAGE} .shep-test-checks > .form {{ gap: 4px 18px !important; flex-wrap: wrap !important; }}
+{_PAGE} .shep-test-checks > .form {{ background: none !important; border: 0 !important; box-shadow: none !important; }}
+{_PAGE} .shep-test-checks > .form > .block {{ flex: 0 0 auto !important; min-width: 0 !important; width: auto !important; margin: 0 !important; }}
+{_PAGE} .shep-test-checks label > span {{ white-space: nowrap; }}
 {_PAGE} .shep-test-replist {{ padding: 12px 16px 0; }}
 {_PAGE} .shep-test-repwrap {{ margin: 0 !important; overflow: visible; }}
 {_PAGE} .shep-test-reps th {{ position: static; }}
@@ -3751,7 +3622,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-res-hd {{ display: flex; align-items: baseline; gap: 10px; }}
 {_PAGE} .shep-test-res-hd h3 {{ margin: 0; font-size: 15px; font-weight: 600; }}
 {_PAGE} .shep-test-vd-why {{ margin-top: 6px; }}
-{_PAGE} .shep-test-job {{ border: 1px solid var(--shep-border) !important; border-radius: 10px !important; background: var(--shep-panel-2) !important; padding: 0 0 8px !important; gap: 4px !important; }}
+{_PAGE} .shep-test-job {{ border: 1px solid var(--shep-border); border-radius: 10px; background: var(--shep-panel-2); padding: 0 0 8px; display: flex; flex-direction: column; gap: 4px; }}
 {_PAGE} .shep-test-job-top {{ align-items: center !important; flex-wrap: nowrap !important; gap: 8px !important; }}
 {_PAGE} .shep-test-job-top > .block {{ flex: 1 1 auto !important; min-width: 0 !important; }}
 {_PAGE} .shep-test-job-top > button {{ flex: none !important; white-space: nowrap; }}
@@ -3764,19 +3635,8 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-fail {{ color: var(--shep-red-700); font-size: 15px; }}
 {_PAGE} .shep-test-units {{ font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-test-units > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
-{_PAGE} .shep-test-fold summary {{ cursor: pointer; }}
-{_PAGE} .shep-test-fold[open] summary {{ margin-bottom: 6px; }}
-{_PAGE} .shep-test-recm {{ margin-top: 12px; font-size: 15px; overflow-wrap: anywhere; }}
-{_PAGE} .shep-test-recm > summary {{ min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; color: var(--shep-text-2); }}
 {_PAGE} .shep-test-outcome {{ display: flex; flex-direction: column; gap: 6px; font-size: 15px; }}
 {_PAGE} .shep-test-chips {{ display: flex; flex-wrap: wrap; gap: 6px 8px; }}
-{_PAGE} .shep-test-label {{ font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }}
-{_PAGE} .shep-test-tiles {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }}
-{_PAGE} .shep-test-tile {{ border: 1px solid var(--shep-border); border-radius: 8px; padding: 8px 10px; background: #fff; min-width: 0; }}
-{_PAGE} .shep-test-tile-l {{ font-size: 14px; color: var(--shep-text-2); }}
-{_PAGE} .shep-test-tile-v {{ font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }}
-{_PAGE} .shep-test-tile-n {{ font-size: 14px; color: var(--shep-text-2); }}
-{_PAGE} .shep-test-notes ul {{ margin: 4px 0 0; padding-left: 18px; font-size: 15px; }}
 {_PAGE} .shep-test-noteform {{ padding: 10px 16px 8px !important; gap: 6px !important; border-top: 1px solid var(--shep-border); }}
 {_PAGE} .shep-test-noterow {{ gap: 10px !important; flex-wrap: wrap !important; align-items: flex-start !important; }}
 {_PAGE} .shep-test-noteform .shep-test-actions > .block {{ flex: 1 1 200px !important; min-width: 0 !important; }}
@@ -3811,7 +3671,6 @@ PAGE_CSS = f"""
   {_PAGE} .shep-test-drawer > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
 }}
 {STACK} {{
-  {_PAGE} .shep-test-tiles {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
   {_PAGE} .shep-test-drawer {{ position: fixed !important; top: 0; right: 0; bottom: 0; width: min(640px, 100%) !important; max-width: 100% !important; z-index: 60; display: flex; flex-direction: column; flex-wrap: nowrap !important; border-radius: 0 !important; }}
   {_PAGE} .shep-test-drawer > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
 }}

@@ -281,34 +281,82 @@ def test_the_batch_size_shown_is_the_measurements_default():
     assert args.batch_size == tp.BATCH_SIZE_SHOWN
 
 
-def test_a_cancelled_runs_output_is_folded_and_a_failed_runs_shown():
+def _outside_details(html: str) -> str:
+    """What a reader sees of a card with its disclosures closed."""
+    return re.sub(r'<details class="[^"]*">.*?</details>', " ", html, flags=re.S)
+
+
+def test_a_runs_output_is_folded_in_its_one_details_and_a_failure_shown():
+    """B52-E: a run's output tail, whatever its state, is the card's one
+    "Details ›", never the main space (12 unfolded lines of R10 definitions
+    and a record_evaluation command); a failed run's first error line is
+    said in the open. Fails on 97c8ec8's card, which drew a completed or
+    failed run's output unfolded."""
     job = {"status": "cancelled", "inputs": {}, "log": ["Traceback", "KeyboardInterrupt"]}
-    html = tp.job_html(job, [], ("none", ""))
-    assert '<details class="shep-test-fold">' in html and "KeyboardInterrupt" in html
-    failed = tp.job_html(dict(job, status="failed"), [], ("none", ""))
-    assert '<details class="shep-test-fold">' not in failed and "KeyboardInterrupt" in failed
+    for status in ("cancelled", "failed", "completed", "running"):
+        html = tp.job_body_html(dict(job, status=status, error_message="Process exited with "
+                                     "code 1"), [], ("busy", "GPU job"))
+        assert html.count("<details") == 1 and html.count('<details class="shep-more">') == 1
+        assert "KeyboardInterrupt" in html and "KeyboardInterrupt" not in _outside_details(html)
+        assert "Output, last 2 lines" in html
+        assert ("Process exited with code 1" in _outside_details(html)) is (status == "failed")
+
+
+def test_every_class_the_page_styles_is_one_it_draws():
+    """No dead style: each ``shep-test-*`` class PAGE_CSS styles is named by
+    the page's code outside that style. Fails on f6b9289, whose ``.shep-test-
+    fold`` rules outlived the last element with the class (a cancelled run's
+    output and "Recorded metrics", both now the shared Details)."""
+    import inspect
+
+    source = inspect.getsource(tp)
+    start = source.index('PAGE_CSS = f"""')
+    code = source[:start] + source[source.index('"""', start + len('PAGE_CSS = f"""')) + 3:]
+    styled = set(re.findall(r"\.(shep-test-[\w-]+)", tp.PAGE_CSS))
+    assert styled and not {name for name in styled if name not in code}
 
 
 def test_the_pill_is_never_green_for_a_failed_or_cancelled_run():
     for status, kind in (("completed", "ok"), ("failed", "red"), ("cancelled", "grey"),
-                         ("running", "accent"), ("idle", "grey")):
+                         ("running", "accent")):
         html = tp.job_html({"status": status, "inputs": {}}, [], ("none", ""))
         assert f'shep-tag-{kind} shep-test-pill" data-status="{status}"' in html
+    # R-81: no run started since the server did is one muted line, no pill
+    # and no card (a 479 x 95 bordered card and "Test run Idle" before).
+    idle = tp.job_html({"status": "idle", "inputs": {}}, [], ("none", ""))
+    assert "shep-test-pill" not in idle and "shep-test-job\"" not in idle
+    assert idle == (f'<div class="shep-test-job-hd"><span class="shep-sub">{tp.NO_JOB_YET}'
+                    "</span></div>")
+    assert tp.job_body_html({}, [], ("none", "")) == ""
 
 
-def test_the_outcome_is_the_runners_kept_and_registered():
-    kept = tp.outcome_html({"kept": True, "registered": False, "summary": "A report was kept."},
-                           [])
-    assert "Report kept" in kept and "Not registered" in kept
-    # That moment's reading, said as such; the registration now is Result's.
-    assert kept.index("When the run ended:") < kept.index("Not registered")
-    assert "The report's registration now is shown in Result." in kept
-    none = tp.outcome_html({"kept": False, "registered": False,
-                            "summary": "No report was published: the run wrote no outcome file"},
-                           [])
-    assert "No report kept" in none and "Registered" not in none and "No report was published" in none
-    unknown = tp.outcome_html({"kept": None, "registered": None, "summary": ""}, [])
-    assert "Kept: cannot be checked" in unknown and "Registered: cannot be checked" in unknown
+def test_the_card_leads_with_what_the_run_left_and_never_says_a_registration():
+    """B52-E and NEW-test-3: an ended run's card says first what it left, as
+    the runner read it from disk (a kept report is Result's; no report kept;
+    cannot be checked), and **never a registration of its own**: the Result
+    reads it from the ledger now, so after a report is registered from the
+    page no visible line of the card says "Not registered" or gives the
+    record_evaluation command (both did, beside Result's "Registered record
+    2"). That moment's reading, its paths and its output are one click away."""
+    tail = ["Report: <registry>/versions/v/reports/r/report.json",
+            "Not registered (no --record). Register it with:",
+            '  python scripts/record_evaluation.py --report "<registry>/x" --checkpoint "y"']
+    summary = ("When the run ended, a report was kept at /srv/reg/versions/v/reports/r; it was "
+               "not registered (at that time: …).")
+    job = {"status": "completed", "inputs": {}, "exit_code": 0, "exit_meaning": "measured",
+           "log": tail, "outcome": {"kept": True, "registered": False, "summary": summary}}
+    card = tp.job_body_html(job, [("/srv/reg", "<registry>")], ("none", ""))
+    shown = _outside_details(card)
+    assert tp.OUTCOME_KEPT in shown and shown.index(tp.OUTCOME_KEPT) < shown.index("Version")
+    for line in ("Not registered", "not registered", "record_evaluation", "<registry>",
+                 "Report kept", "Exit status", "When the run ended"):
+        assert line not in shown and line not in tp.outcome_lead_html(job["outcome"]), line
+    assert "Exit status" in card and "At its end" in card and "record_evaluation.py" in card
+    assert "/srv/reg" not in card and "&lt;registry&gt;/versions/v/reports/r;" in card
+    none = tp.outcome_lead_html({"kept": False, "registered": False, "summary": "No report."})
+    assert "No report kept" in none and "egistered" not in none and "No report." not in none
+    unknown = tp.outcome_lead_html({"kept": None, "registered": None, "summary": ""})
+    assert "Kept: cannot be checked" in unknown and "egistered" not in unknown
 
 
 def test_the_job_card_shows_the_tail_redacted_and_the_failure():
@@ -944,9 +992,12 @@ def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):
     # model's graph view (the report's `n_ranked`).
     ranked = json.loads((site.reports / site.run_id / "report.json").read_text())["n_ranked"]
     assert 0 < ranked <= 10
-    assert "Disease pooled MRR" in html and "Disease coverage" in html
-    assert (f"<b>{ranked} of 10</b> import-eligible cases ranked by the model · 13 source "
-            "cases; 3 excluded at import: ground truth absent 2 · phenotype unmappable 1") in html
+    assert 'tile-l">Pooled MRR<' in html and 'tile-l">Coverage<' in html
+    # The coverage in its one wording (R-82): what it counted, then how the
+    # data stands under it, on lines of their own, never a chain of " · ".
+    assert (f"<div><b>{ranked} of 10</b> import-eligible cases ranked by the model</div>"
+            '<div class="shep-sub">13 source cases; 3 excluded at import: ground truth absent '
+            "2, phenotype unmappable 1</div>") in html
     assert "Validation MRR" not in html, "Trainer validation and a test result never share a place"
     assert "case-" not in html and str(site.root) not in html
     assert "synthetic</b> — a generated stand-in" in html
@@ -1078,10 +1129,10 @@ def test_a_result_of_another_or_no_mode_is_shown_as_recorded(site):
     raw = tp._record_html(changed, run, {})
     text = html_lib.unescape(re.sub(r"<[^>]+>", "", raw))
     assert "Mode E (a measurement mode this version does not describe)" in text
-    assert "Mode C" not in text and "shep-test-tile-l" not in raw
+    assert "Mode C" not in text and "shep-rec-tile-l" not in raw
     assert "source cases ranked" not in text and "not described for this mode" in text
     assert '<dt class="shep-k">Recorded metrics</dt>' in raw
-    assert "<div><code>untruncated_mrr</code> 0.5</div>" in raw
+    assert '<div class="shep-rec-ln"><code>untruncated_mrr</code> 0.5</div>' in raw
     unread = {**record, "scoring": {**record["scoring"], "mode": None}}
     text = html_lib.unescape(re.sub(r"<[^>]+>", "", tp._record_html(unread, run, {})))
     assert text.startswith("This report's record cannot be read as a result") and \
@@ -1173,7 +1224,11 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
         tp.start_state(page, models, ws, label, key, binding, gpu, protocol=protocol))
     assert state(None, LABEL, child) == (False, "Disabled: choose a workspace.")
     assert state("demo", None, child) == (False, "Disabled: choose a data version.")
-    assert state("demo", LABEL, None) == (False, "Disabled: choose a model.")
+    # NEW-test-1: the choice is named by its two selects, the one place the
+    # page asks for it (it said "choose a model", a control it no longer has).
+    assert state("demo", LABEL, None) == (False, tp.CHOOSE_A_CHECKPOINT) == (
+        False, "Disabled: choose the run, then the checkpoint to test.")
+    assert tp.model_html(page, models, None) == ""
     # No measurement chosen (the radio's value None) is said, never filled in.
     assert state("demo", LABEL, child, protocol=None) == (
         False, "Disabled: choose a measurement.")
@@ -1194,6 +1249,53 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
     assert state("demo", LABEL, site.history_key) == (
         False, f"Disabled: Record not readable ({WRITTEN_BEFORE_SPEC}): not measured here. "
                "Choose a model with a readable record.")
+
+
+def test_a_lone_testable_checkpoint_is_chosen_as_the_shared_list_chooses_one(site, monkeypatch):
+    """RJ-61b: the model choice preselected nothing even where there was
+    nothing to choose between. A workspace that lists one checkpoint, which
+    can be tested, has it chosen by the shared list's one rule
+    (`model_list.lone_key`, R-27, which the Models list uses too), Run and
+    Checkpoint drawn on it and Start's reason past the choice; of two or
+    more the page still picks none itself, and a lone file it cannot test
+    is not chosen."""
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    child = tp.find_model(models, site.key)
+    history = tp.find_model(models, site.history_key)
+    assert tp.testable(child) and not tp.testable(history)
+    assert len(models["items"]) >= 2 and tp.chosen_model(models, None) is None
+    assert tp.chosen_model(models, site.key) == site.key
+    lone = {**models, "items": [child]}
+    assert tp.chosen_model(lone, None) == site.key
+    assert tp.chosen_model({**models, "items": [history]}, None) is None
+    # The model list's own lone rule is the same function (no copy of it).
+    assert ml.lone_key([child], tp.testable) == site.key
+    assert ml.lone_key([child, child], tp.testable) is None
+    # Drawn by the page's open.
+    monkeypatch.setattr(tp, "read_job", lambda **k: {"status": "idle", "inputs": None,
+                                                    "outcome": None, "log": []})
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
+    monkeypatch.setattr(tp, "read_models", lambda workspace, request, **k: dict(lone))
+    demo, _ctx, _registry = _page_component()
+    refresh = _named(demo, "_refresh")
+    out = dict(zip([b.elem_id for b in refresh.outputs],
+                   refresh.fn(None, None, None, None, {}, None, request), strict=True))
+    assert out["shep-test-model"]["value"] == site.key
+    assert out["shep-test-model-run"]["value"] == ml.item_run_key(child)
+    assert "choose the run" not in out["shep-test-start-reason"]
+    assert "Model fingerprint" in out["shep-test-model-info"]
+
+
+def test_the_register_option_and_button_say_one_act_and_when():
+    """R-79: "Register the result" (a run option) and "Register this report"
+    (a button) were two near-identical names. The act has one name, Register;
+    the option says when (as the run ends), the button which report."""
+    assert tp.RECORD_LABEL == "Register when the run ends"
+    assert tp.FIELD_HELP["shep-test-record"][0] == tp.RECORD_LABEL
+    assert tp.GATED_LABELS["register"] == "Register this report"
+    assert "Register this report" in tp.FIELD_HELP["shep-test-record"][1]
+    assert "the result" not in tp.RECORD_LABEL
 
 
 def test_a_version_whose_kept_file_changed_is_not_bound_and_start_says_why(site, monkeypatch):
@@ -1657,9 +1759,9 @@ def test_a_kept_mode_d_report_is_shown_as_recorded_and_its_register_is_enabled(
     d_html = tp.result_html(reports, d_run, [])
     result = _shown(d_html)
     assert mode_label("D") in result and "Mode D (" in result
-    assert "shep-test-tile-l" not in d_html and "Mean rank" not in result
-    assert "<div><code>post_import_mrr</code> 0.35</div>" in d_html
-    assert "<div><code>reached_mean_rank</code> 2.43</div>" in d_html
+    assert "shep-rec-tile-l" not in d_html and "Mean rank" not in result
+    assert '<div class="shep-rec-ln"><code>post_import_mrr</code> 0.35</div>' in d_html
+    assert '<div class="shep-rec-ln"><code>reached_mean_rank</code> 2.43</div>' in d_html
     assert ('<dt class="shep-k">Score semantics</dt><dd class="shep-v"><code>'
             'served:gnn_only:eta=1.0:sp=none</code></dd>') in d_html
     for gone in ("η =", "import-eligible)", "reached only", "reached by the served pipeline",
@@ -1673,7 +1775,7 @@ def test_a_kept_mode_d_report_is_shown_as_recorded_and_its_register_is_enabled(
     c_result = _shown(c_html)
     assert mode_label("C") in c_result and "Mode D" not in c_result
     for label_html in (c_html, d_html):
-        label = label_html[label_html.index('class="shep-test-label"'):]
+        label = label_html[label_html.index('class="shep-rec-label"'):]
         label = label[:label.index("</div>")]
         assert "data-help" not in label, label
 
@@ -3174,7 +3276,7 @@ def test_a_run_that_ended_with_no_report_is_a_row_until_the_next():
 def test_the_r10_help_sits_beside_the_r10_lines(site):
     reports = tp.read_reports(LABEL)
     html = tp.result_html(reports, site.run_id, [])
-    label = html[html.index('class="shep-test-label"'):]
+    label = html[html.index('class="shep-rec-label"'):]
     label = label[:label.index("</div>")]
     help_label = f"Help: {renderers.R10_TITLE}"
     assert help_label not in label and "Help: Disease task result" in label
@@ -3219,12 +3321,15 @@ def test_the_run_panels_foot_keeps_start_the_jobs_state_and_cancel_out_of_its_on
     run = by_id["shep-test-run"]
     assert names(run) == ["shep-test-run-hd", "shep-test-bd", "shep-test-runft"]
     body, foot = run.children[1], run.children[2]
-    assert names(body)[-2:] == ["shep-test-fixed", "shep-test-jobcard"]
+    assert names(body)[-2:] == ["shep-test-fixed", "shep-test-job"]
     assert names(body)[0] == "shep-test-model-row"
-    assert names(by_id["shep-test-jobcard"]) == ["shep-test-job-title", "shep-test-job"]
-    # The heading names the run once; its state is the foot's alone.
-    title = by_id["shep-test-job-title"].value
-    assert "Latest test run" in title and "shep-test-pill" not in title
+    # The card's heading names the run once, in the card (none while no run
+    # was started, R-81); its state is the foot's alone.
+    running = {"status": "running", "inputs": {}, "log": []}
+    card = tp.job_body_html(running, [], ("busy", "GPU"))
+    assert "Latest test run" in card and "shep-test-pill" not in card
+    assert by_id["shep-test-job"].value == ""
+    assert by_id["shep-test-cancel"].visible is False
     assert names(foot) == ["shep-test-start", "shep-test-start-reason", "shep-test-action",
                            "shep-test-job-top", "shep-test-cancel-reason"]
     assert names(foot.children[3]) == ["shep-test-job-head", "shep-test-cancel"]
@@ -3423,11 +3528,17 @@ def test_every_gated_button_is_locked_only_when_refused_and_then_says_why(site, 
                        refresh.fn(None, None, None, None, {}, None, request)))
         for button, beside in GATED_REASONS.items():
             label, reason = out[button]["value"], out[beside]
+            if button == "shep-test-cancel" and status not in ("running", "stopping"):
+                # R-81: Cancel is drawn only while a run is busy, so no
+                # reason stands beside a button that is not there.
+                assert out[button]["visible"] is False and reason == "", (status, reason)
+                continue
             if operator:
                 assert tp.LOCK not in label and "Operator controls only" not in reason, button
             else:
                 assert label.startswith(f"{tp.LOCK} ") and out[button]["interactive"] is False
                 assert "Operator controls only: " in reason and tp.LOCK in reason, button
+        assert out["shep-test-cancel"]["visible"] is (status in ("running", "stopping"))
         if operator:
             assert out["shep-test-cancel"]["interactive"] is (status == "running")
     # No report chosen (none kept yet): Register's reason is still D8's.
@@ -3671,6 +3782,10 @@ def test_the_test_page_and_datasets_share_one_redaction():
     assert tp.redact(text, []) == path_redaction.redact_paths(text, [], other=tp.SERVER_PATH)
     assert workspaces.redact(text, None) == path_redaction.redact_paths(
         text, [], other=workspaces.OUTSIDE_PATH)
+    # Models' notes problems and the Test page read one pair, in the shared
+    # module (a page reaches nothing of another page).
+    assert (tp.redact, tp.path_roots) == (workspaces.redact_server, workspaces.path_roots)
+    assert tp.SERVER_PATH == path_redaction.SERVER_PATH
 
 
 
@@ -3771,20 +3886,21 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     assert refusal(base, supplied, None) == protocols.available(
         described("base", None), SUPPLIED)[1] == (
         "no measurement that takes this checkpoint's model measures a supplied cohort version: "
-        "it can be measured by KG link prediction (kg_link_prediction), which measures a KG "
-        "edge set.")
+        "it can be measured by KG link prediction, which measures a KG edge set. Ref: "
+        "kg_link_prediction.")
     assert refusal(base, {"kind": "kg_edges", "counts": {"pairs": 4}}, None) == (
         tp.CHOOSE_A_MEASUREMENT)
     assert refusal(base, None, None) == tp.CHOOSE_A_MEASUREMENT
+    # B72-T1: the measurement by its plain words, its code only in the Ref.
     assert refusal(base, supplied, "kg_link_prediction") == (
-        "the kg_link_prediction measurement does not measure a supplied cohort version; it "
-        "measures a KG edge set.")
+        "the KG link prediction measurement does not measure a supplied cohort version; it "
+        "measures a KG edge set. Ref: kg_link_prediction.")
     assert refusal(base, {"kind": "kg_edges", "counts": {"pairs": 4}}, "kg_link_prediction") is None
     for protocol in ("disease", "gene"):
         assert refusal(base, supplied, protocol) == protocols.model_refusal(
             protocol, described("base", None))
         assert refusal(base, supplied, protocol).endswith(
-            "It can be measured by kg_link_prediction.")
+            "It can be measured by KG link prediction. Ref: kg_link_prediction.")
     specless, refused, unread = ({"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
                                  {"record": "refused", "record_problem": "record version 9"},
                                  {"record": None})
@@ -3807,8 +3923,8 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     assert refusal(_model("C"), None, None) == tp.CHOOSE_A_MEASUREMENT
     assert refusal(_model("gene"), None, "disease") == (
         protocols.model_refusal("disease", described("finetune", "gene")))
-    assert "It can be measured by gene, kg_link_prediction." in refusal(_model("gene"), None,
-                                                                       "disease")
+    assert ("It can be measured by gene or KG link prediction. Ref: kg_link_prediction."
+            in refusal(_model("gene"), None, "disease"))
     for name in ("C", "D", "Disease"):
         assert refusal(_model("disease"), None, name) == (
             protocols.model_refusal(name, described("finetune", "disease")))
@@ -3832,8 +3948,8 @@ def test_a_listed_base_is_offered_the_kg_link_prediction_measurement(site, monke
     assert choices == [("KG link prediction", "kg_link_prediction")]
     assert tp.chosen_measurement(choices, None) == "kg_link_prediction"
     message = protocols.inputs_refusal("kg_link_prediction", SUPPLIED, None)
-    assert message == ("the kg_link_prediction measurement does not measure a supplied cohort "
-                       "version; it measures a KG edge set.")
+    assert message == ("the KG link prediction measurement does not measure a supplied cohort "
+                       "version; it measures a KG edge set. Ref: kg_link_prediction.")
     allowed, why = tp.start_state(page, models, "demo", LABEL, base, binding, ("none", ""),
                                   protocol="kg_link_prediction")
     assert (allowed, why) == (False, f"Disabled: {message}")
@@ -3865,8 +3981,10 @@ def test_a_measurement_needs_a_version_that_lists_its_genes(protocol, counts, mi
     if missing is None:
         assert got is None
     else:
-        assert got == (f"this cohort version lists no {missing} genes, which the {protocol} "
-                       f"measurement needs. Import a source that lists {missing}_genes.")
+        words = protocols._said(protocols.PROTOCOLS[protocol])
+        assert got == (f"this cohort version lists no {missing} genes, which the {words} "
+                       f"measurement needs. Import a source that lists {missing}_genes."
+                       + (f" Ref: {protocol}." if words != protocol else ""))
 
 
 def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, monkeypatch):
@@ -4007,22 +4125,25 @@ def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
 
     raw = tp._record_html(_task_record(mode, **{HOSTILE: 0.5}), {}, {})
     text = " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", raw)).split())
-    tiles = tp._TILES[mode]
+    tiles = renderers.RECORD_TILES[mode]
     assert len(tiles) == 4 and tiles[0] == "pooled_mrr" and tiles[-1] == "coverage"
+    # R-71: a tile's name less the task's, which the label above says once.
     for name in tiles:
-        assert f'shep-test-tile-l">{html_lib.escape(metric_text(mode, name))}<' in raw
+        words = metric_text(mode, name)[len(TASK_NAMES[mode]) + 1:]
+        assert f'shep-rec-tile-l">{html_lib.escape(words[:1].upper() + words[1:])}<' in raw
+        assert f'shep-rec-tile-l">{html_lib.escape(metric_text(mode, name))}<' not in raw
     assert mode_label(mode) in text
-    assert "8 of 10 import-eligible cases ranked by the model · 13 source cases; 3 excluded " \
+    assert "8 of 10 import-eligible cases ranked by the model 13 source cases; 3 excluded " \
         "at import: ground truth absent 3" in text
     # The counts are the Coverage row's alone (rule 1.2): a tile's footer says
     # what its figure is over, never "n of M" or the n ranked again.
-    notes = re.findall(r'shep-test-tile-n">([^<]*)<', raw)
+    notes = re.findall(r'shep-rec-tile-n">([^<]*)<', raw)
     assert len(notes) == 4 and "pooled over positive pairs" in notes
     assert notes[-1] == "share of import-eligible cases ranked"
     assert not any(ch.isdigit() for note in notes for ch in note), notes
     assert text.count("8 of 10") == 1
-    assert "Conservative pooled MRR" in text and "0.2100 · an unranked case whose truth can be " \
-        "assessed counts 0" in text
+    assert "Conservative pooled MRR" in text and "0.2100 an unranked case whose truth can be " \
+        "assessed counts 0" in text and "0.2100 ·" not in text
     assert "Mean rank" not in text and "Mode C" not in text and "Mode D" not in text
     assert "Macro MRR" in text and "Best-positive MRR" in text and "Pooled top-k" in text
     # A tile's figure is not repeated in its family's row (rule 1.2).
@@ -4080,19 +4201,20 @@ def test_a_kept_mode_c_record_is_shown_as_recorded_by_the_one_display():
     raw = tp._record_html(record, {}, {})
     text = _result_text(raw)
     assert mode_label("C") in text and "approved scorer policy" not in text
-    assert "shep-test-tile-l" not in raw and "Mean rank" not in text
+    assert "shep-rec-tile-l" not in raw and "Mean rank" not in text
     recorded = raw.split('<dt class="shep-k">Recorded metrics</dt><dd class="shep-v">')[1]
     recorded = recorded.split("</dd>")[0]
-    assert re.findall(r"<div><code>([^<]*)</code> ([^<]*)</div>", recorded) == [
+    assert re.findall(r'<div class="shep-rec-ln"><code>([^<]*)</code> ([^<]*)</div>',
+                      recorded) == [
         (name, json.dumps(value)) for name, value in record["metrics"].items()]
     assert {"untruncated_mrr": "0.5", "hits@1": "0.25", "hits@10": "0.75",
             "mean_rank": "3.0"} == dict(re.findall(r"<code>([^<]*)</code> ([^<]*)<", recorded))
     assert (f"Score semantics {record['scoring']['score_semantics']}" in text
             and record["scoring"]["score_semantics"] == MODE_C_SEMANTICS_TEXT)
-    assert ("100 source cases · 20 excluded: ground truth absent 12 · phenotype unmappable 8; "
+    assert ("100 source cases; 20 excluded: ground truth absent 12, phenotype unmappable 8 "
             "80 cases counted by the record; what they are is not described for this mode"
             ) in text
-    label = raw[raw.index('class="shep-test-label"'):]
+    label = raw[raw.index('class="shep-rec-label"'):]
     assert "data-help" not in label[:label.index("</div>")]
 
 
@@ -4113,9 +4235,9 @@ def test_a_record_of_a_mode_no_build_has_words_for_is_shown_as_recorded():
         raw = tp._record_html(record, {}, {})
         text = _result_text(raw)
         assert mode_label(mode) in text and f"Mode {mode} (" in text
-        assert "shep-test-tile-l" not in raw and "Mean rank" not in text
+        assert "shep-rec-tile-l" not in raw and "Mean rank" not in text
         assert "macro_precision@3 0.16666666666666666" in text
-        assert len(re.findall(r"<div><code>", raw)) == len(record["metrics"])
+        assert len(re.findall(r'<div class="shep-rec-ln"><code>', raw)) == len(record["metrics"])
         assert "Other metrics" not in text and "Pooled top-k" not in text
 
 
@@ -4128,15 +4250,22 @@ def test_a_task_record_keeps_its_tiles_and_shows_every_metric_one_click_away():
 
     record = _kept_record(registered_report())
     raw = tp._record_html(record, {}, {})
-    assert len(re.findall(r'shep-test-tile-l">', raw)) == 4
+    assert len(re.findall(r'shep-rec-tile-l">', raw)) == 4
     assert "Conservative pooled MRR" in raw and "Pooled top-k" in raw
-    fold = re.search(r'<details class="shep-test-fold shep-test-recm"><summary>Recorded metrics '
-                     r'\((\d+)\)</summary>(.*?)</details>', raw)
-    assert fold and int(fold.group(1)) == len(DISEASE_METRICS)
-    assert "<div><code>macro_precision@3</code> 0.16666666666666666</div>" in fold.group(2)
-    assert raw.index("shep-test-lines") < raw.index("shep-test-recm")
+    # B52-E: the metrics as recorded and the engineering rows are the
+    # record's one "Details ›", after its other rows.
+    fold = re.search(r'<details class="shep-more"><summary>Details ›</summary>(.*?)</details>',
+                     raw)
+    count = re.search(r'<dt class="shep-k">Recorded metrics \((\d+)\)</dt>', fold.group(1))
+    assert count and int(count.group(1)) == len(DISEASE_METRICS)
+    assert ('<div class="shep-rec-ln"><code>macro_precision@3</code> 0.16666666666666666</div>'
+            in fold.group(1))
+    assert raw.index("shep-rec-rows") < raw.index("shep-more")
     assert ('<dt class="shep-k">Score semantics</dt><dd class="shep-v"><code>'
-            + e(record["scoring"]["score_semantics"]) + "</code></dd>") in raw
+            + e(record["scoring"]["score_semantics"]) + "</code></dd>") in fold.group(1)
+    for key in renderers.RECORD_DETAIL_ROWS:
+        assert f'<dt class="shep-k">{key}</dt>' in fold.group(1), key
+        assert f'<dt class="shep-k">{key}</dt>' not in _outside_details(raw), key
 
 
 def test_only_the_described_measurements_have_help_topics():
@@ -4184,6 +4313,59 @@ def _kind_record(kind, **report):
         **report))
 
 
+def test_a_kg_edge_set_or_generated_result_of_the_selected_version_says_no_count_of_datas():
+    """R-70 (counts once when the result's version is the selected one) for
+    the two kinds whose counts the Result folds: Data's version line says a
+    KG edge set's or a generated split's counts (`_version_counts`, every
+    count by name in its "Counts and units" fold), so a result of that very
+    version leaves out its "Data version counts" fold (the shared record put
+    it back: positive_edges 8, pairs 6, edges_without_negative 2 and
+    message_passing_edges 50, or samples 5 and diseases 1, a second time on
+    one screen) and a KG edge set's graph and pairs line their counts (its
+    part, pair rule and seed stay); a KG edge set's run's own counts, which
+    can differ, stay one click away; a result of another version keeps its
+    version's counts. Fails on d6c1efa, whose Result of the selected version
+    drew the fold and "… 50 edges; … 6 rows"."""
+    from src.api.services.record_views import result_view
+
+    for kind, said in (("kg_edges", ("positive_edges", "edges_without_negative")),
+                       ("generated", ("samples", "diseases"))):
+        record = _kind_record(kind)
+        view = result_view(dict(record)).model_dump(mode="json")
+        version = {"kind": kind, "counts": view["counts"], "count_units": view["count_units"]}
+        data = _plain(tp._version_counts(version))
+        selected = tp.Selection(None, None, None, view["cohort"]["version_manifest_sha256"])
+        result = tp._record_html(record, {"run_id": "r"}, {}, selection=selected)
+        assert tp.SELECTED_VERSION in result, kind
+        assert "Data version counts" not in result, kind
+        assert ("Run counts" in result) is (kind == "kg_edges"), kind
+        for name in said:
+            # Data names it; the Result only in a KG edge set's run's counts.
+            assert name in data, (kind, name)
+            assert result.count(f"<code>{name}</code>") == (kind == "kg_edges"), (kind, name)
+        keys = re.findall(r'<dt class="shep-k[^"]*"[^>]*>([^<]*)', result)
+        assert ("Counts" in keys) is (kind == "kg_edges"), (kind, keys)
+        if kind == "kg_edges":
+            run = result[result.index("Run counts"):]
+            assert "pairs_scored" in run and "pairs_not_finite" in run
+            # Its graph and pairs line keeps their part, rule and seed, not
+            # the version's counts Data's lead gives ("… message passing
+            # over 50 edges"; "6 pairs").
+            cohort = view["cohort"]
+            counted = (f"{cohort['message_passing']['edges']} edges",
+                       f"{cohort['pairs']['rows']} rows")
+            assert all(words.split()[0] in data for words in counted)
+            assert not any(words in _plain(result) for words in counted), counted
+            line = _plain(dict(renderers.data_kind_lines(view, version_counts=False))[
+                "Graph and pairs"])
+            assert line.startswith("Message passing over the split's") and "seed" in line
+        other = tp._record_html(record, {"run_id": "r"}, {},
+                                selection=tp.Selection(None, None, None, "f" * 64))
+        assert tp.SELECTED_VERSION not in other and "Data version counts" in other, kind
+        if kind == "kg_edges":
+            assert all(words in _plain(other) for words in counted), counted
+
+
 def test_a_kg_link_prediction_report_row_names_its_measurement_first():
     """The browser check of 7e1d09e: every kept KG link-prediction row read
     "mode kg_link_prediction, not described by this version", on a page that
@@ -4212,14 +4394,64 @@ def test_a_kg_link_prediction_result_has_its_measurement_note():
     from src.evaluation.caveats import KG_LINK_PREDICTION_NOTE, mode_label
 
     raw = tp._record_html(_kind_record("kg_edges"), {}, {})
-    label = raw[raw.index('class="shep-test-label"'):]
+    label = raw[raw.index('class="shep-rec-label"'):]
     label = label[:label.index("</div>")]
     assert 'data-help="test-mode-kg_link_prediction"' in label
     assert tp.TOPIC_HELP["test-mode-kg_link_prediction"] == (
         "KG link prediction result", sentence_lines(KG_LINK_PREDICTION_NOTE))
     assert mode_label("kg_link_prediction") in _result_text(raw)
-    assert '<dt class="shep-k">Recorded metrics</dt>' in raw
-    assert "shep-test-tile-l" not in raw
+    assert "shep-rec-tile-l" not in raw
+
+
+def test_a_kg_link_prediction_records_metrics_read_in_plain_names_on_test_and_models():
+    """B72-C2: a KG link-prediction record showed 'lp_accuracy
+    0.3333333333333333 / lp_roc_auc …', raw names, unrounded, no units, on
+    Test and Models. Each is a row under its plain name
+    (`caveats.LP_METRIC_WORDS`: "ROC-AUC"), its value to four decimals and
+    its unit and denominator said once under it, as the record's
+    ``measured`` holds them; every value as recorded stays one click away
+    ("Recorded metrics (4)") and in every export. The same rows on both
+    pages (one rendering, R-82)."""
+    from src.evaluation.caveats import LP_METRIC_WORDS
+    from src.webui.components import models_page as mp
+
+    record = _kind_record("kg_edges")
+    raw = tp._record_html(record, {}, {})
+    import html as html_lib
+
+    rows = {html_lib.unescape(key): value for key, value in re.findall(
+        r'<dt class="shep-k">([^<]*)</dt><dd class="shep-v">(.*?)</dd>', raw)}
+    assert '<dt class="shep-k">Recorded metrics</dt>' not in raw
+    statuses = record["measured"]["metrics"]
+    for name, value in record["metrics"].items():
+        words = LP_METRIC_WORDS[name]
+        cell = rows[words[:1].upper() + words[1:]]
+        status = statuses[name]
+        if status["status"] == "computed":
+            assert cell.startswith(f"{value:.4f}<div"), (name, cell)
+        else:
+            assert "Not computable" in cell
+        assert renderers.e(status["unit"]) in cell
+        assert f"over {status['denominator']['count']} " in cell
+        assert name not in _result_text(cell)
+    fold = re.search(r'<dt class="shep-k">Recorded metrics \((\d+)\)</dt>'
+                     r'<dd class="shep-v">(.*?)</dd>', raw)
+    assert fold and int(fold.group(1)) == len(record["metrics"])
+    for name, value in record["metrics"].items():
+        assert f"<code>{name}</code> {json.dumps(value)}" in fold.group(2)
+    # Models draws the same rows for the same record (the shared rendering).
+    from src.evaluation.sidecar import append_record, empty_ledger
+
+    registered = append_record(empty_ledger(), record, registered_at="2026-10-27T12:00:00Z",
+                               run_id=f"20261027T120000Z-{record['checkpoint_digest'][:12]}-0000"
+                                      "0001")[1]["records"][0]
+    models = mp.record_block_html(mp.record_view(registered), None)
+    words = {renderers.e(w[:1].upper() + w[1:]) for w in LP_METRIC_WORDS.values()}
+    lp_rows = [key for key in re.findall(r'<dt class="shep-k">([^<]*)</dt>', raw)
+               if key in words]
+    assert len(lp_rows) == len(record["metrics"]) and lp_rows == [
+        key for key in re.findall(r'<dt class="shep-k">([^<]*)</dt>', models)
+        if key in words]
 
 
 @pytest.mark.parametrize("kind, mode", [("kg_edges", "kg_link_prediction"),
@@ -4373,11 +4605,18 @@ def test_the_help_says_what_the_measurement_options_are():
     test), the leads answer the question within the budget, and the
     measurement is said where the choice is made: never Mode C, never "the
     model's own task"."""
-    title, text = tp.TOPIC_HELP["test-fixed"]
-    assert title == "Fixed by the server" and "Mode C" not in text
-    lead = text.split("\n")[0]
-    assert len(lead) <= 100 and "fixes them" in lead
-    assert "Measurement:" not in text and "never chosen here" not in text
+    # R-79: the batch size and the device each have their own ⓘ (one beside
+    # Batch size explained both, and Device had none).
+    assert "test-fixed" not in tp.TOPIC_HELP
+    for topic, title, says in (("test-batch", "Batch size", "job runner fixes"),
+                               ("test-device", "Device", "deployment's device")):
+        got, text = tp.TOPIC_HELP[topic]
+        lead = text.split("\n")[0]
+        assert got == title and len(lead) <= 100 and says in lead and "Mode C" not in text
+        assert len(text.split()) <= 80
+    fixed = tp.fixed_html({"device": {"value": "cpu"}})
+    assert fixed.count('class="shep-i') == 2
+    assert 'data-help="test-batch"' in fixed and 'data-help="test-device"' in fixed
     title, text = tp.FIELD_HELP["shep-test-measurement"]
     lead = text.split("\n")[0]
     assert title == "Measurement" and len(lead) <= 100 and len(text.split()) <= 80
@@ -4406,7 +4645,8 @@ def test_only_protocols(monkeypatch):
 
     from src.evaluation import protocols
 
-    table = {name: replace(protocols.PROTOCOLS["disease"], name=name) for name in ("p1", "p2")}
+    table = {name: replace(protocols.PROTOCOLS["disease"], name=name, label="")
+             for name in ("p1", "p2")}
     monkeypatch.setattr(protocols, "PROTOCOLS", table)
     return table
 
@@ -4437,7 +4677,7 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
     assert state(child, None) == (False, "Disabled: choose a measurement.")
     assert state(child, "p2") == (True, None)
     assert state(child, "disease") == (
-        False, "Disabled: 'disease' is not a measurement this build implements (p1, p2).")
+        False, "Disabled: 'disease' is not a measurement this build implements: p1 or p2.")
 
     # The radio as the model's listener writes it, and a pick.
     demo, _ctx, _registry = _page_component()
@@ -4751,8 +4991,8 @@ def test_the_measurement_options_follow_the_model_and_the_chosen_versions_kind(
     for label, kind in ((LABEL, protocols.SUPPLIED), (GEN_LABEL, protocols.GENERATED)):
         assert tp.measurement_choices(based, version[label]) == []
         said = protocols.available(based["capabilities"], kind)[1]
-        assert ("it can be measured by KG link prediction (kg_link_prediction), which measures "
-                "a KG edge set") in said
+        assert ("it can be measured by KG link prediction, which measures a KG edge set. "
+                "Ref: kg_link_prediction.") in said
         assert tp.start_state(page, models, "demo", label, base, binding, ("none", ""),
                               protocol=None) == (False, f"Disabled: {said}")
     assert tp.start_state(page, models, "demo", KG_LABEL, base, binding, ("none", ""),
@@ -4910,9 +5150,10 @@ def test_a_past_result_keeps_its_own_identity_after_the_selection_changes(site, 
         return _identity_rows(result), _report_rows(table)[site.run_id][1]
 
     rows, cell = shown("demo", LABEL, site.key)
-    assert (rows["Workspace"], rows["Model"], rows["Version"]) == (
-        tp.SELECTED_WORKSPACE, tp.SELECTED_MODEL, tp.SELECTED_VERSION)
-    assert cell == tp.SELECTED_MODEL and rows["Report"] == site.run_id
+    assert (rows["Dataset"], rows["Model"], rows["Version"]) == (
+        tp.SELECTED_DATASET, tp.SELECTED_MODEL, tp.SELECTED_VERSION)
+    # Its run id, which names the model's fingerprint again, one click away.
+    assert cell == tp.SELECTED_MODEL and rows["Run id"] == site.run_id and "Report" not in rows
     # Another checkpoint chosen: the report's own model, by what it is, its
     # run and its file (the words of its Run → Checkpoint pair) and, in the
     # Result, its fingerprint.
@@ -4935,7 +5176,53 @@ def test_a_past_result_keeps_its_own_identity_after_the_selection_changes(site, 
     # Another workspace's dataset record chosen: the listed workspaces whose
     # dataset record the report measured.
     rows, _cell = shown("copy", LABEL, site.key, {**binding, "record_sha256": "0" * 64})
-    assert rows["Workspace"] == "demo"
+    assert rows["Dataset"].startswith("demo's dataset record")
+
+
+def test_a_result_is_the_selected_workspaces_only_by_the_relation_its_record_holds(
+        site, monkeypatch):
+    """NEW-test-5: the Result said "the selected workspace" whenever the
+    report's dataset record digest was the selected workspace's, so a report
+    measured in another workspace built on the same dataset record was
+    attributed to the selected one. A report records its dataset record,
+    never the workspace it read: the Result says exactly that relation, "the
+    selected workspace's dataset record", and names every other listed
+    workspace holding the same record, the one it was measured in among them;
+    a record no listed workspace holds is said so, with its origin."""
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    reports = tp.read_reports(LABEL)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    demo = tp.find(page["workspaces"], "name", "demo")
+    # A second listed workspace on the same dataset record (a copy of demo),
+    # chosen: the report was measured in demo.
+    workspaces = [*page["workspaces"], {**demo, "name": "demo-copy"}]
+    chosen = tp.selection_of(page, models, binding, "demo-copy", LABEL, site.key)
+    result = tp.result_html(reports, site.run_id, [], selection=chosen, models=models,
+                            workspaces=workspaces)
+    dataset = _identity_rows(result)["Dataset"]
+    assert dataset.startswith(tp.SELECTED_DATASET)
+    assert ("demo holds the same record; the report does not record which workspace was read"
+            in dataset)
+    assert _plain(result).count("the selected workspace") == 1     # only "…'s dataset record"
+    assert "the selected workspace " not in _plain(result).replace(tp.SELECTED_DATASET, "")
+    # Demo chosen: the copy is named the same way.
+    chosen = tp.selection_of(page, models, binding, "demo", LABEL, site.key)
+    rows = _identity_rows(tp.result_html(reports, site.run_id, [], selection=chosen,
+                                         models=models, workspaces=workspaces))
+    assert "demo-copy holds the same record" in rows["Dataset"]
+    # Alone on its record: the relation and nothing more.
+    rows = _identity_rows(tp.result_html(reports, site.run_id, [], selection=chosen,
+                                         models=models, workspaces=page["workspaces"]))
+    assert rows["Dataset"] == tp.SELECTED_DATASET
+    # Another workspace's record chosen, the report's held by no listed
+    # workspace: so, and its origin.
+    other = tp.selection_of(page, models, {**binding, "record_sha256": "0" * 64}, "demo",
+                            LABEL, site.key)
+    rows = _identity_rows(tp.result_html(reports, site.run_id, [], selection=other,
+                                         models=models, workspaces=[]))
+    assert rows["Dataset"].startswith("○ No listed workspace holds its dataset record")
+    assert "synthetic — a generated stand-in" in rows["Dataset"]
 
 
 def test_a_model_not_chosen_is_named_by_its_kind_its_run_and_its_file():
@@ -5013,14 +5300,22 @@ def test_one_screen_says_the_models_fingerprint_once(site, monkeypatch):
         tp.result_html(reports, site.run_id, [], selection=chosen, models=models,
                        workspaces=page["workspaces"])])
     text = _plain(re.sub(r'<details class="[^"]*">.*?</details>', " ", screen, flags=re.S))
-    assert text.count(site.run_id) == 1
-    without_run_id = text.replace(site.run_id, " ")
+    # R-70, BACKLOG 51 (d): the report's run id, which names the model's 12
+    # hex digits again, is one click away (it was the Result's Report row).
+    assert text.count(site.run_id) == 0 and site.run_id in screen
+    without_run_id = text
     assert without_run_id.count(site.sha[:12]) == 1, without_run_id
+    # 51 (b): the version's role once, by its option (no Role row under it);
+    # 51 (c): its counts and exclusions once, Data's, the Result of the
+    # selected version saying its own count ("n of M ranked") alone.
+    option = {value: words for words, value in tp.version_choices(page)}[LABEL]
+    assert f"role {version['role']}" in option and "Role" not in text
+    assert text.count("source cases") == 1 and text.count("excluded") == 1, text
     dataset = tp.find(page["workspaces"], "name", "demo")["dataset_fingerprint"]
     assert without_run_id.count(dataset[:12]) == 1
     assert without_run_id.count(version["manifest_sha256"][:12]) == 1
-    # (The fixture's version role is "demo" too: its Role row, not the workspace.)
-    assert not re.search(r"(?<!Role )\bdemo\b(?!-)", without_run_id), without_run_id
+    # (The fixture's version role is "demo" too: its option's, not the panels'.)
+    assert not re.search(r"\bdemo\b(?!-)", without_run_id), without_run_id
     assert tp.run_header_html() == '<div class="shep-panel-hd"><h2>Run</h2></div>'
     # With a test run of the chosen model on the card (review of B3): the
     # card says its own inputs, once each, a row each, drawn from the job
@@ -5042,3 +5337,211 @@ def test_one_screen_says_the_models_fingerprint_once(site, monkeypatch):
     assert with_card.count(dataset[:12]) == 1
     # Its workspace is one Details › away, not in the screen's text.
     assert not re.search(r"(?<!Role )\bdemo\b(?!-)", card), card
+
+
+# --------------------------------------------------------------------------- in a browser
+#: The Test page drawn in a real browser (Node and Playwright): the page as
+#: it opens (no run since the server started), then a run and its kept
+#: report chosen, at the owner's window, two laptop windows and the stacked
+#: layout: the job's idle line and Cancel, each run option's label and its ⓘ,
+#: and the Result's tile values with their names as drawn and with the first
+#: name made to wrap (`browser.LOOK_JS`'s `tops` and `textBox`).
+_TEST_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
+(async () => {
+  const [base, runWords] = process.argv.slice(2);
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.addInitScript(LOOK_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(),
+                                          null, { timeout: 60000 });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  await idle();
+  await page.click('#shep-tab-research-button'); await idle();
+  await page.click('#shep-page-test-button');
+  await page.waitForSelector('#shep-page-test-button[aria-selected="true"]');
+  await idle();
+  await page.waitForSelector('#shep-test-reports tr[data-key]', { timeout: 60000 });
+  await frames();
+  const out = {};
+  out.idle = await page.evaluate(() => {
+    const cancel = document.querySelector('#shep-test-cancel');
+    return { card: document.querySelector('#shep-test-run').innerText.includes('Latest test run'),
+             cancel: !!cancel && cancel.getClientRects().length > 0,
+             head: document.querySelector('#shep-test-job-head').innerText.trim() };
+  });
+  await page.click('#shep-test-model-run input');
+  await page.locator('[role=listbox] li[role=option]', { hasText: runWords }).first().click();
+  await page.waitForSelector('[role=listbox]', { state: 'detached' }).catch(() => {});
+  await idle();
+  await page.waitForFunction(() => /Model fingerprint/.test(
+    (document.querySelector('#shep-test-model-info') || {}).innerText || ''), null, { timeout: 60000 });
+  await page.click('#shep-test-reports tr[data-key]');
+  await idle();
+  await page.waitForSelector('#shep-test-result-body .shep-rec-tile-v', { timeout: 60000 });
+  out.sizes = {};
+  for (const [w, h] of [[1850, 960], [1536, 864], [1440, 900], [960, 1080]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await frames();
+    out.sizes[`${w}x${h}`] = await page.evaluate(async () => {
+      const look = window.__shepLook, values = '#shep-test-result-body .shep-rec-tile-v';
+      const options = {};
+      for (const id of ['shep-test-record', 'shep-test-deterministic']) {
+        const text = look.textBox(document.querySelector(`#${id} label > span`));
+        const i = document.querySelector(`#${id} .shep-i`).getBoundingClientRect();
+        options[id] = { text, info: { left: Math.round(i.left), top: Math.round(i.top) },
+                        block: Math.round(document.getElementById(id).getBoundingClientRect().right) };
+      }
+      const first = document.querySelector('#shep-test-result-body .shep-rec-tile-l');
+      const named = first.textContent;
+      const tiles = look.tops(values);
+      first.textContent = named + ' over a name long enough to take three lines in its tile';
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const wrapped = { tops: look.tops(values), lines: look.textBox(first).lines };
+      first.textContent = named;
+      return { options, tiles, wrapped,
+               names: [...document.querySelectorAll('#shep-test-result-body .shep-rec-tile-l')]
+                 .map((e) => e.textContent) };
+    });
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_run_options_the_idle_job_and_the_result_tiles_as_drawn(site, monkeypatch, tmp_path):
+    """In a real browser (skipped without Node and Playwright), the page on
+    the site's workspace for an operator:
+
+    - R-81: with no run since the server started, no job card and no Cancel
+      (a 479 x 95 bordered card and a disabled Cancel nothing could use), the
+      foot's one muted line instead;
+    - R-79: each run option's label on one line and its ⓘ right after its
+      words ("Deterministic execution" wrapped to two lines at 1850 x 960 with
+      its ⓘ at the block's right edge, 26 px from the words);
+    - R-71, NEW-test-4: the task's tiles named without the task, which their
+      label says once, and their values on one line at 1850, 1536 and 1440
+      wide, also with a name that wraps to three lines (19-20 px apart at
+      1536 x 864 and 1440 x 900); stacked, two to a row, each row's alike.
+    Fails on 6db401b's page: the idle card and Cancel are drawn, the
+    Deterministic label takes two lines, and a wrapped name drops its value."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import LOOK_JS, QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    parents = tp.model_parents(models)
+    run_words = {value: words for words, value in ml.run_choices(parents)}[
+        ml.item_run_key(parents[site.key])]
+    script = (_TEST_PAGE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__LOOK_JS__", json.dumps(LOOK_JS)))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")], run_words)
+    assert seen["idle"] == {"card": False, "cancel": False, "head": tp.NO_JOB_YET}, seen["idle"]
+    for size, facts in seen["sizes"].items():
+        assert facts["names"] == ["Pooled MRR", "Pooled top-1", "Pooled top-10", "Coverage"]
+        for option, drawn in facts["options"].items():
+            text, info = drawn["text"], drawn["info"]
+            assert text["lines"] == 1, (size, option, drawn)
+            assert 0 <= info["left"] - text["right"] <= 12, (size, option, drawn)
+            assert info["left"] < drawn["block"], (size, option, drawn)
+        assert facts["wrapped"]["lines"] >= 2, (size, facts)
+        for tops in (facts["tiles"], facts["wrapped"]["tops"]):
+            rows = [tops] if size != "960x1080" else [tops[:2], tops[2:]]
+            for row in rows:
+                assert max(row) - min(row) <= 2, (size, tops)
+
+
+#: The job card as the page draws it (`#shep-test-job`, its own
+#: ``js_on_load``), redrawn by the server while a run prints lines, as the
+#: poll's `_job_card_now` redraws it: the reader opens its Details, lines
+#: arrive, the reader closes it, a line arrives, the reader opens it again
+#: and the run ends. Each redraw is waited for by the output it brings.
+_JOB_FOLD_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.goto(base, { waitUntil: 'networkidle' });
+  const card = '#shep-test-job';
+  await page.waitForSelector(card + ' details > summary');
+  const read = () => page.evaluate((c) => {
+    const fold = document.querySelector(c + ' details');
+    const log = document.querySelector(c + ' pre');
+    return { open: fold.open, log: log ? log.textContent : '',
+             shown: !!log && log.checkVisibility(),
+             lead: document.querySelector(c).innerText.includes('Its report was kept') };
+  }, card);
+  const redrawn = (button, words) => page.click(button).then(() => page.waitForFunction(
+    ([c, w]) => document.querySelector(c).textContent.includes(w), [card, words], { timeout: 20000 }));
+  const toggle = () => page.click(card + ' details > summary');
+  const out = {};
+  out.drawn = await read();
+  await toggle(); out.opened = await read();
+  await redrawn('#line', 'scored batch 1'); out.line1 = await read();
+  await redrawn('#line', 'scored batch 2'); out.line2 = await read();
+  await toggle(); out.closed = await read();
+  await redrawn('#line', 'scored batch 3'); out.line3 = await read();
+  await toggle(); await redrawn('#end', 'Its report was kept'); out.ended = await read();
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_job_cards_details_stay_as_the_reader_left_them_while_the_run_prints(tmp_path):
+    """A running test's card is drawn again each time its output gains a line
+    (the poll's `_job_card_now`); Gradio's redraw sets each element's
+    attributes to the new HTML's, so the card's Details ›, which holds the
+    output tail (B52-E), closed under the reader on each new line: opened,
+    then one line later ``{open: false}``. In a real browser (skipped
+    without Node and Playwright), the card with the page's own
+    ``js_on_load``: opened, it stays open as lines arrive and its output
+    shows the new line; closed by the reader, a line leaves it closed; opened
+    again, it stays open when the run ends and its output folds under the
+    lead. Fails on f6b9289's page, whose card has no script: the first line
+    closed it."""
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    demo, _ctx, _registry = _page_component()
+    (drawn,) = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-test-job"]
+    job = {"status": "running", "inputs": {"version_label": LABEL, "device": "cpu"},
+           "log": ["scored batch 0"], "elapsed_seconds": 5}
+
+    def card():
+        return tp.job_body_html(job, [], ("busy", "GPU job: test run"))
+
+    def line():
+        job["log"] = [*job["log"], f"scored batch {len(job['log'])}"]
+        return card()
+
+    def end():
+        job.update(status="completed", exit_code=0, exit_meaning="measured",
+                   outcome={"kept": True, "registered": False, "summary": "Kept."})
+        return card()
+
+    with gr.Blocks() as page:
+        shown = tp.plain_html(card(), elem_id="shep-test-job", js_on_load=drawn.js_on_load)
+        gr.Button("Line", elem_id="line").click(line, outputs=[shown])
+        gr.Button("End", elem_id="end").click(end, outputs=[shown])
+    with served(page) as base:
+        seen = run_node(_JOB_FOLD_JS, tmp_path, base[:-len("gradio_api")])
+    assert seen["drawn"]["open"] is False and seen["opened"]["shown"] is True, seen
+    for step in ("line1", "line2"):
+        assert seen[step]["open"] is True and seen[step]["shown"] is True, (step, seen)
+    assert seen["line2"]["log"].endswith("scored batch 2"), seen
+    assert seen["closed"]["open"] is False and seen["line3"]["open"] is False, seen
+    assert "scored batch 3" in seen["line3"]["log"], seen
+    assert seen["ended"]["lead"] is True and seen["ended"]["open"] is True, seen
+    assert seen["ended"]["shown"] is True and "scored batch 3" in seen["ended"]["log"], seen

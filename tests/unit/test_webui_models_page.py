@@ -61,7 +61,7 @@ import pytest
 
 gr = pytest.importorskip("gradio")
 
-from src.evaluation.caveats import mode_label  # noqa: E402
+from src.evaluation.caveats import metric_text, mode_label  # noqa: E402
 from src.utils.fingerprint import file_sha256  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import models_page as mp  # noqa: E402
@@ -307,6 +307,57 @@ def _words(markup):
     return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", markup)).split())
 
 
+def _sections(markup):
+    """Each ledger record on Models, in order (`record_block_html`'s section)."""
+    return re.findall(r'<section class="shep-mp-rec".*?</section>', markup, flags=re.S)
+
+
+def _rows(section):
+    """A record's rows as the one record rendering draws them
+    (`renderers.record_rows`, R-82): each top-level key of its summary list and
+    its value's words, in order (a value's own lists and tables inside it)."""
+    from html.parser import HTMLParser
+
+    class Rows(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.depth, self.inside, self.rows, self.cell = 0, False, [], None
+
+        def handle_starttag(self, tag, attrs):
+            classes = dict(attrs).get("class") or ""
+            if tag == "dl":
+                self.depth += 1
+                if "shep-rec-rows" in classes:
+                    self.inside, self.depth = True, 1
+            elif self.inside and self.depth == 1 and tag in ("dt", "dd"):
+                self.cell = [tag, []]
+            if self.cell is not None and tag not in ("dt", "dd"):
+                self.cell[1].append(" ")
+
+        def handle_endtag(self, tag):
+            if tag == "dl" and self.inside:
+                self.depth -= 1
+                if self.depth == 0:
+                    self.inside = False
+            elif self.inside and self.depth == 1 and tag in ("dt", "dd") and self.cell:
+                text = " ".join("".join(self.cell[1]).split())
+                if tag == "dt":
+                    self.rows.append([text, None])
+                else:
+                    self.rows[-1][1] = text
+                self.cell = None
+            elif self.cell is not None:
+                self.cell[1].append(" ")
+
+        def handle_data(self, data):
+            if self.cell is not None:
+                self.cell[1].append(data)
+
+    parser = Rows()
+    parser.feed(section)
+    return [tuple(row) for row in parser.rows]
+
+
 #: The controls as the page builds them by default: every task, newest first.
 NEWEST_CTL = {"task": "all", "order": "newest"}
 
@@ -450,7 +501,7 @@ def test_a_disagreeing_value_that_is_not_a_finite_number_leaves_the_record_conte
     (view,) = data["answer"]["records"]
     assert view["contest"]["state"] == "contested"
     readonly_html = mp.contest_html(data["contest"][key_text(record_key(record))],
-                                    mode=mp.record_mode(view),
+                                    mode=r.record_mode(view),
                                     deterministic=view["deterministic_algorithms"])
     assert "runs under these conditions differ — investigate" in readonly_html
     assert "not a finite number (run" in readonly_html
@@ -528,8 +579,11 @@ def test_a_record_of_another_or_no_mode_is_shown_as_recorded(world, monkeypatch)
         text = _text(raw)
         assert label in text
         assert "Mode C" not in text and "Disease" not in _text(without_r10(raw))
-        assert re.findall(r"<th[^>]*>([^<]*)</th>", raw)[1:3] == ["Recorded metrics", "Coverage"]
-        assert '<th scope="col" colspan="2">Recorded metrics</th>' in raw
+        # The one record rendering (R-82): its coverage, then every metric as
+        # recorded as one row, no tiles and no disclosure of them again.
+        (section,) = _sections(raw)
+        assert [key for key, _value in _rows(section)][:2] == ["Coverage", "Recorded metrics"]
+        assert "shep-rec-tile" not in raw and "shep-rec-fold" not in raw
         assert ">not described<" not in raw and "what they are is not described" in text
         for name, value in view["metrics"].items():          # every one, unrounded
             assert f"{name} {json.dumps(value)}" in _words(raw), name
@@ -539,8 +593,8 @@ def test_a_record_of_another_or_no_mode_is_shown_as_recorded(world, monkeypatch)
              "deterministic": True, "record_requested": False}
     row = mp.usage_entry_html(entry)
     assert "Measurement mode not recorded, 3 cases" in _text(row) and "Mode C" not in _text(row)
-    assert ('<details class="shep-mp-fold"><summary>Recorded metrics (1)</summary>' in row
-            and "<details class=\"shep-mp-fold\" open" not in row)
+    assert ('<details class="shep-rec-fold"><summary>Recorded metrics (1)</summary>' in row
+            and "<details class=\"shep-rec-fold\" open" not in row)
     assert "untruncated_mrr 0.5" in _words(row)
     for bad in (None, "", 7):
         shown = _text(mp.usage_entry_html({**entry, "mode": bad}))
@@ -565,17 +619,17 @@ def _kept_c_and_d_records(*more):
 
 
 def _table(raw, mode_label_text):
-    """The records table named for `mode_label_text` (its aria-label), to its
-    own closing tag: a record's R10 table nests inside its detail row."""
-    start = raw.index(f'aria-label="{e("Recorded results, " + mode_label_text)}"')
-    depth, at = 1, start
-    while depth:
-        opens, closes = raw.find("<table", at), raw.index("</table>", at)
-        if 0 <= opens < closes:
-            depth, at = depth + 1, opens + 1
-        else:
-            depth, at = depth - 1, closes + 1
-    return raw[start:at - 1]
+    """The records of the mode `mode_label_text` names: from its label's line
+    (said once above them) to the next mode's, or the block's closing note."""
+    start = raw.index(f'<p class="shep-mp-p"><b>{e(mode_label_text)}.</b>')
+    ends = [at for at in (raw.find('<p class="shep-mp-p"><b>', start + 1),
+                          raw.find('<p class="shep-note">', start + 1)) if at > 0]
+    return raw[start:min(ends)]
+
+
+def _value(markup, key):
+    """The value's words of the first record row named `key` in `markup`."""
+    return dict(_rows(_sections(markup)[0]))[key]
 
 
 
@@ -600,17 +654,17 @@ def test_kept_c_and_d_records_are_shown_as_recorded_by_the_one_display():
     assert f"{c_label}." in block and f"{d_label}." in block
     c_table, d_table = _table(raw, c_label), _table(raw, d_label)
     for table in (c_table, d_table):
-        assert '<th scope="col" colspan="2">Recorded metrics</th>' in table
-        assert ">not described<" not in table and 'class="shep-mp-fold"' not in table
-    c_main = c_table[c_table.index('class="shep-mp-main"'):c_table.index('class="shep-mp-more"')]
+        assert '<dt class="shep-k">Recorded metrics</dt>' in table
+        assert ">not described<" not in table and 'class="shep-rec-fold"' not in table
+    c_main = _value(c_table, "Recorded metrics")
     for line in ("untruncated_mrr 0.5", "hits@1 0.25", "hits@10 0.75", "mean_rank 3.0"):
-        assert line in _words(c_main), line
-    d_main = d_table[d_table.index('class="shep-mp-main"'):d_table.index('class="shep-mp-more"')]
+        assert line in c_main, line
+    d_main = _value(d_table, "Recorded metrics")
     for line in ("post_import_mrr 0.35", "post_import_hits@1 0.2", "coverage 0.7",
                  "reached_mrr 0.5", "reached_mean_rank 2.43", "reached_hits@10 0.9"):
-        assert line in _words(d_main), line
-    assert "Score semantics: raw cosine, no eta mixture and no shortest-path term" in words
-    assert "Score semantics: served:gnn_only:eta=1.0:sp=none" in words
+        assert line in d_main, line
+    assert "Score semantics raw cosine, no eta mixture and no shortest-path term" in words
+    assert "Score semantics served:gnn_only:eta=1.0:sp=none" in words
     for gone in ("approved scorer policy", "Served ranking", "import-eligible)", "reached only",
                  "η =", "served scoring", "MRR (untruncated)", "Mode C metrics", "Mode D metrics",
                  "October 2026", "Diagnosis page", "2.43 ", "reached by"):
@@ -622,9 +676,9 @@ def test_kept_c_and_d_records_are_shown_as_recorded_by_the_one_display():
     # Two D records with different semantics: one table, each its own semantics.
     other = {**views[1], "score_semantics": "served:gnn_plus_shortest_path:eta=0.7:sp=abc"}
     two = mp.records_block_html([views[1], other], {})
-    assert two.count('<table class="shep-tbl shep-mp-rec"') == 1
-    assert "Score semantics: served:gnn_only:eta=1.0:sp=none" in _words(two)
-    assert "Score semantics: served:gnn_plus_shortest_path:eta=0.7:sp=abc" in _words(two)
+    assert two.count(f"<b>{e(d_label)}.</b>") == 1 and len(_sections(two)) == 2
+    assert "Score semantics served:gnn_only:eta=1.0:sp=none" in _words(two)
+    assert "Score semantics served:gnn_plus_shortest_path:eta=0.7:sp=abc" in _words(two)
     assert "η" not in _text(two)
 
     for entry_mode, metrics, n in (("D", {"post_import_mrr": 0.35, "coverage": 0.7}, 56),
@@ -658,12 +712,17 @@ def test_a_records_native_build_is_one_line_of_its_detail():
 
     raw = mp.records_block_html(views, {})
 
-    words = _words(raw)
-    assert raw.count("Native build:") == 3
-    assert words.count("Native build: not recorded") == 2
+    from src.utils.run_environment import native_identity_lines
+
+    # One "Native build" row per record (the one record rendering: a line per
+    # component under its lead, as the Test page shows it).
+    sections = _sections(raw)
+    assert raw.count('<dt class="shep-k">Native build</dt>') == len(sections) == 3
+    native = [dict(_rows(section))["Native build"] for section in sections]
+    assert native.count("not recorded") == 2
     assert native_identity_text(views[2]["native_identity"]) == (
         "local build — pyg_lib 0.8.0 aaaaaaaaaaaa")
-    assert "Native build: local build — pyg_lib 0.8.0 aaaaaaaaaaaa" in words
+    assert " ".join(native_identity_lines(views[2]["native_identity"])) in native
     assert "b" * 12 not in raw
 
 
@@ -691,8 +750,8 @@ def test_a_mode_never_seen_before_is_shown_as_recorded_with_no_list_of_modes():
     assert order == sorted(order), order
     table = _table(raw, label)
     assert "zz_new_metric@7 0.123456789" in _words(table) and "pooled_mrr 0.5" in _words(table)
-    assert "Score semantics: zz: a new score" in _words(table)
-    assert raw.count('<table class="shep-tbl shep-mp-rec"') == 4
+    assert "Score semantics zz: a new score" in _words(table)
+    assert raw.count('<p class="shep-mp-p"><b>') == 4 and len(_sections(raw)) == 4
 
 
 def test_a_task_record_keeps_its_columns_and_shows_every_metric_one_click_away():
@@ -705,16 +764,23 @@ def test_a_task_record_keeps_its_columns_and_shows_every_metric_one_click_away()
     records = _kept_c_and_d_records((registered_report(), "f" * 64))
     view = mp.record_view(records[2])
     raw = mp.records_block_html([view], {})
-    heads = re.findall(r'<th scope="col" class="shep-num">([^<]*)</th>', raw)
-    assert heads == ["Disease pooled MRR", "Disease pooled top-10"]
-    assert "Recorded metrics</th>" not in raw
-    fold = re.search(r'<details class="shep-mp-fold"><summary>Recorded metrics \((\d+)\)'
-                     r'</summary>(.*?)</details>', raw)
+    # Its answer first: the task's tiles (the one record rendering, R-82).
+    # R-71: each tile's name less the task's, which the group's label says once.
+    tiles = re.findall(r'shep-rec-tile-l">([^<]*)<', raw)
+    assert tiles == ["Pooled MRR", "Pooled top-1", "Pooled top-10", "Coverage"]
+    assert all(metric_text("disease", name).lower() == f"disease {tile.lower()}"
+               for name, tile in zip(r.RECORD_TILES["disease"], tiles, strict=True))
+    assert '<dt class="shep-k">Recorded metrics</dt>' not in raw
+    # B52-E: in the record's one "Details ›", with its engineering rows.
+    fold = re.search(r'<dt class="shep-k">Recorded metrics \((\d+)\)</dt>'
+                     r'<dd class="shep-v">(.*?)</dd>', raw)
     assert fold and int(fold.group(1)) == len(DISEASE_METRICS)
+    assert raw.count('<details class="shep-more"><summary>Details ›</summary>') == 1
     assert "macro_precision@3 0.16666666666666666" in _words(fold.group(2))
     assert "pooled_top10 0.75" in _words(fold.group(2))
-    assert "Disease conservative pooled MRR 0.4500" in _text(raw)
-    assert ("Score semantics: disease head: -||z_d - z_P||^2 on L2-normalised projected vectors"
+    assert ("Conservative pooled MRR", "0.4500 an unranked case whose truth can be assessed "
+            "counts 0") in _rows(raw)
+    assert ("Score semantics disease head: -||z_d - z_P||^2 on L2-normalised projected vectors"
             in _words(raw))
 
 
@@ -760,8 +826,8 @@ def test_the_read_only_view_shows_kept_c_and_d_records_and_a_task_record_the_sam
     operator = mp.records_block_html(views, contest)
     assert readonly.replace(f'<p class="shep-note">{e(mp.NO_LOAD_HERE)}</p>', "") == operator
     for text in (mode_label("C"), mode_label("D"), mode_label("disease"),
-                 "Score semantics: served:gnn_only:eta=1.0:sp=none", "untruncated_mrr 0.5",
-                 "post_import_mrr 0.35", "Recorded metrics (", "Disease pooled MRR"):
+                 "Score semantics served:gnn_only:eta=1.0:sp=none", "untruncated_mrr 0.5",
+                 "post_import_mrr 0.35", "Recorded metrics (", "Pooled MRR"):
         assert text in _words(readonly), text
 
 
@@ -777,7 +843,7 @@ def test_a_hostile_metric_name_and_score_semantics_are_literal_text_on_models():
         view = mp.record_view(_kept_c_and_d_records((report, "f" * 64))[2])
         raw = mp.records_block_html([view], {})
         assert hostile not in raw and e(hostile) in raw, mode
-        assert f"{hostile} 0.5" in _words(raw) and f"Score semantics: {hostile}" in _words(raw)
+        assert f"{hostile} 0.5" in _words(raw) and f"Score semantics {hostile}" in _words(raw)
     row = mp.usage_entry_html({"kind": "test_run", "at": "2026-10-27T12:00:00Z", "version": "v",
                                "run_id": "r", "mode": hostile, "metrics": metrics,
                                "n_ranked": 3, "device": "cpu", "deterministic": True})
@@ -850,7 +916,7 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     # its code after it (`renderers.relations_html`; never a chain of short
     # names with the full ones in a title: BACKLOG 72, the ops-wiring round's
     # B3; R-72), in the list whose key column keeps the name on one line.
-    assert '<dl class="shep-kv shep-kv-rel shep-mp-rel">' in records
+    assert '<dl class="shep-kv shep-kv-rel">' in records
     assert ('<dt class="shep-k">Model trained on this graph (R3)</dt><dd class="shep-v">'
             + r.status_mark("ok", "Verified")) in records
     assert "R3 model" not in records
@@ -877,6 +943,131 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     assert "<wbr>" not in records
 
 
+def test_test_and_models_draw_one_record_by_one_rendering_with_no_chain(world, monkeypatch):
+    """R-82, NEW-models-results-1, NEW-test-2: the same report record was drawn
+    by two code paths, Test's summary list and Models' table, which put about
+    24 metrics in one ' · ' chain and 'Environment: … · Dataset: … ·
+    Registered …' in another. Both pages now draw it by the one record
+    rendering (`renderers.record_html`): the same rows in the same order with
+    the same values, but for what only each page knows (the registration's
+    words; the dataset, said by its relation where it is the selected
+    workspace's), metrics and environment facts each a row, no value with
+    more than one ' · ' (the skill's §5)."""
+    from src.webui.components import test_page as tp
+
+    _listing, data = _read(world, monkeypatch)
+    record = next(rec for entry in data["ledgers"].values() for rec in entry.get("records") or [])
+    models = _rows(mp.record_block_html(mp.record_view(record), None))
+    test = _rows(tp._record_html(record, {}, {}))
+    own = ("Dataset", "Registration", "Run id")
+    assert [row for row in models if row[0] not in own] == [
+        row for row in test if row[0] not in own]
+    keys = [key for key, _value in models]
+    for key in ("Coverage", "Conservative pooled MRR", "Pooled top-k", "Score semantics",
+                "Relations", r.R10_TITLE, "Environment", "Device", "Deterministic algorithms",
+                "Native build", "Registration"):
+        assert key in keys, key
+    assert keys.index("Coverage") < keys.index("Environment") < keys.index("Registration")
+    for markup in (mp.record_block_html(mp.record_view(record), None),
+                   tp._record_html(record, {}, {})):
+        for key, value in _rows(markup):
+            assert value.count(" · ") <= 1, (key, value)
+        assert "Environment:" not in _text(markup) and "Dataset:" not in _text(markup)
+
+
+def test_the_records_dataset_is_said_once_by_its_relation(world, monkeypatch):
+    """R-66+B51f, NEW-models-results-3: each record said its dataset's origin
+    three times ('Dataset of every record below: synthetic …', a 'synthetic'
+    chip in its cell, 'Dataset: synthetic' in its environment line): with
+    two records, 'synthetic' six times on one screen. Records that measured
+    the selected workspace's dataset record are said so once, by relation
+    (the workspace line says its origin); records that share another origin
+    say it once above them; only records whose origins differ say their own."""
+    _listing, data = _read(world, monkeypatch)
+    records = [rec for entry in data["ledgers"].values() for rec in entry.get("records") or []]
+    views = [mp.record_view(rec) for rec in records[:2]]
+    assert len(views) == 2 and all(view["dataset_origin"] == "synthetic" for view in views)
+    ours = views[0]["dataset_sha256"]
+    assert r.is_digest(ours)
+    same = [{**view, "dataset_sha256": ours} for view in views]
+    block = mp.records_block_html(same, {}, workspace_dataset=ours)
+    assert mp.RECORDS_WORKSPACE_DATASET in _text(block) and "synthetic" not in _text(block)
+    assert all("Dataset" not in dict(_rows(section)) for section in _sections(block))
+    other = mp.records_block_html(same, {}, workspace_dataset="f" * 64)
+    assert _text(other).count("synthetic") == 1
+    assert "Dataset of every record below: synthetic" in _text(other)
+    mixed = mp.records_block_html([same[0], {**same[1], "dataset_origin": "files"}], {})
+    assert [dict(_rows(section))["Dataset"] for section in _sections(mixed)] == [
+        "synthetic — a generated stand-in, not a clinical knowledge graph",
+        "files — built from identified source files"]
+
+
+def test_the_detail_header_says_what_is_in_use_only_when_it_is_another(world, monkeypatch):
+    """R-67: with no model served, the detail said one fact twice, a grey "not
+    in use" chip and "nothing is in use for diagnosis" on the right. It says
+    the chip alone; the right-hand words appear only where another model is
+    in use (or what is in use could not be read)."""
+    listing, data = _read(world, monkeypatch)
+    key = _key(world, "model-05.pt")
+    nothing = {**listing, "served_sha": None, "status_read": True, "status_problem": None}
+    header = mp.detail_parts(nothing, data, key, NEWEST_CTL)["header"]
+    assert "not in use" in header and "nothing is in use" not in header
+    assert "shep-panel-right" not in header
+    other = {**listing, "served_sha": world["shas"]["model-12.pt"], "status_read": True}
+    header = mp.detail_parts(other, data, key, NEWEST_CTL)["header"]
+    assert "in use for diagnosis: model" in header
+    unread = {**nothing, "status_problem": "the status could not be read"}
+    assert "in use for diagnosis: not read" in mp.detail_parts(unread, data, key,
+                                                               NEWEST_CTL)["header"]
+
+
+def test_an_operators_list_header_says_no_operator_controls(world, monkeypatch):
+    """R-18+R-40+R-75+B68+B72: for an operator on loopback, whose header chip
+    reads 'Operator controls: on (this machine)', the list header still read
+    'listed by the server (operator controls only)'. An operator's header is
+    the list's title alone; "Operator controls only" is said only where D8
+    refuses (the read-only form)."""
+    listing, data = _read(world, monkeypatch)
+    assert not listing.get("refused")
+    header = mp.left_header_html(listing, data)
+    assert "operator controls" not in _text(header).lower() and "🔒" not in header
+    assert header == f'<div class="shep-panel-hd"><h2>{e(mp.list_title(listing))}</h2></div>'
+
+
+def test_a_records_investigation_notes_are_shown_on_models(world, monkeypatch):
+    """B40: a contested record's investigation notes were shown on the Test
+    page only. Models shows its group's notes under the group's state, by the
+    one rendering (`renderers.investigation_notes_html`), the operator's view
+    and the read-only one alike; notes that cannot all be read say so, never
+    "no note is kept"; every value escaped."""
+    from src.api.services.record_states import key_text
+
+    _listing, data = _read(world, monkeypatch)
+    record = next(rec for entry in data["ledgers"].values() for rec in entry.get("records") or [])
+    view = mp.record_view(record)
+    state = {"state": "contested", "differing": ["pooled_mrr"], "runs": [], "problems": [],
+             "notes": [{"who": "<b>Dr A</b>", "at": "2026-11-16T10:00:00Z",
+                        "what": "seed drift <img src=x onerror=alert(1)>"}],
+             "notes_problems": []}
+    block = mp.records_block_html([view], {key_text(view["key"]): state})
+    said = _text(block)
+    assert "Investigation notes (1)" in said and "<b>Dr A</b>" in said
+    assert "2026-11-16 10:00:00 UTC" in said and "seed drift <img" in said
+    assert "<img" not in block and "<b>Dr A" not in block
+    unread = {**state, "notes": [], "notes_problems": [""]}
+    said = _text(mp.records_block_html([view], {key_text(view["key"]): unread}))
+    assert "The investigation notes cannot all be read" in said
+    assert "No investigation note is kept" not in said
+    # An operator's reason names no server path (the one redaction).
+    told = {**state, "notes": [], "notes_problems": [
+        "/srv/secret/reports/notes.jsonl line 2 is not a JSON object"]}
+    said = _text(mp.records_block_html([view], {key_text(view["key"]): told}))
+    assert "line 2 is not a JSON object" in said and "/srv/secret" not in said
+    none = {**state, "notes": []}
+    assert "No investigation note is kept for this group." in _text(
+        mp.records_block_html([view], {key_text(view["key"]): none}))
+
+
 def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, monkeypatch):
     """K8-6e.1 (R3): model-05's ledger holds three records; one loses
     ``n_ranked`` by a hand edit. The segment counts the results and names the
@@ -900,7 +1091,7 @@ def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, mon
         "Recorded results · 2 (1 not readable; 1 where runs differ)", mp.RECORDS)
     assert detail["seg"][0][0].count(" · ") == 1
     said = _words(detail["records"])
-    assert ("▲ 1 record for these weights cannot be read as a result. The ledger keeps it as "
+    assert ("▲ 1 record for these weights cannot be read as a result; it is kept as "
             "written.") in said
     assert (f"Index Registration Report Reason {index} #2 "
             f"{bad['source_artifact_digest'][:12]} n_ranked: missing") in said
@@ -961,7 +1152,7 @@ def test_a_records_r10_is_a_table_with_a_mark_on_each_overlap_and_no_stutter():
     from tests.unit.test_evaluation_sidecar import r10_block
 
     block = r10_block("overlap")
-    html = mp.r10_html(block)
+    html = r.r10_table_html(block)
     cells = r10_cells(html)
     assert list(cells) == ["Training", "Validation"]
     assert set(cells["Training"]) == {"evidence", "Disease overlap", "Phenotype-set overlap"}
@@ -1002,13 +1193,13 @@ def test_a_records_r10_reads_in_its_states_words_never_a_count(version, state,
         "state": state, "path": None,
         "problem": None if state == "not_found" else "... /srv/secret/x_samples.json ..."}
 
-    html = mp.r10_html(block)
+    html = r.r10_table_html(block)
 
     # The one R10 rendering (`renderers.r10_table_html`) under its title: a
     # row per scope with its evidence's state, a cell per label.
     from tests.fixtures.r10_table import cell_text, r10_cells
 
-    assert html.startswith(f'<span class="shep-mp-ln"><b>{r.R10_TITLE}</b></span>')
+    assert html.startswith(f'<table class="shep-r10" aria-label="{r.R10_TITLE}">')
     training = r10_cells(html)["Training"]
     assert training["evidence"] == f"evidence {evidence_words}"
     for column in ("Disease overlap", "Phenotype-set overlap"):
@@ -1161,7 +1352,7 @@ def test_no_record_is_dropped_or_set_apart_for_its_family_dataset_or_cohort(worl
                                      ("Usage history · 2", mp.USAGE),
                                      ("Results", mp.RESULTS)], (order, key)
             for label in blocks:
-                assert detail["records"].count(f'<div class="shep-w600">{label}</div>') == 1
+                assert detail["records"].count(f'<div class="shep-mp-rec-hd"><b>{label}</b>') == 1
                 assert detail["usage"].count(f"<td>{label}</td>") == 1
             said = _text(detail["records"] + detail["usage"]).lower()
             for word in ("not compared", "not comparable", "not ordered", "not tested",
@@ -1249,10 +1440,18 @@ def test_the_ledgers_states_are_said_and_name_no_directory(world, monkeypatch):
     key = _key(world, "model-12.pt")
     assert data["ledgers"][key]["state"] == "not_read"
     detail = mp.detail_parts(listing, data, key, ctl)
-    assert "was not read, so none of its records are shown" in detail["records"]
+    assert ("The recorded results beside this checkpoint cannot be read, so none is shown: "
+            in _text(detail["records"]))
     assert str(world["root"]) not in detail["records"] + detail["top"]
     none = mp.detail_parts(listing, data, _key(world, "model-30.pt"), ctl)
-    assert "No ledger" in none["records"] and "never evaluated" in none["records"]
+    # R-68: a titled state, what it means and one next step; no file named,
+    # never "ledger", and "· 0" nowhere.
+    said = _text(none["records"])
+    assert said.startswith("No recorded result yet") and "never evaluated" in said
+    assert "Next: on the Test page" in said
+    assert "ledger" not in said.lower() and "evaluations.json" not in said
+    assert [label for label, _value in none["seg"]] == ["Recorded results", "Usage history",
+                                                       "Results"]
 
 
 def test_markup_in_a_run_name_is_escaped(world, monkeypatch):
@@ -1560,12 +1759,10 @@ def test_a_task_records_coverage_reads_the_same_on_models_and_on_test(world, mon
               "metrics": {**raw["metrics"], "coverage": 0.8}}
     view = mp.record_view(record)
     assert view is not None and view["mode"] == "disease"
-    said = re.compile(r"(\d+) of (\d+) (?:[a-z-]+ )*cases ranked by the model")
-    models = said.findall(_text(mp.coverage_html(view)))
-    test = said.findall(_text(tp._record_html(record, {}, {})))
-    assert models == test == [("8", "10")], (models, test)
-    assert "13 source cases; 3 excluded at import: ground truth absent 3" in _text(
-        mp.coverage_html(view))
+    models = dict(_rows(mp.records_block_html([view], {})))["Coverage"]
+    test = dict(_rows(tp._record_html(record, {}, {})))["Coverage"]
+    assert models == test == ("8 of 10 import-eligible cases ranked by the model 13 source "
+                              "cases; 3 excluded at import: ground truth absent 3")
 
 
 def test_a_registered_task_record_shows_its_own_named_metrics(world, monkeypatch):
@@ -1586,16 +1783,18 @@ def test_a_registered_task_record_shows_its_own_named_metrics(world, monkeypatch
                                  "0.6000")):
         view = {**base, "mode": task, "metrics": metrics}
         html = mp.records_block_html([view], {})
-        heads = re.findall(r'<th scope="col" class="shep-num">([^<]*)</th>', html)
-        name = {"disease": "Disease", "gene": "Gene", "patients_like_me": "Patients-like-me"}[task]
-        assert heads == [f"{name} pooled MRR", second], heads
+        tiles = re.findall(r'shep-rec-tile-l">([^<]*)<', html)
+        # R-71: the task is named once, by the group's label, not by each tile.
+        assert tiles[0] == "Pooled MRR" and tiles[-1] == "Coverage", tiles
+        assert second.split(" ", 1)[1].capitalize() in tiles or task == "gene", tiles
         assert "0.4123" in html and value in html and "not described" not in html
-        text = _text(html)
-        others = text[text.index(f"{name} coverage"):]
-        order = [others.index(f"{name} {words}") for words in (
-            "coverage", "conservative pooled MRR", "pooled top-1 ", "macro precision@10")]
-        assert order == sorted(order), order
-        assert "import-eligible cases ranked by the model" in text
+        # Its other figures as rows, in E1/E5/E2's order, under the task's name
+        # said once (by its label and tiles).
+        keys = [key for key, _value in _rows(html)]
+        order = [keys.index(words) for words in (
+            "Coverage", "Conservative pooled MRR", "Macro precision@k", "Macro MRR")]
+        assert order == sorted(order), keys
+        assert "import-eligible cases ranked by the model" in _text(html)
     entry = {"kind": "test_run", "at": "2026-10-26T12:00:00Z", "version": "v", "run_id": "r",
              "metrics": {"pooled_mrr": 0.5}, "n_ranked": 3, "device": "cpu",
              "deterministic": True, "record_requested": False, "mode": "gene"}
@@ -1630,13 +1829,15 @@ def test_read_only_shows_the_model_in_use_from_the_ledger_and_opens_no_checkpoin
     assert opens.opens(checkpoint) == 0
     assert opens.opens(checkpoint.parent / "evaluations.json") == 1
     parts = mp.detail_parts(listing, data, None, mp.controls(data, None, None))
-    assert mp.READONLY_TITLE in parts["header"] and "opens no checkpoint" in parts["header"]
+    assert mp.READONLY_TITLE in parts["header"] and "no checkpoint is opened" in parts["header"]
     assert sha in parts["top"] and parts["seg"] is None
     records = parts["records"]
     assert "registered #3" in records and "runs differ #1" in records
-    # each record's determinism, from the environment class the route answers
-    assert 'registered #3</span> <span class="shep-sub">deterministic on</span>' in records
-    assert 'registered #2</span> <span class="shep-sub">deterministic off</span>' in records
+    # each record's determinism, from the environment class the route answers,
+    # a row of its own (the one record rendering, R-82)
+    determinism = [dict(_rows(section))["Deterministic algorithms"]
+                   for section in _sections(records)]
+    assert determinism[:2] == ["on", "off"]
     assert ("runs under these conditions differ: " in records and "investigate" not in records
             and mp.NO_LOAD_HERE in records)
     assert str(world["root"]) not in records and str(world["registry"]) not in records
@@ -2519,7 +2720,9 @@ def test_every_record_is_shown_with_its_run_and_its_groups_description(world, mo
             if r["checkpoint_digest"] == world["shas"]["model-05.pt"]]
     assert len(mine) == 3
     for record in mine:
-        assert f"from run {record['run_id']}, report" in records
+        # The Registration row: its time, then its run and its report each on
+        # a line of their own (never a chain), its sequence its heading's chip.
+        assert f'<div class="shep-sub">from run {record["run_id"]}</div>' in records
         assert f"#{record['registration']['sequence']}" in records
     assert "runs differ #1" in records
     assert "runs under these conditions differ: " in records and "investigate" not in records
@@ -2611,8 +2814,9 @@ def test_a_merged_record_and_a_named_run_show_their_possible_overlap(world):
     html, count, _contested, unreadable = mp._records_for_item(entry, {"contest": {}})
 
     assert (count, unreadable) == (2, 1)
-    assert "from run not recorded, report dddddddddddd" in html
-    assert f"from run {named['run_id']}, report" in html
+    assert ('<div class="shep-sub">from run not recorded</div><div class="shep-sub">report '
+            '<code class="shep-fpv"') in html and 'title="' + "d" * 64 + '">dddddddddddd' in html
+    assert f'<div class="shep-sub">from run {named["run_id"]}</div>' in html
     assert "1 report merged into this record before each run had its own record" in html
     assert "possible overlap with record 2 (not recorded)" in html
     assert "possible overlap with record 1 (not recorded)" in html
@@ -2644,10 +2848,10 @@ def test_records_whose_run_cannot_be_told_are_listed_with_the_boundary_reason(wo
     html, count, _contested, unreadable = mp._records_for_item(entry, {"contest": {}})
 
     assert (count, unreadable) == (1, 1)
-    assert f"from run {named['run_id']}, report" in html
+    assert f'<div class="shep-sub">from run {named["run_id"]}</div>' in html
     assert "from run not recorded" not in html
     said = _words(html)
-    assert "▲ 1 record for these weights cannot be read as a result." in said
+    assert "▲ 1 record for these weights cannot be read as a result;" in said
     assert ("0 #1 " + named["source_artifact_digest"][:12] + " whether it names its run cannot "
             "be told: the file's run-identity boundary (run_identity_from_sequence) cannot be "
             "read (it is missing while the file holds 2 records)") in said

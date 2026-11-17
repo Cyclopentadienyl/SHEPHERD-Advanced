@@ -533,12 +533,13 @@ def test_an_exposure_this_build_cannot_read_never_hides_its_result(change, probl
     reading = __import__("src.api.services.record_views",
                          fromlist=["record_reading"]).record_reading(ledger)
     identity, overlaps = reading[id(ledger["records"][0])]
-    shown = _text(mp.records_table_html([mp.record_view(
+    shown = _text(mp.records_block_html([mp.record_view(
         ledger["records"][0], [identity.run_id, identity.historical, identity.problem,
                                list(overlaps)])], {}))
-    assert "Exposure: exposure not recorded" in shown
+    assert "Exposure exposure not recorded" in shown
     assert f"Its block does not read: {problem}" in shown
-    assert "lp_roc_auc 0.625" in shown
+    # Its metrics in plain names (B72-C2), each as recorded one click away.
+    assert "ROC-AUC 0.6250" in shown and "lp_roc_auc 0.625" in shown
 
 
 @pytest.mark.parametrize("path, own", [
@@ -674,37 +675,38 @@ def test_models_shows_each_kind_by_the_one_display_with_its_exposure():
         identity, overlaps = reading[id(record)]
         views.append(mp.record_view(record, [identity.run_id, identity.historical,
                                              identity.problem, list(overlaps)]))
-    supplied, kg, generated = (_text(mp.records_table_html([v], {})) for v in views)
+    supplied, kg, generated = (_text(mp.records_block_html([v], {})) for v in views)
 
-    # The version column's header names the kind of table: "Cohort version"
-    # for supplied cohorts' records only. (A relation row names its relation
-    # by its full words, "Data version bound to this graph", for every kind:
-    # `renderers.relations_html`, the ops-wiring round's B3.)
-    heads = [re.findall(r'<th scope="col">([^<]*)</th>', mp.records_table_html([v], {}))[0]
-             for v in views]
-    assert heads == ["Cohort version", "Data version", "Data version"]
+    # Each record's heading names its data: a supplied cohort's role, another
+    # kind by its kind and role (`role_text`), never "cohort" for those. (A
+    # relation row names its relation by its full words, "Data version bound
+    # to this graph", for every kind: `renderers.relations_html`.)
+    heads = [_text(re.search(r'<div class="shep-mp-rec-hd">(.*?)</div>',
+                             mp.records_block_html([v], {})).group(1)) for v in views]
+    assert "role " in heads[0] and "A KG edge set (test)" in heads[1]
+    assert "A generated split (val)" in heads[2]
     assert "Train/test overlap (R10) Inputs Disease overlap Phenotype-set overlap" in supplied
     assert "Exposure" not in supplied
-    assert "Data version" in kg and "A KG edge set (test)" in kg
-    assert "Recorded metrics" in kg and "lp_roc_auc 0.625" in kg
-    assert ("Exposure: held out relative to the recorded training and validation graph use"
+    assert "A KG edge set (test)" in kg
+    assert "ROC-AUC 0.6250" in kg and "lp_roc_auc 0.625" in kg
+    assert ("Exposure held out relative to the recorded training and validation graph use"
             in kg)
     assert "Definition kg-lp-exposure/v1; the version's split" in kg
     assert "6 of 6 stored pairs scored" in kg and "8 positive edges" in kg
     assert "positive_edges 8: directed graph-view edges of the role's part" in kg
     assert "R10" not in kg and "cohort version" not in kg.lower().replace("data version", "")
-    assert "A generated split (val)" in generated and "Generation:" in generated
+    assert "A generated split (val)" in generated and "Generation " in generated
     assert "allocation uniform-without-replacement v1 with seed 42" in generated
     assert "5 generated patients of 1 disease" in generated
-    assert "R10" not in generated and "Exposure:" not in generated
+    assert "R10" not in generated and "Exposure " not in generated
     assert "held out" not in generated and "held out" not in supplied
 
     # A train or val result is never named a test result (F2): the table, the
     # segment and the read-only title say "Recorded results" for every kind.
     # Seen in review: a generated val record under "Recorded test results".
     for view in views:
-        markup = mp.records_table_html([view], {})
-        assert 'aria-label="Recorded results, ' in markup
+        markup = mp.records_block_html([view], {})
+        assert 'aria-label="Recorded result on ' in markup
         assert "test result" not in markup.lower()
     assert mp.READONLY_TITLE == "Recorded results of the model in use"
 
@@ -714,7 +716,7 @@ def test_models_shows_each_kind_by_the_one_display_with_its_exposure():
     # research comparison Stage 8b): the Test page's result names it too.
     from src.webui.components.renderers import RENDERER_HELP
 
-    assert 'data-help="kg-exposure"' in mp.records_table_html(views[1:2], {})
+    assert 'data-help="kg-exposure"' in mp.records_block_html(views[1:2], {})
     # The bubble says the caveat's own parts, a line each (the skill's §7
     # budget and §13); the record and the API keep `EXPOSURE_CAVEAT` whole.
     _the_exposure_help_says_the_caveats_own_parts(RENDERER_HELP["kg-exposure"][1])
@@ -722,7 +724,7 @@ def test_models_shows_each_kind_by_the_one_display_with_its_exposure():
     hostile = copy.deepcopy(views[1])
     hostile["exposure"]["definition_version"] = "<b>kg-lp-exposure/v9</b>"
     hostile["exposure"]["reading"] = "<img src=x onerror=alert(1)>"
-    markup = mp.records_table_html([hostile], {})
+    markup = mp.records_block_html([hostile], {})
     assert "<img" not in markup and "&lt;img src=x onerror=alert(1)&gt;" in markup
 
 
@@ -791,11 +793,10 @@ def test_the_test_page_says_a_kg_edge_set_and_a_generated_split_in_their_words()
         view = mp.record_view(ledger["records"][0], [identity.run_id, identity.historical,
                                                     identity.problem, list(overlaps)])
         shown = tp._record_html(record, {}, {})
-        models = mp.kind_html(view)
+        models = mp.record_block_html(view, None)
         for label, value in data_kind_lines(view):
-            assert f'<dt class="shep-k">{label}</dt><dd class="shep-v">{value}</dd>' \
-                in shown, (kind, label)
-            assert f"<b>{label}:</b> {value}" in models, (kind, label)
+            row = f'<dt class="shep-k">{label}</dt><dd class="shep-v">{value}</dd>'
+            assert row in shown and row in models, (kind, label)
     assert "5 generated patients of 1 disease" in generated
     assert "share of the cases measured that were ranked" in generated
     for text in (kg, generated):

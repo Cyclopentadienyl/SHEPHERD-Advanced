@@ -1911,7 +1911,8 @@ head 接受 base 或任何 finetune，量測 KG 邊集合（見下文）。報�
 立即檢查，早於 workspace 與 checkpoint；checkpoint 的模型必須提供協定所需的能力（三種任務協定
 即其 task head），在讀入 checkpoint 後立即檢查。以任務協定量測 base 時，會以該協定的理由被拒絕，
 並指出接受它的協定（"the disease measurement takes a finetune model with the disease head; this
-checkpoint is a base model with no task head. It can be measured by kg_link_prediction."），沒有
+checkpoint is a base model with no task head. It can be measured by KG link prediction. Ref:
+kg_link_prediction."），沒有
 model spec 的 checkpoint（ShepherdGNN 歷史檔）則以紀錄讀取器的
 那一句 "written before the model spec: not readable by this build; start a new run" 被拒絕（自
 K8-7b，2026-11-08 起；過去是「作為歷史檔」被拒絕）。Test 頁傳入操作者選擇的協定（§4.14）。
@@ -2240,12 +2241,17 @@ digest 的紀錄不屬於任何模型，不會列出；整份無法讀取的 led
   相同）與 `no validation inputs recorded` 以文字顯示，**絕不顯示為零或數字**；環境類別（CUDA
   且開或關 deterministic algorithms，或 CPU）與 GPU；dataset 來源（合成 workspace 會特別標出）；
   登錄序號與時間、它的執行，以及在每次執行各有自己的紀錄之前併入它的報告數。
-- 沒有紀錄時改為一句話：載入的 checkpoint 旁沒有 ledger；ledger 未讀取，附原因，原因會指出
-  檔案、絕不指出其目錄（例如下述的 schema 2 檔案）；這個 ledger 沒有這組權重的結果；或 "The
-  loaded model changed while its recorded results were read; refresh the page."。
+- 沒有紀錄時改為依原因的狀態，附標題與下一步（自 ops-wiring 與 UI 回合起，不指出檔案，也絕不說
+  「ledger」）："No recorded result yet"（載入的 checkpoint 旁沒有登錄任何結果）或 "No recorded
+  result for these weights"（旁邊的結果屬於其他權重），兩者都說明這不代表這組權重從未評估過，
+  並說明記錄結果是操作者控制項；"▲ The recorded results beside the model in use cannot be read, so
+  none is shown: <原因>"（原因會指出檔案、絕不指出其目錄，例如下述的 schema 2 檔案）；或 "The
+  loaded model changed while its recorded results were read; refresh the page."。每筆紀錄的群組都
+  顯示其調查註記，取自 route 的回答（`contest.notes`；無法全部讀取時 `contest.notes_readable` 為
+  false，並如此說明）。
 - **共用檢查無法當作結果讀取的紀錄**（不符登錄寫出的形狀，或無法讀取執行身分；自 K8-6e.1 起）
   列在結果之下，沒有結果時則單獨列出：一句附 ▲ 的琥珀色句子（"1 record for these weights cannot
-  be read as a result. The ledger keeps it as written."）與一張表格 Index · Registration · Report ·
+  be read as a result; it is kept as written."）與一張表格 Index · Registration · Report ·
   Reason，各欄取自 route 的 `unreadable_records`（紀錄未以可讀形式帶有的序號或報告 digest 顯示為
   "not readable"）。它們絕不計為結果。
 - **這個 route** 不接受任何參數，每次請求都讀取載入之 checkpoint 旁的 ledger，不寫入任何東西，
@@ -3747,10 +3753,11 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   （結果 registry 的清單，§4.12），依種類與 role 列出，每個選項以標籤開頭、一個 " · "：先是
   supplied cohort（「label · role R」；可排名的案例數是所選版本的細節），接著是 KG 邊集合（「kg-test ·
   KG edge set (test)」），然後是 generated split（「gen-val · Generated split (val)」）；太長的標籤從
-  中間截短，選項的值是完整的標籤。所選版本顯示它的計數（supplied cohort 的 role 與案例；KG 邊集合
+  中間截短，選項的值是完整的標籤。所選版本顯示它的計數（supplied cohort 的案例；KG 邊集合
   的 pair 與邊；generated
-  split 的病人、疾病與 fixture 列，每一項在 **Counts and units** 之下附上其 manifest 記錄的單位；KG
-  邊集合或 generated split 的種類與 role 由選項本身說明，不再重複）、版本 digest，以及它是否對照這個
+  split 的病人、疾病與 fixture 列，每一項在 **Counts and units** 之下附上其 manifest 記錄的單位；版本
+  的種類與 role 由選項本身說明，不再重複，只有過長的 role 在選項中被截短時，supplied cohort 才另以
+  一列寫出其 role）、版本 digest，以及它是否對照這個
   workspace 的圖譜映射（「● Bound to this graph」，或「▲ Mapped against another graph」並在版本旁
   附上它帶來的拒絕「✕ Not measured on this workspace: …」，Start 的原因則指向這裡；不寫在選項中；自
   ops-wiring 回合的 B3 起）。registry 中沒有 KG 邊集合時，其下會有一行指出在機器上匯入它的
@@ -3760,7 +3767,8 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   checkpoint 的選單，每個選項長達 91 個字元）：與 Training 的 Continue… 及 Fine-tune 相同的兩個連動
   選單，run 依名稱或開始時間列出、最新的在前，所選 run 的 checkpoint 依檔案是什麼與訓練到哪裡列出
   （「Latest save · 6 epochs completed」、「Best pooled MRR · 4 epochs completed」），每個選項最多 40
-  個字元，其值是清單的鍵。選擇 run 時會同時選取它的最新存檔；在你選擇 run 之前什麼都不選。選單下方
+  個字元，其值是清單的鍵。選擇 run 時會同時選取它的最新存檔；在你選擇 run 之前什麼都不選，除非
+  workspace 只列出一個 checkpoint 且它可以測試，這時它已被選取（與模型清單選取唯一候選的規則相同）。選單下方
   是所選模型的細節：其紀錄說明它是什麼（Base、Disease、凍結骨幹對照組為「Disease · frozen graph
   backbone」、「Record not readable」）、檔案、Trainer 的驗證數值、模型指紋（12 個十六進位數字，可
   Copy），以及它的資料集與此 workspace 的關係（「the selected workspace's current dataset」，或說明
@@ -3781,26 +3789,33 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   種類只選擇一次（自 research comparison Stage 7 起）：supplied cohort 顯示執行時會尋找的目錄（所選的
   workspace，以及訓練證據資料夾，§4.12），設定被拒絕時以紅色 ✕ 與「Refused:」加上原因
   顯示，並停用 Start；KG 邊集合或 generated split 以灰色 ○ 顯示「Not applicable」與原因（R10 屬於
-  supplied cohort），不論該設定如何，執行都不會取得任何證據目錄。接著是 **Register the result**、
-  **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
-  `SHEPHERD_DEVICE`）。**Start test** 透過 job runner（§4.11）啟動真正的
+  supplied cohort），不論該設定如何，執行都不會取得任何證據目錄。接著是 **Register when the run
+  ends**（登錄這個動作只有一個名稱 Register：Result 的 **Register this report** 之後再登錄已保留的
+  報告）、**Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
+  `SHEPHERD_DEVICE`），各自有自己的 ⓘ。**Start test** 透過 job runner（§4.11）啟動真正的
   `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
   **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
   會在量測之前拒絕。Start 會說明它為何不可用：先說持有 GPU 的是什麼，用 GPU chip 的字眼，
   與 Training 及 Fine-tune 的 Start 說法相同（「Disabled: GPU job: training (job runner).」；在 CUDA
   上服務模型時是「Disabled: GPU: inference (this service); stop it with Stop inference on
-  Diagnosis.」），因為那期間任何選擇都無法讓它可用，然後才是缺少某個選擇或另一個圖譜。工作的標題列顯示其狀態（Running、Completed、紅色的
+  Diagnosis.」），因為那期間任何選擇都無法讓它可用，然後才是缺少某個選擇或另一個圖譜；workspace 已
+  列出 checkpoint 而尚未選擇時為「Disabled: choose the run, then the checkpoint to test.」，這是頁面
+  唯一要求這個選擇的地方。量測的拒絕以白話名稱指稱量測，協定名稱只出現在結尾的「Ref:」（「…which the
+  patients-like-me measurement needs. Import a source that lists causal_genes. Ref:
+  patients_like_me.」）。工作的標題列顯示其狀態（Running、Completed、紅色的
   Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色），以及已經過的時間或以 UTC 表示的結束時間；
-  狀態旁的 **Cancel** 只停止測試執行，從不停止訓練工作。標為「Latest test run」的工作卡片顯示執行收到的輸入（一份
-  清單，每項一列：其版本與模型以它們自己的指紋表示，不論目前選擇什麼；其量測以其報告的用語表示；
-  其以 UTC 表示的開始時間（與報告列命名執行的方式相同）；**Details ›** 之下是其 workspace、Register、
-  Deterministic algorithms、Device 與 R10 證據），以及其輸出的最後 12 行（取消後
-  會收合，其最後一行說明執行已被取消，沒有 traceback；量測拒絕訊息中提到的病患 id 會被略去，
-  D7）。在寬螢幕上，Start、其原因與工作的標題列固定在面板底部、其唯一的捲動區域之下，不論工作內容為何；
-  卡片接在選擇之後，位於該捲動區域內。窄螢幕上，選擇、卡片、Start 與標題列依序排列。執行結束後，卡片顯示 job runner 在執行結束當時從磁碟讀到的結果（標為「When the run
-  ended:」）：是否保留了報告、當時是否已登錄，並附上 job runner 的說明（執行沒有寫出 outcome
-  檔案時為「No report was published …」；取消後說明留下了什麼）。之後才以 Register this report
-  登錄的報告，卡片仍保留執行結束時的狀態，並指向 Result：報告現在的登錄狀態以 Result 為準。頁面顯示時每 5 秒讀取一次工作狀態；剛結束的執行的報告會被選取，
+  伺服器啟動後尚未有測試執行時，它只是一行淡色文字「No test run since the server started.」，也沒有
+  工作卡片。**Cancel** 只在執行進行中時顯示於狀態旁，其他時候不繪出，它只停止測試執行，從不停止訓練
+  工作。標為「Latest test run」的工作卡片先說明結束的執行留下了什麼（「Its report was kept: Result
+  shows it and its registration.」或「No report kept」；失敗的執行則是其第一行錯誤），接著是執行收到的
+  輸入（一份清單，每項一列：其版本與模型以它們自己的指紋表示，不論目前選擇什麼；其量測以其報告的
+  用語表示；其以 UTC 表示的開始時間，與報告列命名執行的方式相同），其餘收在唯一的 **Details ›**
+  之中：其 workspace、Register、Deterministic algorithms、Device 與 R10 證據，job runner 在執行結束
+  當時從磁碟讀到的結果（其說明，路徑已遮蔽；執行沒有寫出 outcome 檔案時為「No report was published
+  …」；取消後說明留下了什麼）、其結束狀態，以及其輸出的最後 12 行（量測拒絕訊息中提到的病患 id 會被
+  略去，D7）。卡片從不說明登錄狀態：登錄狀態只由 Result 依帳本的現況顯示，因此之後以 Register this
+  report 登錄的報告在那裡讀作已登錄，任何地方都不會再顯示「Not registered」。在寬螢幕上，Start、其原因與工作的標題列固定在面板底部、其唯一的捲動區域之下，不論工作內容為何；
+  卡片接在選擇之後，位於該捲動區域內。窄螢幕上，選擇、卡片、Start 與標題列依序排列。頁面顯示時每 5 秒讀取一次工作狀態；剛結束的執行的報告會被選取，
   每次執行只選取一次。頁面重新讀取版本的報告庫期間（工作狀態改變、某個操作或匯入之後）所做的
   選擇，會在那次讀取結束後套用，絕不會被它改回；期間做了多次選擇時，留下的是最後一次。
 - **Result。** 最上方（自 ops-wiring 回合的 B3 起；之前位於 Data）是該版本 report store 的精簡表格
@@ -3817,16 +3832,20 @@ split）上量測模型、保留報告並登錄它。共有三個面板：
   對操作者而言，每一列的登錄狀態都是在所顯示的 workspace 中、持有它所量測權重的已列出 checkpoint
   旁的帳本中檢查，因此尚待登錄的報告無論選取哪一列都顯示「not registered」；其 checkpoint 只列在另一
   個 workspace 的報告，在被選取之前顯示「registration not checked」。表格之下、在面板唯一的捲動區域
-  內，是選取的報告：它屬於什麼，依它與目前選擇的關係說明，相同時讀作「the selected workspace」、
-  「the selected model」、「the selected version」，不同時完整寫出（其模型是什麼、其 run、檔案與指紋，其版本的
-  標籤、role 與指紋，持有它所量測之資料集紀錄的已列出 workspace），因此選擇其他 checkpoint 或版本
-  之後，過去的結果仍保有自己的身分；其 run id 只出現一次。接著以帳本將會保存的紀錄形式、由每種模式
+  內，是選取的報告：它屬於什麼，依它與目前選擇的關係說明：其資料集讀作「the selected workspace's
+  dataset record」（報告記錄它所量測的資料集紀錄，從不記錄它讀取的 workspace，因此持有同一份紀錄的
+  其他已列出 workspace 會寫在其下：「demo-copy holds the same record; the report does not record which
+  workspace was read」）、「the selected model」、「the selected version」，不同時完整寫出（其模型是什麼、其 run、檔案與指紋，其版本的
+  標籤、role 與指紋，持有它所量測之資料集紀錄的已列出 workspace 及其來源），因此選擇其他 checkpoint 或版本
+  之後，過去的結果仍保有自己的身分；其 run id 又寫出模型指紋，因此收在一次點擊之內。接著以帳本將會保存的紀錄形式、由每種模式
   共用的同一種顯示呈現（自 K8-6e.2 起）：
-  任務的方塊與文字指標，每個指標的記錄原文收在一次點擊之內（「Recorded metrics (N)」）；這個版本
+  任務的方塊（名稱不再帶任務名，任務由方塊上方的標籤說一次；名稱換行時數值仍在同一行）與文字指標；這個版本
   未描述的模式（包括已保存的 Mode C 或 Mode D 報告）的報告讀作「Mode <mode> (a measurement mode this
-  version does not describe)」，以一列「Recorded metrics」列出每個指標的記錄名稱與數值；score
-  semantics 依記錄原文顯示；含每一類排除的涵蓋率、每項關係各自一列並寫出全名、以文字表示的 R10（*unverifiable* 從不顯示為 0）、環境、資料集來源，
-  以及是否已登錄（對操作者而言，是在清單中持有它所量測權重的 checkpoint 旁的帳本中檢查）。
+  version does not describe)」，以一列「Recorded metrics」列出每個指標的記錄名稱與數值；涵蓋率（來源案例
+  與排除在畫面上只說一次：所選版本由 Data 說明，其他版本在這裡說明）、每項關係各自一列並寫出全名、以文字表示的 R10（*unverifiable* 從不顯示為 0）、環境，
+  以及是否已登錄，只在那裡說一次（上方不再有「Report kept」標籤）；唯一的 **Details ›** 收著其 run id、依記錄原文的
+  score semantics、裝置、deterministic algorithms、native build，以及（已描述的量測）每個指標的記錄
+  原文（「Recorded metrics (N)」）。對操作者而言，登錄狀態是在清單中持有它所量測權重的 checkpoint 旁的帳本中檢查。
   自 research comparison Stage 8b 起，報告由結果服務與 Models 共用的同一個讀取器讀取（其資料種類的
   結果檢視，不論是否已登錄）：KG 邊集合的 exposure 與 generated split 的生成方式以與 Models 相同的
   幾行說明；讀取器無法讀取的紀錄會附原因顯示（只指名欄位，從不顯示其值），而不當作結果顯示。
@@ -3877,27 +3896,31 @@ Patients-like-me；History 以及它所選的「history」紀錄已於 K8-7b，2
 檔案只列在 All 之下）。Workspace 選單的選項是名稱；選單下方列出一次所選
 workspace 的資料集識別（建置時間、資料集指紋、`synthetic`、紀錄的狀態），因此即使選單截斷了很長的
 workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，最新的在前，來自 workspace 的 `runs/`
-之下的每一個目錄，不論其名稱（自 K8-7b 起）。各欄：
+之下的每一個目錄，不論其名稱（自 K8-7b 起），畫成 Diagnosis 分頁的抽屜也使用的同一棵 **run 樹**
+（自 ops-wiring 與 UI 回合的 T05 起）：
 
-- **Model**：先說明檔案是什麼（Base、Disease、Gene、Patients-like-me、「Record not readable」或
-  無法讀取的檔案的「Record unknown」；沒有 model spec 的檔案為「Record not readable」，附上
-  "written before the model spec: not readable by this build; start a new run"，自 K8-7b 起不再是
-  「History · never run」），然後是每個頁面命名 run 所用的同一套字眼（自 ops-wiring 回合的 B3 起：
-  其名稱，接著是目錄的版面名稱，`gatv2` 寫成「GATv2」，它是位置，不是架構，架構由紀錄指明，以及開始
-  時間；未命名的 run 以開始時間開頭）、檔案訓練到哪裡（「6 epochs completed」，舊檔案為「recorded
-  epoch 5」）；正在提供服務的 checkpoint 標示 **In use (Diagnosis)**（以完整的模型指紋比對）；
-- **Fingerprint**：只有模型指紋（checkpoint 的 SHA-256 的前 12 個十六進位數字；自 ops-wiring 回合的
-  B3 起，之前是「Fingerprints: model · dataset trained on」）。資料集只在 workspace 選單下方說明一次：
-  在 workspace 目前資料集以外的資料上訓練的列，在這裡顯示「▲ Another dataset」（由已列出的
-  synthetic workspace 持有時另有琥珀色的 `synthetic`），沒有記錄資料集的列顯示「○ Dataset not
-  recorded」；
-- **Validation (Trainer)**：Trainer 自己在 val 樣本上的數值，也就是訓練用來挑選 checkpoint 的
-  指標，數值下方寫出它的名稱（base 為 LP accuracy，任務模型為 pooled MRR），不論檔案的紀錄如何，
-  都從檔案的 logs 讀取；logs 兩者皆無時為無，沒有 model spec 的檔案即是如此，它的 `val_mrr` 不會
-  被讀取（自 K8-7b 起不再顯示歷史檔前 20 名的 MRR；其原始數值仍留在檔案中，明細寫「Validation
-  (Trainer): not read (record not readable)」）。它從來不是測試結果，也從不與測試結果放在同一欄；
-- **Recorded results**：checkpoint 旁的 ledger 所記錄的內容，以狀態顯示（「none in ledger」、「no
-  ledger」、「3 · runs differ for 1」……），從不顯示某個結果的數值。
+- **每個 run 自成一列**，先以每個頁面命名 run 所用的同一套字眼命名（其名稱，接著是目錄的版面名稱，
+  `gatv2` 寫成「GATv2」，它是位置，不是架構，架構由紀錄指明，以及開始時間：「smoke-ft · GATv2
+  2026-10-17 09:15」；未命名的 run 以開始時間開頭），然後是它的檔案是什麼（Base、Disease、Gene、
+  Patients-like-me、「Record not readable」或「Record unknown」；沒有 model spec 的檔案為「Record not
+  readable」，附上 "written before the model spec: not readable by this build; start a new run"）、
+  以字詞寫出的 operation（New run、Branch、Extend、「Fine-tune, full」、「Fine-tune, frozen」或
+  「Fine-tune, partly frozen」）、已完成的 epoch 與儲存了幾個檔案。它的 ▸ 按鈕或在該列上點一下，會
+  收合或展開它的檔案；最新的幾個 run 是展開的，較舊的在「Show older runs (n)」之後；
+- **每個檔案是其 run 之下的一列**，說明它是什麼（「Latest save」、「Best pooled MRR」、top-k 儲存）與
+  訓練到哪裡（「6 epochs completed」，舊檔案為「recorded epoch 5」），並附模型指紋（checkpoint 的
+  SHA-256 的前 12 個十六進位數字）。資料集只在 workspace 選單下方說明一次：在 workspace 目前資料集
+  以外的資料上訓練的檔案，在其列中顯示「▲ Another dataset」（由已列出的 synthetic workspace 持有時
+  另有琥珀色的 `synthetic`），沒有記錄資料集的顯示「○ Dataset not recorded」。正在提供服務的檔案標示
+  **In use (Diagnosis)**（以完整的模型指紋比對）；
+- **Search** 依名稱找 run，或依模型指紋開頭的十六進位數字找檔案；搜尋結果之外的選取會在清單外說明，
+  並提供 Clear search；
+- 無法讀取的檔案仍是一列灰色的列，寫出其狀態與原因（「Metadata not readable: the file cannot be read
+  as a checkpoint; cannot be loaded」，從未開啟的項目則為「Not read」）。它可以像其他列一樣被選取
+  （自 ops-wiring 與 UI 回合起）：細節區寫出完整的原因與載入器的參照，Load 保持停用，旁邊寫出其狀態。
+
+Trainer 的驗證數值（訓練用來挑選 checkpoint 的指標，在 val 樣本上）與已記錄的結果屬於所選檔案的
+細節（見下），從不是清單的一欄，Trainer 的數值也從不與測試結果放在同一處。
 
 **列出清單會開啟該 workspace 的每一個 checkpoint**，因此清單是操作者控制項（§4.13）。
 自 M5-3 起，伺服器對每個 checkpoint 檔案只讀一次，檔案改變時（依其裝置、inode、大小、修改與
@@ -3910,8 +3933,13 @@ workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，�
 紀錄附上 `deterministic_algorithms`；CPU 紀錄單憑 environment class 看不出來）。那裡沒有 Trainer 的
 驗證數值，也沒有 Load。
 
-**Order: Newest first | By family。** By family（自 K6 起）每個 family 一組，parent 在前，並有
-Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試分數排序已在 K8-6d 退役，連同它的角色設定、
+**Order: Newest first | By family。** By family（自 K6 起）每個 family 一組，其 run 畫成一棵
+血統樹（自 ops-wiring 與 UI 回合的 T05 起；之前的 Lineage 欄已移除）：每個 run 放在其檔案所記錄的
+確切 parent 檔案所屬的 run 之下（以 SHA-256 比對，從不依名稱或時間猜測），依深度縮排，並以字詞
+寫出 operation；任務的 base 保留為脈絡 run；在另一個 workspace 或未列出的 parent 會寫在該 run 上
+（「Parent in workspace …」、「▲ parent unavailable: …」），細節區則指出它（「Parent: 4eebdf797543 of
+run demo-disease · 2026-11-16 20:43; listed here」）。同一 run 的兩個檔案是一個 run，從不被當成兩個
+operation。沒有任何排列方式依測試分數為模型排名：依測試分數排序已在 K8-6d 退役，連同它的角色設定、
 它的 Mode C 規則與每個 checkpoint 只取一筆紀錄的規則。每一筆紀錄都仍可在下方的細節區讀取，系統也從不
 依測試分數自動選擇模型。
 
@@ -3922,26 +3950,42 @@ Copy）、它的檔案（標題說的是它的 run，同一 run 的兩個檔案�
 三個分段：
 
 - **Recorded results**（research comparison Stage 6 之前為 "Recorded test results"）：ledger 為這組
-  權重記錄的每一筆紀錄，不論資料種類與 role，各以其版本的種類與 role 命名（KG 邊集合的紀錄附其
-  exposure；其區塊無法讀取時為 "exposure not recorded" 並附原因），每種量測模式各一張表，依首次出現的
-  順序排列，各自在該模式的標籤（任務另有說明）之下，由每種模式共用的同一種顯示呈現（自 K8-6e.2 起；
-  在此之前先列 Mode C 的紀錄，再列 Mode D 的，各有自己的標籤）。每一列有 cohort version 與其角色；
-  任務的 pooled MRR 與第二個指標（表頭寫出全名），或者對這個版本未描述的模式（包括已保存的 Mode C 或
-  Mode D 紀錄），以一欄「Recorded metrics」列出每個指標的記錄名稱與數值、不四捨五入；列出每一項排除
-  的涵蓋率；以及 `registered #N`，或
-  `runs differ #N` 附「runs under these conditions differ」與不同之處（中性；只有當該群組記錄
-  deterministic algorithms 開啟、執行本應一致時，才以琥珀色加 ▲ 與「— investigate」標出），或「comparison
-  incomplete」（從不顯示為一致）、deterministic 開或關、在每次執行各有自己的紀錄之前併入它的報告
-  （若有），以及這種紀錄與具名執行之間的「possible overlap with record N (not recorded)」；接著是
-  每項關係各自一列並寫出全名（「R3 model trained on this graph: ● Verified」；自 ops-wiring 回合的
-  B3 起）、任務紀錄的其他文字指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、依記錄
-  原文的「Score semantics: …」、任務紀錄收在「Recorded metrics (N)」之後的每個指標原文、執行環境、
-  資料集，以及附上其執行的登錄資訊（在每次執行各有自己的紀錄之前寫入的紀錄為「not recorded」）。
+  權重記錄的每一筆紀錄，不論資料種類與 role，依量測模式分組、依首次出現的順序排列，每種模式的標籤
+  （任務另有說明）在其紀錄上方只出現一次（自 K8-6e.2 起每種模式共用同一種顯示）。**每一筆紀錄都以
+  Test 頁顯示保存報告的方式、由同一個紀錄呈現函式畫出**（自 ops-wiring 與 UI 回合起；在此之前
+  Models 畫成表格的一列，其細節以「 · 」串起約 24 個指標，以及「Environment: … · Dataset: … ·
+  Registered …」）：標題寫出其資料版本（標籤，接著是 role，KG 邊集合或 generated split 則寫種類與
+  role，以及版本指紋）與 `registered #N`，或 `runs differ #N` 附「runs under these conditions
+  differ」與不同之處（中性；只有當該群組記錄 deterministic algorithms 開啟、執行本應一致時，才以
+  琥珀色加 ▲ 與「— investigate」標出），或「comparison incomplete」（從不顯示為一致），並附上該群組
+  的調查註記，與 Test 頁列出的相同（誰、何時、發現什麼；無法讀取時寫「The investigation notes cannot
+  all be read …」，從不寫「no note is kept」；自同一回合起）。接著是任務的答案，以四個數值呈現
+  （pooled MRR、兩個截斷值與 coverage，名稱不帶任務名，由群組標籤說一次，各取四位小數，並說明其計算範圍，
+  數值在同一行），然後是它的各列，每列一個
+  事實，從不串連：涵蓋率（先寫它計算了什麼，下方再寫來源案例與匯入時的排除）；任務的其他數值
+  （附說明的 conservative pooled MRR、每個截斷值家族依 k 寫成一列、macro 與 best-positive MRR）；
+  KG link prediction 的指標以白話名稱呈現（「Accuracy (raw > 0)」、「ROC-AUC」、「Average
+  precision」、「Loss (the LP head's hinge)」），各取四位小數，單位與分母在其下方只寫一次，或為
+  「Not computable」；其他模式的每個指標依記錄原文寫成一列（包括已保存的 Mode C 或 Mode D 紀錄）；
+  各項關係各自一列並寫出全名（「Model trained on this graph (R3)
+  ● Verified」）；supplied cohort 的 R10 以表格呈現（*unverifiable* 是一個原因，從不是 0），或
+  KG 邊集合的 exposure 與其來源，或 generated split 的產生方式；KG 邊集合或 generated split 的計數
+  及其單位收在一次點擊之內；執行環境；以及
+  登錄資訊（時間、來自哪個執行、其報告；在每次執行各有自己的紀錄之前寫入的紀錄為「not recorded」，
+  併入它的報告與它和具名執行之間可能的重疊）。其下唯一的 **Details ›** 收著它如何計算與執行：依記錄
+  原文的 score semantics、裝置、deterministic algorithms 開或關、native build，以及任務與 KG link
+  prediction 的每個指標原文（「Recorded metrics (N)」），不四捨五入，與每一份匯出相同。**資料集只說一次，以其關係說明**：
+  是 workspace 的資料集時寫「Every record below measured the selected workspace's dataset.」（其來源
+  由 workspace 選單下方那一行說明），紀錄共用其他來源時在紀錄上方寫一次，只有來源不同時才逐筆寫出。
   每一筆紀錄都會顯示，這些描述不會隱藏或排除任何紀錄。這組權重中無法當作結果讀取的紀錄（自
-  K8-6e.1 起）絕不顯示為結果、也不算作結果：表格下方是 "▲ 1 record for these weights cannot be read
-  as a result. The ledger keeps it as written." 與一張小表 Index · Registration · Report · Reason
-  （它未以可讀形式帶有的序號或報告 digest 顯示為 "not readable"）；此時分頁標籤為 "Recorded
-  results · 3 (1 not readable)"。唯讀檢視列出同樣的項目，取自該 route；
+  K8-6e.1 起）絕不顯示為結果、也不算作結果：紀錄下方是 "▲ 1 record for these weights cannot be read
+  as a result; it is kept as written." 與一張小表 Index · Registration · Report · Reason（它未以可讀
+  形式帶有的序號或報告 digest 顯示為 "not readable"）；此時分頁標籤為 "Recorded results · 3 (1 not
+  readable)"。沒有紀錄時，分段依原因說明並給出下一步，不指出任何檔案（「No recorded result yet」：
+  此 checkpoint 旁沒有登錄任何結果，這不代表這組權重從未評估過；「Next: on the Test page, choose this
+  model and start a test with Register when the run ends checked」；唯讀檢視則說明記錄結果是操作者控制項），沒有
+  東西可計數的分段名稱不顯示「· 0」。唯讀檢視列出同樣的項目，取自該 route，包括群組的註記（其回答中
+  的 `contest.notes`、`contest.notes_readable`）；
 - **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目，最新的在前：
   測試執行與登錄，以及 K8-6d 之前留下的模型載入，依其記錄內容顯示（「ordered by」加上它記錄的指標名稱，
   以及它的 scoring semantics）。測試執行讀作任務在已排名案例上的第一個指標，或其他模式的標籤與案例數，
@@ -3966,11 +4010,19 @@ Copy）、它的檔案（標題說的是它的 run，同一 run 的兩個檔案�
   exposure（KG 邊集合的讀法，supplied cohort 的 R10 收在一次點擊之內；generated split 的關係是其分配
   方式的，不做比較）以及執行環境。每個無法讀取的項目都附原因列在表格下方，不受範圍與篩選影響。
   **Compare** 將 **Chosen results** 中的前五個並排，每個結果一欄、欄首寫出其名稱與協議，預設開啟
-  **Differences only**：結果、模型（stage、task、operation、parent、family、encoder、與參考配方的關係、
+  **Differences only**，關鍵的組別在前：結果、模型（stage、task、operation、parent、family、encoder、與參考配方的關係、
   能力與每個 spec 值；stage、encoder 的種類與 task 只在模型自己的列中出現一次，不再出現在 spec、能力或訓練
   設定之下）、記錄的與實際生效的訓練設定以及 weight transfer 與 loss identity（同一 base 的兩組可在此
   核對是否從相同的下游權重開始）、資料的識別與 role、量測、執行環境、exposure 與每個指標，皆依記錄原文，
-  每一組只出現一次。每一列以字詞命名（指標依表格的名稱，學習設定依 Training 頁的標籤；紀錄中的鍵放在該列的 title），巢狀設定的每個項目各成一列，
+  每一組只出現一次，順序為結果、模型、資料與指標，然後是訓練設定、量測、執行環境、exposure 與內容參照
+  （自 ops-wiring 與 UI 回合起）。**Differences only 只比較一列所適用的格子**：其他協議的指標與其他
+  資料種類的欄位不算差異，因此這樣的列也會隱藏，並另外計數（「… that apply to one result only」）。
+  **每個事實只出現一次**（自同一回合起）：兩個欄位在每一欄都記錄相同的事實（例如樣本的 digest 同時在
+  資料識別與其內容參照中，KG 邊集合的 pairs 數同時在其識別與計數中，loss 權重同時是學習設定與 loss
+  identity 的一項）時，只在第一個顯示，後面那一列寫「same as <第一列>」；parent 與 family 的訓練 run
+  以 run 的字眼寫出（「probe-base · 2026-11-10 11:05」），run id 放在提示中。很長的值（配方來源、
+  spec 或能力的 JSON）在打開之前只佔一行，其摘要從該列各值共同的開頭之後開始（「…disease run_*.sh
+  script…」）；值只在空白處或其自身的分隔符號（/、_、@）之後換行，從不在一個 token 中間斷開。每一列以字詞命名（指標依表格的名稱，學習設定依 Training 頁的標籤；紀錄中的鍵放在該列的 title），巢狀設定的每個項目各成一列，
   因此其中的差異自成一列。不計算任何差值，每一列指標只屬於一個協議（其他協議的結果在該列讀作
   「another protocol」）。每種缺值各有其字詞：沒有來源的欄位讀作「Unknown」並附原因（每個欄位只寫一次
   原因：其餘各列讀作「Unknown」，原因放在其提示中；除非其他欄在該列不同，**Differences only** 會隱藏
@@ -3985,7 +4037,9 @@ Copy）、它的檔案（標題說的是它的 run，同一 run 的兩個檔案�
 
 **Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
 細節區，不論視窗多矮，它的按鈕都留在表格下方的可見範圍內；按 Close 回到細節區，且仍選取同一個
-checkpoint）。對 base 以及紀錄無法讀取的檔案，它在讀取任何東西之前就是停用的，原因寫在旁邊（沒有
+checkpoint）。選取了它可以提供服務的一列之後，旁邊會以白話說明它的作用（「Serves this model for
+diagnosis once you confirm the change. Results already recorded keep the model they were made
+with.」）；選取之前什麼也不寫。對 base 以及紀錄無法讀取的檔案，它在讀取任何東西之前就是停用的，原因寫在旁邊（沒有
 model spec 的檔案為「Record not readable: written before the model spec: not readable by this
 build; start a new run.」）。Load 不會寫入任何使用紀錄。頁面在顯示時、更換 workspace 時以及
 每一次 Load 之後讀取，
@@ -4096,7 +4150,8 @@ data.pyg.org 沒有 aarch64 wheel，所以由選單或 `PYG_ARM_STRATEGY` 在預
   PyG 在某個運算是否實際使用了某個擴充並未被觀測，記為未知。不記錄本機上的任何路徑，也不記錄
   wheel、函式庫或發行版資產（release asset）的檔名（由它們的 SHA-256 識別）；所要求來源的 URL
   會去除使用者名稱、密碼、查詢字串與片段後保留。Models 與 Test 頁面以「Native build」顯示這個身分：
-  Models 為一行，Test 頁面每個元件一行；在此之前寫入的紀錄顯示「not recorded」。每個元件紀錄中的
+  先一行概要，再每個元件一行，兩頁相同（自 ops-wiring 與 UI 回合起由同一個紀錄呈現函式畫出）；在此之前
+  寫入的紀錄顯示「not recorded」。每個元件紀錄中的
   所有事實（包括各狀態、fallback 原因與來源事實）也會出現在 API 的紀錄檢視（`components`）、結果查詢、
   Models › Results 的 Compare（每個事實一列）與匯出中（自審查修正 RC-P2-1 起）。這適用於
   每一條安裝路徑，包括 Linux 索引路徑與 `deploy.cmd`；只有收據是兩條 ARM 路徑才有的。

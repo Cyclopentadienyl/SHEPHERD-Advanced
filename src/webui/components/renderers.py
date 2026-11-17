@@ -43,14 +43,18 @@ from src.evaluation.caveats import (
     EXPOSURE_NOT_PROVEN,
     EXPOSURE_SCOPE,
     GENERATED_EXPOSURE_NOTE,
+    LP_METRIC_WORDS,
     R10_LABEL_TEXT,
     RELATION_DISPLAY_NAMES,
     R10_STATE_TEXT,
     R10_UNVERIFIABLE_REASON,
     TASK_NAMES,
     exposure_text,
+    metric_text,
+    recorded_metric_lines,
     recorded_value_text,
 )
+from src.utils.run_environment import native_identity_lines
 from src.utils.run_plan import recorded_frozen_parts
 from src.webui.components.help import copy_button, help_button
 
@@ -507,6 +511,16 @@ def _get(item: Any, name: str, default: Any = None) -> Any:
     if isinstance(item, Mapping):
         return item.get(name, default)
     return getattr(item, name, default)
+
+
+def _dig(item: Any, *names: str) -> Any:
+    """``item[a][b]…`` through mappings, None where a step is not one (the
+    one reader's views are plain JSON; a field may be absent or not read)."""
+    for name in names:
+        if not isinstance(item, Mapping):
+            return None
+        item = item.get(name)
+    return item
 
 
 def clock_utc(moment: Optional[datetime], *, seconds: bool = True) -> Optional[str]:
@@ -1609,9 +1623,47 @@ def details_list(rows: Iterable[Tuple[str, str]], *,
     §1.5: low-priority detail one click away, one level, never inside another
     disclosure or a popover): a closed ``<details class="shep-more">`` over
     `summary_list`'s rows (`titles` and `classes` as there), wherever a line
-    names a few of many (`named_words`) and the rest are one click away."""
+    names a few of many (`named_words`) and the rest are one click away.
+    Where the server draws it again while it is read (a poll), its
+    ``gr.HTML`` takes `KEEP_OPEN_JS`."""
     return ('<details class="shep-more"><summary>Details ›</summary>'
             f'{summary_list(rows, titles=titles, classes=classes)}</details>')
+
+
+#: **Disclosures as the reader left them, across redraws**: the
+#: ``js_on_load`` of a ``gr.HTML`` the server draws again while it is read
+#: (the Test page's job card, redrawn by its poll as a run prints). Gradio
+#: 6.30 redraws HTML in place and sets each element's attributes to the new
+#: HTML's, so a ``details`` the reader opened (`details_list`'s, drawn
+#: closed) closed again on each redraw. The reader's own open or close (a
+#: click on its summary; Enter and Space send one) is kept by the summary's
+#: words and its place among the disclosures with those words, and put back
+#: after each redraw for the life of the page.
+KEEP_OPEN_JS = r"""
+var chosen = {};
+function words(d) {
+  var s = d.querySelector(':scope > summary');
+  return s ? s.textContent : '';
+}
+function keyOf(d) {
+  var all = element.querySelectorAll('details'), mine = words(d), n = 0;
+  for (var i = 0; i < all.length && all[i] !== d; i++) { if (words(all[i]) === mine) { n++; } }
+  return mine + '\u0000' + n;
+}
+element.addEventListener('click', function (e) {
+  var s = e.target.closest ? e.target.closest('summary') : null;
+  var d = s ? s.parentElement : null;
+  if (d && d.tagName === 'DETAILS' && element.contains(d)) { chosen[keyOf(d)] = !d.open; }
+});
+function keep() {
+  element.querySelectorAll('details').forEach(function (d) {
+    var want = chosen[keyOf(d)];
+    if (want !== undefined && d.open !== want) { d.open = want; }
+  });
+}
+new MutationObserver(keep).observe(element, {childList: true, subtree: true, attributes: true,
+                                             attributeFilter: ['open']});
+"""
 
 
 def named_words(named: Sequence[str], shown: int) -> str:
@@ -2097,6 +2149,8 @@ R10_HELP = (
     "- Sets ignore order and repeats, so the scoring inputs may differ.\n"
     "Ref: R10",
 )
+#: The R10 table's ⓘ, wherever a recorded result shows it (`record_html`).
+RENDERER_HELP["record-r10"] = R10_HELP
 
 
 def r10_table_html(r10: Any) -> str:
@@ -2134,7 +2188,7 @@ def r10_table_html(r10: Any) -> str:
             f'<tbody>{"".join(rows)}</tbody></table>')
 
 
-def data_kind_lines(view: Mapping[str, Any]) -> list:
+def data_kind_lines(view: Mapping[str, Any], *, version_counts: bool = True) -> list:
     """**The one rendering of what a result's data kind adds** (research
     comparison Stages 6 and 8b), as ``(label, escaped HTML)`` rows, from the
     one reader's view of a record (`record_views`: a ledger record's record
@@ -2145,7 +2199,9 @@ def data_kind_lines(view: Mapping[str, Any]) -> list:
     - a KG edge set's exposure in this build's words (`caveats.exposure_text`,
       the ⓘ saying `EXPOSURE_CAVEAT`'s points) and its source (definition version and
       split, or why its block does not read: fields named, never values), its
-      message-passing graph and pairs, and each metric that could not be
+      message-passing graph and pairs (their counts, the version's own, left
+      out with `version_counts` False, where the page says them for this very
+      version: `record_rows`, R-70), and each metric that could not be
       computed, as a status;
     - a generated split's generation identity, its split manifest and gene
       fixture, and how it stands to a model's training
@@ -2168,11 +2224,13 @@ def data_kind_lines(view: Mapping[str, Any]) -> list:
                     f"allocation {allocation.get('algorithm')} v"
                     f"{allocation.get('algorithm_version')} with seed {allocation.get('seed')}")
         record = fixture.get("record") if isinstance(fixture, Mapping) else None
-        kept = (f"gene fixture {short_hex(_get(record, 'sha256'))}"
-                if isinstance(fixture, Mapping) else "no gene fixture kept")
+        kept = ("gene fixture " + fingerprint_value(_get(record, "sha256"),
+                                                    what="gene fixture fingerprint", copy=False)
+                if isinstance(fixture, Mapping) else e("no gene fixture kept"))
         return [("Generation", e(identity)),
-                ("Split manifest", f"<code>{e(short_hex(_get(manifest, 'sha256')))}</code>; "
-                                   f"{e(kept)}"),
+                ("Split manifest", fingerprint_value(_get(manifest, "sha256"),
+                                                     what="split manifest fingerprint",
+                                                     copy=False) + f"; {kept}"),
                 ("Training relation", e(GENERATED_EXPOSURE_NOTE))]
     if kind != "kg_edges":
         return []
@@ -2190,7 +2248,10 @@ def data_kind_lines(view: Mapping[str, Any]) -> list:
     pairs = cohort.get("pairs") if isinstance(cohort.get("pairs"), Mapping) else {}
     graph = (f"Message passing over the split's {passing.get('part')} part, "
              f"{recorded_count_text(passing.get('edges'))} edges; pairs {pairs.get('rule')} "
-             f"with seed {pairs.get('seed')}, {recorded_count_text(pairs.get('rows'))} rows")
+             f"with seed {pairs.get('seed')}, {recorded_count_text(pairs.get('rows'))} rows"
+             if version_counts else
+             f"Message passing over the split's {passing.get('part')} part; pairs "
+             f"{pairs.get('rule')} with seed {pairs.get('seed')}")
     measured = _get(view, "measured")
     statuses = measured.get("metrics") if isinstance(measured, Mapping) else None
     not_computed = [str(name) for name, status in (statuses or {}).items()
@@ -2199,10 +2260,462 @@ def data_kind_lines(view: Mapping[str, Any]) -> list:
              + help_button("kg-exposure", "Exposure (KG edge sets)")),
             ("Exposure source", e(source)),
             ("Graph and pairs", e(graph))]
-    if not_computed:
+    # A KG link-prediction record says each metric's status in its own row
+    # (`record_figure_rows`), so the list of the ones not computed is said
+    # only for a record of another mode.
+    if not_computed and _get(view, "mode") != LP_MODE:
         rows.append(("Not computable", e(", ".join(not_computed))
                      + " (a status, never a number)"))
     return rows
+
+
+# ---------------------------------------------------------------------------
+# One recorded result (R-82): the record the Test page and Models both draw
+# ---------------------------------------------------------------------------
+#: The KG link-prediction measurement's mode (`caveats.MEASUREMENT_NAMES`).
+LP_MODE = "kg_link_prediction"
+#: What a dataset record's origin means (the Diagnosis panel's words).
+ORIGIN_MEANING = {
+    "synthetic": "a generated stand-in, not a clinical knowledge graph",
+    "files": "built from identified source files",
+}
+#: A value a record does not hold as a number, in its state's words (the
+#: skill's §6: never "—", which means "no value here").
+NOT_REPORTED = "not reported"
+#: **A task record's answer: its tiles**, in order, by the record's mode (a
+#: task measurement, `src.evaluation.task_measurement`): pooled over its
+#: positive pairs or a mean over its ranked cases, and its coverage; each
+#: named by `caveats.metric_text`. A record of any other mode has none: its
+#: figures are its rows (`record_figure_rows`).
+RECORD_TILES = {
+    "disease": ("pooled_mrr", "pooled_top1", "pooled_top10", "coverage"),
+    "gene": ("pooled_mrr", "pooled_top1", "macro_recall@5", "coverage"),
+    "patients_like_me": ("pooled_mrr", "pooled_top10", "macro_recall@10", "coverage"),
+}
+#: A task record's metric families that take a cut-off k, each one row (its k
+#: values in order), and its single figures, a row each.
+_TASK_FAMILIES = ("pooled_top", "macro_recall@", "macro_precision@")
+_TASK_ROWS = ("macro_mrr", "best_positive_mrr")
+
+
+def record_number(value: Any) -> str:
+    """A recorded figure as a result shows it: four decimals (its value as
+    recorded is one click away, `recorded_metrics_fold`, and in every
+    export); "not reported" where the record holds no number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return NOT_REPORTED
+    try:
+        return f"{value:.4f}"
+    except (OverflowError, ValueError):  # an integer too large for a float
+        return NOT_REPORTED
+
+
+def record_mode(view: Mapping[str, Any]) -> Optional[str]:
+    """A record view's measurement mode, or None where it carries none it can
+    read (never taken for another mode)."""
+    mode = _get(view, "mode")
+    return mode if isinstance(mode, str) and mode.strip() else None
+
+
+def record_kind(view: Mapping[str, Any]) -> str:
+    """The kind of data a record view measured (its ``cohort.kind``, by which
+    the one reader read it): supplied, kg_edges or generated."""
+    kind = _dig(view, "cohort", "kind")
+    return kind if isinstance(kind, str) else "supplied"
+
+
+def dataset_origin_html(origin: Any) -> str:
+    """A record's dataset origin, where it is said (`record_rows`' Dataset
+    row, Models' records header): "synthetic" in amber, then what it means."""
+    meaning = ORIGIN_MEANING.get(origin) if isinstance(origin, str) else None
+    word = (f'<b class="shep-amber-t">{e(origin)}</b>' if origin == "synthetic"
+            else e(origin) if isinstance(origin, str) and origin else e(NOT_REPORTED))
+    return word + (f" — {e(meaning)}" if meaning else "")
+
+
+def record_coverage_html(view: Mapping[str, Any], *, version_counts: bool = True) -> str:
+    """**A record's coverage, the one wording** (the Test page's result and
+    Models' records alike): what it counted on its first line, how its data
+    stands under it, with no chain of " · " (the skill's §5). A task record's
+    ranked cases of the import-eligible ones (PLAN_B05 §4); a KG edge set's
+    pairs scored of those stored, and its positive edges; a generated
+    split's cases ranked, and its generated patients and diseases; any other
+    mode's source cases and exclusions, and the cases its record counts, with
+    no claim of what they are. Every count as recorded (`recorded_count_text`).
+
+    The second line is the data version's own counts (source cases and
+    exclusions, positive edges, generated patients): with `version_counts`
+    False, where the page says them already for this very version (the Test
+    page's Data panel, for a result of the selected version; R-70 / BACKLOG
+    51 (c)), it is left out, so a count is said once on the screen; a mode
+    whose first line counts nothing of its own keeps it."""
+    kind, mode = record_kind(view), record_mode(view)
+    counts = _get(view, "counts")
+    counts = counts if isinstance(counts, Mapping) else {}
+    count = recorded_count_text
+    task = mode in TASK_NAMES
+    if kind == "kg_edges":
+        run = _dig(view, "measured", "counts")
+        run = run if isinstance(run, Mapping) else {}
+        main = (f"<b>{e(count(run.get('pairs_scored')))} of {e(count(counts.get('pairs')))}"
+                "</b> stored pairs scored")
+        sub = (f"{count(counts.get('positive_edges'))} positive edges; "
+               f"{count(counts.get('edges_without_negative'))} without a negative to pair")
+    elif kind == "generated":
+        diseases = counts.get("diseases")
+        main = (f"<b>{e(count(_get(view, 'n_ranked')))}</b> "
+                + ("cases ranked by the model" if task else
+                   "counted by the record; what they are is not described for this mode"))
+        sub = (f"{count(counts.get('samples'))} generated patients of {count(diseases)} "
+               f"disease{'' if diseases == 1 else 's'}")
+    else:
+        excluded = counts.get("excluded")
+        reasons = (NOT_REPORTED if not isinstance(excluded, Mapping) else
+                   ", ".join(f"{str(name).replace('_', ' ')} {count(value)}"
+                             for name, value in excluded.items()) or "none")
+        if task:
+            main = (f"<b>{e(count(_get(view, 'n_ranked')))} of "
+                    f"{e(count(counts.get('ranked_eligible')))}</b> import-eligible cases "
+                    "ranked by the model")
+            sub = (f"{count(counts.get('source_cases'))} source cases; "
+                   f"{count(counts.get('n_excluded'))} excluded at import: {reasons}")
+        else:
+            main = e(f"{count(counts.get('source_cases'))} source cases; "
+                     f"{count(counts.get('n_excluded'))} excluded: {reasons}")
+            sub = (f"{count(_get(view, 'n_ranked'))} cases counted by the record; what they "
+                   "are is not described for this mode")
+            # Its first line is the version's counts: the record's own count stays.
+            return f'<div>{main}</div><div class="shep-sub">{e(sub)}</div>'
+    if not version_counts:
+        return f"<div>{main}</div>"
+    return f'<div>{main}</div><div class="shep-sub">{e(sub)}</div>'
+
+
+def _tile_note(name: str, kind: str) -> str:
+    """What a task tile's figure is over: its positive pairs (pooled), its
+    ranked cases (macro) or the share of the import-eligible cases ranked
+    (coverage; a generated split's cases are not imported, so its share is of
+    the cases measured), with no count, since the Coverage row says "n of M"
+    once (the skill's §1.2)."""
+    if name == "coverage":
+        return ("share of import-eligible cases ranked" if kind == "supplied"
+                else "share of the cases measured that were ranked")
+    if name.startswith("pooled_"):
+        return "pooled over positive pairs"
+    if name.startswith("macro_"):
+        return "mean over the ranked cases"
+    return ""
+
+
+def record_tiles_html(view: Mapping[str, Any], metrics: Mapping[str, Any]) -> str:
+    """**A task record's answer**: its tiles (`RECORD_TILES`), each its
+    figure's name less the task's, which the record's label above them says
+    once (`_figure_words`: "Pooled MRR", not "Disease pooled MRR"; R-71), its
+    value to four decimals and what it is over (`_tile_note`); "" for a
+    record of any other mode. The tiles share their rows (``.shep-rec-tile``,
+    a subgrid of ``.shep-rec-tiles``), so their values stand on one line
+    however a name wraps (NEW-test-4)."""
+    mode, kind = record_mode(view), record_kind(view)
+    tiles = "".join(
+        f'<div class="shep-rec-tile"><div class="shep-rec-tile-l">{e(_figure_words(mode, name))}'
+        f'</div><div class="shep-rec-tile-v">{e(record_number(metrics.get(name)))}</div>'
+        f'<div class="shep-rec-tile-n">{e(_tile_note(name, kind))}</div></div>'
+        for name in RECORD_TILES.get(mode or "", ()))
+    return f'<div class="shep-rec-tiles">{tiles}</div>' if tiles else ""
+
+
+def _figure_words(mode: str, name: str) -> str:
+    """A task metric's words as a row under the record's label, which names
+    the task once: `caveats.metric_text`'s "Disease pooled top-k" less the
+    task's name, "Pooled top-k"."""
+    words = metric_text(mode, name)[len(TASK_NAMES[mode]) + 1:]
+    return words[:1].upper() + words[1:]
+
+
+def _task_rows(mode: str, metrics: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    """A task record's figures past its tiles (README E1, E2, E5): the
+    conservative pooled MRR with what it counts, one row for each family that
+    takes a cut-off k (its k values in order, a tile's left out), the macro
+    and best-positive MRR, then any other figure the record holds, a row
+    each. No mean rank: a task reports none."""
+    tiles = RECORD_TILES.get(mode, ())
+    shown = set(tiles) | {"conservative_pooled_mrr"}
+    rows = [(_figure_words(mode, "conservative_pooled_mrr"),
+             e(record_number(metrics.get("conservative_pooled_mrr")))
+             + '<div class="shep-sub">an unranked case whose truth can be assessed counts 0'
+               '</div>')]
+    for prefix in _TASK_FAMILIES:
+        family = sorted((int(name[len(prefix):]), name) for name in metrics
+                        if str(name).startswith(prefix) and str(name)[len(prefix):].isdigit())
+        shown.update(name for _k, name in family)
+        values = [f"k={k} {record_number(metrics[name])}" for k, name in family
+                  if name not in tiles]
+        if values:
+            rows.append((_figure_words(mode, f"{prefix}k"), e(", ".join(values))))
+    for name in _TASK_ROWS:
+        if name in metrics:
+            shown.add(name)
+            rows.append((_figure_words(mode, name), e(record_number(metrics[name]))))
+    for name, value in sorted(metrics.items()):
+        if name not in shown:
+            rows.append((metric_text(mode, str(name)), e(record_number(value))))
+    return rows
+
+
+def _lp_rows(view: Mapping[str, Any], metrics: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    """**A KG link-prediction record's figures** (B72-C2): each metric under
+    its plain name (`caveats.LP_METRIC_WORDS`: "ROC-AUC", "Average
+    precision"), its value to four decimals, and under it, once, its unit and
+    its denominator as the record's ``measured`` holds them; a metric that
+    could not be computed is that status, never a number. A name the
+    measurement does not write keeps its recorded name. The values as
+    recorded are one click away (`recorded_metrics_fold`)."""
+    statuses = _dig(view, "measured", "metrics")
+    statuses = statuses if isinstance(statuses, Mapping) else {}
+    names = [*(n for n in LP_METRIC_WORDS if n in metrics or n in statuses),
+             *(n for n in metrics if n not in LP_METRIC_WORDS),
+             *(n for n in statuses if n not in LP_METRIC_WORDS and n not in metrics)]
+    rows = []
+    for name in names:
+        words = LP_METRIC_WORDS.get(name, str(name))
+        status = statuses.get(name) if isinstance(statuses.get(name), Mapping) else None
+        if status is not None and status.get("status") != "computed":
+            value = status_mark("neutral", "Not computable")
+        else:
+            value = e(record_number(metrics.get(name)))
+        if status is not None:
+            unit = status.get("unit")
+            over = _dig(status, "denominator", "count")
+            over_unit = _dig(status, "denominator", "unit")
+            said = "; ".join(str(part) for part in (
+                unit if isinstance(unit, str) and unit else None,
+                f"over {recorded_count_text(over)} {over_unit}"
+                if isinstance(over_unit, str) and over_unit else None) if part)
+            value += f'<div class="shep-sub">{e(said)}</div>' if said else ""
+        rows.append((words[:1].upper() + words[1:], value))
+    return rows
+
+
+def recorded_metrics_html(metrics: Mapping[str, Any]) -> str:
+    """Every metric of a record as recorded, one per line
+    (`caveats.recorded_metric_lines`: the name as written, a code, and the
+    value's JSON text, unrounded), every value escaped; "no metric recorded"
+    when it holds none. A record view holds every metric as a number with a
+    fraction ("1.0"); a report keeps a whole number as written ("1")."""
+    lines = recorded_metric_lines(metrics)
+    if not lines:
+        return f'<span class="shep-muted">{e("no metric recorded")}</span>'
+    return "".join(f'<div class="shep-rec-ln"><code>{e(name)}</code> {e(value)}</div>'
+                   for name, value in lines)
+
+
+def recorded_metrics_fold(metrics: Mapping[str, Any]) -> str:
+    """Every metric as recorded, one click away: a closed native disclosure,
+    "Recorded metrics (N)" (the skill's §1.5), or "no metric recorded" when
+    there is none. A record's figures in words round them; this keeps each
+    value as written."""
+    if not metrics:
+        return f'<div class="shep-sub shep-rec-fold">{e("no metric recorded")}</div>'
+    return (f'<details class="shep-rec-fold"><summary>Recorded metrics ({len(metrics)})'
+            f'</summary>{recorded_metrics_html(metrics)}</details>')
+
+
+def record_figure_rows(view: Mapping[str, Any], metrics: Mapping[str, Any]
+                       ) -> List[Tuple[str, str]]:
+    """**A record's figures as rows, by its mode**: a task's past its tiles
+    (`_task_rows`), a KG link prediction's in plain names with their units
+    (`_lp_rows`), and any other mode's every metric as recorded, one row,
+    which is then its main result (R2: one display for every mode)."""
+    mode = record_mode(view)
+    if mode in TASK_NAMES:
+        return _task_rows(mode, metrics)
+    if mode == LP_MODE:
+        return _lp_rows(view, metrics)
+    return [("Recorded metrics", recorded_metrics_html(metrics))]
+
+
+def record_semantics_html(view: Mapping[str, Any]) -> str:
+    """The record's ``score_semantics`` exactly as recorded, a code, or "not
+    recorded": never split, interpreted or rebuilt."""
+    raw = _get(view, "score_semantics")
+    if isinstance(raw, str) and raw.strip():
+        return f"<code>{e(raw)}</code>"
+    return f'<span class="shep-muted">{e(NOT_RECORDED.lower())}</span>'
+
+
+def record_environment_html(view: Mapping[str, Any]) -> str:
+    """The view's environment class (as the one reader classified it) and,
+    for a run on CUDA, its GPU and driver on a line of their own."""
+    klass = _get(view, "environment_class")
+    gpu = _get(view, "gpu")
+    text = e(klass if isinstance(klass, str) and klass else NOT_REPORTED)
+    if isinstance(gpu, Mapping):
+        text += (f'<div class="shep-sub">GPU {e(gpu.get("name") or "name not read")}, driver '
+                 f'{e(gpu.get("driver") or "not read")}</div>')
+    return text
+
+
+def record_native_html(view: Mapping[str, Any]) -> str:
+    """The view's native build identity (the run environment's one
+    projection) in its one wording: a lead with the route and the count, then
+    one line per component (`native_identity_lines`); "not recorded" for a
+    run recorded before its environment named components."""
+    return "".join(f"<div>{e(line)}</div>"
+                   for line in native_identity_lines(_get(view, "native_identity")))
+
+
+def record_regime_rows(view: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    """How the measurement ran, as the record holds it: its device (the
+    record's setting, `record_views.recorded_settings`, which each page puts
+    on the view as ``device``) and whether deterministic algorithms were on
+    (the view's ``deterministic_algorithms``, or the page's ``deterministic``
+    where the view holds none); "not recorded" where the record holds none."""
+    device = _get(view, "device")
+    flag = _get(view, "deterministic_algorithms")
+    flag = flag if type(flag) is bool else _get(view, "deterministic")
+    return [("Device", f"<code>{e(device)}</code>" if isinstance(device, str) and device
+             else f'<span class="shep-muted">{e(NOT_RECORDED.lower())}</span>'),
+            ("Deterministic algorithms", e(setting_words("deterministic_algorithms", flag))
+             if type(flag) is bool else f'<span class="shep-muted">'
+             f'{e(NOT_RECORDED.lower())}</span>')]
+
+
+def _counts_fold(title: str, counts: Any, units: Any) -> str:
+    """A version's or a run's counts, each with its unit as recorded, one
+    click away: a closed disclosure, "<title> (N)"."""
+    counts = counts if isinstance(counts, Mapping) else {}
+    units = units if isinstance(units, Mapping) else {}
+    lines = "".join(f'<div class="shep-rec-ln"><code>{e(name)}</code> '
+                    f'{e(recorded_count_text(value))}: '
+                    f'{e(units.get(name) or "unit not recorded")}</div>'
+                    for name, value in counts.items())
+    return (f'<details class="shep-rec-fold"><summary>{e(title)} ({len(counts)})</summary>'
+            f'{lines}</details>')
+
+
+def record_counts_rows(view: Mapping[str, Any], *,
+                       version_counts: bool = True) -> List[Tuple[str, str]]:
+    """A KG edge set's or a generated split's counts, each with its unit as
+    recorded, one click away (`_counts_fold`): the data version's, unless
+    `version_counts` is False (the page says this very version's counts
+    already, `record_coverage_html`; R-70), and a KG edge set's run's, its
+    own reading, which can differ; none for a supplied cohort, whose counts
+    its Coverage row says, or where no fold is left."""
+    kind = record_kind(view)
+    if kind == "supplied":
+        return []
+    folds = (_counts_fold("Data version counts", _get(view, "counts"), _get(view, "count_units"))
+             if version_counts else "")
+    if kind == "kg_edges":
+        folds += _counts_fold("Run counts", _dig(view, "measured", "counts"),
+                              _dig(view, "measured", "count_units"))
+    return [("Counts", folds)] if folds else []
+
+
+def record_rows(view: Mapping[str, Any], metrics: Mapping[str, Any], *,
+                registration: str, dataset: Optional[str] = None,
+                version_counts: bool = True) -> List[Tuple[str, str]]:
+    """**A recorded result's rows, the one list** (R-82: the Test page's
+    result and each of Models' records are drawn from it, in this order):
+    its coverage (`record_coverage_html`, with the version's counts unless
+    `version_counts` is False, as are its counts' fold, `record_counts_rows`,
+    and a KG edge set's graph and pairs, `data_kind_lines`), its figures by
+    mode (`record_figure_rows`),
+    its score semantics, its relations, a supplied cohort's R10 or another
+    kind's lines (`data_kind_lines`), its environment, device, determinism
+    and native build, its dataset where the page has not said it by its
+    relation (`dataset`: the row's HTML, or None), and its registration
+    (`registration`: the row's HTML, which only the page knows: a kept
+    report's state on the Test page, a ledger record's sequence and run on
+    Models). One row per fact (the skill's §4, §5): never a chain of " · ".
+    Which of them are drawn one click away is `record_html`'s
+    (`RECORD_DETAIL_ROWS`)."""
+    relations = _get(view, "relations")
+    rows = [("Coverage", record_coverage_html(view, version_counts=version_counts)),
+            *record_figure_rows(view, metrics),
+            ("Score semantics", record_semantics_html(view)),
+            ("Relations", relations_html(relations) if isinstance(relations, Mapping)
+             else status_mark("neutral", NOT_RECORDED)),
+            *([(R10_TITLE, r10_table_html(_get(view, "r10")))]
+              if record_kind(view) == "supplied"
+              else data_kind_lines(view, version_counts=version_counts)),
+            *record_counts_rows(view, version_counts=version_counts),
+            ("Environment", record_environment_html(view)),
+            *record_regime_rows(view),
+            ("Native build", record_native_html(view))]
+    if dataset is not None:
+        rows.append(("Dataset", dataset))
+    rows.append(("Registration", registration))
+    return rows
+
+
+#: **A record's engineering rows** (B52-E): how its score was computed and
+#: how the measurement ran, which no reading of the result turns on, drawn one
+#: click away under its other rows (`record_html`), with the metrics as
+#: recorded. Its environment's class, which says whether it can be set beside
+#: a CUDA run, stays in view.
+RECORD_DETAIL_ROWS = ("Score semantics", "Device", "Deterministic algorithms", "Native build")
+
+
+def record_html(view: Mapping[str, Any], metrics: Mapping[str, Any], *,
+                registration: str, dataset: Optional[str] = None,
+                version_counts: bool = True,
+                details: Sequence[Tuple[str, str]] = ()) -> str:
+    """**The one rendering of a recorded result** (R-82), the Test page's
+    result and each of Models' records: its answer first (a task's tiles,
+    `record_tiles_html`), then its rows as one summary list (`record_rows`;
+    the relations and R10 across the list's width, R10's ⓘ beside its key),
+    then **one disclosure** ("Details ›", `details_list`; the skill's §1.5,
+    B52-E) holding its engineering rows (`RECORD_DETAIL_ROWS`: the score
+    semantics' formula, the device, determinism and the native build's
+    components with their digests) and, for a described measurement, its
+    metrics as recorded (another mode's are its rows already); `details`,
+    the page's own rows there first (the Test page's run id). What it is of
+    and how it is named are the page's, around it."""
+    rows = record_rows(view, metrics, registration=registration, dataset=dataset,
+                       version_counts=version_counts)
+    mode = record_mode(view)
+    shown = [row for row in rows if row[0] not in RECORD_DETAIL_ROWS]
+    more = [*details, *(row for row in rows if row[0] in RECORD_DETAIL_ROWS)]
+    if mode in TASK_NAMES or mode == LP_MODE:
+        more.append((f"Recorded metrics ({len(metrics)})", recorded_metrics_html(metrics)))
+    return (f'<div class="shep-rec-body">{record_tiles_html(view, metrics)}'
+            + summary_list(shown, wide=("Relations", R10_TITLE),
+                           helps={R10_TITLE: ("record-r10", R10_HELP[0])},
+                           classes="shep-rec-rows")
+            + details_list(more, classes="shep-rec-rows") + "</div>")
+
+
+#: The words a note's time is said in: its recorded ISO time as UTC.
+def _note_time(raw: Any) -> str:
+    return str(raw or "").replace("T", " ").replace("Z", " UTC")
+
+
+def investigation_notes_html(notes: Sequence[Mapping[str, Any]], *, problems: Sequence[str] = (),
+                             expected: bool = False) -> str:
+    """**A condition group's investigation notes, the one rendering** (B40:
+    the Test page's report and Models' records, the operator's and the
+    read-only view's alike): who, when and what, every value escaped; when
+    the notes cannot all be read, so (with `problems`' words, the caller's
+    already redacted), never "no note is kept"; with `expected` (a group
+    whose runs differ or whose comparison is incomplete) and no note, that
+    none is kept. Nothing otherwise."""
+    parts = []
+    if notes:
+        items = "".join(f'<li><b>{e(n.get("who"))}</b> · {e(_note_time(n.get("at")))}'
+                        f'<div>{e(n.get("what"))}</div></li>' for n in notes)
+        parts.append(f'<div class="shep-rec-notes"><div class="shep-w600">Investigation notes '
+                     f'({len(notes)})</div><ul>{items}</ul></div>')
+    if problems:
+        parts.append('<div class="shep-sub">' + status_mark(
+            "neutral", "The investigation notes cannot all be read, so a note kept for this "
+                       "group may be missing here" + (": " + "; ".join(problems)
+                                                      if any(problems) else "."))
+            + "</div>")
+    elif expected and not notes:
+        parts.append(f'<div class="shep-sub">{e("No investigation note is kept for this group.")}'
+                     "</div>")
+    return "".join(parts)
 
 
 #: The labels of Model Facts' digest rows (`summary_list`'s wide rows).
@@ -2296,6 +2809,27 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
 
 __all__ = [
     "CURRENT_DATASET",
+    "LP_MODE",
+    "NOT_REPORTED",
+    "ORIGIN_MEANING",
+    "RECORD_TILES",
+    "dataset_origin_html",
+    "investigation_notes_html",
+    "record_counts_rows",
+    "record_coverage_html",
+    "record_environment_html",
+    "record_figure_rows",
+    "record_html",
+    "record_kind",
+    "record_mode",
+    "record_native_html",
+    "record_number",
+    "record_regime_rows",
+    "record_rows",
+    "record_semantics_html",
+    "record_tiles_html",
+    "recorded_metrics_fold",
+    "recorded_metrics_html",
     "FACTS_MODEL_FP",
     "FACTS_TRAINED_FP",
     "FIELD_ROWS",

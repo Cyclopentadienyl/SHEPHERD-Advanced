@@ -281,7 +281,8 @@ def test_the_stage_and_task_are_checked_before_the_fixture_is_read(trained, tmp_
     with pytest.raises(RunPlanRefused, match="children never chain"):
         train_model.train(config, explicit)
     said = ("the gene measurement takes a finetune model with the gene head; this checkpoint "
-            "is a base model with no task head. It can be measured by kg_link_prediction.")
+            "is a base model with no task head. It can be measured by KG link prediction. "
+            "Ref: kg_link_prediction.")
     with pytest.raises(ModelRecordError, match=re.escape(said)):
         measure_scorer.main(["--mode", "gene", "--checkpoint", str(trained["base"]),
                              "--data-dir", str(bare), "--split", "val",

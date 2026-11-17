@@ -62,8 +62,9 @@ LABEL = "demo-test-1"
 #: no candidate genes.
 CAUSAL_ONLY = "demo-causal-1"
 #: The products' sentence for a name that is not one of them.
-NOT_IMPLEMENTED = ("{!r} is not a measurement this build implements (disease, gene, "
-                   "patients_like_me, kg_link_prediction).")
+NOT_IMPLEMENTED = ("{!r} is not a measurement this build implements: disease, gene, "
+                   "patients-like-me or KG link prediction. Ref: patients_like_me, "
+                   "kg_link_prediction.")
 
 
 def test_the_product_protocols_are_the_three_tasks_and_kg_link_prediction():
@@ -141,7 +142,8 @@ def test_only_protocols(monkeypatch):
     and run the disease evaluator, so neither name is a task. Every consumer
     reads the table through the module when it judges, so this reaches them
     all."""
-    table = {name: replace(protocols.PROTOCOLS["disease"], name=name) for name in ("p1", "p2")}
+    table = {name: replace(protocols.PROTOCOLS["disease"], name=name, label="")
+             for name in ("p1", "p2")}
     monkeypatch.setattr(protocols, "PROTOCOLS", table)
     return table
 
@@ -346,7 +348,7 @@ def test_the_runner_launches_a_protocol_whose_name_is_no_task(runner, test_only_
 
     refused = runner.manager.start_test(asked)
     assert refused["success"] is False
-    assert refused["error"] == ("'disease' is not a measurement this build implements (p1, p2). "
+    assert refused["error"] == ("'disease' is not a measurement this build implements: p1 or p2. "
                                 "Nothing was started.")
     assert _nothing_started(runner)
 
@@ -549,10 +551,12 @@ def test_a_base_and_each_finetune_are_taken_by_the_kg_link_prediction_protocol()
     assert protocols.available(base) == (("kg_link_prediction",), None)
     assert protocols.model_refusal("kg_link_prediction", base) is None
     for task in TASKS:
+        words = protocols._said(protocols.PROTOCOLS[task])
         assert protocols.model_refusal(task, base) == (
-            f"the {task} measurement takes a finetune model with the {task} head; this "
+            f"the {words} measurement takes a finetune model with the {words} head; this "
             "checkpoint is a base model with no task head. It can be measured by "
-            "kg_link_prediction.")
+            "KG link prediction. Ref: " + ", ".join(dict.fromkeys(
+                [task] * (words != task) + ["kg_link_prediction"])) + ".")
         assert protocols.available(described("finetune", task)) == (
             (task, "kg_link_prediction"), None)
         assert protocols.model_refusal("kg_link_prediction", described("finetune", task)) is None
@@ -561,8 +565,8 @@ def test_a_base_and_each_finetune_are_taken_by_the_kg_link_prediction_protocol()
     for kind, words in ((protocols.SUPPLIED, "a supplied cohort version"),
                         (protocols.GENERATED, "a generated split")):
         assert protocols.inputs_refusal("kg_link_prediction", kind, None) == (
-            f"the kg_link_prediction measurement does not measure {words}; it measures a KG "
-            "edge set.")
+            f"the KG link prediction measurement does not measure {words}; it measures a KG "
+            "edge set. Ref: kg_link_prediction.")
     assert protocols.inputs_refusal("disease", protocols.KG_EDGES, {"pairs": 4}) == (
         "the disease measurement does not measure a KG edge set; it measures a generated split "
         "or a supplied cohort version.")
@@ -576,9 +580,9 @@ def test_a_kg_edge_set_with_no_pair_is_refused_by_its_counts(pairs):
     if pairs is not None:
         counts["pairs"] = pairs
     assert protocols.inputs_refusal("kg_link_prediction", protocols.KG_EDGES, counts) == (
-        "this KG edge set holds no (positive, negative) pair, which the kg_link_prediction "
+        "this KG edge set holds no (positive, negative) pair, which the KG link prediction "
         "measurement scores: no positive edge of its part had another tail of its relation in "
-        "its batch to draw a negative from.")
+        "its batch to draw a negative from. Ref: kg_link_prediction.")
 
 
 def test_a_head_is_judged_by_its_scoring_semantics_never_its_name():
@@ -595,8 +599,9 @@ def test_a_head_is_judged_by_its_scoring_semantics_never_its_name():
     assert protocols.available(unstated) == (
         (), "no measurement this build implements takes a base model with no task head.")
     assert protocols.model_refusal("kg_link_prediction", unstated) == (
-        "the kg_link_prediction measurement takes a model with a link-prediction head scoring "
-        "distmult_raw_score/tanh_hinge/v1; this checkpoint is a base model with no task head.")
+        "the KG link prediction measurement takes a model with a link-prediction head scoring "
+        "distmult_raw_score/tanh_hinge/v1; this checkpoint is a base model with no task head. "
+        "Ref: kg_link_prediction.")
 
 
 @pytest.mark.parametrize("name", ["C", "D", None, "Disease"])

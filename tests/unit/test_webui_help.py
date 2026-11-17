@@ -479,8 +479,9 @@ def test_every_registered_help_text_is_within_the_budget(built):
     over = {entry.key: h.budget_problems(entry.text) for entry in registry.entries()}
     assert {key: problems for key, problems in over.items() if problems} == {}
     # 147 since R-49: the Continue drawer's source radio, and its text, went
-    # behind a link; its facts are the Checkpoint path's text.
-    assert len(over) >= 147
+    # behind a link; its facts are the Checkpoint path's text. 146 since R-82:
+    # the Test page's and Models' R10 texts are the one record's ("record-r10").
+    assert len(over) >= 146
 
 
 def _words(text: str) -> int:
@@ -513,7 +514,7 @@ def test_the_train_test_overlap_text_defines_each_column_once(built):
 
     _demo, registry, _texts = built
     by_key = {e.key: e for e in registry.entries()}
-    for key in ("test-r10", "models-r10"):
+    for key in ("record-r10",):
         entry = by_key[key]
         assert (entry.title, entry.text) == r.R10_HELP and entry.title == r.R10_TITLE
         lines = h.help_lines(entry.text)

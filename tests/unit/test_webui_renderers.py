@@ -234,14 +234,34 @@ def test_records_that_cannot_be_read_are_named_apart_from_the_results():
 
 
 def test_an_unreadable_checkpoint_is_greyed_and_cannot_be_loaded():
+    """NEW-models-results-4: an unreadable file's row is greyed and says its
+    state and reason; it is chosen like any other row (never Loaded), so its
+    details say the reason whole, the loader's reference with it, in visible
+    text: Models' detail and the drawer's facts. It was ``aria-disabled``, so
+    the details that held the reference were never reached."""
+    from src.webui.components import model_list as ml
+    from src.webui.components import models_page as mp
+
     html = _models_tree(checkpoint(sha=None, problem="UnpicklingError: no"))
-    assert 'aria-disabled="true"' in html and "shep-row-dis" in html
+    assert "shep-row-dis" in html and 'aria-disabled="true"' not in html
     assert "Metadata not readable: UnpicklingError: no; cannot be loaded" in html
     # A refused read's plain words on the row, the loader's reference left to
     # its details (`renderers.reason_lead`).
     refused = "the file cannot be read as a checkpoint; Ref: UnpicklingError: Weights only"
     assert r.reason_lead(refused) == "the file cannot be read as a checkpoint"
-    assert "Ref:" not in _models_tree(checkpoint(sha=None, problem=refused))
+    item = {**checkpoint(sha=None, problem=refused), "size_bytes": 10}
+    assert "Ref:" not in _models_tree(item)
+    listing = {"items": [item], "workspaces": [], "workspace": "demo"}
+    key = ml.item_key(item)
+    detail = mp.detail_parts(listing, {}, key, {})
+    shown = " ".join(re.sub(r"<[^>]+>", " ", detail["top"]).split())
+    assert ("State ▲ Metadata not readable: cannot be loaded Reason the file cannot be read "
+            "as a checkpoint Ref: UnpicklingError: Weights only") in shown
+    assert detail["seg"] is None and detail["records"] == ""
+    # Load stays off, its state said beside it.
+    assert ml.load_button(listing, item)["interactive"] is False
+    assert "Metadata not readable: it cannot be loaded." in ml.load_reason_html(item, listing)
+    assert "UnpicklingError" in ml.facts_html(listing, key)
 
 
 def test_in_use_marks_the_row():
@@ -1313,10 +1333,12 @@ def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box()
         "Model Facts": r.model_facts_html(facts),
         "Test result identity": result[:result.index("</dl>") + 5],
     }
+    # A supplied version's role is its option's (R-70), not a row under it.
+    assert [words for words, _value in tp.version_choices(page)] == [f"v1 · role {WORLDLY}"]
     for where, html_ in shown.items():
         assert "<dl class=\"shep-kv" in html_, where
         assert HOSTILE not in html_ and "&lt;img src=x onerror=alert(1)&gt;" in html_, where
-        assert WORLDLY in html_, where
+        assert WORLDLY in html_ or where == "Test version", where
         text = _shown_text(html_)
         assert not _REPR.search(text), (where, _REPR.search(text).group(0))
         assert not _nested_boxes(html_, bordered), (where, _nested_boxes(html_, bordered))
@@ -1327,11 +1349,48 @@ def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box()
     assert rows["task"] == rows["task_loss_weight"] == "not taken by a base"
     assert rows["use_amp"] == "off" and rows["num_neighbors"] == "15, 10, 5"
     assert "Reference GATv2 spec" in check
-    # The result's determinism by the one value-words rule; a record
-    # without the flag holds none.
+    # The result's determinism by the one value-words rule, a row of the one
+    # record rendering (`renderers.record_rows`, R-82); a record without the
+    # flag holds none.
+    rows = result[result.index('<dl class="shep-kv shep-rec-rows">'):]
     ident = dict(re.findall(r'<dt class="shep-k">([^<]*)</dt><dd class="shep-v">([^<]*)</dd>',
-                            shown["Test result identity"]))
+                            rows))
     assert ident["Deterministic algorithms"] == "on"
     record["regime"]["deterministic_algorithms"] = False
     assert ('Deterministic algorithms</dt><dd class="shep-v">off</dd>'
             in tp._record_html(record, {}, {}))
+
+
+def test_every_digest_code_element_is_drawn_by_fingerprint_value():
+    """B72-N3: the one digest value, `renderers.fingerprint_value` (its 12 hex
+    digits, ``shep-fpv`` with the whole value as its title), draws every
+    digest a page shows as a value; no page builds its own ``<code>`` around
+    a digest (the load plan's From and To, the Diagnosis reference cohort and
+    Stop question, the Test page's version details and the record's split
+    manifest each did). A digest said inside a sentence (a notice, an
+    option) is plain text and not a code element."""
+    import inspect
+    from pathlib import Path
+
+    own = re.compile(r"<code[^>]*>\{[^}]*(short_hex|\[:12\]|sha256|digest|\[\"sha|\['sha)")
+    allowed = inspect.getsource(r.fingerprint_value)
+    found = []
+    for path in sorted(Path("src/webui").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if path.name == "renderers.py":
+            text = text.replace(allowed, "")
+        found += [f"{path}:{n}" for n, line in enumerate(text.splitlines(), 1)
+                  if own.search(line)]
+    assert found == []
+    # The places it drew, through the one value now: its class and title.
+    from src.webui.components import model_list as ml
+
+    side = {"sha256": "a" * 64, "graph": "b" * 64, "workspace": "w", "served": True}
+    assert ml._cell(side, "sha", [], to=False) == r.fingerprint_value("a" * 64, what="model fingerprint",
+                                                            copy=False)
+    assert f'title="{"b" * 64}"' in ml._cell(side, "workspace", [], to=False)
+    lines = dict(r.data_kind_lines({"cohort": {
+        "kind": "generated", "generation": {}, "allocation": {},
+        "split_manifest": {"sha256": "c" * 64}, "task_fixture": None}}))
+    assert f'<code class="shep-fpv" title="{"c" * 64}">{"c" * 12}</code>' in lines[
+        "Split manifest"]

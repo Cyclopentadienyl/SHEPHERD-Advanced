@@ -586,6 +586,26 @@ table.shep-r10 thead th { font-size: 14px; font-weight: 600; color: var(--shep-t
 table.shep-r10 tbody th { font-size: 14px; font-weight: 600; min-width: 9em; }
 table.shep-r10 tbody tr:last-child > * { border-bottom: 0; }
 table.shep-r10 .shep-r10-n { font-size: 14px; font-weight: 400; color: var(--shep-text-2); }
+/* One recorded result (`renderers.record_html`, R-82): the Test page's
+   result and each of Models' records alike. Its answer first (a task's
+   tiles), then its rows, then its metrics as recorded one click away, the
+   disclosure's summary a 24 px target that shows the keyboard focus. */
+.shep-rec-label { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.shep-rec-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.shep-rec-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: auto; gap: 8px; }
+__STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Each tile spans three of the tiles' rows (name, value, what it is over) and
+   takes them as its own (a subgrid), so every value of a row of tiles stands
+   on one line however a name wraps (NEW-test-4: 19-20 px apart at 1536 and
+   1440 wide). */
+.shep-rec-tile { border: 1px solid var(--shep-border); border-radius: 8px; padding: 8px 10px; background: #fff; min-width: 0; display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 0; align-content: start; }
+.shep-rec-tile-l, .shep-rec-tile-n { font-size: 14px; color: var(--shep-text-2); }
+.shep-rec-tile-v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.shep-rec-fold { font-size: 15px; overflow-wrap: anywhere; }
+.shep-rec-fold > summary { cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; color: var(--shep-text-2); }
+.shep-rec-fold[open] > summary { margin-bottom: 4px; }
+.shep-rec-ln { line-height: 1.45; }
+.shep-rec-notes ul { margin: 4px 0 0; padding-left: 18px; font-size: 15px; }
 .shep-digest { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }
 .shep-digest .shep-dl { grid-column: 1 / -1; font-size: 14px; font-weight: 600; color: var(--shep-text-2); }
 
@@ -605,6 +625,8 @@ table.shep-r10 .shep-r10-n { font-size: 14px; font-weight: 400; color: var(--she
 .shep-tbl tbody tr[data-key]:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: -2px; }
 .shep-tbl tr.shep-grp th { position: static; background: var(--shep-panel-2); font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 10px; border-bottom: 1px solid var(--shep-border); }
 .shep-tbl tbody tr.shep-row-dis td { background: var(--shep-grey-50); color: var(--shep-muted); cursor: default; }
+/* A greyed row that can still be chosen (an unreadable file: its details say why). */
+.shep-tbl tbody tr.shep-row-dis[data-key]:not([aria-disabled="true"]) td { cursor: pointer; }
 
 /* the shared model list: a note under a list (the Test page's), "Show older runs" under the
    tree (`model_list.older_html`) */

@@ -1302,8 +1302,9 @@ def test_a_protocol_and_a_data_kind_that_do_not_match_are_refused_before_the_che
     workspace or the checkpoint is opened."""
     workspace = site.data_dir
     _refused(cli, site, _argv(site, SUPPLIED_LABEL), ValueError,
-             "the kg_link_prediction measurement does not measure a supplied cohort version; "
-             "it measures a KG edge set.", unopened=(site.base, workspace), capsys=capsys)
+             "the KG link prediction measurement does not measure a supplied cohort version; "
+             "it measures a KG edge set. Ref: kg_link_prediction.", unopened=(site.base, workspace),
+             capsys=capsys)
     _refused(cli, site, _argv(site, "kg-test", site.disease, mode="disease"), ValueError,
              "the disease measurement does not measure a KG edge set; it measures a generated "
              "split or a supplied cohort version.", unopened=(site.disease, workspace),
@@ -1311,8 +1312,9 @@ def test_a_protocol_and_a_data_kind_that_do_not_match_are_refused_before_the_che
     _refused(cli, site, ["--mode", LP, "--checkpoint", str(site.base), "--data-dir",
                          str(site.data_dir), "--split", "val", "--output",
                          str(tmp_path / "out.json"), "--device", "cpu"], ValueError,
-             "the kg_link_prediction measurement does not measure a generated split; it "
-             "measures a KG edge set.", unopened=(site.base, workspace), capsys=capsys)
+             "the KG link prediction measurement does not measure a generated split; it "
+             "measures a KG edge set. Ref: kg_link_prediction.", unopened=(site.base, workspace),
+             capsys=capsys)
     assert not (tmp_path / "out.json").exists()
 
 
