@@ -365,6 +365,144 @@ def test_a_fields_visible_info_line_is_part_of_its_description(tmp_path):
     assert seen["bare"] == h.text_id("bare")
 
 
+#: A focus preview whose bubble slides under a pointer the reader never moved
+#: (T08: the shared walk's Diagnosis load drawer at 390 x 844). The page's
+#: clock is paused, so the bubble's hide runs only when the script advances
+#: it: what the test reads never depends on how fast the machine is. At each
+#: window: the field put mid-window; its ⓘ focused once to learn where its
+#: bubble goes (``R``); the pointer rested just above that place; the ⓘ
+#: focused again, then left (its preview's hide pending) and the page
+#: scrolled 40 px by the wheel, so the bubble, following its ⓘ, comes under
+#: the resting pointer, which the browser tells it with a "mouseover" and no
+#: "mousemove". Then the clock runs past the hide. Last, a reader's own
+#: pointer, moved from the ⓘ into its hover preview, keeps the bubble, and
+#: leaving it closes the bubble.
+_RESTING_POINTER_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [420, 800]]) {
+    const page = await browser.newPage({ viewport: { width: w, height: h } });
+    await page.clock.install();
+    await page.goto('file://' + process.argv[2]);
+    await page.waitForSelector('#fld button.shep-i');
+    // The page's clock paused, and seen to stand still.
+    for (let i = 0; ; i++) {
+      await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 60000);
+      const at = await page.evaluate(() => Date.now());
+      await new Promise((r) => setTimeout(r, 50));
+      if (await page.evaluate(() => Date.now()) === at) { break; }
+      if (i > 4) { throw new Error('the page clock did not pause'); }
+    }
+    const bubble = () => page.evaluate(() => {
+      const b = document.getElementById('shep-help-bubble');
+      if (!b || b.hidden) { return null; }
+      const r = b.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    });
+    const inBubble = (p) => page.evaluate(([x, y]) => {
+      const b = document.getElementById('shep-help-bubble'), e = document.elementFromPoint(x, y);
+      return !!b && !!e && b.contains(e);
+    }, p);
+    await page.evaluate(() => window.scrollTo(0, 300));
+    await page.keyboard.press('Tab');
+    await page.focus('#fld button.shep-i');
+    const R = await bubble();
+    await page.evaluate(() => document.activeElement.blur());
+    await page.clock.runFor(1000);
+    const dryClosed = (await bubble()) === null;
+    const P = [Math.round(R.left + R.width / 2), Math.round(R.top - 20)];
+    await page.mouse.move(P[0], P[1]);
+    await page.focus('#fld button.shep-i');
+    const before = { bubble: await bubble(), underPointer: await inBubble(P) };
+    await page.evaluate(() => {
+      window.__entered = false; window.__moves = 0;
+      document.getElementById('shep-help-bubble').addEventListener('mouseover', () => { window.__entered = true; });
+      document.addEventListener('mousemove', () => { window.__moves += 1; }, true);
+      document.activeElement.blur();
+    });
+    await page.mouse.wheel(0, 40);
+    // The bubble follows its ⓘ on the scroll and the browser then tells it
+    // the pointer is over it: both observed, the page's clock run a frame at
+    // a time, never as far as the pending hide (250 ms).
+    let slid = false, ran = 0;
+    for (const end = Date.now() + 5000; Date.now() < end; await new Promise((r) => setTimeout(r, 20))) {
+      if (await inBubble(P) && await page.evaluate(() => window.__entered)) { slid = true; break; }
+      if (ran < 192) { await page.clock.runFor(16); ran += 16; }
+    }
+    await page.clock.runFor(1000);
+    const after = { bubble: await bubble(), underPointer: await inBubble(P),
+                    moves: await page.evaluate(() => window.__moves) };
+    // A reader's own pointer: over the ⓘ (its preview after the delay), then
+    // into the bubble; the bubble stays while it is there and closes after it leaves.
+    const i = await page.locator('#fld button.shep-i').boundingBox();
+    await page.mouse.move(i.x + i.width / 2, i.y + i.height / 2);
+    await page.clock.runFor(1000);
+    const hover = await bubble();
+    await page.mouse.move(hover.left + hover.width / 2, hover.top + hover.height / 2, { steps: 8 });
+    await page.clock.runFor(1000);
+    const kept = (await bubble()) !== null;
+    await page.mouse.move(w - 4, h - 4, { steps: 4 });
+    await page.clock.runFor(1000);
+    const left = (await bubble()) === null;
+    out[`${w}x${h}`] = { R, P, dryClosed, before, slid, ran, after, hover: hover !== null, kept, left };
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_focus_preview_closes_though_it_slid_under_a_resting_pointer(tmp_path):
+    """T08 (the shared walk's ``ui_walk`` errored at setup): Tab moved
+    through the Diagnosis load drawer at 390 x 844, the Validation (Trainer)
+    ⓘ's preview opened on focus, and the next control's scroll moved the
+    bubble, with its ⓘ, under the pointer the walk had left resting. The
+    browser sends the bubble a "mouseover" then (no "mousemove"), and the
+    bubble's ``mouseenter`` cancelled the hide its ⓘ's focusout had asked
+    for: the preview outlived its focus and, kept inside the window, covered
+    the drawer's ×, so its Close never reached the server. A preview now
+    stays only for the reader's own pointer moving in it: here it closes and
+    the page under the pointer is reached again, while a pointer moved from
+    the ⓘ into its hover preview still keeps the bubble until it leaves (at
+    1850 x 960 and 420 x 800)."""
+    found = node_with_playwright()
+    if found is None:
+        pytest.skip("Node with Playwright is not installed")
+    node, env = found
+    registry = h.HelpRegistry()
+    registry.field("fld", "Epochs", "How many passes.\n\n- Smoke test: 2-5.\n- Every pass sees "
+                   "each pair once.\n- Default: 200.")
+    page = tmp_path / "resting.html"
+    page.write_text(
+        f"""<!doctype html><html><head><meta charset="utf-8">
+<style>body {{ margin: 0; font: 15px sans-serif; }} {h.HELP_CSS}</style>{h.HELP_HEAD}</head><body>
+<div style="height: 540px"></div>
+<div class="block" id="fld" style="margin: 0 40px; width: 300px; padding: 16px; border: 1px solid #ccc">
+<label class="block" style="display: block"><span data-testid="block-info">Epochs</span><input>
+</label></div><div style="height: 2400px"></div>
+{registry.texts_html()}</body></html>""", encoding="utf-8")
+    script = tmp_path / "resting.cjs"
+    script.write_text(_RESTING_POINTER_JS, encoding="utf-8")
+    result = subprocess.run([node, str(script), str(page)], env=env, capture_output=True,
+                            text=True, timeout=240)
+    assert result.returncode == 0, result.stderr
+    seen = json.loads(result.stdout)
+    assert set(seen) == {"1850x960", "420x800"}
+    for size, s in seen.items():
+        # The scene as the walk met it: a focus preview, the pointer resting
+        # outside it, then the bubble under that pointer with no pointer move.
+        assert s["dryClosed"] and s["before"]["bubble"] == s["R"], (size, s)
+        assert s["before"]["underPointer"] is False and s["slid"] is True, (size, s)
+        assert s["ran"] < 250 and s["after"]["moves"] == 0, (size, s)
+        # Its hide was not cancelled: closed, the page under the pointer reached again.
+        assert s["after"]["bubble"] is None and s["after"]["underPointer"] is False, (size, s)
+        # A reader moving into a hover preview keeps it; leaving closes it.
+        assert s["hover"] and s["kept"] and s["left"], (size, s)
+
+
 # --------------------------------------------------------------------------- the built dashboard
 @pytest.fixture(scope="module")
 def built():

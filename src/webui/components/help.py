@@ -44,7 +44,9 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   later keeps working: a hover previews it after a short delay
   (`HOVER_OPEN_MS`) and keyboard focus at once, both as a ``tooltip``; a click
   (or Enter or Space) pins it open as a ``dialog`` named by its title; Esc and
-  a click outside close it; it stays open while the pointer is in the bubble;
+  a click outside close it; it stays open while the reader's pointer moves
+  in the bubble (a bubble that only came under a resting pointer, as it
+  follows its ⓘ on a scroll, keeps no preview open);
 - places it so it **never covers the field it explains** (the field's
   component, by its ``elem_id``; else the table row, the key-value row's key
   and value, or the line the ⓘ sits in): beside that field, then above it, then below it, the first that fits
@@ -401,7 +403,12 @@ _HELP_JS = r"""
     var kbd = document.createElement('span'); kbd.className = 'shep-kbd'; kbd.textContent = 'Esc';
     ft.appendChild(kbd); ft.appendChild(document.createTextNode(' to close'));
     bubble.appendChild(hd); bubble.appendChild(bd); bubble.appendChild(ft);
-    bubble.addEventListener('mouseenter', function () { clearTimeout(hideTimer); });
+    // The reader's pointer moving in the bubble keeps it (to read on). A
+    // bubble that came under a resting pointer (it follows its ⓘ when the
+    // page scrolls) gets a "mouseenter" from the browser but no "mousemove":
+    // that keeps nothing, so a preview never outlives its focus or hover
+    // and covers what the pointer rests on.
+    bubble.addEventListener('mousemove', function () { clearTimeout(hideTimer); });
     bubble.addEventListener('mouseleave', function () { if (!pinned) { scheduleHide(); } });
     x.addEventListener('click', function (e) { e.stopPropagation(); close(true); });
     document.body.appendChild(bubble);
