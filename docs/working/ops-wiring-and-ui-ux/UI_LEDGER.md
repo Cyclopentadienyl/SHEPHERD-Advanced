@@ -427,7 +427,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-06 Launch and configuration in the GUI
 
-14 rows: 1 awaiting owner acceptance, 9 code-verified, 4 code-verified at ba6e85e (audit).
+17 rows: 1 awaiting owner acceptance, 12 code-verified, 4 code-verified at ba6e85e (audit).
 
 #### FL-SVC · Service stopped during manual acceptance with no recorded reason
 
@@ -780,7 +780,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-10 Contrast, type scale, focus and targets from shared tokens
 
-17 rows: 1 partly done, 11 code-verified, 5 code-verified at ba6e85e (audit).
+18 rows: 1 partly done, 12 code-verified, 5 code-verified at ba6e85e (audit).
 
 #### NEW-settings-datasets-footer-3 · Disabled Settings fields look like enabled ones for a read-only viewer
 
@@ -1031,7 +1031,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-13 Path redaction and path exposure
 
-5 rows: 1 to do, 3 code-verified, 1 code-verified at ba6e85e (audit).
+6 rows: 1 to do, 4 code-verified, 1 code-verified at ba6e85e (audit).
 
 #### B53 · Open read routes name server paths the pages hide
 
@@ -1179,7 +1179,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-123 rows: 6 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 76 code-verified, 31 code-verified at ba6e85e (audit).
+137 rows: 4 to do, 6 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 86 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
