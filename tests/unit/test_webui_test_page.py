@@ -1420,7 +1420,7 @@ def test_an_evidence_directory_that_cannot_be_checked_never_disables_start(site,
                           protocol="disease") == (True, None)
     row = tp.evidence_html(page, "demo")
     assert ("<code>locked-evidence</code>, <code>evidence</code> (the server's setting)"
-            '<div><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">Cannot be checked: '
+            '<div><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">Cannot be checked: '
             "&lt;evidence 1&gt; (PermissionError: Permission &lt;denied&gt;). R10 cannot look "
             "in it: inputs found nowhere else read unverifiable, naming it.</span></span></div>"
             "</dd>") in row
@@ -3466,7 +3466,7 @@ def test_a_long_choice_ends_in_an_ellipsis_with_its_whole_text_as_title():
     assert '.gradio-container .wrap-inner input[role="combobox"] { text-overflow: ellipsis; }' \
         in style.SHELL_CSS
     assert 'input[role="combobox"]' in shell.SHELL_HEAD
-    assert not by_id["shep-test-cohort-hd"].js_on_load
+    assert by_id["shep-test-cohort-hd"].js_on_load == renderers.KEEP_OPEN_JS
     # Run → Checkpoint: each option short (at most 40 characters and one
     # separator), the distinguishing token first, so an option seldom needs
     # the ellipsis at all; a file's kind is its details' first row, never its
@@ -3786,6 +3786,30 @@ def test_the_test_page_and_datasets_share_one_redaction():
     # module (a page reaches nothing of another page).
     assert (tp.redact, tp.path_roots) == (workspaces.redact_server, workspaces.path_roots)
     assert tp.SERVER_PATH == path_redaction.SERVER_PATH
+
+
+def test_every_surface_says_a_server_path_in_the_one_words():
+    """Verification of fcc3dea (V-AUD-4): the investigation notes on Test,
+    Models and the API's record contest read a hidden path as "<path>",
+    where every other surface says `path_redaction.SERVER_PATH`; and four
+    modules each defined those words again. One definition now, read by
+    every surface. Fails on fcc3dea."""
+    import re
+    from pathlib import Path
+
+    from src.api.services import record_states
+    from src.utils import deployment_view, path_redaction
+    from src.webui.components import diagnosis_card
+
+    said = path_redaction.SERVER_PATH
+    assert record_states._open_note("seed drift; see /srv/ws/demo/notes.txt") == (
+        f"seed drift; see {said}")
+    assert diagnosis_card.SERVER_PATH == deployment_view.HIDDEN_PATH == said
+    src = Path(path_redaction.__file__).resolve().parents[1]
+    defined = re.compile(r"(?:=|other=)\s*[\"']" + re.escape(said) + r"[\"']")
+    again = sorted(str(path.relative_to(src)) for path in src.rglob("*.py")
+                   if defined.search(path.read_text(encoding="utf-8")))
+    assert again == ["utils/path_redaction.py"], again
 
 
 
@@ -5052,7 +5076,7 @@ def test_a_kg_or_generated_start_needs_no_evidence_setting_and_is_given_none(
         assert allowed is False and why.startswith(
             "Disabled: the evidence directories setting is refused: ")
         assert result["success"] is False and result["error"].endswith("Nothing was started.")
-        assert '<span class="shep-st shep-st-error"><span class="shep-st-shape" aria-hidden="true">✕</span><span class="shep-st-w">Refused: ' in row
+        assert '<span class="shep-st shep-st-error"><span class="shep-st-shape" aria-hidden="true">✕</span><span class="shep-st-sp"> </span><span class="shep-st-w">Refused: ' in row
         assert len(manager.started) == 2
 
 
@@ -5072,7 +5096,7 @@ def test_the_r10_row_renders_each_state_escaped():
         row = tp.evidence_html(hostile, "demo", version)
         assert HOSTILE not in row and "&lt;img src=x onerror=alert(1)&gt;" in row
         assert "/srv/x" not in row and "&lt;srv&gt;/x" in row
-        assert '<span class="shep-st shep-st-error"><span class="shep-st-shape" aria-hidden="true">✕</span><span class="shep-st-w">Refused: ' in row
+        assert '<span class="shep-st shep-st-error"><span class="shep-st-shape" aria-hidden="true">✕</span><span class="shep-st-sp"> </span><span class="shep-st-w">Refused: ' in row
     for kind in (protocols.KG_EDGES, protocols.GENERATED):
         row = tp.evidence_html(hostile, "demo", {"kind": kind})
         assert "Refused" not in row and HOSTILE not in row and "onerror" not in row
@@ -5549,7 +5573,7 @@ def test_the_job_cards_details_stay_as_the_reader_left_them_while_the_run_prints
         return card()
 
     with gr.Blocks() as page:
-        shown = tp.plain_html(card(), elem_id="shep-test-job", js_on_load=drawn.js_on_load)
+        shown = tp.plain_html(card(), elem_id="shep-test-job")
         gr.Button("Line", elem_id="line").click(line, outputs=[shown])
         gr.Button("End", elem_id="end").click(end, outputs=[shown])
         gr.Button("Next", elem_id="next").click(next_job, outputs=[shown])

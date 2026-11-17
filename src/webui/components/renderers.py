@@ -179,6 +179,10 @@ STATUS_MARKS = {
 }
 #: The tag colour of each status colour, for a mark drawn as a chip.
 _STATUS_TAG = {"ok": "ok", "neutral": "grey", "warn": "amber", "error": "red", "info": "accent"}
+#: **The space between a mark's shape and its word** (`status_mark`): in its
+#: text, so a copy and ``innerText`` read "○ Saved", never "○Saved"; of no
+#: width (``shep-st-sp``), so the shape's own margin still draws the gap.
+MARK_SPACE = '<span class="shep-st-sp"> </span>'
 
 
 def status_mark(kind: str, words: Any, *, words_html: bool = False,
@@ -189,16 +193,23 @@ def status_mark(kind: str, words: Any, *, words_html: bool = False,
     condition's short sentence, always shown beside the shape, escaped (with
     `words_html`, HTML these renderers built and escaped, a sentence with a
     bold part or a code value). The shape is hidden from a screen reader,
-    which reads the word. Drawn as coloured text (``shep-st``), or with
-    `as_chip` as a tag: a state to watch, or one that stands apart in a row of
-    tags. No page shows a mark without its word."""
+    which reads the word. **Its text reads shape, space, word** ("○ Saved"),
+    copied or read as ``innerText``: a space (`MARK_SPACE`, no width: the
+    shape's margin draws the gap) between them, in one run of text. Drawn as
+    coloured text (``shep-st``), or with `as_chip` as a tag: a state to watch,
+    or one that stands apart in a row of tags; the tag is a flex box, whose
+    items read as lines of their own, so its shape, space and word are one
+    item (``shep-st-in``). No page shows a mark without its word."""
     shape, token = STATUS_MARKS[kind]
     mark = ('<span class="shep-spinner" aria-hidden="true"></span>' if shape is None else
             f'<span class="shep-st-shape" aria-hidden="true">{shape}</span>')
     text = str(words) if words_html else e(words)
-    classes = (f"shep-tag shep-tag-{_STATUS_TAG[token]} shep-st-chip" if as_chip
-               else f"shep-st shep-st-{token}")
-    return f'<span class="{classes}">{mark}<span class="shep-st-w">{text}</span></span>'
+    # The spinner has no text of its own, so nothing to space from.
+    said = f'{mark}{"" if shape is None else MARK_SPACE}<span class="shep-st-w">{text}</span>'
+    if as_chip:
+        return (f'<span class="shep-tag shep-tag-{_STATUS_TAG[token]} shep-st-chip">'
+                f'<span class="shep-st-in">{said}</span></span>')
+    return f'<span class="shep-st shep-st-{token}">{said}</span>'
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _HEX12 = re.compile(r"^[0-9a-f]{12}$")
@@ -1617,31 +1628,36 @@ def summary_list(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = (),
     return f'<dl class="shep-kv{more}">{"".join(cells)}</dl>'
 
 
-def details_list(rows: Iterable[Tuple[str, str]], *,
+def details_list(rows: Iterable[Tuple[str, str]], *, of: Any = None,
                  titles: Optional[Mapping[str, str]] = None, classes: str = "") -> str:
     """**The one "Details ›" disclosure of a summary list** (the skill's
     §1.5: low-priority detail one click away, one level, never inside another
     disclosure or a popover): a closed ``<details class="shep-more">`` over
     `summary_list`'s rows (`titles` and `classes` as there), wherever a line
     names a few of many (`named_words`) and the rest are one click away.
-    Where the server draws it again while it is read (a poll), its
-    ``gr.HTML`` takes `KEEP_OPEN_JS`, and the thing it is of is named around
-    it (`keep_as`)."""
-    return ('<details class="shep-more"><summary>Details ›</summary>'
+    Every dashboard ``gr.HTML`` keeps it as the reader left it when it is
+    drawn again (`KEEP_OPEN_JS`, `shell.plain_html`), and where the region
+    can show another thing, the thing it is of is named: `of` on the
+    disclosure itself, or `keep_as` around it."""
+    named = keep_as(of) if of is not None else ""
+    return (f'<details class="shep-more"{named}><summary>Details ›</summary>'
             f'{summary_list(rows, titles=titles, classes=classes)}</details>')
 
 
-#: **Disclosures as the reader left them, across redraws**: the
-#: ``js_on_load`` of every ``gr.HTML`` the server draws again while it is
-#: read (a poll, a tick, a render) and that holds a disclosure, alone or
-#: before the element's own script. Gradio 6.30 draws HTML again in place and
-#: sets each element's attributes to the new HTML's, so a disclosure the
-#: reader opened was drawn closed again by the next drawing (T06-C: the Test
-#: job card's Details; T08-flow-2: Training's "Details ›" popovers). Both
-#: kinds are kept: a ``details`` (its ``open``) and a button with
-#: ``aria-expanded`` and ``aria-controls`` naming its popover in the same
-#: HTML (the button's ``aria-expanded``, the popover's ``hidden``; how it
-#: opens and closes is its own script's). The reader's own change, by any
+#: **Disclosures as the reader left them, across redraws**: the start of the
+#: ``js_on_load`` of every ``gr.HTML`` of the dashboard (`shell.plain_html`,
+#: and the chart figures), before the element's own script, whatever event
+#: draws it again (a poll, a tick, a render, or the reader's own act: a field
+#: edited, a Load, an order changed) and whatever it then holds (the
+#: verification of fcc3dea: the "Set by you" lines, the Continue drawer's
+#: preview and Models' details closed under the reader's own edits). Gradio
+#: 6.30 draws HTML again in place and sets each element's attributes to the
+#: new HTML's, so a disclosure the reader opened was drawn closed again by the
+#: next drawing (T06-C: the Test job card's Details; T08-flow-2: Training's
+#: "Details ›" popovers). Both kinds are kept: a ``details`` (its ``open``)
+#: and a button with ``aria-expanded`` and ``aria-controls`` naming its
+#: popover in the same HTML (the button's ``aria-expanded``, the popover's
+#: ``hidden``; how it opens and closes is its own script's). The reader's own change, by any
 #: means (a click, Enter or Space, Escape, a click outside, focus leaving), is
 #: told from a drawing's by a mark this script sets on each disclosure, which
 #: a drawing takes off: a change seen on a marked disclosure is the reader's,
@@ -1752,8 +1768,16 @@ KEEP_OPEN_JS = r"""
 
 def keep_as(identity: Any) -> str:
     """The attribute naming **what a region shows** (a run, a job, a
-    workspace), put on the element around its disclosures: `KEEP_OPEN_JS`
-    keeps a disclosure as the reader left it only while it is the same."""
+    workspace), put on the element around its disclosures (or on one
+    itself): `KEEP_OPEN_JS` keeps a disclosure as the reader left it only
+    while it is the same. Every region that can show another thing names
+    it, since the keeper runs on every HTML (`shell.plain_html`): the
+    selected model's identity and each of its records (Models), the
+    selected candidate (Diagnosis), the selected workspace (Datasets), the
+    checkpoint the Continue drawer checked, each result row and the results
+    compared (Results), as the Test page's job and result and Training's
+    workspace and run do. Unnamed, a Details opened for one model was drawn
+    open for the next (the review of 5033d29)."""
     return f' data-keep="{e(identity)}"'
 
 
@@ -2848,11 +2872,15 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
     (``data-shep-focus``: its page scrolls it into view). Without `uses`
     there is no Uses section: for a page whose own line says the device
     statement, always in view, and whose banner says a synthetic workspace is
-    for testing (Diagnosis' identity drawer, over its results footer; R-26)."""
+    for testing (Diagnosis' identity drawer, over its results footer; R-26).
+
+    Each section's title is an h3: every place the facts are drawn (the Load
+    drawer, Models' details, Diagnosis' identity drawer) is titled by an h2,
+    so no heading level is skipped (verification of fcc3dea, V-AUD-2)."""
     def section(key: str, title: str, body: str, extra: str = "") -> str:
         marked = ' data-shep-focus="true"' if key == focus else ""
         return (f'<section class="shep-facts-sec{extra}" data-sec="{key}"{marked}>'
-                f'<h4>{e(title)}</h4><div class="shep-facts-bd">{body}</div></section>')
+                f'<h3>{e(title)}</h3><div class="shep-facts-bd">{body}</div></section>')
 
     location = ""
     if facts.checkpoint_file:

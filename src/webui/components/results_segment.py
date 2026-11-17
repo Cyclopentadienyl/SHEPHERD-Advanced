@@ -625,7 +625,7 @@ def protocol_table_html(protocol: Any, rows: Sequence[Mapping[str, Any]],
     names = list(names) if names is not None else row_names(rows)
     columns = _metric_columns(protocol, rows)
     body = "".join(
-        f'<tr><td class="shep-rs-name">{_name_html(name)}</td>'
+        f'<tr{r.keep_as(name)}><td class="shep-rs-name">{_name_html(name)}</td>'
         f'<td>{_model_cell(row, family=family)}</td>'
         f'<td>{_data_cell(row)}</td>{_metrics_cells(protocol, row, columns)}'
         f'<td>{_state_cell(row)}</td><td>{_exposure_cell(row)}</td>'
@@ -1298,22 +1298,31 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False,
     return f"<td>{_fold(str(value), skip=skip)}</td>"
 
 
-def _hidden_note(alike: int, unknown: int, single: int = 0) -> str:
-    """What Differences only hid, in words: the rows recorded alike in every
-    column they apply to, those that apply to one result only (another
-    protocol's metric, another data kind's field: nothing to differ from),
-    and those whose only difference is an "Unknown" explained above
-    (`_said_above`)."""
-    parts = [f"{alike} rows recorded alike in every column they apply to" if alike else "",
-             f"{single} that apply to one result only" if single else "",
-             f"{unknown} that differ only by an Unknown explained above" if unknown else ""]
-    parts = [part for part in parts if part]
-    if not parts:
+def _hidden_note(alike: int, unknown: int, single: int = 0, none: int = 0) -> str:
+    """What Differences only hid, each cause in its own words (the skill's
+    §9): the rows recorded alike in every column they apply to, those that
+    apply to one result only (another protocol's metric, another data kind's
+    field: nothing to differ from), those that apply to no result (a branch's
+    "Settings changed" beside results of no branch), and those whose only
+    difference is an "Unknown" explained above (`_said_above`). Each count
+    agrees with its words ("1 row … it applies to", "1 that applies"), and
+    the verb with the whole ("is hidden" for one row alone)."""
+    counts = [(alike, ("row recorded alike in every column it applies to",
+                       "rows recorded alike in every column they apply to")),
+              (single, ("that applies to one result only", "that apply to one result only")),
+              (none, ("that applies to no result", "that apply to no result")),
+              (unknown, ("that differs only by an Unknown explained above",
+                         "that differ only by an Unknown explained above"))]
+    said_counts = [(count, words[count != 1]) for count, words in counts if count]
+    if not said_counts:
         return "Differences only: every row differs."
+    parts = [f"{count} {words}" for count, words in said_counts]
     if not alike:
-        parts[0] = parts[0].replace("that ", "rows that ", 1)
+        first = said_counts[0][0]
+        parts[0] = parts[0].replace("that ", "row that " if first == 1 else "rows that ", 1)
     said = parts[0] if len(parts) == 1 else (", ".join(parts[:-1]) + " and " + parts[-1])
-    return f"Differences only: {said} are hidden."
+    verb = "is" if len(parts) == 1 and said_counts[0][0] == 1 else "are"
+    return f"Differences only: {said} {verb} hidden."
 
 
 def _applies(value: Any) -> bool:
@@ -1466,7 +1475,8 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     # (the Field column, then one per result).
     groups: List[List[str]] = []
     body: List[str] = []
-    hidden, unknown_hidden, single_hidden, group_shown, path_shown = 0, 0, 0, None, None
+    hidden, unknown_hidden, single_hidden, none_hidden = 0, 0, 0, 0
+    group_shown, path_shown = None, None
     # Each row's values, kept to say a later row of the same fact by its
     # relation to the first (`_same_as`).
     seen: List[Tuple[Tuple[str, ...], Optional[Tuple[str, str]], str]] = []
@@ -1485,7 +1495,10 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
         applied = [(v, w) for v, w in zip(values, whys) if _applies(v)]
         texts = {_compare_value(v) + "\x01" + str(w) for v, w in applied
                  if not _said_above(v, w)}
-        if differences_only and many and len(applied) < 2:
+        if differences_only and many and not applied:
+            none_hidden += 1
+            continue
+        if differences_only and many and len(applied) == 1:
             single_hidden += 1
             continue
         if differences_only and many and len(texts) <= 1:
@@ -1529,7 +1542,7 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
         notes.append(f"{asked} were chosen; Compare shows {COMPARE_CAP} at a time, the first "
                      f"{COMPARE_CAP} chosen (Export takes them all).")
     if differences_only and many:
-        notes.append(_hidden_note(hidden, unknown_hidden, single_hidden))
+        notes.append(_hidden_note(hidden, unknown_hidden, single_hidden, none_hidden))
     elif differences_only:
         notes.append("One result: every row is shown; choose another to see differences.")
     notes.append("Values as recorded, side by side; no difference is computed, and each "
@@ -1541,8 +1554,11 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     tbodies = "".join(f'<tbody>{"".join(rows_)}</tbody>' for rows_ in groups)
     cols = (f'<colgroup><col class="shep-rs-cfield"></colgroup>'
             f'<colgroup span="{len(columns)}" class="shep-rs-cvals"></colgroup>')
+    # Named by the results compared (`renderers.keep_as`): a value unfolded
+    # for these is never drawn open for others.
+    named = r.keep_as(" · ".join(heads_said))
     return (f'{note_html}{SCROLL_CUE}<div class="shep-tbl-wrap shep-rs-wrap"><table class="shep-tbl '
-            f'shep-rs-cmp" aria-label="Compare results">{cols}<thead><tr><th scope="col">Field</th>'
+            f'shep-rs-cmp"{named} aria-label="Compare results">{cols}<thead><tr><th scope="col">Field</th>'
             f'{heads}</tr></thead>{tbodies}</table></div>')
 
 

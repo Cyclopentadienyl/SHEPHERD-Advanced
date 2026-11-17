@@ -106,8 +106,14 @@ LOAD_HINT = ("An operator loads one with “Load a model…” on the Diagnosis 
 #: server paths, so it goes to the log and the operator's reload response only.
 BUILD_REFUSED = ("it could not be initialized (the service logs name the condition that "
                  "stopped it)")
-#: A refused reload's words on the open surfaces, for the same reason.
+#: A refused reload's words on the open surfaces, for the same reason: a
+#: refusal whose own words may name a path. One decided before any path is
+#: read (the device, the GPU lock) says its own words (`ServingLoad.refusal`).
 RELOAD_REFUSED = "the operator's reload response and the service log say why"
+#: Where a reason's codes begin: a variable or a flag is said only in a
+#: trailing "Ref:" (the WebUI skill's §5), so words added after a reason go
+#: before it (`split_ref`).
+REF_LEAD = " Ref: "
 #: Who stopped inference, in a stopped record's words.
 STOPPED_BY = {"operator": "by an operator", "restart": "for Restart Backend",
               "shutdown": "as the service shut down"}
@@ -121,7 +127,8 @@ class LifecycleBusy(RuntimeError):
 class ServingRefused(RuntimeError):
     """A CUDA load refused before any candidate is read: the GPU lock is busy,
     not configured or unusable, or the job runner's slot is taken. `reason`
-    names no path, so it is also what the open not-serving reason says."""
+    names no path, so it is also what the open not-serving reason says
+    (`ServingLoad.refusal`)."""
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -174,6 +181,18 @@ class NotServingWords(NamedTuple):
         """What a status carries of it beside `reason` (primitives only)."""
         return {"state": self.state, "lead": self.lead, "at": self.at,
                 "model_sha12": self.model_sha12}
+
+
+def split_ref(reason: str) -> Tuple[str, str]:
+    """`reason`'s words, with no closing full stop, and its trailing "Ref:"
+    ("Ref: …", or "" when it has none): whatever a surface says after a
+    reason goes between the two, so the Ref stays last."""
+    words, lead, ref = reason.partition(REF_LEAD)
+    return words.strip().rstrip("."), (lead.strip() + " " + ref.strip()) if lead else ""
+
+
+def _with_ref(sentence: str, ref: str) -> str:
+    return f"{sentence} {ref}" if ref else sentence
 
 
 def _capital(words: str) -> str:
@@ -390,19 +409,23 @@ class AppState:
                 f"Inference was stopped {record.reason} at {record.at}: {model} is no longer "
                 f"loaded, so no diagnosis can be produced. {LOAD_HINT}.",
                 record.at, record.model_sha12)
+        # A refusal's words lead, and its Ref, if any, is said last, after
+        # the load hint (`split_ref`).
+        words, ref = split_ref(record.reason)
         if record.kind == STARTUP_REFUSED:
             return NotServingWords(
-                STARTUP_REFUSED, f"At start-up: {record.reason.rstrip('.')}",
-                "A pipeline is configured for this deployment's start-up but none is being "
-                f"served: {record.reason.rstrip('.')}. {LOAD_HINT}, or restarts the service "
-                "to try again.", record.at, record.model_sha12)
-        # Why the load was refused leads: the GPU lock's holder that refused
-        # it, or where the operator reads why.
+                STARTUP_REFUSED, f"At start-up: {words}",
+                _with_ref("A pipeline is configured for this deployment's start-up but none is "
+                          f"being served: {words}. {LOAD_HINT}, or restarts the service to try "
+                          "again.", ref), record.at, record.model_sha12)
+        # Why the load was refused leads: the refusal decided before any path
+        # was read (the device, the GPU lock and its holder), or where the
+        # operator reads why.
         of = f" of model {record.model_sha12}" if record.model_sha12 else ""
         return NotServingWords(
-            LOAD_REFUSED, _capital(record.reason),
-            f"No model is loaded: the last load{of} was refused at {record.at}: "
-            f"{record.reason.rstrip('.')}. {LOAD_HINT}.", record.at, record.model_sha12)
+            LOAD_REFUSED, _capital(words),
+            _with_ref(f"No model is loaded: the last load{of} was refused at {record.at}: "
+                      f"{words}. {LOAD_HINT}.", ref), record.at, record.model_sha12)
 
     def snapshot(self) -> Dict[str, Any]:
         """What is served and the lifecycle around it, read in one step under
@@ -748,19 +771,39 @@ class AppState:
 
 
 class ServingLoad:
-    """One load in the lifecycle (`AppState.loading`): `hold` is where its
-    resolved device decides the GPU lock, and `lock_refusal` keeps why that
-    refused it, the words the open not-serving reason then says."""
+    """One load in the lifecycle (`AppState.loading`). `settle` decides what
+    is decided before any path is read: the device, by the serving rule, then
+    the GPU lock for it. **`refusal` keeps why either refused**, in its own
+    words, which name no path (the device asked for, the lock's holder), so
+    they are what the open not-serving reason says; a refusal after a path is
+    read leaves it None, and the open surfaces point at the log
+    (`RELOAD_REFUSED`, `BUILD_REFUSED`)."""
 
     def __init__(self, state: AppState) -> None:
         self._state = state
-        self.lock_refusal: Optional[str] = None
+        self.refusal: Optional[str] = None
+
+    def settle(self, requested: Optional[str]) -> str:
+        """The device `requested` resolves to (`resolve_serving_device`: the
+        request, else SHEPHERD_DEVICE, else `auto`, as `requested_serving_device`
+        gave it), with the GPU lock held for it. Raises the resolver's
+        `PipelineBuildError` or the lock's `ServingRefused`, `refusal` set."""
+        from src.inference.pipeline import PipelineBuildError, resolve_serving_device
+
+        try:
+            device = resolve_serving_device(requested)
+        except PipelineBuildError as refused:
+            # The resolver reads only the request and the host, never a path.
+            self.refusal = str(refused)
+            raise
+        self.hold(device)
+        return device
 
     def hold(self, device: Optional[str]) -> None:
         try:
             self._state._hold_gpu_for(device)
         except ServingRefused as refused:
-            self.lock_refusal = refused.reason
+            self.refusal = refused.reason
             raise
 
 
@@ -1705,9 +1748,9 @@ def initialize_pipeline(
     by the shared resolver, the GPU lock held for a CUDA device before
     anything is read (busy, not configured or the runner's slot taken refuses
     it), the shared build, then publication. A refusal is
-    recorded as why nothing is served (`STARTUP_REFUSED`, naming the lock's
-    holder when that refused it, else pointing at the log, since a build's own
-    words can name server paths) and raised, so the lifespan reports the
+    recorded as why nothing is served (`STARTUP_REFUSED`, in the device's or
+    the lock's own words when one of them refused it, `ServingLoad.refusal`,
+    else pointing at the log, since a build's own words can name server paths) and raised, so the lifespan reports the
     service not ready; no other model is chosen. A graph file that is not
     there (`build_pipeline` returns None) is recorded the same way.
 
@@ -1717,12 +1760,10 @@ def initialize_pipeline(
         data_dir: Path to processed data directory (overrides env var)
         device: Inference device (overrides env var)
     """
-    from src.inference.pipeline import resolve_serving_device
-
     with app_state.loading() as load:
         try:
             _configured_source(kg_path, checkpoint_path, data_dir)
-            load.hold(resolve_serving_device(requested_serving_device(device)))
+            load.settle(requested_serving_device(device))
             bundle = build_pipeline(
                 kg_path=kg_path,
                 checkpoint_path=checkpoint_path,
@@ -1734,7 +1775,7 @@ def initialize_pipeline(
                 return
             publish_pipeline(bundle)
         except Exception:
-            app_state.record_refusal(STARTUP_REFUSED, load.lock_refusal or BUILD_REFUSED)
+            app_state.record_refusal(STARTUP_REFUSED, load.refusal or BUILD_REFUSED)
             raise
 
 

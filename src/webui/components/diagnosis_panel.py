@@ -118,7 +118,7 @@ from src.webui.components import served_status
 from src.webui.components.chips import D8_SHORT
 from src.webui.components.help import (HIT_TARGET, KEY_FIRST_CLASS, REGION_CLASS, help_button,
                                        text_id)
-from src.webui.components.renderers import IDENTITY_BANNERS, KEEP_OPEN_JS
+from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import OPTION_CHARS
 from src.webui.components.renderers import cut_at as _cut_at
@@ -126,6 +126,7 @@ from src.webui.components.renderers import e as _e
 from src.webui.components.renderers import fingerprint_value as _fingerprint_value
 from src.webui.components.renderers import grapheme_ends as _grapheme_ends
 from src.webui.components.renderers import is_digest as _is_digest
+from src.webui.components.renderers import keep_as as _keep_as
 from src.webui.components.renderers import resources_html as _resources_html
 from src.webui.exports import export_dir, file_slug
 from src.webui.components.renderers import summary_list as _summary_list
@@ -2337,10 +2338,15 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
                 "details_html": view_update(True, *_HTML_VIEW, value=details_empty_html()),
                 "details_md": view_update(False, *_MD_VIEW), "details_ft": ""}
     kind = _result_kind(result)
+    # The candidate its disclosures are of (`renderers.keep_as`), so a
+    # "More paths" or "Written summary" opened for one candidate is never
+    # drawn open for the next one chosen.
+    named = _keep_as(" ".join(str(candidate.get(k)) for k in (
+        "rank", "disease_id", "gene_id", "case_id") if candidate.get(k) is not None))
     if kind in TASK_ROW_KINDS:
         # No segment is offered: a gene or a reference patient has no
         # evidence, explanation or path, only its values.
-        body = task_details_html(candidate, kind, result)
+        body = f"<div{named}>{task_details_html(candidate, kind, result)}</div>"
         return {"details_hd": details_header_html(candidate, kind),
                 "details_seg": view_update(False, "shep-seg"),
                 "details_html": view_update(True, *_HTML_VIEW, value=body),
@@ -2360,6 +2366,8 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
         why = ("No explanation was returned for this candidate." if explanations
                else "Explanations were off for this run (Options).")
         html_ = f'<p class="shep-muted">{why}</p>'
+    if html_ is not None:
+        html_ = f"<div{named}>{html_}</div>"
     return {
         "details_hd": details_header_html(candidate, _result_kind(result)),
         "details_seg": view_update(True, "shep-seg", value=segment,
@@ -2964,6 +2972,8 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
         result["_query_candidate_genes"] = genes
     result["_explanations"] = explanations
     result["_received_at"] = card.stamp(datetime.now())
+    # The boxes as this run read them (`answered_inputs`).
+    result["_query_inputs"] = query_inputs(phenotype_text, genes_text, cohort)
     # A response that does not name its kind shows no candidate: nothing is
     # selected and nothing is exported (the body says why).
     candidates = (result.get("candidates") or []) if _result_kind(result) is not None else []
@@ -3011,6 +3021,30 @@ def phenotypes_changed(result: Any, state: Any) -> Dict[str, Any]:
     out["card_state"] = {**state, "rendered": {
         **(state.get("rendered") or {}), "badge": ""}}
     return out
+
+
+def query_inputs(phenotype_text: Any, genes_text: Any, cohort: Any) -> List[Any]:
+    """The inputs whose every edit clears a result (the HPO box, the genes
+    box and the Reference cohort's pick: `phenotypes_changed`), as a run
+    read them and as they are now, in one form to compare."""
+    return [phenotype_text or "", genes_text or "", cohort or None]
+
+
+def answered_inputs(result: Any, state: Any, phenotype_text: Any, genes_text: Any,
+                    cohort: Any) -> Dict[str, Any]:
+    """**A result is shown only for the query it answered** (UI-15, B73): run
+    once Run Diagnosis' answer is written, with the inputs as they are then.
+    An edit made while the run was in flight cleared only the result shown
+    before it (`phenotypes_changed`; the run and the edit are events of their
+    own), so the answer, to the inputs as they were when Run was pressed,
+    came under the edited box. When the inputs the result ran on
+    (``_query_inputs``) are not the ones shown, it is cleared as an edit
+    clears it; otherwise nothing changes, and the result keeps its model's
+    identity."""
+    if not result or (isinstance(result, Mapping) and result.get("_query_inputs")
+                      == query_inputs(phenotype_text, genes_text, cohort)):
+        return {}
+    return phenotypes_changed(result, state)
 
 
 def cohort_picked(result: Any, state: Any, cohort: Any) -> Dict[str, Any]:
@@ -3431,10 +3465,11 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                     'title="Read again">↻</button>', elem_id="shep-dx-reread",
                                     js_on_load=MODEL_LIST_JS)
                         # The poll draws it again: the not-serving reason's
-                        # Details stays as the reader left it for that reason.
+                        # Details stays as the reader left it for that reason
+                        # (`plain_html`'s keeper).
                         card_body = plain_html(card.body_html(card.new_state()),
                                                elem_id="shep-dx-card-body",
-                                               js_on_load=KEEP_OPEN_JS + MODEL_LIST_JS)
+                                               js_on_load=MODEL_LIST_JS)
                         with gr.Row(elem_id="shep-dx-card-actions",
                                     elem_classes=["shep-dx-card-actions"]):
                             details_btn = gr.Button("Details ›", size="sm", visible=False,
@@ -3777,17 +3812,27 @@ def create_diagnosis_tab(ctx: Any) -> None:
         return mapped(diagnose(text, patient, top_k, explanations, state, phase, view, request,
                                genes_text=genes, cohort=cohort))
 
-    run_btn.click(_run_diagnosis,
-                  inputs=[phenotype_input, patient_id_input, top_k_input, explanations_input,
-                          card_state, handle.phase, identity_view, genes_input, cohort_input],
-                  outputs=outputs(*dict.fromkeys(result_names + card_names + identity_names)))
-
     def _phenotypes_edited(result, state):
         return mapped(phenotypes_changed(result, state))
 
     edited = {"fn": _phenotypes_edited, "inputs": [results_state, card_state],
               "outputs": outputs(*dict.fromkeys(result_names + ("card_state",))),
               "show_progress": "hidden"}
+
+    def _answered_inputs(result, state, text, genes, cohort):
+        return mapped(answered_inputs(result, state, text, genes, cohort))
+
+    # The answer is written, then checked against the inputs as they are now
+    # (`answered_inputs`): an edit made while the run was in flight clears it
+    # as any edit does. Outside the queue, so it follows the answer at once.
+    run_btn.click(_run_diagnosis,
+                  inputs=[phenotype_input, patient_id_input, top_k_input, explanations_input,
+                          card_state, handle.phase, identity_view, genes_input, cohort_input],
+                  outputs=outputs(*dict.fromkeys(result_names + card_names + identity_names))
+                  ).then(_answered_inputs,
+                         inputs=[results_state, card_state, phenotype_input, genes_input,
+                                 cohort_input],
+                         outputs=edited["outputs"], queue=False, show_progress="hidden")
     # Every change of a box's text clears the result (UI-15, B73): its
     # ``.change``. Gradio 6.30's Textbox dispatches ``.input`` from a keypress
     # alone, so select all then Delete, a cut, a paste or an input method's

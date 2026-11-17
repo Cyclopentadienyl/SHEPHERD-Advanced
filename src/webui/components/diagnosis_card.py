@@ -128,7 +128,7 @@ from src.webui.components.served_status import (
     served_checkpoint_sha,
     served_key,
 )
-from src.utils.path_redaction import redact_paths
+from src.utils import path_redaction
 
 logger = logging.getLogger(__name__)
 
@@ -357,8 +357,9 @@ def task_model_name(task: str, transfer: Any = None) -> str:
     return f"{name} · {words}" if words else name
 
 
-#: What an absolute path the cohort registry does not hold reads as.
-SERVER_PATH = "a server path"
+#: What an absolute path the cohort registry does not hold reads as: the
+#: words every surface uses (`path_redaction.SERVER_PATH`).
+SERVER_PATH = path_redaction.SERVER_PATH
 
 #: A listed reference cohort's ``binding`` when it is a readable version of
 #: another kind than a supplied cohort (a KG edge set, which holds no
@@ -369,21 +370,16 @@ NOT_A_COHORT = "not_a_cohort"
 
 
 def redacted(text: Any, environ: Optional[Mapping[str, str]] = None) -> str:
-    """`text` with no absolute server path left (`path_redaction.redact_paths`, the
-    dashboard's one redaction): a path in the cohort registry reads
-    ``<registry>/…`` (the Test page's name for it), any other "a server path".
-    For the registry's and the reference cohort's refusals, which name the
-    registry's files."""
-    from src.config import server_settings
+    """`text` with no absolute server path left, by the dashboard's one pair
+    (`workspaces.redact_server` over `workspaces.path_roots`): a path under a
+    named server directory reads under its name (``<registry>/…``,
+    ``<workspaces>/…``, ``<intake>/…``, ``<evidence N>/…``), as the Test
+    page's job output and a record's notes say it, any other "a server path".
+    For the registry's and the reference cohort's refusals, which can name
+    the registry's files or a workspace's."""
+    from src.webui.components import workspaces
 
-    roots: List[Tuple[str, str]] = []
-    try:
-        registry = server_settings.cohort_registry(environ)
-        if registry.available:
-            roots.append((str(registry.value), "<registry>"))
-    except Exception:  # noqa: BLE001 - a registry not read is a path shown as "a server path"
-        logger.debug("The cohort registry setting could not be read", exc_info=True)
-    return redact_paths(text, roots, other=SERVER_PATH)
+    return workspaces.redact_server(text, workspaces.path_roots(environ))
 
 
 def reference_cohorts(serving: Optional[str], rows: List[Mapping[str, Any]],

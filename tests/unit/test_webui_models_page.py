@@ -1120,7 +1120,7 @@ def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_
     assert gap in css and ".shep-mp-recwrap + .shep-note" not in css
     html = mp.unreadable_html([{"index": 0, "sequence": None, "source_artifact_digest": None,
                                 "reason": "n_ranked: missing"}])
-    assert '<p class="shep-mp-p shep-mp-unread-p"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">1 record' in html
+    assert '<p class="shep-mp-p shep-mp-unread-p"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">1 record' in html
     assert '<div class="shep-tbl-wrap shep-mp-recwrap shep-mp-unreadwrap">' in html
 
 
@@ -1535,7 +1535,7 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     assert len(view["groups"][2]["keys"]) == 7                       # every ShepherdGNN file
     (orphan,) = view["groups"][1]["runs"]
     assert ('<span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">'
-            '▲</span><span class="shep-st-w">parent unavailable: ') in orphan["note"]
+            '▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">parent unavailable: ') in orphan["note"]
     assert EVIL not in orphan["note"] and html_lib.escape(EVIL) in orphan["note"]
     # The shared list draws them: each group its own row group, in order.
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
@@ -1673,7 +1673,7 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert "matches the reference recipe" in html and mp.REFERENCE_ANCHOR in _text(html)
     assert EVIL not in html and "in workspace <b>&lt;img" in html
     html = mp.identity_html(item, {"parent_state": "unavailable", "parent_problem": EVIL})
-    assert '▲</span><span class="shep-st-w">parent unavailable: &lt;img' in html
+    assert '▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">parent unavailable: &lt;img' in html
     assert EVIL not in html
     assert "none: a new run" in mp.identity_html({**item, "parent_sha256": None}, None)
     # The parent's digest is the one digest value: its 12 hex with the whole
@@ -2654,7 +2654,7 @@ def test_the_list_panel_has_one_scroll_region_at_every_wide_height():
     with gr.Blocks() as demo:
         mp.create_models_page(standalone_context(demo))
     (title,) = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-mp-hd"]
-    assert not getattr(title, "js_on_load", None)
+    assert title.js_on_load == r.KEEP_OPEN_JS
 
 
 def test_a_row_focused_under_the_tables_sticky_header_scrolls_clear_of_it():
@@ -2684,7 +2684,7 @@ def test_a_row_focused_under_the_tables_sticky_header_scrolls_clear_of_it():
     with gr.Blocks() as demo:
         mp.create_models_page(standalone_context(demo))
     (rows,) = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-models-research-rows"]
-    assert rows.js_on_load == js
+    assert rows.js_on_load == r.KEEP_OPEN_JS + js
 
 
 def test_the_table_fits_its_frame_beside_a_classic_scrollbar():
@@ -2742,7 +2742,7 @@ def test_runs_that_differ_are_flagged_only_in_a_deterministic_group(world, monke
     listing, data = _read(world, monkeypatch)
     flagged = mp.detail_parts(listing, data, _key(world, "model-40.pt"), NEWEST_CTL)["records"]
     assert mp.r.warn_chip("runs differ #1") in flagged
-    assert ('<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">runs '
+    assert ('<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">runs '
             "under these conditions differ — investigate: ") in flagged
     assert "Deterministic algorithms were on, so they were expected to agree." in flagged
 
@@ -2763,7 +2763,7 @@ def test_runs_that_differ_are_flagged_only_in_a_deterministic_group(world, monke
                                mode="disease", deterministic=deterministic) == (
             '<div class="shep-mp-delta shep-muted">runs under these conditions differ</div>')
     assert mp.contest_html(state, mode="disease", deterministic=True) == (
-        '<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-w">runs under '
+        '<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">runs under '
         "these conditions differ — investigate: pooled_mrr. Deterministic algorithms were on, "
         "so they were expected to agree.</span></span></div>")
 
@@ -2876,7 +2876,8 @@ def test_an_old_corroborated_usage_entry_is_shown_as_recorded():
 def _visible_words(markup):
     """A screen's visible words: a closed disclosure's body is not shown, so
     it is left out (its summary stays); every tag a space."""
-    shown = re.sub(r'<details class="shep-more">.*?</details>', " ", markup, flags=re.S)
+    shown = re.sub(r'<details class="shep-more"(?![^>]* open)[^>]*>.*?</details>', " ", markup,
+                   flags=re.S)
     return " ".join(_text(re.sub(r"<[^>]+>", " ", shown)).split())
 
 
@@ -3102,3 +3103,111 @@ def test_the_tree_folds_searches_filters_and_keeps_the_selection_in_a_browser(
     assert refreshed["detail"] == bundle_key("disease")
     assert any(f["selected"] and f["shown"] for f in files(refreshed["tree"], "disease_bbbbbb"))
     assert run(refreshed["tree"], "base_aaaaaa")["open"]               # the operator's fold
+
+
+#: The page's Order switch, Task select and "Applying …" line as Gradio draws
+#: them, and rows the shared list drew before the page shaped its view (no
+#: marker); By family clicked, then the page's own rows drawn.
+_PENDING_EARLY_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 } });
+  await page.goto('file://' + process.argv[2]);
+  const said = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(
+    () => r(document.querySelector('#shep-mp-pending .shep-st-w').textContent)))));
+  const before = await said();
+  await page.click('#family');
+  const clicked = await said();
+  await page.evaluate(() => {
+    document.getElementById('shep-models-research-rows').innerHTML =
+      '<table><tr data-key="f"><td>family rows</td></tr></table>'
+      + '<span class="shep-view-for" hidden data-for="family|all"></span>';
+  });
+  const shaped = await said();
+  console.log(JSON.stringify({ before, clicked, shaped }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_an_order_switched_before_the_first_answer_is_announced(tmp_path):
+    """Verification of fcc3dea (V-RB2-5, FL-UI-05): By family clicked while
+    Models' opening answer was on its way read By family for 0.6-1 s over the
+    newest-first rows with no "Applying …": the line waited for rows with a
+    view marker, and the rows the shared list draws before the page first
+    shapes its view carry none. Those rows are the list's own order (newest
+    first, every task), so the switch is announced at once, and the line
+    goes once the page's rows answer it. Fails on fcc3dea."""
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    page = tmp_path / "pending.html"
+    page.write_text(f"""<!doctype html><html><head><meta charset="utf-8"></head><body>
+<div id="shep-mp-order"><label><input type="radio" name="o" value="newest" checked>Newest first</label>
+<label><input id="family" type="radio" name="o" value="family">By family</label></div>
+<div id="shep-mp-task"><input value="All"></div>
+<div id="shep-mp-pending">{mp.PENDING_HTML}</div>
+<div id="shep-models-research-rows"><table><tr data-key="a"><td>newest rows</td></tr></table></div>
+<script>{mp.PENDING_JS}</script></body></html>""", encoding="utf-8")
+    seen = run_node(_PENDING_EARLY_JS, tmp_path, str(page))
+    assert seen == {"before": "", "clicked": "Applying By family…", "shaped": ""}, seen
+
+
+#: Models for a read-only viewer: Load this model and its reason's boxes.
+_LOAD_REASON_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[390, 844], [960, 1080], [1850, 960]]) {
+    const page = await browser.newPage({ viewport: { width: w, height: h } });
+    await page.goto(process.argv[2]);
+    await page.click('#shep-tab-research-button');
+    await page.click('#shep-page-models-button');
+    await page.waitForFunction(() => {
+      const r = document.querySelector('#shep-models-research-reason');
+      return r && /Operator controls only/.test(r.innerText);
+    }, null, { timeout: 60000 });
+    await page.locator('#shep-models-research-load').scrollIntoViewIfNeeded();
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const box = (s) => { const r = document.querySelector(s).getBoundingClientRect();
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; };
+      const words = document.querySelector('#shep-models-research-reason .shep-reason, #shep-models-research-reason');
+      const range = document.createRange(); range.selectNodeContents(words);
+      const lines = new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+      return { load: box('#shep-models-research-load'), reason: box('#shep-models-research-reason'), lines };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
+        tmp_path, world, monkeypatch):
+    """Verification of fcc3dea (V-RB2-4): for a read-only viewer at 390x844
+    the reason beside Load this model was an 84 px column eight lines tall,
+    its left edge inside the button's box: the foot is one grid row (load,
+    reason, note) at every width. On a phone's column each takes a row of
+    its own; wider, the reason stays beside the button. Fails on fcc3dea."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    monkeypatch.setenv("SHEPHERD_DEPLOYMENT_MODE", "read-only")
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_LOAD_REASON_JS, tmp_path, base[:-len("gradio_api")])
+    for size, at in seen.items():
+        load, reason = at["load"], at["reason"]
+        apart = reason["left"] >= load["right"] or reason["top"] >= load["bottom"]
+        assert apart and reason["width"] >= 200 and at["lines"] <= 3, (size, at)
+    phone = seen["390x844"]
+    assert phone["reason"]["top"] >= phone["load"]["bottom"], phone
+    for size in ("960x1080", "1850x960"):
+        assert seen[size]["reason"]["left"] >= seen[size]["load"]["right"], seen[size]

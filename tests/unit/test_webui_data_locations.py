@@ -511,3 +511,67 @@ def test_stop_service_asks_once_then_stops_through_the_orderly_stop(monkeypatch)
         row, *_parts, status = act(refused)
         assert row["visible"] is False and "Refused: " in status
     assert stops == [1]
+
+
+#: Settings at a phone's width and at the owner's window: each data
+#: location's box, how wide it is and whether its placeholder fits in it.
+_BOXES_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[390, 844], [960, 1080], [1850, 960]]) {
+    const page = await browser.newPage({ viewport: { width: w, height: h } });
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(process.argv[2]);
+    await page.click('#shep-tab-settings-button');
+    await page.waitForSelector('#dl_box_workspaces_root textarea, #dl_box_workspaces_root input',
+                               { state: 'visible', timeout: 60000 });
+    await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const boxes = {};
+      for (const key of ['workspaces_root', 'registry', 'intake_dir', 'training_evidence_dirs']) {
+        const f = document.querySelector(`#dl_box_${key} textarea, #dl_box_${key} input`);
+        const r = f.getBoundingClientRect();
+        const c = document.createElement('canvas').getContext('2d');
+        c.font = getComputedStyle(f).font;
+        const s = getComputedStyle(f);
+        const room = f.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight);
+        boxes[key] = { width: Math.round(r.width),
+                       hint_fits: c.measureText(f.placeholder.split('\n')[0]).width <= room + 0.5 };
+      }
+      return { boxes, sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_every_path_box_keeps_room_for_a_path_at_every_window(dl, tmp_path, monkeypatch):
+    """Verification of fcc3dea (V-RA-1): at 390x844 each "Set to" box was
+    40 px wide in every state, its placeholder drawn as "Fc", since the set
+    row never wrapped and the box took what its key and buttons left. A box
+    now keeps room for a path (16em, or its whole row), its buttons wrapping
+    under it where the row cannot hold them; at 960x1080 and 1850x960 the
+    row stays one line (an operator's Settings, every answer in). Fails on
+    fcc3dea."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_BOXES_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    for size, at in seen.items():
+        assert at["sideways"] is False, (size, at)
+        for key, box in at["boxes"].items():
+            assert box["hint_fits"] and box["width"] >= 200, (size, key, box)

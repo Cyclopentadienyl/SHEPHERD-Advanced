@@ -176,22 +176,28 @@ def test_a_research_page_refreshes_only_when_it_is_the_page_shown(built):
     tokens = [ctx.page_tokens[p] for p in shell.RESEARCH_PAGES]
     (research,) = [fn for fn in demo.fns.values()
                    if (ctx.tabs[shell.RESEARCH]._id, "select") in fn.targets]
-    assert research.inputs == [ctx.location, ctx.research_page, *tokens]
+    # Each writer is first given the page shown as it was sent and the time of
+    # the last write (`_written`); its own inputs and outputs follow.
+    sent, written_at = research.inputs[:2]
+    assert research.inputs[2:] == [ctx.location, ctx.research_page, *tokens]
     # queued: Gradio 6.30 dispatches a State's .change only from a queued answer
-    assert research.outputs == [ctx.location, *tokens] and research.queue is not False
-    location, *bumped = research.fn("clinical", "datasets", 0, 4, 0, 0, 0)
-    assert location == "datasets" and bumped == [1, gr.update(), gr.update(), gr.update(),
-                                                 gr.update()]
-    location, *bumped = research.fn("settings", None, 0, 4, 0, 0, 0)  # nothing chosen: Training
+    assert research.outputs == [ctx.location, *tokens, written_at]
+    assert research.queue is not False
+    location, *bumped, at = research.fn("datasets 9", 0.0, "clinical", "datasets", 0, 4, 0, 0, 0)
+    assert location == "datasets" and at == 9.0 and bumped == [1, gr.update(), gr.update(),
+                                                               gr.update(), gr.update()]
+    # nothing chosen: Training
+    location, *bumped, _ = research.fn("training 9", 0.0, "settings", None, 0, 4, 0, 0, 0)
     assert location == "training" and bumped == [gr.update(), 5, gr.update(), gr.update(),
                                                   gr.update()]
-    location, *bumped = research.fn("clinical", "finetune", 0, 0, 2, 0, 0)
+    location, *bumped, _ = research.fn("finetune 9", 0.0, "clinical", "finetune", 0, 0, 2, 0, 0)
     assert location == "finetune" and bumped[2] == 3
     for page in shell.RESEARCH_PAGES:
         (own,) = [fn for fn in demo.fns.values() if (ctx.tabs[page]._id, "select") in fn.targets]
-        assert own.inputs == [ctx.location, ctx.page_tokens[page]]
-        assert own.outputs == [ctx.location, ctx.research_page, ctx.page_tokens[page]]
-        assert own.fn("clinical", 2) == (page, page, 3) and own.queue is not False
+        assert own.inputs == [sent, written_at, ctx.location, ctx.page_tokens[page]]
+        assert own.outputs == [ctx.location, ctx.research_page, ctx.page_tokens[page], written_at]
+        assert own.fn(f"{page} 9", 0.0, "clinical", 2) == (page, page, 3, 9.0)
+        assert own.queue is not False
     # Datasets' refresh hangs on its token, not on any tab's select.
     from src.webui.components import datasets_page
 
@@ -216,18 +222,19 @@ def test_a_research_page_refreshes_once_per_opening(built):
                         if (ctx.tabs[page]._id, "select") in fn.targets)
              for page in shell.RESEARCH_PAGES}
     # first opening: Research's select, then Training's mount select
-    location, *bumped = research.fn("clinical", "training", 0, 0, 0, 0, 0)
+    location, *bumped, at = research.fn("training 5", 0.0, "clinical", "training", 0, 0, 0, 0, 0)
     assert location == "training" and bumped[1] == 1
-    assert inner["training"].fn(location, 1) == ("training", "training", gr.update())
+    assert inner["training"].fn("training 6", at, location, 1) == (
+        "training", "training", gr.update(), 6.0)
     # the other order: the inner select first, then Research's
-    page, _, token = inner["models"].fn("clinical", 0)
+    page, _, token, at = inner["models"].fn("models 5", 0.0, "clinical", 0)
     assert (page, token) == ("models", 1)
-    assert research.fn(page, "models", 0, 0, 0, 0, 1) == (
-        "models", gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
+    assert research.fn("models 5", at, page, "models", 0, 0, 0, 0, 1) == (
+        "models", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), 5.0)
     # within Research, another page's tab still refreshes it
-    assert inner["test"].fn("training", 4) == ("test", "test", 5)
+    assert inner["test"].fn("test 7", 6.0, "training", 4) == ("test", "test", 5, 7.0)
     # returning to Research from another page refreshes the page shown
-    assert research.fn("settings", "test", 0, 0, 0, 5, 0)[4] == 6
+    assert research.fn("test 8", 7.0, "settings", "test", 0, 0, 0, 5, 0)[4] == 6
     for fn in (research, *inner.values()):
         assert fn.concurrency_id == shell.OPEN_PAGE_CONCURRENCY and fn.concurrency_limit == 1
 
@@ -247,13 +254,63 @@ def test_the_location_follows_the_page_shown(built):
     demo, ctx = built
     for tab in (shell.CLINICAL, shell.SETTINGS):
         shown = [fn for fn in demo.fns.values() if (ctx.tabs[tab]._id, "select") in fn.targets
-                 and fn.outputs == [ctx.location]]
-        assert len(shown) == 1 and shown[0].fn() == tab
+                 and fn.outputs[0] is ctx.location]
+        assert len(shown) == 1 and shown[0].fn(f"{tab} 3.5", 0.0) == (tab, 3.5)
     writers = [fn for fn in demo.fns.values() if ctx.location in fn.outputs]
     assert len(writers) == 2 + 1 + len(shell.RESEARCH_PAGES)
     for fn in writers:
         assert fn.queue is not False and fn.concurrency_id == shell.OPEN_PAGE_CONCURRENCY
         assert fn.concurrency_limit == 1 and fn.trigger_mode == "multiple", fn.name
+        # V-RB1-1: each is given the page shown as it was sent, and when.
+        sent, written_at = fn.inputs[:2]
+        assert fn.js == shell.SENT_JS and sent.visible is False
+        assert fn.outputs[-1] is written_at and written_at is writers[0].inputs[1]
+
+
+def test_the_brand_is_the_pages_one_level_one_heading():
+    """Verification of fcc3dea (V-AUD-1, axe page-has-heading-one on every
+    page): the shell's title was a div and the panels' titles h2, so no page
+    had a level-1 heading. The brand is the one h1, drawn as before (no
+    heading size or margin of its own); nothing else in the dashboard draws
+    one. Fails on fcc3dea."""
+    from pathlib import Path
+
+    assert shell._brand_html() == f'<h1 class="shep-brand">{shell.BRAND}</h1>'
+    webui = Path(shell.__file__).resolve().parent
+    drawn = sorted(str(path.relative_to(webui)) for path in webui.rglob("*.py")
+                   if "<h1" in path.read_text(encoding="utf-8"))
+    assert drawn == ["shell.py"], drawn
+    from src.webui.style import SHELL_CSS
+
+    assert "#shep-brand h1.shep-brand { margin: 0; padding: 0;" in SHELL_CSS
+
+
+def test_a_location_writer_writes_only_for_the_page_shown_as_it_was_sent(built):
+    """Verification of fcc3dea (V-RB1-1): after a reload of Research ›
+    Training, Diagnosis' tab sent the select it sends as it mounts after the
+    restore had opened Training, so the session's location ended on Diagnosis
+    while Training was shown, and every Training poll idled. Every writer now
+    writes only when the page shown as it was sent is its own, and never over
+    a write sent after it; with no head script it writes as asked. Fails on
+    fcc3dea, whose writers take no such input."""
+    demo, ctx = built
+    clinical, research, models = (
+        next(fn for fn in demo.fns.values()
+             if (ctx.tabs[tab]._id, "select") in fn.targets and ctx.location in fn.outputs)
+        for tab in (shell.CLINICAL, shell.RESEARCH, shell.MODELS))
+    nothing = (gr.update(), gr.update())
+    # Sent by the mount while Training is shown: nothing written.
+    assert clinical.fn("training 3110.4", 2997.0) == nothing
+    # Sent before a write applied already (it arrived after it): nothing.
+    assert clinical.fn("clinical 1400.0", 2997.0) == nothing
+    assert models.fn("models 10", 20.0, "clinical", 0) == (gr.update(),) * 4
+    assert research.fn("clinical 30", 0.0, "clinical", "models", 0, 0, 0, 0, 0) == (
+        gr.update(),) * 7
+    # Its own page shown, sent after the last write: written, with its time.
+    assert clinical.fn("clinical 3200", 2997.0) == ("clinical", 3200.0)
+    # No head script: written as asked.
+    assert clinical.fn("", 2997.0) == ("clinical", gr.update())
+    assert "sent: sent" in shell.SHELL_HEAD and "performance.now()" in shell.SHELL_HEAD
 
 
 def test_a_load_opens_the_page_this_tab_kept_and_nothing_else(built):
@@ -438,10 +495,143 @@ def test_a_page_can_be_built_alone_with_a_standalone_context():
 
 
 def test_plain_html_has_no_prose_css_and_no_default_click():
+    """No prose CSS and no default click script: only the shared disclosure
+    keeper, then the caller's own script."""
+    from src.webui.components.renderers import KEEP_OPEN_JS
+
     with gr.Blocks():
         block = shell.plain_html("<b>x</b>", elem_id="x", elem_classes="extra")
-    assert block.apply_default_css is False and block.js_on_load is None
+        own = shell.plain_html("", js_on_load="var own = 1;")
+    assert block.apply_default_css is False and block.js_on_load == KEEP_OPEN_JS
+    assert own.js_on_load == KEEP_OPEN_JS + "var own = 1;"
     assert block.elem_classes == ["shep-html", "extra"]
+
+
+def test_every_html_an_event_draws_keeps_its_disclosures_as_the_reader_left_them():
+    """Every ``gr.HTML`` of the dashboard that an event draws (any listener's
+    output: a poll's, a tick's, a render's or the reader's own act's) runs
+    the shared keeper (`renderers.KEEP_OPEN_JS`) once, before its own script,
+    so a ``details`` or an ``aria-expanded`` popover it holds stays as the
+    reader left it when it is drawn again. What a region holds is its
+    renderers' choice at run time, so every one is listed from the built app.
+    On fcc3dea 128 of the 133 had none: only the regions a poll or a render
+    draws again were wired (T08-flow-2), and those the reader's own acts draw
+    again (the "Set by you" lines, the Continue drawer's preview, Models'
+    details and records) closed a Details the reader had opened."""
+    from src.webui.app import create_gradio_app
+    from src.webui.components.renderers import KEEP_OPEN_JS
+
+    demo = create_gradio_app()
+    drawn = {block._id: block for fn in demo.fns.values() for block in fn.outputs
+             if isinstance(block, gr.HTML)}
+    names = {key: getattr(block, "elem_id", None) or f"#{key}" for key, block in drawn.items()}
+    assert len(drawn) >= 130, len(drawn)
+    unkept = sorted(names[key] for key, block in drawn.items()
+                    if not (block.js_on_load or "").startswith(KEEP_OPEN_JS))
+    assert unkept == [], unkept
+    assert [names[key] for key, block in drawn.items()
+            if block.js_on_load.count(KEEP_OPEN_JS) != 1] == []
+    # Among them, regions only the reader's own acts draw again.
+    assert {"shep-train-setby", "ft_setby", "continue_preview", "shep-mp-detail-top",
+            "shep-mp-records"} <= set(names.values())
+
+
+def _disclosures_named(markup: str) -> list:
+    """What `renderers.KEEP_OPEN_JS` keys each disclosure of `markup` by: the
+    ``data-keep`` of the disclosure itself or of its nearest element around
+    it (``None`` where none names it), in order."""
+    from html.parser import HTMLParser
+
+    void = {"area", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"}
+
+    class Names(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.stack, self.found = [], []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            named = attrs.get("data-keep")
+            if named is None:
+                named = next((n for _t, n in reversed(self.stack) if n is not None), None)
+            if tag == "details" or ("aria-expanded" in attrs and "aria-controls" in attrs):
+                self.found.append(named)
+            if tag not in void:
+                self.stack.append((tag, attrs.get("data-keep")))
+
+        def handle_endtag(self, tag):
+            while self.stack:
+                if self.stack.pop()[0] == tag:
+                    break
+
+    parser = Names()
+    parser.feed(markup)
+    return parser.found
+
+
+def test_a_region_that_can_show_another_thing_names_what_its_disclosures_are_of():
+    """The review of 5033d29: the keeper runs on every drawn HTML (4c72a2d),
+    and keys a disclosure by what its region names (`renderers.keep_as`), its
+    words and its place; a region that names nothing is its one thing. The
+    regions that show one of many named nothing, so a "Details ›" opened for
+    one model was drawn open for the next one selected (the same for a
+    record, a candidate's "More paths", a workspace's manifest, the Continue
+    drawer's settings and a result's folds); before 4c72a2d they closed on
+    every drawing. Each such region's renderer names the thing shown, so
+    every disclosure it draws for one thing is named, drawn again for the
+    same thing by the same names, and for another thing by none of them."""
+    from src.webui.components import datasets_page as dsp
+    from src.webui.components import diagnosis_panel as dp
+    from src.webui.components import models_page as mp
+    from src.webui.components import results_segment as rs
+    from src.webui.components import training_console as tc
+
+    def model(name):
+        return {"sha256": name[0] * 64, "architecture": "gatv2", "run": f"run-{name}",
+                "filename": f"{name}.pt"}
+
+    def record(digit, sequence):
+        return {"source": digit * 64, "cohort": {"label": "cohort", "role": "test"},
+                "registration": {"sequence": sequence, "registered_at": "2026-11-17T00:00:00Z"}}
+
+    def candidate(disease):
+        paths = [["HP:1", f"G{n}", disease] for n in range(5)]
+        return dp.details_outputs({"candidates": [{"rank": 1, "disease_id": disease,
+                                                   "evidence_package": {"direct_paths": paths}}]},
+                                  1, "paths")["details_html"]["value"]
+
+    def workspace(name):
+        rows = [{"name": n, "trainable": True, "facts": {"bound": [("Graph", "a" * 64)]}}
+                for n in ("ws_a", "ws_b")]
+        return dsp.details_html({"rows": rows}, name)
+
+    def checked(run):
+        preview = {"ok": True, "parent": f"gatv2/{run}/last.pt", "sha256": run[-1] * 64,
+                   "inherited": {"learning_rate": 0.001}, "action": "continue 5 more epochs"}
+        return tc._check_html(preview, tc.CONTINUE_FROM_LIST, listed=f"gatv2/{run}/last.pt")
+
+    reference = "mims-harvard/SHEPHERD@e95433a disease run_*.sh script (lr 1e-5; README U3, U8)"
+    row = {"protocol": "disease", "result": "ok", "data": {"kind": "supplied"},
+           "exposure": {"r10": None}, "model": {"reference": reference}}
+    regions = {
+        "Models' selected checkpoint": (lambda: mp.identity_html(model("alpha"), None),
+                                        lambda: mp.identity_html(model("beta"), None)),
+        "Models' record": (lambda: mp.record_block_html(record("c", 1), None),
+                           lambda: mp.record_block_html(record("d", 2), None)),
+        "Diagnosis' selected candidate": (lambda: candidate("MONDO:1"),
+                                          lambda: candidate("MONDO:2")),
+        "Datasets' selected workspace": (lambda: workspace("ws_a"), lambda: workspace("ws_b")),
+        "the Continue drawer's check": (lambda: checked("run-a"), lambda: checked("run-b")),
+        "a result's row": (lambda: rs.protocol_table_html("disease", [row], names=["r1"]),
+                           lambda: rs.protocol_table_html("disease", [row], names=["r2"])),
+        "the results compared": (lambda: rs.compare_html([row], False, names=["r1"]),
+                                 lambda: rs.compare_html([row], False, names=["r2"])),
+    }
+    for region, (one, other) in regions.items():
+        named = _disclosures_named(one())
+        assert named and None not in named, (region, named)
+        assert _disclosures_named(one()) == named, region
+        assert set(named).isdisjoint(_disclosures_named(other())), (region, named)
 
 
 def test_the_dead_code_the_m5_review_found_stays_gone():
@@ -701,11 +891,11 @@ def _where_page():
                 if (ctx.tabs[shell.CLINICAL]._id, "select") in fn.targets]
     original = shown.fn
 
-    def late():
+    def late(*args):
         import time
 
         time.sleep(slow["seconds"])
-        return original()
+        return original(*args)
 
     late.__name__ = original.__name__
     shown.fn = late
@@ -872,6 +1062,72 @@ def test_diagnosis_mount_select_never_writes_over_a_page_opened_after_it(tmp_pat
         seen = run_node(_MOUNT_RACE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
     assert seen == {"location": "models", "queued": True}, seen
+
+
+#: Diagnosis' mount-time select held on its way to the server until Research ›
+#: Models is opened and answered, then let go: what the server's location is
+#: once every request is answered.
+_MOUNT_LATE_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext()).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const cfg = await (await fetch(base + 'config')).json();
+  const shownIndex = cfg.dependencies.find((d) => d.api_name === '_shown_clinical').id;
+  let held = null;
+  await page.route('**/queue/join**', (route) => {
+    let body = {};
+    try { body = JSON.parse(route.request().postData() || '{}'); } catch (e) { body = {}; }
+    if (body.fn_index === shownIndex && held === null) { held = route; return; }
+    route.continue();
+  });
+  const tab = (nav, id) => `#${nav} > .tab-wrapper [role="tab"][data-tab-id="${id}"]`;
+  await page.goto(base, { waitUntil: 'load' });
+  for (let i = 0; held === null; i++) {
+    if (i > 400) { throw new Error('Diagnosis never sent its mount-time select'); }
+    await page.waitForTimeout(25);
+  }
+  await page.click(tab('shep-nav', 'research'));
+  await page.click(tab('shep-research-nav', 'models'));
+  await page.waitForSelector(tab('shep-research-nav', 'models') + '[aria-selected="true"]');
+  // Every request but the held one answered.
+  await page.waitForFunction(() => window.__shepQueue.inflight === 1
+                             && window.__shepQueue.direct === 0, null, { timeout: 20000 });
+  await held.continue();
+  await page.waitForFunction((n) => window.__shepQueue.answered(n) > 0
+                             && window.__shepQueue.idle(), shownIndex, { timeout: 20000 });
+  await page.click('#ask-where');
+  await page.waitForFunction(() => document.querySelector('#where textarea').value !== '', null,
+                             { timeout: 20000 });
+  console.log(JSON.stringify({
+    location: (await page.inputValue('#where textarea')).replace(/ #\d+$/, ''),
+    shown: await page.evaluate(() => document.querySelector(
+      '#shep-research-nav > .tab-wrapper [role="tab"][aria-selected="true"]').dataset.tabId) }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_mount_time_select_that_arrives_late_never_moves_the_location(tmp_path):
+    """Verification of fcc3dea (V-RB1-1), the arrival half: Diagnosis' select
+    sent as its tab mounts, held on its way until Research › Models has been
+    opened and answered, wrote "clinical" when it arrived, so Models' poll
+    did nothing while Models was shown. It was sent before Models' writes,
+    so it no longer writes over them (`_written`). Fails on fcc3dea."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    demo, _slow = _where_page()
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_MOUNT_LATE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    assert seen == {"location": "models", "shown": "models"}, seen
 
 
 # --------------------------------------------------------------------------- one choice, one request

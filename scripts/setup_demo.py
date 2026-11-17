@@ -656,6 +656,9 @@ Ref: the API alone, with no dashboard, serving this disease model:
 
         step = "\n".join(training_step_lines(output_dir))
         steps = "\n".join(dashboard_lines(output_dir, args.device, trained=False))
+        # The command trains this workspace, wherever it was written: without
+        # --output-dir it would build and train the default one instead.
+        again = f"python scripts/setup_demo.py --train-model --output-dir {output_dir}"
         print(f"""
 No model was trained, so this workspace has nothing to serve yet: the API
 answers diagnoses only with a trained model, and refuses them (503) until one
@@ -667,7 +670,7 @@ Train the demo in the dashboard, then load its disease model:
 Or train on the command line; training takes the GPU lock and refuses without
 it (deployment guide §4.11):
 {step}
-  python scripts/setup_demo.py --train-model
+  {again}
   # or the production entry point at the reference recipe's full size: a base,
   # then its disease model fine-tuned from the base run's checkpoint
   python scripts/train_model.py --data-dir {output_dir} --stage base

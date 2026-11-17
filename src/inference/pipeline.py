@@ -328,13 +328,16 @@ def resolve_serving_device(requested: Optional[str]) -> str:
     requested = str(requested).strip()
     wants_cuda = requested in ("auto", "cuda") or requested.startswith("cuda:")
     if wants_cuda and not torch.cuda.is_available():
+        # **Plain words first, the variable only in the trailing Ref** (the
+        # WebUI skill's §5): no path is read before this, so these words are
+        # also what the open not-serving reason says (`ServingLoad.refusal`).
         raise ServingDeviceUnavailable(
             f"Serving device {requested!r} requires CUDA, which is not available "
             "here. Hardware acceleration is a hard requirement for deployment and "
             "CUDA is currently the only supported backend, so serving does not "
-            "substitute the CPU for it. Set SHEPHERD_DEVICE=cpu (or send "
-            "device 'cpu' with a reload) explicitly for development; the served "
-            "identity records the device asked for and the one in effect."
+            "substitute the CPU for it. On a development host, start the service "
+            "with the CPU device (Settings › Stop service). Ref: SHEPHERD_DEVICE=cpu, "
+            "or device 'cpu' in a reload request (deployment guide §4.8)"
         )
     return "cuda" if requested == "auto" else requested
 

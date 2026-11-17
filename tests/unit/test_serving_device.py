@@ -339,7 +339,13 @@ def test_a_startup_refused_for_its_device_answers_503(
     assert "candidates" not in diagnosis.json(), "a diagnosis was answered"
     assert diagnosis.json()["error"].startswith("A pipeline is configured")
     assert ready.json()["error"] == diagnosis.json()["error"]
-    assert "requires CUDA" not in diagnosis.json()["error"], "the build's words on an open route"
+    # The device is settled before any path is read, so its own words, which
+    # name none, are the open reason (`ServingLoad.refusal`, T08-flow-12); a
+    # build's own words never are.
+    error = diagnosis.json()["error"]
+    assert "requires CUDA" in error and error.endswith(
+        "Ref: SHEPHERD_DEVICE=cpu, or device 'cpu' in a reload request (deployment guide §4.8)")
+    assert str(data_dir) not in error and str(checkpoint) not in error
     assert api.app_state.pipeline is None
 
 
@@ -505,6 +511,83 @@ def test_a_reload_that_asks_for_cuda_without_it_is_refused_and_keeps_serving(
     assert "still being served" in result.message
     assert api.app_state.pipeline is serving
     assert result.status.served_identity.model_dump() == serving.served_identity().to_dict()
+
+
+@pytest.mark.parametrize("device", [None, "cuda"])
+def test_a_load_refused_for_its_device_says_why_on_every_open_surface(
+    no_cuda, no_device_configured, workspace, device
+):
+    """T08-flow-12: with nothing served, a load refused for its device was
+    recorded only as "the operator's reload response and the service log say
+    why", so the Diagnosis card, its Details and the status route never said
+    what was wrong, while the GPU lock's refusal reached them in its own words.
+    Both are decided before any path is read and name none, so both go
+    through one channel (`ServingLoad.refusal`): the words plain first, the
+    variable only in a trailing Ref, said last on every surface (the WebUI
+    skill's §5). Fails on fcc3dea, where the record says only where to look."""
+    from src.api.routes.pipeline import PipelineReloadRequest, run_reload
+
+    api = no_device_configured
+    data_dir, checkpoint = workspace
+
+    result = run_reload(PipelineReloadRequest(
+        data_dir=str(data_dir), checkpoint_path=str(checkpoint), device=device))
+    status = api.app_state.snapshot()
+
+    asked = device or "auto"
+    words = (f"Serving device '{asked}' requires CUDA, which is not available here. Hardware "
+             "acceleration is a hard requirement for deployment and CUDA is currently the "
+             "only supported backend, so serving does not substitute the CPU for it. On a "
+             "development host, start the service with the CPU device (Settings › Stop "
+             "service)")
+    ref = "Ref: SHEPHERD_DEVICE=cpu, or device 'cpu' in a reload request (deployment guide §4.8)"
+    assert result.success is False
+    assert result.message == f"{words}. {ref}", "the operator's answer keeps its Ref last"
+    said = status["not_serving"]
+    assert said["state"] == api.LOAD_REFUSED and said["lead"] == words
+    reason = status["not_serving_reason"]
+    assert reason == (f"No model is loaded: the last load was refused at {said['at']}: {words}. "
+                      f"{api.LOAD_HINT}. {ref}")
+    assert api.RELOAD_REFUSED not in reason
+    assert str(data_dir) not in reason and str(checkpoint) not in reason
+    assert result.status.not_serving_reason == reason
+
+
+def test_a_refusal_that_may_name_a_path_still_points_at_the_log(
+    no_cuda, no_device_configured, tmp_path
+):
+    """The channel's other side: a refusal whose own words name a server path
+    (missing files in the workspace named) is never said on an open surface;
+    the record points at the operator's answer and the log, as before."""
+    from src.api.routes.pipeline import PipelineReloadRequest, run_reload
+
+    api = no_device_configured
+    empty = tmp_path / "not_a_workspace"
+    empty.mkdir()
+
+    result = run_reload(PipelineReloadRequest(data_dir=str(empty), task="disease"))
+
+    assert result.success is False and str(empty) in result.message
+    reason = api.app_state.not_serving_reason
+    assert reason.endswith(f"refused at {api.app_state.not_serving.at}: {api.RELOAD_REFUSED}. "
+                           f"{api.LOAD_HINT}.")
+    assert str(empty) not in reason
+
+
+def test_a_refusals_ref_is_said_last_on_every_open_surface(api, monkeypatch):
+    """The GPU lock's refusal of an unusable lock ends in "Ref:
+    SHEPHERD_WORKSPACES_ROOT"; the open reason put the load hint after it,
+    so the variable sat mid-text. Every refusal's Ref is said last, at a
+    load or at start-up alike."""
+    lock = ("CUDA inference is refused: the GPU lock cannot be used, and nothing runs on the "
+            "GPU without excluding the others. Ref: SHEPHERD_WORKSPACES_ROOT")
+    for kind in (api.LOAD_REFUSED, api.STARTUP_REFUSED):
+        monkeypatch.setattr(api.app_state, "not_serving",
+                            api.NotServingRecord(kind, "2026-11-17T07:19:31+00:00", lock))
+        words = api.app_state.not_serving_words
+        assert words.reason.endswith(". Ref: SHEPHERD_WORKSPACES_ROOT"), words.reason
+        assert words.reason.count("Ref:") == 1 and "Ref:" not in words.lead
+        assert words.lead.endswith("excluding the others")
 
 
 def test_a_reload_on_the_cpu_succeeds_and_records_the_request(

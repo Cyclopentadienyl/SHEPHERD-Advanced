@@ -775,7 +775,11 @@ TOUCH_HEAD = "<script>" + r"""
     shape.textContent = '\u2715';
     words.className = 'shep-st-w';
     words.textContent = LOST.replace('{field}', function () { return name; });
+    var space = document.createElement('span');
+    space.className = 'shep-st-sp';
+    space.textContent = ' ';
     said.appendChild(shape);
+    said.appendChild(space);
     said.appendChild(words);
     line.appendChild(said);
     (field || document.body).appendChild(line);
@@ -1399,10 +1403,11 @@ def chip_html(ws: Optional[Mapping[str, Any]], *, in_use: bool = False) -> str:
 #: re-mounted, and a replaced value keeps the listeners, being delegated): the
 #: dataset chip's, with its "All datasets ›" cross-link, and the run view
 #: header's. Escape, a click outside or focus leaving it closes it. Both are
-#: drawn again while read (a running job's render), so it starts with the
-#: shared keeper (`renderers.KEEP_OPEN_JS`): open or closed as the reader left
-#: it while the chip shows the same workspace and the header the same run.
-_POPOVER_JS = r.KEEP_OPEN_JS + r"""
+#: drawn again while read (a running job's render), and the shared keeper
+#: every dashboard HTML runs before its own script (`shell.plain_html`,
+#: `renderers.KEEP_OPEN_JS`) keeps it open or closed as the reader left it
+#: while the chip shows the same workspace and the header the same run.
+_POPOVER_JS = r"""
 function pop() { return element.querySelector('.shep-pop'); }
 function toggle(open) {
   var p = pop(), b = element.querySelector('[data-act="details"]');
@@ -3961,7 +3966,13 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
         lines.append('<p class="shep-note">The start checks again against this workspace’s '
                      'data and graph.</p>')
     kind = "red" if differs else "ok"
-    return f'<div class="shep-check shep-check-{kind}">{head}{"".join(lines)}</div>'
+    # Named by the checkpoint checked (`renderers.keep_as`), its key in the
+    # list or its path as shown above (never the server's own path) and its
+    # fingerprint: its disclosures stay as the reader left them across this
+    # checkpoint's checks (a device or a branch field edited), never drawn
+    # open for another checkpoint.
+    named = r.keep_as(f'{listed or _shown_path(preview.get("parent", ""))} {preview.get("sha256")}')
+    return f'<div class="shep-check shep-check-{kind}"{named}>{head}{"".join(lines)}</div>'
 
 
 def _extra_epochs_update(preview: Mapping[str, Any], operation: str = CONTINUE):
@@ -5186,12 +5197,21 @@ PAGE_CSS = charts.CHART_CSS + f"""
 /* Idle is the normal state, so quiet (R-39; the skill's §6): its grey ○ and words as plain muted
    text, no bordered, rounded lozenge beside the buttons. */
 {_PAGE} #shep-train-pill .shep-pill-idle {{ border-color: transparent; background: none; padding-left: 0; padding-right: 0; font-weight: 400; color: var(--shep-muted); }}
-{_PAGE} #shep-train-reason {{ flex: 1 1 120px !important; min-width: 0 !important; }}
+/* A reason line's slot (`run_bar_view`'s line: the run bar's and the drawer's footer's) is as wide as
+   its words can wrap to (its longest word and the GPU tag), never under its floor beside the controls
+   (`--shep-why-floor`) and never wider than its row: where its words do not fit beside the controls,
+   the line takes a row of its own (the skill's §2: a status line is a row of its own), never under or
+   over a control, and there a word wider than the row (a long workspace or run name) breaks inside the
+   line, which is never wider than its slot. At min-width 0 the slot shrank below its words, which ran
+   on over Start (the verification of fcc3dea, 960 x 1080: the GPU lock's reason); at min-width:
+   min-content such a word widened the slot past the run bar and cut the reason off at its edge (the
+   review of 5033d29, 390 x 844): overflow-wrap: break-word does not lower a word's min-content. */
+{_PAGE} :is(#shep-train-reason, #shep-train-drawer-why) {{ flex: 1 1 min-content !important; min-width: min(var(--shep-why-floor, 120px), 100%) !important; max-width: 100% !important; }}
 {_PAGE} .shep-rb-reason {{ display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }}
-{_PAGE} .shep-rb-why {{ display: inline-flex; align-items: flex-start; gap: 6px; flex-wrap: nowrap; font-size: 15px; color: var(--shep-text-2); text-align: right; }}
+{_PAGE} .shep-rb-why {{ display: inline-flex; align-items: flex-start; gap: 6px; flex-wrap: nowrap; max-width: 100%; font-size: 15px; color: var(--shep-text-2); text-align: right; }}
 {_PAGE} .shep-rb-why > svg, {_PAGE} .shep-rb-why > .shep-tag {{ flex: none; margin-top: 3px; }}
 {_PAGE} .shep-rb-why > .shep-tag {{ margin-top: 0; }}
-{_PAGE} .shep-rb-why > span:not(.shep-tag) {{ min-width: 0; text-wrap: pretty; }}
+{_PAGE} .shep-rb-why > span:not(.shep-tag) {{ min-width: 0; text-wrap: pretty; overflow-wrap: break-word; }}
 /* A reason of two sentences breaks between them (`renderers.word_groups`); a sentence wider than its line wraps inside its group without leaving one word alone (text-wrap: pretty). */
 {_PAGE} .shep-rb-why .shep-wg {{ text-wrap: pretty; }}
 {_PAGE} .shep-rb-why .shep-link {{ white-space: nowrap; }}
@@ -5265,7 +5285,8 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-drawer-ft > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; white-space: nowrap; }}
 {_PAGE} #shep-train-drawer-ft > button:disabled {{ background: var(--shep-grey-50) !important; border: 1px solid var(--shep-grey-200) !important; color: var(--shep-grey-600) !important; opacity: 1 !important; box-shadow: none !important; cursor: not-allowed; }}
 {_PAGE} #shep-train-drawer-ft > .block {{ width: auto !important; }}
-{_PAGE} #shep-train-drawer-why, {_PAGE} #shep-train-drawer-notice {{ flex: 1 1 240px !important; min-width: 0 !important; }}
+{_PAGE} #shep-train-drawer-notice {{ flex: 1 1 240px !important; min-width: 0 !important; }}
+{_PAGE} #shep-train-drawer-why {{ --shep-why-floor: 240px; }}
 {_PAGE} .shep-drawer-why {{ font-size: 15px; color: var(--shep-text-2); }}
 {_PAGE} .shep-drawer-why .shep-rb-why {{ text-align: left; flex-wrap: nowrap; align-items: flex-start; }}
 {_PAGE} #shep-train-drawer-why:not(:has(.shep-drawer-why)), {_PAGE} #shep-train-drawer-notice:not(:has(.shep-notice-t)) {{ display: none !important; }}

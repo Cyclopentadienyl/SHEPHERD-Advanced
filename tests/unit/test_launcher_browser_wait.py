@@ -320,3 +320,38 @@ def test_the_failure_page_names_the_log_and_escapes_what_it_shows(monkeypatch, t
     text = page.read_text(encoding="utf-8")
     assert "&lt;script&gt;" in text and "<script>" not in text and "a &amp; b" in text
     assert "none was written" in text
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink") or sys.platform.startswith("win"),
+                    reason="a planted link needs POSIX symlinks")
+def test_the_launchers_own_files_are_written_whole_by_the_one_atomic_writer(
+        monkeypatch, tmp_path):
+    """Verification of fcc3dea (V-AUD-8): the error page and the desktop entry
+    were staged at a predictable ".<name>.<pid>.tmp" opened without O_EXCL, so
+    a link planted at that name was followed and its target overwritten, and
+    nothing was flushed. Both now go through the settings files' writer
+    (`atomic_json.write_text_atomic`: a random O_EXCL name, fsync, replace).
+    Fails on fcc3dea, where the planted link's target is written."""
+    launcher = _launcher()
+    page = tmp_path / "logs" / "launch-error.html"
+    page.parent.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("kept", encoding="utf-8")
+    os.symlink(victim, page.with_name(f".{page.name}.{os.getpid()}.tmp"))
+    launcher.write_error_page(page, "what", "remedy", None)
+    assert victim.read_text(encoding="utf-8") == "kept"
+    assert not page.is_symlink() and "remedy" in page.read_text(encoding="utf-8")
+    assert page.stat().st_mode & 0o777 == 0o600
+    home = tmp_path / "home"
+    target = home / ".local" / "share" / "applications" / "shepherd-advanced.desktop"
+    target.parent.mkdir(parents=True)
+    os.symlink(victim, target.with_name(f".{target.name}.{os.getpid()}.tmp"))
+    monkeypatch.setattr(launcher.sys, "platform", "linux")
+    monkeypatch.setattr(launcher, "desktop_entry_text", lambda settings_file: "[Desktop Entry]\n")
+    assert launcher.install_desktop_entry({"HOME": str(home)}, None) == 0
+    assert victim.read_text(encoding="utf-8") == "kept"
+    assert target.read_text(encoding="utf-8") == "[Desktop Entry]\n"
+    assert not target.is_symlink() and target.stat().st_mode & 0o777 == 0o644
+    from src.config import atomic_json
+
+    assert launcher.write_text_atomic is atomic_json.write_text_atomic

@@ -2472,6 +2472,44 @@ def test_the_task_inputs_are_never_run_outputs_and_clear_on_every_edit(monkeypat
                if (clear._id, "click") in fn.targets)
 
 
+def test_a_result_stays_only_while_the_inputs_are_the_ones_it_answered(monkeypatch,
+                                                                       status_read):
+    """UI-15 (B73): a run keeps the boxes as it read them; once its answer is
+    written, the check run after it (`answered_inputs`, chained after Run
+    Diagnosis with the boxes as they are then) clears it as an edit does
+    (`phenotypes_changed`) when the HPO box, the genes box or the cohort's
+    pick is no longer what it ran on, and changes nothing when they are, so
+    the result keeps its model's identity. On fcc3dea there was no check:
+    an edit made while the run was in flight left the answer, to the older
+    query, under the edited box."""
+    _sent(monkeypatch, _gene_result())
+    out = dp.diagnose("HP:0001250", "", 10, True, _task_card("gene_task"), "idle", {}, None,
+                      genes_text="SCN1A, PTEN", cohort=None)
+    result, state = out["results_state"], out["card_state"]
+    assert result["_query_inputs"] == dp.query_inputs("HP:0001250", "SCN1A, PTEN", None)
+    assert dp.answered_inputs(result, state, "HP:0001250", "SCN1A, PTEN", None) == {}
+    # An empty box reads the same however Gradio sends it.
+    assert dp.query_inputs(None, None, "") == dp.query_inputs("", "", None)
+    for edited in (("HP:0001263", "SCN1A, PTEN", None), ("HP:0001250", "SCN1A", None),
+                   ("HP:0001250", "SCN1A, PTEN", "reference-2")):
+        cleared = dp.answered_inputs(result, state, *edited)
+        assert cleared == dp.phenotypes_changed(result, state), edited
+        assert cleared["results_state"] is None and "Inputs changed" in cleared["results_body"]
+        assert cleared["export_csv"] is dp._EXPORTS_HIDDEN
+    assert dp.answered_inputs(None, state, "HP:0001263", "", None) == {}
+    # The wiring: chained after Run Diagnosis, outside the queue, the boxes
+    # read as they are then, the edit's outputs written.
+    demo, _ctx = _build_tab(monkeypatch)
+    blocks = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    (run,) = _named(demo, "_run_diagnosis")
+    (check,) = _named(demo, "_answered_inputs")
+    (edit,) = _named(demo, "_phenotypes_edited")
+    assert check.trigger_after == run._id and check.queue is False
+    assert check.inputs[2:] == [blocks["dx_hpo_terms"], blocks["dx_candidate_genes"],
+                                blocks["dx_reference_cohort"]]
+    assert check.outputs == edit.outputs
+
+
 #: UI-15 (B73) in a browser: a result is shown, then the genes box is edited
 #: four ways; each says whether the result was cleared ("Inputs changed") and
 #: what the box held after the edit.
@@ -2551,6 +2589,189 @@ def test_every_edit_of_the_genes_box_clears_the_result_shown(monkeypatch, tmp_pa
     assert seen["cut"] == {"cleared": True, "value": ""}, seen
     assert seen["insert_text"] == {"cleared": True, "value": "MECP2"}, seen
     assert seen["typed"] == {"cleared": True, "value": "SCN1A, PTEN X"}, seen
+
+
+#: UI-15 (A30) in a browser, a gene task model's stand-ins served and the
+#: run's answer held on the server until the test opens `gate`: (a) a result
+#: shown, then an input method's composition (Chromium's own, over CDP:
+#: ``Input.imeSetComposition`` per step, ``Input.insertText`` to commit; no
+#: key event) in the HPO box, then in the genes box: whether the result was
+#: cleared ("Inputs changed") and what the box holds; (b) a result shown,
+#: Run Diagnosis again with its answer held, the HPO box or the genes box
+#: edited while it is held (the edit clears the result shown before it), then
+#: the answer let go: what the results body drew from then on (``result``,
+#: ``changed``), whether it ends cleared, and the box; (c) the same with no
+#: edit: the answer's result stays. The run's own check, where the page has
+#: one (`check` is its listener, -1 for none), is waited for by its request.
+_DX_EDITS_JS = r"""
+const { chromium } = require('playwright');
+const fs = require('fs');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const [base, gate, asked] = process.argv.slice(2, 5);
+  const [runFn, checkFn] = [Number(process.argv[5]), Number(process.argv[6])];
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  // The shell's timers keep the network busy: wait for the box, not for idle.
+  await page.goto(base, { waitUntil: 'load' });
+  const hpo = '#dx_hpo_terms textarea', genes = '#dx_candidate_genes textarea', body = '#shep-dx-results-body';
+  await page.waitForSelector(genes, { state: 'visible', timeout: 30000 });
+  const cdp = await page.context().newCDPSession(page);
+  let checked = 0;
+  page.on('requestfinished', (r) => {
+    if (!r.url().includes('/run/predict')) { return; }
+    try { if (JSON.parse(r.postData()).fn_index === checkFn) { checked += 1; } } catch (e) { /* not JSON */ }
+  });
+  // What the results body draws, in order: the result (its genes), the notice that the inputs changed, or other.
+  await page.evaluate((s) => {
+    const el = document.querySelector(s);
+    window.__drawn = [];
+    const note = () => {
+      const t = el.textContent;
+      const now = t.includes('Inputs changed') ? 'changed' : t.includes('PTEN') ? 'result' : 'other';
+      if (window.__drawn[window.__drawn.length - 1] !== now) { window.__drawn.push(now); }
+    };
+    new MutationObserver(note).observe(el, { childList: true, subtree: true, characterData: true });
+  }, body);
+  const drawn = () => page.evaluate(() => window.__drawn.slice());
+  const calls = () => (fs.existsSync(asked) ? Number(fs.readFileSync(asked, 'utf8') || 0) : 0);
+  const until = async (check) => { for (let i = 0; i < 1500 && !check(); i++) { await new Promise((r) => setTimeout(r, 20)); } };
+  const changed = () => page.waitForFunction((s) => document.querySelector(s).textContent.includes('Inputs changed'),
+                                             body, { timeout: 8000 }).then(() => true, () => false);
+  const answered = (n) => page.waitForFunction(([fn, k]) => window.__shepQueue.answered(fn) > k, [runFn, n], { timeout: 30000 });
+  const runs = () => page.evaluate((fn) => window.__shepQueue.answered(fn), runFn);
+  // The query typed, the boxes' edits answered, then Run Diagnosis answered at once: its result shown.
+  const result = async () => {
+    await page.fill(hpo, 'HP:0001250');
+    await page.fill(genes, 'SCN1A, PTEN');
+    await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+    fs.writeFileSync(gate, '');
+    const n = await runs(), checks = checked;
+    await page.click('#shep-dx-run-btn');
+    await answered(n);
+    if (checkFn >= 0) { await until(() => checked > checks); }
+    await page.waitForFunction((s) => { const t = document.querySelector(s).textContent;
+                                        return t.includes('PTEN') && !t.includes('Inputs changed'); },
+                               body, { timeout: 30000 });
+  };
+  const compose = async (sel, steps, commit) => {
+    await page.click(sel);
+    await page.keyboard.press('ControlOrMeta+A');
+    for (const t of steps) { await cdp.send('Input.imeSetComposition', { text: t, selectionStart: t.length, selectionEnd: t.length }); }
+    await cdp.send('Input.insertText', { text: commit });
+  };
+  // A result shown, Run Diagnosis again with its answer held, `edit` (or none) while it is held, then the answer.
+  const held = async (sel, edit) => {
+    await result();
+    fs.unlinkSync(gate);
+    const n = await runs(), asks = calls(), checks = checked;
+    await page.click('#shep-dx-run-btn');
+    await until(() => calls() > asks);
+    const seen = { held: calls() > asks && (await runs()) === n };
+    if (edit) {
+      await page.click(sel);
+      await edit();
+      seen.before = await changed();
+    }
+    await page.evaluate(() => { window.__drawn = []; });
+    fs.writeFileSync(gate, '');
+    await answered(n);
+    // The answer's check answered, where the page has one; else the answer drawn after the edit's notice.
+    if (checkFn >= 0) {
+      await until(() => checked > checks);
+    } else if (edit) {
+      await page.waitForFunction(() => window.__drawn.includes('result'), null, { timeout: 30000 });
+    }
+    seen.cleared = edit ? await changed() : null;
+    const text = await page.evaluate((s) => document.querySelector(s).textContent, body);
+    return Object.assign(seen, { drawn: await drawn(), value: await page.inputValue(sel), text: text.trim().slice(0, 60),
+                                 shows: text.includes('Inputs changed') ? 'changed' : text.includes('PTEN') ? 'result' : 'other' });
+  };
+  const out = {};
+  await result();
+  await compose(hpo, ['h', 'hp'], 'HP:0001263');
+  out.ime_hpo = { cleared: await changed(), value: await page.inputValue(hpo) };
+  await result();
+  await compose(genes, ['m', 'me'], 'MECP2');
+  out.ime_genes = { cleared: await changed(), value: await page.inputValue(genes) };
+  out.held_hpo = await held(hpo, async () => { await page.keyboard.press('ControlOrMeta+A');
+                                                await page.keyboard.type('HP:0001263'); });
+  out.held_genes = await held(genes, async () => { await page.keyboard.press('End');
+                                                    await page.keyboard.type(' X'); });
+  out.held_none = await held(hpo, null);
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_an_input_methods_text_and_an_edit_during_a_run_clear_the_result_shown(
+        monkeypatch, tmp_path):
+    """UI-15 (A30, B73), in Gradio 6.30's own page with the real panel and
+    shell (a gene task model's status, its result and the card's facts are
+    stand-ins; Node and Playwright, skipped without). (a) An input method's
+    composition committed in the HPO box and in the genes box clears the
+    result shown, as a typed edit does. (b) An edit of either box made while
+    Run Diagnosis is in flight clears the result shown before it; the answer,
+    to the query as it was when Run was pressed, is then never left under the
+    edited box: the page ends with "Inputs changed" and the box as edited (on
+    fcc3dea the older query's result stayed). (c) With no edit, the answer's
+    result stays."""
+    import copy
+    import json
+    import time
+
+    from src.webui import shell
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    status = _status_serving(_task_identity("gene_task"))
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (status, None))
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": False, "workspaces": [], "serving": None,
+        "item": None, "item_problem": None, "recorded": None, "trained": None,
+        "cohorts": None})
+    gate, asked, calls = tmp_path / "gate", tmp_path / "asked", []
+
+    def held_diagnose(**kwargs):
+        calls.append(kwargs)
+        asked.write_text(str(len(calls)))
+        for _ in range(3000):
+            if gate.exists():
+                break
+            time.sleep(0.01)
+        return copy.deepcopy(_gene_result())
+
+    monkeypatch.setattr(dp, "_call_diagnose", held_diagnose)
+    gate.write_text("")
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+    run = next(fn._id for fn in demo.fns.values() if fn.name == "_run_diagnosis")
+    check = next((fn._id for fn in demo.fns.values() if fn.name == "_answered_inputs"), -1)
+    with served(demo) as base:
+        seen = run_node(_DX_EDITS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], str(gate), str(asked), str(run), str(check))
+    # (a) An input method's text clears the result shown, in either box.
+    assert seen["ime_hpo"] == {"cleared": True, "value": "HP:0001263"}, seen
+    assert seen["ime_genes"] == {"cleared": True, "value": "MECP2"}, seen
+    # (b) The edit cleared the result shown before it, and the held answer,
+    # to the query as Run was pressed, does not stay under the edited box.
+    for case, value in (("held_hpo", "HP:0001263"), ("held_genes", "SCN1A, PTEN X")):
+        held = seen[case]
+        assert held["held"] and held["before"], (case, held)
+        assert held["cleared"] and held["shows"] == "changed", (case, held)
+        assert held["value"] == value and held["text"].startswith("Inputs changed"), (case, held)
+    # (c) No edit: the answer's result stays.
+    assert seen["held_none"]["held"] and seen["held_none"]["shows"] == "result", seen
+    assert "changed" not in seen["held_none"]["drawn"], seen
+    # The held runs were asked the query as it was when Run was pressed.
+    assert [(c["phenotypes"], c["candidate_genes"]) for c in calls] == [
+        (["HP:0001250"], ["SCN1A", "PTEN"])] * len(calls), calls
 
 
 def test_a_gene_result_shows_its_genes_and_their_values():
@@ -3021,7 +3242,8 @@ def test_after_a_stop_run_is_off_with_the_backends_reason_and_the_result_keeps_i
     out = dp.card_outputs(stopped, result, "idle")
     assert out["run_btn"]["interactive"] is False
     assert dp.RUN_DISABLED_NO_MODEL in out["run_reason"]
-    assert 'Stopped</span></span> <span class="shep-dx-when">at 16:00:30 UTC</span>' in \
+    # The chip's word (in its one run of text, `renderers.status_mark`), then when.
+    assert 'Stopped</span></span></span> <span class="shep-dx-when">at 16:00:30 UTC</span>' in \
         out["card_body"]
     assert '<p class="shep-dx-line shep-dx-reason">By an operator</p>' in out["card_body"]
     assert "Inference was stopped by an operator" in out["card_body"]   # under Details ›

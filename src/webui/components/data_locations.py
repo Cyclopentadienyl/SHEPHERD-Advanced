@@ -612,7 +612,11 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 
 #: The panel's style sheet (listed with the Settings page's, `runtime_settings.PAGE_CSS`):
 #: a name column and a facts column per row, the box as tall as its buttons,
-#: rows divided by one rule; narrow, the name goes above.
+#: rows divided by one rule; narrow, the name goes above, and a box keeps
+#: room for a path (16em, or its whole row when that is narrower): where its
+#: row cannot hold it beside its key and buttons, it and then the buttons
+#: wrap (a phone's column squeezed it to 40 px; verification of fcc3dea,
+#: V-RA-1).
 PAGE_CSS = f"""
 {_PAGE} #shep-dl-bd {{ padding: 4px 16px 12px !important; gap: 0 !important; }}
 {_PAGE} #shep-dl-top {{ gap: 8px !important; align-items: center; flex-wrap: wrap; }}
@@ -649,6 +653,8 @@ PAGE_CSS = f"""
 {_PAGE} [id^="dl_suggest_"]:has(.html-container:empty) {{ display: none !important; }}
 @media (max-width: 899px) {{
   {_PAGE} .shep-dl-left {{ flex-basis: 100% !important; }}
+  {_PAGE} .shep-dl-set {{ flex-wrap: wrap; }}
+  {_PAGE} .shep-dl-set > .block:not(.shep-dl-keycell) {{ flex: 1 1 16em !important; min-width: min(16em, 100%) !important; }}
 }}
 """
 

@@ -287,8 +287,11 @@ def test_model_facts_has_its_five_sections_always_open_with_warnings_first():
     order = [html.index(f'data-sec="{key}"')
              for key in ("warnings", "identity", "uses", "data", "evidence")]
     assert order == sorted(order), order
+    # Each title one level under the h2 of every place that draws the facts
+    # (verification of fcc3dea, V-AUD-2: an h4 under the Load drawer's h2).
     for title in ("Warnings", "Identity", "Uses", "Data", "Evidence"):
-        assert f"<h4>{title}</h4>" in html
+        assert f"<h3>{title}</h3>" in html
+    assert "<h4" not in html
     assert '<section class="shep-facts-sec shep-facts-warn" data-sec="warnings">' in html
     assert "data-shep-focus" not in html
     assert '<section class="shep-facts-sec" data-sec="data" data-shep-focus="true">' in (
@@ -960,6 +963,96 @@ def test_a_status_mark_is_colour_shape_and_word_with_the_word_always_shown(kind,
     assert '<span class="shep-st-w"><b>word</b></span>' in built
     chip = r.status_mark(kind, "word", as_chip=True)
     assert chip.startswith(f'<span class="shep-tag shep-tag-{r._STATUS_TAG[token]} shep-st-chip">')
+    # The shape, the space and the word, one run of text (`MARK_SPACE`).
+    for drawn in (html, chip):
+        assert (f'</span>{r.MARK_SPACE}<span class="shep-st-w">' in drawn) is (shape is not None)
+    assert '<span class="shep-st-in">' in chip and '<span class="shep-st-in">' not in html
+
+
+#: Each status mark drawn in a page with the shell's style sheet, as text and
+#: as a chip, in 14 and 15 px text: its ``innerText``, the text a copy of it
+#: takes, its shape's box and its word's, and the name a screen reader gives
+#: it (the accessibility tree's text of the mark). Reduced motion holds the
+#: spinner still (the style sheet's own rule): turning, its box is the turned
+#: square's, up to 17 px wide, so the gap measured depended on the frame.
+_MARKS_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [390, 844]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1,
+                                                   reducedMotion: 'reduce' })).newPage();
+    await page.goto('file://' + process.argv[2]);
+    out[`${w}x${h}`] = await page.evaluate(() => [...document.querySelectorAll('[data-mark]')].map((p) => {
+      const m = p.firstElementChild;
+      const shape = m.querySelector('.shep-st-shape, .shep-spinner').getBoundingClientRect();
+      const word = m.querySelector('.shep-st-w').getBoundingClientRect();
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      const range = document.createRange();
+      range.selectNodeContents(m);
+      sel.addRange(range);
+      return { mark: p.dataset.mark, inner: m.innerText, copied: sel.toString(),
+               gap: +(word.left - shape.right).toFixed(2), width: +m.getBoundingClientRect().width.toFixed(2),
+               hidden: [...m.querySelectorAll('[aria-hidden="true"]')].map((x) => x.textContent) };
+    }));
+    if (process.argv[3]) { await page.screenshot({ path: `${process.argv[3]}_${w}x${h}.png`, fullPage: true }); }
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def status_marks_page(path):
+    """A page of every status mark, as text and as a chip, in 14 and 15 px
+    text, with the shell's style sheet (`_MARKS_JS` reads it)."""
+    from src.webui.style import SHELL_CSS
+
+    rows = []
+    for kind, word in (("ok", "Saved"), ("neutral", "Not loaded"), ("warn", "Needs attention"),
+                       ("error", "Not usable"), ("running", "Running"), ("stopping", "Stopping")):
+        for chip in (False, True):
+            for size in (14, 15):
+                rows.append(f'<p data-mark="{kind}-{int(chip)}-{size}" style="font-size: {size}px">'
+                            f'{r.status_mark(kind, word, as_chip=chip)} after</p>')
+    path.write_text(f'<!doctype html><html><head><meta charset="utf-8"><style>{SHELL_CSS}'
+                    f'</style></head><body style="padding: 16px">{"".join(rows)}</body></html>',
+                    encoding="utf-8")
+    return path
+
+
+def test_a_status_marks_text_reads_shape_space_word_and_its_look_is_kept(tmp_path):
+    """The verification of fcc3dea: a mark's shape was directly followed by
+    its word, so its text read "○Saved", "✕Not usable" (copied or as
+    ``innerText``), and a chip's read the shape and the word as two lines.
+    Now every mark, as text and as a chip, reads shape, space, word, copied
+    and as ``innerText`` (a chip copied alone ends its line, as any box of
+    its own does), at 1850 x 960 and 390 x 844; the shape stays
+    hidden from a screen reader, so it reads the word; and the look is kept:
+    4 px from the shape to the word (6 px after the spinner), as on fcc3dea,
+    the space having no width."""
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    seen = run_node(_MARKS_JS, tmp_path, str(status_marks_page(tmp_path / "marks.html")))
+    shapes = {kind: shape or "" for kind, (shape, _token) in r.STATUS_MARKS.items()}
+    words = {"ok": "Saved", "neutral": "Not loaded", "warn": "Needs attention",
+             "error": "Not usable", "running": "Running", "stopping": "Stopping"}
+    for size, marks in seen.items():
+        assert len(marks) == 24, size
+        for mark in marks:
+            kind, chip, _px = mark["mark"].split("-")
+            said = f"{shapes[kind]} {words[kind]}".strip()
+            # A chip is a box of its own: a copy of it alone ends its line.
+            copied = mark["copied"][:-1] if chip == "1" and mark["copied"].endswith("\n") else (
+                mark["copied"])
+            assert mark["inner"] == said and copied == said, (size, mark)
+            assert mark["hidden"] == [shapes[kind]], (size, mark)
+            gap = 6 if kind == "running" and chip == "0" else 4
+            assert mark["gap"] == gap, (size, mark)
 
 
 def test_each_missing_state_has_its_own_word_and_a_dash_never_stands_for_not_recorded():

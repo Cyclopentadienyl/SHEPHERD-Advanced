@@ -780,7 +780,10 @@ def record_block_html(view: Mapping[str, Any], state: Optional[Mapping[str, Any]
         (state or {}).get("notes") or [], problems=[redact_server(p, roots) for p in problems],
         expected=(state or {}).get("state") in ("contested", "cannot_be_checked"))
     label = r.e(_get(view, "cohort", "label"))
-    return (f'<section class="shep-mp-rec" aria-label="Recorded result on {label}">'
+    # Named by its registration and report (`renderers.keep_as`): a Details
+    # opened in one record is never drawn open in another model's.
+    named = r.keep_as(f'{_get(view, "registration", "sequence")} {view.get("source")}')
+    return (f'<section class="shep-mp-rec"{named} aria-label="Recorded result on {label}">'
             f'{record_heading_html(view, state)}{group}{notes}'
             + r.record_html(view, metrics, registration=registration_html(view),
                             dataset=dataset)
@@ -1155,12 +1158,14 @@ PENDING_HTML = (f'<div class="shep-mp-pending" role="status" aria-live="polite">
 #: compares what the page shows (the checked Order, the Task select's option)
 #: on every change of the page (a mutation observer and the controls' own
 #: events); while a Task is typed into its filter, the last option chosen
-#: counts. Nothing is shown before rows are first drawn for the controls (the
-#: page not yet read, or read-only). Attached once per page load.
+#: counts. Nothing is shown before any rows are drawn (the page not yet
+#: read); rows the shared list drew before the page first shaped its view
+#: carry no marker and are its own order, newest first, every task. Attached
+#: once per page load.
 PENDING_JS = r"""
 if (!window.__shepModelsPending) {
   window.__shepModelsPending = true;
-  var ORDERS = __ORDERS__, TASKS = __TASKS__;
+  var ORDERS = __ORDERS__, TASKS = __TASKS__, UNSHAPED = __UNSHAPED__;
   var seen = false, lastTask = 'all', queued = false;
   var check = function () {
     queued = false;
@@ -1171,13 +1176,17 @@ if (!window.__shepModelsPending) {
     var radio = document.querySelector('#shep-mp-order input[type=radio]:checked');
     var taskInput = document.querySelector('#shep-mp-task input');
     var marker = document.querySelector('#shep-models-research-rows .shep-view-for');
+    // Rows the shared list drew before the page first shaped its view carry
+    // no marker: they are its own order, newest first, every task
+    // (`UNSHAPED`), so a switch made then is announced (V-RB2-5).
+    var rows = document.querySelector('#shep-models-research-rows tr[data-key]');
     var failed = document.querySelector('#shep-mp-options [data-failed-for]');
     if (taskInput && Object.prototype.hasOwnProperty.call(TASKS, taskInput.value)) {
       lastTask = TASKS[taskInput.value];
     }
     var order = radio ? radio.value : null;
     var wanted = order + '|' + lastTask;
-    var drawn = marker ? marker.getAttribute('data-for') : null;
+    var drawn = marker ? marker.getAttribute('data-for') : (rows ? UNSHAPED : null);
     if (drawn) { seen = true; }
     var pending = seen && order !== null && drawn !== wanted
       && !(failed && failed.getAttribute('data-failed-for') === wanted);
@@ -1207,7 +1216,8 @@ if (!window.__shepModelsPending) {
   soon();
 }
 """.replace("__ORDERS__", json.dumps(_ORDER_WORDS)).replace(
-    "__TASKS__", json.dumps({label: value for label, value in TASK_CHOICES}))
+    "__TASKS__", json.dumps({label: value for label, value in TASK_CHOICES})).replace(
+    "__UNSHAPED__", json.dumps(f"{NEWEST}|{ALL_TASKS}"))
 
 
 def _served_line(listing: Mapping[str, Any]) -> str:
@@ -1288,7 +1298,7 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
     return (r.summary_list(rows, classes="shep-mp-ident",
                            helps={"Fingerprint": ("model-fingerprint", "Model fingerprint"),
                                   "Validation": ("validation-trainer", "Validation (Trainer)")})
-            + r.details_list(provenance))
+            + r.details_list(provenance, of=ml.item_key(item)))
 
 
 def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
@@ -2054,6 +2064,18 @@ PAGE_CSS = f"""
   {_PAGE} {_LIST} > .shep-model-confirm-box {{ grid-area: confirm; margin-top: 16px !important; overflow: visible; }}
   {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(5, max-content); grid-template-areas: "lhd" "ws" "wsline" "task" "ctl"; }}
   {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; }}
+}}
+/* A phone's column: Load, its reason and the note each a row of their own
+   (one row squeezed the reason into an 84 px column; verification of
+   fcc3dea, V-RB2-4). */
+@media (max-width: 599px) {{
+  {_PAGE} {_LIST} > .shep-model-foot {{
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto auto;
+    grid-template-areas: "detail" "load" "reason" "note";
+  }}
+  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ justify-self: start; }}
+  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ padding: 0 16px; }}
+  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note {{ padding: 4px 16px 12px; }}
 }}
 """
 

@@ -634,23 +634,48 @@ def _training_device(requested: Any) -> Tuple[Optional[str], Optional[str]]:
         return None, f"{exc.words} Nothing was started."
 
 
+#: **A test run's refusal of a deployment device it cannot take**
+#: (`deployment_device`; ``{device}`` the value, ``{outcome}`` " Nothing was
+#: started." at a start, nothing on the page): what is wrong and what an
+#: operator can do in plain words, the variable and the CLI's flag only in
+#: the trailing Ref (the WebUI skill's §5), as `TEST_DEVICE_UNAVAILABLE` says
+#: a device this host cannot give.
+TEST_DEVICE_NOT_TAKEN = (
+    "Test runs measure on this service's device, {device}, and a test run takes only auto, "
+    "cuda or cpu. The Test page has no Device of its own: start the service again with one "
+    "of those devices (Settings › Stop service).{outcome} "
+    "Ref: SHEPHERD_DEVICE={device}; scripts/measure_scorer.py --device (deployment guide §4.8)")
+
+
+class DeploymentDeviceNotTaken(ValueError):
+    """`deployment_device`'s refusal of `device`, a value a test run cannot
+    take: its words on the page (``str``) and at a start (`words`)."""
+
+    def __init__(self, device: str) -> None:
+        self.device = device
+        super().__init__(self.words())
+
+    def words(self, outcome: str = "") -> str:
+        """The refusal, `outcome` (" Nothing was started.") before its Ref."""
+        return TEST_DEVICE_NOT_TAKEN.format(device=self.device, outcome=outcome)
+
+
 def deployment_device() -> Optional[str]:
     """The device a test run is given: the deployment's (D5), `SHEPHERD_DEVICE`
     as the served pipeline reads it (`requested_serving_device`). None leaves
     the CLI's own `auto`, which requires CUDA.
 
     Raises:
-        ValueError: a value `measure_scorer.py --device` does not take
-            (`cuda:1`, say), so the deployment's device cannot be passed on.
+        DeploymentDeviceNotTaken: a value `measure_scorer.py --device` does
+            not take (`cuda:1`, say), so the deployment's device cannot be
+            passed on (`TEST_DEVICE_NOT_TAKEN`; a ValueError).
     """
     value = requested_serving_device(None)
     if value is None or value == "auto":
         return None
     if value in ("cuda", "cpu"):
         return value
-    raise ValueError(
-        f"SHEPHERD_DEVICE is {value!r}, and a test run takes auto, cuda or cpu "
-        "(scripts/measure_scorer.py --device), so it cannot be given the deployment's device.")
+    raise DeploymentDeviceNotTaken(value)
 
 
 #: A test run's refusal of a device this host cannot give
@@ -1749,6 +1774,9 @@ class TrainingManager:
         try:
             reports_dir = inputs.reports_dir()
             device = deployment_device()
+        except DeploymentDeviceNotTaken as exc:
+            return {"success": False, "error": exc.words(" Nothing was started."),
+                    "status": self.get_job_status_word("test")}
         except ValueError as exc:
             return {"success": False, "error": f"{exc} Nothing was started.",
                     "status": self.get_job_status_word("test")}

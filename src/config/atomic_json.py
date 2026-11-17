@@ -5,7 +5,9 @@ The saved deployment settings (`src/config/deployment_settings.py`, written by
 `src/utils/settings_store.py`) and the saved runtime settings
 (`src/config/runtime_presets.save_runtime_settings`) are written by this one
 function, so a reader sees the old file or the new one and never a part of
-either (UI-06, 2026-11-16).
+either (UI-06, 2026-11-16). The launcher's own files (its error page and the
+desktop entry, `scripts/launch/shep_launch.py`) are written by the same
+sequence (`write_text_atomic`; verification of fcc3dea, V-AUD-8).
 
 **The sequence** (as Syncthing's `CreateAtomic`, Home Assistant's
 `write_utf8_file_atomic` and Jupyter's `secure_write` do it): the bytes go to a
@@ -44,7 +46,8 @@ FILE_MODE = 0o600
 #: The mode of a directory this creates (an existing one keeps its own).
 DIRECTORY_MODE = 0o700
 
-__all__ = ["DIRECTORY_MODE", "FILE_MODE", "ensure_directory", "write_json_atomic"]
+__all__ = ["DIRECTORY_MODE", "FILE_MODE", "ensure_directory", "write_json_atomic",
+           "write_text_atomic"]
 
 
 def ensure_directory(directory: Any, *, mode: int = DIRECTORY_MODE) -> Path:
@@ -95,18 +98,31 @@ def write_json_atomic(path: Any, data: Any, *, file_mode: int = FILE_MODE,
     """Write `data` as JSON (indented, UTF-8, a final newline) to `path` whole.
 
     Serialised first (``allow_nan=False``), so a value JSON cannot hold raises
-    before anything is created. The parent directory is created with
-    `directory_mode` when absent (`ensure_directory`); the file is written
-    with exactly `file_mode` to a staging name beside `path`, flushed, renamed
-    over `path`, and the directory flushed (module docstring).
+    before anything is created; then written by `write_text_atomic`.
 
     Raises:
         TypeError, ValueError: `data` cannot be written as JSON; nothing was created.
         OSError: the directory or the file cannot be written; `path` is as it was.
     """
+    text = json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+    write_text_atomic(path, text, file_mode=file_mode, directory_mode=directory_mode)
+
+
+def write_text_atomic(path: Any, text: str, *, file_mode: int = FILE_MODE,
+                      directory_mode: int = DIRECTORY_MODE) -> None:
+    """Write `text` (UTF-8) to `path` whole, by the module's one sequence.
+
+    The parent directory is created with `directory_mode` when absent
+    (`ensure_directory`); the file is written with exactly `file_mode` to a
+    new staging name beside `path` (random, ``O_EXCL``: never a file or a
+    link already there), flushed, renamed over `path`, and the directory
+    flushed (module docstring).
+
+    Raises:
+        OSError: the directory or the file cannot be written; `path` is as it was.
+    """
     path = Path(path)
-    payload = (json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
-               ).encode("utf-8")
+    payload = text.encode("utf-8")
     directory = ensure_directory(path.parent, mode=directory_mode)
     flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
              | getattr(os, "O_NOINHERIT", 0) | getattr(os, "O_CLOEXEC", 0))

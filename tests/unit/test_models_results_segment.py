@@ -917,6 +917,68 @@ def test_compare_says_what_a_branch_changed_from_its_parent(world, monkeypatch):
     assert "none" not in _cells(markup, "Settings changed · Learning rate › New")
 
 
+def test_differences_only_counts_each_cause_of_a_hidden_row_in_its_own_words(world,
+                                                                             monkeypatch):
+    """The skill's §9 (each cause in its own words): Differences only hides a
+    row that applies to fewer than two results, and on fcc3dea counted every
+    one as "that apply to one result only", a row that applies to none
+    included: a new base beside a fine-tune reads "Settings changed" not
+    applicable in both, and was said to apply to one. Each count is now its
+    own cause's, read from the table drawn in full: a row with one result's
+    value, and a row with none."""
+    from src.webui.components import results_segment as rs
+
+    finetune, base, _supplied, _kg = _finetune_base_supplied_kg(world, monkeypatch)
+    base["model"]["operation"] = "new"
+    finetune["model"]["operation"] = "finetune"
+    finetune["report_sha256"] = "f" * 64
+    every = rs.compare_html([finetune, base], False)
+    other = {"○ Not applicable", "another protocol"}
+    # Each row's cells that apply (a row said "same as" another is one cell: not counted).
+    applies = {label: sum(cell not in other for cell in cells) for label in _labels(every)
+               if len(cells := _cells(every, label)) == 2}
+    assert applies["Settings changed"] == 0
+    single = sum(1 for count in applies.values() if count == 1)
+    none = sum(1 for count in applies.values() if count == 0)
+    note = _text(rs.compare_html([finetune, base], True))
+    assert (f"{none} that applies to no result" if none == 1
+            else f"{none} that apply to no result") in note, note
+    assert (f"{single} that appl{'ies' if single == 1 else 'y'} to one result only" in note
+            ) if single else ("one result only" not in note), note
+    assert rs._hidden_note(0, 0, 0, 2) == "Differences only: 2 rows that apply to no result are hidden."
+    assert rs._hidden_note(3, 1, 2, 1) == (
+        "Differences only: 3 rows recorded alike in every column they apply to, 2 that apply to "
+        "one result only, 1 that applies to no result and 1 that differs only by an Unknown "
+        "explained above are hidden.")
+
+
+def test_the_hidden_rows_note_agrees_in_number_with_each_count():
+    """Verification of fcc3dea (the fix stage's own find, after V-4): the
+    note said "1 that apply to one result only" and "1 rows recorded alike";
+    each count now agrees with its words, and the verb with the whole. Fails
+    on fcc3dea."""
+    from src.webui.components import results_segment as rs
+
+    assert rs._hidden_note(1, 0) == (
+        "Differences only: 1 row recorded alike in every column it applies to is hidden.")
+    assert rs._hidden_note(0, 0, 1) == (
+        "Differences only: 1 row that applies to one result only is hidden.")
+    assert rs._hidden_note(0, 0, 0, 1) == (
+        "Differences only: 1 row that applies to no result is hidden.")
+    assert rs._hidden_note(0, 1) == (
+        "Differences only: 1 row that differs only by an Unknown explained above is hidden.")
+    assert rs._hidden_note(1, 1, 1, 1) == (
+        "Differences only: 1 row recorded alike in every column it applies to, 1 that applies "
+        "to one result only, 1 that applies to no result and 1 that differs only by an Unknown "
+        "explained above are hidden.")
+    assert rs._hidden_note(158, 0, 0, 1) == (
+        "Differences only: 158 rows recorded alike in every column they apply to and 1 that "
+        "applies to no result are hidden.")
+    assert rs._hidden_note(0, 2, 1) == (
+        "Differences only: 1 row that applies to one result only and 2 that differ only by an "
+        "Unknown explained above are hidden.")
+
+
 def test_compare_keeps_not_applicable_not_recorded_and_none_apart(world, monkeypatch):
     """Browser check models-3 (skill §6: missing states keep their own words):
     a base's weight transfer recorded as null reads "none" on every row of
@@ -1673,7 +1735,7 @@ def test_a_kg_link_prediction_table_shows_plain_names_four_decimals_and_units_on
     assert "Recorded metrics" not in heads
     body = re.findall(r"<tbody>(.*?)</tbody>", markup, re.S)[0]
     cells = [[_text(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)]
-             for tr in re.findall(r"<tr>(.*?)</tr>", body, re.S)]
+             for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S)]
     assert [row[3:7] for row in cells] == [["0.4167", "○ Not computable", "0.5140", "0.8750"],
                                            ["0.6667", "○ Not computable", "0.5140", "0.8750"]]
     assert "lp_" not in text and "0.41666" not in text and "0.51402116" not in text

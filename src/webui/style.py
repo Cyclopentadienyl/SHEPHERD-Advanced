@@ -134,6 +134,8 @@ body { color: var(--shep-text); }
   width: auto !important; min-width: 0 !important; border: 0 !important; background: none !important;
 }
 .shep-brand { font-size: var(--shep-body-size); font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; color: var(--shep-text); }
+/* The brand is the page's h1: no heading size or margin of its own. */
+#shep-brand h1.shep-brand { margin: 0; padding: 0; line-height: inherit; font-size: var(--shep-body-size); font-weight: 600; letter-spacing: -0.01em; color: var(--shep-text); }
 #shep-chips {
   position: absolute; top: 0; right: calc(var(--shep-settings-w, 120px) + 32px); z-index: 4;
   height: var(--shep-row1-h); display: flex; align-items: center; justify-content: flex-end;
@@ -366,6 +368,7 @@ body { color: var(--shep-text); }
   --checkbox-label-text-color-selected: var(--shep-text);
   --block-info-text-color: var(--shep-text-2);
   --input-placeholder-color: var(--shep-muted);
+  --body-text-color-subdued: var(--shep-text-2);
   --input-border-width: 1px;
   --input-border-color: var(--shep-control-border);
   --input-border-color-hover: var(--shep-control-border-hover);
@@ -450,7 +453,11 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
 .shep-st-info { color: var(--shep-status-info); }
 .shep-st-shape { display: inline-block; margin-right: 4px; font-size: 15px; line-height: 1; }
 .shep-st > .shep-spinner { margin-right: 6px; }
-.shep-st-chip .shep-st-shape { margin-right: 0; }
+/* The space between the shape and the word (`renderers.MARK_SPACE`): in the text, so a copy reads
+   "○ Saved", of no width, so the shape's margin draws the gap as before. In a chip the shape, space
+   and word are one inline run (`shep-st-in`), so the tag's flex gap is the shape's margin. */
+.shep-st-sp { font-size: 0; }
+.shep-st-chip .shep-spinner { margin-right: 4px; }
 .shep-reason { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; color: var(--shep-text-2); line-height: 1.45; }
 .shep-reason-grey { border: 1px solid var(--shep-grey-200); background: var(--shep-grey-50); border-radius: 8px; padding: 10px 12px; color: var(--shep-grey-800); }
 .shep-notice { border-radius: 6px; padding: 8px 10px; font-size: 14px; }
@@ -691,7 +698,7 @@ button.shep-row {
 .shep-facts-title > .shep-back-list { display: none; margin-left: auto; font-weight: 400; }
 .shep-facts { display: flex; flex-direction: column; gap: 8px; }
 .shep-facts-sec { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
-.shep-facts-sec > h4 { padding: 8px 12px 0; font-weight: 600; font-size: 15px; margin: 0; }
+.shep-facts-sec > h3 { padding: 8px 12px 0; font-weight: 600; font-size: 15px; margin: 0; }
 .shep-facts-bd { padding: 4px 12px 10px; }
 .shep-facts-warn { border-color: var(--shep-amber-300); background: var(--shep-amber-50); }
 .shep-confirm { border: 1px solid var(--shep-accent-100); background: #fbfbff; border-radius: 10px; padding: 12px 14px; }

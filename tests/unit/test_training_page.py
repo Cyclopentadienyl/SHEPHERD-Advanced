@@ -457,7 +457,9 @@ def test_the_status_pill(status, kind, words, details):
     html = tc.pill_html(status)
     assert f"shep-pill-{kind}" in html
     assert tc.job_status_html(state, words) in html
-    read = re.sub(r'<span class="shep-st-shape" aria-hidden="true">[^<]*</span>', "", html)
+    # What a screen reader reads: the words, the shape hidden (and the space after it).
+    read = re.sub(r'<span class="shep-st-shape" aria-hidden="true">[^<]*</span>'
+                  + re.escape(r.MARK_SPACE), "", html)
     text = re.sub(r"<[^>]+>", "", read)
     assert text == (f"{words}, {details}" if details else words), text
     assert text.count(" · ") <= 1
@@ -3063,7 +3065,7 @@ def test_a_failed_runs_output_tail_is_a_disclosure_fitted_to_the_window():
     assert "<details" not in tc._render_error_block("exit 1")
     assert "window.innerHeight < 1000" in tc._BANNER_JS and "data-tail" in tc._BANNER_JS
     _demo, _ctx, by_id = _page()
-    assert by_id["shep-train-banner"].js_on_load == tc._BANNER_JS
+    assert by_id["shep-train-banner"].js_on_load == r.KEEP_OPEN_JS + tc._BANNER_JS
 
 
 def _rules(css, needle):
@@ -3330,10 +3332,11 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     hidden = [sel for sel, b in _rules(css, "shep-chart-empty") if "display: none" in b]
     assert hidden == [".shep-chart-empty .shep-chart-plot"], hidden
     _demo, _ctx, by_id = _page()
-    assert by_id["shep-train-run-head"].js_on_load == tc._POPOVER_JS
-    assert by_id["shep-train-chip"].js_on_load == tc._POPOVER_JS
-    # Drawn again by each render: kept as the reader left them (T08-flow-2).
-    assert tc._POPOVER_JS.startswith(r.KEEP_OPEN_JS)
+    # Drawn again by each render: kept as the reader left them (T08-flow-2),
+    # by the keeper every dashboard HTML runs first (`shell.plain_html`).
+    assert by_id["shep-train-run-head"].js_on_load == r.KEEP_OPEN_JS + tc._POPOVER_JS
+    assert by_id["shep-train-chip"].js_on_load == r.KEEP_OPEN_JS + tc._POPOVER_JS
+    assert r.KEEP_OPEN_JS not in tc._POPOVER_JS
     assert "--shep-rv-top-h" not in css
 
 
@@ -3482,9 +3485,9 @@ def test_the_details_popovers_stay_as_the_reader_left_them_across_redraws(tmp_pa
     with gr.Blocks() as page:
         shown = gr.State(first)
         chip = shell.plain_html(drawn(first)[0], elem_id="shep-train-chip",
-                                js_on_load=by_id["shep-train-chip"].js_on_load)
+                                js_on_load=tc._POPOVER_JS)
         head = shell.plain_html(drawn(first)[1], elem_id="shep-train-run-head",
-                                js_on_load=by_id["shep-train-run-head"].js_on_load)
+                                js_on_load=tc._POPOVER_JS)
         gr.Button("Step", elem_id="step").click(step, inputs=[shown], outputs=[chip, head, shown])
         gr.Button("Other", elem_id="other").click(other, inputs=[shown],
                                                   outputs=[chip, head, shown])
@@ -3517,3 +3520,173 @@ def test_the_details_popovers_stay_as_the_reader_left_them_across_redraws(tmp_pa
             for after in (*got["pageRedrawn"], got["space"]):
                 assert after["focus"] == "body" and not after["open"], (size, name, got)
         assert not popovers["otherRun"]["open"], (size, popovers["otherRun"])
+
+
+#: The Training page as the service mounts it: four settings typed, so the
+#: "Set by you" line names three and counts one, with its "Details ›"; the
+#: Details opened by the reader; a fifth setting typed (the reader's own act
+#: draws the line again); then the Details closed by the reader and one more
+#: edit. What the line says and whether its Details is open after each.
+_SETBY_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 })).newPage();
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.waitForSelector('#num_epochs input', { state: 'visible', timeout: 60000 });
+  const line = '#shep-train-setby';
+  const says = (words) => page.waitForFunction(([s, w]) => document.querySelector(s).innerText.includes(w),
+                                               [line, words], { timeout: 30000 });
+  const type = async (id, value) => {
+    await page.locator(`#${id} input`).click();
+    await page.keyboard.press('Control+A');
+    await page.keyboard.type(value);
+  };
+  const read = async () => page.evaluate((s) => {
+    const d = document.querySelector(`${s} details`);
+    return { open: d ? d.open : null, text: document.querySelector(s).innerText.split('\n')[0] };
+  }, line);
+  const out = {};
+  await type('num_epochs', '5');
+  await type('learning_rate', '0.001');
+  await type('batch_size', '256');
+  await type('seed', '3');
+  await says('and 1 more');
+  await page.click(`${line} details > summary`);
+  out.opened = await read();
+  await type('split_seed', '4');
+  await says('and 2 more');
+  out.redrawn = await read();
+  await page.click(`${line} details > summary`);
+  out.closed = await read();
+  await type('num_epochs', '7');
+  await says('Epochs 7');
+  out.again = await read();
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_details_the_reader_opened_stays_open_when_their_own_edit_draws_it_again(tmp_path):
+    """The verification of fcc3dea: the disclosure keeper (T08-flow-2) was
+    wired only to regions a poll or a render draws again, so a region the
+    reader's own act draws again closed what the reader had opened: the
+    "Set by you" line's Details, opened, closed under the next field the
+    operator set. Every dashboard HTML now runs the one keeper
+    (`shell.plain_html`): opened, it stays open across that edit; closed by
+    the reader, it stays closed across the next."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_SETBY_JS, tmp_path, base[:-len("gradio_api")])
+    assert seen["opened"]["open"] is True, seen
+    assert seen["redrawn"]["text"].endswith("and 2 more"), seen
+    assert seen["redrawn"]["open"] is True, seen
+    assert seen["closed"]["open"] is False, seen
+    assert "Epochs 7" in seen["again"]["text"] and seen["again"]["open"] is False, seen
+
+
+#: The Training page for an operator: at each window, once the run bar's
+#: reason says the text the second argument names and the page's requests
+#: are answered, the run bar's content box, the box of each line of the
+#: reason's text, the page's scroll width, and what
+#: `document.elementFromPoint` finds at the centre of each run bar control
+#: drawn (a screenshot of each window where a third argument names its
+#: path's start).
+_RUNBAR_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[960, 1080], [1280, 900], [390, 844], [1850, 960]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.click('#shep-tab-research-button', { timeout: 60000 });
+    await page.waitForFunction((said) => {
+      const r = document.querySelector('#shep-train-reason');
+      return r && r.innerText.includes(said) && window.__shepQueue.idle();
+    }, process.argv[3], { timeout: 60000 });
+    if (process.argv[4]) { await page.screenshot({ path: `${process.argv[4]}_${w}x${h}.png` }); }
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const box = (r) => [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)];
+      const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+      const bar = document.querySelector('#shep-train-runbar'), cs = getComputedStyle(bar), b = bar.getBoundingClientRect();
+      const inner = [Math.round(b.left + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft)), Math.round(b.top),
+                     Math.round(b.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight)), Math.round(b.bottom)];
+      const why = document.querySelector('#shep-train-reason .shep-rb-why') || document.querySelector('#shep-train-reason');
+      const range = document.createRange(); range.selectNodeContents(why);
+      const lines = [...range.getClientRects()].filter((r) => r.width > 0).map(box);
+      const scroll = document.documentElement.scrollWidth;
+      const controls = ['#shep-train-dataset input', '#run_name input', '#shep-train-start', '#shep-train-continue', '#shep-train-stop']
+        .map((sel) => [sel, document.querySelector(sel)]).filter(([, el]) => el && shown(el));
+      return { bar: inner, reason: box(why.getBoundingClientRect()), lines, scroll, width: window.innerWidth,
+        controls: controls.map(([sel, el]) => {
+          el.scrollIntoView({ block: 'center' });
+          const r = el.getBoundingClientRect(), at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return { sel, box: box(r), hit: el === at || el.contains(at), at: at ? (at.id || at.className.toString().slice(0, 40) || at.tagName) : null };
+        }) };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+#: A workspace's name as an operator may give one: a single word wider than
+#: a phone's run bar (the review of 5033d29 on fd313af).
+LONG_NAME = "hospital_a_rare_disease_cohort_2026_11_16_reimport_v3"
+
+
+@pytest.mark.parametrize("case", ["gpu_lock", "long_name"])
+def test_no_run_bar_control_is_under_the_reason_at_any_window(case, monkeypatch, tmp_path):
+    """The verification of fcc3dea (pre-existing, seen by the T08 fix lane):
+    at 960 x 1080, for an operator with no workspaces folder set, the run
+    bar's reason (the GPU lock's refusal, several lines) ran over Start and
+    Continue…, and `elementFromPoint` at Start's centre found the reason's
+    text: its slot shrank below its words (its longest word and the GPU
+    tag), which ran on over the buttons. The review of 5033d29: the fix
+    (fd313af) made the slot never narrower than its words, but a word wider
+    than the run bar (a workspace's long name) then widened the slot past
+    the bar at 390 x 844, cutting the reason off at the panel's edge
+    (`overflow-wrap: break-word` does not lower a word's min-content). The
+    slot is as wide as its words but never wider than the run bar, so where
+    they do not fit beside the controls the line takes a row of its own (the
+    skill's §2) and a word wider than that row breaks inside it: at 960 x
+    1080, 1280 x 900, 390 x 844 and 1850 x 960, for the GPU lock's refusal
+    and for a workspace's long name, every run bar control drawn is the
+    first thing at its centre, every line of the reason lies inside the run
+    bar, and the page does not scroll sideways."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    if case == "gpu_lock":
+        monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+        said = "GPU lock"
+    else:
+        (tmp_path / "root" / LONG_NAME).mkdir(parents=True)
+        monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
+        said = f"{LONG_NAME} is not trainable"
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_RUNBAR_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], said)
+    assert set(seen) == {"960x1080", "1280x900", "390x844", "1850x960"}, seen
+    for size, drawn in seen.items():
+        names = [control["sel"] for control in drawn["controls"]]
+        assert {"#shep-train-start", "#shep-train-continue"} <= set(names), (size, drawn)
+        covered = [control for control in drawn["controls"] if not control["hit"]]
+        assert covered == [], (size, drawn)
+        left, _top, right, _bottom = drawn["bar"]
+        outside = [line for line in drawn["lines"] if line[0] < left - 1 or line[2] > right + 1]
+        assert drawn["lines"] and outside == [], (size, drawn)
+        assert drawn["scroll"] <= drawn["width"], (size, drawn)

@@ -1371,13 +1371,16 @@ def create_finetune_page(ctx: Any) -> None:
                                   hops_note, several_note, hops_warn],
                       "show_progress": "hidden"}
 
-    # The page shown: the list and the tasks, the bases (gated), the task
-    # settings for them, the card.
+    # The page shown: the list and the tasks, then the card and the actions
+    # (Start's lock and reason, D8's answer for this request, which needs no
+    # base: a read-only viewer saw an unlocked Start with no reason until the
+    # last step, verification of fcc3dea V-RB2-2), then the bases (gated),
+    # and the task settings for them.
     ctx.on_page_open(PAGE, {
         "fn": _open, "inputs": [ws, ctx.training_workspace, tasks],
         "outputs": [ws, dataset, identity, tasks, tasks_note],
-        "show_progress": "hidden"}).then(**bases_step).then(**base_step).then(
-        **task_view_step).then(**card_step).then(**ctx.chip_refresh)
+        "show_progress": "hidden"}).then(**card_step).then(**bases_step).then(
+        **base_step).then(**task_view_step).then(**ctx.chip_refresh)
     # The shell's slow timer, a read-only poll without the queue.
     ctx.timer_slow.tick(_poll, inputs=[ctx.location, mode, cache],
                         outputs=[card, start, stop, reason, stop_reason, confirm_row, cache],

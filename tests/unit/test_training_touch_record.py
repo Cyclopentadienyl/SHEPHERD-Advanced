@@ -70,7 +70,14 @@ What these pin:
   the shared check's words, beside Start and in the form's line, and nothing
   starts; so it is when the field is left first; Reset to reference empties
   the record and Start then sends no setting; a Tab through every field
-  records nothing; the reference's own value typed is sent as the operator's.
+  records nothing; the reference's own value typed is sent as the operator's;
+- **text typed through an input method** (A26; the browser's own composition
+  over CDP, no key event): the committed value is the operator's edit, sent
+  with the key whether Start is pressed at once (held while the commit is
+  pending) or after the line has said it, the reference committed included;
+  a composition left open when Start is pressed is ended by the browser, and
+  Start carries exactly what the field then holds, which its check refuses
+  when it is no value; a number box's commit too.
 
 What else a field's input does on each form is pinned with the form: the
 "Set by you" line in `test_training_page.py` and
@@ -1163,6 +1170,213 @@ def test_a_start_clicked_while_the_hop_list_edit_is_pending_carries_it(
     assert "Neighbours per hop 15, 10, 5 (reference 15, 10, 5)" in seen["reference"]["line"]
     assert seen["reset"]["after"] == {"counted": {}, "held": 0}
     assert seen["reset"]["order"] == ["line", "reset"], seen["reset"]
+
+
+#: The Training page, text typed through an input method (A26): Chromium's
+#: own composition, driven over CDP (``Input.imeSetComposition`` for each
+#: step, so the page sees compositionstart, compositionupdate and an input
+#: event with ``isComposing`` per step, then ``Input.insertText`` to commit:
+#: the last input and compositionend), no key event at all. Each case from
+#: Reset to reference (the first from the page as loaded); the steps are
+#: pinyin letters, a half value the hop field's own check refuses. (a) committed, the page's
+#: clock paused before the commit (as in `_HELD_TRAINING_JS`) and Start
+#: pressed at once: Start's requests that left and the touch script's state
+#: after 300 ms, then the clock runs; (b) committed, the form's line waited
+#: for, then Start; (c) the reference's own value committed, Start at once;
+#: (d) left uncommitted, Start pressed (the press moves the focus, and the
+#: browser ends the composition with what it holds); (e) a number box,
+#: committed, Start at once. For each: Start's answer, the form's line, the
+#: field's value as drawn, and the composition's events seen on the field.
+_IME_TRAINING_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const start = Number(process.argv[3]);
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 })).newPage();
+  await page.clock.install();
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.waitForSelector('#shep-train-start:not([disabled])', { timeout: 60000 });
+  const cdp = await page.context().newCDPSession(page);
+  const joins = [];
+  page.on('request', (r) => { if (r.url().includes('/queue/join')) { joins.push(JSON.parse(r.postData()).fn_index); } });
+  const starts = () => joins.filter((i) => i === start).length;
+  let expected = 0;
+  const until = async (check) => { for (let i = 0; i < 500 && !check(); i++) { await new Promise((r) => setTimeout(r, 20)); } };
+  const state = () => page.evaluate(() => window.ShepTouch.state());
+  const text = (id) => page.locator(`#${id}`).innerText();
+  await page.evaluate(() => {
+    window.__ime = [];
+    // The composition's own events (the browser's compositionend is not a trusted one), and any key's.
+    ['compositionstart', 'compositionend', 'keydown', 'keypress'].forEach((t) => document.addEventListener(t, (e) => {
+      const field = e.target.closest && e.target.closest('.shep-touch');
+      if (field && (e.isTrusted || t.startsWith('composition'))) { window.__ime.push(t); }
+    }, true));
+    document.addEventListener('input', (e) => {
+      const field = e.target.closest && e.target.closest('.shep-touch');
+      if (field && e.isTrusted) { window.__ime.push(e.isComposing ? 'input composing' : 'input'); }
+    }, true);
+  });
+  const soft = (waiting) => waiting.catch(() => null);
+  // Start's answer once it says `said` (each answer says a new thing), then the form's line once it says `words`.
+  const answered = async (said, words) => {
+    await page.waitForFunction((w) => document.querySelector('#shep-train-notice').innerText.includes(w),
+                               said, { timeout: 30000 });
+    expected += 1;
+    await soft(page.waitForFunction((w) => document.querySelector('#shep-train-setby').innerText.includes(w),
+                                    words, { timeout: 15000 }));
+    return { notice: await text('shep-train-notice'), line: await text('shep-train-setby') };
+  };
+  const reset = async () => {
+    await page.click('#shep-train-reset');
+    await page.waitForFunction(() => document.querySelector('#num_neighbors input').value === '15, 10, 5'
+      && document.querySelector('#num_epochs input').value === '200'
+      && document.querySelector('#shep-train-setby').innerText.includes('Set by you: nothing'));
+    await until(() => starts() === expected);
+  };
+  const pause = async () => {
+    for (let i = 0; i < 5; i++) {
+      await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 60000);
+      const at = await page.evaluate(() => Date.now());
+      await new Promise((r) => setTimeout(r, 50));
+      if (await page.evaluate(() => Date.now()) === at) { return; }
+    }
+    throw new Error('the page clock did not pause');
+  };
+  const press = async () => {
+    const b = await page.locator('#shep-train-start').boundingBox();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await page.mouse.down();
+    await page.mouse.up();
+  };
+  // The field selected, then a composition of `steps`, committed as `commit` unless it is null.
+  const compose = async (sel, steps, commit, before) => {
+    await page.locator(sel).click();
+    await page.keyboard.press('Control+A');
+    await page.evaluate(() => { window.__ime = []; });
+    for (const t of steps) { await cdp.send('Input.imeSetComposition', { text: t, selectionStart: t.length, selectionEnd: t.length }); }
+    if (before) { await before(); }
+    if (commit !== null) { await cdp.send('Input.insertText', { text: commit }); }
+  };
+  const drawn = async (sel, seen) => Object.assign(seen, { value: await page.locator(sel).inputValue(),
+                                                          events: await page.evaluate(() => window.__ime.slice()) });
+  const hops = '#num_neighbors input', epochs = '#num_epochs input';
+  await page.getByText('More training settings', { exact: true }).click();
+  const out = {};
+  // (a) committed, Start pressed at once with the commit's processing held.
+  const before = starts();
+  await compose(hops, ['j', 'ji', 'jiu'], '9, 8, 7', async () => {
+    // The steps' own inputs in the record first, so only the commit is pending.
+    await page.waitForFunction(() => !Object.keys(window.ShepTouch.state().counted).length);
+    await pause();
+  });
+  await press();
+  await new Promise((r) => setTimeout(r, 300));
+  out.at_once = { held: { starts: starts() - before, state: await state() } };
+  await page.clock.resume();
+  Object.assign(out.at_once, await answered('Start 1 recorded', 'Neighbours per hop 9, 8, 7'));
+  await drawn(hops, out.at_once);
+  // (b) committed, the form's line waited for, then Start.
+  await reset();
+  await compose(hops, ['l', 'li', 'liu'], '6, 5, 4');
+  await page.waitForFunction(() => document.querySelector('#shep-train-setby').innerText.includes('Neighbours per hop 6, 5, 4'),
+                             null, { timeout: 30000 });
+  out.paused = { before: await text('shep-train-setby') };
+  await press();
+  Object.assign(out.paused, await answered('Start 2 recorded', 'Neighbours per hop 6, 5, 4'));
+  await drawn(hops, out.paused);
+  // (c) the reference's own value committed, Start at once.
+  await reset();
+  await compose(hops, ['s', 'sh', 'shi'], '15, 10, 5');
+  await press();
+  out.reference = await answered('Start 3 recorded', 'Neighbours per hop 15, 10, 5');
+  await drawn(hops, out.reference);
+  // (d) left uncommitted, then Start pressed.
+  await reset();
+  await compose(hops, ['b', 'ba'], null);
+  out.open = { composing: await page.locator(hops).inputValue() };
+  await press();
+  Object.assign(out.open, await answered('Not started', 'Not valid: Neighbours per hop'));
+  await drawn(hops, out.open);
+  // (e) a number box, committed, Start at once.
+  await reset();
+  await compose(epochs, ['q', 'qi'], '7');
+  await press();
+  out.number = await answered('Start 4 recorded', 'Epochs 7');
+  await drawn(epochs, out.number);
+  await until(() => starts() >= expected);
+  out.starts = starts();
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_text_typed_through_an_input_method_is_the_operators_edit_once_committed(
+        tmp_path, workspace_root, monkeypatch):
+    """A26, an input method on the Training form as the service mounts it:
+    the composition reaches the field as input events with no key event, the
+    commit as one more. (a) Committed and Start pressed at once, the commit's
+    processing held (the page's clock paused): no Start request leaves while
+    the commit is pending (the click held, the commit counted under the
+    field's mark); then one does, carrying the key and the committed value,
+    which reaches the job runner and the form's line as the operator's.
+    (b) Committed, the form's line read first, then Start: the line and the
+    run both carry the committed value. (c) The reference's own value
+    committed is the operator's, as typed (the touched rules). (d) Left
+    uncommitted and Start pressed: the press moves the focus and the browser
+    ends the composition with what it holds; Start carries exactly that
+    value, the field's as drawn, with the key. Here the hop field's own
+    format check refuses it, so this run is not started; a field with no
+    such check takes it as typed (the review of 5033d29: Run name left
+    composing "bai" started a run named "bai"), so this case does not show
+    that a half value never reaches a run. Whether Start may send a
+    composition its own press ended is open (UI_LEDGER V-17). (e) A number
+    box: the committed value, the key and the line. The other edits (clear,
+    cut, paste, the reference retyped, Reset, a task switch, Start at once,
+    Enter) are pinned by the tests above."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.served_page import served
+
+    _browser()
+    asked, carried = _recorded_starts(monkeypatch)
+    demo = create_gradio_app()
+    start = next(fn._id for fn in demo.fns.values() if fn.name == "_on_start")
+    with served(demo, **mount_options()) as base:
+        seen = _run(_IME_TRAINING_JS, tmp_path, base[:-len("gradio_api")], str(start))
+
+    with gr.Blocks():
+        mark = tc.touch_mark(tc.touched_record("shep-train-touched"), "num_neighbors")
+    # The browser's composition: an input event while composing per step, the
+    # commit's input, then compositionend, and no key event behind any of them.
+    assert seen["at_once"]["events"] == ["compositionstart", *["input composing"] * 4,
+                                         "compositionend"], seen["at_once"]
+    assert seen["number"]["events"] == ["compositionstart", *["input composing"] * 3,
+                                        "compositionend"], seen["number"]
+    # (a) Nothing left while the commit was pending: Start held, the commit counted.
+    assert seen["at_once"]["held"] == {"starts": 0, "state": {"counted": {mark: 1}, "held": 1}}, seen
+    # Each Start left once and carried the key and the value as committed.
+    assert seen["starts"] == 5, seen
+    assert [(touched, values["num_neighbors"], values["num_epochs"])
+            for touched, values in carried] == [
+        (["num_neighbors"], "9, 8, 7", 200), (["num_neighbors"], "6, 5, 4", 200),
+        (["num_neighbors"], "15, 10, 5", 200), (["num_neighbors"], "ba", 200),
+        (["num_epochs"], "15, 10, 5", 7)], carried
+    assert [seen[name]["value"] for name in ("at_once", "paused", "reference", "open", "number")
+            ] == ["9, 8, 7", "6, 5, 4", "15, 10, 5", "ba", "7"], seen
+    # The runs: (a), (b), (c) and (e); the half value of (d) was refused.
+    assert [(config.get("num_neighbors"), config.get("num_epochs")) for config in asked] == [
+        ([9, 8, 7], None), ([6, 5, 4], None), ([15, 10, 5], None), (None, 7)], asked
+    assert "Neighbours per hop 9, 8, 7 (reference 15, 10, 5)" in seen["at_once"]["line"]
+    assert "Neighbours per hop 6, 5, 4 (reference 15, 10, 5)" in seen["paused"]["before"]
+    assert "Neighbours per hop 6, 5, 4 (reference 15, 10, 5)" in seen["paused"]["line"]
+    assert "Neighbours per hop 15, 10, 5 (reference 15, 10, 5)" in seen["reference"]["line"]
+    assert "Epochs 7 (reference 200)" in seen["number"]["line"]
+    # (d) The half value as the browser ended it: drawn, sent and refused alike.
+    assert seen["open"]["composing"] == "ba", seen["open"]
+    words = "Neighbours per hop must be whole numbers separated by commas, such as 15, 10, 5."
+    assert seen["open"]["notice"].strip().endswith(f"Not started: {words}"), seen["open"]
+    assert f"Not valid: {words}" in seen["open"]["line"], seen["open"]
 
 
 #: The Training page, one field's line held on the server (`gate`): two keys

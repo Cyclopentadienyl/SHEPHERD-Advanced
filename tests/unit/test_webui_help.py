@@ -1270,3 +1270,73 @@ def test_every_model_spec_field_has_help(built):
     assert set(tc.SPEC_FIELD_WORDS) == {field.path for field in editable}
     concat = by_key["spec-encoder-concat"].text
     assert "GATv2 needs it on" in concat and concat.endswith("README C1)")
+
+
+#: The card's ⓘ pinned with focus on it; the card drawn again (a new ⓘ of
+#: the same help); then focus on the page and the card drawn again.
+_REPLACED_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 } });
+  await page.goto('file://' + process.argv[2]);
+  const I = '#card button.shep-i';
+  await page.waitForSelector(I);
+  await page.click(I);
+  const redraw = () => page.evaluate(() => {
+    const card = document.getElementById('card');
+    const old = card.querySelector('button.shep-i');
+    card.innerHTML = card.innerHTML;
+    return old.isConnected;
+  });
+  const read = () => page.evaluate(() => {
+    const b = document.getElementById('shep-help-bubble'), a = document.activeElement;
+    const i = document.querySelector('#card button.shep-i');
+    return { open: !!b && !b.hidden, role: b && b.getAttribute('role'),
+             focus: a === i ? 'its i' : (a === document.body ? 'page' : a.tagName),
+             expanded: i.getAttribute('aria-expanded') };
+  });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const before = await read();
+  const oldKept = await redraw();
+  await frames();
+  const after = await read();
+  await page.keyboard.press('Escape');
+  await frames();
+  const escaped = await read();
+  // Focus on the page (a click on text), the bubble pinned again: a drawing
+  // never takes the page's focus.
+  await page.click(I);
+  await page.mouse.click(5, 5);
+  await page.click(I);
+  await page.evaluate(() => document.activeElement.blur());
+  await frames();
+  await redraw();
+  await frames();
+  const unfocused = await read();
+  console.log(JSON.stringify({ before, oldKept, after, escaped, unfocused }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_focus_on_a_pinned_i_follows_it_when_a_drawing_replaces_it(tmp_path):
+    """Verification of fcc3dea (V-RB1-2): a pinned bubble whose ⓘ a drawing
+    replaced (Training's dataset chip at a run's start and end) found the new
+    ⓘ and kept it open and expanded, but the reader's focus fell to the page,
+    so Escape no longer reached it; the shared disclosure keeper gives focus
+    back in the same case. Focus now goes to the new ⓘ, unscrolled, and
+    Escape closes the bubble; focus the reader had moved to the page stays
+    there. Fails on fcc3dea (focus on the page)."""
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    seen = run_node(_REPLACED_JS, tmp_path, str(_page(tmp_path)))
+    assert seen["before"] == {"open": True, "role": "dialog", "focus": "its i",
+                              "expanded": "true"}, seen
+    assert seen["oldKept"] is False
+    assert seen["after"] == {"open": True, "role": "dialog", "focus": "its i",
+                             "expanded": "true"}, seen
+    assert seen["escaped"]["open"] is False and seen["escaped"]["focus"] == "its i", seen
+    assert seen["unfocused"]["focus"] == "page" and seen["unfocused"]["open"] is True, seen

@@ -339,7 +339,10 @@ def details_html(data: Mapping[str, Any], name: Optional[str]) -> str:
     head = (f'<div class="shep-panel-hd"><h2>{DETAILS_TITLE}</h2>'
             f'{r.dataset_marks_html(row)}</div>')
     body = r.dataset_details_html(row, row.get("facts"), problem=row.get("facts_problem"))
-    return (head + '<div class="shep-panel-bd">' + body + versions_html(data, row)
+    # Named by the workspace (`renderers.keep_as`): its manifest's and its
+    # versions' disclosures are never drawn open for another one selected.
+    return (head + f'<div class="shep-panel-bd"{r.keep_as(row["name"])}>' + body
+            + versions_html(data, row)
             + comparison_html(row, list(data.get("rows") or [])) + "</div>")
 
 

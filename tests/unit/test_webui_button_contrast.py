@@ -191,9 +191,16 @@ def test_the_themes_own_info_line_and_placeholder_are_below_the_threshold():
     """Why the stylesheet sets them: the theme's subdued grey."""
     assert contrast(_theme_value("block_info_text_color"), "#ffffff") < 4.5
     assert contrast(_theme_value("input_placeholder_color"), "#ffffff") < 4.5
+    assert contrast(_theme_value("body_text_color_subdued"), "#ffffff") < 4.5
 
 
-@pytest.mark.parametrize("text", ["--block-info-text-color", "--input-placeholder-color"])
+#: The text colours the theme draws in its subdued grey and the stylesheet
+#: sets: an info= line, a placeholder, and the subdued text of an empty
+#: Dropdown's input or a value not among its choices (verification of
+#: fcc3dea, V-AUD-3: axe color-contrast 2.53:1 on #shep-test-model-run,
+#: #ft_run, #ft_checkpoint, #shep-rs-chosen; fails on fcc3dea).
+@pytest.mark.parametrize("text", ["--block-info-text-color", "--input-placeholder-color",
+                                  "--body-text-color-subdued"])
 def test_an_info_line_and_a_placeholder_have_four_and_a_half_to_one_where_fields_sit(text):
     """A field's info= line carries a state set at runtime (the Reference
     cohort select's facts) and a placeholder is read as a hint: both are text,

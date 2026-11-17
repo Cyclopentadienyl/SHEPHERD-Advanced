@@ -321,9 +321,9 @@ def _unreadable(read: _Read, source: str, what: str, reason: str, **names: Any) 
 def _redacted(text: Any, roots: Sequence[Tuple[str, str]]) -> str:
     """A problem's words with no server path (`redact_paths`), on one line."""
     from src.utils.checkpoint_paths import problem_line
-    from src.utils.path_redaction import redact_paths
+    from src.utils.path_redaction import SERVER_PATH, redact_paths
 
-    return problem_line(redact_paths(text, roots, other="a server path")) or "no reason given"
+    return problem_line(redact_paths(text, roots, other=SERVER_PATH)) or "no reason given"
 
 
 def _root_word(source: SourceContext) -> str:

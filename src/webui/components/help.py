@@ -364,6 +364,9 @@ _HELP_JS = r"""
   // `byPointer`: the pointer opened the preview (or came to its ⓘ); `yielded`:
   // a preview focus opened let the reader's pointer through (`claim`).
   var byPointer = false, yielded = false;
+  // `anchorFocused`: the reader's focus is on the shown bubble's ⓘ, kept
+  // while a drawing removes that ⓘ (`place` gives it to the new one).
+  var anchorFocused = false;
 
   function closestHelp(node) {
     return node && node.closest ? node.closest(SEL) : null;
@@ -528,8 +531,13 @@ _HELP_JS = r"""
     if (!bubble || bubble.hidden || !anchor) { return; }
     if (!anchor.isConnected) {
       var again = anchorKey && document.querySelector(SEL + '[data-help="' + anchorKey + '"]');
-      if (again) { anchor = again; anchor.setAttribute('aria-expanded', 'true'); }
-      else { close(false); return; }
+      if (!again) { close(false); return; }
+      // A drawing replaced the ⓘ the reader's focus was on: focus goes to
+      // the new one, unscrolled, as the shared disclosure keeper does
+      // (`renderers.KEEP_OPEN_JS`), so Escape still closes the bubble.
+      var refocus = anchorFocused && (!document.activeElement || document.activeElement === document.body);
+      anchor = again; anchor.setAttribute('aria-expanded', 'true');
+      if (refocus) { returning = again; again.focus({preventScroll: true}); returning = null; }
     }
     // Its ⓘ out of view: not drawn and no click's target, still open; focus
     // inside it goes to its ⓘ, the page unmoved.
@@ -704,6 +712,21 @@ _HELP_JS = r"""
   document.addEventListener('focusin', function (e) {
     var btn = closestHelp(e.target);
     if (btn && btn !== returning) { open(btn, false); }
+    anchorFocused = !!anchor && closestHelp(e.target) === anchor;
+  });
+  // Chromium's focusout for a drawing that removes the focused ⓘ is the one
+  // for a click on nothing focusable (no relatedTarget, the ⓘ still in the
+  // page): told apart once the script running now is done.
+  document.addEventListener('focusout', function (e) {
+    if (anchor && closestHelp(e.target) === anchor) {
+      var left = anchor;
+      if (e.relatedTarget) { anchorFocused = false; }
+      else {
+        Promise.resolve().then(function () {
+          if (left.isConnected && document.activeElement !== left) { anchorFocused = false; }
+        });
+      }
+    }
   });
   document.addEventListener('focusout', function (e) {
     var btn = closestHelp(e.target);
