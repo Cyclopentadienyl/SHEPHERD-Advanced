@@ -71,11 +71,15 @@ opens it (`src.utils.launch_instance`). A command
 starting the API alone follows only as a "Ref:", with the disease child's
 checkpoint (its run's `last.pt`) and the device it was trained on: serving
 refuses `auto` without CUDA (contract M3c), so the command names the device.
-Without a model nothing is served, so no command is printed. It has no
+Without a model nothing is served, so no command is printed; the steps are
+led by the dashboard too (the same `dashboard_lines`): start it, train a base
+on Research › Training and its disease model on Research › Fine-tune, then
+load it; the command-line training follows as the other route. It has no
 `--reload`: uvicorn's reloader restarts the server on every saved source
 file, and the server's shutdown stops the GPU job it runs. *History: until
 T08 the uvicorn command was all it printed, so a first run was told to start
-a bare API instead of the dashboard it had just configured.*
+a bare API instead of the dashboard it had just configured; until the T08
+flow, a run without a model printed only the command-line training.*
 
 **`--train-model` takes the deployment's GPU lock** (M5; review of 8242b47,
 P2-4), as `scripts/train_model.py` does: the demo trains through the real
@@ -428,11 +432,18 @@ def default_output_dir(environ: Optional[Mapping[str, str]] = None
 
 
 def dashboard_lines(output_dir: Path, training_device: str,
-                    environ: Optional[Mapping[str, str]] = None) -> List[str]:
-    """**What to do with a trained demo, led by the dashboard** (T08): start
-    it, find the workspace on Datasets and load the disease model in
+                    environ: Optional[Mapping[str, str]] = None, *,
+                    trained: bool = True) -> List[str]:
+    """**What to do with the demo, led by the dashboard** (T08): start it,
+    find the workspace on Datasets and load the disease model in
     Diagnosis › Load a model…, which work with the folder saved in Settings
-    and nothing exported. Said truthfully for where the demo went: in the
+    and nothing exported. With no model `trained` (no `--train-model`), the
+    steps between are the dashboard's training: a base on Research ›
+    Training, then its disease model on Research › Fine-tune (T08 flow: the
+    no-model steps named only the command line, never the dashboard that
+    lists the demo); the device the dashboard serves on is said the same way
+    (`CPU_RESTART`), for a host without CUDA, whatever this command was
+    given. Said truthfully for where the demo went: in the
     workspaces folder saved in Settings, the dashboard lists it; in one set
     for this command only, it does once the same folder is chosen there; in
     another folder, once its parent is. A demo trained on the CPU is served
@@ -458,26 +469,42 @@ def dashboard_lines(output_dir: Path, training_device: str,
     else:
         where = (f"It lists the workspace {name} once {parent} is its workspaces folder: "
                  f"choose that folder in {server_settings.DATA_LOCATIONS}.")
-    device = serving_device(training_device)
     start = "Start the dashboard: its desktop entry, or bash launch_shepherd.sh"
     lines = [f"  1. {start} (launch_shepherd.cmd on Windows). {where}"]
-    if device == "cpu":
-        lines.append(f"     {CPU_DASHBOARD}")
-    lines.append(f"  2. Diagnosis › Load a model…: the run {DEMO_DISEASE_RUN} of the workspace "
-                 f"{name} (the disease model; its base is the run {DEMO_BASE_RUN}).")
+    if not trained:
+        lines += [f"     {CPU_UNTRAINED}",
+                  f"  2. Research › Training: train a base on the workspace {name}; then "
+                  "Research › Fine-tune: its disease model from that base.",
+                  "  3. Diagnosis › Load a model…: that disease model."]
+    else:
+        if serving_device(training_device) == "cpu":
+            lines.append(f"     {CPU_DASHBOARD}")
+        lines.append(f"  2. Diagnosis › Load a model…: the run {DEMO_DISEASE_RUN} of the "
+                     f"workspace {name} (the disease model; its base is the run "
+                     f"{DEMO_BASE_RUN}).")
     return [wrapped for line in lines
             for wrapped in textwrap.wrap(line, 92, subsequent_indent="     ",
                                          break_long_words=False, break_on_hyphens=False)]
 
 
-#: What a demo trained on the CPU needs of the dashboard (`dashboard_lines`):
-#: one started with SHEPHERD_DEVICE=cpu, after the running one is stopped.
-CPU_DASHBOARD = (
-    "It was trained on the CPU: on a host without CUDA its load is refused unless the "
-    "dashboard runs with SHEPHERD_DEVICE=cpu (development hosts only; deployment guide §4.8). "
+#: How a dashboard comes to serve on the CPU (`dashboard_lines`): started
+#: with SHEPHERD_DEVICE=cpu, after the running one is stopped, since a
+#: second start of the same configuration only opens it (review of b39bd3f).
+CPU_RESTART = (
     "A dashboard already running keeps the device it was started with, and a second start "
     "only opens it. So stop it first (Settings › Stop service), then start it as "
     "SHEPHERD_DEVICE=cpu bash launch_shepherd.sh.")
+#: What a demo trained on the CPU needs of the dashboard.
+CPU_DASHBOARD = (
+    "It was trained on the CPU: on a host without CUDA its load is refused unless the "
+    "dashboard runs with SHEPHERD_DEVICE=cpu (development hosts only; deployment guide §4.8). "
+    f"{CPU_RESTART}")
+#: What the demo's models, trained in the dashboard on a host without CUDA,
+#: need of it: Device cpu on its training pages, and the same start.
+CPU_UNTRAINED = (
+    "On a host without CUDA, train its models with Device cpu; their load is then refused "
+    "unless the dashboard runs with SHEPHERD_DEVICE=cpu (development hosts only; deployment "
+    f"guide §4.8). {CPU_RESTART}")
 
 #: The refusal's lead with no `--output-dir` and no workspaces folder in
 #: effect; the setting's own words follow (`refusal`), unset or refused.
@@ -628,13 +655,17 @@ Ref: the API alone, with no dashboard, serving this disease model:
         from src.utils.gpu_lock import training_step_lines
 
         step = "\n".join(training_step_lines(output_dir))
+        steps = "\n".join(dashboard_lines(output_dir, args.device, trained=False))
         print(f"""
 No model was trained, so this workspace has nothing to serve yet: the API
 answers diagnoses only with a trained model, and refuses them (503) until one
 is loaded.
 
-Train on this workspace; training takes the GPU lock and refuses without it
-(deployment guide §4.11):
+Train the demo in the dashboard, then load its disease model:
+{steps}
+
+Or train on the command line; training takes the GPU lock and refuses without
+it (deployment guide §4.11):
 {step}
   python scripts/setup_demo.py --train-model
   # or the production entry point at the reference recipe's full size: a base,
