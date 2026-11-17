@@ -1764,17 +1764,24 @@ _SAID_TWICE = {"datasets": 2, "models": 2}
 _LONG_DIAGNOSIS = {"hpo": "HP:0001250\nHP:0001263", "top_k": 20, "rows": 20}
 
 #: What the acceptance walk reads at each stop besides the shared check: the
-#: header's first chip (D8's), the layout decision, and Diagnosis' results as
-#: drawn (their rows, those with a long name, and the table's width against
-#: its box's).
+#: header's first chip (D8's), the layout decision, Diagnosis' results as
+#: drawn (whether the table has a box, its rows, those with a long name, and
+#: its width against its box's), and the card's Change model… as drawn (its
+#: words, whether it is disabled, and the reason beside it if one is drawn).
 _ACCEPTANCE_FACTS_JS = r"""() => {
   const chip = document.querySelector('#shep-chips .shep-chip');
   const table = document.querySelector('#shep-dx-results-body table');
   const rows = table ? [...table.querySelectorAll('tbody tr[data-key]')] : [];
+  const change = document.querySelector('#shep-dx-change-btn');
+  const why = document.querySelector('#shep-dx-change-why');
+  const drawn = (e) => !!e && e.getClientRects().length > 0;
   return { chip: chip ? chip.innerText.trim() : null,
            layout: document.documentElement.getAttribute('data-shep-layout'),
+           shown: drawn(table),
            rows: rows.length, long: rows.filter((r) => /, type \d+/.test(r.innerText)).length,
-           table: table ? [table.scrollWidth, table.parentElement.clientWidth] : null };
+           table: table ? [table.scrollWidth, table.parentElement.clientWidth] : null,
+           change: drawn(change) ? { text: change.innerText.trim(), off: change.disabled,
+                                     why: drawn(why) ? why.innerText.trim() : '' } : null };
 }"""
 
 
@@ -1802,10 +1809,43 @@ _READ_ONLY_LARGE = ((2560, 1600), (3840, 2160))
 
 
 def _read_only_stops(sizes):
-    """Every page, for a viewer D8 refuses, at `sizes`."""
+    """Every page, for a viewer D8 refuses, at `sizes`; then Diagnosis
+    answered with its largest Top-K on the long names at each of them (the
+    diagnosis asked at the first): the diagnose route asks for no operator,
+    and such a viewer's Diagnosis is drawn apart (Change model locked, its
+    reason beside it)."""
     from tests.fixtures.browser import UI_PAGES
 
-    return [{"size": [w, h], "page": page, "tag": "readonly"} for page in UI_PAGES for w, h in sizes]
+    stops = [{"size": [w, h], "page": page, "tag": "readonly"} for page in UI_PAGES for w, h in sizes]
+    answered = [{"size": [w, h], "page": "clinical", "tag": "results"} for w, h in sizes]
+    answered[0]["diagnose"] = _LONG_DIAGNOSIS
+    return stops + answered
+
+
+def _answered_problems(answered, *, refused=False):
+    """What is wrong with Diagnosis' answered stops (`_ACCEPTANCE_FACTS_JS`):
+    each draws the results table with the 20 results, 16 or more with a long
+    name, and side by side the table is no wider than its box. Change model…
+    is drawn by the gated-button rule: for a viewer D8 refuses (`refused`),
+    disabled with the lock and "Operator controls only: …" beside it; for an
+    operator, usable, with no lock and no reason."""
+    from src.webui.components.chips import LOCK, OPERATOR_ONLY
+
+    problems = []
+    for s in answered:
+        facts = s["extra"]
+        if not facts["shown"] or facts["rows"] != 20 or facts["long"] < 16:
+            problems.append((s["size"], "rows", facts))
+        if facts["layout"] == "side" and facts["table"][0] > facts["table"][1] + 1:
+            problems.append((s["size"], "table wider than its box", facts))
+        change = facts["change"] or {}
+        locked = (change.get("off") is True and change.get("text", "").startswith(LOCK)
+                  and change.get("why", "").startswith(f"{LOCK} {OPERATOR_ONLY}"))
+        unlocked = (change.get("off") is False and not change.get("text", LOCK).startswith(LOCK)
+                    and change.get("why") == "")
+        if not (locked if refused else unlocked):
+            problems.append((s["size"], "Change model", change))
+    return problems
 
 
 @pytest.fixture(scope="module")
@@ -1817,7 +1857,8 @@ def acceptance_walk(tmp_path_factory, _suite_gpu_lock):
     through `_acceptance_stops` (Diagnosis answered with 20 long-named
     candidates), and one as a read-only viewer, every request forwarded
     (`browser.READ_ONLY_HEADERS`: D8 refuses it, the page as such a viewer
-    sees it), through `_read_only_stops` at `_READ_ONLY_HIGH_DPI` on a
+    sees it), through `_read_only_stops` (every page, then Diagnosis answered
+    with the same 20 long-named candidates) at `_READ_ONLY_HIGH_DPI` on a
     high-DPI screen (2 device pixels per CSS pixel) and at `_READ_ONLY_LARGE`.
     Screenshots under the module's ``acceptance-walk*/shots`` and
     ``shots-read-only``."""
@@ -1862,7 +1903,9 @@ def test_the_acceptance_sizes_and_twenty_long_named_results_pass_the_ui_measurem
     it to 723 px in a 562 px box at 1440 x 900 (699 at 1707 x 870, 520 at
     1366 x 620), Phenotypes and Evidence out of view in its sideways scroll,
     whose bar was under the twentieth row; stacked, a table wider than its
-    panel scrolls sideways in its own box (the layout rule)."""
+    panel scrolls sideways in its own box (the layout rule). Change model…
+    is usable, with no lock and no reason (a read-only viewer's is locked:
+    `test_a_read_only_viewers_walk_passes_the_ui_measurement_check`)."""
     from tests.fixtures.browser import PTR_SIZES, UI_PAGES, ui_problems
 
     seen = acceptance_walk["operator"]
@@ -1871,11 +1914,7 @@ def test_the_acceptance_sizes_and_twenty_long_named_results_pass_the_ui_measurem
     assert ui_problems(seen) == []
     answered = [s for s in seen if s.get("tag") == "results"]
     assert len(answered) == 4 + len(PTR_SIZES)
-    for s in answered:
-        facts = s["extra"]
-        assert facts["rows"] == 20 and facts["long"] >= 16, (s["size"], facts)
-        if facts["layout"] == "side":
-            assert facts["table"][0] <= facts["table"][1] + 1, (s["size"], facts)
+    assert _answered_problems(answered) == []
 
 
 def test_a_read_only_viewers_walk_passes_the_ui_measurement_check(acceptance_walk):
@@ -1884,16 +1923,24 @@ def test_a_read_only_viewers_walk_passes_the_ui_measurement_check(acceptance_wal
     at the owner's window, every acceptance size and a phone, the smaller on
     a high-DPI screen, passes the shared check, the D8 chip says
     read-only and why, and the walk focused the controls such a viewer can
-    use (the disabled ones are not focusable)."""
+    use (the disabled ones are not focusable). Diagnosis answered with 20
+    long-named results passes it too at each of those sizes, its results
+    table no wider than its box side by side, Change model… locked with its
+    reason beside it: such a viewer can diagnose (the diagnose route asks for
+    no operator), and their page differs from an operator's by that lock."""
     from tests.fixtures.browser import UI_PAGES, ui_problems
 
     seen = acceptance_walk["read_only"]
+    sizes = (*_READ_ONLY_HIGH_DPI, *_READ_ONLY_LARGE)
     assert {(s["page"], s["size"]) for s in seen if "check" in s} == {
-        (page, f"{w}x{h}") for page in UI_PAGES for w, h in (*_READ_ONLY_HIGH_DPI, *_READ_ONLY_LARGE)}
+        (page, f"{w}x{h}") for page in UI_PAGES for w, h in sizes}
     assert ui_problems(seen) == []
     for s in seen:
         assert s["extra"]["chip"].startswith("Read-only: forwarded by a proxy"), (s["page"], s["extra"])
         assert s["focus"]["n"] >= 3, (s["page"], s["size"], s["focus"])
+    answered = [s for s in seen if s.get("tag") == "results"]
+    assert sorted(s["size"] for s in answered) == sorted(f"{w}x{h}" for w, h in sizes)
+    assert _answered_problems(answered, refused=True) == []
 
 
 def test_each_fingerprint_is_said_once_on_a_screen(ui_walk):
