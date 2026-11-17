@@ -29,6 +29,7 @@ from __future__ import annotations
 import html
 import math
 import re
+import unicodedata
 from collections import Counter
 from datetime import datetime, timezone
 from typing import (Any, Callable, Dict, Hashable, Iterable, List, Mapping, NamedTuple,
@@ -333,17 +334,89 @@ OPTION_CHARS = 40
 _WHAT_ROOM = 5
 
 
+def _glues(ch: str) -> bool:
+    """Whether `ch` joins the character before it (UAX #29's GB9 and GB9a):
+    a combining or spacing mark, a variation selector, a zero-width joiner or
+    non-joiner, an emoji skin tone or a tag character (a subdivision flag)."""
+    cp = ord(ch)
+    return (unicodedata.category(ch) in ("Mn", "Me", "Mc") or ch in "‌‍"
+            or 0x1F3FB <= cp <= 0x1F3FF or 0xE0020 <= cp <= 0xE007F)
+
+
+def _jamo(ch: str) -> str:
+    """A Hangul jamo's or syllable's part in a syllable block (UAX #29's L,
+    V, T, LV, LVT), or "" for any other character."""
+    cp = ord(ch)
+    if 0x1100 <= cp <= 0x115F or 0xA960 <= cp <= 0xA97C:
+        return "L"
+    if 0x1160 <= cp <= 0x11A7 or 0xD7B0 <= cp <= 0xD7C6:
+        return "V"
+    if 0x11A8 <= cp <= 0x11FF or 0xD7CB <= cp <= 0xD7FB:
+        return "T"
+    if 0xAC00 <= cp <= 0xD7A3:
+        return "LV" if (cp - 0xAC00) % 28 == 0 else "LVT"
+    return ""
+
+
+#: Which Hangul part may follow which in one syllable block (UAX #29's GB6-GB8).
+_JAMO_NEXT = {"L": {"L", "V", "LV", "LVT"}, "LV": {"V", "T"}, "V": {"V", "T"},
+              "LVT": {"T"}, "T": {"T"}}
+
+
+def _regional(ch: str) -> bool:
+    """A regional indicator (two make a flag)."""
+    return 0x1F1E6 <= ord(ch) <= 0x1F1FF
+
+
+def grapheme_ends(text: str) -> List[int]:
+    """**Where `text` may be cut without splitting what a reader sees as one
+    character** (a grapheme cluster, UAX #29): every offset between two
+    clusters, 0 and ``len(text)`` included. By the rules a name can meet: CR
+    LF; a mark, a variation selector, a skin tone or a tag character with
+    what it follows; a Hangul syllable block; flags as pairs of regional
+    indicators; and nothing after a zero-width joiner (an emoji sequence such
+    as the family 👨‍👩‍👧, five code points, is one character). The standard
+    library has no grapheme segmentation (``unicodedata`` gives categories,
+    not UAX #29's break properties), so this is written here from them; it
+    never cuts where UAX #29 would not, and may keep a rarer sequence
+    together where UAX #29 would cut it, which only moves a cut to a
+    neighbouring cluster."""
+    ends, flags = [0], 0
+    for i in range(1, len(text)):
+        before, ch = text[i - 1], text[i]
+        flags = flags + 1 if _regional(before) else 0
+        if before == "\r" and ch == "\n":
+            continue
+        if unicodedata.category(before) in ("Cc", "Zl", "Zp") \
+                or unicodedata.category(ch) in ("Cc", "Zl", "Zp"):
+            ends.append(i)
+        elif _glues(ch) or before == "‍" or _jamo(ch) in _JAMO_NEXT.get(_jamo(before), ()):
+            continue
+        elif not (_regional(ch) and flags % 2):
+            ends.append(i)
+    if text:
+        ends.append(len(text))
+    return ends
+
+
 def middle_cut(text: str, room: int, *, head: int = 0) -> str:
     """`text` in at most `room` characters: whole where it fits, else cut in
     its middle with an ellipsis, so its start and its end stay (where a copy
     or a version differs: "…copy_b.pt", "…67-v1.pt"), its start at least
     `head` characters long where the room allows (`fit_apart`: through where
-    two alike names differ). Never longer than `text`."""
+    two alike names differ). Cut only between two grapheme clusters
+    (`grapheme_ends`, B72-N4): a character drawn from several code points (a
+    ZWJ emoji sequence, a flag, a letter and its accent) stays whole on its
+    side of the "…" or is left out whole, the end given the room the start
+    could not use. Never longer than `text`."""
     if len(text) <= room:
         return text
     keep = max(room, 1) - 1
     first = max(keep // 2, min(head, keep))
-    return text[:first] + "…" + text[len(text) - (keep - first):]
+    ends = grapheme_ends(text)
+    first = max(end for end in ends if end <= first)
+    last = min(end for end in ends if len(text) - end <= keep - first)
+    return text[:first] + "…" + text[last:]
 
 
 def _fitted(what: str, rest: Optional[str], mark: str = "",
@@ -675,7 +748,9 @@ def short_reason(text: Any, limit: int = 80) -> str:
     """A reason shortened for a cell, on one line; the full text goes in
     ``title`` or a details panel."""
     flat = " ".join(str(text or "").split())
-    return flat if len(flat) <= limit else flat[:limit - 1] + "…"
+    if len(flat) <= limit:
+        return flat
+    return flat[:max(end for end in grapheme_ends(flat) if end <= limit - 1)] + "…"
 
 
 #: Why a workspace without a readable manifest is not trainable, in short words:
@@ -2285,6 +2360,7 @@ __all__ = [
     "fit_option",
     "fit_options",
     "freeze_words",
+    "grapheme_ends",
     "ident_html",
     "is_digest",
     "metric_words",

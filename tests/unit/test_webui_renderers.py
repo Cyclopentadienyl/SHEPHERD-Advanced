@@ -362,6 +362,46 @@ def test_an_option_is_never_longer_than_the_rule_and_never_lengthens_its_token()
                 assert len(token) <= len(what) or token == what, option
 
 
+#: A ZWJ family emoji (MAN, ZWJ, WOMAN, ZWJ, GIRL): five code points, one
+#: character on screen.
+FAMILY = "\U0001F468‍\U0001F469‍\U0001F467"
+#: A flag (two regional indicators) and a letter with a combining accent.
+FLAG, ACCENTED = "\U0001F1EF\U0001F1F5", "é"
+
+
+def _split_sequences(text):
+    """What is left of `text` once every whole family, flag and accented
+    letter is taken out: any part of one left over means a cut split it."""
+    left = text.replace(FAMILY, "").replace(FLAG, "").replace(ACCENTED, "")
+    return [ch for ch in left if ch in FAMILY + FLAG + "́"]
+
+
+def test_a_cut_never_splits_a_character_drawn_from_several_code_points():
+    """B72-N4: `middle_cut` sliced by code point, so a name holding the ZWJ
+    family emoji cut to 20 characters kept a lone GIRL after the ellipsis,
+    and `fit_option` gave "run-👨‍👩…👩‍👧-end · …", a split sequence. Every cut
+    (`middle_cut`, so `fit_option` and `fit_options`; `short_reason`) is
+    made between two grapheme clusters (`grapheme_ends`): a family, a flag
+    and a letter with its accent each stay whole on its side of the "…" or
+    are left out whole, and every option stays within `OPTION_CHARS`."""
+    name = f"run-{FAMILY}-{'x' * 30}{FAMILY}-end"
+    assert r.middle_cut(name, 20) == f"run-{FAMILY}…x{FAMILY}-end"
+    for room in range(1, len(name) + 1):
+        for head in (0, 4, 6, 8):
+            cut = r.middle_cut(name, room, head=head)
+            assert len(cut) <= room and not _split_sequences(cut), (room, head, cut)
+    for what in (f"run-{FAMILY}-end", f"run-{FAMILY * 3}-end", f"{FAMILY}{FLAG}caf{ACCENTED}" * 3):
+        for rest in (None, "r" * 20, "r" * 37, f"{FAMILY}-{'r' * 40}"):
+            for mark in ("", " (2)"):
+                option = r.fit_option(what, rest, mark)
+                assert len(option) <= r.OPTION_CHARS and not _split_sequences(option), option
+    labels = [label for label, _v in r.fit_options([(f"a{FAMILY * 12}b", None, 1),
+                                                     (f"a{FAMILY * 12}c", None, 2)])]
+    assert len(set(labels)) == 2 and not any(_split_sequences(label) for label in labels), labels
+    assert r.short_reason("a" * 78 + FAMILY + "b", 80) == "a" * 78 + "…"
+    assert r.grapheme_ends(f"{ACCENTED}{FLAG}\U0001F1FA\U0001F1F8\r\n한") == [0, 2, 4, 6, 8, 9]
+
+
 #: The full fine-tune and its frozen-backbone control of the round's
 #: checkpoint B flow, whose names differ only in their middle.
 ARMS = {"gatv2/20261114-025700_cpb-dis-full-disease_265be0":
