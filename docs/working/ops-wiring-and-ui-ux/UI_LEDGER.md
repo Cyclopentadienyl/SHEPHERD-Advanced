@@ -272,7 +272,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-04 The shared model list: folding, search, lineage
 
-14 rows: 1 partly done, 1 outside this round's scope (owner to decide), 10 code-verified, 2 code-verified at ba6e85e (audit).
+15 rows: 1 partly done, 1 outside this round's scope (owner to decide), 11 code-verified, 2 code-verified at ba6e85e (audit).
 
 #### B39-UI2 · Model list reads every checkpoint though it shows only four runs
 
@@ -426,7 +426,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-06 Launch and configuration in the GUI
 
-10 rows: 1 awaiting owner acceptance, 5 code-verified, 4 code-verified at ba6e85e (audit).
+14 rows: 1 awaiting owner acceptance, 9 code-verified, 4 code-verified at ba6e85e (audit).
 
 #### FL-SVC · Service stopped during manual acceptance with no recorded reason
 
@@ -1130,7 +1130,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-117 rows: 1 to do, 6 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 69 code-verified, 31 code-verified at ba6e85e (audit).
+123 rows: 6 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 4 not applicable, 76 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
