@@ -1869,8 +1869,12 @@ def acceptance_walk(tmp_path_factory, _suite_gpu_lock):
     sees it), through `_read_only_stops` (every page, then Diagnosis answered
     with the same 20 long-named candidates) at `_READ_ONLY_HIGH_DPI` on a
     high-DPI screen (2 device pixels per CSS pixel) and at `_READ_ONLY_LARGE`.
-    Screenshots under the module's ``acceptance-walk*/shots`` and
-    ``shots-read-only``."""
+    Screenshots only when ``SHEPHERD_UI_SHOTS`` names a folder (its ``shots``
+    and ``shots-read-only``): they are evidence for a person, no assertion
+    reads them, and a 3840 x 2160 page's capture beside the full suite's
+    other browsers has crashed Chromium's renderer mid-walk."""
+    import os
+
     from tests.fixtures.browser import READ_ONLY_HEADERS, node_with_playwright, walk_ui
     from tests.fixtures.registered_cohort import write_long_named_workspace
     from tests.fixtures.served_page import served_service
@@ -1881,20 +1885,26 @@ def acceptance_walk(tmp_path_factory, _suite_gpu_lock):
     root = tmp_path_factory.mktemp("acceptance-walk")
     demo = write_long_named_workspace(root / "workspaces" / "demo")
     served = train_children(demo, ("disease",))["disease"]
-    for name in ("registry", "shots", "shots-read-only", "operator", "read-only", "read-only-large"):
+    for name in ("registry", "operator", "read-only", "read-only-large"):
         (root / name).mkdir()
+    keep = os.environ.get("SHEPHERD_UI_SHOTS")
+    shots = Path(keep) / "shots" if keep else None
+    shots_read_only = Path(keep) / "shots-read-only" if keep else None
+    for folder in (shots, shots_read_only):
+        if folder is not None:
+            folder.mkdir(parents=True, exist_ok=True)
     settings = {"SHEPHERD_WORKSPACES_ROOT": str(root / "workspaces"),
                 "SHEPHERD_REGISTRY": str(root / "registry"), "SHEPHERD_DEPLOYMENT_MODE": "M1",
                 "SHEPHERD_DEVICE": "cpu", "SHEPHERD_KG_PATH": str(demo / "kg.json"),
                 "SHEPHERD_CHECKPOINT_PATH": str(served), "SHEPHERD_DATA_DIR": str(demo)}
     with served_service(root / "service", settings) as page:
         operator = walk_ui(page, root / "operator", _acceptance_stops(),
-                           extra_js=_ACCEPTANCE_FACTS_JS, shots=root / "shots")
+                           extra_js=_ACCEPTANCE_FACTS_JS, shots=shots)
         read_only = walk_ui(page, root / "read-only", _read_only_stops(_READ_ONLY_HIGH_DPI),
-                            extra_js=_ACCEPTANCE_FACTS_JS, shots=root / "shots-read-only",
+                            extra_js=_ACCEPTANCE_FACTS_JS, shots=shots_read_only,
                             headers=READ_ONLY_HEADERS, device_scale=2)
         read_only += walk_ui(page, root / "read-only-large", _read_only_stops(_READ_ONLY_LARGE),
-                             extra_js=_ACCEPTANCE_FACTS_JS, shots=root / "shots-read-only",
+                             extra_js=_ACCEPTANCE_FACTS_JS, shots=shots_read_only,
                              headers=READ_ONLY_HEADERS)
     return {"operator": operator, "read_only": read_only}
 
