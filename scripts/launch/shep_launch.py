@@ -37,7 +37,7 @@ from src.config.runtime_presets import (  # noqa: E402
     load_runtime_settings,
     resolve_allocator,
 )
-from src.config.atomic_json import ensure_directory  # noqa: E402
+from src.config.atomic_json import ensure_directory, write_text_atomic  # noqa: E402
 from src.config.deployment_settings import ENV_SETTINGS_FILE, settings_location  # noqa: E402
 from src.config.server_settings import (  # noqa: E402
     ENV_BIND_HOST,
@@ -473,17 +473,13 @@ code {{ font-size: 14px; word-break: break-all; }}
 
 def write_error_page(page: Path, what: str, remedy: str, log_path: Optional[Path]) -> Path:
     """The local error page of a start without a terminal: what failed, what
-    to do and where the log is, every value escaped. Written whole (0600)."""
-    ensure_directory(page.parent)
+    to do and where the log is, every value escaped. Written whole (0600), by
+    the settings files' one atomic writer (`write_text_atomic`)."""
     text = ERROR_PAGE.format(what=html.escape(what), remedy=html.escape(remedy),
                              log=html.escape(str(log_path) if log_path else "none was written"),
                              when=html.escape(time.strftime("%Y-%m-%d %H:%M:%S")),
                              repo=html.escape(str(REPO_ROOT)))
-    staged = page.with_name(f".{page.name}.{os.getpid()}.tmp")
-    fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as out:
-        out.write(text)
-    os.replace(staged, page)
+    write_text_atomic(page, text, file_mode=0o600)
     return page
 
 
@@ -778,12 +774,8 @@ def install_desktop_entry(environ, settings_file: Optional[str]) -> int:
     except ValueError as exc:
         log(f"ERROR: {exc}")
         return 2
-    ensure_directory(target.parent, mode=0o755)
-    staged = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-    with os.fdopen(fd, "w", encoding="utf-8") as out:
-        out.write(text)
-    os.replace(staged, target)
+    # Whole, by the settings files' one atomic writer (`write_text_atomic`).
+    write_text_atomic(target, text, file_mode=0o644, directory_mode=0o755)
     log(f"Desktop entry written: {target}")
     log(f"  It starts      : {LAUNCH_SCRIPT}")
     log(f"  Settings file  : {settings_file or 'this account’s (the default)'}")
