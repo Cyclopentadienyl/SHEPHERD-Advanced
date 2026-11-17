@@ -1256,3 +1256,38 @@ def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box()
     record["regime"]["deterministic_algorithms"] = False
     assert ('Deterministic algorithms</dt><dd class="shep-v">off</dd>'
             in tp._record_html(record, {}, {}))
+
+
+def test_every_digest_code_element_is_drawn_by_fingerprint_value():
+    """B72-N3: the one digest value, `renderers.fingerprint_value` (its 12 hex
+    digits, ``shep-fpv`` with the whole value as its title), draws every
+    digest a page shows as a value; no page builds its own ``<code>`` around
+    a digest (the load plan's From and To, the Diagnosis reference cohort and
+    Stop question, the Test page's version details and the record's split
+    manifest each did). A digest said inside a sentence (a notice, an
+    option) is plain text and not a code element."""
+    import inspect
+    from pathlib import Path
+
+    own = re.compile(r"<code[^>]*>\{[^}]*(short_hex|\[:12\]|sha256|digest|\[\"sha|\['sha)")
+    allowed = inspect.getsource(r.fingerprint_value)
+    found = []
+    for path in sorted(Path("src/webui").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if path.name == "renderers.py":
+            text = text.replace(allowed, "")
+        found += [f"{path}:{n}" for n, line in enumerate(text.splitlines(), 1)
+                  if own.search(line)]
+    assert found == []
+    # The places it drew, through the one value now: its class and title.
+    from src.webui.components import model_list as ml
+
+    side = {"sha256": "a" * 64, "graph": "b" * 64, "workspace": "w", "served": True}
+    assert ml._cell(side, "sha", [], to=False) == r.fingerprint_value("a" * 64, what="model fingerprint",
+                                                            copy=False)
+    assert f'title="{"b" * 64}"' in ml._cell(side, "workspace", [], to=False)
+    lines = dict(r.data_kind_lines({"cohort": {
+        "kind": "generated", "generation": {}, "allocation": {},
+        "split_manifest": {"sha256": "c" * 64}, "task_fixture": None}}))
+    assert f'<code class="shep-fpv" title="{"c" * 64}">{"c" * 12}</code>' in lines[
+        "Split manifest"]

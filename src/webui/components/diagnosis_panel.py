@@ -1916,7 +1916,9 @@ def reference_line_html(result: Mapping[str, Any]) -> str:
     if _result_kind(result) != PATIENTS_LIKE_ME or not isinstance(reference, Mapping):
         return ""
     return (f'<p class="shep-dx-kind shep-dx-ref">Reference cohort <b>{_e(reference.get("label"))}'
-            f'</b> · version <code>{_e(_short_hex(reference.get("version_sha256")))}</code></p>')
+            f'</b> · version '
+            + _fingerprint_value(reference.get("version_sha256"), what="version fingerprint",
+                                 copy=False) + '</p>')
 
 
 def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
@@ -2906,7 +2908,8 @@ def stop_question_html(sha256: str) -> str:
     """Stop inference's question, naming the model it is bound to and what
     the stop does (the skill's §9: what happens, who acts)."""
     return ('<div class="shep-dx-stop-q">'
-            f'<b>Stop inference of model <code>{_e(_short_hex(sha256))}</code>?</b> '
+            '<b>Stop inference of model '
+            + _fingerprint_value(sha256, what="model fingerprint", copy=False) + '?</b> '
             'Diagnoses already accepted finish; new diagnoses are refused until a model is '
             'loaded. Nothing loads a model again by itself.</div>')
 

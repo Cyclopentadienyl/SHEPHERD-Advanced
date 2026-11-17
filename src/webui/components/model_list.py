@@ -1571,7 +1571,7 @@ def _cell(side: Mapping[str, Any], row: str, workspaces: Sequence[Any], *, to: b
     if row == "model":
         return r.e(side["model"])
     if row == "sha":
-        return f'<code class="shep-fpv">{r.e(r.short_hex(side["sha256"]))}</code>'
+        return r.fingerprint_value(side["sha256"], what="model fingerprint", copy=False)
     if row == "trained":
         if not side.get("trained_on_known"):
             return '<span class="shep-muted">not in this workspace\'s list</span>'
@@ -1587,7 +1587,8 @@ def _cell(side: Mapping[str, Any], row: str, workspaces: Sequence[Any], *, to: b
             return "same"
         name = f"<b>{r.e(side['workspace'])}</b>" if side["workspace"] else \
             '<span class="shep-muted">not a listed workspace</span>'
-        return f'{name} · graph <code>{r.e(r.short_hex(side["graph"]))}</code>'
+        return f'{name} · graph ' + r.fingerprint_value(side["graph"], what="graph fingerprint",
+                                                         copy=False)
     if row == "sp":
         return ("computed from the model's graph view" if side.get("sp") == "computed"
                 else "not used by this task")

@@ -2498,8 +2498,9 @@ def preview_summary(plan: Any, inputs: Mapping[str, Any]) -> Dict[str, Any]:
 def _source_entry(entry: Any) -> str:
     if not isinstance(entry, Mapping):
         return "not recorded"
-    return (f"digest <code>{e(str(entry.get('digest') or '')[:12])}</code>…, declared version "
-            f"{e(entry.get('declared_version') or 'none')}")
+    return ("digest " + r.fingerprint_value(entry.get("digest"), what="source digest",
+                                            copy=False)
+            + f", declared version {e(entry.get('declared_version') or 'none')}")
 
 
 def _gene_rows(genes: Any) -> List[Tuple[str, str]]:
@@ -2542,7 +2543,8 @@ def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
     graph = preview.get("graph") or {}
     rows = [
         ("Source", f'{e(source.get("filename"))} ({e(source.get("format"))}) · sha256 '
-                   f'<code class="shep-full">{e(source.get("sha256"))}</code>'),
+                   + r.fingerprint_value(source.get("sha256"), what="source fingerprint",
+                                         full=True, copy=False)),
         ("Source cases", f"<b>{e(_count(n))}</b>"),
         ("Ranked-eligible", f"<b>{e(_count(counts.get('ranked_eligible')))}</b> of {e(_count(n))}"),
         ("Excluded", f"<b>{e(_count(counts.get('n_excluded')))}</b> of {e(_count(n))}"
@@ -2560,11 +2562,14 @@ def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
                             f"normalisation v{e(mapping.get('phenotype_normalisation_version'))})"),
         ("Partial phenotypes", e(mapping.get("partial_phenotypes"))),
         *_gene_rows(counts.get("genes")),
-        ("Graph", "the workspace manifest’s digests: " + " · ".join(
-            f"{e(role)} <code>{e(str(d or '')[:12])}</code>" for role, d in graph.items())),
+        ("Graph", "the workspace manifest’s digests: " + ", ".join(
+            f"{e(role)} " + r.fingerprint_value(d, what=f"{role} digest", copy=False)
+            for role, d in graph.items())),
         ("Dataset record", ('origin <b class="shep-amber-t">synthetic</b>' if record.get("origin") == "synthetic"
                             else f"origin {e(record.get('origin'))}")
-                           + f", sha256 <code>{e(str(record.get('sha256') or '')[:12])}</code>…"),
+                           + ", sha256 " + r.fingerprint_value(record.get("sha256"),
+                                                               what="dataset record digest",
+                                                               copy=False)),
         ("HPO · MONDO", f"HPO {_source_entry(record.get('hpo'))} · MONDO {_source_entry(record.get('mondo'))}"),
     ]
     warn = ""

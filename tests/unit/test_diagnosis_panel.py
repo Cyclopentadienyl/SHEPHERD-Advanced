@@ -2554,9 +2554,12 @@ def test_a_patients_like_me_result_shows_reference_patients_and_its_version():
     assert 'data-help="dx-similarity"' in body and ">-0.120</td>" in body
     assert "Dravet syndrome" in body and ">SCN1A</td>" in body
     assert body.count("not recorded") == 2
-    assert (f"Reference cohort <b>reference-1</b> · version <code>{VERSION_SHA[:12]}</code>"
-            in body)
-    assert VERSION_SHA not in body and SAMPLES_SHA not in body
+    # The version by the one digest value (B72-N3), its whole value the title.
+    assert (f'Reference cohort <b>reference-1</b> · version <code class="shep-fpv" '
+            f'title="{VERSION_SHA}">{VERSION_SHA[:12]}</code>' in body)
+    # Only the version's title holds its whole digest; the samples' is the
+    # identity drawer's.
+    assert body.count(VERSION_SHA) == 1 and SAMPLES_SHA not in body
     out = dp.details_outputs(result, 1)
     details = out["details_html"]["value"]
     assert "<code>HP:0001250</code> <code>HP:0001263</code>" in details
@@ -2760,7 +2763,8 @@ def test_stop_inference_asks_first_naming_and_binding_the_model_shown():
     from src.utils.operator_access import ENABLED
 
     asked = dp.ask_stop_inference(ENABLED, _serving_card())
-    assert f"<code>{_SERVED_SHA[:12]}</code>" in asked["stop_text"]
+    assert (f'<code class="shep-fpv" title="{_SERVED_SHA}">{_SERVED_SHA[:12]}</code>'
+            in asked["stop_text"])
     assert "Diagnoses already accepted finish; new diagnoses are refused until a model is " \
            "loaded" in asked["stop_text"]
     assert asked["stop_asked"]["sha256"] == _SERVED_SHA

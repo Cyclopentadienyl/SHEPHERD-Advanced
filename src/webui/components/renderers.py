@@ -2078,11 +2078,13 @@ def data_kind_lines(view: Mapping[str, Any]) -> list:
                     f"allocation {allocation.get('algorithm')} v"
                     f"{allocation.get('algorithm_version')} with seed {allocation.get('seed')}")
         record = fixture.get("record") if isinstance(fixture, Mapping) else None
-        kept = (f"gene fixture {short_hex(_get(record, 'sha256'))}"
-                if isinstance(fixture, Mapping) else "no gene fixture kept")
+        kept = ("gene fixture " + fingerprint_value(_get(record, "sha256"),
+                                                    what="gene fixture fingerprint", copy=False)
+                if isinstance(fixture, Mapping) else e("no gene fixture kept"))
         return [("Generation", e(identity)),
-                ("Split manifest", f"<code>{e(short_hex(_get(manifest, 'sha256')))}</code>; "
-                                   f"{e(kept)}"),
+                ("Split manifest", fingerprint_value(_get(manifest, "sha256"),
+                                                     what="split manifest fingerprint",
+                                                     copy=False) + f"; {kept}"),
                 ("Training relation", e(GENERATED_EXPOSURE_NOTE))]
     if kind != "kg_edges":
         return []
