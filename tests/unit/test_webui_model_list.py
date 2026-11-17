@@ -453,6 +453,99 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
     assert seen["picked"] is True and seen["back"] is True, seen
 
 
+_DRAWER_HEAD_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+const SIZES = [[1850, 960], [1280, 900], [960, 1080], [390, 844]];
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of SIZES) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h },
+                                                   deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(), null, { timeout: 30000 });
+    await page.goto(process.argv[2], { waitUntil: 'load' });
+    await page.waitForSelector('#shep-dx-change-btn:not([disabled])', { timeout: 60000 });
+    await idle();
+    await page.click('#shep-dx-change-btn');
+    await page.waitForSelector('#shep-models-clinical-rows [data-key]', { state: 'attached', timeout: 30000 });
+    await idle();
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const drawer = document.querySelector('#shep-dx-change');
+      const edge = drawer.getBoundingClientRect().right - (parseFloat(getComputedStyle(drawer).borderRightWidth) || 0);
+      // Each word drawn in the title and the task segment, where the browser draws it.
+      const words = [];
+      for (const root of [document.querySelector('#shep-dx-change-title'), document.querySelector('#shep-dx-change-task')]) {
+        const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          const re = /\S+/g;
+          for (let m = re.exec(n.textContent); m; m = re.exec(n.textContent)) {
+            const range = document.createRange();
+            range.setStart(n, m.index); range.setEnd(n, m.index + m[0].length);
+            for (const b of range.getClientRects()) { words.push({ word: m[0], right: b.right }); }
+          }
+        }
+      }
+      const labels = [...document.querySelectorAll('#shep-dx-change-task label')].map((l) => {
+        const span = l.querySelector('span') || l;
+        return { text: l.innerText.trim(), whole: span.scrollWidth <= span.clientWidth + 1 };
+      });
+      return { edge, past: words.filter((x) => x.right > edge + 0.5), labels,
+               drawer: [drawer.scrollWidth, drawer.clientWidth],
+               page: [document.scrollingElement.scrollWidth, innerWidth] };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_drawers_title_and_task_segment_stay_inside_it_at_every_window(
+        root, serving, monkeypatch, tmp_path):
+    """V-19 (FL-UI-03's T04 review line, the WebUI skill §2): stacked at 390 x
+    844 the Load for inference drawer's title note ran 217 px and its task
+    segment 49 px past the drawer's right edge, cut ("operator controls · one
+    mo", "Patients-like-"): both took their one line's width and never gave
+    way. In a real browser (skipped without Node and Playwright), the drawer
+    open for an operator at 1850 x 960, 1280 x 900, 960 x 1080 and 390 x 844:
+    every word of its title and of its task segment is drawn inside the
+    drawer, each segment label whole (no ellipsis), and nothing scrolls
+    sideways, the drawer or the page. Fails on 78444a6 at 390 x 844."""
+    from src.webui import shell
+    from src.webui.app import mount_options
+    from src.webui.components import diagnosis_panel as dp
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    status = _status(root)
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (status, None))
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": True, "workspaces": [], "serving": None,
+        "item": None, "item_problem": None, "recorded": None, "trained": None,
+        "cohorts": None})
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_DRAWER_HEAD_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    assert set(seen) == {"1850x960", "1280x900", "960x1080", "390x844"}
+    for size, got in seen.items():
+        assert got["past"] == [], (size, got)
+        assert [label["text"] for label in got["labels"]] == [
+            "All tasks", "Disease", "Gene", "Patients-like-me"], (size, got)
+        assert all(label["whole"] for label in got["labels"]), (size, got)
+        assert got["drawer"][0] <= got["drawer"][1] and got["page"][0] <= got["page"][1], (size, got)
+
+
 def test_in_use_is_matched_by_the_full_fingerprint_only(root, serving, monkeypatch):
     sha = root["shas"]["model-05.pt"]
     serving["value"]["served_identity"]["checkpoint"]["sha256"] = sha[:12] + "f" * 52

@@ -4040,7 +4040,6 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-tbl td.shep-dx-evcell {{ white-space: normal; min-width: 6.5em; }}
 {_TAB} .shep-dx-ref code {{ font-family: var(--shep-mono); }}
 {_TAB} .shep-dx-task-box {{ gap: 0 !important; }}
-{_TAB} #shep-dx-change-task {{ flex: 0 0 auto !important; width: auto !important; }}
 {_TAB} #shep-dx-change-ws {{ flex: 1 1 100% !important; margin-top: -4px; }}
 {_TAB} #shep-dx-change-ws:not(:has(.shep-ws-line)) {{ display: none !important; }}
 {_TAB} .shep-dx-kind {{ margin: 0 0 8px; font-size: 14px; color: var(--shep-text-2); }}
@@ -4085,7 +4084,14 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-explanation {{ font-size: 15px; }}
 {_TAB} .shep-dx-drawer {{ box-shadow: 0 10px 30px rgba(20, 24, 40, .14); }}
 {_TAB} .shep-dx-drawer-hd {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important; padding: 10px 16px !important; border-bottom: 1px solid var(--shep-border); }}
-{_TAB} .shep-dx-drawer-hd > * {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
+/* A drawer's head and the Load drawer's task segment take their words' width and give way to
+   the drawer, never past it (V-19: held at their one line's width, the Load drawer's title note
+   ran 217 px and its task segment 49 px past the drawer's edge at 390 x 844, cut): a title
+   wraps its words; the task segment keeps every label whole and wraps them onto another line
+   (the shared segment's one row, `.shep-seg`, would end three of its four labels in an
+   ellipsis in a phone's 324 px). */
+{_TAB} .shep-dx-drawer-hd > *, {_TAB} #shep-dx-change-task {{ flex: 0 1 auto !important; width: auto !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-change-task .wrap {{ display: inline-flex !important; flex-wrap: wrap; }}
 {_TAB} .shep-dx-drawer-hd h2 {{ font-size: var(--shep-title-size); font-weight: 600; margin: 0; display: inline; }}
 {_TAB} .shep-dx-drawer-note {{ margin-left: 10px; font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} #shep-dx-identity-close, {_TAB} #shep-dx-change-close {{ margin-left: auto; }}
