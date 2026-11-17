@@ -3102,3 +3102,54 @@ def test_the_tree_folds_searches_filters_and_keeps_the_selection_in_a_browser(
     assert refreshed["detail"] == bundle_key("disease")
     assert any(f["selected"] and f["shown"] for f in files(refreshed["tree"], "disease_bbbbbb"))
     assert run(refreshed["tree"], "base_aaaaaa")["open"]               # the operator's fold
+
+
+#: The page's Order switch, Task select and "Applying …" line as Gradio draws
+#: them, and rows the shared list drew before the page shaped its view (no
+#: marker); By family clicked, then the page's own rows drawn.
+_PENDING_EARLY_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 } });
+  await page.goto('file://' + process.argv[2]);
+  const said = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(
+    () => r(document.querySelector('#shep-mp-pending .shep-st-w').textContent)))));
+  const before = await said();
+  await page.click('#family');
+  const clicked = await said();
+  await page.evaluate(() => {
+    document.getElementById('shep-models-research-rows').innerHTML =
+      '<table><tr data-key="f"><td>family rows</td></tr></table>'
+      + '<span class="shep-view-for" hidden data-for="family|all"></span>';
+  });
+  const shaped = await said();
+  console.log(JSON.stringify({ before, clicked, shaped }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_an_order_switched_before_the_first_answer_is_announced(tmp_path):
+    """Verification of fcc3dea (V-RB2-5, FL-UI-05): By family clicked while
+    Models' opening answer was on its way read By family for 0.6-1 s over the
+    newest-first rows with no "Applying …": the line waited for rows with a
+    view marker, and the rows the shared list draws before the page first
+    shapes its view carry none. Those rows are the list's own order (newest
+    first, every task), so the switch is announced at once, and the line
+    goes once the page's rows answer it. Fails on fcc3dea."""
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    page = tmp_path / "pending.html"
+    page.write_text(f"""<!doctype html><html><head><meta charset="utf-8"></head><body>
+<div id="shep-mp-order"><label><input type="radio" name="o" value="newest" checked>Newest first</label>
+<label><input id="family" type="radio" name="o" value="family">By family</label></div>
+<div id="shep-mp-task"><input value="All"></div>
+<div id="shep-mp-pending">{mp.PENDING_HTML}</div>
+<div id="shep-models-research-rows"><table><tr data-key="a"><td>newest rows</td></tr></table></div>
+<script>{mp.PENDING_JS}</script></body></html>""", encoding="utf-8")
+    seen = run_node(_PENDING_EARLY_JS, tmp_path, str(page))
+    assert seen == {"before": "", "clicked": "Applying By family…", "shaped": ""}, seen
+

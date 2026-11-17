@@ -1155,12 +1155,14 @@ PENDING_HTML = (f'<div class="shep-mp-pending" role="status" aria-live="polite">
 #: compares what the page shows (the checked Order, the Task select's option)
 #: on every change of the page (a mutation observer and the controls' own
 #: events); while a Task is typed into its filter, the last option chosen
-#: counts. Nothing is shown before rows are first drawn for the controls (the
-#: page not yet read, or read-only). Attached once per page load.
+#: counts. Nothing is shown before any rows are drawn (the page not yet
+#: read); rows the shared list drew before the page first shaped its view
+#: carry no marker and are its own order, newest first, every task. Attached
+#: once per page load.
 PENDING_JS = r"""
 if (!window.__shepModelsPending) {
   window.__shepModelsPending = true;
-  var ORDERS = __ORDERS__, TASKS = __TASKS__;
+  var ORDERS = __ORDERS__, TASKS = __TASKS__, UNSHAPED = __UNSHAPED__;
   var seen = false, lastTask = 'all', queued = false;
   var check = function () {
     queued = false;
@@ -1171,13 +1173,17 @@ if (!window.__shepModelsPending) {
     var radio = document.querySelector('#shep-mp-order input[type=radio]:checked');
     var taskInput = document.querySelector('#shep-mp-task input');
     var marker = document.querySelector('#shep-models-research-rows .shep-view-for');
+    // Rows the shared list drew before the page first shaped its view carry
+    // no marker: they are its own order, newest first, every task
+    // (`UNSHAPED`), so a switch made then is announced (V-RB2-5).
+    var rows = document.querySelector('#shep-models-research-rows tr[data-key]');
     var failed = document.querySelector('#shep-mp-options [data-failed-for]');
     if (taskInput && Object.prototype.hasOwnProperty.call(TASKS, taskInput.value)) {
       lastTask = TASKS[taskInput.value];
     }
     var order = radio ? radio.value : null;
     var wanted = order + '|' + lastTask;
-    var drawn = marker ? marker.getAttribute('data-for') : null;
+    var drawn = marker ? marker.getAttribute('data-for') : (rows ? UNSHAPED : null);
     if (drawn) { seen = true; }
     var pending = seen && order !== null && drawn !== wanted
       && !(failed && failed.getAttribute('data-failed-for') === wanted);
@@ -1207,7 +1213,8 @@ if (!window.__shepModelsPending) {
   soon();
 }
 """.replace("__ORDERS__", json.dumps(_ORDER_WORDS)).replace(
-    "__TASKS__", json.dumps({label: value for label, value in TASK_CHOICES}))
+    "__TASKS__", json.dumps({label: value for label, value in TASK_CHOICES})).replace(
+    "__UNSHAPED__", json.dumps(f"{NEWEST}|{ALL_TASKS}"))
 
 
 def _served_line(listing: Mapping[str, Any]) -> str:
