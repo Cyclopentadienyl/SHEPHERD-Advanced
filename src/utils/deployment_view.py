@@ -401,7 +401,13 @@ def _value_text(value: Any) -> str:
 
 def text_lines(view: DeploymentView) -> List[str]:
     """The view for a shell (`scripts/deployment_settings.py show`): paths
-    shown, the variable of each location named, one fact per line."""
+    shown, the variable of each location named, one fact per line. **Every
+    reason the JSON form carries is said here too** (`as_dict`, paths shown):
+    the file's, the deployment mode's, each location's problem and note, the
+    GPU lock's and why a change waits, each as its own ``problem:`` line
+    under what it is about. T08 flow: the mode read "read-only (source: not
+    set)" and the lock "not configured" with no reason, which ``--json``
+    gave."""
     lines = []
     file = view.file
     lines.append(f"Settings file: {file.path or 'none (no place for one in this environment)'}"
@@ -413,6 +419,8 @@ def text_lines(view: DeploymentView) -> List[str]:
     mode = view.mode
     lines.append(f"Deployment mode: {mode.value or 'read-only'} "
                  f"(source: {_SOURCE_TEXT.get(mode.source, mode.source)})")
+    if mode.problem:
+        lines.append(f"  problem: {mode.problem}")
     for item in view.fields:
         lines.append("")
         lines.append(f"{item.name} ({item.variable}, saved as {item.key})")
@@ -435,6 +443,8 @@ def text_lines(view: DeploymentView) -> List[str]:
     lines.append("")
     lock = view.gpu_lock
     lines.append(f"GPU lock: {lock.value if lock.value is not None else 'not configured'}")
+    if lock.problem:
+        lines.append(f"  problem: {lock.problem}")
     if view.pending_reason:
         lines.append(f"Pending: {', '.join(view.pending)}. {view.pending_reason}")
     return lines
