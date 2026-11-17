@@ -77,6 +77,11 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   inside a region marked `REGION_CLASS` (a card it heads) places its bubble
   outside that whole region when one of the four sides fits, else outside
   the line it sits in, as any other ⓘ;
+- a field in a container marked `KEY_FIRST_CLASS` is drawn as its key, its ⓘ
+  and its control, in that order (Diagnosis' Options): its control is kept
+  after its ⓘ in the page too (Gradio puts a checkbox's box before its
+  words), so focus and a screen reader meet them in the order drawn (WCAG
+  2.4.3, 1.3.2);
 - shows "Esc to close" only on a pinned bubble (a dialog); a preview has none.
 
 The same script copies a full value from a ``button.shep-copy`` (``data-copy``)
@@ -109,6 +114,11 @@ HIT_TARGET = 24
 #: card): its bubble is placed outside the region, not only outside the line
 #: the ⓘ sits in (`fieldRect`'s ``regionRect``).
 REGION_CLASS = "shep-help-region"
+
+#: The class of a container whose fields are drawn as rows of their key, their
+#: ⓘ and their control, in that order (Diagnosis' Options): the help keeps
+#: each field's control after its ⓘ in the page (`keyFirst`).
+KEY_FIRST_CLASS = "shep-key-first"
 
 #: **A help text's grammar**, read the same way by `help_lines` and by the
 #: bubble's script (the patterns are given to it as written here): the first
@@ -346,7 +356,8 @@ _HELP_JS = r"""
   if (window.ShepHelp) { return; }
   var SEL = 'button.shep-i';
   var MAX_W = __MAX_W__, HOVER_MS = __HOVER_MS__, GAP = 10, EDGE = 8;
-  var REGION = '__REGION__', BULLET = __BULLET__, REF = __REF__, TERM = new RegExp(__TERM__);
+  var REGION = '__REGION__', KEY_FIRST = '__KEY_FIRST__';
+  var BULLET = __BULLET__, REF = __REF__, TERM = new RegExp(__TERM__);
   var bubble = null, anchor = null, anchorKey = null, pinned = false;
   var hideTimer = null, openTimer = null, previewFor = null;
   // `byPointer`: the pointer opened the preview (or came to its ⓘ); `yielded`:
@@ -734,14 +745,26 @@ _HELP_JS = r"""
     var want = ids.join(' ');
     if (input.getAttribute('aria-describedby') !== want) { input.setAttribute('aria-describedby', want); }
   }
+  // A field drawn as its key, its ⓘ and its control (in a container marked
+  // KEY_FIRST) keeps its control after its ⓘ in the page as well, so focus
+  // and a screen reader meet them in the order drawn: Gradio puts a
+  // checkbox's box before its words, where the ⓘ follows.
+  function keyFirst(target, btn) {
+    if (!target.closest('.' + KEY_FIRST)) { return; }
+    var input = target.querySelector('input:not([type=hidden])');
+    if (input && btn && input.parentNode === btn.parentNode &&
+        (input.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+      btn.insertAdjacentElement('afterend', input);
+    }
+  }
   function enhance() {
     var texts = document.querySelectorAll('.shep-help-texts [data-help-target]');
     for (var i = 0; i < texts.length; i++) {
       var t = texts[i], target = document.getElementById(t.getAttribute('data-help-target'));
       if (!target) { continue; }
-      var key = t.getAttribute('data-help-key');
-      if (target.querySelector(SEL + '[data-help="' + key + '"]')) {
-        keepLabel(target, key); describe(target, key, t.id); continue;
+      var key = t.getAttribute('data-help-key'), known = target.querySelector(SEL + '[data-help="' + key + '"]');
+      if (known) {
+        keyFirst(target, known); keepLabel(target, key); describe(target, key, t.id); continue;
       }
       var title = titleIn(target);
       if (!title) { continue; }
@@ -755,6 +778,7 @@ _HELP_JS = r"""
       btn.setAttribute('aria-describedby', t.id);
       btn.innerHTML = '__I_ICON__';
       title.insertAdjacentElement('afterend', btn);
+      keyFirst(target, btn);
       if (!title.id) { title.id = 'shep-lbl-' + key; }
       var input = target.querySelector('textarea, input:not([type=radio])');
       if (input && !input.hasAttribute('aria-label')) { input.setAttribute('aria-labelledby', title.id); }
@@ -802,6 +826,7 @@ HELP_HEAD = "<script>" + (_HELP_JS.replace("__I_ICON__", _I_ICON.replace("'", "\
                           .replace("__MAX_W__", str(BUBBLE_MAX_WIDTH))
                           .replace("__HOVER_MS__", str(HOVER_OPEN_MS))
                           .replace("__REGION__", REGION_CLASS)
+                          .replace("__KEY_FIRST__", KEY_FIRST_CLASS)
                           .replace("__BULLET__", json.dumps(BULLET))
                           .replace("__REF__", json.dumps(REF_PREFIX))
                           .replace("__TERM__", json.dumps(TERM_PATTERN))) + "</script>"
@@ -893,6 +918,7 @@ __all__ = [
     "HelpEntry",
     "HelpLine",
     "HelpRegistry",
+    "KEY_FIRST_CLASS",
     "REF_PREFIX",
     "REGION_CLASS",
     "TERM_PATTERN",

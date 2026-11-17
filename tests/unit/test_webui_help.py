@@ -28,8 +28,10 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   least 24 × 24 px, the lead is bold, "- " lines are one list and a "Term:"
   is bold, and a hostile text shows as literal text in each part; a bubble
   whose ⓘ is scrolled out of view (the window or a region) is not drawn and
-  takes no click, and is drawn again with its ⓘ back (T08-help-1); and a
-  click on a control under a focus preview reaches it (T08-flow-1).
+  takes no click, and is drawn again with its ⓘ back (T08-help-1); a click on
+  a control under a focus preview reaches it (T08-flow-1); and, in the served
+  dashboard, Tab meets each checkbox's ⓘ and box in the order drawn
+  (T08-flow-3).
 
 Module: tests/unit/test_webui_help.py
 """
@@ -37,6 +39,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -835,6 +838,118 @@ def test_a_focus_preview_lets_the_click_through_to_the_control_under_it(tmp_path
         # Its focus keeps it while the pointer crosses it; focus leaving closes it.
         assert s["again"]["shown"] and s["crossed"]["shown"] and s["crossed"]["focus"] == "seed-i", (size, s)
         assert not s["left"]["shown"], (size, s)
+
+
+#: T08-flow-3. The served dashboard at each window: each page opened (its
+#: accordions open); for each checkbox given (one with field help) drawn on
+#: it: its row's focusable parts (its ⓘ and its box) in the order drawn (left
+#: to right), and in the order Tab reaches them from the control before them.
+_CHECKBOX_ORDER_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const base = process.argv[2], ids = JSON.parse(process.argv[3]);
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [960, 1080]]) {
+    const page = await browser.newPage({ viewport: { width: w, height: h } });
+    await page.goto(base);
+    await page.waitForSelector('#dx_explanations button.shep-i');
+    const seen = {};
+    for (const id of ['clinical', 'training', 'finetune', 'test', 'settings']) {
+      const level1 = id === 'clinical' || id === 'settings';
+      if (!level1 && !(await page.$('#shep-tab-research-button[aria-selected="true"]'))) {
+        await page.click('#shep-tab-research-button', { force: true });
+      }
+      const tab = level1 ? `#shep-tab-${id}-button` : `#shep-page-${id}-button`;
+      await page.click(tab, { force: true });
+      await page.waitForSelector(tab + '[aria-selected="true"]');
+      // Training's Parameters, folded on a narrow window, and every accordion.
+      for (const fold of await page.$$('button.shep-train-fold[aria-expanded="false"]')) {
+        if (await fold.isVisible()) { await fold.click(); }
+      }
+      for (const acc of await page.$$('button.label-wrap:not(.open)')) {
+        if (await acc.isVisible()) { await acc.click(); }
+      }
+      // Every given checkbox drawn on this page, its ⓘ added.
+      await page.waitForFunction((ids) => ids.every((k) => {
+        const b = document.getElementById(k);
+        return !b || !b.querySelector('input[type=checkbox]').getClientRects().length || !!b.querySelector('button.shep-i');
+      }), ids);
+      const rows = await page.evaluate((ids) => {
+        const tabbable = (e) => e.tabIndex >= 0 && !e.disabled && e.getClientRects().length > 0
+          && getComputedStyle(e).visibility === 'visible';
+        const all = [...document.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]')].filter(tabbable);
+        return ids.map((k) => {
+          const b = document.getElementById(k), box = b && b.querySelector('input[type=checkbox]');
+          if (!box || !box.getClientRects().length) { return null; }
+          const parts = [b.querySelector('button.shep-i'), box].filter(tabbable);
+          const drawn = parts.slice().sort((p, q) => p.getBoundingClientRect().left - q.getBoundingClientRect().left)
+            .map((p) => (p === box ? 'box' : 'i'));
+          const first = Math.min(...parts.map((p) => all.indexOf(p)));
+          if (first > 0) { all[first - 1].setAttribute('data-before', k); }
+          const mid = parts.map((p) => { const r = p.getBoundingClientRect(); return r.top + r.height / 2; });
+          return { k, drawn, disabled: box.disabled, oneLine: Math.max(...mid) - Math.min(...mid) < 12 };
+        }).filter(Boolean);
+      }, ids);
+      for (const row of rows) {
+        await page.focus(`[data-before="${row.k}"]`);
+        const order = [];
+        for (let n = 0; n < row.drawn.length; n++) {
+          await page.keyboard.press('Tab');
+          order.push(await page.evaluate((k) => {
+            const a = document.activeElement, b = document.getElementById(k);
+            return !b.contains(a) ? 'out' : a.matches('button.shep-i') ? 'i' : a.type === 'checkbox' ? 'box' : a.tagName;
+          }, row.k));
+        }
+        await page.evaluate((k) => document.querySelector(`[data-before="${k}"]`).removeAttribute('data-before'), row.k);
+        seen[row.k] = { page: id, drawn: row.drawn, tab: order, disabled: row.disabled, oneLine: row.oneLine };
+      }
+    }
+    out[`${w}x${h}`] = seen;
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_tab_reaches_each_checkboxs_i_and_box_in_the_order_they_are_drawn(tmp_path, monkeypatch):
+    """T08-flow-3 (WCAG 2.4.3): Diagnosis › Options draws "Explanations ⓘ ☑"
+    (R-24: the words in the key column, the box in the control column with
+    Top-K's box), but Gradio puts a checkbox's box before its words and the
+    shared help puts the ⓘ after the words, so Tab reached the box before the
+    ⓘ. In the served dashboard, at 1850 x 960 and 960 x 1080, every checkbox
+    with field help drawn on Diagnosis, Training (its Parameters unfolded and
+    its accordions open), Fine-tune, Test and Settings: Tab from the control
+    before it reaches its ⓘ and its box in the order they are drawn
+    (Diagnosis: ⓘ then box; the others, drawn box, words, ⓘ: box then ⓘ).
+    Training's Continue drawer's Mixed precision is drawn only with a run to
+    continue; it is the same setting field as the base form's, which is
+    walked."""
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    operator_mode(monkeypatch)
+    demo = create_gradio_app()
+    texts = next(b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-help-texts")
+    targets = set(re.findall(r'data-help-target="([^"]+)"', str(texts.value)))
+    helped = {b.elem_id for b in demo.blocks.values() if isinstance(b, gr.Checkbox) and b.elem_id in targets}
+    assert {"dx_explanations", "use_amp", "ft_use_amp", "torch_compile"} <= helped, helped
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_CHECKBOX_ORDER_JS, tmp_path, base[:-len("gradio_api")], json.dumps(sorted(helped)),
+                        timeout=600)
+    assert set(seen) == {"1850x960", "960x1080"}
+    for size, rows in seen.items():
+        assert set(rows) == helped - {"branch_use_amp"}, (size, sorted(helped - set(rows)))
+        for k, row in rows.items():
+            assert row["oneLine"] and set(row["drawn"]) == {"i", "box"}, (size, k, row)
+            assert row["tab"] == row["drawn"], (size, k, row)
+        assert rows["dx_explanations"]["drawn"] == ["i", "box"], (size, rows["dx_explanations"])
 
 
 # --------------------------------------------------------------------------- the built dashboard

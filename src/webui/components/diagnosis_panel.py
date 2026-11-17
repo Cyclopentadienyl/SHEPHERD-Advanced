@@ -116,7 +116,8 @@ from src.utils.server_address import ServerAddressUnknownError, api_base_url
 from src.webui.components import diagnosis_card as card
 from src.webui.components import served_status
 from src.webui.components.chips import D8_SHORT
-from src.webui.components.help import HIT_TARGET, REGION_CLASS, help_button, text_id
+from src.webui.components.help import (HIT_TARGET, KEY_FIRST_CLASS, REGION_CLASS, help_button,
+                                       text_id)
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import OPTION_CHARS
@@ -3393,7 +3394,10 @@ def create_diagnosis_tab(ctx: Any) -> None:
                         patient_id_input = gr.Textbox(label="Patient ID (optional)", value="",
                                                       info=FIELD_INFO["dx_patient_id"],
                                                       max_lines=1, elem_id="dx_patient_id")
-                        with gr.Row(elem_id="shep-dx-options", elem_classes=["shep-dx-options"]):
+                        # Drawn as rows of key, ⓘ and control: the help keeps each
+                        # control after its ⓘ in the page (`help.KEY_FIRST_CLASS`).
+                        with gr.Row(elem_id="shep-dx-options",
+                                    elem_classes=["shep-dx-options", KEY_FIRST_CLASS]):
                             plain_html('<span class="shep-dx-opt">Options</span>',
                                        elem_id="shep-dx-options-label")
                             top_k_input = gr.Number(label="Top-K", value=10, minimum=1,
@@ -3881,7 +3885,9 @@ PAGE_CSS = f"""
 /* Options (R-24): its label over its controls, no box of its own; each control a row of one grid,
    its key, its ⓘ and its control in three columns (the keys as wide as the longest), the
    checkbox's words in the key column as Top-K's are. The blocks between the grid and each
-   control's label draw no box (display: contents); the label takes the grid's columns. */
+   control's label draw no box (display: contents); the label takes the grid's columns. The
+   page holds each label's parts in that order too (the help moves the checkbox's box after
+   its ⓘ, help.KEY_FIRST_CLASS), so Tab meets them as drawn. */
 {_TAB} .shep-dx-options {{ display: grid !important; grid-template-columns: max-content auto 1fr; align-items: center !important;
   gap: 6px 8px !important; padding: 6px 0 !important; }}
 {_TAB} #shep-dx-options-label {{ grid-column: 1 / -1; }}
