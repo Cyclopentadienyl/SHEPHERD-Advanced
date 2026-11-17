@@ -46,6 +46,10 @@ HOSTILE = "<img src=x onerror=alert(1)>"
 
 
 def _text(markup: str) -> str:
+    """What a reader sees: each tag a space, but a line-break opportunity
+    (``<wbr>``, Compare's token separators) none, every run of white space
+    one space."""
+    markup = markup.replace("<wbr>", "")
     return re.sub(r"\s+", " ", html_lib.unescape(re.sub(r"<[^>]+>", " ", markup))).strip()
 
 
@@ -379,7 +383,8 @@ def test_compare_shows_values_side_by_side_differences_only_and_no_computed_diff
     assert sorted(values) == sorted([rs.recorded_value_text(0.1 + 0.2), "0.25"])
     assert "0.05" not in text and "Δ" not in text and "difference:" not in text.lower()
     # Differences only: rows recorded alike are hidden (the model, the data).
-    assert "Differences only:" in text and "rows recorded alike in every column are hidden" in text
+    assert "Differences only:" in text and (
+        "rows recorded alike in every column they apply to" in text)
     assert "Learning stage" not in text and "Data label" not in text
     # All rows: they are shown.
     every = _text(rs.compare_html([first, second], False))
@@ -394,7 +399,7 @@ def test_compare_never_puts_two_protocols_metrics_on_one_row_and_caps_at_five(
     results = _results(state)
     disease = next(row for row in results if row["protocol"] == "disease")
     odd = next(row for row in results if row["protocol"] == "Z9")
-    markup = rs.compare_html([disease, odd], True)
+    markup = rs.compare_html([disease, odd], False)
     # Each metric in the protocol tables' words, its protocol's
     # (`caveats.metric_text`), its recorded name the row's title.
     hits = re.search(r'<th scope="row" title="metrics.hits@1">Mode Z9 hits@1</th>(.*?)</tr>',
@@ -403,9 +408,15 @@ def test_compare_never_puts_two_protocols_metrics_on_one_row_and_caps_at_five(
     mrr = re.search(r'<th scope="row" title="metrics.pooled_mrr">Disease pooled MRR</th>'
                     r'(.*?)</tr>', markup).group(1)
     assert "another protocol" in mrr
+    # Differences only compares the cells a row applies to (NEW-models-results-2):
+    # one protocol's metric beside another protocol's result is no difference,
+    # so it is hidden and counted apart.
+    differing = rs.compare_html([disease, odd], True)
+    assert "Mode Z9 hits@1" not in differing and "Disease pooled MRR" not in differing
+    assert "that apply to one result only" in _text(differing)
     # Each group once, in its place: the second protocol's metrics are not
     # split from the first's by References (Stage 8b review).
-    for every in (rs.compare_html([disease, odd], False), markup):
+    for every in (rs.compare_html([disease, odd], False), differing):
         heads = [_text(head) for head in
                  re.findall(r'<th scope="rowgroup"[^>]*>(.*?)</th>', every)]
         assert heads
@@ -576,7 +587,7 @@ def test_differences_only_says_an_older_records_unknown_once_not_per_component_f
         "○ Unknown", "8"]
     # Only the components' later rows are hidden for this reason, and said apart.
     hidden = len(entries) - 1
-    assert (f"and {hidden} that differ only by an Unknown explained above."
+    assert (f"and {hidden} that differ only by an Unknown explained above are hidden."
             in _text(markup))
     without = copy.deepcopy(rows[four])
     without["environment"]["components"] = None
@@ -957,13 +968,27 @@ def test_compare_keeps_not_applicable_not_recorded_and_none_apart(world, monkeyp
     assert _cells(markup, "Data identity · Split › Rule") == [
         "facts-80/10/10/v1", "○ Not applicable"]
     assert _cells(markup, "Data identity · Samples SHA-256")[0] == "○ Not applicable"
-    assert _cells(markup, "Data counts · Pairs") == ["6", "○ Not applicable"]
+    # Each digest and count once (B72-C1): a later field recording the same
+    # fact says so by its relation to the first, in one cell across the
+    # columns; the export keeps every field.
+    assert _cells(markup, "Data identity · Pairs › Rows") == ["6", "○ Not applicable"]
+    assert _cells(markup, "Data counts · Pairs") == ["same as Data identity · Pairs › Rows"]
     assert _cells(markup, "Data counts · Source cases")[0] == "○ Not applicable"
     assert _cells(markup, "Content references · pairs › SHA-256") == [
         "3" * 12, "○ Not applicable"]
-    assert _cells(markup, "Content references · samples › SHA-256")[0] == "○ Not applicable"
-    assert _cells(markup, "Content references · graph.kg › SHA-256")[0] == _cells(
-        markup, "Content references · graph.kg › SHA-256")[1]
+    assert _cells(markup, "Data identity · Samples SHA-256") == ["○ Not applicable", "5" * 12]
+    assert _cells(markup, "Content references · samples › SHA-256") == [
+        "same as Data identity · Samples SHA-256"]
+    assert _cells(markup, "Content references · graph.kg › SHA-256") == ["1" * 12] * 2
+    same = rs.compare_html([finetune, supplied], False)
+    assert _cells(same, "Data identity · Samples SHA-256") == ["5" * 12] * 2
+    assert _cells(same, "Content references · samples › SHA-256") == [
+        "same as Data identity · Samples SHA-256"]
+    assert _cells(same, "Content references · source › SHA-256") == [
+        "same as Data identity · Source SHA-256"]
+    digests = [cell for label in _labels(same) for cell in set(_cells(same, label))
+               if re.fullmatch(r"[0-9a-f]{12}", cell)]
+    assert len(digests) == len(set(digests))      # each digest once in Compare
     lacking = copy.deepcopy(supplied)
     lacking["data"]["identity"].pop("source_sha256")
     markup = rs.compare_html([kg, supplied, lacking], False)
@@ -1150,7 +1175,10 @@ def test_compare_says_a_columns_unknown_reason_once_per_field(world, monkeypatch
         said: dict = {}
         for ref, cells in re.findall(r'<th scope="row" title="([^"]*)"[^>]*>.*?</th>(.*?)</tr>',
                                      markup):
-            cell = re.findall(r"<td[^>]*>.*?</td>", cells)[1]
+            found = re.findall(r"<td[^>]*>.*?</td>", cells)
+            if len(found) < 2:      # a fact said once, by its relation (B72-C1)
+                continue
+            cell = found[1]
             if f'title="{html_lib.escape(why)}"' in cell:
                 said.setdefault(".".join(ref.split(".")[:2]), []).append(_text(cell))
         assert {"model.spec", "model.weight_transfer", "model.capabilities"} <= set(said)
@@ -1223,8 +1251,8 @@ def test_compare_keeps_numbers_and_run_ids_whole_and_scrolls_inside_its_wrapper(
     assert '<td class="shep-num">0.29166666666666663</td>' in markup
     number = _css_rule("#shep-page-models .shep-rs-cmp td.shep-num")
     assert "white-space: nowrap" in number and "overflow-wrap: normal" in number
-    # A run id: each part to and with its hyphen kept whole, a break allowed
-    # only between them; the parent's and the family's training runs alike.
+    # A report's run id: each part to and with its hyphen kept whole, a break
+    # allowed only between them.
     run = re.search(r'title="run_id">Run</th>(.*?)</tr>', markup).group(1)
     assert run.startswith(
         '<td><span class="shep-nowrap">20261110T110716Z-</span><wbr>'
@@ -1236,22 +1264,35 @@ def test_compare_keeps_numbers_and_run_ids_whole_and_scrolls_inside_its_wrapper(
                 for cell in re.findall(r"<td[^>]*>.*?</td>", cells)]
 
     assert whole(run) == [finetune["run_id"], base["run_id"]]
+    # The parent's and the family's training runs in the run words every page
+    # names a run by (RC-D, B72-C1: Compare said the raw id), the id as
+    # recorded their title; the export keeps the id.
+    every = rs.compare_html([finetune, base], False)
     for ref, value in (("model.parent_run", "20261110-110512_probe-base_d4e3e7"),
                        ("model.family_id", "20261110-110512_probe-base_d4e3e7")):
-        cells = re.search(rf'title="{re.escape(ref)}">[^<]*</th>(.*?)</tr>', markup).group(1)
-        assert cells.startswith('<td><span class="shep-nowrap">20261110-</span><wbr>'
-                                '<span class="shep-nowrap">110512_probe-</span><wbr>'
-                                '<span class="shep-nowrap">base_d4e3e7</span></td>'), ref
-        assert whole(cells)[0] == value
+        cells = re.search(rf'title="{re.escape(ref)}">[^<]*</th>(.*?)</tr>', every).group(1)
+        assert cells.startswith(f'<td title="{value}">probe-base · 2026-11-10 11:05</td>'), ref
+        assert value not in whole(cells)[0]
     # A run id's missing value keeps its own word ("none", recorded as null).
     assert _cells(markup, "Parent run")[1] == "none"
     assert "<img" not in rs._run_id_html(f"{HOSTILE}-{HOSTILE}")
     assert rs._run_id_html("a-b-") == ('<span class="shep-nowrap">a-</span><wbr>'
                                        '<span class="shep-nowrap">b-</span>')
-    # Prose, JSON and reasons still break anywhere (relook-1: break-word on
-    # every cell made a five-column Compare 2,699 px wide).
-    assert "overflow-wrap: anywhere" in _css_rule(
-        "#shep-page-models .shep-rs-cmp td, #shep-page-models .shep-rs-unread td")
+    # A code token breaks only at its own separators (B72-C4: Compare broke
+    # 'patient_represent|ation' and 'distmult_raw_scor|e'): no break inside a
+    # token, a <wbr> after each "/", "_" and "@", and a long value folded to
+    # one line (`_fold`; relook-1: break-word on every cell made a five-column
+    # Compare 2,699 px wide, so its long JSON and prose stay narrow folded).
+    rule = _css_rule("#shep-page-models .shep-rs-cmp td")
+    assert "overflow-wrap: normal" in rule and "word-break: normal" in rule
+    assert "anywhere" not in rule
+    assert rs._breakable("patient_disease/v1@x <b>") == (
+        "patient_<wbr>disease/<wbr>v1@<wbr>x &lt;b&gt;")
+    long = "mims-harvard/SHEPHERD@e95433a disease run_*.sh script (lr 1e-5; README U3, U8)"
+    folded = rs._fold(long, skip=len("mims-harvard/SHEPHERD@e95433a "))
+    assert folded.startswith('<details class="shep-rs-fold"><summary>…disease run_')
+    assert folded.endswith(rs._breakable(long) + "</details>")
+    assert rs._fold("short_value") == "short_<wbr>value"
     # Wider than the panel: the wrapper scrolls sideways, the Field column
     # (its head and every row's name) pinned at the left over an opaque
     # background, and the group and sub-heading words kept in view.

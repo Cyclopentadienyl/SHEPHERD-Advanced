@@ -2078,7 +2078,18 @@ PAGE_CSS = f"""
     var(--shep-panel); }}
 {_PAGE} .shep-rs-wrap + .shep-mp-p {{ margin-top: 16px; }}
 {_PAGE} .shep-rs-tbl td {{ overflow-wrap: break-word; vertical-align: top; }}
-{_PAGE} .shep-rs-cmp td, {_PAGE} .shep-rs-unread td {{ overflow-wrap: anywhere; vertical-align: top; }}
+{_PAGE} .shep-rs-unread td {{ overflow-wrap: anywhere; vertical-align: top; }}
+/* Compare's cells break at a value's spaces and its tokens' own separators
+   only (B72-C4: `results_segment._breakable` puts a <wbr> after each), never
+   inside a token; a long value is one folded line until opened (`_fold`). */
+{_PAGE} .shep-rs-cmp td {{ overflow-wrap: normal; word-break: normal; vertical-align: top; }}
+/* Compare is read row by row: 32 px rows (the skill's §8 floor), its Field column wide
+   enough for a setting's label on one line. */
+{_PAGE} .shep-rs-cmp td, {_PAGE} .shep-rs-cmp tbody th[scope="row"] {{ padding-top: 6px; padding-bottom: 6px; }}
+{_PAGE} .shep-rs-cmp tbody th[scope="row"] {{ min-width: 12em; }}
+{_PAGE} .shep-rs-cmp td.shep-rs-same {{ color: var(--shep-text-2); }}
+{_PAGE} .shep-rs-fold > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; color: var(--shep-text-2); }}
+{_PAGE} .shep-rs-fold[open] > summary {{ margin-bottom: 2px; }}
 {_PAGE} .shep-rs-cmp td.shep-num {{ white-space: nowrap; overflow-wrap: normal; }}
 {_PAGE} .shep-rs-cmp tbody th {{ position: static; }}
 {_PAGE} .shep-rs-cmp tbody th[scope="row"], {_PAGE} .shep-rs-cmp thead th:first-child {{ position: sticky; left: 0; box-shadow: inset -1px 0 0 var(--shep-border); }}

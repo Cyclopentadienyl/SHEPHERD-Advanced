@@ -59,9 +59,19 @@ family, every value of the spec and its relation to the reference recipe, the
 recorded and effective training settings, the data's identity and role, the
 measurement's settings, the environment (its native build line, and every
 recorded fact of each component under its name as recorded), the exposure)
-and each metric, each
-group once, in that order, each row named in words (`renderers.field_words`;
-its record key is its title). A nested value is one row per entry, so a difference
+and each metric, each group once, **the key groups first** (`COMPARE_GROUPS`:
+the result, the model, the data and the metrics, then the rest), each row
+named in words (`renderers.field_words`; its record key is its title).
+**Differences only compares the cells a row applies to** (NEW-models-results-2):
+another protocol's metric and another data kind's field are no difference,
+so a row only one result holds is hidden and counted apart (`_hidden_note`).
+**Each fact once** (B72-C1): a row recorded alike in every column with an
+earlier row of the same fact (a digest, whichever field records it; the same
+record name in another field) says "same as <that row>" (`_same_as`); the
+parent's and the family's training runs read in run words, the id their
+title (RC-D). A long value is one folded line (`_fold`), its summary after
+what the row's values share; a value breaks only at a space or after its
+own separators, never inside a token (B72-C4, `_breakable`). A nested value is one row per entry, so a difference
 inside a nested setting is its own row (`_tree`), named by the entry's own
 words under a sub-heading row that says its path once. **Values side by
 side, as recorded; no difference is computed;** a number and a run id are
@@ -104,6 +114,8 @@ Module: src/webui/components/results_segment.py
 from __future__ import annotations
 
 import json
+import os
+import re
 import time
 from collections import Counter
 from datetime import datetime, timezone
@@ -697,9 +709,11 @@ NOT_APPLICABLE = object()
 #: The values that are no value: each passed down to every row a mapping's
 #: entries make (`_tree`), as a value recorded as null is.
 _GAPS = (OTHER_PROTOCOL, ABSENT, NOT_APPLICABLE)
-#: Compare's groups of rows, in the order shown, each once.
-COMPARE_GROUPS = ("Result", "Model", "Training settings", "Data", "Measurement", "Environment",
-                  "Exposure", "Metrics", "References")
+#: Compare's groups of rows, in the order shown, each once: **the key rows
+#: first** (NEW-models-results-2), what each result is, of which model and
+#: data, and its metrics, then how it was trained, measured and run.
+COMPARE_GROUPS = ("Result", "Model", "Data", "Metrics", "Training settings", "Measurement",
+                  "Environment", "Exposure", "References")
 #: Measurement settings Compare does not show as rows of their own: the mode
 #: is the result's protocol, which heads its column, the score semantics has
 #: its own row, and the cohort kind is the data's kind, the Data group's "Data
@@ -1090,10 +1104,26 @@ def _compare_value(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=True, default=str)
 
 
-#: The rows whose values are run ids (the report store's run, the parent's
-#: and the family's training runs): each shown whole between its own hyphens
-#: (`_run_id_html`).
-_RUN_IDS = ("run_id", "model.parent_run", "model.family_id")
+#: The row whose values are the report store's run ids: each shown whole
+#: between its own hyphens (`_run_id_html`).
+_RUN_IDS = ("run_id",)
+#: The rows whose values are training runs (the parent's and the family's
+#: root run): named in the run words every page names a run by
+#: (`renderers.run_words`, "demo-base · 2026-11-16 09:13", as the Results
+#: table's family and Models' Family row), the run id as recorded its title
+#: (RC-D, B72-C1).
+_TRAINING_RUNS = ("model.parent_run", "model.family_id")
+#: **A value longer than this is folded** (NEW-models-results-2): a native
+#: disclosure whose summary is its first words (`_fold`), so a recipe source
+#: or a spec's JSON takes one line until it is opened; its whole value as
+#: recorded is one click away, and in every export.
+FOLD_CHARS = 48
+#: How much of a folded value its summary shows, cut after a separator.
+FOLD_PREVIEW = 24
+#: The characters a code token breaks after (B72-C4): its own separators,
+#: each followed by an explicit ``<wbr>``; Compare's cells never break inside
+#: a token otherwise (``overflow-wrap: normal``, Models' Results CSS).
+_TOKEN_BREAKS = re.compile(r"([/_@])")
 
 
 def _run_id_html(value: str) -> str:
@@ -1106,8 +1136,61 @@ def _run_id_html(value: str) -> str:
     return "<wbr>".join(f'<span class="shep-nowrap">{r.e(part)}</span>' for part in parts)
 
 
+def _breakable(text: str) -> str:
+    """`text` escaped, a line break offered after each of a token's own
+    separators (`_TOKEN_BREAKS`) and at its spaces, never inside a token
+    (B72-C4: 'patient_represent|ation' broke mid-word)."""
+    return "".join(f"{r.e(piece)}<wbr>" if _TOKEN_BREAKS.fullmatch(piece) else r.e(piece)
+                   for piece in _TOKEN_BREAKS.split(text) if piece)
+
+
+#: Where a folded value's summary may start or end: after a space or one of
+#: a token's separators.
+_PREVIEW_CUTS = " /_,@-"
+
+
+def _fold(text: str, *, code: bool = False, skip: int = 0) -> str:
+    """A long value as one line until opened (`FOLD_CHARS`): a closed native
+    disclosure, its summary `FOLD_PREVIEW` characters of the value (cut after
+    a space or a separator) and "…", the whole value under it, breakable at
+    its own separators only (`_breakable`). `skip` is how much of its start
+    every value of its row shares (`_shared_start`): the summary begins after
+    it ("…disease run_*.sh…"), so folded values that differ show where. A
+    value that is short is shown whole."""
+    body = _breakable(text)
+    if code:
+        body = f"<code>{body}</code>"
+    if len(text) <= FOLD_CHARS:
+        return body
+    start = skip if 0 < skip < len(text) else 0
+    end = start + FOLD_PREVIEW
+    cut = max((text.rfind(ch, start, end) for ch in _PREVIEW_CUTS), default=-1)
+    preview = text[start:cut + 1 if cut > start + FOLD_PREVIEW // 3 else end].strip()
+    lead = "…" if start else ""
+    return (f'<details class="shep-rs-fold"><summary>{r.e(lead + preview)}…</summary>'
+            f"{body}</details>")
+
+
+def _shared_start(values: Sequence[Any]) -> int:
+    """How much of its start every text value of a row shares (a recipe
+    source's "mims-harvard/SHEPHERD@e95433a "), cut back to just after a
+    space or a separator; 0 for a row with fewer than two such values or
+    one that shares nothing. Only a folded value's summary uses it."""
+    texts = [v if isinstance(v, str) else
+             json.dumps(v, sort_keys=True, ensure_ascii=False, default=str,
+                        separators=(", ", ": "))
+             for v in values if isinstance(v, (str, list, dict)) and _applies(v)]
+    if len(texts) < 2:
+        return 0
+    shared = len(os.path.commonprefix(texts))
+    if shared == min(len(t) for t in texts):
+        return 0
+    cut = max(texts[0].rfind(ch, 0, shared) for ch in _PREVIEW_CUTS)
+    return cut + 1 if cut > 0 else 0
+
+
 def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False,
-               name: Optional[str] = None) -> str:
+               name: Optional[str] = None, training_run: bool = False, skip: int = 0) -> str:
     """One Compare cell: "another protocol" on a metric row of another
     protocol's result; "not applicable" for a field that does not apply to
     the result's data kind; "not recorded" for a field the result's records
@@ -1123,7 +1206,10 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False,
     (`renderers.SETTING_CHOICE_WORDS`) by those words and then the value as
     recorded: "Frozen (graph_side)", "Trained (none)", since its row is named
     by that field's label ("Graph backbone", `renderers.field_words`), under
-    which the bare value would read as another fact."""
+    which the bare value would read as another fact. A training run
+    (`training_run`: a parent's or a family's) in run words, its id the title.
+    A list, a mapping or text longer than `FOLD_CHARS` is folded (`_fold`);
+    every text breaks only at its own separators (`_breakable`)."""
     if value is OTHER_PROTOCOL:
         return '<td class="shep-muted">another protocol</td>'
     if value is NOT_APPLICABLE:
@@ -1139,34 +1225,81 @@ def _cell_html(value: Any, why: Optional[str], *, full: bool, run: bool = False,
         return '<td class="shep-muted">none</td>'
     if run and isinstance(value, str):
         return f"<td>{_run_id_html(value)}</td>"
+    if training_run and isinstance(value, str) and value:
+        return f'<td title="{r.e(value)}">{r.e(r.run_words(None, value, fit=False))}</td>'
     if r.is_digest(value):
         return f'<td>{r.fingerprint_value(value, full=full, copy=False)}</td>'
     if isinstance(value, bool) or isinstance(value, (dict, list, tuple)):
         text = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str,
                           separators=(", ", ": "))
-        return f"<td><code>{r.e(text)}</code></td>"
+        return f"<td>{_fold(text, code=True, skip=skip)}</td>"
     if isinstance(value, (int, float)):
         return f'<td class="shep-num">{r.e(recorded_value_text(value))}</td>'
     if isinstance(value, str) and name in r.SETTING_CHOICE_WORDS:
         words = r.setting_words(name, value)
         if words != value:
-            return f"<td>{r.e(words)} (<code>{r.e(value)}</code>)</td>"
-    return f"<td>{r.e(value)}</td>"
+            return f"<td>{r.e(words)} (<code>{_breakable(value)}</code>)</td>"
+    return f"<td>{_fold(str(value), skip=skip)}</td>"
 
 
-def _hidden_note(alike: int, unknown: int) -> str:
+def _hidden_note(alike: int, unknown: int, single: int = 0) -> str:
     """What Differences only hid, in words: the rows recorded alike in every
-    column, and those whose only difference is an "Unknown" explained above
+    column they apply to, those that apply to one result only (another
+    protocol's metric, another data kind's field: nothing to differ from),
+    and those whose only difference is an "Unknown" explained above
     (`_said_above`)."""
-    if alike and unknown:
-        return (f"Differences only: {alike} rows recorded alike in every column are hidden, "
-                f"and {unknown} that differ only by an Unknown explained above.")
-    if alike:
-        return f"Differences only: {alike} rows recorded alike in every column are hidden."
-    if unknown:
-        return (f"Differences only: {unknown} rows that differ only by an Unknown explained "
-                "above are hidden.")
-    return "Differences only: every row differs."
+    parts = [f"{alike} rows recorded alike in every column they apply to" if alike else "",
+             f"{single} that apply to one result only" if single else "",
+             f"{unknown} that differ only by an Unknown explained above" if unknown else ""]
+    parts = [part for part in parts if part]
+    if not parts:
+        return "Differences only: every row differs."
+    if not alike:
+        parts[0] = parts[0].replace("that ", "rows that ", 1)
+    said = parts[0] if len(parts) == 1 else (", ".join(parts[:-1]) + " and " + parts[-1])
+    return f"Differences only: {said} are hidden."
+
+
+def _applies(value: Any) -> bool:
+    """Whether a cell holds something its row can differ by: not "another
+    protocol" (a metric of another protocol's result) and not "not
+    applicable" (a field of another data kind)."""
+    return value is not OTHER_PROTOCOL and value is not NOT_APPLICABLE
+
+
+def _leaf(ref: Optional[str], parts: Sequence[str]) -> Optional[str]:
+    """The record name a row says (its key's last entry; a file's "rows" are
+    its own count, named by the file), by which two fields that record one
+    fact are told to be the same (`_same_as`)."""
+    if not ref:
+        return None
+    *head, leaf = ref.split(".")
+    return head[-1] if leaf == "rows" and head else leaf
+
+
+def _same_as(values: Sequence[Any], ref: Optional[str], parts: Sequence[str],
+             seen: Sequence[Tuple[Tuple[str, ...], Optional[str], Tuple[str, ...], str]]
+             ) -> Optional[str]:
+    """**A fact said once** (B72-C1): the whole name of an earlier row whose
+    values are recorded alike in every column with this row's, where they
+    are one fact: a digest (one content, whichever field records it: the
+    graph view's digest as the split's view digest, the samples' as their
+    content reference's), or the same record name in another field (a loss
+    weight as a learning setting and in the loss identity, a count in the
+    data's counts and the run's). None otherwise, or for a row with no value
+    in any column."""
+    if not any(v is not None and v is not ABSENT and _applies(v) for v in values):
+        return None
+    texts = tuple(_compare_value(v) for v in values)
+    digest = any(r.is_digest(v) for v in values)
+    leaf = _leaf(ref, parts)
+    for earlier, earlier_leaf, earlier_parts, label in seen:
+        if earlier != texts:
+            continue
+        if digest or (leaf is not None and leaf == earlier_leaf
+                      and earlier_parts[:1] != tuple(parts[:1])):
+            return label
+    return None
 
 
 #: **The sideways scroll cue at Compare's top**, beside its foot's own
@@ -1259,18 +1392,30 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     # (the Field column, then one per result).
     groups: List[List[str]] = []
     body: List[str] = []
-    hidden, unknown_hidden, group_shown, path_shown = 0, 0, None, None
+    hidden, unknown_hidden, single_hidden, group_shown, path_shown = 0, 0, 0, None, None
+    # Each row's values, kept to say a later row of the same fact by its
+    # relation to the first (`_same_as`).
+    seen: List[Tuple[Tuple[str, ...], Optional[str], Tuple[str, ...], str]] = []
     for group, parts, ref, values, whys in _rows(columns):
         digests = {value for value in values if r.is_digest(value)}
         full = len({r.short_hex(value) for value in digests}) < len(digests)
+        same = _same_as(values, ref, parts, seen)
+        seen.append((tuple(_compare_value(v) for v in values), _leaf(ref, parts), tuple(parts),
+                     "the column heads" if ref == "report_sha256" else _label(parts)))
         if ref == "report_sha256" and not full and all(
                 name.endswith(f" · {r.short_hex(row.get('report_sha256'))}")
                 for row, name in zip(columns, heads_said)):
             continue  # each column's head says it (rule 1.2)
-        texts = {_compare_value(v) + "\x01" + str(w) for v, w in zip(values, whys)
+        # Differences only compares the cells a row applies to: another
+        # protocol's metric and another data kind's field are no difference.
+        applied = [(v, w) for v, w in zip(values, whys) if _applies(v)]
+        texts = {_compare_value(v) + "\x01" + str(w) for v, w in applied
                  if not _said_above(v, w)}
+        if differences_only and many and len(applied) < 2:
+            single_hidden += 1
+            continue
         if differences_only and many and len(texts) <= 1:
-            if any(_said_above(v, w) for v, w in zip(values, whys)):
+            if any(_said_above(v, w) for v, w in applied):
                 unknown_hidden += 1
             else:
                 hidden += 1
@@ -1289,8 +1434,13 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
         path_shown = path or None
         run = ref in _RUN_IDS
         name = ref.rsplit(".", 1)[-1] if ref else None
-        cells = "".join(_cell_html(v, w, full=full, run=run, name=name)
-                        for v, w in zip(values, whys))
+        skip = _shared_start(values)
+        cells = ("".join(_cell_html(v, w, full=full, run=run, name=name,
+                                    training_run=ref in _TRAINING_RUNS, skip=skip)
+                         for v, w in zip(values, whys))
+                 if same is None else
+                 f'<td colspan="{len(columns)}" class="shep-rs-same">'
+                 f'{r.e("same as " + same)}</td>')
         title = f' title="{r.e(ref)}"' if ref else ""
         if path:
             body.append(f'<tr class="shep-rs-entry"><th scope="row"{title} '
@@ -1305,7 +1455,7 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
         notes.append(f"{asked} were chosen; Compare shows {COMPARE_CAP} at a time, the first "
                      f"{COMPARE_CAP} chosen (Export takes them all).")
     if differences_only and many:
-        notes.append(_hidden_note(hidden, unknown_hidden))
+        notes.append(_hidden_note(hidden, unknown_hidden, single_hidden))
     elif differences_only:
         notes.append("One result: every row is shown; choose another to see differences.")
     notes.append("Values as recorded, side by side; no difference is computed, and each "
