@@ -2128,8 +2128,15 @@ PAGE_CSS = f"""
 {_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-main > .shep-model-body {{ display: none !important; }}
 {_PAGE} {_LIST}:has(.shep-mp-ro) {{ grid-template-columns: minmax(0, 30fr) minmax(0, 70fr); }}
 /* The list's and the detail's minimum widths (the layout rule's measure, `src/webui/shell.py`):
-   the list's table whole from 450 px; side by side, the grid's columns never go under them. */
-{_PAGE} {_LIST} {{ --shep-mp-list-min: 450px; --shep-mp-detail-min: 480px; }}
+   side by side, the grid's columns never go under them. The list's is the shared tree's
+   (`model_list._tree_html`) whole with its widest common rows, By family: a lineage two runs deep
+   under a 19-character run name, a record not readable (its Task words) and a file that records
+   no completed epochs ("recorded epoch 2") make it 656 px, and its frame's borders and padding
+   36 more (the Models browser test's world; the multi-family demo's is 609). At 450 px, the old
+   table's, the tree was cut at its Fingerprint column at 1280 x 900 (the demo's Newest first
+   565 px in a 531 px frame, By family 609) and at 1366 x 620 (By family). A longer name or a
+   deeper lineage scrolls the rows sideways in their own region. */
+{_PAGE} {_LIST} {{ --shep-mp-list-min: 692px; --shep-mp-detail-min: 480px; }}
 {_PAGE} {_LIST} > .shep-model-main {{ --shep-panel-min: var(--shep-mp-list-min); }}
 {_PAGE} {_LIST} > .shep-model-foot {{ --shep-panel-min: var(--shep-mp-detail-min); }}
 {SIDE} {{

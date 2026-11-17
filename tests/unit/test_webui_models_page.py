@@ -252,6 +252,26 @@ def _add_bundles(world, *, orphan_parent_run=None):
     return shas
 
 
+def _add_child(world, run, parent_sha, parent_run):
+    """One more disease fine-tune, a file of `run` whose recorded parent is
+    `parent_sha` of `parent_run` (in the base's family: a lineage one run
+    deeper than the base's children)."""
+    from src.utils.checkpoint_io import write_checkpoint
+    from tests.unit import test_task_first_selection as bundles
+
+    fingerprint = file_sha256(world["workspace"] / "split_manifest.json")
+    path = world["workspace"] / "runs" / "gatv2" / run / "checkpoints" / "last.pt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sha = write_checkpoint({**bundles._record_payload(
+        "disease", logs={"val_pooled_mrr": 0.43},
+        parent={"sha256": parent_sha, "run": parent_run}),
+        "checkpoint_kind": "weights", "training_input_digests": {"split_manifest": fingerprint},
+        "epoch": 3}, path)
+    os.utime(path, (time.time() - 19 * 3600,) * 2)
+    world["paths"][f"{run}/last.pt"] = path
+    return sha
+
+
 def _run_row(html, run):
     """The tree's summary row of the run `run` (``architecture/run``)."""
     at = html.index(f'data-fold="r:{run}"')
@@ -2777,8 +2797,13 @@ const ROWS = '#shep-models-research-rows';
   await fold('20261002-000000_disease_bbbbbb');
   await pick('disease_bbbbbb');
   out.selected = await tree();
-  // The narrow layout: the shell stacks the page two frames after a resize.
   const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  // A smaller side-by-side window (a UI_SIZES size), the page still side by side.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await frames();
+  await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') === 'side');
+  out.mid = await tree();
+  // The narrow layout: the shell stacks the page two frames after a resize.
   await page.setViewportSize({ width: 760, height: 1000 });
   await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') !== 'side');
   await frames();
@@ -2829,7 +2854,9 @@ def test_the_tree_folds_searches_filters_and_keeps_the_selection_in_a_browser(
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     operator_request(monkeypatch)
-    _add_bundles(world)
+    shas = _add_bundles(world)
+    _add_child(world, "20261004-000000_demo-disease-extend_eeeeee", shas["disease"],
+               BUNDLES["disease"][0])
     script = (_TREE_PAGE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
               .replace("__TREE_JS__", json.dumps(TREE_JS)))
     with served(create_gradio_app(), **mount_options()) as base:
@@ -2851,8 +2878,9 @@ def test_the_tree_folds_searches_filters_and_keeps_the_selection_in_a_browser(
     assert any(f["selected"] for f in chosen) and all(f["shown"] for f in chosen)
     # The table fits its frame, side by side and stacked, and no word is cut
     # over two lines (it was 48 px wider than its frame at 1850 x 960, and
-    # "Disease" broke as "Dise/ase" at 760 x 1000).
-    for size in ("selected", "narrow"):
+    # "Disease" broke as "Dise/ase" at 760 x 1000; at 1280 x 900, with a lineage
+    # two runs deep under a long run name, 125 px wider, its Fingerprint cut).
+    for size in ("selected", "mid", "narrow"):
         assert seen[size]["fit"]["over"] <= 0 and seen[size]["fit"]["split"] == [], (size, seen[size]["fit"])
     searched = seen["searched"]
     assert searched["count"] == "1 run matches “GENE”, with 1 run they come from"
