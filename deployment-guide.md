@@ -3265,7 +3265,8 @@ Models 顯示的同一行）、搜尋（名稱，或 model fingerprint 的前幾
 Research › Models 畫的同一份清單：每個 run 一列（"smoke-ft · GATv2 2026-10-17 09:15"、任務、操作如
 "Fine-tune, frozen"、已完成的 epoch、存檔數），可摺疊與展開其 checkpoint，每個依其性質命名（"Latest
 save"、"Best pooled MRR"）並附其 model fingerprint；顯示最近四個 run 與目前使用中模型所在的 run，後者
-展開並把那個 checkpoint 標為 "In use"（其餘在 "Show older runs"）。清單旁是選中 checkpoint 的資料，以
+展開並把那個 checkpoint 標為 "In use"（其餘在 "Show older runs"；按下之前，搜尋與任務篩選只看這些 run，
+並如此說明："No run matches “…” in the latest runs"）。清單旁是選中 checkpoint 的資料，以
 所選 workspace 目前 dataset 訓練的 checkpoint 以這層關係說明；清單與資料各自捲動（窄視窗時資料在清單
 下方，選一列會把資料帶入視野，"↑ Back to the list" 回到該列）。然後是 "Compare in Research › Models
 ›"，以及 "Load this model" / Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every session?"，from → to，
