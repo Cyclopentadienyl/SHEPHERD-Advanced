@@ -267,6 +267,24 @@ def test_the_location_follows_the_page_shown(built):
         assert fn.outputs[-1] is written_at and written_at is writers[0].inputs[1]
 
 
+def test_the_brand_is_the_pages_one_level_one_heading():
+    """Verification of fcc3dea (V-AUD-1, axe page-has-heading-one on every
+    page): the shell's title was a div and the panels' titles h2, so no page
+    had a level-1 heading. The brand is the one h1, drawn as before (no
+    heading size or margin of its own); nothing else in the dashboard draws
+    one. Fails on fcc3dea."""
+    from pathlib import Path
+
+    assert shell._brand_html() == f'<h1 class="shep-brand">{shell.BRAND}</h1>'
+    webui = Path(shell.__file__).resolve().parent
+    drawn = sorted(str(path.relative_to(webui)) for path in webui.rglob("*.py")
+                   if "<h1" in path.read_text(encoding="utf-8"))
+    assert drawn == ["shell.py"], drawn
+    from src.webui.style import SHELL_CSS
+
+    assert "#shep-brand h1.shep-brand { margin: 0; padding: 0;" in SHELL_CSS
+
+
 def test_a_location_writer_writes_only_for_the_page_shown_as_it_was_sent(built):
     """Verification of fcc3dea (V-RB1-1): after a reload of Research ›
     Training, Diagnosis' tab sent the select it sends as it mounts after the

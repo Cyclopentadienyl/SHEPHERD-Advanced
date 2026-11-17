@@ -2863,11 +2863,15 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
     (``data-shep-focus``: its page scrolls it into view). Without `uses`
     there is no Uses section: for a page whose own line says the device
     statement, always in view, and whose banner says a synthetic workspace is
-    for testing (Diagnosis' identity drawer, over its results footer; R-26)."""
+    for testing (Diagnosis' identity drawer, over its results footer; R-26).
+
+    Each section's title is an h3: every place the facts are drawn (the Load
+    drawer, Models' details, Diagnosis' identity drawer) is titled by an h2,
+    so no heading level is skipped (verification of fcc3dea, V-AUD-2)."""
     def section(key: str, title: str, body: str, extra: str = "") -> str:
         marked = ' data-shep-focus="true"' if key == focus else ""
         return (f'<section class="shep-facts-sec{extra}" data-sec="{key}"{marked}>'
-                f'<h4>{e(title)}</h4><div class="shep-facts-bd">{body}</div></section>')
+                f'<h3>{e(title)}</h3><div class="shep-facts-bd">{body}</div></section>')
 
     location = ""
     if facts.checkpoint_file:

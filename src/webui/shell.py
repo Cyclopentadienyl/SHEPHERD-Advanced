@@ -521,7 +521,10 @@ def _restore(kept: Any) -> Tuple[Any, Any, Any]:
 
 
 def _brand_html() -> str:
-    return f'<div class="shep-brand">{BRAND}</div>'
+    """The product's name: the page's one level-1 heading (a page title for a
+    screen reader's heading list; the panels' titles are h2), drawn as it was
+    (`.shep-brand`)."""
+    return f'<h1 class="shep-brand">{BRAND}</h1>'
 
 
 def build_shell(blocks: Any, pages: Dict[str, Callable[[PageContext], None]],
@@ -592,14 +595,14 @@ def build_shell(blocks: Any, pages: Dict[str, Callable[[PageContext], None]],
                           [sent, written_at, location, research_page, *tokens],
                           [location, *tokens, written_at], show_progress="hidden", js=SENT_JS,
                           **LOCATION_WRITES)
-    # A reload comes back on the page this browser tab showed (`_restore`):
-    # the head script hands over the page it kept, the answer opens it as a
-    # cross-link does, and the script keeps the page shown again from then.
     for page in RESEARCH_PAGES:
         tabs[page].select(_written(_open_page(page), page.__eq__, 3),
                           [sent, written_at, location, page_tokens[page]],
                           [location, research_page, page_tokens[page], written_at],
                           show_progress="hidden", js=SENT_JS, **LOCATION_WRITES)
+    # A reload comes back on the page this browser tab showed (`_restore`):
+    # the head script hands over the page it kept, the answer opens it as a
+    # cross-link does, and the script keeps the page shown again from then.
     kept = gr.Textbox(visible=False, elem_id="shep-kept-page")
     blocks.load(_restore, [kept], ctx.nav_outputs, show_progress="hidden",
                 js="() => (window.ShepShell ? window.ShepShell.kept : '')").then(

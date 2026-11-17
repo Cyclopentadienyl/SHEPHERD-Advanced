@@ -287,8 +287,11 @@ def test_model_facts_has_its_five_sections_always_open_with_warnings_first():
     order = [html.index(f'data-sec="{key}"')
              for key in ("warnings", "identity", "uses", "data", "evidence")]
     assert order == sorted(order), order
+    # Each title one level under the h2 of every place that draws the facts
+    # (verification of fcc3dea, V-AUD-2: an h4 under the Load drawer's h2).
     for title in ("Warnings", "Identity", "Uses", "Data", "Evidence"):
-        assert f"<h4>{title}</h4>" in html
+        assert f"<h3>{title}</h3>" in html
+    assert "<h4" not in html
     assert '<section class="shep-facts-sec shep-facts-warn" data-sec="warnings">' in html
     assert "data-shep-focus" not in html
     assert '<section class="shep-facts-sec" data-sec="data" data-shep-focus="true">' in (
