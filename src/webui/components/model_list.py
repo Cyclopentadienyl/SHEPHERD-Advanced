@@ -2314,7 +2314,12 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         # review UI-3: the re-read after a Load dropped a row picked meanwhile;
         # D04: whatever the filter, the search or the folds show), and so does
         # what the operator unfolded; another workspace starts afresh. The
-        # drawer opens the latest runs only until "Show older runs" (BACKLOG 39).
+        # drawer opens the latest runs only until "Show older runs" (BACKLOG 39),
+        # asked of one workspace: another workspace picked opens its latest
+        # runs (it opened every checkpoint of it, the session's "Show older
+        # runs" kept); the same one read again keeps it, as it keeps the folds.
+        older = bool(older) and isinstance(previous, Mapping) and previous.get(
+            "workspace") == name
         data = list_models(name, request, family=chosen.family,
                            latest_runs=None if older else chosen.latest_runs)
         same = isinstance(previous, Mapping) and previous.get("workspace") == data.get("workspace")
@@ -2331,9 +2336,10 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                 list_html(data, key, chosen, show_older=older, view=current_view, search=query,
                           fold=fold_state),
                 facts_html(data, key), gr.update(**load_button(data, item)),
-                load_reason_html(item, data), note_html(current_view), fold_state)
+                load_reason_html(item, data), note_html(current_view), fold_state, older)
 
-    refresh_outputs = [listing, selected, workspace, count, rows, facts, load, reason, note, fold]
+    refresh_outputs = [listing, selected, workspace, count, rows, facts, load, reason, note, fold,
+                       show_older]
     refresh = {"fn": _refresh,
                "inputs": [workspace, show_older, view, listing, selected, search, fold],
                "outputs": refresh_outputs, "show_progress": "minimal"}

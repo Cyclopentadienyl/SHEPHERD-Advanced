@@ -2010,7 +2010,21 @@ def test_the_drawer_opens_only_the_runs_it_shows_and_the_rest_on_show_older_runs
     shown = dict(zip(map(id, select.outputs), out, strict=True))
     assert {"model-01.pt", "base.pt", "model-07.pt"} <= set(opened)
     assert "disease_cccccc" in shown[id(handle.rows)]
-    assert shown[id(handle.listing)]["runs_unread"] == 0
+    older = shown[id(handle.listing)]
+    assert older["runs_unread"] == 0 and shown[id(handle.show_older)] is True
+    # Another workspace picked after "Show older runs" lists its latest runs
+    # only (its every file was opened: "Show older runs" was kept for the
+    # session); the same workspace read again keeps what was asked.
+    shutil.copytree(root["workspace"], root["root"] / "other")
+    opened.clear()
+    out = handle.refresh["fn"]("other", True, None, older, None, gradio_request())
+    by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
+    assert sorted(opened) == first, sorted(opened)
+    assert by[id(handle.listing)]["workspace"] == "other" and by[id(handle.show_older)] is False
+    assert "Show older runs (up to 3 more)" in by[id(handle.rows)]
+    out = handle.refresh["fn"]("demo", True, None, older, None, gradio_request())
+    by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
+    assert by[id(handle.show_older)] is True and by[id(handle.listing)]["runs_unread"] == 0
 
 
 def test_a_drawer_search_says_the_older_runs_it_has_not_searched(root, serving, monkeypatch):
