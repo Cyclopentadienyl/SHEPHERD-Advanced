@@ -1586,7 +1586,7 @@ what the protocol needs (for the three task protocols, its task head), checked r
 checkpoint is read. A base asked for a task protocol is refused with that protocol's reason, which
 names the one that takes it ("the disease measurement takes a finetune model with the disease
 head; this checkpoint is a base model with no task head. It can be measured by
-kg_link_prediction."), and a
+KG link prediction. Ref: kg_link_prediction."), and a
 checkpoint without a model spec (a ShepherdGNN history file) with the record reader's phrase,
 "written before the model spec: not readable by this build; start a new run" (since K8-7b,
 2026-11-08; it used to be refused "as history"). The Test page passes the

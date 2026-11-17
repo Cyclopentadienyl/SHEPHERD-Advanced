@@ -181,13 +181,14 @@ def _stored(cohort):
     # The disease child asked as gene: its listed record has the disease head.
     ({"protocol": "gene"},
      "the gene measurement takes a finetune model with the gene head; this checkpoint is a "
-     "finetune model with the disease head. It can be measured by disease, "
-     "kg_link_prediction."),
+     "finetune model with the disease head. It can be measured by disease or KG link "
+     "prediction. Ref: kg_link_prediction."),
     # The base asked as disease: its listed record is a base's, which the KG
     # link-prediction protocol takes (research comparison Stage 5).
     ({"base": True},
      "the disease measurement takes a finetune model with the disease head; this checkpoint "
-     "is a base model with no task head. It can be measured by kg_link_prediction."),
+     "is a base model with no task head. It can be measured by KG link prediction. Ref: "
+     "kg_link_prediction."),
 ])
 def test_a_listed_record_the_protocol_does_not_take_is_refused_before_a_job_starts(
         cohort, monkeypatch, change, says):
@@ -223,8 +224,8 @@ def test_a_listed_record_the_protocol_does_not_take_is_refused_before_a_job_star
     # Listed as a finetuned disease child; the file is the base.
     ({"base_file": True},
      "the disease measurement takes a finetune model with the disease head; this checkpoint "
-     "is a base model with no task head. It can be measured by kg_link_prediction. Nothing "
-     "was written."),
+     "is a base model with no task head. It can be measured by KG link prediction. Ref: "
+     "kg_link_prediction. Nothing was written."),
 ])
 def test_listed_fields_the_files_do_not_bear_out_are_refused_by_the_run(
         cohort, monkeypatch, listed, says):

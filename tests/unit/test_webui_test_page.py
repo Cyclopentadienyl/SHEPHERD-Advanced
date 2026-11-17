@@ -3774,20 +3774,20 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     assert refusal(base, supplied, None) == protocols.available(
         described("base", None), SUPPLIED)[1] == (
         "no measurement that takes this checkpoint's model measures a supplied cohort version: "
-        "it can be measured by KG link prediction (kg_link_prediction), which measures a KG "
-        "edge set.")
+        "it can be measured by KG link prediction, which measures a KG edge set. Ref: "
+        "kg_link_prediction.")
     assert refusal(base, {"kind": "kg_edges", "counts": {"pairs": 4}}, None) == (
         tp.CHOOSE_A_MEASUREMENT)
     assert refusal(base, None, None) == tp.CHOOSE_A_MEASUREMENT
     assert refusal(base, supplied, "kg_link_prediction") == (
-        "the kg_link_prediction measurement does not measure a supplied cohort version; it "
-        "measures a KG edge set.")
+        "the KG link prediction measurement does not measure a supplied cohort version; it "
+        "measures a KG edge set. Ref: kg_link_prediction.")
     assert refusal(base, {"kind": "kg_edges", "counts": {"pairs": 4}}, "kg_link_prediction") is None
     for protocol in ("disease", "gene"):
         assert refusal(base, supplied, protocol) == protocols.model_refusal(
             protocol, described("base", None))
         assert refusal(base, supplied, protocol).endswith(
-            "It can be measured by kg_link_prediction.")
+            "It can be measured by KG link prediction. Ref: kg_link_prediction.")
     specless, refused, unread = ({"record": "refused", "record_problem": WRITTEN_BEFORE_SPEC},
                                  {"record": "refused", "record_problem": "record version 9"},
                                  {"record": None})
@@ -3810,8 +3810,8 @@ def test_measure_refusal_says_why_each_kind_is_not_measured():
     assert refusal(_model("C"), None, None) == tp.CHOOSE_A_MEASUREMENT
     assert refusal(_model("gene"), None, "disease") == (
         protocols.model_refusal("disease", described("finetune", "gene")))
-    assert "It can be measured by gene, kg_link_prediction." in refusal(_model("gene"), None,
-                                                                       "disease")
+    assert ("It can be measured by gene or KG link prediction. Ref: kg_link_prediction."
+            in refusal(_model("gene"), None, "disease"))
     for name in ("C", "D", "Disease"):
         assert refusal(_model("disease"), None, name) == (
             protocols.model_refusal(name, described("finetune", "disease")))
@@ -3835,8 +3835,8 @@ def test_a_listed_base_is_offered_the_kg_link_prediction_measurement(site, monke
     assert choices == [("KG link prediction", "kg_link_prediction")]
     assert tp.chosen_measurement(choices, None) == "kg_link_prediction"
     message = protocols.inputs_refusal("kg_link_prediction", SUPPLIED, None)
-    assert message == ("the kg_link_prediction measurement does not measure a supplied cohort "
-                       "version; it measures a KG edge set.")
+    assert message == ("the KG link prediction measurement does not measure a supplied cohort "
+                       "version; it measures a KG edge set. Ref: kg_link_prediction.")
     allowed, why = tp.start_state(page, models, "demo", LABEL, base, binding, ("none", ""),
                                   protocol="kg_link_prediction")
     assert (allowed, why) == (False, f"Disabled: {message}")
@@ -3868,8 +3868,10 @@ def test_a_measurement_needs_a_version_that_lists_its_genes(protocol, counts, mi
     if missing is None:
         assert got is None
     else:
-        assert got == (f"this cohort version lists no {missing} genes, which the {protocol} "
-                       f"measurement needs. Import a source that lists {missing}_genes.")
+        words = protocols._said(protocols.PROTOCOLS[protocol])
+        assert got == (f"this cohort version lists no {missing} genes, which the {words} "
+                       f"measurement needs. Import a source that lists {missing}_genes."
+                       + (f" Ref: {protocol}." if words != protocol else ""))
 
 
 def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, monkeypatch):
@@ -4461,7 +4463,8 @@ def test_only_protocols(monkeypatch):
 
     from src.evaluation import protocols
 
-    table = {name: replace(protocols.PROTOCOLS["disease"], name=name) for name in ("p1", "p2")}
+    table = {name: replace(protocols.PROTOCOLS["disease"], name=name, label="")
+             for name in ("p1", "p2")}
     monkeypatch.setattr(protocols, "PROTOCOLS", table)
     return table
 
@@ -4492,7 +4495,7 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
     assert state(child, None) == (False, "Disabled: choose a measurement.")
     assert state(child, "p2") == (True, None)
     assert state(child, "disease") == (
-        False, "Disabled: 'disease' is not a measurement this build implements (p1, p2).")
+        False, "Disabled: 'disease' is not a measurement this build implements: p1 or p2.")
 
     # The radio as the model's listener writes it, and a pick.
     demo, _ctx, _registry = _page_component()
@@ -4806,8 +4809,8 @@ def test_the_measurement_options_follow_the_model_and_the_chosen_versions_kind(
     for label, kind in ((LABEL, protocols.SUPPLIED), (GEN_LABEL, protocols.GENERATED)):
         assert tp.measurement_choices(based, version[label]) == []
         said = protocols.available(based["capabilities"], kind)[1]
-        assert ("it can be measured by KG link prediction (kg_link_prediction), which measures "
-                "a KG edge set") in said
+        assert ("it can be measured by KG link prediction, which measures a KG edge set. "
+                "Ref: kg_link_prediction.") in said
         assert tp.start_state(page, models, "demo", label, base, binding, ("none", ""),
                               protocol=None) == (False, f"Disabled: {said}")
     assert tp.start_state(page, models, "demo", KG_LABEL, base, binding, ("none", ""),

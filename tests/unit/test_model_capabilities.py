@@ -269,10 +269,12 @@ def test_a_test_only_double_passes_the_shared_checks_without_a_gatv2_rule(double
     assert tp.measure_refusal(item, version, "disease") is None
     for name in ("gene", "patients_like_me"):
         said.append(tp.measure_refusal(item, version, name))
+        words = protocols._said(protocols.PROTOCOLS[name])
         assert said[-1] == protocols.model_refusal(name, described) == (
-            f"the {name} measurement takes a finetune model with the {name} head; this "
+            f"the {words} measurement takes a finetune model with the {words} head; this "
             "checkpoint is a finetune model with the disease head. It can be measured by "
-            "disease, kg_link_prediction.")
+            "disease or KG link prediction. Ref: " + ", ".join(
+                [name] * (words != name) + ["kg_link_prediction"]) + ".")
     registry = tmp_path / "registry"
     registry.mkdir()
     inputs = TestRunInputs(
@@ -416,8 +418,9 @@ def test_a_model_offering_two_task_heads_is_taken_by_both_task_protocols():
                                         None)
     assert protocols.model_refusal("gene", two) == (
         "the gene measurement takes a finetune model with the gene head; this checkpoint is a "
-        "finetune model with the disease and patients_like_me heads. It can be measured by "
-        "disease, patients_like_me, kg_link_prediction.")
+        "finetune model with the disease and patients-like-me heads. It can be measured by "
+        "disease, patients-like-me or KG link prediction. Ref: patients_like_me, "
+        "kg_link_prediction.")
 
 
 def test_an_input_no_evaluator_supplies_is_refused():
@@ -435,13 +438,16 @@ def test_the_data_kind_is_judged_and_a_generated_split_has_no_counts_to_judge():
     for name in tasks:
         assert protocols.inputs_refusal(name, protocols.GENERATED, None) is None
         assert protocols.inputs_refusal(name, protocols.SUPPLIED, GENES) is None
-        # A kind no protocol names is said in neutral words, never as a cohort.
+        # A kind no protocol names is said in neutral words, never as a cohort;
+        # the measurement by its words, its name only in the Ref (B72-T1).
+        words = protocols._said(protocols.PROTOCOLS[name])
+        ref = f" Ref: {name}." if words != name else ""
         assert protocols.inputs_refusal(name, "unknown_kind", GENES) == (
-            f"the {name} measurement does not measure data of kind 'unknown_kind'; it measures "
-            "a generated split or a supplied cohort version.")
+            f"the {words} measurement does not measure data of kind 'unknown_kind'; it measures "
+            "a generated split or a supplied cohort version." + ref)
         assert protocols.inputs_refusal(name, None, GENES) == (
-            f"the {name} measurement does not measure data of no kind this build reads; it "
-            "measures a generated split or a supplied cohort version.")
+            f"the {words} measurement does not measure data of no kind this build reads; it "
+            "measures a generated split or a supplied cohort version." + ref)
     # The counts are a registered version's: a gene measurement of one listing none is refused.
     assert protocols.inputs_refusal("gene", protocols.SUPPLIED, None).startswith(
         "this cohort version lists no causal genes")
@@ -449,8 +455,8 @@ def test_the_data_kind_is_judged_and_a_generated_split_has_no_counts_to_judge():
     for kind, words in (("unknown_kind", "data of kind 'unknown_kind'"),
                         (None, "data of no kind this build reads")):
         assert protocols.inputs_refusal("kg_link_prediction", kind, {"pairs": 3}) == (
-            f"the kg_link_prediction measurement does not measure {words}; it measures a KG "
-            "edge set.")
+            f"the KG link prediction measurement does not measure {words}; it measures a KG "
+            "edge set. Ref: kg_link_prediction.")
 
 
 def test_a_protocol_takes_exactly_the_writable_models_its_words_name():

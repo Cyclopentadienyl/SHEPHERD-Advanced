@@ -86,16 +86,17 @@ def _fixture_gap(protocol: "Protocol", counts: Mapping[str, Any]) -> str:
     its role."""
     if GENERATED_FIXTURE_COUNT not in counts:
         return (f"this generated split version keeps no functional gene fixture, which the "
-                f"{protocol.name} measurement scores: a generated split's patients carry no genes "
+                f"{_said(protocol)} measurement scores: a generated split's patients carry no genes "
                 "of their own, and the fixture gives each a causal gene drawn from its disease "
                 "and distractor candidates. That is a gap in this version's data, not a judgment "
                 "of its role: derive the fixture in its workspace "
                 "(scripts/derive_task_fixture.py), then keep the split again under a new label "
-                "(scripts/import_cohort.py --kind generated), which keeps the fixture with it.")
+                "(scripts/import_cohort.py --kind generated), which keeps the fixture with it."
+                + _ref(protocol.name))
     return (f"this generated split version's functional gene fixture holds no row of its split "
-            f"(none of its patients' diseases has a gene in the graph), so the {protocol.name} "
+            f"(none of its patients' diseases has a gene in the graph), so the {_said(protocol)} "
             "measurement has no case to score. That is a gap in this version's data, not a "
-            "judgment of its role.")
+            "judgment of its role." + _ref(protocol.name))
 
 #: The task heads' scoring semantics, by task, as
 #: `src.models.bundle.capabilities.TASK_HEAD_SEMANTICS` states them.
@@ -133,8 +134,8 @@ class Protocol:
     #: The head its evaluator scores with, `(kind, name, scoring semantics)`,
     #: as a model's capability description lists its heads.
     head: tuple[str, str, str]
-    #: Its plain words, which a reason names it by with its name beside
-    #: ("KG link prediction (kg_link_prediction)", `_named`): the words a page
+    #: Its plain words, which a reason names it by (`_said`), its name only in
+    #: the reason's trailing "Ref:" (`_ref`): the words a page
     #: offers it under (`caveats.MEASUREMENT_NAMES`, restated here because this
     #: module imports the standard library only, and pinned equal by
     #: tests/unit/test_kg_link_prediction.py). "" names it by its name alone.
@@ -264,7 +265,9 @@ def names() -> tuple[str, ...]:
 
 
 def _unknown(name: Any) -> str:
-    return f"{name!r} is not a measurement this build implements ({', '.join(PROTOCOLS)})."
+    said = [_said(p) for p in PROTOCOLS.values()]
+    return (f"{name!r} is not a measurement this build implements: "
+            f"{', '.join(said[:-1])} or {said[-1]}.{_ref(*PROTOCOLS)}")
 
 
 def _protocol(name: Any) -> Protocol | None:
@@ -326,13 +329,13 @@ def _takes(protocol: Protocol) -> str:
     none); any other head is named by its kind and scoring semantics."""
     kind, name, semantics = protocol.head
     if kind == TASK:
-        return f"a finetune model with the {name} head"
+        return f"a finetune model with the {_task_words(name)} head"
     return f"a model with a {kind.replace('_', '-')} head scoring {semantics}"
 
 
 def _described(model: Mapping[str, Any]) -> str:
     """A model as a reason names it: its learning stage and its task heads."""
-    tasks = [name for kind, name, *_rest in _heads(model) if kind == TASK]
+    tasks = [_task_words(name) for kind, name, *_rest in _heads(model) if kind == TASK]
     head = ("no task head" if not tasks
             else f"the {' and '.join(tasks)} head{'s' if len(tasks) > 1 else ''}")
     return f"a {model.get('learning_stage')} model with {head}"
@@ -342,12 +345,39 @@ def _words(names: Any) -> str:
     return ", ".join(_CAPABILITY_WORDS.get(n, n) for n in sorted(names))
 
 
-def _named(name: str) -> str:
-    """A protocol as a reason for a page names it: its plain words with its
-    name beside ("KG link prediction (kg_link_prediction)"), or its name for
-    one without words (skill: an internal code only beside a plain label)."""
-    label = PROTOCOLS[name].label
-    return f"{label} ({name})" if label else name
+def _said(protocol: Protocol) -> str:
+    """**A protocol as a reason names it** (B72-T1; the WebUI skill's §5: an
+    internal code only beside a plain label or in a trailing "Ref:"): its
+    plain words in a sentence's case ("the patients-like-me measurement",
+    "the KG link prediction measurement"), or its name for one without
+    words. Every reason of this module that names a protocol says it so,
+    its name in the reason's "Ref:" (`_ref`)."""
+    label = protocol.label
+    if not label:
+        return protocol.name
+    return label if label[1:2].isupper() else label[:1].lower() + label[1:]
+
+
+def _task_words(task: str) -> str:
+    """A task head as a reason names it: by its task's measurement's words
+    (`_said`: "the patients-like-me head"), a task this build has no
+    measurement for by its recorded name."""
+    return _said(PROTOCOLS[task]) if task in PROTOCOLS else task
+
+
+def _ref(*names: str) -> str:
+    """A reason's trailing " Ref: …." (B72-T1): the names of the protocols it
+    named whose words are not their name (the command line's ``--mode``
+    values), in order, once each; "" when every one reads as its name."""
+    codes = [name for name in dict.fromkeys(names) if _said(PROTOCOLS[name]) != name]
+    return f" Ref: {', '.join(codes)}." if codes else ""
+
+
+def _listed(names: Any) -> str:
+    """Protocols as a reason lists them, by their words (`_said`): "disease
+    or KG link prediction"."""
+    said = [_said(PROTOCOLS[name]) for name in names]
+    return " or ".join(said) if len(said) < 3 else f"{', '.join(said[:-1])} or {said[-1]}"
 
 
 def _unmet(protocol: Protocol, model: Mapping[str, Any]) -> str:
@@ -358,10 +388,11 @@ def _unmet(protocol: Protocol, model: Mapping[str, Any]) -> str:
     if protocol.computation not in _offered(model, "computation"):
         lacks.add(protocol.computation)
     if lacks:
-        return (f"the {protocol.name} measurement needs {_words(lacks)}, which this checkpoint's "
-                f"model ({model.get('encoder')} encoder) does not offer in this build.")
+        return (f"the {_said(protocol)} measurement needs {_words(lacks)}, which this "
+                f"checkpoint's model ({model.get('encoder')} encoder) does not offer in this "
+                "build.")
     return (f"this checkpoint's model needs {_words(_inputs(model) - set(protocol.supplies))}, "
-            f"which the {protocol.name} measurement does not supply.")
+            f"which the {_said(protocol)} measurement does not supply.")
 
 
 def _none_takes(model: Any) -> str | None:
@@ -379,7 +410,8 @@ def available(model: Any, kind: Any = None) -> tuple[tuple[str, ...], str | None
     (research comparison Stage 7: the Test page's options for the chosen
     version), only those of them that measure it; when none does, no protocol
     and the reason, naming the protocols that take the model, each by its
-    plain words with its name beside (`_named`), and the kinds they measure.
+    plain words (`_said`, their names in its "Ref:"), and the kinds they
+    measure.
     A version's counts are never judged here: a protocol that
     measures its kind is offered, and what the version lacks is its refusal's
     (`inputs_refusal`)."""
@@ -394,9 +426,9 @@ def available(model: Any, kind: Any = None) -> tuple[tuple[str, ...], str | None
         for name in found:
             kinds += [k for k in PROTOCOLS[name].data_kinds if k not in kinds]
         return (), (f"no measurement that takes this checkpoint's model measures {said}: it can "
-                    f"be measured by {', '.join(_named(name) for name in found)}, which measure"
+                    f"be measured by {_listed(found)}, which measure"
                     f"{'s' if len(found) == 1 else ''} "
-                    f"{' or '.join(_KIND_WORDS.get(k, k) for k in kinds)}.")
+                    f"{' or '.join(_KIND_WORDS.get(k, k) for k in kinds)}.{_ref(*found)}")
     if found:
         return found, None
     reason = _none_takes(model)
@@ -424,11 +456,13 @@ def model_refusal(name: Any, model: Any) -> str | None:
     if reason is not None:
         return reason
     if not _carries(protocol, model):
-        said = (f"the {protocol.name} measurement takes {_takes(protocol)}; this checkpoint is "
+        said = (f"the {_said(protocol)} measurement takes {_takes(protocol)}; this checkpoint is "
                 f"{_described(model)}.")
     else:
         said = _unmet(protocol, model)
-    return f"{said} It can be measured by {', '.join(found)}." if found else said
+    if found:
+        said += f" It can be measured by {_listed(found)}."
+    return said + _ref(protocol.name, *found)
 
 
 def inputs_refusal(name: Any, kind: Any, counts: Mapping[str, Any] | None) -> str | None:
@@ -451,7 +485,8 @@ def inputs_refusal(name: Any, kind: Any, counts: Mapping[str, Any] | None) -> st
         said = _KIND_WORDS.get(kind, f"data of kind {kind!r}") if isinstance(kind, str) \
             else "data of no kind this build reads"
         takes = " or ".join(_KIND_WORDS.get(k, k) for k in protocol.data_kinds)
-        return f"the {protocol.name} measurement does not measure {said}; it measures {takes}."
+        return (f"the {_said(protocol)} measurement does not measure {said}; it measures "
+                f"{takes}.{_ref(protocol.name)}")
     if kind == GENERATED:
         if counts is None or not protocol.gene_fields:
             return None
@@ -465,14 +500,16 @@ def inputs_refusal(name: Any, kind: Any, counts: Mapping[str, Any] | None) -> st
             continue
         if need in _NEED_WORDS:
             what, field = _NEED_WORDS[need]
-            return (f"this cohort version lists no {what} genes, which the {protocol.name} "
-                    f"measurement needs. Import a source that lists {field}.")
+            return (f"this cohort version lists no {what} genes, which the {_said(protocol)} "
+                    f"measurement needs. Import a source that lists {field}."
+                    + _ref(protocol.name))
         if need == "pairs":
             return (f"this KG edge set holds no (positive, negative) pair, which the "
-                    f"{protocol.name} measurement scores: no positive edge of its part had "
-                    "another tail of its relation in its batch to draw a negative from.")
-        return (f"this cohort version records no {need}, which the {protocol.name} "
-                "measurement needs.")
+                    f"{_said(protocol)} measurement scores: no positive edge of its part had "
+                    "another tail of its relation in its batch to draw a negative from."
+                    + _ref(protocol.name))
+        return (f"this cohort version records no {need}, which the {_said(protocol)} "
+                "measurement needs." + _ref(protocol.name))
     return None
 
 

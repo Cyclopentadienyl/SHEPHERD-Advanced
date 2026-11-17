@@ -1903,7 +1903,8 @@ head 接受 base 或任何 finetune，量測 KG 邊集合（見下文）。報�
 立即檢查，早於 workspace 與 checkpoint；checkpoint 的模型必須提供協定所需的能力（三種任務協定
 即其 task head），在讀入 checkpoint 後立即檢查。以任務協定量測 base 時，會以該協定的理由被拒絕，
 並指出接受它的協定（"the disease measurement takes a finetune model with the disease head; this
-checkpoint is a base model with no task head. It can be measured by kg_link_prediction."），沒有
+checkpoint is a base model with no task head. It can be measured by KG link prediction. Ref:
+kg_link_prediction."），沒有
 model spec 的 checkpoint（ShepherdGNN 歷史檔）則以紀錄讀取器的
 那一句 "written before the model spec: not readable by this build; start a new run" 被拒絕（自
 K8-7b，2026-11-08 起；過去是「作為歷史檔」被拒絕）。Test 頁傳入操作者選擇的協定（§4.14）。

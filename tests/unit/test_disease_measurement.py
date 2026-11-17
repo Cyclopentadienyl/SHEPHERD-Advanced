@@ -130,7 +130,7 @@ def test_a_base_is_refused_before_anything_is_written(trained, tmp_path):
     out = tmp_path / "base.json"
     said = ("the disease measurement takes a finetune model with the disease head; this "
             "checkpoint is a base model with no task head. It can be measured by "
-            "kg_link_prediction.")
+            "KG link prediction. Ref: kg_link_prediction.")
     with pytest.raises(ValueError, match=re.escape(said)):
         measure_scorer.main(["--mode", "disease", "--checkpoint", str(trained["base"]),
                              "--data-dir", str(trained["data_dir"]), "--split", "val",
