@@ -1261,7 +1261,7 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     a family view's context, the runs a shown run descends from, counted
     apart); a search says what matches ("3 runs match “disease”, with 2 runs
     they come from"). Counted against what the preset ever lists (the drawer:
-    its task models); while
+    its task models), an entry the listing could not list never a run; while
     the drawer leaves runs out (not read yet, `runs_unread`, or beyond its
     latest), a search and a filter say they saw the latest runs only ("1 run
     matches “gene” in the latest runs", "Gene: 1 of the latest 4 runs"), never
@@ -1271,7 +1271,7 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     chosen = task_filter(view)
     lead = f"{FILTER_WORDS[chosen][0]}: " if chosen not in ("all", preset.rows) else ""
     query = str(search or "").strip()
-    every = shown_items(listing, None, preset)
+    every = [i for i in shown_items(listing, None, preset) if not r.entry_place(i)]
     total = len({item_run_key(i) for i in every})
     tree = tree_view(listing, view, preset, search=query, fold=fold, show_older=show_older)
     # A run is counted once, whatever groups it is drawn in; an entry the

@@ -1957,8 +1957,10 @@ def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, mon
     entry = _row_of_key(html, "/626164ff")
     assert "bad\\xff" in entry and "a folder in runs/" in entry and "RUNS" not in entry
     assert "runs/bad\\xff cannot be listed (…)" in entry          # why, on the page
-    # Counted apart, never as a run or a saved file (B69 L3).
+    # Counted apart, never as a run or a saved file (B69 L3), a filter's
+    # "of N runs" too (it read "Disease: 3 of 10 runs").
     assert ml.count_line(data, research, False) == "9 runs, 10 saved files, 1 entry not listed"
+    assert ml.count_line(data, research, False, {"task": "disease"}) == "Disease: 3 of 9 runs"
 
 
 def _row_of_key(html, key):
