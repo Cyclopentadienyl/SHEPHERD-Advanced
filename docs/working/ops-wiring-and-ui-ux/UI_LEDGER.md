@@ -1858,6 +1858,15 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: UX:221 (appendix 19); RJ audits[0].findings[5]; UX:252 (appendix 50); RJ audits[1].findings[15]; UX:120; BL:1030 (item 72 Shell); SK:107-108
 - **Closed at**: —
 
+#### V-1 · A Details the reader opened closes when their own act draws its region again
+
+- **State**: code-verified · found by the verification of fcc3dea · severity medium · page: shell
+- **Problem**: The disclosure keeper (T08-flow-2) kept a disclosure open only in the five regions a poll, a tick or a render draws again. A region the reader's own act draws again closed what the reader had opened.
+- **At fcc3dea**: On the Training page, with four settings set the "Set by you" line counts one more behind its "Details ›"; opened, it closed when the operator set a fifth field. The fix lane's report on T08-flow-2 listed the same for the Fine-tune line, the Continue drawer's preview on a device or branch edit, and Models' details and records after a Load or an Order or Task change. Of the 133 `gr.HTML` outputs of an event in the built dashboard, 128 had no keeper.
+- **Done when**: Every `gr.HTML` that an event draws runs the one keeper, listed from the built app by a test that fails on fcc3dea; a browser test shows a Details opened by the reader still open after their own edit draws it again.
+- **Sources**: the fix lane's report on T08-flow-2 ("Seen, not fixed"); the verification brief, item 3
+- **Closed at**: 4c72a2d. Root: the keeper was wired region by region, while what an HTML holds is its renderers' choice at run time. Fix: `shell.plain_html`, the dashboard's one HTML constructor, runs `renderers.KEEP_OPEN_JS` before any script of its own, and the chart figure does the same; the per-page wiring it replaces is gone (Training's `_POPOVER_JS` prefix, the Test job card and result, the Diagnosis card). Tests: `test_webui_shell.py::test_every_html_an_event_draws_keeps_its_disclosures_as_the_reader_left_them` (all 133, the keeper once and first; fails on fcc3dea) and `test_training_page.py::test_a_details_the_reader_opened_stays_open_when_their_own_edit_draws_it_again` (browser, 1850×960: open across the next field set, closed by the reader stays closed; fails on fcc3dea). The shared UI walk passes. No visible change.
+
 **UI-16, test**
 
 #### B72-C2 · Recorded LP metrics show raw names, unrounded values, no units
