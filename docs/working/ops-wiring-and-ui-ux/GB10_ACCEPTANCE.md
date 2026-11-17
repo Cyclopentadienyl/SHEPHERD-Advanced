@@ -9,6 +9,10 @@ and onto the UI steps the owner runs by hand. It follows the research-comparison
 ([`../research-comparison/GB10_ACCEPTANCE.md`](../research-comparison/GB10_ACCEPTANCE.md)), whose run at `e60f23e` is
 the base the check was last revised on.
 
+**2026-11-17.** The completion round changed the launcher, the systemd unit's comments and the probe's settings
+isolation; what that adds to the GB10 run is §5. The text above and §1–§4 are as written at `500a8d6`, with a pointer
+where a sentence no longer holds.
+
 - **What was verified, and where.** On the CPU in the round's container only: `tests/unit/test_probe_m2_phase.py`
   runs the demo phase end to end and checks every new probe's facts against the disk
   (`test_the_demo_phase_passes_and_every_required_probe_runs`, with `_check_the_research_comparison_flow` and
@@ -208,7 +212,7 @@ The check lives outside this repository, in the owner's session (TA-10 at `e60f2
 **The code to test** is the head delivered for the external review. Only documents may follow it before the run.
 `deploy.sh`, `pyproject.toml`, `uv.lock` and the launcher are unchanged since `30e8ae1`, so, by the plan's §八 item 6,
 one existing accepted environment in a reused candidate slot is enough: no second PyG environment is built for this
-round. A6 records the route that environment has, and its version and native identity are recorded before the run.
+round (2026-11-17: the launcher and the steps `deploy.sh` prints have changed since; the rule still holds, §5). A6 records the route that environment has, and its version and native identity are recorded before the run.
 The owner's formal checkout, deployment, models and ledgers are not touched; the probe works on new copies.
 
 1. **The probe**, while no managed GPU job runs:
@@ -260,3 +264,52 @@ bfloat16; model quality.
 measurement; L7.branch one branch at the base's epochs through the job runner; W12 one service start, up to 12 stops
 under 8 diagnosis clients, each after a load, and on the CPU three short trainings (one on CUDA, the other two being
 refused there). On the CPU here, the whole demo phase test, every demo probe included, took about 90 s.
+
+## 5. The completion round's GB10 steps (2026-11-17)
+
+The completion round (`ba6e85e`..its delivered head) changed the launcher (`launch_shepherd.sh`/`.cmd`,
+`scripts/launch/shep_launch.py`, the desktop entry), where the data locations come from (Settings › Data locations and
+the saved settings file, a variable set at start still winning), the systemd unit's comments (how the locations are
+chosen; it still starts the launcher without the local mark, so only an explicit M1 turns operator controls on), the
+probe and the WebUI. The probe names a saved settings file of its own for its run and one for each service it starts
+(`3d27037`), so the account's saved locations never reach what it runs, and T5/RT3 read a record's group description
+by its three fields (`c46a5a7`); no option, ID, key or required list changed (demo 69, real data 15 at the head).
+`deploy.sh`/`deploy.cmd` changed only the next steps they print; `pyproject.toml` and `uv.lock` are unchanged, so §4's
+rule holds: one existing accepted environment in a reused candidate slot, no new PyG environment. The candidate slot
+runs this head's launcher; the owner's formal checkout and slot are not updated first (A/B kept), and the slot has its
+own settings file (`launch_shepherd.sh --settings-file <the slot's file>`), so its choices never reach the formal
+slot's.
+
+These steps need the GB10 itself (a desktop, a file manager, CUDA); each was run on the CPU host only as far as the
+round's record says (the round README §12, T08):
+
+1. **A double click with nothing preset** (A03, A12). Install the slot's entry
+   (`launch_shepherd.sh --install-desktop-entry --settings-file <the slot's file>`) and double-click it in the file
+   manager, with no `SHEPHERD_*` variable in the desktop session: the dashboard opens in the browser; Settings › Data
+   locations can be changed (operator controls on for this computer's requests, "local start"); no page asks for a
+   variable. A second double click opens the running page and starts nothing; the other slot's port in use is never
+   taken for this one.
+2. **Choose, save, restart** (A04, A10). In Settings › Data locations choose the slot's workspaces folder and
+   registry (a copy, never the formal slot's folders), Save, then Apply; Stop service, double-click again: the same
+   values are in effect, source "saved"; Restart Backend gives the same. A folder that already held data is unchanged
+   (list it before and after).
+3. **Changing a location while a GPU job runs** (A09). Start a short Training run on CUDA; save another workspaces
+   folder: Apply is refused while the job runs, naming it; the job keeps its folder and lock to its end; after it,
+   Apply; a new job takes the lock in the new folder and the old folder's lock is free.
+4. **Training and inference exclude each other on the GPU** (B48): §4's UI step 3 and W12, unchanged.
+5. **The Device field on a CUDA host**: Training, the Continue drawer and Fine-tune offer CUDA with no "No CUDA device
+   here" note; a Load on Diagnosis serves on CUDA with no variable set (on a CPU-only development host a Load needs
+   `SHEPHERD_DEVICE=cpu`, recorded as that host's limit, not a GB10 step).
+6. **The run bar's queue under a real job** (B46-races' accepted cost): while a CUDA run prints and its page polls,
+   open Continue…, change the workspace and run the Check: each step answers (the drawer's steps share the run bar's
+   queue group, so a slow read delays them but never shows an older state); note how long the slowest step took.
+7. **The owner's look** (OWN-1, B27-P): the pages at the owner's window (about 1850 × 960) on the slot, against the
+   round's screenshots and mockups; points named become ledger rows.
+
+8. **The probe beside a saved settings file** (§4 step 1, as written): with the account's own settings file holding
+   saved locations (step 2's), the probe runs and judges as in §4; the services it starts read the probe's own file
+   (`<work>/probe-settings/deployment.json`, never written), and the account's file is unchanged after the run (hash
+   it before and after).
+
+A step that fails is recorded with what it showed; no step changes the formal slot, its data, models, reports or
+ledgers.
