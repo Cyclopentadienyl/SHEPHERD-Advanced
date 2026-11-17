@@ -47,6 +47,19 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   a click outside close it; it stays open while the reader's pointer moves
   in the bubble (a bubble that only came under a resting pointer, as it
   follows its ⓘ on a scroll, keeps no preview open);
+- lets the pointer through a preview the pointer did not open (focus opened
+  it): the reader's pointer moving over it turns its pointer events off, so
+  a click goes to the control under it, and only its focus keeps or ends it
+  (a hover preview stays the pointer's, to be read on, WCAG 1.4.13; a pinned
+  bubble is a dialog); the wheel over it still scrolls its text where its
+  height is capped, then the page past the text's end;
+- does not draw a bubble whose ⓘ is out of view (outside the window, or
+  outside the visible part of a region it scrolls in: as Floating UI's
+  ``hide`` reads its reference's clipping ancestors) and lets clicks reach
+  what is under it; it stays open and is drawn again where it belongs when
+  its ⓘ is back in view. Focus inside it then moves to its ⓘ without
+  scrolling; Esc closes it and still reaches the page. Closing never scrolls
+  the page: focus returns to a ⓘ with ``preventScroll``;
 - places it so it **never covers the field it explains** (the field's
   component, by its ``elem_id``; else the table row, the key-value row's key
   and value, or the line the ⓘ sits in): beside that field, then above it, then below it, the first that fits
@@ -65,6 +78,11 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   inside a region marked `REGION_CLASS` (a card it heads) places its bubble
   outside that whole region when one of the four sides fits, else outside
   the line it sits in, as any other ⓘ;
+- a field in a container marked `KEY_FIRST_CLASS` is drawn as its key, its ⓘ
+  and its control, in that order (Diagnosis' Options): its control is kept
+  after its ⓘ in the page too (Gradio puts a checkbox's box before its
+  words), so focus and a screen reader meet them in the order drawn (WCAG
+  2.4.3, 1.3.2);
 - shows "Esc to close" only on a pinned bubble (a dialog); a preview has none.
 
 The same script copies a full value from a ``button.shep-copy`` (``data-copy``)
@@ -97,6 +115,11 @@ HIT_TARGET = 24
 #: card): its bubble is placed outside the region, not only outside the line
 #: the ⓘ sits in (`fieldRect`'s ``regionRect``).
 REGION_CLASS = "shep-help-region"
+
+#: The class of a container whose fields are drawn as rows of their key, their
+#: ⓘ and their control, in that order (Diagnosis' Options): the help keeps
+#: each field's control after its ⓘ in the page (`keyFirst`).
+KEY_FIRST_CLASS = "shep-key-first"
 
 #: **A help text's grammar**, read the same way by `help_lines` and by the
 #: bubble's script (the patterns are given to it as written here): the first
@@ -334,9 +357,13 @@ _HELP_JS = r"""
   if (window.ShepHelp) { return; }
   var SEL = 'button.shep-i';
   var MAX_W = __MAX_W__, HOVER_MS = __HOVER_MS__, GAP = 10, EDGE = 8;
-  var REGION = '__REGION__', BULLET = __BULLET__, REF = __REF__, TERM = new RegExp(__TERM__);
+  var REGION = '__REGION__', KEY_FIRST = '__KEY_FIRST__';
+  var BULLET = __BULLET__, REF = __REF__, TERM = new RegExp(__TERM__);
   var bubble = null, anchor = null, anchorKey = null, pinned = false;
   var hideTimer = null, openTimer = null, previewFor = null;
+  // `byPointer`: the pointer opened the preview (or came to its ⓘ); `yielded`:
+  // a preview focus opened let the reader's pointer through (`claim`).
+  var byPointer = false, yielded = false;
 
   function closestHelp(node) {
     return node && node.closest ? node.closest(SEL) : null;
@@ -407,9 +434,13 @@ _HELP_JS = r"""
     // bubble that came under a resting pointer (it follows its ⓘ when the
     // page scrolls) gets a "mouseenter" from the browser but no "mousemove":
     // that keeps nothing, so a preview never outlives its focus or hover
-    // and covers what the pointer rests on.
-    bubble.addEventListener('mousemove', function () { clearTimeout(hideTimer); });
-    bubble.addEventListener('mouseleave', function () { if (!pinned) { scheduleHide(); } });
+    // and covers what the pointer rests on. A preview focus opened is not
+    // the pointer's: the pointer moving over it passes through it (the
+    // control under it gets the click), and its leaving ends nothing.
+    bubble.addEventListener('mousemove', function () {
+      if (pinned || byPointer) { clearTimeout(hideTimer); } else if (!yielded) { yielded = true; claim(); }
+    });
+    bubble.addEventListener('mouseleave', function () { if (!pinned && byPointer) { scheduleHide(); } });
     x.addEventListener('click', function (e) { e.stopPropagation(); close(true); });
     document.body.appendChild(bubble);
     return bubble;
@@ -464,12 +495,49 @@ _HELP_JS = r"""
   function overlaps(a, b) {
     return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
   }
+  // Whether a ⓘ is out of view: not drawn, or wholly outside the window or
+  // the visible part of a region it scrolls in (an ancestor that clips its
+  // overflow; one that does not hold an absolutely or fixed positioned box
+  // does not clip it), as Floating UI's `hide` reads its reference.
+  var CLIPS = /auto|scroll|hidden|clip|overlay/;
+  function holdsFixed(s) {
+    return s.transform !== 'none' || s.perspective !== 'none' || s.filter !== 'none' ||
+      /paint|layout|strict|content/.test(s.contain || '') || /transform|perspective|filter/.test(s.willChange || '');
+  }
+  function outOfView(el) {
+    var r = el.getBoundingClientRect();
+    if (!r.width && !r.height) { return true; }
+    var c = {left: 0, top: 0, right: document.documentElement.clientWidth,
+             bottom: document.documentElement.clientHeight};
+    var pos = getComputedStyle(el).position;
+    for (var n = el.parentElement; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      var s = getComputedStyle(n);
+      if (pos === 'fixed' ? !holdsFixed(s) : pos === 'absolute' && s.position === 'static' && !holdsFixed(s)) {
+        continue;
+      }
+      if (s.display !== 'contents' && s.display !== 'inline') {
+        var b = n.getBoundingClientRect(), left = b.left + n.clientLeft, top = b.top + n.clientTop;
+        if (CLIPS.test(s.overflowX)) { c.left = Math.max(c.left, left); c.right = Math.min(c.right, left + n.clientWidth); }
+        if (CLIPS.test(s.overflowY)) { c.top = Math.max(c.top, top); c.bottom = Math.min(c.bottom, top + n.clientHeight); }
+      }
+      pos = s.position === 'fixed' || s.position === 'absolute' ? s.position : 'static';
+    }
+    return r.bottom <= c.top || r.top >= c.bottom || r.right <= c.left || r.left >= c.right;
+  }
   function place() {
     if (!bubble || bubble.hidden || !anchor) { return; }
     if (!anchor.isConnected) {
       var again = anchorKey && document.querySelector(SEL + '[data-help="' + anchorKey + '"]');
       if (again) { anchor = again; anchor.setAttribute('aria-expanded', 'true'); }
       else { close(false); return; }
+    }
+    // Its ⓘ out of view: not drawn and no click's target, still open; focus
+    // inside it goes to its ⓘ, the page unmoved.
+    var away = outOfView(anchor);
+    bubble.style.visibility = away ? 'hidden' : '';
+    if (away) {
+      if (bubble.contains(document.activeElement)) { anchor.focus({preventScroll: true}); }
+      return;
     }
     var a = anchor.getBoundingClientRect(), f = fieldRect(anchor), region = regionRect(anchor);
     var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
@@ -539,16 +607,50 @@ _HELP_JS = r"""
     if (pinned) { bubble.setAttribute('aria-labelledby', 'shep-help-bubble-title'); }
     else { bubble.removeAttribute('aria-labelledby'); }
   }
-  function open(btn, pin) {
+  // Who the bubble answers to: pinned, or a preview the pointer opened, it
+  // takes the pointer's events (the pointer can be moved onto it, WCAG
+  // 1.4.13); a preview focus opened lets the reader's pointer through once
+  // it moves over it (`yielded`), its own wheel aside (`wheelText`).
+  function claim() {
+    if (!bubble) { return; }
+    if (pinned || byPointer) { yielded = false; }
+    bubble.style.pointerEvents = yielded ? 'none' : '';
+    if (yielded) { document.addEventListener('wheel', wheelText, {passive: false}); }
+    else { document.removeEventListener('wheel', wheelText); }
+  }
+  // A preview that lets the pointer through still scrolls its own text under
+  // the wheel (its height capped, its text scrolling inside), as one that
+  // takes the pointer does: the wheel over it moves its text while the text
+  // can move, and past its end, or with none to move, the page as before.
+  function wheelText(e) {
+    if (!yielded || !bubble || bubble.hidden || bubble.style.visibility === 'hidden' ||
+        e.ctrlKey || !e.deltaY) { return; }
+    var r = bubble.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom) {
+      return;
+    }
+    var bd = bubble.querySelector('.shep-bubble-bd');
+    var dy = e.deltaY * (e.deltaMode === 1 ? (parseFloat(getComputedStyle(bd).lineHeight) || 20)
+                         : e.deltaMode === 2 ? bd.clientHeight : 1);
+    if ((dy > 0 ? bd.scrollHeight - bd.clientHeight - bd.scrollTop : bd.scrollTop) < 1) { return; }
+    e.preventDefault();
+    bd.scrollTop += dy;
+  }
+  // `viaPointer`: a hover opened it. Focus on the ⓘ of a preview already
+  // shown leaves it whoever's it was.
+  function open(btn, pin, viaPointer) {
     clearTimeout(hideTimer);
     clearTimeout(openTimer); previewFor = null;
+    if (anchor !== btn || !bubble || bubble.hidden) { byPointer = false; yielded = false; }
     if (anchor && anchor !== btn) { anchor.setAttribute('aria-expanded', 'false'); pinned = false; }
     anchor = btn; anchorKey = btn.getAttribute('data-help');
     pinned = pin ? true : pinned;
+    byPointer = byPointer || !!viaPointer;
     var b = ensureBubble();
     b.querySelector('.shep-bubble-title').textContent = titleOf(btn);
     fill(b.querySelector('.shep-bubble-bd'), textOf(btn));
     setRole();
+    claim();
     b.hidden = false;
     btn.setAttribute('aria-expanded', 'true');
     place();
@@ -559,20 +661,24 @@ _HELP_JS = r"""
     if (previewFor === btn) { return; }
     clearTimeout(openTimer);
     previewFor = btn;
-    openTimer = setTimeout(function () { previewFor = null; if (btn.isConnected) { open(btn, false); } }, HOVER_MS);
+    openTimer = setTimeout(function () { previewFor = null; if (btn.isConnected) { open(btn, false, true); } }, HOVER_MS);
   }
+  // Focus inside the bubble goes back to its ⓘ once it is closed, without
+  // scrolling the page to it; that focus opens nothing (`returning`): the
+  // reader closed it (before, it opened a preview with no ⓘ to follow,
+  // which stayed drawn where it was when the page scrolled).
+  var returning = null;
   function close(returnFocus) {
     clearTimeout(hideTimer);
     clearTimeout(openTimer); previewFor = null;
-    if (bubble) { bubble.hidden = true; }
-    if (anchor) {
-      anchor.setAttribute('aria-expanded', 'false');
-      if (returnFocus && anchor.isConnected && bubble && bubble.contains(document.activeElement)) {
-        anchor.focus();
-      }
-    }
-    anchor = null; anchorKey = null; pinned = false;
+    var back = returnFocus && anchor && anchor.isConnected && bubble &&
+      bubble.contains(document.activeElement) ? anchor : null;
+    if (bubble) { bubble.hidden = true; bubble.style.visibility = ''; }
+    if (anchor) { anchor.setAttribute('aria-expanded', 'false'); }
+    anchor = null; anchorKey = null; pinned = false; byPointer = false; yielded = false;
     setRole();
+    claim();
+    if (back) { returning = back; back.focus({preventScroll: true}); returning = null; }
   }
   // A hide the last ⓘ's pointer left behind never cancels another ⓘ's
   // preview that is waiting to open: that one replaces the bubble instead.
@@ -580,9 +686,12 @@ _HELP_JS = r"""
     clearTimeout(hideTimer);
     hideTimer = setTimeout(function () { if (!pinned && !previewFor) { close(false); } }, 250);
   }
+  // The pointer on the ⓘ of the preview shown makes it the pointer's too.
   document.addEventListener('mouseover', function (e) {
     var btn = closestHelp(e.target);
-    if (btn) { if (anchor !== btn || !bubble || bubble.hidden) { openSoon(btn); } else { clearTimeout(hideTimer); } }
+    if (!btn) { return; }
+    if (anchor !== btn || !bubble || bubble.hidden) { openSoon(btn); }
+    else { clearTimeout(hideTimer); byPointer = true; claim(); }
   });
   document.addEventListener('mouseout', function (e) {
     var btn = closestHelp(e.target);
@@ -594,7 +703,7 @@ _HELP_JS = r"""
   });
   document.addEventListener('focusin', function (e) {
     var btn = closestHelp(e.target);
-    if (btn) { open(btn, false); }
+    if (btn && btn !== returning) { open(btn, false); }
   });
   document.addEventListener('focusout', function (e) {
     var btn = closestHelp(e.target);
@@ -613,10 +722,13 @@ _HELP_JS = r"""
     }
     if (bubble && !bubble.hidden && !bubble.contains(e.target)) { close(false); }
   }, true);
+  // Esc closes the bubble; while its ⓘ is out of view (the bubble not drawn)
+  // the key also goes on to what the reader sees.
   document.addEventListener('keydown', function (e) {
     if ((e.key === 'Escape' || e.key === 'Esc') && bubble && !bubble.hidden) {
+      var drawn = bubble.style.visibility !== 'hidden';
       close(true);
-      e.stopPropagation();
+      if (drawn) { e.stopPropagation(); }
     }
   }, true);
   window.addEventListener('resize', place);
@@ -654,14 +766,26 @@ _HELP_JS = r"""
     var want = ids.join(' ');
     if (input.getAttribute('aria-describedby') !== want) { input.setAttribute('aria-describedby', want); }
   }
+  // A field drawn as its key, its ⓘ and its control (in a container marked
+  // KEY_FIRST) keeps its control after its ⓘ in the page as well, so focus
+  // and a screen reader meet them in the order drawn: Gradio puts a
+  // checkbox's box before its words, where the ⓘ follows.
+  function keyFirst(target, btn) {
+    if (!target.closest('.' + KEY_FIRST)) { return; }
+    var input = target.querySelector('input:not([type=hidden])');
+    if (input && btn && input.parentNode === btn.parentNode &&
+        (input.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+      btn.insertAdjacentElement('afterend', input);
+    }
+  }
   function enhance() {
     var texts = document.querySelectorAll('.shep-help-texts [data-help-target]');
     for (var i = 0; i < texts.length; i++) {
       var t = texts[i], target = document.getElementById(t.getAttribute('data-help-target'));
       if (!target) { continue; }
-      var key = t.getAttribute('data-help-key');
-      if (target.querySelector(SEL + '[data-help="' + key + '"]')) {
-        keepLabel(target, key); describe(target, key, t.id); continue;
+      var key = t.getAttribute('data-help-key'), known = target.querySelector(SEL + '[data-help="' + key + '"]');
+      if (known) {
+        keyFirst(target, known); keepLabel(target, key); describe(target, key, t.id); continue;
       }
       var title = titleIn(target);
       if (!title) { continue; }
@@ -675,6 +799,7 @@ _HELP_JS = r"""
       btn.setAttribute('aria-describedby', t.id);
       btn.innerHTML = '__I_ICON__';
       title.insertAdjacentElement('afterend', btn);
+      keyFirst(target, btn);
       if (!title.id) { title.id = 'shep-lbl-' + key; }
       var input = target.querySelector('textarea, input:not([type=radio])');
       if (input && !input.hasAttribute('aria-label')) { input.setAttribute('aria-labelledby', title.id); }
@@ -722,6 +847,7 @@ HELP_HEAD = "<script>" + (_HELP_JS.replace("__I_ICON__", _I_ICON.replace("'", "\
                           .replace("__MAX_W__", str(BUBBLE_MAX_WIDTH))
                           .replace("__HOVER_MS__", str(HOVER_OPEN_MS))
                           .replace("__REGION__", REGION_CLASS)
+                          .replace("__KEY_FIRST__", KEY_FIRST_CLASS)
                           .replace("__BULLET__", json.dumps(BULLET))
                           .replace("__REF__", json.dumps(REF_PREFIX))
                           .replace("__TERM__", json.dumps(TERM_PATTERN))) + "</script>"
@@ -813,6 +939,7 @@ __all__ = [
     "HelpEntry",
     "HelpLine",
     "HelpRegistry",
+    "KEY_FIRST_CLASS",
     "REF_PREFIX",
     "REGION_CLASS",
     "TERM_PATTERN",

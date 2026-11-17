@@ -1641,3 +1641,48 @@ def test_the_segment_is_models_third_and_registers_every_i_it_draws(world, monke
     for key in registered_keys_in(rs.status_html(state, scope, shown)):
         assert key in registry, key
     assert not hasattr(tp, "_kind_lines")
+
+
+def test_a_kg_link_prediction_table_shows_plain_names_four_decimals_and_units_once(
+        world, monkeypatch):
+    """B72-C2 on Models › Results (seen again by the T08 flow): a KG link
+    prediction table's metrics read as Test and the Models detail read a
+    record (R-82, `renderers.lp_metric_words`): a column per metric under its
+    plain name ("Accuracy (raw > 0)", "ROC-AUC"), each value to four decimals
+    (`renderers.record_number`), a metric that could not be computed "Not
+    computable", each metric's unit said once under the table; no ``lp_``
+    key and no unrounded value on the page (the T08 flow saw one "Recorded
+    metrics" column, "lp_accuracy 0.4166666666666667 …"). The values as
+    recorded stay in Compare and every export."""
+    from src.webui.components import results_segment as rs
+
+    state, _scope, _rows = _shown(_state(world, monkeypatch, root="root_b"))
+    kg = next(row for row in _results(state) if row["protocol"] == "kg_link_prediction")
+    second = copy.deepcopy(kg)
+    for row, accuracy in ((kg, 5 / 12), (second, 2 / 3)):
+        for metric in row["metrics"]:
+            if metric["name"] == "lp_accuracy":
+                metric["value"] = accuracy
+            elif metric["name"] == "lp_average_precision":
+                metric["value"] = 0.514021164021164
+    markup = rs.protocol_table_html("kg_link_prediction", [kg, second], names=["one", "two"])
+    text = _text(markup)
+    heads = [_text(h) for h in re.findall(r"<th[^>]*>(.*?)</th>", markup)]
+    assert heads[3:7] == ["Accuracy (raw > 0)", "ROC-AUC", "Average precision",
+                          "Loss (the LP head's hinge)"], heads
+    assert "Recorded metrics" not in heads
+    body = re.findall(r"<tbody>(.*?)</tbody>", markup, re.S)[0]
+    cells = [[_text(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)]
+             for tr in re.findall(r"<tr>(.*?)</tr>", body, re.S)]
+    assert [row[3:7] for row in cells] == [["0.4167", "○ Not computable", "0.5140", "0.8750"],
+                                           ["0.6667", "○ Not computable", "0.5140", "0.8750"]]
+    assert "lp_" not in text and "0.41666" not in text and "0.51402116" not in text
+    # Each metric's unit once, after the table, in the record's words.
+    unit = next(m["unit"] for m in kg["metrics"] if m["name"] == "lp_roc_auc")
+    assert unit and text.count(unit) == 1, text
+    for metric in kg["metrics"]:
+        assert text.count(metric["unit"]) == 1, metric["name"]
+    # Escaped like every other value.
+    hostile = copy.deepcopy(kg)
+    hostile["metrics"][0]["unit"] = HOSTILE
+    assert HOSTILE not in rs.protocol_table_html("kg_link_prediction", [hostile], names=["h"])

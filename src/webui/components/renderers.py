@@ -1625,45 +1625,136 @@ def details_list(rows: Iterable[Tuple[str, str]], *,
     `summary_list`'s rows (`titles` and `classes` as there), wherever a line
     names a few of many (`named_words`) and the rest are one click away.
     Where the server draws it again while it is read (a poll), its
-    ``gr.HTML`` takes `KEEP_OPEN_JS`."""
+    ``gr.HTML`` takes `KEEP_OPEN_JS`, and the thing it is of is named around
+    it (`keep_as`)."""
     return ('<details class="shep-more"><summary>Details ›</summary>'
             f'{summary_list(rows, titles=titles, classes=classes)}</details>')
 
 
 #: **Disclosures as the reader left them, across redraws**: the
-#: ``js_on_load`` of a ``gr.HTML`` the server draws again while it is read
-#: (the Test page's job card, redrawn by its poll as a run prints). Gradio
-#: 6.30 redraws HTML in place and sets each element's attributes to the new
-#: HTML's, so a ``details`` the reader opened (`details_list`'s, drawn
-#: closed) closed again on each redraw. The reader's own open or close (a
-#: click on its summary; Enter and Space send one) is kept by the summary's
-#: words and its place among the disclosures with those words, and put back
-#: after each redraw for the life of the page.
+#: ``js_on_load`` of every ``gr.HTML`` the server draws again while it is
+#: read (a poll, a tick, a render) and that holds a disclosure, alone or
+#: before the element's own script. Gradio 6.30 draws HTML again in place and
+#: sets each element's attributes to the new HTML's, so a disclosure the
+#: reader opened was drawn closed again by the next drawing (T06-C: the Test
+#: job card's Details; T08-flow-2: Training's "Details ›" popovers). Both
+#: kinds are kept: a ``details`` (its ``open``) and a button with
+#: ``aria-expanded`` and ``aria-controls`` naming its popover in the same
+#: HTML (the button's ``aria-expanded``, the popover's ``hidden``; how it
+#: opens and closes is its own script's). The reader's own change, by any
+#: means (a click, Enter or Space, Escape, a click outside, focus leaving), is
+#: told from a drawing's by a mark this script sets on each disclosure, which
+#: a drawing takes off: a change seen on a marked disclosure is the reader's,
+#: and is kept; a disclosure without it was drawn again, and gets the
+#: reader's last choice back, with no focus moved (an open by the reader's
+#: own click focuses, never this); only where the drawing replaced the
+#: control the reader's focus was on in it, and left focus nowhere, is focus
+#: put back on the same place, without scrolling (so Escape still reaches the
+#: popover); focus the reader moved away, to the page itself included (a
+#: click on text), is never brought back. A disclosure is the same one while
+#: the region names the same thing (`keep_as`, on an element around it;
+#: none: the region's one thing), its summary's or its button's words are the
+#: same and so is its place among those; a choice for one no longer drawn
+#: (another run, another job) is dropped.
 KEEP_OPEN_JS = r"""
-var chosen = {};
-function words(d) {
-  var s = d.querySelector(':scope > summary');
-  return s ? s.textContent : '';
-}
-function keyOf(d) {
-  var all = element.querySelectorAll('details'), mine = words(d), n = 0;
-  for (var i = 0; i < all.length && all[i] !== d; i++) { if (words(all[i]) === mine) { n++; } }
-  return mine + '\u0000' + n;
-}
-element.addEventListener('click', function (e) {
-  var s = e.target.closest ? e.target.closest('summary') : null;
-  var d = s ? s.parentElement : null;
-  if (d && d.tagName === 'DETAILS' && element.contains(d)) { chosen[keyOf(d)] = !d.open; }
-});
-function keep() {
-  element.querySelectorAll('details').forEach(function (d) {
-    var want = chosen[keyOf(d)];
-    if (want !== undefined && d.open !== want) { d.open = want; }
+(function () {
+  var MARK = 'data-shep-kept', chosen = {}, focused = null;
+  var CONTROLS = 'a[href], button, input, select, textarea, summary, [tabindex]';
+  function popover(b) {
+    var p = document.getElementById(b.getAttribute('aria-controls'));
+    return p && element.contains(p) ? p : null;
+  }
+  function isOpen(d) {
+    return d.tagName === 'DETAILS' ? d.open : d.getAttribute('aria-expanded') === 'true';
+  }
+  function setOpen(d, open) {
+    if (d.tagName === 'DETAILS') { d.open = open; return; }
+    popover(d).hidden = !open;
+    d.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  function words(d) {
+    if (d.tagName === 'DETAILS') {
+      var s = d.querySelector(':scope > summary');
+      return s ? s.textContent : '';
+    }
+    return d.textContent + '\u0001' + d.getAttribute('aria-controls');
+  }
+  // A disclosure's controls in order, its summary or its button first.
+  function controls(d) {
+    var inside = Array.prototype.slice.call(
+      (d.tagName === 'DETAILS' ? d : popover(d)).querySelectorAll(CONTROLS));
+    return d.tagName === 'DETAILS' ? inside : [d].concat(inside);
+  }
+  // Each disclosure drawn, by its key: what the region names, its words, its place.
+  function disclosures() {
+    var seen = {}, all = [];
+    element.querySelectorAll('details, [aria-expanded][aria-controls]').forEach(function (d) {
+      if (d.tagName !== 'DETAILS' && !popover(d)) { return; }
+      var of = d.closest('[data-keep]'), named = of && element.contains(of);
+      var key = (named ? of.getAttribute('data-keep') : '') + '\u0000' + words(d);
+      seen[key] = (seen[key] || 0) + 1;
+      all.push({d: d, key: key + '\u0000' + seen[key]});
+    });
+    return all;
+  }
+  function keep() {
+    var drawn = {};
+    disclosures().forEach(function (x) {
+      var d = x.d;
+      drawn[x.key] = d;
+      if (!d.hasAttribute(MARK)) {
+        var want = chosen[x.key];
+        if (want !== undefined && want !== isOpen(d)) { setOpen(d, want); }
+        d.setAttribute(MARK, '');
+      } else if (d.__shepOpen !== isOpen(d)) {
+        chosen[x.key] = isOpen(d);
+      }
+      d.__shepOpen = isOpen(d);
+    });
+    Object.keys(chosen).forEach(function (k) { if (!drawn[k]) { delete chosen[k]; } });
+    // A drawing that replaced the control the reader's focus was on, and left
+    // focus nowhere, puts it back on the same place in the same disclosure.
+    var now = document.activeElement, d = focused && drawn[focused.key];
+    if (d && !focused.el.isConnected && (!now || now === document.body)
+        && (focused.at === 0 || isOpen(d))) {
+      var to = controls(d)[focused.at];
+      if (to) { to.focus({preventScroll: true}); }
+    }
+  }
+  element.addEventListener('focusin', function (e) {
+    focused = null;
+    disclosures().some(function (x) {
+      var at = controls(x.d).indexOf(e.target);
+      if (at >= 0) { focused = {el: e.target, key: x.key, at: at}; }
+      return at >= 0;
+    });
   });
-}
-new MutationObserver(keep).observe(element, {childList: true, subtree: true, attributes: true,
-                                             attributeFilter: ['open']});
+  // Focus that went nowhere is the reader's (a click on text or a chart),
+  // unless a drawing removed its control: the browser tells the two alike (a
+  // focusout, the control still in the page), so the place is forgotten once
+  // the script running now (a drawing's, which removes it) is done, where
+  // the control is still in the page and focus is not on it.
+  element.addEventListener('focusout', function (e) {
+    var was = focused;
+    if (e.relatedTarget) { focused = null; return; }
+    queueMicrotask(function () {
+      if (was && focused === was && was.el.isConnected && document.activeElement !== was.el) {
+        focused = null;
+      }
+    });
+  });
+  new MutationObserver(keep).observe(element, {childList: true, subtree: true, attributes: true,
+    attributeFilter: ['open', 'hidden', 'aria-expanded', MARK]});
+  keep();
+})();
 """
+
+
+def keep_as(identity: Any) -> str:
+    """The attribute naming **what a region shows** (a run, a job, a
+    workspace), put on the element around its disclosures: `KEEP_OPEN_JS`
+    keeps a disclosure as the reader left it only while it is the same."""
+    return f' data-keep="{e(identity)}"'
 
 
 def named_words(named: Sequence[str], shown: int) -> str:
@@ -2462,27 +2553,46 @@ def _task_rows(mode: str, metrics: Mapping[str, Any]) -> List[Tuple[str, str]]:
     return rows
 
 
+def lp_metric_names(names: Iterable[Any]) -> List[Any]:
+    """**A KG link-prediction record's metrics in the order every surface
+    shows them**: the measurement's own (`caveats.LP_METRIC_WORDS`' order)
+    among `names`, then any other name in the order given, each once."""
+    names = list(dict.fromkeys(names))
+    return [*(n for n in LP_METRIC_WORDS if n in names),
+            *(n for n in names if n not in LP_METRIC_WORDS)]
+
+
+def lp_metric_words(name: Any) -> str:
+    """A KG link-prediction metric by its plain name, as a row's key or a
+    column's head (`caveats.LP_METRIC_WORDS`: "Accuracy (raw > 0)",
+    "ROC-AUC", "Average precision"); a name the measurement does not write
+    keeps its recorded name."""
+    words = LP_METRIC_WORDS.get(name, str(name))
+    return words[:1].upper() + words[1:]
+
+
+def lp_value_html(value: Any, computed: bool = True) -> str:
+    """A KG link-prediction metric's value as every surface shows it: four
+    decimals (`record_number`), or "Not computable" where its record says it
+    could not be computed (a status, never a number)."""
+    return e(record_number(value)) if computed else status_mark("neutral", "Not computable")
+
+
 def _lp_rows(view: Mapping[str, Any], metrics: Mapping[str, Any]) -> List[Tuple[str, str]]:
     """**A KG link-prediction record's figures** (B72-C2): each metric under
-    its plain name (`caveats.LP_METRIC_WORDS`: "ROC-AUC", "Average
-    precision"), its value to four decimals, and under it, once, its unit and
-    its denominator as the record's ``measured`` holds them; a metric that
-    could not be computed is that status, never a number. A name the
-    measurement does not write keeps its recorded name. The values as
-    recorded are one click away (`recorded_metrics_fold`)."""
+    its plain name (`lp_metric_words`), its value to four decimals
+    (`lp_value_html`), and under it, once, its unit and its denominator as
+    the record's ``measured`` holds them; a metric that could not be
+    computed is that status, never a number. The values as recorded are one
+    click away (`recorded_metrics_fold`). Models › Results' table reads the
+    same three (`results_segment`)."""
     statuses = _dig(view, "measured", "metrics")
     statuses = statuses if isinstance(statuses, Mapping) else {}
-    names = [*(n for n in LP_METRIC_WORDS if n in metrics or n in statuses),
-             *(n for n in metrics if n not in LP_METRIC_WORDS),
-             *(n for n in statuses if n not in LP_METRIC_WORDS and n not in metrics)]
     rows = []
-    for name in names:
-        words = LP_METRIC_WORDS.get(name, str(name))
+    for name in lp_metric_names([*metrics, *statuses]):
         status = statuses.get(name) if isinstance(statuses.get(name), Mapping) else None
-        if status is not None and status.get("status") != "computed":
-            value = status_mark("neutral", "Not computable")
-        else:
-            value = e(record_number(metrics.get(name)))
+        value = lp_value_html(metrics.get(name),
+                              status is None or status.get("status") == "computed")
         if status is not None:
             unit = status.get("unit")
             over = _dig(status, "denominator", "count")
@@ -2492,7 +2602,7 @@ def _lp_rows(view: Mapping[str, Any], metrics: Mapping[str, Any]) -> List[Tuple[
                 f"over {recorded_count_text(over)} {over_unit}"
                 if isinstance(over_unit, str) and over_unit else None) if part)
             value += f'<div class="shep-sub">{e(said)}</div>' if said else ""
-        rows.append((words[:1].upper() + words[1:], value))
+        rows.append((lp_metric_words(name), value))
     return rows
 
 
@@ -2759,9 +2869,9 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
     trained_label = FACTS_TRAINED_FP + (f" · {', '.join(facts.trained_on_names)}"
                                         if facts.trained_on_names else "")
     # A listed file trained on the chosen workspace's current dataset: by that
-    # relation, the dataset said once, under the list's workspace select.
-    trained_row = (("Trained on", e(CURRENT_DATASET)) if facts.current_dataset
-                   else (trained_label, data_fp))
+    # relation, said once, in Data (T08-flow-5: Identity said it too); the
+    # dataset itself is said under the list's workspace select.
+    trained_rows = ([] if facts.current_dataset else [(trained_label, data_fp)])
     identity = summary_list([
         ("Model", e(facts.name_line)),
         *([("Task", e(facts.task))] if facts.task else []),
@@ -2769,7 +2879,7 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
         ("Run", f"<code>{e(facts.run)}</code>" if facts.run else "—"),
         ("Checkpoint file", location or "—"),
         (FACTS_MODEL_FP, model_fp),
-        trained_row,
+        *trained_rows,
         *facts.served_rows,
     ], wide=(FACTS_MODEL_FP, trained_label, *(label for label, _value in facts.served_rows)))
     uses_text = f"{NOT_A_MEDICAL_DEVICE} {SYNTHETIC_FOR_TESTING}"
@@ -2810,6 +2920,9 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
 __all__ = [
     "CURRENT_DATASET",
     "LP_MODE",
+    "lp_metric_names",
+    "lp_metric_words",
+    "lp_value_html",
     "NOT_REPORTED",
     "ORIGIN_MEANING",
     "RECORD_TILES",
@@ -2863,6 +2976,7 @@ __all__ = [
     "cut_at",
     "dataset_details_html",
     "details_list",
+    "keep_as",
     "SHORT_HEX",
     "SYNTHETIC_FOR_TESTING",
     "SYNTHETIC_SOURCES",

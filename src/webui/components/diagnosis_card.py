@@ -838,7 +838,11 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
     # The whole reason only where nothing is served (a stop's model still has
     # the card's own Details ›), one level, never inside another disclosure.
     if state != STOPPING and isinstance(reason, str) and reason:
-        line += ('<details class="shep-more shep-dx-why-more"><summary>Details ›</summary>'
+        # Named by the state and when it began: the poll's next drawing keeps
+        # it as the reader left it while it is the same (`r.KEEP_OPEN_JS`).
+        line += (f'<details class="shep-more shep-dx-why-more"'
+                 f'{r.keep_as(f"{state} at {when}" if when else state)}>'
+                 '<summary>Details ›</summary>'
                  f'<p class="shep-dx-line">{r.e(reason)}</p></details>')
     if state == STOPPED and not grey:
         line += ('<p class="shep-dx-line"><button type="button" class="shep-dx-link '

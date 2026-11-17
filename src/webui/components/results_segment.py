@@ -38,9 +38,11 @@ without reading again:
   with byte-equal reports are told apart; the same name its Compare option
   and column head say), its model (its family too in the workspace scope),
   its data (kind and role, never "test" for another role), its metrics as
-  Models shows a record of its protocol (a described task's two figures,
-  unrounded where its condition group's runs differ on them, as Models'
-  contest shows them; any other protocol's every metric as recorded), its
+  Test and Models show a record of its protocol (a described task's two
+  figures; a KG link prediction's every metric under its plain name, four
+  decimals, each unit said once under the table, B72-C2; unrounded where its
+  condition group's runs differ on them, as Models' contest shows them; any
+  other protocol's every metric as recorded), its
   state (report kept or "report not available" for a ledger-only record;
   registered, not registered, merged, or a record naming it that cannot be
   read; bytes that differ elsewhere; how its condition group compares) and
@@ -461,25 +463,51 @@ def _metric_value(metric: Mapping[str, Any]) -> str:
     return recorded_value_text(metric.get("value"))
 
 
-def _metrics_cells(protocol: Any, row: Mapping[str, Any]) -> str:
-    """A described task's two figures, four decimals, as Models' columns show
-    them; a figure its condition group's runs differ on as recorded,
-    unrounded (`models_page.contested_value_text`, Models' contest), so two
-    runs that differ never read as equal beside "runs ... differ". Any other
-    protocol's every metric as recorded."""
-    metrics = row.get("metrics") or []
+def _metric_columns(protocol: Any, rows: Sequence[Mapping[str, Any]]) -> Optional[List[Any]]:
+    """The metrics a protocol's table shows in columns of their own: a
+    described task's two (`models_page.RECORD_COLUMNS`), a KG link
+    prediction's every metric its rows record, in the order its record shows
+    them (`renderers.lp_metric_names`, B72-C2); None for any other protocol,
+    whose every metric is shown as recorded in one column."""
     columns = mp.RECORD_COLUMNS.get(protocol)
     if columns:
-        by_name = {m.get("name"): m.get("value") for m in metrics}
+        return list(columns)
+    if protocol == r.LP_MODE:
+        return r.lp_metric_names(m.get("name") for row in rows
+                                 for m in row.get("metrics") or []) or None
+    return None
+
+
+def _metrics_cells(protocol: Any, row: Mapping[str, Any],
+                   columns: Optional[Sequence[Any]]) -> str:
+    """A row's figures in their columns (`_metric_columns`), four decimals,
+    as Test and Models show a record of its protocol (R-82): a described
+    task's two as Models' columns show them, a KG link prediction's by the
+    record's one rendering (`renderers.lp_value_html`: "Not computable" for a
+    metric its record could not compute); a figure its condition group's runs
+    differ on as recorded, unrounded (`models_page.contested_value_text`,
+    Models' contest), so two runs that differ never read as equal beside
+    "runs ... differ". Any other protocol's every metric as recorded."""
+    metrics = row.get("metrics") or []
+    if columns:
+        by_name = {m.get("name"): m for m in metrics}
         group = row.get("group") or {}
         differing = (set(group.get("differing") or []) if group.get("state") == "contested"
                      else set())
         cells = []
         for name in columns:
-            value = by_name.get(name)
-            text = (mp.contested_value_text(value) if name in differing
-                    else mp.fmt_metric(name, value))
-            cells.append(f'<td class="shep-num">{r.e(text)}</td>')
+            metric = by_name.get(name) or {}
+            value = metric.get("value")
+            if protocol == r.LP_MODE and metric.get("status") not in (None, "recorded",
+                                                                      "computed"):
+                text = r.lp_value_html(value, computed=False)
+            elif name in differing:
+                text = r.e(mp.contested_value_text(value))
+            elif protocol == r.LP_MODE:
+                text = r.lp_value_html(value)
+            else:
+                text = r.e(mp.fmt_metric(name, value))
+            cells.append(f'<td class="shep-num">{text}</td>')
         return "".join(cells)
     if not metrics:
         return '<td><span class="shep-muted">no metric recorded</span></td>'
@@ -552,12 +580,37 @@ def _environment_cell(row: Mapping[str, Any]) -> str:
     return f'<div>{r.e(environment.get("class") or "not reported")}</div>{sub}'
 
 
-def _metric_heads(protocol: Any) -> str:
-    columns = mp.RECORD_COLUMNS.get(protocol)
+def _metric_words(protocol: Any, name: Any) -> str:
+    """A metric column's head: a described task's by its measurement's name
+    ("Disease pooled MRR", `caveats.metric_text`), a KG link prediction's by
+    its plain name as its record reads ("ROC-AUC", `renderers.lp_metric_words`)."""
+    return r.lp_metric_words(name) if protocol == r.LP_MODE else metric_text(protocol, name)
+
+
+def _metric_heads(protocol: Any, columns: Optional[Sequence[Any]]) -> str:
     if columns:
-        return "".join(f'<th scope="col" class="shep-num">{r.e(metric_text(protocol, name))}'
+        return "".join(f'<th scope="col" class="shep-num">{r.e(_metric_words(protocol, name))}'
                        '</th>' for name in columns)
     return '<th scope="col">Recorded metrics</th>'
+
+
+def _units_html(protocol: Any, rows: Sequence[Mapping[str, Any]],
+                columns: Optional[Sequence[Any]]) -> str:
+    """Each metric column's unit, said once under its table (the skill's §5),
+    in the words the rows' records hold (a KG edge set's run records each
+    metric's unit, `results._metrics`); nothing for a column no row records
+    one for."""
+    units = []
+    for name in columns or ():
+        said = list(dict.fromkeys(
+            m["unit"] for row in rows for m in row.get("metrics") or []
+            if m.get("name") == name and isinstance(m.get("unit"), str) and m["unit"]))
+        if said:
+            units.append((_metric_words(protocol, name), r.e("; ".join(said))))
+    if not units:
+        return ""
+    return ('<p class="shep-mp-p shep-rs-units-h">Units</p>'
+            + r.summary_list(units, classes="shep-rs-units"))
 
 
 def protocol_table_html(protocol: Any, rows: Sequence[Mapping[str, Any]],
@@ -570,10 +623,11 @@ def protocol_table_html(protocol: Any, rows: Sequence[Mapping[str, Any]],
     every value escaped."""
     family = (scope or {}).get("scope") != FAMILY
     names = list(names) if names is not None else row_names(rows)
+    columns = _metric_columns(protocol, rows)
     body = "".join(
         f'<tr><td class="shep-rs-name">{_name_html(name)}</td>'
         f'<td>{_model_cell(row, family=family)}</td>'
-        f'<td>{_data_cell(row)}</td>{_metrics_cells(protocol, row)}'
+        f'<td>{_data_cell(row)}</td>{_metrics_cells(protocol, row, columns)}'
         f'<td>{_state_cell(row)}</td><td>{_exposure_cell(row)}</td>'
         f'<td>{_environment_cell(row)}</td></tr>' for row, name in zip(rows, names))
     label = mode_label(protocol)
@@ -584,8 +638,9 @@ def protocol_table_html(protocol: Any, rows: Sequence[Mapping[str, Any]],
             '<div class="shep-tbl-wrap shep-rs-wrap"><table class="shep-tbl shep-rs-tbl" '
             f'aria-label="{r.e("Results, " + label)}"><thead><tr>'
             '<th scope="col">Result</th><th scope="col">Model</th><th scope="col">Data</th>'
-            f'{_metric_heads(protocol)}<th scope="col">State</th><th scope="col">Exposure</th>'
-            f'<th scope="col">Environment</th></tr></thead><tbody>{body}</tbody></table></div>')
+            f'{_metric_heads(protocol, columns)}<th scope="col">State</th>'
+            '<th scope="col">Exposure</th><th scope="col">Environment</th></tr></thead>'
+            f'<tbody>{body}</tbody></table></div>{_units_html(protocol, rows, columns)}')
 
 
 def _where_text(where: Any) -> str:
