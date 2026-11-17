@@ -2964,6 +2964,8 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
         result["_query_candidate_genes"] = genes
     result["_explanations"] = explanations
     result["_received_at"] = card.stamp(datetime.now())
+    # The boxes as this run read them (`answered_inputs`).
+    result["_query_inputs"] = query_inputs(phenotype_text, genes_text, cohort)
     # A response that does not name its kind shows no candidate: nothing is
     # selected and nothing is exported (the body says why).
     candidates = (result.get("candidates") or []) if _result_kind(result) is not None else []
@@ -3011,6 +3013,30 @@ def phenotypes_changed(result: Any, state: Any) -> Dict[str, Any]:
     out["card_state"] = {**state, "rendered": {
         **(state.get("rendered") or {}), "badge": ""}}
     return out
+
+
+def query_inputs(phenotype_text: Any, genes_text: Any, cohort: Any) -> List[Any]:
+    """The inputs whose every edit clears a result (the HPO box, the genes
+    box and the Reference cohort's pick: `phenotypes_changed`), as a run
+    read them and as they are now, in one form to compare."""
+    return [phenotype_text or "", genes_text or "", cohort or None]
+
+
+def answered_inputs(result: Any, state: Any, phenotype_text: Any, genes_text: Any,
+                    cohort: Any) -> Dict[str, Any]:
+    """**A result is shown only for the query it answered** (UI-15, B73): run
+    once Run Diagnosis' answer is written, with the inputs as they are then.
+    An edit made while the run was in flight cleared only the result shown
+    before it (`phenotypes_changed`; the run and the edit are events of their
+    own), so the answer, to the inputs as they were when Run was pressed,
+    came under the edited box. When the inputs the result ran on
+    (``_query_inputs``) are not the ones shown, it is cleared as an edit
+    clears it; otherwise nothing changes, and the result keeps its model's
+    identity."""
+    if not result or (isinstance(result, Mapping) and result.get("_query_inputs")
+                      == query_inputs(phenotype_text, genes_text, cohort)):
+        return {}
+    return phenotypes_changed(result, state)
 
 
 def cohort_picked(result: Any, state: Any, cohort: Any) -> Dict[str, Any]:
@@ -3777,17 +3803,27 @@ def create_diagnosis_tab(ctx: Any) -> None:
         return mapped(diagnose(text, patient, top_k, explanations, state, phase, view, request,
                                genes_text=genes, cohort=cohort))
 
-    run_btn.click(_run_diagnosis,
-                  inputs=[phenotype_input, patient_id_input, top_k_input, explanations_input,
-                          card_state, handle.phase, identity_view, genes_input, cohort_input],
-                  outputs=outputs(*dict.fromkeys(result_names + card_names + identity_names)))
-
     def _phenotypes_edited(result, state):
         return mapped(phenotypes_changed(result, state))
 
     edited = {"fn": _phenotypes_edited, "inputs": [results_state, card_state],
               "outputs": outputs(*dict.fromkeys(result_names + ("card_state",))),
               "show_progress": "hidden"}
+
+    def _answered_inputs(result, state, text, genes, cohort):
+        return mapped(answered_inputs(result, state, text, genes, cohort))
+
+    # The answer is written, then checked against the inputs as they are now
+    # (`answered_inputs`): an edit made while the run was in flight clears it
+    # as any edit does. Outside the queue, so it follows the answer at once.
+    run_btn.click(_run_diagnosis,
+                  inputs=[phenotype_input, patient_id_input, top_k_input, explanations_input,
+                          card_state, handle.phase, identity_view, genes_input, cohort_input],
+                  outputs=outputs(*dict.fromkeys(result_names + card_names + identity_names))
+                  ).then(_answered_inputs,
+                         inputs=[results_state, card_state, phenotype_input, genes_input,
+                                 cohort_input],
+                         outputs=edited["outputs"], queue=False, show_progress="hidden")
     # Every change of a box's text clears the result (UI-15, B73): its
     # ``.change``. Gradio 6.30's Textbox dispatches ``.input`` from a keypress
     # alone, so select all then Delete, a cut, a paste or an input method's
