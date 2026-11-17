@@ -2061,8 +2061,8 @@ def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, mon
     assert "bad\\xff" in entry and "a folder in runs/" in entry and "RUNS" not in entry
     assert "runs/bad\\xff cannot be listed (…)" in entry          # why, on the page
     # Counted apart, never as a run or a saved file (B69 L3), a filter's
-    # "of N runs" too (it read "Disease: 3 of 10 runs").
-    assert ml.count_line(data, research, False) == "9 runs, 10 saved files, 1 entry not listed"
+    # "of N runs" too (it read "Disease: 3 of 10 runs"), by its state (V-22).
+    assert ml.count_line(data, research, False) == "9 runs, 10 saved files, 1 entry not read"
     assert ml.count_line(data, research, False, {"task": "disease"}) == "Disease: 3 of 9 runs"
     # A file whose metadata cannot be read: named once, in its Model cell; its
     # state and reason in words on the page, the loader's reference left to
@@ -2080,6 +2080,31 @@ def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, mon
 def _entry_rows(html):
     """The rows of entries the listing could not list (no key: no choice)."""
     return re.findall(r'<tr class="shep-tree-entry[^"]*"[^>]*>.*?</tr>', html, re.S)
+
+
+def test_the_count_line_says_an_unlisted_entry_in_its_rows_words(root, serving, monkeypatch):
+    """V-22 (the verification of fcc3dea, part RB2): beside a run folder whose
+    name is not valid text, Models' count line read "3 runs, 7 saved files, 1
+    entry not listed" while that entry's row was drawn in the list, saying it
+    "cannot be listed …, so no file in it is read". The count says the
+    entry's state as its row does: never opened, "not read" (the one word
+    for that state, `renderers.unreadable_words`), counted once, apart from
+    the runs and files; the drawer, which lists task models only, draws no
+    such row and counts none. Fails on 78444a6."""
+    from src.webui.components import renderers as r
+
+    runs = root["workspace"] / "runs" / "gatv2"
+    (runs / os.fsdecode(b"bad\xff")).mkdir()
+    listing = ml.list_models("demo", operator_request(monkeypatch))
+    research, clinical = ml.PRESETS["research"], ml.PRESETS["clinical"]
+    count = ml.count_line(listing, research, False)
+    assert count == "8 runs, 9 saved files, 1 entry not read", count
+    (item,) = [i for i in listing["items"] if r.entry_place(i)]
+    assert r.unreadable_words(item) == "not read"
+    (row,) = _entry_rows(ml.list_html(listing, None, research))
+    assert "so no file in it is read" in _visible(row)
+    assert _entry_rows(ml.list_html(listing, None, clinical, show_older=True)) == []
+    assert "entry" not in ml.count_line(listing, clinical, True)
 
 
 def _row_of_key(html, key):

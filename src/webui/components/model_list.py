@@ -1290,7 +1290,8 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     a family view's context, the runs a shown run descends from, counted
     apart); a search says what matches ("3 runs match “disease”, with 2 runs
     they come from"). Counted against what the preset ever lists (the drawer:
-    its task models), an entry the listing could not list never a run; while
+    its task models), an entry the listing could not list never a run (it is
+    counted apart, by its state: "1 entry not read"); while
     the drawer leaves runs out (not read yet, `runs_unread`, or beyond its
     latest), a search and a filter say they saw the latest runs only ("1 run
     matches “gene” in the latest runs", "Gene: 1 of the latest 4 runs"), never
@@ -1305,7 +1306,9 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     tree = tree_view(listing, view, preset, search=query, fold=fold, show_older=show_older)
     # A run is counted once, whatever groups it is drawn in; an entry the
     # listing could not list (a directory, B69) is counted apart, never as
-    # a run or a saved file.
+    # a run or a saved file, by the state its row says (V-22: "not listed"
+    # beside its own row read as a contradiction): never opened, so "not
+    # read", the one word for that state (`renderers.unreadable_words`).
     entries = {k for k in tree.matched if r.entry_place(find_item(listing, k) or {})}
     runs = list(dict.fromkeys(run.key for g in tree.groups for run in g.runs
                               if not run.context and run.files[0] not in entries))
@@ -1336,7 +1339,7 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
         body = (f"{_counted(families, 'family')}, " if families else "") + (
             f"{_counted(len(runs), 'run')}, {_counted(files, 'saved file')}")
     with_ = f", with {_counted(context, 'run')} they come from" if context else ""
-    unlisted = f", {_counted(len(entries), 'entry')} not listed" if entries else ""
+    unlisted = f", {_counted(len(entries), 'entry')} not read" if entries else ""
     return f"{lead}{body}{with_}{unlisted}"
 
 
