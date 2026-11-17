@@ -1505,10 +1505,14 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-empty {{ margin: 0; color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-from {{ margin: 0; overflow-wrap: anywhere; }}
 {_PAGE} .shep-ft-k {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); margin-right: 8px; }}
+/* The card's table fits its card (T08-flow-6: kept on one line, its heads and its run name made
+   it wider than the card, its last column cut at the panel's edge): a head of a word or two wraps
+   at its spaces, a run name after its own hyphens (never inside a token, as Compare's run ids),
+   so nothing is cut and nothing scrolls sideways; a number never breaks. */
 {_PAGE} .shep-ft-table {{ width: 100%; border-collapse: collapse; font-size: 15px; }}
-{_PAGE} .shep-ft-table th {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 8px; border-bottom: 1px solid var(--shep-border); white-space: nowrap; }}
+{_PAGE} .shep-ft-table th {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 8px; border-bottom: 1px solid var(--shep-border); vertical-align: bottom; }}
 {_PAGE} .shep-ft-table td {{ padding: 8px; border-bottom: 1px solid var(--shep-border); vertical-align: top; min-width: 0; }}
-{_PAGE} .shep-ft-table code.shep-ident {{ max-width: 40ch; }}
+{_PAGE} .shep-ft-table code.shep-ident {{ white-space: normal; overflow: visible; max-width: none; }}
 {_PAGE} .shep-ft-links {{ margin: 0; }}
 {_PAGE} .shep-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; font-weight: 400; }}
 {_PAGE} .shep-link:hover {{ text-decoration: underline; }}
