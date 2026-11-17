@@ -3638,6 +3638,74 @@ def test_a_failed_runs_output_tail_starts_by_the_window_and_keeps_the_readers_ch
     assert seen["960x1080"]["drawn"]["layout"] == "stack"
 
 
+#: A failed run's banner whose HTML holds the failure when it mounts (its tab
+#: opened after it was written, as Training is), at three windows: once the
+#: one keeper has taken the tail in hand (its mark on it), whether it is open;
+#: a screen of each under argv[3].
+_BANNER_MOUNT_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const [base, shots] = [process.argv[2], process.argv[3]];
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [960, 1080], [1920, 1080]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h },
+                                                   deviceScaleFactor: 1 })).newPage();
+    await page.goto(base, { waitUntil: 'load' });
+    await page.waitForSelector('#other-page');
+    await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout'));
+    const unmounted = await page.evaluate(() => !document.getElementById('shep-train-banner'));
+    await page.getByRole('tab', { name: 'Training' }).click();
+    const tail = '#shep-train-banner details.shep-banner-more';
+    await page.waitForSelector(tail + '[data-shep-kept]', { state: 'attached' });
+    await page.screenshot({ path: `${shots}/banner-mounted_${w}x${h}.png` });
+    out[w + 'x' + h] = await page.evaluate(([t, u]) => ({ unmounted: u, open: document.querySelector(t).open,
+      layout: document.documentElement.getAttribute('data-shep-layout') }), [tail, unmounted]);
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_failed_runs_output_tail_drawn_as_the_banner_mounts_starts_by_the_window(tmp_path):
+    """The review of e1dda3e (V-16): the one keeper (`renderers.KEEP_OPEN_JS`)
+    took the disclosures already in a region's HTML as it mounts before the
+    region's own script had given its default (``shepKeepDefault``), so a
+    failed run's tail written before its banner mounted (Training opened
+    after the failure) was drawn as its HTML says, open, whatever the
+    window. Now the keeper's first pass runs after the region's own script:
+    the tail starts at the banner's default, closed at 1850 x 960 (side by
+    side, short) and open at 960 x 1080 and 1920 x 1080. In a real browser
+    (skipped without Node and Playwright), the dashboard's head deciding the
+    layout. Fails on e1dda3e (open at 1850 x 960); d8d1828's banner applied
+    its default by a script of its own, which 5d8e6d5 retired."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    printed = "\n\n--- Last output ---\n" + "\n".join(f"epoch {i}: loss 0.{i}" for i in range(12))
+    html, _key = tc._build_error_banner_payload(
+        {"error_message": "Process exited with code 1" + printed, "job_id": "TRAIN-a"},
+        None, run="gatv2/run-a")
+    with gr.Blocks() as page:
+        with gr.Tabs():
+            with gr.Tab("Other", id="other"):
+                gr.Markdown("Another page", elem_id="other-page")
+            with gr.Tab("Training", id="train"):
+                shell.plain_html(html, elem_id="shep-train-banner", js_on_load=tc._BANNER_JS)
+    shots = tmp_path / "shots"
+    shots.mkdir()
+    with served(page, **mount_options()) as base:
+        seen = run_node(_BANNER_MOUNT_JS, tmp_path, base[:-len("gradio_api")], str(shots))
+    for size, default in (("1850x960", False), ("960x1080", True), ("1920x1080", True)):
+        assert seen[size]["unmounted"], (size, seen)
+        assert seen[size]["open"] is default, (size, seen)
+    assert seen["1850x960"]["layout"] == "side" and seen["960x1080"]["layout"] == "stack"
+
+
 #: The Training page as the service mounts it: four settings typed, so the
 #: "Set by you" line names three and counts one, with its "Details ›"; the
 #: Details opened by the reader; a fifth setting typed (the reader's own act

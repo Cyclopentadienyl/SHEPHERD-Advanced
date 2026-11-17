@@ -1676,9 +1676,13 @@ def details_list(rows: Iterable[Tuple[str, str]], *, of: Any = None,
 #: unless the region's own script (which runs after this one) gives a default
 #: the HTML cannot say, one that hangs on the window: a function
 #: ``element.shepKeepDefault(d)`` answering true (open), false (closed) or
-#: undefined (as drawn), asked each time such a disclosure is drawn; the
-#: reader's own choice always wins over it (Training's failed-run banner: its
-#: output tail, closed on a short side-by-side window; UI ledger V-16).
+#: undefined (as drawn), asked each time such a disclosure is drawn, the
+#: drawing the region mounts with included (this script's first pass waits
+#: for the region's own script: before, a disclosure already in the HTML as
+#: the region mounted was taken as drawn, its default never asked; the review
+#: of e1dda3e); the reader's own choice always wins over it (Training's
+#: failed-run banner: its output tail, closed on a short side-by-side window;
+#: UI ledger V-16).
 KEEP_OPEN_JS = r"""
 (function () {
   var MARK = 'data-shep-kept', chosen = {}, focused = null;
@@ -1773,7 +1777,9 @@ KEEP_OPEN_JS = r"""
   });
   new MutationObserver(keep).observe(element, {childList: true, subtree: true, attributes: true,
     attributeFilter: ['open', 'hidden', 'aria-expanded', MARK]});
-  keep();
+  // The drawing the region mounts with, once its own script (after this one,
+  // in the same js_on_load) has given its default.
+  queueMicrotask(keep);
 })();
 """
 
