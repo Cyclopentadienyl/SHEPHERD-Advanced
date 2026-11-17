@@ -2910,8 +2910,10 @@ def create_test_page(ctx: Any) -> None:
                 # The job's card at its natural height, after the choices:
                 # what it left, what it was given, the rest one Details away
                 # (`job_body_html`); none while no run was started. Its state
-                # is the foot's.
-                job_out = plain_html(job_body_html({}, [], ("none", "")), elem_id="shep-test-job")
+                # is the foot's. The poll draws it again as a run prints, so
+                # its Details stays as the reader left it (`r.KEEP_OPEN_JS`).
+                job_out = plain_html(job_body_html({}, [], ("none", "")), elem_id="shep-test-job",
+                                     js_on_load=r.KEEP_OPEN_JS)
             with gr.Column(elem_classes=["shep-test-runft"], elem_id="shep-test-runft"):
                 start = gr.Button(GATED_LABELS["start"], variant="primary",
                                   interactive=False, elem_id="shep-test-start")

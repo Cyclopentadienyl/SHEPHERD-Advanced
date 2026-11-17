@@ -1533,9 +1533,47 @@ def details_list(rows: Iterable[Tuple[str, str]], *,
     §1.5: low-priority detail one click away, one level, never inside another
     disclosure or a popover): a closed ``<details class="shep-more">`` over
     `summary_list`'s rows (`titles` and `classes` as there), wherever a line
-    names a few of many (`named_words`) and the rest are one click away."""
+    names a few of many (`named_words`) and the rest are one click away.
+    Where the server draws it again while it is read (a poll), its
+    ``gr.HTML`` takes `KEEP_OPEN_JS`."""
     return ('<details class="shep-more"><summary>Details ›</summary>'
             f'{summary_list(rows, titles=titles, classes=classes)}</details>')
+
+
+#: **Disclosures as the reader left them, across redraws**: the
+#: ``js_on_load`` of a ``gr.HTML`` the server draws again while it is read
+#: (the Test page's job card, redrawn by its poll as a run prints). Gradio
+#: 6.30 redraws HTML in place and sets each element's attributes to the new
+#: HTML's, so a ``details`` the reader opened (`details_list`'s, drawn
+#: closed) closed again on each redraw. The reader's own open or close (a
+#: click on its summary; Enter and Space send one) is kept by the summary's
+#: words and its place among the disclosures with those words, and put back
+#: after each redraw for the life of the page.
+KEEP_OPEN_JS = r"""
+var chosen = {};
+function words(d) {
+  var s = d.querySelector(':scope > summary');
+  return s ? s.textContent : '';
+}
+function keyOf(d) {
+  var all = element.querySelectorAll('details'), mine = words(d), n = 0;
+  for (var i = 0; i < all.length && all[i] !== d; i++) { if (words(all[i]) === mine) { n++; } }
+  return mine + '\u0000' + n;
+}
+element.addEventListener('click', function (e) {
+  var s = e.target.closest ? e.target.closest('summary') : null;
+  var d = s ? s.parentElement : null;
+  if (d && d.tagName === 'DETAILS' && element.contains(d)) { chosen[keyOf(d)] = !d.open; }
+});
+function keep() {
+  element.querySelectorAll('details').forEach(function (d) {
+    var want = chosen[keyOf(d)];
+    if (want !== undefined && d.open !== want) { d.open = want; }
+  });
+}
+new MutationObserver(keep).observe(element, {childList: true, subtree: true, attributes: true,
+                                             attributeFilter: ['open']});
+"""
 
 
 def named_words(named: Sequence[str], shown: int) -> str:

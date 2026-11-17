@@ -5391,3 +5391,90 @@ def test_the_run_options_the_idle_job_and_the_result_tiles_as_drawn(site, monkey
             rows = [tops] if size != "960x1080" else [tops[:2], tops[2:]]
             for row in rows:
                 assert max(row) - min(row) <= 2, (size, tops)
+
+
+#: The job card as the page draws it (`#shep-test-job`, its own
+#: ``js_on_load``), redrawn by the server while a run prints lines, as the
+#: poll's `_job_card_now` redraws it: the reader opens its Details, lines
+#: arrive, the reader closes it, a line arrives, the reader opens it again
+#: and the run ends. Each redraw is waited for by the output it brings.
+_JOB_FOLD_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.goto(base, { waitUntil: 'networkidle' });
+  const card = '#shep-test-job';
+  await page.waitForSelector(card + ' details > summary');
+  const read = () => page.evaluate((c) => {
+    const fold = document.querySelector(c + ' details');
+    const log = document.querySelector(c + ' pre');
+    return { open: fold.open, log: log ? log.textContent : '',
+             shown: !!log && log.checkVisibility(),
+             lead: document.querySelector(c).innerText.includes('Its report was kept') };
+  }, card);
+  const redrawn = (button, words) => page.click(button).then(() => page.waitForFunction(
+    ([c, w]) => document.querySelector(c).textContent.includes(w), [card, words], { timeout: 20000 }));
+  const toggle = () => page.click(card + ' details > summary');
+  const out = {};
+  out.drawn = await read();
+  await toggle(); out.opened = await read();
+  await redrawn('#line', 'scored batch 1'); out.line1 = await read();
+  await redrawn('#line', 'scored batch 2'); out.line2 = await read();
+  await toggle(); out.closed = await read();
+  await redrawn('#line', 'scored batch 3'); out.line3 = await read();
+  await toggle(); await redrawn('#end', 'Its report was kept'); out.ended = await read();
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_job_cards_details_stay_as_the_reader_left_them_while_the_run_prints(tmp_path):
+    """A running test's card is drawn again each time its output gains a line
+    (the poll's `_job_card_now`); Gradio's redraw sets each element's
+    attributes to the new HTML's, so the card's Details ›, which holds the
+    output tail (B52-E), closed under the reader on each new line: opened,
+    then one line later ``{open: false}``. In a real browser (skipped
+    without Node and Playwright), the card with the page's own
+    ``js_on_load``: opened, it stays open as lines arrive and its output
+    shows the new line; closed by the reader, a line leaves it closed; opened
+    again, it stays open when the run ends and its output folds under the
+    lead. Fails on f6b9289's page, whose card has no script: the first line
+    closed it."""
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    demo, _ctx, _registry = _page_component()
+    (drawn,) = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-test-job"]
+    job = {"status": "running", "inputs": {"version_label": LABEL, "device": "cpu"},
+           "log": ["scored batch 0"], "elapsed_seconds": 5}
+
+    def card():
+        return tp.job_body_html(job, [], ("busy", "GPU job: test run"))
+
+    def line():
+        job["log"] = [*job["log"], f"scored batch {len(job['log'])}"]
+        return card()
+
+    def end():
+        job.update(status="completed", exit_code=0, exit_meaning="measured",
+                   outcome={"kept": True, "registered": False, "summary": "Kept."})
+        return card()
+
+    with gr.Blocks() as page:
+        shown = tp.plain_html(card(), elem_id="shep-test-job", js_on_load=drawn.js_on_load)
+        gr.Button("Line", elem_id="line").click(line, outputs=[shown])
+        gr.Button("End", elem_id="end").click(end, outputs=[shown])
+    with served(page) as base:
+        seen = run_node(_JOB_FOLD_JS, tmp_path, base[:-len("gradio_api")])
+    assert seen["drawn"]["open"] is False and seen["opened"]["shown"] is True, seen
+    for step in ("line1", "line2"):
+        assert seen[step]["open"] is True and seen[step]["shown"] is True, (step, seen)
+    assert seen["line2"]["log"].endswith("scored batch 2"), seen
+    assert seen["closed"]["open"] is False and seen["line3"]["open"] is False, seen
+    assert "scored batch 3" in seen["line3"]["log"], seen
+    assert seen["ended"]["lead"] is True and seen["ended"]["open"] is True, seen
+    assert seen["ended"]["shown"] is True and "scored batch 3" in seen["ended"]["log"], seen
