@@ -2276,7 +2276,14 @@ def test_the_walks_reader_never_reads_gradios_status_tracker_as_a_blocks_words(t
     its wiring and the shell real, the served status and the card's facts
     stand-ins), the walk's reader reads the reason the page drew, by the
     walk's one ``words`` (`browser.LOOK_JS`): none for an operator, the
-    lock's words alone for a read-only viewer, never the timer."""
+    lock's words alone for a read-only viewer, never the timer.
+
+    A tracker Gradio draws is no such case (the review of 6a14d6b, R3-2): the
+    reader skipped every tracker, so a shown timer or a failed event's red
+    "Error" in a block read as nothing, and a check of that block passed. Read
+    on a page of its own (`_DRAWN_TRACKER_JS`), a drawn tracker's words are
+    read like any other: the timer beside a block's own words, the timer
+    alone, and "Error". Fails on 6a14d6b ("Own words", "", "")."""
     from src.webui.app import mount_options
     from src.webui.components import diagnosis_panel as dp
     from src.webui.components.chips import LOCK, OPERATOR_ONLY
@@ -2319,6 +2326,78 @@ def test_the_walks_reader_never_reads_gradios_status_tracker_as_a_blocks_words(t
     assert read_only["block"]["own"].startswith(f"{LOCK} {OPERATOR_ONLY}"), read_only
     assert change["off"] is True and change["text"] == f"{LOCK} Change model…", read_only
     assert change["why"] == read_only["block"]["own"], read_only
+    # A tracker Gradio draws is read like any other words (the review of
+    # 6a14d6b, R3-2): `_DRAWN_TRACKER_JS` on a page of its own.
+    with gr.Blocks() as drawn:
+        own = gr.HTML("<p>Own words</p>", elem_id="shep-t-own")
+        only = gr.HTML("", elem_id="shep-t-only")
+        gr.Button("Go", elem_id="shep-t-go").click(
+            lambda: ("<p>Own words</p>", ""), None, [own, only], show_progress="full", queue=False)
+        failed = gr.HTML("", elem_id="shep-t-err")
+
+        def fail():
+            raise gr.Error("The reason could not be read")
+
+        gr.Button("Fail", elem_id="shep-t-fail").click(fail, None, [failed], show_progress="full")
+    script = (_DRAWN_TRACKER_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__LOOK_JS__", json.dumps(LOOK_JS)))
+    with served(drawn) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")])
+    for block, read in seen.items():
+        # Drawn: not hidden, opaque, with a box, its words in view.
+        assert read["tracker"]["hide"] is False and read["tracker"]["opacity"] == "1", (block, read)
+        assert min(read["tracker"]["box"]) > 0, (block, read)
+    assert re.search(r"\d\.\ds", seen["own"]["words"]) and "Own words" in seen["own"]["words"], seen
+    assert re.search(r"\d\.\ds", seen["only"]["words"]), seen
+    assert "Error" in seen["err"]["words"], seen
+
+
+#: A drawn status tracker, read by the walk's ``words`` (the review of
+#: 6a14d6b, R3-2): at 1280 x 720, a block whose own words stay beside the
+#: tracker of an event in flight (``show_progress="full"``, its request held),
+#: a block whose only drawn words are that tracker's timer, then a block whose
+#: event failed, Gradio's red "Error" in its tracker. Each block's tracker (its
+#: ``hide`` class, opacity, box) and what ``words`` reads of the block.
+_DRAWN_TRACKER_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.addInitScript(LOOK_JS);
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-t-go');
+  await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+  const shownWith = (ids, pattern) => page.waitForFunction(([ids, pattern]) => ids.every((id) => {
+    const t = document.querySelector(`#${id} [data-testid="status-tracker"]`);
+    return !!t && !t.classList.contains('hide') && getComputedStyle(t).opacity === '1'
+      && new RegExp(pattern).test(t.textContent); }), [ids, pattern], { timeout: 30000 });
+  const read = (id) => page.evaluate((id) => {
+    const el = document.getElementById(id), t = el.querySelector('[data-testid="status-tracker"]');
+    const box = t.getBoundingClientRect();
+    return { words: window.__shepLook.words(el), text: el.innerText.trim(),
+             tracker: { hide: t.classList.contains('hide'), opacity: getComputedStyle(t).opacity,
+                        box: [Math.round(box.width), Math.round(box.height)] } };
+  }, id);
+  const out = {};
+  let release = null;
+  const released = new Promise((resolve) => { release = resolve; });
+  await page.route('**/run/predict', async (route) => { await released; await route.continue().catch(() => {}); });
+  await page.click('#shep-t-go');
+  await shownWith(['shep-t-own', 'shep-t-only'], '\\d\\.\\ds');
+  out.own = await read('shep-t-own');
+  out.only = await read('shep-t-only');
+  release();
+  await page.unroute('**/run/predict');
+  await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+  await page.click('#shep-t-fail');
+  await shownWith(['shep-t-err'], 'Error');
+  out.err = await read('shep-t-err');
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
 
 
 def test_each_fingerprint_is_said_once_on_a_screen(ui_walk):

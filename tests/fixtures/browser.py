@@ -39,7 +39,8 @@ Gradio's effective styles, never the style sheet's text:
 - ``ratio(a, b)`` and ``behind(el)``: WCAG contrast of two computed colours,
   and the first opaque background behind an element;
 - ``words(el)``: a block's words as drawn (its ``innerText``, trimmed), never
-  Gradio's status tracker's: the one way a walk's fact reader reads words.
+  the words of a Gradio status tracker that is not drawn (a drawn one's are
+  read like any other): the one way a walk's fact reader reads words.
 
 ``typeScale`` also lists every visible text under 14 px, a glyph included.
 
@@ -416,17 +417,26 @@ LOOK_JS = r"""
     return { lines: lines.size, right: Math.round(last.right), top: Math.round(rects[0].top) };
   };
   /* A block's words as drawn, the one way a walk's fact reader reads words:
-     its innerText, trimmed, never Gradio's status tracker's. While an event
-     that writes a block is in flight, Gradio keeps its tracker among the
-     block's children even when the event hides its progress (opacity 0, a
-     0 px box), and the tracker's timer ("0.2s") is in the block's innerText
-     though nothing of it is seen (V-24). With a tracker inside, the words are
-     those of the block's other children, each as drawn (one not drawn says
+     its innerText, trimmed, never the words of a Gradio status tracker that
+     is not drawn. While an event that writes a block is in flight, Gradio
+     keeps its tracker among the block's children even when the event hides
+     its progress (the class `hide`, opacity 0, a 0 px box), and the
+     tracker's timer ("0.2s") is in the block's innerText though nothing of
+     it is seen (V-24). A tracker Gradio draws (a shown timer, a failed
+     event's red "Error") is read like any other words (the review of
+     6a14d6b, R3-2: every tracker was skipped, so a check of such a block
+     passed on nothing). With an undrawn tracker inside, the words are those
+     of the block's other children, each as drawn (one not drawn says
      nothing, as in innerText; one drawn as `display: contents` by its own). */
   const TRACKER = '[data-testid="status-tracker"]';
+  const undrawn = (t) => {
+    const box = t.getBoundingClientRect();
+    return t.classList.contains('hide') || +getComputedStyle(t).opacity === 0
+      || box.width < 1 || box.height < 1;
+  };
   const words = (el) => {
-    if (!el || el.matches(TRACKER)) { return ''; }
-    if (!el.querySelector(TRACKER)) { return el.innerText.trim(); }
+    if (!el || (el.matches(TRACKER) && undrawn(el))) { return ''; }
+    if (![...el.querySelectorAll(TRACKER)].some(undrawn)) { return el.innerText.trim(); }
     return [...el.childNodes].map((n) => {
       if (n.nodeType === Node.TEXT_NODE) { return n.data.trim(); }
       if (n.nodeType !== Node.ELEMENT_NODE) { return ''; }
