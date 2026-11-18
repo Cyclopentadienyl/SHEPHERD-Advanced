@@ -1041,11 +1041,14 @@ class TestCheckpointsInAndOut:
         assert sorted(len(run.files) for g in tree.groups for run in g.runs) == [1, 3]
         html = ml.list_html(listing_ui, None, ml.PRESETS["research"])
         # Two rows of their own: the run of three files under its fold node,
-        # the run that cannot be listed by its own key.
+        # the run that cannot be listed as one row of its own. That row is no
+        # choice (V-21): it carries no ``data-key``, so its key, which the
+        # listing keeps (found above), is no row's key on the page.
         assert re.findall(r'<tr class="shep-tree-run[^"]*" data-fold="r:([^"]*)"', html) == [
             "gatv2/bad\\xff"]
         lone = next(i for i in items if i["run_key"] == "gatv2//" + b"bad\xff".hex())
-        assert html.count(f'data-key="{lone["key"]}"') == 1
+        assert len(re.findall(r'<tr class="shep-tree-entry[ "]', html)) == 1
+        assert f'data-key="{lone["key"]}"' not in html
         assert sorted(len(v) for v in ml.runs_of(console).values()) == [1, 3]
 
     def test_a_directory_entry_never_shares_a_key_with_a_run_or_file_named_alike(
