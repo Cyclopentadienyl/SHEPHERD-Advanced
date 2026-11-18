@@ -1552,12 +1552,13 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### V-23 · The Load drawer's "↑ Back to the list" wraps inside its 32 px button in a stacked drawer
 
-- **State**: to do · found by the verification of 78444a6 (the fix lane, while looking at R-28) · severity low · page: diagnosis
+- **State**: code-verified · found by the verification of 78444a6 (the fix lane, while looking at R-28) · severity low · page: diagnosis
 - **Problem**: Stacked, the chosen model's title in the Load drawer keeps "↑ Back to the list" beside the name and the "selected" chip; the button gets what the title leaves, so its words wrap inside it and run past its border.
 - **At 78444a6**: No commit of this lane touches it; measured at 086bd69 in Chromium on the served Diagnosis page (an operator, the drawer open, a file chosen): at 390×844 the button is 57 px wide and 32 px tall, its words on three lines (63 px of text at a 21 px line); at 760×1000, 117 px wide, two lines in the same 32 px. Evidence: scratchpad/verify/fix3/logs/v23-back.json; screens scratchpad/verify/fix3/shots/v23-plain_drawer-facts-title_{390x844,760x1000}.png, scratchpad/verify/fix3/shots/r28_78444a6_plain_drawer-facts_390x844.png.
 - **Done when**: Stacked, the button's words stay on one line inside it (the button keeps its words' width and the title's name wraps, or the button takes a line of its own); a browser test at 390×844 and 760×1000 fails before; screens before and after.
 - **Sources**: the verification of 78444a6 (this lane, item 4's look); SK §2, §10 (targets); `model_list.FACTS_JS`, `BACK_TO_LIST`
-- **Closed at**: —
+- **Fixed (verification, 1655345, 2026-11-18)**: the title's one stacked rule (`style.SHELL_CSS`, where the button is shown): the button keeps its words' width on one line (`flex: none`, `white-space: nowrap`) and the title wraps its items (`flex-wrap: wrap`), so the button takes a line of its own, at the title's end, when the name and its chip leave it no room. `FACTS_JS` is unchanged. Measured after in Chromium on the served Diagnosis page (an operator, the drawer open, a file chosen): at 760×1000 the name (one line) and the chip, the button under them, 123 px wide, one line; at 390×844 the name on two lines across the title's 324 px, the chip and the button (123 px, one line) under it; at 1850×960, side by side, no button, the same boxes as before (title 428×42 px, chip beside the name). Test: `test_webui_model_list.py::test_back_to_the_list_keeps_its_words_on_one_line_in_a_stacked_drawer` (fails on 78444a6 at 760×1000 and 390×844). Screens: scratchpad/verify/fix3/shots/v23-before-plain_drawer-facts-title_{1850x960,760x1000,390x844}.png and v23-after-…; measurements scratchpad/verify/fix3/logs/v23-{before,after}-back2.json.
+- **Closed at**: 1655345.
 
 **UI-16, finetune**
 
