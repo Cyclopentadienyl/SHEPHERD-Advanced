@@ -29,6 +29,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Overstated records**: eight rows a record called done that were only partly done (three verdicts overturned by the second reviewer: R-18+R-40+R-75+B68+B72, R-66+B51f, R-72+B72; and R-25+K6, RC-B, B72-N7, R-16+R-76+B72, R-53).
 - **By state at the base**: 97 to do, 49 partly done, 59 already done, 1 awaiting hardware, 5 not applicable, 7 outside this round's scope.
 - **At the head (2026-11-17, `c958ff3`)**: 249 rows: the base's 218, one opened by the T08 suite (T08-help-1), the T08 flow's twelve (T08-flow-1 to T08-flow-12) and the verification round's eighteen (V-1 to V-18); by state: 1 to do, 11 partly done, 161 code-verified, 59 code-verified at ba6e85e (audit), 1 awaiting hardware, 2 awaiting owner acceptance, 5 not applicable, 9 outside this round's scope (owner to decide). Rows written before the rebase cite commit IDs from before it: see [Commit IDs rewritten by the rebase](#commit-ids-rewritten-by-the-rebase-2026-11-17).
+- **At the delivery (2026-11-18, product head `75359a7`)**: 256 rows: the 249 above and the third verification pass's V-19 to V-24, with V-25 recorded at T09 (the T08 flow's F9); by state: 2 to do, 10 partly done, 167 code-verified, 59 code-verified at ba6e85e (audit), 1 awaiting hardware, 2 awaiting owner acceptance, 6 not applicable, 9 outside this round's scope (owner to decide).
 
 ## Rows by task
 
@@ -425,6 +426,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: the owner's fix list rev 1 (2026-11-16)
 - **Closed at**: 4e419fb (with d2d02f6 for the Task select's one request). Tests: `test_webui_models_page.py::test_a_control_changed_while_the_page_answers_is_applied_and_one_pick_is_one_request` (browser, the dashboard as mounted, one `_sync` answer held: a row then By family; By family then Newest first, the second answer held until the first one's rows are drawn; a row then Task Disease; each ends with the switch, the count line, the groups and Lineage agreeing with the last change and the line cleared, "Applying …" said while pending; on ba6e85e all fail: By family dropped, the switch set back, Disease dropped), and the unit cases `test_an_answer_writes_a_control_back_only_where_it_cannot_apply`, `test_an_answer_that_fails_says_what_was_not_applied_and_changes_nothing`, `test_the_rows_say_the_view_they_were_drawn_for_and_another_workspace_drops_it`. Seen on a CPU demo workspace at 1850×960 and 960×1080: the line under the switch at 14 px, gone once applied, no sideways scroll. The other "who fired" listeners were checked: no other always_last listener reads its trigger (the Diagnosis drawer's Task is a Radio whose one listener writes the view only).
 - **Re-checked (verification, fcc3dea, part RB2)**: an Order switched before Models' opening answer arrived read By family over the newest-first rows for 0.6–1 s with no "Applying …" (V-RB2-5; under load): the line waited for rows carrying a view marker, and the rows the shared list draws before the page first shapes its view carry none. Fixed at 2972962: `PENDING_JS` reads unmarked rows as the list's own order, newest first, every task; test `test_webui_models_page.py::test_an_order_switched_before_the_first_answer_is_announced` (fails on fcc3dea).
+- **Screens (verification of fcc3dea, part RB2, 2026-11-18)**: seen in the real app at fcc3dea, 1850×960 and 960×1080 (Newest first, By family, a fast Newest then By family, a row chosen then By family): once settled, the switch, the count line, the family title and the row order agree; "Applying …" shows from the first painted frame after a click until the rows match. The gap RB2 found there (an Order switched before the page's first answer, not announced) was fixed at 2972962 (V-RB2-5). Screens: scratchpad/verify/rb2/run2/shots/i4-flui05-*.png; scratchpad/verify/rb2/run2/json/i4-flui05-*.json.
 
 ### UI-06 Launch and configuration in the GUI
 
@@ -770,6 +772,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Fix**: the one R10 rendering is a table (`renderers.r10_table_html`): a row per scope (Training, Validation) with its evidence state under it, a column per label (Disease overlap, Phenotype-set overlap), each cell its state by the shared mark and its count, denominator, unit and cases, or its unverifiable reason, read by the one reading of a label's state (`r10_state_parts`; `r10_state_text` joins it as before). An overlap is amber ▲ and blocks nothing; "none" keeps the caveats' words with its count and no green mark; an unverifiable cell has no number. The governed words are unchanged (skill §13, 2026-10-25). Test shows it under 'Train/test overlap (R10)' with the R10 labels' ⓘ; Models' record and Models › Results' fold show the same table.
 - **Sources**: UX:265 (appendix 63); RJ audits[2].findings[2]; UX:68 (section 3 high #7); UX:71-72; UX:127; UX:153-157 (decision 3); BL:1010 (52); SK:63; SK:189-193
 - **Closed at**: 751b8d7. Tests: `test_webui_models_page.py::test_a_records_r10_is_a_table_with_a_mark_on_each_overlap_and_no_stutter`, `::test_unverifiable_is_a_word_and_never_a_count`, `::test_a_records_r10_reads_in_its_states_words_never_a_count`, `test_webui_test_page.py::test_unverifiable_is_a_word_never_a_count`, `::test_a_kept_reports_r10_reads_in_its_states_words_never_a_count`, `::test_the_r10_help_sits_beside_the_r10_lines` (each fails on 0f4ae91: no R10 table). Seen on the CPU demo copy at 1850×960, 1536×864 and 960×1080: Test's Result and Models' record show the table, three overlap cells amber ▲ (rgb(122,70,0)) with '3 of 5 distinct test diseases; 7 test cases with one of them', '2 of 10 test cases', '1 of 5 …; 2 test cases …', the fourth 'None in the inputs this checkpoint records (not evidence about data outside them) 0 of 10 test cases' unmarked; no sideways page scroll; nested in Models' record the table's header is not sticky (computed position static).
+- **Screens (verification of fcc3dea, part RB2, 2026-11-18)**: seen in the real app at fcc3dea, 1850×960 and 960×1080: Test's Result, Models' recorded result and Models › Results' fold each show the R10 table (Inputs Training and Validation × Disease and Phenotype-set overlap), the overlapping Validation cells amber with ▲, the Training cells unmarked with "not evidence about data outside them", no "overlap: overlap". The unverifiable state was not on the demo. Screens: scratchpad/verify/rb2/run2/shots/i4-r63-*.png; scratchpad/verify/rb2/run2/json/i4-r63.json.
 
 #### B68-R10 · Refused R10 evidence setting shown amber with no mark
 
@@ -1022,6 +1025,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Fix**: `renderers.unreadable_words`: "not read" for an entry with neither a digest nor a size (`ListedCheckpoint`: never opened), "metadata not readable" for a file whose read was made and failed or gave no record; the shared list's row, the Models table and detail and the Test page's model say it alike.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
 - **Closed at**: 2112605. Test: `test_webui_renderers.py::test_an_entry_never_read_does_not_claim_a_failed_read` (fails on 0f4ae91: the 'bad\xff' entry reads 'metadata not readable'). Checked by unit test only, not in the browser.
+- **Screens (verification of fcc3dea, part RB2, 2026-11-18)**: the row's first browser check, in the real app at fcc3dea with a run folder named bad\xff and a last.pt that cannot be read: the folder's row claims no read; "Metadata not readable" only for the file whose read was made and failed. Screens: scratchpad/verify/rb2/run2/shots/i4-nmr5-*.png; scratchpad/verify/rb2/run2/json/i4-nmr5.json. Two things RB2 saw there became V-21 and V-22.
 
 #### B72-T2 · Version mapped against another graph shown as amber chip without mark
 
@@ -1181,7 +1185,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-143 rows: 1 to do, 5 partly done, 1 awaiting hardware, 1 awaiting owner acceptance, 5 outside this round's scope (owner to decide), 4 not applicable, 95 code-verified, 31 code-verified at ba6e85e (audit).
+144 rows: 1 to do, 5 partly done, 1 awaiting hardware, 1 awaiting owner acceptance, 5 outside this round's scope (owner to decide), 5 not applicable, 95 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
@@ -1627,6 +1631,15 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Options (owner to decide; verification of 78444a6, 2026-11-17)**: not fixed. In five columns, whole words alone need 335 px, more than the 324 px card at 390×844, so the run column's floor and the figures' columns cannot give way enough there without cutting or breaking a word; at 1280×900 the floor cannot give the 10 px without cutting "disease". The skill and the recorded decisions do not settle the form. (a) Narrower cells, 4 px a side: 376 px, fits the 406 px card, not the 324 px one. (b) On a card narrower than the table's narrowest, each child as a summary list (Task as its title; Status, Run, Best save, Validation as rows; the skill's §4 form for one thing's attributes), keyed to the card's own width. (c) The table scrolls sideways in its own region with a cue (the skill's §1.1: one region scrolls inside). (d) A lower run floor, the name cut with its whole id in its title (the shared identifier rule): fits 406 px only.
 - **Sources**: T08-flow-6 (review of a6aae90, 6f30c2b: "Not changed here"); the acceptance map's audit (A14); SK §1.1, §2, §4
 - **Done when reworded (review of 6a14d6b, 2026-11-18)**: it read "The owner's choice below is made; then the table fits its card at every window, nothing cut, no sideways scroll, numbers never broken". Only option (b) can meet that: (a) does not fit the 324 px card, (c) scrolls sideways in its own region and (d) cuts the run's name. So the row chose for the owner. It now asks for the chosen option's form at every window, each option's limits as its Options entry names them. No option is chosen; the row stays to do.
+- **Closed at**: —
+
+#### V-25 · A refused second Fine-tune Start keeps its reason after the job it names has ended (T08 F9)
+
+- **State**: not applicable · found by the T08 browser flow (F9), recorded at T09 · severity low · page: finetune
+- **Problem**: In the T08 flow (71587aa) a second Fine-tune Start, refused while another job held the GPU, kept its refusal beside Start after that job had ended, until the next act.
+- **At 71587aa**: one reading in part B's flow (scratchpad/t08/B); the flow's critic found it rests on that reading alone, and B's re-check probe did not reproduce it (scratchpad/t08/result.json, critic).
+- **Why this state**: the WebUI skill §9 keeps a refusal visible inline next to what it disables, and nothing auto-dismisses; a refusal beside Start stays until the next act by that rule (the T08 triage, README §12 "T08 flow"). Nothing here is a defect unless the owner asks for a refusal that clears itself when its cause ends, which would be a new rule for every refusal beside a control.
+- **Sources**: the T08 flow's finding F9 (scratchpad/t08/result.json); SK §9
 - **Closed at**: —
 
 **UI-16, help**
