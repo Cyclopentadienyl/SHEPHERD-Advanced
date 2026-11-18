@@ -1181,7 +1181,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-16 Every other recorded problem, by page
 
-137 rows: 6 partly done, 1 awaiting hardware, 1 awaiting owner acceptance, 5 outside this round's scope (owner to decide), 4 not applicable, 89 code-verified, 31 code-verified at ba6e85e (audit).
+143 rows: 1 to do, 5 partly done, 1 awaiting hardware, 1 awaiting owner acceptance, 5 outside this round's scope (owner to decide), 4 not applicable, 95 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
