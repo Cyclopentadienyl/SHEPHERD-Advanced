@@ -632,8 +632,9 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .shep-tbl tbody tr[data-key]:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: -2px; }
 .shep-tbl tr.shep-grp th { position: static; background: var(--shep-panel-2); font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 10px; border-bottom: 1px solid var(--shep-border); }
 .shep-tbl tbody tr.shep-row-dis td { background: var(--shep-grey-50); color: var(--shep-muted); cursor: default; }
-/* A greyed row that can still be chosen (an unreadable file: its details say why). */
-.shep-tbl tbody tr.shep-row-dis[data-key]:not([aria-disabled="true"]) td { cursor: pointer; }
+/* A greyed row that can still be chosen (an unreadable file: its details say why); a greyed row
+   with no key (an entry the listing could not list) is no choice and keeps the default cursor. */
+.shep-tbl tbody tr.shep-row-dis[data-key] td { cursor: pointer; }
 
 /* the shared model list: a note under a list (the Test page's), "Show older runs" under the
    tree (`model_list.older_html`) */
@@ -804,7 +805,11 @@ __STACK__ {
   .shep-tbl-wrap { overflow-x: auto; overflow-y: hidden; }
   .shep-tbl th { position: static; }
   .shep-tbl td { overflow-wrap: anywhere; }
-  .shep-facts-title > .shep-back-list { display: inline-flex; align-items: center; }
+  /* "↑ Back to the list" keeps its words' width, on one line; the title wraps its items, so the
+     button takes a line of its own, at its end, when the name and its chip leave it no room (it got
+     what they left: 57 px at 390 x 844, its words on three lines in its 32 px box; V-23). */
+  .shep-facts-title { flex-wrap: wrap; }
+  .shep-facts-title > .shep-back-list { display: inline-flex; align-items: center; flex: none; white-space: nowrap; }
 }
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK)
 

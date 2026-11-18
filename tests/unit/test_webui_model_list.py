@@ -326,6 +326,27 @@ def test_the_drawers_rows_and_facts_name_the_workspace_dataset_by_its_relation(
         assert screen.count("synthetic") == 1, screen
 
 
+def _diagnosis_page(root, monkeypatch):
+    """The Diagnosis page alone (the shell, other pages empty), for an
+    operator, the demo workspace's model served: its Load for inference
+    drawer, as the browser tests below open it."""
+    from src.webui import shell
+    from src.webui.components import diagnosis_panel as dp
+
+    operator_mode(monkeypatch)
+    status = _status(root)
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (status, None))
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": True, "workspaces": [], "serving": None,
+        "item": None, "item_problem": None, "recorded": None, "trained": None,
+        "cohorts": None})
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+    return demo
+
+
 _DRAWER_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
@@ -416,26 +437,13 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
     its region and the details in theirs: the list was 524 px there, its tree
     cut at the Fingerprint column, before the shared tree took 7 px a side
     and the regions their measured minimums."""
-    from src.webui import shell
     from src.webui.app import mount_options
-    from src.webui.components import diagnosis_panel as dp
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
-    operator_mode(monkeypatch)
-    status = _status(root)
-    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (status, None))
-    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
-        "key": dp.card.served_key(s), "operator": True, "workspaces": [], "serving": None,
-        "item": None, "item_problem": None, "recorded": None, "trained": None,
-        "cohorts": None})
-    with gr.Blocks() as demo:
-        shell.build_shell(demo, {**{page: (lambda ctx: None)
-                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
-                                 shell.CLINICAL: dp.create_diagnosis_tab})
-    with served(demo, **mount_options()) as base:
+    with served(_diagnosis_page(root, monkeypatch), **mount_options()) as base:
         seen = run_node(_DRAWER_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
     before, after = seen["before"], seen["after"]
@@ -451,6 +459,183 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
     assert stacked["layout"] == "stack"
     assert stacked["list"][1] <= stacked["facts"][0] < stacked["load"][0], stacked
     assert seen["picked"] is True and seen["back"] is True, seen
+
+
+_DRAWER_HEAD_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+const SIZES = [[1850, 960], [1280, 900], [960, 1080], [390, 844]];
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of SIZES) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h },
+                                                   deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(), null, { timeout: 30000 });
+    await page.goto(process.argv[2], { waitUntil: 'load' });
+    await page.waitForSelector('#shep-dx-change-btn:not([disabled])', { timeout: 60000 });
+    await idle();
+    await page.click('#shep-dx-change-btn');
+    await page.waitForSelector('#shep-models-clinical-rows [data-key]', { state: 'attached', timeout: 30000 });
+    await idle();
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const drawer = document.querySelector('#shep-dx-change');
+      const edge = drawer.getBoundingClientRect().right - (parseFloat(getComputedStyle(drawer).borderRightWidth) || 0);
+      // Each word drawn in the title and the task segment, where the browser draws it.
+      const words = [];
+      for (const root of [document.querySelector('#shep-dx-change-title'), document.querySelector('#shep-dx-change-task')]) {
+        const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          const re = /\S+/g;
+          for (let m = re.exec(n.textContent); m; m = re.exec(n.textContent)) {
+            const range = document.createRange();
+            range.setStart(n, m.index); range.setEnd(n, m.index + m[0].length);
+            for (const b of range.getClientRects()) { words.push({ word: m[0], right: b.right }); }
+          }
+        }
+      }
+      const labels = [...document.querySelectorAll('#shep-dx-change-task label')].map((l) => {
+        const span = l.querySelector('span') || l;
+        return { text: l.innerText.trim(), whole: span.scrollWidth <= span.clientWidth + 1 };
+      });
+      return { edge, past: words.filter((x) => x.right > edge + 0.5), labels,
+               drawer: [drawer.scrollWidth, drawer.clientWidth],
+               page: [document.scrollingElement.scrollWidth, innerWidth] };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_drawers_title_and_task_segment_stay_inside_it_at_every_window(
+        root, serving, monkeypatch, tmp_path):
+    """V-19 (FL-UI-03's T04 review line, the WebUI skill §2): stacked at 390 x
+    844 the Load for inference drawer's title note ran 217 px and its task
+    segment 49 px past the drawer's right edge, cut ("operator controls · one
+    mo", "Patients-like-"): both took their one line's width and never gave
+    way. In a real browser (skipped without Node and Playwright), the drawer
+    open for an operator at 1850 x 960, 1280 x 900, 960 x 1080 and 390 x 844:
+    every word of its title and of its task segment is drawn inside the
+    drawer, each segment label whole (no ellipsis), and nothing scrolls
+    sideways, the drawer or the page. Fails on 78444a6 at 390 x 844."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    with served(_diagnosis_page(root, monkeypatch), **mount_options()) as base:
+        seen = run_node(_DRAWER_HEAD_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    assert set(seen) == {"1850x960", "1280x900", "960x1080", "390x844"}
+    for size, got in seen.items():
+        assert got["past"] == [], (size, got)
+        assert [label["text"] for label in got["labels"]] == [
+            "All tasks", "Disease", "Gene", "Patients-like-me"], (size, got)
+        assert all(label["whole"] for label in got["labels"]), (size, got)
+        assert got["drawer"][0] <= got["drawer"][1] and got["page"][0] <= got["page"][1], (size, got)
+
+
+#: The Load drawer open, a file chosen, at each window: its facts' title, with
+#: "↑ Back to the list", as the browser draws it.
+_FACTS_TITLE_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+const ROWS = '#shep-models-clinical-rows', FACTS = '#shep-models-clinical-facts';
+const SIZES = [[1850, 960], [760, 1000], [390, 844]];
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of SIZES) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h },
+                                                   deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(), null, { timeout: 30000 });
+    await page.goto(process.argv[2], { waitUntil: 'load' });
+    await page.waitForSelector('#shep-dx-change-btn:not([disabled])', { timeout: 60000 });
+    await idle();
+    await page.click('#shep-dx-change-btn');
+    await page.waitForSelector(`${ROWS} [data-key]`, { state: 'attached', timeout: 30000 });
+    await idle();
+    const key = await page.$eval(`${ROWS} tr[data-key]:not([hidden])`, (r) => r.getAttribute('data-key'));
+    await page.click(`${ROWS} tr[data-key="${key}"]`);
+    await page.waitForFunction(([F, k]) => { const t = document.querySelector(F + ' [data-facts-key]');
+      return !!t && t.getAttribute('data-facts-key') === k; }, [FACTS, key], { timeout: 30000 });
+    await idle();
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out[`${w}x${h}`] = await page.evaluate((F) => {
+      const title = document.querySelector(F + ' [data-facts-key]');
+      const back = title.querySelector('button.shep-back-list');
+      const tb = title.getBoundingClientRect(), bb = back.getBoundingClientRect();
+      const lines = (e) => { const range = document.createRange(); range.selectNodeContents(e);
+        return new Set([...range.getClientRects()].map((x) => Math.round(x.top))).size; };
+      const mid = (e) => { const b = e.getBoundingClientRect(); return b.top + b.height / 2; };
+      // Each word drawn in the title, where the browser draws it.
+      const past = [];
+      const walk = document.createTreeWalker(title, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        const re = /\S+/g;
+        for (let m = re.exec(n.textContent); m; m = re.exec(n.textContent)) {
+          const range = document.createRange();
+          range.setStart(n, m.index); range.setEnd(n, m.index + m[0].length);
+          for (const b of range.getClientRects()) {
+            if (b.width && (b.left < tb.left - 0.5 || b.right > tb.right + 0.5)) { past.push(m[0]); }
+          }
+        }
+      }
+      return { layout: document.documentElement.getAttribute('data-shep-layout'),
+               shown: getComputedStyle(back).display !== 'none',
+               backLines: back.offsetParent ? lines(back) : 0,
+               backWhole: back.scrollWidth <= back.clientWidth && back.scrollHeight <= back.clientHeight,
+               backIn: bb.left >= tb.left - 0.5 && bb.right <= tb.right + 0.5,
+               backHeight: Math.round(bb.height), past,
+               chipBesideName: Math.abs(mid(title.querySelector('.shep-tag')) - mid(title.querySelector('b'))) < 2,
+               page: [document.scrollingElement.scrollWidth, innerWidth] };
+    }, FACTS);
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_back_to_the_list_keeps_its_words_on_one_line_in_a_stacked_drawer(
+        root, serving, monkeypatch, tmp_path):
+    """V-23 (the verification of 78444a6, R-28's look): stacked, the Load
+    drawer's chosen model's title kept "↑ Back to the list" beside the name
+    and the "selected" chip, and the button got what they left: 57 px at 390
+    x 844, its words on three lines inside its 32 px box; 117 px and two
+    lines at 760 x 1000. In a real browser (skipped without Node and
+    Playwright), the drawer open for an operator and a file chosen: stacked
+    (760 x 1000, 390 x 844) the button keeps its words on one line, whole,
+    inside its box and the title, taking a line of its own when the name and
+    chip leave it no room; every word of the title inside it; nothing scrolls
+    sideways. Side by side at 1850 x 960, unchanged: no button, the chip
+    beside the name. Fails on 78444a6 at 760 x 1000 and 390 x 844."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    with served(_diagnosis_page(root, monkeypatch), **mount_options()) as base:
+        seen = run_node(_FACTS_TITLE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    side = seen.pop("1850x960")
+    assert side["layout"] == "side" and not side["shown"], side
+    assert side["chipBesideName"] and side["past"] == [], side
+    assert set(seen) == {"760x1000", "390x844"}
+    for size, got in seen.items():
+        assert got["layout"] == "stack" and got["shown"], (size, got)
+        assert got["backLines"] == 1 and got["backWhole"] and got["backIn"], (size, got)
+        assert got["backHeight"] == 32 and got["past"] == [], (size, got)
+        assert got["page"][0] <= got["page"][1], (size, got)
 
 
 def test_in_use_is_matched_by_the_full_fingerprint_only(root, serving, monkeypatch):
@@ -1964,12 +2149,12 @@ def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, mon
     assert "Another dataset" in _row_of_key(html, "gatv2/m/model-03.pt")
     cells = re.findall(r"<td>(.*?)</td>", _row_of_key(html, _key("model-03.pt")), re.S)
     assert cells[-1] == r_fingerprint(item["sha256"], listing)
-    entry = _row_of_key(html, "/626164ff")
+    (entry,) = _entry_rows(html)
     assert "bad\\xff" in entry and "a folder in runs/" in entry and "RUNS" not in entry
     assert "runs/bad\\xff cannot be listed (…)" in entry          # why, on the page
     # Counted apart, never as a run or a saved file (B69 L3), a filter's
-    # "of N runs" too (it read "Disease: 3 of 10 runs").
-    assert ml.count_line(data, research, False) == "9 runs, 10 saved files, 1 entry not listed"
+    # "of N runs" too (it read "Disease: 3 of 10 runs"), by its state (V-22).
+    assert ml.count_line(data, research, False) == "9 runs, 10 saved files, 1 entry not read"
     assert ml.count_line(data, research, False, {"task": "disease"}) == "Disease: 3 of 9 runs"
     # A file whose metadata cannot be read: named once, in its Model cell; its
     # state and reason in words on the page, the loader's reference left to
@@ -1982,6 +2167,57 @@ def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, mon
     assert ("Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded"
             in words), words
     assert words.count(" · ") <= 1 and "title=" not in broken, broken
+
+
+def _entry_rows(html):
+    """The rows of entries the listing could not list (no key: no choice)."""
+    return re.findall(r'<tr class="shep-tree-entry[^"]*"[^>]*>.*?</tr>', html, re.S)
+
+
+def test_the_count_line_says_an_unlisted_entry_in_its_rows_words(root, serving, monkeypatch):
+    """V-22 (the verification of fcc3dea, part RB2): beside a run folder whose
+    name is not valid text, Models' count line read "3 runs, 7 saved files, 1
+    entry not listed" while that entry's row was drawn in the list, saying it
+    "cannot be listed …, so no file in it is read". The count says the
+    entry's state as its row does: never opened, "not read" (the one word
+    for that state, `renderers.unreadable_words`), counted once, apart from
+    the runs and files; the drawer, which lists task models only, draws no
+    such row and counts none. Fails on 78444a6.
+
+    The review of 6a14d6b (R3-1): an alias (runs/alias -> gatv2, B69-L4) is
+    such an entry too, and its row says the opposite of "not read": its runs
+    were read and are listed under gatv2 once, "so it is not listed again".
+    Each entry is counted by the state its own row says, in that state's own
+    words (the skill's §6: missing states keep their own words), never
+    merged: it read "2 entries not read". Fails on 6a14d6b."""
+    from src.webui.components import renderers as r
+
+    runs = root["workspace"] / "runs" / "gatv2"
+    (runs / os.fsdecode(b"bad\xff")).mkdir()
+    listing = ml.list_models("demo", operator_request(monkeypatch))
+    research, clinical = ml.PRESETS["research"], ml.PRESETS["clinical"]
+    count = ml.count_line(listing, research, False)
+    assert count == "8 runs, 9 saved files, 1 entry not read", count
+    (item,) = [i for i in listing["items"] if r.entry_place(i)]
+    assert r.unreadable_words(item) == "not read"
+    (row,) = _entry_rows(ml.list_html(listing, None, research))
+    assert "so no file in it is read" in _visible(row)
+    assert _entry_rows(ml.list_html(listing, None, clinical, show_older=True)) == []
+    assert "entry" not in ml.count_line(listing, clinical, True)
+    # An alias beside it: its runs are the runs counted on the same line.
+    os.symlink("gatv2", runs.parent / "alias")
+    listing = ml.list_models("demo", operator_request(monkeypatch))
+    count = ml.count_line(listing, research, False)
+    assert count == "8 runs, 9 saved files, 1 entry not read, 1 entry not listed again", count
+    rows = [_visible(row) for row in _entry_rows(ml.list_html(listing, None, research))]
+    states = {i["run"]: r.unreadable_words(i) for i in listing["items"] if r.entry_place(i)}
+    assert states == {"bad\\xff": "not read", "alias": "not listed again"}, states
+    for name, state in states.items():
+        (words,) = [w for w in rows if w.startswith(name)]
+        # Its row and the count say its state alike.
+        assert f"1 entry {state}" in count and (
+            "so no file in it is read" if state == "not read" else f"so it is {state}") in words
+    assert "entry" not in ml.count_line(listing, clinical, True)
 
 
 def _row_of_key(html, key):

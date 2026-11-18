@@ -1122,7 +1122,10 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
     far it trained and its model fingerprint, "In use" on the served one. A
     folded row is in the table, hidden, so nothing is dropped by folding. An
     entry the listing could not list reads its own name and where it sits
-    (`renderers.entry_place`)."""
+    (`renderers.entry_place`) and why, and is no choice: a plain row, with no
+    key the page could choose, no hover and no tab stop (V-21: it looked
+    choosable, and a click on it left the details on the model chosen
+    before)."""
     workspaces = listing.get("workspaces") or []
     served = listing.get("served_sha")
     items = {item_key(i): i for i in listing.get("items") or []}
@@ -1159,13 +1162,12 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
             place = r.entry_place(first)
             if place is not None:
                 # A directory the listing could not list: its own name and
-                # where it sits, the reason in its row (BACKLOG 66, 69).
-                key = run.files[0]
+                # where it sits, the reason in its row (BACKLOG 66, 69). It
+                # holds no model to show or load, so it is no choice (V-21):
+                # no ``data-key``, the one mark of a row the page may choose.
                 why = first.get("problem") or "not read"
                 rows.append(
-                    f'<tr class="shep-tree-file shep-row-dis" data-key="{r.e(key)}" '
-                    f'data-in="{r.e(group.node)}" tabindex="0" aria-disabled="true"'
-                    f'{" aria-current=" + chr(34) + "true" + chr(34) if key == selected else ""}'
+                    f'<tr class="shep-tree-entry shep-row-dis" data-in="{r.e(group.node)}"'
                     f'{hidden}><td><span class="shep-w600">{_whole_words(first.get("run"))}</span>'
                     f'<div class="shep-sub">{r.e(place)}</div></td>'
                     # Why, in words on the page (B69 L3: said once, never only
@@ -1288,7 +1290,9 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     a family view's context, the runs a shown run descends from, counted
     apart); a search says what matches ("3 runs match “disease”, with 2 runs
     they come from"). Counted against what the preset ever lists (the drawer:
-    its task models), an entry the listing could not list never a run; while
+    its task models), an entry the listing could not list never a run (it is
+    counted apart, each by the state its row says, in that state's own words:
+    "1 entry not read, 1 entry not listed again"); while
     the drawer leaves runs out (not read yet, `runs_unread`, or beyond its
     latest), a search and a filter say they saw the latest runs only ("1 run
     matches “gene” in the latest runs", "Gene: 1 of the latest 4 runs"), never
@@ -1303,8 +1307,17 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     tree = tree_view(listing, view, preset, search=query, fold=fold, show_older=show_older)
     # A run is counted once, whatever groups it is drawn in; an entry the
     # listing could not list (a directory, B69) is counted apart, never as
-    # a run or a saved file.
-    entries = {k for k in tree.matched if r.entry_place(find_item(listing, k) or {})}
+    # a run or a saved file, by the state its own row says (V-22: "not
+    # listed" beside its own row read as a contradiction), in that state's
+    # own words, never merged (the skill's §6; the review of 6a14d6b, R3-1:
+    # an alias, whose runs were read, read "not read"): one never opened
+    # "not read", a link listed otherwise "not listed again"
+    # (`renderers.unreadable_words`, the one word for each state).
+    entries: Dict[str, str] = {}
+    for key in tree.matched:
+        item = find_item(listing, key) or {}
+        if r.entry_place(item):
+            entries[key] = r.unreadable_words(item)
     runs = list(dict.fromkeys(run.key for g in tree.groups for run in g.runs
                               if not run.context and run.files[0] not in entries))
     context = len({run.key for g in tree.groups for run in g.runs if run.context} - set(runs))
@@ -1334,7 +1347,10 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
         body = (f"{_counted(families, 'family')}, " if families else "") + (
             f"{_counted(len(runs), 'run')}, {_counted(files, 'saved file')}")
     with_ = f", with {_counted(context, 'run')} they come from" if context else ""
-    unlisted = f", {_counted(len(entries), 'entry')} not listed" if entries else ""
+    states: Dict[str, int] = {}
+    for state in entries.values():
+        states[state] = states.get(state, 0) + 1
+    unlisted = "".join(f", {_counted(n, 'entry')} {state}" for state, n in states.items())
     return f"{lead}{body}{with_}{unlisted}"
 
 
@@ -1416,8 +1432,9 @@ def load_reason_html(item: Optional[Mapping[str, Any]],
     return f'<div class="shep-reason shep-reason-grey">{r.e(why)}</div>' if why else ""
 
 
-#: Under the chosen model's title, shown stacked only (the drawer's CSS):
-#: back to the row chosen (`FACTS_JS`).
+#: At the end of the chosen model's title, shown stacked only (`style.SHELL_CSS`:
+#: its words on one line, on a line of its own when the name and its chip leave
+#: it no room): back to the row chosen (`FACTS_JS`).
 BACK_TO_LIST = ('<button type="button" class="shep-btn shep-back-list">'
                 '↑ Back to the list</button>')
 
@@ -1951,7 +1968,7 @@ element.addEventListener('click', function (e) {
     return;
   }
   var row = e.target.closest ? e.target.closest('[data-key]') : null;
-  if (!row || row.getAttribute('aria-disabled') === 'true') { return; }
+  if (!row) { return; }
   pick(row.getAttribute('data-key'));
 });
 // The selected row, or else the model in use, is located once it is drawn
@@ -1974,7 +1991,7 @@ new MutationObserver(locate).observe(element, {childList: true, subtree: true});
 locate();
 element.addEventListener('keydown', function (e) {
   var row = e.target.closest ? e.target.closest('tr[data-key]') : null;
-  if (!row || e.target !== row || row.getAttribute('aria-disabled') === 'true') { return; }
+  if (!row || e.target !== row) { return; }
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(row.getAttribute('data-key')); }
 });
 // A row focused under its table's sticky header scrolls clear of it (the

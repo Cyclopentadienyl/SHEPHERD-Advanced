@@ -624,6 +624,14 @@ def _link_problem(entry: Path) -> Optional[str]:
     return None
 
 
+#: The state of a link the listing does not list again (`_alias_problem`): its
+#: runs were read and are listed once, under the directory it reaches, so it is
+#: never "not read" (the review of 6a14d6b, R3-1). Its entry's sentence ends
+#: with it; a reader tells such an entry by `is_alias_problem`.
+ALIAS_STATE = "not listed again"
+_ALIAS_END = f", so it is {ALIAS_STATE}"
+
+
 def _alias_problem(base: Path, alias: Path, listed: Path) -> str:
     """What the listing says of a link it does not list again: the listed
     directory its runs are listed under, both named under ``runs/`` as shown."""
@@ -631,8 +639,15 @@ def _alias_problem(base: Path, alias: Path, listed: Path) -> str:
         return "/".join(_shown_name(part)
                         for part in (RUNS_DIRNAME, *path.relative_to(base).parts))
 
-    return (f"{shown(alias)} is a link to {shown(listed)}, whose runs are listed there once, "
-            "so it is not listed again")
+    return (f"{shown(alias)} is a link to {shown(listed)}, whose runs are listed there once"
+            f"{_ALIAS_END}")
+
+
+def is_alias_problem(problem: Any) -> bool:
+    """Whether an entry's `problem` is the listing's sentence for a link it
+    does not list again (`_alias_problem`: `ALIAS_STATE`), never an entry it
+    could not read."""
+    return isinstance(problem, str) and problem.endswith(_ALIAS_END)
 
 
 def _without_aliases(base: Path, runs: List[Path]
@@ -1635,6 +1650,7 @@ def select_auto_run_checkpoint(
 
 
 __all__ = [
+    "ALIAS_STATE",
     "CHECKPOINT_NOT_READ",
     "RANKING_SCORE_KEYS",
     "RETIRED_LOCATION_FIELDS",
@@ -1662,6 +1678,7 @@ __all__ = [
     "propose_run_dir",
     "read_run_checkpoints",
     "exception_line",
+    "is_alias_problem",
     "problem_line",
     "refusal_line",
     "refuse_retired_locations",
