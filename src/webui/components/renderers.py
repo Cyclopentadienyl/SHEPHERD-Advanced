@@ -1351,7 +1351,14 @@ def unreadable_words(item: Any) -> str:
     digest or a size, `ListedCheckpoint`); "not read" for an entry never
     opened: a name that is not text, a directory that cannot be listed, a
     file outside the workspace (BACKLOG 66, `read_run_checkpoints`), whose
-    reason says why. Every list and detail of a checkpoint says it alike."""
+    reason says why; "not listed again" for a link to a directory listed
+    otherwise (B69-L4, `checkpoint_paths.ALIAS_STATE`), whose runs were read
+    and are listed there once, never "not read" (the review of 6a14d6b,
+    R3-1). Every list, count and detail of a checkpoint says it alike."""
+    from src.utils.checkpoint_paths import ALIAS_STATE, is_alias_problem
+
+    if is_alias_problem(_get(item, "problem")):
+        return ALIAS_STATE
     read = is_digest(_get(item, "sha256")) or _get(item, "size_bytes") is not None
     return "metadata not readable" if read else "not read"
 

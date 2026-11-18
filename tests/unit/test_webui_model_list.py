@@ -2182,7 +2182,14 @@ def test_the_count_line_says_an_unlisted_entry_in_its_rows_words(root, serving, 
     entry's state as its row does: never opened, "not read" (the one word
     for that state, `renderers.unreadable_words`), counted once, apart from
     the runs and files; the drawer, which lists task models only, draws no
-    such row and counts none. Fails on 78444a6."""
+    such row and counts none. Fails on 78444a6.
+
+    The review of 6a14d6b (R3-1): an alias (runs/alias -> gatv2, B69-L4) is
+    such an entry too, and its row says the opposite of "not read": its runs
+    were read and are listed under gatv2 once, "so it is not listed again".
+    Each entry is counted by the state its own row says, in that state's own
+    words (the skill's §6: missing states keep their own words), never
+    merged: it read "2 entries not read". Fails on 6a14d6b."""
     from src.webui.components import renderers as r
 
     runs = root["workspace"] / "runs" / "gatv2"
@@ -2196,6 +2203,20 @@ def test_the_count_line_says_an_unlisted_entry_in_its_rows_words(root, serving, 
     (row,) = _entry_rows(ml.list_html(listing, None, research))
     assert "so no file in it is read" in _visible(row)
     assert _entry_rows(ml.list_html(listing, None, clinical, show_older=True)) == []
+    assert "entry" not in ml.count_line(listing, clinical, True)
+    # An alias beside it: its runs are the runs counted on the same line.
+    os.symlink("gatv2", runs.parent / "alias")
+    listing = ml.list_models("demo", operator_request(monkeypatch))
+    count = ml.count_line(listing, research, False)
+    assert count == "8 runs, 9 saved files, 1 entry not read, 1 entry not listed again", count
+    rows = [_visible(row) for row in _entry_rows(ml.list_html(listing, None, research))]
+    states = {i["run"]: r.unreadable_words(i) for i in listing["items"] if r.entry_place(i)}
+    assert states == {"bad\\xff": "not read", "alias": "not listed again"}, states
+    for name, state in states.items():
+        (words,) = [w for w in rows if w.startswith(name)]
+        # Its row and the count say its state alike.
+        assert f"1 entry {state}" in count and (
+            "so no file in it is read" if state == "not read" else f"so it is {state}") in words
     assert "entry" not in ml.count_line(listing, clinical, True)
 
 

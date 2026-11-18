@@ -1291,7 +1291,8 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     apart); a search says what matches ("3 runs match “disease”, with 2 runs
     they come from"). Counted against what the preset ever lists (the drawer:
     its task models), an entry the listing could not list never a run (it is
-    counted apart, by its state: "1 entry not read"); while
+    counted apart, each by the state its row says, in that state's own words:
+    "1 entry not read, 1 entry not listed again"); while
     the drawer leaves runs out (not read yet, `runs_unread`, or beyond its
     latest), a search and a filter say they saw the latest runs only ("1 run
     matches “gene” in the latest runs", "Gene: 1 of the latest 4 runs"), never
@@ -1306,10 +1307,17 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     tree = tree_view(listing, view, preset, search=query, fold=fold, show_older=show_older)
     # A run is counted once, whatever groups it is drawn in; an entry the
     # listing could not list (a directory, B69) is counted apart, never as
-    # a run or a saved file, by the state its row says (V-22: "not listed"
-    # beside its own row read as a contradiction): never opened, so "not
-    # read", the one word for that state (`renderers.unreadable_words`).
-    entries = {k for k in tree.matched if r.entry_place(find_item(listing, k) or {})}
+    # a run or a saved file, by the state its own row says (V-22: "not
+    # listed" beside its own row read as a contradiction), in that state's
+    # own words, never merged (the skill's §6; the review of 6a14d6b, R3-1:
+    # an alias, whose runs were read, read "not read"): one never opened
+    # "not read", a link listed otherwise "not listed again"
+    # (`renderers.unreadable_words`, the one word for each state).
+    entries: Dict[str, str] = {}
+    for key in tree.matched:
+        item = find_item(listing, key) or {}
+        if r.entry_place(item):
+            entries[key] = r.unreadable_words(item)
     runs = list(dict.fromkeys(run.key for g in tree.groups for run in g.runs
                               if not run.context and run.files[0] not in entries))
     context = len({run.key for g in tree.groups for run in g.runs if run.context} - set(runs))
@@ -1339,7 +1347,10 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
         body = (f"{_counted(families, 'family')}, " if families else "") + (
             f"{_counted(len(runs), 'run')}, {_counted(files, 'saved file')}")
     with_ = f", with {_counted(context, 'run')} they come from" if context else ""
-    unlisted = f", {_counted(len(entries), 'entry')} not read" if entries else ""
+    states: Dict[str, int] = {}
+    for state in entries.values():
+        states[state] = states.get(state, 0) + 1
+    unlisted = "".join(f", {_counted(n, 'entry')} {state}" for state, n in states.items())
     return f"{lead}{body}{with_}{unlisted}"
 
 
