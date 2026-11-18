@@ -1683,7 +1683,8 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
 #: (the panels' own minimum widths with their gaps, against the room), how the
 #: panels sit, the page's own scroll both ways, and Training's run bar.
 _LAYOUT_FACTS_JS = r"""() => {
-  const { box, panels: kids } = window.__shepLook.shownPage();
+  const { shownPage, words } = window.__shepLook;
+  const { box, panels: kids } = shownPage();
   const panels = kids.map((k) => ({ min: parseFloat(getComputedStyle(k).getPropertyValue('--shep-panel-min')) || 0,
                                     top: Math.round(k.getBoundingClientRect().top), w: k.getBoundingClientRect().width }))
     .filter((p) => p.min > 0);
@@ -1706,10 +1707,8 @@ _LAYOUT_FACTS_JS = r"""() => {
     return r.width > 0 && r.height > 0 ? [Math.round(r.top), Math.round(r.bottom)] : null; };
   // Training's Continue drawer, open: its body, step 3's row (Check checkpoint and its prompt),
   // and what the run bar draws of its actions and says beside them (R-48, R-49,
-  // NEW-training-finetune-2). The reason is the page's own words (`.shep-rb-reason`), not
-  // the block's whole text: Gradio's status tracker in the same block can show a queued
-  // event's elapsed time ("1.5s") under load although every event writing it hides its
-  // progress, and that is Gradio's, not a reason the page says.
+  // NEW-training-finetune-2), the reason read by the walk's `words` (never Gradio's status
+  // tracker in its block, which showed a queued event's elapsed time, "1.5s", under load).
   let drawer = null;
   const dr = document.getElementById('shep-train-drawer');
   if (dr && dr.getClientRects().length) {
@@ -1718,7 +1717,7 @@ _LAYOUT_FACTS_JS = r"""() => {
                prompt: at(document.getElementById('shep-train-check-prompt')),
                actions: ['shep-train-start', 'shep-train-continue', 'shep-train-stop']
                  .filter((i) => at(document.getElementById(i))),
-               reason: document.querySelector('#shep-train-reason .shep-rb-reason').innerText.trim(),
+               reason: words(document.getElementById('shep-train-reason')),
                closers: [...dr.querySelectorAll('button')].filter((b) => at(b)
                  && /^(close|cancel)$/i.test((b.getAttribute('aria-label') || b.textContent).trim())).length };
   }
@@ -2033,20 +2032,23 @@ _LONG_DIAGNOSIS = {"hpo": "HP:0001250\nHP:0001263", "top_k": 20, "rows": 20}
 #: drawn (whether the table has a box, its rows, those with a long name, and
 #: its width against its box's), and the card's Change model… as drawn (its
 #: words, whether it is disabled, and the reason beside it if one is drawn).
+#: Every text is read by the walk's `words` (`browser.LOOK_JS`), never Gradio's
+#: status tracker (V-24).
 _ACCEPTANCE_FACTS_JS = r"""() => {
+  const { words } = window.__shepLook;
   const chip = document.querySelector('#shep-chips .shep-chip');
   const table = document.querySelector('#shep-dx-results-body table');
   const rows = table ? [...table.querySelectorAll('tbody tr[data-key]')] : [];
   const change = document.querySelector('#shep-dx-change-btn');
   const why = document.querySelector('#shep-dx-change-why');
   const drawn = (e) => !!e && e.getClientRects().length > 0;
-  return { chip: chip ? chip.innerText.trim() : null,
+  return { chip: chip ? words(chip) : null,
            layout: document.documentElement.getAttribute('data-shep-layout'),
            shown: drawn(table),
-           rows: rows.length, long: rows.filter((r) => /, type \d+/.test(r.innerText)).length,
+           rows: rows.length, long: rows.filter((r) => /, type \d+/.test(words(r))).length,
            table: table ? [table.scrollWidth, table.parentElement.clientWidth] : null,
-           change: drawn(change) ? { text: change.innerText.trim(), off: change.disabled,
-                                     why: drawn(why) ? why.innerText.trim() : '' } : null };
+           change: drawn(change) ? { text: words(change), off: change.disabled,
+                                     why: drawn(why) ? words(why) : '' } : null };
 }"""
 
 
@@ -2216,6 +2218,107 @@ def test_a_read_only_viewers_walk_passes_the_ui_measurement_check(acceptance_wal
     answered = [s for s in seen if s.get("tag") == "results"]
     assert sorted(s["size"] for s in answered) == sorted(f"{w}x{h}" for w, h in sizes)
     assert _answered_problems(answered, refused=True) == []
+
+
+#: The acceptance walk's reader (`_ACCEPTANCE_FACTS_JS`) on Diagnosis while the
+#: card's poll is in flight (V-24), for an operator and then a read-only viewer
+#: (`browser.READ_ONLY_HEADERS`), at 1280 x 720: the page served and its card
+#: read, then every request a ``queue=False`` listener sends (the card's 5 s
+#: poll) held until the page has been read, and the page read once Gradio's
+#: status tracker in Change model's reason block shows its timer: the reader's
+#: facts, the block's whole ``innerText`` and the reason the page drew in it.
+_HELD_POLL_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, FACTS = __FACTS_JS__, VIEWERS = __VIEWERS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [viewer, headers] of Object.entries(VIEWERS)) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 720 },
+                                               ...(headers ? { extraHTTPHeaders: headers } : {}) });
+    const page = await context.newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.addInitScript(LOOK_JS);
+    await page.goto(process.argv[2], { waitUntil: 'load' });
+    // The card read: Change model… usable, or locked with its reason beside it.
+    await page.waitForSelector('#shep-dx-change-btn:not([disabled]), #shep-dx-change-why .shep-dx-why',
+                               { timeout: 60000 });
+    await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+    let release = null;
+    const released = new Promise((resolve) => { release = resolve; });
+    await page.route('**/run/predict', async (route) => { await released; await route.continue().catch(() => {}); });
+    await page.waitForFunction(() => {
+      const tracker = document.querySelector('#shep-dx-change-why [data-testid="status-tracker"]');
+      return !!tracker && /\d\.\ds/.test(tracker.textContent); }, null, { timeout: 30000 });
+    const facts = await page.evaluate(FACTS);
+    const block = await page.evaluate(() => {
+      const why = document.getElementById('shep-dx-change-why'), own = why.querySelector('.shep-dx-why');
+      return { text: why.innerText.trim(), own: own ? own.innerText.trim() : '' }; });
+    release();
+    await page.unroute('**/run/predict');
+    await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+    out[viewer] = { facts, block };
+    await context.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_walks_reader_never_reads_gradios_status_tracker_as_a_blocks_words(tmp_path, monkeypatch):
+    """V-24: the acceptance walk once read Change model's reason as "0.2s" at
+    1280 x 720. While the card's 5 s poll (``queue=False``, its progress
+    hidden) is in flight, Gradio keeps its status tracker in each block the
+    poll writes, hidden (opacity 0, a 0 px box) but rendered, and the
+    tracker's timer is in the block's ``innerText``. With the poll held in
+    flight and the timer in the reason's block (`_HELD_POLL_JS`; the panel,
+    its wiring and the shell real, the served status and the card's facts
+    stand-ins), the walk's reader reads the reason the page drew, by the
+    walk's one ``words`` (`browser.LOOK_JS`): none for an operator, the
+    lock's words alone for a read-only viewer, never the timer."""
+    from src.webui.app import mount_options
+    from src.webui.components import diagnosis_panel as dp
+    from src.webui.components.chips import LOCK, OPERATOR_ONLY
+    from tests.fixtures.browser import (
+        LOOK_JS,
+        QUEUE_JS,
+        READ_ONLY_HEADERS,
+        node_with_playwright,
+        run_node,
+    )
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+    from tests.unit.test_diagnosis_panel import _status_serving, _task_identity
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    status = _status_serving(_task_identity("disease_task"))
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (status, None))
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, *, operator, **k: {
+        "key": dp.card.served_key(s), "operator": operator, "workspaces": [], "serving": None,
+        "item": None, "item_problem": None, "recorded": None, "trained": None, "cohorts": None})
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+    script = (_HELD_POLL_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__LOOK_JS__", json.dumps(LOOK_JS))
+              .replace("__FACTS_JS__", _ACCEPTANCE_FACTS_JS)
+              .replace("__VIEWERS__", json.dumps({"operator": None, "read_only": READ_ONLY_HEADERS})))
+    with served(demo, **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")])
+    for viewer, read in seen.items():
+        # Gradio's timer is in the block's innerText while the poll is held.
+        assert re.search(r"\d\.\ds", read["block"]["text"]), (viewer, read)
+    operator, read_only = seen["operator"], seen["read_only"]
+    assert operator["block"]["own"] == "", operator
+    assert operator["facts"]["change"] == {"text": "Change model…", "off": False, "why": ""}, operator
+    change = read_only["facts"]["change"]
+    assert read_only["block"]["own"].startswith(f"{LOCK} {OPERATOR_ONLY}"), read_only
+    assert change["off"] is True and change["text"] == f"{LOCK} Change model…", read_only
+    assert change["why"] == read_only["block"]["own"], read_only
 
 
 def test_each_fingerprint_is_said_once_on_a_screen(ui_walk):
