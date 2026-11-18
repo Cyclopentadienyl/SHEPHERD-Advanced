@@ -1421,8 +1421,9 @@ def load_reason_html(item: Optional[Mapping[str, Any]],
     return f'<div class="shep-reason shep-reason-grey">{r.e(why)}</div>' if why else ""
 
 
-#: Under the chosen model's title, shown stacked only (the drawer's CSS):
-#: back to the row chosen (`FACTS_JS`).
+#: At the end of the chosen model's title, shown stacked only (`style.SHELL_CSS`:
+#: its words on one line, on a line of its own when the name and its chip leave
+#: it no room): back to the row chosen (`FACTS_JS`).
 BACK_TO_LIST = ('<button type="button" class="shep-btn shep-back-list">'
                 '↑ Back to the list</button>')
 

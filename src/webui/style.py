@@ -805,7 +805,11 @@ __STACK__ {
   .shep-tbl-wrap { overflow-x: auto; overflow-y: hidden; }
   .shep-tbl th { position: static; }
   .shep-tbl td { overflow-wrap: anywhere; }
-  .shep-facts-title > .shep-back-list { display: inline-flex; align-items: center; }
+  /* "↑ Back to the list" keeps its words' width, on one line; the title wraps its items, so the
+     button takes a line of its own, at its end, when the name and its chip leave it no room (it got
+     what they left: 57 px at 390 x 844, its words on three lines in its 32 px box; V-23). */
+  .shep-facts-title { flex-wrap: wrap; }
+  .shep-facts-title > .shep-back-list { display: inline-flex; align-items: center; flex: none; white-space: nowrap; }
 }
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK)
 
