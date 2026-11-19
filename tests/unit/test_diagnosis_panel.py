@@ -1956,10 +1956,13 @@ def test_a_selected_row_shows_its_details_with_its_counts():
     assert dp.select_candidate(_sample_result(), "evidence", "99") == {}
     paths = dp.details_outputs(_sample_result(), 1, "paths")
     assert "MONDO:0011073" in paths["details_html"]["value"]
+    # The Explanation view: its lead from the result (the HTML view), the
+    # written explanation whole under its fold (the Markdown view, R-1b).
     explanation = dp.details_outputs(_sample_result(), 1, "explanation")
     assert dp.VIEW_OFF not in explanation["details_md"]["elem_classes"]
     assert explanation["details_md"]["value"] == "Because ..."
-    assert dp.VIEW_OFF in explanation["details_html"]["elem_classes"]
+    assert dp.VIEW_OFF not in explanation["details_html"]["elem_classes"]
+    assert dp.EXPLANATION_FOLD in explanation["details_html"]["value"]
 
 
 #: What may still be shown or hidden with ``visible``: the two drawers (whole
@@ -1995,7 +1998,11 @@ def test_the_details_switch_views_by_class():
             out = dp.details_outputs(result, rank, segment)
             _assert_views_switch_by_class(out)
             assert _shown(out["details_seg"]) is (rank is not None)
-            assert _shown(out["details_html"]) is not _shown(out["details_md"])
+            # The HTML view always; the Markdown view is the Explanation
+            # view's written explanation, under its fold (R-1b).
+            written = (rank is not None and segment == "explanation"
+                       and bool(result["candidates"][rank - 1].get("explanation")))
+            assert _shown(out["details_html"]) and _shown(out["details_md"]) is written
             assert "shep-html" in out["details_html"]["elem_classes"]
     _assert_views_switch_by_class(dp.select_candidate(result, "explanation", "1"))
 
@@ -3395,11 +3402,32 @@ def test_the_details_header_is_rank_name_and_id_and_each_score_is_said_once():
     identity drawer and the exports (the table, the header and every details
     view the page draws)."""
     result = _paths_result()
-    for segment in ("evidence", "phenotypes", "paths"):
+    # The pipeline's written explanation opens with the candidate and its
+    # score, as the API writes it (R-1b: shown as the Explanation view, the
+    # row's score was on screen twice).
+    written = ("## Diagnosis Candidate: Dravet syndrome\n"
+               "Score: -0.280 (a ranking score, not a calibrated disease probability)\n\n"
+               "### Matching Phenotypes\n- Global developmental delay (HP:0001263)\n")
+    result["candidates"][0]["explanation"] = written
+    for segment in ("evidence", "explanation", "phenotypes", "paths"):
         out = dp.details_outputs(result, 1, segment)
         page = _visible(dp.results_body_html(result, 1) + out["details_hd"]
                         + out["details_html"]["value"])
         assert page.count("-0.280") == 1, segment
+    # The Explanation view as first shown: what the explanation sets out, from
+    # the result, the score referred to by the table; the explanation itself
+    # whole and unchanged in the Markdown view, drawn only while its fold is
+    # open (closed until the reader opens it).
+    out = dp.details_outputs(result, 1, "explanation")
+    assert _visible(out["details_html"]["value"]) == (
+        "Score " + dp.EXPLANATION_SCORE + " Matching phenotypes listed under Matching "
+        "phenotypes › Supporting genes SCN1A CDKL5 Direct paths 5 · listed under Paths ›")
+    assert out["details_html"]["value"].endswith(
+        '<details class="shep-more shep-dx-written"><summary>Written explanation ›</summary>'
+        '</details></div>')
+    assert out["details_md"]["value"] == written
+    assert ("#shep-tab-clinical #shep-dx-details-bd:has(details.shep-dx-written:not([open])) "
+            "#shep-dx-explanation { display: none !important; }") in dp.PAGE_CSS
     hd = dp.details_header_html(result["candidates"][0], "disease_task/v1")
     assert _visible(hd) == "#1 Dravet syndrome MONDO:0011073"
     gene = _gene_result()
@@ -3756,12 +3784,22 @@ const { chromium } = require('playwright');
     }, name, { timeout: 20000 });
   };
   await seg('Explanation');
-  await page.waitForFunction(() => !document.querySelector('#shep-dx-explanation').classList.contains('shep-dx-off')
+  // As first shown: the view's lead, the written explanation under its fold.
+  await page.waitForFunction(() => /Written explanation/.test(document.querySelector('#shep-dx-details-body').innerText),
+                             null, { timeout: 20000 });
+  text = await body();
+  // (A hidden element's innerText is its whole text: what is drawn is its boxes.)
+  const drawn = () => page.evaluate(() => document.querySelector('#shep-dx-explanation').getClientRects().length);
+  seen.explanation = { score: count(text, score), written: await drawn() };
+  // The fold opened: the written explanation, whole, right under it.
+  await page.click('#shep-dx-details-body details.shep-dx-written > summary');
+  await page.waitForFunction(() => document.querySelector('#shep-dx-explanation').getClientRects().length > 0
                              && document.querySelector('#shep-dx-explanation').innerText.trim().length > 0,
                              null, { timeout: 20000 });
   text = await body();
-  seen.explanation = { device: count(text, 'Not a certified medical device'),
-                       note: count(text, 'computational prediction') };
+  Object.assign(seen.explanation, { device: count(text, 'Not a certified medical device'),
+                                    note: count(text, 'computational prediction'),
+                                    opened: count(text, score) });
   // The identity drawer at Model in use, then This result.
   await page.click('#shep-dx-details-btn');
   await page.waitForFunction(() => document.querySelector('#shep-dx-id-model [data-sec="identity"]'),
@@ -3796,7 +3834,9 @@ def test_in_a_browser_each_notice_score_and_path_length_is_said_once(served, mon
                                                                       tmp_path):
     """T06-D as drawn (Node and Playwright, skipped without), on the real
     application serving a disease child: the row's score is on screen once
-    (R-1b); no "Mode A" and the shortest path's length once (R-3,
+    (R-1b), with the Explanation view as first shown too (its written
+    explanation, which opens with the score, folded; the review of 6a2d52e);
+    no "Mode A" and the shortest path's length once (R-3,
     NEW-diagnosis-2); the device line once, the results footer's, with the
     Explanation view open (NEW-diagnosis-1) and with the identity drawer open
     at either view (R-26); no capitals in a banner and no "synthetic data"
@@ -3829,7 +3869,12 @@ def test_in_a_browser_each_notice_score_and_path_length_is_said_once(served, mon
     assert evidence["shortest"] <= 1 and evidence["device"] == 1 and not evidence["ms"], seen
     assert re.fullmatch(r"\d+ / 2", evidence["kn"].strip()), seen
     assert evidence["score"] == 1 and "Score" not in evidence["head"], seen
-    assert seen["explanation"] == {"device": 1, "note": 0}, seen
+    # R-1b: with the Explanation view as first shown the row's score is on
+    # screen once (the table's), the written explanation folded; opened, the
+    # explanation is the API's whole text, its own score line included.
+    assert seen["explanation"]["score"] == 1 and seen["explanation"]["written"] == 0, seen
+    assert seen["explanation"]["opened"] == 2, seen
+    assert {k: seen["explanation"][k] for k in ("device", "note")} == {"device": 1, "note": 0}, seen
     model = seen["model"]
     assert model["device"] == 1 and model["caps"] == 0 and model["details"] == 0, seen
     assert model["order"][0] == "warnings" and "uses" not in model["order"], seen

@@ -2217,6 +2217,52 @@ def evidence_html(candidate: Mapping[str, Any], explanations: bool = True) -> st
     return "".join(parts)
 
 
+#: **The Explanation view** (R-1b): the pipeline's written explanation opens
+#: with the candidate's name and its score ("Score: -2.844 (a ranking score,
+#: …)"), so shown as the view it put the selected row's score on screen
+#: twice. The view shows what the explanation covers from the result the page
+#: already projects, then the explanation, whole as the API wrote it, under
+#: this fold: the Markdown view under the HTML one (`#shep-dx-explanation`),
+#: drawn while the fold is open (`PAGE_CSS`).
+EXPLANATION_FOLD = "Written explanation ›"
+#: The score, referred to by its relation to the table (its number is said
+#: once, there), with what it is (`SCORE_NOTE`).
+EXPLANATION_SCORE = ("In the table: it ranks this result's candidates and is not a calibrated "
+                     "disease probability.")
+
+
+def explanation_html(candidate: Mapping[str, Any], result: Optional[Mapping[str, Any]] = None,
+                     explanations: bool = True) -> str:
+    """The Explanation view of a disease candidate (R-1b; the skill's §4: an
+    explanation's facts as key-value rows, its narrative folded): what the
+    pipeline's written explanation sets out, from the structured result (the
+    score by its relation to the table, the matching phenotypes and the paths
+    each listed in its own view, the supporting genes), then the written
+    explanation itself under "Written explanation ›" (`EXPLANATION_FOLD`; its
+    text is the Markdown view, unchanged and uncut). With no explanation, why,
+    in its own words."""
+    if not candidate.get("explanation"):
+        why = ("No explanation was returned for this candidate." if explanations
+               else "Explanations were off for this run (Options).")
+        return f'<p class="shep-muted">{_e(why)}</p>'
+    rows: List[Tuple[str, str]] = [("Score", _e(EXPLANATION_SCORE)),
+                                   ("Matching phenotypes",
+                                    '<button type="button" class="shep-dx-link" '
+                                    'data-key="seg:phenotypes">listed under Matching phenotypes ›'
+                                    '</button>')]
+    genes = candidate.get("supporting_genes") or []
+    if genes:
+        rows.append(("Supporting genes", '<span class="shep-dx-genes">' + "".join(
+            f'<span class="shep-dx-gene">{_e(g)}</span>' for g in genes) + "</span>"))
+    paths = _paths(candidate)
+    if paths:
+        rows.append(("Direct paths", f'{len(paths)} · <button type="button" class="shep-dx-link" '
+                     'data-key="seg:paths">listed under Paths ›</button>'))
+    return (_summary_list(rows, classes="shep-dx-ev")
+            + f'<details class="shep-more shep-dx-written"><summary>{_e(EXPLANATION_FOLD)}'
+            '</summary></details>')
+
+
 def phenotypes_html(candidate: Mapping[str, Any],
                     result: Optional[Mapping[str, Any]] = None) -> str:
     """The query's phenotypes as used, **split by whether the graph annotates
@@ -2375,19 +2421,18 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
         html_ = phenotypes_html(candidate, result)
     elif segment == "paths":
         html_ = paths_html(candidate, result)
+    else:
+        html_ = explanation_html(candidate, result, explanations)
     explanation = candidate.get("explanation")
-    if segment == "explanation" and not explanation:
-        why = ("No explanation was returned for this candidate." if explanations
-               else "Explanations were off for this run (Options).")
-        html_ = f'<p class="shep-muted">{why}</p>'
-    if html_ is not None:
-        html_ = f"<div{named}>{html_}</div>"
+    # The written explanation, whole as the API wrote it, is the Markdown view
+    # under the Explanation view's fold (`explanation_html`).
+    written = segment == "explanation" and bool(explanation)
     return {
         "details_hd": details_header_html(candidate, _result_kind(result)),
         "details_seg": view_update(True, "shep-seg", value=segment,
                                    choices=segment_choices(candidate)),
-        "details_html": view_update(html_ is not None, *_HTML_VIEW, value=html_),
-        "details_md": view_update(html_ is None, *_MD_VIEW, value=explanation),
+        "details_html": view_update(True, *_HTML_VIEW, value=f"<div{named}>{html_}</div>"),
+        "details_md": view_update(written, *_MD_VIEW, value=explanation),
         "details_ft": details_footer_html(result, rank),
     }
 
@@ -4196,6 +4241,9 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-details-ft {{ border-top: 1px solid var(--shep-border); }}
 {_TAB} .shep-dx-det-ft {{ display: flex; align-items: center; gap: 4px; padding: 10px 16px; font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} #shep-dx-explanation {{ font-size: 15px; }}
+/* The written explanation (the Markdown view) is drawn while the Explanation view's fold is
+   open, right under its summary (R-1b, `explanation_html`). */
+{_TAB} #shep-dx-details-bd:has(details.shep-dx-written:not([open])) #shep-dx-explanation {{ display: none !important; }}
 {_TAB} .shep-dx-drawer {{ box-shadow: 0 10px 30px rgba(20, 24, 40, .14); }}
 {_TAB} .shep-dx-drawer-hd {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important; padding: 10px 16px !important; border-bottom: 1px solid var(--shep-border); }}
 /* A drawer's head and the Load drawer's task segment take their words' width and give way to
