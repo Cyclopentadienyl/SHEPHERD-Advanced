@@ -122,6 +122,7 @@ def test_a_first_start_says_nothing_is_set_and_offers_the_suggested_folders(dl, 
         assert f"~/SHEPHERD-data/{SUGGESTED[key]}" in row["suggest"]["value"]
         assert row["box"]["interactive"] is True and row["save"]["interactive"] is True
         assert ">Set to<" in row["key"]["value"]
+        assert row["lock"]["value"] == ""          # an operator: no lock, no reason
     evidence = rows["training_evidence_dirs"]
     assert dl.EVIDENCE_NONE in evidence["state"]["value"]
     assert evidence["create"]["visible"] is False
@@ -356,7 +357,8 @@ def test_an_unreadable_file_has_one_notice_and_replace_keeps_a_copy(dl, monkeypa
 
 def test_a_read_only_request_sees_no_path_and_every_control_locked(dl, monkeypatch, tmp_path):
     """Read-only: what is set and from where stay; no path, no problem text
-    naming one; every box and button off with the lock; D8's reason once."""
+    naming one; every box and button off with the lock; D8's reason once,
+    and each row's short phrase (`ROW_LOCKED`) beside its locked buttons."""
     root, registry = tmp_path / "ws-secret", tmp_path / "reg-secret"
     root.mkdir()
     registry.mkdir()
@@ -378,6 +380,7 @@ def test_a_read_only_request_sees_no_path_and_every_control_locked(dl, monkeypat
         assert row["box"]["interactive"] is False and row["box"]["value"] == ""
         for part, label in (("check", dl.CHECK_LABEL), ("save", dl.SAVE_LABEL)):
             assert (row[part]["value"], row[part]["interactive"]) == (f"🔒 {label}", False)
+        assert row["lock"]["value"] == dl.reason_line("Operator controls only"), key
     assert rows["intake_dir"]["create"]["value"] == f"🔒 {dl.CREATE_LABEL}"
     # Each act checks its own request: refused, nothing read or written.
     before = _saved_file()
@@ -514,7 +517,9 @@ def test_stop_service_asks_once_then_stops_through_the_orderly_stop(monkeypatch)
 
 
 #: Settings at a phone's width and at the owner's window: each data
-#: location's box, how wide it is and whether its placeholder fits in it.
+#: location's box, how wide it is and whether its placeholder fits in it,
+#: and each of its row's buttons shown (Check, Save, Create): whether it lies
+#: inside its row's content box.
 _BOXES_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
@@ -540,6 +545,17 @@ const QUEUE_JS = __QUEUE_JS__;
         const room = f.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight);
         boxes[key] = { width: Math.round(r.width),
                        hint_fits: c.measureText(f.placeholder.split('\n')[0]).width <= room + 0.5 };
+        const row = document.getElementById(`dl_row_${key}`);
+        const rs = getComputedStyle(row), rr = row.getBoundingClientRect();
+        const left = rr.left + parseFloat(rs.paddingLeft), right = rr.right - parseFloat(rs.paddingRight);
+        boxes[key].buttons = [];
+        for (const part of ['check', 'save', 'create']) {
+          const b = document.getElementById(`dl_${part}_${key}`);
+          const br = b ? b.getBoundingClientRect() : null;
+          if (!br || br.width === 0 || b.offsetParent === null) { continue; }
+          boxes[key].buttons.push({ part, left: br.left, right: br.right, row_left: left, row_right: right,
+                                    inside: br.left >= left - 0.5 && br.right <= right + 0.5 });
+        }
       }
       return { boxes, sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth };
     });
@@ -558,7 +574,10 @@ def test_every_path_box_keeps_room_for_a_path_at_every_window(dl, tmp_path, monk
     now keeps room for a path (16em, or its whole row), its buttons wrapping
     under it where the row cannot hold them; at 960x1080 and 1850x960 the
     row stays one line (an operator's Settings, every answer in). Fails on
-    fcc3dea."""
+    fcc3dea. The review of 5188b4e (2026-11-19): at 390x844 Create, indented
+    by the key column's 8em as if its box sat beside the key, ended at x 381
+    past its row's 357; every button shown now lies inside its row (fails on
+    5188b4e)."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.operator_access import operator_mode
@@ -575,6 +594,7 @@ def test_every_path_box_keeps_room_for_a_path_at_every_window(dl, tmp_path, monk
         assert at["sideways"] is False, (size, at)
         for key, box in at["boxes"].items():
             assert box["hint_fits"] and box["width"] >= 200, (size, key, box)
+            assert box["buttons"] and all(b["inside"] for b in box["buttons"]), (size, key, box)
 
 
 #: Settings for an operator: drafts typed in the evidence folders box and in
@@ -672,3 +692,125 @@ def test_a_draft_survives_every_other_rows_check_and_save(dl, tmp_path, monkeypa
         assert seen[step] == {"workspaces_root": "", **drafts}, (step, seen)
     assert seen["ownSave"] == {"workspaces_root": "", **drafts}, seen
     assert _saved_file()["applied"]["training_evidence_dirs"] == [str(draft)]
+
+
+#: Settings at the owner's window and a phone's, the panel's page open
+#: answered: for each row's visible locked button (Check, Save, Create
+#: suggested folder), brought into view as a reader scrolls to it, the line in
+#: the panel that says why it is locked (the lock mark, then words, in no
+#: button) nearest it: the one in its own row when there is one, else any.
+#: How far its drawn words are from the button, down the page (``dy``, the
+#: gap between their boxes) and across (``dx``), and whether both are wholly
+#: on screen; and how often the panel's long reason is said on the page.
+_ROW_LOCKS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [390, 844]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(process.argv[2], { waitUntil: 'load' });
+    await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+    await page.click('#shep-tab-settings-button');
+    // The page's open answered: the rows' buttons drawn for this request.
+    await page.waitForFunction(() => {
+      const b = document.getElementById('dl_check_workspaces_root');
+      return !!b && b.offsetParent !== null; }, null, { timeout: 30000 });
+    await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+    out[w + 'x' + h] = await page.evaluate(async () => {
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const T = (e) => (e.innerText || '').replace(/\s+/g, ' ').trim();
+      const box = (e) => e.getBoundingClientRect();
+      const clip = (e) => { let x = { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
+        for (let a = e.parentElement; a; a = a.parentElement) { const s = getComputedStyle(a);
+          if (/(auto|scroll|hidden|clip)/.test(s.overflowY + s.overflowX)) { const p = box(a);
+            x = { left: Math.max(x.left, p.left), top: Math.max(x.top, p.top),
+                  right: Math.min(x.right, p.right), bottom: Math.min(x.bottom, p.bottom) }; } }
+        return x; };
+      const whole = (e) => { const q = box(e), x = clip(e);
+        return q.left >= x.left - 1 && q.top >= x.top - 1 && q.right <= x.right + 1 && q.bottom <= x.bottom + 1; };
+      // A line's drawn words, not its block's width.
+      const words = (e) => { const r = document.createRange(); r.selectNodeContents(e);
+        return r.getBoundingClientRect(); };
+      const gaps = (a, b) => { const p = box(a), q = words(b);
+        return { dx: Math.round(Math.max(0, p.left - q.right, q.left - p.right)),
+                 dy: Math.round(Math.max(0, p.top - q.bottom, q.top - p.bottom)) }; };
+      const rowOf = (e) => e.closest('.shep-dl-row');
+      const panel = document.getElementById('shep-dl');
+      // The lines that say why: the lock mark, then words, in no button.
+      const reasons = [...panel.querySelectorAll('*')].filter((e) =>
+        T(e) === '🔒' && !e.closest('button') && e.offsetParent !== null).map((e) => e.parentElement);
+      const rows = {};
+      for (const key of ['workspaces_root', 'registry', 'intake_dir', 'training_evidence_dirs']) {
+        rows[key] = {};
+        for (const part of ['check', 'save', 'create']) {
+          const b = document.getElementById(`dl_${part}_${key}`);
+          if (!b || b.offsetParent === null) { continue; }
+          b.scrollIntoView({ block: 'nearest' });
+          await frame();
+          const own = reasons.filter((e) => rowOf(e) === rowOf(b));
+          const near = (own.length ? own : reasons).map((e) => [gaps(b, e), e])
+            .sort((x, y) => x[0].dy - y[0].dy)[0];
+          rows[key][part] = { text: T(b), disabled: b.disabled, ...(near ? near[0] : {}),
+                              sameRow: own.length > 0, reason: near ? T(near[1]) : null,
+                              whole: whole(b), reasonWhole: near ? whole(near[1]) : false };
+        }
+      }
+      const said = (words) => (document.body.innerText.split(words).length - 1);
+      return { rows, locks: (T(panel).match(/🔒/g) || []).length, reasons: reasons.map(T),
+               longSaid: said('Folder paths are shown to operator controls only.'),
+               sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.parametrize("operator", [False, True], ids=["read-only", "operator"])
+def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch, operator):
+    """Owner's decision 3 of 2026-11-19 (the recheck of d7ebfc3, section 7.3):
+    for a read-only viewer the panel said why once, above its rows, so a
+    row's locked Check, Save and Create were 37-375 px below that line at
+    1850 x 960 and up to 1,312 px at 390 x 844 (the reviewer's figures; with
+    Create offered here, 38-556 and 190-1,371). In a real browser, nothing
+    set (Create offered), a request D8 refuses: each row's visible locked
+    button has the short phrase (`ROW_LOCKED`, the lock and "Operator
+    controls only") in its own row, on the line next to it (its words at
+    most 24 px above or below the button), both wholly on screen when the
+    button is brought into view; the panel's long reason is said once on the
+    page. An operator sees no lock and no phrase. Fails on d7ebfc3."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import DEPLOYMENT_MODE, operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    if operator:
+        operator_mode(monkeypatch)
+    else:
+        monkeypatch.delenv(DEPLOYMENT_MODE, raising=False)
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_ROW_LOCKS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    phrase = "Operator controls only"
+    for size, at in seen.items():
+        assert at["sideways"] is False, (size, at)
+        if operator:
+            assert at["locks"] == 0 and at["reasons"] == [] and at["longSaid"] == 0, (size, at)
+            continue
+        assert at["longSaid"] == 1, (size, at)
+        assert at["rows"]["workspaces_root"].get("create"), (size, at)       # Create offered
+        for key, buttons in at["rows"].items():
+            assert {"check", "save"} <= set(buttons), (size, key, buttons)
+            for part, button in buttons.items():
+                assert button["text"].startswith("🔒 ") and button["disabled"], (size, key, part)
+                assert button["reason"] == f"🔒 {phrase}", (size, key, part, button)
+                assert button["sameRow"] and button["dy"] <= 24, (size, key, part, button)
+                assert button["whole"] and button["reasonWhole"], (size, key, part, button)

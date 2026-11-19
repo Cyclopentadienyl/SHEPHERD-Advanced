@@ -382,6 +382,30 @@ def pip_install(spec: str, name: str, reinstall: bool = False, no_deps: bool = F
                 "does not hold, the locked set was kept and it is not installed")
             return False
 
+class Accelerator(NamedTuple):
+    """An optional accelerator the launcher can install: its key in an
+    attention order (and its flag's ``args`` name), the module it imports
+    as, its name in the log, the flag that asks a start to install it,
+    whether it runs on ARM, and whether pip installs it without its
+    dependencies."""
+    key: str
+    module: str
+    display: str
+    flag: str
+    on_arm: bool = True
+    no_deps: bool = False
+
+
+#: In the order a start considers them; an accelerator is installed only when
+#: its flag asks for it (`main`).
+ACCELERATORS = (
+    Accelerator("flash_attn", "flash_attn", "FlashAttention", "--flash-attn", on_arm=False,
+                no_deps=True),
+    Accelerator("xformers", "xformers", "xFormers", "--xformers"),
+    Accelerator("sage_attn", "sage_attention", "SageAttention", "--sage-attn"),
+)
+
+
 def have_module(mod: str) -> bool:
     try:
         __import__(mod)
@@ -863,20 +887,24 @@ def install_desktop_entry(environ, settings_file: Optional[str]) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="shep_launch", description="SHEPHERD launcher for optional accelerators", formatter_class=argparse.RawTextHelpFormatter,
                                 epilog="Arguments after -- go to the main app unchanged, e.g.  shep_launch.py --no-browser -- --port 8264")
-    g = p.add_argument_group("Accelerator flags (opt-in like SD WebUI)")
-    g.add_argument("--flash-attn", action="store_true", help="Enable FlashAttention (Windows/x86; skipped on ARM)")
-    g.add_argument("--xformers", action="store_true", help="Enable xFormers memory-efficient attention")
-    g.add_argument("--sage-attn", action="store_true", help="Enable SageAttention (community plugin)")
+    g = p.add_argument_group("Accelerator flags (opt-in like SD WebUI)",
+                             "A start installs an accelerator only when its own flag asks for it;\n"
+                             "an attention order uses the installed ones and installs none.")
+    g.add_argument("--flash-attn", action="store_true", help="Use FlashAttention, installing it when missing (Windows/x86; skipped on ARM)")
+    g.add_argument("--xformers", action="store_true", help="Use xFormers memory-efficient attention, installing it when missing")
+    g.add_argument("--sage-attn", action="store_true", help="Use SageAttention (community plugin), installing it when missing")
     g.add_argument("--cudnn-sdpa", action="store_true", help="Prefer cuDNN SDPA (default if nothing else selected)")
     g.add_argument("--torch-sdpa", action="store_true", help="Prefer vanilla Torch SDPA")
     g.add_argument("--naive-attn", action="store_true", help="Force naive/matmul attention as last resort")
     r = p.add_argument_group("Reinstall/behavior controls")
-    r.add_argument("--reinstall-flash-attn", action="store_true")
-    r.add_argument("--reinstall-xformers", action="store_true")
-    r.add_argument("--reinstall-sage-attn", action="store_true")
-    r.add_argument("--no-auto-install", action="store_true", help="Do not pip-install automatically; only check")
+    r.add_argument("--reinstall-flash-attn", action="store_true", help="With --flash-attn: its install, when missing, uses pip --force-reinstall")
+    r.add_argument("--reinstall-xformers", action="store_true", help="With --xformers: its install, when missing, uses pip --force-reinstall")
+    r.add_argument("--reinstall-sage-attn", action="store_true", help="With --sage-attn: its install, when missing, uses pip --force-reinstall")
+    r.add_argument("--no-auto-install", action="store_true",
+                   help="Install nothing: --flash-attn, --xformers and --sage-attn use their\n"
+                        "accelerator only when it is installed")
     o = p.add_argument_group("Ordering and plugins")
-    o.add_argument("--attention-order", type=str, default="", help="Comma list, e.g. flash_attn,xformers,cudnn_sdpa,torch_sdpa,naive")
+    o.add_argument("--attention-order", type=str, default="", help="Comma list, e.g. flash_attn,xformers,cudnn_sdpa,torch_sdpa,naive\n(uses what is installed; installs nothing)")
     o.add_argument("--plugin", type=str, default="", help="Custom plugin path 'module.sub:Class' (will be checked)")
     d = p.add_argument_group("Diagnostics")
     d.add_argument("--print-plan", action="store_true", help="Print chosen plan and exit code")
@@ -1266,34 +1294,51 @@ def main() -> int:
         for fallback in ["torch_sdpa", "naive"]:
             if fallback not in order:
                 order.append(fallback)
-    resolved: List[str] = []
-    def try_enable(mod_key: str, import_name: str, reinstall_flag: bool, display: str, allow_on_arm: bool = True, no_deps: bool = False) -> bool:
-        if is_arm() and not allow_on_arm:
-            log(f"Skip {display} on ARM architecture"); return False
-        if have_module(import_name):
-            log(f"{display} already available"); return True
+    # **Use, and install only when asked** (the owner's decision of
+    # 2026-11-19). The order -- the platform's preference from
+    # deployment.yaml, or --attention-order -- chooses among the accelerators
+    # that are installed; it is never permission to install one, with CUDA
+    # or without. Only an accelerator's own flag (`ACCELERATORS`) asks this
+    # start to install it when it is missing, through `pip_install` and its
+    # uv.lock constraints; --no-auto-install turns that install off and
+    # --reinstall-<name> adds pip's reinstall to it. A start that does not
+    # launch (--print-plan, --skip-launch, --dry-run) installs nothing: it
+    # says what the flag would install. An accelerator this start does not use
+    # is said in one line, with how to install it, and the start goes on with
+    # the next one in the order.
+    def usable(accelerator: Accelerator) -> bool:
+        if is_arm() and not accelerator.on_arm:
+            log(f"Skip {accelerator.display} on ARM architecture"); return False
+        if have_module(accelerator.module):
+            log(f"{accelerator.display} already available"); return True
+        if not getattr(args, accelerator.key):
+            log(f"{accelerator.display} is not installed, so this start goes on without it (a "
+                f"start installs it only when asked: start once with {accelerator.flag})")
+            return False
         if args.no_auto_install:
-            log(f"{display} not installed; --no-auto-install set, skipping install"); return False
-        spec = choose_spec(table, mod_key, torch_v=torch_v, cuda_v=cuda_v, py_v=py_v, os_name=os_name, arch=arch)
+            log(f"{accelerator.display} is not installed, so this start goes on without it "
+                f"(--no-auto-install: {accelerator.flag} uses it only when it is installed)")
+            return False
+        return install(accelerator)
+
+    def install(accelerator: Accelerator) -> bool:
+        spec = choose_spec(table, accelerator.key, torch_v=torch_v, cuda_v=cuda_v, py_v=py_v,
+                           os_name=os_name, arch=arch)
         if not spec:
-            log(f"No install spec found for {display}; skipping"); return False
-        if args.dry_run:
-            log(f"[dry-run] Would install {display}: {spec}"); return False
-        ok = pip_install(spec, display, reinstall=reinstall_flag, no_deps=no_deps)
-        return ok and have_module(import_name)
-    if "flash_attn" in order:
-        enabled = try_enable("flash_attn", "flash_attn", args.reinstall_flash_attn, "FlashAttention", allow_on_arm=False, no_deps=True)
-        if not enabled:
-            order = [x for x in order if x != "flash_attn"]
-            os.environ["FLASHATTN_FORCE_DISABLE"] = "1"
-    if "xformers" in order:
-        enabled = try_enable("xformers", "xformers", args.reinstall_xformers, "xFormers")
-        if not enabled:
-            order = [x for x in order if x != "xformers"]
-    if "sage_attn" in order:
-        enabled = try_enable("sage_attn", "sage_attention", args.reinstall_sage_attn, "SageAttention")
-        if not enabled:
-            order = [x for x in order if x != "sage_attn"]
+            log(f"No install spec found for {accelerator.display}; skipping"); return False
+        if not launching:
+            only = "dry-run" if args.dry_run else "print-plan" if args.print_plan else "skip-launch"
+            log(f"[{only}] Would install {accelerator.display}: {spec}"); return False
+        ok = pip_install(spec, accelerator.display,
+                         reinstall=getattr(args, f"reinstall_{accelerator.key}"),
+                         no_deps=accelerator.no_deps)
+        return ok and have_module(accelerator.module)
+
+    for accelerator in ACCELERATORS:
+        if accelerator.key in order and not usable(accelerator):
+            order = [x for x in order if x != accelerator.key]
+            if accelerator.key == "flash_attn":
+                os.environ["FLASHATTN_FORCE_DISABLE"] = "1"
     if args.plugin:
         mod, cls = (args.plugin.split(":", 1) + [""])[:2]
         try:
