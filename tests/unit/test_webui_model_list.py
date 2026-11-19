@@ -394,9 +394,17 @@ const ROWS = '#shep-models-clinical-rows', FACTS = '#shep-models-clinical-facts'
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') === 'side');
   await frames();
-  out.fit = await page.evaluate(([R, F]) => { const rows = document.querySelector(R), facts = document.querySelector(F);
+  const fit = () => page.evaluate(([R, F]) => { const rows = document.querySelector(R), facts = document.querySelector(F);
     return { rows: [rows.clientWidth, rows.scrollWidth], facts: [facts.clientWidth, facts.scrollWidth],
              body: [rows.parentElement.clientWidth, rows.parentElement.scrollWidth] }; }, [ROWS, FACTS]);
+  out.fit = await fit();
+  // Another host's text metrics, standing in: the tree's words a little wider (WIDER_TREE).
+  await page.addStyleTag({ content: process.argv[3] });
+  await frames();
+  out.wider = await fit();
+  out.widerFacts = await page.$eval(FACTS, (f) => f.getBoundingClientRect().width);
+  await page.addStyleTag({ content: process.argv[3].replace(/letter-spacing:[^;}]*/, 'letter-spacing: normal') });
+  await frames();
   // Measured in the dashboard's own type: its fonts' faces, as the page loaded them.
   out.font = await page.evaluate(() => [...document.fonts]
     .filter((f) => f.family.replace(/["']/g, '') === 'IBM Plex Sans').map((f) => f.status));
@@ -425,6 +433,12 @@ const ROWS = '#shep-models-clinical-rows', FACTS = '#shep-models-clinical-facts'
 """
 
 
+#: Another host's text metrics, standing in: the model tree's words a little
+#: wider than this host draws them (OPS-FIX-R2; the reviewer's host drew the
+#: tree 620 px where this one draws it 599 px).
+WIDER_TREE = "#shep-models-clinical-rows table { letter-spacing: 0.04em; }"
+
+
 def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
         root, serving, monkeypatch, tmp_path):
     """UI-07 (RC-C) as drawn (Node and Playwright, skipped without), the
@@ -445,7 +459,15 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
     and the tree, 612.9 px at its narrowest in this host's Inter, was 617 px
     in its 616 px region on the reviewer's host (the review of 6a2d52e) and
     655 px where no Inter is installed (DejaVu Sans); in IBM Plex Sans it is
-    599.2 px. Fails on 6a2d52e (the fonts did not load)."""
+    599.2 px. Fails on 6a2d52e (the fonts did not load).
+
+    OPS-FIX-R2 (the recheck of d7ebfc3): with IBM Plex Sans loaded the tree
+    was still 620 px in its 616 px region on the reviewer's host: the region's
+    minimum was a number fitted to this host's text. It now takes the tree's
+    own narrowest, as far as the details' minimum leaves room, so with the
+    tree's words a little wider (`WIDER_TREE`, a stand-in for another host's
+    metrics) the tree is still whole in its region and the details keep their
+    minimum. Fails on d7ebfc3 (the tree 640 px in 616)."""
     from src.webui.app import mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -454,7 +476,7 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
         pytest.skip("Node with Playwright is not installed")
     with served(_diagnosis_page(root, monkeypatch), **mount_options()) as base:
         seen = run_node(_DRAWER_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
-                        base[:-len("gradio_api")])
+                        base[:-len("gradio_api")], WIDER_TREE)
     before, after = seen["before"], seen["after"]
     assert before["layout"] == "side"
     assert after["rows"] == before["rows"], seen                  # the list stays
@@ -465,6 +487,11 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
     assert seen["font"] and all(state == "loaded" for state in seen["font"]), seen["font"]
     fit = seen["fit"]                         # at 1280 x 900, nothing cut or scrolled sideways
     assert all(scroll <= client for client, scroll in fit.values()), fit
+    # The same with the tree's words wider, the details at least their minimum.
+    wider = seen["wider"]
+    assert all(scroll <= client for client, scroll in wider.values()), wider
+    assert wider["rows"][0] > fit["rows"][0], (fit, wider)        # the region took the tree's
+    assert seen["widerFacts"] >= 222, seen["widerFacts"]
     stacked = seen["stacked"]
     assert stacked["layout"] == "stack"
     assert stacked["list"][1] <= stacked["facts"][0] < stacked["load"][0], stacked

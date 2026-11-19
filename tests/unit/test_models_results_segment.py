@@ -1740,8 +1740,19 @@ def test_export_writes_the_shown_or_chosen_rows_through_the_one_serializer(world
     # Nothing chosen: nothing written, the next step said.
     file_update, note = rs._on_results_export(None, state, listing, selected, rs.WORKSPACE, [],
                                               rs.SELECTED, "csv")
-    assert file_update["link"] is None and file_update["visible"] is False
+    assert file_update["link"] == exports.NO_LINK and file_update["visible"] is False
+    assert file_update["interactive"] is False
     assert "Choose results" in _text(note)
+    # A file that cannot be written: nothing offered, the note says so
+    # (OPS-FIX-R1; on d7ebfc3 the write's error left the earlier link).
+    def unwritable(*_args):
+        raise OSError("simulated: the download directory cannot be written")
+
+    monkeypatch.setattr(rs, "export_file", unwritable)
+    file_update, note = rs._on_results_export(None, state, listing, selected, rs.WORKSPACE, [],
+                                              rs.SHOWN, "csv")
+    assert file_update["link"] == exports.NO_LINK and file_update["visible"] is False
+    assert _text(note).endswith(rs.EXPORT_NOT_WRITTEN)
 
 
 # ---------------------------------------------------------------------------
@@ -1768,7 +1779,9 @@ def test_every_handler_asks_d8_first_and_a_refused_request_reads_nothing(world, 
     assert rs._on_results_compare(None, state, ["x"], True).count("Refused:") == 1
     file_update, note = rs._on_results_export(None, state, listing, selected, rs.WORKSPACE, [],
                                               rs.SHOWN, "csv")
-    assert file_update["link"] is None and file_update["visible"] is False
+    from src.webui import exports
+
+    assert file_update["link"] == exports.NO_LINK and file_update["visible"] is False
     assert "Refused:" in note
 
 

@@ -135,7 +135,7 @@ from src.webui.components.workspaces import read_workspaces, redact, workspaces_
 from src.webui.operator_access import operator_access
 from src.webui.shell import FINETUNE as PAGE
 from src.webui.shell import page_elem_id, picked, plain_html, unread_choice
-from src.webui.style import SIDE
+from src.webui.style import FIT, FIT_WIDE, NARROW_ATTR, SIDE
 
 logger = logging.getLogger(__name__)
 
@@ -753,11 +753,11 @@ def job_card_html(status: Mapping[str, Any], *, operator: bool,
     its parent, the start's graph backbone (`freeze_line_html`) and its
     children, each drawn once from its one view (`_child_view`) in both forms:
     a row of the table, and a summary list (`_list_html`) that the card shows
-    instead of the table while the card is narrower than the table's narrowest
-    (`TABLE_FROM`, the card's own width: a container query, never the
-    window's); or, with no Fine-tune status, why (none since the server
-    started, or the next base or continued run cleared it), in words of its
-    own."""
+    instead of the table while the table's own narrowest does not fit the
+    card (the shell's fit, `style.FIT`: measured in the type drawn, never a
+    fixed width or the window's); or, with no Fine-tune status, why (none
+    since the server started, or the next base or continued run cleared it),
+    in words of its own."""
     finetune = status.get("finetune")
     if not finetune:
         if (status.get("status") or "idle") == "idle":
@@ -777,8 +777,9 @@ def job_card_html(status: Mapping[str, Any], *, operator: bool,
             "</th></tr></thead>")
     link = ('<button type="button" class="shep-link" data-act="training">Charts on Research › '
             'Training ›</button>')
-    return (f'<div class="shep-ft-card">{parent_line_html(finetune)}{freeze_line_html(finetune)}'
-            f'<table class="shep-ft-table">{head}<tbody>{rows}</tbody></table>'
+    return (f'<div class="shep-ft-card {FIT}">{parent_line_html(finetune)}'
+            f'{freeze_line_html(finetune)}'
+            f'<table class="shep-ft-table {FIT_WIDE}">{head}<tbody>{rows}</tbody></table>'
             f'<div class="shep-ft-children">{lists}</div>'
             f'<p class="shep-ft-links">{link}</p></div>')
 
@@ -1535,17 +1536,6 @@ _PAGE = "#" + page_elem_id(PAGE)
 #: review of a6aae90).
 RUN_FLOOR = "76px"
 
-#: **The job card's table from this card width on** (px), below it each child
-#: as its summary list (`_list_html`; UI ledger V-20): the table's narrowest,
-#: measured in the dashboard's type (the fit test), is 388.6 px for an ended
-#: Disease child with its best saves and 396.8 px with an ended
-#: Patients-like-me one beside it ("Patients-", "Completed", the run's floor,
-#: "completed", "Validation", 12 px between columns), and side by side the
-#: job panel's minimum (440 px) leaves the card 406 px, so the table is drawn
-#: there. A narrower card (324 px at 390 x 844) cut the table's last column
-#: at the panel's edge (the review of 6a2d52e, OPS-C-R6).
-TABLE_FROM = 404
-
 #: This page's style sheet (listed in `src/webui/app.py`'s ``PAGE_CSS``).
 #: Nothing under 14 px; status colours only through the ``--shep-status-*``
 #: tokens.
@@ -1597,7 +1587,7 @@ PAGE_CSS = f"""
    refusal (`training_console.notice_html`); an empty one takes no room. */
 {_PAGE} #ft_notice, {_PAGE} #ft_stop_notice {{ font-size: 15px; overflow-wrap: anywhere; }}
 {_PAGE} #ft_notice:not(:has(.shep-notice-t)), {_PAGE} #ft_stop_notice:not(:has(.shep-notice-t)) {{ display: none !important; }}
-{_PAGE} .shep-ft-card {{ display: flex; flex-direction: column; gap: 10px; font-size: 15px; container: shep-ft-card / inline-size; }}
+{_PAGE} .shep-ft-card {{ display: flex; flex-direction: column; gap: 10px; font-size: 15px; }}
 {_PAGE} .shep-ft-empty {{ margin: 0; color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-from {{ margin: 0; overflow-wrap: anywhere; }}
 {_PAGE} .shep-ft-k {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); margin-right: 8px; }}
@@ -1614,15 +1604,17 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-table td {{ padding: 8px 6px; border-bottom: 1px solid var(--shep-border); vertical-align: top; min-width: 0; }}
 {_PAGE} .shep-ft-table :is(th, td):first-child {{ padding-left: 0; }}
 {_PAGE} .shep-ft-table :is(th, td):last-child {{ padding-right: 0; }}
-/* A card narrower than the table's narrowest (`TABLE_FROM`; UI ledger V-20, the review of
-   6a2d52e's OPS-C-R6) shows each child as its summary list instead (`_list_html`, the same child's
-   view as its row): its task as its title, its rows the table's columns, a line between children
-   as between the table's rows. Keyed to the card's own width (its container), never the window's. */
+/* A card the table's own narrowest does not fit (the shell's fit marks it `NARROW_ATTR`; UI
+   ledger V-20, OPS-C-R6; OPS-FIX-R2: measured in the type drawn, so another host's wider text
+   never leaves the table past the card, as the fixed 404 px did: 412 px in a 406 px card) shows
+   each child as its summary list instead (`_list_html`, the same child's view as its row): its
+   task as its title, its rows the table's columns, a line between children as between the
+   table's rows. Keyed to the card's own content, never the window's. (At the owner's sizes the
+   ended Disease and Patients-like-me children's table is 396.8 px at its narrowest in the
+   dashboard's type and the card 406 px side by side: the table; 324 px at 390 x 844: the list.) */
 {_PAGE} .shep-ft-children {{ display: none; }}
-@container shep-ft-card (width < {TABLE_FROM}px) {{
-  {_PAGE} .shep-ft-table {{ display: none; }}
-  {_PAGE} .shep-ft-children {{ display: flex; flex-direction: column; }}
-}}
+{_PAGE} .shep-ft-card[{NARROW_ATTR}] .shep-ft-table {{ display: none; }}
+{_PAGE} .shep-ft-card[{NARROW_ATTR}] .shep-ft-children {{ display: flex; flex-direction: column; }}
 {_PAGE} .shep-ft-child {{ padding: 8px 0; border-bottom: 1px solid var(--shep-border); }}
 {_PAGE} .shep-ft-child:first-child {{ border-top: 1px solid var(--shep-border); }}
 {_PAGE} .shep-ft-child-t {{ margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--shep-text); }}
@@ -1637,7 +1629,8 @@ PAGE_CSS = f"""
 {_PAGE} .shep-html svg {{ display: inline-block; vertical-align: -2px; }}
 /* The two panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the form's
    base summary list keeps its key column whole from 480 px; from 440 the job's card is 406 px,
-   past `TABLE_FROM`, so its table is drawn whole in it. */
+   where the ended children's table is drawn whole in the dashboard's type (else the card shows
+   their lists: the shell's fit). */
 {_PAGE} #shep-ft-form {{ --shep-panel-min: 480px; }}
 {_PAGE} #shep-ft-job {{ --shep-panel-min: 440px; }}
 {SIDE} {{

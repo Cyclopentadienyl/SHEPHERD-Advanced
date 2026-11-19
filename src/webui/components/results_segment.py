@@ -102,7 +102,10 @@ serializer (`results.to_csv`, `results.to_json`), as a new file to download
 from the dashboard's one download directory (`src/webui/exports.py`,
 `write_new`: its bytes are the serializer's text): "⬇ Download CSV" (or
 JSON) saves it by a link that names an opaque id, never the file's path
-(`exports.offer`), and the note beside it names the file.
+(`exports.offer`), and the note beside it names the file. With nothing to
+download (nothing chosen, refused, or a file that could not be written,
+which the note says) the download is not shown and links nowhere
+(`exports.download_update`).
 
 **D8.** Listing results opens checkpoint files (the service lists every
 workspace's checkpoints, SPEC_4 C3), so every handler here, reading,
@@ -145,7 +148,7 @@ from src.webui.components import model_list as ml
 from src.webui.components import models_page as mp
 from src.webui.components import renderers as r
 from src.webui.components.help import REF_PREFIX, help_button
-from src.webui.exports import file_slug, offer, write_new
+from src.webui.exports import download_update, file_slug, write_new
 from src.webui.operator_access import operator_access
 from src.webui.shell import picked, plain_html
 
@@ -1740,8 +1743,15 @@ def _on_results_compare(request: gr.Request, state, chosen, differences):
                               asked=len(chosen_rows(state, chosen)))
 
 
-#: Export's download button with nothing to download: hidden, no link.
-_NO_DOWNLOAD = gr.update(link=None, visible=False)
+#: Said when Export's file could not be written (the download offers nothing).
+EXPORT_NOT_WRITTEN = ("Export file not written (disk or permissions?): nothing to download. "
+                      "Export again to retry.")
+
+
+def _no_download() -> Dict[str, Any]:
+    """Export's download with nothing to download: not shown, no link
+    (`exports.download_update`, new at each answer; OPS-FIX-R1)."""
+    return download_update(visible=False)
 
 
 def _on_results_export(request: gr.Request, state, listing, selected, scope, chosen, which, fmt):
@@ -1750,17 +1760,17 @@ def _on_results_export(request: gr.Request, state, listing, selected, scope, cho
     service's one serializer; the file to download and what it holds."""
     access = operator_access(request)
     if not access.allowed:
-        return _NO_DOWNLOAD, f'<div class="shep-reason">{r.e(access.refusal)}</div>'
+        return _no_download(), f'<div class="shep-reason">{r.e(access.refusal)}</div>'
     state = state if isinstance(state, Mapping) else EMPTY_STATE
     if state.get("read_id") is None:
-        return (_NO_DOWNLOAD,
+        return (_no_download(),
                 '<p class="shep-mp-p shep-muted">Nothing has been read to export yet.</p>')
     fmt = fmt if fmt in ("csv", "json") else "csv"
     all_rows = state.get("rows") or []
     if which == SELECTED:
         rows = chosen_rows(state, chosen)
         if not rows:
-            return (_NO_DOWNLOAD,
+            return (_no_download(),
                     '<p class="shep-mp-p shep-muted">Choose results above to export them, or '
                     'export all shown.</p>')
     else:
@@ -1769,7 +1779,13 @@ def _on_results_export(request: gr.Request, state, listing, selected, scope, cho
     name = (f"family-{named['family']}" if named.get("scope") == FAMILY
             else f"workspace-{named.get('workspace')}") + ("-selected" if which == SELECTED
                                                            else "")
-    path = export_file(rows, fmt, name)
+    try:
+        path = export_file(rows, fmt, name)
+        # The file by its link: an opaque id, never its path (OPS-C-R4).
+        update = download_update(path, value=f"⬇ Download {fmt.upper()}")
+    except (OSError, ValueError):
+        return (_no_download(),
+                f'<p class="shep-mp-p">{r.status_mark("error", EXPORT_NOT_WRITTEN)}</p>')
     results = sum(1 for row in rows if row.get("result") != service.UNREADABLE)
     unreadable = len(rows) - results
     said = (f"Exported {results} result{'s' if results != 1 else ''}"
@@ -1777,9 +1793,7 @@ def _on_results_export(request: gr.Request, state, listing, selected, scope, cho
                if unreadable else "")
             + f" as {fmt.upper()}, one row per result and metric (read {state.get('read_at')}): "
             + f"{os.path.basename(path)}.")
-    # The file by its link: an opaque id, never its path (OPS-C-R4).
-    return (gr.update(value=f"⬇ Download {fmt.upper()}", link=offer(path), visible=True),
-            f'<p class="shep-mp-p">{r.e(said)}</p>')
+    return update, f'<p class="shep-mp-p">{r.e(said)}</p>'
 
 
 # ---------------------------------------------------------------------------
@@ -1859,6 +1873,7 @@ __all__ = [
     "COMPARE_GROUPS",
     "CROSS_WORKSPACE_GAP",
     "EMPTY_STATE",
+    "EXPORT_NOT_WRITTEN",
     "FAMILY",
     "RESULTS",
     "SEGMENT_HELP",

@@ -491,3 +491,270 @@ def test_a_linked_export_button_saves_its_file_in_a_browser(downloads, tmp_path)
     assert expired["download_attr"] == "", expired
     assert not [url for url in out["asked"] if "file=" in url], out
     assert str(downloads) not in json.dumps(out)
+
+
+# ---------------------------------------------------------------------------
+# A control with no file to offer (OPS-FIX-R1, the recheck of d7ebfc3)
+# ---------------------------------------------------------------------------
+#: Each step of `plan` in the real page at the owner's window: its acts
+#: (fill, click), then each export control as a reader meets it: what it is
+#: drawn as (``href``, disabled, shown), a mouse click at its centre, the
+#: keyboard's Tab from `plan.from` until it (then Enter), and focus asked by
+#: script (then Enter); for each, the file the browser saved (name and text)
+#: or none. A wait that does not end is recorded, never thrown, so a page that
+#: answers differently is measured, not lost.
+_NO_FILE_JS = r"""
+const { chromium } = require('playwright');
+const fs = require('fs');
+(async () => {
+  const [base, planText, queue] = process.argv.slice(2, 5);
+  const plan = JSON.parse(planText);
+  const browser = await chromium.launch();
+  const context = await browser.newContext({ viewport: { width: 1850, height: 960 },
+                                             acceptDownloads: true });
+  const page = await context.newPage();
+  await page.addInitScript(queue);
+  await page.goto(base);
+  await page.waitForSelector(plan.from, { timeout: 30000 });
+  const joins = () => page.evaluate(() => window.__shepQueue.joins.length);
+  const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null,
+                                          { timeout: 30000 });
+  const saved = async (act) => {
+    const waiting = page.waitForEvent('download', { timeout: 2500 })
+      .then(async (d) => ({ name: d.suggestedFilename(),
+                            text: fs.readFileSync(await d.path(), 'utf8') }))
+      .catch(() => null);
+    await act();
+    return await waiting;
+  };
+  const probe = async (id) => {
+    const sel = '#' + id;
+    if (!(await page.$(sel))) {
+      return { state: null, mouse: null, reached: false, keyboard: null, focused: false,
+               scripted: null };
+    }
+    const state = await page.$eval(sel, (e) => ({
+      tag: e.tagName, href: e.getAttribute('href'), disabled: e.disabled === true,
+      shown: e.checkVisibility({ checkVisibilityCSS: true }) }));
+    if (state.shown) { await page.locator(sel).scrollIntoViewIfNeeded(); }
+    const box = state.shown ? await page.locator(sel).boundingBox() : null;
+    const mouse = box ? await saved(() => page.mouse.click(box.x + box.width / 2,
+                                                         box.y + box.height / 2)) : null;
+    await page.focus(plan.from);
+    const tabs = [];
+    for (let i = 0; i < 40; i += 1) {
+      await page.keyboard.press('Tab');
+      const at = await page.evaluate(() => (document.activeElement || {}).id || '');
+      tabs.push(at);
+      if (at === id) { break; }
+    }
+    const reached = tabs[tabs.length - 1] === id;
+    const keyboard = reached ? await saved(() => page.keyboard.press('Enter')) : null;
+    const focused = await page.evaluate((s) => {
+      const e = document.querySelector(s); e.focus(); return document.activeElement === e;
+    }, sel);
+    const scripted = focused ? await saved(() => page.keyboard.press('Enter')) : null;
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    return { state, mouse, reached, keyboard, focused, scripted };
+  };
+  const out = [];
+  for (const step of plan.steps) {
+    for (const act of step.acts) {
+      const before = await joins();
+      if (act.fill) { await page.fill(act.fill, act.text); }
+      else { await page.locator(act.click, act.has ? { hasText: act.has } : {}).first().click(); }
+      if (act.answered) {
+        await page.waitForFunction((n) => window.__shepQueue.joins.length > n, before,
+                                   { timeout: 30000 }).catch(() => null);
+      }
+      await page.waitForTimeout(150);
+      await idle();
+    }
+    const said = await page.waitForFunction(([s, t]) => (
+      (document.querySelector(s) || {}).innerText || '').includes(t), step.marker,
+      { timeout: 15000 }).then(() => true).catch(() => false);
+    await idle();
+    const controls = {};
+    for (const id of plan.controls) { controls[id] = await probe(id); }
+    out.push({ name: step.name, said, controls });
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((err) => { console.error(err); process.exit(1); });
+"""
+
+
+def _no_file_walk(demo, plan, tmp_path):
+    """`_NO_FILE_JS` over `demo`, served as the dashboard mounts it; each
+    step's measures by name."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    with served(demo, **mount_options()) as base:
+        steps = run_node(_NO_FILE_JS, tmp_path, base[:-len("gradio_api")], json.dumps(plan),
+                         QUEUE_JS)
+    return {step["name"]: step for step in steps}
+
+
+def _offers(step, control, name, holds, lacks):
+    """At `step`, `control` offers only the file `name`: drawn as a link, and
+    the mouse, Tab then Enter, and focus then Enter each save that file,
+    which holds `holds` and none of `lacks`."""
+    seen = step["controls"][control]
+    assert step["said"], step["name"]
+    assert seen["state"]["tag"] == "A" and LINK.fullmatch(seen["state"]["href"] or ""), seen
+    for way in ("mouse", "keyboard", "scripted"):
+        got = seen[way]
+        assert got is not None, (step["name"], control, way, seen)
+        assert got["name"] == name, (step["name"], control, way, got["name"])
+        assert holds in got["text"], (step["name"], control, way)
+        assert not [text for text in lacks if text in got["text"]], (step["name"], control, way)
+
+
+def _offers_nothing(step, control):
+    """At `step`, `control` points at nothing and cannot be used: no link;
+    the mouse, Tab and focus by script reach no file (a disabled button
+    takes no focus; a hidden one has no box; one not shown may not be drawn
+    at all)."""
+    seen = step["controls"][control]
+    assert step["said"], step["name"]
+    if seen["state"] is not None:  # drawn (a control not shown may not be in the page)
+        assert seen["state"]["href"] is None, (step["name"], control, seen["state"])
+        assert seen["state"]["tag"] == "BUTTON" and seen["state"]["disabled"], \
+            (step["name"], seen)
+    assert not seen["reached"] and not seen["focused"], (step["name"], control, seen)
+    assert seen["mouse"] is None and seen["keyboard"] is None and seen["scripted"] is None, \
+        (step["name"], control, seen)
+
+
+def test_a_diagnosis_export_offers_only_the_answer_on_screen_or_nothing(
+        downloads, monkeypatch, tmp_path):
+    """OPS-FIX-R1 (the recheck of d7ebfc3): the real Diagnosis page in a
+    browser, through its own events: an answer whose exports were written
+    (A: SCN1A), then one whose writing failed (B: MECP2), then one with no
+    candidate (B: KCNQ2), then a written one again (C: PTEN), then its
+    inputs edited (the reset, after all those events). At each step the CSV
+    and the report offer the answer on screen's own file, or nothing: by the
+    mouse, by Tab then Enter, by focus then Enter. On d7ebfc3 an update's
+    ``link=None`` was dropped by Gradio (it removes a None-valued key from an
+    update, in place in the page's shared update), so the failed export's
+    disabled control was still the earlier answer's ``<a href>``, reachable
+    by Tab, and Enter saved SCN1A's CSV under MECP2's answer."""
+    import copy
+
+    from src.webui.components import diagnosis_panel as dp
+    from tests.unit.test_diagnosis_panel import _gene_result
+
+    demo = _diagnosis_page(monkeypatch)
+    original = dp._write_exports
+
+    def answer(**kwargs):
+        (gene,) = kwargs["candidate_genes"]
+        result = copy.deepcopy(_gene_result())
+        result.update(patient_id=f"pt_{gene}", session_id=f"sess_{gene}", warnings=[])
+        one = {**result["candidates"][0], "gene_name": gene, "gene_id": f"disgenet:{gene}"}
+        result["candidates"] = [] if gene == "KCNQ2" else [one]
+        return result
+
+    def write(result):
+        if result["session_id"] == "sess_MECP2":
+            raise OSError("simulated: the download directory cannot be written")
+        return original(result)
+
+    monkeypatch.setattr(dp, "_call_diagnose", answer)
+    monkeypatch.setattr(dp, "_write_exports", write)
+    genes = "#dx_candidate_genes textarea"
+    run = {"click": "#shep-dx-run-btn", "answered": True}
+    body = "#shep-dx-results-body"
+    plan = {"from": "#shep-dx-run-btn", "controls": ["shep-dx-export-csv", "shep-dx-export-md"],
+            "steps": [
+                {"name": "A", "marker": [body, "SCN1A"],
+                 "acts": [{"fill": "#dx_hpo_terms textarea", "text": "HP:0001250"},
+                          {"fill": genes, "text": "SCN1A"}, run]},
+                {"name": "B failed", "marker": [body, "could not be written"],
+                 "acts": [{"fill": genes, "text": "MECP2"}, run]},
+                {"name": "B none", "marker": [body, "No candidates found"],
+                 "acts": [{"fill": genes, "text": "KCNQ2"}, run]},
+                {"name": "C", "marker": [body, "PTEN"],
+                 "acts": [{"fill": genes, "text": "PTEN"}, run]},
+                {"name": "reset", "marker": [body, "Inputs changed"],
+                 "acts": [{"fill": "#dx_hpo_terms textarea", "text": "HP:0001263"}]}]}
+    seen = _no_file_walk(demo, plan, tmp_path)
+    others = ["SCN1A", "MECP2", "KCNQ2", "PTEN"]
+    for step, gene in (("A", "SCN1A"), ("C", "PTEN")):
+        lacks = [other for other in others if other != gene]
+        _offers(seen[step], "shep-dx-export-csv", f"diagnosis_pt_{gene}_sess_{gene}.csv",
+                f"disgenet:{gene}", lacks)
+        _offers(seen[step], "shep-dx-export-md", f"diagnosis_pt_{gene}_sess_{gene}_report.md",
+                f"pt_{gene}", lacks)
+    for step in ("B failed", "B none", "reset"):
+        for control in ("shep-dx-export-csv", "shep-dx-export-md"):
+            _offers_nothing(seen[step], control)
+    # Shown, disabled, beside their reason while an answer is on screen;
+    # hidden once there is none.
+    for step, shown in (("B failed", True), ("B none", True), ("reset", False)):
+        assert seen[step]["controls"]["shep-dx-export-csv"]["state"]["shown"] is shown, step
+
+
+def test_a_results_export_offers_only_the_last_export_or_nothing(
+        world, downloads, monkeypatch, tmp_path):  # noqa: F811 (the fixture)
+    """OPS-FIX-R1: Models › Results' Export in a browser, through the
+    segment's own events (a read, the scope, then Export): CSV of the rows
+    shown (A), then Selected with nothing chosen (B: nothing to export), then
+    JSON whose writing fails (B), then JSON written (C). The download offers
+    the last export's own file, or nothing: by the mouse, by Tab then Enter,
+    by focus then Enter. On d7ebfc3 nothing-to-export kept the earlier link
+    (hidden), and a failed write raised, leaving the earlier export offered."""
+    from src.api.services import results as service
+    from src.webui.components import results_segment as rs
+    from tests.unit.test_models_results_segment import _listing, _operator, _shown, _state
+
+    _operator(monkeypatch)
+    state, _scope, _rows = _shown(_state(world, monkeypatch))
+    shown = [state["rows"][i] for i in state["shown"]]
+    listing, selected = _listing()
+    calls = []
+    original = rs.export_file
+
+    def write(rows, fmt, name):
+        calls.append(fmt)
+        if len(calls) == 2:
+            raise OSError("simulated: the download directory cannot be written")
+        return original(rows, fmt, name)
+
+    monkeypatch.setattr(rs, "export_file", write)
+    with gr.Blocks() as segment:
+        seg = gr.Radio(choices=[rs.RESULTS], value=rs.RESULTS, visible=False)
+        parts = rs.create_results_segment()
+        rs.wire_results_segment(parts, seg=seg, listing=gr.State(listing),
+                                selected=gr.State(selected))
+    parts["column"].visible = True
+    export = {"click": "#shep-rs-export", "answered": True}
+    note = "#shep-rs-export-note"
+    plan = {"from": "#shep-rs-export", "controls": ["shep-rs-file"],
+            "steps": [
+                {"name": "A", "marker": [note, "as CSV"],
+                 "acts": [{"click": "#shep-rs-again", "answered": True},
+                          {"click": "#shep-rs-scope label", "has": "This workspace",
+                           "answered": True}, export]},
+                {"name": "B none", "marker": [note, "Choose results above"],
+                 "acts": [{"click": "#shep-rs-which label", "has": "Selected"}, export]},
+                {"name": "B failed", "marker": [note, "Export file not written"],
+                 "acts": [{"click": "#shep-rs-which label", "has": "All shown"},
+                          {"click": "#shep-rs-format label", "has": "JSON"}, export]},
+                {"name": "C", "marker": [note, "as JSON"], "acts": [export]}]}
+    seen = _no_file_walk(segment, plan, tmp_path)
+    assert calls == ["csv", "json", "json"], calls
+    for step, text in (("A", service.to_csv(shown)), ("C", service.to_json(shown))):
+        got = seen[step]["controls"]["shep-rs-file"]
+        name = (got["mouse"] or {}).get("name", "")
+        assert name.endswith(".csv" if step == "A" else ".json"), (step, got)
+        _offers(seen[step], "shep-rs-file", name, text, [])
+        assert got["mouse"]["text"] == text, step
+    for step in ("B none", "B failed"):
+        _offers_nothing(seen[step], "shep-rs-file")
+        drawn = seen[step]["controls"]["shep-rs-file"]["state"]
+        assert drawn is None or not drawn["shown"], (step, drawn)
