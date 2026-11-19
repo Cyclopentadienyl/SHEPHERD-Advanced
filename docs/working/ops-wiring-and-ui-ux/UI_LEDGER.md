@@ -30,12 +30,13 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **By state at the base**: 97 to do, 49 partly done, 59 already done, 1 awaiting hardware, 5 not applicable, 7 outside this round's scope.
 - **At the head (2026-11-17, `c958ff3`)**: 249 rows: the base's 218, one opened by the T08 suite (T08-help-1), the T08 flow's twelve (T08-flow-1 to T08-flow-12) and the verification round's eighteen (V-1 to V-18); by state: 1 to do, 11 partly done, 161 code-verified, 59 code-verified at ba6e85e (audit), 1 awaiting hardware, 2 awaiting owner acceptance, 5 not applicable, 9 outside this round's scope (owner to decide). Rows written before the rebase cite commit IDs from before it: see [Commit IDs rewritten by the rebase](#commit-ids-rewritten-by-the-rebase-2026-11-17).
 - **At the delivery (2026-11-18, product head `602e091`)**: 256 rows: the 249 above and the third verification pass's V-19 to V-24, with V-25 recorded at T09 (the T08 flow's F9); by state: 2 to do, 10 partly done, 167 code-verified, 59 code-verified at ba6e85e (audit), 1 awaiting hardware, 2 awaiting owner acceptance, 6 not applicable, 9 outside this round's scope (owner to decide).
+- **At the review fixes (2026-11-19, product head `05267fb`)**: 262 rows: the 256 above and six from the external review of `6a2d52e` (OPS-C-R1, OPS-C-R2, OPS-C-R3, OPS-C-R5, OPS-C-R6b, OPS-C-R6c; its R4 and R6 are B72-E1 and V-20); by state: 2 partly done, 183 code-verified, 59 code-verified at ba6e85e (audit), 1 awaiting hardware, 2 awaiting owner acceptance, 6 not applicable, 9 outside this round's scope (owner to decide). Each of the 59 audit rows now carries a trace line (the review's CP-D): 52 name a test that pins the fact, 7 the code alone; none is contradicted or unverified.
 
 ## Rows by task
 
 ### UI-01 Navigation hierarchy
 
-4 rows: 1 partly done, 3 code-verified.
+4 rows: 4 code-verified.
 
 #### NEW-shell-nav-theme-1 · Chosen in-page radio fill is exactly the level-1 switch's fill
 
@@ -49,14 +50,15 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### R-15 · Two navigation rows plus footer take 131px of a 964px window
 
-- **State**: partly done · found by the 2026-10-25 review · severity medium · page: shell
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: shell
 - **Problem**: Two navigation rows plus the footer took 131 px of 964, out of the chart grid (evidence cites the owner's 'charts squeezed' complaint).
 - **At ba6e85e**: At 1850x960 the header row is 0-55 px, the research tab row 55-100 px and the runtime footer 928-960 px: 132 of 960 px (the review measured 131 of 964). The research tabs are still a second row. The footer is still its own 32 px row, now leading with the consequence. Training's four plots are 230/217 px. At 960 px wide the header wraps to 99 px, with a 45 px tab row under it.
 - **Done when**: At 1850x960 the research tabs sit in the header row (and/or the footer is folded into it), so navigation and footer together take clearly less than 132 px and Training's chart grid gains that height.
 - **Sources**: UX:217 (appendix 15); RJ audits[0].findings[16]; UX:119-120 (section 4: research tabs inside the header row when there is room); RJ research[1].principles[1] (G2)
 - **Re-checked (T04 measure, a569948)**: the shared check (a569948: the service on the demo workspace, a base and its disease child trained and the child served, an operator; every page at 1850x960, 1280x900, 1920x700, 1440x1600, 960x1080, 390x844 and 1536x760): header and tabs cause no sideways page scroll at any size and the captions stay off the tabs' line; header and tabs still 102 px at 1850x960 (the navigation test). The height, the owner's choice above, is unchanged.
 - **Owner's decision (verified T06-D)**: the height is the owner's choice; no code waits on it. Measured on this branch at 1850x960 on Training: header 0-47 px, research tabs 47-102 px (the group captions' 18 px tier over 32 px tabs), footer 928-960 px: 134 px. The choices and what each changes: (a) keep D01's two rows and the footer row: nothing changes and the row closes as decided (134 px against the review's 131); (b) drop the caption tier: about 22 px back to every research page, the Prepare / Evaluate captions gone or put back on the tabs' line, which the owner rejected (skill §3); (c) fold the footer into the header: 32 px back, but its line (822 px) does not fit the header's free span (about 713 px), so its words are cut or row 1 wraps, or its consequence moves behind a bubble (skill §7: never for a must-know fact); (d) the research tabs in the header row (the Done when's first way): the 55 px row back, a change of D01's navigation whose fit at narrower windows is not measured here.
-- **Closed at**: d3203dd (D01), with the footer decision measured and recorded; the row's Done when is not met. Measured at 1850x960 on Training: header 0-47 px and research tabs 47-102 px, so header and tabs take 102 px (D01's about 100; 100 before, when the group labels sat on the tab line); the footer stays its own 32 px row (928-960), so the three take 134 px against 132 before, and the four plots stay 231/231/217/217 px. **Footer decision: kept as its own row.** Its line (the consequence, 749 px, then Versions ›, 61 px: 822 px with the gap) does not fit the header's free span between the stage switch and the chips (538 to 1299 px less the gaps: about 713 px), so folding it in would cut words to an ellipsis or wrap row 1, losing what it says; a chip with an ⓘ would hide a must-know consequence behind a bubble (skill §7). Left: the owner's choice between D01's caption tier (2 px more than before) and the row's "clearly less than 132 px", which needs the footer folded or the caption tier dropped. Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_training_1850x960.png.
+- **Closed at**: d3203dd (D01), with the footer decision measured and recorded; the row's Done when (about 100 px) is not met, and the external review of 6a2d52e read it as a target and kept the 134 px (the Decided line). Measured at 1850x960 on Training: header 0-47 px and research tabs 47-102 px, so header and tabs take 102 px (D01's about 100; 100 before, when the group labels sat on the tab line); the footer stays its own 32 px row (928-960), so the three take 134 px against 132 before, and the four plots stay 231/231/217/217 px. **Footer decision: kept as its own row.** Its line (the consequence, 749 px, then Versions ›, 61 px: 822 px with the gap) does not fit the header's free span between the stage switch and the chips (538 to 1299 px less the gaps: about 713 px), so folding it in would cut words to an ellipsis or wrap row 1, losing what it says; a chip with an ⓘ would hide a must-know consequence behind a bubble (skill §7). Left: the owner's choice between D01's caption tier (2 px more than before) and the row's "clearly less than 132 px", which needs the footer folded or the caption tier dropped. Screens: scratchpad/t04/nav-tokens/shots/{before,after}/*_training_1850x960.png.
+- **Decided (the external review of 6a2d52e, 2026-11-19)**: rev 2's 100 px is a target, not a gate that may cost readability. D01's two rows and the footer row are kept and measured: 134 px at 1850×960 on Training (header 0-47, research tabs 47-102, footer 928-960); the Prepare / Evaluate captions the owner asked for stay. The plots keep their floor (231/231/217/217 px).
 
 #### R-20+R-46+B72 · Level-1 switch and in-page radios share one filled accent style
 
@@ -80,11 +82,11 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-02 Orientation and scrolling
 
-16 rows: 1 partly done, 1 outside this round's scope (owner to decide), 8 code-verified, 6 code-verified at ba6e85e (audit).
+16 rows: 1 outside this round's scope (owner to decide), 9 code-verified, 6 code-verified at ba6e85e (audit).
 
 #### FL-UI-02 · Layout picks side-by-side vs stacked from fixed 1400x760 sizes, not the window's shape
 
-- **State**: partly done · found by the owner · severity unrated (fix list) · page: shell
+- **State**: code-verified · found by the owner · severity unrated (fix list) · page: shell
 - **Problem**: The panels sit side by side only at 1400 px wide or more and 760 px tall or more; otherwise they stack (style.py:443-478). The fix list's counterexamples follow from this: 1280 x 900 and 1920 x 700 stack, while 1440 x 1600 (portrait) is side by side. A short-height window is forced into the stacked layout although it has the width.
 - **At ba6e85e**: Recorded only in the fix list rev 1 (2026-11-16), confirmed there from the code. Earlier records state the rule (by the usable size), but none records the fixed threshold as a problem. Not fixed.
 - **Done when**: At 1920x700 and 1280x900-wide-landscape windows the panels sit side by side and at 1440x1600 portrait they stack; short height is handled by region scrolling with no control covered, checked by a browser test over these sizes.
@@ -92,7 +94,8 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Evidence (T04 measure, a569948)**: the layout test now reads its facts from the shared walk (the service itself on the demo workspace, a disease child served; every page through 760x1000, 1850x960, 1280x900, 1920x700, 1440x1600, 1000x1000, 1536x760, 1080x1920, 960x1080, 390x844 and back to 1850x960, then Training, Datasets and Fine-tune opened at 1280x900): the same decisions, 960x1080 and 390x844 stacked, Datasets stacked at 1280x900 whether resized to or opened at, each page's first and last 1850x960 alike. Nothing over a focused control is now the shared check's, every control on every page at 1850x960, 1280x900, 1920x700, 1440x1600, 960x1080, 390x844 and 1536x760, not two short sizes: it found the Top-K and Explanations bubbles over their own ⓘ (R-24) and the run bar's fingerprint ⓘ under its bubble when stacked (R-38+owner), both fixed. Tests: tests/unit/test_webui_shell.py::test_one_layout_decision_at_every_size_and_back, tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check. Screens: scratchpad/t04/measure/shots/after/matrix/<page>_<w>x<h>.png.
 - **Progress (T04 layout-rows, 497f583)**: The 15 orientation media queries and 2 matchMedia calls at 9b7d9b6 (style.py 2, finetune 1, diagnosis 3, models 2 + SCROLL_JS, datasets 1, training 3 + _BANNER_JS, test 2, charts 1) are one decision in the shell's layout pass: the window's inner size (no wider than tall: stack), then whether the shown page's panels fit by their own --shep-panel-min (read from the panels as drawn, with their gaps); written as data-shep-layout on the root element, which every style sheet nests its rules in (style.SIDE/STACK/SIDE_SHORT); data-shep-short under 900 px is density only. Content breakpoints kept: Diagnosis' input width (1600/1800) and one-column fields (760), Datasets' short labels (1799), Settings' name column (899), reduced motion; Training's 1199 run-bar rule went with its one-row bar. Measured on the CPU demo (4 test reports): 1280x900 side by side on every page but Datasets (its own minimum, about 1400 px: the six-column table 860 px and the four-column digest grid 495 px; whether a more compact table should bring it side by side at 1280 is the owner's call), 1920x700 side by side (short), 1440x1600, 1000x1000, 1080x1920, 960x1080 and 760x1000 stacked, 1850x960/1920x1080/1536x760 side by side; no page-level horizontal scroll at any size; nothing sticky over a focused control (the only cover the matrix found is the ⓘ help bubble of the control focused just before, the same as at 9b7d9b6). Also from the brief: the header chips end in a titled ellipsis inside the window (at 360 px the Operator controls chip's left edge was -41, now 16; ::test_no_header_element_covers_a_tab_at_any_width at 360 and 420); stacked, a table wider than its panel scrolls sideways in its own box (Datasets at 760x1000: 692/822, was cut by 94 px). Tests: tests/unit/test_webui_shell.py::test_one_layout_decision_at_every_size_and_back (an operator; 760x1000 → 1850x960 → 1280x900 → 1920x700 → 1440x1600 → 1000x1000 → 1536x760 → 1080x1920 → 1850x960, every page), ::test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_left; both fail on 9b7d9b6 (attribute absent, 1280x900 stacked). Screens: scratchpad/t04/layout-rows/shots/before/before_<size>_<page>.png and scratchpad/t04/layout-rows/shots/after/after_<size>_<page>.png for 1850x960, 1280x900, 1920x700, 1440x1600, 1000x1000, 1536x760, 960x1080, 1080x1920, 1920x1080, 760x1000; numbers in before_matrix.txt / after_matrix.txt.
 - **Progress (T04 review fixes, 796f9bc and 3d5a4cd)**: the review found the row closed for less than its Done when: Datasets stacks at 1280x900. The brief's first step was tried on its table, measured in Chromium on the demo at 1280x900: without the Sources and In use floors (7 and 11 em) the table's own minimum is still 734 px in the 701 px its panel has there (Name 173, Built 148, Dataset fingerprint 157, Sources 72, samples 75, In use 110 px; the two In use marks then wrap to three lines each), so side by side would need about 1281 px of room against 1248 (with the floors 860 + 495 + 16 = 1371); none of the widths left is a fixed one (Name is its nowrap origin and record line, Built and the fingerprint their nowrap values), so nothing was changed. Short side-by-side windows (height never stacks): 1366x620 (a 1366x768 laptop less the browser's bars, now in browser.UI_SIZES) and 1280x600 are in the shared walk, every page side by side there but Datasets; the walk found Models' list scrolling around its rows' own region and Training's plots' body shorter than one plot (fixed: OPS-C9, R-38+owner), and passes at both. The Diagnosis load confirmation hides the list's rows below 900 px of height (data-shep-short) where it hid them below 820 before 497f583: kept at 900 and said so in diagnosis_panel's PAGE_CSS comment, as from 820 to 899 px the rows' share held no whole row (68, 108 and 128 px at 1600x820, 1600x860 and 1850x880, measured with the rows shown; the confirmation is whole either way). Tests: tests/unit/test_webui_shell.py::test_one_layout_decision_at_every_size_and_back, ::test_every_page_at_every_size_passes_the_ui_measurement_check (fails on eafa8a2 at 1366x620 and 1280x600), ::test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_left (no module describes the 1400 x 760 gate or the sticky card any more; fails on eafa8a2). Screens: scratchpad/t04/fix-1/shots/before/before_datasets_1280x900.png, scratchpad/t04/fix-1/shots/before/try_datasets_nofloors_1280x900.png, scratchpad/t04/fix-1/shots/before/before_confirm_rowsshown_<size>.png. Left: Datasets at 1280x900, the owner's call between shorter In use marks or no Built column at that width (or a narrower details grid) and stacking there.
-- **Closed at**: —
+- **Closed at**: 497f583, 796f9bc, 3d5a4cd (Datasets at 1280×900 stacks by its measured minimum, kept by the external review of 6a2d52e).
+- **Decided (the external review of 6a2d52e, 2026-11-19)**: the direction follows the window's shape, and a page whose content does not fit side by side stacks. Datasets at 1280×900 is such a page, with its evidence (its table needs 734 px of the 701 px it has; 3d5a4cd): no fact (Built, the fingerprint) is dropped to force it side by side, and no page's minimum becomes a site-wide threshold. The other sizes of the Done when hold (`test_webui_shell.py::test_one_layout_decision_at_every_size_and_back`).
 
 #### NEW-diagnosis-3 · Records claim sticky-cover and drawer-repeat fixes that are not in the code
 
@@ -195,6 +198,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Re-checked (T04 layout-rows, 497f583)**: the run bar is now one wrapping row, 74 px at 1850x960 with no blank area; still built at scale 0.
 - **Re-checked (T04 measure, a569948)**: the shared walk's layout facts: one row, 74 px, at 1850x960.
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the run bar is built at scale 0 with `flex: none` (`training_console.create_training_tab`, PAGE_CSS), pinned by tests/unit/test_training_console_runview.py::test_the_run_bar_keeps_its_own_height_and_the_run_view_takes_the_rest; the shared walk (tests/unit/test_webui_shell.py::test_one_layout_decision_at_every_size_and_back) measures it one row, under 90 px, at 1850x960. Commit c215031.
 
 #### OPS-B5a · Header chips covered the Research tab at a narrow width
 
@@ -205,6 +209,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Re-checked (T04 layout-rows, 497f583)**: no header element covers a tab at 360, 420, 480, 760, 1100 or 1850 px, and the chips stay inside the window (::test_no_header_element_covers_a_tab_at_any_width).
 - **Re-checked (T04 measure, a569948)**: the shared check at 390x844: no sideways page scroll, every header control in view with nothing over it when focused.
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: tests/unit/test_webui_shell.py::test_no_header_element_covers_a_tab_at_any_width (browser; skipped without Node and Playwright) finds each tab first at its centre and corners at 360, 420, 480, 760, 1100 and 1850 px, every chip inside the window; code `shell._SHELL_JS` (the header layout pass). Commit 25e6af9.
 
 #### OPS-C10 · Test's Start below the fold at 1850x960
 
@@ -215,6 +220,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Re-checked (T04 layout-rows, 497f583)**: side by side (the shared decision) the Run panel keeps its body and foot, the page not scrolling at 1850x960, 1920x1080, 1536x760, 1920x700 or 1280x900 (after_matrix); no control covered when focused at 1536x760 or 1920x700 (the layout test).
 - **Re-checked (T04 measure, a569948)**: the shared check at 1850x960, 1280x900, 1920x700, 1440x1600, 960x1080, 390x844 and 1536x760: every enabled control on Test in view with nothing over it when focused, its focus cue at 3:1 (a disabled one, as Cancel while idle, is not focusable and not measured).
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: Start, its reason, the job's state and Cancel are the Run panel's non-scrolling foot under its one scroll region (`test_page.create_test_page`, PAGE_CSS), pinned by tests/unit/test_webui_test_page.py::test_the_run_panels_foot_keeps_start_the_jobs_state_and_cancel_out_of_its_one_scroll_region; the shared walk (tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check) finds each enabled control in view when focused. Commit f49bab4.
 
 #### OPS-C9 · Models had more than one scroll region at some heights
 
@@ -226,6 +232,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Re-checked (T04 measure, a569948)**: the shared check on Models at every size: at most one scroll region per panel and none inside another (the page included).
 - **Regression found and fixed (T04 review fixes, 796f9bc)**: side by side below about 660 px of height (side by side there since 497f583) the list panel scrolled around its rows' own region: at 1366x620 and 1280x600 two scroll regions in panel 1, the panel 16 px over its height around the rows' 148 px (their 160 px floor). The rows now take what the header leaves (minmax(0, 1fr), the skill's §2 rule), and the panel scrolls only when its header alone does not fit (below about 480 px): one region, the rows', 132 px at 1366x620 and 112 at 1280x600 (382 at 1850x960 and 272 at 1536x760 as before). Tests: tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check at 1366x620 and 1280x600 (fails on eafa8a2), tests/unit/test_webui_models_page.py::test_the_list_panel_has_one_scroll_region_at_every_wide_height. Screens: scratchpad/t04/fix-1/shots/{before,after}/walk/models_<size>.png.
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: Models' list rows are the panel's one scroll region (`models_page.PAGE_CSS`), pinned by tests/unit/test_webui_models_page.py::test_the_list_panel_has_one_scroll_region_at_every_wide_height; the shared walk (tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check) finds at most one region per panel, none nested. Commits c9fdb87, 796f9bc.
 
 #### R-55 · Sticky chart toolbar covered chart titles when scrolled
 
@@ -236,6 +243,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Re-checked (T04 layout-rows, 497f583)**: the toolbar is still a row of its own; at 1536x760 and 1920x700 the run view's one scroll region is the plots' body, and nothing sticky covers a focused control (the layout test).
 - **Re-checked (T04 measure, a569948)**: the shared check at 1536x760 and 1920x700: one scroll region per panel on Training (the plots' body), none nested, nothing over a focused control (the chart axes are not its measure).
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the chart toolbar is a row of its own above the scrolling plots body and no `.shep-charts-bar` rule is sticky (`training_console.PAGE_CSS`), pinned by tests/unit/test_training_page.py::test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row. Commit 443cfc1.
 
 #### TR-F1+owner · Plot size stuck after narrow; sticky status line covered axes
 
@@ -246,6 +254,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Re-checked (T04 layout-rows, 497f583)**: resources stay a row of their own under the plots; the layout test's first and last 1850x960 visits (with 760 to 1920 px between) give the same panels, tops and run bar; the plot sizes after a narrow visit were not re-measured here.
 - **Re-checked (T04 measure, a569948)**: the layout test compares each page's first and last 1850x960 facts with 960x1080 and 390x844 between: alike.
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: code only for the plot size: `charts.CHART_CSS` sizes a plot box by the layout alone (`contain: size`) and the module's ResizeObserver fits the canvas both ways; no test pins it and the shared walk's layout facts carry no plot sizes. The covered-axes half is pinned by tests/unit/test_training_page.py::test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row. Commits 4764faa, 1f4eb05.
 
 ### UI-03 Field-row alignment
 
@@ -274,7 +283,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-04 The shared model list: folding, search, lineage
 
-15 rows: 1 partly done, 1 outside this round's scope (owner to decide), 11 code-verified, 2 code-verified at ba6e85e (audit).
+15 rows: 1 outside this round's scope (owner to decide), 12 code-verified, 2 code-verified at ba6e85e (audit).
 
 #### B39-UI2 · Model list reads every checkpoint though it shows only four runs
 
@@ -287,12 +296,13 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### B69-L1 · Unlistable runs/ entry reads 'RUNS · <name>'; name line upper-cases the directory
 
-- **State**: partly done · found by an internal review · severity cosmetic · page: models
+- **State**: code-verified · found by an internal review · severity cosmetic · page: models
 - **Problem**: Such names read 'RUNS · <name>'; the 'architecture' field names a location.
 - **At ba6e85e**: Seen in the real app (my private copy with a workspace copy holding runs/bad\xff, runs/gatv2/run\xff and an alias link). The rows read 'bad\xff · RUNS', 'run\xff · GATv2', 'demo-disease · ALIAS 2026-11-16 09:13' and 'demo-base · ALIAS …'. The name line upper-cases the directory name (renderers.architecture_label :719-725, 'A location, never the model's architecture'). The API's architecture field is 'runs' or 'alias'. The visible reason reads 'metadata not readable · cannot be loaded' even for a directory that was never read.
 - **Done when**: An unlistable directory's row reads its plain name and location in words (no upper-cased directory), and the API 'architecture' field names the encoder, not a directory.
 - **Sources**: BL:1027 (item 69)
 - **Closed at**: 572c34f, 11bbe99 (the rows). An entry the listing could not list is a row of its own name and where it sits, in words, with its reason on the page: "broken-link / a run folder in runs/gatv2/ / runs/gatv2/broken-link cannot be listed (a link whose target does not exist), so no file in it is read", "alias / a folder in runs/ / runs/alias is a link to runs/gatv2, whose runs are listed there once, so it is not listed again", "bad\xff / a folder in runs/ / runs/bad\xff cannot be listed (its name is not valid text, …)"; no upper-cased directory and no "metadata not readable" for a directory never read; the count line counts them apart ("10 runs, 20 saved files, 4 entries not listed"). Tests: tests/unit/test_webui_model_list.py::test_the_tree_escapes_and_names_entries_it_could_not_list (it needs the tree's cells, so it does not run on aad658c unchanged; the rows there are as At ba6e85e says). Seen in Chromium on a copy of the demo with a broken link, a link loop, an alias and runs/bad\xff, at 1850x960 and 760x1000. Screens: scratchpad/t05/list-core/shots/after_models_unlisted_entries_1850x960.png (and _760x1000). **Left**: the API's `architecture` field still names the directory an entry sits in (`runs`, `gatv2`): it is the key the resolve route takes back (architecture/run/filename), so naming the encoder there needs a field of its own, not a change of this one. **Review fix (T05 review, 2026-11-17)**: 0e2b799 — the filtered count line's "of N runs" counted an entry not listed as a run ("Disease: 5 of 12 runs" with one such entry on a copy of the multi-family demo); it now leaves them out, as every other count does ("Disease: 5 of 11 runs"). Test: tests/unit/test_webui_model_list.py::test_the_tree_escapes_and_names_entries_it_could_not_list ("Disease: 3 of 9 runs"; "of 10" on 9b160ab). Seen in Chromium at 1850x960 and 760x1000: scratchpad/t05/fixer/logs/cases_before.json, scratchpad/t05/fixer/logs/cases_after.json.
+- **Decided (the external review of 6a2d52e, 2026-11-19)**: the reader's part is done (the row's plain name and place in words, 572c34f, 11bbe99). The API's `architecture` field still names the directory an entry sits in because the resolve route takes it back as a key (architecture/run/filename); renaming it would break resolution. Kept as a recorded technical debt of the API, not a user-visible defect; naming the encoder there needs a field of its own.
 
 #### B69-L3 · Broken link or link loop under runs/ skipped without a word
 
@@ -392,6 +402,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: In the workspace copy, runs/bad\xff, runs/gatv2/run\xff and a checkpoint named odd\xff.pt each show as one row with its reason ('… is not listed (its name is not valid text, shown here with backslash escapes; it cannot be opened by name), so it is not read'). Every other file is listed. GET /api/v1/workspaces/linkcases/checkpoints answers 200 with 15 entries.
 - **Sources**: BL:1024 (item 66)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: a run, file or directory whose name is not valid text is one listed entry with its reason and every list and route answers (`checkpoint_paths.list_runs`, `list_run_checkpoints`, `unlisted_problem`), pinned by tests/unit/test_server_lists.py::TestCheckpointsInAndOut::test_a_run_or_file_whose_name_is_not_text_is_listed_and_every_list_answers and ::test_a_directory_under_runs_whose_name_is_not_text_is_one_entry_and_every_list_answers. Commits c769df7, 5e36e83.
 
 #### B72-N6 · Diagnosis drawer rows repeated their run under a run heading
 
@@ -401,6 +412,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: BL:1030 (B3 note)
 - **Re-checked (T05 drawer-rows, db16eea)**: the drawer draws the shared tree now: each run is named once, in its own row, its files under it by what each is ("Latest save"), never their run again (tests/unit/test_webui_model_list.py::test_an_operator_lists_the_serving_workspace_with_the_one_in_use_located).
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the Load drawer draws the shared tree, each run named once in its own row and never in its files' rows (`model_list.list_html`), pinned by tests/unit/test_webui_model_list.py::test_an_operator_lists_the_serving_workspace_with_the_one_in_use_located. Commits 11bbe99, db16eea.
 
 #### T08-flow-4 · The model tree names a run's tied best saves and its top-k saves by file name
 
@@ -430,7 +442,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-06 Launch and configuration in the GUI
 
-17 rows: 1 awaiting owner acceptance, 12 code-verified, 4 code-verified at ba6e85e (audit).
+20 rows: 1 awaiting owner acceptance, 15 code-verified, 4 code-verified at ba6e85e (audit).
 
 #### FL-SVC · Service stopped during manual acceptance with no recorded reason
 
@@ -508,6 +520,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Progress (2026-11-16, T08 fixes: 202cbbe)**: the one open once the server answers now says what happened: "Server ready." then "Opened <url> in the browser.", or "No browser could be opened on this computer: open <url> in a browser." when `webbrowser.open` finds none (it said "opening browser" whatever it answered); the poll and its no-deadline wait are unchanged. Tests and evidence: FL-UI-06's T08 entry.
 - **Sources**: docs/working/BACKLOG.md:975 (item 17 F7)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the launcher polls /health with no deadline and opens the browser once (`shep_launch._open_browser_when_ready`), pinned on a simulated clock by tests/unit/test_launcher_browser_wait.py::test_it_does_not_give_up_before_the_server_answers (800 s), ::test_it_logs_progress_about_every_30_seconds and ::test_every_open_says_what_happened. Commits 64c585c (merged in 150105f, #128), 202cbbe.
 
 #### OPS-B5b · Settings offered acceleration toggles and HGT claims not built
 
@@ -516,6 +529,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The Acceleration row in the facts list reads '○ Not implemented yet (new acceleration work is deferred; each run's record keeps the kernels and precision it ran with)', with no toggle. The help and accordion texts no longer state HGT behaviour as current. Before: 'dynamic PyG/HGT workloads may graph-break' and 'HGT has been observed to run slower'. Now: 'GATv2, the one architecture built today, has not been measured with it', and the HGT figures are 'measured earlier on this project with an architecture no longer built'. No acceleration toggle existed in src/webui before B5 (git grep at 0ee56f9^ finds none), so that half of B5 was a guard against adding one, not a removal.
 - **Sources**: OPS:218-219 (B5); commit 0ee56f9
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: Settings' Acceleration row reads "Not implemented yet" with no input (`runtime_settings.facts_html`) and its help names HGT only as earlier or no longer built, pinned by tests/unit/test_webui_gradio6.py::test_settings_say_the_running_allocator_apart_from_the_saved_one and ::test_no_settings_text_claims_an_architecture_that_is_not_built. Commit 0ee56f9.
 
 #### R-11 · Settings was a wall of text with actions above settings, stretched controls
 
@@ -524,6 +538,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Settings is one bordered panel (max-width 1040 px, left-aligned) with a one-line intro, then a four-row summary list of facts (Allocator now / Allocator saved / torch.compile saved / Acceleration), then the two fields with their info lines and two specifically labelled accordions, then the action row (Apply Settings primary, Restart Backend secondary) in the panel foot, then a three-sentence restart note. Measured at 1850x960: the panel is 1040x669 px, the allocator block is 1006 px wide (its input about 982 px), the action row is at y=604 below the fields (fields at y=282-523), and the page does not scroll (docScroll 0). At 960x1080 the panel is 928 px with no horizontal scroll. The env-override sentence appears only when an explicit launch setting is active (saved_html).
 - **Sources**: UX:213 (appendix 11); RJ audits[0].findings[18]; UX:125 (section 4 Settings)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: code only: since b13e262 Settings is two panels (Data locations, Runtime settings: tests/unit/test_webui_data_locations.py::test_the_settings_page_has_the_data_locations_panel_beside_runtime_settings pins only that); the Runtime panel's facts and fields come before its action row (`runtime_settings._runtime_panel`), which no test pins. Commit 0ee56f9.
 
 #### R-14 · Read-only viewers could edit Settings fields
 
@@ -532,6 +547,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: For a request D8 refuses (a forwarded request), the page opens with the allocator select and the torch.compile checkbox disabled. Measured: input.disabled=true for both. Both buttons read '🔒 Apply Settings' and '🔒 Restart Backend' and are disabled. The reason 'Operator controls only: forwarded by a proxy.' is visible beside them (14 px, rgb(67,74,88) on white, 8.9:1). Because the fields cannot be changed, the 'Not saved: Apply Settings saves the fields above' prompt cannot appear for that viewer, and the open shows no click-this prompt. For the operator, fields and buttons are enabled with no lock.
 - **Sources**: UX:216 (appendix 14); RJ audits[0].findings[21]; UX:125 ('read-only locks')
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: a request D8 refuses gets non-interactive fields, 🔒 Apply, Restart and Stop, and the reason once next to the fields (`runtime_settings._on_open`), pinned by tests/unit/test_webui_gradio6.py::test_a_read_only_request_gets_still_fields_and_escaped_refusals, ::test_read_only_settings_lock_apply_and_restart_with_the_reason and the browser test tests/unit/test_webui_shell.py::test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge. Commits 0ee56f9, 80b2518.
 
 #### T08-flow-7 · setup_demo.py without --train-model ends with command-line steps and never names the dashboard
 
@@ -600,9 +616,41 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: the verification of fcc3dea, part AUD (V-AUD-8)
 - **Closed at**: b618863. The sequence is `atomic_json.write_text_atomic` (`write_json_atomic` serialises and calls it); the launcher's two writes call it with their modes (0600; 0644 in a 0755 directory). Test: `test_launcher_browser_wait.py::test_the_launchers_own_files_are_written_whole_by_the_one_atomic_writer` (fails on fcc3dea: the link's target overwritten).
 
+#### OPS-C-R1 · A second start that sets other settings reuses the running service
+
+- **State**: code-verified · found by the external review of 6a2d52e · severity high (P2) · page: launcher
+- **Problem**: A second start that found a healthy service opened it without checking what this start set. With `SHEPHERD_DEPLOYMENT_MODE=readonly` it printed "Operator controls: off" and opened the running M1 service, where operator controls were on; with another `SHEPHERD_WORKSPACES_ROOT` it opened the service still on the first folder. Both exited 0. A plain second start of a read-only service printed "on (the local start)".
+- **At 6a2d52e**: reproduced by the review with the real launcher (its `evidence/instance_reproduction.json`). The reuse path (`shep_launch.py`) compared nothing with what the start set, and the launcher printed its own mode before it knew which service the user would get.
+- **Done when**: Before a reuse, what this start sets explicitly (a mode or a data location) is compared with what the running service has in effect, through the one settings resolution. Equal, or nothing set: reuse, with the running service's own "Operator controls" line. Different: nothing is opened, a plain line names what runs and how to get what was asked, and the start exits non-zero. The instance key is unchanged. Tests: the same settings, M1 then read-only, one root then another, and Save/Apply in the service then a plain start.
+- **Sources**: the external review of 6a2d52e (Codex, 2026-11-19), OPS-C-R1
+- **Fixed (the review of 6a2d52e, 2026-11-19)**: e4348a1. The info file records the start's settings (`start_settings`: the mode, the local mark, the bind and the four data locations). `launch_instance.asks_not_met` compares each explicit mode or location with the running service's value in effect now; both sides are read through `server_settings` (`all_settings`, `configured`: the service's recorded variables, the saved file read now, so a Save and Apply counts), with no second resolver. Equal, or nothing set: reuse, printing the running service's line. Different: nothing opens; the ERROR line names what runs (its controls, the differing location, its URL and pid) and what this start set, then the remedy (Stop service, then start again); the exit is 1, and without a terminal the error page says it. An older info file without `start_settings` refuses any explicit setting. The guides (en, zh) and the README say so.
+- **Tests**: `tests/unit/test_service_unit.py` (6 new tests, 11 cases, and the lock test extended) and `tests/unit/test_launch_instance.py` (1 new). On a 6a2d52e snapshot 10 of the 16 selected fail (exit 0; the start's own operator line). With the real launcher on 6a2d52e, read-only over M1, another root and the old root after Apply exit 0 and reuse; at e4348a1 they exit 1 with the service and its info file unchanged, while the same settings, a root with a trailing slash, explicit M1 over the local M1 and a plain start after Save/Apply reuse with exit 0 (the lanes' review, on a snapshot of c7f6faa).
+- **Closed at**: e4348a1.
+
+#### OPS-C-R5 · Settings › Data locations: a Check on one row overwrites another row's unsaved draft
+
+- **State**: code-verified · found by the external review of 6a2d52e · severity low (P3) · page: settings
+- **Problem**: Every answer of the panel set the Training evidence folders box back to its saved list. A draft typed there was lost when another row's Check or Save answered, and when Settings was shown again; the one-folder rows kept theirs.
+- **At 6a2d52e**: reproduced in a browser (the review's `evidence/draft_browser_reproduction.json`; the new test on a 6a2d52e snapshot: the box held `old_evidence` once the workspaces row's Check answered).
+- **Done when**: A row's box gets a value only when the panel first opens and when that row's own Save succeeds; every other act and answer, a refusal included, leaves every box as typed, for every row alike; a browser test types a draft and presses another row's Check and Save.
+- **Sources**: the external review of 6a2d52e (Codex, 2026-11-19), OPS-C-R5
+- **Fixed (the review of 6a2d52e, 2026-11-19)**: 8eb91c5. Root: the panel's one drawing (`_row_updates` via `_panel`) gave the evidence box `item.saved` on every return, a special case for one row. Now `_panel(fill=…)` sets a box only at the panel's first open in a session (a `gr.State` the open reads and a following step sets, for an operator's open) and for a row whose own Save succeeded (`box_value`: the evidence folders' list, else empty). Every other act leaves each box as typed. A read-only request's boxes are still emptied. `clear` is retired.
+- **Tests**: `tests/unit/test_webui_data_locations.py::test_a_draft_survives_every_other_rows_check_and_save` (browser: drafts in two rows, then the workspaces Check and Save, a refused registry Save, Settings shown again and the evidence row's own Save; each step waits for its own answer). Fails on 6a2d52e at the first step. Evidence: scratchpad/c6a2/config-r5/repro/r5_test_on_6a2d52e.txt.
+- **Closed at**: 8eb91c5.
+
+#### OPS-C-R6c · Settings › Data locations: the evidence folders' box cut its hint at 390×844
+
+- **State**: code-verified · found when the browser tests began drawing in the dashboard's own type (the review of 6a2d52e) · severity low · page: settings
+- **Problem**: At 390×844 the Training evidence folders box was 241 px; its hint "One folder path on the server per line" needs 250.5 px and had 215 px, so it was cut. The test host's fallback font (OPS-C-R6b) had wrapped the buttons and hidden it.
+- **At 6a2d52e**: `test_webui_data_locations.py::test_every_path_box_keeps_room_for_a_path_at_every_window` with the fonts served: hint_fits False, width 241.
+- **Done when**: Every path box's hint is whole at every window of that test, in the dashboard's type.
+- **Sources**: the U4 stage of the review of 6a2d52e (OPS-C-R6b's fallout); V-8 (the boxes' room on a phone)
+- **Fixed (the review of 6a2d52e, 2026-11-19)**: 2dae2ad. On a narrow window a box keeps 16em, enough for the one-folder rows' hint (168.7 px) but not this one; the evidence folders' box now takes its whole row there (`data_locations.PAGE_CSS`). Test: the one above, which fails on 6a2d52e with the fonts served and passes.
+- **Closed at**: 2dae2ad.
+
 ### UI-07 The model drawer's scrolling
 
-1 rows: 1 code-verified.
+2 rows: 2 code-verified.
 
 #### RC-C · Diagnosis model drawer list and details share one scroll
 
@@ -613,19 +661,30 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: UX:137-139; BL:1010 (item 52 (C)); BL:182
 - **Closed at**: db16eea. Side by side (the shell's one layout decision, `style.SIDE`) the drawer's list and the chosen model's details are two regions, each its own scroll (`overflow: auto`, `overscroll-behavior: contain`) and its own minimum width (`--shep-panel-min`: the tree whole from 616 px, the details from 222 px; their sum fits the candidates and details panels the drawer covers, so wherever the page is side by side both fit), the body around them no scroll region, Load in the foot under both. Stacked (`style.STACK`, no media query) the page flows: the list, then the details, then Load; a row chosen brings its details' title to the top of the window and focuses it, and "↑ Back to the list" brings the chosen row back into view and focuses it (`model_list.FACTS_JS`, waiting for the facts that name the row). The shared tree's cells take 7 px a side in the shared style sheet (Models' own rule before), so the tree is whole in its region from 1240 px; the foot's note wraps beside Load instead of running past the drawer's edge. Measured on the multi-family demo (the demo-disease model served), a file of demo-b-disease chosen, the wheel over the details: at 7815893 one region (`.shep-model-body`, 503 px for 1171) and the list's first rows moved from y 364 to -303 at 1850x960 (from 384 to -569 at 1280x900); at db16eea the details scroll on their own (148 px at 1850x960, 717 at 1280x900), the list's rows stay at y 372/417/462/507 and Load at 861-899 (798-837 at 1280x900), nothing over it; stacked at 760x1000 and 390x844 no region scrolls inside, the chosen file's details title is at y 0 and focused (at 7815893 its details stayed 438 px below the window), Back to the list puts the row at y 462-507 (383-428), focused. Tests: tests/unit/test_webui_model_list.py::test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser (side by side the list stays while the details scroll, Load in view; at 1280x900 nothing cut or scrolled sideways; stacked the order, the focus and the return; fails on 7815893), tests/unit/test_diagnosis_panel.py::test_the_load_drawers_list_and_details_are_two_regions_that_fit_side_by_side (the regions, their minimums summed against the panels, no media query; fails on 7815893), and the shared check tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check, which now opens the drawer at 1850x960 as well as 1280x900, 1366x620 and 390x844 and chooses a row (`browser.UI_WALK_JS` `pick`), an area a page marks inside a panel (`shep-area`) counted as its own: no drawer finding; its one finding, a Settings data-locations box under the runtime footer at 1366x620, is there at 7815893 too (not this row's). Screens: scratchpad/t05/drawer-rows/shots2/before_drawer_details_scrolled_1850x960.png, scratchpad/t05/drawer-rows/shots2/after_drawer_details_scrolled_1850x960.png (and _1280x900, _760x1000, _390x844), after_drawer_select_*, after_drawer_back_to_list_760x1000.png and _390x844.png; measurements scratchpad/t05/drawer-rows/shots2/before_drawer.json, scratchpad/t05/drawer-rows/shots2/after_drawer.json.
 
+#### OPS-C-R6b · The model drawer's list overflows by 1 px at 1280×900 on another host
+
+- **State**: code-verified · found by the external review of 6a2d52e · severity low · page: diagnosis (test harness)
+- **Problem**: `test_webui_model_list.py::test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser` read the rows' clientWidth 616 against a scrollWidth of 617 at 1280×900 on the reviewer's aarch64 host; it passed here.
+- **At 6a2d52e**: the browser test server (`tests/fixtures/served_page.py::served`) mounted Gradio alone, so the dashboard's IBM Plex Sans faces answered 404 (font status `['error', 'error']`) and every served browser test drew and measured the page in the host's fallback font. The rows region's 616 px minimum (a 2 px wrap and a 614.0 px tree) was fitted to this host's Inter (the tree's narrowest 612.9 px). With DejaVu Sans as the fallback the same test reads 616 against 656. In IBM Plex Sans the tree's narrowest is 599.2 px. Nothing was cut; the page was not at fault.
+- **Done when**: The browser tests measure the page in the dashboard's own type; the drawer test passes whatever the host's fallback font.
+- **Sources**: the external review of 6a2d52e (Codex, 2026-11-19), the last paragraph of §三 (`evidence/model_list_fit_recheck.log`)
+- **Fixed (the review of 6a2d52e, 2026-11-19)**: 543b2e6. `served()` serves `/static` as the API does, and the shared queue's `idle()` (`tests/fixtures/browser.py`) also waits for the page's fonts; the rows region's comment gives its measure in the dashboard's type; the 616 px minimum is kept and no tolerance changed. The drawer test checks that the IBM Plex Sans faces loaded; it passes with and without Inter on the host and fails on 6a2d52e (`['error', 'error']`). Every served browser file ran once in the real fonts: the Fine-tune card (V-20), the evidence folders' box (OPS-C-R6c) and one Test page premise (913acdf) followed from it.
+- **Closed at**: 543b2e6.
+
 ### UI-08 Form density after expanding
 
-16 rows: 1 partly done, 1 outside this round's scope (owner to decide), 1 not applicable, 5 code-verified, 8 code-verified at ba6e85e (audit).
+16 rows: 1 awaiting owner acceptance, 1 outside this round's scope (owner to decide), 1 not applicable, 5 code-verified, 8 code-verified at ba6e85e (audit).
 
 #### B27-2 · Expanding More training settings / More settings makes scrolling long
 
-- **State**: partly done · found by the owner · severity requirement · page: training
+- **State**: awaiting owner acceptance · found by the owner · severity requirement · page: training
 - **Problem**: An expanded collapsible section made the scroll too long.
 - **At ba6e85e**: Expanding 'More training settings' on Training grows the Parameters region from 615 to 988 px of content (373 px to scroll). Fine-tune's 'More settings' grows its form to 1242 px in a 681 px region (561 px to scroll). Accordions still open downward in one column; nothing opens sideways or step by step.
 - **Done when**: At 1850x960, expanding Training's 'More training settings' and Fine-tune's 'More settings' adds little scroll (e.g. expanded fields laid out in two columns or a sideways step layout), measured by region scrollHeight, or an explicit owner decision is recorded.
 - **Sources**: BL:985 (item 27 (2)); SK:28-29
 - **Owner's decision (verified T06-D)**: Training's part is the owner's choice among the three under Closed at. What each changes, measured on this branch at 1850x960: the Parameters panel is 564 px wide (x 16-580), two fields to a row; the run view beside it about 1240 px. (a) One bounded inner scroll while the section is expanded: nothing changes, the 346 px scroll stays inside Parameters (the no-scroll rule covers the page with nothing expanded); (b) a wider Parameters panel: a third column of fields needs about one field's width more (about 260 px, estimated from the panel, not built), leaving the run view about 980 px, under the skill's 2 × 2 chart width (about 1000 px), so the four charts go to one column and the run view scrolls; (c) a step or sideways layout of the expanded settings: a new layout, mockup first (B27-P), the run view unchanged.
 - **Closed at**: — (partly done at a37d09f). Fine-tune: expanding 'More settings' now adds 252 px of scroll (scrollHeight 930 in a 678 px body; was 1260, 582 px), its fields in the two columns with the dense spacing; measured by the region's scrollHeight (scratchpad/t06b/continue-finetune/shots/before/finetune_more_1850x960.png, scratchpad/t06b/continue-finetune/shots/after/finetune_more_1850x960.png). Left, for the owner: Training's 'More training settings' still adds 346 px (Parameters 1003 in 657; was 1006). Its fields already sit two to a row in a 563 px panel, so less scroll needs a layout decision: (a) accept one bounded inner scroll region while a section is expanded (the no-scroll rule covers nothing expanded), (b) a wider Parameters panel at the run view's cost, or (c) a step or sideways layout for the expanded settings (scratchpad/t06b/continue-finetune/shots/after/training_more_1850x960.png).
+- **Decided (the external review of 6a2d52e, 2026-11-19)**: no step layout for Training's expanded settings. What is kept: the expanded "More training settings" scroll inside Parameters (one bounded region, 346 px more at 1850×960), its actions reachable, no nested scroll, the section folded until the reader opens it and kept as the reader left it; Fine-tune's part adds 252 px (a37d09f). The content's height is measured above; the reading is the owner's subjective acceptance.
 
 #### NEW-training-finetune-2 · Continue drawer opens with step 3 Check cut off while Start is enabled
 
@@ -701,6 +760,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Every inherited setting is said in words by renderers.setting_words, for example 'Task = not taken by a base', 'Early stopping patience = off', 'Graph backbone = Trained'. No Python repr appears.
 - **Sources**: BL:1030 (item 72)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the check says each inherited setting in words, each None by its meaning (`renderers.setting_words`, `training_console._check_html`), pinned by tests/unit/test_training_console_resume.py::test_the_checks_settings_are_said_in_words_and_the_spec_by_its_differences (no repr mark in the text) and tests/unit/test_webui_renderers.py::test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box. Commits 090ae2c, e2e63f1.
 
 #### B72-CD2 · Continue drawer's model_spec row about 3,000 px tall
 
@@ -709,6 +769,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The Model spec row reads 'Differs from the reference GATv2 spec: Input › Dimension 8 (2048), … and 1 more' and puts the whole spec behind a closed 'Details ›'.
 - **Sources**: BL:1030; OPS:354
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the Model spec row reads its differences from the reference with the whole spec behind one "Details ›" (`training_console._check_html`), pinned by tests/unit/test_training_console_resume.py::test_the_checks_settings_are_said_in_words_and_the_spec_by_its_differences. Commit e2e63f1.
 
 #### B72-CD3 · Continue drawer result nested three bordered boxes
 
@@ -717,6 +778,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: After a check, the only bordered elements inside the drawer body are Gradio's radio wraps, at depth 0; the result has no bordered box inside another. The check result and the dataset relation are tinted fills (green or red), not nested borders.
 - **Sources**: BL:1030
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the check result and the dataset comparison draw no border of their own and the check's HTML holds no bordered box inside another (`training_console._check_html`, PAGE_CSS), pinned by tests/unit/test_webui_renderers.py::test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box. Commits 418a9e5, e1e5244.
 
 #### B72-CD4 · Finished run's first Check named internal extend_epochs field
 
@@ -725,6 +787,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: A finished run's first Check now reads 'The parent last.pt finished its original training (1/1 epochs), so there is nothing left to resume. To train further, extend it at a fixed rate with Extra epochs. Enter Extra epochs above, then click Check checkpoint again.' page_words maps the CLI field names to the drawer's labels (training_console.py:3304-3314). run_plan.py:627-628 still says extend_epochs for the CLI.
 - **Sources**: BL:1030
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: a finished checkpoint's check names the drawer's "Extra epochs", never `extend_epochs` (`training_console.page_words`), pinned by tests/unit/test_training_console_resume.py::test_a_finished_checkpoint_offers_extend_and_says_why_it_cannot_resume. Commit 7649fa0.
 
 #### B72-CD5 · Run options started with 'GATv2 · ' shared prefix
 
@@ -733,6 +796,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Run options lead with the run's name: 'demo-disease · GATv2 2026-11-16 09:13' and 'demo-base · GATv2 2026-11-16 09:13'.
 - **Sources**: BL:1030
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: a run's option leads with its name, then its architecture and start time, never the shared "GATv2 · " (`renderers.run_words`, `model_list.run_options`), pinned by tests/unit/test_training_page.py::test_a_run_reads_as_its_name_architecture_and_start_time and tests/unit/test_training_console_runview.py::test_the_select_lists_the_workspaces_runs_latest_first_by_the_one_option_rule. Commit 7128f59.
 
 #### OPS-B2 · Fine-tune Epochs field sat below its region
 
@@ -741,6 +805,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: At 1850x960 Fine-tune's Epochs field sits at y 728-818, inside the form body, which ends at 846.
 - **Sources**: OPS:358 (B2 row)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: at 1850x960 the shared walk finds Fine-tune's form body with nothing to scroll and Device, Run name and "More settings" (all after Epochs, `finetune_page.COMMON_SHOWN`) inside it above the footer row, pinned by tests/unit/test_webui_shell.py::test_the_continue_drawer_and_the_fine_tune_form_fit_the_owners_window (browser). Commit 1d33b5b.
 
 #### R-45 · Training Parameters single-file and long at wide widths
 
@@ -749,6 +814,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The base form uses a grid of repeat(auto-fill, minmax(240px, 1fr)) at every width (training_console.py:5004-5006). At 1850x960 the common fields sit two per row (Epochs | Learning rate, Batch size | Seed, Split seed), Device has its own row, and the 'More training settings' and 'Model' accordions are in view at y 610 and 662. At 960 px the fields fall into three columns. 'Parameters' appears once.
 - **Sources**: UX:247 (appendix 45); RJ audits[1].findings[12]
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: code only: the Parameters form is a `repeat(auto-fill, minmax(240px, 1fr))` grid (`training_console.PAGE_CSS`); tests pin its dense padding and the stacked fold (R-60), not its columns. Present since the history root 9a96a72.
 
 #### RC-A · Mismatched side padding under 'Settings taken from this checkpoint'
 
@@ -757,6 +823,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: 'Settings taken from this checkpoint' is now a disclosure with no box of its own. Its summary, its note ('They cannot be changed when continuing; to train with other settings, choose Branch above.') and its key-value list all span x=45..551 inside the drawer (measured), so they share one side padding.
 - **Sources**: UX:133-135; BL:1010 (item 52 (A))
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: code only: "Settings taken from this checkpoint" is a borderless disclosure whose note and list take the drawer's own padding (`training_console._check_html`, PAGE_CSS `.shep-inherit` sets a margin only); tests/unit/test_webui_renderers.py::test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box pins that it draws no border, nothing pins the shared padding. Present since the history root 9a96a72.
 
 ### UI-09 R10 train/test overlap presentation
 
@@ -781,6 +848,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: A refused evidence setting renders as a red '✕ Refused: …' (class shep-st-error, rgb(165,34,34)). A directory that cannot be checked renders as an amber ▲. A KG edge set renders as '○ Not applicable · …' in grey; I saw that live on my copy with the KG edge set chosen. The shared server sets no evidence directory, so I rendered the refused state from ba6e85e's evidence_html into the live page's CSS.
 - **Sources**: BL:1026 (item 68)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the R10 row renders a refused setting as the red ✕ "Refused:", a folder that cannot be checked as the amber ▲, a KG edge set or generated split as ○ Not applicable (`test_page.evidence_html`), pinned by tests/unit/test_webui_test_page.py::test_the_r10_row_renders_each_state_escaped, ::test_an_evidence_directory_that_cannot_be_checked_never_disables_start and ::test_a_kg_or_generated_start_needs_no_evidence_setting_and_is_given_none. Commit 5e36e83.
 
 ### UI-10 Contrast, type scale, focus and targets from shared tokens
 
@@ -793,8 +861,10 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Done when**: For a read-only viewer, the allocator select and torch.compile checkbox have a visibly distinct disabled style (computed colour/border differs from enabled) and the operator-only reason is shown next to the fields.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
 - **Re-checked (T04 measure, a569948)**: the read-only test passes; the shared walk is an operator's, so a read-only viewer's fields are not in it.
-- **Closed at**: d3203dd (the look) and 80b2518 (the reason). For a read-only viewer the "🔒 Operator controls only: deployment mode not set to M1." line is now the Runtime settings panel's body line between its facts and the allocator select it turns off, said once in the panel (the buttons keep their locks); it was in the buttons' row under the two fields and their accordions. Both Settings panels draw it through one line, `data_locations.reason_line` (the Data locations panel already said its own above its rows). Seen in Chromium on a server without M1 (after) and on 5137694: at 1850x960 the reason at 316-336 px above the select at 348 (before 659-700 px, under the select at 316-426), at 760x1000 434-454 px above the select at 466 (before 827-848). The look half as recorded at d3203dd. Test: tests/unit/test_webui_shell.py::test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge (the reason in the panel body, between the facts and the select, once, not in the buttons' row; fails on 5137694). Screens: scratchpad/t06d/shell-settings-audit/shots/before/settings_readonly_1850x960.png, scratchpad/t06d/shell-settings-audit/shots/after/settings_readonly_1850x960.png (and _760x1000).
+- **Closed at**: d3203dd (the look), 80b2518 (the reason) and c7f6faa (the reason beside Runtime settings' actions, the review of 6a2d52e). For a read-only viewer the "🔒 Operator controls only: deployment mode not set to M1." line is now the Runtime settings panel's body line between its facts and the allocator select it turns off, said once in the panel (the buttons keep their locks); it was in the buttons' row under the two fields and their accordions. Both Settings panels draw it through one line, `data_locations.reason_line` (the Data locations panel already said its own above its rows). Seen in Chromium on a server without M1 (after) and on 5137694: at 1850x960 the reason at 316-336 px above the select at 348 (before 659-700 px, under the select at 316-426), at 760x1000 434-454 px above the select at 466 (before 827-848). The look half as recorded at d3203dd. Test: tests/unit/test_webui_shell.py::test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge (the reason in the panel body, between the facts and the select, once, not in the buttons' row; fails on 5137694). Screens: scratchpad/t06d/shell-settings-audit/shots/before/settings_readonly_1850x960.png, scratchpad/t06d/shell-settings-audit/shots/after/settings_readonly_1850x960.png (and _760x1000).
 - **Noted (T08 flow, 2026-11-17)**: for a read-only viewer the "Operator controls only: …" reason is this panel's body line (the T06-D decision); with the accordions open it is about 735 px above Apply, Restart Backend and Stop service at 1850×960, so the reason is not beside those buttons. Kept as decided; the owner may ask for a reason beside the actions too (scratchpad/t08/C, the read-only Settings shots).
+- **Fixed (the review of 6a2d52e, CLAUDE_ACTIONS item 12, 2026-11-19)**: c7f6faa. For a read-only viewer, "🔒 Operator controls only: <reason>." is now the first line of Runtime settings' actions row, directly above Apply Settings, Restart Backend and Stop service (the one gated-button rule, `chips.gated`; the words from `operator_only` through `data_locations.reason_line`). The line above the two fields is a short relation to it (`FIELDS_LOCKED`: "Read-only for this request: the reason is beside the actions below."), so the reason is said once in the panel. Measured with the accordions open: at 6a2d52e the buttons were 734 px below the reason at 1850×960 and 1218–1319 px at 390×844; now 12, 12 and 12 px at 1850×960 and 12, 63 and 113 px at 390×844, each wholly on screen with the reason. An operator sees no lock (0 of 13 buttons) at either size. Test: `test_webui_shell.py::test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge` (both sizes); it fails on 6a2d52e (Apply 733.5 px below a reason that is not in the actions' row). Screens: scratchpad/c6a2/config-r5/measure/.
+- **Left (owner to decide, the review of 6a2d52e, 2026-11-19)**: Data locations keeps its one reason above its rows (T06-D): each row's locked Check, Save and Create is 37–375 px below it at 1850×960 and up to 1,312 px at 390×844. A reason beside each row would repeat D8's sentence four times on one screen (rule 1.2); not done.
 
 #### NEW-shell-nav-theme-4 · Diagnosis identity banners and warnings line draw their own ⚠ glyph
 
@@ -914,6 +984,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The chosen radio's label is white on #5558e3 (the dashboard's accent), 5.4:1, measured in the page (rgb(85,88,227)) and computed.
 - **Sources**: OPS:363-364
 - **Closed at**: Look changed at d3203dd (R-20): a chosen radio's label is the body colour on a tint, 14.0:1; white on the accent (5.4:1) is level 1's selected look alone. Test: tests/unit/test_webui_button_contrast.py::test_a_chosen_radios_label_reads_on_its_fill_and_is_not_the_level_1_look.
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: a chosen radio's label is the body colour on a tint at 4.5:1 or more, its border and dot 3:1 (`style.SHELL_CSS`), pinned by tests/unit/test_webui_button_contrast.py::test_a_chosen_radios_label_reads_on_its_fill_and_is_not_the_level_1_look. Commits 3d85531, d3203dd.
 
 #### R-2 · Placeholders and info= text used Gradio's subdued grey at 2.54:1
 
@@ -922,6 +993,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Placeholders and info= lines use the dashboard tokens: --block-info-text-color: var(--shep-text-2) (#434a58) and --input-placeholder-color: var(--shep-muted) (#5b6270). Measured at 1850x960: the Diagnosis placeholders ('HP:0001250 — Seizure…', '(auto-generated if blank)') are 6.13:1 on white, and the Settings info= lines ('Read once when the backend starts…') are 14 px #434a58 at 8.9:1. A contrast test pins both.
 - **Sources**: UX:204 (appendix 2); RJ audits[0].findings[1]; UX:63 (section 3, high #2); UX:46-47 (section 2 layer 1); UX:86-87 (must-fix); BL:1010
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: info= lines and placeholders take the dashboard's tokens (`style.SHELL_CSS`) at 4.5:1 or more on every field background, pinned by tests/unit/test_webui_button_contrast.py::test_an_info_line_and_a_placeholder_have_four_and_a_half_to_one_where_fields_sit and ::test_the_themes_own_info_line_and_placeholder_are_below_the_threshold. Present since 9a96a72; 2ce81cf.
 
 #### R-52+B52L · Plain tables used aria-selected; links lacked a focus style
 
@@ -930,6 +1002,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Datasets' selected row carries aria-current="true" and no aria-selected, and on no page does any element outside tab or option roles carry aria-selected. With keyboard focus, 'Details ›' (.shep-link), the icon Copy buttons and the model-list rows show Chromium's default focus ring (outline auto, dark on white), clearly visible; table rows show the 2 px accent outline. There is no explicit :focus-visible rule for .shep-link or button.shep-copy, so their ring is the browser default. Inferred: a browser with a weaker default would show less.
 - **Sources**: UX:254 (appendix 52); RJ audits[1].findings[28]; BL:1010 (item 52 (L), K6d2 review)
 - **Closed at**: d3203dd adds the explicit ring the audit missed: .shep-link and button.shep-copy take a 2 px focus ring in --shep-focus-ring on :focus-visible (as the tabs, table rows and Details › do), not the browser's default. 71b8bac makes it every button's, link's and disclosure's: the shared check found Gradio's buttons (Run Diagnosis, Start, Apply Settings, Check, Save, ...), every accordion head and the Diagnosis card's link buttons drawing the browser's own ring (outline: auto, in no token: a faint grey around the accent buttons) on every page at every size (188 of its 202 problems at 3a1a36f). One rule at no specificity (style.py) gives them the focus token's 2 px ring (accent-600, 6:1), so a control with its own (a tab, a table row, the ⓘ) keeps it; the link and Copy rule and the Models and Test summary rings are gone. Tests: tests/unit/test_webui_shell.py::test_every_button_link_and_disclosure_takes_the_focus_tokens_ring, tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check. Screens: scratchpad/t04/measure/shots/{before,after}/*_focus_run_{1850x960,390x844}.png, *_focus_accordion_1850x960.png.
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: plain tables mark the selected row `aria-current`, never `aria-selected` (tests/unit/test_webui_datasets.py::test_the_list_is_the_servers_with_the_markers, tests/unit/test_diagnosis_panel.py::test_the_task_tables_mark_the_selected_row_without_aria_selected), and every button, link and disclosure takes the focus token's 2 px ring (`style.SHELL_CSS`; tests/unit/test_webui_shell.py::test_every_button_link_and_disclosure_takes_the_focus_tokens_ring and the shared walk). Commits d3203dd, 71b8bac.
 
 #### R-58 · Training labels mixed casing, abbreviations and an emoji
 
@@ -938,6 +1011,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Form labels are sentence case and full words, from renderers.SETTING_LABELS (renderers.py:1501-1526): Epochs, Learning rate, Batch size, Seed, Split seed, Neighbours per hop, Gradient clip, Mixed precision, Early stopping patience, Epochs per validation. Model fields read 'Input › Dimension' and 'Encoder › Layers'. There is no emoji control (no Randomize seed), and the architecture reads 'GATv2'.
 - **Sources**: UX:260 (appendix 58); RJ audits[1].findings[24]
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: every base field's label is `renderers.SETTING_LABELS[name]` (tests/unit/test_training_page.py::test_the_form_is_what_a_new_base_takes_common_settings_first) and the page shows "Epochs", "Learning rate", "Batch size", "Seed" and no retired "Batch Size" or "GNN Conv Type" (tests/unit/test_entry_documents.py::test_the_training_page_s_names_in_the_playbook_are_its_labels_and_buttons); the casing of the other labels and the absence of an emoji control are in code only. Commit 090ae2c.
 
 #### R-83 · role=list without list items and a likely clipped focus ring
 
@@ -946,6 +1020,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Every role="list" now holds role="listitem" children, with the heading outside the list (seen in the Diagnosis drawer: two listitem children). The Test reports are now a .shep-tbl table whose rows take a 2 px accent outline at -2 px offset, so the ring is not clipped. The reports table itself could not be seen (the registry is empty); its focus state is read from the code. The 20 px ⓘ half belongs to R-29.
 - **Sources**: UX:285 (appendix 83); RJ audits[2].findings[20]
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: code only: no `role="list"` is left in src/webui at 6a2d52e (git grep; the B0a pin's fixture tests/fixtures/list_roles.py has no user since e26fba9 and db16eea made them tables), and a focused table row's ring is inset (`style.SHELL_CSS`, `outline-offset: -2px`); the shared walk measures the ring's contrast, not clipping. Commits 1de2854, e26fba9, db16eea.
 
 #### V-11 · axe: no h1 on any page, Model Facts' headings skip a level, Gradio's subdued grey at 2.53:1
 
@@ -958,7 +1033,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-11 One action, one operation
 
-4 rows: 4 code-verified.
+5 rows: 5 code-verified.
 
 #### B46-races · Brief older displays on Training/Test pill, banner, Continue drawer and job card
 
@@ -1002,6 +1077,17 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: UX:261 (appendix 59); RJ audits[1].findings[25]
 - **Closed at**: e72d4a0. Test: `test_training_page.py::test_no_listener_of_the_continue_drawers_controls_shows_a_progress_timer` (every listener of the drawer's source, run, checkpoint, path, Device and operation; on ba6e85e it names the five). Seen in the browser on a CPU demo workspace, a mutation observer counting visible Gradio progress text in the drawer while the source was switched, a path typed, a listed checkpoint chosen and Device changed twice: 54 visible timer texts on ba6e85e (on continue_preview, continue_run, checkpoint_dropdown, the parent's details, manual_checkpoint), none now.
 
+#### OPS-C-R2 · Start can launch with the previous dataset or parent after a new one is shown
+
+- **State**: code-verified · found by the external review of 6a2d52e · severity high (P2) · page: finetune, training, test
+- **Problem**: Start read the session's State, which still held the choice before the one shown while the new choice's read was in flight or had failed. Fine-tune started alpha with beta shown, and the other run's checkpoint with this run shown; Training started alpha with beta shown in its run bar; the Continue drawer and Test's Start had the same window. On Fine-tune, A→B→A dropped the second pick of A (Gradio's "once" trigger on blur), leaving B's read under a select showing A.
+- **At 6a2d52e**: reproduced by the review with `_on_dataset`'s answer held (`evidence/dropdown_reproduction.json`); the new tests on a 6a2d52e snapshot start [alpha/late, beta] for A→B, [beta] with alpha shown for A→B→A, [alpha/late, beta] after a failed read, [alpha/late, alpha/base] for a late run, and [alpha, beta] on Training.
+- **Done when**: Start uses the selection shown and settled, or refuses a stale one in plain words beside Start, by one shared piece; no fixed sleep, no page-wide lock, no second validator; browser tests with the read held, late or failing.
+- **Sources**: the external review of 6a2d52e (Codex, 2026-11-19), OPS-C-R2
+- **Fixed (the review of 6a2d52e, 2026-11-19)**: 7ce53b2. Root: no submit boundary between the select shown and the State, and Start's request never carried the choice shown. Each Start now carries its selects as shown, and the shared `shell.unread_choice` compares them with the State, after D8: while the State was read for another choice, Start is refused beside it in the shared words (`UNREAD_CHOICE`: "✕ Not started: the Dataset you chose is still being read. Try again once it shows, or choose it again."). It covers Fine-tune (Dataset, Run), Training (Dataset), the Continue drawer (Dataset, Run) and Test (Run). Fine-tune's dataset pick keeps every pick (`trigger_mode="multiple"`). The runner's and the fingerprints' checks are unchanged.
+- **Tests**: `tests/unit/test_webui_start_selection.py` (5 tests: a real browser with the read held, late or failing, and the handler and wiring). All 5 fail on 6a2d52e as above; after the fix each case starts once, with the selection shown, after a stated refusal. Screens: scratchpad/c6a2/u1/ (before and after, A→B held, 1850×960).
+- **Closed at**: 7ce53b2.
+
 ### UI-12 What bound and verified mean
 
 3 rows: 2 code-verified, 1 code-verified at ba6e85e (audit).
@@ -1034,10 +1120,11 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: A version mapped against another graph shows, in its Graph row, an amber '▲ Mapped against another graph (kg differ)' (rgb(122,70,0)). Under the version comes a red '✕ Not measured on this workspace: the version was mapped against another graph, so a run would refuse it. …'. Start's reason points there: 'Disabled: the data version is mapped against another graph (see Data).' I rendered this from ba6e85e's version_html into the live page's CSS; the demo has one graph.
 - **Sources**: BL:1030
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: a version mapped against another graph shows the ▲ "Mapped against another graph (kg differ)" and the ✕ refusal beside it, and Start is disabled naming it (`test_page.version_html`, `start_state`), pinned by tests/unit/test_webui_test_page.py::test_the_data_panel_lists_every_kind_by_kind_and_role_with_its_counts and ::test_start_waits_for_every_choice_and_says_why. Commit e26fba9.
 
 ### UI-13 Path redaction and path exposure
 
-6 rows: 1 to do, 4 code-verified, 1 code-verified at ba6e85e (audit).
+6 rows: 5 code-verified, 1 code-verified at ba6e85e (audit).
 
 #### B53 · Open read routes name server paths the pages hide
 
@@ -1054,14 +1141,17 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### B72-E1 · Export download link exposes Gradio's /tmp cache path
 
-- **State**: to do · found by an internal review · page: results
+- **State**: code-verified · found by an internal review · page: results
 - **Problem**: The download link shows /ui/gradio_api/file=/tmp/gradio/….
 - **At ba6e85e**: On my private copy, Export (All shown, CSV) gave a link with href http://127.0.0.1:8871/ui/gradio_api/file=/tmp/gradio/bbcde121…/results_workspace-demo_20261116T103647Z.csv. The visible name and the download name carry no path, but the link does. The file is written by exports.write_new into a mkdtemp directory and served by gr.File (results_segment.py:1334-1345, 1506).
 - **Done when**: After the owner's D7 decision, the Export link's href carries no server temp path (or the decision to keep it is recorded).
 - **T02 note**: still the owner's D7 decision (README U3); not changed. Models › Results' Export is gated, so its link reaches an operator only, whom the rev 2 plan lets see full paths; the Diagnosis exports go through the same Gradio file route for any request (not rechecked by href in this pass: the export buttons hold no link before a click). Removing the path means a download route of the dashboard's own, a new serving surface.
 - **Owner's decision (verified T06-D)**: still D7's (README U3), not changed. Seen on this branch at 1850x960: Diagnosis' Export CSV downloads from /ui/gradio_api/file=/tmp/gradio/<hash>/diagnosis_SYNTHETIC_patient_<id>_sess_<id>.csv (the server's temp folder in the link; the patient id in the file name, which the saved file keeps). The choices: (a) keep Gradio's file route and record that decision: nothing changes, the link names a temp folder of the server to whoever exports (Models › Results only for an operator; Diagnosis for whoever runs a diagnosis); (b) a download route of the dashboard's own that names the file only: no server path in any link, but a new serving surface (D8's check per request, the files' lifetime, its tests).
 - **Sources**: BL:1030; OPS:172 (U3)
-- **Closed at**: —
+- **Closed at**: 47bd59a, 993fe0b.
+- **Fixed (the review of 6a2d52e, OPS-C-R4, 2026-11-19)**: the review placed this in scope: a download names no server path. 47bd59a. Root: the shared download boundary (`src/webui/exports.py`) left the transport to Gradio's file controls, whose only transport is the server path. `exports.offer` maps each file the download directory holds to an opaque, unguessable id kept in the process's memory, and the control gets the link `download/<id>`. One dashboard route (`exports.ROUTES`, via `mount_options` `app_kwargs`) serves it as an attachment under its own name; an unknown, malformed, path-like or expired id answers 404 naming nothing, and the route takes no path. Each export is a `gr.Button` with that link (Diagnosis' CSV and report, Models › Results' Export). Content, names, the one-day lifetime and each entry's permission are unchanged. Test: `tests/unit/test_dashboard_downloads.py` (5 tests: the id mapping, every download a linked button, each export served with no path in the answer, link or headers and its bytes and name unchanged, a real-browser save); on 6a2d52e 2 fail and 3 error, the link reading `…/ui/gradio_api/file=<path>`. Screens: scratchpad/c6a2/u3/shots/out/.
+- **Fixed (the lanes' review, 993fe0b, 2026-11-19)**: REV-R4-a: a linked `gr.Button` is `<a target=_self>` with no `download` attribute, so clicking an export whose id had expired, or was lost at a restart, loaded the route's plain-text 404 in the dashboard's tab, and the result and inputs went with it. `exports.DOWNLOAD_HEAD` (the dashboard head, one place for every export) marks a clicked export link as a download: a valid id saves as before; an expired one is a failed download and the page stays. The browser save test gained an expired-link click (no navigation, the page present); it fails on 961d901.
+- **For owner acceptance (the review of 6a2d52e, 2026-11-19)**: Models › Results' Export changed from a file box (name and size) to a "⬇ Download CSV/JSON" button, its note naming the file.
 
 #### B72-N5 · Path outside every root with a bracketed spaced part is only partly redacted
 
@@ -1089,6 +1179,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: No absolute server path appears in the Training page's text or title attributes (run details opened, Continue checked on cpu) or on Fine-tune. Paths are shown relative: 'demo/runs/gatv2/…/checkpoints/last.pt' and 'gatv2/…/last.pt'.
 - **Sources**: OPS:363-364
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: Training's banner blocks, Fine-tune's job card and a refused check redact a printed server path for every request (`training_console.printed_scrub`), pinned by tests/unit/test_training_page.py::test_every_banner_block_redacts_what_it_prints_whoever_calls_it, tests/unit/test_webui_finetune_page.py::test_a_failed_childs_printed_line_names_no_server_path_for_any_request, ::test_the_card_redacts_a_printed_line_whoever_draws_it and tests/unit/test_training_console_resume.py::test_a_refused_checks_reason_names_no_server_path. Commits 951c54a, 549e82a.
 
 #### V-12 · Investigation notes say "<path>" and Diagnosis names only the registry
 
@@ -1147,7 +1238,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-15 Diagnosis input changes and result identity
 
-3 rows: 3 code-verified.
+4 rows: 4 code-verified.
 
 #### B73 · Genes box edited without a keypress keeps the old diagnosis result
 
@@ -1158,9 +1249,10 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Reproduced (T02)**: in Chromium, the panel served with a gene task model's stand-in status and result: after a result, select all then Delete, a cut (Ctrl+X) and inserted text (an input method's or a paste's: an input event, no keypress) changed the genes and left the result; typing cleared it.
 - **Fix**: the genes box clears on `.change`, as the HPO box does. No handler writes the box (the card shows it by its container's class), so a change is the user's edit or Clear; the cohort select keeps its pick listener. The Training touch record is not used.
 - **Sources**: BL:1031 (item 73); OPS:371
-- **Closed at**: 620056f. Tests: `test_diagnosis_panel.py::test_every_edit_of_the_genes_box_clears_the_result_shown` (browser, the real panel and shell: each of the four edits clears the result, "Inputs changed"; on ee6d0aa the three keypress-free edits fail) and `test_the_task_inputs_are_never_run_outputs_and_clear_on_every_edit` (the wiring). Inferred from the wiring, not reproduced, not changed: an edit made while Run Diagnosis is in flight clears only the result shown before it, so the answer then shows the older query's result under the edited box (either box; the run and the edit's listener are two queued events of their own groups). A check of the result's query against the boxes once it lands would close it.
+- **Closed at**: 620056f; its in-flight residual 799c8c8, 49d5911 (OPS-C-R3). Tests: `test_diagnosis_panel.py::test_every_edit_of_the_genes_box_clears_the_result_shown` (browser, the real panel and shell: each of the four edits clears the result, "Inputs changed"; on ee6d0aa the three keypress-free edits fail) and `test_the_task_inputs_are_never_run_outputs_and_clear_on_every_edit` (the wiring). Inferred from the wiring, not reproduced, not changed: an edit made while Run Diagnosis is in flight clears only the result shown before it, so the answer then shows the older query's result under the edited box (either box; the run and the edit's listener are two queued events of their own groups). A check of the result's query against the boxes once it lands would close it.
 - **Re-checked (verification, fcc3dea)**: the in-flight edit reproduced in Chromium (the real panel and shell, a gene task model's stand-ins, the run's answer held on the server): a result shown, Run again, the HPO box or the genes box edited while held; the edit cleared the result shown, then the answer to the older query was drawn under the edited box and stayed. Fixed at 0149db5: the run keeps the boxes as it read them (`query_inputs`: the HPO box, the genes box, the cohort's pick), and a check chained after Run Diagnosis (`answered_inputs`, outside the queue) clears a result whose boxes changed through `phenotypes_changed`, the one clearing path; a matching result is left with its model identity; no second touched record. An input method's composition committed in either box clears the result as typing does (already so on fcc3dea). Tests: `test_diagnosis_panel.py::test_an_input_methods_text_and_an_edit_during_a_run_clear_the_result_shown` (browser) and `::test_a_result_stays_only_while_the_inputs_are_the_ones_it_answered`, both failing on fcc3dea. Left: the older answer is drawn for one request's time before the check clears it.
 - **Re-checked (verification fix stage, B73's residual)**: the older answer is drawn for one request's time before `answered_inputs` clears it. It cannot be kept from being drawn by the same root without a second mechanism: Gradio writes an event's outputs as its answer arrives, and a `.then` step, where the boxes are read as they are now, starts only after. Moving the draw into that step (the run's answer kept in a State, drawn or cleared by the check) only moves the window: an edit made while the check is in flight then finds no result to clear (`phenotypes_changed` sees the State before the draw), and the check draws the older answer for good, which is worse than a flash. Keeping it from ever being drawn needs a check in the browser before the draw (a second mechanism), so it is left as is; the result shown at rest is always the inputs' own.
+- **Fixed (the review of 6a2d52e, OPS-C-R3, 2026-11-19)**: the review placed the residual above in scope: the older answer was not only drawn for a request's time but downloadable, and kept for good when the check failed. Fixed in 799c8c8 and 49d5911; see OPS-C-R3.
 
 #### NEW-diagnosis-5 · A typed HPO name is dropped silently; report lists unused ids as used
 
@@ -1183,9 +1275,21 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: UX:207 (appendix 5); RJ audits[0].findings[12]; UX:123 (section 4 Diagnosis: 'the input echo')
 - **Closed at**: e1eeb69 (names, CSV), with b22829f and 26b3501 (the live line, the split, the report). Tests: `test_diagnosis_panel.py::test_a_run_names_its_terms_from_its_own_graph_only`, `::test_the_csv_and_report_carry_the_used_and_not_used_split`, `test_results_export.py::test_the_diagnosis_csv_is_byte_identical_to_before_the_cell_rules_moved` (its pin written again with the two columns; every other cell checked unchanged) and the T02 tests; the new ones fail on d92b329. Seen on a CPU demo service from the worktree (scratch HOME/XDG, M1, the demo's disease model served) at d92b329 (port 9160) and after (9161), the audit's query 'HP:0001250 Seizure, HP:0001263, Hypotonia, HP:9999999, HP:0001250': "Used (2) Seizure HP:0001250, Global developmental delay HP:0001263" (`after_evidence_1850x960.png`, `t06d/diagnosis-results/shots/` in the session scratchpad); the service's exported CSV had both columns and its report "Phenotypes used: Seizure (HP:0001250), …". Not in the done-when, left as it was: the server's warnings line still names the unknown id and the repeat count beside "Not used".
 
+#### OPS-C-R3 · An answer to the old inputs is shown and downloadable after the inputs changed
+
+- **State**: code-verified · found by the external review of 6a2d52e (B73's residual) · severity high (P2) · page: diagnosis
+- **Problem**: Run Diagnosis drew the result, its State and its export files; only the check chained after it (`_answered_inputs`) cleared an answer to inputs edited during the run. With that request held, the table, details, count and badge showed the SCN1A/PTEN answer under a genes box reading MECP2, and its CSV downloaded; with it failed, they stayed for good.
+- **At 6a2d52e**: reproduced by the review (`evidence/diagnosis_reproduction.json`, `stale_answer.png`); the new browser test on a 6a2d52e snapshot draws and offers the old answer in all 7 edit cases, and for good after a failed check.
+- **Done when**: An answer is never shown as the valid result nor offered for download under other inputs, whether or not a later request arrives, by one mechanism for every input the answer depends on (HPO box, genes box, cohort); nothing recomputed, nothing deleted; browser tests that hold or fail the follow-up request and sample from the answer's arrival.
+- **Sources**: the external review of 6a2d52e (Codex, 2026-11-19), OPS-C-R3; B73
+- **Fixed (the review of 6a2d52e, 2026-11-19)**: 799c8c8. Root: the inputs a run read were not bound to its answer's publication; the page relied on a later request. An inputs generation is held in the browser: Run carries it, the result keeps it and the results body marks it (`answer_mark`); a gate stylesheet (`ANSWER_GATE_CSS`), written at each edit, draws an answer's parts only under its own generation and shows the cleared state's words where the cleared state draws them. The chained check compares generations (`query_inputs` retired). Nothing is recomputed or deleted.
+- **Fixed (the lanes' review, 49d5911, 2026-11-19)**: REV-R3-a, REV-R3-b. The generation rose in a listener Gradio dispatches 45–110 ms after the edit (`INPUTS_EDITED_JS`): an answer arriving in that gap was drawn and offered under the edited box, and a Run pressed in it sent the new text with the old count, so its valid answer was hidden and cleared ("Inputs changed"). The edits' own server listeners also cleared any answer, so a late edit request wiped a quick Run's answer (seen on 6a2d52e too). Now `diagnosis_panel.INPUTS_HEAD` (the dashboard head, beside TOUCH_HEAD) counts each edit and writes the gate in the edit's own event (the two boxes' `input`, the cohort's blur, a click on Clear), `INPUTS_GEN_JS` puts that count into Run, the check and the three edit listeners, and all of them keep an answer only under its own generation (`answered_inputs`). `INPUTS_EDITED_JS` is retired.
+- **Tests**: `tests/unit/test_diagnosis_stale_answer.py`, 5 tests: a browser test of typed, deleted and pasted edits, an input method's commit and a cohort switch, the check held, failed (500) or answered first, sampled at every change from the answer's arrival; a paused-clock test, `::test_an_edit_counts_in_its_own_event_before_an_answer_or_a_run_that_follows_it` (typed then Run: the answer drawn and kept; pasted or cleared as it arrives: never drawn nor offered); two wiring and rule units. With no edit the answer shows and downloads as before. 5 fail on 6a2d52e, 4 on 961d901. Screens: scratchpad/c6a2/u2/shots-6a2d52e/, shots-fix/, shots-fix-390/ and scratchpad/c6a2/ui-review/shots-fix/.
+- **Closed at**: 799c8c8, 49d5911.
+
 ### UI-16 Every other recorded problem, by page
 
-144 rows: 1 to do, 5 partly done, 1 awaiting hardware, 1 awaiting owner acceptance, 5 outside this round's scope (owner to decide), 5 not applicable, 95 code-verified, 31 code-verified at ba6e85e (audit).
+144 rows: 1 partly done, 1 awaiting hardware, 5 outside this round's scope (owner to decide), 5 not applicable, 101 code-verified, 31 code-verified at ba6e85e (audit).
 
 **UI-16, datasets**
 
@@ -1274,6 +1378,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Fix**: each of the seven routes keeps its path and answers 501 with one sentence: what is not built, that nothing made up is answered in its place, and what to use instead (`src/api/routes/not_built.py`, `refuse_not_built`; e.g. "HPO term search is not built: this service answers no made-up data in its place. Diagnosis reads HP:####### ids as given (POST /api/v1/diagnose); look a term up in the HPO itself."). The mock tables, their response models and their fillers are gone. Download files (`src/webui/exports.py`) live a day after they are written (`LIFETIME_SECONDS`): older ones are deleted before every write, a directory an earlier process left (a crash, Restart Backend's exec) loses its expired files and goes once empty, the process's own directory goes at exit, and Gradio's own copies are swept on the same lifetime (the dashboard's `gr.Blocks(delete_cache=exports.CACHE_SWEEP)`). Keeping a diagnosis (also in the old problem text) is not this row's done-when and is unchanged: not built.
 - **Sources**: BL:1014 (item 56)
 - **Closed at**: 5cfb112. Tests: `test_operator_access.py::test_a_route_that_is_not_built_refuses_plainly_and_makes_nothing_up` (the seven paths: 501, the sentence, none of Seizure, Marfan, SCN1A, FBN1; on the old code each answered 200 with the mock), `test_diagnosis_panel.py::test_download_files_live_one_lifetime_then_are_deleted` (expired files deleted before a write, an earlier process's directory swept and removed once empty, the exit handler removes the directory, the dashboard's delete_cache on the same lifetime; fails on the old code). Seen with curl on a CPU demo service: `/api/v1/hpo/search?q=seiz` and `/api/v1/disease/MONDO:0007947` answered 501 with their sentences. Not checked live: Gradio's own sweep of its cached copies after a day (the setting is pinned; its sweep is Gradio's).
+- **Changed (the review of 6a2d52e, 47bd59a, 2026-11-19)**: Gradio holds no copy of a download any more (B72-E1: every export is served by `exports.ROUTES` by an opaque id), so the sweep of Gradio's copies (`delete_cache`, `exports.CACHE_SWEEP`) is retired; the export files keep their one-day lifetime, and an expired file's link answers 404.
 
 #### B62 · Patients-like-me rows show reference patient details against D7's aggregates-only rule
 
@@ -1394,14 +1499,15 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### R-1b · Selected candidate's score repeats in the details header
 
-- **State**: partly done · found by the owner · severity high (finding 1 as a whole) · page: diagnosis
+- **State**: code-verified · found by the owner · severity high (finding 1 as a whole) · page: diagnosis
 - **Problem**: The details header repeated the row's scores ('Confidence · GNN · SP'); the same numbers twice for one candidate.
 - **At ba6e85e**: The details header still repeats the selected row's score. Row 1 shows -2.844 in the table, and the header beside it reads 'MONDO:0012091 Score -2.844'. GNN and SP left the header only because the mixture model and its columns were retired in K8-4 (f4a8c0f). That was a scoring change, not a UI fix. At f9202b6 the header read 'Score <b>…</b> · GNN … · SP …'.
 - **Done when**: details_header_html shows only '#rank name ID' (also for gene and patients-like-me headers), and a test checks each score string occurs once outside the drawer and exports.
 - **Fix (T06-D)**: the details header is "#rank name id" only, for a disease ("#1 CDKL5 deficiency disorder · MONDO:0012091"), a gene (its id) and a reference patient ("Reference patient"); a gene's details drop the model and SP similarities its row shows.
 - **Left**: the Explanation view shows the pipeline's written explanation, whose first lines name the candidate and its score ("Score: -2.844 (a ranking score, not a calibrated disease probability)"), so with that view open the row's score is on screen twice. That text is every API client's explanation and carries the score's meaning; dropping its header is a change to the API's explanation, not made here (the reviewer or owner to choose).
 - **Sources**: UX:203 (appendix 1); RJ audits[0].findings[0]; UX:65 ('the repeat Later'); UX:123 (section 4 Diagnosis: 'the scores said once'); RJ research[3].principles[4] (DX-05)
-- **Closed at**: — (advanced in e1eeb69. Tests: `test_diagnosis_panel.py::test_the_details_header_is_rank_name_and_id_and_each_score_is_said_once` (the selected row's score once in the table, header and the Evidence, Matching phenotypes and Paths views; a gene's score, model and SP similarity once; a reference patient's similarity once) and the browser test above (row 1's score once with Evidence shown); both fail on d92b329. Seen: `before_evidence_1850x960.png` ("MONDO:0012091 Score -2.844") / `after_evidence_1850x960.png` ("MONDO:0012091"), `t06d/diagnosis-results/shots/` in the session scratchpad.)
+- **Closed at**: 961d901 (the review of 6a2d52e; advanced in e1eeb69. Tests: `test_diagnosis_panel.py::test_the_details_header_is_rank_name_and_id_and_each_score_is_said_once` (the selected row's score once in the table, header and the Evidence, Matching phenotypes and Paths views; a gene's score, model and SP similarity once; a reference patient's similarity once) and the browser test above (row 1's score once with Evidence shown); both fail on d92b329. Seen: `before_evidence_1850x960.png` ("MONDO:0012091 Score -2.844") / `after_evidence_1850x960.png` ("MONDO:0012091"), `t06d/diagnosis-results/shots/` in the session scratchpad.)
+- **Done (the review of 6a2d52e, 2026-11-19)**: 961d901. The Left above: the Explanation view was the API's explanation string itself, not the structured result the page already projects (real app: -2.790 on screen twice at 1850×960 and 390×844). The view is now drawn from the result (`explanation_html`): Score by its relation to the table and what it is, Matching phenotypes and Direct paths each pointing to its own view, and Supporting genes. Below them a closed "Written explanation ›" fold holds the API's text whole and unchanged (the existing Markdown view, drawn by one CSS rule while the fold is open). The API's text, the scoring and the report's "Full explanation" are unchanged, and no string is cut. Tests: `test_diagnosis_panel.py::test_the_details_header_is_rank_name_and_id_and_each_score_is_said_once` (with the Explanation view: the score once) and `::test_in_a_browser_each_notice_score_and_path_length_is_said_once` (real app: the score once as first shown; the opened fold shows the whole text); both fail on 6a2d52e (no view drawn; a timeout), and a reproduction there counts the score twice. Screens: scratchpad/c6a2/u5/shots/r1b/.
 
 #### R-28 · 'Model in use' drawer still nests collapsible sections (two levels of disclosure)
 
@@ -1452,6 +1558,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Exports now carry the matching phenotypes: the CSV's matching_phenotypes is 'HP:0001263' for rank 1. The report has a 'Matching Phenotypes' section per candidate, and the page shows 'Matching phenotypes 1'.
 - **Sources**: BL:975 (item 17 F6)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: every candidate carries its direct matches through the API and the WebUI's CSV (`explanation_generator.find_matching_phenotypes`), pinned on a trained disease child by tests/unit/test_matching_phenotypes.py::test_every_candidate_carries_its_direct_matches, ::test_the_api_carries_the_matches and ::test_the_csv_column_carries_the_matches. Fixed in batch B (merged 150105f, #128); the test file is in history since 9a96a72.
 
 #### B27-4 · The served identity in one place
 
@@ -1460,6 +1567,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The served identity is one block, always shown: the 'Model in use' card with state, name, model fingerprint, trained-on and dataset fingerprint, and the synthetic chip. Each result carries a badge with the shared status mark ('● Produced by the model in use ›'; ▲ for an earlier model, ○ for not compared). The badge opens 'This result', which marks the parts that differ 'In use now'. The CSV's served_* columns and the report's 'What produced this result' keep the full identity.
 - **Sources**: BL:985 (item 27 (4)); PTR:2422-2436
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the served identity is the card's; each result has a shared-mark badge and its own identity, each value once (`diagnosis_panel.badge_html`, `result_identity_html`), pinned by tests/unit/test_diagnosis_panel.py::test_the_badge_says_its_state_by_the_shared_mark, ::test_a_result_older_than_a_load_says_how_many_parts_differ and the shared walk's tests/unit/test_webui_shell.py::test_each_fingerprint_is_said_once_on_a_screen. Commits 496ea31, 76ccfcd.
 
 #### B61 · One quantity named 'model term' and 'GNN score'
 
@@ -1468,6 +1576,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: src/webui names neither 'GNN score' nor 'model term' (grep), apart from the refusal code MODEL_TERM_UNAVAILABLE. The table says 'Score'.
 - **Sources**: BL:1019 (item 61)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the Diagnosis table says "Score", never "Model term" (`diagnosis_panel.candidates_table_html`), pinned by tests/unit/test_disease_serving.py::test_the_diagnosis_page_and_exports_read_the_kind; "GNN score" is absent from src/webui by git grep, not by a test. Present since 9a96a72.
 
 #### OPS-B4 · Diagnosis card showed the whole not-serving reason
 
@@ -1476,6 +1585,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: With no model, the card shows '○ Not loaded', the lead 'Nothing has been loaded since the service started', and 'Details ›' for the full reason of about 50 words. While serving it shows '● Serving'. The page's own 'Loading <12 hex> for every session…' line is gone.
 - **Sources**: OPS:213-217 (B4, review of A3b)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: with nothing loaded the card shows ○ Not loaded, the backend's lead and the whole reason behind "Details ›" (`diagnosis_card.body_html`), pinned by tests/unit/test_diagnosis_card.py::test_each_state_shows_its_words_and_the_backend_s_lead_escaped; the page's own "… for every session" line is gone (tests/unit/test_diagnosis_panel.py::test_this_pages_load_is_said_by_the_server_and_run_waits_for_its_answer). Commits eed93d6, 9fe7b15.
 
 #### OPS-C12 · A refused reload was not written to the service log
 
@@ -1484,6 +1594,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Fixed in the close (18518a6..500a8d6, OPS:364). Not rechecked here (it needs a refused Load, which only the diagnosis checker may do).
 - **Sources**: docs/working/ops-wiring-and-ui-ux/README.md:363 (close, browser acceptance: 'a refused reload was not written to the service log'); docs/working/ops-wiring-and-ui-ux/README.md:364 (close, fixes)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: a refused reload is written to the service log once, at WARNING, with its message (`api/routes/pipeline.run_reload`), pinned by tests/unit/test_serving_device.py::test_a_reload_refused_for_its_device_reads_no_candidate_checkpoint (caplog), which the audit could not run. Commit aca9cd5.
 
 #### OPS-C5+K7 · Load confirmation From side read as if a model were served
 
@@ -1492,6 +1603,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: With nothing served, the confirmation's From column reads 'no model loaded' for Model and 'not applicable' for the fingerprint, trained-on, workspace, task, SP table and data rows.
 - **Sources**: OPS:363-364; SR:1108-1112 (K7 P3)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: with nothing served the load confirmation's From reads "no model loaded" for Model and "not applicable" for the fingerprint, Trained on, Serving workspace, SP table and Data rows (`model_list._from_side`), pinned by tests/unit/test_webui_model_list.py::test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked. Commit 42931ee.
 
 #### R-1a · Uncalibrated score was labelled 'Confidence'
 
@@ -1500,6 +1612,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Nothing on the page or in the report says 'Confidence' any more. The table header reads 'Score' with an info bubble: 'Score ranks the candidates of this result. It is not a calibrated disease probability.' The kind line above the table says 'ranked by its Score (uncalibrated)'. The details header and the exported report also say 'Score', and the report carries the same sentence.
 - **Sources**: UX:203 (appendix 1); RJ audits[0].findings[0]; UX:65 (section 3, high #4); UX:84-85 (section 4 must-fix); BL:1010 (item 52); SK:83
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the page and the report say "Score" with the not-calibrated note and its ⓘ, never "Confidence", and the CSV has no confidence column (`diagnosis_panel.SCORE_NOTE`, `results_body_html`, `_build_results_report_md`), pinned by tests/unit/test_diagnosis_panel.py::test_the_score_is_named_for_what_it_is_and_the_csv_names_the_kinds_fields. Present since 9a96a72.
 
 #### R-4+B51g · 'No model loaded' appeared four times and 'no result yet' twice
 
@@ -1508,6 +1621,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Empty page at 1850 x 960: - the card says '○ Not loaded', then 'Nothing has been loaded since the service started' and 'Details ›'; - Run Diagnosis' reason is 'Disabled until a model is loaded.', the audit's own wording; - the right side of the results header is empty; - the body says 'No result yet' once. Counts in the page text: 'No model loaded' 0, 'Not loaded' 1, 'No result yet' 1.
 - **Sources**: UX:206 (appendix 4); RJ audits[0].findings[13]; UX:50 (section 2 layer 2); BL:1009 (item 51 (g))
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: on the empty page "no model loaded" is said 0 times, "Not loaded" once and "No result yet" once, Run's reason "Disabled until a model is loaded." (`diagnosis_panel.card_outputs`), pinned by tests/unit/test_diagnosis_card.py::test_no_model_loaded_is_said_once_on_the_card_with_its_one_action. Commit eed93d6.
 
 #### RC-E · Explanation said 'Confidence: HIGH (score ...)'
 
@@ -1516,6 +1630,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The Explanation view says 'Score: -2.844 (a ranking score, not a calibrated disease probability)'. There is no 'Confidence' and no HIGH/MEDIUM/LOW band. The report says the same.
 - **Sources**: UX:90-94; BL:1010 (item 52); M5W:22
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the generator's explanation, the report and the summary say "Score: x (a ranking score, not a calibrated disease probability)" with no "Confidence" and no HIGH/MEDIUM/LOW (`explanation_generator.SCORE_MEANING`), pinned by tests/unit/test_matching_phenotypes.py::test_the_written_explanation_names_a_ranking_score_not_a_confidence_band. Commit ff664f6.
 
 #### T08-flow-3 · Tab reaches the Explanations checkbox before its ⓘ, the reverse of what is drawn
 
@@ -1602,6 +1717,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: With Disease ticked, emptying Task loss weight gives 'Set by you: nothing valid. / Not valid: Task loss weight must be set, not null.'. The page never says the task's reference would be used (seen). It passed the narrow re-review (OPS:371).
 - **Sources**: OPS:367; OPS:369
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: an emptied task number is refused in the shared words ("<label> must be set.", since NEW-training-finetune-6), never said to take the reference, and Start starts nothing (`finetune_page.sent_settings`, `set_by_html`), pinned by tests/unit/test_webui_finetune_page.py::test_an_emptied_task_number_is_refused_before_start_and_never_said_to_be_the_reference (4 fields x None and ""). Commits 4ec427a, 2a6bf34.
 
 #### T08-flow-6 · The Fine-tune job card's table is wider than its panel at 1850×960
 
@@ -1624,14 +1740,15 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### V-20 · The Fine-tune job card's table is wider than its card at 390×844, and 10 px wider at 1280×900
 
-- **State**: to do · found by the T08 fix lane (T08-flow-6), recorded by the verification of 78444a6 · severity medium · page: finetune
+- **State**: code-verified · found by the T08 fix lane (T08-flow-6), recorded by the verification of 78444a6 · severity medium · page: finetune
 - **Problem**: At 390×844 the card's table is wider than its 324 px card in every state: running 353 px, done 416 px; a done table's Validation (Trainer) column lies past the panel's edge and is not drawn. At 1280×900 and 1366×620 a done table is 416 px in its 406 px card, 10 px into the panel's padding (nothing cut).
 - **At 78444a6**: Measured again on the served page (the fit test's three states at five windows): the done table's narrowest is 415.9 px, its columns Task 72.4, Status 93.3, Run 76 (its 60 px floor), Best save 91 and Validation (Trainer) 83.2, each with 16 px of padding. Their narrowest pieces are whole words: "Disease" 56.4, "Completed" 77.3, the run name's "disease" 59 (the floor keeps it whole), "completed" 75, "Validation" 67.2, together 334.9 px before any padding. Evidence: scratchpad/t08fix/fix-ui/logs/after-measure.json; scratchpad/verify/fix3/logs/before-ftcard.json (its "min" part); screens scratchpad/verify/fix3/shots/at78444a6-ftcard-panel-done-390x844.png and -1280x900.png.
 - **Done when**: The owner has chosen one of the options below, and the chosen option's form is drawn at every window: the job card's table, or its children, as that option says, with only the limits its Options entry names (taken with the choice), no sideways page scroll and numbers never broken; a browser test at 390×844 and 1280×900 fails on 78444a6.
 - **Options (owner to decide; verification of 78444a6, 2026-11-17)**: not fixed. In five columns, whole words alone need 335 px, more than the 324 px card at 390×844, so the run column's floor and the figures' columns cannot give way enough there without cutting or breaking a word; at 1280×900 the floor cannot give the 10 px without cutting "disease". The skill and the recorded decisions do not settle the form. (a) Narrower cells, 4 px a side: 376 px, fits the 406 px card, not the 324 px one. (b) On a card narrower than the table's narrowest, each child as a summary list (Task as its title; Status, Run, Best save, Validation as rows; the skill's §4 form for one thing's attributes), keyed to the card's own width. (c) The table scrolls sideways in its own region with a cue (the skill's §1.1: one region scrolls inside). (d) A lower run floor, the name cut with its whole id in its title (the shared identifier rule): fits 406 px only.
 - **Sources**: T08-flow-6 (review of a6aae90, 6f30c2b: "Not changed here"); the acceptance map's audit (A14); SK §1.1, §2, §4
 - **Done when reworded (review of 6a14d6b, 2026-11-18)**: it read "The owner's choice below is made; then the table fits its card at every window, nothing cut, no sideways scroll, numbers never broken". Only option (b) can meet that: (a) does not fit the 324 px card, (c) scrolls sideways in its own region and (d) cuts the run's name. So the row chose for the owner. It now asks for the chosen option's form at every window, each option's limits as its Options entry names them. No option is chosen; the row stays to do.
-- **Closed at**: —
+- **Closed at**: 247ac71, 7e8b83c.
+- **Fixed (the review of 6a2d52e, OPS-C-R6, 2026-11-19)**: the review read rev 2 as choosing option (b) for the owner. 247ac71, 7e8b83c: each child is built once (`finetune_page._child_view`) and drawn as a table row or as a summary list (Task as its title; Status, Run, Best save and Validation (Trainer) as rows, with the heads' ⓘ). A container query on the card's own width draws the list below `TABLE_FROM` (404 px), so a side-by-side card (at least 406 px) keeps the table. Cells are 6 px a side with no outer padding, and the Run floor (`RUN_FLOOR`) is 76 px, nine code characters, so a Patients-like-me run keeps "patients-". Measured in the dashboard's own type (the earlier figures were in the test host's fallback font, OPS-C-R6b): at 6a2d52e the table was 343.6 px running and 404.6–412.8 px ended in the 324 px card at 390×844, and 412.8 px with a Patients-like-me child in the 406 px card at 1280×900 (a Disease child alone fit, 404.6 px); its narrowest is now 388.6 px (396.8 px with Patients-like-me), and 390×844 draws the list. Test: `test_webui_finetune_page.py::test_the_job_cards_table_fits_its_card_with_every_cell_whole` at 1850×960, 1536×760, 960×1080, 1280×900 and 390×844 in three states; it fails on 6a2d52e (running, 390×844: the table's right edge 376.6 px against the card's 357). Screens: scratchpad/c6a2/u4/shots/before-plex/, before/ and after/.
 
 #### V-25 · A refused second Fine-tune Start keeps its reason after the job it names has ended (T08 F9)
 
@@ -1711,6 +1828,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Every ordinary help text sits behind one shared ⓘ (help.py: one registry, one hidden container, one head script; 131 texts). It opens on hover after 300 ms, on focus and on click. info= keeps only short format and must-know lines: on Diagnosis, Datasets, Training, Fine-tune, Test and Models no info= line shows at load, and Settings shows two short ones (12 and 17 words). A test guards it: test_no_component_keeps_ordinary_help_in_info.
 - **Sources**: BL:985 (item 27 (3)); PTR:2407-2421
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: ordinary help is behind the shared ⓘ (`help.HelpRegistry`) and info= holds exactly the must-see lines the skill's §7 allows (formats and units, Settings' two lines, the Device note, Diagnosis' rules), pinned by tests/unit/test_webui_help.py::test_no_component_keeps_ordinary_help_in_info and ::test_every_registered_help_target_exists_in_the_built_app. Present since 9a96a72.
 
 #### T08-flow-1 · A focus preview covers a neighbouring control and takes its first click
 
@@ -1786,12 +1904,13 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### R-68 · Empty recorded-results state is a dead end naming a file; segments show '· 0' twice
 
-- **State**: partly done · found by the 2026-10-25 review · severity medium · page: models
+- **State**: code-verified · found by the 2026-10-25 review · severity medium · page: models
 - **Problem**: Models' empty recorded-results state was a dead end naming a file.
 - **At ba6e85e**: Selecting a checkpoint with no ledger shows 'No ledger (evaluations.json) is beside this checkpoint, so no recorded result can be shown; that does not mean these weights were never evaluated.' (models_page.py:1437-1440). With a ledger that holds nothing for the file it shows 'This ledger holds no result for these weights; …' (RECORD_ABSENCE). Neither has a title, a next step or a 'Test this model ›' action. The segments 'Recorded results · 0 | Usage history · 0 | Results' still show with both counts at 0 (models_page.py:1413-1419). The table cell says 'no ledger' or 'none in ledger' (renderers.py:694-700).
 - **Done when**: Each empty cause shows a titled state with one next step ('Test this model ›' or the read-only refusal), segments are hidden when both counts are 0, and no text says 'ledger'.
 - **Sources**: UX:270 (appendix 68); RJ audits[2].findings[13]; UX:129
-- **Closed at**: a3f9fa8. Each empty cause is a titled state with what it means and one next step, naming no file and never "ledger" (`models_page.records_empty_html`): "No recorded result yet" (none registered beside the checkpoint) and "No recorded result for these weights" (the results beside it are of other weights), each saying this does not mean the weights were never evaluated, then "Next: on the Test page, choose this model and start a test with Register the result on; its result then appears here." (the read-only view: recording a result is an operator control); a ledger that cannot be read says so with ▲ and its reason. The segments show no count of 0 ("Recorded results | Usage history | Results"; "Recorded results · 0 | Usage history · 0" before). Test: `test_webui_models_page.py::test_the_ledgers_states_are_said_and_name_no_directory` (fails on 97c8ec8). Seen at 1850x960 and 960x1080 on a probe-rc-disease file whose weights have no record beside it ("No recorded result for these weights … Next: on the Test page …"; "This ledger holds no result for these weights; …" before) (`scratchpad/t06c/models-records/shots/*/*_models_empty_*.png`). **Left, against Done when**: the next step is written words, not a "Test this model ›" action (no page links to another page with a model chosen today; that would be a new mechanism), and the segments are kept, without counts, because Results (the family's or workspace's results) stays reachable from a checkpoint with no record. Owner or review to decide whether either is still wanted.
+- **Closed at**: a3f9fa8; d6d1478 (the next step's action, the review of 6a2d52e). Each empty cause is a titled state with what it means and one next step, naming no file and never "ledger" (`models_page.records_empty_html`): "No recorded result yet" (none registered beside the checkpoint) and "No recorded result for these weights" (the results beside it are of other weights), each saying this does not mean the weights were never evaluated, then "Next: on the Test page, choose this model and start a test with Register the result on; its result then appears here." (the read-only view: recording a result is an operator control); a ledger that cannot be read says so with ▲ and its reason. The segments show no count of 0 ("Recorded results | Usage history | Results"; "Recorded results · 0 | Usage history · 0" before). Test: `test_webui_models_page.py::test_the_ledgers_states_are_said_and_name_no_directory` (fails on 97c8ec8). Seen at 1850x960 and 960x1080 on a probe-rc-disease file whose weights have no record beside it ("No recorded result for these weights … Next: on the Test page …"; "This ledger holds no result for these weights; …" before) (`scratchpad/t06c/models-records/shots/*/*_models_empty_*.png`). **Left, against Done when**: the next step is written words, not a "Test this model ›" action (no page links to another page with a model chosen today; that would be a new mechanism), and the segments are kept, without counts, because Results (the family's or workspace's results) stays reachable from a checkpoint with no record. Owner or review to decide whether either is still wanted.
+- **Done (the review of 6a2d52e, 2026-11-19)**: d6d1478. The next step was words only ("Next: on the Test page, choose this model and …"), so the reader had to find the same run and file again on Test. Root: no page could hand a model to Test; the cross-link (`PageContext.go`, `nav_outputs`) only opens a page. The operator's next step is one action, "Test this model ›": its queued click writes `ctx.test_model` (`{workspace, key}`, a page-context State beside `training_workspace`) and returns `ctx.go("test")`, and the Test page's opening chooses that workspace and checkpoint and clears the hand-off. The read-only view keeps its refusal words and has no action. The shared trigger (`TRIGGER_JS`, `event_act`) moved to `renderers`, which Training and Fine-tune now read. Tests: `test_webui_models_page.py::test_the_empty_records_next_step_opens_test_with_this_model_chosen` (wiring) and `::test_test_this_model_opens_the_test_page_with_it_chosen_in_a_browser` (1850×960 and 390×844); both fail on 6a2d52e (no `data-act`; the action never appears). The segments stay without counts, as recorded at a3f9fa8. Screens: scratchpad/c6a2/u5/shots/r68-before/, r68-after/.
 
 #### R-78 · Models Load note is jargon and shows before anything is selected
 
@@ -1874,6 +1993,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Each checkpoint says how far it trained in the same words on every page seen: '1 epoch completed' on Models, in Fine-tune's Checkpoint option ('Latest save · 1 epoch completed') and in the Diagnosis drawer rows, and '1 of 1 epochs completed' in Training's run view.
 - **Sources**: BL:1010 (item 52 (J), K6 smoke)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: one checkpoint reads the same completed epochs on the Diagnosis card, Models and the Training, Fine-tune and Test options (`renderers.epoch_words`), pinned by tests/unit/test_diagnosis_card.py::test_one_file_reads_the_same_completed_epochs_on_every_page and tests/unit/test_training_page.py::test_the_run_checkpoint_helpers_have_one_home. Commit 7128f59.
 
 #### OPS-C7 · Unreadable checkpoint not said in plain words
 
@@ -1882,6 +2002,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: I put a corrupt.pt (random bytes) in the workspace copy. Its row shows 'corrupt.pt · metadata not readable · cannot be loaded', and its reason reads 'the file cannot be read as a checkpoint; Ref: UnpicklingError: Weights only load failed…'. The route's problem field leads with the same words (checkpoint_paths.refusal_line, CHECKPOINT_NOT_READ).
 - **Sources**: OPS:363-364
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: an unreadable checkpoint's row reads "Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded" in visible words, the exception only after "Ref:" (`checkpoint_paths.refusal_line`, `CHECKPOINT_NOT_READ`), pinned by tests/unit/test_webui_model_list.py::test_the_tree_escapes_and_names_entries_it_could_not_list and tests/unit/test_checkpoint_paths.py::test_a_file_the_read_refuses_is_listed_with_its_reason. Commit 9683383.
 
 #### V-14 · Models › Load this model: the read-only reason is squeezed into an 84 px column on a phone
 
@@ -1925,11 +2046,12 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### NEW-models-results-2 · Compare of 4 results is 12,342 px tall even with Differences only
 
-- **State**: partly done · found by the 2026-11-16 audit · page: results
+- **State**: code-verified · found by the 2026-11-16 audit · page: results
 - **At ba6e85e**: Compare of 4 results is 12,342 px tall with 'Differences only' (168 alike rows already hidden) and 21,825 px with all rows. The detail body scrolls 14,710 px against 682 visible at 1850x960. Most of it is per-stage recipe sources and raw JSON, far from one screen. Evidence: (audit evidence, not kept in the repository) no record names it.
 - **Done when**: Compare of 4 results at 1850x960 with Differences only fits its key rows in about one screen, with per-stage recipe sources and raw JSON folded behind disclosures.
 - **Sources**: found by the 2026-11-16 audit at ba6e85e
-- **Closed at**: 3b6027c. Differences only now compares the cells a row applies to: another protocol's metric and another data kind's field are no difference, so a row only one result holds is hidden and counted apart ("… 27 that apply to one result only are hidden"); the key groups come first (the result, the model, the data, the metrics; then training settings, measurement, environment, exposure, content references); each fact once (B72-C1); a value over 48 characters (recipe sources, a spec's or a capability's JSON) is one folded line whose summary starts after what the row's values share ("…disease run_*.sh script…"); 32 px rows and a Field column wide enough for a label on one line. Tests: `test_models_results_segment.py::test_compare_never_puts_two_protocols_metrics_on_one_row_and_caps_at_five` (hidden and counted), `::test_compare_keeps_numbers_and_run_ids_whole_and_scrolls_inside_its_wrapper` (folding); fail on 97c8ec8. Measured in Chromium, four results of probe-rc (two disease on a supplied cohort, a patients-like-me and a disease on a generated split), Differences only: 10,041 px and 181 rows before, 3,627 px and 84 rows after at 1850x960 (3,627 at 960x1080, 10,670 before) (`scratchpad/t06c/models-records/shots/*/*_compare4_diff_*.png`, `.json`). **Left**: the key rows (Result, Model, Data, Metrics) end 1,447 px down, about 2.3 heights of the 631 px Compare box at 1850x960, so "about one screen" is not met on this data: most of it is 16 disease metrics that truly differ. Fitting them needs a further choice (folding whole groups, or metrics only for the protocol the columns share), for the owner or review.
+- **Closed at**: 3b6027c; 2764b2c (the folds, the review of 6a2d52e). Differences only now compares the cells a row applies to: another protocol's metric and another data kind's field are no difference, so a row only one result holds is hidden and counted apart ("… 27 that apply to one result only are hidden"); the key groups come first (the result, the model, the data, the metrics; then training settings, measurement, environment, exposure, content references); each fact once (B72-C1); a value over 48 characters (recipe sources, a spec's or a capability's JSON) is one folded line whose summary starts after what the row's values share ("…disease run_*.sh script…"); 32 px rows and a Field column wide enough for a label on one line. Tests: `test_models_results_segment.py::test_compare_never_puts_two_protocols_metrics_on_one_row_and_caps_at_five` (hidden and counted), `::test_compare_keeps_numbers_and_run_ids_whole_and_scrolls_inside_its_wrapper` (folding); fail on 97c8ec8. Measured in Chromium, four results of probe-rc (two disease on a supplied cohort, a patients-like-me and a disease on a generated split), Differences only: 10,041 px and 181 rows before, 3,627 px and 84 rows after at 1850x960 (3,627 at 960x1080, 10,670 before) (`scratchpad/t06c/models-records/shots/*/*_compare4_diff_*.png`, `.json`). **Left**: the key rows (Result, Model, Data, Metrics) end 1,447 px down, about 2.3 heights of the 631 px Compare box at 1850x960, so "about one screen" is not met on this data: most of it is 16 disease metrics that truly differ. Fitting them needs a further choice (folding whole groups, or metrics only for the protocol the columns share), for the owner or review.
+- **Done (the review of 6a2d52e, 2026-11-19)**: 2764b2c. Compare of the row's four probe-rc results, Differences only, at 1850×960 ended its key rows 1,448 px down its 631 px box (3,627 px in all; the served page at 6a2d52e). Root: the groups had no fold of their rows. Each group's header is now a native fold that says how many rows it holds. Result, Model and Data show their own fields and fold their nested entries; Metrics shows the metrics its protocol's table shows in columns (`_metric_columns`) and folds the other 15; Training settings, Measurement, Environment, Exposure and References are folded whole. Every value stays in the table, unrounded, and in the export; the five-result cap and Differences only are unchanged; folds stay as the reader left them. After: the key groups end 603 px down the box, which scrolls 750 px. Test: `test_models_results_segment.py::test_compare_of_four_shows_its_key_groups_in_its_first_screen_and_folds_the_rest` on `tests/fixtures/compare_four_results.json` (the four results as the results service read them; synthetic, no paths): the headers and counts, every metric a row and in the export, and in the dashboard's head at the box's width Metrics ending at 598 ≤ 631 px; it fails on 6a2d52e (no fold). Screens: scratchpad/c6a2/u5/shots/cmp/.
 
 #### B72-C1 · Compare says digests and counts twice and names the family by id
 
@@ -1956,6 +2078,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Compare's 'Settings changed' row reads '○ Not applicable' for all four results, none of which is a branch: a new base and three fine-tunes. results_segment.py:810-822 gives a same-settings branch 'Same settings as its parent' and gives any other operation NOT_APPLICABLE.
 - **Sources**: OPS:363-364
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: Compare's "Settings changed" reads ○ Not applicable for a new base and a fine-tune and the branch's own words for a branch (`results_segment.compare_fields`), pinned by tests/unit/test_models_results_segment.py::test_compare_says_what_a_branch_changed_from_its_parent. Commit 18518a6.
 
 #### V-4 · Compare's hidden-rows note counts a row that applies to no result as one that applies to one
 
@@ -1989,14 +2112,15 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### INT-AUDIT · No UI audit script in the repository
 
-- **State**: partly done · found by an internal review · page: shell
+- **State**: code-verified · found by an internal review · page: shell
 - **Problem**: The owner's measurable complaints (squeezed charts, covered axes) were caught by the owner, not a script.
 - **At ba6e85e**: The repository has no UI audit script. It has targeted pieces: token contrast tests (labels, info lines, placeholders, radios, checkboxes, status tokens) and a few browser tests that pin geometry, such as the header chips at several widths. Nothing checks input borders, the type scale, a repeated fact on screen, skill §3's group-label rule or the navigation levels, so the PREPARE/EVALUATE problem the owner raised again was not caught by any check. axe-core ran once offline at the close (OPS:363) and is not in the repository.
 - **Done when**: A repository UI audit runs screenshots at the owner's sizes and checks geometry, repeat counts, axe offline, input borders at 3:1, the type scale, group-label placement and distinct navigation styles, and fails on the current PREPARE/EVALUATE problem.
 - **Sources**: UX:132 (section 4); BL:1010 (52); RJ research[4].principles[1] (S2)
 - **Progress (T04 measure, a569948 and de26f19; fixes 71b8bac, 2cd2d20, 8578907)**: one shared check in the repository, extended from the browser fixture and tests (tests/fixtures/browser.py: check, focusWalk, walk_ui, ui_problems; tests/fixtures/served_page.py: served_service): the service on the demo workspace, a base and its disease child trained and the child served, one browser through every page at 1850x960, 1280x900, 1920x700, 1440x1600, 960x1080, 390x844 and 1536x760 (and the layout's other shapes), a screenshot of each: no sideways page scroll, one scroll region per area, every control focused as a keyboard does in view with nothing over it and its focus cue at 3:1, no text under 14 px, the type scale, field borders at 3:1, one label style per page, the group captions above their tabs' line and outside their hit area, at most one ' · ' in a choice or option; the navigation test keeps the levels' distinct looks. About 150-200 s with the layout test under two workers. One of four runs under two workers failed in the walk's setup before de26f19 (its message was not kept); de26f19 closes the two races that could cause it (the service's port given after a probe, select handles gone stale), and the runs after it passed. It fails on c1e57c6 (1115 problems: both captions on the tabs' line at all 30 research-page stops, sizes and weights off the scale, borders under 3:1, three label styles, upper case, the browser's focus ring) and on 3a1a36f (202: the browser's focus ring, Top-K and Explanations under their own bubble, the run bar's fingerprint ⓘ under its bubble when stacked), and passes at a569948. Tests: tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check, tests/unit/test_webui_shell.py::test_one_layout_decision_at_every_size_and_back. Screens: scratchpad/t04/measure/shots/{before,after}/matrix/<page>_<w>x<h>.png. Left: repeat counts (a fact counted on one screen, B27-5) and axe-core offline (not installed here: no axe-core under npm's global root, no axe_playwright_python), and a read-only viewer's walk.
 - **Progress (T06-D shell-settings-audit)**: 7bdffd1 and a563a59. (1) The shared walk's open problem, "1366x620 settings: focused #dl_box_training_evidence_dirs textarea under #runtime_footer", fixed at its layout root: the caret's room (R-25) under what a scroll region brings into view was set on the page and the panels, not on a page's own region side by side (a level-1 or research tab item), so a box partly under that region's foot was focused by bringing its first line in, its centre left under the runtime line (561-619 px against the foot at 588); the rule now names those regions too, nothing sticky added (test_a_box_partly_under_a_pages_region_foot_is_focused_whole_into_view, fails on 5137694: bottom 637 against 588; screens scratchpad/t06d/shell-settings-audit/shots/before/settings_evidence_focus_1366x620.png, scratchpad/t06d/shell-settings-audit/shots/after/settings_evidence_focus_1366x620.png). (2) Repeat counts: at every checked stop the walk records each fingerprint drawn (`code.shep-fpv`) and how often the page's visible text says it (`LOOK_JS` repeats, `browser.repeat_problems`), pinned once per screen on every page at every representative size (test_each_fingerprint_is_said_once_on_a_screen) and on the acceptance walk (test_each_fingerprint_is_said_once_with_twenty_results_and_for_a_read_only_viewer); said twice with a reason only on Datasets (its selected workspace's row and details, B51-h) and Models (the model in use's row and the Load line); the Diagnosis load drawer is counted apart on this base (B27-5). On this base the check finds the drawer's repeat: dataset fingerprint said 4 times and the model in use's 3 times (1850x960, the drawer open, nothing chosen; repeat_problems reports both). (3) A read-only viewer's walk: the same check with every request forwarded (X-Forwarded-For, D8 refuses it on a service in mode M1), every page at 1850x960, 1920x1080, 1440x900, 1280x720, 1707x870, 1080x1920, 960x540 and 390x844 on a high-DPI screen (2 device pixels per CSS pixel) and at 2560x1600 and 3840x2160 (test_a_read_only_viewers_walk_passes_the_ui_measurement_check). axe-core is not installed here (no axe-core under npm's global root, no axe_playwright_python) and was not added: the accessibility rows are the walk's own measurements (text sizes, border and focus-cue contrast, focus in view and uncovered, label styles). Left: axe-core offline, which needs it installed.
-- **Closed at**: —
+- **Closed at**: `tests/unit/test_webui_shell.py` (the shared walk), 2ce81cf (axe's rules, outside the repository).
+- **Decided (the external review of 6a2d52e, 2026-11-19)**: the repository's UI audit is the shared walk (`tests/fixtures/browser.py` `LOOK_JS`/`UI_WALK_JS`, `tests/unit/test_webui_shell.py`), run at the owner's sizes: geometry and sideways scroll, nothing over a focused control, the type scale (no text under 14 px), field borders and focus cues at 3:1, the group captions apart from the tabs, the navigation tokens, each fingerprint said once (`repeat_problems`), read-only and keyboard walks. No second audit platform. axe-core is not installed in the project's environment; it ran offline at the close and in the verification of fcc3dea (2ce81cf fixed its three rules), and a context without it is not counted as a failure of the product.
 
 #### B27-5 · Same fact still repeated on one screen (drawer fingerprints, Models count line)
 
@@ -2015,6 +2139,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: A run reads one way across pages: 'demo-disease · GATv2 2026-11-16 09:13' in Training's Viewing select, the Models rows and the drawer heading, and 'demo-base · GATv2 2026-11-16 09:13' in Fine-tune's Run select. Details rows give the run's directory in full, by design (B0c review).
 - **Sources**: BL:1030 (note 2026-11-13, review of B0b)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: a run reads one way in titles, Models' tree and the Run selects (`renderers.run_words`; the page copies retired), pinned by tests/unit/test_webui_renderers.py::test_one_run_reads_one_way_on_every_page. Commit 3608d5b.
 
 #### OPS-C2 · Run names that cut alike lost where they differ
 
@@ -2023,6 +2148,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Run names that would cut alike keep their start through where they differ. fit_options on 'cpb-disease-full-finetune-2026-11-16-a' and 'cpb-disease-frozen-finetune-2026-11-16-a' gives 'cpb-disease-fu… · GATv2 …' and 'cpb-disease-fr… · GATv2 …', where a plain fit_option cuts both to 'cpb-dis…11-16-a'.
 - **Sources**: OPS:363-364
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: run names that would cut alike keep their start through where they differ (`renderers.fit_options`, `run_names`), pinned by tests/unit/test_webui_renderers.py::test_runs_whose_names_cut_alike_keep_where_they_differ. Commit f4478f2.
 
 #### R-19+R-50+B72 · Environment footer led with versions and never stated the consequence
 
@@ -2031,6 +2157,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The footer now leads with the consequence, in the shared warn mark: '▲ No CUDA device visible: GPU training is unavailable. torch is built for CUDA 13.0; check the driver and CUDA libraries.' The colour is rgb(122,70,0) on rgb(243,244,247), 7.06:1, from the token; there is no emoji and no raw hex. The versions are behind a closed native 'Versions ›' disclosure (7.39:1). Opened, it shows 'torch 2.10.0+cu130 · CUDA 13.0 (no device) · PyG 2.8.1 · native ext OK · Voyager'. A healthy runtime reads 'Runtime: every checked module imports.' with no mark. The row is 32 px high at 1850 and 960 wide.
 - **Sources**: UX:221 (appendix 19); RJ audits[0].findings[5]; UX:252 (appendix 50); RJ audits[1].findings[15]; UX:120; BL:1030 (item 72 Shell); SK:107-108
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the footer leads with the ▲ consequence ("No CUDA device visible: GPU training is unavailable."), its versions only behind "Versions ›", and a healthy runtime reads quietly with no mark (`app._runtime_footer`), pinned by tests/unit/test_runtime_status.py::test_footer_leads_with_the_consequence_and_keeps_versions_one_click_away and ::test_footer_is_red_when_a_capability_is_gone (no raw hex). Commit 6a9a7c3.
 
 #### V-1 · A Details the reader opened closes when their own act draws its region again
 
@@ -2210,6 +2337,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The job card heads its reading 'When the run ended:' and adds 'The report's registration now is shown in Result.' Seen after I registered a report from the page: the card read 'When the run ended: ● Report kept · Not registered', beside the Result's '● Registered record 2' and the row's 'Registered #2'. The two now read as different moments, not as contradicting present states.
 - **Sources**: M5W:50-61; UX:184-185; PTR:52
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the Test job card now leads with what the run left and never says a registration, so it cannot contradict the Result's (`test_page.job_body_html`, `outcome_lead_html`), pinned by tests/unit/test_webui_test_page.py::test_the_card_leads_with_what_the_run_left_and_never_says_a_registration; the "When the run ended:" wording the audit saw is gone. Commit f6b9289.
 
 #### B51-e · Each Test report row said 'not registered' twice
 
@@ -2218,6 +2346,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Each report row has the time, the model by relation, the measurement and one state chip. No sub-line restates the chip ('not registered' appears once per row).
 - **Sources**: BL:1009 (item 51 (e))
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: each report row says its state once, in its State cell, its Report and Model cells being exactly the time and the 12 hex (`test_page.reports_html`), pinned by tests/unit/test_webui_test_page.py::test_every_row_says_not_registered_for_an_operator_and_keeps_it and ::test_report_rows_that_would_read_the_same_are_told_apart_by_their_run_id. Commit e26fba9.
 
 #### R-61+B52I+B72 · Test's model select was a dot-joined provenance chain per option
 
@@ -2226,6 +2355,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The Test page picks the model with two cascading selects, Run then Checkpoint, using the shared model_list.parents_update. Each option has at most 40 characters and one ' · '. Seen on the shared server: Run options 'demo-disease · GATv2 2026-11-16 09:13' (37 characters) and 'demo-base · GATv2 2026-11-16 09:13'; Checkpoint options 'Latest save · 1 epoch completed' (33) and 'Best pooled MRR · 1 epoch completed' (35). The chosen file's details are a summary list: Model, File, Validation, Model fingerprint (12 hex with Copy), Dataset.
 - **Sources**: UX:263 (appendix 61); RJ audits[2].findings[0]; UX:66 (section 3 high #5); UX:126; BL:1010 (item 52 (I), K6 smoke; 'two-level selects elsewhere'); BL:1030 (item 72 Test)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: Test picks the model as Run then Checkpoint through the shared pair, each option at most 40 characters with at most one " · ", the chosen file's details a summary list (`test_page.model_parents`, `model_list.parents_update`), pinned by tests/unit/test_webui_test_page.py::test_an_operator_lists_the_workspaces_checkpoints. Commit e26fba9.
 
 #### R-62 · Report rows read identically with different registration states
 
@@ -2234,6 +2364,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Report rows that would read alike get the seconds, then the run id's last part. Seen on my isolated copy: two runs in one minute read '2026-11-16 10:13:56 UTC' and '10:13:46 UTC', and an older one reads '10:12 UTC'. Each row has one state chip. For an operator every row is refined: 'Registered #1', 'Registered #2', 'not registered'. No two rows read the same with different states.
 - **Sources**: UX:264 (appendix 62); RJ audits[2].findings[1]; UX:67 (section 3 high #6); UX:89; UX:108-109
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: report rows whose times read alike get the seconds, then the run id's last part (`test_page.reports_html`, `renderers.run_time`, `distinct_names`), pinned by tests/unit/test_webui_test_page.py::test_report_rows_that_would_read_the_same_are_told_apart_by_their_run_id and ::test_report_rows_are_named_by_the_shared_run_time_and_distinct_names. Present since 9a96a72.
 
 #### R-64 · Result did not say which workspace or run produced the report
 
@@ -2242,6 +2373,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The Result opens with a summary list: Report (run id), Workspace, Model, Version, Deterministic algorithms, Device. Each fact is said by its relation when it matches the selection ('the selected workspace / model / version') and in full when it differs. Seen with another checkpoint selected: the report's Model row read 'Disease / demo-disease · GATv2 2026-11-16 09:13 / Latest save · 1 epoch completed / 63d8975e5d6c'. The Registration row names the ledger by a short relative path.
 - **Sources**: UX:266 (appendix 64); RJ audits[2].findings[3]; UX:69 (section 3 high #8); UX:128; BL:1010
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the Result says its dataset record, model and version by their relation to the selection when they match and in full when not, its run id one click away, and names the listed workspaces holding its dataset record (`test_page.result_html`, `selection_of`), pinned by tests/unit/test_webui_test_page.py::test_a_past_result_keeps_its_own_identity_after_the_selection_changes and ::test_a_result_is_the_selected_workspaces_only_by_the_relation_its_record_holds. Commit e26fba9; the Workspace row became the dataset-record relation in NEW-test-5.
 
 #### R-80 · 'Other metrics' sorted lexically (Hits@100 before Hits@20)
 
@@ -2250,6 +2382,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: A task record's cut-off families are sorted by k as numbers. Seen: 'Pooled top-k: k=3, k=5, k=20, k=50, k=100'; 'Macro recall@k: k=1 … k=100'. Models sorts its other metrics with _metric_order, by k. The Mode C measurement that produced 'Hits@100 before Hits@20' is retired.
 - **Sources**: UX:282 (appendix 80); RJ audits[2].findings[17]
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: code only: the shared record renderer sorts each cut-off family by its k as a number (`renderers._task_rows`); tests/unit/test_webui_test_page.py::test_a_task_record_shows_its_own_tiles_coverage_and_figures checks which k appear, not their order; the `_metric_order` the audit cited is gone. Commit a3f9fa8.
 
 #### T08-flow-11 · A Test run on a host that cannot give the device is started, then fails with "Process exited with code 1"
 
@@ -2434,6 +2567,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The Viewing select lists the workspace's runs (demo-disease and demo-base). Choosing demo-base redrew the charts with the base's titles and the header 'a past run', while the run bar and its pill stay the training job's.
 - **Sources**: BL:1010 (item 52 (H)); OPS:208
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: choosing a past run in Viewing changes only the chart token, Export CSV and the header, the pill staying the job's (`training_console.view_choices`, `_on_view_run`), pinned by tests/unit/test_training_console_runview.py::test_choosing_a_past_run_changes_only_the_view_and_the_job_drives_the_pill. Commit 443cfc1.
 
 #### K6-patience · Base form's patience field left the form invalid
 
@@ -2442,6 +2576,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Early stopping patience reads 'off' once the form mounts. Changing Epochs to 3 gives 'Set by you: Epochs 3 (reference 200)' with no 'Not valid' (seen).
 - **Sources**: SR:963-966
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: patience is a text box reading "off", sent as None without a refusal (`training_console.setting_field`, `base_start_settings`), pinned by tests/unit/test_training_console_config.py::test_an_optional_setting_reads_off_and_what_the_browser_sends_is_the_recipes_none; an Epochs edit reads "5 (reference 200)" (::test_the_line_names_the_first_few_and_every_one_is_in_its_details). Present since 9a96a72.
 
 #### OPS-C3 · Run bar's Run name did not name a continued or branched run
 
@@ -2450,6 +2585,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Judged from the code; not exercised, because it would start a run. The drawer's start takes the run bar's Run name (_on_resume inputs, training_console.py:4743-4746), and the Run name help says 'It names a continued or branched run too' (:4239-4243). The Run name field stays visible in Continue mode (seen).
 - **Sources**: OPS:363-364
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: a branch and a continuation started from the drawer send the run bar's trimmed Run name and no rule hides the field while the drawer is open (`training_console._on_resume`), pinned by tests/unit/test_training_console_resume.py::test_the_run_bars_run_name_names_a_branch_and_a_continuation, which the audit had not found. Commits 3599a82, 01ab7b8.
 
 #### OPS-C4 · '1 epochs' in the continuation plan's words
 
@@ -2458,6 +2594,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: The continuation plan's words now read 'Extend training by 1 epoch at a fixed rate of 1e-05 (epoch 2, new target 2)', and the options read '1 epoch completed'.
 - **Sources**: OPS:363-364
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: the plan says "Extend training by 1 epoch … (epoch 5, new target 5)" (`run_plan.plan_continuation`) and the page says "1 epoch completed", pinned by tests/unit/test_continue_training.py::test_extending_by_one_epoch_says_one_epoch and tests/unit/test_training_page.py::test_epochs_done_says_one_epoch_and_more_epochs. Commit 7590445.
 
 #### R-47+TR-F5+owner · Checkpoint options were a wall of dot-joined jargon
 
@@ -2466,6 +2603,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Checkpoint options read 'Latest save · 1 epoch completed' and 'Best pooled MRR · 1 epoch completed' (base: Latest save / Best LP accuracy), with the distinguishing word first, one ' · ' and at most 40 characters. Run options read 'demo-disease · GATv2 2026-11-16 09:13'. 'Best' comes from the recorded selection metric. The chosen file's details form a summary list: File, Kind, Holds, Continuing, Validation 'pooled MRR (Trainer) 0.3133 — selection metric on val, not an independent test', Selection, Model fingerprint 63d8975e5d6c with Copy, and Run (its directory).
 - **Sources**: UX:249 (appendix 47); RJ audits[1].findings[5]; M5W:21; commit 4764faa (F5); commit 1f4eb05 (F5); UX:101-102; UX:131; UX:158-161 (decision 4); RJ audits[1].overall; RJ research[4].principles[6] (S7); RJ research[2].principles[0] (ML-ID-1)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: a checkpoint option is what it is first, then how far it trained, one " · ", at most 40 characters, its validation figure in the details (`model_list.checkpoint_words`), pinned by tests/unit/test_training_page.py::test_a_checkpoints_option_says_what_it_is_and_how_far_it_trained. Commits 1f4eb05, 7128f59.
 
 #### TR-F2 · Chart wheel did not zoom in a narrow window
 
@@ -2474,6 +2612,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: At 960x960 the mouse wheel over the first plot zoomed it ('zoomed: epochs 0–2') and the page did not scroll (scrollY 686 before and after). The chart module's header says the wheel zooms in every layout, narrow included (shep_charts.js:65-68).
 - **Sources**: M5W:21; commit 4764faa (F2)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: code only: the chart module's wheel listener has no layout gate (`shep_charts.js` `bind`); tests/unit/test_webui_charts.py::test_the_toolbar_offers_reset_export_zoom_and_the_gestures pins only that the narrow "wheel scrolls the page" note is gone, no test sends a wheel event in a narrow layout. Commit 4764faa.
 
 #### TR-F3 · Chart epoch axis could run below 0
 
@@ -2482,6 +2621,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: normX clamps the view's start at 0 (shep_charts.js:153-155). After zooming, 30 ArrowLeft pans ended at 'zoomed: epochs 0–1', never below 0.
 - **Sources**: M5W:21; commit 4764faa (F3)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: a zoom out, a pan left, a stored negative view and the auto range all start at epoch 0 (`shep_charts.js` `normX`), pinned by tests/unit/test_webui_charts.py::test_no_epoch_view_starts_below_epoch_0 (Node; skipped without it). Commit 4764faa.
 
 #### TR-F4 · Stop's question named a stale epoch
 
@@ -2490,6 +2630,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At ba6e85e**: Judged from the code; not seen, because the question appears only while a job runs and the audit may not start one. STOP_QUESTION names no epoch and says what can be continued is shown once the job has stopped (training_console.py:3150-3171).
 - **Sources**: M5W:21; commit 4764faa (F4)
 - **Closed at**: —
+- **Traced (the review of 6a2d52e, CP-D, 2026-11-19)**: Stop's question names no epoch and reads no checkpoint, the same before and after a save (`training_console.STOP_QUESTION`, `_on_stop_request`), pinned by tests/unit/test_training_console_resume.py::test_stop_asks_without_naming_an_epoch_the_job_has_moved_past. Commit 4764faa.
 
 #### T08-flow-2 · Training's "Details ›" popovers close under the reader when the poll redraws
 
@@ -2525,14 +2666,15 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 #### V-17 · An input method's composition left open becomes the value Start sends
 
-- **State**: awaiting owner acceptance · found by the review of 5033d29 · severity low · page: training
+- **State**: code-verified · found by the review of 5033d29 · severity low · page: training
 - **Problem**: A composition left uncommitted when Start is pressed is ended by the browser with what it holds (pinyin letters, say), and Start sends that as the field's value. A field with a format check refuses it (Neighbours per hop); a free-text field takes it, and the run starts with it.
 - **At fcc3dea**: In Training's Run name, the composition "b", "ba", "bai" left open and Start pressed: the browser ended it as "bai", Start sent run_name "bai" and the job runner was asked to start a run named "bai" (the review's probe on 5033d29, whose touch script is fcc3dea's: scratchpad/verify/review/probe/test_review_ime_run_name.py, ime_run_name.log). fe6a8ce's test and message said "a half value never reaches a run", which holds only for a field whose own check refuses it; the test's words now say so.
 - **Done when**: The owner or the integrator decides whether Start may send a composition its own press ended. If not, Start's held-click path (`TOUCH_HEAD`) treats an open composition as a pending edit (the press does not end it and nothing goes out until it is committed, or the refusal is said beside Start), with a browser test on Run name; if so, the decision is recorded here.
 - **Sources**: the review of 5033d29 (R-3); the verification brief's IME item (A26)
 - **Decided (integrator, 2026-11-17)**: Start may send a composition its own press ended. The press takes focus, the browser ends the composition with what it holds (Chromium, as observed), the field then shows that text, and Start sends what the field shows. This is the rule already decided for every pending edit: Start waits for it and carries it (OPS-R1, the r1b round). A26 asks that touched, null and the submitted value stay right, and they do: the value sent is the field's value, and a field's own check still refuses a value it does not take (Neighbours per hop). Holding Start while a composition is open would be a new behaviour with new words beside Start; the brief's "not submitted as a half value" read more into A26 than it says. The owner may still ask for the hold.
 - **Corrected (the review of e1dda3e, 2026-11-17)**: the Decided line above (and 8ddb05f's message) calls this a rule already in force; it is not. OPS-R1's held click (`TOUCH_HEAD`, the r1b round) covers only the fields `record_touches` marks (`TOUCH_CLASS`): the Training base form, Fine-tune and the Continue drawer's Branch fields. Run name is not one of them (`training_console.py`, `run_name`: no `record_touches`), so the touch script never counts its input nor holds a click for it. Start sends "bai" because the press ended the composition before the click (Chromium, as observed) and the field then held that text, not because Start waited for an edit. OPS-R1's Done when (the "Set by you" line after a Reset burst, a pressed option) and the r1b round decide nothing about compositions, and A26's "results stay right" does not say which value is right for an open one. So sending what the press ended is a new choice, and it is what Run name does today. The owner's question stays as the Done when puts it: hold Start while a composition is open (Run name would then need a hold it does not have today), or send what the press ended. Recorded, not chosen; the State is unchanged.
-- **Closed at**: —
+- **Closed at**: fe6a8ce, f214913 (decided by the external review of 6a2d52e; no code change).
+- **Decided (the external review of 6a2d52e, 2026-11-19)**: the review reads rev 2 as settling this: keep the browser's normal composition commit; Start sends the text the field shows once the press has ended the composition. No evidence supports a new "no Start while composing" gate, so none is added. The behaviour is pinned by the IME test (`fe6a8ce`, `f214913`: an open composition is refused only by a field's own check). The owner may still ask for a hold.
 
 ## Commit IDs rewritten by the rebase (2026-11-17)
 
