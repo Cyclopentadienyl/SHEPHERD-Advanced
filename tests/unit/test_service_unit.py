@@ -665,6 +665,20 @@ def test_an_accelerator_s_own_flag_asks_for_its_install(monkeypatch, cuda):
     assert done["environ"]["ATTENTION_ORDER"] == "flash_attn,torch_sdpa,naive"
 
 
+@pytest.mark.parametrize("plan_only", ["--print-plan", "--skip-launch", "--dry-run"])
+def test_a_start_that_does_not_launch_installs_nothing_even_when_asked(monkeypatch, capsys,
+                                                                       plan_only):
+    """The review of H1 (2026-11-19): --print-plan or --skip-launch with an
+    accelerator's flag still called the installer; only --dry-run stopped it,
+    although none of the three launches. A start that only shows its plan
+    changes nothing: it says what the flag would install."""
+    done = _x86_start(monkeypatch, [plan_only, "--flash-attn"], cuda="13.0")
+    assert done["installs"] == []
+    assert done["server"] is None
+    out = capsys.readouterr().out
+    assert f"[{plan_only[2:]}] Would install FlashAttention: " in out
+
+
 def test_no_auto_install_keeps_an_accelerator_flag_to_what_is_installed(monkeypatch, capsys):
     done = _x86_start(monkeypatch, ["--flash-attn", "--no-auto-install"], cuda="13.0")
     assert done["installs"] == []

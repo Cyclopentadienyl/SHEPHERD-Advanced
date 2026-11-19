@@ -1301,9 +1301,11 @@ def main() -> int:
     # or without. Only an accelerator's own flag (`ACCELERATORS`) asks this
     # start to install it when it is missing, through `pip_install` and its
     # uv.lock constraints; --no-auto-install turns that install off and
-    # --reinstall-<name> adds pip's reinstall to it. An accelerator this start
-    # does not use is said in one line, with how to install it, and the start
-    # goes on with the next one in the order.
+    # --reinstall-<name> adds pip's reinstall to it. A start that does not
+    # launch (--print-plan, --skip-launch, --dry-run) installs nothing: it
+    # says what the flag would install. An accelerator this start does not use
+    # is said in one line, with how to install it, and the start goes on with
+    # the next one in the order.
     def usable(accelerator: Accelerator) -> bool:
         if is_arm() and not accelerator.on_arm:
             log(f"Skip {accelerator.display} on ARM architecture"); return False
@@ -1324,8 +1326,9 @@ def main() -> int:
                            os_name=os_name, arch=arch)
         if not spec:
             log(f"No install spec found for {accelerator.display}; skipping"); return False
-        if args.dry_run:
-            log(f"[dry-run] Would install {accelerator.display}: {spec}"); return False
+        if not launching:
+            only = "dry-run" if args.dry_run else "print-plan" if args.print_plan else "skip-launch"
+            log(f"[{only}] Would install {accelerator.display}: {spec}"); return False
         ok = pip_install(spec, accelerator.display,
                          reinstall=getattr(args, f"reinstall_{accelerator.key}"),
                          no_deps=accelerator.no_deps)

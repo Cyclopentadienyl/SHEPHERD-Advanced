@@ -22,7 +22,7 @@
   "flash_attn": {
     "_description": "FlashAttention-2 for NVIDIA GPUs (x86 only, NOT compatible with ARM)",
     "_optional": true,
-    "_install_via": "launch_shepherd.sh --flash-attn (a start installs it only when its flag asks)",
+    "_install_via": "launch_shepherd.sh --flash-attn (launch_shepherd.cmd --flash-attn on Windows; a start installs it only when its flag asks)",
     "_compatibility": {
       "os": [
         "windows",
@@ -81,7 +81,7 @@
   "xformers": {
     "_description": "Memory-efficient attention from Meta (cross-platform)",
     "_optional": true,
-    "_install_via": "launch_shepherd.sh --xformers (a start installs it only when its flag asks)",
+    "_install_via": "launch_shepherd.sh --xformers (launch_shepherd.cmd --xformers on Windows; a start installs it only when its flag asks)",
     "_compatibility": {
       "os": [
         "windows",
@@ -144,7 +144,7 @@
   "sage_attn": {
     "_description": "SageAttention community plugin (experimental)",
     "_optional": true,
-    "_install_via": "launch_shepherd.sh --sage-attn (a start installs it only when its flag asks)",
+    "_install_via": "launch_shepherd.sh --sage-attn (launch_shepherd.cmd --sage-attn on Windows; a start installs it only when its flag asks)",
     "_compatibility": {
       "os": [
         "windows",
