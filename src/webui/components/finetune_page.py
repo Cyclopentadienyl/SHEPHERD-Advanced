@@ -1526,24 +1526,25 @@ def create_finetune_page(ctx: Any) -> None:
 #: This page's element id (`shell.page_elem_id`), the scope of `PAGE_CSS`.
 _PAGE = "#" + page_elem_id(PAGE)
 
-#: The job card's Run column at its narrowest (seven characters of the code
-#: font): about what the other columns leave it in a 420 px card (the job
-#: panel at 1536 x 760) once a child has ended (its best saves' words and
-#: the Trainer's figure). Past it the column takes its share of the card's
-#: room; a name's token wider than that share is cut, never widening the
-#: table (the review of a6aae90).
-RUN_FLOOR = "60px"
+#: The job card's Run column at its narrowest: nine characters of the code
+#: font (14 px), the widest word every child's run name holds, its task's
+#: ("patients-": the runner names a child's run after its task), so no
+#: child's own task word is cut (it was at seven, "patien…", whatever the
+#: card's width). Past it the column takes its share of the card's room; a
+#: name's token wider than that share is cut, never widening the table (the
+#: review of a6aae90).
+RUN_FLOOR = "76px"
 
 #: **The job card's table from this card width on** (px), below it each child
 #: as its summary list (`_list_html`; UI ledger V-20): the table's narrowest,
-#: measured in the served page (the fit test), is 383.9 px for an ended
-#: Disease child with its best saves and 391.3 px with a Patients-like-me one
-#: beside it ("Patients-", "Completed", the run's floor, "completed",
-#: "Validation", 12 px between columns), and side by side the job panel's
-#: minimum (440 px) leaves the card 406 px, so the table is drawn there. A
-#: card narrower than this (324 px at 390 x 844) would cut the table's last
-#: column at the panel's edge (the review of 6a2d52e, OPS-C-R6).
-TABLE_FROM = 400
+#: measured in the dashboard's type (the fit test), is 388.6 px for an ended
+#: Disease child with its best saves and 396.8 px with an ended
+#: Patients-like-me one beside it ("Patients-", "Completed", the run's floor,
+#: "completed", "Validation", 12 px between columns), and side by side the
+#: job panel's minimum (440 px) leaves the card 406 px, so the table is drawn
+#: there. A narrower card (324 px at 390 x 844) cut the table's last column
+#: at the panel's edge (the review of 6a2d52e, OPS-C-R6).
+TABLE_FROM = 404
 
 #: This page's style sheet (listed in `src/webui/app.py`'s ``PAGE_CSS``).
 #: Nothing under 14 px; status colours only through the ``--shep-status-*``

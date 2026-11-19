@@ -1481,16 +1481,17 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     identifier rule). Fails on 4b5cee6.
 
     UI ledger V-20 (the review of 6a2d52e, OPS-C-R6), also at 1280 x 900 and
-    390 x 844: the card draws its table from `TABLE_FROM` of its own width
-    on, inside the card itself (at 1280 x 900 the ended child's table was
-    415.9 px in the 406 px card, 10 px into the panel's padding), and below
-    it each child as its summary list, inside the card (at 390 x 844 the
-    table was 353.3 px running and 415.9 px ended in the 324 px card, the
-    Validation (Trainer) column past the panel's edge and not drawn): the
-    child's task as its title, Status, Run, Best save and Validation
-    (Trainer) as its rows (one row named by both for a line said for both),
-    the same words as its table row; at every window each figure on one
-    line. Fails on 6a2d52e."""
+    390 x 844, in the dashboard's type: the card draws its table from
+    `TABLE_FROM` of its own width on, inside the card itself (at 1280 x 900
+    the ended Disease and Patients-like-me children's table was 412.8 px in
+    the 406 px card, 6.8 px into the panel's padding, and the latter's run
+    cut to "patien…" at the Run column's floor), and below it each child as
+    its summary list, inside the card (at 390 x 844 the table was 343.6 px
+    running and 412.8 px ended in the 324 px card, the Validation (Trainer)
+    column past the panel's edge and not drawn): the child's task as its
+    title, Status, Run, Best save and Validation (Trainer) as its rows (one
+    row named by both for a line said for both), the same words as its table
+    row; at every window each figure on one line. Fails on 6a2d52e."""
     from src.webui.app import mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -1502,7 +1503,11 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
                              "20261117-073706_b-probe-card-frozen-disease_91e37d"),
                       settings={"frozen_parts": "graph_side"})
     child = _child("disease", "completed", "20261117-071255_b-ft-full-disease_263055")
-    done = _status(child, status="completed")
+    # Beside it an ended Patients-like-me child, its run named after its task as
+    # the runner names it: the Task column's and the Run column's widest words.
+    plm = _child("patients_like_me", "completed",
+                 "20261117-074410_b-ft-full-patients-like-me_8c1d2e")
+    done = _status(child, plm, status="completed")
     # A name with no hyphen (40 characters, `slugify_run_name`'s longest), ended
     # with its best saves (the other columns at their widest), and a directory
     # not named by its start time, shown as its whole id.
@@ -1518,7 +1523,7 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
                       {"words": "Best pooled MRR · 1 epoch completed", "validation": figure,
                        "selection": selection}],
              "recorded": True, "problem": None}
-    products = {f"{child['run_dir']}|completed": ended,
+    products = {f"{child['run_dir']}|completed": ended, f"{plm['run_dir']}|completed": ended,
                 f"{word_child['run_dir']}|completed": ended}
     shown = {"status": running}
     monkeypatch.setattr(fp.training_manager, "get_status", lambda: shown["status"])
