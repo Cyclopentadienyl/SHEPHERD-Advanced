@@ -23,6 +23,10 @@ it shows escaped:
   import folder, which hold patient-level data); never a guessed old folder
   or a slot's.
   The variable is named only under "Advanced: source ›".
+- **A box is the reader's**: it is set when the panel first opens and when
+  its own row's Save succeeds (`box_value`: the evidence folders' saved list,
+  else empty); every other act and answer, another row's Check or Save, a
+  refusal, Settings shown again, leaves what the reader typed (OPS-C-R5).
 - **Overridden** (Syncthing's form): a row the environment sets keeps its box
   and Save, which change the saved value only; its Saved line says it applies
   once the start-up setting is removed, and the page never calls it in effect.
@@ -61,7 +65,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import gradio as gr
 
@@ -285,9 +289,21 @@ def notice_html(view: DeploymentView, access: Any) -> str:
     return ""
 
 
+def box_value(item: FieldView) -> str:
+    """**What a row's box holds when the panel sets it** (`_panel`'s `fill`):
+    the evidence folders' saved list, one per line (the list is edited as a
+    whole); empty for a one-folder row, whose box holds only a change to
+    make."""
+    if item.key == KEY_TRAINING_EVIDENCE_DIRS:
+        return "\n".join(item.saved or ())
+    return ""
+
+
 def _row_updates(item: FieldView, view: DeploymentView, access: Any,
-                 result: str, clear: bool = False) -> List[Any]:
-    """One row's outputs, in `ROW_PARTS` order."""
+                 result: str, fill: bool = False) -> List[Any]:
+    """One row's outputs, in `ROW_PARTS` order. The box's value is set only
+    when `fill` (`box_value`) or for a request D8 refuses (emptied: no path
+    is shown); otherwise it is left as the reader typed it."""
     allowed, shown = access.allowed, access.allowed
     readable = view.file.problem is None
     suggestion = suggested_folder(item.key)
@@ -297,11 +313,10 @@ def _row_updates(item: FieldView, view: DeploymentView, access: Any,
     if item.key == KEY_TRAINING_EVIDENCE_DIRS:
         key_words = "Set to"
     box: Dict[str, Any] = {"interactive": allowed}
-    if not allowed or clear:
+    if not allowed:
         box["value"] = ""
-    elif item.key == KEY_TRAINING_EVIDENCE_DIRS:
-        # The list is edited as a whole: the box holds the saved list.
-        box["value"] = "\n".join(item.saved or ())
+    elif fill:
+        box["value"] = box_value(item)
     return [
         gr.update(value=state_html(item, view, shown=shown)),
         gr.update(value=f'<span class="shep-dl-key">{r.e(key_words)}</span>'),
@@ -317,18 +332,24 @@ def _row_updates(item: FieldView, view: DeploymentView, access: Any,
 
 
 def _panel(request: gr.Request, *, results: Optional[Mapping[str, str]] = None,
-           status: str = "", clear: Optional[str] = None) -> Tuple[Any, ...]:
+           status: str = "", fill: Iterable[str] = ()) -> Tuple[Any, ...]:
     """Every output of the panel from one read of the view and of D8's
     answer for this request: the rows' (`ROW_PARTS`, in `KEYS` order), then
     the panel's (`PANEL_PARTS`). `results` holds a row's outcome line,
-    `status` the panel's; `clear` names the row whose box a save emptied."""
+    `status` the panel's; `fill` names the rows whose box is set
+    (`box_value`): every row when the panel first opens, a row whose own
+    Save succeeded. Every other row's box keeps what the reader typed, for
+    every act and every answer, a refusal too (OPS-C-R5: each answer set the
+    evidence folders box back to the saved list, so another row's Check
+    lost a draft typed there)."""
     access = operator_access(request)
     view = data_locations.view()
     results = results or {}
+    fill = frozenset(fill)
     out: List[Any] = []
     for item in view.fields:
         out += _row_updates(item, view, access, results.get(item.key, ""),
-                            clear=item.key == clear and item.key != KEY_TRAINING_EVIDENCE_DIRS)
+                            fill=item.key in fill)
     repairable = access.allowed and view.file.problem is not None and view.file.repairable
     out += [
         gr.update(value=notice_html(view, access)),
@@ -446,9 +467,19 @@ def _outcome_words(done: Any, key: Optional[str] = None) -> str:
 # ---------------------------------------------------------------------------
 # Handlers (each an operator control, D8, checked on its own request)
 # ---------------------------------------------------------------------------
-def _on_locations_open(request: gr.Request):
-    """The panel each time Settings is shown."""
-    return _panel(request)
+def _on_locations_open(request: gr.Request, filled: bool = False):
+    """The panel each time Settings is shown; the boxes are set at its first
+    open for an operator only (`filled`: this session's boxes were set, the
+    panel's state, `_on_locations_filled`), so a draft survives Settings
+    shown again."""
+    return _panel(request, fill=() if filled else KEYS)
+
+
+def _on_locations_filled(request: gr.Request) -> bool:
+    """After an open: whether the boxes are set now (an operator's open set
+    them; a request D8 refuses emptied them, so a later open by an operator
+    sets them)."""
+    return operator_access(request).allowed
 
 
 def _on_check(key: str, text: Any, request: gr.Request):
@@ -472,7 +503,7 @@ def _on_save(key: str, text: Any, request: gr.Request):
             "neutral", "Nothing saved: type a folder path first")})
     done = data_locations.save_and_apply({key: value})
     return _panel(request, results={key: _outcome_words(done, key)},
-                  clear=key if done.save.saved else None)
+                  fill=(key,) if done.save.saved else ())
 
 
 def create_folder(key: str) -> Tuple[Optional[Path], str]:
@@ -540,8 +571,9 @@ def _on_replace_unreadable(request: gr.Request):
 def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
     """Build the Data locations panel (call inside the Settings page, beside
     Runtime settings). Read each time Settings is shown (``ctx.on_page_open``);
-    every act redraws the whole panel from one read, then refreshes the
-    header's chips (the GPU chip follows the workspaces folder). The controls
+    every act redraws the whole panel from one read, each box but the ones
+    `_panel` fills left as the reader typed it, then refreshes the header's
+    chips (the GPU chip follows the workspaces folder). The controls
     start disabled, as each page's gated controls do, until the open reads
     D8's answer for this request. Returns the components by name, for tests."""
     parts: Dict[str, Any] = {}
@@ -590,8 +622,12 @@ def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
 
     outputs = [rows[key][part] for key in KEYS for part in ROW_PARTS]
     outputs += [parts[name] for name in PANEL_PARTS]
-    ctx.on_page_open(SETTINGS_PAGE, {"fn": _on_locations_open, "outputs": outputs, "queue": False,
-                                     "show_progress": "hidden"})
+    # Whether this session's boxes were set (`_on_locations_open`).
+    filled = gr.State(False)
+    ctx.on_page_open(SETTINGS_PAGE, {"fn": _on_locations_open, "inputs": [filled],
+                                     "outputs": outputs, "queue": False,
+                                     "show_progress": "hidden"}).then(
+        fn=_on_locations_filled, outputs=[filled], queue=False, show_progress="hidden")
     for key in KEYS:
         row = rows[key]
         key_state = gr.State(key)
@@ -661,6 +697,6 @@ PAGE_CSS = f"""
 
 __all__ = ["APPLY_LABEL", "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET", "OVERRIDDEN",
            "PAGE_CSS", "PANEL_PARTS", "PATH_HIDDEN", "PRIVATE_KEYS", "REPAIR_LABEL",
-           "ROW_PARTS", "SAVE_LABEL", "SOURCE_WORDS", "UNKNOWN", "UNREADABLE",
+           "ROW_PARTS", "SAVE_LABEL", "SOURCE_WORDS", "UNKNOWN", "UNREADABLE", "box_value",
            "check_words", "create_data_locations_panel", "create_folder", "holds_words",
            "name_html", "notice_html", "reason_line", "state_html", "where_html"]
