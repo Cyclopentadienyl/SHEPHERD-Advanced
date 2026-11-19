@@ -431,7 +431,10 @@ def test_the_fields_must_know_rules_are_visible_lines(monkeypatch):
     assert hpo.info == "Only HP:####### ids are read; names and punctuation are ignored."
     assert hpo.placeholder == "HP:0001250, HP:0001263"
     assert patient.info == dp.FIELD_INFO["dx_patient_id"] and not patient.placeholder
-    (typed,) = [fn for fn in demo.fns.values() if (hpo._id, "change") in fn.targets]
+    # The box's change listener on the server (the page also counts the edit
+    # in the browser, `INPUTS_EDITED_JS`, with no server function).
+    (typed,) = [fn for fn in demo.fns.values()
+                if (hpo._id, "change") in fn.targets and fn.fn is not None]
     assert blocks["shep-dx-hpo-echo"] in typed.outputs and hpo in typed.inputs
 
 
@@ -2474,39 +2477,40 @@ def test_the_task_inputs_are_never_run_outputs_and_clear_on_every_edit(monkeypat
 
 def test_a_result_stays_only_while_the_inputs_are_the_ones_it_answered(monkeypatch,
                                                                        status_read):
-    """UI-15 (B73): a run keeps the boxes as it read them; once its answer is
-    written, the check run after it (`answered_inputs`, chained after Run
-    Diagnosis with the boxes as they are then) clears it as an edit does
-    (`phenotypes_changed`) when the HPO box, the genes box or the cohort's
-    pick is no longer what it ran on, and changes nothing when they are, so
-    the result keeps its model's identity. On fcc3dea there was no check:
-    an edit made while the run was in flight left the answer, to the older
-    query, under the edited box."""
+    """UI-15 (B73): a run keeps the page's inputs generation as its request
+    carried it (the count of the edits of the HPO box, the genes box and the
+    cohort's pick, `INPUTS_EDITED_JS`); once its answer is written, the check
+    run after it (`answered_inputs`, chained after Run Diagnosis with the
+    generation as it is then) clears it as an edit does
+    (`phenotypes_changed`) when an edit was made since, and changes nothing
+    when none was, so the result keeps its model's identity. On fcc3dea
+    there was no check: an edit made while the run was in flight left the
+    answer, to the older query, under the edited box. (The page draws no
+    such answer in the meantime: `tests/unit/test_diagnosis_stale_answer.py`,
+    OPS-C-R3.)"""
     _sent(monkeypatch, _gene_result())
     out = dp.diagnose("HP:0001250", "", 10, True, _task_card("gene_task"), "idle", {}, None,
-                      genes_text="SCN1A, PTEN", cohort=None)
+                      genes_text="SCN1A, PTEN", cohort=None, gen=3)
     result, state = out["results_state"], out["card_state"]
-    assert result["_query_inputs"] == dp.query_inputs("HP:0001250", "SCN1A, PTEN", None)
-    assert dp.answered_inputs(result, state, "HP:0001250", "SCN1A, PTEN", None) == {}
-    # An empty box reads the same however Gradio sends it.
-    assert dp.query_inputs(None, None, "") == dp.query_inputs("", "", None)
-    for edited in (("HP:0001263", "SCN1A, PTEN", None), ("HP:0001250", "SCN1A", None),
-                   ("HP:0001250", "SCN1A, PTEN", "reference-2")):
-        cleared = dp.answered_inputs(result, state, *edited)
+    assert result["_inputs_gen"] == 3
+    assert dp.answered_inputs(result, state, 3) == {}
+    # A generation that is not a count reads as the first.
+    assert [dp.inputs_generation_of(v) for v in (None, "3", True, -1, 2.0, 4)] == [0] * 5 + [4]
+    for edited in (4, 9, None):
+        cleared = dp.answered_inputs(result, state, edited)
         assert cleared == dp.phenotypes_changed(result, state), edited
         assert cleared["results_state"] is None and "Inputs changed" in cleared["results_body"]
         assert cleared["export_csv"] is dp._EXPORTS_HIDDEN
-    assert dp.answered_inputs(None, state, "HP:0001263", "", None) == {}
-    # The wiring: chained after Run Diagnosis, outside the queue, the boxes
-    # read as they are then, the edit's outputs written.
+    assert dp.answered_inputs(None, state, 4) == {}
+    # The wiring: chained after Run Diagnosis, outside the queue, the
+    # generation read as it is then, the edit's outputs written.
     demo, _ctx = _build_tab(monkeypatch)
     blocks = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     (run,) = _named(demo, "_run_diagnosis")
     (check,) = _named(demo, "_answered_inputs")
     (edit,) = _named(demo, "_phenotypes_edited")
     assert check.trigger_after == run._id and check.queue is False
-    assert check.inputs[2:] == [blocks["dx_hpo_terms"], blocks["dx_candidate_genes"],
-                                blocks["dx_reference_cohort"]]
+    assert check.inputs[2:] == [blocks["shep-dx-inputs-gen"]]
     assert check.outputs == edit.outputs
 
 
