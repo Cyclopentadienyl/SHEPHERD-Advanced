@@ -2666,7 +2666,13 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 
 Start the dashboard from its desktop entry or with `launch_shepherd.sh` and open ⚙ Settings (a
 second start of the same configuration starts no second service: it opens the running one, or,
-when no browser can be opened on that computer, prints the address to open). The
+when no browser can be opened on that computer, prints the address to open; its "Operator
+controls" line is the running one's. A second start whose environment sets a deployment mode or
+a data location the running one does not have in effect now opens nothing: it says what runs,
+its address and what it sets, and exits with status 1; stop the running one first (Settings ›
+Stop service), then start again. A Save and Apply in the running one never makes a start that
+sets nothing refuse. Since the review of 6a2d52e; before, such a start opened the running one
+and reported success). The
 **Data locations** panel has one row per location (Workspaces folder, Results registry, Import
 folder, Training evidence folders): what needs it, what is in effect and where it came from
 ("Saved in Settings", "Set when the service started"), and a path box with:
@@ -3084,7 +3090,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, with Epochs, Seed and Graph backbone (Trained, or Frozen for the frozen-backbone control) for every child, the rest of what every chosen task reads under More settings and the task's own settings for one task (below), and a job card with the start's graph backbone, each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
 | **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below); the results of a model's family or the workspace, compared and exported (Results, since research comparison Stage 8b) |
-| **⚙ Settings**, at the right of the header | Runtime Settings: the memory allocator running against the one saved, the allocator and torch.compile, then Apply Settings and Restart Backend (below). For a read-only browser the two fields cannot be changed and both buttons are disabled with the lock, with "Operator controls only: <reason>" once, just above the two fields |
+| **⚙ Settings**, at the right of the header | Runtime Settings: the memory allocator running against the one saved, the allocator and torch.compile, then Apply Settings and Restart Backend (below). For a read-only browser the two fields cannot be changed and the buttons (with Stop service) are disabled with the lock, with "Operator controls only: <reason>" once, on the line just above them; the line above the two fields says the reason is beside the actions below |
 
 - The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
   underlined and bold; Settings, when selected, has a light fill and an underline. Prepare and

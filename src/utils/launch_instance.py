@@ -43,12 +43,13 @@ file is never removed.
 **The info file** (`write_info`, the one atomic JSON writer, 0600) is written
 by the launcher once it holds the lock: the format, a random instance id, the
 pid that becomes the server's, the port, the URL, the repository root, the
-settings file, the start time and the launch log. The service is given the id
-and the file as `SHEPHERD_INSTANCE_ID` and `SHEPHERD_INSTANCE_FILE` (the
-launcher's, like `SHEPHERD_BIND_HOST`: it removes them from its own
-environment first), answers the id on ``/health`` (`served_instance_id`) and
-removes the file at shutdown when it still names that id
-(`remove_own_info`). A file found while the lock is free is stale and
+settings file, the start time, the launch log, and the settings variables the
+server is started with (``start_settings``, `SETTINGS_VARIABLES`). The service
+is given the id and the file as `SHEPHERD_INSTANCE_ID` and
+`SHEPHERD_INSTANCE_FILE` (the launcher's, like `SHEPHERD_BIND_HOST`: it removes
+them from its own environment first), answers the id on ``/health``
+(`served_instance_id`) and removes the file at shutdown when it still names
+that id (`remove_own_info`). A file found while the lock is free is stale and
 replaced: **what a crash leaves** (FL-SVC). Its server ended without its
 orderly stop (killed by SIGKILL or the out-of-memory killer, crashed, forced
 to quit, or the machine stopped), which writes no line of its own; the next
@@ -58,13 +59,28 @@ start logs that it found it (`ended_without_stop_words`).
 id: an answer of 200 alone never counts, since another program may hold the
 port (`instance_answers`, in the launcher, which reads ``/health``).
 
+**A second start opens the running instance only when it gets what it asks
+for** (`asks_not_met`; review of 6a2d52e, OPS-C-R1). A start asks for a
+setting explicitly when its environment sets the deployment mode or a data
+location (`ASKED_VARIABLES`, set and not empty, as the resolution reads them).
+Each is compared with what the running service has in effect now: the one
+resolution (`src.config.server_settings`) read for the service's environment,
+which is this start's with the recorded ``start_settings`` in place of its own
+(`running_environment`), so the saved file is read now and a Save and Apply
+made in the running service counts. Nothing asked, or all of it in effect: the
+launcher opens the running service, as before. Anything else: it opens
+nothing, says what runs and what was asked, and exits non-zero; the settings
+are never part of the key, so one configuration still has one backend. An info
+file without ``start_settings`` (an earlier launcher's) says nothing about
+them, so every ask counts as not met.
+
 **The launch log** (`log_file`): a start without a terminal appends its output
 to ``logs/launch.log`` here, the server's included, and an error page beside
 it says what failed (`error_page`). The log is moved to ``launch.log.1`` once it
 passes `LOG_ROTATE_BYTES`, so it stays bounded.
 
-Standard library only (and `src.utils.file_lock`, `src.config.atomic_json`):
-the launcher imports it before anything starts.
+Standard library only (and `src.utils.file_lock`, `src.config.atomic_json`,
+`src.config.server_settings`): the launcher imports it before anything starts.
 
 Module: src/utils/launch_instance.py
 """
@@ -76,10 +92,18 @@ import os
 import secrets
 import sys
 from pathlib import Path
-from typing import Any, Dict, Mapping, NamedTuple, Optional
+from typing import Any, Dict, Mapping, NamedTuple, Optional, Tuple
 
+from src.config import server_settings
 from src.config.atomic_json import ensure_directory, write_json_atomic
 from src.config.deployment_settings import APP_DIRECTORY, utc_stamp
+from src.config.server_settings import (
+    ENV_BIND_HOST,
+    ENV_DEPLOYMENT_MODE,
+    ENV_LOCAL_ENTRY,
+    FIELD_NAMES,
+    SAVED_VARIABLES,
+)
 from src.utils.file_lock import open_lock_file, try_lock
 
 #: The variable naming the state directory explicitly.
@@ -98,14 +122,30 @@ LOGS = "logs"
 LOG_NAME = "launch.log"
 ERROR_PAGE_NAME = "launch-error.html"
 LOG_ROTATE_BYTES = 10 * 1024 * 1024
+#: The variables a server reads its settings from (`server_settings`): the
+#: deployment mode, the launcher's local-start mark and bind host, which decide
+#: the mode with it, and the data locations. The saved settings file is not
+#: one: it is the configuration itself (`instance_key`).
+SETTINGS_VARIABLES = (ENV_DEPLOYMENT_MODE, ENV_LOCAL_ENTRY, ENV_BIND_HOST,
+                      *SAVED_VARIABLES.values())
+#: Those a start sets to ask for a setting: the mode and the data locations
+#: (the launcher's own two never are; it sets them).
+ASKED_VARIABLES = (ENV_DEPLOYMENT_MODE, *SAVED_VARIABLES.values())
+#: What the running service has when its info file does not record it.
+NOT_RECORDED = "not recorded (it was started by an earlier version of the launcher)"
 
 __all__ = [
+    "ASKED_VARIABLES",
+    "Ask",
     "ENV_INSTANCE_FILE",
     "ENV_INSTANCE_ID",
     "ENV_STATE_DIR",
     "INFO_FORMAT",
     "Instance",
     "LOG_ROTATE_BYTES",
+    "NOT_RECORDED",
+    "SETTINGS_VARIABLES",
+    "asks_not_met",
     "claim",
     "ended_without_stop_words",
     "error_page",
@@ -117,6 +157,7 @@ __all__ = [
     "read_info",
     "remove_own_info",
     "rotate_log",
+    "running_environment",
     "served_instance_id",
     "state_directory",
     "write_info",
@@ -223,9 +264,12 @@ def read_info(path: Path) -> Optional[Dict[str, Any]]:
 
 
 def write_info(path: Path, *, instance_id: str, pid: int, port: int, url: str,
-               repo_root: Any, settings_file: Optional[Any], log: Optional[Any]) -> Dict[str, Any]:
+               repo_root: Any, settings_file: Optional[Any], log: Optional[Any],
+               environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """Write the info file at `path` whole (0600, its directory 0700) and
-    return what it holds."""
+    return what it holds. `environ` is the environment the server is started
+    with: its `SETTINGS_VARIABLES` that are set and not empty are recorded as
+    ``start_settings`` (none recorded when it is None)."""
     info = {
         "format": INFO_FORMAT,
         "instance_id": instance_id,
@@ -237,8 +281,94 @@ def write_info(path: Path, *, instance_id: str, pid: int, port: int, url: str,
         "log": None if log is None else str(log),
         "started_at": utc_stamp(),
     }
+    if environ is not None:
+        info["start_settings"] = {name: environ[name] for name in SETTINGS_VARIABLES
+                                  if environ.get(name)}
     write_json_atomic(path, info)
     return info
+
+
+def running_environment(info: Mapping[str, Any],
+                        environ: Mapping[str, str]) -> Optional[Dict[str, str]]:
+    """The environment the server of `info` reads its settings from: `environ`
+    (this start's, which names the same saved settings file, `instance_key`)
+    with each of `SETTINGS_VARIABLES` as the server was started with it
+    (``start_settings``); None when the info file does not record them."""
+    recorded = info.get("start_settings")
+    if not isinstance(recorded, dict) or not all(
+            isinstance(value, str) for value in recorded.values()):
+        return None
+    running = {name: value for name, value in environ.items() if name not in SETTINGS_VARIABLES}
+    running.update({name: recorded[name] for name in SETTINGS_VARIABLES if recorded.get(name)})
+    return running
+
+
+class Ask(NamedTuple):
+    """A setting a start asks for that the running service does not have in
+    effect, in words: its plain name, what the running service has (None
+    when its info file does not record it), what this start asks for, and the
+    variable that asks."""
+
+    name: str
+    running: Optional[str]
+    asked: str
+    variable: str
+
+
+#: Each asked variable's plain name in a sentence.
+_ASKED_NAMES = {ENV_DEPLOYMENT_MODE: "operator controls",
+                **{variable: FIELD_NAMES[key] for key, variable in SAVED_VARIABLES.items()}}
+
+
+def _state(settings: Mapping[str, Any], environ: Mapping[str, str],
+           variable: str) -> Tuple[Any, str]:
+    """A setting as `environ` reads it by the one resolution (`settings`, its
+    readers' answers by variable), and in words: the operator controls on or
+    off; a data location's value in effect, else what is set and refused,
+    else nothing."""
+    setting = settings[variable]
+    if variable == ENV_DEPLOYMENT_MODE:
+        return setting.available, "on" if setting.available else "off"
+    if setting.value is not None and setting.available:
+        value = setting.value
+        words = (", ".join(str(entry) for entry in value) or "none"
+                 if isinstance(value, tuple) else str(value))
+        return ("in effect", value), words
+    raw = server_settings.configured(variable, environ).raw
+    if raw is None:
+        return None, "not set"
+    if isinstance(raw, str) and variable == server_settings.ENV_TRAINING_EVIDENCE_DIRS:
+        raw = [entry for entry in raw.split(os.pathsep) if entry]
+    if isinstance(raw, (list, tuple)):
+        raw = tuple(str(entry) for entry in raw)
+        return ("refused", raw), f"{', '.join(raw)} (refused)"
+    return ("refused", raw), f"{raw} (refused)"
+
+
+def _read(environ: Mapping[str, str]) -> Dict[str, Any]:
+    return {setting.variable: setting for setting in server_settings.all_settings(environ)}
+
+
+def asks_not_met(info: Mapping[str, Any], environ: Mapping[str, str]) -> Tuple[Ask, ...]:
+    """What this start asks for (`environ`'s `ASKED_VARIABLES`, set and not
+    empty) that the running server of `info` does not have in effect now, in
+    `ASKED_VARIABLES` order; empty when it asks for nothing or has it all
+    (module docstring). With no ``start_settings`` recorded, every ask."""
+    asked = [variable for variable in ASKED_VARIABLES if environ.get(variable)]
+    if not asked:
+        return ()
+    running = running_environment(info, environ)
+    here, there = _read(environ), (_read(running) if running is not None else None)
+    unmet = []
+    for variable in asked:
+        want, want_words = _state(here, environ, variable)
+        if there is None:
+            unmet.append(Ask(_ASKED_NAMES[variable], None, want_words, variable))
+            continue
+        have, have_words = _state(there, running, variable)
+        if have != want:
+            unmet.append(Ask(_ASKED_NAMES[variable], have_words, want_words, variable))
+    return tuple(unmet)
 
 
 def ended_without_stop_words(info: Mapping[str, Any]) -> str:

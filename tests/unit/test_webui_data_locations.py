@@ -575,3 +575,100 @@ def test_every_path_box_keeps_room_for_a_path_at_every_window(dl, tmp_path, monk
         assert at["sideways"] is False, (size, at)
         for key, box in at["boxes"].items():
             assert box["hint_fits"] and box["width"] >= 200, (size, key, box)
+
+
+#: Settings for an operator: drafts typed in the evidence folders box and in
+#: the registry box, then another row's Check and Save, a refused Save, a
+#: return to Settings, and the evidence row's own Save: what each box holds
+#: after each answer (each step waits for its own answer's words, then for
+#: every request to be answered).
+_DRAFTS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const [url, ws, draft] = process.argv.slice(2);
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.goto(url, { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  const box = (key) => `#dl_box_${key} textarea, #dl_box_${key} input`;
+  const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  const said = (key, words) => page.waitForFunction(([key, words]) => {
+    const line = document.querySelector(`#dl_result_${key}`);
+    return !!line && line.innerText.includes(words); }, [key, words], { timeout: 30000 });
+  const boxes = async () => { const out = {};
+    for (const key of ['workspaces_root', 'registry', 'training_evidence_dirs']) {
+      out[key] = await page.inputValue(box(key)); }
+    return out; };
+  const seen = {};
+  await page.click('#shep-tab-settings-button');
+  await page.waitForSelector('#dl_box_training_evidence_dirs textarea:enabled', { timeout: 30000 });
+  await idle();
+  seen.opened = await boxes();
+  await page.fill(box('training_evidence_dirs'), draft);
+  await page.fill(box('registry'), 'relative/registry-draft');
+  await page.fill(box('workspaces_root'), ws);
+  await page.click('#dl_check_workspaces_root');
+  await said('workspaces_root', 'Usable');
+  await idle();
+  seen.otherCheck = await boxes();
+  await page.click('#dl_save_workspaces_root');
+  await said('workspaces_root', 'Saved');
+  await idle();
+  seen.otherSave = await boxes();
+  await page.click('#dl_save_registry');
+  await said('registry', 'Not saved');
+  await idle();
+  seen.refusedSave = await boxes();
+  // Settings shown again (its open reads the panel again, every result line emptied).
+  await page.click('#shep-tab-research-button');
+  await idle();
+  await page.click('#shep-tab-settings-button');
+  await page.waitForFunction(() => document.querySelector('#dl_result_registry').innerText.trim() === '',
+                             null, { timeout: 30000 });
+  await idle();
+  seen.shownAgain = await boxes();
+  await page.fill(box('training_evidence_dirs'), `  ${draft}  \n\n`);
+  await page.click('#dl_save_training_evidence_dirs');
+  await said('training_evidence_dirs', 'Saved');
+  await idle();
+  seen.ownSave = await boxes();
+  console.log(JSON.stringify(seen));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_draft_survives_every_other_rows_check_and_save(dl, tmp_path, monkeypatch):
+    """OPS-C-R5 (the external review of 6a2d52e): every answer of the panel
+    set the evidence folders box back to the saved list, so a draft typed
+    there was lost when another row's Check answered. In a real browser, for
+    an operator: a box's value is set when the panel first opens and when its
+    own row's Save succeeds; another row's Check and Save, a refused Save and
+    Settings shown again leave every draft as typed (the registry's too);
+    the evidence row's own Save shows the list as saved. Fails on 6a2d52e
+    (the evidence box reads the saved folder after the workspaces Check)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    ws, old, draft = tmp_path / "ws", tmp_path / "old_evidence", tmp_path / "draft_evidence"
+    for folder in (ws, old, draft):
+        folder.mkdir()
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
+    _parts(dl, dl._on_save("training_evidence_dirs", str(old), operator_request(monkeypatch)))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_DRAFTS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], str(ws), str(draft))
+    assert seen["opened"] == {"workspaces_root": "", "registry": "",
+                              "training_evidence_dirs": str(old)}, seen
+    drafts = {"registry": "relative/registry-draft", "training_evidence_dirs": str(draft)}
+    assert seen["otherCheck"] == {"workspaces_root": str(ws), **drafts}, seen
+    for step in ("otherSave", "refusedSave", "shownAgain"):
+        # The workspaces box was emptied by its own Save, and only by it.
+        assert seen[step] == {"workspaces_root": "", **drafts}, (step, seen)
+    assert seen["ownSave"] == {"workspaces_root": "", **drafts}, seen
+    assert _saved_file()["applied"]["training_evidence_dirs"] == [str(draft)]

@@ -254,8 +254,9 @@ ALLOWED = {
         (1, _NOT_INPUT.format(what="the saved deployment settings: where the data locations "
                                    "are (UI-06), each checked by its directory rule when read")),
     ("src/utils/launch_instance.py", "read_info", "json.loads"):
-        (1, _NOT_INPUT.format(what="the launcher's own instance info file (its id, pid, port "
-                                   "and URL), to open a configuration that already runs")),
+        (1, _NOT_INPUT.format(what="the launcher's own instance info file (its id, pid, port, "
+                                   "URL and the settings its server was started with), to open "
+                                   "a configuration that already runs")),
     ("src/utils/launch_instance.py", "instance_key", "hashlib.sha256"):
         (1, "the launcher's name for one configuration: a hash of two path strings (the "
             "repository root and the saved settings file), never of a file's bytes"),

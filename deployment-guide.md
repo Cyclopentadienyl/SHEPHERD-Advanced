@@ -2787,7 +2787,11 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 ### 在 Settings › Data locations 中選擇（自 2026-11-16 起）
 
 從桌面項目或 `launch_shepherd.sh` 啟動儀表板，開啟 ⚙ Settings（同一個設定再啟動一次，不會啟動第二個
-服務：它會開啟正在執行的那個；那台電腦上開不了瀏覽器時，則印出要開啟的網址）。**Data locations** 面板每個位置
+服務：它會開啟正在執行的那個；那台電腦上開不了瀏覽器時，則印出要開啟的網址；它的「Operator controls」
+一行說的是正在執行的那個。第二次啟動的環境變數若設定了正在執行的那個目前沒有生效的部署模式或資料位置，
+則什麼也不開啟：它說明正在執行的是什麼、其網址與它自己設定了什麼，並以狀態 1 結束；請先停止正在執行的那個
+（Settings › Stop service），再重新啟動。在執行中的那個做 Save 與 Apply，絕不會讓一次什麼都沒設定的
+啟動被拒絕。自 6a2d52e 的審查起；以前這樣的啟動會開啟正在執行的那個並回報成功）。**Data locations** 面板每個位置
 一列（Workspaces folder、Results registry、Import folder、Training evidence folders）：誰需要它、
 目前生效的值與來源（「Saved in Settings」、「Set when the service started」），以及一個路徑框，
 附帶：
@@ -3139,7 +3143,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run，Epochs、Seed 與 Graph backbone（Trained，或凍結主幹對照的 Frozen）對每個子模型相同；每個所選任務都會讀取的其他設定在 More settings 下，只選一個任務時另有該任務自己的設定（見下文）；一張 job card 顯示這次啟動的 graph backbone、每個任務的狀態、Stop 與產出 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
 | **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文）；模型 family 或此 workspace 的結果，可比較與匯出（Results，自 research comparison Stage 8b 起） |
-| 頁首右側的 **⚙ Settings** | Runtime Settings：目前執行中與已儲存的記憶體配置器、記憶體配置器與 torch.compile 兩個欄位，接著是 Apply Settings 與 Restart Backend（見下文）。對唯讀的瀏覽器，這兩個欄位不能更改，兩個按鈕會停用並顯示鎖，"Operator controls only: <原因>" 只寫一次，在這兩個欄位正上方 |
+| 頁首右側的 **⚙ Settings** | Runtime Settings：目前執行中與已儲存的記憶體配置器、記憶體配置器與 torch.compile 兩個欄位，接著是 Apply Settings 與 Restart Backend（見下文）。對唯讀的瀏覽器，這兩個欄位不能更改，這些按鈕（連同 Stop service）會停用並顯示鎖，"Operator controls only: <原因>" 只寫一次，在按鈕正上方的那一行；兩個欄位上方的一行說明原因寫在下方的操作旁 |
 
 - 選中的階段（Diagnosis 或 Research）以填色加粗體顯示；選中的研究頁面以底線加粗體顯示；
   Settings 被選中時有淺色填色與底線。Prepare 與 Evaluate 是分組標籤，不是按鈕。欄位名稱是欄位
