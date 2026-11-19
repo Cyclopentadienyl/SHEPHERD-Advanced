@@ -129,7 +129,7 @@ from src.webui.components.renderers import grapheme_ends as _grapheme_ends
 from src.webui.components.renderers import is_digest as _is_digest
 from src.webui.components.renderers import keep_as as _keep_as
 from src.webui.components.renderers import resources_html as _resources_html
-from src.webui.exports import export_dir, file_slug
+from src.webui.exports import export_dir, file_slug, offer
 from src.webui.components.renderers import summary_list as _summary_list
 from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.components.renderers import STATUS_MARKS as _STATUS_MARKS
@@ -1496,8 +1496,9 @@ def _export_basename(result: Dict[str, Any]) -> str:
 
 
 def _write_exports(result: Dict[str, Any]) -> Tuple[str, str]:
-    """Generate both export files for a result up front (so the DownloadButtons
-    can serve them on the first click). Returns (csv_path, md_path)."""
+    """Generate both export files for a result up front (so each export's
+    link, `exports.offer`, serves its file on the first click). Returns
+    (csv_path, md_path)."""
     base = _export_basename(result)
     # The dashboard's one download directory (`src/webui/exports.py`); files
     # are named by session signature so they do not collide.
@@ -1513,13 +1514,13 @@ def _write_exports(result: Dict[str, Any]) -> Tuple[str, str]:
 # =============================================================================
 # The page: help texts and fixed words
 # =============================================================================
-#: DownloadButton update for the "no downloadable result" state.
+#: An export button's update for the "no downloadable result" state: no link.
 #: No result: the exports are not shown at all (the mockup's first screen has
 #: none), but stay mounted (``"hidden"``), so the next result only shows them.
-_EXPORTS_HIDDEN = gr.update(value=None, interactive=False, visible="hidden")
+_EXPORTS_HIDDEN = gr.update(link=None, interactive=False, visible="hidden")
 #: A result whose export files could not be written (or that has no
 #: candidate): the exports are shown, disabled, beside the reason.
-_DOWNLOAD_DISABLED = gr.update(value=None, interactive=False, visible=True)
+_DOWNLOAD_DISABLED = gr.update(link=None, interactive=False, visible=True)
 
 #: **What must stay visible under a field** (``info=``; the WebUI skill §7: a
 #: format is never only in a bubble or a placeholder; UI-15, R-6).
@@ -3001,8 +3002,9 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
     if candidates:
         try:
             csv_path, md_path = _write_exports(result)
-            csv_update = gr.update(value=csv_path, interactive=True, visible=True)
-            md_update = gr.update(value=md_path, interactive=True, visible=True)
+            # Each file by its link: an opaque id, never its path (OPS-C-R4).
+            csv_update = gr.update(link=offer(csv_path), interactive=True, visible=True)
+            md_update = gr.update(link=offer(md_path), interactive=True, visible=True)
         except Exception as exc:  # noqa: BLE001 — never let export break the result
             logger.warning("Export file generation failed: %s", exc)
             csv_update = md_update = _DOWNLOAD_DISABLED
@@ -3670,12 +3672,15 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 plain_html(empty_results_html(_inputs_changed_html()), elem_id="shep-dx-stale")
             with gr.Row(elem_id="shep-dx-results-ft", elem_classes=["shep-panel-ft"]):
                 # Not shown until a result exists (`_EXPORTS_HIDDEN`).
-                export_csv = gr.DownloadButton("⬇ Export CSV", size="sm", interactive=False,
-                                               scale=0, min_width=0, elem_id="shep-dx-export-csv",
-                                               visible="hidden")
-                export_report = gr.DownloadButton("⬇ Export report (.md)", size="sm",
-                                                  interactive=False, scale=0, min_width=0,
-                                                  elem_id="shep-dx-export-md", visible="hidden")
+                # Each export downloads by its link (`exports.offer`: an
+                # opaque id, never the file's path; the button draws as a
+                # link once it has one).
+                export_csv = gr.Button("⬇ Export CSV", size="sm", interactive=False, scale=0,
+                                       min_width=0, elem_id="shep-dx-export-csv",
+                                       visible="hidden")
+                export_report = gr.Button("⬇ Export report (.md)", size="sm", interactive=False,
+                                          scale=0, min_width=0, elem_id="shep-dx-export-md",
+                                          visible="hidden")
                 plain_html(help_button("dx-exports", "Exports"), elem_id="shep-dx-exports-help")
                 plain_html(f'<p class="shep-dx-device">{_e(NOT_A_MEDICAL_DEVICE)}</p>',
                            elem_id="shep-dx-device")

@@ -227,14 +227,14 @@ def test_download_files_live_one_lifetime_then_are_deleted(monkeypatch, tmp_path
     copies of them. Now each file lives `exports.LIFETIME_SECONDS` after it
     was written: older ones go before every write, a directory an earlier
     process left (a crash, an exec) loses its expired files and goes once
-    empty, the process's own directory goes at exit, and Gradio's copies are
-    swept on the same lifetime (the dashboard's ``delete_cache``)."""
+    empty, and the process's own directory goes at exit. Gradio keeps no
+    copy of them since OPS-C-R4 (each is served by an id from this directory,
+    `test_dashboard_downloads.py`), so no sweep of Gradio's cache is needed."""
     import atexit
     import time
     from pathlib import Path
 
     from src.webui import exports
-    from src.webui.app import create_gradio_app
 
     monkeypatch.setattr(exports.tempfile, "tempdir", str(tmp_path))
     monkeypatch.setattr(exports, "_EXPORT_DIR", None)
@@ -265,8 +265,6 @@ def test_download_files_live_one_lifetime_then_are_deleted(monkeypatch, tmp_path
     later = exports.write_new("results_x", "csv", "a,b\n")
     assert not Path(csv_path).exists() and Path(md_path).exists() and later.exists()
     assert exports.prune(mine, now=time.time() + exports.LIFETIME_SECONDS + 1) == 2
-    # Gradio's copies of the same files are swept on the same lifetime.
-    assert create_gradio_app().delete_cache == (exports.SWEEP_SECONDS, exports.LIFETIME_SECONDS)
     fn(*args, **kwargs)
     assert not mine.exists()
 
@@ -452,9 +450,12 @@ def test_on_diagnose_success_sets_download_values(monkeypatch, status_read):
     assert out["results_state"] is not None and out["results_state"].get("candidates")
     assert out["export_csv"] is not dp._DOWNLOAD_DISABLED
     assert out["export_report"] is not dp._DOWNLOAD_DISABLED
-    # A result shows the exports, which no result had shown (M5-3).
+    # A result shows the exports, which no result had shown (M5-3), each by
+    # its link (an opaque id, never the file's path: OPS-C-R4).
     assert out["export_csv"]["visible"] is True and out["export_csv"]["interactive"] is True
     assert out["export_report"]["visible"] is True and out["export_report"]["interactive"] is True
+    assert out["export_csv"]["link"].startswith("download/")
+    assert out["export_report"]["link"].startswith("download/")
     assert out["selected"] == 1 and "Dravet syndrome" in out["details_hd"]
 
 
@@ -487,7 +488,7 @@ def test_no_export_buttons_are_shown_before_a_result():
                if getattr(c, "elem_id", None) in ("shep-dx-export-csv", "shep-dx-export-md")}
     assert set(buttons) == {"shep-dx-export-csv", "shep-dx-export-md"}
     assert all(b.visible == "hidden" for b in buttons.values())
-    assert dp._EXPORTS_HIDDEN["visible"] == "hidden" and dp._EXPORTS_HIDDEN["value"] is None
+    assert dp._EXPORTS_HIDDEN["visible"] == "hidden" and dp._EXPORTS_HIDDEN["link"] is None
     assert "#shep-dx-results-ft:has(#shep-dx-export-csv.hidden) #shep-dx-exports-help" in dp.PAGE_CSS
 
 

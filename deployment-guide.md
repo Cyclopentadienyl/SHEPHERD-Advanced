@@ -2483,9 +2483,12 @@ route。服務會在 Gradio 看到請求之前拒絕它們（`src/api/middleware
   寫進它的暫存目錄，而且從不刪除。
 
 拒絕的回應是 `403`，附一行原因與 `connection: close`。請求本體不會被讀取，請求日誌會像其他
-回應一樣記下這次拒絕。本機下載不受影響：Diagnosis 分頁的 CSV 與 Markdown 匯出照常下載，
-`HEAD` 與 `Range` 請求也一樣。（自 M5-2 起，Training 頁面的 Export CSV 以文字經由頁面自己的
-server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。）
+回應一樣記下這次拒絕。儀表板自己的下載不經過 Gradio 的 `file=` route（自 6a2d52e 的外部審查
+OPS-C-R4 起）：每個匯出（Diagnosis 分頁的 CSV 與 Markdown 報告、Models › Results 的 Export）
+都從 `/ui/download/<id>` 下載，連結只帶一個不透明的 id，不含任何伺服器路徑。這個 id 在檔案的
+存活期間（寫入後一天）、且只在發出它的服務程序內提供該檔案，`HEAD` 與 `Range` 請求也一樣
+（重新啟動前的連結即失效）；其他任何 id 都回應 `404`。（自 M5-2 起，Training 頁面的 Export CSV
+以文字經由頁面自己的 server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。）
 
 ### 儀表板的其他變更
 

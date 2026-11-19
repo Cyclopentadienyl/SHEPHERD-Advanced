@@ -100,7 +100,9 @@ only results of another data kind hold.
 rows, the unreadable items among them), uncapped, through the service's one
 serializer (`results.to_csv`, `results.to_json`), as a new file to download
 from the dashboard's one download directory (`src/webui/exports.py`,
-`write_new`: its bytes are the serializer's text).
+`write_new`: its bytes are the serializer's text): "⬇ Download CSV" (or
+JSON) saves it by a link that names an opaque id, never the file's path
+(`exports.offer`), and the note beside it names the file.
 
 **D8.** Listing results opens checkpoint files (the service lists every
 workspace's checkpoints, SPEC_4 C3), so every handler here, reading,
@@ -143,7 +145,7 @@ from src.webui.components import model_list as ml
 from src.webui.components import models_page as mp
 from src.webui.components import renderers as r
 from src.webui.components.help import REF_PREFIX, help_button
-from src.webui.exports import file_slug, write_new
+from src.webui.exports import file_slug, offer, write_new
 from src.webui.operator_access import operator_access
 from src.webui.shell import picked, plain_html
 
@@ -1673,24 +1675,27 @@ def _on_results_compare(request: gr.Request, state, chosen, differences):
                               asked=len(chosen_rows(state, chosen)))
 
 
+#: Export's download button with nothing to download: hidden, no link.
+_NO_DOWNLOAD = gr.update(link=None, visible=False)
+
+
 def _on_results_export(request: gr.Request, state, listing, selected, scope, chosen, which, fmt):
     """Export: D8 first; then the chosen results, or every row shown (the
     unreadable items among them), uncapped, as CSV or JSON through the
     service's one serializer; the file to download and what it holds."""
     access = operator_access(request)
     if not access.allowed:
-        return (gr.update(value=None, visible=False),
-                f'<div class="shep-reason">{r.e(access.refusal)}</div>')
+        return _NO_DOWNLOAD, f'<div class="shep-reason">{r.e(access.refusal)}</div>'
     state = state if isinstance(state, Mapping) else EMPTY_STATE
     if state.get("read_id") is None:
-        return (gr.update(value=None, visible=False),
+        return (_NO_DOWNLOAD,
                 '<p class="shep-mp-p shep-muted">Nothing has been read to export yet.</p>')
     fmt = fmt if fmt in ("csv", "json") else "csv"
     all_rows = state.get("rows") or []
     if which == SELECTED:
         rows = chosen_rows(state, chosen)
         if not rows:
-            return (gr.update(value=None, visible=False),
+            return (_NO_DOWNLOAD,
                     '<p class="shep-mp-p shep-muted">Choose results above to export them, or '
                     'export all shown.</p>')
     else:
@@ -1705,8 +1710,11 @@ def _on_results_export(request: gr.Request, state, listing, selected, scope, cho
     said = (f"Exported {results} result{'s' if results != 1 else ''}"
             + (f" and {unreadable} unreadable item{'s' if unreadable != 1 else ''}"
                if unreadable else "")
-            + f" as {fmt.upper()}, one row per result and metric (read {state.get('read_at')}).")
-    return (gr.update(value=path, visible=True), f'<p class="shep-mp-p">{r.e(said)}</p>')
+            + f" as {fmt.upper()}, one row per result and metric (read {state.get('read_at')}): "
+            + f"{os.path.basename(path)}.")
+    # The file by its link: an opaque id, never its path (OPS-C-R4).
+    return (gr.update(value=f"⬇ Download {fmt.upper()}", link=offer(path), visible=True),
+            f'<p class="shep-mp-p">{r.e(said)}</p>')
 
 
 # ---------------------------------------------------------------------------
@@ -1746,8 +1754,10 @@ def create_results_segment() -> Dict[str, Any]:
             parts["format"] = gr.Radio(choices=EXPORT_FORMATS, value="csv", label="Format",
                                        elem_id="shep-rs-format")
             parts["export"] = gr.Button("Export", size="sm", elem_id="shep-rs-export")
-        parts["file"] = gr.File(label="Export file", interactive=False, visible=False,
-                                elem_id="shep-rs-file")
+        # The export downloads by its link (`exports.offer`: an opaque id,
+        # never the file's path), shown once a file is written.
+        parts["file"] = gr.Button("⬇ Download", size="sm", visible=False,
+                                  elem_id="shep-rs-file")
         parts["export_note"] = plain_html("", elem_id="shep-rs-export-note")
     return parts
 

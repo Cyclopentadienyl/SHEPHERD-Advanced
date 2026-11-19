@@ -1249,9 +1249,11 @@ def test_a_read_only_fine_tune_poll_never_lists_checkpoints(spies, monkeypatch):
 # --------------------------------------------------------------------------- CORS and uploads
 @pytest.mark.parametrize("base_url", [OPERATOR_BASE_URL, "http://192.0.2.10:8264"],
                          ids=["loopback-host", "lan-host"])
-def test_no_cross_origin_browser_access_is_granted(dashboard_app, base_url, monkeypatch):
+def test_no_cross_origin_browser_access_is_granted(dashboard_app, base_url, monkeypatch,
+                                                   tmp_path):
     """No Access-Control-Allow-Origin for another origin, on /api, on the
-    dashboard's config and on `file=`, whatever Host; preflights refused. The
+    dashboard's config, on `file=` and on the dashboard's download route
+    (`exports.ROUTES`, OPS-C-R4), whatever Host; preflights refused. The
     request itself still reaches the server, which is why D8, not CORS, guards
     the operator controls."""
     foreign = {"Origin": "https://evil.example"}
@@ -1266,10 +1268,17 @@ def test_no_cross_origin_browser_access_is_granted(dashboard_app, base_url, monk
         assert "access-control-allow-origin" not in preflight.headers
     with _dashboard_client(dashboard_app, base_url) as client:
         # A real file= download: a file in Gradio's own temporary directory,
-        # where a download (Diagnosis' exports) is placed. (The Training
-        # page's Export CSV is saved by the browser from a server function
-        # since M5-2, with no file on the server.)
+        # which Gradio's file route serves. (The dashboard's exports are
+        # served by its own download route since OPS-C-R4, below; the
+        # Training page's Export CSV is saved by the browser from a server
+        # function since M5-2, with no file on the server.)
         import gradio.utils
+
+        from src.webui import exports
+
+        (tmp_path / "downloads").mkdir()
+        monkeypatch.setattr(exports, "_EXPORT_DIR", tmp_path / "downloads")
+        link = exports.offer(exports.write_new("cors-probe", "csv", "rank,gene\n1,SCN1A\n"))
 
         folder = Path(gradio.utils.get_upload_folder())
         folder.mkdir(parents=True, exist_ok=True)
@@ -1278,7 +1287,7 @@ def test_no_cross_origin_browser_access_is_granted(dashboard_app, base_url, monk
         exported = folder / f"cors-probe-{uuid.uuid4().hex}.csv"
         exported.write_text("epoch,split,total\n1,train,1.5\n")
         path = f"/ui/gradio_api/file={exported}"
-        for url in ("/ui/config", path):
+        for url in ("/ui/config", path, f"/ui/{link}"):
             response = client.get(url, headers=foreign)
             assert response.status_code == 200, url
             assert "access-control-allow-origin" not in response.headers, url

@@ -2298,10 +2298,14 @@ request (`src/api/middleware/gradio_routes.py`):
   removes them.
 
 A refusal is `403` with a one-line reason and `connection: close`. The request body is not
-read, and the request log shows the refusal like any other response. Local downloads are not
-affected: the Diagnosis tab's CSV and Markdown exports download as before, `HEAD` and `Range`
-requests included. (Since M5-2 the Training page's Export CSV comes as text through the page's
-own server function and the browser saves it; no file is served for it.)
+read, and the request log shows the refusal like any other response. The dashboard's own
+downloads do not use Gradio's `file=` route (since the external review of 6a2d52e, OPS-C-R4):
+each export (the Diagnosis tab's CSV and Markdown report, Models › Results' Export) downloads
+from `/ui/download/<id>`, a link that names an opaque id, never a server path. The id serves its
+file, `HEAD` and `Range` requests included, while the file lives (a day after it was written) and
+only in the service process that offered it (a link from before a restart is gone); any other id
+answers `404`. (Since M5-2 the Training page's Export CSV comes as text through the page's own
+server function and the browser saves it; no file is served for it.)
 
 ### What else changed in the dashboard
 

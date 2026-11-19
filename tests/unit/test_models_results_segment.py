@@ -1576,11 +1576,18 @@ def test_export_writes_the_shown_or_chosen_rows_through_the_one_serializer(world
     _operator(monkeypatch)
     state, _scope, _shown_rows = _shown(_state(world, monkeypatch))
     listing, selected = _listing()
+    def written(update):
+        """The file an export's link names (`exports.offer`): its button is
+        given a link, never the file's path (OPS-C-R4)."""
+        assert update["visible"] is True and update["link"].startswith(exports.LINK)
+        return exports.offered(update["link"][len(exports.LINK):])
+
     file_update, note = rs._on_results_export(None, state, listing, selected, rs.WORKSPACE, [],
                                               rs.SHOWN, "csv")
-    path = Path(file_update["value"])
+    path = written(file_update)
     shown = [state["rows"][i] for i in state["shown"]]
     assert path.parent == tmp_path / "downloads" and path.name.startswith("results_workspace-lab")
+    assert file_update["value"] == "⬇ Download CSV" and path.name in _text(note)
     # The file's bytes are the serializer's text, untranslated (as the
     # command line writes its file).
     assert path.read_bytes() == service.to_csv(shown).encode("utf-8")
@@ -1592,12 +1599,12 @@ def test_export_writes_the_shown_or_chosen_rows_through_the_one_serializer(world
     assert len(many["rows"]) > rs.COMPARE_CAP
     file_update, _note = rs._on_results_export(None, many, listing, selected, rs.WORKSPACE, [],
                                                rs.SHOWN, "json")
-    assert Path(file_update["value"]).read_bytes() == service.to_json(
+    assert written(file_update).read_bytes() == service.to_json(
         many["rows"]).encode("utf-8")
     keys = [f"{many['read_id']}:{index}" for index in many["shown"]][:rs.COMPARE_CAP + 2]
     file_update, _note = rs._on_results_export(None, many, listing, selected, rs.WORKSPACE,
                                                keys, rs.SELECTED, "json")
-    assert Path(file_update["value"]).read_bytes() == service.to_json(
+    assert written(file_update).read_bytes() == service.to_json(
         many["rows"][:rs.COMPARE_CAP + 2]).encode("utf-8")
     # Two exports of one name in one second: two files, neither replaced.
     first = rs.export_file(shown, "csv", "same")
@@ -1614,7 +1621,8 @@ def test_export_writes_the_shown_or_chosen_rows_through_the_one_serializer(world
     # Nothing chosen: nothing written, the next step said.
     file_update, note = rs._on_results_export(None, state, listing, selected, rs.WORKSPACE, [],
                                               rs.SELECTED, "csv")
-    assert file_update["value"] is None and "Choose results" in _text(note)
+    assert file_update["link"] is None and file_update["visible"] is False
+    assert "Choose results" in _text(note)
 
 
 # ---------------------------------------------------------------------------
@@ -1641,7 +1649,8 @@ def test_every_handler_asks_d8_first_and_a_refused_request_reads_nothing(world, 
     assert rs._on_results_compare(None, state, ["x"], True).count("Refused:") == 1
     file_update, note = rs._on_results_export(None, state, listing, selected, rs.WORKSPACE, [],
                                               rs.SHOWN, "csv")
-    assert file_update["value"] is None and "Refused:" in note
+    assert file_update["link"] is None and file_update["visible"] is False
+    assert "Refused:" in note
 
 
 def test_an_operator_reads_once_on_opening_and_again_only_when_asked(world, monkeypatch):

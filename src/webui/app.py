@@ -232,10 +232,9 @@ def create_gradio_app() -> gr.Blocks:
         analytics_enabled=False,
         # The layout follows the browser's usable width, not a fixed cap.
         fill_width=True,
-        # Gradio serves each download from a copy in its cache: deleted on the
-        # download files' own lifetime (`src/webui/exports.py`, B56), never
-        # left for good.
-        delete_cache=exports.CACHE_SWEEP,
+        # No ``delete_cache``: Gradio's cache holds no download file, each is
+        # served by the dashboard's own route (`src/webui/exports.py`,
+        # OPS-C-R4), and lives the download files' own lifetime (B56).
         # Theme and CSS are not set here: Gradio 6 drops them from a mounted
         # Blocks, with only a warning. `mount_dashboard` passes them.
     ) as app:
@@ -294,6 +293,10 @@ def mount_options() -> dict[str, Any]:
       dashboard's colours do not have, and screen recording), beside the
       dashboard's ⚙ Settings; it also takes height from the one-screen layout.
 
+    And one route of the dashboard's own, ``app_kwargs`` (the mounted app's
+    first): ``<mount>/download/<id>``, which serves each download file by an
+    opaque id, never by its path (`exports.ROUTES`, OPS-C-R4).
+
     Two routes Gradio registers with no switch at all are refused in front of
     the mount: ``src/api/middleware/gradio_routes.py``.
     """
@@ -307,6 +310,7 @@ def mount_options() -> dict[str, Any]:
         "ssr_mode": False,
         "max_file_size": MAX_UPLOAD_SIZE,
         "footer_links": [],
+        "app_kwargs": {"routes": list(exports.ROUTES)},
     }
 
 
