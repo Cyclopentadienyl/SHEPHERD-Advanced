@@ -32,6 +32,18 @@ absolute path (``/ui/gradio_api/file=/tmp/…``). (A subclass of either would
 have Gradio write a type stub beside this module at import, an untracked file
 that marks every recorded run's checkout dirty: `run_environment`.)
 
+**What a download control is given** (OPS-FIX-R1, the recheck of d7ebfc3):
+one update, `download_update`, new at each call, for every export of every
+page. With a file it is the file's link, enabled; with none (no result, an
+answer with no candidate, nothing chosen, a file that could not be written)
+it is the empty link (`NO_LINK`), disabled: Gradio 6.30 draws the Button as
+a ``<button>`` again, which takes no click and no focus, so no state without
+a file of its own can still reach an earlier answer's file. ``link=None``
+never did that: Gradio removes every None-valued key but ``value`` from an
+update before applying it (in place, so a shared update lost its key for
+good), the control kept the earlier link, and a disabled link stays an
+``<a href>`` that Tab reaches and Enter follows.
+
 Who may download is who was given the link: each entry keeps its own
 permission, decided by its handler before it writes (Diagnosis' exports for
 whoever may run a diagnosis; Models › Results' Export for an operator, D8),
@@ -69,6 +81,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import gradio as gr
 from starlette.requests import Request
 from starlette.responses import FileResponse, PlainTextResponse, Response
 from starlette.routing import Route
@@ -221,6 +234,27 @@ def offer(path: Any) -> str:
     return LINK + file_id
 
 
+#: A download control's link while it offers no file (`download_update`): the
+#: empty link. Gradio 6.30 applies it (it drops only None-valued keys from an
+#: update: ``utils.delete_none``, called by ``Blocks.postprocess_data``) and
+#: its Button is a link only while its link is not empty (``link &&
+#: link.length > 0``), so the control is a ``<button>`` again.
+NO_LINK = ""
+
+
+def download_update(path: Any = None, *, visible: Any = True, **props: Any) -> Dict[str, Any]:
+    """**The one update of a download control** (a ``gr.Button`` with a link;
+    module docstring), new at each call, so nothing Gradio does to an update
+    reaches another. With `path`: the file there, by its link (`offer`),
+    enabled and shown. Without: nothing to download, by the empty link
+    (`NO_LINK`), disabled, shown as `visible` says (``True`` beside its
+    reason, ``"hidden"`` or ``False`` where nothing is said). `props` are
+    the control's other words (its label)."""
+    if path is None:
+        return gr.update(link=NO_LINK, interactive=False, visible=visible, **props)
+    return gr.update(link=offer(path), interactive=True, visible=visible, **props)
+
+
 def offered(file_id: Any) -> Optional[Path]:
     """The file `file_id` names (`offer`) while it lives; None for anything
     else: an id never offered, a malformed or path-like one, a file expired
@@ -280,6 +314,6 @@ DOWNLOAD_HEAD = "<script>" + r"""
 """.replace("__LINK__", json.dumps(LINK)) + "</script>"
 
 
-__all__ = ["DOWNLOAD_HEAD", "LIFETIME_SECONDS", "LINK", "NOT_OFFERED", "PREFIX", "ROUTE",
-           "ROUTES", "download", "export_dir", "file_slug", "offer", "offered", "prune",
-           "write_new"]
+__all__ = ["DOWNLOAD_HEAD", "LIFETIME_SECONDS", "LINK", "NOT_OFFERED", "NO_LINK", "PREFIX",
+           "ROUTE", "ROUTES", "download", "download_update", "export_dir", "file_slug", "offer",
+           "offered", "prune", "write_new"]

@@ -340,12 +340,25 @@ def test_phenotype_change_noops_without_results():
     assert dp.phenotypes_changed(None, None) == {}
 
 
+def _no_file(update, visible):
+    """An export's update with no file to download (`exports.download_update`):
+    the empty link, which Gradio applies (``link=None`` it drops), disabled,
+    shown as `visible`; a new update, never a shared one (OPS-FIX-R1)."""
+    from src.webui import exports
+
+    assert update == {"__type__": "update", "link": exports.NO_LINK, "interactive": False,
+                      "visible": visible}, update
+    return update
+
+
 def test_phenotype_change_clears_after_a_run():
     out = dp.phenotypes_changed(_sample_result(), None)
     assert "Inputs changed" in out["results_body"]
     assert out["results_state"] is None and out["selected"] is None and out["badge"] == ""
-    assert out["export_csv"] is dp._EXPORTS_HIDDEN
-    assert out["export_report"] is dp._EXPORTS_HIDDEN
+    _no_file(out["export_csv"], "hidden")
+    _no_file(out["export_report"], "hidden")
+    assert out["export_csv"] is not out["export_report"]
+    assert dp.phenotypes_changed(_sample_result(), None)["export_csv"] is not out["export_csv"]
 
 
 #: The audit's query (UI-15, R-5): an id with its name, an id, a name on its
@@ -440,7 +453,8 @@ def test_on_diagnose_no_hpo_disables_downloads(status_read):
     out = _run("no ids here")
     assert "No valid HPO terms found" in out["results_body"]
     assert out["results_state"] is None
-    assert out["export_csv"] is dp._EXPORTS_HIDDEN and out["export_report"] is dp._EXPORTS_HIDDEN
+    _no_file(out["export_csv"], "hidden")
+    _no_file(out["export_report"], "hidden")
     assert status_read["reads"] == []   # nothing was asked of the server
 
 
@@ -448,8 +462,7 @@ def test_on_diagnose_success_sets_download_values(monkeypatch, status_read):
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _sample_result())
     out = _run("HP:0001250")
     assert out["results_state"] is not None and out["results_state"].get("candidates")
-    assert out["export_csv"] is not dp._DOWNLOAD_DISABLED
-    assert out["export_report"] is not dp._DOWNLOAD_DISABLED
+    assert out["export_csv"]["link"] != "" and out["export_report"]["link"] != ""
     # A result shows the exports, which no result had shown (M5-3), each by
     # its link (an opaque id, never the file's path: OPS-C-R4).
     assert out["export_csv"]["visible"] is True and out["export_csv"]["interactive"] is True
@@ -470,9 +483,9 @@ def test_on_diagnose_export_failure_still_shows_results(monkeypatch, status_read
     assert "Dravet syndrome" in out["results_body"]
     assert "could not be written" in out["results_body"]
     assert out["results_state"] is not None and out["results_state"].get("candidates")
-    assert out["export_csv"] is dp._DOWNLOAD_DISABLED and out["export_report"] is dp._DOWNLOAD_DISABLED
     # A result exists: its exports are shown, disabled, beside the reason.
-    assert dp._DOWNLOAD_DISABLED["visible"] is True
+    _no_file(out["export_csv"], True)
+    _no_file(out["export_report"], True)
 
 
 def test_no_export_buttons_are_shown_before_a_result():
@@ -488,7 +501,7 @@ def test_no_export_buttons_are_shown_before_a_result():
                if getattr(c, "elem_id", None) in ("shep-dx-export-csv", "shep-dx-export-md")}
     assert set(buttons) == {"shep-dx-export-csv", "shep-dx-export-md"}
     assert all(b.visible == "hidden" for b in buttons.values())
-    assert dp._EXPORTS_HIDDEN["visible"] == "hidden" and dp._EXPORTS_HIDDEN["link"] is None
+    _no_file(dp._no_result_outputs(None)["export_csv"], "hidden")
     assert "#shep-dx-results-ft:has(#shep-dx-export-csv.hidden) #shep-dx-exports-help" in dp.PAGE_CSS
 
 
@@ -945,8 +958,8 @@ def _assert_refused_without_results(out):
     assert "After a diagnosis" in out["details_html"]["value"]
     assert dp.VIEW_OFF not in out["details_html"]["elem_classes"]
     assert out["results_state"] is None  # no earlier result passes as this one
-    assert out["export_csv"] is dp._EXPORTS_HIDDEN
-    assert out["export_report"] is dp._EXPORTS_HIDDEN
+    _no_file(out["export_csv"], "hidden")
+    _no_file(out["export_report"], "hidden")
 
 
 def test_one_hundred_repeats_then_another_is_refused_with_both_numbers(served):
@@ -2012,8 +2025,8 @@ def test_a_response_that_does_not_name_its_kind_shows_no_candidates(monkeypatch,
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: dict(result))
     out = _run("HP:0001250")
     assert out["selected"] is None
-    assert out["export_csv"] is dp._DOWNLOAD_DISABLED
-    assert out["export_report"] is dp._DOWNLOAD_DISABLED
+    _no_file(out["export_csv"], True)
+    _no_file(out["export_report"], True)
 
 
 @pytest.mark.parametrize("kind", ["gnn_ranking/v1", "path_reasoning/v1", "demo/v1"])
@@ -2373,7 +2386,8 @@ def test_an_empty_gene_list_is_said_at_the_click_and_nothing_is_asked(monkeypatc
     out = dp.diagnose("HP:0001250", "", 10, True, _task_card("gene_task"), "idle", {}, None,
                       genes_text=" ,; \n")
     assert dp.NO_CANDIDATE_GENES in out["results_body"] and out["results_state"] is None
-    assert out["export_csv"] is dp._EXPORTS_HIDDEN and status_read["reads"] == []
+    _no_file(out["export_csv"], "hidden")
+    assert status_read["reads"] == []
 
 
 def test_run_waits_for_a_readable_reference_cohort_version():
@@ -2613,7 +2627,7 @@ def test_a_result_stays_only_while_the_inputs_are_the_ones_it_answered(monkeypat
         cleared = dp.answered_inputs(result, state, edited)
         assert cleared == dp.phenotypes_changed(result, state), edited
         assert cleared["results_state"] is None and "Inputs changed" in cleared["results_body"]
-        assert cleared["export_csv"] is dp._EXPORTS_HIDDEN
+        _no_file(cleared["export_csv"], "hidden")
     assert dp.answered_inputs(None, state, 4) == {}
     # The wiring: chained after Run Diagnosis, outside the queue, the
     # generation read as it is then, the edit's outputs written.
