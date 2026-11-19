@@ -4242,9 +4242,10 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change .shep-model-head > :not(.form) {{ min-width: 0 !important; }}
 /* **The list and the chosen model's details, two regions** (UI-07: they shared one scroll, so
    reading the details moved the list). Each has its minimum width (`--shep-panel-min`, the
-   layout rule's measure): the tree whole from 616 px (614 px measured with a model of every task,
-   "Patients-like-me" its Task column's widest word, and a 12-hex digest; 566 px on the
-   multi-family demo; a longer run name scrolls the list sideways in its own region), the
+   layout rule's measure): the tree whole from 616 px (599 px at its narrowest in the dashboard's
+   type with a model of every task, "Patients-like-me" its Task column's widest word, and a 12-hex
+   digest in the host's monospace; 566 px on the multi-family demo; a longer run name scrolls the
+   list sideways in its own region), the
    details' summary lists from 222 px (a key and its value, each wrapping). Side
    by side the drawer covers the candidates and the details panels, whose own minimums are no
    narrower, so whenever the page is side by side the two regions fit beside each other (summed

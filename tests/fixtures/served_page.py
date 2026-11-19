@@ -121,12 +121,27 @@ def served(demo: Any, **mount: Any) -> Iterator[str]:
     """The page's Blocks mounted on a FastAPI app as the dashboard mounts it
     (``/ui``, with `mount`: what `gr.mount_gradio_app` is given besides the
     app, the Blocks and the path), served by uvicorn on a free loopback port;
-    yields the base of Gradio's API (the page itself is its ``/ui/``)."""
+    yields the base of Gradio's API (the page itself is its ``/ui/``).
+
+    The dashboard's own files are served beside it at ``/static`` as the API
+    serves them (`src/api/main.py`): its fonts (IBM Plex Sans,
+    `app.DASHBOARD_CSS`), so a browser draws and measures the page in the
+    type it is drawn in. Without them every width a test measured was the
+    host's fallback font's (here Inter; DejaVu Sans where no Inter is
+    installed, 40 px wider over the model list's tree at 1280 x 900), and a
+    region's minimum fitted to one host's measure was a pixel short on
+    another (the review of 6a2d52e: the model list's rows region, 616 px,
+    scrolled to 617)."""
     import gradio as gr
     import uvicorn
     from fastapi import FastAPI
+    from starlette.staticfiles import StaticFiles
+
+    from src import webui
 
     app = FastAPI()
+    app.mount("/static", StaticFiles(directory=str(Path(webui.__file__).parent / "static")),
+              name="static")
     gr.mount_gradio_app(app, demo, path="/ui", **mount)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
