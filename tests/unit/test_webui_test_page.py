@@ -5538,7 +5538,8 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
       const first = document.querySelector('#shep-test-result-body .shep-rec-tile-l');
       const named = first.textContent;
       const tiles = look.tops(values);
-      first.textContent = named + ' over a name long enough to take three lines in its tile';
+      first.textContent = named + ' over a name long enough to take three lines in its tile,'
+        + ' whatever the window and however narrow the type it is drawn in';
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const wrapped = { tops: look.tops(values), lines: look.textBox(first).lines };
       first.textContent = named;
