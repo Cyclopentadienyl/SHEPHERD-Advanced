@@ -653,7 +653,9 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: room for a path (16em, or its whole row when that is narrower): where its
 #: row cannot hold it beside its key and buttons, it and then the buttons
 #: wrap (a phone's column squeezed it to 40 px; verification of fcc3dea,
-#: V-RA-1).
+#: V-RA-1). The evidence folders' box, a path per line, takes its whole row:
+#: its hint ("One folder path on the server per line", 250.5 px in the
+#: dashboard's type) is longer than 16em leaves it (215 px at 390 x 844).
 PAGE_CSS = f"""
 {_PAGE} #shep-dl-bd {{ padding: 4px 16px 12px !important; gap: 0 !important; }}
 {_PAGE} #shep-dl-top {{ gap: 8px !important; align-items: center; flex-wrap: wrap; }}
@@ -692,6 +694,7 @@ PAGE_CSS = f"""
   {_PAGE} .shep-dl-left {{ flex-basis: 100% !important; }}
   {_PAGE} .shep-dl-set {{ flex-wrap: wrap; }}
   {_PAGE} .shep-dl-set > .block:not(.shep-dl-keycell) {{ flex: 1 1 16em !important; min-width: min(16em, 100%) !important; }}
+  {_PAGE} #dl_box_{KEY_TRAINING_EVIDENCE_DIRS} {{ flex-basis: 100% !important; }}
 }}
 """
 

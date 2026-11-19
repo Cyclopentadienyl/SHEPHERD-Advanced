@@ -227,14 +227,14 @@ def test_download_files_live_one_lifetime_then_are_deleted(monkeypatch, tmp_path
     copies of them. Now each file lives `exports.LIFETIME_SECONDS` after it
     was written: older ones go before every write, a directory an earlier
     process left (a crash, an exec) loses its expired files and goes once
-    empty, the process's own directory goes at exit, and Gradio's copies are
-    swept on the same lifetime (the dashboard's ``delete_cache``)."""
+    empty, and the process's own directory goes at exit. Gradio keeps no
+    copy of them since OPS-C-R4 (each is served by an id from this directory,
+    `test_dashboard_downloads.py`), so no sweep of Gradio's cache is needed."""
     import atexit
     import time
     from pathlib import Path
 
     from src.webui import exports
-    from src.webui.app import create_gradio_app
 
     monkeypatch.setattr(exports.tempfile, "tempdir", str(tmp_path))
     monkeypatch.setattr(exports, "_EXPORT_DIR", None)
@@ -265,8 +265,6 @@ def test_download_files_live_one_lifetime_then_are_deleted(monkeypatch, tmp_path
     later = exports.write_new("results_x", "csv", "a,b\n")
     assert not Path(csv_path).exists() and Path(md_path).exists() and later.exists()
     assert exports.prune(mine, now=time.time() + exports.LIFETIME_SECONDS + 1) == 2
-    # Gradio's copies of the same files are swept on the same lifetime.
-    assert create_gradio_app().delete_cache == (exports.SWEEP_SECONDS, exports.LIFETIME_SECONDS)
     fn(*args, **kwargs)
     assert not mine.exists()
 
@@ -431,7 +429,10 @@ def test_the_fields_must_know_rules_are_visible_lines(monkeypatch):
     assert hpo.info == "Only HP:####### ids are read; names and punctuation are ignored."
     assert hpo.placeholder == "HP:0001250, HP:0001263"
     assert patient.info == dp.FIELD_INFO["dx_patient_id"] and not patient.placeholder
-    (typed,) = [fn for fn in demo.fns.values() if (hpo._id, "change") in fn.targets]
+    # The box's change listener on the server (the page also counts the edit
+    # in the browser, in its own event: `INPUTS_HEAD`).
+    (typed,) = [fn for fn in demo.fns.values()
+                if (hpo._id, "change") in fn.targets and fn.fn is not None]
     assert blocks["shep-dx-hpo-echo"] in typed.outputs and hpo in typed.inputs
 
 
@@ -449,9 +450,12 @@ def test_on_diagnose_success_sets_download_values(monkeypatch, status_read):
     assert out["results_state"] is not None and out["results_state"].get("candidates")
     assert out["export_csv"] is not dp._DOWNLOAD_DISABLED
     assert out["export_report"] is not dp._DOWNLOAD_DISABLED
-    # A result shows the exports, which no result had shown (M5-3).
+    # A result shows the exports, which no result had shown (M5-3), each by
+    # its link (an opaque id, never the file's path: OPS-C-R4).
     assert out["export_csv"]["visible"] is True and out["export_csv"]["interactive"] is True
     assert out["export_report"]["visible"] is True and out["export_report"]["interactive"] is True
+    assert out["export_csv"]["link"].startswith("download/")
+    assert out["export_report"]["link"].startswith("download/")
     assert out["selected"] == 1 and "Dravet syndrome" in out["details_hd"]
 
 
@@ -484,7 +488,7 @@ def test_no_export_buttons_are_shown_before_a_result():
                if getattr(c, "elem_id", None) in ("shep-dx-export-csv", "shep-dx-export-md")}
     assert set(buttons) == {"shep-dx-export-csv", "shep-dx-export-md"}
     assert all(b.visible == "hidden" for b in buttons.values())
-    assert dp._EXPORTS_HIDDEN["visible"] == "hidden" and dp._EXPORTS_HIDDEN["value"] is None
+    assert dp._EXPORTS_HIDDEN["visible"] == "hidden" and dp._EXPORTS_HIDDEN["link"] is None
     assert "#shep-dx-results-ft:has(#shep-dx-export-csv.hidden) #shep-dx-exports-help" in dp.PAGE_CSS
 
 
@@ -1952,10 +1956,13 @@ def test_a_selected_row_shows_its_details_with_its_counts():
     assert dp.select_candidate(_sample_result(), "evidence", "99") == {}
     paths = dp.details_outputs(_sample_result(), 1, "paths")
     assert "MONDO:0011073" in paths["details_html"]["value"]
+    # The Explanation view: its lead from the result (the HTML view), the
+    # written explanation whole under its fold (the Markdown view, R-1b).
     explanation = dp.details_outputs(_sample_result(), 1, "explanation")
     assert dp.VIEW_OFF not in explanation["details_md"]["elem_classes"]
     assert explanation["details_md"]["value"] == "Because ..."
-    assert dp.VIEW_OFF in explanation["details_html"]["elem_classes"]
+    assert dp.VIEW_OFF not in explanation["details_html"]["elem_classes"]
+    assert dp.EXPLANATION_FOLD in explanation["details_html"]["value"]
 
 
 #: What may still be shown or hidden with ``visible``: the two drawers (whole
@@ -1991,7 +1998,11 @@ def test_the_details_switch_views_by_class():
             out = dp.details_outputs(result, rank, segment)
             _assert_views_switch_by_class(out)
             assert _shown(out["details_seg"]) is (rank is not None)
-            assert _shown(out["details_html"]) is not _shown(out["details_md"])
+            # The HTML view always; the Markdown view is the Explanation
+            # view's written explanation, under its fold (R-1b).
+            written = (rank is not None and segment == "explanation"
+                       and bool(result["candidates"][rank - 1].get("explanation")))
+            assert _shown(out["details_html"]) and _shown(out["details_md"]) is written
             assert "shep-html" in out["details_html"]["elem_classes"]
     _assert_views_switch_by_class(dp.select_candidate(result, "explanation", "1"))
 
@@ -2474,39 +2485,40 @@ def test_the_task_inputs_are_never_run_outputs_and_clear_on_every_edit(monkeypat
 
 def test_a_result_stays_only_while_the_inputs_are_the_ones_it_answered(monkeypatch,
                                                                        status_read):
-    """UI-15 (B73): a run keeps the boxes as it read them; once its answer is
+    """UI-15 (B73): a run keeps the page's inputs generation as its request
+    carried it (the count of the edits of the HPO box, the genes box and the
+    cohort's pick, `INPUTS_HEAD`, `INPUTS_GEN_JS`); once its answer is
     written, the check run after it (`answered_inputs`, chained after Run
-    Diagnosis with the boxes as they are then) clears it as an edit does
-    (`phenotypes_changed`) when the HPO box, the genes box or the cohort's
-    pick is no longer what it ran on, and changes nothing when they are, so
-    the result keeps its model's identity. On fcc3dea there was no check:
-    an edit made while the run was in flight left the answer, to the older
-    query, under the edited box."""
+    Diagnosis with the generation as it is then) clears it as an edit does
+    (`phenotypes_changed`) when an edit was made since, and changes nothing
+    when none was, so the result keeps its model's identity. On fcc3dea
+    there was no check: an edit made while the run was in flight left the
+    answer, to the older query, under the edited box. (The page draws no
+    such answer in the meantime: `tests/unit/test_diagnosis_stale_answer.py`,
+    OPS-C-R3.)"""
     _sent(monkeypatch, _gene_result())
     out = dp.diagnose("HP:0001250", "", 10, True, _task_card("gene_task"), "idle", {}, None,
-                      genes_text="SCN1A, PTEN", cohort=None)
+                      genes_text="SCN1A, PTEN", cohort=None, gen=3)
     result, state = out["results_state"], out["card_state"]
-    assert result["_query_inputs"] == dp.query_inputs("HP:0001250", "SCN1A, PTEN", None)
-    assert dp.answered_inputs(result, state, "HP:0001250", "SCN1A, PTEN", None) == {}
-    # An empty box reads the same however Gradio sends it.
-    assert dp.query_inputs(None, None, "") == dp.query_inputs("", "", None)
-    for edited in (("HP:0001263", "SCN1A, PTEN", None), ("HP:0001250", "SCN1A", None),
-                   ("HP:0001250", "SCN1A, PTEN", "reference-2")):
-        cleared = dp.answered_inputs(result, state, *edited)
+    assert result["_inputs_gen"] == 3
+    assert dp.answered_inputs(result, state, 3) == {}
+    # A generation that is not a count is none, which no answer is kept under.
+    assert [dp.inputs_generation_of(v) for v in (None, "3", True, -1, 2.0, 4)] == [None] * 5 + [4]
+    for edited in (4, 9, None):
+        cleared = dp.answered_inputs(result, state, edited)
         assert cleared == dp.phenotypes_changed(result, state), edited
         assert cleared["results_state"] is None and "Inputs changed" in cleared["results_body"]
         assert cleared["export_csv"] is dp._EXPORTS_HIDDEN
-    assert dp.answered_inputs(None, state, "HP:0001263", "", None) == {}
-    # The wiring: chained after Run Diagnosis, outside the queue, the boxes
-    # read as they are then, the edit's outputs written.
+    assert dp.answered_inputs(None, state, 4) == {}
+    # The wiring: chained after Run Diagnosis, outside the queue, the
+    # generation read as it is then, the edit's outputs written.
     demo, _ctx = _build_tab(monkeypatch)
     blocks = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     (run,) = _named(demo, "_run_diagnosis")
     (check,) = _named(demo, "_answered_inputs")
     (edit,) = _named(demo, "_phenotypes_edited")
     assert check.trigger_after == run._id and check.queue is False
-    assert check.inputs[2:] == [blocks["dx_hpo_terms"], blocks["dx_candidate_genes"],
-                                blocks["dx_reference_cohort"]]
+    assert check.inputs[2:] == [blocks["shep-dx-inputs-gen"]]
     assert check.outputs == edit.outputs
 
 
@@ -2567,6 +2579,7 @@ def test_every_edit_of_the_genes_box_clears_the_result_shown(monkeypatch, tmp_pa
     import copy
 
     from src.webui import shell
+    from src.webui.app import mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
 
@@ -2583,7 +2596,9 @@ def test_every_edit_of_the_genes_box_clears_the_result_shown(monkeypatch, tmp_pa
         shell.build_shell(demo, {**{page: (lambda ctx: None)
                                     for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
                                  shell.CLINICAL: dp.create_diagnosis_tab})
-    with served(demo) as base:
+    # The page as the dashboard serves it, its head too: the page counts its
+    # inputs' edits there (`dp.INPUTS_HEAD`).
+    with served(demo, **mount_options()) as base:
         seen = run_node(_GENES_EDIT_JS, tmp_path, base[:-len("gradio_api")])
     assert seen["select_all_delete"] == {"cleared": True, "value": ""}, seen
     assert seen["cut"] == {"cleared": True, "value": ""}, seen
@@ -2723,6 +2738,7 @@ def test_an_input_methods_text_and_an_edit_during_a_run_clear_the_result_shown(
     import time
 
     from src.webui import shell
+    from src.webui.app import mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
 
@@ -2753,7 +2769,8 @@ def test_an_input_methods_text_and_an_edit_during_a_run_clear_the_result_shown(
                                  shell.CLINICAL: dp.create_diagnosis_tab})
     run = next(fn._id for fn in demo.fns.values() if fn.name == "_run_diagnosis")
     check = next((fn._id for fn in demo.fns.values() if fn.name == "_answered_inputs"), -1)
-    with served(demo) as base:
+    # The page as the dashboard serves it, its head too (`dp.INPUTS_HEAD`).
+    with served(demo, **mount_options()) as base:
         seen = run_node(_DX_EDITS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")], str(gate), str(asked), str(run), str(check))
     # (a) An input method's text clears the result shown, in either box.
@@ -3390,11 +3407,32 @@ def test_the_details_header_is_rank_name_and_id_and_each_score_is_said_once():
     identity drawer and the exports (the table, the header and every details
     view the page draws)."""
     result = _paths_result()
-    for segment in ("evidence", "phenotypes", "paths"):
+    # The pipeline's written explanation opens with the candidate and its
+    # score, as the API writes it (R-1b: shown as the Explanation view, the
+    # row's score was on screen twice).
+    written = ("## Diagnosis Candidate: Dravet syndrome\n"
+               "Score: -0.280 (a ranking score, not a calibrated disease probability)\n\n"
+               "### Matching Phenotypes\n- Global developmental delay (HP:0001263)\n")
+    result["candidates"][0]["explanation"] = written
+    for segment in ("evidence", "explanation", "phenotypes", "paths"):
         out = dp.details_outputs(result, 1, segment)
         page = _visible(dp.results_body_html(result, 1) + out["details_hd"]
                         + out["details_html"]["value"])
         assert page.count("-0.280") == 1, segment
+    # The Explanation view as first shown: what the explanation sets out, from
+    # the result, the score referred to by the table; the explanation itself
+    # whole and unchanged in the Markdown view, drawn only while its fold is
+    # open (closed until the reader opens it).
+    out = dp.details_outputs(result, 1, "explanation")
+    assert _visible(out["details_html"]["value"]) == (
+        "Score " + dp.EXPLANATION_SCORE + " Matching phenotypes listed under Matching "
+        "phenotypes › Supporting genes SCN1A CDKL5 Direct paths 5 · listed under Paths ›")
+    assert out["details_html"]["value"].endswith(
+        '<details class="shep-more shep-dx-written"><summary>Written explanation ›</summary>'
+        '</details></div>')
+    assert out["details_md"]["value"] == written
+    assert ("#shep-tab-clinical #shep-dx-details-bd:has(details.shep-dx-written:not([open])) "
+            "#shep-dx-explanation { display: none !important; }") in dp.PAGE_CSS
     hd = dp.details_header_html(result["candidates"][0], "disease_task/v1")
     assert _visible(hd) == "#1 Dravet syndrome MONDO:0011073"
     gene = _gene_result()
@@ -3751,12 +3789,22 @@ const { chromium } = require('playwright');
     }, name, { timeout: 20000 });
   };
   await seg('Explanation');
-  await page.waitForFunction(() => !document.querySelector('#shep-dx-explanation').classList.contains('shep-dx-off')
+  // As first shown: the view's lead, the written explanation under its fold.
+  await page.waitForFunction(() => /Written explanation/.test(document.querySelector('#shep-dx-details-body').innerText),
+                             null, { timeout: 20000 });
+  text = await body();
+  // (A hidden element's innerText is its whole text: what is drawn is its boxes.)
+  const drawn = () => page.evaluate(() => document.querySelector('#shep-dx-explanation').getClientRects().length);
+  seen.explanation = { score: count(text, score), written: await drawn() };
+  // The fold opened: the written explanation, whole, right under it.
+  await page.click('#shep-dx-details-body details.shep-dx-written > summary');
+  await page.waitForFunction(() => document.querySelector('#shep-dx-explanation').getClientRects().length > 0
                              && document.querySelector('#shep-dx-explanation').innerText.trim().length > 0,
                              null, { timeout: 20000 });
   text = await body();
-  seen.explanation = { device: count(text, 'Not a certified medical device'),
-                       note: count(text, 'computational prediction') };
+  Object.assign(seen.explanation, { device: count(text, 'Not a certified medical device'),
+                                    note: count(text, 'computational prediction'),
+                                    opened: count(text, score) });
   // The identity drawer at Model in use, then This result.
   await page.click('#shep-dx-details-btn');
   await page.waitForFunction(() => document.querySelector('#shep-dx-id-model [data-sec="identity"]'),
@@ -3791,7 +3839,9 @@ def test_in_a_browser_each_notice_score_and_path_length_is_said_once(served, mon
                                                                       tmp_path):
     """T06-D as drawn (Node and Playwright, skipped without), on the real
     application serving a disease child: the row's score is on screen once
-    (R-1b); no "Mode A" and the shortest path's length once (R-3,
+    (R-1b), with the Explanation view as first shown too (its written
+    explanation, which opens with the score, folded; the review of 6a2d52e);
+    no "Mode A" and the shortest path's length once (R-3,
     NEW-diagnosis-2); the device line once, the results footer's, with the
     Explanation view open (NEW-diagnosis-1) and with the identity drawer open
     at either view (R-26); no capitals in a banner and no "synthetic data"
@@ -3824,7 +3874,12 @@ def test_in_a_browser_each_notice_score_and_path_length_is_said_once(served, mon
     assert evidence["shortest"] <= 1 and evidence["device"] == 1 and not evidence["ms"], seen
     assert re.fullmatch(r"\d+ / 2", evidence["kn"].strip()), seen
     assert evidence["score"] == 1 and "Score" not in evidence["head"], seen
-    assert seen["explanation"] == {"device": 1, "note": 0}, seen
+    # R-1b: with the Explanation view as first shown the row's score is on
+    # screen once (the table's), the written explanation folded; opened, the
+    # explanation is the API's whole text, its own score line included.
+    assert seen["explanation"]["score"] == 1 and seen["explanation"]["written"] == 0, seen
+    assert seen["explanation"]["opened"] == 2, seen
+    assert {k: seen["explanation"][k] for k in ("device", "note")} == {"device": 1, "note": 0}, seen
     model = seen["model"]
     assert model["device"] == 1 and model["caps"] == 0 and model["details"] == 0, seen
     assert model["order"][0] == "warnings" and "uses" not in model["order"], seen

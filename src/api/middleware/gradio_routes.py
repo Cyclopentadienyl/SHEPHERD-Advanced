@@ -7,9 +7,11 @@ switch to turn any of them off (no ``gr.Blocks``, ``mount_gradio_app`` or
 files):
 
 * ``GET|HEAD <mount>/gradio_api/file=<target>`` and its older alias
-  ``<mount>/gradio_api/file/<target>``. A local ``<target>`` is how ``gr.File``
-  and ``gr.DownloadButton`` hand an export (CSV, Markdown) to the browser, and
-  keeps working. An ``http(s)://`` ``<target>`` is fetched **by the server**
+  ``<mount>/gradio_api/file/<target>``. A local ``<target>`` is Gradio's own
+  way to serve a file it holds, and keeps working; the dashboard's downloads
+  no longer use it (their links name an opaque id at ``<mount>/download/``,
+  never a server path: `src/webui/exports.py`, OPS-C-R4), and Gradio serves
+  no file of theirs. An ``http(s)://`` ``<target>`` is fetched **by the server**
   since Gradio 6.20 (issue #13593, PR #13596 replaced the old redirect with a
   server-side fetch) and streamed back on this origin. That fetch ignores
   ``HTTPS_PROXY``, and for a ``.png``, ``.txt`` or ``.json`` URL whose server
@@ -31,7 +33,7 @@ files):
 This middleware answers each with 403, a one-line reason and
 ``connection: close``, and never calls ``receive()``: the request body is not
 read and nothing is written. Every other request passes through untouched,
-local ``file=`` downloads (GET, HEAD and Range) included.
+a local ``file=`` target (GET, HEAD and Range) included.
 
 Matching uses the decoded path Starlette routes on (``scope["path"]`` less
 ``root_path``, as ``starlette._utils.get_route_path`` computes it), so a

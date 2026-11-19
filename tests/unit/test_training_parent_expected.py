@@ -453,6 +453,13 @@ def _values(tc):
     return [tc.form_value(tc._branch_field_value(name)) for name in tc.BRANCH_FIELDS]
 
 
+def _shown(tc, ws, parents, source, key):
+    """The run bar's Dataset and the list's Run as a settled page shows them
+    (the drawer's start carries them, OPS-C-R2)."""
+    item = (parents or {}).get(key) if source != tc.CONTINUE_FROM_PATH and key else None
+    return (ws or {}).get("name"), (tc._model_list().item_run_key(item) if item else None)
+
+
 def _check(c, source, typed="", mode=None, operation=None):
     """Check checkpoint for the drawer's operation (Continue unless given):
     its text, Extra epochs update, mode and comparison."""
@@ -468,8 +475,9 @@ def _continue(c, source, typed="", mode=None, operation=None):
     check's text, the Extra epochs update and the mode."""
     tc = c["tc"]
     said, text, extend, _rate, mode, *_branch = tc._on_resume(
-        OP, operation or tc.CONTINUE, c["state"], "", "cpu", source, c["key"], typed, None, None,
-        c["listed"], mode or {}, [], *_values(tc))
+        OP, *_shown(tc, c["state"], c["listed"], source, c["key"]), operation or tc.CONTINUE,
+        c["state"], "", "cpu", source, c["key"], typed, None, None, c["listed"], mode or {}, [],
+        *_values(tc))
     return said, text, extend, mode
 
 
@@ -637,7 +645,8 @@ def test_a_typed_parent_changed_after_the_consoles_check_is_refused_by_the_start
     monkeypatch.setattr(manager, "preview_continuation", preview)
     shown = _sha(case["parents"]["a"])
     with patch.object(tm.subprocess, "Popen") as popen:
-        said, *_rest = tc._on_resume(OP, tc.CONTINUE, ws, "", "cpu", tc.CONTINUE_FROM_PATH, key,
+        said, *_rest = tc._on_resume(OP, *_shown(tc, ws, parents, tc.CONTINUE_FROM_PATH, key),
+                                     tc.CONTINUE, ws, "", "cpu", tc.CONTINUE_FROM_PATH, key,
                                      str(case["parents"]["a"]), None, None, parents, {}, [],
                                      *_values(tc))
     assert sent == [None, shown]
@@ -709,7 +718,8 @@ def test_a_typed_branch_parent_changed_after_the_consoles_check_is_refused_by_th
     monkeypatch.setattr(manager, "preview_branch", preview)
     shown = _sha(case["parents"]["a"])
     with patch.object(tm.subprocess, "Popen") as popen:
-        said, *_rest = tc._on_resume(OP, tc.BRANCH, ws, "", "cpu", tc.CONTINUE_FROM_PATH, key,
+        said, *_rest = tc._on_resume(OP, *_shown(tc, ws, parents, tc.CONTINUE_FROM_PATH, key),
+                                     tc.BRANCH, ws, "", "cpu", tc.CONTINUE_FROM_PATH, key,
                                      str(case["parents"]["a"]), None, None, parents, {}, [],
                                      *_values(tc))
     assert sent == [None, shown]
@@ -736,7 +746,8 @@ def test_a_same_settings_branch_from_the_page_is_a_new_run_from_its_parent(case,
     manager = tm.TrainingManager()
     monkeypatch.setattr(tc, "training_manager", manager)
     shown = _sha(case["parents"]["a"])
-    said, text, *_rest = tc._on_resume(OP, tc.BRANCH, ws, "", "cpu", tc.CONTINUE_FROM_LIST, key,
+    said, text, *_rest = tc._on_resume(OP, *_shown(tc, ws, parents, tc.CONTINUE_FROM_LIST, key),
+                                       tc.BRANCH, ws, "", "cpu", tc.CONTINUE_FROM_LIST, key,
                                        "", None, None, parents, {}, [], *_values(tc))
     assert said == "", said
     assert "no setting changed" in text

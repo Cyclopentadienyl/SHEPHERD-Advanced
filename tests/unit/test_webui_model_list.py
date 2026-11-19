@@ -397,6 +397,9 @@ const ROWS = '#shep-models-clinical-rows', FACTS = '#shep-models-clinical-facts'
   out.fit = await page.evaluate(([R, F]) => { const rows = document.querySelector(R), facts = document.querySelector(F);
     return { rows: [rows.clientWidth, rows.scrollWidth], facts: [facts.clientWidth, facts.scrollWidth],
              body: [rows.parentElement.clientWidth, rows.parentElement.scrollWidth] }; }, [ROWS, FACTS]);
+  // Measured in the dashboard's own type: its fonts' faces, as the page loaded them.
+  out.font = await page.evaluate(() => [...document.fonts]
+    .filter((f) => f.family.replace(/["']/g, '') === 'IBM Plex Sans').map((f) => f.status));
   // Stacked: the list, the details, Load, in that order; a file chosen brings its
   // details into view, "Back to the list" the row.
   await page.setViewportSize({ width: 760, height: 1000 });
@@ -436,7 +439,13 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
     still side by side, the tree of every task's models (614 px) is whole in
     its region and the details in theirs: the list was 524 px there, its tree
     cut at the Fingerprint column, before the shared tree took 7 px a side
-    and the regions their measured minimums."""
+    and the regions their measured minimums. Measured in the dashboard's own
+    type (IBM Plex Sans, served beside the page as the API serves it): the
+    test server served no fonts, so the page was drawn in the host's fallback
+    and the tree, 612.9 px at its narrowest in this host's Inter, was 617 px
+    in its 616 px region on the reviewer's host (the review of 6a2d52e) and
+    655 px where no Inter is installed (DejaVu Sans); in IBM Plex Sans it is
+    599.2 px. Fails on 6a2d52e (the fonts did not load)."""
     from src.webui.app import mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -453,6 +462,7 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
     assert after["load"] == before["load"] and after["loadOnTop"], seen
     assert after["load"][1] <= after["innerH"], seen
     assert after["list"][0] == after["facts"][0], seen            # side by side
+    assert seen["font"] and all(state == "loaded" for state in seen["font"]), seen["font"]
     fit = seen["fit"]                         # at 1280 x 900, nothing cut or scrolled sideways
     assert all(scroll <= client for client, scroll in fit.values()), fit
     stacked = seen["stacked"]

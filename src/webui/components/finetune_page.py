@@ -68,9 +68,13 @@ Module: src/webui/components/finetune_page.py
   or the job runner's refusal in its words, a setting it names first by the
   field's label (`training_console.labelled_problem`).
 
-**Start** (D8 first): the workspace and the parent are resolved by the server
-from its lists again (`resolve_workspace`, `resolve_checkpoint`; never a
-client path), then the job runner's one Fine-tune start
+**Start** (D8 first): the Dataset and Run selects as Start's own request
+carries them, against what the session read for them (`shell.unread_choice`):
+a choice whose reading has not landed, or failed, is refused beside Start,
+never started on the choice before it (OPS-C-R2); the workspace and the
+parent are resolved by the server from its lists again (`resolve_workspace`,
+`resolve_checkpoint`; never a client path), then the job runner's one
+Fine-tune start
 (`TrainingManager.start_finetune`) with the parent's listed digest and the
 dataset fingerprint shown. Its checks before anything starts (the parent a
 base with weights, its graph, each task's fixture, the settings, the freeze
@@ -130,7 +134,7 @@ from src.webui.components.help import help_button
 from src.webui.components.workspaces import read_workspaces, redact, workspaces_root
 from src.webui.operator_access import operator_access
 from src.webui.shell import FINETUNE as PAGE
-from src.webui.shell import page_elem_id, picked, plain_html
+from src.webui.shell import page_elem_id, picked, plain_html, unread_choice
 from src.webui.style import SIDE
 
 logger = logging.getLogger(__name__)
@@ -648,35 +652,47 @@ def products_of(finetune: Optional[Mapping[str, Any]], held: Mapping[str, Any]
     return out
 
 
-def _products_cells(child: Mapping[str, Any], *, operator: bool,
-                    products: Mapping[str, Any]) -> str:
+def _products(child: Mapping[str, Any], *, operator: bool,
+              products: Mapping[str, Any]) -> Tuple[str, Optional[str]]:
+    """An ended child's products, each HTML, as ``(best save, validation)``;
+    or ``(why, None)``: one line said once for both (the table's one cell over
+    the two columns, the narrow card's one row)."""
     status = child.get("status")
     if status in ("queued", "running", "stopping"):
-        return '<td colspan="2" class="shep-muted">after it ends</td>'
+        return "after it ends", None
     if status in ("cancelled", "refused") or not child.get("run_dir"):
-        return '<td colspan="2" class="shep-muted">no run</td>'
+        return "no run", None
     if not operator:
-        return (f'<td colspan="2" class="shep-muted">{tc.LOCK_ICON} not shown: reading the '
-                'checkpoints is an operator control</td>')
+        return f"{tc.LOCK_ICON} not shown: reading the checkpoints is an operator control", None
     found = products.get(f"{child['run_dir']}|{status}") or {}
     if found.get("problem"):
-        return f'<td colspan="2" class="shep-muted">not read: {r.e(found["problem"])}</td>'
+        return f"not read: {r.e(found['problem'])}", None
     best = found.get("best") or []
     if not best:
         why = ("no saved file records its selection metric's figure" if found.get("recorded")
                else f"{r.selection_words({}).lower()} in its saved files")
-        return f'<td colspan="2" class="shep-muted">{r.e(why)}</td>'
+        return r.e(why), None
     names = "".join(f"<div>{r.e(entry['words'])}</div>" for entry in best)
     by = f'<div class="shep-sub">{r.e(best[0]["selection"])}</div>'
-    return f"<td>{names}{by}</td><td>{r.validation_cell(best[0]['validation'])}</td>"
+    return f"{names}{by}", r.validation_cell(best[0]["validation"])
 
 
-def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mapping[str, Any]) -> str:
-    """One child's row: Task | Status | Run | Best save | Validation
-    (Trainer), escaped (a failure's first line through the one redaction of a
-    printed line, `training_console.printed_scrub`, whoever calls). The run is
-    its name part (`renderers.run_name`; the parent line and the Task column
-    say the rest), its whole id in its title."""
+#: The job card's two product columns and their ⓘ: the table's heads, the
+#: narrow card's keys.
+BEST_SAVE, VALIDATION = "Best save", "Validation (Trainer)"
+_PRODUCT_HELPS = {BEST_SAVE: ("finetune-best-save", BEST_SAVE),
+                  VALIDATION: ("validation-trainer", VALIDATION)}
+
+
+def _child_view(child: Mapping[str, Any], *, operator: bool,
+                products: Mapping[str, Any]) -> Dict[str, Any]:
+    """**One child as the card says it, whichever form draws it**: its task,
+    status, run and products (`_products`), each HTML, escaped (a failure's
+    first line through the one redaction of a printed line,
+    `training_console.printed_scrub`, whoever calls). The run is its name part
+    (`renderers.run_name`; the parent line and the task say the rest), its
+    whole id in its title. The table's row and the narrow card's summary list
+    are both drawn from it (`_row_html`, `_list_html`)."""
     status = str(child.get("status") or "queued")
     task = TASK_NAMES.get(child.get("task"), str(child.get("task")))
     why = ""
@@ -687,23 +703,61 @@ def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mappin
     architecture, run = _run_parts(child.get("run_dir"))
     if run:
         whole = f"{architecture}/{run}"
-        run_cell = (f'<div class="shep-ft-run">{r.ident_html(r.run_name(run) or whole, title=whole)}'
+        run_html = (f'<div class="shep-ft-run">{r.ident_html(r.run_name(run) or whole, title=whole)}'
                     "</div>")
     else:
-        run_cell = ('<span class="shep-muted">not started yet</span>' if status == "queued" else
+        run_html = ('<span class="shep-muted">not started yet</span>' if status == "queued" else
                     '<span class="shep-muted">never started</span>')
-    return (f"<tr><td>{r.e(task)}</td><td>{tc.job_status_html(status)}{why}</td>"
-            f"<td>{run_cell}</td>{_products_cells(child, operator=operator, products=products)}"
-            "</tr>")
+    best, validation = _products(child, operator=operator, products=products)
+    return {"task": r.e(task), "status": f"{tc.job_status_html(status)}{why}", "run": run_html,
+            "best": best, "validation": validation}
+
+
+def _row_html(view: Mapping[str, Any]) -> str:
+    """A child's table row (`_child_view`): Task | Status | Run | Best save |
+    Validation (Trainer); a line said for both products is one cell over the
+    two columns."""
+    if view["validation"] is None:
+        products = f'<td colspan="2" class="shep-muted">{view["best"]}</td>'
+    else:
+        products = f"<td>{view['best']}</td><td>{view['validation']}</td>"
+    return (f"<tr><td>{view['task']}</td><td>{view['status']}</td><td>{view['run']}</td>"
+            f"{products}</tr>")
+
+
+def _list_html(view: Mapping[str, Any]) -> str:
+    """**A child on a card narrower than the table's narrowest** (UI ledger
+    V-20; the review of 6a2d52e, OPS-C-R6): the same child (`_child_view`) as
+    the one summary list (`renderers.summary_list`, the skill's §4: one thing,
+    several attributes), its task as its title and Status, Run, Best save and
+    Validation (Trainer) as its rows, each product key with its table head's
+    ⓘ; a line said for both products is one row named by both."""
+    rows = [("Status", view["status"]), ("Run", view["run"])]
+    if view["validation"] is None:
+        rows.append((f"{BEST_SAVE}, {VALIDATION}",
+                     f'<span class="shep-muted">{view["best"]}</span>'))
+    else:
+        rows += [(BEST_SAVE, view["best"]), (VALIDATION, view["validation"])]
+    return (f'<section class="shep-ft-child"><h3 class="shep-ft-child-t">{view["task"]}</h3>'
+            f"{r.summary_list(rows, helps=_PRODUCT_HELPS)}</section>")
+
+
+def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mapping[str, Any]) -> str:
+    """One child's table row (`_row_html` of `_child_view`)."""
+    return _row_html(_child_view(child, operator=operator, products=products))
 
 
 def job_card_html(status: Mapping[str, Any], *, operator: bool,
                   products: Optional[Mapping[str, Any]] = None) -> str:
     """The Fine-tune job card from the job runner's status (`get_status()`):
-    its parent, the start's graph backbone (`freeze_line_html`) and one row
-    per child; or, with no Fine-tune status, why
-    (none since the server started, or the next base or continued run cleared
-    it), in words of its own."""
+    its parent, the start's graph backbone (`freeze_line_html`) and its
+    children, each drawn once from its one view (`_child_view`) in both forms:
+    a row of the table, and a summary list (`_list_html`) that the card shows
+    instead of the table while the card is narrower than the table's narrowest
+    (`TABLE_FROM`, the card's own width: a container query, never the
+    window's); or, with no Fine-tune status, why (none since the server
+    started, or the next base or continued run cleared it), in words of its
+    own."""
     finetune = status.get("finetune")
     if not finetune:
         if (status.get("status") or "idle") == "idle":
@@ -713,16 +767,19 @@ def job_card_html(status: Mapping[str, Any], *, operator: bool,
             text = ("No Fine-tune job to show: the latest training job is a base or continued "
                     "run (Research › Training shows it). The next Fine-tune start shows here.")
         return f'<div class="shep-ft-card"><p class="shep-ft-empty">{r.e(text)}</p></div>'
-    rows = "".join(child_row_html(child, operator=operator, products=products or {})
-                   for child in finetune.get("children") or [])
+    views = [_child_view(child, operator=operator, products=products or {})
+             for child in finetune.get("children") or []]
+    rows = "".join(_row_html(view) for view in views)
+    lists = "".join(_list_html(view) for view in views)
     head = ("<thead><tr><th>Task</th><th>Status</th><th>Run</th>"
-            f'<th>Best save{help_button("finetune-best-save", "Best save")}</th>'
-            f'<th>Validation (Trainer){help_button("validation-trainer", "Validation (Trainer)")}'
+            f"<th>{BEST_SAVE}{help_button(*_PRODUCT_HELPS[BEST_SAVE])}</th>"
+            f"<th>{VALIDATION}{help_button(*_PRODUCT_HELPS[VALIDATION])}"
             "</th></tr></thead>")
     link = ('<button type="button" class="shep-link" data-act="training">Charts on Research › '
             'Training ›</button>')
     return (f'<div class="shep-ft-card">{parent_line_html(finetune)}{freeze_line_html(finetune)}'
             f'<table class="shep-ft-table">{head}<tbody>{rows}</tbody></table>'
+            f'<div class="shep-ft-children">{lists}</div>'
             f'<p class="shep-ft-links">{link}</p></div>')
 
 
@@ -1015,13 +1072,18 @@ def _on_hops_input(tasks, key, parents, touched, *values):
             hops_note_html(tasks, item, touched, hops), hops_warning_html(tasks, item, touched, hops))
 
 
-def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run_name,
-                       touched, *values):
+def _on_finetune_start(request: gr.Request, dataset, run, ws, parents, key, tasks, device,
+                       run_name, touched, *values):
     """Start: an operator control (D8), checked first on this event's own
-    request; then the Fine-tune start (`_start`) with the settings' fields'
-    `values`, in `FINETUNE_FIELDS` order, and `touched`, the form's record of
-    the fields the operator touched, as this click's own request carries it
-    (`training_console.touched_record`).
+    request; then the selection it uses, as this click's own request carries
+    the Dataset and Run selects (`dataset`, `run`; the Checkpoint is `key`),
+    against what the session read for them (`shell.unread_choice`: the
+    workspace `ws`, the chosen base's run in `parents`), so a choice whose
+    reading has not landed (or failed) is refused, never started on the one
+    before it (OPS-C-R2); then the Fine-tune start (`_start`) with the
+    settings' fields' `values`, in `FINETUNE_FIELDS` order, and `touched`, the
+    form's record of the fields the operator touched, as this click's own
+    request carries it (`training_console.touched_record`).
 
     Returns the notice beside Start, a refusal with the shared mark of a
     refusal, escaped (`training_console.notice_html`), or nothing once started
@@ -1034,6 +1096,11 @@ def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run
     access = operator_access(request)
     if not access.allowed:
         return tc.notice_html(access.refusal, mark="error"), "", gr.update()
+    item = (parents or {}).get(key) if key else None
+    unread = unread_choice(("Dataset", dataset, (ws or {}).get("name")),
+                           *([("Run", run, ml.item_run_key(item))] if item else []))
+    if unread:
+        return tc.notice_html(f"Not started: {unread}", mark="error"), "", gr.update()
     fields = dict(zip(FINETUNE_FIELDS, values, strict=True))
     said, of_the_form = _start(ws, parents, key, tasks, device, run_name, fields, touched)
     if of_the_form:
@@ -1334,7 +1401,7 @@ def create_finetune_page(ctx: Any) -> None:
                        elem_id="ft_job_hd")
             with gr.Column(elem_id="ft_job_bd", elem_classes=["shep-ft-bd"]):
                 card = plain_html(job_card_html({"status": "idle"}, operator=False),
-                                  elem_id="ft_card", js_on_load=tc.TRIGGER_JS)
+                                  elem_id="ft_card", js_on_load=r.TRIGGER_JS)
                 with gr.Row(elem_classes=["shep-ft-stop-row"]):
                     # Drawn only while a child of this page's start runs or
                     # stops (`actions_view`'s ``stop_shown``): none at first.
@@ -1386,10 +1453,12 @@ def create_finetune_page(ctx: Any) -> None:
                         outputs=[card, start, stop, reason, stop_reason, confirm_row, cache],
                         queue=False, show_progress="hidden")
 
+    # Every choice is kept ("multiple", `shell.picked`): one made while the
+    # one before it is read is read after it, never dropped.
     picked(dataset)(_on_dataset, inputs=[dataset, tasks],
                     outputs=[ws, identity, tasks, tasks_note],
-                    show_progress="hidden").then(**bases_step).then(**base_step).then(
-        **ctx.chip_refresh)
+                    show_progress="hidden", trigger_mode="multiple").then(**bases_step).then(
+        **base_step).then(**ctx.chip_refresh)
     refresh.click(**bases_step).then(**base_step).then(**ctx.chip_refresh)
     run_select.change(ml.on_run_chosen, inputs=[run_select, parents, checkpoint],
                       outputs=[checkpoint], show_progress="hidden")
@@ -1431,8 +1500,11 @@ def create_finetune_page(ctx: Any) -> None:
           inputs=[fields[name] for name in guards],
           outputs=[fields[name] for name in dependent], queue=False, show_progress="hidden")
 
+    # Start carries the Dataset and Run selects as the reader sees them, which
+    # it checks against what the session read for them (`_on_finetune_start`).
     start.click(_on_finetune_start,
-                inputs=[ws, parents, checkpoint, tasks, device, run_name, touched, *field_list],
+                inputs=[dataset, run_select, ws, parents, checkpoint, tasks, device, run_name,
+                        touched, *field_list],
                 outputs=[notice, stop_notice, refused], show_progress="hidden").then(
         tc.close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden").then(
         **card_step).then(**ctx.chip_refresh)
@@ -1446,7 +1518,7 @@ def create_finetune_page(ctx: Any) -> None:
 
     def _on_card_click(evt: gr.EventData):
         """The card's "Charts on Research › Training ›"."""
-        return ctx.go("training") if tc.event_act(evt) == "training" else ctx.no_nav()
+        return ctx.go("training") if r.event_act(evt) == "training" else ctx.no_nav()
 
     card.click(_on_card_click, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
 
@@ -1454,13 +1526,25 @@ def create_finetune_page(ctx: Any) -> None:
 #: This page's element id (`shell.page_elem_id`), the scope of `PAGE_CSS`.
 _PAGE = "#" + page_elem_id(PAGE)
 
-#: The job card's Run column at its narrowest (seven characters of the code
-#: font): about what the other columns leave it in a 420 px card (the job
-#: panel at 1536 x 760) once a child has ended (its best saves' words and
-#: the Trainer's figure). Past it the column takes its share of the card's
-#: room; a name's token wider than that share is cut, never widening the
-#: table (the review of a6aae90).
-RUN_FLOOR = "60px"
+#: The job card's Run column at its narrowest: nine characters of the code
+#: font (14 px), the widest word every child's run name holds, its task's
+#: ("patients-": the runner names a child's run after its task), so no
+#: child's own task word is cut (it was at seven, "patien…", whatever the
+#: card's width). Past it the column takes its share of the card's room; a
+#: name's token wider than that share is cut, never widening the table (the
+#: review of a6aae90).
+RUN_FLOOR = "76px"
+
+#: **The job card's table from this card width on** (px), below it each child
+#: as its summary list (`_list_html`; UI ledger V-20): the table's narrowest,
+#: measured in the dashboard's type (the fit test), is 388.6 px for an ended
+#: Disease child with its best saves and 396.8 px with an ended
+#: Patients-like-me one beside it ("Patients-", "Completed", the run's floor,
+#: "completed", "Validation", 12 px between columns), and side by side the
+#: job panel's minimum (440 px) leaves the card 406 px, so the table is drawn
+#: there. A narrower card (324 px at 390 x 844) cut the table's last column
+#: at the panel's edge (the review of 6a2d52e, OPS-C-R6).
+TABLE_FROM = 404
 
 #: This page's style sheet (listed in `src/webui/app.py`'s ``PAGE_CSS``).
 #: Nothing under 14 px; status colours only through the ``--shep-status-*``
@@ -1513,7 +1597,7 @@ PAGE_CSS = f"""
    refusal (`training_console.notice_html`); an empty one takes no room. */
 {_PAGE} #ft_notice, {_PAGE} #ft_stop_notice {{ font-size: 15px; overflow-wrap: anywhere; }}
 {_PAGE} #ft_notice:not(:has(.shep-notice-t)), {_PAGE} #ft_stop_notice:not(:has(.shep-notice-t)) {{ display: none !important; }}
-{_PAGE} .shep-ft-card {{ display: flex; flex-direction: column; gap: 10px; font-size: 15px; }}
+{_PAGE} .shep-ft-card {{ display: flex; flex-direction: column; gap: 10px; font-size: 15px; container: shep-ft-card / inline-size; }}
 {_PAGE} .shep-ft-empty {{ margin: 0; color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-from {{ margin: 0; overflow-wrap: anywhere; }}
 {_PAGE} .shep-ft-k {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); margin-right: 8px; }}
@@ -1526,8 +1610,22 @@ PAGE_CSS = f"""
    the shared identifier's ellipsis, its whole id in its title, never widening the table (the
    review of a6aae90). */
 {_PAGE} .shep-ft-table {{ width: 100%; border-collapse: collapse; font-size: 15px; }}
-{_PAGE} .shep-ft-table th {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 8px; border-bottom: 1px solid var(--shep-border); vertical-align: bottom; }}
-{_PAGE} .shep-ft-table td {{ padding: 8px; border-bottom: 1px solid var(--shep-border); vertical-align: top; min-width: 0; }}
+{_PAGE} .shep-ft-table th {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px; border-bottom: 1px solid var(--shep-border); vertical-align: bottom; }}
+{_PAGE} .shep-ft-table td {{ padding: 8px 6px; border-bottom: 1px solid var(--shep-border); vertical-align: top; min-width: 0; }}
+{_PAGE} .shep-ft-table :is(th, td):first-child {{ padding-left: 0; }}
+{_PAGE} .shep-ft-table :is(th, td):last-child {{ padding-right: 0; }}
+/* A card narrower than the table's narrowest (`TABLE_FROM`; UI ledger V-20, the review of
+   6a2d52e's OPS-C-R6) shows each child as its summary list instead (`_list_html`, the same child's
+   view as its row): its task as its title, its rows the table's columns, a line between children
+   as between the table's rows. Keyed to the card's own width (its container), never the window's. */
+{_PAGE} .shep-ft-children {{ display: none; }}
+@container shep-ft-card (width < {TABLE_FROM}px) {{
+  {_PAGE} .shep-ft-table {{ display: none; }}
+  {_PAGE} .shep-ft-children {{ display: flex; flex-direction: column; }}
+}}
+{_PAGE} .shep-ft-child {{ padding: 8px 0; border-bottom: 1px solid var(--shep-border); }}
+{_PAGE} .shep-ft-child:first-child {{ border-top: 1px solid var(--shep-border); }}
+{_PAGE} .shep-ft-child-t {{ margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--shep-text); }}
 {_PAGE} .shep-ft-run {{ display: grid; grid-template-columns: minmax({RUN_FLOOR}, max-content); }}
 {_PAGE} .shep-ft-run > code.shep-ident {{ white-space: normal; max-width: none; }}
 {_PAGE} .shep-ft-links {{ margin: 0; }}
@@ -1538,7 +1636,8 @@ PAGE_CSS = f"""
 {_PAGE} .shep-rb-confirm-q {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-radius: 8px; padding: 8px 12px; font-size: 15px; }}
 {_PAGE} .shep-html svg {{ display: inline-block; vertical-align: -2px; }}
 /* The two panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the form's
-   base summary list keeps its key column whole from 480 px; the job's card and tables fit in 440. */
+   base summary list keeps its key column whole from 480 px; from 440 the job's card is 406 px,
+   past `TABLE_FROM`, so its table is drawn whole in it. */
 {_PAGE} #shep-ft-form {{ --shep-panel-min: 480px; }}
 {_PAGE} #shep-ft-job {{ --shep-panel-min: 440px; }}
 {SIDE} {{

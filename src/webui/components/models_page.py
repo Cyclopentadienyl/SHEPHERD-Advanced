@@ -1371,9 +1371,15 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
 #: **What the records segment says when it holds no result, per cause**
 #: (R-68, the skill's §9): a title, what will appear, and one next step;
 #: never a file's name, never "ledger". An absence is never read as "never
-#: evaluated" (`caveats.RECORD_ABSENCE`'s meaning, said in these words).
-RECORDS_NEXT = ("Next: on the Test page, choose this model and start a test with Register when "
-                "the run ends checked; its result then appears here.")
+#: evaluated" (`caveats.RECORD_ABSENCE`'s meaning, said in these words). The
+#: operator's next step is one action, "Test this model ›": the Test page with
+#: this checkpoint chosen (`ctx.test_model`, `ctx.go`; wired in
+#: `create_models_page`).
+RECORDS_NEXT = ("Next: start a test of it with Register when the run ends checked; its result "
+                "then appears here.")
+#: The action's label and its act (`renderers.TRIGGER_JS`).
+TEST_THIS = "Test this model ›"
+TEST_ACT = "test"
 RECORDS_NOT_EVALUATED = ("That does not mean these weights were never evaluated: a result "
                          "registered beside another copy of them is not shown here.")
 RECORDS_EMPTY = {
@@ -1390,12 +1396,17 @@ RECORDS_NEXT_READONLY = ("Recording a result is an operator control: an operator
 
 def records_empty_html(cause: str, *, readonly: bool = False) -> str:
     """The records segment with no result, for one cause (`RECORDS_EMPTY`):
-    its title, what it means and one next step (the Test page, or for a
-    read-only request the refusal that says who can act)."""
+    its title, what it means and one next step: for an operator "Test this
+    model ›" (the Test page with this checkpoint chosen), for a read-only
+    request the refusal that says who can act, with no action."""
     title, said = RECORDS_EMPTY[cause]
-    step = RECORDS_NEXT_READONLY if readonly else RECORDS_NEXT
+    if readonly:
+        step = r.e(RECORDS_NEXT_READONLY)
+    else:
+        step = (f'{r.e(RECORDS_NEXT)} <button type="button" class="shep-link" '
+                f'data-act="{TEST_ACT}">{r.e(TEST_THIS)}</button>')
     return (f'<div class="shep-mp-empty"><p class="shep-mp-empty-t">{r.e(title)}</p>'
-            f'<p class="shep-mp-p">{r.e(said)}</p><p class="shep-mp-p">{r.e(step)}</p></div>')
+            f'<p class="shep-mp-p">{r.e(said)}</p><p class="shep-mp-p">{step}</p></div>')
 
 
 def _records_for_item(ledger: Optional[Mapping[str, Any]], data: Mapping[str, Any], *,
@@ -1620,7 +1631,8 @@ def create_models_page(ctx: Any) -> None:
                                         show_label=False, label="Shown", visible=False,
                                         elem_id="shep-mp-seg", elem_classes=["shep-seg"],
                                         container=False)
-                parts["records"] = plain_html("", elem_id="shep-mp-records")
+                parts["records"] = plain_html("", elem_id="shep-mp-records",
+                                              js_on_load=r.TRIGGER_JS)
                 parts["usage"] = plain_html("", elem_id="shep-mp-usage", visible=False)
                 parts["results"] = rs.create_results_segment()
         return column
@@ -1784,6 +1796,19 @@ def create_models_page(ctx: Any) -> None:
     parts["seg"].input(_segment, inputs=[parts["seg"]],
                        outputs=[parts["records"], parts["usage"], parts["results"]["column"]],
                        queue=False, show_progress="hidden")
+
+    def _to_test(listing, selected, evt: gr.EventData):
+        """The empty records state's "Test this model ›" (R-68): the Test page
+        opened with the selected checkpoint handed to it (`ctx.test_model`,
+        which its opening chooses and clears). Queued, so the hand-off is the
+        session's before the page's opening reads it."""
+        if r.event_act(evt) != TEST_ACT or not isinstance(listing, Mapping) \
+                or selected is None or ml.find_item(listing, selected) is None:
+            return (gr.update(), *ctx.no_nav())
+        return ({"workspace": listing.get("workspace"), "key": selected}, *ctx.go("test"))
+
+    parts["records"].click(_to_test, inputs=[handle.listing, handle.selected],
+                           outputs=[ctx.test_model, *ctx.nav_outputs], show_progress="hidden")
     # Models › Results (research comparison Stage 8b): its own gated handlers.
     rs.wire_results_segment(parts["results"], seg=parts["seg"], listing=handle.listing,
                             selected=handle.selected)
@@ -1905,6 +1930,8 @@ PAGE_CSS = f"""
 /* A segment with no result (`records_empty_html`, R-68): its title, what it means, the next step. */
 {_PAGE} .shep-mp-empty {{ display: flex; flex-direction: column; gap: 4px; }}
 {_PAGE} .shep-mp-empty-t {{ margin: 0; font-size: 15px; font-weight: 600; color: var(--shep-text); }}
+{_PAGE} .shep-mp-empty .shep-link {{ border: 0; background: none; padding: 0; min-height: 24px; color: var(--shep-accent-text); font: inherit; cursor: pointer; white-space: nowrap; }}
+{_PAGE} .shep-mp-empty .shep-link:hover {{ text-decoration: underline; }}
 /* Models › Results (Stage 8b): its controls in rows that wrap, its tables
    scrolling sideways inside their own wrapper, Compare's groups as row
    headers. A wrapper not scrolled to its end shades its right edge, so a
@@ -1959,7 +1986,15 @@ PAGE_CSS = f"""
 {_PAGE} .shep-rs-cmp thead th:first-child {{ z-index: 2; }}
 {_PAGE} .shep-rs-cmp th[scope="row"] {{ text-align: left; font-weight: 400; color: var(--shep-text-2); background: var(--shep-panel); }}
 {_PAGE} .shep-rs-cmp tr.shep-rs-entry th[scope="row"] {{ padding-left: 22px; }}
-{_PAGE} .shep-rs-cmp tr.shep-rs-grp th {{ text-align: left; font-weight: 600; background: var(--shep-panel-2); }}
+{_PAGE} .shep-rs-cmp tr.shep-rs-grp th {{ text-align: left; font-weight: 600; background: var(--shep-panel-2); padding-top: 6px; padding-bottom: 6px; }}
+/* Compare's key rows first (NEW-models-results-2): a group's other rows
+   (`shep-rs-rest`) are hidden while its header's fold is closed; the fold's
+   summary is the group's name, then how many rows it holds, as a link. */
+{_PAGE} .shep-rs-cmp tbody:has(> tr.shep-rs-grp details.shep-rs-gfold:not([open])) > tr.shep-rs-rest {{ display: none; }}
+{_PAGE} .shep-rs-cmp details.shep-rs-gfold > summary {{ cursor: pointer; list-style: none; min-height: 24px; line-height: 24px; }}
+{_PAGE} .shep-rs-cmp details.shep-rs-gfold > summary::-webkit-details-marker {{ display: none; }}
+{_PAGE} .shep-rs-cmp .shep-rs-gmore {{ font-weight: 400; color: var(--shep-accent-text); }}
+{_PAGE} .shep-rs-cmp details.shep-rs-gfold > summary:hover .shep-rs-gmore {{ text-decoration: underline; }}
 {_PAGE} .shep-rs-cmp tr.shep-rs-sub td {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); line-height: inherit; padding: 12px 10px 4px; border-bottom: 0; }}
 {_PAGE} .shep-rs-cmp .shep-rs-pin {{ position: sticky; left: 10px; display: inline-block; }}
 /* Compare's sideways scroll cue at its top (`results_segment.SCROLL_CUE`): a line

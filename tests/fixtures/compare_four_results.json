@@ -1,0 +1,3340 @@
+{
+ "_about": "Four results of the CPU probe workspace probe-rc as the results service reads them (Models > Results, This workspace, the first four Compare choices: two disease results on a supplied cohort, a patients-like-me result and a disease result on a generated split): the Compare the UI ledger's row NEW-models-results-2 measured. Synthetic probe data, no path.",
+ "names": [
+  "2026-11-10 11:07 UTC \u00b7 5ad3b2bac629",
+  "2026-11-10 11:05 UTC \u00b7 adaf3e777d2c",
+  "2026-11-10 11:05 UTC \u00b7 87752b182b18",
+  "2026-11-10 11:05 UTC \u00b7 42d7fae8a603"
+ ],
+ "rows": [
+  {
+   "result": "run",
+   "run_id": "20261110T110716Z-31ab26b3b0fe-45ad9e27",
+   "report_sha256": "5ad3b2bac62991ea2794b168a5988469deae12189b33f0cc7cdc7ae41d14db2a",
+   "report": "kept",
+   "registered": "registered",
+   "stores": [
+    {
+     "source": "deployment",
+     "label": "probe-rc-supplied-1"
+    }
+   ],
+   "ledgers": [
+    {
+     "source": "deployment",
+     "workspace": "probe-rc",
+     "ledger": "gatv2/probe-rc-disease-frozen",
+     "sequence": 1,
+     "registered_at": "2026-11-10T11:07:16Z"
+    }
+   ],
+   "n_corroborating": 0,
+   "historical_overlap": [],
+   "conflict": null,
+   "group": {
+    "condition_group": "[\"31ab26b3b0fe65dd51d4809cc96d196193025975c06b15daaeae307ec1355cc9\", \"probe-synthetic\", \"8a00f95423c4eac5fe8f5bd106d70e26ede30477f82ce561a18ae9fbebc41b0f\", \"5ee802599323f0d3de49ea4a1339b8310b03450d80c2eaac69ea3729026de795\"]",
+    "state": "uncontested",
+    "differing": [],
+    "why": null
+   },
+   "protocol": "disease",
+   "semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+   "measurement": {
+    "mode": "disease",
+    "cohort_kind": "supplied",
+    "candidate_construction": "every disease of the model's graph view",
+    "score_semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+    "model_construction": "model bundle (src.models.bundle.build_bundle) from its model spec",
+    "canonical_tie_policy_version": "average-rank/v1",
+    "metric_schema_version": 2,
+    "batch_size": 32,
+    "software_revision": "7e1d09e4cbdd70ef86c8063004913cb40e027c06",
+    "torch_version": "2.10.0+cu130",
+    "cuda_version": "13.0",
+    "device": "cpu",
+    "dtype": "torch.float32",
+    "amp_enabled": false,
+    "amp_dtype": null,
+    "torch_compile_wrapped": false,
+    "deterministic_algorithms": false,
+    "cudnn_deterministic": null,
+    "cudnn_benchmark": null,
+    "n_ranked": 8,
+    "scoring_semantics_digest": "9f842397a3f0a58c234e56d066eecc5e66febd0d45dfc5f19b0963127b283e12",
+    "measurement_semantics_digest": "5ee802599323f0d3de49ea4a1339b8310b03450d80c2eaac69ea3729026de795"
+   },
+   "data": {
+    "kind": "supplied",
+    "label": "probe-rc-supplied-1",
+    "role": "probe-synthetic",
+    "version_sha256": "8a00f95423c4eac5fe8f5bd106d70e26ede30477f82ce561a18ae9fbebc41b0f",
+    "dataset_origin": "synthetic",
+    "identity": {
+     "samples_sha256": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e",
+     "source_sha256": "cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0"
+    },
+    "counts": {
+     "source_cases": 12,
+     "ranked_eligible": 10,
+     "excluded": {
+      "ground_truth_absent": 1,
+      "phenotype_unmappable": 1
+     },
+     "n_excluded": 2
+    },
+    "count_units": null
+   },
+   "environment": {
+    "class": "CPU (development; a different measurement from a CUDA run)",
+    "deterministic_algorithms": false,
+    "gpu": null,
+    "native_identity": {
+     "pyg_lib": {
+      "kind": "PyG native extension",
+      "version": "0.8.0+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 1,
+       "aggregate_sha256": "c160d1fd4cf8ab1b28642b2ffeddf1408183d13348ca34b3f8d5731f1cc6c925"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_cluster": {
+      "kind": "PyG native extension",
+      "version": "1.6.3+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 9,
+       "aggregate_sha256": "4ad65252bbd451db2d1c84c545d6e2a2938c1a21b0fd197e720af1c9ec08e6c2"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_scatter": {
+      "kind": "PyG native extension",
+      "version": "2.1.2+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 4,
+       "aggregate_sha256": "75903da5ca5448c8aaffb15c843fb7580ae21591f7f0f81db50a956a4975251c"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_sparse": {
+      "kind": "PyG native extension",
+      "version": "0.6.18+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 12,
+       "aggregate_sha256": "99a789fb6944da298ab88a87c9d37b3440920b81c124b8ac2813f319b9f7f154"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     }
+    },
+    "components": {
+     "pyg_lib": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "0.8.0+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 1,
+       "aggregate_sha256": "c160d1fd4cf8ab1b28642b2ffeddf1408183d13348ca34b3f8d5731f1cc6c925"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_cluster": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "1.6.3+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 9,
+       "aggregate_sha256": "4ad65252bbd451db2d1c84c545d6e2a2938c1a21b0fd197e720af1c9ec08e6c2"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_scatter": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "2.1.2+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 4,
+       "aggregate_sha256": "75903da5ca5448c8aaffb15c843fb7580ae21591f7f0f81db50a956a4975251c"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_sparse": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "0.6.18+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 12,
+       "aggregate_sha256": "99a789fb6944da298ab88a87c9d37b3440920b81c124b8ac2813f319b9f7f154"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     }
+    }
+   },
+   "exposure": {
+    "state": "recorded as R10 (see r10)",
+    "reading": null,
+    "definition_version": null,
+    "measured_edges": null,
+    "in_recorded_graph_use": null,
+    "problem": null,
+    "r10": {
+     "training": {
+      "evidence": {
+       "state": "found"
+      },
+      "disease_overlap": {
+       "state": "overlap",
+       "k": 3,
+       "n": 5,
+       "cases": 7
+      },
+      "phenotype_set_overlap": {
+       "state": "overlap",
+       "k": 2,
+       "n": 10
+      }
+     },
+     "validation": {
+      "evidence": {
+       "state": "found"
+      },
+      "disease_overlap": {
+       "state": "overlap",
+       "k": 1,
+       "n": 5,
+       "cases": 2
+      },
+      "phenotype_set_overlap": {
+       "state": "none",
+       "k": 0,
+       "n": 10
+      }
+     }
+    }
+   },
+   "reason": null,
+   "model": {
+    "checkpoint_sha256": "31ab26b3b0fe65dd51d4809cc96d196193025975c06b15daaeae307ec1355cc9",
+    "locations": [
+     {
+      "source": "deployment",
+      "workspace": "probe-rc",
+      "checkpoint": "gatv2/probe-rc-disease-frozen/last.pt"
+     }
+    ],
+    "learning_stage": "finetune",
+    "task": "disease",
+    "operation": "finetune",
+    "family_id": "20261110-110512_probe-base_d4e3e7",
+    "parent_sha256": "a6eb26c11d906b441cd814e6e4d7bb066e3ac572afec70cbd053c983893f926d",
+    "parent_run": "probe-rc-base",
+    "parent_changes": null,
+    "encoder": "gatv2",
+    "reference": false,
+    "differences": [
+     "encoder.heads",
+     "encoder.hidden",
+     "encoder.layers",
+     "encoder.output",
+     "input.dim"
+    ],
+    "spec": {
+     "spec_version": 1,
+     "learning_stage": "finetune",
+     "graph_view": {
+      "rule": "reference/v1",
+      "drop_native_self_loops": true,
+      "deduplicate": true,
+      "largest_component": true,
+      "exclude_relations": []
+     },
+     "input": {
+      "kind": "learned_table",
+      "dim": 8,
+      "init": "normal",
+      "type_embedding": false
+     },
+     "encoder": {
+      "kind": "gatv2",
+      "layers": 2,
+      "hidden": 4,
+      "output": 4,
+      "heads": 2,
+      "first_hidden_multiplier": 2,
+      "dropout": 0.3,
+      "attention_dropout": 0.0,
+      "attention_slope": 0.2,
+      "add_self_loops": true,
+      "share_weights": false,
+      "concat": true,
+      "residual": false,
+      "norm": "graph_layer_norm+batch_norm",
+      "activation_slope": 0.01,
+      "relation_edge_dim": null
+     },
+     "lp_head": {
+      "kind": "distmult_tanh",
+      "margin": 1.0,
+      "relation_init": "xavier_uniform_leaky_relu"
+     },
+     "patient_encoder": {
+      "transformer_layers": 3,
+      "transformer_heads": 8,
+      "feedforward": 2048,
+      "dropout": 0.1
+     },
+     "task_head": {
+      "task": "disease",
+      "projection_slope": 0.1,
+      "distance_normalisation_eps": 1e-12,
+      "softmax_scale": 1.0,
+      "multi_similarity": [
+       1.0,
+       20.0,
+       1.0,
+       0.4
+      ],
+      "gene": null
+     }
+    },
+    "capabilities": {
+     "learning_stage": "finetune",
+     "encoder": "gatv2",
+     "representations": [
+      "node_vectors",
+      "patient_representation"
+     ],
+     "heads": [
+      [
+       "link_prediction",
+       "distmult_tanh",
+       "distmult_raw_score/tanh_hinge/v1"
+      ],
+      [
+       "task",
+       "disease",
+       "patient_disease/negative_normalised_squared_distance/v1"
+      ]
+     ],
+     "node_inputs": [
+      "node_ids"
+     ],
+     "relation_inputs": [
+      "relation_ids"
+     ],
+     "computation": [
+      "full_view",
+      "sampled"
+     ],
+     "sampled_hops": 2,
+     "node_vector_width": 8
+    },
+    "weight_transfer": {
+     "loaded_from_parent": [
+      "encoder",
+      "input",
+      "lp_head"
+     ],
+     "initialised_new": [
+      "patient_encoder",
+      "task_head"
+     ],
+     "trainable": [
+      "patient_encoder",
+      "task_head"
+     ],
+     "optimizer": "new",
+     "parts": {
+      "input": "frozen",
+      "encoder": "frozen",
+      "lp_head": "frozen",
+      "patient_encoder": "trainable",
+      "task_head": "trainable"
+     },
+     "frozen_forward": "eval",
+     "downstream_initial_sha256": "acc5f61b67044cd93bcbe449d8f3a24c857b60682f5e9922ead645f182b0b35d",
+     "downstream_digest_rule": "parts_state_sha256/1"
+    },
+    "loss_identity": {
+     "terms": [
+      "task",
+      "lp"
+     ],
+     "task_loss": "nca",
+     "task_loss_weight": 0.1,
+     "lp_loss_weight": 0.9,
+     "lp_head": "distmult_tanh",
+     "margin": 1.0,
+     "terms_without_trainable_parameters": [
+      "lp"
+     ]
+    },
+    "training_rules": 2,
+    "learning_settings": {
+     "learning_stage": "finetune",
+     "model_spec": {
+      "spec_version": 1,
+      "learning_stage": "finetune",
+      "graph_view": {
+       "rule": "reference/v1",
+       "drop_native_self_loops": true,
+       "deduplicate": true,
+       "largest_component": true,
+       "exclude_relations": []
+      },
+      "input": {
+       "kind": "learned_table",
+       "dim": 8,
+       "init": "normal",
+       "type_embedding": false
+      },
+      "encoder": {
+       "kind": "gatv2",
+       "layers": 2,
+       "hidden": 4,
+       "output": 4,
+       "heads": 2,
+       "first_hidden_multiplier": 2,
+       "dropout": 0.3,
+       "attention_dropout": 0.0,
+       "attention_slope": 0.2,
+       "add_self_loops": true,
+       "share_weights": false,
+       "concat": true,
+       "residual": false,
+       "norm": "graph_layer_norm+batch_norm",
+       "activation_slope": 0.01,
+       "relation_edge_dim": null
+      },
+      "lp_head": {
+       "kind": "distmult_tanh",
+       "margin": 1.0,
+       "relation_init": "xavier_uniform_leaky_relu"
+      },
+      "patient_encoder": {
+       "transformer_layers": 3,
+       "transformer_heads": 8,
+       "feedforward": 2048,
+       "dropout": 0.1
+      },
+      "task_head": {
+       "task": "disease",
+       "projection_slope": 0.1,
+       "distance_normalisation_eps": 1e-12,
+       "softmax_scale": 1.0,
+       "multi_similarity": [
+        1.0,
+        20.0,
+        1.0,
+        0.4
+       ],
+       "gene": null
+      },
+      "sources": {
+       "input.dim": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh:6-17 (nfeat 2048)",
+       "input.init": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:62 (nn.Embedding default N(0,1))",
+       "encoder.layers": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:77 (n_layers 3)",
+       "encoder.hidden": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (hidden 256; first layer doubled, node_embedder_model.py:58)",
+       "encoder.output": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (output 128)",
+       "encoder.heads": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (n_heads 4)",
+       "encoder.dropout": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (dropout 0.3)",
+       "encoder.concat": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:81-85 (GATv2Conv concat default; README C1)",
+       "encoder.attention": "PyG 1.7.2 GATv2Conv defaults: dropout 0, add_self_loops, no shared weights, slope 0.2 (README U4)",
+       "encoder.norm": "mims-harvard/SHEPHERD@e95433a hparams.py:25 batch_layer; node_embedder_model.py:135-143 (README C2, \u00a72.8)",
+       "encoder.activation_slope": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:140 (F.leaky_relu default 0.01)",
+       "lp_head": "mims-harvard/SHEPHERD@e95433a decoders.py bilinear + tanh; node_embedder_model.py:416-425 hinge, margin 1",
+       "lp_head.relation_init": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:114 (xavier_uniform, leaky_relu gain)",
+       "patient_encoder": "mims-harvard/SHEPHERD@e95433a train.py:67-68 (3 layers, 8 heads); torch TransformerEncoderLayer defaults",
+       "patient_encoder.pooling": "allennlp 2.4.0 BilinearAttention, bias dropped (README U11)",
+       "task_head.projection_slope": "mims-harvard/SHEPHERD@e95433a hparams.py:96 (leaky_relu 0.1)",
+       "task_head.distance": "pytorch-metric-learning 0.9.98 LpDistance(power=2), normalised (README U10)",
+       "task_head.gene": "mims-harvard/SHEPHERD@e95433a gp_aligner.py:95-101 (EMBSIM); add_spl_to_patients.py:104-109 (bounds); eta 0.5 from run_causal_gene_discovery.sh",
+       "task_head.augmentation": "paper Eq 10, K 3 and omega 0.7 as provisional defaults (README F10)",
+       "graph_view": "paper Methods (dedup, self-loops removed, largest connected component); README G1"
+      }
+     },
+     "split_seed": 0,
+     "task": "disease",
+     "task_loss_weight": 0.1,
+     "lp_loss_weight": 0.9,
+     "candidate_sample_size": 8,
+     "sparse_sample_size": 8,
+     "candidate_upsample_size": null,
+     "frozen_parts": "graph_side",
+     "num_epochs": 1,
+     "learning_rate": 1e-05,
+     "weight_decay": 0.0,
+     "batch_size": 8,
+     "gradient_accumulation_steps": 1,
+     "max_grad_norm": 1.0,
+     "scheduler_type": "none",
+     "warmup_steps": 0,
+     "min_lr_ratio": 0.01,
+     "use_amp": false,
+     "amp_dtype": "float16",
+     "num_neighbors": [
+      3,
+      3
+     ],
+     "eval_every_n_epochs": 1,
+     "early_stopping_patience": null,
+     "save_top_k": 1,
+     "seed": 33
+    },
+    "effective_settings": {
+     "device": {
+      "requested": "cpu",
+      "effective": "cpu"
+     },
+     "amp": {
+      "requested": false,
+      "dtype_requested": "float16",
+      "enabled": false,
+      "dtype": "float32",
+      "grad_scaler": false
+     },
+     "compile": {
+      "requested": false,
+      "installed": false
+     },
+     "loaders": {
+      "train": {
+       "kind": "FinetuneSampler",
+       "batch_size": 8,
+       "sizes": [
+        3,
+        3
+       ],
+       "batches": 8,
+       "recipe": {
+        "learning_stage": "finetune",
+        "reference_filled": {
+         "early_stopping_patience": "early stopping disabled in the source (README C6): no patience",
+         "learning_rate": "mims-harvard/SHEPHERD@e95433a disease run_*.sh script (lr 1e-5; README U3, U8)",
+         "lp_loss_weight": "mims-harvard/SHEPHERD@e95433a disease run_*.sh script lmbda 0.9 (README C3)",
+         "max_grad_norm": "mims-harvard/SHEPHERD@e95433a hparams.py:95-110 (gradclip 1.0)",
+         "scheduler_type": "mims-harvard/SHEPHERD@e95433a train.py:283-292,311 (no scheduler; README C6, U8)",
+         "seed": "mims-harvard/SHEPHERD@e95433a train.py:78 (seed 33)",
+         "task_loss_weight": "mims-harvard/SHEPHERD@e95433a disease run_*.sh script lmbda 0.9 on LP, so 0.1 on the task (README C3)",
+         "use_amp": "mims-harvard/SHEPHERD@e95433a train.py:308-317 (precision 16 never passed: fp32; README U15)",
+         "warmup_steps": "no warmup in the source (README C6)",
+         "weight_decay": "mims-harvard/SHEPHERD@e95433a gene_prioritization_model.py:541-543 (Adam, no weight decay; U8)"
+        },
+        "operator_set": [
+         "batch_size",
+         "candidate_sample_size",
+         "frozen_parts",
+         "num_epochs",
+         "num_neighbors",
+         "sparse_sample_size"
+        ]
+       }
+      },
+      "val": {
+       "cases": 20,
+       "bound": 20,
+       "excluded": 0,
+       "phenotypes_outside_view": 0
+      }
+     },
+     "schedule": {
+      "type": "none",
+      "base_lr": 1e-05
+     }
+    }
+   },
+   "references": [
+    {
+     "name": "graph.kg",
+     "sha256": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.node_features",
+     "sha256": "2cd4b452d61a29081b2882e217f7f290f3969ea0a9da3e19d08df6b77d4c0d44",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.edge_indices",
+     "sha256": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.num_nodes",
+     "sha256": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "dataset_record",
+     "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "source",
+     "sha256": "cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0",
+     "kept": "registry",
+     "state": "verified",
+     "reason": "the registry's sources/cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0.json holds the bytes recorded"
+    },
+    {
+     "name": "samples",
+     "sha256": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e",
+     "kept": "version",
+     "state": "verified",
+     "reason": "the version's samples.json holds the bytes recorded"
+    }
+   ],
+   "run_counts": null,
+   "metrics": [
+    {
+     "name": "best_positive_mrr",
+     "value": 0.4,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "conservative_pooled_mrr",
+     "value": 0.32,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "coverage",
+     "value": 0.8,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_mrr",
+     "value": 0.4,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@1",
+     "value": 0.125,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@10",
+     "value": 0.1,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@100",
+     "value": 0.01,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@20",
+     "value": 0.05,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@3",
+     "value": 0.29166666666666663,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@5",
+     "value": 0.2,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@50",
+     "value": 0.02,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@1",
+     "value": 0.125,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@10",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@100",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@20",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@3",
+     "value": 0.875,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@5",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@50",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_mrr",
+     "value": 0.4,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top1",
+     "value": 0.125,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top10",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top100",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top20",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top3",
+     "value": 0.875,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top5",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top50",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    }
+   ],
+   "unknown": {
+    "run_counts": "its record holds no run counts beyond n_ranked (only a KG edge set's run records its own counts, each with its unit)",
+    "metric.unit": "its record holds no unit per metric (only a KG edge set's run records each metric's unit and denominator)"
+   }
+  },
+  {
+   "result": "run",
+   "run_id": "20261110T110550Z-877646dfcda2-1bd51211",
+   "report_sha256": "adaf3e777d2cd1f05ca844f8ccdab20bc79205ebddd2884312d4c9de19a4cd9c",
+   "report": "kept",
+   "registered": "registered",
+   "stores": [
+    {
+     "source": "deployment",
+     "label": "probe-gen-val-1"
+    }
+   ],
+   "ledgers": [
+    {
+     "source": "deployment",
+     "workspace": "probe-rc",
+     "ledger": "gatv2/probe-rc-patients-like-me",
+     "sequence": 1,
+     "registered_at": "2026-11-10T11:05:50Z"
+    }
+   ],
+   "n_corroborating": 0,
+   "historical_overlap": [],
+   "conflict": null,
+   "group": {
+    "condition_group": "[\"877646dfcda2652fb18068167a14ac98f091229b2abdc48a2e95b05982094bb8\", \"val\", \"01f2abad7ab0648bfe1ec85d63a645433c7bfa76f296737320f2fd9c4c99c964\", \"2bba6a6e65c018492e28fb48935fdbb71303d6b4330839505a8be486910b9e10\"]",
+    "state": "uncontested",
+    "differing": [],
+    "why": null
+   },
+   "protocol": "patients_like_me",
+   "semantics": "patient tower: -||z_a - z_b||^2 on L2-normalised projected vectors; a pair is positive when the declared causal-gene sets intersect: the same gene of the graph, or the same normalised identifier outside it (no alias resolved)",
+   "measurement": {
+    "mode": "patients_like_me",
+    "cohort_kind": "generated",
+    "candidate_construction": "every other patient of the measured cohort; self excluded by case id",
+    "score_semantics": "patient tower: -||z_a - z_b||^2 on L2-normalised projected vectors; a pair is positive when the declared causal-gene sets intersect: the same gene of the graph, or the same normalised identifier outside it (no alias resolved)",
+    "model_construction": "model bundle (src.models.bundle.build_bundle) from its model spec",
+    "canonical_tie_policy_version": "average-rank/v1",
+    "metric_schema_version": 2,
+    "batch_size": 32,
+    "software_revision": "7e1d09e4cbdd70ef86c8063004913cb40e027c06",
+    "torch_version": "2.10.0+cu130",
+    "cuda_version": "13.0",
+    "device": "cpu",
+    "dtype": "torch.float32",
+    "amp_enabled": false,
+    "amp_dtype": null,
+    "torch_compile_wrapped": false,
+    "deterministic_algorithms": false,
+    "cudnn_deterministic": null,
+    "cudnn_benchmark": null,
+    "n_ranked": 20,
+    "scoring_semantics_digest": "9c4a7450d2d64d2c107d15ba06c085c308651d969711d3e0a10ee4eeab6bf7b2",
+    "measurement_semantics_digest": "2bba6a6e65c018492e28fb48935fdbb71303d6b4330839505a8be486910b9e10"
+   },
+   "data": {
+    "kind": "generated",
+    "label": "probe-gen-val-1",
+    "role": "val",
+    "version_sha256": "01f2abad7ab0648bfe1ec85d63a645433c7bfa76f296737320f2fd9c4c99c964",
+    "dataset_origin": "synthetic",
+    "identity": {
+     "samples_sha256": "92c8181eeb546d2ccfeb9d982e703cd879a08b762357740328e63b1a9dd63a40",
+     "split_manifest": {
+      "sha256": "bdfb11bd79052c0f10ac9d4274b84a08de86e21e27e94e532635b39c0be2dde8"
+     },
+     "generation": {
+      "algorithm": "coverage-first-then-replacement",
+      "algorithm_version": 1
+     },
+     "allocation": {
+      "algorithm": "uniform-without-replacement",
+      "algorithm_version": 1,
+      "seed": 20260909
+     },
+     "task_fixture": {
+      "rule": "one-causal-gene-from-the-disease-plus-distractors/v1",
+      "record": {
+       "sha256": "ac2488a1a9aa9a4a24a13fda80a61ed1e6730a7341afecf99d65e4336b360fdd"
+      },
+      "samples": {
+       "sha256": "18dee6e650f9e9029fd88260963747cf7731764c5a8157302c629c7f678da66e"
+      }
+     }
+    },
+    "counts": {
+     "diseases": 1,
+     "samples": 20,
+     "task_fixture_samples": 20
+    },
+    "count_units": {
+     "diseases": "distinct diseases among those patients (the split's realised disease set)",
+     "samples": "generated patients: the sample rows of the role's split, as written",
+     "task_fixture_samples": "functional gene fixture rows of the role's split: its patients whose disease has a gene in the graph, each given one causal gene drawn from that disease's genes and distractor candidates by the fixture's rule; the cases the gene and patients-like-me measurements score"
+    }
+   },
+   "environment": {
+    "class": "CPU (development; a different measurement from a CUDA run)",
+    "deterministic_algorithms": false,
+    "gpu": null,
+    "native_identity": {
+     "pyg_lib": {
+      "kind": "PyG native extension",
+      "version": "0.8.0+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 1,
+       "aggregate_sha256": "c160d1fd4cf8ab1b28642b2ffeddf1408183d13348ca34b3f8d5731f1cc6c925"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_cluster": {
+      "kind": "PyG native extension",
+      "version": "1.6.3+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 9,
+       "aggregate_sha256": "4ad65252bbd451db2d1c84c545d6e2a2938c1a21b0fd197e720af1c9ec08e6c2"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_scatter": {
+      "kind": "PyG native extension",
+      "version": "2.1.2+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 4,
+       "aggregate_sha256": "75903da5ca5448c8aaffb15c843fb7580ae21591f7f0f81db50a956a4975251c"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_sparse": {
+      "kind": "PyG native extension",
+      "version": "0.6.18+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 12,
+       "aggregate_sha256": "99a789fb6944da298ab88a87c9d37b3440920b81c124b8ac2813f319b9f7f154"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     }
+    },
+    "components": {
+     "pyg_lib": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "0.8.0+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 1,
+       "aggregate_sha256": "c160d1fd4cf8ab1b28642b2ffeddf1408183d13348ca34b3f8d5731f1cc6c925"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_cluster": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "1.6.3+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 9,
+       "aggregate_sha256": "4ad65252bbd451db2d1c84c545d6e2a2938c1a21b0fd197e720af1c9ec08e6c2"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_scatter": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "2.1.2+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 4,
+       "aggregate_sha256": "75903da5ca5448c8aaffb15c843fb7580ae21591f7f0f81db50a956a4975251c"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_sparse": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "0.6.18+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 12,
+       "aggregate_sha256": "99a789fb6944da298ab88a87c9d37b3440920b81c124b8ac2813f319b9f7f154"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     }
+    }
+   },
+   "exposure": {
+    "state": "not compared: a generated split's relation to a model's training is its allocation's (see data_identity)",
+    "reading": null,
+    "definition_version": null,
+    "measured_edges": null,
+    "in_recorded_graph_use": null,
+    "problem": null,
+    "r10": null
+   },
+   "reason": null,
+   "model": {
+    "checkpoint_sha256": "877646dfcda2652fb18068167a14ac98f091229b2abdc48a2e95b05982094bb8",
+    "locations": [
+     {
+      "source": "deployment",
+      "workspace": "probe-rc",
+      "checkpoint": "gatv2/probe-rc-patients-like-me/last.pt"
+     }
+    ],
+    "learning_stage": "finetune",
+    "task": "patients_like_me",
+    "operation": "finetune",
+    "family_id": "20261110-110512_probe-base_d4e3e7",
+    "parent_sha256": "a6eb26c11d906b441cd814e6e4d7bb066e3ac572afec70cbd053c983893f926d",
+    "parent_run": "probe-rc-base",
+    "parent_changes": null,
+    "encoder": "gatv2",
+    "reference": false,
+    "differences": [
+     "encoder.heads",
+     "encoder.hidden",
+     "encoder.layers",
+     "encoder.output",
+     "input.dim"
+    ],
+    "spec": {
+     "spec_version": 1,
+     "learning_stage": "finetune",
+     "graph_view": {
+      "rule": "reference/v1",
+      "drop_native_self_loops": true,
+      "deduplicate": true,
+      "largest_component": true,
+      "exclude_relations": []
+     },
+     "input": {
+      "kind": "learned_table",
+      "dim": 8,
+      "init": "normal",
+      "type_embedding": false
+     },
+     "encoder": {
+      "kind": "gatv2",
+      "layers": 2,
+      "hidden": 4,
+      "output": 4,
+      "heads": 2,
+      "first_hidden_multiplier": 2,
+      "dropout": 0.3,
+      "attention_dropout": 0.0,
+      "attention_slope": 0.2,
+      "add_self_loops": true,
+      "share_weights": false,
+      "concat": true,
+      "residual": false,
+      "norm": "graph_layer_norm+batch_norm",
+      "activation_slope": 0.01,
+      "relation_edge_dim": null
+     },
+     "lp_head": {
+      "kind": "distmult_tanh",
+      "margin": 1.0,
+      "relation_init": "xavier_uniform_leaky_relu"
+     },
+     "patient_encoder": {
+      "transformer_layers": 3,
+      "transformer_heads": 8,
+      "feedforward": 2048,
+      "dropout": 0.1
+     },
+     "task_head": {
+      "task": "patients_like_me",
+      "projection_slope": 0.1,
+      "distance_normalisation_eps": 1e-12,
+      "softmax_scale": 1.0,
+      "multi_similarity": [
+       1.0,
+       20.0,
+       1.0,
+       0.4
+      ],
+      "gene": null
+     }
+    },
+    "capabilities": {
+     "learning_stage": "finetune",
+     "encoder": "gatv2",
+     "representations": [
+      "node_vectors",
+      "patient_representation"
+     ],
+     "heads": [
+      [
+       "link_prediction",
+       "distmult_tanh",
+       "distmult_raw_score/tanh_hinge/v1"
+      ],
+      [
+       "task",
+       "patients_like_me",
+       "patient_patient/negative_normalised_squared_distance/v1"
+      ]
+     ],
+     "node_inputs": [
+      "node_ids"
+     ],
+     "relation_inputs": [
+      "relation_ids"
+     ],
+     "computation": [
+      "full_view",
+      "sampled"
+     ],
+     "sampled_hops": 2,
+     "node_vector_width": 8
+    },
+    "weight_transfer": {
+     "loaded_from_parent": [
+      "encoder",
+      "input",
+      "lp_head"
+     ],
+     "initialised_new": [
+      "patient_encoder",
+      "task_head"
+     ],
+     "trainable": "all",
+     "optimizer": "new",
+     "parts": {
+      "input": "trainable",
+      "encoder": "trainable",
+      "lp_head": "trainable",
+      "patient_encoder": "trainable",
+      "task_head": "trainable"
+     },
+     "frozen_forward": null,
+     "downstream_initial_sha256": "114c56770476a2dbec6da9dec00290e7bbbed6187ddd451435acb27e4131ced6",
+     "downstream_digest_rule": "parts_state_sha256/1"
+    },
+    "loss_identity": {
+     "terms": [
+      "task",
+      "lp"
+     ],
+     "task_loss": "nca",
+     "task_loss_weight": 0.3,
+     "lp_loss_weight": 0.7,
+     "lp_head": "distmult_tanh",
+     "margin": 1.0,
+     "terms_without_trainable_parameters": []
+    },
+    "training_rules": 2,
+    "learning_settings": {
+     "learning_stage": "finetune",
+     "model_spec": {
+      "spec_version": 1,
+      "learning_stage": "finetune",
+      "graph_view": {
+       "rule": "reference/v1",
+       "drop_native_self_loops": true,
+       "deduplicate": true,
+       "largest_component": true,
+       "exclude_relations": []
+      },
+      "input": {
+       "kind": "learned_table",
+       "dim": 8,
+       "init": "normal",
+       "type_embedding": false
+      },
+      "encoder": {
+       "kind": "gatv2",
+       "layers": 2,
+       "hidden": 4,
+       "output": 4,
+       "heads": 2,
+       "first_hidden_multiplier": 2,
+       "dropout": 0.3,
+       "attention_dropout": 0.0,
+       "attention_slope": 0.2,
+       "add_self_loops": true,
+       "share_weights": false,
+       "concat": true,
+       "residual": false,
+       "norm": "graph_layer_norm+batch_norm",
+       "activation_slope": 0.01,
+       "relation_edge_dim": null
+      },
+      "lp_head": {
+       "kind": "distmult_tanh",
+       "margin": 1.0,
+       "relation_init": "xavier_uniform_leaky_relu"
+      },
+      "patient_encoder": {
+       "transformer_layers": 3,
+       "transformer_heads": 8,
+       "feedforward": 2048,
+       "dropout": 0.1
+      },
+      "task_head": {
+       "task": "patients_like_me",
+       "projection_slope": 0.1,
+       "distance_normalisation_eps": 1e-12,
+       "softmax_scale": 1.0,
+       "multi_similarity": [
+        1.0,
+        20.0,
+        1.0,
+        0.4
+       ],
+       "gene": null
+      },
+      "sources": {
+       "input.dim": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh:6-17 (nfeat 2048)",
+       "input.init": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:62 (nn.Embedding default N(0,1))",
+       "encoder.layers": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:77 (n_layers 3)",
+       "encoder.hidden": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (hidden 256; first layer doubled, node_embedder_model.py:58)",
+       "encoder.output": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (output 128)",
+       "encoder.heads": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (n_heads 4)",
+       "encoder.dropout": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (dropout 0.3)",
+       "encoder.concat": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:81-85 (GATv2Conv concat default; README C1)",
+       "encoder.attention": "PyG 1.7.2 GATv2Conv defaults: dropout 0, add_self_loops, no shared weights, slope 0.2 (README U4)",
+       "encoder.norm": "mims-harvard/SHEPHERD@e95433a hparams.py:25 batch_layer; node_embedder_model.py:135-143 (README C2, \u00a72.8)",
+       "encoder.activation_slope": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:140 (F.leaky_relu default 0.01)",
+       "lp_head": "mims-harvard/SHEPHERD@e95433a decoders.py bilinear + tanh; node_embedder_model.py:416-425 hinge, margin 1",
+       "lp_head.relation_init": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:114 (xavier_uniform, leaky_relu gain)",
+       "patient_encoder": "mims-harvard/SHEPHERD@e95433a train.py:67-68 (3 layers, 8 heads); torch TransformerEncoderLayer defaults",
+       "patient_encoder.pooling": "allennlp 2.4.0 BilinearAttention, bias dropped (README U11)",
+       "task_head.projection_slope": "mims-harvard/SHEPHERD@e95433a hparams.py:96 (leaky_relu 0.1)",
+       "task_head.distance": "pytorch-metric-learning 0.9.98 LpDistance(power=2), normalised (README U10)",
+       "task_head.gene": "mims-harvard/SHEPHERD@e95433a gp_aligner.py:95-101 (EMBSIM); add_spl_to_patients.py:104-109 (bounds); eta 0.5 from run_causal_gene_discovery.sh",
+       "task_head.augmentation": "paper Eq 10, K 3 and omega 0.7 as provisional defaults (README F10)",
+       "graph_view": "paper Methods (dedup, self-loops removed, largest connected component); README G1"
+      }
+     },
+     "split_seed": 0,
+     "task": "patients_like_me",
+     "task_loss_weight": 0.3,
+     "lp_loss_weight": 0.7,
+     "candidate_sample_size": null,
+     "sparse_sample_size": 4,
+     "candidate_upsample_size": 1,
+     "frozen_parts": "none",
+     "num_epochs": 1,
+     "learning_rate": 5e-05,
+     "weight_decay": 0.0,
+     "batch_size": 4,
+     "gradient_accumulation_steps": 1,
+     "max_grad_norm": 1.0,
+     "scheduler_type": "none",
+     "warmup_steps": 0,
+     "min_lr_ratio": 0.01,
+     "use_amp": false,
+     "amp_dtype": "float16",
+     "num_neighbors": [
+      3,
+      3
+     ],
+     "eval_every_n_epochs": 1,
+     "early_stopping_patience": null,
+     "save_top_k": 3,
+     "seed": 33
+    },
+    "effective_settings": {
+     "device": {
+      "requested": "cpu",
+      "effective": "cpu"
+     },
+     "amp": {
+      "requested": false,
+      "dtype_requested": "float16",
+      "enabled": false,
+      "dtype": "float32",
+      "grad_scaler": false
+     },
+     "compile": {
+      "requested": false,
+      "installed": false
+     },
+     "loaders": {
+      "train": {
+       "kind": "PatientsSampler",
+       "batch_size": 4,
+       "sizes": [
+        3,
+        3
+       ],
+       "batches": 15,
+       "recipe": {
+        "learning_stage": "finetune",
+        "reference_filled": {
+         "candidate_upsample_size": "mims-harvard/SHEPHERD@e95433a run_patients_like_me.sh (upsample_cand 1; README U3, U9, U14)",
+         "early_stopping_patience": "early stopping disabled in the source (README C6): no patience",
+         "frozen_parts": "mims-harvard/SHEPHERD@e95433a train.py:267 and gene_prioritization_model.py:541-543 (the GNN keeps training: Adam over the whole model; README A10, U8)",
+         "learning_rate": "mims-harvard/SHEPHERD@e95433a patients-like-me run_*.sh script (lr 5e-5; README U3, U8)",
+         "lp_loss_weight": "mims-harvard/SHEPHERD@e95433a patients-like-me run_*.sh script lmbda 0.7 (README C3)",
+         "max_grad_norm": "mims-harvard/SHEPHERD@e95433a hparams.py:95-110 (gradclip 1.0)",
+         "scheduler_type": "mims-harvard/SHEPHERD@e95433a train.py:283-292,311 (no scheduler; README C6, U8)",
+         "seed": "mims-harvard/SHEPHERD@e95433a train.py:78 (seed 33)",
+         "task_loss_weight": "mims-harvard/SHEPHERD@e95433a patients-like-me run_*.sh script lmbda 0.7 on LP, so 0.3 on the task (README C3)",
+         "use_amp": "mims-harvard/SHEPHERD@e95433a train.py:308-317 (precision 16 never passed: fp32; README U15)",
+         "warmup_steps": "no warmup in the source (README C6)",
+         "weight_decay": "mims-harvard/SHEPHERD@e95433a gene_prioritization_model.py:541-543 (Adam, no weight decay; U8)"
+        },
+        "operator_set": [
+         "batch_size",
+         "num_epochs",
+         "num_neighbors",
+         "sparse_sample_size"
+        ]
+       }
+      },
+      "val": {
+       "cases": 20,
+       "phenotypes_outside_view": 0,
+       "no_causal_gene": 0,
+       "with_causal_genes_outside_graph": 0,
+       "bound": 20,
+       "excluded": 0
+      }
+     },
+     "schedule": {
+      "type": "none",
+      "base_lr": 5e-05
+     }
+    }
+   },
+   "references": [
+    {
+     "name": "graph.kg",
+     "sha256": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.node_features",
+     "sha256": "2cd4b452d61a29081b2882e217f7f290f3969ea0a9da3e19d08df6b77d4c0d44",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.edge_indices",
+     "sha256": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.num_nodes",
+     "sha256": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "dataset_record",
+     "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "split_manifest",
+     "sha256": "bdfb11bd79052c0f10ac9d4274b84a08de86e21e27e94e532635b39c0be2dde8",
+     "kept": "version",
+     "state": "verified",
+     "reason": "the version's split_manifest.json holds the bytes recorded"
+    },
+    {
+     "name": "split.train_samples",
+     "sha256": "bf9675b667c6bdf9cfa63271b1df3418fc47205d82f9a980b4309c7243edc45e",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "split.val_samples",
+     "sha256": "92c8181eeb546d2ccfeb9d982e703cd879a08b762357740328e63b1a9dd63a40",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "samples",
+     "sha256": "92c8181eeb546d2ccfeb9d982e703cd879a08b762357740328e63b1a9dd63a40",
+     "kept": "version",
+     "state": "verified",
+     "reason": "the version's samples.json holds the bytes recorded"
+    },
+    {
+     "name": "task_fixture",
+     "sha256": "ac2488a1a9aa9a4a24a13fda80a61ed1e6730a7341afecf99d65e4336b360fdd",
+     "kept": "version",
+     "state": "verified",
+     "reason": "the version's task_fixture.json holds the bytes recorded"
+    },
+    {
+     "name": "task_fixture.samples",
+     "sha256": "18dee6e650f9e9029fd88260963747cf7731764c5a8157302c629c7f678da66e",
+     "kept": "version",
+     "state": "verified",
+     "reason": "the version's task_fixture_samples.json holds the bytes recorded"
+    }
+   ],
+   "run_counts": null,
+   "metrics": [
+    {
+     "name": "best_positive_mrr",
+     "value": 0.22364792070674425,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "conservative_pooled_mrr",
+     "value": 0.13051601644878094,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "coverage",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_mrr",
+     "value": 0.1292911263850319,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@1",
+     "value": 0.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@10",
+     "value": 0.27,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@100",
+     "value": 0.06100000000000001,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@20",
+     "value": 0.30500000000000005,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@3",
+     "value": 0.016666666666666666,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@5",
+     "value": 0.41,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@50",
+     "value": 0.12200000000000003,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@1",
+     "value": 0.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@10",
+     "value": 0.44000000000000006,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@100",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@20",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@3",
+     "value": 0.00625,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@5",
+     "value": 0.32375000000000004,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@50",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_mrr",
+     "value": 0.13051601644878094,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top1",
+     "value": 0.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top10",
+     "value": 0.4426229508196721,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top100",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top20",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top3",
+     "value": 0.00819672131147541,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top5",
+     "value": 0.3360655737704918,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top50",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    }
+   ],
+   "unknown": {
+    "run_counts": "its record holds no run counts beyond n_ranked (only a KG edge set's run records its own counts, each with its unit)",
+    "metric.unit": "its record holds no unit per metric (only a KG edge set's run records each metric's unit and denominator)"
+   }
+  },
+  {
+   "result": "run",
+   "run_id": "20261110T110549Z-eea723a97e5d-9364843b",
+   "report_sha256": "87752b182b185accd4f4236145c0c4f13f477c16953b78c1790ef4f4129e46a7",
+   "report": "kept",
+   "registered": "registered",
+   "stores": [
+    {
+     "source": "deployment",
+     "label": "probe-rc-supplied-1"
+    }
+   ],
+   "ledgers": [
+    {
+     "source": "deployment",
+     "workspace": "probe-rc",
+     "ledger": "gatv2/probe-rc-disease",
+     "sequence": 1,
+     "registered_at": "2026-11-10T11:05:49Z"
+    }
+   ],
+   "n_corroborating": 0,
+   "historical_overlap": [],
+   "conflict": null,
+   "group": {
+    "condition_group": "[\"eea723a97e5dc5f7365a80d361577725d6ae1552f50e72ece921ff57c12ba925\", \"probe-synthetic\", \"8a00f95423c4eac5fe8f5bd106d70e26ede30477f82ce561a18ae9fbebc41b0f\", \"5ee802599323f0d3de49ea4a1339b8310b03450d80c2eaac69ea3729026de795\"]",
+    "state": "uncontested",
+    "differing": [],
+    "why": null
+   },
+   "protocol": "disease",
+   "semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+   "measurement": {
+    "mode": "disease",
+    "cohort_kind": "supplied",
+    "candidate_construction": "every disease of the model's graph view",
+    "score_semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+    "model_construction": "model bundle (src.models.bundle.build_bundle) from its model spec",
+    "canonical_tie_policy_version": "average-rank/v1",
+    "metric_schema_version": 2,
+    "batch_size": 32,
+    "software_revision": "7e1d09e4cbdd70ef86c8063004913cb40e027c06",
+    "torch_version": "2.10.0+cu130",
+    "cuda_version": "13.0",
+    "device": "cpu",
+    "dtype": "torch.float32",
+    "amp_enabled": false,
+    "amp_dtype": null,
+    "torch_compile_wrapped": false,
+    "deterministic_algorithms": false,
+    "cudnn_deterministic": null,
+    "cudnn_benchmark": null,
+    "n_ranked": 8,
+    "scoring_semantics_digest": "9f842397a3f0a58c234e56d066eecc5e66febd0d45dfc5f19b0963127b283e12",
+    "measurement_semantics_digest": "5ee802599323f0d3de49ea4a1339b8310b03450d80c2eaac69ea3729026de795"
+   },
+   "data": {
+    "kind": "supplied",
+    "label": "probe-rc-supplied-1",
+    "role": "probe-synthetic",
+    "version_sha256": "8a00f95423c4eac5fe8f5bd106d70e26ede30477f82ce561a18ae9fbebc41b0f",
+    "dataset_origin": "synthetic",
+    "identity": {
+     "samples_sha256": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e",
+     "source_sha256": "cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0"
+    },
+    "counts": {
+     "source_cases": 12,
+     "ranked_eligible": 10,
+     "excluded": {
+      "ground_truth_absent": 1,
+      "phenotype_unmappable": 1
+     },
+     "n_excluded": 2
+    },
+    "count_units": null
+   },
+   "environment": {
+    "class": "CPU (development; a different measurement from a CUDA run)",
+    "deterministic_algorithms": false,
+    "gpu": null,
+    "native_identity": {
+     "pyg_lib": {
+      "kind": "PyG native extension",
+      "version": "0.8.0+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 1,
+       "aggregate_sha256": "c160d1fd4cf8ab1b28642b2ffeddf1408183d13348ca34b3f8d5731f1cc6c925"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_cluster": {
+      "kind": "PyG native extension",
+      "version": "1.6.3+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 9,
+       "aggregate_sha256": "4ad65252bbd451db2d1c84c545d6e2a2938c1a21b0fd197e720af1c9ec08e6c2"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_scatter": {
+      "kind": "PyG native extension",
+      "version": "2.1.2+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 4,
+       "aggregate_sha256": "75903da5ca5448c8aaffb15c843fb7580ae21591f7f0f81db50a956a4975251c"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_sparse": {
+      "kind": "PyG native extension",
+      "version": "0.6.18+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 12,
+       "aggregate_sha256": "99a789fb6944da298ab88a87c9d37b3440920b81c124b8ac2813f319b9f7f154"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     }
+    },
+    "components": {
+     "pyg_lib": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "0.8.0+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 1,
+       "aggregate_sha256": "c160d1fd4cf8ab1b28642b2ffeddf1408183d13348ca34b3f8d5731f1cc6c925"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_cluster": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "1.6.3+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 9,
+       "aggregate_sha256": "4ad65252bbd451db2d1c84c545d6e2a2938c1a21b0fd197e720af1c9ec08e6c2"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_scatter": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "2.1.2+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 4,
+       "aggregate_sha256": "75903da5ca5448c8aaffb15c843fb7580ae21591f7f0f81db50a956a4975251c"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_sparse": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "0.6.18+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 12,
+       "aggregate_sha256": "99a789fb6944da298ab88a87c9d37b3440920b81c124b8ac2813f319b9f7f154"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     }
+    }
+   },
+   "exposure": {
+    "state": "recorded as R10 (see r10)",
+    "reading": null,
+    "definition_version": null,
+    "measured_edges": null,
+    "in_recorded_graph_use": null,
+    "problem": null,
+    "r10": {
+     "training": {
+      "evidence": {
+       "state": "found"
+      },
+      "disease_overlap": {
+       "state": "overlap",
+       "k": 3,
+       "n": 5,
+       "cases": 7
+      },
+      "phenotype_set_overlap": {
+       "state": "overlap",
+       "k": 2,
+       "n": 10
+      }
+     },
+     "validation": {
+      "evidence": {
+       "state": "found"
+      },
+      "disease_overlap": {
+       "state": "overlap",
+       "k": 1,
+       "n": 5,
+       "cases": 2
+      },
+      "phenotype_set_overlap": {
+       "state": "none",
+       "k": 0,
+       "n": 10
+      }
+     }
+    }
+   },
+   "reason": null,
+   "model": {
+    "checkpoint_sha256": "eea723a97e5dc5f7365a80d361577725d6ae1552f50e72ece921ff57c12ba925",
+    "locations": [
+     {
+      "source": "deployment",
+      "workspace": "probe-rc",
+      "checkpoint": "gatv2/probe-rc-disease/last.pt"
+     }
+    ],
+    "learning_stage": "finetune",
+    "task": "disease",
+    "operation": "finetune",
+    "family_id": "20261110-110512_probe-base_d4e3e7",
+    "parent_sha256": "a6eb26c11d906b441cd814e6e4d7bb066e3ac572afec70cbd053c983893f926d",
+    "parent_run": "probe-rc-base",
+    "parent_changes": null,
+    "encoder": "gatv2",
+    "reference": false,
+    "differences": [
+     "encoder.heads",
+     "encoder.hidden",
+     "encoder.layers",
+     "encoder.output",
+     "input.dim"
+    ],
+    "spec": {
+     "spec_version": 1,
+     "learning_stage": "finetune",
+     "graph_view": {
+      "rule": "reference/v1",
+      "drop_native_self_loops": true,
+      "deduplicate": true,
+      "largest_component": true,
+      "exclude_relations": []
+     },
+     "input": {
+      "kind": "learned_table",
+      "dim": 8,
+      "init": "normal",
+      "type_embedding": false
+     },
+     "encoder": {
+      "kind": "gatv2",
+      "layers": 2,
+      "hidden": 4,
+      "output": 4,
+      "heads": 2,
+      "first_hidden_multiplier": 2,
+      "dropout": 0.3,
+      "attention_dropout": 0.0,
+      "attention_slope": 0.2,
+      "add_self_loops": true,
+      "share_weights": false,
+      "concat": true,
+      "residual": false,
+      "norm": "graph_layer_norm+batch_norm",
+      "activation_slope": 0.01,
+      "relation_edge_dim": null
+     },
+     "lp_head": {
+      "kind": "distmult_tanh",
+      "margin": 1.0,
+      "relation_init": "xavier_uniform_leaky_relu"
+     },
+     "patient_encoder": {
+      "transformer_layers": 3,
+      "transformer_heads": 8,
+      "feedforward": 2048,
+      "dropout": 0.1
+     },
+     "task_head": {
+      "task": "disease",
+      "projection_slope": 0.1,
+      "distance_normalisation_eps": 1e-12,
+      "softmax_scale": 1.0,
+      "multi_similarity": [
+       1.0,
+       20.0,
+       1.0,
+       0.4
+      ],
+      "gene": null
+     }
+    },
+    "capabilities": {
+     "learning_stage": "finetune",
+     "encoder": "gatv2",
+     "representations": [
+      "node_vectors",
+      "patient_representation"
+     ],
+     "heads": [
+      [
+       "link_prediction",
+       "distmult_tanh",
+       "distmult_raw_score/tanh_hinge/v1"
+      ],
+      [
+       "task",
+       "disease",
+       "patient_disease/negative_normalised_squared_distance/v1"
+      ]
+     ],
+     "node_inputs": [
+      "node_ids"
+     ],
+     "relation_inputs": [
+      "relation_ids"
+     ],
+     "computation": [
+      "full_view",
+      "sampled"
+     ],
+     "sampled_hops": 2,
+     "node_vector_width": 8
+    },
+    "weight_transfer": {
+     "loaded_from_parent": [
+      "encoder",
+      "input",
+      "lp_head"
+     ],
+     "initialised_new": [
+      "patient_encoder",
+      "task_head"
+     ],
+     "trainable": "all",
+     "optimizer": "new",
+     "parts": {
+      "input": "trainable",
+      "encoder": "trainable",
+      "lp_head": "trainable",
+      "patient_encoder": "trainable",
+      "task_head": "trainable"
+     },
+     "frozen_forward": null,
+     "downstream_initial_sha256": "acc5f61b67044cd93bcbe449d8f3a24c857b60682f5e9922ead645f182b0b35d",
+     "downstream_digest_rule": "parts_state_sha256/1"
+    },
+    "loss_identity": {
+     "terms": [
+      "task",
+      "lp"
+     ],
+     "task_loss": "nca",
+     "task_loss_weight": 0.1,
+     "lp_loss_weight": 0.9,
+     "lp_head": "distmult_tanh",
+     "margin": 1.0,
+     "terms_without_trainable_parameters": []
+    },
+    "training_rules": 2,
+    "learning_settings": {
+     "learning_stage": "finetune",
+     "model_spec": {
+      "spec_version": 1,
+      "learning_stage": "finetune",
+      "graph_view": {
+       "rule": "reference/v1",
+       "drop_native_self_loops": true,
+       "deduplicate": true,
+       "largest_component": true,
+       "exclude_relations": []
+      },
+      "input": {
+       "kind": "learned_table",
+       "dim": 8,
+       "init": "normal",
+       "type_embedding": false
+      },
+      "encoder": {
+       "kind": "gatv2",
+       "layers": 2,
+       "hidden": 4,
+       "output": 4,
+       "heads": 2,
+       "first_hidden_multiplier": 2,
+       "dropout": 0.3,
+       "attention_dropout": 0.0,
+       "attention_slope": 0.2,
+       "add_self_loops": true,
+       "share_weights": false,
+       "concat": true,
+       "residual": false,
+       "norm": "graph_layer_norm+batch_norm",
+       "activation_slope": 0.01,
+       "relation_edge_dim": null
+      },
+      "lp_head": {
+       "kind": "distmult_tanh",
+       "margin": 1.0,
+       "relation_init": "xavier_uniform_leaky_relu"
+      },
+      "patient_encoder": {
+       "transformer_layers": 3,
+       "transformer_heads": 8,
+       "feedforward": 2048,
+       "dropout": 0.1
+      },
+      "task_head": {
+       "task": "disease",
+       "projection_slope": 0.1,
+       "distance_normalisation_eps": 1e-12,
+       "softmax_scale": 1.0,
+       "multi_similarity": [
+        1.0,
+        20.0,
+        1.0,
+        0.4
+       ],
+       "gene": null
+      },
+      "sources": {
+       "input.dim": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh:6-17 (nfeat 2048)",
+       "input.init": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:62 (nn.Embedding default N(0,1))",
+       "encoder.layers": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:77 (n_layers 3)",
+       "encoder.hidden": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (hidden 256; first layer doubled, node_embedder_model.py:58)",
+       "encoder.output": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (output 128)",
+       "encoder.heads": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (n_heads 4)",
+       "encoder.dropout": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (dropout 0.3)",
+       "encoder.concat": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:81-85 (GATv2Conv concat default; README C1)",
+       "encoder.attention": "PyG 1.7.2 GATv2Conv defaults: dropout 0, add_self_loops, no shared weights, slope 0.2 (README U4)",
+       "encoder.norm": "mims-harvard/SHEPHERD@e95433a hparams.py:25 batch_layer; node_embedder_model.py:135-143 (README C2, \u00a72.8)",
+       "encoder.activation_slope": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:140 (F.leaky_relu default 0.01)",
+       "lp_head": "mims-harvard/SHEPHERD@e95433a decoders.py bilinear + tanh; node_embedder_model.py:416-425 hinge, margin 1",
+       "lp_head.relation_init": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:114 (xavier_uniform, leaky_relu gain)",
+       "patient_encoder": "mims-harvard/SHEPHERD@e95433a train.py:67-68 (3 layers, 8 heads); torch TransformerEncoderLayer defaults",
+       "patient_encoder.pooling": "allennlp 2.4.0 BilinearAttention, bias dropped (README U11)",
+       "task_head.projection_slope": "mims-harvard/SHEPHERD@e95433a hparams.py:96 (leaky_relu 0.1)",
+       "task_head.distance": "pytorch-metric-learning 0.9.98 LpDistance(power=2), normalised (README U10)",
+       "task_head.gene": "mims-harvard/SHEPHERD@e95433a gp_aligner.py:95-101 (EMBSIM); add_spl_to_patients.py:104-109 (bounds); eta 0.5 from run_causal_gene_discovery.sh",
+       "task_head.augmentation": "paper Eq 10, K 3 and omega 0.7 as provisional defaults (README F10)",
+       "graph_view": "paper Methods (dedup, self-loops removed, largest connected component); README G1"
+      }
+     },
+     "split_seed": 0,
+     "task": "disease",
+     "task_loss_weight": 0.1,
+     "lp_loss_weight": 0.9,
+     "candidate_sample_size": 8,
+     "sparse_sample_size": 8,
+     "candidate_upsample_size": null,
+     "frozen_parts": "none",
+     "num_epochs": 1,
+     "learning_rate": 1e-05,
+     "weight_decay": 0.0,
+     "batch_size": 8,
+     "gradient_accumulation_steps": 1,
+     "max_grad_norm": 1.0,
+     "scheduler_type": "none",
+     "warmup_steps": 0,
+     "min_lr_ratio": 0.01,
+     "use_amp": false,
+     "amp_dtype": "float16",
+     "num_neighbors": [
+      3,
+      3
+     ],
+     "eval_every_n_epochs": 1,
+     "early_stopping_patience": null,
+     "save_top_k": 3,
+     "seed": 33
+    },
+    "effective_settings": {
+     "device": {
+      "requested": "cpu",
+      "effective": "cpu"
+     },
+     "amp": {
+      "requested": false,
+      "dtype_requested": "float16",
+      "enabled": false,
+      "dtype": "float32",
+      "grad_scaler": false
+     },
+     "compile": {
+      "requested": false,
+      "installed": false
+     },
+     "loaders": {
+      "train": {
+       "kind": "FinetuneSampler",
+       "batch_size": 8,
+       "sizes": [
+        3,
+        3
+       ],
+       "batches": 8,
+       "recipe": {
+        "learning_stage": "finetune",
+        "reference_filled": {
+         "early_stopping_patience": "early stopping disabled in the source (README C6): no patience",
+         "frozen_parts": "mims-harvard/SHEPHERD@e95433a train.py:267 and gene_prioritization_model.py:541-543 (the GNN keeps training: Adam over the whole model; README A10, U8)",
+         "learning_rate": "mims-harvard/SHEPHERD@e95433a disease run_*.sh script (lr 1e-5; README U3, U8)",
+         "lp_loss_weight": "mims-harvard/SHEPHERD@e95433a disease run_*.sh script lmbda 0.9 (README C3)",
+         "max_grad_norm": "mims-harvard/SHEPHERD@e95433a hparams.py:95-110 (gradclip 1.0)",
+         "scheduler_type": "mims-harvard/SHEPHERD@e95433a train.py:283-292,311 (no scheduler; README C6, U8)",
+         "seed": "mims-harvard/SHEPHERD@e95433a train.py:78 (seed 33)",
+         "task_loss_weight": "mims-harvard/SHEPHERD@e95433a disease run_*.sh script lmbda 0.9 on LP, so 0.1 on the task (README C3)",
+         "use_amp": "mims-harvard/SHEPHERD@e95433a train.py:308-317 (precision 16 never passed: fp32; README U15)",
+         "warmup_steps": "no warmup in the source (README C6)",
+         "weight_decay": "mims-harvard/SHEPHERD@e95433a gene_prioritization_model.py:541-543 (Adam, no weight decay; U8)"
+        },
+        "operator_set": [
+         "batch_size",
+         "candidate_sample_size",
+         "num_epochs",
+         "num_neighbors",
+         "sparse_sample_size"
+        ]
+       }
+      },
+      "val": {
+       "cases": 20,
+       "bound": 20,
+       "excluded": 0,
+       "phenotypes_outside_view": 0
+      }
+     },
+     "schedule": {
+      "type": "none",
+      "base_lr": 1e-05
+     }
+    }
+   },
+   "references": [
+    {
+     "name": "graph.kg",
+     "sha256": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.node_features",
+     "sha256": "2cd4b452d61a29081b2882e217f7f290f3969ea0a9da3e19d08df6b77d4c0d44",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.edge_indices",
+     "sha256": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.num_nodes",
+     "sha256": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "dataset_record",
+     "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "source",
+     "sha256": "cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0",
+     "kept": "registry",
+     "state": "verified",
+     "reason": "the registry's sources/cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0.json holds the bytes recorded"
+    },
+    {
+     "name": "samples",
+     "sha256": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e",
+     "kept": "version",
+     "state": "verified",
+     "reason": "the version's samples.json holds the bytes recorded"
+    }
+   ],
+   "run_counts": null,
+   "metrics": [
+    {
+     "name": "best_positive_mrr",
+     "value": 0.4,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "conservative_pooled_mrr",
+     "value": 0.32,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "coverage",
+     "value": 0.8,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_mrr",
+     "value": 0.4,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@1",
+     "value": 0.125,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@10",
+     "value": 0.1,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@100",
+     "value": 0.01,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@20",
+     "value": 0.05,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@3",
+     "value": 0.125,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@5",
+     "value": 0.2,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@50",
+     "value": 0.02,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@1",
+     "value": 0.125,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@10",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@100",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@20",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@3",
+     "value": 0.375,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@5",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@50",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_mrr",
+     "value": 0.4,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top1",
+     "value": 0.125,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top10",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top100",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top20",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top3",
+     "value": 0.375,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top5",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top50",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    }
+   ],
+   "unknown": {
+    "run_counts": "its record holds no run counts beyond n_ranked (only a KG edge set's run records its own counts, each with its unit)",
+    "metric.unit": "its record holds no unit per metric (only a KG edge set's run records each metric's unit and denominator)"
+   }
+  },
+  {
+   "result": "run",
+   "run_id": "20261110T110549Z-8b4497c1759b-ec0a1dbf",
+   "report_sha256": "42d7fae8a6036c421e07cccacdb27bc3fb7186feb3c2cb13038ce6617a965640",
+   "report": "kept",
+   "registered": "registered",
+   "stores": [
+    {
+     "source": "deployment",
+     "label": "probe-gen-val-1"
+    }
+   ],
+   "ledgers": [
+    {
+     "source": "deployment",
+     "workspace": "probe-rc",
+     "ledger": "gatv2/probe-rc-d1-disease",
+     "sequence": 3,
+     "registered_at": "2026-11-10T11:05:49Z"
+    }
+   ],
+   "n_corroborating": 0,
+   "historical_overlap": [],
+   "conflict": null,
+   "group": {
+    "condition_group": "[\"8b4497c1759b9ba6f72b3a947eec994343d90767c34a6a08875a6deb6237665f\", \"val\", \"01f2abad7ab0648bfe1ec85d63a645433c7bfa76f296737320f2fd9c4c99c964\", \"01ba17a81579d8601fa4b27e64f59b049acc51fd499feb568bb23652c6912f63\"]",
+    "state": "uncontested",
+    "differing": [],
+    "why": null
+   },
+   "protocol": "disease",
+   "semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+   "measurement": {
+    "mode": "disease",
+    "cohort_kind": "generated",
+    "candidate_construction": "every disease of the model's graph view",
+    "score_semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
+    "model_construction": "model bundle (src.models.bundle.build_bundle) from its model spec",
+    "canonical_tie_policy_version": "average-rank/v1",
+    "metric_schema_version": 2,
+    "batch_size": 32,
+    "software_revision": "7e1d09e4cbdd70ef86c8063004913cb40e027c06",
+    "torch_version": "2.10.0+cu130",
+    "cuda_version": "13.0",
+    "device": "cpu",
+    "dtype": "torch.float32",
+    "amp_enabled": false,
+    "amp_dtype": null,
+    "torch_compile_wrapped": false,
+    "deterministic_algorithms": false,
+    "cudnn_deterministic": null,
+    "cudnn_benchmark": null,
+    "n_ranked": 20,
+    "scoring_semantics_digest": "26e81f42561f53fc0eb9c59b5221a667310349160b4b14826848b9ca3dcfac1c",
+    "measurement_semantics_digest": "01ba17a81579d8601fa4b27e64f59b049acc51fd499feb568bb23652c6912f63"
+   },
+   "data": {
+    "kind": "generated",
+    "label": "probe-gen-val-1",
+    "role": "val",
+    "version_sha256": "01f2abad7ab0648bfe1ec85d63a645433c7bfa76f296737320f2fd9c4c99c964",
+    "dataset_origin": "synthetic",
+    "identity": {
+     "samples_sha256": "92c8181eeb546d2ccfeb9d982e703cd879a08b762357740328e63b1a9dd63a40",
+     "split_manifest": {
+      "sha256": "bdfb11bd79052c0f10ac9d4274b84a08de86e21e27e94e532635b39c0be2dde8"
+     },
+     "generation": {
+      "algorithm": "coverage-first-then-replacement",
+      "algorithm_version": 1
+     },
+     "allocation": {
+      "algorithm": "uniform-without-replacement",
+      "algorithm_version": 1,
+      "seed": 20260909
+     },
+     "task_fixture": {
+      "rule": "one-causal-gene-from-the-disease-plus-distractors/v1",
+      "record": {
+       "sha256": "ac2488a1a9aa9a4a24a13fda80a61ed1e6730a7341afecf99d65e4336b360fdd"
+      },
+      "samples": {
+       "sha256": "18dee6e650f9e9029fd88260963747cf7731764c5a8157302c629c7f678da66e"
+      }
+     }
+    },
+    "counts": {
+     "diseases": 1,
+     "samples": 20,
+     "task_fixture_samples": 20
+    },
+    "count_units": {
+     "diseases": "distinct diseases among those patients (the split's realised disease set)",
+     "samples": "generated patients: the sample rows of the role's split, as written",
+     "task_fixture_samples": "functional gene fixture rows of the role's split: its patients whose disease has a gene in the graph, each given one causal gene drawn from that disease's genes and distractor candidates by the fixture's rule; the cases the gene and patients-like-me measurements score"
+    }
+   },
+   "environment": {
+    "class": "CPU (development; a different measurement from a CUDA run)",
+    "deterministic_algorithms": false,
+    "gpu": null,
+    "native_identity": {
+     "pyg_lib": {
+      "kind": "PyG native extension",
+      "version": "0.8.0+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 1,
+       "aggregate_sha256": "c160d1fd4cf8ab1b28642b2ffeddf1408183d13348ca34b3f8d5731f1cc6c925"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_cluster": {
+      "kind": "PyG native extension",
+      "version": "1.6.3+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 9,
+       "aggregate_sha256": "4ad65252bbd451db2d1c84c545d6e2a2938c1a21b0fd197e720af1c9ec08e6c2"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_scatter": {
+      "kind": "PyG native extension",
+      "version": "2.1.2+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 4,
+       "aggregate_sha256": "75903da5ca5448c8aaffb15c843fb7580ae21591f7f0f81db50a956a4975251c"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     },
+     "torch_sparse": {
+      "kind": "PyG native extension",
+      "version": "0.6.18+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 12,
+       "aggregate_sha256": "99a789fb6944da298ab88a87c9d37b3440920b81c124b8ac2813f319b9f7f154"
+      },
+      "source": {
+       "state": "not recorded",
+       "route": null
+      }
+     }
+    },
+    "components": {
+     "pyg_lib": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "0.8.0+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 1,
+       "aggregate_sha256": "c160d1fd4cf8ab1b28642b2ffeddf1408183d13348ca34b3f8d5731f1cc6c925"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_cluster": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "1.6.3+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 9,
+       "aggregate_sha256": "4ad65252bbd451db2d1c84c545d6e2a2938c1a21b0fd197e720af1c9ec08e6c2"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_scatter": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "2.1.2+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 4,
+       "aggregate_sha256": "75903da5ca5448c8aaffb15c843fb7580ae21591f7f0f81db50a956a4975251c"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     },
+     "torch_sparse": {
+      "kind": "PyG native extension",
+      "requested": "unknown",
+      "installed": true,
+      "available": true,
+      "selected": "unknown",
+      "in_effect": "unknown",
+      "fallback_reason": null,
+      "version": "0.6.18+pt210cpu",
+      "native": {
+       "state": "recorded",
+       "count": 12,
+       "aggregate_sha256": "99a789fb6944da298ab88a87c9d37b3440920b81c124b8ac2813f319b9f7f154"
+      },
+      "source": {
+       "state": "not recorded",
+       "reason": "no source receipt is kept in this environment"
+      }
+     }
+    }
+   },
+   "exposure": {
+    "state": "not compared: a generated split's relation to a model's training is its allocation's (see data_identity)",
+    "reading": null,
+    "definition_version": null,
+    "measured_edges": null,
+    "in_recorded_graph_use": null,
+    "problem": null,
+    "r10": null
+   },
+   "reason": null,
+   "model": {
+    "checkpoint_sha256": "8b4497c1759b9ba6f72b3a947eec994343d90767c34a6a08875a6deb6237665f",
+    "locations": [
+     {
+      "source": "deployment",
+      "workspace": "probe-rc",
+      "checkpoint": "gatv2/probe-rc-d1-disease/last.pt"
+     }
+    ],
+    "learning_stage": "finetune",
+    "task": "disease",
+    "operation": "finetune",
+    "family_id": "20261110-110512_probe-base_d4e3e7",
+    "parent_sha256": "a6eb26c11d906b441cd814e6e4d7bb066e3ac572afec70cbd053c983893f926d",
+    "parent_run": "20261110-110512_probe-base_d4e3e7",
+    "parent_changes": null,
+    "encoder": "gatv2",
+    "reference": false,
+    "differences": [
+     "encoder.heads",
+     "encoder.hidden",
+     "encoder.layers",
+     "encoder.output",
+     "input.dim"
+    ],
+    "spec": {
+     "spec_version": 1,
+     "learning_stage": "finetune",
+     "graph_view": {
+      "rule": "reference/v1",
+      "drop_native_self_loops": true,
+      "deduplicate": true,
+      "largest_component": true,
+      "exclude_relations": []
+     },
+     "input": {
+      "kind": "learned_table",
+      "dim": 8,
+      "init": "normal",
+      "type_embedding": false
+     },
+     "encoder": {
+      "kind": "gatv2",
+      "layers": 2,
+      "hidden": 4,
+      "output": 4,
+      "heads": 2,
+      "first_hidden_multiplier": 2,
+      "dropout": 0.3,
+      "attention_dropout": 0.0,
+      "attention_slope": 0.2,
+      "add_self_loops": true,
+      "share_weights": false,
+      "concat": true,
+      "residual": false,
+      "norm": "graph_layer_norm+batch_norm",
+      "activation_slope": 0.01,
+      "relation_edge_dim": null
+     },
+     "lp_head": {
+      "kind": "distmult_tanh",
+      "margin": 1.0,
+      "relation_init": "xavier_uniform_leaky_relu"
+     },
+     "patient_encoder": {
+      "transformer_layers": 3,
+      "transformer_heads": 8,
+      "feedforward": 2048,
+      "dropout": 0.1
+     },
+     "task_head": {
+      "task": "disease",
+      "projection_slope": 0.1,
+      "distance_normalisation_eps": 1e-12,
+      "softmax_scale": 1.0,
+      "multi_similarity": [
+       1.0,
+       20.0,
+       1.0,
+       0.4
+      ],
+      "gene": null
+     }
+    },
+    "capabilities": {
+     "learning_stage": "finetune",
+     "encoder": "gatv2",
+     "representations": [
+      "node_vectors",
+      "patient_representation"
+     ],
+     "heads": [
+      [
+       "link_prediction",
+       "distmult_tanh",
+       "distmult_raw_score/tanh_hinge/v1"
+      ],
+      [
+       "task",
+       "disease",
+       "patient_disease/negative_normalised_squared_distance/v1"
+      ]
+     ],
+     "node_inputs": [
+      "node_ids"
+     ],
+     "relation_inputs": [
+      "relation_ids"
+     ],
+     "computation": [
+      "full_view",
+      "sampled"
+     ],
+     "sampled_hops": 2,
+     "node_vector_width": 8
+    },
+    "weight_transfer": {
+     "loaded_from_parent": [
+      "encoder",
+      "input",
+      "lp_head"
+     ],
+     "initialised_new": [
+      "patient_encoder",
+      "task_head"
+     ],
+     "trainable": "all",
+     "optimizer": "new",
+     "parts": {
+      "input": "trainable",
+      "encoder": "trainable",
+      "lp_head": "trainable",
+      "patient_encoder": "trainable",
+      "task_head": "trainable"
+     },
+     "frozen_forward": null,
+     "downstream_initial_sha256": "acc5f61b67044cd93bcbe449d8f3a24c857b60682f5e9922ead645f182b0b35d",
+     "downstream_digest_rule": "parts_state_sha256/1"
+    },
+    "loss_identity": {
+     "terms": [
+      "task",
+      "lp"
+     ],
+     "task_loss": "nca",
+     "task_loss_weight": 0.1,
+     "lp_loss_weight": 0.9,
+     "lp_head": "distmult_tanh",
+     "margin": 1.0,
+     "terms_without_trainable_parameters": []
+    },
+    "training_rules": 2,
+    "learning_settings": {
+     "learning_stage": "finetune",
+     "model_spec": {
+      "spec_version": 1,
+      "learning_stage": "finetune",
+      "graph_view": {
+       "rule": "reference/v1",
+       "drop_native_self_loops": true,
+       "deduplicate": true,
+       "largest_component": true,
+       "exclude_relations": []
+      },
+      "input": {
+       "kind": "learned_table",
+       "dim": 8,
+       "init": "normal",
+       "type_embedding": false
+      },
+      "encoder": {
+       "kind": "gatv2",
+       "layers": 2,
+       "hidden": 4,
+       "output": 4,
+       "heads": 2,
+       "first_hidden_multiplier": 2,
+       "dropout": 0.3,
+       "attention_dropout": 0.0,
+       "attention_slope": 0.2,
+       "add_self_loops": true,
+       "share_weights": false,
+       "concat": true,
+       "residual": false,
+       "norm": "graph_layer_norm+batch_norm",
+       "activation_slope": 0.01,
+       "relation_edge_dim": null
+      },
+      "lp_head": {
+       "kind": "distmult_tanh",
+       "margin": 1.0,
+       "relation_init": "xavier_uniform_leaky_relu"
+      },
+      "patient_encoder": {
+       "transformer_layers": 3,
+       "transformer_heads": 8,
+       "feedforward": 2048,
+       "dropout": 0.1
+      },
+      "task_head": {
+       "task": "disease",
+       "projection_slope": 0.1,
+       "distance_normalisation_eps": 1e-12,
+       "softmax_scale": 1.0,
+       "multi_similarity": [
+        1.0,
+        20.0,
+        1.0,
+        0.4
+       ],
+       "gene": null
+      },
+      "sources": {
+       "input.dim": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh:6-17 (nfeat 2048)",
+       "input.init": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:62 (nn.Embedding default N(0,1))",
+       "encoder.layers": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:77 (n_layers 3)",
+       "encoder.hidden": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (hidden 256; first layer doubled, node_embedder_model.py:58)",
+       "encoder.output": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (output 128)",
+       "encoder.heads": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (n_heads 4)",
+       "encoder.dropout": "mims-harvard/SHEPHERD@e95433a run_pretrain.sh (dropout 0.3)",
+       "encoder.concat": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:81-85 (GATv2Conv concat default; README C1)",
+       "encoder.attention": "PyG 1.7.2 GATv2Conv defaults: dropout 0, add_self_loops, no shared weights, slope 0.2 (README U4)",
+       "encoder.norm": "mims-harvard/SHEPHERD@e95433a hparams.py:25 batch_layer; node_embedder_model.py:135-143 (README C2, \u00a72.8)",
+       "encoder.activation_slope": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:140 (F.leaky_relu default 0.01)",
+       "lp_head": "mims-harvard/SHEPHERD@e95433a decoders.py bilinear + tanh; node_embedder_model.py:416-425 hinge, margin 1",
+       "lp_head.relation_init": "mims-harvard/SHEPHERD@e95433a node_embedder_model.py:114 (xavier_uniform, leaky_relu gain)",
+       "patient_encoder": "mims-harvard/SHEPHERD@e95433a train.py:67-68 (3 layers, 8 heads); torch TransformerEncoderLayer defaults",
+       "patient_encoder.pooling": "allennlp 2.4.0 BilinearAttention, bias dropped (README U11)",
+       "task_head.projection_slope": "mims-harvard/SHEPHERD@e95433a hparams.py:96 (leaky_relu 0.1)",
+       "task_head.distance": "pytorch-metric-learning 0.9.98 LpDistance(power=2), normalised (README U10)",
+       "task_head.gene": "mims-harvard/SHEPHERD@e95433a gp_aligner.py:95-101 (EMBSIM); add_spl_to_patients.py:104-109 (bounds); eta 0.5 from run_causal_gene_discovery.sh",
+       "task_head.augmentation": "paper Eq 10, K 3 and omega 0.7 as provisional defaults (README F10)",
+       "graph_view": "paper Methods (dedup, self-loops removed, largest connected component); README G1"
+      }
+     },
+     "split_seed": 0,
+     "task": "disease",
+     "task_loss_weight": 0.1,
+     "lp_loss_weight": 0.9,
+     "candidate_sample_size": 8,
+     "sparse_sample_size": 8,
+     "candidate_upsample_size": null,
+     "frozen_parts": "none",
+     "num_epochs": 1,
+     "learning_rate": 1e-05,
+     "weight_decay": 0.0,
+     "batch_size": 8,
+     "gradient_accumulation_steps": 1,
+     "max_grad_norm": 1.0,
+     "scheduler_type": "none",
+     "warmup_steps": 0,
+     "min_lr_ratio": 0.01,
+     "use_amp": false,
+     "amp_dtype": "float16",
+     "num_neighbors": [
+      3,
+      3
+     ],
+     "eval_every_n_epochs": 1,
+     "early_stopping_patience": null,
+     "save_top_k": 3,
+     "seed": 33
+    },
+    "effective_settings": {
+     "device": {
+      "requested": "cpu",
+      "effective": "cpu"
+     },
+     "amp": {
+      "requested": false,
+      "dtype_requested": "float16",
+      "enabled": false,
+      "dtype": "float32",
+      "grad_scaler": false
+     },
+     "compile": {
+      "requested": false,
+      "installed": false
+     },
+     "loaders": {
+      "train": {
+       "kind": "FinetuneSampler",
+       "batch_size": 8,
+       "sizes": [
+        3,
+        3
+       ],
+       "batches": 8,
+       "recipe": {
+        "learning_stage": "finetune",
+        "reference_filled": {
+         "early_stopping_patience": "early stopping disabled in the source (README C6): no patience",
+         "frozen_parts": "mims-harvard/SHEPHERD@e95433a train.py:267 and gene_prioritization_model.py:541-543 (the GNN keeps training: Adam over the whole model; README A10, U8)",
+         "learning_rate": "mims-harvard/SHEPHERD@e95433a disease run_*.sh script (lr 1e-5; README U3, U8)",
+         "lp_loss_weight": "mims-harvard/SHEPHERD@e95433a disease run_*.sh script lmbda 0.9 (README C3)",
+         "max_grad_norm": "mims-harvard/SHEPHERD@e95433a hparams.py:95-110 (gradclip 1.0)",
+         "scheduler_type": "mims-harvard/SHEPHERD@e95433a train.py:283-292,311 (no scheduler; README C6, U8)",
+         "seed": "mims-harvard/SHEPHERD@e95433a train.py:78 (seed 33)",
+         "task_loss_weight": "mims-harvard/SHEPHERD@e95433a disease run_*.sh script lmbda 0.9 on LP, so 0.1 on the task (README C3)",
+         "use_amp": "mims-harvard/SHEPHERD@e95433a train.py:308-317 (precision 16 never passed: fp32; README U15)",
+         "warmup_steps": "no warmup in the source (README C6)",
+         "weight_decay": "mims-harvard/SHEPHERD@e95433a gene_prioritization_model.py:541-543 (Adam, no weight decay; U8)"
+        },
+        "operator_set": [
+         "batch_size",
+         "candidate_sample_size",
+         "num_epochs",
+         "num_neighbors",
+         "sparse_sample_size"
+        ]
+       }
+      },
+      "val": {
+       "cases": 20,
+       "bound": 20,
+       "excluded": 0,
+       "phenotypes_outside_view": 0
+      }
+     },
+     "schedule": {
+      "type": "none",
+      "base_lr": 1e-05
+     }
+    }
+   },
+   "references": [
+    {
+     "name": "graph.kg",
+     "sha256": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.node_features",
+     "sha256": "2cd4b452d61a29081b2882e217f7f290f3969ea0a9da3e19d08df6b77d4c0d44",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.edge_indices",
+     "sha256": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "graph.num_nodes",
+     "sha256": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "dataset_record",
+     "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "split_manifest",
+     "sha256": "bdfb11bd79052c0f10ac9d4274b84a08de86e21e27e94e532635b39c0be2dde8",
+     "kept": "version",
+     "state": "verified",
+     "reason": "the version's split_manifest.json holds the bytes recorded"
+    },
+    {
+     "name": "split.train_samples",
+     "sha256": "bf9675b667c6bdf9cfa63271b1df3418fc47205d82f9a980b4309c7243edc45e",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "split.val_samples",
+     "sha256": "92c8181eeb546d2ccfeb9d982e703cd879a08b762357740328e63b1a9dd63a40",
+     "kept": "workspace",
+     "state": "not checked",
+     "reason": "no workspace location was given"
+    },
+    {
+     "name": "samples",
+     "sha256": "92c8181eeb546d2ccfeb9d982e703cd879a08b762357740328e63b1a9dd63a40",
+     "kept": "version",
+     "state": "verified",
+     "reason": "the version's samples.json holds the bytes recorded"
+    },
+    {
+     "name": "task_fixture",
+     "sha256": "ac2488a1a9aa9a4a24a13fda80a61ed1e6730a7341afecf99d65e4336b360fdd",
+     "kept": "version",
+     "state": "verified",
+     "reason": "the version's task_fixture.json holds the bytes recorded"
+    },
+    {
+     "name": "task_fixture.samples",
+     "sha256": "18dee6e650f9e9029fd88260963747cf7731764c5a8157302c629c7f678da66e",
+     "kept": "version",
+     "state": "verified",
+     "reason": "the version's task_fixture_samples.json holds the bytes recorded"
+    }
+   ],
+   "run_counts": null,
+   "metrics": [
+    {
+     "name": "best_positive_mrr",
+     "value": 0.32083333333333325,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "conservative_pooled_mrr",
+     "value": 0.32083333333333325,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "coverage",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_mrr",
+     "value": 0.32083333333333325,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@1",
+     "value": 0.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@10",
+     "value": 0.10000000000000002,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@100",
+     "value": 0.010000000000000002,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@20",
+     "value": 0.05000000000000001,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@3",
+     "value": 0.28333333333333327,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@5",
+     "value": 0.20000000000000004,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_precision@50",
+     "value": 0.020000000000000004,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@1",
+     "value": 0.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@10",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@100",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@20",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@3",
+     "value": 0.85,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@5",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "macro_recall@50",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_mrr",
+     "value": 0.32083333333333325,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top1",
+     "value": 0.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top10",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top100",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top20",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top3",
+     "value": 0.85,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top5",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    },
+    {
+     "name": "pooled_top50",
+     "value": 1.0,
+     "status": "recorded",
+     "unit": null,
+     "denominator": null
+    }
+   ],
+   "unknown": {
+    "run_counts": "its record holds no run counts beyond n_ranked (only a KG edge set's run records its own counts, each with its unit)",
+    "metric.unit": "its record holds no unit per metric (only a KG edge set's run records each metric's unit and denominator)"
+   }
+  }
+ ]
+}

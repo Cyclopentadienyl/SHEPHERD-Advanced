@@ -3786,7 +3786,7 @@ OPERATOR_ROUTES: Tuple[Tuple[str, str, int], ...] = (
 #: named). Allowed or refused, nothing is done.
 GATED_EVENTS: Tuple[Tuple[str, str, Tuple[Any, ...], str], ...] = (
     ("training_console", "_on_stop", ({},), "No training is running"),
-    ("test_page", "_on_start", ({}, {}, None, None, None, None, False, False),
+    ("test_page", "_on_start", ({}, {}, None, None, None, None, None, False, False),
      "Nothing was started."),
     ("test_page", "_on_register", ({}, {}, {}, None, None), "Nothing was registered."),
     ("diagnosis_panel", "_on_stop_inference", ({},), "Nothing was stopped"),

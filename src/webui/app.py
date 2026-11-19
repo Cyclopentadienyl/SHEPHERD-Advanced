@@ -22,8 +22,10 @@ Dependencies:
       takes its theme, CSS, head and JS from gr.mount_gradio_app(), not from
       gr.Blocks(); `mount_dashboard` is the one place that passes them
       (`mount_options`: the theme, the CSS, and the head: every style sheet and
-      the scripts of the shared ⓘ, the shell and the touch record,
-      `training_console.TOUCH_HEAD`).
+      the scripts of the shared ⓘ, the shell, the touch record,
+      `training_console.TOUCH_HEAD`, Diagnosis' inputs generation,
+      `diagnosis_panel.INPUTS_HEAD`, and the downloads',
+      `exports.DOWNLOAD_HEAD`).
 
 Called by:
     - src.api.main (`mount_dashboard`, at /ui)
@@ -169,15 +171,21 @@ def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
       ``body`` and Gradio's containers), and it drops ``@supports`` and
       ``@container`` rules. A style element in the head is applied as written;
     - **the head scripts**: the shared ⓘ (and Copy), the shell (always
-      light, title, header row) and the touch record's (every edit of a
+      light, title, header row), the touch record's (every edit of a
       field whose touches a form records is that field's input, an emptied
       text box included, and is in the form's record before a click made
-      after it goes out: `training_console.TOUCH_HEAD`). They run once per
-      page load, before any component exists, so each works by
-      document-level (or window-level) delegation.
+      after it goes out: `training_console.TOUCH_HEAD`), Diagnosis' inputs
+      generation (each edit of an input an answer depends on counted in its
+      own event, and the page's gate written for it:
+      `diagnosis_panel.INPUTS_HEAD`) and the downloads' (a click on a link
+      to the download route is a download, never a visit:
+      `exports.DOWNLOAD_HEAD`). They run once per page load, before any
+      component exists, so each works by document-level (or window-level)
+      delegation.
     """
     return ("<style>" + HELP_CSS + SHELL_CSS + "".join(page_css) + "</style>"
-            + HELP_HEAD + shell.SHELL_HEAD + training_console.TOUCH_HEAD)
+            + HELP_HEAD + shell.SHELL_HEAD + training_console.TOUCH_HEAD
+            + diagnosis_panel.INPUTS_HEAD + exports.DOWNLOAD_HEAD)
 
 
 DASHBOARD_HEAD = dashboard_head()
@@ -232,10 +240,9 @@ def create_gradio_app() -> gr.Blocks:
         analytics_enabled=False,
         # The layout follows the browser's usable width, not a fixed cap.
         fill_width=True,
-        # Gradio serves each download from a copy in its cache: deleted on the
-        # download files' own lifetime (`src/webui/exports.py`, B56), never
-        # left for good.
-        delete_cache=exports.CACHE_SWEEP,
+        # No ``delete_cache``: Gradio's cache holds no download file, each is
+        # served by the dashboard's own route (`src/webui/exports.py`,
+        # OPS-C-R4), and lives the download files' own lifetime (B56).
         # Theme and CSS are not set here: Gradio 6 drops them from a mounted
         # Blocks, with only a warning. `mount_dashboard` passes them.
     ) as app:
@@ -272,8 +279,9 @@ def mount_options() -> dict[str, Any]:
 
     The look and the page's scripts: theme, CSS and ``head``
     (`DASHBOARD_HEAD`: every style sheet, and the scripts of the shared ⓘ,
-    the shell and the touch record, `training_console.TOUCH_HEAD`); there is
-    no ``js``. All of them belong here: Gradio 6 drops them from
+    the shell, the touch record, `training_console.TOUCH_HEAD`, Diagnosis'
+    inputs generation, `diagnosis_panel.INPUTS_HEAD`, and the downloads',
+    `exports.DOWNLOAD_HEAD`); there is no ``js``. All of them belong here: Gradio 6 drops them from
     ``gr.Blocks``.
 
     The switches, each off whatever the environment says, because left to
@@ -294,6 +302,10 @@ def mount_options() -> dict[str, Any]:
       dashboard's colours do not have, and screen recording), beside the
       dashboard's ⚙ Settings; it also takes height from the one-screen layout.
 
+    And one route of the dashboard's own, ``app_kwargs`` (the mounted app's
+    first): ``<mount>/download/<id>``, which serves each download file by an
+    opaque id, never by its path (`exports.ROUTES`, OPS-C-R4).
+
     Two routes Gradio registers with no switch at all are refused in front of
     the mount: ``src/api/middleware/gradio_routes.py``.
     """
@@ -307,6 +319,7 @@ def mount_options() -> dict[str, Any]:
         "ssr_mode": False,
         "max_file_size": MAX_UPLOAD_SIZE,
         "footer_links": [],
+        "app_kwargs": {"routes": list(exports.ROUTES)},
     }
 
 

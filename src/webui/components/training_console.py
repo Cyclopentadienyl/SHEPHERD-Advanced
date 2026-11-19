@@ -1439,26 +1439,18 @@ document.addEventListener('pointerdown', function (e) {
 }, {passive: true});
 """
 
-#: Cross-links in the reason line ("Open Test ›") and the banner's Dismiss.
-TRIGGER_JS = r"""
-element.addEventListener('click', function (e) {
-  var a = e.target.closest ? e.target.closest('[data-act]') : null;
-  if (a) { trigger('click', {act: a.getAttribute('data-act'), key: a.getAttribute('data-key') || ''}); }
-});
-"""
-
 #: A wide window at least this tall shows a failed run's output tail open;
 #: a shorter one shows its summary line, so the charts keep their room.
 BANNER_OPEN_HEIGHT = 1000
 
-#: The banner: Dismiss (`TRIGGER_JS`) and its output tail's default, drawn
+#: The banner: Dismiss (`renderers.TRIGGER_JS`) and its output tail's default, drawn
 #: closed on a side-by-side window under `BANNER_OPEN_HEIGHT` px tall (the
 #: charts keep their room) and open otherwise, given to the one disclosure
 #: keeper (`renderers.KEEP_OPEN_JS`, its ``shepKeepDefault``), which keeps
 #: the reader's own opening or closing over it while the banner names the
 #: same failed job (`keep_as`); another failed job's tail starts at the
 #: default again (UI ledger V-16).
-_BANNER_JS = TRIGGER_JS + r"""
+_BANNER_JS = r.TRIGGER_JS + r"""
 element.shepKeepDefault = function (d) {
   if (!d.matches('details.shep-banner-more')) { return undefined; }
   return !(document.documentElement.getAttribute('data-shep-layout') === 'side'
@@ -3173,12 +3165,6 @@ def _on_training_workspace(name, ws, mode):
     return state, dataset_choices_update(state), chip_html(state), mode
 
 
-def event_act(evt: Any) -> Optional[str]:
-    """The ``act`` a page element's trigger sent (`TRIGGER_JS`, `_POPOVER_JS`)."""
-    data = getattr(evt, "_data", None)
-    return data.get("act") if isinstance(data, Mapping) else None
-
-
 def notice_html(text: Any, *, mark: Optional[str]) -> str:
     """A handler's notice (an HTML component: the run bar's, the drawer's,
     Fine-tune's Start and Stop): the one place a handler's sentence becomes
@@ -3202,7 +3188,7 @@ def _on_banner_click(dismissed, cache, evt: gr.EventData):
     writer, hides it (B46-races: a render that crossed the click brought the
     banner back)."""
     key = (cache or {}).get("banner_key")
-    if event_act(evt) != "dismiss" or not key:
+    if r.event_act(evt) != "dismiss" or not key:
         return gr.update()
     return [*(dismissed or []), key][-20:]
 
@@ -3215,12 +3201,16 @@ def _workspace_path(name: Any) -> Path:
     return resolve_workspace(name)
 
 
-def _on_start(request: gr.Request, ws, run_name, device, touched, *values):
+def _on_start(request: gr.Request, dataset, ws, run_name, device, touched, *values):
     """Start: an operator control (D8), checked first on this event's own
-    request; then a new base run (`_start`). `touched` is the form's record
-    of the fields the operator touched, as this click's own request carries
-    it (`touched_record`); ``values`` are the base form's, in
-    `base_form_keys` order.
+    request; then the run bar's Dataset as this click's own request carries
+    it (`dataset`) against the workspace the session read (`ws`;
+    `shell.unread_choice`: a choice whose reading has not landed, or failed,
+    is refused, never started on the one before it, OPS-C-R2); then a new
+    base run (`_start`). `touched` is the form's record of the fields the
+    operator touched, as this click's own request carries it
+    (`touched_record`); ``values`` are the base form's, in `base_form_keys`
+    order.
 
     Returns the notice (`notice_html`): the refusal, inline, or nothing once
     started.
@@ -3228,6 +3218,9 @@ def _on_start(request: gr.Request, ws, run_name, device, touched, *values):
     access = operator_access(request)
     if not access.allowed:
         return notice_html(access.refusal, mark="error")
+    unread = _shell().unread_choice(("Dataset", dataset, (ws or {}).get("name")))
+    if unread:
+        return notice_html(f"Not started: {unread}", mark="error")
     return notice_html(_start(ws, run_name, device, values, touched), mark="error")
 
 
@@ -3454,7 +3447,7 @@ SOURCE_LINKS = {CONTINUE_FROM_LIST: "Type a path instead ›",
 
 def source_link_html(source: Any) -> str:
     """The drawer's source link (`SOURCE_LINKS`) for the `source` shown, a
-    link-styled button the page's trigger reads (`TRIGGER_JS`: its act
+    link-styled button the page's trigger reads (`renderers.TRIGGER_JS`: its act
     ``source``)."""
     shown = CONTINUE_FROM_PATH if source == CONTINUE_FROM_PATH else CONTINUE_FROM_LIST
     return (f'<button type="button" class="shep-link" data-act="source">'
@@ -3465,7 +3458,7 @@ def _on_source_link(source, evt: gr.EventData):
     """The source link: the other source (the hidden source radio's value,
     whose change shows its fields and clears the check), and the link's
     words for it; any other act, nothing."""
-    if event_act(evt) != "source":
+    if r.event_act(evt) != "source":
         return gr.update(), gr.update()
     other = CONTINUE_FROM_LIST if source == CONTINUE_FROM_PATH else CONTINUE_FROM_PATH
     return other, source_link_html(other)
@@ -4317,13 +4310,18 @@ def _on_check_continue(request: gr.Request, operation, source, listed, manual, d
             compare_html(record, ws or {}), *_branch_updates(preview, op, touched, values))
 
 
-def _on_resume(request: gr.Request, operation, ws, run_name, device, source, listed, manual,
-               extend_epochs, extend_lr, parents, mode, touched, *values):
+def _on_resume(request: gr.Request, dataset, run, operation, ws, run_name, device, source,
+               listed, manual, extend_epochs, extend_lr, parents, mode, touched, *values):
     """The drawer's start, Continue Training or Start branch: an operator
     control (D8, checked first on this event's own request; refused, nothing
-    is opened or started), then the same check as the preview, the dataset
-    comparison, then the job runner's start with the full dataset
-    fingerprint and the parent's model fingerprint this session showed.
+    is opened or started), then the run bar's Dataset and the list's Run as
+    this click's own request carries them (`dataset`, `run`; the Checkpoint
+    is `listed`) against what the session read for them (`ws`, the listed
+    parent's run in `parents`; `shell.unread_choice`: a choice whose reading
+    has not landed, or failed, is refused, nothing checked or started,
+    OPS-C-R2), then the same check as the preview, the dataset comparison,
+    then the job runner's start with the full dataset fingerprint and the
+    parent's model fingerprint this session showed.
 
     A continuation sends only operational fields (contract M3a-3): every
     learning setting comes from the checkpoint, so the training form's values
@@ -4346,6 +4344,13 @@ def _on_resume(request: gr.Request, operation, ws, run_name, device, source, lis
     if not access.allowed:
         return (notice_html(access.refusal, mark="error"), gr.update(), gr.update(), gr.update(),
                 gr.update(), *(gr.update(),) * (1 + len(BRANCH_FIELDS)))
+    item = ((parents or {}).get(listed) if source != CONTINUE_FROM_PATH and listed else None)
+    unread = _shell().unread_choice(
+        ("Dataset", dataset, (ws or {}).get("name")),
+        *([("Run", run, _model_list().item_run_key(item))] if item else []))
+    if unread:
+        return (notice_html(f"Not started: {unread}", mark="error"), gr.update(), gr.update(),
+                gr.update(), gr.update(), *(gr.update(),) * (1 + len(BRANCH_FIELDS)))
     said, text, extend, rate, mode, branch = _resume(
         operation, ws, device, source, listed, manual, extend_epochs, extend_lr, parents, mode,
         touched, values, run_name=run_name)
@@ -4653,7 +4658,7 @@ def create_training_tab(ctx: Any) -> None:
                 run_name = gr.Textbox(label="Run name", value="", max_lines=1, elem_id="run_name",
                                       scale=0, min_width=240, container=False)
                 reason = plain_html('<div class="shep-rb-reason"></div>', elem_id="shep-train-reason",
-                                    js_on_load=TRIGGER_JS)
+                                    js_on_load=r.TRIGGER_JS)
                 # Labelled by the render's one gated-button rule (`ACTION_LABELS`).
                 start_btn = gr.Button(ACTION_LABELS["start"], variant="primary",
                                       interactive=False, scale=0, elem_id="shep-train-start")
@@ -4769,7 +4774,7 @@ def create_training_tab(ctx: Any) -> None:
                         parents_note = plain_html("", elem_id="shep-train-parents-note")
                         source_link = plain_html(source_link_html(CONTINUE_FROM_LIST),
                                                  elem_id="shep-train-source-link",
-                                                 js_on_load=TRIGGER_JS)
+                                                 js_on_load=r.TRIGGER_JS)
                     # Two steps (the GB10 WebUI recheck: one option per file, each the
                     # run, epoch, file, kind and fingerprint, read as a wall of text):
                     # the run, then its checkpoint, each in a few words; the chosen
@@ -4955,11 +4960,11 @@ def create_training_tab(ctx: Any) -> None:
         **view_step).then(**ctx.chip_refresh)
     def _on_chip_click(evt: gr.EventData):
         """The chip's "All datasets ›": Research › Datasets."""
-        return ctx.go("datasets") if event_act(evt) == "datasets" else ctx.no_nav()
+        return ctx.go("datasets") if r.event_act(evt) == "datasets" else ctx.no_nav()
 
     def _on_reason_click(evt: gr.EventData):
         """The reason line's "Open Test ›": Research › Test."""
-        return ctx.go("test") if event_act(evt) == "open-test" else ctx.no_nav()
+        return ctx.go("test") if r.event_act(evt) == "open-test" else ctx.no_nav()
 
     chip.click(_on_chip_click, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
     reason.click(_on_reason_click, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
@@ -4967,8 +4972,9 @@ def create_training_tab(ctx: Any) -> None:
                  show_progress="hidden", **in_order).then(**view_step)
 
     # Start, Stop.
-    # Start also closes a Stop confirmation left from an earlier job.
-    start_btn.click(_on_start, inputs=[ws, run_name, device, touched, *base_fields],
+    # Start also closes a Stop confirmation left from an earlier job. It
+    # carries the run bar's Dataset as the reader sees it (`_on_start`).
+    start_btn.click(_on_start, inputs=[dataset, ws, run_name, device, touched, *base_fields],
                     outputs=[notice],
                     show_progress="hidden").then(
         close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden",
@@ -5017,9 +5023,12 @@ def create_training_tab(ctx: Any) -> None:
         outputs=[continue_preview, extend_epochs, extend_lr, mode, compare, *branch_shown],
         show_progress="hidden", **in_order).then(**view_step).then(
         None, js=SHOW_CHECK_JS, queue=False).then(**ctx.chip_refresh)
+    # The drawer's start carries the run bar's Dataset and the list's Run as
+    # the reader sees them (`_on_resume`).
     resume_btn.click(
         _on_resume,
-        inputs=[continue_operation, ws, run_name, continue_device, continue_source,
+        inputs=[dataset, continue_run, continue_operation, ws, run_name, continue_device,
+                continue_source,
                 checkpoint_dropdown, manual_checkpoint, extend_epochs, extend_lr, parents, mode,
                 branch_touched, *branch_fields],
         outputs=[drawer_notice, continue_preview, extend_epochs, extend_lr, mode,

@@ -105,8 +105,11 @@ QUEUE_JS = r"""
   q.answered = (fnIndex) => q.joins.filter((j) => j.fn_index === fnIndex && j.event_id !== null
                                             && j.event_id in q.done).length;
   /* Nothing asked is unanswered: every join, and every listener that skips the
-     queue (``queue=False``, answered by its own request). */
-  q.idle = () => q.inflight === 0 && q.direct === 0 && q.joins.every((j) => j.event_id !== null);
+     queue (``queue=False``, answered by its own request); and the page's fonts
+     are in (`served` serves them; drawn in a fallback first, a text is drawn
+     again when its font arrives). */
+  q.idle = () => q.inflight === 0 && q.direct === 0 && q.joins.every((j) => j.event_id !== null)
+    && document.fonts.status === 'loaded';
   const original = window.fetch;
   window.fetch = function (input, init) {
     const url = typeof input === 'string' ? input : (input && input.url) || String(input);

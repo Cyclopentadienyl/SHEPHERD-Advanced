@@ -2483,9 +2483,14 @@ route。服務會在 Gradio 看到請求之前拒絕它們（`src/api/middleware
   寫進它的暫存目錄，而且從不刪除。
 
 拒絕的回應是 `403`，附一行原因與 `connection: close`。請求本體不會被讀取，請求日誌會像其他
-回應一樣記下這次拒絕。本機下載不受影響：Diagnosis 分頁的 CSV 與 Markdown 匯出照常下載，
-`HEAD` 與 `Range` 請求也一樣。（自 M5-2 起，Training 頁面的 Export CSV 以文字經由頁面自己的
-server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。）
+回應一樣記下這次拒絕。儀表板自己的下載不經過 Gradio 的 `file=` route（自 6a2d52e 的外部審查
+OPS-C-R4 起）：每個匯出（Diagnosis 分頁的 CSV 與 Markdown 報告、Models › Results 的 Export）
+都從 `/ui/download/<id>` 下載，連結只帶一個不透明的 id，不含任何伺服器路徑。這個 id 在檔案的
+存活期間（寫入後一天）、且只在發出它的服務程序內提供該檔案，`HEAD` 與 `Range` 請求也一樣
+（重新啟動前的連結即失效）；其他任何 id 都回應 `404`。頁面一律把這類連結當作下載處理，所以
+點擊一個連結已失效的匯出，只會在瀏覽器中顯示下載失敗，儀表板與其中的結果和輸入仍留在畫面上。
+（自 M5-2 起，Training 頁面的 Export CSV
+以文字經由頁面自己的 server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。）
 
 ### 儀表板的其他變更
 
@@ -3990,8 +3995,9 @@ Copy）、它的檔案（標題說的是它的 run，同一 run 的兩個檔案�
   as a result; it is kept as written." 與一張小表 Index · Registration · Report · Reason（它未以可讀
   形式帶有的序號或報告 digest 顯示為 "not readable"）；此時分頁標籤為 "Recorded results · 3 (1 not
   readable)"。沒有紀錄時，分段依原因說明並給出下一步，不指出任何檔案（「No recorded result yet」：
-  此 checkpoint 旁沒有登錄任何結果，這不代表這組權重從未評估過；「Next: on the Test page, choose this
-  model and start a test with Register when the run ends checked」；唯讀檢視則說明記錄結果是操作者控制項），沒有
+  此 checkpoint 旁沒有登錄任何結果，這不代表這組權重從未評估過；「Next: start a test of it with Register
+  when the run ends checked; its result then appears here.」與動作「Test this model ›」，它會開啟 Test
+  頁並選好此 workspace 與 checkpoint；唯讀檢視則說明記錄結果是操作者控制項，沒有動作），沒有
   東西可計數的分段名稱不顯示「· 0」。唯讀檢視列出同樣的項目，取自該 route，包括群組的註記（其回答中
   的 `contest.notes`、`contest.notes_readable`）；
 - **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目，最新的在前：
@@ -4024,7 +4030,11 @@ Copy）、它的檔案（標題說的是它的 run，同一 run 的兩個檔案�
   設定之下）、記錄的與實際生效的訓練設定以及 weight transfer 與 loss identity（同一 base 的兩組可在此
   核對是否從相同的下游權重開始）、資料的識別與 role、量測、執行環境、exposure 與每個指標，皆依記錄原文，
   每一組只出現一次，順序為結果、模型、資料與指標，然後是訓練設定、量測、執行環境、exposure 與內容參照
-  （自 ops-wiring 與 UI 回合起）。**Differences only 只比較一列所適用的格子**：其他協議的指標與其他
+  （自 ops-wiring 與 UI 回合起）。**關鍵的列在前，其餘收合**（自 6a2d52e 的審查起）：每一組只顯示其
+  關鍵的列（結果、模型與資料自己的欄位，以及該協議表格以欄顯示的指標），其餘收合在組名之下，組名寫出
+  收合了多少列（「Metrics · 15 more rows ›」）；訓練設定、量測、執行環境、exposure 與內容參照整組收合
+  （「Training settings · 30 rows ›」）。點一下即可展開，並維持你離開時的狀態；每個收合的值都仍在表格中、
+  不經四捨五入，也都在匯出中。**Differences only 只比較一列所適用的格子**：其他協議的指標與其他
   資料種類的欄位不算差異，因此這樣的列也會隱藏，並另外計數（「… that apply to one result only」）。
   **每個事實只出現一次**（自同一回合起）：兩個欄位在每一欄都記錄相同的事實（例如樣本的 digest 同時在
   資料識別與其內容參照中，KG 邊集合的 pairs 數同時在其識別與計數中，loss 權重同時是學習設定與 loss

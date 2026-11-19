@@ -146,7 +146,8 @@ def test_a_recorded_field_is_marked_for_the_touch_script_the_dashboard_loads():
     assert f"var LOST = {json.dumps(tc.TOUCH_LOST_WORDS)};" in tc.TOUCH_HEAD
     assert "e.isTrusted" in tc.TOUCH_HEAD and "key: 'Unidentified'" in tc.TOUCH_HEAD
     head = dashboard_head()
-    assert head.count(tc.TOUCH_HEAD) == 1 and head.endswith(tc.TOUCH_HEAD)
+    # Once, among the head's scripts (after its one style element).
+    assert head.count(tc.TOUCH_HEAD) == 1 and tc.TOUCH_HEAD in head.split("</style>", 1)[1]
 
 
 def _three_forms():

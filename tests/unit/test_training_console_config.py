@@ -100,7 +100,7 @@ def _form(**changed):
 
 def _start(touched=(), device="cpu", run_name="", **changed):
     """Start as the browser sends it: the touched record and every field."""
-    return tc._on_start(OP, WS, run_name, device, list(touched), *_form(**changed))
+    return tc._on_start(OP, WS["name"], WS, run_name, device, list(touched), *_form(**changed))
 
 
 def _sent(call):
@@ -265,7 +265,8 @@ def test_the_record_is_read_as_data_from_the_request(listed, started):
     assert tc.touched_keys(["num_epochs", "seed", 3, None]) == {"num_epochs", "seed"}
     for odd in (None, "num_epochs, seed", {"num_epochs": True}, 5):
         assert tc.touched_keys(odd) == set()
-        assert tc._on_start(OP, WS, "", "cpu", odd, *_form(num_epochs=5, seed=3)) == ""
+        assert tc._on_start(OP, WS["name"], WS, "", "cpu", odd,
+                            *_form(num_epochs=5, seed=3)) == ""
         assert _sent(started[-1]) == {}
 
 
@@ -662,7 +663,7 @@ def test_start_is_refused_for_a_read_only_request_before_anything_is_read(monkey
                                                                           started):
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
     monkeypatch.setattr(tc, "_workspace_path", lambda name: pytest.fail("the list was read"))
-    notice = tc._on_start(gradio_request(), WS, "", "cpu", [], *_form())
+    notice = tc._on_start(gradio_request(), WS["name"], WS, "", "cpu", [], *_form())
     assert "Refused" in notice and started == []
 
 
@@ -671,12 +672,12 @@ def test_on_start_refuses_without_a_trainable_listed_dataset(monkeypatch, listed
     lists: nothing is started, and the notice says why."""
     from src.api.services.server_lists import ServerListRefused
 
-    assert "select a dataset" in tc._on_start(OP, {"name": None, "row": None}, "", "cpu", [],
-                                              *_form())
+    assert "select a dataset" in tc._on_start(OP, None, {"name": None, "row": None}, "", "cpu",
+                                              [], *_form())
     untrainable = {"name": "x", "row": {"name": "x", "dataset_fingerprint": FP, "trainable": False,
                                         "not_trainable": "files missing", "manifest": "read"}}
-    assert "x is not trainable: files missing" in tc._on_start(OP, untrainable, "", "cpu", [],
-                                                               *_form())
+    assert "x is not trainable: files missing" in tc._on_start(OP, "x", untrainable, "", "cpu",
+                                                               [], *_form())
 
     def unlisted(name):
         raise ServerListRefused("gone")

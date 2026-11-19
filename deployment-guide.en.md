@@ -2298,10 +2298,16 @@ request (`src/api/middleware/gradio_routes.py`):
   removes them.
 
 A refusal is `403` with a one-line reason and `connection: close`. The request body is not
-read, and the request log shows the refusal like any other response. Local downloads are not
-affected: the Diagnosis tab's CSV and Markdown exports download as before, `HEAD` and `Range`
-requests included. (Since M5-2 the Training page's Export CSV comes as text through the page's
-own server function and the browser saves it; no file is served for it.)
+read, and the request log shows the refusal like any other response. The dashboard's own
+downloads do not use Gradio's `file=` route (since the external review of 6a2d52e, OPS-C-R4):
+each export (the Diagnosis tab's CSV and Markdown report, Models › Results' Export) downloads
+from `/ui/download/<id>`, a link that names an opaque id, never a server path. The id serves its
+file, `HEAD` and `Range` requests included, while the file lives (a day after it was written) and
+only in the service process that offered it (a link from before a restart is gone); any other id
+answers `404`. The page follows each such link as a download, so clicking an export whose link is
+gone ends as the browser's failed download and the dashboard stays on screen with its result and
+inputs. (Since M5-2 the Training page's Export CSV comes as text through the page's own
+server function and the browser saves it; no file is served for it.)
 
 ### What else changed in the dashboard
 
@@ -4152,10 +4158,10 @@ warning, with ▲; and three segments:
   "not readable"); the segment then reads "Recorded results · 3 (1 not readable)". With no record
   the segment says so per cause and gives the next step, naming no file ("No recorded result
   yet": none is registered beside this checkpoint, which does not mean these weights were never
-  evaluated; "Next: on the Test page, choose this model and start a test with Register when the
-  run ends checked"; the read-only view says recording a result is an operator control), and a
-  segment with
-  nothing to count shows no "· 0". The read-only view lists the same items, from the route, the
+  evaluated; "Next: start a test of it with Register when the run ends checked; its result then
+  appears here." and the action "Test this model ›", which opens the Test page with this
+  workspace and checkpoint chosen; the read-only view says recording a result is an operator
+  control, with no action), and a segment with nothing to count shows no "· 0". The read-only view lists the same items, from the route, the
   group's notes included (`contest.notes`, `contest.notes_readable` in its answer);
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history, newest first: test runs and registrations, and any model load kept from before
@@ -4199,7 +4205,13 @@ warning, with ▲; and three segments:
   environment, the exposure and every metric, as recorded, each group once, in the order the
   result, the model, the data and the metrics, then the training settings, the measurement, the
   environment, the exposure and the content references (since the ops-wiring and UI round).
-  **Differences only compares the cells a row applies to**: another protocol's metric and another
+  **The key rows first, the rest folded** (since the review of 6a2d52e): each group shows its key
+  rows (the result's, the model's and the data's own fields, and the metrics its protocol's table
+  shows in columns) and folds the rest under its header, which says how many rows it holds
+  ("Metrics · 15 more rows ›"); the training settings, the measurement, the environment, the
+  exposure and the content references are folded whole ("Training settings · 30 rows ›"). A fold
+  opens with a click and stays as you left it; every folded value is in the table, unrounded, and
+  in the export. **Differences only compares the cells a row applies to**: another protocol's metric and another
   data kind's field are no difference, so such a row is hidden too and counted apart ("… that
   apply to one result only"). **Each fact once** (since the same round): a fact two fields record
   alike in every column (a digest such as the samples' in the data's identity and in its content

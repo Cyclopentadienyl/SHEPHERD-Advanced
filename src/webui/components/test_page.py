@@ -209,7 +209,7 @@ from src.webui.components.workspaces import (
     workspace_binding,
 )
 from src.webui.operator_access import operator_access
-from src.webui.shell import page_elem_id, picked, plain_html
+from src.webui.shell import page_elem_id, picked, plain_html, unread_choice
 from src.webui.style import SIDE, STACK
 
 logger = logging.getLogger(__name__)
@@ -3197,7 +3197,15 @@ def create_test_page(ctx: Any) -> None:
     every_one = {"trigger_mode": "multiple"}
 
     # ------------------------------------------------------------------ page open
-    def _refresh(ws, label, key, protocol, current_models, current_report, request: gr.Request):
+    def _refresh(ws, label, key, protocol, current_models, current_report, handed,
+                 request: gr.Request):
+        """The page shown: everything read again for the selection. A model
+        another page handed over as it opened this one (`ctx.test_model`:
+        Models' "Test this model ›", R-68) is the selection's workspace and
+        checkpoint, chosen as a pick would (while it is listed), and the
+        hand-off is cleared, so a later opening keeps the reader's choice."""
+        if isinstance(handed, Mapping) and handed.get("workspace"):
+            ws, key = handed["workspace"], handed.get("key")
         page = read_page(request)
         ws = default_workspace(page, ws)
         binding = _binding_for(page, ws)
@@ -3207,7 +3215,7 @@ def create_test_page(ctx: Any) -> None:
         job = read_job()
         gpu = _gpu(page)
         reports, run_id = _reports(page, models, label, current_report, job, request)
-        return [page, models, binding, reports, run_id,
+        return [page, models, binding, reports, run_id, None,
                 *_cohort_outputs(page, binding, ws, label),
                 *_run_outputs(page, models, binding, ws, label, key, protocol, job, gpu),
                 *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
@@ -3216,8 +3224,9 @@ def create_test_page(ctx: Any) -> None:
     ctx.on_page_open(PAGE, {
         "fn": _refresh,
         "inputs": [workspace, version, model_state, measurement_state, models_state,
-                   selected_report],
-        "outputs": [*state_outputs, *cohort_outputs, *run_outputs, *result_outputs],
+                   selected_report, ctx.test_model],
+        "outputs": [*state_outputs, ctx.test_model, *cohort_outputs, *run_outputs,
+                    *result_outputs],
         "show_progress": "hidden",
         **one_at_a_time,
     })
@@ -3394,17 +3403,30 @@ def create_test_page(ctx: Any) -> None:
                     measurement_state,
                     selected_report, reports_state]
 
-    def _on_start(page, models, ws, label, key, protocol, rec, det, request: gr.Request):
+    def _on_start(page, models, ws, label, run, key, protocol, rec, det, request: gr.Request):
+        """Start: for an operator's request (D8 is `start_test_run`'s first
+        check), the Run select as this click's own request carries it
+        (`run`) against the run of the checkpoint chosen in the session's
+        listing (`shell.unread_choice`: a Run whose checkpoints have not
+        landed is refused, never tested on the checkpoint of the run before,
+        OPS-C-R2); then `start_test_run`."""
+        roots = (page or {}).get("roots") or []
+        item = find_model(models or {}, key)
+        unread = operator_access(request).allowed and unread_choice(
+            *([("Run", run, ml.item_run_key(item))] if item else []))
+        if unread:
+            return _outcome_box("amber", said(unread[:1].upper() + unread[1:],
+                                              "Nothing was started."), roots)
         result = start_test_run(page, models, ws, label, key, rec, det, request,
                                 protocol=protocol)
-        roots = (page or {}).get("roots") or []
         if result.get("success"):
             return _outcome_box("ok", "The test run started. It checks the model and the cohort "
                                       "again on the bytes it reads before measuring.")
         return _outcome_box("amber", str(result.get("error") or "Nothing was started."), roots)
 
-    start.click(_on_start, inputs=[page_state, models_state, workspace, version, model,
-                                   measurement, record, deterministic],
+    # Start carries the Run select as the reader sees it (`_on_start`).
+    start.click(_on_start, inputs=[page_state, models_state, workspace, version, run_select,
+                                   model, measurement, record, deterministic],
                 outputs=[action_out], show_progress="minimal") \
         .then(_after_act, inputs=after_inputs, outputs=after_outputs, show_progress="hidden",
               **one_at_a_time) \

@@ -1444,14 +1444,75 @@ def test_the_ledgers_states_are_said_and_name_no_directory(world, monkeypatch):
             in _text(detail["records"]))
     assert str(world["root"]) not in detail["records"] + detail["top"]
     none = mp.detail_parts(listing, data, _key(world, "model-30.pt"), ctl)
-    # R-68: a titled state, what it means and one next step; no file named,
-    # never "ledger", and "· 0" nowhere.
+    # R-68: a titled state, what it means and one next step (its action,
+    # `test_the_empty_records_next_step_opens_test_with_this_model_chosen`);
+    # no file named, never "ledger", and "· 0" nowhere.
     said = _text(none["records"])
     assert said.startswith("No recorded result yet") and "never evaluated" in said
-    assert "Next: on the Test page" in said
+    assert said.endswith("Next: start a test of it with Register when the run ends checked; "
+                         "its result then appears here. Test this model ›")
     assert "ledger" not in said.lower() and "evaluations.json" not in said
     assert [label for label, _value in none["seg"]] == ["Recorded results", "Usage history",
                                                        "Results"]
+
+
+def test_the_empty_records_next_step_opens_test_with_this_model_chosen(world, monkeypatch):
+    """R-68: the empty state's next step was words ("Next: on the Test page,
+    choose this model and …"), a dead end for the reader. It is one action,
+    "Test this model ›", through the cross-link the pages share
+    (`PageContext.go` / ``nav_outputs``, as Fine-tune's link to Training):
+    a queued click that hands the selected checkpoint to the Test page
+    (`ctx.test_model`) and opens it; the Test page's opening chooses that
+    workspace and checkpoint and clears the hand-off. A read-only request
+    keeps its refusal words and gets no action."""
+    from src.webui.components import test_page as tp
+    from src.webui.shell import standalone_context
+
+    operator = mp.records_empty_html("none")
+    assert operator.count("data-act=") == 1
+    assert ('<button type="button" class="shep-link" data-act="test">Test this model ›'
+            '</button>') in operator
+    readonly = mp.records_empty_html("no_ledger", readonly=True)
+    assert "data-act" not in readonly and "<button" not in readonly
+    assert _text(readonly).endswith(mp.RECORDS_NEXT_READONLY)
+
+    with gr.Blocks() as demo:
+        ctx = standalone_context(demo)
+        mp.create_models_page(ctx)
+        tp.create_test_page(ctx)
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    to_test = _fn(demo, "_to_test")
+    assert to_test.targets == [(by_id["shep-mp-records"]._id, "click")]
+    assert to_test.outputs == [ctx.test_model, *ctx.nav_outputs]
+    assert to_test.queue is not False                 # its State write precedes the opening
+    listing, _data = _read(world, monkeypatch)
+    key = _key(world, "model-30.pt")
+    handed, *nav = to_test.fn(listing, key, gr.EventData(None, {"act": "test", "key": ""}))
+    assert handed == {"workspace": "demo", "key": key}
+    assert [getattr(u, "selected", u) for u in nav] == [
+        getattr(u, "selected", u) for u in ctx.go("test")]
+    for act, selected in (("dismiss", key), ("test", None), ("test", "hgt/no-such/run.pt")):
+        kept, *nav = to_test.fn(listing, selected, gr.EventData(None, {"act": act}))
+        assert kept == gr.update() and nav == list(ctx.no_nav()), (act, selected)
+
+    # The Test page's opening takes the hand-off, chooses it and clears it.
+    opened = [fn for fn in demo.fns.values() if fn.name == "_refresh"
+              and (ctx.page_tokens["test"]._id, "change") in fn.targets]
+    assert len(opened) == 1
+    opened = opened[0]
+    assert ctx.test_model in opened.inputs and ctx.test_model in opened.outputs
+    assert by_id["shep-test-model"] in opened.outputs
+    request = operator_request(monkeypatch)
+    out = dict(zip(map(id, opened.outputs),
+                   opened.fn(None, None, None, None, {}, None, handed, request)))
+    assert out[id(ctx.test_model)] is None
+    assert out[id(by_id["shep-test-model"])]["value"] == key
+    assert out[id(by_id["shep-test-workspace"])]["value"] == "demo"
+    # With nothing handed, the opening keeps the reader's own choice.
+    kept = _key(world, "model-12.pt")
+    out = dict(zip(map(id, opened.outputs),
+                   opened.fn("demo", None, kept, None, {}, None, None, request)))
+    assert out[id(by_id["shep-test-model"])]["value"] == kept
 
 
 def test_markup_in_a_run_name_is_escaped(world, monkeypatch):
@@ -3190,6 +3251,119 @@ def test_an_entry_it_could_not_list_is_no_choice_in_a_browser(tmp_path, world, m
     assert not after["focused"] and after["tabIndex"] < 0 and not after["keyed"], after
     assert after["entryCurrent"] is None, after
     assert after["current"] == [after["detail"]] and after["detail"].endswith("model-12.pt"), after
+
+
+#: Models served whole: a file with no recorded result chosen, its "Test this
+#: model ›" clicked; the Test page as it opens (the page shown, the Run and
+#: Checkpoint selects as drawn). Screens of both, at 1850 x 960 and 390 x 844.
+_TEST_THIS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+const ROWS = '#shep-models-research-rows';
+(async () => {
+  const [base, shots] = process.argv.slice(2);
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [390, 844]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h },
+                                                   deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+    await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await page.click('#shep-tab-research-button', { timeout: 60000 });
+    await page.click('#shep-page-models-button');
+    await page.waitForFunction(() => {
+      const m = document.querySelector('#shep-models-research-rows .shep-view-for');
+      return !!m && m.getAttribute('data-for') === 'newest|all';
+    }, null, { timeout: 30000 });
+    await idle();
+    // Its run unfolded (each run is drawn folded but the newest).
+    const row = page.locator(`${ROWS} tr[data-key*="model-30.pt"]`);
+    if (!(await row.isVisible())) {
+      const fold = page.locator(`${ROWS} button.shep-fold[data-fold="r:sage/20261015-083000_run_e4c2a9"]`);
+      await fold.scrollIntoViewIfNeeded();
+      await fold.click();
+      await row.waitFor({ state: 'visible', timeout: 30000 });
+    }
+    await row.scrollIntoViewIfNeeded();
+    await row.click();
+    await page.waitForFunction(() => document.querySelector('#shep-mp-records').innerText
+      .includes('No recorded result yet'), null, { timeout: 30000 });
+    await idle();
+    await page.locator('#shep-mp-records').scrollIntoViewIfNeeded();
+    const said = await page.$eval('#shep-mp-records', (e) => e.innerText.trim());
+    await page.screenshot({ path: `${shots}/models_empty_${w}x${h}.png` });
+    const action = page.locator('#shep-mp-records button[data-act="test"]');
+    await action.waitFor({ state: 'visible', timeout: 10000 });
+    await action.click();
+    await page.waitForFunction(() => {
+      const t = document.querySelector('#shep-page-test-button');
+      const m = document.querySelector('#shep-test-model input');
+      return !!t && t.getAttribute('aria-selected') === 'true' && !!m && m.value.trim() !== '';
+    }, null, { timeout: 30000 });
+    await idle();
+    const seen = await page.evaluate(() => ({
+      run: document.querySelector('#shep-test-model-run input').value,
+      checkpoint: document.querySelector('#shep-test-model input').value,
+      workspace: document.querySelector('#shep-test-workspace input').value,
+      testShown: document.querySelector('#shep-page-test-button').getAttribute('aria-selected'),
+    }));
+    await page.screenshot({ path: `${shots}/test_opened_${w}x${h}.png` });
+    out[`${w}x${h}`] = { said, ...seen };
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_test_this_model_opens_the_test_page_with_it_chosen_in_a_browser(
+        tmp_path, world, monkeypatch):
+    """R-68 in a real browser (skipped without Node and Playwright), Models
+    served whole at 1850 x 960 and 390 x 844: model-30.pt, with no recorded
+    result, chosen; its empty state's "Test this model ›" clicked; the Test
+    page is the page shown, with that workspace, run and checkpoint chosen
+    (the options the Test page draws for it). Fails on 6a2d52e: there was no
+    action to click."""
+    from src.webui.app import create_gradio_app, mount_options
+    from src.webui.components import test_page as tp
+    from src.webui.shell import standalone_context
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    request = operator_request(monkeypatch)
+    key = _key(world, "model-30.pt")
+    # The labels the Test page's selects draw for that checkpoint.
+    with gr.Blocks() as alone:
+        ctx = standalone_context(alone)
+        tp.create_test_page(ctx)
+    opened = next(fn for fn in alone.fns.values() if fn.name == "_refresh"
+                  and (ctx.page_tokens["test"]._id, "change") in fn.targets)
+    by_id = {getattr(b, "elem_id", None): b for b in alone.blocks.values()}
+    # The page opened on that workspace and checkpoint chosen by hand.
+    chosen = ["demo", None, key, None, {}, None]
+    out = dict(zip(map(id, opened.outputs), opened.fn(
+        *chosen, *[None] * (len(opened.inputs) - len(chosen)), request)))
+
+    def label(elem_id):
+        update = out[id(by_id[elem_id])]
+        return next(shown for shown, value in update["choices"] if value == update["value"])
+
+    labels = tuple(label(i) for i in ("shep-test-workspace", "shep-test-model-run",
+                                      "shep-test-model"))
+    shots = tmp_path / "shots"
+    shots.mkdir()
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_TEST_THIS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], str(shots))
+    for size, at in seen.items():
+        assert at["said"].startswith("No recorded result yet"), (size, at)
+        assert at["said"].endswith("Test this model ›"), (size, at)
+        assert at["testShown"] == "true", (size, at)
+        assert (at["workspace"], at["run"], at["checkpoint"]) == labels, (size, at)
 
 
 #: The page's Order switch, Task select and "Applying …" line as Gradio draws

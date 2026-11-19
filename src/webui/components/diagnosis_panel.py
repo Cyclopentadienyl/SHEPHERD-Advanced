@@ -93,6 +93,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 import re
 import time
@@ -128,7 +129,7 @@ from src.webui.components.renderers import grapheme_ends as _grapheme_ends
 from src.webui.components.renderers import is_digest as _is_digest
 from src.webui.components.renderers import keep_as as _keep_as
 from src.webui.components.renderers import resources_html as _resources_html
-from src.webui.exports import export_dir, file_slug
+from src.webui.exports import export_dir, file_slug, offer
 from src.webui.components.renderers import summary_list as _summary_list
 from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.components.renderers import STATUS_MARKS as _STATUS_MARKS
@@ -1495,8 +1496,9 @@ def _export_basename(result: Dict[str, Any]) -> str:
 
 
 def _write_exports(result: Dict[str, Any]) -> Tuple[str, str]:
-    """Generate both export files for a result up front (so the DownloadButtons
-    can serve them on the first click). Returns (csv_path, md_path)."""
+    """Generate both export files for a result up front (so each export's
+    link, `exports.offer`, serves its file on the first click). Returns
+    (csv_path, md_path)."""
     base = _export_basename(result)
     # The dashboard's one download directory (`src/webui/exports.py`); files
     # are named by session signature so they do not collide.
@@ -1512,13 +1514,13 @@ def _write_exports(result: Dict[str, Any]) -> Tuple[str, str]:
 # =============================================================================
 # The page: help texts and fixed words
 # =============================================================================
-#: DownloadButton update for the "no downloadable result" state.
+#: An export button's update for the "no downloadable result" state: no link.
 #: No result: the exports are not shown at all (the mockup's first screen has
 #: none), but stay mounted (``"hidden"``), so the next result only shows them.
-_EXPORTS_HIDDEN = gr.update(value=None, interactive=False, visible="hidden")
+_EXPORTS_HIDDEN = gr.update(link=None, interactive=False, visible="hidden")
 #: A result whose export files could not be written (or that has no
 #: candidate): the exports are shown, disabled, beside the reason.
-_DOWNLOAD_DISABLED = gr.update(value=None, interactive=False, visible=True)
+_DOWNLOAD_DISABLED = gr.update(link=None, interactive=False, visible=True)
 
 #: **What must stay visible under a field** (``info=``; the WebUI skill §7: a
 #: format is never only in a bubble or a placeholder; UI-15, R-6).
@@ -2080,10 +2082,22 @@ def reference_line_html(result: Mapping[str, Any]) -> str:
                                  copy=False) + '</p>')
 
 
+def answer_mark(result: Mapping[str, Any]) -> str:
+    """The inputs generation a result answered (``_inputs_gen``, `diagnose`)
+    as the results body that draws it carries it: a hidden element with
+    ``data-shep-gen``, which the page's gate reads (`ANSWER_GATE_CSS`); ""
+    for a result no run of the page made."""
+    gen = result.get("_inputs_gen")
+    if not isinstance(gen, int) or isinstance(gen, bool):
+        return ""
+    return f'<span class="shep-dx-answered" data-shep-gen="{gen}" hidden></span>'
+
+
 def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
-    """Under the badge: the banners, the result's warnings, the kind's label
-    (what the Score column holds, visible text), a patients-like-me result's
-    reference cohort version, and the table."""
+    """Under the badge: the answer's mark (`answer_mark`), the banners, the
+    result's warnings, the kind's label (what the Score column holds,
+    visible text), a patients-like-me result's reference cohort version, and
+    the table."""
     warnings = result.get("warnings") or []
     note = (f'<p class="shep-dx-warnings">'
             f'{_status_mark("warn", "Warnings: " + "; ".join(str(w) for w in warnings))}</p>'
@@ -2091,8 +2105,8 @@ def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
     kind = _result_kind(result)
     label = (f'<p class="shep-dx-kind">{_e(kind_label(result))}</p>'
              if kind is not None else "")
-    return banners_html(result) + note + phenotypes_used_html(result) + label + \
-        reference_line_html(result) + \
+    return answer_mark(result) + banners_html(result) + note + phenotypes_used_html(result) + \
+        label + reference_line_html(result) + \
         candidates_table_html(result.get("candidates") or [], selected, kind, result)
 
 
@@ -2201,6 +2215,52 @@ def evidence_html(candidate: Mapping[str, Any], explanations: bool = True) -> st
         parts.append('<details class="shep-more shep-dx-ev-more"><summary>Written summary ›'
                      f'</summary><p>{_e(summary)}</p></details>')
     return "".join(parts)
+
+
+#: **The Explanation view** (R-1b): the pipeline's written explanation opens
+#: with the candidate's name and its score ("Score: -2.844 (a ranking score,
+#: …)"), so shown as the view it put the selected row's score on screen
+#: twice. The view shows what the explanation covers from the result the page
+#: already projects, then the explanation, whole as the API wrote it, under
+#: this fold: the Markdown view under the HTML one (`#shep-dx-explanation`),
+#: drawn while the fold is open (`PAGE_CSS`).
+EXPLANATION_FOLD = "Written explanation ›"
+#: The score, referred to by its relation to the table (its number is said
+#: once, there), with what it is (`SCORE_NOTE`).
+EXPLANATION_SCORE = ("In the table: it ranks this result's candidates and is not a calibrated "
+                     "disease probability.")
+
+
+def explanation_html(candidate: Mapping[str, Any], result: Optional[Mapping[str, Any]] = None,
+                     explanations: bool = True) -> str:
+    """The Explanation view of a disease candidate (R-1b; the skill's §4: an
+    explanation's facts as key-value rows, its narrative folded): what the
+    pipeline's written explanation sets out, from the structured result (the
+    score by its relation to the table, the matching phenotypes and the paths
+    each listed in its own view, the supporting genes), then the written
+    explanation itself under "Written explanation ›" (`EXPLANATION_FOLD`; its
+    text is the Markdown view, unchanged and uncut). With no explanation, why,
+    in its own words."""
+    if not candidate.get("explanation"):
+        why = ("No explanation was returned for this candidate." if explanations
+               else "Explanations were off for this run (Options).")
+        return f'<p class="shep-muted">{_e(why)}</p>'
+    rows: List[Tuple[str, str]] = [("Score", _e(EXPLANATION_SCORE)),
+                                   ("Matching phenotypes",
+                                    '<button type="button" class="shep-dx-link" '
+                                    'data-key="seg:phenotypes">listed under Matching phenotypes ›'
+                                    '</button>')]
+    genes = candidate.get("supporting_genes") or []
+    if genes:
+        rows.append(("Supporting genes", '<span class="shep-dx-genes">' + "".join(
+            f'<span class="shep-dx-gene">{_e(g)}</span>' for g in genes) + "</span>"))
+    paths = _paths(candidate)
+    if paths:
+        rows.append(("Direct paths", f'{len(paths)} · <button type="button" class="shep-dx-link" '
+                     'data-key="seg:paths">listed under Paths ›</button>'))
+    return (_summary_list(rows, classes="shep-dx-ev")
+            + f'<details class="shep-more shep-dx-written"><summary>{_e(EXPLANATION_FOLD)}'
+            '</summary></details>')
 
 
 def phenotypes_html(candidate: Mapping[str, Any],
@@ -2361,19 +2421,18 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
         html_ = phenotypes_html(candidate, result)
     elif segment == "paths":
         html_ = paths_html(candidate, result)
+    else:
+        html_ = explanation_html(candidate, result, explanations)
     explanation = candidate.get("explanation")
-    if segment == "explanation" and not explanation:
-        why = ("No explanation was returned for this candidate." if explanations
-               else "Explanations were off for this run (Options).")
-        html_ = f'<p class="shep-muted">{why}</p>'
-    if html_ is not None:
-        html_ = f"<div{named}>{html_}</div>"
+    # The written explanation, whole as the API wrote it, is the Markdown view
+    # under the Explanation view's fold (`explanation_html`).
+    written = segment == "explanation" and bool(explanation)
     return {
         "details_hd": details_header_html(candidate, _result_kind(result)),
         "details_seg": view_update(True, "shep-seg", value=segment,
                                    choices=segment_choices(candidate)),
-        "details_html": view_update(html_ is not None, *_HTML_VIEW, value=html_),
-        "details_md": view_update(html_ is None, *_MD_VIEW, value=explanation),
+        "details_html": view_update(True, *_HTML_VIEW, value=f"<div{named}>{html_}</div>"),
+        "details_md": view_update(written, *_MD_VIEW, value=explanation),
         "details_ft": details_footer_html(result, rank),
     }
 
@@ -2929,11 +2988,18 @@ NO_CANDIDATE_GENES = (
 
 def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: bool,
              state: Any, phase: Any, view: Any, request: Any, *, genes_text: str = "",
-             cohort: Any = None) -> Dict[str, Any]:
+             cohort: Any = None, gen: Any = 0) -> Dict[str, Any]:
     """Run Diagnosis: the shared API (`_call_diagnose`), then the status read
     again for the badge, so a result never meets an older read. The full
     result is kept in this session's state; the export files are written up
     front, so one click downloads them.
+
+    **The result keeps the inputs generation its run read** (`gen`, the
+    page's count of its inputs' edits as Run Diagnosis' own request carries
+    it, read in the same step as the boxes' text: `INPUTS_HEAD`,
+    `INPUTS_GEN_JS`), and the results body that draws it marks it
+    (`answer_mark`): the page draws the answer, and offers its download, only
+    while no edit has been made since (`ANSWER_GATE_CSS`, OPS-C-R3).
 
     **The served task's input goes only to its task** (the card's last read,
     `diagnosis_card.served_task`): a gene task model gets the Candidate genes
@@ -2972,8 +3038,8 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
         result["_query_candidate_genes"] = genes
     result["_explanations"] = explanations
     result["_received_at"] = card.stamp(datetime.now())
-    # The boxes as this run read them (`answered_inputs`).
-    result["_query_inputs"] = query_inputs(phenotype_text, genes_text, cohort)
+    # The inputs generation this run read (`answered_inputs`, `answer_mark`).
+    result["_inputs_gen"] = inputs_generation_of(gen)
     # A response that does not name its kind shows no candidate: nothing is
     # selected and nothing is exported (the body says why).
     candidates = (result.get("candidates") or []) if _result_kind(result) is not None else []
@@ -2982,8 +3048,9 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
     if candidates:
         try:
             csv_path, md_path = _write_exports(result)
-            csv_update = gr.update(value=csv_path, interactive=True, visible=True)
-            md_update = gr.update(value=md_path, interactive=True, visible=True)
+            # Each file by its link: an opaque id, never its path (OPS-C-R4).
+            csv_update = gr.update(link=offer(csv_path), interactive=True, visible=True)
+            md_update = gr.update(link=offer(md_path), interactive=True, visible=True)
         except Exception as exc:  # noqa: BLE001 — never let export break the result
             logger.warning("Export file generation failed: %s", exc)
             csv_update = md_update = _DOWNLOAD_DISABLED
@@ -3009,53 +3076,176 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
     return out
 
 
+#: What the results panel says of a result its inputs were edited after
+#: (`phenotypes_changed`), and while the page holds back an answer to inputs
+#: edited since its run (`ANSWER_GATE_CSS`): the same words either way.
+INPUTS_CHANGED = "Inputs changed — Run Diagnosis to refresh the results."
+
+
+def _inputs_changed_html() -> str:
+    return f'<p class="shep-dx-notice-p">{_e(INPUTS_CHANGED)}</p>'
+
+
 def phenotypes_changed(result: Any, state: Any) -> Dict[str, Any]:
-    """Editing the phenotypes after a run clears the result and its exports,
-    so nothing stale can be read or exported. Nothing happens before a
-    result exists (typing the first query)."""
+    """The cleared result: no result and no exports, the page saying the
+    inputs changed, so nothing stale can be read or exported (what
+    `answered_inputs` does for an answer of another generation). Nothing
+    happens before a result exists (typing the first query)."""
     if not result:
         return {}
     state = state if isinstance(state, Mapping) else card.new_state()
-    out = _no_result_outputs('<p class="shep-dx-notice-p">Inputs changed — Run Diagnosis '
-                             'to refresh the results.</p>')
+    out = _no_result_outputs(_inputs_changed_html())
     out["card_state"] = {**state, "rendered": {
         **(state.get("rendered") or {}), "badge": ""}}
     return out
 
 
-def query_inputs(phenotype_text: Any, genes_text: Any, cohort: Any) -> List[Any]:
-    """The inputs whose every edit clears a result (the HPO box, the genes
-    box and the Reference cohort's pick: `phenotypes_changed`), as a run
-    read them and as they are now, in one form to compare."""
-    return [phenotype_text or "", genes_text or "", cohort or None]
+def inputs_generation_of(value: Any) -> Optional[int]:
+    """The page's inputs generation as a request carries it (the hidden
+    ``shep-dx-inputs-gen`` slot, written by the request's own script,
+    `INPUTS_GEN_JS`): a count from 0; None for anything else (a page without
+    its head's count, `INPUTS_HEAD`), which no answer is kept under."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 \
+        else None
 
 
-def answered_inputs(result: Any, state: Any, phenotype_text: Any, genes_text: Any,
-                    cohort: Any) -> Dict[str, Any]:
-    """**A result is shown only for the query it answered** (UI-15, B73): run
-    once Run Diagnosis' answer is written, with the inputs as they are then.
-    An edit made while the run was in flight cleared only the result shown
-    before it (`phenotypes_changed`; the run and the edit are events of their
-    own), so the answer, to the inputs as they were when Run was pressed,
-    came under the edited box. When the inputs the result ran on
-    (``_query_inputs``) are not the ones shown, it is cleared as an edit
-    clears it; otherwise nothing changes, and the result keeps its model's
-    identity."""
-    if not result or (isinstance(result, Mapping) and result.get("_query_inputs")
-                      == query_inputs(phenotype_text, genes_text, cohort)):
+def answered_inputs(result: Any, state: Any, gen: Any) -> Dict[str, Any]:
+    """**A result is kept only for the inputs it answered** (UI-15, B73),
+    decided by the page's inputs generation as the request carries it
+    (`gen`, `INPUTS_GEN_JS`): the request of the check chained after Run
+    Diagnosis, once its answer is written, and the request of each edit's own
+    listener (the HPO box's and the genes box's change, the Reference
+    cohort's pick). When the generation the result answered
+    (``_inputs_gen``) is not the page's, the result is cleared
+    (`phenotypes_changed`); when it is, nothing changes and the result keeps
+    its model's identity: an answer to inputs edited while its run was in
+    flight is cleared, and an answer to a Run pressed just after an edit is
+    kept, whichever of the requests comes first (REV-R3-b).
+
+    The page never waits for these requests to stop drawing such an answer:
+    it draws it, and offers its download, only under the generation it
+    answered (`ANSWER_GATE_CSS`), whether they come, come late or fail
+    (OPS-C-R3); they keep the session's state and the page's words in step
+    with it."""
+    if not result:
+        return {}
+    page = inputs_generation_of(gen)
+    if (isinstance(result, Mapping) and page is not None
+            and result.get("_inputs_gen") == page):
         return {}
     return phenotypes_changed(result, state)
 
 
-def cohort_picked(result: Any, state: Any, cohort: Any) -> Dict[str, Any]:
-    """A Reference cohort picked (its ``.input``, never a card update): the
-    result is cleared as for edited phenotypes, and the select's facts follow
-    the pick (`cohort_info`). The card's state is written back only with a
-    cleared result: the select's cache holds the server's facts, not the pick
-    (`card_outputs`), so the timer has nothing to send again and a read
-    running beside the pick is not written over."""
+#: The page's two states its gate reads (`ANSWER_GATE_CSS`; ``{gen}`` is the
+#: page's inputs generation): the results body draws no answer of this
+#: generation (none at all, or one of another, `answer_mark`), and it draws
+#: an answer of another generation.
+_NOT_THIS_ANSWER = '#shep-dx:not(:has(#shep-dx-results-body [data-shep-gen="{gen}"]))'
+_STALE_ANSWER = '#shep-dx:has(#shep-dx-results-body [data-shep-gen]:not([data-shep-gen="{gen}"]))'
+
+#: **An answer is drawn, and its download offered, only under the inputs it
+#: answered** (OPS-C-R3, the external review of 6a2d52e; UI-15, B73): the
+#: page's gate, a style sheet the page's head script (`INPUTS_HEAD`) writes
+#: for the page's inputs generation at each edit, in the edit's own event. What is drawn from an answer (the header's count,
+#: the badge, both exports and their ⓘ, the selected candidate's details) is
+#: drawn only while the results body draws an answer of this generation; in
+#: its place the details' empty state (``#shep-dx-details-stale-hd`` and
+#: ``#shep-dx-details-stale``, what a cleared result leaves there, each part
+#: where the details draw it). An answer of another generation in the
+#: results body is not drawn either, and the page says what the cleared
+#: state says (`INPUTS_CHANGED`, ``#shep-dx-stale``). Gradio writes an
+#: answer's outputs one by one; a style applies to each as it is written,
+#: before the browser draws it, so no part of an answer that arrives after an
+#: edit is ever drawn nor offered, whatever order its parts come in and
+#: whatever any later request does; an edit made with an answer shown hides
+#: it at once. Once the check chained after the run (`answered_inputs`) or an
+#: edit's own listener clears it, the page draws the cleared state the gate
+#: imitates; a new run answers this generation. Nothing is recomputed and
+#: nothing is deleted.
+ANSWER_GATE_CSS = (
+    _NOT_THIS_ANSWER + " :is(#shep-dx-results-hd .shep-panel-right, "
+    "#shep-dx-badge :is(.shep-dx-badge-row, .shep-dx-badge-why), #shep-dx-export-csv, "
+    "#shep-dx-export-md, #shep-dx-exports-help, #shep-dx-details-hd, #shep-dx-seg, "
+    "#shep-dx-details-body, #shep-dx-explanation, #shep-dx-details-ft) "
+    "{ display: none !important; }\n"
+    + _NOT_THIS_ANSWER + " :is(#shep-dx-details-stale-hd, #shep-dx-details-stale) "
+    "{ display: block !important; }\n"
+    + _STALE_ANSWER + " #shep-dx-results-body { display: none !important; }\n"
+    + _STALE_ANSWER + " #shep-dx-stale { display: block !important; }")
+
+#: **An edit of an input the answer depends on, counted in the browser in the
+#: edit's own event** (REV-R3-a, REV-R3-b: the review of 961d901; OPS-C-R3):
+#: the page's head script (in the dashboard's head, `app.dashboard_head`)
+#: holds the page's inputs generation, a count from 0, and at each such edit
+#: raises it by one and writes the page's gate for it (`ANSWER_GATE_CSS`),
+#: before the event's next listener runs. The edits are the ones whose own
+#: listeners clear a result: each input event of the HPO box's and the genes
+#: box's text area (every change of a box's text Gradio takes is one: its
+#: value binding reads the box at that event alone, so a keystroke, a delete,
+#: a cut, a paste, a drop and each step of an input method's composition
+#: are each counted), the Reference cohort's blur (its pick, `shell.picked`:
+#: Gradio sends it from the select's own blur), and a click on Clear (which
+#: writes both boxes in the browser, with no input event).
+#:
+#: Before, the count went up in a listener of the boxes' ``.change`` and the
+#: cohort's blur, which Gradio dispatches some time after the box's text has
+#: changed (measured 45 to 110 ms; a text box's two ticks, each an animation
+#: frame and a zero timeout). An answer arriving in between was drawn, its
+#: download offered, under the edited box (REV-R3-a); a Run pressed in
+#: between carried the boxes' new text with the count before the edit, so
+#: the answer to the text shown was hidden, then cleared (REV-R3-b).
+#:
+#: ``ShepDx.gen()`` reads the count. Each request that decides on an answer
+#: carries it in its last input (`INPUTS_GEN_JS`).
+INPUTS_HEAD = "<script>" + r"""
+(function () {
+  if (window.ShepDx) { return; }
+  var GATE = __GATE__, gen = 0;
+  // By event: the elements an edit of an input the answer depends on reaches.
+  var EDITS = { input: '#dx_hpo_terms textarea, #dx_candidate_genes textarea',
+                focusout: '#dx_reference_cohort input', click: '#shep-dx-clear' };
+  function edited() {
+    gen += 1;
+    var gate = document.getElementById('shep-dx-answer-gate');
+    if (!gate) {
+      gate = document.createElement('style');
+      gate.id = 'shep-dx-answer-gate';
+      document.head.appendChild(gate);
+    }
+    gate.textContent = GATE.split('{gen}').join(String(gen));
+  }
+  Object.keys(EDITS).forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      var el = e.target;
+      if (el && el.closest && el.closest(EDITS[type])) { edited(); }
+    }, true);
+  });
+  window.ShepDx = { gen: function () { return gen; } };
+})();
+""".replace("__GATE__", json.dumps(ANSWER_GATE_CSS)) + "</script>"
+
+#: **A request carries the page's inputs generation as it is when the request
+#: is made** (the listener's ``js``): its last input, the hidden
+#: ``shep-dx-inputs-gen`` slot, becomes ``ShepDx.gen()`` (`INPUTS_HEAD`), or
+#: null on a page without that head (`inputs_generation_of`). Gradio 6.30 runs
+#: it on the inputs it has just read, in the same step, so Run Diagnosis'
+#: request carries the count of the edits its text holds, never one before
+#: them; the check chained after the run and each edit's own listener read
+#: the count as it is when they go.
+INPUTS_GEN_JS = ("(...args) => { const page = window.ShepDx; "
+                 "args[args.length - 1] = page ? page.gen() : null; return args; }")
+
+
+def cohort_picked(result: Any, state: Any, cohort: Any, gen: Any = None) -> Dict[str, Any]:
+    """A Reference cohort picked (its blur, `shell.picked`, never a card
+    update): a result of another inputs generation is cleared as for edited
+    phenotypes (`answered_inputs`, `gen` as the pick's request carries it),
+    and the select's facts follow the pick (`cohort_info`). The card's state
+    is written back only with a cleared result: the select's cache holds the
+    server's facts, not the pick (`card_outputs`), so the timer has nothing
+    to send again and a read running beside the pick is not written over."""
     state = state if isinstance(state, Mapping) else card.new_state()
-    out = phenotypes_changed(result, state)
+    out = answered_inputs(result, state, gen)
     out["cohort"] = gr.update(info=cohort_info(_cohorts(state), cohort))
     return out
 
@@ -3391,6 +3581,10 @@ def create_diagnosis_tab(ctx: Any) -> None:
 
     results_state = gr.State(None)
     selected = gr.State(None)
+    #: The slot a request carries the page's inputs generation in (its last
+    #: input, written by the request's own script, `INPUTS_GEN_JS`; the count
+    #: is the page head's, `INPUTS_HEAD`). Nothing writes the slot itself.
+    inputs_gen = gr.Number(value=0, precision=0, visible=False, elem_id="shep-dx-inputs-gen")
     card_state = gr.State(card.new_state())
     identity_view = gr.State({"open": False})
     change_closed = gr.State(False)
@@ -3575,20 +3769,30 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 badge = plain_html("", elem_id="shep-dx-badge", js_on_load=MODEL_LIST_JS)
                 results_body = plain_html(empty_results_html(), elem_id="shep-dx-results-body",
                                           js_on_load=MODEL_LIST_JS)
+                # Drawn only while the page holds back an answer to inputs
+                # edited since its run (`ANSWER_GATE_CSS`).
+                plain_html(empty_results_html(_inputs_changed_html()), elem_id="shep-dx-stale")
             with gr.Row(elem_id="shep-dx-results-ft", elem_classes=["shep-panel-ft"]):
                 # Not shown until a result exists (`_EXPORTS_HIDDEN`).
-                export_csv = gr.DownloadButton("⬇ Export CSV", size="sm", interactive=False,
-                                               scale=0, min_width=0, elem_id="shep-dx-export-csv",
-                                               visible="hidden")
-                export_report = gr.DownloadButton("⬇ Export report (.md)", size="sm",
-                                                  interactive=False, scale=0, min_width=0,
-                                                  elem_id="shep-dx-export-md", visible="hidden")
+                # Each export downloads by its link (`exports.offer`: an
+                # opaque id, never the file's path; the button draws as a
+                # link once it has one).
+                export_csv = gr.Button("⬇ Export CSV", size="sm", interactive=False, scale=0,
+                                       min_width=0, elem_id="shep-dx-export-csv",
+                                       visible="hidden")
+                export_report = gr.Button("⬇ Export report (.md)", size="sm", interactive=False,
+                                          scale=0, min_width=0, elem_id="shep-dx-export-md",
+                                          visible="hidden")
                 plain_html(help_button("dx-exports", "Exports"), elem_id="shep-dx-exports-help")
                 plain_html(f'<p class="shep-dx-device">{_e(NOT_A_MEDICAL_DEVICE)}</p>',
                            elem_id="shep-dx-device")
 
         # --- the selected candidate's details ----------------------------------
         with gr.Column(elem_id="shep-dx-details", elem_classes=["shep-panel"], min_width=0):
+            # The details' empty state, each part where the details draw it,
+            # drawn only while the results body draws no answer of the page's
+            # inputs generation (`ANSWER_GATE_CSS`).
+            plain_html(details_header_html(None), elem_id="shep-dx-details-stale-hd")
             details_hd = plain_html(details_header_html(None), elem_id="shep-dx-details-hd")
             # The segmented control and the views are shown and hidden by a
             # class, never `visible` (`view_update`).
@@ -3597,6 +3801,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                    container=False, elem_classes=["shep-seg", VIEW_OFF],
                                    elem_id="shep-dx-seg")
             with gr.Column(elem_id="shep-dx-details-bd", elem_classes=["shep-dx-scroll"]):
+                plain_html(details_empty_html(), elem_id="shep-dx-details-stale")
                 details_html = plain_html(details_empty_html(), elem_id="shep-dx-details-body",
                                           js_on_load=MODEL_LIST_JS)
                 details_md = gr.Markdown("", elem_id="shep-dx-explanation",
@@ -3808,53 +4013,64 @@ def create_diagnosis_tab(ctx: Any) -> None:
                     "details_md", "details_ft")
 
     def _run_diagnosis(text, patient, top_k, explanations, state, phase, view, genes, cohort,
-                       request: gr.Request):
+                       gen, request: gr.Request):
         return mapped(diagnose(text, patient, top_k, explanations, state, phase, view, request,
-                               genes_text=genes, cohort=cohort))
+                               genes_text=genes, cohort=cohort, gen=gen))
 
-    def _phenotypes_edited(result, state):
-        return mapped(phenotypes_changed(result, state))
+    def _phenotypes_edited(result, state, gen):
+        return mapped(answered_inputs(result, state, gen))
 
-    edited = {"fn": _phenotypes_edited, "inputs": [results_state, card_state],
+    edited = {"fn": _phenotypes_edited, "inputs": [results_state, card_state, inputs_gen],
               "outputs": outputs(*dict.fromkeys(result_names + ("card_state",))),
-              "show_progress": "hidden"}
+              "js": INPUTS_GEN_JS, "show_progress": "hidden"}
 
-    def _answered_inputs(result, state, text, genes, cohort):
-        return mapped(answered_inputs(result, state, text, genes, cohort))
+    def _answered_inputs(result, state, gen):
+        return mapped(answered_inputs(result, state, gen))
 
-    # The answer is written, then checked against the inputs as they are now
-    # (`answered_inputs`): an edit made while the run was in flight clears it
-    # as any edit does. Outside the queue, so it follows the answer at once.
+    # Run carries the page's inputs generation, read with the boxes' text
+    # (`INPUTS_GEN_JS`), which its result keeps and its results body marks
+    # (`diagnose`); the page draws the answer only under that generation
+    # (`ANSWER_GATE_CSS`, OPS-C-R3). The answer is written, then checked
+    # against the generation as it is now (`answered_inputs`): an edit made
+    # while the run was in flight clears it from the session's state as any
+    # edit does. Outside the queue, so it follows the answer at once.
     run_btn.click(_run_diagnosis,
                   inputs=[phenotype_input, patient_id_input, top_k_input, explanations_input,
-                          card_state, handle.phase, identity_view, genes_input, cohort_input],
-                  outputs=outputs(*dict.fromkeys(result_names + card_names + identity_names))
-                  ).then(_answered_inputs,
-                         inputs=[results_state, card_state, phenotype_input, genes_input,
-                                 cohort_input],
-                         outputs=edited["outputs"], queue=False, show_progress="hidden")
-    # Every change of a box's text clears the result (UI-15, B73): its
-    # ``.change``. Gradio 6.30's Textbox dispatches ``.input`` from a keypress
-    # alone, so select all then Delete, a cut, a paste or an input method's
-    # text kept the old genes' result. No handler writes either box (the
-    # card shows the genes box by its container's class), so a change is the
-    # user's edit or Clear. The cohort select clears on its pick, never on a
-    # card's write of it (`_cohort_picked`).
-    def _phenotypes_typed(result, state, text):
-        return mapped({**phenotypes_changed(result, state), "hpo_echo": hpo_echo_html(text)})
+                          card_state, handle.phase, identity_view, genes_input, cohort_input,
+                          inputs_gen],
+                  outputs=outputs(*dict.fromkeys(result_names + card_names + identity_names)),
+                  js=INPUTS_GEN_JS
+                  ).then(_answered_inputs, inputs=[results_state, card_state, inputs_gen],
+                         outputs=edited["outputs"], js=INPUTS_GEN_JS, queue=False,
+                         show_progress="hidden")
+    # Every change of a box's text clears a result of another generation
+    # (UI-15, B73): its ``.change``. Gradio 6.30's Textbox dispatches
+    # ``.input`` from a keypress alone, so select all then Delete, a cut, a
+    # paste or an input method's text kept the old genes' result. No handler
+    # writes either box (the card shows the genes box by its container's
+    # class), so a change is the user's edit or Clear. The cohort select
+    # clears on its pick, never on a card's write of it (`_cohort_picked`).
+    # Each edit is counted in the browser in its own event (`INPUTS_HEAD`),
+    # before these requests go: from then on the page draws no answer of an
+    # earlier generation, whatever the requests do or when, and each request
+    # carries the count as it is when it goes (`INPUTS_GEN_JS`).
+    def _phenotypes_typed(result, state, text, gen):
+        return mapped({**answered_inputs(result, state, gen), "hpo_echo": hpo_echo_html(text)})
 
-    phenotype_input.change(_phenotypes_typed, inputs=[results_state, card_state, phenotype_input],
+    phenotype_input.change(_phenotypes_typed,
+                           inputs=[results_state, card_state, phenotype_input, inputs_gen],
                            outputs=outputs(*dict.fromkeys(result_names
                                                           + ("card_state", "hpo_echo"))),
-                           show_progress="hidden")
+                           js=INPUTS_GEN_JS, show_progress="hidden")
     genes_input.change(**edited)
 
-    def _cohort_picked(result, state, cohort):
-        return mapped(cohort_picked(result, state, cohort))
+    def _cohort_picked(result, state, cohort, gen):
+        return mapped(cohort_picked(result, state, cohort, gen))
 
-    picked(cohort_input)(_cohort_picked, inputs=[results_state, card_state, cohort_input],
+    picked(cohort_input)(_cohort_picked,
+                         inputs=[results_state, card_state, cohort_input, inputs_gen],
                          outputs=outputs(*dict.fromkeys(result_names + ("card_state", "cohort"))),
-                         show_progress="hidden")
+                         js=INPUTS_GEN_JS, show_progress="hidden")
 
     def _select_candidate(result, segment, evt: gr.EventData):
         return mapped(select_candidate(result, segment, _event_key(evt)))
@@ -3908,6 +4124,8 @@ PAGE_CSS = f"""
 @media (min-width: 1600px) {{ {_TAB} {{ --dx-in-w: 320px; }} }}
 @media (min-width: 1800px) {{ {_TAB} {{ --dx-in-w: 370px; }} }}
 {_TAB} #shep-dx {{ position: relative; gap: 16px; align-items: stretch; }}
+/* Drawn only by the page's gate (`ANSWER_GATE_CSS`). */
+{_TAB} #shep-dx-stale, {_TAB} #shep-dx-details-stale-hd, {_TAB} #shep-dx-details-stale {{ display: none !important; }}
 {_TAB} #shep-dx-input {{ flex: 0 0 var(--dx-in-w) !important; width: var(--dx-in-w); max-width: var(--dx-in-w); }}
 {_TAB} #shep-dx-results {{ flex: 5 1 0 !important; }}
 {_TAB} #shep-dx-details {{ flex: 4 1 0 !important; }}
@@ -4082,6 +4300,9 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-details-ft {{ border-top: 1px solid var(--shep-border); }}
 {_TAB} .shep-dx-det-ft {{ display: flex; align-items: center; gap: 4px; padding: 10px 16px; font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} #shep-dx-explanation {{ font-size: 15px; }}
+/* The written explanation (the Markdown view) is drawn while the Explanation view's fold is
+   open, right under its summary (R-1b, `explanation_html`). */
+{_TAB} #shep-dx-details-bd:has(details.shep-dx-written:not([open])) #shep-dx-explanation {{ display: none !important; }}
 {_TAB} .shep-dx-drawer {{ box-shadow: 0 10px 30px rgba(20, 24, 40, .14); }}
 {_TAB} .shep-dx-drawer-hd {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important; padding: 10px 16px !important; border-bottom: 1px solid var(--shep-border); }}
 /* A drawer's head and the Load drawer's task segment take their words' width and give way to
@@ -4128,9 +4349,10 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change .shep-model-head > :not(.form) {{ min-width: 0 !important; }}
 /* **The list and the chosen model's details, two regions** (UI-07: they shared one scroll, so
    reading the details moved the list). Each has its minimum width (`--shep-panel-min`, the
-   layout rule's measure): the tree whole from 616 px (614 px measured with a model of every task,
-   "Patients-like-me" its Task column's widest word, and a 12-hex digest; 566 px on the
-   multi-family demo; a longer run name scrolls the list sideways in its own region), the
+   layout rule's measure): the tree whole from 616 px (599 px at its narrowest in the dashboard's
+   type with a model of every task, "Patients-like-me" its Task column's widest word, and a 12-hex
+   digest in the host's monospace; 566 px on the multi-family demo; a longer run name scrolls the
+   list sideways in its own region), the
    details' summary lists from 222 px (a key and its value, each wrapping). Side
    by side the drawer covers the candidates and the details panels, whose own minimums are no
    narrower, so whenever the page is side by side the two regions fit beside each other (summed
@@ -4193,13 +4415,19 @@ PAGE_CSS = f"""
 
 
 __all__ = [
+    "ANSWER_GATE_CSS",
     "CLOSE_WHILE_LOADING",
     "FIELD_HELP",
+    "INPUTS_CHANGED",
+    "INPUTS_GEN_JS",
+    "INPUTS_HEAD",
     "PAGE_CSS",
     "SEGMENTS",
     "TASK_OUTPUTS",
     "TASK_VIEWS",
     "TOPIC_HELP",
+    "answer_mark",
+    "answered_inputs",
     "asks_explanations",
     "badge_html",
     "card_outputs",
@@ -4211,6 +4439,7 @@ __all__ = [
     "create_diagnosis_tab",
     "details_outputs",
     "diagnose",
+    "inputs_generation_of",
     "open_change",
     "poll_card",
     "reference_line_html",

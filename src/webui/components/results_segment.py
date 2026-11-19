@@ -100,7 +100,9 @@ only results of another data kind hold.
 rows, the unreadable items among them), uncapped, through the service's one
 serializer (`results.to_csv`, `results.to_json`), as a new file to download
 from the dashboard's one download directory (`src/webui/exports.py`,
-`write_new`: its bytes are the serializer's text).
+`write_new`: its bytes are the serializer's text): "⬇ Download CSV" (or
+JSON) saves it by a link that names an opaque id, never the file's path
+(`exports.offer`), and the note beside it names the file.
 
 **D8.** Listing results opens checkpoint files (the service lists every
 workspace's checkpoints, SPEC_4 C3), so every handler here, reading,
@@ -143,7 +145,7 @@ from src.webui.components import model_list as ml
 from src.webui.components import models_page as mp
 from src.webui.components import renderers as r
 from src.webui.components.help import REF_PREFIX, help_button
-from src.webui.exports import file_slug, write_new
+from src.webui.exports import file_slug, offer, write_new
 from src.webui.operator_access import operator_access
 from src.webui.shell import picked, plain_html
 
@@ -770,6 +772,14 @@ _GAPS = (OTHER_PROTOCOL, ABSENT, NOT_APPLICABLE)
 #: data, and its metrics, then how it was trained, measured and run.
 COMPARE_GROUPS = ("Result", "Model", "Data", "Metrics", "Training settings", "Measurement",
                   "Environment", "Exposure", "References")
+#: **What Compare shows before anything is opened** (NEW-models-results-2):
+#: the key groups' own rows (what each result is, of which model and data)
+#: and the metrics a protocol's table shows in columns (`_metric_columns`);
+#: every other row of a group, an entry under a path, the other metrics and
+#: every row of the later groups, is folded under its group's header, one
+#: disclosure per group that says how many rows it holds (`_group_head`).
+#: Folded rows are in the table as drawn, unrounded, and in every export.
+KEY_GROUPS = ("Result", "Model", "Data")
 #: Measurement settings Compare does not show as rows of their own: the mode
 #: is the result's protocol, which heads its column, the score semantics has
 #: its own row, and the cohort kind is the data's kind, the Data group's "Data
@@ -1429,6 +1439,51 @@ sync();
 """
 
 
+def _summary_metric(ref: Optional[str], values: Sequence[Any],
+                    columns: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether a Metrics row is one its protocol's table shows in a column
+    (`_metric_columns`: a described task's two, a KG link prediction's
+    every metric), for a protocol of a column the row applies to; a metric's
+    own parts (``metrics.<name>.<part>``) are not."""
+    parts = (ref or "").split(".")
+    if len(parts) != 2 or parts[0] != "metrics":
+        return False
+    protocols = {column.get("protocol") for column, value in zip(columns, values)
+                 if value is not OTHER_PROTOCOL}
+    return any(parts[1] in (_metric_columns(protocol, [c for c in columns
+                                                      if c.get("protocol") == protocol])
+                            or ())
+               for protocol in protocols)
+
+
+def _folded(group: str, path: Sequence[str], ref: Optional[str], values: Sequence[Any],
+            columns: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether a Compare row is drawn under its group's fold
+    (`KEY_GROUPS`): an entry under a path in a key group, a metric its
+    protocol's table does not show in a column, every row of a later group."""
+    if group in KEY_GROUPS:
+        return bool(path)
+    if group == "Metrics":
+        return not _summary_metric(ref, values, columns)
+    return True
+
+
+def _group_head(group: str, span: int, folded: int, shown: int) -> str:
+    """A group's header row: its name, and when it holds folded rows the
+    fold that opens them, its summary saying how many ("Model · 2 more rows
+    ›", or "Training settings · 40 rows ›" for a group wholly folded),
+    closed until the reader opens it (`renderers.KEEP_OPEN_JS` keeps it as
+    left while the same results are compared)."""
+    if not folded:
+        return (f'<tr class="shep-rs-grp"><th scope="rowgroup" colspan="{span}">'
+                f'<span class="shep-rs-pin">{r.e(group)}</span></th></tr>')
+    count = f"{folded} {'more ' if shown else ''}row{'s' if folded != 1 else ''}"
+    return (f'<tr class="shep-rs-grp"><th scope="rowgroup" colspan="{span}">'
+            f'<details class="shep-rs-gfold"><summary><span class="shep-rs-pin">{r.e(group)} '
+            f'<span class="shep-rs-gmore">· {r.e(count)} ›</span></span></summary></details>'
+            f'</th></tr>')
+
+
 def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                  asked: int = 0, names: Optional[Sequence[Any]] = None) -> str:
     """The chosen results side by side (at most `COMPARE_CAP`, a cap of this
@@ -1446,7 +1501,12 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     accessible name and its record key its title. Each group is a row group
     of its own (a ``<tbody>`` headed by its name, ``scope="rowgroup"``: by
     HTML's table model its header heads its own rows, never a later group's),
-    under a real ``<colgroup>`` of the Field column and the results'. The
+    under a real ``<colgroup>`` of the Field column and the results'. **The
+    key rows first** (NEW-models-results-2): a group's rows other than its
+    key ones (`_folded`) are drawn folded under its header (`_group_head`),
+    so what the results are, their model, data and headline metrics read in
+    the first screen of Compare, and how they were trained, measured and run
+    is one click away, every value still in the table and the export. The
     sub-heading is a plain cell, not a header: a header there would head
     every later cell of its group, under later paths too, and each entry's
     accessible name already says its whole path. Values
@@ -1473,7 +1533,8 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     # name (`scope="rowgroup"`), so a group's header heads its own rows only
     # and never a later group's; the table's columns are a real `<colgroup>`
     # (the Field column, then one per result).
-    groups: List[List[str]] = []
+    # Each group shown: its name, its rows, how many are folded and shown.
+    groups: List[Dict[str, Any]] = []
     body: List[str] = []
     hidden, unknown_hidden, single_hidden, none_hidden = 0, 0, 0, 0
     group_shown, path_shown = None, None
@@ -1508,15 +1569,17 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                 hidden += 1
             continue
         if group != group_shown:
-            # Its words stay in view when the table scrolls sideways (`shep-rs-pin`).
-            body = [f'<tr class="shep-rs-grp"><th scope="rowgroup" colspan="{span}">'
-                    f'<span class="shep-rs-pin">{r.e(group)}</span></th></tr>']
-            groups.append(body)
+            body = []
+            groups.append({"name": group, "rows": body, "folded": 0, "shown": 0})
             group_shown, path_shown = group, None
         path = parts[:-1]
+        folded = _folded(group, path, ref, values, columns)
+        groups[-1]["folded" if folded else "shown"] += 1
+        rest = ' class="shep-rs-rest"' if folded else ""
         if path and path != path_shown:
             # A plain cell, not a header (`compare_html`'s docstring says why).
-            body.append(f'<tr class="shep-rs-sub"><td colspan="{span}">'
+            body.append(f'<tr class="shep-rs-sub{" shep-rs-rest" if folded else ""}">'
+                        f'<td colspan="{span}">'
                         f'<span class="shep-rs-pin">{r.e(_label(path))}</span></td></tr>')
         path_shown = path or None
         run = ref in _RUN_IDS
@@ -1530,10 +1593,11 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                  f'{r.e("same as " + same)}</td>')
         title = f' title="{r.e(ref)}"' if ref else ""
         if path:
-            body.append(f'<tr class="shep-rs-entry"><th scope="row"{title} '
+            body.append(f'<tr class="shep-rs-entry{" shep-rs-rest" if folded else ""}">'
+                        f'<th scope="row"{title} '
                         f'aria-label="{r.e(_label(parts))}">{r.e(parts[-1])}</th>{cells}</tr>')
         else:
-            body.append(f'<tr><th scope="row"{title}>{r.e(parts[0])}</th>{cells}</tr>')
+            body.append(f'<tr{rest}><th scope="row"{title}>{r.e(parts[0])}</th>{cells}</tr>')
     heads = "".join(f'<th scope="col">{_name_html(name)}<div class="shep-sub">'
                     f'{r.e(protocol_words(row.get("protocol")))}</div></th>'
                     for row, name in zip(columns, heads_said))
@@ -1548,10 +1612,13 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     notes.append("Values as recorded, side by side; no difference is computed, and each "
                  "metric row is one protocol's.")
     note_html = "".join(f'<p class="shep-mp-p shep-sub">{r.e(n)}</p>' for n in notes)
+    # Its words stay in view when the table scrolls sideways (`shep-rs-pin`).
+    tbodies = "".join(
+        f'<tbody>{_group_head(g["name"], span, g["folded"], g["shown"])}{"".join(g["rows"])}'
+        f'</tbody>' for g in groups)
     if not groups:
-        groups.append([f'<tr><td colspan="{span}" class="shep-muted">Every row is '
-                       'recorded alike in every column.</td></tr>'])
-    tbodies = "".join(f'<tbody>{"".join(rows_)}</tbody>' for rows_ in groups)
+        tbodies = (f'<tbody><tr><td colspan="{span}" class="shep-muted">Every row is '
+                   'recorded alike in every column.</td></tr></tbody>')
     cols = (f'<colgroup><col class="shep-rs-cfield"></colgroup>'
             f'<colgroup span="{len(columns)}" class="shep-rs-cvals"></colgroup>')
     # Named by the results compared (`renderers.keep_as`): a value unfolded
@@ -1673,24 +1740,27 @@ def _on_results_compare(request: gr.Request, state, chosen, differences):
                               asked=len(chosen_rows(state, chosen)))
 
 
+#: Export's download button with nothing to download: hidden, no link.
+_NO_DOWNLOAD = gr.update(link=None, visible=False)
+
+
 def _on_results_export(request: gr.Request, state, listing, selected, scope, chosen, which, fmt):
     """Export: D8 first; then the chosen results, or every row shown (the
     unreadable items among them), uncapped, as CSV or JSON through the
     service's one serializer; the file to download and what it holds."""
     access = operator_access(request)
     if not access.allowed:
-        return (gr.update(value=None, visible=False),
-                f'<div class="shep-reason">{r.e(access.refusal)}</div>')
+        return _NO_DOWNLOAD, f'<div class="shep-reason">{r.e(access.refusal)}</div>'
     state = state if isinstance(state, Mapping) else EMPTY_STATE
     if state.get("read_id") is None:
-        return (gr.update(value=None, visible=False),
+        return (_NO_DOWNLOAD,
                 '<p class="shep-mp-p shep-muted">Nothing has been read to export yet.</p>')
     fmt = fmt if fmt in ("csv", "json") else "csv"
     all_rows = state.get("rows") or []
     if which == SELECTED:
         rows = chosen_rows(state, chosen)
         if not rows:
-            return (gr.update(value=None, visible=False),
+            return (_NO_DOWNLOAD,
                     '<p class="shep-mp-p shep-muted">Choose results above to export them, or '
                     'export all shown.</p>')
     else:
@@ -1705,8 +1775,11 @@ def _on_results_export(request: gr.Request, state, listing, selected, scope, cho
     said = (f"Exported {results} result{'s' if results != 1 else ''}"
             + (f" and {unreadable} unreadable item{'s' if unreadable != 1 else ''}"
                if unreadable else "")
-            + f" as {fmt.upper()}, one row per result and metric (read {state.get('read_at')}).")
-    return (gr.update(value=path, visible=True), f'<p class="shep-mp-p">{r.e(said)}</p>')
+            + f" as {fmt.upper()}, one row per result and metric (read {state.get('read_at')}): "
+            + f"{os.path.basename(path)}.")
+    # The file by its link: an opaque id, never its path (OPS-C-R4).
+    return (gr.update(value=f"⬇ Download {fmt.upper()}", link=offer(path), visible=True),
+            f'<p class="shep-mp-p">{r.e(said)}</p>')
 
 
 # ---------------------------------------------------------------------------
@@ -1746,8 +1819,10 @@ def create_results_segment() -> Dict[str, Any]:
             parts["format"] = gr.Radio(choices=EXPORT_FORMATS, value="csv", label="Format",
                                        elem_id="shep-rs-format")
             parts["export"] = gr.Button("Export", size="sm", elem_id="shep-rs-export")
-        parts["file"] = gr.File(label="Export file", interactive=False, visible=False,
-                                elem_id="shep-rs-file")
+        # The export downloads by its link (`exports.offer`: an opaque id,
+        # never the file's path), shown once a file is written.
+        parts["file"] = gr.Button("⬇ Download", size="sm", visible=False,
+                                  elem_id="shep-rs-file")
         parts["export_note"] = plain_html("", elem_id="shep-rs-export-note")
     return parts
 
