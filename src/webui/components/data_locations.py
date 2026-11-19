@@ -46,8 +46,10 @@ it shows escaped:
   hidden)" or ○ Not set (sources stay), a refused value's problem is said in
   fixed words that never quote the value (`deployment_view.problem_words`),
   every other text is redacted by the one redaction, every box and button is
-  disabled with the lock, and one reason line in D8's words says why
-  (`chips.operator_only`).
+  disabled with the lock, one reason line in D8's words says why, once, above
+  the rows (`chips.operator_only`), and each row says the short `ROW_LOCKED`
+  ("🔒 Operator controls only") on the line under its box, Check and Save,
+  just above its Create (the owner's decision of 2026-11-19).
 
 These are folders on the server machine; the page says so. Nothing here
 blocks another page: a page that needs a folder that is not set says so in
@@ -82,7 +84,7 @@ from src.config.deployment_settings import (
 from src.utils import deployment_view
 from src.utils.deployment_view import DeploymentView, FieldView
 from src.webui.components import renderers as r
-from src.webui.components.chips import LOCK, gated, operator_only
+from src.webui.components.chips import LOCK, OPERATOR_ONLY, gated, operator_only
 from src.webui.operator_access import operator_access
 from src.webui.shell import SETTINGS as SETTINGS_PAGE
 from src.webui.shell import plain_html, tab_elem_id
@@ -104,6 +106,10 @@ OVERRIDDEN = "Saved, applies when the start-up setting is removed"
 PATH_HIDDEN = "Set (path hidden)"
 #: The read-only reason's second half (the first is D8's, `operator_only`).
 PATHS_OPERATOR_ONLY = "Folder paths are shown to operator controls only."
+#: Each row's short reason beside its locked box and buttons, for a request
+#: D8 refuses: the lead of D8's words (`chips.OPERATOR_ONLY`); the whole
+#: reason is the panel's line (`notice_html`).
+ROW_LOCKED = OPERATOR_ONLY.rstrip(":")
 #: The unreadable file's notice (Save is off until it is replaced: said here once).
 UNREADABLE = ("Settings file cannot be read: the folders saved in it are unknown and not used; "
               "Save is off until the file is replaced. Folders set when the service started "
@@ -131,7 +137,8 @@ REPAIR_THEN = ("Replace renames it beside itself and keeps it; then choose the f
                "again.")
 
 #: The order of the per-row outputs (`_panel`).
-ROW_PARTS = ("state", "key", "box", "check", "save", "create", "suggest", "result", "adv")
+ROW_PARTS = ("state", "key", "box", "check", "save", "lock", "create", "suggest", "result",
+             "adv")
 PANEL_PARTS = ("notice", "repair", "apply", "status", "where")
 
 
@@ -258,9 +265,10 @@ def where_html(view: DeploymentView, *, shown: bool) -> str:
 # ---------------------------------------------------------------------------
 def reason_line(text: str) -> str:
     """**A refusal's line beside what it turns off** on Settings (D8's
-    reason, the lock before it): one per panel, in this panel above its rows
-    (each row's box, Check and Save), in Runtime settings beside its
-    actions, where the line above its two fields says where it is."""
+    reason, the lock before it): in this panel the whole reason once, above
+    its rows, and each row's short `ROW_LOCKED` under its box and buttons;
+    in Runtime settings beside its actions, where the line above its two
+    fields says where it is."""
     return (f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
             f"<span>{r.e(text)}</span></div>")
 
@@ -324,6 +332,7 @@ def _row_updates(item: FieldView, view: DeploymentView, access: Any,
         gr.update(**box),
         gr.update(**gated(CHECK_LABEL, allowed)),
         gr.update(**gated(SAVE_LABEL, allowed, interactive=readable)),
+        gr.update(value="" if allowed else reason_line(ROW_LOCKED)),
         gr.update(visible=creatable, **gated(CREATE_LABEL, allowed)),
         gr.update(value=(f'<code class="shep-dl-path"{_title(suggestion, shown)}>'
                          f"{r.e(_tilde(suggestion))}</code>") if creatable else ""),
@@ -610,6 +619,9 @@ def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
                                                      elem_id=f"dl_check_{key}")
                             row["save"] = gr.Button(SAVE_LABEL, interactive=False, scale=0,
                                                     elem_id=f"dl_save_{key}")
+                        # Read-only: why the box and the buttons above and
+                        # Create below are locked (`ROW_LOCKED`).
+                        row["lock"] = plain_html("", elem_id=f"dl_lock_{key}")
                         with gr.Row(elem_classes=["shep-dl-create"]):
                             row["create"] = gr.Button(CREATE_LABEL, visible=False,
                                                       interactive=False, scale=0,
@@ -656,6 +668,9 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: V-RA-1). The evidence folders' box, a path per line, takes its whole row:
 #: its hint ("One folder path on the server per line", 250.5 px in the
 #: dashboard's type) is longer than 16em leaves it (215 px at 390 x 844).
+#: A read-only row's short reason (`ROW_LOCKED`) is a line of its own just
+#: under its box and buttons and above its Create: under Check and Save at its
+#: end, or at its start where the buttons wrap there (narrow).
 PAGE_CSS = f"""
 {_PAGE} #shep-dl-bd {{ padding: 4px 16px 12px !important; gap: 0 !important; }}
 {_PAGE} #shep-dl-top {{ gap: 8px !important; align-items: center; flex-wrap: wrap; }}
@@ -681,6 +696,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-set > button, {_PAGE} .shep-dl-create > button {{ flex: none !important; min-width: max-content !important; }}
 {_PAGE} .shep-dl-create {{ gap: 8px !important; align-items: center; padding-left: calc(8em + 8px); }}
 {_PAGE} .shep-dl-create:not(:has(button:not([hidden]))) {{ display: none !important; }}
+{_PAGE} [id^="dl_lock_"] .shep-reason {{ justify-content: flex-end; }}
 {_PAGE} .shep-dl-kv {{ gap: 4px 12px; }}
 {_PAGE} .shep-dl-kv > dt {{ width: 8em; }}
 {_PAGE} .shep-dl-v {{ margin-right: 8px; }}
@@ -689,10 +705,12 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-problem {{ color: var(--shep-text-2); font-size: 14px; }}
 {_PAGE} .shep-dl-adv {{ font-size: 14px; margin-top: 2px; }}
 {_PAGE} [id^="dl_result_"]:has(.html-container:empty), {_PAGE} #dl_status:has(.html-container:empty),
-{_PAGE} [id^="dl_suggest_"]:has(.html-container:empty) {{ display: none !important; }}
+{_PAGE} [id^="dl_suggest_"]:has(.html-container:empty),
+{_PAGE} [id^="dl_lock_"]:has(.html-container:empty) {{ display: none !important; }}
 @media (max-width: 899px) {{
   {_PAGE} .shep-dl-left {{ flex-basis: 100% !important; }}
   {_PAGE} .shep-dl-set {{ flex-wrap: wrap; }}
+  {_PAGE} [id^="dl_lock_"] .shep-reason {{ justify-content: flex-start; }}
   {_PAGE} .shep-dl-set > .block:not(.shep-dl-keycell) {{ flex: 1 1 16em !important; min-width: min(16em, 100%) !important; }}
   {_PAGE} #dl_box_{KEY_TRAINING_EVIDENCE_DIRS} {{ flex-basis: 100% !important; }}
 }}
@@ -701,6 +719,6 @@ PAGE_CSS = f"""
 
 __all__ = ["APPLY_LABEL", "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET", "OVERRIDDEN",
            "PAGE_CSS", "PANEL_PARTS", "PATH_HIDDEN", "PRIVATE_KEYS", "REPAIR_LABEL",
-           "ROW_PARTS", "SAVE_LABEL", "SOURCE_WORDS", "UNKNOWN", "UNREADABLE", "box_value",
-           "check_words", "create_data_locations_panel", "create_folder", "holds_words",
-           "name_html", "notice_html", "reason_line", "state_html", "where_html"]
+           "ROW_LOCKED", "ROW_PARTS", "SAVE_LABEL", "SOURCE_WORDS", "UNKNOWN", "UNREADABLE",
+           "box_value", "check_words", "create_data_locations_panel", "create_folder",
+           "holds_words", "name_html", "notice_html", "reason_line", "state_html", "where_html"]

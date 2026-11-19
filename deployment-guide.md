@@ -2845,8 +2845,9 @@ yet …」）並提供 **Apply**，下次啟動時也會套用。所以工作看
 `deployment.json.unreadable-<UTC 時間>`；在那之前 Save 關閉。無法開啟的檔案（權限、磁碟）要在原處
 修正，絕不改名。
 
-**對唯讀的瀏覽器**，每個路徑都顯示「Set (path hidden)」，來源照樣顯示，每個路徑框與按鈕都上鎖，旁邊
-寫著「Operator controls only: <原因>」。一個已設定但被拒絕的值顯示為「<Folder> set when the service
+**對唯讀的瀏覽器**，每個路徑都顯示「Set (path hidden)」，來源照樣顯示，每個路徑框與按鈕都上鎖：
+「Operator controls only: <原因>」在各列上方說一次，每一列則在其路徑框、Check 與 Save 正下方的一行
+寫著「🔒 Operator controls only」（2026-11-19 起）。一個已設定但被拒絕的值顯示為「<Folder> set when the service
 started（或 saved in Settings）is refused: an operator sees why in Settings › Data locations」，
 絕不顯示拒絕原因本身的文字，因為它會照原樣重複輸入的值（相對路徑或 `~` 路徑不會被路徑遮蔽處理隱藏）。
 
