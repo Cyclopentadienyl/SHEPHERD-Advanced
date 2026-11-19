@@ -1445,7 +1445,10 @@ def test_without_a_terminal_a_refused_start_opens_a_page_saying_why(monkeypatch,
 def test_the_launch_log_receives_the_output_and_is_bounded(tmp_path):
     """The redirect itself, in a child process (it replaces fds 1 and 2):
     the launcher's lines and a later process's land in the log, and a log
-    past its bound is moved aside once."""
+    past its bound is moved aside once. The child becomes the later process
+    by the launcher's own `exec_server`, which flushes first: a bare
+    ``os.execv`` lost the launcher's buffered line unless PYTHONUNBUFFERED
+    was set (the recheck of d7ebfc3, section 8)."""
     log = tmp_path / "logs" / "launch.log"
     log.parent.mkdir()
     log.write_bytes(b"x" * 64)
@@ -1457,8 +1460,8 @@ def test_the_launch_log_receives_the_output_and_is_bounded(tmp_path):
         "launcher.instances.rotate_log.__defaults__ = (32,)\n"
         "launcher.send_output_to_log(__import__('pathlib').Path(sys.argv[2]))\n"
         "launcher.log('from the launcher')\n"
-        "os.execv(sys.executable, [sys.executable, '-c', "
-        "'import sys; print(\"from the server\"); print(\"to stderr\", file=sys.stderr)'])\n")
+        "sys.exit(launcher.exec_server([sys.executable, '-c', "
+        "'import sys; print(\"from the server\"); print(\"to stderr\", file=sys.stderr)']))\n")
     done = subprocess.run([sys.executable, "-c", program, str(LAUNCHER), str(log)],
                           capture_output=True, text=True, timeout=60)
     assert done.returncode == 0 and done.stdout == "" and done.stderr == ""
