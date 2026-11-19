@@ -430,7 +430,7 @@ def test_the_fields_must_know_rules_are_visible_lines(monkeypatch):
     assert hpo.placeholder == "HP:0001250, HP:0001263"
     assert patient.info == dp.FIELD_INFO["dx_patient_id"] and not patient.placeholder
     # The box's change listener on the server (the page also counts the edit
-    # in the browser, `INPUTS_EDITED_JS`, with no server function).
+    # in the browser, in its own event: `INPUTS_HEAD`).
     (typed,) = [fn for fn in demo.fns.values()
                 if (hpo._id, "change") in fn.targets and fn.fn is not None]
     assert blocks["shep-dx-hpo-echo"] in typed.outputs and hpo in typed.inputs
@@ -2487,9 +2487,9 @@ def test_a_result_stays_only_while_the_inputs_are_the_ones_it_answered(monkeypat
                                                                        status_read):
     """UI-15 (B73): a run keeps the page's inputs generation as its request
     carried it (the count of the edits of the HPO box, the genes box and the
-    cohort's pick, `INPUTS_EDITED_JS`); once its answer is written, the check
-    run after it (`answered_inputs`, chained after Run Diagnosis with the
-    generation as it is then) clears it as an edit does
+    cohort's pick, `INPUTS_HEAD`, `INPUTS_GEN_JS`); once its answer is
+    written, the check run after it (`answered_inputs`, chained after Run
+    Diagnosis with the generation as it is then) clears it as an edit does
     (`phenotypes_changed`) when an edit was made since, and changes nothing
     when none was, so the result keeps its model's identity. On fcc3dea
     there was no check: an edit made while the run was in flight left the
@@ -2502,8 +2502,8 @@ def test_a_result_stays_only_while_the_inputs_are_the_ones_it_answered(monkeypat
     result, state = out["results_state"], out["card_state"]
     assert result["_inputs_gen"] == 3
     assert dp.answered_inputs(result, state, 3) == {}
-    # A generation that is not a count reads as the first.
-    assert [dp.inputs_generation_of(v) for v in (None, "3", True, -1, 2.0, 4)] == [0] * 5 + [4]
+    # A generation that is not a count is none, which no answer is kept under.
+    assert [dp.inputs_generation_of(v) for v in (None, "3", True, -1, 2.0, 4)] == [None] * 5 + [4]
     for edited in (4, 9, None):
         cleared = dp.answered_inputs(result, state, edited)
         assert cleared == dp.phenotypes_changed(result, state), edited
@@ -2579,6 +2579,7 @@ def test_every_edit_of_the_genes_box_clears_the_result_shown(monkeypatch, tmp_pa
     import copy
 
     from src.webui import shell
+    from src.webui.app import mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
 
@@ -2595,7 +2596,9 @@ def test_every_edit_of_the_genes_box_clears_the_result_shown(monkeypatch, tmp_pa
         shell.build_shell(demo, {**{page: (lambda ctx: None)
                                     for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
                                  shell.CLINICAL: dp.create_diagnosis_tab})
-    with served(demo) as base:
+    # The page as the dashboard serves it, its head too: the page counts its
+    # inputs' edits there (`dp.INPUTS_HEAD`).
+    with served(demo, **mount_options()) as base:
         seen = run_node(_GENES_EDIT_JS, tmp_path, base[:-len("gradio_api")])
     assert seen["select_all_delete"] == {"cleared": True, "value": ""}, seen
     assert seen["cut"] == {"cleared": True, "value": ""}, seen
@@ -2735,6 +2738,7 @@ def test_an_input_methods_text_and_an_edit_during_a_run_clear_the_result_shown(
     import time
 
     from src.webui import shell
+    from src.webui.app import mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
 
@@ -2765,7 +2769,8 @@ def test_an_input_methods_text_and_an_edit_during_a_run_clear_the_result_shown(
                                  shell.CLINICAL: dp.create_diagnosis_tab})
     run = next(fn._id for fn in demo.fns.values() if fn.name == "_run_diagnosis")
     check = next((fn._id for fn in demo.fns.values() if fn.name == "_answered_inputs"), -1)
-    with served(demo) as base:
+    # The page as the dashboard serves it, its head too (`dp.INPUTS_HEAD`).
+    with served(demo, **mount_options()) as base:
         seen = run_node(_DX_EDITS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")], str(gate), str(asked), str(run), str(check))
     # (a) An input method's text clears the result shown, in either box.

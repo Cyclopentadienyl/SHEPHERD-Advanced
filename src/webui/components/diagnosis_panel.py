@@ -2996,7 +2996,8 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
 
     **The result keeps the inputs generation its run read** (`gen`, the
     page's count of its inputs' edits as Run Diagnosis' own request carries
-    it, `INPUTS_EDITED_JS`), and the results body that draws it marks it
+    it, read in the same step as the boxes' text: `INPUTS_HEAD`,
+    `INPUTS_GEN_JS`), and the results body that draws it marks it
     (`answer_mark`): the page draws the answer, and offers its download, only
     while no edit has been made since (`ANSWER_GATE_CSS`, OPS-C-R3).
 
@@ -3086,9 +3087,10 @@ def _inputs_changed_html() -> str:
 
 
 def phenotypes_changed(result: Any, state: Any) -> Dict[str, Any]:
-    """Editing the phenotypes after a run clears the result and its exports,
-    so nothing stale can be read or exported. Nothing happens before a
-    result exists (typing the first query)."""
+    """The cleared result: no result and no exports, the page saying the
+    inputs changed, so nothing stale can be read or exported (what
+    `answered_inputs` does for an answer of another generation). Nothing
+    happens before a result exists (typing the first query)."""
     if not result:
         return {}
     state = state if isinstance(state, Mapping) else card.new_state()
@@ -3098,31 +3100,38 @@ def phenotypes_changed(result: Any, state: Any) -> Dict[str, Any]:
     return out
 
 
-def inputs_generation_of(value: Any) -> int:
+def inputs_generation_of(value: Any) -> Optional[int]:
     """The page's inputs generation as a request carries it (the hidden
-    ``shep-dx-inputs-gen``, `INPUTS_EDITED_JS`): a count from 0, 0 for
-    anything else."""
-    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+    ``shep-dx-inputs-gen`` slot, written by the request's own script,
+    `INPUTS_GEN_JS`): a count from 0; None for anything else (a page without
+    its head's count, `INPUTS_HEAD`), which no answer is kept under."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 \
+        else None
 
 
 def answered_inputs(result: Any, state: Any, gen: Any) -> Dict[str, Any]:
-    """**A result is kept only for the inputs it answered** (UI-15, B73): run
-    once Run Diagnosis' answer is written, with the page's inputs generation
-    as it is then (`gen`). An edit made while the run was in flight cleared
-    only the result shown before it (`phenotypes_changed`; the run and the
-    edit are events of their own), so the session's state holds an answer to
-    the inputs as they were when Run was pressed. When the generation the
-    result answered (``_inputs_gen``) is not the page's, the result is
-    cleared as an edit clears it; otherwise nothing changes, and the result
-    keeps its model's identity.
+    """**A result is kept only for the inputs it answered** (UI-15, B73),
+    decided by the page's inputs generation as the request carries it
+    (`gen`, `INPUTS_GEN_JS`): the request of the check chained after Run
+    Diagnosis, once its answer is written, and the request of each edit's own
+    listener (the HPO box's and the genes box's change, the Reference
+    cohort's pick). When the generation the result answered
+    (``_inputs_gen``) is not the page's, the result is cleared
+    (`phenotypes_changed`); when it is, nothing changes and the result keeps
+    its model's identity: an answer to inputs edited while its run was in
+    flight is cleared, and an answer to a Run pressed just after an edit is
+    kept, whichever of the requests comes first (REV-R3-b).
 
-    The page never waits for this request to stop drawing such an answer:
+    The page never waits for these requests to stop drawing such an answer:
     it draws it, and offers its download, only under the generation it
-    answered (`ANSWER_GATE_CSS`), whether this request comes, comes late or
-    fails (OPS-C-R3); this keeps the session's state and the page's words in
-    step with it."""
-    if not result or (isinstance(result, Mapping)
-                      and result.get("_inputs_gen") == inputs_generation_of(gen)):
+    answered (`ANSWER_GATE_CSS`), whether they come, come late or fail
+    (OPS-C-R3); they keep the session's state and the page's words in step
+    with it."""
+    if not result:
+        return {}
+    page = inputs_generation_of(gen)
+    if (isinstance(result, Mapping) and page is not None
+            and result.get("_inputs_gen") == page):
         return {}
     return phenotypes_changed(result, state)
 
@@ -3136,8 +3145,8 @@ _STALE_ANSWER = '#shep-dx:has(#shep-dx-results-body [data-shep-gen]:not([data-sh
 
 #: **An answer is drawn, and its download offered, only under the inputs it
 #: answered** (OPS-C-R3, the external review of 6a2d52e; UI-15, B73): the
-#: page's gate, a style sheet `INPUTS_EDITED_JS` writes for the page's inputs
-#: generation at each edit. What is drawn from an answer (the header's count,
+#: page's gate, a style sheet the page's head script (`INPUTS_HEAD`) writes
+#: for the page's inputs generation at each edit, in the edit's own event. What is drawn from an answer (the header's count,
 #: the badge, both exports and their ⓘ, the selected candidate's details) is
 #: drawn only while the results body draws an answer of this generation; in
 #: its place the details' empty state (``#shep-dx-details-stale-hd`` and
@@ -3164,32 +3173,79 @@ ANSWER_GATE_CSS = (
     + _STALE_ANSWER + " #shep-dx-results-body { display: none !important; }\n"
     + _STALE_ANSWER + " #shep-dx-stale { display: block !important; }")
 
-#: **An edit of an input the answer depends on, counted in the browser at the
-#: edit** (`create_diagnosis_tab`: the listener of the HPO box's and the
-#: genes box's every change and of the Reference cohort's pick, the edits
-#: whose server listeners clear a result, `phenotypes_changed`): the page's
-#: inputs generation (the hidden ``shep-dx-inputs-gen``) goes up by one and
-#: the page's gate (`ANSWER_GATE_CSS`) is written for it, with no request.
-#: Run Diagnosis' request carries the generation (`diagnose`), and so does
-#: the check chained after it (`answered_inputs`).
-INPUTS_EDITED_JS = (
-    "(gen) => { const next = (Number.isInteger(gen) && gen >= 0 ? gen : 0) + 1; "
-    "let gate = document.getElementById('shep-dx-answer-gate'); "
-    "if (!gate) { gate = document.createElement('style'); gate.id = 'shep-dx-answer-gate'; "
-    "document.head.appendChild(gate); } "
-    "gate.textContent = __GATE__.split('{gen}').join(String(next)); return next; }"
-).replace("__GATE__", json.dumps(ANSWER_GATE_CSS))
+#: **An edit of an input the answer depends on, counted in the browser in the
+#: edit's own event** (REV-R3-a, REV-R3-b: the review of 961d901; OPS-C-R3):
+#: the page's head script (in the dashboard's head, `app.dashboard_head`)
+#: holds the page's inputs generation, a count from 0, and at each such edit
+#: raises it by one and writes the page's gate for it (`ANSWER_GATE_CSS`),
+#: before the event's next listener runs. The edits are the ones whose own
+#: listeners clear a result: each input event of the HPO box's and the genes
+#: box's text area (every change of a box's text Gradio takes is one: its
+#: value binding reads the box at that event alone, so a keystroke, a delete,
+#: a cut, a paste, a drop and each step of an input method's composition
+#: are each counted), the Reference cohort's blur (its pick, `shell.picked`:
+#: Gradio sends it from the select's own blur), and a click on Clear (which
+#: writes both boxes in the browser, with no input event).
+#:
+#: Before, the count went up in a listener of the boxes' ``.change`` and the
+#: cohort's blur, which Gradio dispatches some time after the box's text has
+#: changed (measured 45 to 110 ms; a text box's two ticks, each an animation
+#: frame and a zero timeout). An answer arriving in between was drawn, its
+#: download offered, under the edited box (REV-R3-a); a Run pressed in
+#: between carried the boxes' new text with the count before the edit, so
+#: the answer to the text shown was hidden, then cleared (REV-R3-b).
+#:
+#: ``ShepDx.gen()`` reads the count. Each request that decides on an answer
+#: carries it in its last input (`INPUTS_GEN_JS`).
+INPUTS_HEAD = "<script>" + r"""
+(function () {
+  if (window.ShepDx) { return; }
+  var GATE = __GATE__, gen = 0;
+  // By event: the elements an edit of an input the answer depends on reaches.
+  var EDITS = { input: '#dx_hpo_terms textarea, #dx_candidate_genes textarea',
+                focusout: '#dx_reference_cohort input', click: '#shep-dx-clear' };
+  function edited() {
+    gen += 1;
+    var gate = document.getElementById('shep-dx-answer-gate');
+    if (!gate) {
+      gate = document.createElement('style');
+      gate.id = 'shep-dx-answer-gate';
+      document.head.appendChild(gate);
+    }
+    gate.textContent = GATE.split('{gen}').join(String(gen));
+  }
+  Object.keys(EDITS).forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      var el = e.target;
+      if (el && el.closest && el.closest(EDITS[type])) { edited(); }
+    }, true);
+  });
+  window.ShepDx = { gen: function () { return gen; } };
+})();
+""".replace("__GATE__", json.dumps(ANSWER_GATE_CSS)) + "</script>"
+
+#: **A request carries the page's inputs generation as it is when the request
+#: is made** (the listener's ``js``): its last input, the hidden
+#: ``shep-dx-inputs-gen`` slot, becomes ``ShepDx.gen()`` (`INPUTS_HEAD`), or
+#: null on a page without that head (`inputs_generation_of`). Gradio 6.30 runs
+#: it on the inputs it has just read, in the same step, so Run Diagnosis'
+#: request carries the count of the edits its text holds, never one before
+#: them; the check chained after the run and each edit's own listener read
+#: the count as it is when they go.
+INPUTS_GEN_JS = ("(...args) => { const page = window.ShepDx; "
+                 "args[args.length - 1] = page ? page.gen() : null; return args; }")
 
 
-def cohort_picked(result: Any, state: Any, cohort: Any) -> Dict[str, Any]:
-    """A Reference cohort picked (its ``.input``, never a card update): the
-    result is cleared as for edited phenotypes, and the select's facts follow
-    the pick (`cohort_info`). The card's state is written back only with a
-    cleared result: the select's cache holds the server's facts, not the pick
-    (`card_outputs`), so the timer has nothing to send again and a read
-    running beside the pick is not written over."""
+def cohort_picked(result: Any, state: Any, cohort: Any, gen: Any = None) -> Dict[str, Any]:
+    """A Reference cohort picked (its blur, `shell.picked`, never a card
+    update): a result of another inputs generation is cleared as for edited
+    phenotypes (`answered_inputs`, `gen` as the pick's request carries it),
+    and the select's facts follow the pick (`cohort_info`). The card's state
+    is written back only with a cleared result: the select's cache holds the
+    server's facts, not the pick (`card_outputs`), so the timer has nothing
+    to send again and a read running beside the pick is not written over."""
     state = state if isinstance(state, Mapping) else card.new_state()
-    out = phenotypes_changed(result, state)
+    out = answered_inputs(result, state, gen)
     out["cohort"] = gr.update(info=cohort_info(_cohorts(state), cohort))
     return out
 
@@ -3525,8 +3581,9 @@ def create_diagnosis_tab(ctx: Any) -> None:
 
     results_state = gr.State(None)
     selected = gr.State(None)
-    #: The page's inputs generation, held in the browser: how many edits of
-    #: the inputs an answer depends on this page has seen (`INPUTS_EDITED_JS`).
+    #: The slot a request carries the page's inputs generation in (its last
+    #: input, written by the request's own script, `INPUTS_GEN_JS`; the count
+    #: is the page head's, `INPUTS_HEAD`). Nothing writes the slot itself.
     inputs_gen = gr.Number(value=0, precision=0, visible=False, elem_id="shep-dx-inputs-gen")
     card_state = gr.State(card.new_state())
     identity_view = gr.State({"open": False})
@@ -3960,58 +4017,60 @@ def create_diagnosis_tab(ctx: Any) -> None:
         return mapped(diagnose(text, patient, top_k, explanations, state, phase, view, request,
                                genes_text=genes, cohort=cohort, gen=gen))
 
-    def _phenotypes_edited(result, state):
-        return mapped(phenotypes_changed(result, state))
+    def _phenotypes_edited(result, state, gen):
+        return mapped(answered_inputs(result, state, gen))
 
-    edited = {"fn": _phenotypes_edited, "inputs": [results_state, card_state],
+    edited = {"fn": _phenotypes_edited, "inputs": [results_state, card_state, inputs_gen],
               "outputs": outputs(*dict.fromkeys(result_names + ("card_state",))),
-              "show_progress": "hidden"}
+              "js": INPUTS_GEN_JS, "show_progress": "hidden"}
 
     def _answered_inputs(result, state, gen):
         return mapped(answered_inputs(result, state, gen))
 
-    # Run carries the page's inputs generation, which its result keeps and
-    # its results body marks (`diagnose`); the page draws the answer only
-    # under that generation (`ANSWER_GATE_CSS`, OPS-C-R3). The answer is
-    # written, then checked against the generation as it is now
-    # (`answered_inputs`): an edit made while the run was in flight clears it
-    # from the session's state as any edit does. Outside the queue, so it
-    # follows the answer at once.
+    # Run carries the page's inputs generation, read with the boxes' text
+    # (`INPUTS_GEN_JS`), which its result keeps and its results body marks
+    # (`diagnose`); the page draws the answer only under that generation
+    # (`ANSWER_GATE_CSS`, OPS-C-R3). The answer is written, then checked
+    # against the generation as it is now (`answered_inputs`): an edit made
+    # while the run was in flight clears it from the session's state as any
+    # edit does. Outside the queue, so it follows the answer at once.
     run_btn.click(_run_diagnosis,
                   inputs=[phenotype_input, patient_id_input, top_k_input, explanations_input,
                           card_state, handle.phase, identity_view, genes_input, cohort_input,
                           inputs_gen],
-                  outputs=outputs(*dict.fromkeys(result_names + card_names + identity_names))
+                  outputs=outputs(*dict.fromkeys(result_names + card_names + identity_names)),
+                  js=INPUTS_GEN_JS
                   ).then(_answered_inputs, inputs=[results_state, card_state, inputs_gen],
-                         outputs=edited["outputs"], queue=False, show_progress="hidden")
-    # Every change of a box's text clears the result (UI-15, B73): its
-    # ``.change``. Gradio 6.30's Textbox dispatches ``.input`` from a keypress
-    # alone, so select all then Delete, a cut, a paste or an input method's
-    # text kept the old genes' result. No handler writes either box (the
-    # card shows the genes box by its container's class), so a change is the
-    # user's edit or Clear. The cohort select clears on its pick, never on a
-    # card's write of it (`_cohort_picked`).
-    def _phenotypes_typed(result, state, text):
-        return mapped({**phenotypes_changed(result, state), "hpo_echo": hpo_echo_html(text)})
+                         outputs=edited["outputs"], js=INPUTS_GEN_JS, queue=False,
+                         show_progress="hidden")
+    # Every change of a box's text clears a result of another generation
+    # (UI-15, B73): its ``.change``. Gradio 6.30's Textbox dispatches
+    # ``.input`` from a keypress alone, so select all then Delete, a cut, a
+    # paste or an input method's text kept the old genes' result. No handler
+    # writes either box (the card shows the genes box by its container's
+    # class), so a change is the user's edit or Clear. The cohort select
+    # clears on its pick, never on a card's write of it (`_cohort_picked`).
+    # Each edit is counted in the browser in its own event (`INPUTS_HEAD`),
+    # before these requests go: from then on the page draws no answer of an
+    # earlier generation, whatever the requests do or when, and each request
+    # carries the count as it is when it goes (`INPUTS_GEN_JS`).
+    def _phenotypes_typed(result, state, text, gen):
+        return mapped({**answered_inputs(result, state, gen), "hpo_echo": hpo_echo_html(text)})
 
-    phenotype_input.change(_phenotypes_typed, inputs=[results_state, card_state, phenotype_input],
+    phenotype_input.change(_phenotypes_typed,
+                           inputs=[results_state, card_state, phenotype_input, inputs_gen],
                            outputs=outputs(*dict.fromkeys(result_names
                                                           + ("card_state", "hpo_echo"))),
-                           show_progress="hidden")
+                           js=INPUTS_GEN_JS, show_progress="hidden")
     genes_input.change(**edited)
 
-    def _cohort_picked(result, state, cohort):
-        return mapped(cohort_picked(result, state, cohort))
+    def _cohort_picked(result, state, cohort, gen):
+        return mapped(cohort_picked(result, state, cohort, gen))
 
-    picked(cohort_input)(_cohort_picked, inputs=[results_state, card_state, cohort_input],
+    picked(cohort_input)(_cohort_picked,
+                         inputs=[results_state, card_state, cohort_input, inputs_gen],
                          outputs=outputs(*dict.fromkeys(result_names + ("card_state", "cohort"))),
-                         show_progress="hidden")
-    # The same edits, counted in the browser at the edit, with no request
-    # (`INPUTS_EDITED_JS`): from then on the page draws no answer of an
-    # earlier generation, whatever the requests above do or when.
-    gr.on([phenotype_input.change, genes_input.change, picked(cohort_input)], None,
-          inputs=[inputs_gen], outputs=[inputs_gen], js=INPUTS_EDITED_JS, queue=False,
-          trigger_mode="multiple", show_progress="hidden")
+                         js=INPUTS_GEN_JS, show_progress="hidden")
 
     def _select_candidate(result, segment, evt: gr.EventData):
         return mapped(select_candidate(result, segment, _event_key(evt)))
@@ -4360,7 +4419,8 @@ __all__ = [
     "CLOSE_WHILE_LOADING",
     "FIELD_HELP",
     "INPUTS_CHANGED",
-    "INPUTS_EDITED_JS",
+    "INPUTS_GEN_JS",
+    "INPUTS_HEAD",
     "PAGE_CSS",
     "SEGMENTS",
     "TASK_OUTPUTS",

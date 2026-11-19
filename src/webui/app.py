@@ -22,8 +22,9 @@ Dependencies:
       takes its theme, CSS, head and JS from gr.mount_gradio_app(), not from
       gr.Blocks(); `mount_dashboard` is the one place that passes them
       (`mount_options`: the theme, the CSS, and the head: every style sheet and
-      the scripts of the shared ⓘ, the shell and the touch record,
-      `training_console.TOUCH_HEAD`).
+      the scripts of the shared ⓘ, the shell, the touch record,
+      `training_console.TOUCH_HEAD`, and Diagnosis' inputs generation,
+      `diagnosis_panel.INPUTS_HEAD`).
 
 Called by:
     - src.api.main (`mount_dashboard`, at /ui)
@@ -169,15 +170,19 @@ def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
       ``body`` and Gradio's containers), and it drops ``@supports`` and
       ``@container`` rules. A style element in the head is applied as written;
     - **the head scripts**: the shared ⓘ (and Copy), the shell (always
-      light, title, header row) and the touch record's (every edit of a
+      light, title, header row), the touch record's (every edit of a
       field whose touches a form records is that field's input, an emptied
       text box included, and is in the form's record before a click made
-      after it goes out: `training_console.TOUCH_HEAD`). They run once per
-      page load, before any component exists, so each works by
-      document-level (or window-level) delegation.
+      after it goes out: `training_console.TOUCH_HEAD`) and Diagnosis' inputs
+      generation (each edit of an input an answer depends on counted in its
+      own event, and the page's gate written for it:
+      `diagnosis_panel.INPUTS_HEAD`). They run once per page load, before any
+      component exists, so each works by document-level (or window-level)
+      delegation.
     """
     return ("<style>" + HELP_CSS + SHELL_CSS + "".join(page_css) + "</style>"
-            + HELP_HEAD + shell.SHELL_HEAD + training_console.TOUCH_HEAD)
+            + HELP_HEAD + shell.SHELL_HEAD + training_console.TOUCH_HEAD
+            + diagnosis_panel.INPUTS_HEAD)
 
 
 DASHBOARD_HEAD = dashboard_head()
@@ -271,7 +276,8 @@ def mount_options() -> dict[str, Any]:
 
     The look and the page's scripts: theme, CSS and ``head``
     (`DASHBOARD_HEAD`: every style sheet, and the scripts of the shared ⓘ,
-    the shell and the touch record, `training_console.TOUCH_HEAD`); there is
+    the shell, the touch record, `training_console.TOUCH_HEAD`, and
+    Diagnosis' inputs generation, `diagnosis_panel.INPUTS_HEAD`); there is
     no ``js``. All of them belong here: Gradio 6 drops them from
     ``gr.Blocks``.
 
