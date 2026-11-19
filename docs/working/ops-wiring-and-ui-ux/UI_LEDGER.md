@@ -31,6 +31,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **At the head (2026-11-17, `c958ff3`)**: 249 rows: the base's 218, one opened by the T08 suite (T08-help-1), the T08 flow's twelve (T08-flow-1 to T08-flow-12) and the verification round's eighteen (V-1 to V-18); by state: 1 to do, 11 partly done, 161 code-verified, 59 code-verified at ba6e85e (audit), 1 awaiting hardware, 2 awaiting owner acceptance, 5 not applicable, 9 outside this round's scope (owner to decide). Rows written before the rebase cite commit IDs from before it: see [Commit IDs rewritten by the rebase](#commit-ids-rewritten-by-the-rebase-2026-11-17).
 - **At the delivery (2026-11-18, product head `602e091`)**: 256 rows: the 249 above and the third verification pass's V-19 to V-24, with V-25 recorded at T09 (the T08 flow's F9); by state: 2 to do, 10 partly done, 167 code-verified, 59 code-verified at ba6e85e (audit), 1 awaiting hardware, 2 awaiting owner acceptance, 6 not applicable, 9 outside this round's scope (owner to decide).
 - **At the review fixes (2026-11-19, product head `05267fb`)**: 262 rows: the 256 above and six from the external review of `6a2d52e` (OPS-C-R1, OPS-C-R2, OPS-C-R3, OPS-C-R5, OPS-C-R6b, OPS-C-R6c; its R4 and R6 are B72-E1 and V-20); by state: 2 partly done, 183 code-verified, 59 code-verified at ba6e85e (audit), 1 awaiting hardware, 2 awaiting owner acceptance, 6 not applicable, 9 outside this round's scope (owner to decide). Each of the 59 audit rows now carries a trace line (the review's CP-D): 52 name a test that pins the fact, 7 the code alone; none is contradicted or unverified.
+- **At the delivery of the review fixes (2026-11-19, product head `b9ac890`)**: 265 rows: the 262 above and the three the real-launcher flow at `14e035d` found (FINAL-1 to FINAL-3, fixed); by state: 2 partly done, 186 code-verified, 59 code-verified at ba6e85e (audit), 1 awaiting hardware, 2 awaiting owner acceptance, 6 not applicable, 9 outside this round's scope (owner to decide).
 
 ## Rows by task
 
@@ -442,7 +443,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-06 Launch and configuration in the GUI
 
-20 rows: 1 awaiting owner acceptance, 15 code-verified, 4 code-verified at ba6e85e (audit).
+21 rows: 1 awaiting owner acceptance, 16 code-verified, 4 code-verified at ba6e85e (audit).
 
 #### FL-SVC · Service stopped during manual acceptance with no recorded reason
 
@@ -626,6 +627,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Fixed (the review of 6a2d52e, 2026-11-19)**: e4348a1. The info file records the start's settings (`start_settings`: the mode, the local mark, the bind and the four data locations). `launch_instance.asks_not_met` compares each explicit mode or location with the running service's value in effect now; both sides are read through `server_settings` (`all_settings`, `configured`: the service's recorded variables, the saved file read now, so a Save and Apply counts), with no second resolver. Equal, or nothing set: reuse, printing the running service's line. Different: nothing opens; the ERROR line names what runs (its controls, the differing location, its URL and pid) and what this start set, then the remedy (Stop service, then start again); the exit is 1, and without a terminal the error page says it. An older info file without `start_settings` refuses any explicit setting. The guides (en, zh) and the README say so.
 - **Tests**: `tests/unit/test_service_unit.py` (6 new tests, 11 cases, and the lock test extended) and `tests/unit/test_launch_instance.py` (1 new). On a 6a2d52e snapshot 10 of the 16 selected fail (exit 0; the start's own operator line). With the real launcher on 6a2d52e, read-only over M1, another root and the old root after Apply exit 0 and reuse; at e4348a1 they exit 1 with the service and its info file unchanged, while the same settings, a root with a trailing slash, explicit M1 over the local M1 and a plain start after Save/Apply reuse with exit 0 (the lanes' review, on a snapshot of c7f6faa).
 - **Closed at**: e4348a1.
+- **Re-checked (the final flow at 14e035d, 2026-11-19)**: the real launcher from nothing (no terminal, from /): a plain second start reused (exit 0, one server, the info file's hash unchanged); `SHEPHERD_DEPLOYMENT_MODE=readonly` and another workspaces folder each exited 1, opened nothing, left the one server and its info file unchanged, and `GET /api/v1/settings/deployment` still said operator controls on; after a Save in Settings moved the service to another folder, a plain start reused and the old folder refused; a trailing slash and an explicit M1 reused. The page it wrote without a terminal said "did not start" (FINAL-1, fixed). Not shown in this flow: a plain start of a read-only service (the lane's tests and review cover it). Evidence: scratchpad/c6a2/flow/f1/logs/, f1/json/.
 
 #### OPS-C-R5 · Settings › Data locations: a Check on one row overwrites another row's unsaved draft
 
@@ -647,6 +649,16 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: the U4 stage of the review of 6a2d52e (OPS-C-R6b's fallout); V-8 (the boxes' room on a phone)
 - **Fixed (the review of 6a2d52e, 2026-11-19)**: 2dae2ad. On a narrow window a box keeps 16em, enough for the one-folder rows' hint (168.7 px) but not this one; the evidence folders' box now takes its whole row there (`data_locations.PAGE_CSS`). Test: the one above, which fails on 6a2d52e with the fonts served and passes.
 - **Closed at**: 2dae2ad.
+
+#### FINAL-1 · A refused reuse's error page says "SHEPHERD-Advanced did not start" while it runs
+
+- **State**: code-verified · found by the real-launcher flow at 14e035d (part f1) · severity low (P3) · page: launcher
+- **Problem**: From the desktop entry (no terminal), a second start that sets a deployment mode or a workspaces folder the running service does not have opened the error page titled and headed "SHEPHERD-Advanced did not start", while its "What failed" said the service already runs (OPS-C-R1's refusal). The terminal words were right.
+- **At 14e035d**: `scripts/launch/shep_launch.py` `ERROR_PAGE` had a fixed `<title>` and `<h1>`, which `Failure` used for every failure, the refusal from `open_running` included. Evidence: scratchpad/c6a2/flow/f1/logs/s4_launch-error.html (and s5_, s6_).
+- **Done when**: The one error page says what happened: a refused reuse that the service runs without the settings this start sets, a start that failed that it did not start; a test reads the page's title and heading.
+- **Sources**: the final flow at 14e035d (scratchpad/c6a2/flow/f1_result.md, its finding)
+- **Fixed (the final flow at 14e035d, 2026-11-19)**: e318dc3. The one page takes its title and heading from the failure (`heading`, escaped; default `DID_NOT_START`). `open_running`'s refusal passes `RUNS_WITHOUT_SETTINGS`: "SHEPHERD-Advanced already runs without the settings this start sets", the terminal line's own words. The bind and port refusals, a failed exec, a service that ended and a server gone before it answered keep "SHEPHERD-Advanced did not start". `launch_shepherd.sh`'s `error_page()` serves only its two early failures (no `.venv`, no `shep_launch.py`) and keeps its heading. Tests: `test_service_unit.py::test_without_a_terminal_a_start_with_other_settings_opens_the_error_page_not_the_service` reads the title and heading (fails on 14e035d); `::test_without_a_terminal_a_refused_start_opens_a_page_saying_why` pins "did not start". `test_service_unit.py` 101, `test_launch_instance.py` 17, `test_launcher_browser_wait.py` 16 passed.
+- **Closed at**: e318dc3.
 
 ### UI-07 The model drawer's scrolling
 
@@ -1087,6 +1099,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Fixed (the review of 6a2d52e, 2026-11-19)**: 7ce53b2. Root: no submit boundary between the select shown and the State, and Start's request never carried the choice shown. Each Start now carries its selects as shown, and the shared `shell.unread_choice` compares them with the State, after D8: while the State was read for another choice, Start is refused beside it in the shared words (`UNREAD_CHOICE`: "✕ Not started: the Dataset you chose is still being read. Try again once it shows, or choose it again."). It covers Fine-tune (Dataset, Run), Training (Dataset), the Continue drawer (Dataset, Run) and Test (Run). Fine-tune's dataset pick keeps every pick (`trigger_mode="multiple"`). The runner's and the fingerprints' checks are unchanged.
 - **Tests**: `tests/unit/test_webui_start_selection.py` (5 tests: a real browser with the read held, late or failing, and the handler and wiring). All 5 fail on 6a2d52e as above; after the fix each case starts once, with the selection shown, after a stated refusal. Screens: scratchpad/c6a2/u1/ (before and after, A→B held, 1850×960).
 - **Closed at**: 7ce53b2.
+- **Re-checked (the final flow at 14e035d, 2026-11-19)**: in the real app, with 500–1500 ms of client latency, a dataset switched and Start pressed in the same task never started a job on the dataset shown before (Training: one job on the dataset shown, by its record; demo → demo2 → demo: one job on demo; Fine-tune: refused). The latency did not open the window the shared refusal guards: the pick's request, sent first, was answered first, so the shared words were not seen; the regression tests hold the read on the server. On Fine-tune the start reached the server after the dataset's read and before the base list's, and the older base-list check refused it ("the list shows demo's bases, not demo2's; list them again (Refresh)"); its words stay beside Start after the list has caught up, by the recorded rule (V-25). The two demo datasets were alike but for their folder, so the records' `data_dir` is the evidence. Evidence: scratchpad/c6a2/flow/f2/json/s4_*.json, f2/json/r2_records/.
 
 ### UI-12 What bound and verified mean
 
@@ -1152,6 +1165,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Fixed (the review of 6a2d52e, OPS-C-R4, 2026-11-19)**: the review placed this in scope: a download names no server path. 47bd59a. Root: the shared download boundary (`src/webui/exports.py`) left the transport to Gradio's file controls, whose only transport is the server path. `exports.offer` maps each file the download directory holds to an opaque, unguessable id kept in the process's memory, and the control gets the link `download/<id>`. One dashboard route (`exports.ROUTES`, via `mount_options` `app_kwargs`) serves it as an attachment under its own name; an unknown, malformed, path-like or expired id answers 404 naming nothing, and the route takes no path. Each export is a `gr.Button` with that link (Diagnosis' CSV and report, Models › Results' Export). Content, names, the one-day lifetime and each entry's permission are unchanged. Test: `tests/unit/test_dashboard_downloads.py` (5 tests: the id mapping, every download a linked button, each export served with no path in the answer, link or headers and its bytes and name unchanged, a real-browser save); on 6a2d52e 2 fail and 3 error, the link reading `…/ui/gradio_api/file=<path>`. Screens: scratchpad/c6a2/u3/shots/out/.
 - **Fixed (the lanes' review, 993fe0b, 2026-11-19)**: REV-R4-a: a linked `gr.Button` is `<a target=_self>` with no `download` attribute, so clicking an export whose id had expired, or was lost at a restart, loaded the route's plain-text 404 in the dashboard's tab, and the result and inputs went with it. `exports.DOWNLOAD_HEAD` (the dashboard head, one place for every export) marks a clicked export link as a download: a valid id saves as before; an expired one is a failed download and the page stays. The browser save test gained an expired-link click (no navigation, the page present); it fails on 961d901.
 - **For owner acceptance (the review of 6a2d52e, 2026-11-19)**: Models › Results' Export changed from a file box (name and size) to a "⬇ Download CSV/JSON" button, its note naming the file.
+- **Re-checked (the final flow at 14e035d, 2026-11-19)**: every export link in the real app (Models › Results' CSV, Diagnosis' CSV and report) is `download/<43-character id>`; no server path in the page, the panels' HTML or the response headers; each file saved under its own name with the route's bytes, and the page stayed. Evidence: scratchpad/c6a2/flow/f2/json/s3k_results.json, s3n_run.json, f2/dl/.
 
 #### B72-N5 · Path outside every root with a bracketed spaced part is only partly redacted
 
@@ -1192,7 +1206,7 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 
 ### UI-14 Reload restores the page and valid selections
 
-4 rows: 1 outside this round's scope (owner to decide), 3 code-verified.
+5 rows: 1 outside this round's scope (owner to decide), 4 code-verified.
 
 #### B32-UI8 · Every open page lands on Diagnosis after a reconnect reload
 
@@ -1236,9 +1250,19 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Sources**: docs/working/BACKLOG.md:990 (item 32); docs/working/PLAN_TEST_RESULTS.md:2387-2389
 - **Closed at**: —
 
+#### FINAL-2 · Test › Import a new version…: after a successful Commit the page's read raises
+
+- **State**: code-verified · found by the real-launcher flow at 14e035d (part f2) · severity high (P2; a regression of d6d1478, R-68) · page: test
+- **Problem**: After a successful Commit a red "Error" toast appeared; the Data panel read "No data version is in the registry yet", the selects were empty and Start was disabled until the page was opened again. The server logged `TypeError: create_test_page.<locals>._refresh() missing 1 required positional argument: 'request'` in `_after_commit`.
+- **At 14e035d**: R-68 gave the page opening (`_refresh`) a hand-off input and a cleared-slot output (`ctx.test_model`); `_after_commit` still called it with the old positions, and its event's outputs had no hand-off slot, so giving the argument alone would have shifted every panel output by one. The full suite at 05267fb passed: no test ran a Commit's follow-up. Evidence: scratchpad/c6a2/flow/f2/json/s3e_import.json, f2/shots/s3e-01-import-committed-1850x960.png.
+- **Done when**: The read after a Commit draws the page with the committed version chosen; every other parameter change of this round is checked at its call sites; a test calls the Commit's follow-up as the page wires it.
+- **Sources**: the final flow at 14e035d (scratchpad/c6a2/flow/f2_result.md, F1)
+- **Fixed (the final flow at 14e035d, 2026-11-19)**: 229fa71. The page read is `_read` (the states and the panels apart); the opening applies the hand-off and writes its cleared slot between them; the read after a Commit hands no model over and writes exactly the outputs it is wired to. Every function whose parameters changed in 6a2d52e..14e035d in src/ and scripts/ (18 changed, 3 removed, one class field) was checked call site by call site, and every Gradio event's inputs against its handler (360 events, 0 mismatches); no other mismatch; the review redid the sweep independently with the same list. Test: `test_webui_test_page.py::test_a_commits_follow_up_reads_the_page_with_the_committed_version_chosen` (the step chained after `_on_commit`, called as wired: one value per output, the committed version chosen and drawn, the hand-off neither read nor written); fails on 14e035d with the TypeError; the file 217 passed.
+- **Closed at**: 229fa71.
+
 ### UI-15 Diagnosis input changes and result identity
 
-4 rows: 4 code-verified.
+5 rows: 5 code-verified.
 
 #### B73 · Genes box edited without a keypress keeps the old diagnosis result
 
@@ -1286,6 +1310,17 @@ A row is closed only with its scope, its tests and the screen it was seen on; a 
 - **Fixed (the lanes' review, 49d5911, 2026-11-19)**: REV-R3-a, REV-R3-b. The generation rose in a listener Gradio dispatches 45–110 ms after the edit (`INPUTS_EDITED_JS`): an answer arriving in that gap was drawn and offered under the edited box, and a Run pressed in it sent the new text with the old count, so its valid answer was hidden and cleared ("Inputs changed"). The edits' own server listeners also cleared any answer, so a late edit request wiped a quick Run's answer (seen on 6a2d52e too). Now `diagnosis_panel.INPUTS_HEAD` (the dashboard head, beside TOUCH_HEAD) counts each edit and writes the gate in the edit's own event (the two boxes' `input`, the cohort's blur, a click on Clear), `INPUTS_GEN_JS` puts that count into Run, the check and the three edit listeners, and all of them keep an answer only under its own generation (`answered_inputs`). `INPUTS_EDITED_JS` is retired.
 - **Tests**: `tests/unit/test_diagnosis_stale_answer.py`, 5 tests: a browser test of typed, deleted and pasted edits, an input method's commit and a cohort switch, the check held, failed (500) or answered first, sampled at every change from the answer's arrival; a paused-clock test, `::test_an_edit_counts_in_its_own_event_before_an_answer_or_a_run_that_follows_it` (typed then Run: the answer drawn and kept; pasted or cleared as it arrives: never drawn nor offered); two wiring and rule units. With no edit the answer shows and downloads as before. 5 fail on 6a2d52e, 4 on 961d901. Screens: scratchpad/c6a2/u2/shots-6a2d52e/, shots-fix/, shots-fix-390/ and scratchpad/c6a2/ui-review/shots-fix/.
 - **Closed at**: 799c8c8, 49d5911.
+- **Re-checked (the final flow at 14e035d, 2026-11-19)**: in the real app (a disease model on the CPU, 500 ms of client latency): Run, then an edit of the HPO box before the answer: from the click to the end no row, count, badge or enabled export link of the old answer was visible, and "Inputs changed" was shown at its arrival; an edit then Run at once: the new answer drawn and kept; no edit: the answer shown and its CSV downloaded. Limits of the flow: the demo serves no gene model, so the genes box was not used; its per-frame check of the details pane never fired and the gate hides an old answer rather than removing it, so only what was visible is shown; the paused-clock regression test covers both boxes and the details. Evidence: scratchpad/c6a2/flow/f2/json/s5_r3.json.
+
+#### FINAL-3 · Diagnosis: after a refused Load, the card on the same page still says "Not loaded"
+
+- **State**: code-verified · found by the real-launcher flow at 14e035d (part f2) · severity low (P3; older than this round) · page: diagnosis
+- **Problem**: On a host without CUDA, the service on device auto, Load › Reload with <sha12> answered "Not reloaded; the model in use is unchanged. Serving device 'auto' requires CUDA …"; the card on that page still read "○ Not loaded Nothing has been loaded since the service started", while a page opened afterwards read "✕ Load refused at 11:24:46 UTC …".
+- **At 14e035d**: the card was read after a Load only through `ctx.served_model_changed.change`, which the shared list's Reload sets only when what is served changed; the card shows the status's last load outcome, which a refusal changes without changing what is served; the step Diagnosis chains on the answer (`_reload_answered`) put Run back and read nothing. Evidence: scratchpad/c6a2/flow/f2/json/s6x_load_auto.json, s6x_card_fresh.json.
+- **Done when**: After every finished Load attempt the card on that page says the status's outcome, without anything that means "the served model changed" firing for a refusal and without a second poll; a test with a refusing stand-in.
+- **Sources**: the final flow at 14e035d (scratchpad/c6a2/flow/f2_result.md, F3)
+- **Fixed (the final flow at 14e035d, 2026-11-19)**: 6e03dc4. The step before the reload (the list's `on_loading`) also keeps the trigger's token as it is then (`token_at_reload`); the answer's step compares it with the token after the answer. Changed: the trigger's listener reads the card, once, and the step puts Run back. Unchanged (refused, shown again, stopped with an error): the step reads the card itself (`refresh_card`) and sends Run from that read. The trigger still means only "what is served changed"; no change notice is raised and no result is marked; no poll is added. Test: `test_diagnosis_panel.py::test_a_refused_reload_leaves_the_card_on_this_page_saying_the_refusal` (the page built in the real shell; the read, the step before the reload, the confirmed Load with a refusing stand-in, every step chained on its answer: "Load refused" and its reason, Run says no model is loaded, no change notice, the trigger not written; a Load that changed what is served reads the card once); fails on 14e035d (only Run's outputs written). `test_diagnosis_panel.py` 181, `test_webui_model_list.py` 64, `test_diagnosis_card.py` 55 passed.
+- **Closed at**: 6e03dc4.
 
 ### UI-16 Every other recorded problem, by page
 
