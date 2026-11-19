@@ -1369,11 +1369,14 @@ def test_the_page_follows_the_contract():
 
 #: The Fine-tune page served whole (the shell's layout and style sheets), the
 #: job card drawn by the page's own poll from the runner's status: at each
-#: window, the card's table and every cell measured where the browser draws
-#: them, once the card names `WORD` (the state the test serves).
+#: window, once the card names `WORD` (the state the test serves), the form
+#: the card draws (its table, or each child's summary list) and every piece
+#: of it (a cell; a list's title, key and value) measured where the browser
+#: draws it; each child as the table holds it and as its list holds it,
+#: whichever is drawn; and how many lines each figure takes.
 _CARD_FIT_JS = r"""
 const { chromium } = require('playwright');
-const SIZES = [[1850, 960], [1536, 760], [960, 1080]];
+const SIZES = [[1850, 960], [1536, 760], [960, 1080], [1280, 900], [390, 844]];
 (async () => {
   const [url, word] = [process.argv[2], process.argv[3]];
   const browser = await chromium.launch();
@@ -1387,7 +1390,7 @@ const SIZES = [[1850, 960], [1536, 760], [960, 1080]];
     await page.click('#shep-page-finetune-button', { force: true });
     await page.waitForSelector('#shep-page-finetune-button[aria-selected="true"]');
     await page.waitForFunction((word) => {
-      const t = document.querySelector('#ft_card .shep-ft-table');
+      const t = document.querySelector('#ft_card .shep-ft-card');
       return !!t && t.innerText.includes(word);
     }, word, { timeout: 60000 });
     // Drawn and still: the card's box the same over two frames.
@@ -1405,21 +1408,50 @@ const SIZES = [[1850, 960], [1536, 760], [960, 1080]];
     out[`${w}x${h}`] = await page.evaluate(() => {
       const rect = (el) => { const b = el.getBoundingClientRect();
                              return { left: b.left, right: b.right, width: b.width }; };
+      const drawn = (el) => el.getClientRects().length > 0;
+      const words = (el) => el.textContent.replace(/\s+/g, ' ').trim();
+      // A head's or a key's own words, without its ⓘ.
+      const own = (el) => [...el.childNodes].filter((n) => n.nodeType === 3)
+        .map((n) => n.textContent).join('').replace(/\s+/g, ' ').trim();
       const card = document.querySelector('#ft_card .shep-ft-card');
       const table = card.querySelector('.shep-ft-table');
+      const lists = [...card.querySelectorAll('.shep-ft-child')];
+      const form = drawn(table) ? 'table' : (lists.length && lists.every(drawn) ? 'list' : 'none');
+      const shown = form === 'table' ? [table] : lists;
+      const pieces = form === 'table' ? [...table.querySelectorAll('th, td')]
+        : lists.flatMap((list) => [...list.querySelectorAll('h3, dt, dd')]);
       const body = document.querySelector('#ft_job_bd');
-      const cells = [...table.querySelectorAll('th, td')].map((cell) => {
+      const cells = pieces.map((cell) => {
         const b = cell.getBoundingClientRect();
-        // Anything in the cell that shows less than it holds (an ellipsis,
+        // Anything in the piece that shows less than it holds (an ellipsis,
         // a clipped box): its text is cut.
         const cut = [...cell.querySelectorAll('*')].filter((el) =>
           getComputedStyle(el).overflowX !== 'visible' && el.scrollWidth > el.clientWidth + 1)
           .map((el) => ({ what: el.tagName + ' ' + el.textContent.trim(), title: el.title }));
         return { text: cell.innerText.replace(/\s+/g, ' ').trim(), left: b.left, right: b.right, cut };
       });
-      return { card: rect(card), table: rect(table), panel: rect(document.querySelector('#shep-ft-job')),
+      // Each figure drawn (0.8400) and the lines it takes.
+      const numbers = [];
+      const walk = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        if (!drawn(n.parentElement)) continue;
+        for (const m of n.textContent.matchAll(/\d+\.\d+/g)) {
+          const range = document.createRange();
+          range.setStart(n, m.index);
+          range.setEnd(n, m.index + m[0].length);
+          numbers.push({ figure: m[0], lines: new Set([...range.getClientRects()]
+            .map((r) => Math.round(r.top))).size });
+        }
+      }
+      return { form, card: rect(card), shown: shown.map(rect),
+               heads: [...table.querySelectorAll('th')].map(own),
+               rows: [...table.tBodies[0].rows].map((tr) => [...tr.cells].map(words)),
+               lists: lists.map((list) => ({ title: words(list.querySelector('h3')),
+                                             keys: [...list.querySelectorAll('dt')].map(own),
+                                             values: [...list.querySelectorAll('dd')].map(words) })),
+               panel: rect(document.querySelector('#shep-ft-job')),
                body: { sw: body.scrollWidth, cw: body.clientWidth },
-               page: { sw: document.scrollingElement.scrollWidth, vw: innerWidth }, cells };
+               page: { sw: document.scrollingElement.scrollWidth, vw: innerWidth }, cells, numbers };
     });
     await page.close();
   }
@@ -1446,7 +1478,19 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     start time made the table wider than its card again (the review of
     a6aae90; here 716 px in 420): with them the table still fits, and only
     those two are cut, each with its whole id in its title (the shared
-    identifier rule). Fails on 4b5cee6."""
+    identifier rule). Fails on 4b5cee6.
+
+    UI ledger V-20 (the review of 6a2d52e, OPS-C-R6), also at 1280 x 900 and
+    390 x 844: the card draws its table from `TABLE_FROM` of its own width
+    on, inside the card itself (at 1280 x 900 the ended child's table was
+    415.9 px in the 406 px card, 10 px into the panel's padding), and below
+    it each child as its summary list, inside the card (at 390 x 844 the
+    table was 353.3 px running and 415.9 px ended in the 324 px card, the
+    Validation (Trainer) column past the panel's edge and not drawn): the
+    child's task as its title, Status, Run, Best save and Validation
+    (Trainer) as its rows (one row named by both for a line said for both),
+    the same words as its table row; at every window each figure on one
+    line. Fails on 6a2d52e."""
     from src.webui.app import mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -1495,15 +1539,35 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     for state, sizes in seen.items():
         for size, got in sizes.items():
             where = (state, size)
-            assert got["table"]["right"] <= got["card"]["right"] + 0.5, (where, got)
-            assert got["table"]["width"] <= got["card"]["width"] + 0.5, (where, got)
+            for box in got["shown"]:
+                assert box["left"] >= got["card"]["left"] - 0.5, (where, box, got["card"])
+                assert box["right"] <= got["card"]["right"] + 0.5, (where, box, got["card"])
             for cell in got["cells"]:
-                assert cell["right"] <= got["panel"]["right"] + 0.5, (where, cell, got["panel"])
+                assert cell["right"] <= got["card"]["right"] + 0.5, (where, cell, got["card"])
                 # Only a token too wide for its column is cut, its whole id in its title.
                 assert all(cut["title"] in whole for cut in cell["cut"]), (where, cell)
                 assert not cell["cut"] or state == "tokens", (where, cell)
             assert got["body"]["sw"] <= got["body"]["cw"], (where, got["body"])
             assert got["page"]["sw"] <= got["page"]["vw"], (where, got["page"])
-    texts = " ".join(cell["text"] for cell in seen["done"]["1850x960"]["cells"])
-    assert "Validation (Trainer)" in texts and "0.8400" in texts
-    assert "b-ft-full-disease" in texts.replace("- ", "-").replace(" -", "-")
+            assert all(number["lines"] == 1 for number in got["numbers"]), (where, got["numbers"])
+    one, both = ["Status", "Run", "Best save", "Validation (Trainer)"], \
+        ["Status", "Run", "Best save, Validation (Trainer)"]
+    for state, sizes in seen.items():
+        for size, got in sizes.items():
+            where = (state, size)
+            # The table where the card holds its narrowest, else each child's list (V-20).
+            assert got["form"] == ("table" if got["card"]["width"] >= fp.TABLE_FROM else "list"), \
+                (where, got["form"], got["card"])
+            # Both forms say the same of each child: its list's title and values are its row.
+            assert got["heads"] == ["Task", "Status", "Run", "Best save", "Validation (Trainer)"], \
+                where
+            assert [[child["title"], *child["values"]] for child in got["lists"]] == got["rows"], \
+                (where, got["lists"], got["rows"])
+            assert all(child["keys"] in (one, both) for child in got["lists"]), (where, got["lists"])
+            assert all((child["keys"] == one) == (len(row) == 5)
+                       for child, row in zip(got["lists"], got["rows"])), where
+        assert sizes["1280x900"]["form"] == "table" and sizes["390x844"]["form"] == "list", state
+    for size in ("1850x960", "390x844"):
+        texts = " ".join(cell["text"] for cell in seen["done"][size]["cells"])
+        assert "Validation (Trainer)" in texts and "0.8400" in texts, size
+        assert "b-ft-full-disease" in texts.replace("- ", "-").replace(" -", "-"), size
