@@ -144,6 +144,16 @@ def test_every_download_of_the_dashboard_is_a_linked_button_and_the_route_is_the
     (route,) = mount_options()["app_kwargs"]["routes"]
     assert route.path == "/download/{file_id}" and route.methods >= {"GET", "HEAD"}
     assert app.delete_cache is None
+    # Every link to the route is followed as a download (REV-R4-a), by one
+    # script in the dashboard's head.
+    from src.webui import exports
+
+    head = mount_options()["head"]
+    assert head.count(exports.DOWNLOAD_HEAD) == 1
+    assert f"var LINK = {json.dumps(exports.LINK)};" in exports.DOWNLOAD_HEAD
+    assert "new URL(LINK, document.baseURI).href" in exports.DOWNLOAD_HEAD
+    assert "a.setAttribute('download', '')" in exports.DOWNLOAD_HEAD
+    assert "}, true);" in exports.DOWNLOAD_HEAD
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +364,10 @@ def test_each_export_downloads_by_a_link_that_names_no_server_path(
 #: file for each and gives each its link, as the handlers do; then each is
 #: clicked as a reader clicks it. What the browser saved, from which address,
 #: under which name; what each button is drawn as; whether the page asked
-#: Gradio's file route for anything.
+#: Gradio's file route for anything. Then Expire puts both files past their
+#: lifetime (REV-R4-a) and the CSV's export is clicked again: whether the
+#: click was a download (and whether it failed), whether the page's own frame
+#: went anywhere, and whether the page is still there.
 _SAVE_JS = r"""
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -385,6 +398,27 @@ const fs = require('fs');
   };
   const out = { before, csv: await save('#save-csv'), json: await save('#save-json'),
                 still: page.url() };
+  await page.locator('#expire').click();
+  await page.waitForFunction(() => /expired/.test((document.querySelector('#expired') || {}).textContent || ''),
+                             null, { timeout: 30000 });
+  const went = [];
+  page.on('framenavigated', (frame) => { if (frame === page.mainFrame()) { went.push(frame.url()); } });
+  const clicked = Promise.race([
+    page.waitForEvent('download', { timeout: 15000 }).then(async (d) => (
+      { download: d.url(), failure: await d.failure() })),
+    page.waitForEvent('framenavigated', { timeout: 15000 }).then((f) => ({ navigated: f.url() })),
+  ]);
+  const href = await page.locator('#save-csv').getAttribute('href');
+  await page.locator('#save-csv').click();
+  out.expired = { href, ...(await clicked) };
+  await page.waitForLoadState('load');
+  out.expired.went = went;
+  out.expired.url = page.url();
+  out.expired.page = await page.locator('#make').count();
+  out.expired.download_attr = await page.evaluate(() => {
+    const a = document.querySelector('a#save-csv');
+    return a ? a.getAttribute('download') : null;
+  });
   out.asked = asked.filter((url) => url.includes('/download/') || url.includes('file='));
   console.log(JSON.stringify(out));
   await browser.close();
@@ -398,7 +432,10 @@ def test_a_linked_export_button_saves_its_file_in_a_browser(downloads, tmp_path)
     handler gives it `exports.offer`'s link it is drawn as that link, and a
     click saves the file written, under its own name, from
     ``/ui/download/<id>``, leaving the page where it was; nothing the page
-    asks names Gradio's file route."""
+    asks names Gradio's file route. Once the file is past its lifetime
+    (REV-R4-a), a click on its link is a download that fails and the page
+    stays (`exports.DOWNLOAD_HEAD`); on 47bd59a the tab went to the route's
+    404 text and the page was gone."""
     from src.webui import exports
     from src.webui.app import mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
@@ -408,11 +445,21 @@ def test_a_linked_export_button_saves_its_file_in_a_browser(downloads, tmp_path)
         pytest.skip("Node with Playwright is not installed")
     texts = {"csv": "rank,gene\n1,SCN1A\n2,PTEN\n", "json": '[{"metric": "mrr"}]'}
 
+    written = []
+
     def make():
         csv = exports.write_new("diagnosis_pt_01_sess_abc", "csv", texts["csv"])
         data = exports.write_new("results_workspace-lab", "json", texts["json"])
+        written.extend([csv, data])
         return (gr.update(link=exports.offer(csv), interactive=True, visible=True),
                 gr.update(value="⬇ Download JSON", link=exports.offer(data), visible=True))
+
+    def expire():
+        # Written past the files' lifetime (a day) ago, as the clock would leave them.
+        then = time.time() - exports.LIFETIME_SECONDS - 60
+        for path in written:
+            os.utime(path, (then, then))
+        return "expired"
 
     with gr.Blocks() as demo:
         made = gr.Button("Make", elem_id="make")
@@ -420,6 +467,8 @@ def test_a_linked_export_button_saves_its_file_in_a_browser(downloads, tmp_path)
                                elem_id="save-csv")
         json_button = gr.Button("⬇ Download", size="sm", visible=False, elem_id="save-json")
         made.click(make, outputs=[csv_button, json_button])
+        expired = gr.HTML("", elem_id="expired")
+        gr.Button("Expire", elem_id="expire").click(expire, outputs=[expired])
     with served(demo, **mount_options()) as base:
         page = base[:-len("gradio_api")]
         out = run_node(_SAVE_JS, tmp_path, page)
@@ -433,5 +482,12 @@ def test_a_linked_export_button_saves_its_file_in_a_browser(downloads, tmp_path)
         assert saved["name"] == name and saved["text"] == texts[kind], saved
         assert saved["label"] == label, saved
     assert out["still"].split("?")[0] == page, out
+    # Past its lifetime: the click is a download that fails, the page stays.
+    expired = out["expired"]
+    assert "navigated" not in expired and expired["went"] == [], expired
+    assert expired["url"] == out["still"] and expired["page"] == 1, expired
+    assert expired["download"] == urljoin(page, expired["href"]), expired
+    assert expired["failure"], expired
+    assert expired["download_attr"] == "", expired
     assert not [url for url in out["asked"] if "file=" in url], out
     assert str(downloads) not in json.dumps(out)

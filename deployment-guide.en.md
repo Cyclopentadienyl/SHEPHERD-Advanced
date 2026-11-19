@@ -2304,7 +2304,9 @@ each export (the Diagnosis tab's CSV and Markdown report, Models › Results' Ex
 from `/ui/download/<id>`, a link that names an opaque id, never a server path. The id serves its
 file, `HEAD` and `Range` requests included, while the file lives (a day after it was written) and
 only in the service process that offered it (a link from before a restart is gone); any other id
-answers `404`. (Since M5-2 the Training page's Export CSV comes as text through the page's own
+answers `404`. The page follows each such link as a download, so clicking an export whose link is
+gone ends as the browser's failed download and the dashboard stays on screen with its result and
+inputs. (Since M5-2 the Training page's Export CSV comes as text through the page's own
 server function and the browser saves it; no file is served for it.)
 
 ### What else changed in the dashboard

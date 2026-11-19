@@ -19,7 +19,11 @@ so it reaches ``<mount>/download/<id>``: the dashboard's one download route
 the file an id names (`offered`) as an attachment under its own name, and
 answers 404 for anything else. An id is 32 random bytes
 (``secrets.token_urlsafe``), new at each offer and kept in this process's
-memory only. Only a file this directory holds can be offered, and the route
+memory only. **A click on a link never takes the page's place**
+(`DOWNLOAD_HEAD`, in the dashboard's head): every link to the route is
+followed as a download, so a link the route no longer serves (expired, or
+given before a restart) ends as the browser's failed download and the
+dashboard, with its result and inputs, stays where it was. Only a file this directory holds can be offered, and the route
 takes an id, never a path, so no submitted path becomes a download target.
 Gradio's file controls, its file route and its cache are not used for a
 download: before, ``gr.DownloadButton`` and ``gr.File`` had Gradio copy each
@@ -37,8 +41,8 @@ not.
 **How long a file is kept** (B56): a download file holds a result's rows, a
 patient's terms among them, so it is not left behind for good. Each lives
 `LIFETIME_SECONDS` (a day) after it was written, so a result on screen can be
-downloaded for that long; after it, its link answers 404 and the result is
-run or exported again.
+downloaded for that long; after it, its link answers 404 (a click on it is a
+failed download, the page staying) and the result is run or exported again.
 
 - Each time a page asks for the directory (`export_dir`, before every write),
   its files older than that are deleted (`prune`); an id lives as long as its
@@ -54,6 +58,7 @@ Module: src/webui/exports.py
 from __future__ import annotations
 
 import atexit
+import json
 import os
 import re
 import secrets
@@ -246,6 +251,35 @@ async def download(request: Request) -> Response:
 #: (`src.webui.app.mount_options`): ``<mount>/download/<id>``.
 ROUTES: List[Route] = [Route(ROUTE, download, methods=["GET", "HEAD"])]
 
+#: **A click on a download link is a download, never a visit** (REV-R4-a, the
+#: review of 47bd59a; in the dashboard's head, `src.webui.app.dashboard_head`):
+#: the one place every export's link is followed. An export is a ``gr.Button``
+#: with a link, which Gradio 6.30 draws as an ``<a href target="_self">`` with
+#: no ``download`` attribute; a link the route still serves answers with an
+#: attachment, so the page stayed, but one it no longer serves (past its file's
+#: lifetime, or given before a restart: the ids live in process memory)
+#: loaded the route's 404 text in the dashboard's own tab, and the session's
+#: result and inputs went with it. A capturing listener of the page's clicks
+#: gives the clicked link the ``download`` attribute before the browser
+#: follows it when it leads to the route (`LINK`, resolved against the page:
+#: the mount's ``download/``), so the browser downloads what the route
+#: answers: the file, or for a 404 a download that fails; the page never
+#: leaves. Gradio's own drawing of the link is unchanged, and the route, its
+#: answers and the files' lifetime are as before.
+DOWNLOAD_HEAD = "<script>" + r"""
+(function () {
+  if (window.ShepDownloads) { return; }
+  var LINK = __LINK__;
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a || a.hasAttribute('download')) { return; }
+    if (a.href.indexOf(new URL(LINK, document.baseURI).href) === 0) { a.setAttribute('download', ''); }
+  }, true);
+  window.ShepDownloads = true;
+})();
+""".replace("__LINK__", json.dumps(LINK)) + "</script>"
 
-__all__ = ["LIFETIME_SECONDS", "LINK", "NOT_OFFERED", "PREFIX", "ROUTE", "ROUTES", "download",
-           "export_dir", "file_slug", "offer", "offered", "prune", "write_new"]
+
+__all__ = ["DOWNLOAD_HEAD", "LIFETIME_SECONDS", "LINK", "NOT_OFFERED", "PREFIX", "ROUTE",
+           "ROUTES", "download", "export_dir", "file_slug", "offer", "offered", "prune",
+           "write_new"]

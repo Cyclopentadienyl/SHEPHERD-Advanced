@@ -23,8 +23,9 @@ Dependencies:
       gr.Blocks(); `mount_dashboard` is the one place that passes them
       (`mount_options`: the theme, the CSS, and the head: every style sheet and
       the scripts of the shared ⓘ, the shell, the touch record,
-      `training_console.TOUCH_HEAD`, and Diagnosis' inputs generation,
-      `diagnosis_panel.INPUTS_HEAD`).
+      `training_console.TOUCH_HEAD`, Diagnosis' inputs generation,
+      `diagnosis_panel.INPUTS_HEAD`, and the downloads',
+      `exports.DOWNLOAD_HEAD`).
 
 Called by:
     - src.api.main (`mount_dashboard`, at /ui)
@@ -173,16 +174,18 @@ def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
       light, title, header row), the touch record's (every edit of a
       field whose touches a form records is that field's input, an emptied
       text box included, and is in the form's record before a click made
-      after it goes out: `training_console.TOUCH_HEAD`) and Diagnosis' inputs
+      after it goes out: `training_console.TOUCH_HEAD`), Diagnosis' inputs
       generation (each edit of an input an answer depends on counted in its
       own event, and the page's gate written for it:
-      `diagnosis_panel.INPUTS_HEAD`). They run once per page load, before any
+      `diagnosis_panel.INPUTS_HEAD`) and the downloads' (a click on a link
+      to the download route is a download, never a visit:
+      `exports.DOWNLOAD_HEAD`). They run once per page load, before any
       component exists, so each works by document-level (or window-level)
       delegation.
     """
     return ("<style>" + HELP_CSS + SHELL_CSS + "".join(page_css) + "</style>"
             + HELP_HEAD + shell.SHELL_HEAD + training_console.TOUCH_HEAD
-            + diagnosis_panel.INPUTS_HEAD)
+            + diagnosis_panel.INPUTS_HEAD + exports.DOWNLOAD_HEAD)
 
 
 DASHBOARD_HEAD = dashboard_head()
@@ -276,9 +279,9 @@ def mount_options() -> dict[str, Any]:
 
     The look and the page's scripts: theme, CSS and ``head``
     (`DASHBOARD_HEAD`: every style sheet, and the scripts of the shared ⓘ,
-    the shell, the touch record, `training_console.TOUCH_HEAD`, and
-    Diagnosis' inputs generation, `diagnosis_panel.INPUTS_HEAD`); there is
-    no ``js``. All of them belong here: Gradio 6 drops them from
+    the shell, the touch record, `training_console.TOUCH_HEAD`, Diagnosis'
+    inputs generation, `diagnosis_panel.INPUTS_HEAD`, and the downloads',
+    `exports.DOWNLOAD_HEAD`); there is no ``js``. All of them belong here: Gradio 6 drops them from
     ``gr.Blocks``.
 
     The switches, each off whatever the environment says, because left to

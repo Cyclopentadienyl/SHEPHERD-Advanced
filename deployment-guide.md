@@ -2487,7 +2487,9 @@ route。服務會在 Gradio 看到請求之前拒絕它們（`src/api/middleware
 OPS-C-R4 起）：每個匯出（Diagnosis 分頁的 CSV 與 Markdown 報告、Models › Results 的 Export）
 都從 `/ui/download/<id>` 下載，連結只帶一個不透明的 id，不含任何伺服器路徑。這個 id 在檔案的
 存活期間（寫入後一天）、且只在發出它的服務程序內提供該檔案，`HEAD` 與 `Range` 請求也一樣
-（重新啟動前的連結即失效）；其他任何 id 都回應 `404`。（自 M5-2 起，Training 頁面的 Export CSV
+（重新啟動前的連結即失效）；其他任何 id 都回應 `404`。頁面一律把這類連結當作下載處理，所以
+點擊一個連結已失效的匯出，只會在瀏覽器中顯示下載失敗，儀表板與其中的結果和輸入仍留在畫面上。
+（自 M5-2 起，Training 頁面的 Export CSV
 以文字經由頁面自己的 server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。）
 
 ### 儀表板的其他變更
