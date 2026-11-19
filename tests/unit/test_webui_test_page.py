@@ -2420,6 +2420,50 @@ def test_the_import_is_one_at_a_time_and_there_is_no_upload():
     assert not kinds & {"File", "UploadButton", "Files"}
 
 
+def test_a_commits_follow_up_reads_the_page_with_the_committed_version_chosen(site, monkeypatch):
+    """A Commit's follow-up (`_after_commit`, chained after `_on_commit` as
+    the page wires it) reads the page again as its opening does, with the
+    version just committed chosen: the Data panel, the version select and the
+    Run panel drawn for it, each in its own output. R-68 gave the opening a
+    hand-off (`ctx.test_model`, an input and an output) and the follow-up
+    still called it with the old positions: a TypeError after every
+    successful Commit (a red "Error" toast; the panels left as they were
+    until the page was opened again). A commit hands no model over: the
+    follow-up neither reads nor writes the hand-off."""
+    monkeypatch.setattr(tp, "read_job", lambda **k: {"status": "idle", "inputs": None,
+                                                    "outcome": None, "log": []})
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: tuple(GPU_NONE))
+    demo, ctx, _registry = _page_component()
+    commit = _named(demo, "_on_commit")
+    (after,) = [fn for fn in demo.fns.values() if fn.trigger_after == commit._id]
+    assert after.name == "_after_commit"
+    assert ctx.test_model not in after.inputs and ctx.test_model not in after.outputs
+    request = operator_request(monkeypatch)
+    page = tp.read_page(request)
+    preview, _ = tp.preview_import("demo", "cases.json", "demo-test-2", "demo", "keep", request)
+    written = dict(zip([b._id for b in commit.outputs],
+                       commit.fn(page, preview, "demo", "cases.json", "demo-test-2", "demo",
+                                 "keep", request), strict=True))
+    committed = written[after.inputs[0]._id]
+    assert committed == "demo-test-2"
+    # The rest of its inputs as the page holds them: the workspace, the
+    # version chosen before the import, no model or measurement chosen yet.
+    out = dict(zip([b.elem_id for b in after.outputs],
+                   after.fn(committed, "demo", LABEL, None, None, {}, None, request),
+                   strict=True))
+    chosen = out["shep-test-version"]
+    assert chosen["value"] == "demo-test-2"
+    assert {"demo-test-1", "demo-test-2"} <= {value for _label, value in chosen["choices"]}
+    # The version's own lines, drawn for the version committed (13 source
+    # cases, 10 ranked; bound to this workspace's graph), not an empty read.
+    info = out["shep-test-version-info"]
+    assert "No data version" not in info and "Bound to this graph" in info
+    assert "13 source cases, 10 ranked-eligible" in info
+    assert out["shep-test-workspace"]["value"] == "demo"
+    runs = [value for _label, value in out["shep-test-model-run"]["choices"]]
+    assert any(CHILD_RUNS["disease"] in str(value) for value in runs), runs
+
+
 def test_every_write_of_the_selection_is_in_one_queued_group_of_one():
     """The session's selection (the checkpoint listing, the version's
     reports, the report shown) is written only by queued listeners of

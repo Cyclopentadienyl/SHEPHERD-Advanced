@@ -3197,15 +3197,12 @@ def create_test_page(ctx: Any) -> None:
     every_one = {"trigger_mode": "multiple"}
 
     # ------------------------------------------------------------------ page open
-    def _refresh(ws, label, key, protocol, current_models, current_report, handed,
-                 request: gr.Request):
-        """The page shown: everything read again for the selection. A model
-        another page handed over as it opened this one (`ctx.test_model`:
-        Models' "Test this model ›", R-68) is the selection's workspace and
-        checkpoint, chosen as a pick would (while it is listed), and the
-        hand-off is cleared, so a later opening keeps the reader's choice."""
-        if isinstance(handed, Mapping) and handed.get("workspace"):
-            ws, key = handed["workspace"], handed.get("key")
+    def _read(ws, label, key, protocol, current_models, current_report, request):
+        """Everything read again for the selection: the states
+        (`state_outputs`) and the panels (`cohort_outputs`, `run_outputs`,
+        `result_outputs`), apart, for the page's opening and the read after a
+        Commit (`_after_commit`), which write the same outputs but for the
+        hand-off between them."""
         page = read_page(request)
         ws = default_workspace(page, ws)
         binding = _binding_for(page, ws)
@@ -3215,10 +3212,23 @@ def create_test_page(ctx: Any) -> None:
         job = read_job()
         gpu = _gpu(page)
         reports, run_id = _reports(page, models, label, current_report, job, request)
-        return [page, models, binding, reports, run_id, None,
-                *_cohort_outputs(page, binding, ws, label),
-                *_run_outputs(page, models, binding, ws, label, key, protocol, job, gpu),
-                *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
+        return ([page, models, binding, reports, run_id],
+                [*_cohort_outputs(page, binding, ws, label),
+                 *_run_outputs(page, models, binding, ws, label, key, protocol, job, gpu),
+                 *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)])
+
+    def _refresh(ws, label, key, protocol, current_models, current_report, handed,
+                 request: gr.Request):
+        """The page shown: everything read again for the selection (`_read`).
+        A model another page handed over as it opened this one
+        (`ctx.test_model`: Models' "Test this model ›", R-68) is the
+        selection's workspace and checkpoint, chosen as a pick would (while it
+        is listed), and the hand-off is cleared, so a later opening keeps the
+        reader's choice."""
+        if isinstance(handed, Mapping) and handed.get("workspace"):
+            ws, key = handed["workspace"], handed.get("key")
+        states, panels = _read(ws, label, key, protocol, current_models, current_report, request)
+        return [*states, None, *panels]
 
     state_outputs = [page_state, models_state, binding_state_, reports_state, selected_report]
     ctx.on_page_open(PAGE, {
@@ -3615,10 +3625,12 @@ def create_test_page(ctx: Any) -> None:
 
     def _after_commit(committed, ws, label, key, protocol, current_models, current_report,
                       request: gr.Request):
-        """The page read again, as a page open reads it, with the version just
-        committed chosen."""
-        return _refresh(ws, committed or label, key, protocol, current_models, current_report,
-                        request)
+        """The page read again, as a page open reads it (`_read`), with the
+        version just committed chosen. A commit hands no model over, so it
+        neither reads nor clears the opening's hand-off (`ctx.test_model`)."""
+        states, panels = _read(ws, committed or label, key, protocol, current_models,
+                               current_report, request)
+        return [*states, *panels]
 
     committed_label = gr.State(None)
     commit_btn.click(_on_commit, inputs=[page_state, preview_state, workspace, intake, new_label,

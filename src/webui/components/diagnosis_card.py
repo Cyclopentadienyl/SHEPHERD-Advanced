@@ -10,9 +10,11 @@ panel, directly above Run Diagnosis (the mockup's round 2; the header's
 dashboard's one reader (`served_status.read_status`: the status route's own
 function, in process), **with a 5 s limit** (`read_status_within`), per browser
 session: on page load, when Diagnosis is shown, on the shell's slow timer while
-it is shown, after each diagnosis, after a Load ("served model changed") and on
-↻. What it knows lives in this session's `gr.State` (a plain dict,
-`new_state`): no module state, nothing assumes one browser (BACKLOG 28).
+it is shown, after each diagnosis, after each answer of this page's Load (one
+that changed what is served through "served model changed"; any other, a
+refusal, by the answer's own step: `diagnosis_panel`) and on ↻. What it knows
+lives in this session's `gr.State` (a plain dict, `new_state`): no module
+state, nothing assumes one browser (BACKLOG 28).
 
 **The states** (always words plus colour; `card_mode`):
 

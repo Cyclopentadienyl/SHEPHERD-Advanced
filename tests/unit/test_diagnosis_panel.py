@@ -1826,6 +1826,111 @@ def test_this_pages_load_is_said_by_the_server_and_run_waits_for_its_answer(monk
     assert "for every session" not in reloading["card_body"]
 
 
+def _page_steps(demo, request):
+    """Call the page's events as the page does: each with the values its
+    inputs hold now (a State's as last written, else as built), and the
+    request last when it takes one; what each writes is kept for the next."""
+    import inspect
+
+    values = {b._id: getattr(b, "value", None) for b in demo.blocks.values()}
+
+    def run(fn):
+        args = [values[b._id] for b in fn.inputs]
+        if "request" in inspect.signature(fn.fn).parameters:
+            args.append(request)
+        out = fn.fn(*args)
+        pairs = list(out.items()) if isinstance(out, dict) else list(zip(fn.outputs, out,
+                                                                         strict=True))
+        for block, value in pairs:
+            if not (isinstance(value, dict) and value.get("__type__") == "update"):
+                values[block._id] = value
+        return {block._id: value for block, value in pairs}
+
+    return values, run
+
+
+def test_a_refused_reload_leaves_the_card_on_this_page_saying_the_refusal(monkeypatch):
+    """Load › Reload refused (the flow at 14e035d: the service on device auto,
+    no CUDA): the drawer said "Not reloaded; the model in use is unchanged.
+    …" while the card on the same page still read "○ Not loaded Nothing has
+    been loaded since the service started"; a page opened afterwards read
+    "✕ Load refused at …". The card shows the status's last load outcome,
+    which a refusal changes without changing what is served: the card is
+    read again after every answer of this page's Reload, while the shared
+    "served model changed" trigger is left as it was (it means what is
+    served changed) and no change notice is raised. The steps run as the
+    page chains them: the page's read, the step before the reload, the
+    confirmed Load (a stand-in reload that refuses), then every step chained
+    on its answer and, had it changed, the trigger's listeners."""
+    from src.webui.components import diagnosis_card as card
+    from src.webui.components import model_list as ml
+    from tests.fixtures.operator_access import operator_request
+
+    demo, ctx = _build_tab(monkeypatch)
+    lead = ("Serving device 'auto' requires CUDA, which is not available here. On a "
+            "development host, start the service with the CPU device (Settings › Stop service)")
+    reads = [{"initialized": False, **_NOT_LOADED, "not_serving": {
+        "state": "not_loaded", "lead": "Nothing has been loaded since the service started",
+        "at": None, "model_sha12": None}}]
+    asked = []
+    monkeypatch.setattr(card, "read_status_within",
+                        lambda *a, **k: asked.append(1) or (reads[-1], None))
+    monkeypatch.setattr(card, "served_facts", lambda status, **kw: {
+        "key": card.served_key(status), "operator": kw.get("operator"), "workspaces": [],
+        "serving": None, "item": None, "item_problem": None, "recorded": None, "trained": None})
+
+    def refused_reload(plan, request):
+        reads.append({"initialized": False, **_NOT_LOADED,
+                      "not_serving_reason": f"No model is loaded: the last load of model "
+                                            f"1e20694dcae4 was refused: {lead}",
+                      "not_serving": {"state": "load_refused", "lead": lead,
+                                      "at": "2026-07-07T16:00:00+00:00",
+                                      "model_sha12": "1e20694dcae4"}})
+        return ml.LoadStep(None, ml._outcome("grey", "Not reloaded; the model in use is "
+                                             "unchanged.", lead), "", None, False)
+
+    monkeypatch.setattr(ml, "finish_load", refused_reload)
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    body, run_why = by_id["shep-dx-card-body"]._id, by_id["shep-dx-run-why"]._id
+    request = operator_request(monkeypatch)
+    values, run = _page_steps(demo, request)
+    (opened,) = [fn for fn in _named(demo, "_card_refresh") if (demo._id, "load") in fn.targets]
+    assert "Nothing has been loaded since the service started" in run(opened)[body]
+    (loading,) = _named(demo, "_loading")
+    values[loading.inputs[0]._id] = {"to": {"sha256": "1e20694dcae4" + "0" * 52}, "from": {}}
+    run(loading)
+    (confirm,) = _named(demo, "_confirm")
+    answered = run(confirm)
+    assert "Not reloaded; the model in use is unchanged." in answered[confirm.outputs[2]._id]
+    assert answered[ctx.served_model_changed._id] == gr.update(), "nothing served changed"
+    drawn = {}
+    for fn in [fn for fn in demo.fns.values() if fn.trigger_after == confirm._id and fn.fn]:
+        drawn.update(run(fn))
+    assert body in drawn, "the card is read again after the refused reload's answer"
+    assert "Load refused" in drawn[body] and "Nothing has been loaded" not in drawn[body]
+    assert "requires CUDA" in drawn[body]
+    assert dp.RUN_DISABLED_NO_MODEL in drawn[run_why]
+    card_state = opened.inputs[0]
+    assert values[card_state._id]["change"] is None, "no change notice: the same is served"
+    # A Load that changed what is served sets the trigger, whose listener
+    # reads the card: read once, not again by the answer's own step.
+    def reloaded(plan, request):
+        reads.append(_status_serving(_served_identity()))
+        return ml.LoadStep(None, ml._outcome("ok", "Reloaded."), "", "e" * 64, True)
+
+    monkeypatch.setattr(ml, "finish_load", reloaded)
+    run(loading)
+    token = run(confirm)[ctx.served_model_changed._id]
+    assert isinstance(token, str) and token.startswith("e" * 64 + "@")
+    asked.clear()
+    drawn = {}
+    for fn in [fn for fn in demo.fns.values() if fn.fn and (
+            fn.trigger_after == confirm._id
+            or (ctx.served_model_changed._id, "change") in fn.targets)]:
+        drawn.update(run(fn))
+    assert len(asked) == 1 and "Serving" in drawn[body]
+
+
 def test_the_compare_link_keeps_each_arrow_with_its_word(monkeypatch):
     """M5-3: at 1440 x 900 "Compare in Research › Models ›" left its last "›"
     alone on a line; each is held to the word before it."""

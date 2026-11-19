@@ -2226,7 +2226,9 @@ class ModelList:
       ``head`` and ``foot`` builders returned;
     - ``reload_done``: the event that ends a Reload (its answer: reloaded or
       not, the phase back to idle or confirming), for a page to chain
-      ``.then(…)`` on, as Diagnosis puts Run Diagnosis back;
+      ``.then(…)`` on, as Diagnosis puts Run Diagnosis back and, after an
+      answer that changed nothing served (no ``served_model_changed``),
+      reads its card again;
     - ``after_close_js``: the page step a page chains at the end of its own
       close named in ``close_while_loading`` (`load_closed_js`).
     """

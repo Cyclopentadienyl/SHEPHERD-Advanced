@@ -3591,6 +3591,11 @@ def create_diagnosis_tab(ctx: Any) -> None:
     #: The model this session's Stop inference question named (its full
     #: fingerprint), or None: the confirmation stops only that model.
     stop_asked = gr.State(None)
+    #: The shared "served model changed" token (`ctx.served_model_changed`)
+    #: as it was when this page's Reload began (`_reload_began`): its answer
+    #: tells from it whether the Load changed what is served
+    #: (`_reload_answered`).
+    token_at_reload = gr.State(None)
 
     with gr.Row(elem_id="shep-dx", elem_classes=["shep-page", "shep-dx"], equal_height=False):
         # --- the input column ------------------------------------------------
@@ -3756,10 +3761,14 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                elem_id="shep-dx-change-note")
                     return links["cancel"]
 
+                def _reload_began(plan, state, token):
+                    return (*card_loading_outputs(plan, state), token)
+
                 handle = ctx.create_model_list(
                     "clinical", head=_head, foot=_foot,
-                    on_loading={"fn": card_loading_outputs, "inputs": [card_state],
-                                "outputs": [run_btn, run_cover, run_reason]},
+                    on_loading={"fn": _reload_began,
+                                "inputs": [card_state, ctx.served_model_changed],
+                                "outputs": [run_btn, run_cover, run_reason, token_at_reload]},
                     close_while_loading=CLOSE_WHILE_LOADING)
 
         # --- the candidates ---------------------------------------------------
@@ -3879,15 +3888,30 @@ def create_diagnosis_tab(ctx: Any) -> None:
                         show_progress="hidden")
 
     # The reload's answer (reloaded or not): Run Diagnosis follows the phase
-    # again, whatever the answer was (a refused reload changes nothing served,
-    # so no card refresh would run).
-    def _reload_answered(state, phase):
-        return card_loaded_outputs(state if isinstance(state, Mapping) else card.new_state(),
-                                   phase)
+    # again, whatever the answer was, and the card reads the status again
+    # after every answer, once. A Load that changed what is served set the
+    # shared trigger, whose ``.change`` reads it (above); one that changed
+    # nothing (refused, shown again, stopped with an error) left the trigger
+    # as it was when the Reload began (`token_at_reload`), so the card is read
+    # here: the status's last load outcome ("Load refused" and its reason,
+    # `diagnosis_card.serving_state`), with nothing said to have changed (the
+    # served identity is the same, so no change notice and no result marked).
+    def _reload_answered(state, phase, before, token, result, view, cohort, stop,
+                         request: gr.Request):
+        if token != before:
+            run = card_loaded_outputs(state if isinstance(state, Mapping) else card.new_state(),
+                                      phase)
+            return mapped(dict(zip(("run_btn", "run_cover", "run_reason"), run)))
+        out = refresh_card(state, result, phase, view, request, cohort=cohort, stop=stop)
+        # Run is sent whatever the card sent last: the step before the reload
+        # changed it in the page alone (`card_loading_outputs`).
+        return mapped({**out, **run_controls(out["card_state"], phase)})
 
-    handle.reload_done.then(_reload_answered, inputs=[card_state, handle.phase],
-                            outputs=[run_btn, run_cover, run_reason],
-                            show_progress="hidden")
+    handle.reload_done.then(_reload_answered,
+                            inputs=[card_state, handle.phase, token_at_reload,
+                                    ctx.served_model_changed, results_state, identity_view,
+                                    cohort_input, stop_asked],
+                            outputs=outputs(*read_names), show_progress="hidden")
 
     # --- the card's own links: dismiss, Retry / read it, Recorded results ›
     identity_names = ("identity_view", "identity_drawer", "change_drawer", "identity_seg",
