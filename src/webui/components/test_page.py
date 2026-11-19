@@ -209,7 +209,7 @@ from src.webui.components.workspaces import (
     workspace_binding,
 )
 from src.webui.operator_access import operator_access
-from src.webui.shell import page_elem_id, picked, plain_html
+from src.webui.shell import page_elem_id, picked, plain_html, unread_choice
 from src.webui.style import SIDE, STACK
 
 logger = logging.getLogger(__name__)
@@ -3394,17 +3394,30 @@ def create_test_page(ctx: Any) -> None:
                     measurement_state,
                     selected_report, reports_state]
 
-    def _on_start(page, models, ws, label, key, protocol, rec, det, request: gr.Request):
+    def _on_start(page, models, ws, label, run, key, protocol, rec, det, request: gr.Request):
+        """Start: for an operator's request (D8 is `start_test_run`'s first
+        check), the Run select as this click's own request carries it
+        (`run`) against the run of the checkpoint chosen in the session's
+        listing (`shell.unread_choice`: a Run whose checkpoints have not
+        landed is refused, never tested on the checkpoint of the run before,
+        OPS-C-R2); then `start_test_run`."""
+        roots = (page or {}).get("roots") or []
+        item = find_model(models or {}, key)
+        unread = operator_access(request).allowed and unread_choice(
+            *([("Run", run, ml.item_run_key(item))] if item else []))
+        if unread:
+            return _outcome_box("amber", said(unread[:1].upper() + unread[1:],
+                                              "Nothing was started."), roots)
         result = start_test_run(page, models, ws, label, key, rec, det, request,
                                 protocol=protocol)
-        roots = (page or {}).get("roots") or []
         if result.get("success"):
             return _outcome_box("ok", "The test run started. It checks the model and the cohort "
                                       "again on the bytes it reads before measuring.")
         return _outcome_box("amber", str(result.get("error") or "Nothing was started."), roots)
 
-    start.click(_on_start, inputs=[page_state, models_state, workspace, version, model,
-                                   measurement, record, deterministic],
+    # Start carries the Run select as the reader sees it (`_on_start`).
+    start.click(_on_start, inputs=[page_state, models_state, workspace, version, run_select,
+                                   model, measurement, record, deterministic],
                 outputs=[action_out], show_progress="minimal") \
         .then(_after_act, inputs=after_inputs, outputs=after_outputs, show_progress="hidden",
               **one_at_a_time) \

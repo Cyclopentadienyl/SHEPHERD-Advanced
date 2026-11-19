@@ -2900,13 +2900,13 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(site, monkeypatc
         event = next(x for x in lines if x.startswith("event: ") and x != "event: heartbeat")
         return event, lines[lines.index(event) + 1][len("data:"):]
 
-    event, refused = call("http://192.0.2.10", [None, None, None, None])
+    event, refused = call("http://192.0.2.10", [None, None, None, None, None])
     assert event == "event: complete" and "Refused: " in refused
-    event, loopback = call(OPERATOR_BASE_URL, [None, None, None, None])
+    event, loopback = call(OPERATOR_BASE_URL, [None, None, None, None, None])
     assert event == "event: complete" and "Choose a data version the server lists" in loopback
     assert given and all(page == {} and models.get("items") == [] for page, models in given), \
         "the handler was given what the client posted"
-    event, forged = call(OPERATOR_BASE_URL, ["demo", LABEL, site.key, None])
+    event, forged = call(OPERATOR_BASE_URL, ["demo", LABEL, None, site.key, None])
     assert event == "event: error" and "not in the list of choices" in forged
     assert manager.started == []
 

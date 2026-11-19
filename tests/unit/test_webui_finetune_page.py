@@ -285,10 +285,18 @@ def gr_update(**kwargs):
     return gr.update(**kwargs)
 
 
+def _shown(ws, parents, key):
+    """The Dataset and Run selects as a settled page shows them (Start's own
+    request carries them, OPS-C-R2): the workspace read and the chosen
+    base's run."""
+    item = (parents or {}).get(key) if key else None
+    return (ws or {}).get("name"), (ml.item_run_key(item) if item else None)
+
+
 def _start_with(operator, ws, parents, key, tasks, touched, device="cpu", run_name="",
                 **changed):
-    return fp._on_finetune_start(operator, ws, parents, key, tasks, device, run_name, touched,
-                                 *_values(**changed))
+    return fp._on_finetune_start(operator, *_shown(ws, parents, key), ws, parents, key, tasks,
+                                 device, run_name, touched, *_values(**changed))
 
 
 def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_was_touched(
@@ -424,8 +432,8 @@ def test_an_emptied_task_number_is_refused_before_start_and_never_said_to_be_the
     ws = tc.workspace_state("demo")
     parents = fp._on_finetune_bases(operator, ws, None)[0]
     key = f"gatv2/{BASE_RUN}/last.pt"
-    said, _stop, beside = fp._on_finetune_start(operator, ws, parents, key, ["disease"], "cpu",
-                                                "", [name],
+    said, _stop, beside = fp._on_finetune_start(operator, *_shown(ws, parents, key), ws, parents,
+                                                key, ["disease"], "cpu", "", [name],
                                                 *_fields(["disease"], **{name: emptied}))
     assert started == [] and said == ""
     assert beside == ('<span class="shep-ft-refused">' + r.status_mark(
@@ -508,7 +516,8 @@ def test_the_runners_refusal_of_the_settings_is_said_beside_start_in_its_words(
 
 
 def test_start_is_refused_for_a_read_only_request(root, started):
-    said, _stop, beside = fp._on_finetune_start(READ_ONLY, tc.workspace_state("demo"), {}, None,
+    said, _stop, beside = fp._on_finetune_start(READ_ONLY, "demo", None,
+                                                tc.workspace_state("demo"), {}, None,
                                                 ["disease"], "cpu", "", [], *_values())
     assert "Refused" in said and started == [] and "shep-st-error" in said
     assert beside == gr_update()                   # what Start would refuse, left as it is
@@ -694,8 +703,9 @@ def test_the_line_says_what_start_sends_and_reset_brings_back_each_tasks_referen
     hops_line, refused = fp._on_field_input(tasks, ["num_neighbors"], *cleared)
     assert "Not valid: Neighbours per hop needs at least 1 item(s)." in hops_line
     assert "Start would refuse: Neighbours per hop needs at least 1 item(s)." in refused
-    said, _stop, beside = fp._on_finetune_start(operator, ws, parents, key, tasks, "cpu", "",
-                                                ["num_neighbors"], *cleared)
+    said, _stop, beside = fp._on_finetune_start(operator, *_shown(ws, parents, key), ws, parents,
+                                                key, tasks, "cpu", "", ["num_neighbors"],
+                                                *cleared)
     assert said == "" and started == []
     assert "Not started: Neighbours per hop needs at least 1 item(s)" in beside
     # Reset to reference: the record empty, every field where it starts.
@@ -706,8 +716,9 @@ def test_the_line_says_what_start_sends_and_reset_brings_back_each_tasks_referen
         [], [], "each child takes its task’s reference values and this build’s defaults.")
     assert "Untouched, each child takes its task’s reference" in fp.hops_note_html(
         tasks, None, record, "")
-    said, _stop, _beside = fp._on_finetune_start(operator, ws, parents, key, tasks, "cpu", "",
-                                                 record, *(u["value"] for u in updates))
+    said, _stop, _beside = fp._on_finetune_start(operator, *_shown(ws, parents, key), ws,
+                                                 parents, key, tasks, "cpu", "", record,
+                                                 *(u["value"] for u in updates))
     assert said == "" and "num_neighbors" not in started[-1][0].settings
     assert started[-1][0].settings == {}
     # One task: Reset puts its own settings at its reference.
@@ -1281,7 +1292,10 @@ def test_the_page_follows_the_contract():
     assert touched.visible is False and touched.value == []
     fields = [by_id[f"ft_{name}"] for name in fp.FINETUNE_FIELDS]
     setby, refused = by_id["ft_setby"], by_id["ft_refused"]
-    parents_state = start.inputs[1]
+    # Start carries the Dataset and Run selects as the reader sees them
+    # (OPS-C-R2), then the session's workspace and parent list.
+    assert start.inputs[:2] == [by_id["ft_dataset"], by_id["ft_run"]]
+    parents_state = start.inputs[3]
     for name in fp.FINETUNE_FIELDS:
         field = by_id[f"ft_{name}"]
         (first,) = [fn for fn in fns if (field._id, "input") in fn.targets]

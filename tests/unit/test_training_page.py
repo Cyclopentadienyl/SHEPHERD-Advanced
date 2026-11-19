@@ -248,7 +248,10 @@ def test_each_fields_input_records_it_and_reset_and_the_guards_are_wired():
     assert guards.outputs == [by_id["warmup_steps"], by_id["min_lr_ratio"], by_id["amp_dtype"]]
     assert {target[1] for target in guards.targets} == {"change"}
     (start,) = [fn for fn in fns if fn.fn is tc._on_start]
-    assert start.inputs[3] is touched and start.inputs[4:] == fields
+    # Start carries the run bar's Dataset as the reader sees it (OPS-C-R2),
+    # then the session's workspace, the run name, the device, the record.
+    assert start.inputs[0] is by_id["shep-train-dataset"]
+    assert start.inputs[4] is touched and start.inputs[5:] == fields
     # No record on the server: no State is written by a field's input.
     assert not [fn for fn in fns if any(isinstance(block, gr.State) for block in fn.outputs)
                 and any((f._id, "input") in fn.targets for f in fields)]
@@ -2322,11 +2325,11 @@ def test_the_notice_escapes_the_server_text_it_carries(root, monkeypatch, operat
     # Start: the runner's refusal, and a workspace that is not trainable.
     monkeypatch.setattr(tc.training_manager, "start_training",
                         lambda config, **k: {"success": False, "error": f"{TAG} refused"})
-    notice = tc._on_start(operator, tc.workspace_state("demo"), *_FORM)
+    notice = tc._on_start(operator, "demo", tc.workspace_state("demo"), *_FORM)
     assert _no_tag(notice) and "&lt;img src=x" in notice and "refused" in notice
     odd = tc.workspace_state(ODD)
     odd["row"] = {**odd["row"], "trainable": False, "not_trainable": "x", "manifest": "read"}
-    notice = tc._on_start(operator, odd, *_FORM)
+    notice = tc._on_start(operator, ODD, odd, *_FORM)
     assert _no_tag(notice) and "&lt;b&gt;odd&amp;name is not trainable" in notice
     # Stop: the snapshot sentence names the checkpoint inside the workspace.
     last = root / ODD / "runs" / "gatv2" / "r" / "checkpoints" / "last.pt"
@@ -2343,8 +2346,9 @@ def test_the_notice_escapes_the_server_text_it_carries(root, monkeypatch, operat
                                  "filename": "last.pt", "sha256": "c" * 64,
                                  "dataset_fingerprint": fp}}
     notice, text, *_rest = tc._on_resume(
-        operator, tc.CONTINUE, tc.workspace_state(ODD), "", "cpu", tc.CONTINUE_FROM_LIST,
-        "gatv2/r/last.pt", "", None, None, parents, {}, [])
+        operator, ODD, tc._model_list().item_run_key(parents["gatv2/r/last.pt"]), tc.CONTINUE,
+        tc.workspace_state(ODD), "", "cpu", tc.CONTINUE_FROM_LIST, "gatv2/r/last.pt", "", None,
+        None, parents, {}, [])
     assert notice == ""
     assert "no longer listed" in text and "&lt;b&gt;odd&amp;name" in text and _no_tag(text)
 
@@ -3196,8 +3200,8 @@ def test_the_drawers_notice_is_a_refusal_with_the_shared_mark():
             if sel == f"{tc._PAGE} #shep-train-drawer-notice"]
     assert rule and not any("amber" in body for body in rule)
     # D8's refusal of the start, should one reach it, is the same mark's.
-    notice, *_rest = tc._on_resume(READ_ONLY, tc.BRANCH, {}, "", "cpu", tc.CONTINUE_FROM_LIST,
-                                   None, "", None, None, {}, {}, [],
+    notice, *_rest = tc._on_resume(READ_ONLY, None, None, tc.BRANCH, {}, "", "cpu",
+                                   tc.CONTINUE_FROM_LIST, None, "", None, None, {}, {}, [],
                                    *(None,) * len(tc.BRANCH_FIELDS))
     refusal = tc.operator_access(READ_ONLY).refusal
     assert notice == f'<span class="shep-notice-t">{r.status_mark("error", refusal)}</span>'

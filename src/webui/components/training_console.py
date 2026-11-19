@@ -3215,12 +3215,16 @@ def _workspace_path(name: Any) -> Path:
     return resolve_workspace(name)
 
 
-def _on_start(request: gr.Request, ws, run_name, device, touched, *values):
+def _on_start(request: gr.Request, dataset, ws, run_name, device, touched, *values):
     """Start: an operator control (D8), checked first on this event's own
-    request; then a new base run (`_start`). `touched` is the form's record
-    of the fields the operator touched, as this click's own request carries
-    it (`touched_record`); ``values`` are the base form's, in
-    `base_form_keys` order.
+    request; then the run bar's Dataset as this click's own request carries
+    it (`dataset`) against the workspace the session read (`ws`;
+    `shell.unread_choice`: a choice whose reading has not landed, or failed,
+    is refused, never started on the one before it, OPS-C-R2); then a new
+    base run (`_start`). `touched` is the form's record of the fields the
+    operator touched, as this click's own request carries it
+    (`touched_record`); ``values`` are the base form's, in `base_form_keys`
+    order.
 
     Returns the notice (`notice_html`): the refusal, inline, or nothing once
     started.
@@ -3228,6 +3232,9 @@ def _on_start(request: gr.Request, ws, run_name, device, touched, *values):
     access = operator_access(request)
     if not access.allowed:
         return notice_html(access.refusal, mark="error")
+    unread = _shell().unread_choice(("Dataset", dataset, (ws or {}).get("name")))
+    if unread:
+        return notice_html(f"Not started: {unread}", mark="error")
     return notice_html(_start(ws, run_name, device, values, touched), mark="error")
 
 
@@ -4317,13 +4324,18 @@ def _on_check_continue(request: gr.Request, operation, source, listed, manual, d
             compare_html(record, ws or {}), *_branch_updates(preview, op, touched, values))
 
 
-def _on_resume(request: gr.Request, operation, ws, run_name, device, source, listed, manual,
-               extend_epochs, extend_lr, parents, mode, touched, *values):
+def _on_resume(request: gr.Request, dataset, run, operation, ws, run_name, device, source,
+               listed, manual, extend_epochs, extend_lr, parents, mode, touched, *values):
     """The drawer's start, Continue Training or Start branch: an operator
     control (D8, checked first on this event's own request; refused, nothing
-    is opened or started), then the same check as the preview, the dataset
-    comparison, then the job runner's start with the full dataset
-    fingerprint and the parent's model fingerprint this session showed.
+    is opened or started), then the run bar's Dataset and the list's Run as
+    this click's own request carries them (`dataset`, `run`; the Checkpoint
+    is `listed`) against what the session read for them (`ws`, the listed
+    parent's run in `parents`; `shell.unread_choice`: a choice whose reading
+    has not landed, or failed, is refused, nothing checked or started,
+    OPS-C-R2), then the same check as the preview, the dataset comparison,
+    then the job runner's start with the full dataset fingerprint and the
+    parent's model fingerprint this session showed.
 
     A continuation sends only operational fields (contract M3a-3): every
     learning setting comes from the checkpoint, so the training form's values
@@ -4346,6 +4358,13 @@ def _on_resume(request: gr.Request, operation, ws, run_name, device, source, lis
     if not access.allowed:
         return (notice_html(access.refusal, mark="error"), gr.update(), gr.update(), gr.update(),
                 gr.update(), *(gr.update(),) * (1 + len(BRANCH_FIELDS)))
+    item = ((parents or {}).get(listed) if source != CONTINUE_FROM_PATH and listed else None)
+    unread = _shell().unread_choice(
+        ("Dataset", dataset, (ws or {}).get("name")),
+        *([("Run", run, _model_list().item_run_key(item))] if item else []))
+    if unread:
+        return (notice_html(f"Not started: {unread}", mark="error"), gr.update(), gr.update(),
+                gr.update(), gr.update(), *(gr.update(),) * (1 + len(BRANCH_FIELDS)))
     said, text, extend, rate, mode, branch = _resume(
         operation, ws, device, source, listed, manual, extend_epochs, extend_lr, parents, mode,
         touched, values, run_name=run_name)
@@ -4967,8 +4986,9 @@ def create_training_tab(ctx: Any) -> None:
                  show_progress="hidden", **in_order).then(**view_step)
 
     # Start, Stop.
-    # Start also closes a Stop confirmation left from an earlier job.
-    start_btn.click(_on_start, inputs=[ws, run_name, device, touched, *base_fields],
+    # Start also closes a Stop confirmation left from an earlier job. It
+    # carries the run bar's Dataset as the reader sees it (`_on_start`).
+    start_btn.click(_on_start, inputs=[dataset, ws, run_name, device, touched, *base_fields],
                     outputs=[notice],
                     show_progress="hidden").then(
         close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden",
@@ -5017,9 +5037,12 @@ def create_training_tab(ctx: Any) -> None:
         outputs=[continue_preview, extend_epochs, extend_lr, mode, compare, *branch_shown],
         show_progress="hidden", **in_order).then(**view_step).then(
         None, js=SHOW_CHECK_JS, queue=False).then(**ctx.chip_refresh)
+    # The drawer's start carries the run bar's Dataset and the list's Run as
+    # the reader sees them (`_on_resume`).
     resume_btn.click(
         _on_resume,
-        inputs=[continue_operation, ws, run_name, continue_device, continue_source,
+        inputs=[dataset, continue_run, continue_operation, ws, run_name, continue_device,
+                continue_source,
                 checkpoint_dropdown, manual_checkpoint, extend_epochs, extend_lr, parents, mode,
                 branch_touched, *branch_fields],
         outputs=[drawer_notice, continue_preview, extend_epochs, extend_lr, mode,

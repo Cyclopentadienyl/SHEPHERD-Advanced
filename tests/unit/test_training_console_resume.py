@@ -204,7 +204,12 @@ def _resume_all(c, source, listed, manual, extend=None, mode=None, device="cpu",
     """The drawer's start, every output: its notice, the check's text, the
     Extra epochs and Extra-epoch rate updates, the mode, the Branch box and
     each Branch field."""
-    return tc._on_resume(OP, operation, state or c["state"], run_name, device, source, listed,
+    state = state or c["state"]
+    item = c["parents"].get(listed) if source != tc.CONTINUE_FROM_PATH and listed else None
+    # The run bar's Dataset and the list's Run as a settled page shows them
+    # (Start's own request carries them, OPS-C-R2).
+    shown = (state.get("name"), tc._model_list().item_run_key(item) if item else None)
+    return tc._on_resume(OP, *shown, operation, state, run_name, device, source, listed,
                          manual, extend, rate, c["parents"], mode or {},
                          sorted({*touched, *edited}), *_values(**edited))
 

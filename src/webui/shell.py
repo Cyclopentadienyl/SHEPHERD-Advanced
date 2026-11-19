@@ -291,10 +291,48 @@ def picked(control: Any) -> Any:
     never from a write, so a Dropdown's choice is its blur; a focus that
     chose nothing is one request, as with ``input``. Every other control
     (a Radio, a multiselect Dropdown, a Checkbox) keeps its ``input``, which
-    it sends once per change."""
+    it sends once per change.
+
+    **A listener keeps every choice** (``trigger_mode="multiple"``): with
+    Gradio's default for a blur ("once") the browser drops a choice made
+    while the listener still answers the one before it, and the session
+    keeps that one under the select showing the next (OPS-C-R2: A, then B
+    while A's read ran, then A again, left B's read for good). An action
+    that uses the choice checks it first (`unread_choice`)."""
     if isinstance(control, gr.Dropdown) and not getattr(control, "multiselect", False):
         return control.blur
     return control.input
+
+
+#: **What an action says of a choice not read yet** (`unread_choice`;
+#: ``{what}`` is the select's label), after the page's own lead ("Not
+#: started: "; on the Test page, before its "Nothing was started.").
+UNREAD_CHOICE = ("the {what} you chose is still being read. Try again once it shows, or choose "
+                 "it again.")
+
+
+def unread_choice(*choices: Tuple[str, Any, Any]) -> Optional[str]:
+    """**The submit boundary of a select's choice** (OPS-C-R2, the external
+    review of 6a2d52e): an action that uses what a select chose (a start)
+    takes the select's value in its own request, as the reader sees it, and
+    is refused while the session's state was read for another choice.
+
+    A choice is read by later events (its `picked` listener, then the lists
+    written after it, each a request of its own), and a ``gr.State`` is read
+    when the action runs: a Start pressed while that reading was on its way,
+    or after it failed, read the state of the choice before (Fine-tune
+    started on the dataset and the base shown before the one chosen; the
+    Training run bar's Start on its dataset before). Each of `choices` is
+    ``(what, shown, read)``: the select's label, its value as the action's
+    own request carries it, and the value the state was read for. Returns
+    `UNREAD_CHOICE` for the first whose two differ (the action then does
+    nothing), else None. Nothing waits and nothing is locked: once the
+    reading lands the two agree and the same action goes through; a reading
+    that failed is made again by choosing again."""
+    for what, shown, read in choices:
+        if shown != read:
+            return UNREAD_CHOICE.format(what=what)
+    return None
 
 
 def tab_elem_id(tab: str) -> str:
@@ -861,10 +899,12 @@ __all__ = [
     "TEST",
     "TITLES",
     "TRAINING",
+    "UNREAD_CHOICE",
     "build_shell",
     "help_texts",
     "page_elem_id",
     "picked",
     "standalone_context",
     "tab_elem_id",
+    "unread_choice",
 ]

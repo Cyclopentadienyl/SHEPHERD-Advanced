@@ -68,9 +68,13 @@ Module: src/webui/components/finetune_page.py
   or the job runner's refusal in its words, a setting it names first by the
   field's label (`training_console.labelled_problem`).
 
-**Start** (D8 first): the workspace and the parent are resolved by the server
-from its lists again (`resolve_workspace`, `resolve_checkpoint`; never a
-client path), then the job runner's one Fine-tune start
+**Start** (D8 first): the Dataset and Run selects as Start's own request
+carries them, against what the session read for them (`shell.unread_choice`):
+a choice whose reading has not landed, or failed, is refused beside Start,
+never started on the choice before it (OPS-C-R2); the workspace and the
+parent are resolved by the server from its lists again (`resolve_workspace`,
+`resolve_checkpoint`; never a client path), then the job runner's one
+Fine-tune start
 (`TrainingManager.start_finetune`) with the parent's listed digest and the
 dataset fingerprint shown. Its checks before anything starts (the parent a
 base with weights, its graph, each task's fixture, the settings, the freeze
@@ -130,7 +134,7 @@ from src.webui.components.help import help_button
 from src.webui.components.workspaces import read_workspaces, redact, workspaces_root
 from src.webui.operator_access import operator_access
 from src.webui.shell import FINETUNE as PAGE
-from src.webui.shell import page_elem_id, picked, plain_html
+from src.webui.shell import page_elem_id, picked, plain_html, unread_choice
 from src.webui.style import SIDE
 
 logger = logging.getLogger(__name__)
@@ -1015,13 +1019,18 @@ def _on_hops_input(tasks, key, parents, touched, *values):
             hops_note_html(tasks, item, touched, hops), hops_warning_html(tasks, item, touched, hops))
 
 
-def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run_name,
-                       touched, *values):
+def _on_finetune_start(request: gr.Request, dataset, run, ws, parents, key, tasks, device,
+                       run_name, touched, *values):
     """Start: an operator control (D8), checked first on this event's own
-    request; then the Fine-tune start (`_start`) with the settings' fields'
-    `values`, in `FINETUNE_FIELDS` order, and `touched`, the form's record of
-    the fields the operator touched, as this click's own request carries it
-    (`training_console.touched_record`).
+    request; then the selection it uses, as this click's own request carries
+    the Dataset and Run selects (`dataset`, `run`; the Checkpoint is `key`),
+    against what the session read for them (`shell.unread_choice`: the
+    workspace `ws`, the chosen base's run in `parents`), so a choice whose
+    reading has not landed (or failed) is refused, never started on the one
+    before it (OPS-C-R2); then the Fine-tune start (`_start`) with the
+    settings' fields' `values`, in `FINETUNE_FIELDS` order, and `touched`, the
+    form's record of the fields the operator touched, as this click's own
+    request carries it (`training_console.touched_record`).
 
     Returns the notice beside Start, a refusal with the shared mark of a
     refusal, escaped (`training_console.notice_html`), or nothing once started
@@ -1034,6 +1043,11 @@ def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, device, run
     access = operator_access(request)
     if not access.allowed:
         return tc.notice_html(access.refusal, mark="error"), "", gr.update()
+    item = (parents or {}).get(key) if key else None
+    unread = unread_choice(("Dataset", dataset, (ws or {}).get("name")),
+                           *([("Run", run, ml.item_run_key(item))] if item else []))
+    if unread:
+        return tc.notice_html(f"Not started: {unread}", mark="error"), "", gr.update()
     fields = dict(zip(FINETUNE_FIELDS, values, strict=True))
     said, of_the_form = _start(ws, parents, key, tasks, device, run_name, fields, touched)
     if of_the_form:
@@ -1386,10 +1400,12 @@ def create_finetune_page(ctx: Any) -> None:
                         outputs=[card, start, stop, reason, stop_reason, confirm_row, cache],
                         queue=False, show_progress="hidden")
 
+    # Every choice is kept ("multiple", `shell.picked`): one made while the
+    # one before it is read is read after it, never dropped.
     picked(dataset)(_on_dataset, inputs=[dataset, tasks],
                     outputs=[ws, identity, tasks, tasks_note],
-                    show_progress="hidden").then(**bases_step).then(**base_step).then(
-        **ctx.chip_refresh)
+                    show_progress="hidden", trigger_mode="multiple").then(**bases_step).then(
+        **base_step).then(**ctx.chip_refresh)
     refresh.click(**bases_step).then(**base_step).then(**ctx.chip_refresh)
     run_select.change(ml.on_run_chosen, inputs=[run_select, parents, checkpoint],
                       outputs=[checkpoint], show_progress="hidden")
@@ -1431,8 +1447,11 @@ def create_finetune_page(ctx: Any) -> None:
           inputs=[fields[name] for name in guards],
           outputs=[fields[name] for name in dependent], queue=False, show_progress="hidden")
 
+    # Start carries the Dataset and Run selects as the reader sees them, which
+    # it checks against what the session read for them (`_on_finetune_start`).
     start.click(_on_finetune_start,
-                inputs=[ws, parents, checkpoint, tasks, device, run_name, touched, *field_list],
+                inputs=[dataset, run_select, ws, parents, checkpoint, tasks, device, run_name,
+                        touched, *field_list],
                 outputs=[notice, stop_notice, refused], show_progress="hidden").then(
         tc.close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden").then(
         **card_step).then(**ctx.chip_refresh)
