@@ -38,7 +38,8 @@ def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch, tmp_
     assert len(on_select) == 1
     assert [o.elem_id for o in on_select[0].outputs] == [
         "runtime_apply", "runtime_restart", "runtime_restart_lock", "runtime_access_reason",
-        "runtime_stop", "allocator_preset", "torch_compile", "runtime_facts"]
+        "runtime_stop", "runtime_fields_lock", "allocator_preset", "torch_compile",
+        "runtime_facts"]
 
     from tests.fixtures.operator_access import operator_request
 
@@ -49,24 +50,24 @@ def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch, tmp_
         monkeypatch.setenv(name, value)
     presets.save_runtime_settings({"allocator_preset": "expandable"})
     monkeypatch.setattr(rs, "is_training_active", lambda: True)
-    apply, button, note, reason, stop, alloc, compile_, _facts = on_select[0].fn(
+    apply, button, note, reason, stop, fields, alloc, compile_, _facts = on_select[0].fn(
         operator_request(monkeypatch))
     assert apply["interactive"] is True and button["interactive"] is False
     # Stop service follows Restart's lock: off while a GPU job runs, no lock.
     assert (stop["value"], stop["interactive"]) == (rs.STOP_LABEL, False)
-    assert note["visible"] is True and reason["visible"] is False
+    assert note["visible"] is True and reason["visible"] is False and fields["visible"] is False
     assert rs.RESTART_BUSY in note["value"] and "shep-st-neutral" in note["value"]
     assert alloc["interactive"] is True and compile_["interactive"] is True
     # Off while training runs, but not refused: no lock (the WebUI skill's §3).
     assert (apply["value"], button["value"]) == (rs.APPLY_LABEL, rs.RESTART_LABEL)
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
-    apply, button, note, reason, stop, *_fields = on_select[0].fn(operator_request(monkeypatch))
+    apply, button, note, reason, stop, *_rest = on_select[0].fn(operator_request(monkeypatch))
     assert button["interactive"] is True and note["visible"] is False
     assert stop["interactive"] is True
     # R-12: with the running allocator saved, a restart would change nothing,
     # so Restart is off, said beside it; Stop service stays on.
     presets.save_runtime_settings({"allocator_preset": "cuda_async"})
-    apply, button, note, reason, stop, *_fields = on_select[0].fn(operator_request(monkeypatch))
+    apply, button, note, reason, stop, *_rest = on_select[0].fn(operator_request(monkeypatch))
     assert (button["value"], button["interactive"]) == (rs.RESTART_LABEL, False)
     assert note["visible"] is True and rs.RESTART_IDLE in note["value"]
     assert stop["interactive"] is True and apply["interactive"] is True
@@ -138,7 +139,7 @@ def test_an_open_restart_question_closes_once_restart_turns_off(monkeypatch, tmp
     unchanged = [gr.update()] * 5
     # Still wanted: the open question stays.
     for fn in (rs._after_apply, lambda q, req: rs._poll_restart_lock("settings", q, req)):
-        assert list(fn(restart_question, operator_request(monkeypatch))[5:]) == unchanged
+        assert list(fn(restart_question, operator_request(monkeypatch))[6:]) == unchanged
     # The running allocator saved again, or a GPU job started: it closes.
     for save, busy, reason in (("cuda_async", False, rs.RESTART_IDLE),
                                ("expandable", True, rs.RESTART_BUSY)):
@@ -146,15 +147,15 @@ def test_an_open_restart_question_closes_once_restart_turns_off(monkeypatch, tmp
         monkeypatch.setattr(rs, "is_training_active", lambda busy=busy: busy)
         for fn in (rs._after_apply, lambda q, req: rs._poll_restart_lock("settings", q, req)):
             out = fn(restart_question, operator_request(monkeypatch))
-            _apply, button, note, _access, _stop = out[:5]
-            row, question, restart_now, stop_now, said = out[5:]
+            _apply, button, note, _access, _stop, _fields = out[:6]
+            row, question, restart_now, stop_now, said = out[6:]
             assert (row["visible"], restart_now["visible"], stop_now["visible"]) == (
                 False, False, False)
             assert question["value"] == "" and said == ""
             assert button["interactive"] is False and reason in note["value"]
             # A Stop question and a closed row are left as they are.
-            assert list(fn(stop_question, operator_request(monkeypatch))[5:]) == unchanged
-            assert list(fn("", operator_request(monkeypatch))[5:]) == unchanged
+            assert list(fn(stop_question, operator_request(monkeypatch))[6:]) == unchanged
+            assert list(fn("", operator_request(monkeypatch))[6:]) == unchanged
 
 
 def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch, tmp_path):
@@ -169,13 +170,17 @@ def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch, 
     monkeypatch.setattr(presets, "RUNTIME_SETTINGS_FILE", tmp_path / "settings.json")
     monkeypatch.setattr(rs, "is_training_active", lambda: False)
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
-    apply, button, note, reason, stop, alloc, compile_, _facts = rs._on_open(gradio_request())
+    apply, button, note, reason, stop, fields, alloc, compile_, _facts = rs._on_open(
+        gradio_request())
     assert (apply["value"], apply["interactive"]) == (f"🔒 {rs.APPLY_LABEL}", False)
     assert (button["value"], button["interactive"]) == (f"🔒 {rs.RESTART_LABEL}", False)
     assert (stop["value"], stop["interactive"]) == (f"🔒 {rs.STOP_LABEL}", False)
     assert reason["visible"] is True and reason["value"] == (
         '<div class="shep-reason"><span aria-hidden="true">🔒</span><span>Operator controls '
         "only: deployment mode not set to M1.</span></div>")
+    # Above the fields, a short relation to that reason, not a second copy.
+    assert fields["visible"] is True and rs.FIELDS_LOCKED in fields["value"]
+    assert "Operator controls only" not in fields["value"]
     # The fields that need the operator are not interactive for this request,
     # and show the saved values (none saved: the default preset, compile off).
     assert alloc == gr.update(interactive=False, value="cuda_async")
@@ -359,15 +364,15 @@ def test_the_restart_lock_is_polled_on_the_shells_slow_timer_only_while_shown(mo
     assert poll.inputs[1].elem_id == "runtime_question"
     assert [o.elem_id for o in poll.outputs] == [
         "runtime_apply", "runtime_restart", "runtime_restart_lock", "runtime_access_reason",
-        "runtime_stop", "runtime_confirm", "runtime_question", "runtime_restart_now",
-        "runtime_stop_now", "runtime_restart_status"]
+        "runtime_stop", "runtime_fields_lock", "runtime_confirm", "runtime_question",
+        "runtime_restart_now", "runtime_stop_now", "runtime_restart_status"]
     from tests.fixtures.operator_access import operator_request
 
     monkeypatch.setattr(rs, "is_training_active", lambda: pytest.fail("read on another page"))
-    assert poll.fn("clinical", "", operator_request(monkeypatch)) == (gr.update(),) * 10
+    assert poll.fn("clinical", "", operator_request(monkeypatch)) == (gr.update(),) * 11
     monkeypatch.setattr(rs, "is_training_active", lambda: True)
-    apply, button, note, _reason, stop, *asked = poll.fn("settings", "",
-                                                          operator_request(monkeypatch))
+    apply, button, note, _reason, stop, _fields, *asked = poll.fn(
+        "settings", "", operator_request(monkeypatch))
     assert button["interactive"] is False and note["visible"] is True
     assert stop["interactive"] is False
     assert asked == [gr.update()] * 5, "no question was open: the row is left as it is"

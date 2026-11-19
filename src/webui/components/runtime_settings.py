@@ -45,11 +45,14 @@ Operator controls (D8, M5-1):
     on the shell's slow timer: no lock while D8 allows the request; for a
     request D8 refuses, the buttons disabled with the lock, the two fields
     that need the operator (the allocator and torch.compile) not interactive,
-    and the visible "Operator controls only: …" reason once, next to the
-    fields, above them (`chips.operator_only`, `data_locations.reason_line`:
-    the Data locations panel says its own the same way). Restart and Stop service are also off while a
-    GPU job runs, and Restart while no saved allocator waits for it, each
-    said beside them. A disabled control is a display, never the control.
+    and the visible "Operator controls only: …" reason once, beside the
+    buttons in their row (`chips.operator_only`, `data_locations.reason_line`),
+    the line above the two fields a short relation to it (`FIELDS_LOCKED`):
+    with the accordions open the panel's one line was 734 px above the
+    buttons at 1850 x 960 (the external review of 6a2d52e). Restart and Stop
+    service are also off while a GPU job runs, and Restart while no saved
+    allocator waits for it, each said beside them. A disabled control is a
+    display, never the control.
 
 Module: src/webui/components/runtime_settings.py
 """
@@ -406,21 +409,31 @@ APPLY_LABEL = "Apply Settings"
 RESTART_LABEL = "Restart Backend"
 
 
+#: The line above the two fields for a request D8 refuses: a short relation
+#: to the reason, which is said once, beside the actions it turns off
+#: (`_refresh_restart_lock`). The reason was this line, 734 px above Apply,
+#: Restart Backend and Stop service at 1850 x 960 with the accordions open.
+FIELDS_LOCKED = "Read-only for this request: the reason is beside the actions below."
+
+
 def _refresh_restart_lock(request: gr.Request):
     """Apply, Restart and Stop service as this request may use them, by the
     one gated-button rule (`chips.gated`): for a refused request, all
-    disabled with the lock and D8's short reason once, above the fields it
-    turns off too (`chips.operator_only`; the header chip's ⓘ gives D8's
-    whole reason);
+    disabled with the lock and D8's short reason once, beside them in their
+    row (`chips.operator_only`; the header chip's ⓘ gives D8's whole
+    reason), and above the two fields it turns off too a short relation to
+    it (`FIELDS_LOCKED`);
     Restart and Stop service also off while a GPU job runs (`RESTART_BUSY`),
     and Restart while a restart would change nothing (`restart_applies`,
     `RESTART_IDLE`), the reason beside them. A display: each button's handler
-    checks its own request."""
+    checks its own request. Returns the updates of `lock_outputs`
+    (`_wire_runtime_panel`), in that order."""
     locked = is_training_active()
     access = operator_access(request)
     idle = not restart_applies(os.environ, load_runtime_settings())
     reason = "" if access.allowed else data_locations.reason_line(
         f"{operator_only(access.condition)}.")
+    fields = "" if access.allowed else data_locations.reason_line(FIELDS_LOCKED)
     why = RESTART_BUSY if locked else RESTART_IDLE if idle and access.allowed else None
     return (
         gr.update(**gated(APPLY_LABEL, access.allowed)),
@@ -430,6 +443,7 @@ def _refresh_restart_lock(request: gr.Request):
                                                   if why else "")),
         gr.update(visible=not access.allowed, value=reason),
         gr.update(**gated(STOP_LABEL, access.allowed, interactive=not locked)),
+        gr.update(visible=not access.allowed, value=fields),
     )
 
 
@@ -456,7 +470,7 @@ def _poll_restart_lock(location, question, request: gr.Request):
     had been opened). The fields are left as they are, so an open select is
     never redrawn."""
     if location != SETTINGS_PAGE:
-        return (gr.update(),) * 10
+        return (gr.update(),) * 11
     return (*_refresh_restart_lock(request), *_restart_question_closed(question, request))
 
 
@@ -556,9 +570,9 @@ def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
                    elem_id="shep-settings-hd")
         with gr.Column(elem_id="shep-settings-bd"):
             facts = plain_html(facts_html(settings=settings), elem_id="runtime_facts")
-            # Why the fields and the buttons are off for this request (D8),
-            # next to the fields it turns off (NEW-settings-datasets-footer-3).
-            access_note = plain_html("", visible=False, elem_id="runtime_access_reason")
+            # For a request D8 refuses, next to the fields it turns off: where
+            # the reason is (`FIELDS_LOCKED`; NEW-settings-datasets-footer-3).
+            fields_note = plain_html("", visible=False, elem_id="runtime_fields_lock")
             allocator = gr.Dropdown(
                 label="Memory allocator", choices=ALLOCATOR_CHOICES, value=saved_alloc,
                 interactive=False, elem_id="allocator_preset",
@@ -571,6 +585,10 @@ def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
             with gr.Accordion("About torch.compile", open=False):
                 gr.Markdown(COMPILE_DETAILS)
         with gr.Row(elem_classes=["shep-panel-ft"], elem_id="shep-settings-ft"):
+            # Why the buttons (and the fields) are off for this request (D8),
+            # beside them, the row's first line, just above them: the one
+            # gated-button rule (`chips.gated`).
+            access_note = plain_html("", visible=False, elem_id="runtime_access_reason")
             apply_btn = gr.Button(APPLY_LABEL, variant="primary", interactive=False, scale=0,
                                   elem_id="runtime_apply")
             restart_btn = gr.Button(RESTART_LABEL, variant="secondary", interactive=False,
@@ -595,17 +613,19 @@ def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
             status = plain_html("", elem_id="runtime_status")
             restart_status = plain_html("", elem_id="runtime_restart_status")
     return (facts, allocator, torch_compile, apply_btn, restart_btn, stop_btn,
-            restart_lock_note, access_note, (confirm, question, restart_now, stop_now), cancel,
-            status, restart_status)
+            restart_lock_note, (access_note, fields_note),
+            (confirm, question, restart_now, stop_now), cancel, status, restart_status)
 
 
 def _wire_runtime_panel(ctx: Any, facts, allocator, torch_compile, apply_btn, restart_btn,
-                        stop_btn, restart_lock_note, access_note, asking, cancel, status,
+                        stop_btn, restart_lock_note, notes, asking, cancel, status,
                         restart_status) -> None:
     """The Runtime settings panel's events (`create_runtime_settings_tab`)."""
+    access_note, fields_note = notes
     confirm, question, restart_now, stop_now = asking
     asked = [confirm, question, restart_now, stop_now, restart_status]
-    lock_outputs = [apply_btn, restart_btn, restart_lock_note, access_note, stop_btn]
+    lock_outputs = [apply_btn, restart_btn, restart_lock_note, access_note, stop_btn,
+                    fields_note]
     ctx.timer_slow.tick(fn=_poll_restart_lock, inputs=[ctx.location, question],
                         outputs=[*lock_outputs, *asked], queue=False, show_progress="hidden")
     ctx.on_page_open(SETTINGS_PAGE, {"fn": _on_open,
@@ -636,7 +656,8 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 
 #: This page's style sheet (the page contract: listed in `src/webui/app.py`'s
 #: ``PAGE_CSS``): one panel at a readable width, its body padded, its
-#: actions one row with their reasons beside them.
+#: actions one row with their reasons beside them (D8's on a line of its own
+#: just above them).
 PAGE_CSS = f"""
 {_PAGE} #shep-settings-cols {{ gap: 16px !important; align-items: flex-start; flex-wrap: wrap; }}
 {_PAGE} #shep-settings-cols > #shep-dl {{ flex: 55 1 640px !important; min-width: 0 !important; }}
@@ -647,6 +668,7 @@ PAGE_CSS = f"""
 {_PAGE} #shep-settings-bd {{ padding: 14px 16px !important; gap: 12px !important; }}
 {_PAGE} #shep-settings-ft > button {{ flex: none !important; min-width: max-content !important; white-space: nowrap; }}
 {_PAGE} #shep-settings-ft > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}
+{_PAGE} #shep-settings-ft > #runtime_access_reason {{ flex-basis: 100% !important; }}
 {_PAGE} #shep-settings-out {{ padding: 0 16px 12px !important; gap: 6px !important; }}
 {_PAGE} #runtime_status:has(.html-container:empty),
 {_PAGE} #runtime_restart_status:has(.html-container:empty) {{ display: none !important; }}
@@ -657,7 +679,7 @@ PAGE_CSS = f"""
 
 
 __all__ = ["ACCELERATION", "ALLOCATOR_CHOICES", "ALLOCATOR_WORDS", "COMPILE_EXPERIMENTAL",
-           "COMPILE_READ", "FIELD_HELP", "FIELD_INFO", "PAGE_CSS", "RESTART_BUSY",
+           "COMPILE_READ", "FIELDS_LOCKED", "FIELD_HELP", "FIELD_INFO", "PAGE_CSS", "RESTART_BUSY",
            "RESTART_CONFIRM_LABEL", "RESTART_IDLE", "RESTART_QUESTION", "RESTART_STOPS_SERVING",
            "STOP_CONFIRM_LABEL", "STOP_DONE", "STOP_LABEL", "STOP_QUESTION", "allocator_words",
            "create_runtime_settings_tab", "facts_html", "restart_applies", "running_html",

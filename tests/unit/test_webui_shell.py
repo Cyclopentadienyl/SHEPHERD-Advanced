@@ -1394,39 +1394,78 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
 })().catch((e) => { console.error(e); process.exit(1); });
 """
 
-#: What a read-only viewer's Settings and header draw (no deployment mode).
+#: What a read-only viewer's Settings and header draw (no deployment mode):
+#: the look at 1850 x 960; then at 1850 x 960 and 390 x 844, Runtime
+#: settings' accordions open (the external review of 6a2d52e measured the
+#: reason 734 px from the buttons so), where D8's reason and the fields'
+#: line are, and each locked action brought into view as a reader brings it
+#: (`scrollIntoView` nearest): how far below the reason it is and whether
+#: both are wholly on screen (inside the window and every box that clips).
 _READ_ONLY_LOOK_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
 (async () => {
   const browser = await chromium.launch();
-  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
-  await page.addInitScript(QUEUE_JS);
-  await page.addInitScript(LOOK_JS);
-  await page.goto(process.argv[2], { waitUntil: 'load' });
-  await page.waitForSelector('#shep-chips .shep-chip-readonly', { timeout: 60000 });
-  await page.click('#shep-tab-settings-button');
-  await page.waitForSelector('#allocator_preset input:disabled', { timeout: 30000 });
-  // The page's open answered: D8's reason drawn for this request.
-  await page.waitForSelector('#runtime_access_reason .shep-reason', { state: 'visible', timeout: 30000 });
-  await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
-  console.log(JSON.stringify(await page.evaluate(() => {
-    const s = (sel) => { const c = getComputedStyle(document.querySelector(sel));
-      return { background: c.backgroundColor, border: c.borderTopColor, color: c.color }; };
-    const box = (sel) => { const r = document.querySelector(sel).getBoundingClientRect();
-      return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
-    const panel = document.getElementById('shep-settings');
-    return { chip: s('#shep-chips .shep-chip-readonly'),
-             fields: window.__shepLook.fields(document.getElementById('shep-tab-settings')),
-             select: s('#allocator_preset .wrap:has(> .wrap-inner)'), value: s('#allocator_preset input'),
-             box: s('#torch_compile input[type=checkbox]'), label: s('#torch_compile label'),
-             reason: { text: document.querySelector('#runtime_access_reason').innerText.trim(),
-                       at: box('#runtime_access_reason .shep-reason'),
-                       inBody: !!document.querySelector('#shep-settings-bd #runtime_access_reason') },
-             facts: box('#runtime_facts'), allocator: box('#allocator_preset'), footer: box('#shep-settings-ft'),
-             footerText: document.getElementById('shep-settings-ft').innerText,
-             said: (panel.innerText.match(/Operator controls only/g) || []).length };
-  })));
+  const out = { sizes: {} };
+  for (const [w, h] of [[1850, 960], [390, 844]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.addInitScript(LOOK_JS);
+    await page.goto(process.argv[2], { waitUntil: 'load' });
+    await page.waitForSelector('#shep-chips .shep-chip-readonly', { timeout: 60000 });
+    await page.click('#shep-tab-settings-button');
+    await page.waitForSelector('#allocator_preset input:disabled', { timeout: 30000 });
+    // The page's open answered: D8's reason drawn for this request.
+    await page.waitForSelector('#runtime_access_reason .shep-reason', { state: 'visible', timeout: 30000 });
+    await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+    if (w === 1850) {
+      out.look = await page.evaluate(() => {
+        const s = (sel) => { const c = getComputedStyle(document.querySelector(sel));
+          return { background: c.backgroundColor, border: c.borderTopColor, color: c.color }; };
+        return { chip: s('#shep-chips .shep-chip-readonly'),
+                 fields: window.__shepLook.fields(document.getElementById('shep-tab-settings')),
+                 select: s('#allocator_preset .wrap:has(> .wrap-inner)'), value: s('#allocator_preset input'),
+                 box: s('#torch_compile input[type=checkbox]'), label: s('#torch_compile label') };
+      });
+    }
+    for (const acc of await page.$$('#shep-settings button.label-wrap:not(.open)')) { await acc.click(); }
+    await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+    out.sizes[w + 'x' + h] = await page.evaluate(async () => {
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // The accordions opened: their transitions finished, so nothing moves while it is read.
+      await Promise.all(document.getAnimations().map((a) => a.finished));
+      await frame();
+      const T = (e) => (e.innerText || '').replace(/\s+/g, ' ').trim();
+      const box = (e) => { const r = e.getBoundingClientRect();
+        return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
+      const clip = (e) => { let x = { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
+        for (let a = e.parentElement; a; a = a.parentElement) { const s = getComputedStyle(a);
+          if (/(auto|scroll|hidden|clip)/.test(s.overflowY + s.overflowX)) { const p = box(a);
+            x = { left: Math.max(x.left, p.left), top: Math.max(x.top, p.top),
+                  right: Math.min(x.right, p.right), bottom: Math.min(x.bottom, p.bottom) }; } }
+        return x; };
+      const whole = (e) => { const q = box(e), x = clip(e);
+        return q.left >= x.left - 1 && q.top >= x.top - 1 && q.right <= x.right + 1 && q.bottom <= x.bottom + 1; };
+      const reason = document.querySelector('#runtime_access_reason .shep-reason');
+      const fields = document.querySelector('#runtime_fields_lock .shep-reason');
+      const actions = {};
+      for (const id of ['runtime_apply', 'runtime_restart', 'runtime_stop']) {
+        const b = document.getElementById(id);
+        b.scrollIntoView({ block: 'nearest' });
+        await frame();
+        actions[id] = { text: T(b), disabled: b.disabled, below: box(b).top - box(reason).bottom,
+                        whole: whole(b), reasonWhole: whole(reason), at: box(b), clip: clip(b) };
+      }
+      const panel = document.getElementById('shep-settings');
+      return { reason: T(reason), inFooter: !!document.querySelector('#shep-settings-ft #runtime_access_reason'),
+               fields: fields && T(fields), fieldsAt: fields && box(fields),
+               facts: box(document.getElementById('runtime_facts')),
+               allocator: box(document.getElementById('allocator_preset')), actions,
+               said: (panel.innerText.match(/Operator controls only/g) || []).length };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
 """
@@ -1524,13 +1563,20 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     D8 refuses (no deployment mode): Settings' allocator select and
     torch.compile checkbox are drawn off (the disabled fill, border and grey
     words, the select's value at 4.5:1 on it), not like the enabled ones an
-    operator sees; the header's read-only chip is the amber lozenge. The
-    "Operator controls only: …" reason is said once in the panel, next to
-    the fields it turns off: in the panel's body, between the facts and the
-    allocator select, not in the buttons' row under the two fields and their
-    accordions (where it was: NEW-settings-datasets-footer-3)."""
+    operator sees; the header's read-only chip is the amber lozenge.
+
+    Where Runtime settings says why (the external review of 6a2d52e): the
+    "Operator controls only: …" reason is said once in the panel, beside the
+    actions it turns off, by the one gated-button rule: the actions' row's
+    line just above Apply Settings, Restart Backend and Stop service, each
+    within 120 px under it and both wholly on screen when the action is
+    brought into view, at 1850 x 960 and 390 x 844 with the accordions open;
+    next to the fields, between the facts and the allocator select, a short
+    relation to it (`FIELDS_LOCKED`). Fails on 6a2d52e: the reason was that
+    body line, 734 px above the buttons at 1850 x 960."""
     from src.webui import style
     from src.webui.app import create_gradio_app, mount_options
+    from src.webui.components import runtime_settings as rs
     from tests.fixtures.browser import LOOK_JS, QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.operator_access import DEPLOYMENT_MODE
     from tests.fixtures.served_page import served
@@ -1545,19 +1591,26 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
         seen = run_node(script, tmp_path, base[:-len("gradio_api")])
     tokens = dict(re.findall(r"(--shep-[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{6})", style.SHELL_CSS))
     off, line, words = (tokens["--shep-grey-50"], tokens["--shep-grey-200"], tokens["--shep-grey-600"])
-    assert seen["select"]["background"] == _rgb(off) and seen["select"]["border"] == _rgb(line)
-    assert seen["value"]["color"] == _rgb(words) and contrast(words, off) >= 4.5
-    assert seen["box"]["background"] == _rgb(off) and seen["box"]["border"] == _rgb(line)
-    assert seen["label"]["color"] == _rgb(words)
-    assert seen["chip"]["background"] == _rgb(tokens["--shep-amber-50"])
-    assert seen["chip"]["color"] == _rgb(tokens["--shep-amber-800"])
-    assert any(f["disabled"] for f in seen["fields"])
-    reason, allocator = seen["reason"], seen["allocator"]
-    assert reason["text"].split() == ["🔒", *"Operator controls only: deployment mode not set to M1.".split()], reason
-    assert reason["inBody"] and seen["said"] == 1, seen
-    assert seen["facts"]["bottom"] <= reason["at"]["top"] + 0.5, seen
-    assert reason["at"]["bottom"] <= allocator["top"] + 0.5 <= reason["at"]["bottom"] + 24, seen
-    assert "Operator controls only" not in seen["footerText"], seen
+    look = seen["look"]
+    assert look["select"]["background"] == _rgb(off) and look["select"]["border"] == _rgb(line)
+    assert look["value"]["color"] == _rgb(words) and contrast(words, off) >= 4.5
+    assert look["box"]["background"] == _rgb(off) and look["box"]["border"] == _rgb(line)
+    assert look["label"]["color"] == _rgb(words)
+    assert look["chip"]["background"] == _rgb(tokens["--shep-amber-50"])
+    assert look["chip"]["color"] == _rgb(tokens["--shep-amber-800"])
+    assert any(f["disabled"] for f in look["fields"])
+    reason = ["🔒", *"Operator controls only: deployment mode not set to M1.".split()]
+    for size, at in seen["sizes"].items():
+        assert at["reason"].split() == reason and at["inFooter"] and at["said"] == 1, (size, at)
+        for name, action in at["actions"].items():
+            assert action["text"].startswith("🔒 ") and action["disabled"], (size, name, action)
+            assert 0 <= action["below"] <= 120, (size, name, action)
+            assert action["whole"] and action["reasonWhole"], (size, name, action)
+        # Next to the fields: the relation, between the facts and the select.
+        fields, allocator = at["fieldsAt"], at["allocator"]
+        assert at["fields"] == f"🔒 {rs.FIELDS_LOCKED}", (size, at)
+        assert at["facts"]["bottom"] <= fields["top"] + 0.5, (size, at)
+        assert fields["bottom"] <= allocator["top"] + 0.5 <= fields["bottom"] + 24, (size, at)
 
 
 #: Settings' scroll region (its level-1 tab item, side by side) with the

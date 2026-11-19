@@ -258,8 +258,9 @@ def where_html(view: DeploymentView, *, shown: bool) -> str:
 # ---------------------------------------------------------------------------
 def reason_line(text: str) -> str:
     """**A refusal's line beside what it turns off** on Settings (D8's
-    reason, the lock before it): one per panel, above the fields it
-    disables, in this panel and in Runtime settings alike."""
+    reason, the lock before it): one per panel, in this panel above its rows
+    (each row's box, Check and Save), in Runtime settings beside its
+    actions, where the line above its two fields says where it is."""
     return (f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
             f"<span>{r.e(text)}</span></div>")
 
