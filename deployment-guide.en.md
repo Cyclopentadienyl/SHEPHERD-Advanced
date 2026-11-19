@@ -2666,7 +2666,13 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 
 Start the dashboard from its desktop entry or with `launch_shepherd.sh` and open ⚙ Settings (a
 second start of the same configuration starts no second service: it opens the running one, or,
-when no browser can be opened on that computer, prints the address to open). The
+when no browser can be opened on that computer, prints the address to open; its "Operator
+controls" line is the running one's. A second start whose environment sets a deployment mode or
+a data location the running one does not have in effect now opens nothing: it says what runs,
+its address and what it sets, and exits with status 1; stop the running one first (Settings ›
+Stop service), then start again. A Save and Apply in the running one never makes a start that
+sets nothing refuse. Since the review of 6a2d52e; before, such a start opened the running one
+and reported success). The
 **Data locations** panel has one row per location (Workspaces folder, Results registry, Import
 folder, Training evidence folders): what needs it, what is in effect and where it came from
 ("Saved in Settings", "Set when the service started"), and a path box with:

@@ -41,6 +41,7 @@ from src.config.atomic_json import ensure_directory, write_text_atomic  # noqa: 
 from src.config.deployment_settings import ENV_SETTINGS_FILE, settings_location  # noqa: E402
 from src.config.server_settings import (  # noqa: E402
     ENV_BIND_HOST,
+    ENV_DEPLOYMENT_MODE,
     ENV_LOCAL_ENTRY,
     LOCAL_ENTRY,
     MODE_OFF_STATE,
@@ -655,6 +656,65 @@ def claim_instance(files: "instances.Instance", progress_every: float = 30.0) ->
         time.sleep(1.0)
 
 
+def operator_controls_words(environ: Mapping[str, str]) -> str:
+    """The "Operator controls" line's words for a service started with
+    `environ`: on, and why, or the service's own reason they are off, in its
+    parts (the state, then why, in whole sentences; T08 flow: a cut sentence
+    went on in lower case)."""
+    mode = deployment_mode(environ)
+    if mode.available:
+        return ("on for requests made on this computer "
+                + ("(the local start)" if environ.get(ENV_LOCAL_ENTRY) == LOCAL_ENTRY
+                   and mode.source != "environment" else "(the deployment mode set at start)"))
+    return f"{MODE_OFF_STATE}. {mode_off_why(mode)}"
+
+
+#: Why a second start that asks for other settings opens nothing, and what to do.
+OTHER_SETTINGS_REMEDY = (
+    "To start with what this start sets, stop the running service first (Settings › Stop "
+    "service in it, Ctrl-C in its terminal, or end pid {pid}), then start again. To open the "
+    "running service as it is, start without those settings.")
+
+
+def open_running(running: Mapping[str, Any], args: argparse.Namespace, fail: Failure) -> int:
+    """A second start of a configuration that runs (plan §4.5): open it, or,
+    when it does not have what this start asks for, open nothing and say what
+    runs (OPS-C-R1, `launch_instance.asks_not_met`). Its "Operator controls"
+    line is the running service's, never this start's own."""
+    ui = f"{running['url']}/ui"
+    pid = running.get("pid")
+    unmet = instances.asks_not_met(running, os.environ)
+    environ = instances.running_environment(running, os.environ)
+    if unmet:
+        # What runs: its operator controls always, and each location asked
+        # for that it does not have; then what this start sets.
+        if environ is None:
+            runs = f"its settings {instances.NOT_RECORDED}"
+        else:
+            runs = ", ".join(
+                ["operator controls " + ("on" if deployment_mode(environ).available else "off")]
+                + [f"{ask.name} {ask.running}" for ask in unmet
+                   if ask.variable != ENV_DEPLOYMENT_MODE])
+        asked = ", ".join(f"{ask.name} {ask.asked}" for ask in unmet)
+        refs = ", ".join(ask.variable for ask in unmet)
+        remedy = OTHER_SETTINGS_REMEDY.format(pid=pid)
+        status = fail(f"SHEPHERD-Advanced already runs for this configuration at {ui} (pid {pid}) "
+                      "without the settings this start sets, so it was not opened and no second "
+                      f"backend is started on the same data. Running: {runs}. This start sets: "
+                      f"{asked} (Ref: {refs}).", remedy, 1)
+        log(remedy)
+        return status
+    log(f"SHEPHERD-Advanced already runs for this configuration at {ui} (pid {pid}); no second "
+        "backend is started on the same data.")
+    if args.local_entry:
+        log("Operator controls     : " + (operator_controls_words(environ) if environ is not None
+                                          else instances.NOT_RECORDED + "; the dashboard's "
+                                          "header says them"))
+    if not args.no_browser:
+        open_in_browser(ui)
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # The saved settings file this start uses (--settings-file)
 # ---------------------------------------------------------------------------
@@ -1078,25 +1138,20 @@ def main() -> int:
     # **The local start's mode** (D06): ``--local-entry`` on a loopback bind
     # marks the start, and an unset deployment mode is then M1 for this
     # computer (`server_settings.deployment_mode`); an explicit one decides,
-    # and D8 still checks every request.
+    # and D8 still checks every request. Its "Operator controls" line is said
+    # once this start knows which service the user gets: this one, or the one
+    # that already runs (`open_running`).
     if args.local_entry:
         if bind is not None and bind.host is not None and bind_is_loopback(bind.host):
             os.environ[ENV_LOCAL_ENTRY] = LOCAL_ENTRY
-        mode = deployment_mode(os.environ)
-        if mode.available:
-            log("Operator controls     : on for requests made on this computer "
-                + ("(the local start)" if os.environ.get(ENV_LOCAL_ENTRY) == LOCAL_ENTRY
-                   and mode.source != "environment" else "(the deployment mode set at start)"))
-        else:
-            # The service's own reason, in its parts: the state, then why, in
-            # whole sentences (T08 flow: a cut sentence went on in lower case).
-            log(f"Operator controls     : {MODE_OFF_STATE}. {mode_off_why(mode)}")
 
     # **One instance per configuration, and the port** (plan §4.5), before
     # anything is installed: a start of a configuration that already runs
-    # opens that one and ends, and a port in use is said before the long
-    # part of a start. Only for a server on a host and port (a socket has no
-    # URL to tell an instance by).
+    # opens that one and ends, unless it sets a deployment mode or a data
+    # location that one does not have (`open_running`: then it opens nothing
+    # and exits non-zero), and a port in use is said before the long part of
+    # a start. Only for a server on a host and port (a socket has no URL to
+    # tell an instance by).
     uvicorn_defaults = list(UVICORN_DEFAULT_ARGS)
     instance_fd: Optional[int] = None
     info_path: Optional[Path] = None
@@ -1116,12 +1171,7 @@ def main() -> int:
                     f"used ({exc})")
                 found = None
             if found is not None and found.running is not None:
-                ui = f"{found.running['url']}/ui"
-                log(f"SHEPHERD-Advanced already runs for this configuration at {ui} (pid "
-                    f"{found.running.get('pid')}); no second backend is started on the same data.")
-                if not args.no_browser:
-                    open_in_browser(ui)
-                return 0
+                return open_running(found.running, args, fail)
             if found is not None:
                 instance_fd, info_path = found.fd, files.info
                 # The lock was free: an info file still there is what a
@@ -1143,6 +1193,8 @@ def main() -> int:
                 "URL names this start)")
             _drop_instance(None, None, instance_fd)
             instance_fd = info_path = None
+    if args.local_entry:
+        log(f"Operator controls     : {operator_controls_words(os.environ)}")
     base_url = display_base_url(uvicorn_defaults + passthrough)
     if instance_fd is not None and info_path is not None:
         instance_id = instances.new_instance_id()
@@ -1150,7 +1202,7 @@ def main() -> int:
             instances.write_info(info_path, instance_id=instance_id, pid=os.getpid(),
                                  port=int(bind_address(uvicorn_defaults + passthrough)[1]),
                                  url=base_url, repo_root=REPO_ROOT, settings_file=settings_file,
-                                 log=log_path)
+                                 log=log_path, environ=os.environ)
         except (OSError, ValueError) as exc:
             log(f"WARNING: the single-instance record {info_path} cannot be written ({exc})")
             _drop_instance(None, None, instance_fd)

@@ -2787,7 +2787,11 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 ### 在 Settings › Data locations 中選擇（自 2026-11-16 起）
 
 從桌面項目或 `launch_shepherd.sh` 啟動儀表板，開啟 ⚙ Settings（同一個設定再啟動一次，不會啟動第二個
-服務：它會開啟正在執行的那個；那台電腦上開不了瀏覽器時，則印出要開啟的網址）。**Data locations** 面板每個位置
+服務：它會開啟正在執行的那個；那台電腦上開不了瀏覽器時，則印出要開啟的網址；它的「Operator controls」
+一行說的是正在執行的那個。第二次啟動的環境變數若設定了正在執行的那個目前沒有生效的部署模式或資料位置，
+則什麼也不開啟：它說明正在執行的是什麼、其網址與它自己設定了什麼，並以狀態 1 結束；請先停止正在執行的那個
+（Settings › Stop service），再重新啟動。在執行中的那個做 Save 與 Apply，絕不會讓一次什麼都沒設定的
+啟動被拒絕。自 6a2d52e 的審查起；以前這樣的啟動會開啟正在執行的那個並回報成功）。**Data locations** 面板每個位置
 一列（Workspaces folder、Results registry、Import folder、Training evidence folders）：誰需要它、
 目前生效的值與來源（「Saved in Settings」、「Set when the service started」），以及一個路徑框，
 附帶：

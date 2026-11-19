@@ -830,6 +830,10 @@ def test_a_start_holds_its_configuration_s_lock_through_the_exec(monkeypatch, tm
         assert info["url"] == "http://127.0.0.1:8001"
         assert info["repo_root"] == str(launcher.REPO_ROOT)
         assert info["settings_file"] == str(tmp_path / "settings" / "deployment.json")
+        # The settings variables the server is started with (OPS-C-R1): here
+        # only the bind host the launcher passes; a second start compares
+        # what it sets with what they give the server (`open_running`).
+        assert info["start_settings"] == {"SHEPHERD_BIND_HOST": "127.0.0.1"}
         assert done["exec_env"]["SHEPHERD_INSTANCE_ID"] == info["instance_id"]
         assert done["exec_env"]["SHEPHERD_INSTANCE_FILE"] == str(files.info)
         assert (files.info.stat().st_mode & 0o777) == 0o600
@@ -846,13 +850,15 @@ class _Health:
     def __init__(self, instance_id):
         import http.server
 
-        answer = json.dumps({"status": "healthy", "instance_id": instance_id}).encode()
+        self.instance_id = instance_id
+        health = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 self.send_response(200)
                 self.end_headers()
-                self.wfile.write(answer)
+                self.wfile.write(json.dumps({"status": "healthy",
+                                             "instance_id": health.instance_id}).encode())
 
             def log_message(self, *args):
                 pass
@@ -917,6 +923,254 @@ def test_a_second_start_of_a_running_configuration_opens_it(monkeypatch, tmp_pat
     opened = f"Opened {ui} in the browser."
     missing = f"No browser could be opened on this computer: open {ui} in a browser."
     assert (opened in out, missing in out) == (found is True, found is False)
+
+
+def _first_start(monkeypatch, launcher, tmp_path, **env):
+    """A real first start of the configuration (the launcher's own main, its
+    exec stubbed) with `env` added to its environment: it takes the lock,
+    keeps it as its server would, and writes the info file as a start does;
+    a loopback server answers /health with the id it recorded, at the URL it
+    recorded. Returns that answer and the descriptors to close."""
+    health = _Health(None)
+    port = health.url.rsplit(":", 1)[1]
+    done = _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install", "--no-browser",
+                                       "--", "--port", port],
+                         env=_state_env(tmp_path, **env), launcher=launcher, keep_lock=True)
+    assert done["exec"] and len(done["handed"]) == 1
+    info = json.loads(_instance_files(launcher, tmp_path).info.read_text(encoding="utf-8"))
+    health.instance_id = info["instance_id"]
+    return health, done["handed"]
+
+
+def _second_start(monkeypatch, launcher, tmp_path, **options):
+    """A second start from the desktop entry, `env` its environment's own
+    settings (the state directory and the settings file are the first
+    start's)."""
+    env = options.pop("env", {})
+    return _run_launcher(monkeypatch, ["--local-entry", "--no-auto-install"],
+                         env=_state_env(tmp_path, **env), launcher=launcher, **options)
+
+
+def _operator_lines(out):
+    return [line.split("Operator controls     : ", 1)[1] for line in out.splitlines()
+            if "Operator controls     : " in line]
+
+
+@pytest.fixture
+def folders(tmp_path):
+    names = {}
+    for name in ("root_A", "root_B", "root_C"):
+        (tmp_path / name).mkdir()
+        names[name] = str(tmp_path / name)
+    return names
+
+
+@pytest.mark.parametrize("asked", [{}, {"SHEPHERD_WORKSPACES_ROOT": "root_A"},
+                                   {"SHEPHERD_WORKSPACES_ROOT": "root_A/"},
+                                   {"SHEPHERD_DEPLOYMENT_MODE": "M1"}],
+                         ids=["nothing-set", "same-folder", "same-folder-spelled-otherwise",
+                              "M1-set"])
+def test_a_second_start_that_sets_what_runs_opens_it(monkeypatch, tmp_path, capsys, folders,
+                                                     asked):
+    """OPS-C-R1: a second start that sets nothing, or sets what the running
+    service has in effect (the same folder, however spelled; M1 over the
+    local start's M1), opens it, as every second double click did. Its
+    "Operator controls" line is the running service's: the local start's
+    M1, not "the deployment mode set at start" that this start's own
+    M1 would say."""
+    launcher = _launcher()
+    health, handed = _first_start(monkeypatch, launcher, tmp_path,
+                                  SHEPHERD_WORKSPACES_ROOT=folders["root_A"])
+    asked = {name: (folders[value.rstrip("/")] + value[len(value.rstrip("/")):]
+                    if value.startswith("root_") else value) for name, value in asked.items()}
+    capsys.readouterr()
+    try:
+        done = _second_start(monkeypatch, launcher, tmp_path, env=asked)
+    finally:
+        health.close()
+        for fd in handed:
+            os.close(fd)
+    ui = f"{health.url}/ui"
+    out = capsys.readouterr().out
+    assert done["status"] == 0 and done["server"] is None and done["opened"] == [ui], out
+    assert f"SHEPHERD-Advanced already runs for this configuration at {ui}" in out
+    assert _operator_lines(out) == ["on for requests made on this computer (the local start)"]
+
+
+@pytest.mark.parametrize("first, asked, runs, sets, ref", [
+    ({"SHEPHERD_WORKSPACES_ROOT": "root_A"},
+     {"SHEPHERD_WORKSPACES_ROOT": "root_A", "SHEPHERD_DEPLOYMENT_MODE": "readonly"},
+     "operator controls on", "operator controls off", "SHEPHERD_DEPLOYMENT_MODE"),
+    ({"SHEPHERD_WORKSPACES_ROOT": "root_A"}, {"SHEPHERD_WORKSPACES_ROOT": "root_B"},
+     "operator controls on, the workspaces folder root_A", "the workspaces folder root_B",
+     "SHEPHERD_WORKSPACES_ROOT"),
+    ({"SHEPHERD_DEPLOYMENT_MODE": "readonly"}, {"SHEPHERD_DEPLOYMENT_MODE": "M1"},
+     "operator controls off", "operator controls on", "SHEPHERD_DEPLOYMENT_MODE"),
+    ({}, {"SHEPHERD_DEPLOYMENT_MODE": "readonly", "SHEPHERD_REGISTRY": "root_B"},
+     "operator controls on, the results registry not set",
+     "operator controls off, the results registry root_B",
+     "SHEPHERD_DEPLOYMENT_MODE, SHEPHERD_REGISTRY"),
+], ids=["read-only-over-M1", "root_B-over-root_A", "M1-over-read-only", "mode-and-registry"])
+def test_a_second_start_that_sets_other_settings_opens_nothing_and_says_what_runs(
+        monkeypatch, tmp_path, capsys, folders, first, asked, runs, sets, ref):
+    """OPS-C-R1 (review of 6a2d52e): a second start with
+    SHEPHERD_DEPLOYMENT_MODE=readonly said "Operator controls: off" and
+    opened the running service, whose operator controls were on; one with
+    another workspaces folder opened the service on the first. Both
+    reported success. It now opens nothing, starts nothing, says what runs
+    (its operator controls, each location asked for that it does not have,
+    its address) and what this start sets, says how to get it, and exits
+    non-zero; it prints no "Operator controls" line of its own. The running
+    instance stays the one recorded."""
+    def named(values):
+        return {name: folders.get(value, value) for name, value in values.items()}
+
+    def words(text):
+        for name, path in folders.items():
+            text = text.replace(name, path)
+        return text
+
+    launcher = _launcher()
+    files = _instance_files(launcher, tmp_path)
+    health, handed = _first_start(monkeypatch, launcher, tmp_path, **named(first))
+    recorded = files.info.read_text(encoding="utf-8")
+    capsys.readouterr()
+    try:
+        done = _second_start(monkeypatch, launcher, tmp_path, env=named(asked))
+    finally:
+        health.close()
+        for fd in handed:
+            os.close(fd)
+    ui = f"{health.url}/ui"
+    out = capsys.readouterr().out
+    assert done["status"] == 1, out
+    assert done["server"] is None and done["opened"] == [] and done["installs"] == []
+    assert (f"ERROR: SHEPHERD-Advanced already runs for this configuration at {ui} (pid "
+            f"{os.getpid()}) without the settings this start sets, so it was not opened and no "
+            f"second backend is started on the same data. Running: {words(runs)}. This start "
+            f"sets: {words(sets)} (Ref: {ref}).") in out, out
+    assert ("To start with what this start sets, stop the running service first (Settings › "
+            "Stop service in it, Ctrl-C in its terminal, or end pid") in out
+    assert _operator_lines(out) == []
+    assert files.info.read_text(encoding="utf-8") == recorded
+
+
+def test_a_save_and_apply_in_the_running_service_counts_and_never_refuses_a_plain_start(
+        monkeypatch, tmp_path, capsys, folders):
+    """OPS-C-R1: what the running service has in effect is read now, by the
+    one resolution, from the saved file it reads: after Settings' Save and
+    Apply moved it from root_A to root_C, a plain second start opens it (a
+    Save and Apply never makes one refuse), one that sets root_C opens it,
+    and one that sets root_A, what it was started with, opens nothing."""
+    from src.utils import settings_store
+
+    launcher = _launcher()
+    env = _state_env(tmp_path)
+
+    def save_and_apply(folder):
+        # What Settings' Save does (`data_locations.save_and_apply`), on the
+        # file the service reads: save, then apply.
+        assert settings_store.save({"workspaces_root": folder}, env).saved
+        assert settings_store.apply_saved(env).applied
+
+    save_and_apply(folders["root_A"])
+    health, handed = _first_start(monkeypatch, launcher, tmp_path)
+    save_and_apply(folders["root_C"])
+    capsys.readouterr()
+    try:
+        plain = _second_start(monkeypatch, launcher, tmp_path)
+        out_plain = capsys.readouterr().out
+        same = _second_start(monkeypatch, launcher, tmp_path,
+                             env={"SHEPHERD_WORKSPACES_ROOT": folders["root_C"]})
+        capsys.readouterr()
+        old = _second_start(monkeypatch, launcher, tmp_path,
+                            env={"SHEPHERD_WORKSPACES_ROOT": folders["root_A"]})
+        out_old = capsys.readouterr().out
+    finally:
+        health.close()
+        for fd in handed:
+            os.close(fd)
+    ui = f"{health.url}/ui"
+    assert plain["status"] == 0 and plain["opened"] == [ui]
+    assert _operator_lines(out_plain) == ["on for requests made on this computer (the local start)"]
+    assert same["status"] == 0 and same["opened"] == [ui]
+    assert old["status"] == 1 and old["opened"] == [] and old["server"] is None
+    assert (f"Running: operator controls on, the workspaces folder {folders['root_C']}. This "
+            f"start sets: the workspaces folder {folders['root_A']} "
+            "(Ref: SHEPHERD_WORKSPACES_ROOT).") in out_old
+
+
+def test_a_plain_second_start_says_the_running_service_s_operator_controls(
+        monkeypatch, tmp_path, capsys):
+    """OPS-C-R1: the launcher's "Operator controls" line describes the
+    service the user ends up with. A plain second start of a service started
+    read-only said "on for requests made on this computer (the local start)",
+    its own mode, and opened the read-only one; it now says that one's."""
+    from src.config import server_settings as ss
+
+    launcher = _launcher()
+    health, handed = _first_start(monkeypatch, launcher, tmp_path,
+                                  SHEPHERD_DEPLOYMENT_MODE="readonly")
+    capsys.readouterr()
+    try:
+        done = _second_start(monkeypatch, launcher, tmp_path)
+    finally:
+        health.close()
+        for fd in handed:
+            os.close(fd)
+    out = capsys.readouterr().out
+    assert done["status"] == 0 and done["opened"] == [f"{health.url}/ui"]
+    assert _operator_lines(out) == [f"{ss.MODE_OFF_STATE}. {ss.MODE_NOT_M1_WHY}"]
+
+
+def test_an_info_file_of_an_earlier_launcher_opens_only_a_start_that_sets_nothing(
+        monkeypatch, tmp_path, capsys, folders):
+    """An info file written before the settings were recorded says nothing
+    about them: a start that sets nothing opens the running service, and its
+    line says the controls are not recorded; one that sets a location cannot
+    be told it is in effect, so it opens nothing and says so."""
+    launcher = _launcher()
+    files, fd, health = _running_instance(launcher, tmp_path, "abc123", "abc123")
+    try:
+        plain = _second_start(monkeypatch, launcher, tmp_path)
+        out_plain = capsys.readouterr().out
+        asked = _second_start(monkeypatch, launcher, tmp_path,
+                              env={"SHEPHERD_WORKSPACES_ROOT": folders["root_A"]})
+        out_asked = capsys.readouterr().out
+    finally:
+        health.close()
+        os.close(fd)
+    assert plain["status"] == 0 and plain["opened"] == [f"{health.url}/ui"]
+    assert _operator_lines(out_plain) == [
+        "not recorded (it was started by an earlier version of the launcher); the dashboard's "
+        "header says them"]
+    assert asked["status"] == 1 and asked["opened"] == []
+    assert ("Running: its settings not recorded (it was started by an earlier version of the "
+            f"launcher). This start sets: the workspaces folder {folders['root_A']} "
+            "(Ref: SHEPHERD_WORKSPACES_ROOT).") in out_asked
+
+
+def test_without_a_terminal_a_start_with_other_settings_opens_the_error_page_not_the_service(
+        monkeypatch, tmp_path, folders):
+    """From the desktop entry (no terminal), a second start that sets
+    another folder opens the error page saying what runs and what to do,
+    never the running service."""
+    launcher = _launcher()
+    monkeypatch.setattr(launcher, "send_output_to_log", lambda path: None)
+    health, handed = _first_start(monkeypatch, launcher, tmp_path,
+                                  SHEPHERD_WORKSPACES_ROOT=folders["root_A"])
+    try:
+        done = _second_start(monkeypatch, launcher, tmp_path, terminal=False,
+                             env={"SHEPHERD_WORKSPACES_ROOT": folders["root_B"]})
+    finally:
+        health.close()
+        for fd in handed:
+            os.close(fd)
+    page = tmp_path / "state" / "logs" / "launch-error.html"
+    assert done["status"] == 1 and done["opened"] == [page.as_uri()]
+    text = page.read_text(encoding="utf-8")
+    assert f"the workspaces folder {folders['root_A']}" in text
+    assert "Settings › Stop service in it" in text
 
 
 def test_another_configuration_is_another_instance(monkeypatch, tmp_path):

@@ -107,6 +107,32 @@ def test_the_info_file_is_written_whole_and_read_only_when_it_is_one(tmp_path):
     assert li.read_info(tmp_path / "absent.json") is None
 
 
+def test_an_ask_is_compared_with_what_runs_by_the_one_resolution(tmp_path):
+    """OPS-C-R1: a second start's explicit setting is met when the running
+    server's recorded start settings give the same value by the one
+    resolution (the same folder through a link, the same evidence folders
+    with an empty entry), and a value set and refused is compared as set."""
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (tmp_path / "link").symlink_to(a)
+    info = {"start_settings": {"SHEPHERD_WORKSPACES_ROOT": str(a),
+                               "SHEPHERD_TRAINING_EVIDENCE_DIRS": f"{a}{os.pathsep}{b}"}}
+    env = {"SHEPHERD_SETTINGS_FILE": str(tmp_path / "deployment.json")}
+    assert li.asks_not_met(info, env) == ()
+    assert li.asks_not_met(info, {**env, "SHEPHERD_WORKSPACES_ROOT": str(tmp_path / "link")}) == ()
+    assert li.asks_not_met(info, {**env, "SHEPHERD_TRAINING_EVIDENCE_DIRS":
+                                  f"{a}{os.pathsep}{os.pathsep}{b}"}) == ()
+    assert li.asks_not_met(info, {**env, "SHEPHERD_TRAINING_EVIDENCE_DIRS": str(b)}) == (
+        li.Ask("the training evidence folders", f"{a}, {b}", str(b),
+               "SHEPHERD_TRAINING_EVIDENCE_DIRS"),)
+    absent = tmp_path / "absent"
+    assert li.asks_not_met(info, {**env, "SHEPHERD_WORKSPACES_ROOT": str(absent)}) == (
+        li.Ask("the workspaces folder", str(a), f"{absent} (refused)",
+               "SHEPHERD_WORKSPACES_ROOT"),)
+    assert li.running_environment({}, env) is None
+
+
 def test_the_server_removes_only_its_own_info_file(tmp_path):
     path = tmp_path / "k.json"
     li.write_info(path, instance_id="mine", pid=1, port=8000, url="http://127.0.0.1:8000",
