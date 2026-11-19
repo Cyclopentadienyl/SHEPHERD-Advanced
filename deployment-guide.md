@@ -4214,8 +4214,12 @@ release 同版本）通過驗收。自 Batch 1 起，`deploy.sh` 從 lock 安裝
 
 不設舊環境專用的第二條管線，也不維護歷史版本相容矩陣。
 
-**Launcher 的可選加速套件**（`--flash-attn`、`--xformers`、`--sage-attn`，以及在 x86 上預設的
-FlashAttention）是可選的第三方插件，不在本專案原生支援範圍內，也不列入 `uv.lock`。它們用
+**Launcher 的可選加速套件**（`--flash-attn`、`--xformers`、`--sage-attn`）是可選的第三方插件，
+不在本專案原生支援範圍內，也不列入 `uv.lock`。**啟動只在該加速套件自己的旗標要求時才安裝它**
+（2026-11-19 起）：`configs/deployment.yaml` 中平台的偏好順序（x86 上 FlashAttention 排第一）與
+`--attention-order` 只在已安裝的加速套件中選用，不論有沒有 CUDA，都不會因此安裝任何套件。缺少的
+加速套件會被略過，並以一行說明如何安裝（用它的旗標啟動一次），啟動接著使用順序中的下一個；
+`--no-auto-install` 也會關掉旗標的安裝，此時旗標只會使用已安裝的加速套件。它們用
 `python -m pip` 安裝；部署腳本建立的 `.venv` 原本沒有 pip，但 ARM 原始碼編譯流程
 （`scripts/build_pyg_arm.sh`）會把 pip 裝進去。現在每次安裝都會帶上由 `uv export` 從 `uv.lock`
 匯出的 constraints（`scripts/launch/shep_launch.py` 的 `pip_install`）：需要另一個 torch、或任何

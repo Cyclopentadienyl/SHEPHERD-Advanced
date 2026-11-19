@@ -94,7 +94,7 @@ class _ExecReachedError(Exception):
 
 def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True, busy_ports=(),
                   terminal=True, output_kept=False, launcher=None, keep_lock=False,
-                  browser=True):
+                  browser=True, installed=()):
     """Run the launcher's own main with the server, installs and browser stubbed.
 
     Returns what it did: the server command, whether it exec'd or waited,
@@ -107,6 +107,8 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True, busy_por
     a pipe. The instance lock a start hands to its exec (`handed`) is
     released afterwards, unless `keep_lock`. `browser` is what the stubbed
     ``webbrowser.open`` answers: False, as on a host where it finds none.
+    `installed` names the accelerator modules that import; every other one
+    is absent.
     """
     launcher = launcher or _launcher()
     record = {"exec": [], "run": [], "browsers": 0, "threads": [], "installs": [],
@@ -143,8 +145,9 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True, busy_por
         open=lambda url: record["opened"].append(url) or browser))
     monkeypatch.setattr(launcher, "pip_install", lambda spec, name, **kwargs: (
         record["installs"].append(name) or False))
-    # Every accelerator absent, so a requested one reaches the install decision.
-    monkeypatch.setattr(launcher, "have_module", lambda module: False)
+    # Every accelerator absent unless named, so a requested one reaches the
+    # install decision.
+    monkeypatch.setattr(launcher, "have_module", lambda module: module in installed)
     monkeypatch.setattr(launcher.threading, "Thread", _Thread)
     monkeypatch.setattr(launcher.os, "execve", _execve)
     monkeypatch.setattr(launcher, "load_runtime_settings", lambda: {})
@@ -586,6 +589,104 @@ def test_without_no_auto_install_a_missing_accelerator_is_installed(monkeypatch)
     # The control for the two tests above: the install spy does fire.
     done = _run_launcher(monkeypatch, ["--no-browser"], env={"SHEP_COMMANDLINE_ARGS": "--xformers"})
     assert done["installs"] == ["xFormers"]
+
+
+def _x86_start(monkeypatch, launcher_args, *, cuda, installed=(), launcher=None, **options):
+    """A start on an x86 host, where `configs/deployment.yaml` prefers
+    FlashAttention first, whose torch has `cuda` (None: a CPU build), with
+    only the accelerator modules `installed` importable. The installer is the
+    stub `_run_launcher` puts in `pip_install`'s place: what it was asked to
+    install is ``installs``, and nothing is installed."""
+    launcher = launcher or _launcher()
+    monkeypatch.setattr(launcher.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(launcher, "detect_torch", lambda: ("2.10.0", cuda))
+    return _run_launcher(monkeypatch, ["--no-browser", *launcher_args], launcher=launcher,
+                         installed=installed, **options)
+
+
+def _said_about(out, name):
+    return [line for line in out.splitlines() if name in line and "not installed" in line]
+
+
+@pytest.mark.parametrize("cuda", [None, "13.0"], ids=["cpu", "cuda"])
+def test_an_ordinary_start_installs_no_accelerator(monkeypatch, capsys, cuda):
+    """H1 (the owner's decision of 2026-11-19): an ordinary start on x86,
+    FlashAttention first in the platform's preferred order and not installed,
+    called the installer, with CUDA or without; only --no-auto-install or
+    --naive-attn stopped it. The order now chooses among what is installed:
+    nothing is installed, FlashAttention is left out of the order with one
+    line saying why and how to install it, and the start goes on."""
+    done = _x86_start(monkeypatch, [], cuda=cuda)
+    assert done["installs"] == []
+    assert done["server"] is not None
+    assert done["environ"]["ATTENTION_ORDER"] == "torch_sdpa,naive"
+    assert done["environ"]["FLASHATTN_FORCE_DISABLE"] == "1"
+    said = _said_about(capsys.readouterr().out, "FlashAttention")
+    assert said == ["[SHEPHERD] FlashAttention is not installed, so this start goes on without "
+                    "it (a start installs it only when asked: start once with --flash-attn)"]
+
+
+@pytest.mark.parametrize("cuda", [None, "13.0"], ids=["cpu", "cuda"])
+def test_an_attention_order_installs_nothing_either(monkeypatch, capsys, cuda):
+    """--attention-order is an order too: it names what to use, the first
+    available first, and asks for no install."""
+    done = _x86_start(monkeypatch, ["--attention-order", "flash_attn,xformers,sage_attn,torch_sdpa"],
+                      cuda=cuda)
+    assert done["installs"] == []
+    assert done["environ"]["ATTENTION_ORDER"] == "torch_sdpa"
+    out = capsys.readouterr().out
+    for name, flag in (("FlashAttention", "--flash-attn"), ("xFormers", "--xformers"),
+                       ("SageAttention", "--sage-attn")):
+        said = _said_about(out, name)
+        assert len(said) == 1 and said[0].endswith(f"start once with {flag})")
+
+
+@pytest.mark.parametrize("cuda", [None, "13.0"], ids=["cpu", "cuda"])
+def test_an_ordinary_start_uses_an_installed_accelerator(monkeypatch, capsys, cuda):
+    done = _x86_start(monkeypatch, [], cuda=cuda, installed={"flash_attn"})
+    assert done["installs"] == []
+    assert done["environ"]["ATTENTION_ORDER"] == "flash_attn,torch_sdpa,naive"
+    assert "FLASHATTN_FORCE_DISABLE" not in done["environ"]
+    assert "FlashAttention already available" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("cuda", [None, "13.0"], ids=["cpu", "cuda"])
+def test_an_accelerator_s_own_flag_asks_for_its_install(monkeypatch, cuda):
+    """The explicit request: --flash-attn installs a missing FlashAttention
+    through the launcher's one installer (`pip_install`, constrained to
+    uv.lock: test_launcher_pip_constraints.py), and an installed one is
+    used, not installed again."""
+    done = _x86_start(monkeypatch, ["--flash-attn"], cuda=cuda)
+    assert done["installs"] == ["FlashAttention"]
+    assert done["server"] is not None
+
+    done = _x86_start(monkeypatch, ["--flash-attn"], cuda=cuda, installed={"flash_attn"})
+    assert done["installs"] == []
+    assert done["environ"]["ATTENTION_ORDER"] == "flash_attn,torch_sdpa,naive"
+
+
+def test_no_auto_install_keeps_an_accelerator_flag_to_what_is_installed(monkeypatch, capsys):
+    done = _x86_start(monkeypatch, ["--flash-attn", "--no-auto-install"], cuda="13.0")
+    assert done["installs"] == []
+    assert done["environ"]["ATTENTION_ORDER"] == "torch_sdpa,naive"
+    assert _said_about(capsys.readouterr().out, "FlashAttention") == [
+        "[SHEPHERD] FlashAttention is not installed, so this start goes on without it "
+        "(--no-auto-install: --flash-attn uses it only when it is installed)"]
+
+
+def test_a_plain_second_start_installs_nothing(monkeypatch, tmp_path):
+    """A plain start of a configuration that already runs (the reuse path)
+    opens that one and installs nothing, FlashAttention missing on a CUDA
+    host."""
+    launcher = _launcher()
+    _files, fd, health = _running_instance(launcher, tmp_path, "abc123", "abc123")
+    try:
+        done = _x86_start(monkeypatch, [], cuda="13.0", launcher=launcher,
+                          env=_state_env(tmp_path))
+    finally:
+        health.close()
+        os.close(fd)
+    assert done["status"] == 0 and done["server"] is None and done["installs"] == []
 
 
 def test_only_one_environment_source_is_read(monkeypatch):

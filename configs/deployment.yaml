@@ -41,7 +41,10 @@ defaults:
   # (BACKLOG 50). Nothing read the copy that stood here.
 
   attention_backend:
-    # Order of preference (first available wins)
+    # Order of preference (first available wins). An order only chooses among
+    # what is installed and never installs anything; a start installs an
+    # optional accelerator only when its own flag asks (--flash-attn,
+    # --xformers, --sage-attn: scripts/launch/shep_launch.py).
     prefer: [torch_sdpa, naive]
     allow_xformers: true
     # Environment variable to force-disable flash attention

@@ -4442,9 +4442,14 @@ maintained, goes through the same entry points:
 
 There is no second pipeline for old environments and no matrix of historical combinations.
 
-**The launcher's optional accelerators** (`--flash-attn`, `--xformers`, `--sage-attn`, and on x86
-FlashAttention by default) are optional third-party plugins, outside the project's native support,
-and stay out of `uv.lock`. They install with `python -m pip`, which a deploy-created `.venv` lacks
+**The launcher's optional accelerators** (`--flash-attn`, `--xformers`, `--sage-attn`) are optional
+third-party plugins, outside the project's native support, and stay out of `uv.lock`. **A start
+installs one only when its own flag asks for it** (since 2026-11-19): the platform's preferred order
+in `configs/deployment.yaml` (FlashAttention first on x86) and `--attention-order` choose among the
+accelerators that are installed and never install one, with CUDA or without. A missing one is left
+out with one line saying how to install it (start once with its flag), and the start goes on with
+the next in the order; `--no-auto-install` turns the flags' install off too, so a flag then only uses
+an installed accelerator. They install with `python -m pip`, which a deploy-created `.venv` lacks
 until the ARM source build (`scripts/build_pyg_arm.sh`) puts it there. Every such install now goes
 through constraints that `uv export` makes from `uv.lock` (`pip_install` in
 `scripts/launch/shep_launch.py`): an accelerator that would need another torch, or another version
