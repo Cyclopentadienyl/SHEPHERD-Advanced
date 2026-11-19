@@ -772,6 +772,14 @@ _GAPS = (OTHER_PROTOCOL, ABSENT, NOT_APPLICABLE)
 #: data, and its metrics, then how it was trained, measured and run.
 COMPARE_GROUPS = ("Result", "Model", "Data", "Metrics", "Training settings", "Measurement",
                   "Environment", "Exposure", "References")
+#: **What Compare shows before anything is opened** (NEW-models-results-2):
+#: the key groups' own rows (what each result is, of which model and data)
+#: and the metrics a protocol's table shows in columns (`_metric_columns`);
+#: every other row of a group, an entry under a path, the other metrics and
+#: every row of the later groups, is folded under its group's header, one
+#: disclosure per group that says how many rows it holds (`_group_head`).
+#: Folded rows are in the table as drawn, unrounded, and in every export.
+KEY_GROUPS = ("Result", "Model", "Data")
 #: Measurement settings Compare does not show as rows of their own: the mode
 #: is the result's protocol, which heads its column, the score semantics has
 #: its own row, and the cohort kind is the data's kind, the Data group's "Data
@@ -1431,6 +1439,51 @@ sync();
 """
 
 
+def _summary_metric(ref: Optional[str], values: Sequence[Any],
+                    columns: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether a Metrics row is one its protocol's table shows in a column
+    (`_metric_columns`: a described task's two, a KG link prediction's
+    every metric), for a protocol of a column the row applies to; a metric's
+    own parts (``metrics.<name>.<part>``) are not."""
+    parts = (ref or "").split(".")
+    if len(parts) != 2 or parts[0] != "metrics":
+        return False
+    protocols = {column.get("protocol") for column, value in zip(columns, values)
+                 if value is not OTHER_PROTOCOL}
+    return any(parts[1] in (_metric_columns(protocol, [c for c in columns
+                                                      if c.get("protocol") == protocol])
+                            or ())
+               for protocol in protocols)
+
+
+def _folded(group: str, path: Sequence[str], ref: Optional[str], values: Sequence[Any],
+            columns: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether a Compare row is drawn under its group's fold
+    (`KEY_GROUPS`): an entry under a path in a key group, a metric its
+    protocol's table does not show in a column, every row of a later group."""
+    if group in KEY_GROUPS:
+        return bool(path)
+    if group == "Metrics":
+        return not _summary_metric(ref, values, columns)
+    return True
+
+
+def _group_head(group: str, span: int, folded: int, shown: int) -> str:
+    """A group's header row: its name, and when it holds folded rows the
+    fold that opens them, its summary saying how many ("Model · 2 more rows
+    ›", or "Training settings · 40 rows ›" for a group wholly folded),
+    closed until the reader opens it (`renderers.KEEP_OPEN_JS` keeps it as
+    left while the same results are compared)."""
+    if not folded:
+        return (f'<tr class="shep-rs-grp"><th scope="rowgroup" colspan="{span}">'
+                f'<span class="shep-rs-pin">{r.e(group)}</span></th></tr>')
+    count = f"{folded} {'more ' if shown else ''}row{'s' if folded != 1 else ''}"
+    return (f'<tr class="shep-rs-grp"><th scope="rowgroup" colspan="{span}">'
+            f'<details class="shep-rs-gfold"><summary><span class="shep-rs-pin">{r.e(group)} '
+            f'<span class="shep-rs-gmore">· {r.e(count)} ›</span></span></summary></details>'
+            f'</th></tr>')
+
+
 def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                  asked: int = 0, names: Optional[Sequence[Any]] = None) -> str:
     """The chosen results side by side (at most `COMPARE_CAP`, a cap of this
@@ -1448,7 +1501,12 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     accessible name and its record key its title. Each group is a row group
     of its own (a ``<tbody>`` headed by its name, ``scope="rowgroup"``: by
     HTML's table model its header heads its own rows, never a later group's),
-    under a real ``<colgroup>`` of the Field column and the results'. The
+    under a real ``<colgroup>`` of the Field column and the results'. **The
+    key rows first** (NEW-models-results-2): a group's rows other than its
+    key ones (`_folded`) are drawn folded under its header (`_group_head`),
+    so what the results are, their model, data and headline metrics read in
+    the first screen of Compare, and how they were trained, measured and run
+    is one click away, every value still in the table and the export. The
     sub-heading is a plain cell, not a header: a header there would head
     every later cell of its group, under later paths too, and each entry's
     accessible name already says its whole path. Values
@@ -1475,7 +1533,8 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     # name (`scope="rowgroup"`), so a group's header heads its own rows only
     # and never a later group's; the table's columns are a real `<colgroup>`
     # (the Field column, then one per result).
-    groups: List[List[str]] = []
+    # Each group shown: its name, its rows, how many are folded and shown.
+    groups: List[Dict[str, Any]] = []
     body: List[str] = []
     hidden, unknown_hidden, single_hidden, none_hidden = 0, 0, 0, 0
     group_shown, path_shown = None, None
@@ -1510,15 +1569,17 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                 hidden += 1
             continue
         if group != group_shown:
-            # Its words stay in view when the table scrolls sideways (`shep-rs-pin`).
-            body = [f'<tr class="shep-rs-grp"><th scope="rowgroup" colspan="{span}">'
-                    f'<span class="shep-rs-pin">{r.e(group)}</span></th></tr>']
-            groups.append(body)
+            body = []
+            groups.append({"name": group, "rows": body, "folded": 0, "shown": 0})
             group_shown, path_shown = group, None
         path = parts[:-1]
+        folded = _folded(group, path, ref, values, columns)
+        groups[-1]["folded" if folded else "shown"] += 1
+        rest = ' class="shep-rs-rest"' if folded else ""
         if path and path != path_shown:
             # A plain cell, not a header (`compare_html`'s docstring says why).
-            body.append(f'<tr class="shep-rs-sub"><td colspan="{span}">'
+            body.append(f'<tr class="shep-rs-sub{" shep-rs-rest" if folded else ""}">'
+                        f'<td colspan="{span}">'
                         f'<span class="shep-rs-pin">{r.e(_label(path))}</span></td></tr>')
         path_shown = path or None
         run = ref in _RUN_IDS
@@ -1532,10 +1593,11 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                  f'{r.e("same as " + same)}</td>')
         title = f' title="{r.e(ref)}"' if ref else ""
         if path:
-            body.append(f'<tr class="shep-rs-entry"><th scope="row"{title} '
+            body.append(f'<tr class="shep-rs-entry{" shep-rs-rest" if folded else ""}">'
+                        f'<th scope="row"{title} '
                         f'aria-label="{r.e(_label(parts))}">{r.e(parts[-1])}</th>{cells}</tr>')
         else:
-            body.append(f'<tr><th scope="row"{title}>{r.e(parts[0])}</th>{cells}</tr>')
+            body.append(f'<tr{rest}><th scope="row"{title}>{r.e(parts[0])}</th>{cells}</tr>')
     heads = "".join(f'<th scope="col">{_name_html(name)}<div class="shep-sub">'
                     f'{r.e(protocol_words(row.get("protocol")))}</div></th>'
                     for row, name in zip(columns, heads_said))
@@ -1550,10 +1612,13 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
     notes.append("Values as recorded, side by side; no difference is computed, and each "
                  "metric row is one protocol's.")
     note_html = "".join(f'<p class="shep-mp-p shep-sub">{r.e(n)}</p>' for n in notes)
+    # Its words stay in view when the table scrolls sideways (`shep-rs-pin`).
+    tbodies = "".join(
+        f'<tbody>{_group_head(g["name"], span, g["folded"], g["shown"])}{"".join(g["rows"])}'
+        f'</tbody>' for g in groups)
     if not groups:
-        groups.append([f'<tr><td colspan="{span}" class="shep-muted">Every row is '
-                       'recorded alike in every column.</td></tr>'])
-    tbodies = "".join(f'<tbody>{"".join(rows_)}</tbody>' for rows_ in groups)
+        tbodies = (f'<tbody><tr><td colspan="{span}" class="shep-muted">Every row is '
+                   'recorded alike in every column.</td></tr></tbody>')
     cols = (f'<colgroup><col class="shep-rs-cfield"></colgroup>'
             f'<colgroup span="{len(columns)}" class="shep-rs-cvals"></colgroup>')
     # Named by the results compared (`renderers.keep_as`): a value unfolded

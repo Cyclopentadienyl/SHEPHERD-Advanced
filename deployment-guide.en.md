@@ -4197,7 +4197,13 @@ warning, with ▲; and three segments:
   environment, the exposure and every metric, as recorded, each group once, in the order the
   result, the model, the data and the metrics, then the training settings, the measurement, the
   environment, the exposure and the content references (since the ops-wiring and UI round).
-  **Differences only compares the cells a row applies to**: another protocol's metric and another
+  **The key rows first, the rest folded** (since the review of 6a2d52e): each group shows its key
+  rows (the result's, the model's and the data's own fields, and the metrics its protocol's table
+  shows in columns) and folds the rest under its header, which says how many rows it holds
+  ("Metrics · 15 more rows ›"); the training settings, the measurement, the environment, the
+  exposure and the content references are folded whole ("Training settings · 30 rows ›"). A fold
+  opens with a click and stays as you left it; every folded value is in the table, unrounded, and
+  in the export. **Differences only compares the cells a row applies to**: another protocol's metric and another
   data kind's field are no difference, so such a row is hidden too and counted apart ("… that
   apply to one result only"). **Each fact once** (since the same round): a fact two fields record
   alike in every column (a digest such as the samples' in the data's identity and in its content

@@ -415,9 +415,11 @@ def test_compare_never_puts_two_protocols_metrics_on_one_row_and_caps_at_five(
     assert "Mode Z9 hits@1" not in differing and "Disease pooled MRR" not in differing
     assert "that apply to one result only" in _text(differing)
     # Each group once, in its place: the second protocol's metrics are not
-    # split from the first's by References (Stage 8b review).
+    # split from the first's by References (Stage 8b review). A header is its
+    # group's name, then its fold's count where it folds rows
+    # (NEW-models-results-2: "Model · 44 more rows ›").
     for every in (rs.compare_html([disease, odd], False), differing):
-        heads = [_text(head) for head in
+        heads = [_text(head).split(" · ")[0] for head in
                  re.findall(r'<th scope="rowgroup"[^>]*>(.*?)</th>', every)]
         assert heads
         assert len(heads) == len(set(heads))
@@ -1432,6 +1434,120 @@ def test_compare_keeps_numbers_and_run_ids_whole_and_scrolls_inside_its_wrapper(
     assert "display: none" in _css_rule("#shep-page-models .shep-rs-cue[hidden]")
 
 
+#: The four results NEW-models-results-2 was measured on (the probe workspace
+#: probe-rc, its first four Compare choices), as the results service read
+#: them: `tests/fixtures/compare_four_results.json`.
+FOUR_RESULTS = Path(__file__).parents[1] / "fixtures" / "compare_four_results.json"
+#: Compare's box at 1850 x 960 with those four chosen: its wrapper's client
+#: box, 937 x 631 px, measured in the served page (Models › Results).
+COMPARE_BOX = (937, 631)
+
+#: Compare of the four drawn in the dashboard's head (its CSS, its fonts) in
+#: a box of Compare's width: where each group's shown rows end against the
+#: table's top, then the Metrics and Training settings folds opened.
+_COMPARE_FOUR_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 },
+                                                 deviceScaleFactor: 1 })).newPage();
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#shep-four table.shep-rs-cmp', { timeout: 60000 });
+  await page.evaluate(() => document.fonts.ready);
+  const groups = () => page.evaluate(() => {
+    const t = document.querySelector('#shep-four table.shep-rs-cmp');
+    const top = t.getBoundingClientRect().top;
+    return [...t.querySelectorAll('tbody')].map((b) => {
+      const rows = [...b.children].filter((r) => r.getBoundingClientRect().height > 0);
+      const name = b.querySelector('tr.shep-rs-grp th');
+      return { name: name ? name.textContent.trim() : '', shown: rows.length, rows: b.children.length,
+               bottom: Math.round(rows[rows.length - 1].getBoundingClientRect().bottom - top) };
+    });
+  });
+  const closed = await groups();
+  const fonts = await page.evaluate(() => [...document.fonts].filter((f) => /Plex Sans/.test(f.family))
+    .map((f) => f.status));
+  for (const name of ['Metrics', 'Training settings']) {
+    await page.locator('#shep-four tr.shep-rs-grp summary', { hasText: name }).click();
+  }
+  const opened = await groups();
+  console.log(JSON.stringify({ closed, opened, fonts }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_compare_of_four_shows_its_key_groups_in_its_first_screen_and_folds_the_rest(tmp_path):
+    """NEW-models-results-2: Compare of four results, Differences only, ended
+    its key rows (Result, Model, Data, Metrics) 1,448 px down its 631 px box
+    at 1850 x 960 (2.3 screens; 3,627 px in all), most of it 16 disease
+    metrics that truly differ and how each was trained. Now each group shows
+    its key rows (a key group's own fields; the metrics its protocol's table
+    shows in columns) and folds the rest under its header, which says how
+    many rows it holds; the later groups are folded whole. In the
+    dashboard's head at Compare's width the key groups end within the box
+    (603 px measured in the served page); every metric is still in the
+    table, unrounded, opened by its fold, and every one is in the export.
+    Fails on 6a2d52e (no fold: the Metrics group ends 1,448 px down)."""
+    import json
+
+    import gradio as gr
+
+    from src.api.services import results as service
+    from src.webui.app import mount_options
+    from src.webui.components import results_segment as rs
+    from src.webui.shell import plain_html
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    four = json.loads(FOUR_RESULTS.read_text(encoding="utf-8"))
+    rows, names = four["rows"], four["names"]
+    markup = rs.compare_html(rows, True, names=names)
+    heads = [html_lib.unescape(re.sub(r"<[^>]+>", "", h)).strip() for h in
+             re.findall(r'<th scope="rowgroup"[^>]*>(.*?)</th>', markup)]
+    assert heads == ["Result", "Model · 1 more row ›", "Data · 1 more row ›",
+                     "Metrics · 15 more rows ›", "Training settings · 30 rows ›",
+                     "Measurement · 5 rows ›", "Exposure · 1 row ›", "References · 1 row ›"]
+    # Folded, never dropped: every metric that differs is a row of the table,
+    # the summary's (its protocol's table columns) shown, the rest under the
+    # fold; with Differences only off, every metric of every result.
+    shown = re.findall(r'<tr><th scope="row" title="(metrics\.[^"]+)"', markup)
+    folded = re.findall(r'<tr class="shep-rs-rest"><th scope="row" title="(metrics\.[^"]+)"',
+                        markup)
+    assert shown == ["metrics.pooled_mrr"] and len(folded) == 15
+    every = rs.compare_html(rows, False, names=names)
+    for row in rows:
+        for metric in row["metrics"]:
+            assert f'title="metrics.{metric["name"]}"' in every, metric["name"]
+            assert rs.recorded_value_text(metric["value"]) in every, metric
+    # The export (the service's one serializer, one row per metric) is every
+    # result's every metric, as recorded.
+    exported = json.loads(service.to_json(rows))["rows"]
+    assert sorted((x["report_sha256"], x["metric_name"], x["value"]) for x in exported) == sorted(
+        (row["report_sha256"], m["name"], m["value"]) for row in rows for m in row["metrics"])
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    width, height = COMPARE_BOX
+    with gr.Blocks() as demo:
+        with gr.Column(elem_id="shep-page-models"):
+            plain_html(f'<div id="shep-four" style="width: {width + 2}px">{markup}</div>')
+    with served(demo, **mount_options()) as base:
+        seen = run_node(_COMPARE_FOUR_JS, tmp_path, base[:-len("gradio_api")])
+    assert seen["fonts"] and set(seen["fonts"]) == {"loaded"}, seen["fonts"]
+    closed = {g["name"]: g for g in seen["closed"]}
+    metrics = next(g for name, g in closed.items() if name.startswith("Metrics"))
+    assert metrics["bottom"] <= height, seen["closed"]
+    assert (metrics["shown"], metrics["rows"]) == (2, 17)
+    for name, group in closed.items():
+        if not name.startswith(("Result", "Model", "Data", "Metrics")):
+            assert group["shown"] == 1, (name, group)       # its header only
+    opened = {g["name"]: g for g in seen["opened"]}
+    for name in ("Metrics", "Training settings"):
+        group = next(g for n, g in opened.items() if n.startswith(name))
+        assert group["shown"] == group["rows"], (name, group)
+
+
 def _layers(declarations):
     """A rule's ``background`` layers, top first (split at its top-level commas)."""
     value = re.search(r"background: ([^;]*);", declarations).group(1)
@@ -1506,7 +1622,9 @@ def test_compare_names_a_nested_entry_by_its_own_words_under_its_path(world, mon
                                             "gradient_clip": "1.0"}}}}}
     path = "Effective setting · Loaders › Train › Recipe › Reference filled"
     markup = rs.compare_html([first, second], True)
-    sub = re.findall(r'<tr class="shep-rs-sub"><td colspan="3">'
+    # (A row drawn under its group's fold carries ``shep-rs-rest`` too,
+    # NEW-models-results-2.)
+    sub = re.findall(r'<tr class="shep-rs-sub(?: shep-rs-rest)?"><td colspan="3">'
                      r'<span class="shep-rs-pin">([^<]*)</span></td></tr>', markup)
     # Said once, above its two differing entries; the alike gradient clip and
     # the train loader's alike entries are hidden, and so is their path.
@@ -1514,10 +1632,10 @@ def test_compare_names_a_nested_entry_by_its_own_words_under_its_path(world, mon
     assert "Effective setting · Loaders › Train" not in [html_lib.unescape(w) for w in sub]
     ref = "model.effective_settings.loaders.train.recipe.reference_filled"
     opening = re.escape(f'<span class="shep-rs-pin">{html_lib.escape(path)}</span></td></tr>')
-    block = re.search(opening + r'(.*?)(?:<tr class="shep-rs-(?:sub|grp)"|</tbody>)',
-                      markup).group(1)
-    assert re.findall(r'<tr class="shep-rs-entry"><th scope="row" title="([^"]*)" '
-                      r'aria-label="([^"]*)">([^<]*)</th>', block) == [
+    block = re.search(opening + r'(.*?)(?:<tr class="shep-rs-(?:sub|grp)(?: shep-rs-rest)?"'
+                      r'|</tbody>)', markup).group(1)
+    assert re.findall(r'<tr class="shep-rs-entry(?: shep-rs-rest)?"><th scope="row" '
+                      r'title="([^"]*)" aria-label="([^"]*)">([^<]*)</th>', block) == [
         (f"{ref}.learning_rate", html_lib.escape(f"{path} › Learning rate"), "Learning rate"),
         (f"{ref}.scheduler", html_lib.escape(f"{path} › Scheduler"), "Scheduler")]
     assert _cells(markup, f"{path} › Learning rate") == ["1e-5 (README U3)", "5e-5 (README U3)"]
@@ -1534,16 +1652,17 @@ def test_compare_names_a_nested_entry_by_its_own_words_under_its_path(world, mon
         bodies = re.findall(r"<tbody>(.*?)</tbody>", markup)
         assert bodies and all(body.startswith('<tr class="shep-rs-grp"><th scope="rowgroup"')
                               and body.count('scope="rowgroup"') == 1 for body in bodies)
-        assert '<tr class="shep-rs-sub"><th' not in markup
+        assert not re.search(r'<tr class="shep-rs-sub[^"]*"><th', markup)
         assert set(re.findall(r'<th(?=[ >])( scope="[a-z]+")?', "".join(bodies))) == {
             ' scope="row"', ' scope="rowgroup"'}
-        assert len(re.findall(r'<tr class="shep-rs-sub">', markup)) == len(
-            re.findall(r'<tr class="shep-rs-sub"><td colspan="3"><span class="shep-rs-pin">'
-                       r'[^<]*</span></td></tr>', markup)) > 0
+        assert len(re.findall(r'<tr class="shep-rs-sub[^"]*">', markup)) == len(
+            re.findall(r'<tr class="shep-rs-sub(?: shep-rs-rest)?"><td colspan="3">'
+                       r'<span class="shep-rs-pin">[^<]*</span></td></tr>', markup)) > 0
         heading = None
         for kind, words, attrs, name in re.findall(
-                r'<tr class="shep-rs-(sub|grp)"><t[hd][^>]*><span class="shep-rs-pin">([^<]*)'
-                r'</span></t[hd]></tr>|<tr(?: class="shep-rs-entry")?><th scope="row"([^>]*)>'
+                r'<tr class="shep-rs-(sub|grp)(?: shep-rs-rest)?"><t[hd][^>]*>'
+                r'(?:<details[^>]*><summary>)?<span class="shep-rs-pin">([^<]*)'
+                r'|<tr(?: class="(?:shep-rs-entry ?)?(?:shep-rs-rest)?")?><th scope="row"([^>]*)>'
                 r'([^<]*)</th>', markup):
             if kind:
                 heading = html_lib.unescape(words) if kind == "sub" else None

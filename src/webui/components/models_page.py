@@ -1986,7 +1986,15 @@ PAGE_CSS = f"""
 {_PAGE} .shep-rs-cmp thead th:first-child {{ z-index: 2; }}
 {_PAGE} .shep-rs-cmp th[scope="row"] {{ text-align: left; font-weight: 400; color: var(--shep-text-2); background: var(--shep-panel); }}
 {_PAGE} .shep-rs-cmp tr.shep-rs-entry th[scope="row"] {{ padding-left: 22px; }}
-{_PAGE} .shep-rs-cmp tr.shep-rs-grp th {{ text-align: left; font-weight: 600; background: var(--shep-panel-2); }}
+{_PAGE} .shep-rs-cmp tr.shep-rs-grp th {{ text-align: left; font-weight: 600; background: var(--shep-panel-2); padding-top: 6px; padding-bottom: 6px; }}
+/* Compare's key rows first (NEW-models-results-2): a group's other rows
+   (`shep-rs-rest`) are hidden while its header's fold is closed; the fold's
+   summary is the group's name, then how many rows it holds, as a link. */
+{_PAGE} .shep-rs-cmp tbody:has(> tr.shep-rs-grp details.shep-rs-gfold:not([open])) > tr.shep-rs-rest {{ display: none; }}
+{_PAGE} .shep-rs-cmp details.shep-rs-gfold > summary {{ cursor: pointer; list-style: none; min-height: 24px; line-height: 24px; }}
+{_PAGE} .shep-rs-cmp details.shep-rs-gfold > summary::-webkit-details-marker {{ display: none; }}
+{_PAGE} .shep-rs-cmp .shep-rs-gmore {{ font-weight: 400; color: var(--shep-accent-text); }}
+{_PAGE} .shep-rs-cmp details.shep-rs-gfold > summary:hover .shep-rs-gmore {{ text-decoration: underline; }}
 {_PAGE} .shep-rs-cmp tr.shep-rs-sub td {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); line-height: inherit; padding: 12px 10px 4px; border-bottom: 0; }}
 {_PAGE} .shep-rs-cmp .shep-rs-pin {{ position: sticky; left: 10px; display: inline-block; }}
 /* Compare's sideways scroll cue at its top (`results_segment.SCROLL_CUE`): a line
