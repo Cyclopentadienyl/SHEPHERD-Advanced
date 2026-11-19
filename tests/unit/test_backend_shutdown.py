@@ -876,13 +876,20 @@ def test_the_launcher_waits_for_the_server_through_a_ctrl_c(tmp_path):
     """Ctrl-C reaches the terminal's foreground group, the launcher and the
     server alike. The launcher keeps waiting while the server shuts down (and
     stops its job), and exits with the server's status; `subprocess.run`
-    killed the server 0.25 s after the first Ctrl-C."""
+    killed the server 0.25 s after the first Ctrl-C.
+
+    The two lines read are the launcher's "$ <command>" and the server's
+    READY. The stand-in launcher runs unbuffered (``-u``), as on the console
+    where `serve` runs: without it, and without PYTHONUNBUFFERED in the
+    environment, its line stayed in its buffer until it exited, so the read
+    waited out the server's sleep and the Ctrl-C reached a launcher already
+    exiting (-2; the full suite at 3288d65, run without PYTHONUNBUFFERED)."""
     server, launcher = tmp_path / "server.py", tmp_path / "launcher.py"
     server.write_text(SLOW_SERVER)
     launcher.write_text(LAUNCHER)
     done_marker = tmp_path / "done"
     process = subprocess.Popen(
-        [sys.executable, str(launcher), str(REPO / "scripts" / "launch" / "shep_launch.py"),
+        [sys.executable, "-u", str(launcher), str(REPO / "scripts" / "launch" / "shep_launch.py"),
          str(server), str(done_marker)],
         stdout=subprocess.PIPE, text=True, start_new_session=True, cwd=str(REPO))
     try:
