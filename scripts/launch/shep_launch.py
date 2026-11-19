@@ -451,9 +451,15 @@ def send_output_to_log(path: Path) -> None:
           f"(pid {os.getpid()}, {REPO_ROOT}) =====", flush=True)
 
 
+#: The error page's title and heading, which say what happened: a start that
+#: failed (the default), or a second start that opened nothing because the
+#: service of its configuration runs without what it sets (`open_running`).
+DID_NOT_START = "SHEPHERD-Advanced did not start"
+RUNS_WITHOUT_SETTINGS = "SHEPHERD-Advanced already runs without the settings this start sets"
+
 ERROR_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>SHEPHERD-Advanced did not start</title>
+<title>{heading}</title>
 <style>
 body {{ font: 15px/1.5 system-ui, sans-serif; color: #1f2430; background: #fff;
        max-width: 720px; margin: 40px auto; padding: 0 16px; }}
@@ -463,7 +469,7 @@ dd {{ margin: 4px 0 0; }}
 code {{ font-size: 14px; word-break: break-all; }}
 .meta {{ font-size: 14px; color: #434a58; margin-top: 24px; }}
 </style></head>
-<body><h1>SHEPHERD-Advanced did not start</h1>
+<body><h1>{heading}</h1>
 <dl><dt>What failed</dt><dd>{what}</dd>
 <dt>What to do</dt><dd>{remedy}</dd>
 <dt>The full log</dt><dd><code>{log}</code></dd></dl>
@@ -472,11 +478,14 @@ code {{ font-size: 14px; word-break: break-all; }}
 """
 
 
-def write_error_page(page: Path, what: str, remedy: str, log_path: Optional[Path]) -> Path:
-    """The local error page of a start without a terminal: what failed, what
-    to do and where the log is, every value escaped. Written whole (0600), by
-    the settings files' one atomic writer (`write_text_atomic`)."""
-    text = ERROR_PAGE.format(what=html.escape(what), remedy=html.escape(remedy),
+def write_error_page(page: Path, what: str, remedy: str, log_path: Optional[Path],
+                     heading: str = DID_NOT_START) -> Path:
+    """The local error page of a start without a terminal: under `heading`
+    (its title too), what failed, what to do and where the log is, every
+    value escaped. Written whole (0600), by the settings files' one atomic
+    writer (`write_text_atomic`)."""
+    text = ERROR_PAGE.format(heading=html.escape(heading),
+                             what=html.escape(what), remedy=html.escape(remedy),
                              log=html.escape(str(log_path) if log_path else "none was written"),
                              when=html.escape(time.strftime("%Y-%m-%d %H:%M:%S")),
                              repo=html.escape(str(REPO_ROOT)))
@@ -484,11 +493,12 @@ def write_error_page(page: Path, what: str, remedy: str, log_path: Optional[Path
     return page
 
 
-def show_error_page(page: Path, what: str, remedy: str, log_path: Optional[Path]) -> None:
+def show_error_page(page: Path, what: str, remedy: str, log_path: Optional[Path],
+                    heading: str = DID_NOT_START) -> None:
     """Write the error page and open it in the browser; a failure to do
     either is logged, never raised (the start has failed already)."""
     try:
-        written = write_error_page(page, what, remedy, log_path)
+        written = write_error_page(page, what, remedy, log_path, heading)
         log(f"The error page is {written}")
         open_in_browser(written.as_uri())
     except Exception as exc:  # noqa: BLE001 - the start has failed already
@@ -510,16 +520,19 @@ def server_gone_page(page: str, log_path: str) -> Callable[[], None]:
 
 class Failure:
     """How this start reports a failure before the server is up: a log line
-    always, and the error page too when it has no terminal (`page` set)."""
+    always, and the error page too when it has no terminal (`page` set),
+    under the heading that says what happened (`DID_NOT_START` unless the
+    failure names another)."""
 
     def __init__(self, page: Optional[Path] = None, log_path: Optional[Path] = None) -> None:
         self.page = page
         self.log_path = log_path
 
-    def __call__(self, what: str, remedy: str, status: int) -> int:
+    def __call__(self, what: str, remedy: str, status: int,
+                 heading: str = DID_NOT_START) -> int:
         log(f"ERROR: {what}")
         if self.page is not None:
-            show_error_page(self.page, what, remedy, self.log_path)
+            show_error_page(self.page, what, remedy, self.log_path, heading)
         return status
 
 
@@ -679,8 +692,9 @@ OTHER_SETTINGS_REMEDY = (
 def open_running(running: Mapping[str, Any], args: argparse.Namespace, fail: Failure) -> int:
     """A second start of a configuration that runs (plan §4.5): open it, or,
     when it does not have what this start asks for, open nothing and say what
-    runs (OPS-C-R1, `launch_instance.asks_not_met`). Its "Operator controls"
-    line is the running service's, never this start's own."""
+    runs (OPS-C-R1, `launch_instance.asks_not_met`), under the error page's
+    `RUNS_WITHOUT_SETTINGS` heading, never "did not start". Its "Operator
+    controls" line is the running service's, never this start's own."""
     ui = f"{running['url']}/ui"
     pid = running.get("pid")
     unmet = instances.asks_not_met(running, os.environ)
@@ -701,7 +715,7 @@ def open_running(running: Mapping[str, Any], args: argparse.Namespace, fail: Fai
         status = fail(f"SHEPHERD-Advanced already runs for this configuration at {ui} (pid {pid}) "
                       "without the settings this start sets, so it was not opened and no second "
                       f"backend is started on the same data. Running: {runs}. This start sets: "
-                      f"{asked} (Ref: {refs}).", remedy, 1)
+                      f"{asked} (Ref: {refs}).", remedy, 1, heading=RUNS_WITHOUT_SETTINGS)
         log(remedy)
         return status
     log(f"SHEPHERD-Advanced already runs for this configuration at {ui} (pid {pid}); no second "

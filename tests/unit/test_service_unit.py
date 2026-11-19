@@ -1150,11 +1150,19 @@ def test_an_info_file_of_an_earlier_launcher_opens_only_a_start_that_sets_nothin
             "(Ref: SHEPHERD_WORKSPACES_ROOT).") in out_asked
 
 
+def _page_heads(text):
+    """The error page's title and heading, as read."""
+    return (re.search(r"<title>(.*?)</title>", text, re.S).group(1),
+            re.search(r"<h1>(.*?)</h1>", text, re.S).group(1))
+
+
 def test_without_a_terminal_a_start_with_other_settings_opens_the_error_page_not_the_service(
         monkeypatch, tmp_path, folders):
     """From the desktop entry (no terminal), a second start that sets
     another folder opens the error page saying what runs and what to do,
-    never the running service."""
+    never the running service. Its title and heading say that it runs
+    without those settings (final flow at 14e035d, G1: both said
+    "SHEPHERD-Advanced did not start" while it ran). Fails on 14e035d."""
     launcher = _launcher()
     monkeypatch.setattr(launcher, "send_output_to_log", lambda path: None)
     health, handed = _first_start(monkeypatch, launcher, tmp_path,
@@ -1171,6 +1179,8 @@ def test_without_a_terminal_a_start_with_other_settings_opens_the_error_page_not
     text = page.read_text(encoding="utf-8")
     assert f"the workspaces folder {folders['root_A']}" in text
     assert "Settings › Stop service in it" in text
+    heads = ("SHEPHERD-Advanced already runs without the settings this start sets",) * 2
+    assert _page_heads(text) == heads and "did not start" not in text
 
 
 def test_another_configuration_is_another_instance(monkeypatch, tmp_path):
@@ -1325,6 +1335,7 @@ def test_without_a_terminal_a_refused_start_opens_a_page_saying_why(monkeypatch,
     assert done["opened"] == [page.as_uri()]
     assert f"Opened {page.as_uri()} in the browser." in capsys.readouterr().out
     text = page.read_text(encoding="utf-8")
+    assert _page_heads(text) == ("SHEPHERD-Advanced did not start",) * 2
     assert "refusing to bind all interfaces" in text and "section 4.13" in text
     assert str(tmp_path / "state" / "logs" / "launch.log") in text
     assert (page.stat().st_mode & 0o777) == 0o600
