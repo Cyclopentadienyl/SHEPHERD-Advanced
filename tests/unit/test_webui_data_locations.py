@@ -517,7 +517,9 @@ def test_stop_service_asks_once_then_stops_through_the_orderly_stop(monkeypatch)
 
 
 #: Settings at a phone's width and at the owner's window: each data
-#: location's box, how wide it is and whether its placeholder fits in it.
+#: location's box, how wide it is and whether its placeholder fits in it,
+#: and each of its row's buttons shown (Check, Save, Create): whether it lies
+#: inside its row's content box.
 _BOXES_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
@@ -543,6 +545,17 @@ const QUEUE_JS = __QUEUE_JS__;
         const room = f.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight);
         boxes[key] = { width: Math.round(r.width),
                        hint_fits: c.measureText(f.placeholder.split('\n')[0]).width <= room + 0.5 };
+        const row = document.getElementById(`dl_row_${key}`);
+        const rs = getComputedStyle(row), rr = row.getBoundingClientRect();
+        const left = rr.left + parseFloat(rs.paddingLeft), right = rr.right - parseFloat(rs.paddingRight);
+        boxes[key].buttons = [];
+        for (const part of ['check', 'save', 'create']) {
+          const b = document.getElementById(`dl_${part}_${key}`);
+          const br = b ? b.getBoundingClientRect() : null;
+          if (!br || br.width === 0 || b.offsetParent === null) { continue; }
+          boxes[key].buttons.push({ part, left: br.left, right: br.right, row_left: left, row_right: right,
+                                    inside: br.left >= left - 0.5 && br.right <= right + 0.5 });
+        }
       }
       return { boxes, sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth };
     });
@@ -561,7 +574,10 @@ def test_every_path_box_keeps_room_for_a_path_at_every_window(dl, tmp_path, monk
     now keeps room for a path (16em, or its whole row), its buttons wrapping
     under it where the row cannot hold them; at 960x1080 and 1850x960 the
     row stays one line (an operator's Settings, every answer in). Fails on
-    fcc3dea."""
+    fcc3dea. The review of 5188b4e (2026-11-19): at 390x844 Create, indented
+    by the key column's 8em as if its box sat beside the key, ended at x 381
+    past its row's 357; every button shown now lies inside its row (fails on
+    5188b4e)."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.operator_access import operator_mode
@@ -578,6 +594,7 @@ def test_every_path_box_keeps_room_for_a_path_at_every_window(dl, tmp_path, monk
         assert at["sideways"] is False, (size, at)
         for key, box in at["boxes"].items():
             assert box["hint_fits"] and box["width"] >= 200, (size, key, box)
+            assert box["buttons"] and all(b["inside"] for b in box["buttons"]), (size, key, box)
 
 
 #: Settings for an operator: drafts typed in the evidence folders box and in

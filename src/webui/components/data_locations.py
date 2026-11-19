@@ -670,7 +670,10 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: dashboard's type) is longer than 16em leaves it (215 px at 390 x 844).
 #: A read-only row's short reason (`ROW_LOCKED`) is a line of its own just
 #: under its box and buttons and above its Create: under Check and Save at its
-#: end, or at its start where the buttons wrap there (narrow).
+#: end, or at its start where the buttons wrap there (narrow). Create starts
+#: under the box, past the key's 8em, while the box sits beside the key; narrow,
+#: where the box wraps under the key, it starts at the row's start (at 390 x 844
+#: the indent put it 2 px past its row's edge; the review of 5188b4e).
 PAGE_CSS = f"""
 {_PAGE} #shep-dl-bd {{ padding: 4px 16px 12px !important; gap: 0 !important; }}
 {_PAGE} #shep-dl-top {{ gap: 8px !important; align-items: center; flex-wrap: wrap; }}
@@ -711,6 +714,7 @@ PAGE_CSS = f"""
   {_PAGE} .shep-dl-left {{ flex-basis: 100% !important; }}
   {_PAGE} .shep-dl-set {{ flex-wrap: wrap; }}
   {_PAGE} [id^="dl_lock_"] .shep-reason {{ justify-content: flex-start; }}
+  {_PAGE} .shep-dl-create {{ padding-left: 0; }}
   {_PAGE} .shep-dl-set > .block:not(.shep-dl-keycell) {{ flex: 1 1 16em !important; min-width: min(16em, 100%) !important; }}
   {_PAGE} #dl_box_{KEY_TRAINING_EVIDENCE_DIRS} {{ flex-basis: 100% !important; }}
 }}
