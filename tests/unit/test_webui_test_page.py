@@ -1282,7 +1282,7 @@ def test_a_lone_testable_checkpoint_is_chosen_as_the_shared_list_chooses_one(sit
     demo, _ctx, _registry = _page_component()
     refresh = _named(demo, "_refresh")
     out = dict(zip([b.elem_id for b in refresh.outputs],
-                   refresh.fn(None, None, None, None, {}, None, request), strict=True))
+                   refresh.fn(None, None, None, None, {}, None, None, request), strict=True))
     assert out["shep-test-model"]["value"] == site.key
     assert out["shep-test-model-run"]["value"] == ml.item_run_key(child)
     assert "choose the run" not in out["shep-test-start-reason"]
@@ -2535,7 +2535,7 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
 
     with served(demo) as base:
         browser = ServedSession(base, demo)
-        assert browser.wait(join(refresh, [None] * 6))
+        assert browser.wait(join(refresh, [None] * len(refresh.inputs)))
         assert browser.wait(pick(LABEL))
         runs = [r["run_id"] for r in browser.state(reports_state)["runs"]]
         assert sorted(runs) == sorted([site.run_id, other]) and runs[0] == site.run_id
@@ -2622,7 +2622,7 @@ def test_a_tick_that_crosses_an_acts_read_never_brings_back_an_older_job_card(
 
     with served(demo) as base:
         browser = ServedSession(base, demo)
-        assert browser.wait(browser.join(refresh, [None] * 6))
+        assert browser.wait(browser.join(refresh, [None] * len(refresh.inputs)))
         browser.set_state(ctx.location, tp.PAGE)
         hold.set()
         answers = []
@@ -2705,7 +2705,7 @@ def test_an_ended_run_is_handed_over_once_and_a_click_after_it_stays(site, monke
                                         change])
 
         running = {"job_id": "test-9", "status": "running"}
-        assert browser.wait(browser.join(refresh, [None] * 6))
+        assert browser.wait(browser.join(refresh, [None] * len(refresh.inputs)))
         browser.set_state(ctx.location, tp.PAGE)
         newest = browser.state(selected_report)
         assert newest == site.run_id != other
@@ -2767,7 +2767,7 @@ def test_a_run_started_here_that_ends_before_the_next_tick_is_chosen(site, monke
             return browser.join(after, [None, None, None, "demo", None, None, None, None,
                                         change])
 
-        assert browser.wait(browser.join(refresh, [None] * 6))
+        assert browser.wait(browser.join(refresh, [None] * len(refresh.inputs)))
         browser.set_state(ctx.location, tp.PAGE)
         assert browser.wait(hand_over(tick()))
         assert tick().get("__type__") == "update"
@@ -2821,7 +2821,7 @@ def test_a_late_reload_never_writes_back_another_workspaces_checkpoints(site, mo
 
     with served(demo) as base:
         browser = ServedSession(base, demo)
-        assert browser.wait(browser.join(refresh, [None] * 6))
+        assert browser.wait(browser.join(refresh, [None] * len(refresh.inputs)))
         listing = browser.state(models_state)
         assert listing["workspace"] == "demo" and listing["items"], listing
         hold.set()
@@ -3528,7 +3528,7 @@ def test_every_gated_button_is_locked_only_when_refused_and_then_says_why(site, 
     for operator in (True, False):
         request = operator_request(monkeypatch) if operator else _readonly()
         out = dict(zip([b.elem_id for b in refresh.outputs],
-                       refresh.fn(None, None, None, None, {}, None, request)))
+                       refresh.fn(None, None, None, None, {}, None, None, request)))
         for button, beside in GATED_REASONS.items():
             label, reason = out[button]["value"], out[beside]
             if button == "shep-test-cancel" and status not in ("running", "stopping"):
@@ -4900,7 +4900,7 @@ def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
 
     with served(demo) as url:
         browser = ServedSession(url, demo)
-        assert browser.wait(browser.join(refresh, [None] * 6))
+        assert browser.wait(browser.join(refresh, [None] * len(refresh.inputs)))
         # The child's run picked: its latest save is chosen with it.
         chosen = browser.join(on_run, [None, None, None, "demo", LABEL, run_of(site.key), None,
                                        None, None, None])

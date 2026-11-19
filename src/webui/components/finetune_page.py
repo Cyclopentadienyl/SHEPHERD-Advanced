@@ -1401,7 +1401,7 @@ def create_finetune_page(ctx: Any) -> None:
                        elem_id="ft_job_hd")
             with gr.Column(elem_id="ft_job_bd", elem_classes=["shep-ft-bd"]):
                 card = plain_html(job_card_html({"status": "idle"}, operator=False),
-                                  elem_id="ft_card", js_on_load=tc.TRIGGER_JS)
+                                  elem_id="ft_card", js_on_load=r.TRIGGER_JS)
                 with gr.Row(elem_classes=["shep-ft-stop-row"]):
                     # Drawn only while a child of this page's start runs or
                     # stops (`actions_view`'s ``stop_shown``): none at first.
@@ -1518,7 +1518,7 @@ def create_finetune_page(ctx: Any) -> None:
 
     def _on_card_click(evt: gr.EventData):
         """The card's "Charts on Research › Training ›"."""
-        return ctx.go("training") if tc.event_act(evt) == "training" else ctx.no_nav()
+        return ctx.go("training") if r.event_act(evt) == "training" else ctx.no_nav()
 
     card.click(_on_card_click, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
 

@@ -1791,6 +1791,26 @@ KEEP_OPEN_JS = r"""
 """
 
 
+#: **The one trigger of a region's acts** (a ``js_on_load`` of `shell.plain_html`):
+#: a click on an element with ``data-act`` sends the region's ``click`` with
+#: ``{act, key}``, which its listener reads (`event_act`): cross-links such as
+#: Training's "Open Test ›", Fine-tune's "Charts on Research › Training" and
+#: Models' "Test this model ›", and Training's banner's Dismiss.
+TRIGGER_JS = r"""
+element.addEventListener('click', function (e) {
+  var a = e.target.closest ? e.target.closest('[data-act]') : null;
+  if (a) { trigger('click', {act: a.getAttribute('data-act'), key: a.getAttribute('data-key') || ''}); }
+});
+"""
+
+
+def event_act(evt: Any) -> Optional[str]:
+    """The ``act`` a region's trigger sent (`TRIGGER_JS`; Training's popover's
+    own script sends one too), or None."""
+    data = getattr(evt, "_data", None)
+    return data.get("act") if isinstance(data, Mapping) else None
+
+
 def keep_as(identity: Any) -> str:
     """The attribute naming **what a region shows** (a run, a job, a
     workspace), put on the element around its disclosures (or on one
@@ -3030,6 +3050,8 @@ __all__ = [
     "cut_at",
     "dataset_details_html",
     "details_list",
+    "TRIGGER_JS",
+    "event_act",
     "keep_as",
     "SHORT_HEX",
     "SYNTHETIC_FOR_TESTING",

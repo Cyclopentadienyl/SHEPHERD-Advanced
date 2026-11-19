@@ -3197,7 +3197,15 @@ def create_test_page(ctx: Any) -> None:
     every_one = {"trigger_mode": "multiple"}
 
     # ------------------------------------------------------------------ page open
-    def _refresh(ws, label, key, protocol, current_models, current_report, request: gr.Request):
+    def _refresh(ws, label, key, protocol, current_models, current_report, handed,
+                 request: gr.Request):
+        """The page shown: everything read again for the selection. A model
+        another page handed over as it opened this one (`ctx.test_model`:
+        Models' "Test this model ›", R-68) is the selection's workspace and
+        checkpoint, chosen as a pick would (while it is listed), and the
+        hand-off is cleared, so a later opening keeps the reader's choice."""
+        if isinstance(handed, Mapping) and handed.get("workspace"):
+            ws, key = handed["workspace"], handed.get("key")
         page = read_page(request)
         ws = default_workspace(page, ws)
         binding = _binding_for(page, ws)
@@ -3207,7 +3215,7 @@ def create_test_page(ctx: Any) -> None:
         job = read_job()
         gpu = _gpu(page)
         reports, run_id = _reports(page, models, label, current_report, job, request)
-        return [page, models, binding, reports, run_id,
+        return [page, models, binding, reports, run_id, None,
                 *_cohort_outputs(page, binding, ws, label),
                 *_run_outputs(page, models, binding, ws, label, key, protocol, job, gpu),
                 *_result_outputs(page, reports, models, run_id, job, binding, ws, label, key)]
@@ -3216,8 +3224,9 @@ def create_test_page(ctx: Any) -> None:
     ctx.on_page_open(PAGE, {
         "fn": _refresh,
         "inputs": [workspace, version, model_state, measurement_state, models_state,
-                   selected_report],
-        "outputs": [*state_outputs, *cohort_outputs, *run_outputs, *result_outputs],
+                   selected_report, ctx.test_model],
+        "outputs": [*state_outputs, ctx.test_model, *cohort_outputs, *run_outputs,
+                    *result_outputs],
         "show_progress": "hidden",
         **one_at_a_time,
     })

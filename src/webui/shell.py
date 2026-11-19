@@ -162,7 +162,12 @@ page (one exception, recorded after this list):
   **Every listener that writes it** (and Training's own record of its run
   bar's workspace) takes ``**ctx.training_workspace_writes``: one queued group
   of one (`TRAINING_SELECTION_CONCURRENCY`), first asked first run, so none
-  writes back a workspace it started from over one chosen meanwhile.
+  writes back a workspace it started from over one chosen meanwhile;
+- ``ctx.test_model``: a model a cross-link hands the Test page (a
+  ``gr.State``, ``{"workspace", "key"}`` of a listed checkpoint, or None).
+  Models' "Test this model ›" sets it and opens Test (``ctx.go``); the Test
+  page's opening that follows chooses that workspace and checkpoint and
+  clears it, so a later opening keeps the reader's own choice.
 
 **The one exception to "nothing else of another page"**: Fine-tune is
 Training's second form (README §1: a base, then its task children; §8: "base
@@ -358,6 +363,9 @@ class PageContext:
     training_workspace: Any
     #: The id of the page shown (`gr.State`): clinical, settings or a research page.
     location: Any = None
+    #: A model handed to the Test page by a cross-link (`gr.State`, the module
+    #: docstring), taken and cleared by its next opening.
+    test_model: Any = None
     #: The research page shown under Research (`gr.State`), Training at first.
     research_page: Any = None
     #: One `gr.State` per research page, bumped each time that page is shown.
@@ -433,7 +441,8 @@ def standalone_context(blocks: Any, help_registry: Optional[HelpRegistry] = None
         blocks=blocks, help=help_registry or HelpRegistry(), nav=nav, research_nav=research_nav,
         timer_fast=gr.Timer(FAST_SECONDS, active=False), timer_slow=gr.Timer(SLOW_SECONDS, active=False),
         chips=chips, served_model_changed=gr.State(None), training_workspace=gr.State(None),
-        location=gr.State(CLINICAL), research_page=gr.State(DEFAULT_RESEARCH_PAGE),
+        location=gr.State(CLINICAL), test_model=gr.State(None),
+        research_page=gr.State(DEFAULT_RESEARCH_PAGE),
         page_tokens={page: gr.State(0) for page in RESEARCH_PAGES},
         tabs={RESEARCH: research_tab})
 
@@ -576,6 +585,7 @@ def build_shell(blocks: Any, pages: Dict[str, Callable[[PageContext], None]],
     registry.topics(RENDERER_HELP)
     served_model_changed = gr.State(None)
     training_workspace = gr.State(None)
+    test_model = gr.State(None)
     location = gr.State(CLINICAL)
     research_page = gr.State(DEFAULT_RESEARCH_PAGE)
     page_tokens = {page: gr.State(0) for page in RESEARCH_PAGES}
@@ -595,6 +605,7 @@ def build_shell(blocks: Any, pages: Dict[str, Callable[[PageContext], None]],
                               timer_fast=timer_fast, timer_slow=timer_slow, chips=chips,
                               served_model_changed=served_model_changed,
                               training_workspace=training_workspace, location=location,
+                              test_model=test_model,
                               research_page=research_page, page_tokens=page_tokens, tabs=tabs)
             with gr.Tab(LABELS[CLINICAL], id=CLINICAL, elem_id=tab_elem_id(CLINICAL),
                         elem_classes=["shep-tab"]) as clinical_tab:

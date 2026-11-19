@@ -4150,10 +4150,10 @@ warning, with ▲; and three segments:
   "not readable"); the segment then reads "Recorded results · 3 (1 not readable)". With no record
   the segment says so per cause and gives the next step, naming no file ("No recorded result
   yet": none is registered beside this checkpoint, which does not mean these weights were never
-  evaluated; "Next: on the Test page, choose this model and start a test with Register when the
-  run ends checked"; the read-only view says recording a result is an operator control), and a
-  segment with
-  nothing to count shows no "· 0". The read-only view lists the same items, from the route, the
+  evaluated; "Next: start a test of it with Register when the run ends checked; its result then
+  appears here." and the action "Test this model ›", which opens the Test page with this
+  workspace and checkpoint chosen; the read-only view says recording a result is an operator
+  control, with no action), and a segment with nothing to count shows no "· 0". The read-only view lists the same items, from the route, the
   group's notes included (`contest.notes`, `contest.notes_readable` in its answer);
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history, newest first: test runs and registrations, and any model load kept from before

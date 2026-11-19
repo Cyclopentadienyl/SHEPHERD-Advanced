@@ -3989,8 +3989,9 @@ Copy）、它的檔案（標題說的是它的 run，同一 run 的兩個檔案�
   as a result; it is kept as written." 與一張小表 Index · Registration · Report · Reason（它未以可讀
   形式帶有的序號或報告 digest 顯示為 "not readable"）；此時分頁標籤為 "Recorded results · 3 (1 not
   readable)"。沒有紀錄時，分段依原因說明並給出下一步，不指出任何檔案（「No recorded result yet」：
-  此 checkpoint 旁沒有登錄任何結果，這不代表這組權重從未評估過；「Next: on the Test page, choose this
-  model and start a test with Register when the run ends checked」；唯讀檢視則說明記錄結果是操作者控制項），沒有
+  此 checkpoint 旁沒有登錄任何結果，這不代表這組權重從未評估過；「Next: start a test of it with Register
+  when the run ends checked; its result then appears here.」與動作「Test this model ›」，它會開啟 Test
+  頁並選好此 workspace 與 checkpoint；唯讀檢視則說明記錄結果是操作者控制項，沒有動作），沒有
   東西可計數的分段名稱不顯示「· 0」。唯讀檢視列出同樣的項目，取自該 route，包括群組的註記（其回答中
   的 `contest.notes`、`contest.notes_readable`）；
 - **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目，最新的在前：
