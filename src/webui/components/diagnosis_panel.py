@@ -4143,6 +4143,15 @@ _TAB = "#shep-tab-clinical"
 #: px the rows' share holds no whole row (measured 68 px at 1600 x 820, 108 at
 #: 1600 x 860, 128 at 1850 x 880: a cut slice of the first row), and the
 #: confirmation is whole either way.
+#: The Load drawer's two regions side by side (UI-07; OPS-FIX-R2): the gap
+#: between them and the details' minimum width (px). The list's region has no
+#: fixed minimum: it takes the tree's own narrowest, its box never wider than
+#: `DRAWER_TREE_ROOM`, the body's width (``cqw``: the body is its inline-size
+#: container) less the details' minimum and the gap.
+DRAWER_GAP = 14
+DRAWER_FACTS_MIN = 222
+DRAWER_TREE_ROOM = f"calc(100cqw - {DRAWER_FACTS_MIN + DRAWER_GAP}px)"
+
 PAGE_CSS = f"""
 {_TAB} {{ --dx-in-w: 300px; }}
 @media (min-width: 1600px) {{ {_TAB} {{ --dx-in-w: 320px; }} }}
@@ -4372,20 +4381,22 @@ PAGE_CSS = f"""
    (at 1280 x 900 it drew 26 px, its label cut to "W"); only the words beside it may shrink. */
 {_TAB} #shep-dx-change .shep-model-head > :not(.form) {{ min-width: 0 !important; }}
 /* **The list and the chosen model's details, two regions** (UI-07: they shared one scroll, so
-   reading the details moved the list). Each has its minimum width (`--shep-panel-min`, the
-   layout rule's measure): the tree whole from 616 px (599 px at its narrowest in the dashboard's
-   type with a model of every task, "Patients-like-me" its Task column's widest word, and a 12-hex
-   digest in the host's monospace; 566 px on the multi-family demo; a longer run name scrolls the
-   list sideways in its own region), the
-   details' summary lists from 222 px (a key and its value, each wrapping). Side
-   by side the drawer covers the candidates and the details panels, whose own minimums are no
-   narrower, so whenever the page is side by side the two regions fit beside each other (summed
-   by `test_diagnosis_panel.py`); each scrolls on its own, Load in the foot under both. Stacked,
-   the page flows: the list, then the details, then Load; choosing a row brings its details into
-   view and "↑ Back to the list" returns to the row (`model_list.FACTS_JS`). */
-{_TAB} #shep-dx-change .shep-model-body {{ gap: 14px !important; align-items: flex-start !important; flex-wrap: nowrap !important; }}
-{_TAB} #shep-dx-change .shep-model-body > .shep-model-rows {{ --shep-panel-min: 616px; flex: 3 1 0 !important; min-width: 0 !important; }}
-{_TAB} #shep-dx-change .shep-model-body > .shep-model-facts {{ --shep-panel-min: 222px; flex: 2 1 0 !important; min-width: 0 !important; }}
+   reading the details moved the list). Side by side the list takes the tree's own narrowest
+   (its min-content width in the type drawn: 599 px with a model of every task in the dashboard's
+   type, "Patients-like-me" its Task column's widest word and a 12-hex digest in the host's
+   monospace), as far as the details leave room: the tree's box is never wider than the body less
+   the details' minimum and the gap (`DRAWER_TREE_ROOM`, against the body's own width), so a
+   longer run name scrolls the list sideways in its own region. OPS-FIX-R2: the list's minimum was
+   a fixed 616 px, fitted to this host's text, and on the reviewer's host the same tree was 620 px
+   in it. The details' summary lists keep 222 px (`--shep-panel-min`: a key and its value, each
+   wrapping). Side by side the drawer covers the candidates and the details panels, whose own
+   minimums are no narrower than that tree and the details beside it (summed by
+   `test_diagnosis_panel.py`); each scrolls on its own, Load in the foot under both. Stacked, the
+   page flows: the list, then the details, then Load; choosing a row brings its details into view
+   and "↑ Back to the list" returns to the row (`model_list.FACTS_JS`). */
+{_TAB} #shep-dx-change .shep-model-body {{ gap: {DRAWER_GAP}px !important; align-items: flex-start !important; flex-wrap: nowrap !important; }}
+{_TAB} #shep-dx-change .shep-model-body > .shep-model-rows {{ flex: 3 1 0 !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-change .shep-model-body > .shep-model-facts {{ --shep-panel-min: {DRAWER_FACTS_MIN}px; flex: 2 1 0 !important; min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-foot {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important;
   border-top: 1px solid var(--shep-border); padding-top: 10px !important; }}
 /* Load and Cancel keep their words' width; the note beside them takes the rest and wraps (it
@@ -4410,14 +4421,17 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx-identity-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto; }}
   {_TAB} #shep-dx-change-bd {{ flex: 1 1 auto !important; min-height: 0; display: flex; flex-direction: column; }}
   {_TAB} #shep-dx-change .shep-model-list {{ flex: 1 1 auto !important; min-height: 0; display: flex !important; flex-direction: column; }}
-  {_TAB} #shep-dx-change .shep-model-body {{ flex: 1 1 0 !important; min-height: 120px; overflow: hidden; align-items: stretch !important; }}
+  {_TAB} #shep-dx-change .shep-model-body {{ flex: 1 1 0 !important; min-height: 120px; overflow: hidden; align-items: stretch !important;
+    container-type: inline-size; }}
   {_TAB} #shep-dx-change .shep-model-body > .shep-model-rows,
   {_TAB} #shep-dx-change .shep-model-body > .shep-model-facts {{
-    min-width: var(--shep-panel-min) !important; min-height: 0; max-height: 100%;
-    overflow: auto !important; overscroll-behavior: contain;
+    min-height: 0; max-height: 100%; overflow: auto !important; overscroll-behavior: contain;
   }}
-  /* The tree's header row sticks to the top of the rows' own region (no box scrolling inside it). */
-  {_TAB} #shep-dx-change .shep-model-rows .shep-tbl-wrap {{ overflow: visible; }}
+  {_TAB} #shep-dx-change .shep-model-body > .shep-model-rows {{ min-width: min-content !important; }}
+  {_TAB} #shep-dx-change .shep-model-body > .shep-model-facts {{ min-width: var(--shep-panel-min) !important; }}
+  /* The tree's header row sticks to the top of the rows' own region (no box scrolling inside it);
+     the tree's box at most the room the details leave (`DRAWER_TREE_ROOM`). */
+  {_TAB} #shep-dx-change .shep-model-rows .shep-tbl-wrap {{ overflow: visible; max-width: {DRAWER_TREE_ROOM}; }}
   {_TAB} #shep-dx-change .shep-model-confirm-box {{ flex: 0 1 auto !important; min-height: 0; overflow: hidden; }}
   {_TAB} #shep-models-clinical-confirm {{ flex: 0 1 auto !important; min-height: 0; overflow: auto !important; }}
   {_TAB} #shep-dx-change .shep-model-confirm-box > .row {{ flex: none !important; }}

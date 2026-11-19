@@ -68,6 +68,15 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   window (``data-shep-short``, under ``style.SHORT_BELOW`` px tall) only
   makes headers denser: height never stacks a page. A page with no
   ``.shep-page`` row (Settings) is decided by the window's shape alone.
+- **A wide form only while it fits** (OPS-FIX-R2): the same pass measures
+  each box of class ``style.FIT`` (the Fine-tune job card): its wide form
+  (``style.FIT_WIDE``, a table) laid out at its own narrowest, its
+  min-content width in the type drawn, for the measure alone and put back
+  before anything is painted, against the box's width. When the form does
+  not fit, the box gets ``style.NARROW_ATTR`` and its page draws the narrow
+  form (each child's summary list). The measure never reads the state it
+  sets, and it is taken again when the page changes, the window resizes or
+  a font arrives: no width fitted to one host's text decides it.
 
 The page contract (UI-B, UI-C and UI-D edit only their own modules)
 ------------------------------------------------------------------
@@ -225,7 +234,7 @@ import gradio as gr
 from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
 from src.webui.components.help import HelpRegistry, as_json_for_script
 from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
-from src.webui.style import LAYOUT_ATTR, SHORT_ATTR, SHORT_BELOW
+from src.webui.style import FIT, FIT_WIDE, LAYOUT_ATTR, NARROW_ATTR, SHORT_ATTR, SHORT_BELOW
 
 BRAND = "SHEPHERD-Advanced"
 
@@ -796,6 +805,33 @@ _SHELL_JS = r"""
     if (root.getAttribute(LAYOUT) !== want) { root.setAttribute(LAYOUT, want); }
     if (root.hasAttribute(SHORT) !== (h < SHORT_BELOW)) { root.toggleAttribute(SHORT, h < SHORT_BELOW); }
   }
+  // **A wide form only while it fits** (the layout rule's fit, module
+  // docstring): each box of class FIT drawn shows its wide form (FIT_WIDE)
+  // while that form's own narrowest, its min-content width, fits the box's
+  // content width, and is marked NARROW when it does not, for its page's
+  // style sheet to draw its narrow form. The form is laid out at its
+  // narrowest for the measure alone (its own inline style, put back before
+  // anything is painted; a style change is no mutation this pass listens
+  // to), so the measure never depends on the state it sets.
+  var FIT = '__FIT__', FIT_WIDE = '__FIT_WIDE__', NARROW = '__NARROW__';
+  var AT_NARROWEST = 'position:absolute !important;visibility:hidden !important;'
+    + 'width:min-content !important;min-width:0 !important;max-width:none !important;';
+  function fits() {
+    var boxes = document.querySelectorAll('.' + FIT);
+    for (var i = 0; i < boxes.length; i++) {
+      var box = boxes[i], wide = box.querySelector('.' + FIT_WIDE);
+      if (!wide || !drawn(box)) { continue; }
+      var kept = wide.getAttribute('style');
+      wide.setAttribute('style', (kept ? kept + ';' : '') + AT_NARROWEST + 'display:'
+        + (wide.tagName === 'TABLE' ? 'table' : 'block') + ' !important;');
+      var need = wide.getBoundingClientRect().width;
+      if (kept === null) { wide.removeAttribute('style'); } else { wide.setAttribute('style', kept); }
+      var s = getComputedStyle(box);
+      var room = box.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
+      var narrow = need > room + 0.5;
+      if (box.hasAttribute(NARROW) !== narrow) { box.toggleAttribute(NARROW, narrow); }
+    }
+  }
   // The scroll cue (`style.py`'s .shep-scroll-cue): a region with more below says so.
   function cue(el) {
     var more = el.scrollHeight - el.scrollTop - el.clientHeight > 1;
@@ -807,6 +843,7 @@ _SHELL_JS = r"""
   }, true);
   function layout() {
     orientation();
+    fits();
     var cues = document.querySelectorAll('.shep-scroll-cue');
     for (var c = 0; c < cues.length; c++) { cue(cues[c]); }
     var shell = document.getElementById('shep-shell');
@@ -866,6 +903,10 @@ _SHELL_JS = r"""
   new MutationObserver(update).observe(document.documentElement,
     {childList: true, subtree: true, attributes: true, attributeFilter: ['aria-selected', 'class']});
   window.addEventListener('resize', update);
+  // A font arriving redraws text in its own widths: the fit is measured again.
+  if (document.fonts && document.fonts.addEventListener) {
+    document.fonts.addEventListener('loadingdone', update);
+  }
   if (window.ResizeObserver) {
     var ro = new ResizeObserver(update);
     var watch = setInterval(function () {
@@ -887,6 +928,8 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__RESEARCH_LABEL__", as_json_for_script(RESEARCH_TABLIST_LABEL))
               .replace("__LAYOUT__", LAYOUT_ATTR).replace("__SHORT__", SHORT_ATTR)
               .replace("__SHORT_BELOW__", str(SHORT_BELOW))
+              .replace("__FIT__", FIT).replace("__FIT_WIDE__", FIT_WIDE)
+              .replace("__NARROW__", NARROW_ATTR)
               + "</script>")
 
 

@@ -72,6 +72,16 @@ SHORT = ':where(html[data-shep-short])'
 #: confirmation's room).
 SIDE_SHORT = ':where(html[data-shep-layout="side"][data-shep-short])'
 SHORT_BELOW = 900
+#: **A box drawn in its wide form while that form fits** (OPS-FIX-R2; the
+#: layout pass's fit, `src/webui/shell.py`): a box of class `FIT` shows its
+#: wide form (class `FIT_WIDE`, a table) while the form's own narrowest, its
+#: min-content width in the type it is drawn in, fits the box; when it does
+#: not, the pass sets `NARROW_ATTR` on the box and its page's style sheet
+#: draws its narrow form instead. No fixed width decides it, so another
+#: host's text metrics cannot make the wide form overflow its box.
+FIT = "shep-fit"
+FIT_WIDE = "shep-fit-wide"
+NARROW_ATTR = "data-shep-narrow"
 
 SHELL_CSS = """
 :root {
@@ -814,5 +824,5 @@ __STACK__ {
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK)
 
 
-__all__ = ["BRAND_WIDTH", "LAYOUT_ATTR", "SHELL_CSS", "SHORT", "SHORT_ATTR", "SHORT_BELOW", "SIDE", "SIDE_SHORT",
-           "STACK"]
+__all__ = ["BRAND_WIDTH", "FIT", "FIT_WIDE", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT",
+           "SHORT_ATTR", "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK"]

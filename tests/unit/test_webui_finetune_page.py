@@ -1393,6 +1393,8 @@ const SIZES = [[1850, 960], [1536, 760], [960, 1080], [1280, 900], [390, 844]];
       const t = document.querySelector('#ft_card .shep-ft-card');
       return !!t && t.innerText.includes(word);
     }, word, { timeout: 60000 });
+    // Another host's text metrics, standing in (argv 5): the card's words a little wider.
+    if (process.argv[5]) await page.addStyleTag({ content: process.argv[5] });
     // Drawn and still: the card's box the same over two frames.
     await page.evaluate(async () => {
       const box = () => JSON.stringify(document.querySelector('#ft_card').getBoundingClientRect());
@@ -1415,6 +1417,12 @@ const SIZES = [[1850, 960], [1536, 760], [960, 1080], [1280, 900], [390, 844]];
         .map((n) => n.textContent).join('').replace(/\s+/g, ' ').trim();
       const card = document.querySelector('#ft_card .shep-ft-card');
       const table = card.querySelector('.shep-ft-table');
+      // The table's own narrowest (its min-content width), whichever form is drawn.
+      const style = table.getAttribute('style');
+      table.setAttribute('style', 'position:absolute !important;visibility:hidden !important;'
+        + 'display:table !important;width:min-content !important;');
+      const narrowest = table.getBoundingClientRect().width;
+      if (style === null) table.removeAttribute('style'); else table.setAttribute('style', style);
       const lists = [...card.querySelectorAll('.shep-ft-child')];
       const form = drawn(table) ? 'table' : (lists.length && lists.every(drawn) ? 'list' : 'none');
       const shown = form === 'table' ? [table] : lists;
@@ -1443,7 +1451,7 @@ const SIZES = [[1850, 960], [1536, 760], [960, 1080], [1280, 900], [390, 844]];
             .map((r) => Math.round(r.top))).size });
         }
       }
-      return { form, card: rect(card), shown: shown.map(rect),
+      return { form, narrowest, card: rect(card), shown: shown.map(rect),
                heads: [...table.querySelectorAll('th')].map(own),
                rows: [...table.tBodies[0].rows].map((tr) => [...tr.cells].map(words)),
                lists: lists.map((list) => ({ title: words(list.querySelector('h3')),
@@ -1459,6 +1467,15 @@ const SIZES = [[1850, 960], [1536, 760], [960, 1080], [1280, 900], [390, 844]];
   console.log(JSON.stringify(out));
 })();
 """
+
+
+#: Another host's text metrics, standing in: the job card's words a little
+#: wider than this host draws them (OPS-FIX-R2; the reviewer's host drew the
+#: ended children's table 412 px where this one draws it 396.8 px, in the same
+#: monospace for the run names, so the stand-in widens the card's proportional
+#: text and leaves the run names' monospace as drawn).
+WIDER_TEXT = ("#ft_card .shep-ft-card { letter-spacing: 0.04em; } "
+              "#ft_card .shep-ft-card code { letter-spacing: normal; }")
 
 
 def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypatch, tmp_path):
@@ -1481,8 +1498,8 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     identifier rule). Fails on 4b5cee6.
 
     UI ledger V-20 (the review of 6a2d52e, OPS-C-R6), also at 1280 x 900 and
-    390 x 844, in the dashboard's type: the card draws its table from
-    `TABLE_FROM` of its own width on, inside the card itself (at 1280 x 900
+    390 x 844, in the dashboard's type: the card draws its table where the
+    table's own narrowest fits it, inside the card itself (at 1280 x 900
     the ended Disease and Patients-like-me children's table was 412.8 px in
     the 406 px card, 6.8 px into the panel's padding, and the latter's run
     cut to "patien…" at the Run column's floor), and below it each child as
@@ -1491,7 +1508,16 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     column past the panel's edge and not drawn): the child's task as its
     title, Status, Run, Best save and Validation (Trainer) as its rows (one
     row named by both for a line said for both), the same words as its table
-    row; at every window each figure on one line. Fails on 6a2d52e."""
+    row; at every window each figure on one line. Fails on 6a2d52e.
+
+    OPS-FIX-R2 (the recheck of d7ebfc3): the switch was a fixed card width
+    fitted to this host's text (404 px against a narrowest of 396.8 px), and
+    on the reviewer's host the same table was 412 px in the 406 px card. The
+    card now draws its table exactly while the table's own narrowest fits it
+    (the shell's measure), so with the card's words a little wider
+    (`WIDER_TEXT`, a stand-in for another host's metrics) every window still
+    shows a form that fits: at 1280 x 900 the list. Fails on d7ebfc3 (the
+    table, 419 px in 406)."""
     from src.webui.app import mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -1541,6 +1567,8 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
         seen["done"] = run_node(_CARD_FIT_JS, tmp_path, url, "Best pooled MRR")
         shown["status"] = tokens
         seen["tokens"] = run_node(_CARD_FIT_JS, tmp_path, url, "legacy_")
+        shown["status"] = done
+        seen["wider"] = run_node(_CARD_FIT_JS, tmp_path, url, "Best pooled MRR", "", WIDER_TEXT)
     for state, sizes in seen.items():
         for size, got in sizes.items():
             where = (state, size)
@@ -1560,9 +1588,10 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     for state, sizes in seen.items():
         for size, got in sizes.items():
             where = (state, size)
-            # The table where the card holds its narrowest, else each child's list (V-20).
-            assert got["form"] == ("table" if got["card"]["width"] >= fp.TABLE_FROM else "list"), \
-                (where, got["form"], got["card"])
+            # The table where the card holds the table's own narrowest, else each child's
+            # list (V-20; OPS-FIX-R2: by the content, never a fixed width).
+            assert got["form"] == ("table" if got["narrowest"] <= got["card"]["width"] + 0.5
+                                   else "list"), (where, got["form"], got["narrowest"], got["card"])
             # Both forms say the same of each child: its list's title and values are its row.
             assert got["heads"] == ["Task", "Status", "Run", "Best save", "Validation (Trainer)"], \
                 where
@@ -1571,7 +1600,8 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
             assert all(child["keys"] in (one, both) for child in got["lists"]), (where, got["lists"])
             assert all((child["keys"] == one) == (len(row) == 5)
                        for child, row in zip(got["lists"], got["rows"])), where
-        assert sizes["1280x900"]["form"] == "table" and sizes["390x844"]["form"] == "list", state
+        assert sizes["390x844"]["form"] == "list", state
+        assert sizes["1280x900"]["form"] == ("list" if state == "wider" else "table"), state
     for size in ("1850x960", "390x844"):
         texts = " ".join(cell["text"] for cell in seen["done"][size]["cells"])
         assert "Validation (Trainer)" in texts and "0.8400" in texts, size

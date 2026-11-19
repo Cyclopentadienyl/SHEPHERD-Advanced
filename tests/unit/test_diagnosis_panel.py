@@ -668,9 +668,14 @@ def test_the_load_drawers_list_and_details_are_two_regions_that_fit_side_by_side
     decides it. Side by side the drawer covers the candidates and the
     details panels, so the page is side by side only where the drawer holds
     both regions whole: those two panels' minimums and their gap are at least
-    the two regions', theirs and the drawer body's padding (what the browser
-    draws is `test_webui_model_list.py::
-    test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser`)."""
+    the tree's narrowest in the dashboard's type, the details' minimum, their
+    gap and the drawer body's padding (what the browser draws is
+    `test_webui_model_list.py::
+    test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser`).
+    The list's region has no fixed minimum (OPS-FIX-R2: 616 px, fitted to
+    this host's text, held a 620 px tree on the reviewer's): it takes the
+    tree's own narrowest, the tree's box never wider than the body less the
+    details' minimum and the gap."""
     from tests.unit.test_webui_shell import blocks, side, stack
 
     css = " ".join(dp.PAGE_CSS.split())
@@ -688,13 +693,22 @@ def test_the_load_drawers_list_and_details_are_two_regions_that_fit_side_by_side
               + px(f"{dp._TAB} #shep-dx", "gap"))
     (pad,) = re.findall(re.escape(f"{dp._TAB} #shep-dx-change-bd") + r" \{ padding: \d+px (\d+)px",
                         css)
-    regions = (px(rows, "--shep-panel-min") + px(facts, "--shep-panel-min") + px(body, "gap")
-               + 2 * int(pad))
+    # The tree's narrowest with a model of every task, in the dashboard's type
+    # (599.2 px, measured by the browser test).
+    tree = 600
+    regions = (tree + px(facts, "--shep-panel-min") + px(body, "gap") + 2 * int(pad))
     assert regions + 2 <= panels, (regions, panels)            # and the drawer's border
+    assert "--shep-panel-min" not in css[css.index(f"{rows} {{"):].split("}", 1)[0]
+    assert px(facts, "--shep-panel-min") == dp.DRAWER_FACTS_MIN and px(body, "gap") == dp.DRAWER_GAP
     wide = side(css)
-    assert f"{body} {{ flex: 1 1 0 !important; min-height: 120px; overflow: hidden;" in wide
-    assert (f"{rows}, {facts} {{ min-width: var(--shep-panel-min) !important; min-height: 0; "
-            "max-height: 100%; overflow: auto !important; overscroll-behavior: contain; }") in wide
+    assert (f"{body} {{ flex: 1 1 0 !important; min-height: 120px; overflow: hidden; "
+            "align-items: stretch !important; container-type: inline-size; }") in wide
+    assert (f"{rows}, {facts} {{ min-height: 0; max-height: 100%; overflow: auto !important; "
+            "overscroll-behavior: contain; }") in wide
+    assert f"{rows} {{ min-width: min-content !important; }}" in wide
+    assert f"{facts} {{ min-width: var(--shep-panel-min) !important; }}" in wide
+    assert (f"{dp._TAB} #shep-dx-change .shep-model-rows .shep-tbl-wrap {{ overflow: visible; "
+            f"max-width: calc(100cqw - {dp.DRAWER_FACTS_MIN + dp.DRAWER_GAP}px); }}") in wide
     narrow = stack(css)
     assert f"{body} {{ flex-direction: column !important; }}" in narrow
     assert "overflow" not in narrow[narrow.index(body):]
