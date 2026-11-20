@@ -1265,7 +1265,7 @@ _STOP_QUESTION_JS = r"""async () => {
 #: OPS-RECHECK-N1S typed (Node and Playwright): at each window, a diagnosis
 #: run on the inputs as they are and its results drawn; what is read (the
 #: card folded or not, its height and its three actions at their centres,
-#: the HPO text, the results) before Stop inference's question opens, with it
+#: the HPO text, the results' own words) before Stop inference's question opens, with it
 #: open and after Keep serving; then the question opened again, the HPO box
 #: focused from the fields region's top (its centre's topmost element, and
 #: how much of it is shown), twelve lines typed into it with what `elementsFromPoint`
@@ -1304,9 +1304,26 @@ const QUEUE_JS = __QUEUE_JS__;
       const b = e.getBoundingClientRect(), t = document.elementsFromPoint(b.left + b.width / 2, b.top + b.height / 2)[0];
       return b.top >= 0 && b.bottom <= innerHeight && !!t && (t === e || e.contains(t));
     };
+    // The results' own words: their innerText without a Gradio status
+    // tracker that is not drawn. The card's 5 s timer read writes the badge
+    // and the results body; while it is in flight each holds a tracker that
+    // is not drawn (class `hide`, opacity 0, 0 px high) and whose timer
+    // ("0.1s") innerText still reads (V-24, `browser.words`). Those trackers
+    // are left out for this read only; a drawn one is read as drawn.
+    const own = (e) => {
+      const off = [...e.querySelectorAll('[data-testid="status-tracker"]')].filter((t) => {
+        const b = t.getBoundingClientRect();
+        return t.classList.contains('hide') || +getComputedStyle(t).opacity === 0 || b.width < 1 || b.height < 1;
+      });
+      const was = off.map((t) => [t.style.getPropertyValue('display'), t.style.getPropertyPriority('display')]);
+      off.forEach((t) => t.style.setProperty('display', 'none', 'important'));
+      const text = e.innerText;
+      off.forEach((t, i) => (was[i][0] ? t.style.setProperty('display', ...was[i]) : t.style.removeProperty('display')));
+      return text;
+    };
     return { folded: card.hasAttribute('__FOLDED__'), h: Math.round(card.getBoundingClientRect().height * 2) / 2,
              actions: [at('#shep-dx-details-btn'), at('#shep-dx-change-btn'), at('#shep-dx-stop-btn')],
-             hpo: q('#dx_hpo_terms textarea').value, results: q('#shep-dx-results').innerText,
+             hpo: q('#dx_hpo_terms textarea').value, results: own(q('#shep-dx-results')),
              rows: document.querySelectorAll('#shep-dx-results-body tbody tr[data-key]').length };
   });
   await page.goto(process.argv[2], { waitUntil: 'load' });
