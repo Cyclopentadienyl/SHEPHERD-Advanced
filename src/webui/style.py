@@ -82,6 +82,22 @@ SHORT_BELOW = 900
 FIT = "shep-fit"
 FIT_WIDE = "shep-fit-wide"
 NARROW_ATTR = "data-shep-narrow"
+#: **A box drawn whole while its column has the room** (OPS-FIX-N1; the layout
+#: pass's fold, `src/webui/shell.py`): side by side, a box of class `FOLD`
+#: shares a column with a region of class `FOLD_ROOM` (the column: the box's
+#: nearest ancestor that holds such a region as a child), and the region keeps
+#: a floor, its CSS minimum height. While the column holds everything in it
+#: with the box whole and the region at its floor (or at its whole content,
+#: when that is less), the box is drawn whole; when it does not, the pass sets
+#: `FOLDED_ATTR` on the box, whose parts of class `FOLD_PART` are then not
+#: drawn (this sheet; they stay one click away in the box's own details), and
+#: its page's style sheet may draw the rest denser. The box is measured drawn
+#: whole, so the measure never depends on the state it sets, and no window size
+#: decides it: the box's own height, the column's and the region's floor do.
+FOLD = "shep-fold"
+FOLD_ROOM = "shep-fold-room"
+FOLD_PART = "shep-fold-part"
+FOLDED_ATTR = "data-shep-folded"
 
 SHELL_CSS = """
 :root {
@@ -758,6 +774,9 @@ html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
 }
+/* **A box folded** (`FOLD`, OPS-FIX-N1): its column has not the room for it whole beside the region
+   that keeps a floor, so its long parts are not drawn; the box's own details hold them. */
+[__FOLDED__] .__FOLD_PART__ { display: none !important; }
 
 /* ---------------------------------------------------------------- the layout rule */
 /* Side by side (`SIDE`, the shell's one decision): one screen. The selected
@@ -821,7 +840,8 @@ __STACK__ {
   .shep-facts-title { flex-wrap: wrap; }
   .shep-facts-title > .shep-back-list { display: inline-flex; align-items: center; flex: none; white-space: nowrap; }
 }
-""".replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK)
+""".replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK) \
+    .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART)
 
 
 __all__ = ["BRAND_WIDTH", "FIT", "FIT_WIDE", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT",
