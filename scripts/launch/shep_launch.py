@@ -357,7 +357,13 @@ def pip_install(spec: str, name: str, reinstall: bool = False, no_deps: bool = F
     source build puts it there, and an accelerator installed with its
     dependencies can ask for another torch. The locked set goes in as
     constraints, so pip refuses such an install instead of making it; when the
-    constraints cannot be had, nothing is installed."""
+    constraints cannot be had, nothing is installed.
+
+    ``spec`` is the table's install spec (`choose_spec`): a requirement and
+    pip's options for it, such as "flash-attn --no-build-isolation". It is
+    split here, the one place a spec is parsed, so each part is an argument of
+    its own: given whole, pip read the string as one invalid requirement
+    (the recheck of d4209c4, OPS-RECHECK-I1)."""
     import tempfile
 
     with tempfile.TemporaryDirectory(prefix="shepherd-lock-") as scratch:
@@ -372,7 +378,7 @@ def pip_install(spec: str, name: str, reinstall: bool = False, no_deps: bool = F
             args.extend(["--force-reinstall", "-I"])
         if no_deps:
             args.append("--no-deps")
-        args.append(spec)
+        args.extend(shlex.split(spec))
         log(f"Installing {name}: {spec} (constrained to uv.lock)")
         try:
             run(args, check=True)
