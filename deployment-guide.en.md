@@ -3191,15 +3191,16 @@ carry their own values, so the option is neither shown nor sent for them).
 
 **The "Model in use" card** is the last item of the input panel, with Run Diagnosis right below
 it: both follow Options, and stay pinned at the panel's bottom when the inputs need to scroll (at
-1536 × 760, for example). The inputs above them keep at least the HPO terms field whole (its
-label, its format line and its box, 166 px); in a short window where the whole card would leave
+1536 × 760, for example). The inputs above them keep the HPO terms field whole (its label,
+its format line and its box, 166 px) where the panel has the room; in a short window where the whole card would leave
 them less (since OPS-FIX-N1: measured, the card's own height against the panel, not a window
 size; at 1280 × 600 and 1366 × 620 with a model loaded), the card folds: its model fingerprint,
 its trained-on line and its recorded results go into "Details ›" (the identity drawer, which
 holds them whole), and it keeps the serving state with its chip, the task's model name with its
 run on one line, "Details ›", "Change model…" and "■ Stop inference". Where even the folded card
-leaves the inputs less (no model loaded, or a read-only viewer's reason line, in a short window
-with warning lines), the inputs take what is left and scroll; Run Diagnosis stays in view. It shows:
+leaves the inputs less (no model loaded, a read-only viewer's reason line, or the Stop inference
+question open, in a short window with warning lines), the inputs take what is left and scroll;
+Run Diagnosis stays in view. It shows:
 
 - the title row "Model in use ⓘ · current ↻": what is served is read for this browser
   when the page opens, every 5 seconds while Diagnosis is shown, after each diagnosis, after a

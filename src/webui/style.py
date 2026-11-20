@@ -86,7 +86,8 @@ NARROW_ATTR = "data-shep-narrow"
 #: pass's fold, `src/webui/shell.py`): side by side, a box of class `FOLD`
 #: shares a column with a region of class `FOLD_ROOM` (the column: the box's
 #: nearest ancestor that holds such a region as a child), and the region names
-#: its floor, the height in its custom property `FOLD_FLOOR`. While the column
+#: its floor, a height in px in its custom property `FOLD_FLOOR` (a region without it
+#: has a floor of 0, so its box folds only when it alone overflows). While the column
 #: holds everything in it with the box whole and the region at its floor (or
 #: at its whole content, when that is less), the box is drawn whole; when it
 #: does not, the pass sets `FOLDED_ATTR` on the box, whose parts of class
@@ -782,7 +783,7 @@ html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
   mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
 }
 /* **A box folded** (`FOLD`, OPS-FIX-N1): its column has not the room for it whole beside the region
-   that keeps a floor, so its long parts are not drawn; the box's own details hold them. */
+   at its floor (`FOLD_FLOOR`), so its long parts are not drawn; the box's own details hold them. */
 [__FOLDED__] .__FOLD_PART__ { display: none !important; }
 
 /* ---------------------------------------------------------------- the layout rule */
