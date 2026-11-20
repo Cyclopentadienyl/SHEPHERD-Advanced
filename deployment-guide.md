@@ -3231,7 +3231,14 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 這個選項對它們既不顯示也不送出）。
 
 **「Model in use」卡片**是輸入面板的最後一項，Run Diagnosis 緊接在它下方：兩者跟在 Options
-後面；當輸入欄位需要捲動時（例如 1536 × 760），兩者固定在面板底部。卡片顯示：
+後面；當輸入欄位需要捲動時（例如 1536 × 760），兩者固定在面板底部。其上的輸入欄位至少保留完整的
+HPO terms 欄位（標籤、格式說明與輸入框，166 px）；在較矮的視窗中，若完整的卡片會讓輸入欄位少於
+這個高度（自 OPS-FIX-N1 起：以量測判定，即卡片自身的高度對照面板，而非視窗尺寸；例如載入模型後的
+1280 × 600 與 1366 × 620），卡片會收合：model fingerprint、trained-on 一行與 recorded results 移入
+"Details ›"（身分抽屜，其中完整列出），卡片保留服務狀態及其標籤、任務的模型名稱與其 run（同一行）、
+"Details ›"、"Change model…" 與 "■ Stop inference"。若卡片收合後仍讓輸入欄位少於這個高度（例如未載入
+模型，或唯讀檢視者的原因說明行，加上較矮視窗中的警告行），輸入欄位就用剩下的高度捲動，Run Diagnosis
+仍留在畫面內。卡片顯示：
 
 - 標題列 "Model in use ⓘ · current ↻"：目前服務的內容會為這個瀏覽器讀取——頁面打開
   時、Diagnosis 顯示期間每 5 秒、每次診斷之後、更換模型之後，以及按 ↻ 時；超過 5 秒的讀取顯示
@@ -3249,7 +3256,7 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
   checkpoint 檔，屬於操作者控制項（§4.13）：唯讀的瀏覽器看到 "not shown · reading the checkpoint
   is an operator control"。若另一個瀏覽器更換了模型，這張卡片會顯示 "not read yet · read it"，
   直到頁面再次打開或按下 "read it"（每 5 秒的讀取絕不打開 checkpoint）；
-- 只在成立時出現的標籤：`synthetic data`（琥珀色）；結果顯示同一個服務身分的合成橫幅時不顯示
+- 只在成立時出現、位於服務狀態旁的標籤：`synthetic data`（琥珀色）；結果顯示同一個服務身分的合成橫幅時不顯示
   （說一次，自 T06 起）。`no trained model` 與 `unverified` 標籤
   已隨路徑推理狀態移除（K7），`no SP table` 與 `GNN not loaded` 已隨 mixture 移除（K8-4）；
 - "Recorded results: <狀態>"（§4.9），它的 › 會打開 Details 的 Evidence；"Details ›"；

@@ -2083,8 +2083,9 @@ _LONG_DIAGNOSIS = {"hpo": "HP:0001250\nHP:0001263", "top_k": 20, "rows": 20}
 #: What the acceptance walk reads at each stop besides the shared check: the
 #: header's first chip (D8's), the layout decision, Diagnosis' results as
 #: drawn (whether the table has a box, its rows, those with a long name, and
-#: its width against its box's), and the card's Change model… as drawn (its
-#: words, whether it is disabled, and the reason beside it if one is drawn).
+#: its width against its box's), the card's Change model… as drawn (its
+#: words, whether it is disabled, and the reason beside it if one is drawn),
+#: and whether the card is folded (`style.FOLDED_ATTR`, OPS-FIX-N1).
 #: Every text is read by the walk's `words` (`browser.LOOK_JS`), never Gradio's
 #: status tracker (V-24).
 _ACCEPTANCE_FACTS_JS = r"""() => {
@@ -2094,6 +2095,7 @@ _ACCEPTANCE_FACTS_JS = r"""() => {
   const rows = table ? [...table.querySelectorAll('tbody tr[data-key]')] : [];
   const change = document.querySelector('#shep-dx-change-btn');
   const why = document.querySelector('#shep-dx-change-why');
+  const card = document.querySelector('#shep-dx-card');
   const drawn = (e) => !!e && e.getClientRects().length > 0;
   return { chip: chip ? words(chip) : null,
            layout: document.documentElement.getAttribute('data-shep-layout'),
@@ -2101,8 +2103,9 @@ _ACCEPTANCE_FACTS_JS = r"""() => {
            rows: rows.length, long: rows.filter((r) => /, type \d+/.test(words(r))).length,
            table: table ? [table.scrollWidth, table.parentElement.clientWidth] : null,
            change: drawn(change) ? { text: words(change), off: change.disabled,
-                                     why: drawn(why) ? words(why) : '' } : null };
-}"""
+                                     why: drawn(why) ? words(why) : '' } : null,
+           folded: drawn(card) && card.hasAttribute('__FOLDED__') };
+}""".replace("__FOLDED__", shell.FOLDED_ATTR)
 
 
 def _acceptance_stops():
@@ -2475,12 +2478,20 @@ def test_each_fingerprint_is_said_once_with_twenty_results_and_for_a_read_only_v
     result's own identity said against the model in use where they differ,
     not again where they are the same: the result's model fingerprint and the
     card's once), every page at the acceptance sizes, and every page a
-    read-only viewer sees."""
+    read-only viewer sees. Where the card is folded (OPS-FIX-N1, option b: a
+    short window, 1366 x 620 and the read-only 1280 x 720 here) its
+    fingerprint is in its Details, one click away, and the result says
+    "Produced by the model in use": the screen draws no fingerprint, and the
+    count is kept by the stops where the card is whole
+    (`test_diagnosis_panel`'s short-window test opens Details to the
+    fingerprint)."""
     from tests.fixtures.browser import repeat_problems
 
     seen = acceptance_walk["operator"] + acceptance_walk["read_only"]
     answered = [s for s in seen if s.get("tag") == "results"]
-    assert all(s["repeats"] for s in answered)
+    whole = [s for s in answered if not s["extra"]["folded"]]
+    assert whole and all(s["repeats"] for s in whole)
+    assert any(s["extra"]["folded"] for s in answered)
     assert repeat_problems(seen, _SAID_TWICE) == []
 
 

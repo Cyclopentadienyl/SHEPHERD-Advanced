@@ -3191,7 +3191,15 @@ carry their own values, so the option is neither shown nor sent for them).
 
 **The "Model in use" card** is the last item of the input panel, with Run Diagnosis right below
 it: both follow Options, and stay pinned at the panel's bottom when the inputs need to scroll (at
-1536 × 760, for example). It shows:
+1536 × 760, for example). The inputs above them keep at least the HPO terms field whole (its
+label, its format line and its box, 166 px); in a short window where the whole card would leave
+them less (since OPS-FIX-N1: measured, the card's own height against the panel, not a window
+size; at 1280 × 600 and 1366 × 620 with a model loaded), the card folds: its model fingerprint,
+its trained-on line and its recorded results go into "Details ›" (the identity drawer, which
+holds them whole), and it keeps the serving state with its chip, the task's model name with its
+run on one line, "Details ›", "Change model…" and "■ Stop inference". Where even the folded card
+leaves the inputs less (no model loaded, or a read-only viewer's reason line, in a short window
+with warning lines), the inputs take what is left and scroll; Run Diagnosis stays in view. It shows:
 
 - the title row "Model in use ⓘ · current ↻": what is served is read for this browser
   when the page opens, every 5 seconds while Diagnosis is shown, after each diagnosis, after a
@@ -3213,8 +3221,9 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
   browser sees "not shown · reading the checkpoint is an operator control". When another browser
   has changed the model, this card says "not read yet · read it" until the page is opened again
   or "read it" is clicked (the 5-second read never opens a checkpoint);
-- a chip, only when true: `synthetic data` (amber), left out while the results show the
-  synthetic banner of a result from this same served identity (said once, since T06). The `no
+- a chip, only when true, beside the serving state: `synthetic data` (amber), left out while the
+  results show the synthetic banner of a result from this same served identity (said once, since
+  T06). The `no
   trained model` and `unverified` chips went with the path-reasoning state (K7), and `no SP
   table` and `GNN not loaded` with the mixture (K8-4);
 - "Recorded results: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "Change

@@ -77,6 +77,19 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   form (each child's summary list). The measure never reads the state it
   sets, and it is taken again when the page changes, the window resizes or
   a font arrives: no width fitted to one host's text decides it.
+- **A box whole only while its column has the room** (OPS-FIX-N1): the same
+  pass measures, side by side, each box of class ``style.FOLD`` (the
+  Diagnosis card) drawn whole, with what else its column holds and the
+  column's region of class ``style.FOLD_ROOM`` (the Diagnosis fields) at
+  its floor (its custom property ``style.FOLD_FLOOR``). When the column has
+  not that room, the box gets ``style.FOLDED_ATTR`` and its parts of class
+  ``style.FOLD_PART`` are not drawn (they stay in the box's own details), so
+  the region keeps its floor; stacked, nothing folds. The floor is not a
+  CSS minimum: where even the folded box leaves less, the region takes what
+  is left and stays the column's one scroll region. Like the fit, the
+  measure never reads the state it sets: no window size decides it, the
+  box's own height (a notice, a long name, the type drawn), the column's
+  and the floor do.
 
 The page contract (UI-B, UI-C and UI-D edit only their own modules)
 ------------------------------------------------------------------
@@ -234,7 +247,8 @@ import gradio as gr
 from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
 from src.webui.components.help import HelpRegistry, as_json_for_script
 from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
-from src.webui.style import FIT, FIT_WIDE, LAYOUT_ATTR, NARROW_ATTR, SHORT_ATTR, SHORT_BELOW
+from src.webui.style import (FIT, FIT_WIDE, FOLD, FOLD_FLOOR, FOLD_ROOM, FOLDED_ATTR, LAYOUT_ATTR,
+                              NARROW_ATTR, SHORT_ATTR, SHORT_BELOW)
 
 BRAND = "SHEPHERD-Advanced"
 
@@ -832,6 +846,46 @@ _SHELL_JS = r"""
       if (box.hasAttribute(NARROW) !== narrow) { box.toggleAttribute(NARROW, narrow); }
     }
   }
+  // **A box whole only while its column has the room** (the layout rule's
+  // fold, module docstring): side by side, each box of class FOLD drawn is
+  // whole while its column (its nearest ancestor holding a region of class
+  // FOLD_ROOM) holds what it holds with the box whole and that region at its
+  // floor (its FOLD_FLOOR property, or its whole content when less), and is marked
+  // FOLDED when it does not, for its long parts to give way. The box is
+  // measured whole (the mark taken off for the measure alone and put back
+  // before anything is painted; an attribute this pass does not listen to),
+  // so the measure never depends on the state it sets. Stacked, nothing folds.
+  var FOLD = '__FOLD__', FOLD_ROOM = '__FOLD_ROOM__', FOLD_FLOOR = '__FOLD_FLOOR__', FOLDED = '__FOLDED__';
+  function px(v) { return parseFloat(v) || 0; }
+  function folds() {
+    var side = document.documentElement.getAttribute(LAYOUT) === 'side';
+    var boxes = document.querySelectorAll('.' + FOLD);
+    for (var i = 0; i < boxes.length; i++) {
+      var box = boxes[i], column = box.parentElement, room = null;
+      while (column && !(room = column.querySelector(':scope > .' + FOLD_ROOM))) {
+        column = column.parentElement;
+      }
+      var fold = false;
+      if (side && room && drawn(box) && drawn(room)) {
+        var was = box.hasAttribute(FOLDED);
+        if (was) { box.removeAttribute(FOLDED); }
+        var c = getComputedStyle(column), r = getComputedStyle(room);
+        var space = column.clientHeight - px(c.paddingTop) - px(c.paddingBottom);
+        var floor = px(r.getPropertyValue(FOLD_FLOOR));
+        var need = Math.min(floor, room.scrollHeight), kids = 0;
+        for (var k = column.firstElementChild; k; k = k.nextElementSibling) {
+          var s = getComputedStyle(k);
+          if (!drawn(k) || s.position === 'absolute' || s.position === 'fixed') { continue; }
+          kids += 1;
+          need += px(s.marginTop) + px(s.marginBottom) + (k === room ? 0 : k.getBoundingClientRect().height);
+        }
+        need += Math.max(kids - 1, 0) * px(c.rowGap);
+        if (was) { box.setAttribute(FOLDED, ''); }
+        fold = need > space + 0.5;
+      }
+      if (box.hasAttribute(FOLDED) !== fold) { box.toggleAttribute(FOLDED, fold); }
+    }
+  }
   // The scroll cue (`style.py`'s .shep-scroll-cue): a region with more below says so.
   function cue(el) {
     var more = el.scrollHeight - el.scrollTop - el.clientHeight > 1;
@@ -844,6 +898,7 @@ _SHELL_JS = r"""
   function layout() {
     orientation();
     fits();
+    folds();
     var cues = document.querySelectorAll('.shep-scroll-cue');
     for (var c = 0; c < cues.length; c++) { cue(cues[c]); }
     var shell = document.getElementById('shep-shell');
@@ -930,6 +985,8 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__SHORT_BELOW__", str(SHORT_BELOW))
               .replace("__FIT__", FIT).replace("__FIT_WIDE__", FIT_WIDE)
               .replace("__NARROW__", NARROW_ATTR)
+              .replace("__FOLD__", FOLD).replace("__FOLD_ROOM__", FOLD_ROOM)
+              .replace("__FOLD_FLOOR__", FOLD_FLOOR).replace("__FOLDED__", FOLDED_ATTR)
               + "</script>")
 
 

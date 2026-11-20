@@ -80,7 +80,8 @@ state, nothing assumes one browser (BACKLOG 28).
   "Operator controls only: …" beside them). Only the served file is opened, on a queued refresh, once per
   served model per session (what it records is kept while the served
   identity is the same); the timer's read never opens a checkpoint;
-- the mode chip, only when true: amber "synthetic data", left out while a
+- the mode chip, only when true: amber "synthetic data", beside the serving
+  state, left out while a
   result's synthetic banner from the same served identity is shown beside the
   card (`body_html`'s ``synthetic_said``: said once, R-26);
 - "Recorded results: <state>" from the ledger beside the checkpoint and the
@@ -101,6 +102,14 @@ state, nothing assumes one browser (BACKLOG 28).
   the registry's reason it is not one (`NOT_A_COHORT`), never as bound or
   chosen by default.
   A hint only: the server checks the version it is sent.
+
+**Folded in a short window** (OPS-FIX-N1): side by side, when the whole card
+would leave the page's fields less than their floor (the shell's layout pass
+measures it, `style.FOLD`), its long identity, the fingerprint line, the
+trained-on line and "Recorded results" (`style.FOLD_PART`), is not drawn; the
+serving state with its chip, the task's model name and its run (on one line,
+its whole words in its title), Details ›, Change model… and Stop inference
+stay. Details holds the whole identity; a result's own identity is its own.
 
 **Details** (the identity drawer's "Model in use") is the shared Model Facts
 summary (`renderers.model_facts_html`) of the served checkpoint, with what only
@@ -130,6 +139,7 @@ from src.webui.components.served_status import (
     served_checkpoint_sha,
     served_key,
 )
+from src.webui.style import FOLD_PART
 from src.utils import path_redaction
 
 logger = logging.getLogger(__name__)
@@ -803,10 +813,11 @@ _STATE_MARK = {SERVING: ("ok", False), LOADING: ("running", False),
 BACK_TO_RESEARCH = "Back to research ›"
 
 
-def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
+def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "") -> str:
     """The serving state in the backend's words (`serving_state`; a load
     while a model serves beside it, `loading_too`; when a stop or a refusal
-    was recorded beside it, `not_serving_when`), and when no diagnosis is
+    was recorded beside it, `not_serving_when`; `beside`, the served data's
+    chips, at its end), and when no diagnosis is
     admitted the backend's lead under it (`not_serving_lead`: who stopped it,
     why a load was refused and the holder) with its whole reason
     one click away ("Details ›", ``not_serving_reason``: the load hint, the
@@ -826,6 +837,8 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
     when = not_serving_when(status)
     if when:
         mark += f' <span class="shep-dx-when">at {r.e(when)}</span>'
+    if beside:
+        mark += f" {beside}"
     line = f'<p class="shep-dx-line shep-dx-serving" data-state="{r.e(state)}">{mark}</p>'
     if state == SERVING:
         return line
@@ -851,15 +864,15 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool) -> str:
 
 def _recorded_html(facts: Mapping[str, Any], *, grey: bool) -> str:
     if grey:
-        return f'<span class="shep-dx-tests">{r.e("Recorded results: not read")}</span>'
+        return f'<span class="shep-dx-tests {FOLD_PART}">{r.e("Recorded results: not read")}</span>'
     raw = facts.get("recorded")
     recorded = r.RecordedTests(**raw) if isinstance(raw, Mapping) else None
     text = r.recorded_tests_text(recorded)
     if recorded is None and facts.get("item_problem"):
         text += f" · {facts['item_problem']}"
-    return (f'<span class="shep-dx-tests">{r.e(text)} <button type="button" class="shep-dx-link" '
-            'data-key="evidence" aria-label="Recorded results: open Details at Evidence">›</button>'
-            '</span>')
+    return (f'<span class="shep-dx-tests {FOLD_PART}">{r.e(text)} <button type="button" '
+            'class="shep-dx-link" data-key="evidence" '
+            'aria-label="Recorded results: open Details at Evidence">›</button></span>')
 
 
 def body_html(state: Mapping[str, Any], produced_at: Any = None, *,
@@ -908,6 +921,8 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None, *,
     status = state.get("status") or {}
     facts = state.get("facts") or {}
     kind = served_kind(status)
+    chips = _chips(status, grey=grey, synthetic_said=synthetic_said)
+    chips_html = '<span class="shep-dx-chips">' + "".join(chips) + "</span>" if chips else ""
     lines: List[str] = []
     if kind == "no_model":
         # The state in its own words, the backend's lead and its reason one
@@ -920,27 +935,33 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None, *,
         task = served_task(status)
         why = ""
         if item:
-            run = r.e(r.model_name_line(item))
+            run = r.model_name_line(item)
         else:
             meta = status.get("checkpoint_meta") or {}
-            run = f"Checkpoint · {r.e(r.epoch_words(meta if isinstance(meta, Mapping) else {}))}"
-            why = r.e(facts.get("item_problem") or "")
+            run = f"Checkpoint · {r.epoch_words(meta if isinstance(meta, Mapping) else {})}"
+            why = str(facts.get("item_problem") or "")
+        run = f"{run} · {why}" if why else run
         # The task, named once on the card (K6 decision 4), a frozen-backbone
-        # child as such (decision F1); the run under it. Every served model is
-        # a finetuned task's (its scoring mode names one).
+        # child as such (decision F1); the run under it, its whole words in its
+        # title (folded, it is one line: OPS-FIX-N1). Every served model is a
+        # finetuned task's (its scoring mode names one).
         name = (f'<p class="shep-dx-name">{r.e(task_model_name(task, served_transfer(status)))}'
-                f'</p><p class="shep-dx-line shep-dx-sub">{run}{f" · {why}" if why else ""}</p>')
+                f'</p><p class="shep-dx-line shep-dx-sub" title="{r.e(run)}">{r.e(run)}</p>')
         mark = "" if grey else " " + r.status_mark("ok", "verified")
-        lines.append(f'{_serving_html(status, grey=grey)}{name}'
-                     f'<p class="shep-dx-line">{r.fingerprint_html("model fingerprint", sha, copy=False)}'
-                     f'{mark}</p>'
-                     f'<p class="shep-dx-line">{_trained_html(facts)}</p>')
+        # The served data's chips beside the serving state (a line of its own
+        # said nothing more). The long identity (the fingerprint, the trained-on
+        # data, the recorded results) folds into Details › when the column has
+        # not the room for it (`style.FOLD`, OPS-FIX-N1).
+        serving = _serving_html(status, grey=grey, beside=chips_html)
+        if serving:
+            chips_html = ""
+        lines.append(f'{serving}{name}'
+                     f'<p class="shep-dx-line {FOLD_PART}">'
+                     f'{r.fingerprint_html("model fingerprint", sha, copy=False)}{mark}</p>'
+                     f'<p class="shep-dx-line {FOLD_PART}">{_trained_html(facts)}</p>')
     else:
         lines.append('<p class="shep-dx-line shep-muted">The status did not say what is served.</p>')
-    chips = _chips(status, grey=grey, synthetic_said=synthetic_said)
-    tail = []
-    if chips:
-        tail.append('<span class="shep-dx-chips">' + "".join(chips) + "</span>")
+    tail = [chips_html] if chips_html else []
     if kind == "model":
         tail.append(_recorded_html(facts, grey=grey))
     if tail:

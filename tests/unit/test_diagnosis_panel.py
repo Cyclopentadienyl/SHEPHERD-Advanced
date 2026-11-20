@@ -807,13 +807,21 @@ def test_the_fields_scroll_above_the_card_and_run_row_whose_foot_never_covers_th
     with the sticky block. R-24: every label and control starts at the
     panel's one inner edge (no side padding on the fields), and Options is a
     key/ⓘ/control grid with no box of its own. What the browser draws is
-    `test_the_hpo_caret_stays_in_view_and_the_input_column_has_one_left_edge`."""
+    `test_the_hpo_caret_stays_in_view_and_the_input_column_has_one_left_edge`.
+    OPS-FIX-N1: the region names a floor (`FIELDS_FLOOR`, the HPO field
+    whole, in `style.FOLD_FLOOR`) and is the region the card folds for
+    (`style.FOLD_ROOM`); in a short window the card folds first
+    (`test_a_short_window_folds_the_cards_identity_and_keeps_every_input_usable`).
+    The floor is not a CSS minimum: its minimum height stays 0, so where the
+    card has nothing more to fold the region takes what is left and stays the
+    one scroll region
+    (`test_a_card_with_nothing_more_to_fold_leaves_one_scroll_region_and_run_in_view`)."""
     from src.webui import style
     from tests.unit.test_webui_shell import side
 
     css = " ".join(dp.PAGE_CSS.split())
     assert (f"{dp._TAB} #shep-dx-input-bd > #shep-dx-fields {{ flex: 0 1 auto !important; "
-            "min-height: 0; overflow: auto;") in side(css)
+            f"min-height: 0; {style.FOLD_FLOOR}: {dp.FIELDS_FLOOR}px; overflow: auto;") in side(css)
     assert "position: sticky" not in css and "--shep-dx-sticky-h" not in css
     assert not hasattr(dp, "STICKY_JS") and not hasattr(style, "sticky_room_js")
     # Every scroll region, a page's own tab region side by side included
@@ -906,6 +914,293 @@ def test_the_hpo_caret_stays_in_view_and_the_input_column_has_one_left_edge(monk
             edges["expl"][0], edges["card"], edges["run"]} == {edge}, edges
     assert edges["topk"][1] == edges["expl"][1] > edge, edges
     assert edges["box"] == {"background": "rgba(0, 0, 0, 0)", "border": "0px"}, edges
+
+
+#: OPS-FIX-N1 at each stop of the shared walk (`browser.walk_ui`'s ``extra``):
+#: the input column's room (its content box; its height and its content's,
+#: to see that it holds them), the fields region (its height,
+#: its content and its floor, `style.FOLD_FLOOR`), the room the HPO
+#: field takes from the region's top (its label, info line and box: the first
+#: input whole), the foot under
+#: the fields (the card and Run) as drawn and with the card whole (the card's
+#: fold, `style.FOLDED_ATTR`, taken off for the measure alone and put back), what
+#: the card shows, each action at its centre (`elementsFromPoint`), the
+#: footer's warning lines; then each of the served task's inputs focused in
+#: turn, its centre's topmost element; and the identity drawer's words when
+#: it is open.
+_SHORT_JS = r"""async () => {
+  const q = (s) => document.querySelector(s);
+  const drawn = (e) => !!e && e.getClientRects().length > 0;
+  const at = (s) => {
+    const e = q(s);
+    if (!drawn(e)) { return null; }
+    const b = e.getBoundingClientRect(), t = document.elementsFromPoint(b.left + b.width / 2, b.top + b.height / 2)[0];
+    return { inView: b.top >= 0 && b.bottom <= innerHeight && b.left >= 0 && b.right <= innerWidth,
+             hit: !!t && (t === e || e.contains(t)), on: t ? ((t.closest('[id]') || t).id || t.tagName) : null };
+  };
+  const lines = (e) => {
+    if (!drawn(e)) { return 0; }
+    const range = document.createRange();
+    range.selectNodeContents(e);
+    return new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top))).size;
+  };
+  const column = q('#shep-dx-input-bd'), fields = q('#shep-dx-fields'), card = q('#shep-dx-card');
+  const foot = q('#shep-dx-sticky'), cs = getComputedStyle(column);
+  const folded = card.hasAttribute('data-shep-folded');
+  if (folded) { card.removeAttribute('data-shep-folded'); }
+  const whole = foot.getBoundingClientRect().height;
+  if (folded) { card.setAttribute('data-shep-folded', ''); }
+  const shown = (s) => [...card.querySelectorAll(s)].some(drawn);
+  const out = {
+    layout: document.documentElement.getAttribute('data-shep-layout'),
+    space: column.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom),
+    column: { h: column.clientHeight, content: column.scrollHeight },
+    fields: { h: fields.clientHeight, content: fields.scrollHeight,
+              floor: parseFloat(getComputedStyle(fields).getPropertyValue('__FOLD_FLOOR__')) || 0 },
+    hpo: q('#dx_hpo_terms textarea').getBoundingClientRect().bottom - fields.getBoundingClientRect().top
+      + fields.scrollTop, foot: foot.getBoundingClientRect().height, whole, folded,
+    card: { h: card.getBoundingClientRect().height, name: shown('.shep-dx-name'),
+            serving: shown('.shep-dx-serving'), sub: shown('.shep-dx-sub'),
+            subLines: lines(card.querySelector('.shep-dx-sub')),
+            fingerprint: shown('code.shep-fpv'), trained: shown('.shep-trained'),
+            recorded: shown('.shep-dx-tests'), synthetic: card.innerText.includes('synthetic data') },
+    actions: { run: at('#shep-dx-run-btn'), details: at('#shep-dx-details-btn'),
+               change: at('#shep-dx-change-btn'), stop: at('#shep-dx-stop-btn') },
+    footer: lines(q('.shep-rt .shep-st-w')),
+    inputs: {},
+    identity: drawn(q('#shep-dx-identity')) ? q('#shep-dx-identity').innerText : null,
+  };
+  if (!out.identity) {
+    for (const s of ['#dx_hpo_terms textarea', '#dx_candidate_genes textarea', '#dx_reference_cohort input',
+                     '#dx_patient_id input', '#dx_top_k input']) {
+      const e = q(s);
+      if (!drawn(e)) { continue; }
+      e.focus();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const b = e.getBoundingClientRect(), t = document.elementsFromPoint(b.left + b.width / 2, b.top + b.height / 2)[0];
+      out.inputs[s] = t === e || e.contains(t) ? 'itself' : ((t && (t.closest('[id]') || t).id) || 'nothing');
+      e.blur();
+    }
+    fields.scrollTop = 0;
+  }
+  return out;
+}""".replace("__FOLD_FLOOR__", dp.FOLD_FLOOR)
+
+#: The windows of the walk: the owner's, then shrunk to the short laptops and
+#: enlarged again through 1536 x 760 back to the owner's.
+_SHORT_SIZES = ((1850, 960), (1280, 600), (1366, 620), (1536, 760), (1850, 960))
+
+#: Two environment warnings in the footer, the recheck's CPU run's (CUDA and
+#: cuVS), each in the probe's consequence-first words (`version_checker`).
+_TWO_WARNINGS = [
+    "No CUDA device visible: GPU training is unavailable. torch is built for CUDA 13.0; check the "
+    "driver and CUDA libraries.",
+    "The GPU vector backend cannot be constructed: cuVS is installed but cupy is missing (Voyager on "
+    "the CPU is unaffected)."]
+
+
+def test_a_short_window_folds_the_cards_identity_and_keeps_every_input_usable(monkeypatch,
+                                                                             tmp_path):
+    """OPS-FIX-N1 (the recheck of d4209c4, option b): at 1280 x 600 with a
+    model loaded and two environment warning lines, the fields region was
+    8 px of its 423 px (28 at 1366 x 620): the card (327 px) and Run never gave way,
+    the region had no floor, and with two warning lines the focused HPO box's
+    centre was under the card's header. In a real browser (Node and
+    Playwright, skipped without), the page served whole with a model of each
+    task loaded (a stand-in status with the card's every line: its run, the
+    trained-on dataset, the recorded results, the synthetic chip) and the
+    footer's two warning lines, through 1850 x 960, 1280 x 600, 1366 x 620,
+    1536 x 760 and back to 1850 x 960:
+
+    - the fields region keeps at least the HPO field whole (its label, info
+      line and box), or all its fields when they need less, and its floor
+      holds that field; where they need more it is the one region that
+      scrolls (the shared check: one scroll region per area);
+    - the card folds its long identity (the fingerprint, the trained-on data,
+      the recorded results) exactly where the whole card would leave the
+      fields under their floor, measured, and keeps the task's model name,
+      its run on one line, the serving state, the synthetic chip, Details,
+      Change model… and Stop inference; Run Diagnosis and every action are in
+      view with nothing over them; over the walk the card is drawn whole and
+      folded, and back at 1850 x 960 it is as it was;
+    - every input of the served task (disease: HPO; gene: HPO and genes;
+      patients-like-me: HPO and the reference cohort; Patient ID and Top-K),
+      focused, is the topmost element at its centre, and the shared check's
+      keyboard walk finds no control covered;
+    - the warnings stay on screen (two lines), and Details opens the
+      identity drawer with the whole identity: the fingerprint and the data.
+    Fails on d4209c4 (the fields region 8 px at 1280 x 600, the HPO box under
+    the card's header)."""
+    from src.utils.version_checker import NOTICE
+    from src.webui import app, shell
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import node_with_playwright, ui_problems, walk_ui
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    monkeypatch.setattr(app, "probe_runtime", lambda: {"status": NOTICE, "issues": _TWO_WARNINGS})
+    monkeypatch.setattr(app, "format_runtime_line", lambda report=None: "Python 3.12 · torch 2.10.0")
+    identities = {"disease": _served_identity(), "gene": _task_identity("gene_task"),
+                  "patients_like_me": _task_identity("patients_like_me")}
+    shown = {"task": "disease"}
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (
+        {**_status_serving(identities[shown["task"]]),
+         "checkpoint_meta": {"epoch": 0, "completed_epochs": 1}}, None))
+    trained = _digest("dataset")
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": True, "serving": "demo",
+        "workspaces": [{"name": "demo", "dataset_fingerprint": trained}],
+        "item": {"architecture": "gatv2", "run": f"20261002-000000_{shown['task']}_bbbbbb",
+                 "completed_epochs": 1, "sha256": CHECKPOINT_SHA},
+        "item_problem": None, "recorded": {"state": "none"},
+        "trained": {"state": "read", "fingerprint": trained, "problem": None},
+        "cohorts": _cohorts(_version("cohort-a"))})
+    # Built as the dashboard is (`app.create_gradio_app`): the full width, the runtime footer.
+    with gr.Blocks(analytics_enabled=False, fill_width=True) as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+        shell.plain_html(app._runtime_footer(), elem_id="runtime_footer")
+    details = {"click": "#shep-dx-details-btn", "shown": "#shep-dx-identity",
+               "close": "#shep-dx-identity-close button"}
+    walks = {}
+    with served(demo, **mount_options()) as base:
+        for task, sizes in (("disease", _SHORT_SIZES), ("gene", _SHORT_SIZES[:3]),
+                            ("patients_like_me", _SHORT_SIZES[:3])):
+            shown["task"] = task
+            stops = [{"size": list(size), "page": "clinical"} for size in sizes]
+            if task == "disease":
+                stops.append({"size": [1280, 600], "page": "clinical", "open": details})
+            (tmp_path / task / "shots").mkdir(parents=True)
+            walks[task] = walk_ui(base[:-len("gradio_api")], tmp_path / task, stops,
+                                  extra_js=_SHORT_JS, shots=tmp_path / task / "shots")
+    inputs = {"disease": {"#dx_hpo_terms textarea"},
+              "gene": {"#dx_hpo_terms textarea", "#dx_candidate_genes textarea"},
+              "patients_like_me": {"#dx_hpo_terms textarea", "#dx_reference_cohort input"}}
+    forms = set()
+    for task, seen in walks.items():
+        assert ui_problems(seen) == [], (task, ui_problems(seen))
+        for stop in (s for s in seen if not s.get("open")):
+            where, got = (task, stop["size"]), stop["extra"]
+            # The warnings on screen: two lines at the short laptops' widths, as on the reviewer's.
+            assert got["layout"] == "side", (where, got)
+            assert got["footer"] >= (2 if stop["size"] in ("1280x600", "1366x620") else 1), (where, got)
+            fields = got["fields"]
+            # A usable height: the HPO field whole, or every field when they need less.
+            assert fields["h"] + 0.5 >= min(got["hpo"], fields["content"]), (where, got)
+            assert fields["floor"] + 0.5 >= got["hpo"], (where, got)
+            # Folded exactly where the whole card leaves the fields under their floor.
+            need = got["whole"] + min(fields["floor"], fields["content"])
+            assert got["folded"] == (need > got["space"] + 0.5), (where, got)
+            forms.add(got["folded"])
+            card = got["card"]
+            assert card["name"] and card["serving"] and card["sub"], (where, card)
+            assert card["synthetic"] == (task == "disease"), (where, card)
+            identity = not got["folded"]
+            assert card["fingerprint"] == card["trained"] == card["recorded"] == identity, (where, card)
+            if got["folded"]:
+                assert card["subLines"] == 1, (where, card)
+            for name, action in got["actions"].items():
+                assert action and action["inView"] and action["hit"], (where, name, action)
+            assert inputs[task] <= set(got["inputs"]), (where, got["inputs"])
+            assert set(got["inputs"].values()) == {"itself"}, (where, got["inputs"])
+    assert forms == {True, False}, forms
+    disease = walks["disease"]
+    first, last = disease[0]["extra"], disease[len(_SHORT_SIZES) - 1]["extra"]
+    assert first == last, (first, last)
+    identity = disease[-1]["extra"]["identity"]
+    # The whole identity one click away: the full fingerprint and the trained-on data.
+    assert identity and CHECKPOINT_SHA in identity and trained in identity, identity
+
+
+#: A frozen backbone's weight transfer (the served item's and the status's):
+#: the card's run line names it, a taller card than a full child's.
+_FROZEN = {"parts": {"input": "frozen", "encoder": "frozen", "lp_head": "frozen",
+                     "task_head": "trainable"}}
+
+
+def test_a_card_with_nothing_more_to_fold_leaves_one_scroll_region_and_run_in_view(monkeypatch,
+                                                                                   tmp_path):
+    """The review of OPS-FIX-N1's first version (90c375e): the fields'
+    floor was a CSS minimum height, kept even where the card had nothing
+    (more) to fold, so with the footer's two warning lines the input column
+    overflowed: a second scroll region around the fields, and Run Diagnosis
+    and its reason line out of view. With no model loaded (an operator, and
+    a read-only viewer) at 1280 x 600 and 1366 x 620, and for a read-only
+    viewer with a patients-like-me child on a frozen backbone loaded (its
+    reason line and its run line keep even the folded card tall), the floor
+    is the fold's measure only (`style.FOLD_FLOOR`): in a real browser (Node
+    and Playwright, skipped without) the input column holds what it holds,
+    the fields take what is left and are its one scroll region (the shared
+    check), Run Diagnosis is in view (with a model loaded, the topmost
+    element at its centre), and every input focused is the topmost element
+    at its centre. Fails on 90c375e (with no model at 1280 x 600 the card and
+    Run took 296 px and the fields' floor 166 px of a 385 px column: the
+    fields in a second scroll region)."""
+    from src.utils.version_checker import NOTICE
+    from src.webui import app, shell
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import READ_ONLY_HEADERS, node_with_playwright, ui_problems, walk_ui
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    monkeypatch.setattr(app, "probe_runtime", lambda: {"status": NOTICE, "issues": _TWO_WARNINGS})
+    monkeypatch.setattr(app, "format_runtime_line", lambda report=None: "Python 3.12 · torch 2.10.0")
+    state = {"loaded": False, "operator": True}
+    identity = _task_identity("patients_like_me")
+
+    def status(*a, **k):
+        if not state["loaded"]:
+            return {"initialized": False, **_NOT_LOADED, "not_serving": {
+                "state": "not_loaded", "lead": "Nothing has been loaded since the service started",
+                "at": None, "model_sha12": None}}, None
+        return {**_status_serving(identity), "weight_transfer": _FROZEN,
+                "checkpoint_meta": {"epoch": 0, "completed_epochs": 1}}, None
+
+    monkeypatch.setattr(dp.card, "read_status_within", status)
+    trained = _digest("dataset")
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": state["operator"], "serving": "demo",
+        "workspaces": [{"name": "demo", "dataset_fingerprint": trained}],
+        "item": {"architecture": "gatv2", "run": "20261002-000000_patients_like_me_bbbbbb",
+                 "completed_epochs": 1, "sha256": CHECKPOINT_SHA, "weight_transfer": _FROZEN},
+        "item_problem": None, "recorded": {"state": "none"},
+        "trained": {"state": "read", "fingerprint": trained, "problem": None},
+        "cohorts": _cohorts(_version("cohort-a"))})
+    with gr.Blocks(analytics_enabled=False, fill_width=True) as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+        shell.plain_html(app._runtime_footer(), elem_id="runtime_footer")
+    stops = [{"size": [1280, 600], "page": "clinical"}, {"size": [1366, 620], "page": "clinical"}]
+    walks = {}
+    with served(demo, **mount_options()) as base:
+        for name, loaded, operator in (("no model", False, True), ("no model, read-only", False, False),
+                                       ("frozen, read-only", True, False)):
+            state.update(loaded=loaded, operator=operator)
+            (tmp_path / name).mkdir()
+            walks[name] = walk_ui(base[:-len("gradio_api")], tmp_path / name, stops,
+                                  extra_js=_SHORT_JS, headers=None if operator else READ_ONLY_HEADERS)
+    for name, seen in walks.items():
+        assert ui_problems(seen) == [], (name, ui_problems(seen))
+        for stop in seen:
+            where, got = (name, stop["size"]), stop["extra"]
+            assert got["layout"] == "side" and got["footer"] >= 2, (where, got)
+            # The column holds what it holds: the fields take what is left, Run in its foot.
+            assert got["column"]["content"] <= got["column"]["h"] + 0.5, (where, got["column"])
+            assert 0 < got["fields"]["h"] < got["fields"]["content"], (where, got["fields"])
+            run = got["actions"]["run"]
+            assert run and run["inView"], (where, run)
+            if name.startswith("frozen"):
+                assert run["hit"], (where, run)
+                assert got["folded"] and got["card"]["name"], (where, got)
+            assert set(got["inputs"].values()) == {"itself"}, (where, got["inputs"])
 
 
 # ------------------------------------------------- the phenotype list and the API
