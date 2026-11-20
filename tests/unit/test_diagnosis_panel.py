@@ -1515,7 +1515,10 @@ def test_the_stop_question_takes_the_card_actions_place_and_leaves_the_inputs_us
                 assert got[name] and got[name]["inView"] and got[name]["hit"], (where, name, got[name])
             assert set(got["inputs"]) == inputs[task], (where, got["inputs"])
             assert set(got["inputs"].values()) == {"itself"}, (where, got["inputs"])
-            # The one scroll region holds the HPO box whole (8 px of its 83 at 490587c).
+            # The fields region is at least the HPO box's height (8 px against
+            # its 83 at 490587c). Not that the focused box is wholly shown:
+            # focused from the region's top, the browser brings its caret's
+            # line into view (63-68 of 83 px at the short windows, accepted).
             assert got["hpo"]["region"] >= got["hpo"]["box"], (where, got["hpo"])
     card = ("folded", "h", "actions")
     for task, stops in typed.items():
