@@ -3497,12 +3497,22 @@ STOP_FOCUS_ORDER = ("shep-dx-stop-keep", "shep-dx-stop-btn", "shep-dx-change-btn
 #: them, a ``focusout`` with a related target) forgets it, and so does focus
 #: that went nowhere while the control is still drawn once the script
 #: running now is done (the reader clicked on text; a drawing's hide leaves
-#: it not drawn). A drawing that leaves the remembered control not drawn
-#: (detached or boxless), with focus on nothing, the body or that control (a
-#: browser may keep focus on a hidden element), focuses the first of
-#: `STOP_FOCUS_ORDER` drawn and enabled. Focus anywhere else, the HPO box
-#: being typed in for one, is never taken; nothing is done while no card
-#: control held focus; no page state is kept.
+#: it not drawn), and a press (``pointerdown``) outside them while focus is
+#: not on the control: a click on text while the body already has focus (a
+#: drawing hid the control and left nothing enabled to place focus on, D8
+#: refusing as a model changed elsewhere, say) fires no focus event (the
+#: review of 6d77a80). A press while focus is still on it (a touch that
+#: scrolls, a scrollbar) moves no focus and forgets nothing. A drawing that
+#: leaves the remembered control not drawn (detached or boxless), with focus
+#: on nothing, the body or that control (a browser may keep focus on a hidden
+#: element), focuses the first of `STOP_FOCUS_ORDER` drawn and enabled,
+#: without scrolling (as `renderers.KEEP_OPEN_JS` does: the page stays where
+#: the reader left it).
+#: Focus on any other element, the HPO box being typed in for one, is not
+#: taken; focus on the body is placed only while a card control is the last
+#: place the reader focused or pressed; nothing is done while no card
+#: control held focus. No ``gr.State``: the script keeps its own ``focused``
+#: (the remembered control) and ``watched`` (the card observed).
 STOP_FOCUS_HEAD = "<script>" + r"""
 (function () {
   if (window.ShepDxStopFocus) { return; }
@@ -3514,7 +3524,7 @@ STOP_FOCUS_HEAD = "<script>" + r"""
     if (!was || drawn(was) || (now && now !== document.body && now !== was)) { return; }
     for (var i = 0; i < ORDER.length; i++) {
       var to = document.getElementById(ORDER[i]);
-      if (drawn(to) && !to.disabled) { to.focus(); return; }
+      if (drawn(to) && !to.disabled) { to.focus({preventScroll: true}); return; }
     }
   }
   var drawing = new MutationObserver(keep);
@@ -3538,6 +3548,13 @@ STOP_FOCUS_HEAD = "<script>" + r"""
     queueMicrotask(function () {
       if (focused === was && drawn(was) && document.activeElement !== was) { focused = null; }
     });
+  }, true);
+  // A press elsewhere while focus is not on the control is the reader's, and
+  // may move no focus (a click on text while the body has it already).
+  document.addEventListener('pointerdown', function (e) {
+    var t = e.target;
+    if (focused && document.activeElement !== focused
+        && !(t && t.closest && t.closest(SWAPPED))) { focused = null; }
   }, true);
 })();
 """.replace("__SWAPPED__", json.dumps(STOP_SWAPPED)).replace(
