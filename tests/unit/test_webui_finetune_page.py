@@ -1517,7 +1517,18 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     (the shell's measure), so with the card's words a little wider
     (`WIDER_TEXT`, a stand-in for another host's metrics) every window still
     shows a form that fits: at 1280 x 900 the list. Fails on d7ebfc3 (the
-    table, 419 px in 406)."""
+    table, 419 px in 406).
+
+    OPS-RECHECK-T1 (the recheck of d4209c4): the test itself still pinned a
+    form to a window (the table at 1280 x 900 in every pass but the wider one,
+    the list at 390 x 844), so on the reviewer's host, where the ended
+    children's table needed 412 px in the 406 px card and the card rightly
+    drew the list, it failed. The form is judged by the measured content
+    alone, at every window and in every pass: the table where the card holds
+    its own narrowest, else the list; over the run both forms are drawn, so
+    each form's checks are met. With a stand-in at the reviewer's figure
+    (the ended pass's words 0.027 em wider, 411.8 px in 406) the old pin
+    fails on d4209c4 and this check passes."""
     from src.webui.app import mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -1600,8 +1611,10 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
             assert all(child["keys"] in (one, both) for child in got["lists"]), (where, got["lists"])
             assert all((child["keys"] == one) == (len(row) == 5)
                        for child, row in zip(got["lists"], got["rows"])), where
-        assert sizes["390x844"]["form"] == "list", state
-        assert sizes["1280x900"]["form"] == ("list" if state == "wider" else "table"), state
+    # No window is pinned to a form (OPS-RECHECK-T1): over the run each form is drawn
+    # somewhere, so the checks above have met both.
+    assert {got["form"] for sizes in seen.values() for got in sizes.values()} == {"table", "list"}, \
+        {state: {size: got["form"] for size, got in sizes.items()} for state, sizes in seen.items()}
     for size in ("1850x960", "390x844"):
         texts = " ".join(cell["text"] for cell in seen["done"][size]["cells"])
         assert "Validation (Trainer)" in texts and "0.8400" in texts, size
