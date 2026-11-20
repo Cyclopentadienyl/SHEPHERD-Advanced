@@ -3498,11 +3498,12 @@ STOP_FOCUS_ORDER = ("shep-dx-stop-keep", "shep-dx-stop-btn", "shep-dx-change-btn
 #: that went nowhere while the control is still drawn once the script
 #: running now is done (the reader clicked on text; a drawing's hide leaves
 #: it not drawn), and a press (``pointerdown``) outside them while focus is
-#: not on the control: a click on text while the body already has focus (a
+#: not on the control, or is on it no longer drawn (a browser may keep focus
+#: on a hidden element): a click on text while the body already has focus (a
 #: drawing hid the control and left nothing enabled to place focus on, D8
 #: refusing as a model changed elsewhere, say) fires no focus event (the
-#: review of 6d77a80). A press while focus is still on it (a touch that
-#: scrolls, a scrollbar) moves no focus and forgets nothing. A drawing that
+#: review of 6d77a80). A press while focus is still on it, drawn (a touch
+#: that scrolls, a scrollbar), moves no focus and forgets nothing. A drawing that
 #: leaves the remembered control not drawn (detached or boxless), with focus
 #: on nothing, the body or that control (a browser may keep focus on a hidden
 #: element), focuses the first of `STOP_FOCUS_ORDER` drawn and enabled,
@@ -3553,7 +3554,7 @@ STOP_FOCUS_HEAD = "<script>" + r"""
   // may move no focus (a click on text while the body has it already).
   document.addEventListener('pointerdown', function (e) {
     var t = e.target;
-    if (focused && document.activeElement !== focused
+    if (focused && (document.activeElement !== focused || !drawn(focused))
         && !(t && t.closest && t.closest(SWAPPED))) { focused = null; }
   }, true);
 })();
