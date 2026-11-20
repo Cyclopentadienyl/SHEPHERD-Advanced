@@ -4062,12 +4062,16 @@ def test_the_card_shows_stop_inference_by_class_while_a_model_serves():
     assert not _shown(hidden["stop_btn"])
 
 
-#: OPS-RECHECK-N1S's review, F3 (Node and Playwright): where focus is after
-#: each Stop inference step, read once the step's requests are answered
-#: (`QUEUE_JS`) and two frames drawn: the focused element's id (or its tag),
-#: whether it is drawn, whether it matches ``:focus-visible`` and its outline
-#: style, and whether the question is open. ``plan.readonly``: the read-only
-#: viewer's ■ Stop inference (drawn, disabled), focused and Enter pressed.
+#: OPS-RECHECK-N1S's review, F3, and its recheck (Node and Playwright): where
+#: focus is after each Stop inference step, read once the step's requests are
+#: answered (`QUEUE_JS`) and two frames drawn: the focused element's id (or
+#: its tag), whether it is drawn, whether it matches ``:focus-visible`` and
+#: its outline style, and whether the question is open. ``plan.model`` is the
+#: stand-in's file of the served model's generation: one more is a model
+#: changed elsewhere, which the card's next read (the shell's 5 s timer)
+#: finds, closing a question bound to the model before (``closeMs``: from the
+#: change to the question closed). ``plan.readonly``: the read-only viewer's
+#: ■ Stop inference (drawn, disabled), focused and Enter pressed.
 _STOP_FOCUS_TEST_JS = r"""
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -4090,6 +4094,19 @@ const QUEUE_JS = __QUEUE_JS__;
                question: !!document.querySelector('#shep-dx-stop-text .shep-dx-stop-q') };
     });
   };
+  // A model changed elsewhere; the card's next read closes the open question.
+  const changedElsewhere = async () => {
+    const t0 = Date.now();
+    fs.writeFileSync(plan.model + '.new', String(Number(fs.readFileSync(plan.model, 'utf8')) + 1));
+    fs.renameSync(plan.model + '.new', plan.model);
+    await asked(false);
+    return Date.now() - t0;
+  };
+  const enterOnStop = async () => {
+    await page.focus('#shep-dx-stop-btn');
+    await page.keyboard.press('Enter');
+    await asked(true);
+  };
   await page.goto(process.argv[2], { waitUntil: 'load' });
   await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
   await idle();
@@ -4103,33 +4120,61 @@ const QUEUE_JS = __QUEUE_JS__;
     await page.keyboard.press('Enter');
     out.after = await focus();
   } else {
-    // The HPO box holds focus while the question opens and closes (each
-    // button's click() moves no focus).
-    await page.focus('#dx_hpo_terms textarea');
+    // The HPO box holds focus, and is typed in, while the question opens and
+    // closes by each of its ways (each button's click() moves no focus): Keep
+    // serving, ■ Stop inference now (the stand-in releases nothing) and the
+    // card's read finding a model changed elsewhere.
+    const hpo = '#dx_hpo_terms textarea';
+    await page.focus(hpo);
     await page.keyboard.type('HP:0001250');
     await page.$eval('#shep-dx-stop-btn', (b) => b.click());
     await asked(true);
+    await page.keyboard.type(' HP:0001263');
     out.typingAsked = await focus();
     await page.$eval('#shep-dx-stop-keep', (b) => b.click());
     await asked(false);
     out.typingKept = await focus();
+    await page.$eval('#shep-dx-stop-btn', (b) => b.click());
+    await asked(true);
+    await page.$eval('#shep-dx-stop-now', (b) => b.click());
+    await asked(false);
+    out.typingStopped = await focus();
+    await page.$eval('#shep-dx-stop-btn', (b) => b.click());
+    await asked(true);
+    out.typingCloseMs = await changedElsewhere();
+    out.typingClosed = await focus();
+    out.typed = await page.$eval(hpo, (t) => t.value);
     // The keyboard alone: Enter on ■ Stop inference, then on Keep serving
     // (the next Enter goes where the first left focus: read and stop here
     // when that is not Keep serving).
-    await page.focus('#shep-dx-stop-btn');
-    await page.keyboard.press('Enter');
-    await asked(true);
+    await enterOnStop();
     out.asked = await focus();
     if (out.asked.on !== 'shep-dx-stop-keep') { console.log(JSON.stringify(out)); await browser.close(); return; }
     await page.keyboard.press('Enter');
     await asked(false);
     out.kept = await focus();
-    // Enter on ■ Stop inference now, twice: the stop's stand-in releases
-    // nothing the first time and the model the second.
-    for (const name of ['stillServed', 'released']) {
-      await page.focus('#shep-dx-stop-btn');
-      await page.keyboard.press('Enter');
-      await asked(true);
+    // Keep serving focused, then the card's read closes the question.
+    await enterOnStop();
+    out.timerAsked = await focus();
+    out.timerCloseMs = await changedElsewhere();
+    out.timer = await focus();
+    // Keep serving focused, then the reader clicks on the page's text: focus
+    // is on the body while Keep serving is still drawn, and the read that
+    // then closes the question gives it none.
+    await enterOnStop();
+    const text = await page.$eval('#shep-dx-input-hd h2', (h) => {
+      const r = h.getBoundingClientRect();
+      return { x: r.left + 6, y: r.top + r.height / 2 };
+    });
+    await page.mouse.click(text.x, text.y);
+    out.clicked = await focus();
+    out.clickedCloseMs = await changedElsewhere();
+    out.clickedRead = await focus();
+    // Enter on ■ Stop inference now, three times: the stop's stand-in
+    // releases nothing, then nothing with the card read after it failing (a
+    // failed step in Stop now's chain), then the model.
+    for (const name of ['stillServed', 'failedStep', 'released']) {
+      await enterOnStop();
       await page.focus('#shep-dx-stop-now');
       await page.keyboard.press('Enter');
       await asked(false);
@@ -4143,25 +4188,38 @@ const QUEUE_JS = __QUEUE_JS__;
 
 
 def test_a_focus_the_stop_question_hides_goes_to_the_next_card_control(monkeypatch, tmp_path):
-    """OPS-RECHECK-N1S's review, F3: the question takes the place of the
-    card's actions, so Enter on ■ Stop inference hid the focused button and
-    focus fell to the page's body (at 490587c it stayed on the button); Keep
-    serving and ■ Stop inference now hide themselves too. Each of the three
-    events ends with one step (`dp.STOP_FOCUS_JS`) that, only when focus was
-    lost, focuses the first drawn and enabled of Keep serving, ■ Stop
-    inference and Change model…. In a real browser (Node and Playwright,
-    skipped without), an operator with a model loaded, at the owner's window:
+    """OPS-RECHECK-N1S's review, F3, and its recheck: the question takes the
+    place of the card's actions, so a drawing that swaps them hid the focused
+    control and focus fell to the page's body: Enter on ■ Stop inference (at
+    490587c it stayed on the button), Keep serving and ■ Stop inference now
+    hiding themselves, and the card's read closing a question a model changed
+    elsewhere left stale (at b10355a, whose step was chained to the swapping
+    events only).
+    One keeper for the card (`dp.STOP_FOCUS_HEAD`, in the page's head)
+    remembers the swapped control focus is on and, when a drawing leaves it
+    not drawn with focus on nothing, focuses the first drawn and enabled of
+    Keep serving, ■ Stop inference and Change model…, whichever event drew.
+    In a real browser (Node and Playwright, skipped without), an operator
+    with a model loaded, at the owner's window:
 
     - Enter on ■ Stop inference: Keep serving is focused, its focus drawn;
     - Enter on Keep serving: ■ Stop inference is focused, its focus drawn;
+    - Keep serving focused and a model changed elsewhere: the card's next read
+      closes the question and ■ Stop inference is focused, its focus drawn;
     - Enter on ■ Stop inference now: ■ Stop inference is focused while the
-      model still serves (the stop's stand-in released nothing), Change
+      model still serves (the stop's stand-in released nothing), also when the
+      card read after the stop fails (a failed step of its chain), and Change
       model… once nothing does (it released the model);
-    - focus elsewhere is never taken: the HPO box being typed in keeps it
-      while the question opens and closes;
+    - focus elsewhere is never taken: the HPO box being typed in keeps it,
+      and its text, while the question opens, Keep serving and ■ Stop
+      inference now close it and the card's read does; a reader who clicked
+      on the page's text (focus on the body, Keep serving still drawn) is
+      given no focus by the read that then closes the question;
     - the read-only viewer's ■ Stop inference is drawn and disabled: it takes
       no focus and Enter opens nothing.
-    Fails on 44d29b6 (the focus on the body after Enter on ■ Stop inference)."""
+    Fails on 44d29b6 (the focus on the body after Enter on ■ Stop inference)
+    and on b10355a (the focus on the body after the card's read and after a
+    failed step of Stop now's chain)."""
     from types import SimpleNamespace
 
     from src.api.routes import pipeline
@@ -4174,23 +4232,41 @@ def test_a_focus_the_stop_question_hides_goes_to_the_next_card_control(monkeypat
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     operator_mode(monkeypatch)
-    page = {"serving": True, "operator": True, "stops": 0}
+    page = {"serving": True, "operator": True, "stops": 0, "fail": False}
+    # The served model's generation (the browser script writes one more):
+    # 0 is the model the stand-ins describe, each next one another checkpoint.
+    model = tmp_path / "model.txt"
+    model.write_text("0")
 
     def status(*args, **kwargs):
         if not page["serving"]:
             return dict(_NOTHING_SERVED), None
-        return {**_status_serving(_served_identity()),
+        identity, generation = _served_identity(), int(model.read_text())
+        if generation:
+            identity["checkpoint"] = {"state": "verified",
+                                      "sha256": _digest(f"elsewhere-{generation}")}
+        return {**_status_serving(identity),
                 "checkpoint_meta": {"epoch": 0, "completed_epochs": 1}}, None
 
     def stop(request):
         page["stops"] += 1
-        page["serving"] = page["stops"] < 2
+        page["serving"] = page["stops"] < 4
+        page["fail"] = page["stops"] == 3
         return SimpleNamespace(success=not page["serving"], released=not page["serving"],
                                message="Stop inference (the test's stand-in).",
                                status=SimpleNamespace(model_dump=lambda: status()[0]))
 
+    real_refresh = dp.refresh_card
+
+    def refresh(*args, **kwargs):
+        if page["fail"]:
+            page["fail"] = False
+            raise RuntimeError("The card's read failed (the test's stand-in).")
+        return real_refresh(*args, **kwargs)
+
     monkeypatch.setattr(dp.card, "read_status_within", status)
     monkeypatch.setattr(pipeline, "run_stop", stop)
+    monkeypatch.setattr(dp, "refresh_card", refresh)
     monkeypatch.setattr(dp, "memory_after_stop_html", lambda resources=None: "")
     trained = _digest("dataset")
     monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
@@ -4211,27 +4287,38 @@ def test_a_focus_the_stop_question_hides_goes_to_the_next_card_control(monkeypat
         for viewer, headers in (("operator", None), ("readonly", READ_ONLY_HEADERS)):
             page["operator"] = viewer == "operator"
             plan = tmp_path / f"{viewer}.json"
-            plan.write_text(json.dumps({"readonly": headers is not None, "headers": headers}))
+            plan.write_text(json.dumps({"readonly": headers is not None, "headers": headers,
+                                        "model": str(model)}))
             seen[viewer] = run_node(script, tmp_path, base[:-len("gradio_api")], str(plan),
                                     timeout=300)
             page["serving"] = True
     got = seen["operator"]
-    for step in ("typingAsked", "typingKept"):
-        assert got[step]["on"] == "TEXTAREA", (step, got[step])
-    expected = {"asked": ("shep-dx-stop-keep", True), "kept": ("shep-dx-stop-btn", False),
-                "stillServed": ("shep-dx-stop-btn", False),
-                "released": ("shep-dx-change-btn", False)}
-    for step, (control, question) in expected.items():
-        at = got.get(step)
-        assert at, (step, got)
-        assert at["on"] == control and at["drawn"] and at["question"] is question, (step, at)
-        assert at["visible"] and at["outline"] != "none", (step, at)
-    assert page["stops"] == 2
+    # Where focus is after each step (the control, the question open, its
+    # focus drawn), all at once, so a failure shows every path.
+    where = {step: (at["on"], at["question"], bool(at["drawn"] and at["visible"]
+                                                   and at["outline"] != "none"))
+             for step, at in got.items() if isinstance(at, dict)}
+    expected = {
+        "typingAsked": ("TEXTAREA", True), "typingKept": ("TEXTAREA", False),
+        "typingStopped": ("TEXTAREA", False), "typingClosed": ("TEXTAREA", False),
+        "asked": ("shep-dx-stop-keep", True), "kept": ("shep-dx-stop-btn", False),
+        "timerAsked": ("shep-dx-stop-keep", True), "timer": ("shep-dx-stop-btn", False),
+        "clicked": (None, True), "clickedRead": (None, False),
+        "stillServed": ("shep-dx-stop-btn", False), "failedStep": ("shep-dx-stop-btn", False),
+        "released": ("shep-dx-change-btn", False)}
+    assert {step: where.get(step, (None, None, None))[:2] for step in expected} == expected, got
+    # After the keyboard, each focus placed is drawn as focused.
+    for step in ("asked", "kept", "timerAsked", "timer", "stillServed", "failedStep", "released"):
+        assert where[step][2], (step, got[step])
+    assert got["typed"] == "HP:0001250 HP:0001263", got
+    assert page["stops"] == 4 and model.read_text() == "3"
     readonly = seen["readonly"]
     assert readonly["button"] == {"drawn": True, "disabled": True}, readonly
     # Enter went to whatever held focus before (the page's tab): nothing opened.
     assert readonly["after"]["on"] == readonly["before"]["on"] != "shep-dx-stop-btn", readonly
     assert not readonly["after"]["question"], readonly
+    # The keeper is the page head's, once.
+    assert mount_options()["head"].count(dp.STOP_FOCUS_HEAD) == 1
 
 
 # --------------------------------------------------------------------------- status marks (R-1c, B72-N7)

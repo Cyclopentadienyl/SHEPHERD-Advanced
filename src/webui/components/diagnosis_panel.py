@@ -32,7 +32,8 @@ inside its own panel; stacked, the panels stack and only the page scrolls.
   serves: an operator control (D8 on each event's own request) that asks
   first, naming the model shown, and is bound to it (the question takes the
   place of the card's actions while it is open, OPS-RECHECK-N1S, and a
-  focus the swap loses is placed again, `STOP_FOCUS_JS`);
+  focus any drawing of the card hides is placed again by the card's keeper,
+  `STOP_FOCUS_HEAD`);
   confirmed, it calls the one stop in process (`run_stop`, which
   ``POST /api/v1/pipeline/stop`` calls): the diagnoses already accepted
   finish, new ones are refused until a model is loaded, and it says what the
@@ -3469,32 +3470,78 @@ def keep_serving() -> Dict[str, Any]:
     return {**_stop_hidden(), "stop_text": ""}
 
 
-#: Where a keyboard's focus goes when Stop inference's question swaps the
-#: card's controls (OPS-RECHECK-N1S, its review's F3): the question opened
-#: hides the card's actions with the ■ Stop inference just pressed in them,
-#: and Keep serving and ■ Stop inference now hide themselves, so focus fell
-#: to the page's body. The first of these drawn and enabled takes it: Keep
-#: serving (the safe answer while the question is open), then ■ Stop
-#: inference, then Change model… (a stop that left no model to stop).
+#: The card's controls Stop inference's question swaps, as the card draws
+#: them: every button of its actions row (Details ›, Change model…, ■ Stop
+#: inference), whose place the open question takes, and of its stop row
+#: (■ Stop inference now, Keep serving), which the question's answers and the
+#: card's reads hide.
+STOP_SWAPPED = "#shep-dx-card-actions button, #shep-dx-stop-row button"
+
+#: Where focus goes when a drawing hides the one of those it was on: the
+#: first of these drawn and enabled. Keep serving (the safe answer while the
+#: question is open), then ■ Stop inference, then Change model… (a stop that
+#: left no model to stop).
 STOP_FOCUS_ORDER = ("shep-dx-stop-keep", "shep-dx-stop-btn", "shep-dx-change-btn")
 
-#: The last step of each event that swaps those controls (the question
-#: opened, Keep serving, the end of Stop now's chain), with no state of its
-#: own: **only when focus was lost** (on nothing, on the body or on a control
-#: no longer drawn) it focuses the first of `STOP_FOCUS_ORDER` drawn and
-#: enabled. Focus anywhere else, the HPO box being typed in for one, stays
-#: where it is. Gradio 6.30 starts it once the event's answer is drawn (the
-#: focus was already lost at its start on each path, measured); should the
-#: answer be drawn later, it looks again on each of the next three frames,
-#: never longer.
-STOP_FOCUS_JS = r"""async () => {
-  const drawn = (e) => !!e && e.getClientRects().length > 0;
-  const lost = () => { const a = document.activeElement; return !a || a === document.body || !drawn(a); };
-  for (let i = 0; i < 3 && !lost(); i++) { await new Promise((r) => requestAnimationFrame(r)); }
-  if (!lost()) { return; }
-  const next = __ORDER__.map((id) => document.getElementById(id)).find((e) => drawn(e) && !e.disabled);
-  if (next) { next.focus(); }
-}""".replace("__ORDER__", json.dumps(list(STOP_FOCUS_ORDER)))
+#: **One keeper for the card's swapped controls** (OPS-RECHECK-N1S: its
+#: review's F3 and the recheck of b10355a), a script of the dashboard's head
+#: (`app.dashboard_head`, as `INPUTS_HEAD`) of the shape of the disclosures'
+#: keeper (`renderers.KEEP_OPEN_JS`). The root it holds: a drawing hides the
+#: card control focus is on, and nothing places focus again, whichever event
+#: drew (the question opened, Keep serving, ■ Stop inference now and the
+#: steps after it, a card read closing a question a model changed elsewhere
+#: left stale). A step chained to the events that swap them (b10355a) left
+#: focus on the page's body after the read's close and after a failed step of
+#: Stop now's chain. A ``focusin`` on one of `STOP_SWAPPED` remembers it and
+#: watches the card's drawing; focus moved elsewhere (a ``focusin`` outside
+#: them, a ``focusout`` with a related target) forgets it, and so does focus
+#: that went nowhere while the control is still drawn once the script
+#: running now is done (the reader clicked on text; a drawing's hide leaves
+#: it not drawn). A drawing that leaves the remembered control not drawn
+#: (detached or boxless), with focus on nothing, the body or that control (a
+#: browser may keep focus on a hidden element), focuses the first of
+#: `STOP_FOCUS_ORDER` drawn and enabled. Focus anywhere else, the HPO box
+#: being typed in for one, is never taken; nothing is done while no card
+#: control held focus; no page state is kept.
+STOP_FOCUS_HEAD = "<script>" + r"""
+(function () {
+  if (window.ShepDxStopFocus) { return; }
+  window.ShepDxStopFocus = true;
+  var SWAPPED = __SWAPPED__, ORDER = __ORDER__, focused = null, watched = null;
+  function drawn(el) { return !!el && el.isConnected && el.getClientRects().length > 0; }
+  function keep() {
+    var was = focused, now = document.activeElement;
+    if (!was || drawn(was) || (now && now !== document.body && now !== was)) { return; }
+    for (var i = 0; i < ORDER.length; i++) {
+      var to = document.getElementById(ORDER[i]);
+      if (drawn(to) && !to.disabled) { to.focus(); return; }
+    }
+  }
+  var drawing = new MutationObserver(keep);
+  document.addEventListener('focusin', function (e) {
+    var el = e.target;
+    focused = el && el.matches && el.matches(SWAPPED) ? el : null;
+    var card = focused && focused.closest('#shep-dx-card');
+    if (card && card !== watched) {
+      drawing.observe(card, {childList: true, subtree: true, attributes: true});
+      watched = card;
+    }
+  }, true);
+  // Focus that went nowhere is the reader's (a click on text), unless a
+  // drawing hid its control: the browser tells the two alike (a focusout
+  // with no related target), so the control is forgotten once the script
+  // running now is done, where it is still drawn and focus is not on it.
+  document.addEventListener('focusout', function (e) {
+    var was = focused;
+    if (!was || e.target !== was) { return; }
+    if (e.relatedTarget) { focused = null; return; }
+    queueMicrotask(function () {
+      if (focused === was && drawn(was) && document.activeElement !== was) { focused = null; }
+    });
+  }, true);
+})();
+""".replace("__SWAPPED__", json.dumps(STOP_SWAPPED)).replace(
+    "__ORDER__", json.dumps(list(STOP_FOCUS_ORDER))) + "</script>"
 
 
 def _on_stop_inference_request(request: gr.Request, state) -> Tuple[Any, ...]:
@@ -4030,22 +4077,19 @@ def create_diagnosis_tab(ctx: Any) -> None:
     # the confirmed stop (in process, `run_stop`), the card read again (its
     # reads close these views once the model they are bound to is no longer
     # offered) and the chips (the GPU chip names inference while a CUDA model
-    # serves). Each of the three ends by placing a focus the swap lost
-    # (`STOP_FOCUS_JS`).
+    # serves). A focus any drawing of the card hides is placed again by the
+    # card's keeper in the page's head (`STOP_FOCUS_HEAD`), never by an event.
     stop_btn.click(_on_stop_inference_request, inputs=[card_state],
-                   outputs=outputs(*STOP_OUTPUTS), show_progress="hidden").then(
-        None, js=STOP_FOCUS_JS)
+                   outputs=outputs(*STOP_OUTPUTS), show_progress="hidden")
     stop_now_btn.click(_on_stop_inference, inputs=[stop_asked], outputs=outputs(*STOP_OUTPUTS),
-                       show_progress="hidden").then(**refresh).then(**ctx.chip_refresh).then(
-        None, js=STOP_FOCUS_JS)
+                       show_progress="hidden").then(**refresh).then(**ctx.chip_refresh)
 
     def _keep_serving():
         return mapped(keep_serving())
 
     stop_keep_btn.click(_keep_serving, inputs=None,
                         outputs=outputs("stop_text", "stop_asked", "stop_now_btn",
-                                        "stop_keep_btn"), show_progress="hidden").then(
-        None, js=STOP_FOCUS_JS)
+                                        "stop_keep_btn"), show_progress="hidden")
 
     change_names = ("change_drawer", "plan", "phase", "change_closed")
     reset_names = ("confirm", "confirm_html", "list_reason", "change_closed")
@@ -4544,6 +4588,7 @@ __all__ = [
     "INPUTS_HEAD",
     "PAGE_CSS",
     "SEGMENTS",
+    "STOP_FOCUS_HEAD",
     "TASK_OUTPUTS",
     "TASK_VIEWS",
     "TOPIC_HELP",
