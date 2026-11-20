@@ -708,7 +708,7 @@ const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [390, 844]]) {
+  for (const [w, h, wider] of [[1850, 960, false], [390, 844, false], [390, 844, true]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
     await page.addInitScript(QUEUE_JS);
     await page.goto(process.argv[2], { waitUntil: 'load' });
@@ -719,7 +719,13 @@ const QUEUE_JS = __QUEUE_JS__;
       const b = document.getElementById('dl_check_workspaces_root');
       return !!b && b.offsetParent !== null; }, null, { timeout: 30000 });
     await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
-    out[w + 'x' + h] = await page.evaluate(async () => {
+    if (wider) {
+      // Another host's wider text (the recheck of d4209c4 read Create 30 px
+      // from its row's phrase at 390 x 844): the panel's words 0.04em apart.
+      await page.addStyleTag({ content: '#shep-dl { letter-spacing: 0.04em !important; }' });
+      await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+    }
+    out[w + 'x' + h + (wider ? '-wider' : '')] = await page.evaluate(async () => {
       const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const T = (e) => (e.innerText || '').replace(/\s+/g, ' ').trim();
       const box = (e) => e.getBoundingClientRect();
@@ -783,7 +789,12 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
     controls only") in its own row, on the line next to it (its words at
     most 24 px above or below the button), both wholly on screen when the
     button is brought into view; the panel's long reason is said once on the
-    page. An operator sees no lock and no phrase. Fails on d7ebfc3."""
+    page. An operator sees no lock and no phrase. Fails on d7ebfc3. The
+    recheck of d4209c4 read Create 30 px from its row's phrase at 390 x 844
+    on its host: Create was centred against a suggestion that wrapped to
+    more lines. A pass with the panel's words 0.04em apart (another host's
+    metrics) reads the same 30 px on d4209c4; Create now shares its
+    suggestion's first baseline."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.operator_access import DEPLOYMENT_MODE, operator_mode
