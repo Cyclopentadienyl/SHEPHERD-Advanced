@@ -3241,8 +3241,11 @@ Run Diagnosis stays in view. It shows:
   start-up settings). A load is said by this state alone, whichever page or client started it;
 - **■ Stop inference**, while a model serves (an operator control, §4.13; locked for a read-only
   browser). It asks first: "Stop inference of model <12 hex>? Diagnoses already accepted finish;
-  new diagnoses are refused until a model is loaded. Nothing loads a model again by itself."
-  with **■ Stop inference now** and **Keep serving**. The stop is bound to the model the question
+  new ones are refused until a model is loaded. Nothing reloads one by itself." with
+  **■ Stop inference now** and **Keep serving**, in a band across the card that takes the place of
+  its actions ("Details ›", "Change model…" and "■ Stop inference" are drawn again once the
+  question closes; since OPS-RECHECK-N1S, so a short window keeps its inputs, one scroll region,
+  while the question is open). The stop is bound to the model the question
   named: another model loaded meanwhile keeps serving, and the answer says so. After a stop it
   says what the stop did ("Inference stopped: 2 accepted request(s) finished first, then model …
   and its graph were released and the GPU lock given back. …") and the resources reading taken

@@ -24,7 +24,8 @@ Dependencies:
       (`mount_options`: the theme, the CSS, and the head: every style sheet and
       the scripts of the shared ⓘ, the shell, the touch record,
       `training_console.TOUCH_HEAD`, Diagnosis' inputs generation,
-      `diagnosis_panel.INPUTS_HEAD`, and the downloads',
+      `diagnosis_panel.INPUTS_HEAD`, and its card's focus keeper,
+      `diagnosis_panel.STOP_FOCUS_HEAD`, and the downloads',
       `exports.DOWNLOAD_HEAD`).
 
 Called by:
@@ -177,15 +178,18 @@ def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
       after it goes out: `training_console.TOUCH_HEAD`), Diagnosis' inputs
       generation (each edit of an input an answer depends on counted in its
       own event, and the page's gate written for it:
-      `diagnosis_panel.INPUTS_HEAD`) and the downloads' (a click on a link
-      to the download route is a download, never a visit:
+      `diagnosis_panel.INPUTS_HEAD`), its card's focus keeper (a focus a
+      drawing of the card hides goes to the card's next control:
+      `diagnosis_panel.STOP_FOCUS_HEAD`) and the downloads' (a click on a
+      link to the download route is a download, never a visit:
       `exports.DOWNLOAD_HEAD`). They run once per page load, before any
       component exists, so each works by document-level (or window-level)
       delegation.
     """
     return ("<style>" + HELP_CSS + SHELL_CSS + "".join(page_css) + "</style>"
             + HELP_HEAD + shell.SHELL_HEAD + training_console.TOUCH_HEAD
-            + diagnosis_panel.INPUTS_HEAD + exports.DOWNLOAD_HEAD)
+            + diagnosis_panel.INPUTS_HEAD + diagnosis_panel.STOP_FOCUS_HEAD
+            + exports.DOWNLOAD_HEAD)
 
 
 DASHBOARD_HEAD = dashboard_head()
@@ -280,7 +284,8 @@ def mount_options() -> dict[str, Any]:
     The look and the page's scripts: theme, CSS and ``head``
     (`DASHBOARD_HEAD`: every style sheet, and the scripts of the shared ⓘ,
     the shell, the touch record, `training_console.TOUCH_HEAD`, Diagnosis'
-    inputs generation, `diagnosis_panel.INPUTS_HEAD`, and the downloads',
+    inputs generation, `diagnosis_panel.INPUTS_HEAD`, and its card's focus
+    keeper, `diagnosis_panel.STOP_FOCUS_HEAD`, and the downloads',
     `exports.DOWNLOAD_HEAD`); there is no ``js``. All of them belong here: Gradio 6 drops them from
     ``gr.Blocks``.
 

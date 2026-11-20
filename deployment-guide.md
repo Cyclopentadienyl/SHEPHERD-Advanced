@@ -3271,9 +3271,11 @@ HPO terms 欄位（標籤、格式說明與輸入框，166 px）；在較矮的�
   原因在 "Details ›" 之下，點一下即可看到（如何載入模型、啟動設定）。載入只由這個狀態表達，不論是
   哪個頁面或用戶端發起的；
 - **■ Stop inference**，在有模型服務時出現（操作者控制項，§4.13；唯讀瀏覽器看到上鎖的按鈕）。它
-  會先詢問："Stop inference of model <12 hex>? Diagnoses already accepted finish; new diagnoses
-  are refused until a model is loaded. Nothing loads a model again by itself."，附
-  **■ Stop inference now** 與 **Keep serving**。停止綁定詢問中指名的模型：期間換上的其他模型會繼續
+  會先詢問："Stop inference of model <12 hex>? Diagnoses already accepted finish; new ones are
+  refused until a model is loaded. Nothing reloads one by itself."，附 **■ Stop inference now**
+  與 **Keep serving**，以橫跨卡片的一條色帶顯示，取代卡片的操作列（詢問關閉後 "Details ›"、
+  "Change model…" 與 "■ Stop inference" 重新出現；自 OPS-RECHECK-N1S 起，讓較矮視窗在詢問開著時仍保有
+  輸入欄位，且只有一個捲動區）。停止綁定詢問中指名的模型：期間換上的其他模型會繼續
   服務，回應也會這樣說。停止後它顯示停止的結果（"Inference stopped: 2 accepted request(s) finished
   first, then model … and its graph were released and the GPU lock given back. …"），以及當時取得的
   資源讀數（`/api/v1/system/resources`）：那是一個讀數，不保證記憶體已經交還（GB10 的記憶體是共用的）。
