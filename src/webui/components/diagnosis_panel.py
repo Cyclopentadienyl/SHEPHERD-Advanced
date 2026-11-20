@@ -135,7 +135,7 @@ from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.components.renderers import STATUS_MARKS as _STATUS_MARKS
 from src.webui.components.renderers import status_mark as _status_mark
 from src.webui.operator_access import operator_access
-from src.webui.style import FOLD, FOLD_ROOM, FOLDED_ATTR, SIDE, SIDE_SHORT, STACK
+from src.webui.style import FOLD, FOLD_FLOOR, FOLD_ROOM, FOLDED_ATTR, SIDE, SIDE_SHORT, STACK
 
 logger = logging.getLogger(__name__)
 
@@ -3603,8 +3603,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
             plain_html('<div class="shep-panel-hd"><h2>Patient phenotypes</h2></div>',
                        elem_id="shep-dx-input-hd")
             with gr.Column(elem_id="shep-dx-input-bd", elem_classes=["shep-dx-scroll"]):
-                # The column's one scroll region, kept at its floor (`FIELDS_FLOOR`);
-                # the card folds its long identity first (`style.FOLD`, OPS-FIX-N1).
+                # The column's one scroll region, with its floor (`FIELDS_FLOOR`): the
+                # card folds its long identity first (`style.FOLD`, OPS-FIX-N1).
                 with gr.Column(elem_id="shep-dx-fields", elem_classes=["shep-dx-fields", FOLD_ROOM]):
                     phenotype_input = gr.Textbox(
                         label="HPO terms", lines=3, max_lines=12, elem_id="dx_hpo_terms",
@@ -4134,7 +4134,7 @@ _TAB = "#shep-tab-clinical"
 #: inside; in the input column the fields are its one scroll region and the
 #: Model-in-use card and Run Diagnosis are its foot, in flow under them, never
 #: over them (R-25: a sticky card hid the HPO box's lower lines and its caret
-#: at 1536 x 760 once it held 8 lines); the fields keep a floor
+#: at 1536 x 760 once it held 8 lines); the fields have a floor
 #: (`FIELDS_FLOOR`) and the card folds its long identity when it would leave
 #: them less (`style.FOLD`, measured by the shell's layout pass; OPS-FIX-N1: at
 #: 1280 x 600 with a model loaded and two warning lines the fields were 8 px
@@ -4160,11 +4160,15 @@ DRAWER_FACTS_MIN = 222
 DRAWER_TREE_ROOM = f"calc(100cqw - {DRAWER_FACTS_MIN + DRAWER_GAP}px)"
 #: **The fields region's floor** (px, side by side; OPS-FIX-N1): the HPO terms
 #: field whole, its label, its info line on two lines and its three-line box
-#: (166 px measured in the 300 px column), so the region never shrinks under
-#: its first input; when the fields need more, the region scrolls (the
-#: column's one scroll region). The Model-in-use card gives way first: it
-#: folds its long identity (`style.FOLD`) when it would leave the region
-#: under this floor.
+#: (166 px measured in the 300 px column); when the fields need more, the
+#: region scrolls (the column's one scroll region). The Model-in-use card
+#: gives way first: it folds its long identity (`style.FOLD`) when it would
+#: leave the region under this floor. The floor is the fold's measure
+#: (`style.FOLD_FLOOR`), not a CSS minimum: where the card, folded or with
+#: nothing to fold (no model loaded; a read-only viewer's reason line), still
+#: leaves less, the region takes what is left and stays the one scroll region,
+#: Run Diagnosis in view (a minimum height there put a second scroll region
+#: around the fields and Run out of view; the review of 90c375e).
 FIELDS_FLOOR = 166
 
 PAGE_CSS = f"""
@@ -4428,7 +4432,7 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx > .shep-panel {{ max-height: 100%; }}
   {_TAB} .shep-dx-scroll {{ flex: 1 1 auto !important; min-height: 0; overflow: auto; }}
   {_TAB} #shep-dx-input-bd {{ display: flex; flex-direction: column; flex-wrap: nowrap !important; }}
-  {_TAB} #shep-dx-input-bd > #shep-dx-fields {{ flex: 0 1 auto !important; min-height: {FIELDS_FLOOR}px; overflow: auto; flex-wrap: nowrap !important; }}
+  {_TAB} #shep-dx-input-bd > #shep-dx-fields {{ flex: 0 1 auto !important; min-height: 0; {FOLD_FLOOR}: {FIELDS_FLOOR}px; overflow: auto; flex-wrap: nowrap !important; }}
   {_TAB} #shep-dx-fields > *, {_TAB} #shep-dx-side > * {{ flex-shrink: 0 !important; }}
   /* The card folded (OPS-FIX-N1; `style.FOLD`): its long identity is in Details ›; the serving
      state with the data's chips, the task's model name and its run, on one line (beside the name

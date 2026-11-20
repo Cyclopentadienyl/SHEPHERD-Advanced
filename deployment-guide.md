@@ -3236,7 +3236,9 @@ HPO terms 欄位（標籤、格式說明與輸入框，166 px）；在較矮的�
 這個高度（自 OPS-FIX-N1 起：以量測判定，即卡片自身的高度對照面板，而非視窗尺寸；例如載入模型後的
 1280 × 600 與 1366 × 620），卡片會收合：model fingerprint、trained-on 一行與 recorded results 移入
 "Details ›"（身分抽屜，其中完整列出），卡片保留服務狀態及其標籤、任務的模型名稱與其 run（同一行）、
-"Details ›"、"Change model…" 與 "■ Stop inference"。卡片顯示：
+"Details ›"、"Change model…" 與 "■ Stop inference"。若卡片收合後仍讓輸入欄位少於這個高度（例如未載入
+模型，或唯讀檢視者的原因說明行，加上較矮視窗中的警告行），輸入欄位就用剩下的高度捲動，Run Diagnosis
+仍留在畫面內。卡片顯示：
 
 - 標題列 "Model in use ⓘ · current ↻"：目前服務的內容會為這個瀏覽器讀取——頁面打開
   時、Diagnosis 顯示期間每 5 秒、每次診斷之後、更換模型之後，以及按 ↻ 時；超過 5 秒的讀取顯示

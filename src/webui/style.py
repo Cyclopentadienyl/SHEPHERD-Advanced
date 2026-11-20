@@ -85,17 +85,24 @@ NARROW_ATTR = "data-shep-narrow"
 #: **A box drawn whole while its column has the room** (OPS-FIX-N1; the layout
 #: pass's fold, `src/webui/shell.py`): side by side, a box of class `FOLD`
 #: shares a column with a region of class `FOLD_ROOM` (the column: the box's
-#: nearest ancestor that holds such a region as a child), and the region keeps
-#: a floor, its CSS minimum height. While the column holds everything in it
-#: with the box whole and the region at its floor (or at its whole content,
-#: when that is less), the box is drawn whole; when it does not, the pass sets
-#: `FOLDED_ATTR` on the box, whose parts of class `FOLD_PART` are then not
-#: drawn (this sheet; they stay one click away in the box's own details), and
-#: its page's style sheet may draw the rest denser. The box is measured drawn
-#: whole, so the measure never depends on the state it sets, and no window size
-#: decides it: the box's own height, the column's and the region's floor do.
+#: nearest ancestor that holds such a region as a child), and the region names
+#: its floor, the height in its custom property `FOLD_FLOOR`. While the column
+#: holds everything in it with the box whole and the region at its floor (or
+#: at its whole content, when that is less), the box is drawn whole; when it
+#: does not, the pass sets `FOLDED_ATTR` on the box, whose parts of class
+#: `FOLD_PART` are then not drawn (this sheet; they stay one click away in the
+#: box's own details), and its page's style sheet may draw the rest denser.
+#: The floor decides the fold and is not a CSS minimum: where the box, folded
+#: or with nothing to fold, still leaves the region less, the region takes
+#: what is left and stays its column's one scroll region (a minimum there
+#: overflowed the column, a second scroll region around the region, the
+#: column's foot out of view; the review of the fold's first version). The box
+#: is measured drawn whole, so the measure never depends on the state it sets,
+#: and no window size decides it: the box's own height, the column's and the
+#: region's floor do.
 FOLD = "shep-fold"
 FOLD_ROOM = "shep-fold-room"
+FOLD_FLOOR = "--shep-fold-floor"
 FOLD_PART = "shep-fold-part"
 FOLDED_ATTR = "data-shep-folded"
 
@@ -844,5 +851,6 @@ __STACK__ {
     .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART)
 
 
-__all__ = ["BRAND_WIDTH", "FIT", "FIT_WIDE", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT",
-           "SHORT_ATTR", "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK"]
+__all__ = ["BRAND_WIDTH", "FIT", "FIT_WIDE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
+           "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT", "SHORT_ATTR",
+           "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK"]
