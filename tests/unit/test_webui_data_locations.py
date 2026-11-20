@@ -825,3 +825,160 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
                 assert button["reason"] == f"🔒 {phrase}", (size, key, part, button)
                 assert button["sameRow"] and button["dy"] <= 24, (size, key, part, button)
                 assert button["whole"] and button["reasonWhole"], (size, key, part, button)
+
+
+#: Settings with nothing set (Create offered on each required row), the
+#: panel's page open answered, at the owner's window, a laptop's, a phone's
+#: and the narrowest, the panel's words as drawn and 0.04em apart (another
+#: host's wider metrics): for each row's Create brought into view, its
+#: suggested folder as drawn. Its words (each character's line), the width the
+#: suggestion is given, the width of each piece of its path up to and with a
+#: separator, drawn on one line (``~/``, ``SHEPHERD-data/``, ``workspaces``),
+#: the room beside Create, and where the suggestion lies (beside Create or
+#: under it); Create's gap to its row's phrase (read-only); whether Create,
+#: the suggestion and its drawn lines lie inside the row's content box.
+_SUGGEST_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1850, 960], [1366, 768], [390, 844], [320, 640]]) for (const spacing of [0, 0.04]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(process.argv[2], { waitUntil: 'load' });
+    await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+    await page.click('#shep-tab-settings-button');
+    await page.waitForFunction(() => {
+      const b = document.getElementById('dl_create_workspaces_root');
+      return !!b && b.offsetParent !== null; }, null, { timeout: 30000 });
+    await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+    if (spacing) {
+      await page.addStyleTag({ content: `#shep-dl { letter-spacing: ${spacing}em !important; }` });
+      await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+    }
+    out[`${w}x${h}@${spacing}em`] = await page.evaluate(async () => {
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const box = (e) => e.getBoundingClientRect();
+      const words = (e) => { const r = document.createRange(); r.selectNodeContents(e);
+        return r.getBoundingClientRect(); };
+      // A text as one line in the suggestion's own type (laid out apart, out of flow).
+      const oneLine = (code, text) => { const m = document.createElement('span');
+        m.style.cssText = 'position: absolute; visibility: hidden; white-space: nowrap; padding: 0';
+        m.textContent = text; code.appendChild(m); const width = box(m).width; m.remove(); return width; };
+      const rows = {};
+      for (const key of ['workspaces_root', 'registry', 'intake_dir']) {
+        const b = document.getElementById(`dl_create_${key}`);
+        if (!b || b.offsetParent === null) { continue; }
+        b.scrollIntoView({ block: 'nearest' });
+        await frame();
+        const row = document.getElementById(`dl_row_${key}`), crow = b.closest('.shep-dl-create');
+        const rs = getComputedStyle(row), rr = box(row);
+        const left = rr.left + parseFloat(rs.paddingLeft), right = rr.right - parseFloat(rs.paddingRight);
+        const inside = (q) => q.left >= left - 0.5 && q.right <= right + 0.5;
+        const sug = document.getElementById(`dl_suggest_${key}`), code = sug.querySelector('code');
+        const text = code.textContent;
+        // Each character's line, and the lines the words are drawn on.
+        const chars = [], drawn = [];
+        const walk = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          for (let i = 0; i < n.length; i++) { const g = document.createRange();
+            g.setStart(n, i); g.setEnd(n, i + 1);
+            const q = [...g.getClientRects()].find((x) => x.width > 0);
+            chars.push({ c: n.data[i], top: q ? Math.round(q.top) : null });
+            if (q) { drawn.push(q); } } }
+        const inWord = /[\p{L}\p{N}]/u;
+        const breaks = [];
+        for (let i = 1; i < chars.length; i++) {
+          if (inWord.test(chars[i - 1].c) && inWord.test(chars[i].c) && chars[i - 1].top !== chars[i].top) {
+            breaks.push(text.slice(0, i) + '|' + text.slice(i)); } }
+        const pieces = (text.match(/[^/]*\/|[^/]+$/g) || []).map((p) => ({ p, width: oneLine(code, p) }));
+        const bb = box(b), sb = box(sug), cs = getComputedStyle(crow);
+        const others = [...crow.children].filter((e) => e !== b && e.offsetParent !== null && box(e).height > 0);
+        const phrase = document.querySelector(`#dl_lock_${key} .shep-reason`);
+        const pq = phrase && phrase.offsetParent !== null ? words(phrase) : null;
+        rows[key] = {
+          text, breaks, pieces, lines: new Set(chars.map((x) => x.top).filter((t) => t !== null)).size,
+          longest: Math.max(...pieces.map((x) => x.width)),
+          width: sug.clientWidth,
+          room: right - bb.right - parseFloat(cs.columnGap),
+          under: sb.top >= bb.bottom, beside: sb.left >= bb.right && sb.top < bb.bottom,
+          firstLine: others.every((e) => box(e).bottom > bb.top),
+          phraseDy: pq ? Math.round(Math.max(0, bb.top - pq.bottom, pq.top - bb.bottom)) : null,
+          cut: sug.scrollWidth > sug.clientWidth || drawn.length !== text.length,
+          inside: { create: inside(bb), suggestion: inside(sb), lines: drawn.every(inside),
+                    phrase: pq ? inside(pq) : null } };
+      }
+      return { rows, sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.parametrize("operator", [False, True], ids=["read-only", "operator"])
+def test_the_suggested_folder_is_whole_beside_or_under_create(dl, tmp_path, monkeypatch, operator):
+    """OPS-RECHECK-DL1 (the lanes' review of c2a64ac): the suggested folder
+    beside Create got only what the row's 8em indent and the 220 px button
+    left (83 px at 1366 x 768, 96 at 390 x 844, 26 at 320 x 640), so
+    "~/SHEPHERD-data/workspaces" broke inside its words over 4 lines (9 to
+    14 at 320 x 640): the create row never let it go under Create. In a real
+    browser, nothing set, at 1850 x 960, 1366 x 768, 390 x 844 and 320 x 640,
+    the panel's words as drawn and 0.04em apart, for a read-only viewer and
+    an operator: each Create offered has its suggestion whole (every
+    character drawn, nothing cut) with no line break inside a word, given at
+    least the width of its path's longest piece (up to and with a separator);
+    under Create wherever the room beside Create is narrower than that;
+    Create on its row's first line, its words at most 24 px from its row's
+    phrase (read-only; `test_each_rows_locked_buttons_say_why_beside_them`'s
+    limit); Create, the suggestion and its lines inside the row; no sideways
+    page scroll. Fails on 490587c (at 1366 x 768 the suggestion is 83 px
+    wide, broken as "~/SHEPHER|D-data/work|spaces")."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import DEPLOYMENT_MODE, operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    if operator:
+        operator_mode(monkeypatch)
+    else:
+        monkeypatch.delenv(DEPLOYMENT_MODE, raising=False)
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_SUGGEST_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    assert len(seen) == 8, seen
+    problems = []
+    for size, at in seen.items():
+        if at["sideways"]:
+            problems.append(f"{size}: the page scrolls sideways")
+        if set(at["rows"]) != {"workspaces_root", "registry", "intake_dir"}:
+            problems.append(f"{size}: Create offered on {sorted(at['rows'])}")
+        for key, row in at["rows"].items():
+            where = f"{size} {key}"
+            if row["text"] != f"~/SHEPHERD-data/{SUGGESTED[key]}" or row["cut"]:
+                problems.append(f"{where}: suggestion not whole: {row['text']!r}")
+            if row["breaks"]:
+                problems.append(f"{where}: broken inside a word: {row['breaks']}")
+            if row["width"] < row["longest"]:
+                problems.append(f"{where}: {row['width']} px for a piece of {row['longest']:.1f} px "
+                                f"({row['lines']} lines)")
+            if row["room"] < row["longest"] and not row["under"]:
+                problems.append(f"{where}: beside Create in {row['room']:.1f} px, not under it")
+            if not (row["under"] or row["beside"]):
+                problems.append(f"{where}: neither beside nor under Create")
+            if not row["firstLine"]:
+                problems.append(f"{where}: Create is not on its row's first line")
+            if operator and row["phraseDy"] is not None:
+                problems.append(f"{where}: an operator sees a lock phrase")
+            if not operator and (row["phraseDy"] is None or row["phraseDy"] > 24):
+                problems.append(f"{where}: Create {row['phraseDy']} px from its row's phrase")
+            outside = [part for part, ok in row["inside"].items() if ok is False]
+            if outside:
+                problems.append(f"{where}: past the row's edge: {outside}")
+    assert not problems, "\n".join(problems)
