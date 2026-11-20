@@ -673,7 +673,10 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: end, or at its start where the buttons wrap there (narrow). Create starts
 #: under the box, past the key's 8em, while the box sits beside the key; narrow,
 #: where the box wraps under the key, it starts at the row's start (at 390 x 844
-#: the indent put it 2 px past its row's edge; the review of 5188b4e).
+#: the indent put it 2 px past its row's edge; the review of 5188b4e). Create
+#: and its suggestion line share their first baseline: centred, a suggestion
+#: that wraps to more lines pushed Create down, 30 px from its row's phrase at
+#: 390 x 844 on another host (the recheck of d4209c4).
 PAGE_CSS = f"""
 {_PAGE} #shep-dl-bd {{ padding: 4px 16px 12px !important; gap: 0 !important; }}
 {_PAGE} #shep-dl-top {{ gap: 8px !important; align-items: center; flex-wrap: wrap; }}
@@ -697,7 +700,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-set input:focus-visible, {_PAGE} .shep-dl-set textarea:focus-visible {{ outline: 2px solid var(--shep-accent-600) !important; outline-offset: 1px; }}
 {_PAGE} .shep-dl-set input:disabled, {_PAGE} .shep-dl-set textarea:disabled {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
 {_PAGE} .shep-dl-set > button, {_PAGE} .shep-dl-create > button {{ flex: none !important; min-width: max-content !important; }}
-{_PAGE} .shep-dl-create {{ gap: 8px !important; align-items: center; padding-left: calc(8em + 8px); }}
+{_PAGE} .shep-dl-create {{ gap: 8px !important; align-items: baseline; padding-left: calc(8em + 8px); }}
 {_PAGE} .shep-dl-create:not(:has(button:not([hidden]))) {{ display: none !important; }}
 {_PAGE} [id^="dl_lock_"] .shep-reason {{ justify-content: flex-end; }}
 {_PAGE} .shep-dl-kv {{ gap: 4px 12px; }}

@@ -102,3 +102,50 @@ def test_a_conflict_with_the_lock_is_a_refused_install(monkeypatch, capsys):
 
     assert launcher.pip_install("xformers", "xFormers") is False
     assert "the locked set was kept" in capsys.readouterr().out
+
+
+def _configured_specs(launcher):
+    """Every install spec `configs/accelerators.json` gives an accelerator
+    the launcher installs, as `choose_spec` returns them."""
+    table = launcher.read_json(launcher.ACCEL_TABLE)
+    specs = set()
+
+    def leaves(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if not key.startswith("_"):
+                    leaves(value)
+        elif isinstance(node, str):
+            specs.add(node)
+
+    for accelerator in launcher.ACCELERATORS:
+        leaves(table[accelerator.key])
+    return sorted(specs)
+
+
+def test_a_configured_spec_reaches_pip_as_separate_arguments(monkeypatch):
+    """The recheck of d4209c4 (OPS-RECHECK-I1): an explicit --flash-attn on
+    linux/x86_64, Python 3.12, torch 2.10.0, CUDA 13.0 gets the spec
+    "flash-attn --no-build-isolation" from the table, and `pip_install`
+    appended it as one argv element, which pip refuses ("Invalid
+    requirement: 'flash-attn --no-build-isolation'"). The one installer now
+    splits a spec into its requirement and its options; every spec the table
+    holds reaches pip as separate arguments, after the launcher's own."""
+    launcher = _launcher()
+    spec = launcher.choose_spec(launcher.read_json(launcher.ACCEL_TABLE), "flash_attn",
+                                torch_v="2.10.0", cuda_v="13.0", py_v="3.12",
+                                os_name="linux", arch="x86_64")
+    assert spec == "flash-attn --no-build-isolation"
+    calls = _recording(launcher, monkeypatch)
+    assert launcher.pip_install(spec, "FlashAttention", no_deps=True) is True
+    pip = calls[-1][:-1]                              # the constraints text recorded last
+    assert pip[-2:] == ["flash-attn", "--no-build-isolation"]
+    assert spec not in pip                            # never the whole spec as one argument
+
+    for spec in _configured_specs(launcher):
+        calls = _recording(launcher, monkeypatch)
+        assert launcher.pip_install(spec, "an accelerator") is True
+        pip = calls[-1][:-1]
+        parts = spec.split()
+        assert pip[-len(parts):] == parts, spec
+        assert len(parts) == 1 or spec not in pip, spec
