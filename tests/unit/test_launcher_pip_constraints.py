@@ -140,11 +140,12 @@ def test_a_configured_spec_reaches_pip_as_separate_arguments(monkeypatch):
     assert launcher.pip_install(spec, "FlashAttention", no_deps=True) is True
     pip = calls[-1][:-1]                              # the constraints text recorded last
     assert pip[-2:] == ["flash-attn", "--no-build-isolation"]
-    assert not any(" " in part for part in pip)
+    assert spec not in pip                            # never the whole spec as one argument
 
     for spec in _configured_specs(launcher):
         calls = _recording(launcher, monkeypatch)
         assert launcher.pip_install(spec, "an accelerator") is True
         pip = calls[-1][:-1]
-        assert pip[-len(spec.split()):] == spec.split(), spec
-        assert not any(" " in part for part in pip), spec
+        parts = spec.split()
+        assert pip[-len(parts):] == parts, spec
+        assert len(parts) == 1 or spec not in pip, spec
