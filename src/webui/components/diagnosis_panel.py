@@ -30,11 +30,13 @@ inside its own panel; stacked, the panels stack and only the page scrolls.
   ``/pipeline/config``, is retired (its file was read by nothing).
 - **Stop inference** (the ops round's I1, I4), on the card while a model
   serves: an operator control (D8 on each event's own request) that asks
-  first, naming the model shown, and is bound to it; confirmed, it calls the
-  one stop in process (`run_stop`, which ``POST /api/v1/pipeline/stop``
-  calls): the diagnoses already accepted finish, new ones are refused until a
-  model is loaded, and it says what the stop said, with the resources reading
-  taken after it (never a promise that memory was returned). The card then
+  first, naming the model shown, and is bound to it (the question takes the
+  place of the card's actions while it is open, OPS-RECHECK-N1S);
+  confirmed, it calls the one stop in process (`run_stop`, which
+  ``POST /api/v1/pipeline/stop`` calls): the diagnoses already accepted
+  finish, new ones are refused until a model is loaded, and it says what the
+  stop said, with the resources reading taken after it (never a promise that
+  memory was returned). The card then
   shows the server's state in its own words (`diagnosis_card.serving_state`:
   "Stopped at …", the backend's lead "By an operator", its reason under
   Details ›) and the way back to research ("Back to research ›", Research ›
@@ -3358,12 +3360,15 @@ def _stop_said(text: str) -> str:
 
 def stop_question_html(sha256: str) -> str:
     """Stop inference's question, naming the model it is bound to and what
-    the stop does (the skill's §9: what happens, who acts)."""
+    the stop does (the skill's §9: what happens, who acts): the diagnoses
+    already accepted finish, new ones are refused until a model is loaded,
+    and nothing reloads one by itself. Its words were tightened for the
+    card's band (OPS-RECHECK-N1S), each of those facts kept."""
     return ('<div class="shep-dx-stop-q">'
             '<b>Stop inference of model '
             + _fingerprint_value(sha256, what="model fingerprint", copy=False) + '?</b> '
-            'Diagnoses already accepted finish; new diagnoses are refused until a model is '
-            'loaded. Nothing loads a model again by itself.</div>')
+            'Diagnoses already accepted finish; new ones are refused until a model is loaded. '
+            'Nothing reloads one by itself.</div>')
 
 
 #: The Stop inference buttons' own classes: each is shown and hidden by a
@@ -4268,7 +4273,17 @@ PAGE_CSS = f"""
    inference now", so a click on one hit the other). */
 {_TAB} .shep-dx-stop-row > button {{ flex: 0 0 auto !important; width: auto !important; }}
 {_TAB} #shep-dx-stop-text {{ flex: 1 1 100% !important; }}
-{_TAB} .shep-dx-stop-q {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-radius: 8px; padding: 8px 12px; }}
+/* Stop inference's question (OPS-RECHECK-N1S): a band across the card (into its 16 px side padding), its
+   words the card's whole width, its two buttons under it; while it is open it takes the place of the
+   card's actions: Details ›, Change model… and ■ Stop inference are not drawn (the question's own
+   buttons answer it), so it adds no row under them. Keep serving, the stop, or a read that no longer
+   offers the model it names closes it (`stop_views_closed`), and they are drawn again. (Drawn under the
+   actions, a box inside the card's padding, it kept even the folded card 333 px tall: at 1280 x 600 with
+   two warning lines the fields were 8 px, the focused HPO box under the card's head.) */
+{_TAB} .shep-dx-stop-q {{ background: var(--shep-red-50); border-top: 1px solid var(--shep-red-200);
+  border-bottom: 1px solid var(--shep-red-200); margin: 0 -16px; padding: 4px 8px; }}
+{_TAB} .shep-dx-stop-row:has(.shep-dx-stop-q) {{ row-gap: 4px !important; }}
+{_TAB} #shep-dx-card:has(> #shep-dx-stop-row .shep-dx-stop-q) > .shep-dx-card-actions {{ display: none !important; }}
 {_TAB} .shep-dx-stop-said, {_TAB} .shep-dx-stop-mem {{ margin: 2px 0 0; font-size: 14px; }}
 {_TAB} .shep-dx-why {{ margin: 2px 0 0; font-size: 14px; color: var(--shep-text-2); text-align: right; }}
 {_TAB} #shep-dx-run-why .shep-dx-why {{ text-align: left; margin: 0 16px 8px; }}

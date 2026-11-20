@@ -4,6 +4,7 @@ handlers (Run Diagnosis, the phenotypes, the table and the details), the
 results badge, Run Diagnosis' states, Change model…'s D8 check, the identity
 drawer, and the page as built in the shell.
 """
+import json
 import os
 import re
 
@@ -1201,6 +1202,323 @@ def test_a_card_with_nothing_more_to_fold_leaves_one_scroll_region_and_run_in_vi
                 assert run["hit"], (where, run)
                 assert got["folded"] and got["card"]["name"], (where, got)
             assert set(got["inputs"].values()) == {"itself"}, (where, got["inputs"])
+
+
+#: OPS-RECHECK-N1S at each stop of the shared walk with Stop inference's
+#: question open (`browser.walk_ui`'s ``open``: ■ Stop inference opens it,
+#: ■ Stop inference now shows it, Keep serving closes it): the layout
+#: decision, the input column (its height and its content's), the fields
+#: region, whether the card is folded (`style.FOLDED_ATTR`) and whether its
+#: actions row is drawn, the question's words, the question and both its
+#: buttons and Run Diagnosis at their centres (`elementsFromPoint`), the
+#: footer's warning lines; then each of the served task's inputs focused in
+#: turn from the fields region's top, its centre's topmost element, and for
+#: the HPO box its height, the region's and how much of the box is shown.
+_STOP_QUESTION_JS = r"""async () => {
+  const q = (s) => document.querySelector(s);
+  const drawn = (e) => !!e && e.getClientRects().length > 0;
+  const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const at = (s) => {
+    const e = q(s);
+    if (!drawn(e)) { return null; }
+    const b = e.getBoundingClientRect(), t = document.elementsFromPoint(b.left + b.width / 2, b.top + b.height / 2)[0];
+    return { inView: b.top >= 0 && b.bottom <= innerHeight && b.left >= 0 && b.right <= innerWidth,
+             hit: !!t && (t === e || e.contains(t)), on: t ? ((t.closest('[id]') || t).id || t.tagName) : null };
+  };
+  const lines = (e) => {
+    if (!drawn(e)) { return 0; }
+    const range = document.createRange();
+    range.selectNodeContents(e);
+    return new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top))).size;
+  };
+  const column = q('#shep-dx-input-bd'), fields = q('#shep-dx-fields'), card = q('#shep-dx-card');
+  const out = {
+    layout: document.documentElement.getAttribute('data-shep-layout'),
+    column: { h: column.clientHeight, content: column.scrollHeight }, fields: fields.clientHeight,
+    folded: card.hasAttribute('__FOLDED__'), actions: drawn(q('#shep-dx-card-actions')),
+    words: drawn(q('#shep-dx-stop-text')) ? q('#shep-dx-stop-text').innerText : '',
+    question: at('#shep-dx-stop-text .shep-dx-stop-q'), now: at('#shep-dx-stop-now'),
+    keep: at('#shep-dx-stop-keep'), run: at('#shep-dx-run-btn'),
+    footer: lines(q('.shep-rt .shep-st-w')), inputs: {}, hpo: null,
+  };
+  for (const s of ['#dx_hpo_terms textarea', '#dx_candidate_genes textarea', '#dx_reference_cohort input',
+                   '#dx_patient_id input', '#dx_top_k input']) {
+    const e = q(s);
+    if (!drawn(e)) { continue; }
+    fields.scrollTop = 0;
+    await frame();
+    e.focus();
+    await frame();
+    const b = e.getBoundingClientRect(), t = document.elementsFromPoint(b.left + b.width / 2, b.top + b.height / 2)[0];
+    out.inputs[s] = t === e || e.contains(t) ? 'itself' : ((t && (t.closest('[id]') || t).id) || 'nothing');
+    if (s === '#dx_hpo_terms textarea') {
+      const top = fields.getBoundingClientRect().top + fields.clientTop, bottom = top + fields.clientHeight;
+      out.hpo = { box: Math.round(b.height), region: fields.clientHeight,
+                  shown: Math.round(Math.max(0, Math.min(b.bottom, bottom) - Math.max(b.top, top))) };
+    }
+    e.blur();
+  }
+  fields.scrollTop = 0;
+  return out;
+}""".replace("__FOLDED__", dp.FOLDED_ATTR)
+
+#: OPS-RECHECK-N1S typed (Node and Playwright): at each window, a diagnosis
+#: run on the inputs as they are and its results drawn; what is read (the
+#: card folded or not, its height and its three actions at their centres,
+#: the HPO text, the results) before Stop inference's question opens, with it
+#: open and after Keep serving; then the question opened again, the HPO box
+#: focused from the fields region's top (its centre's topmost element, and
+#: how much of it is shown), twelve lines typed into it with what `elementsFromPoint`
+#: finds on the caret's line after each (`_CARET_JS`'s method; an edit clears
+#: the results, `phenotypes_changed`), the same read, Keep serving, and the
+#: same read after.
+_STOP_TYPED_JS = r"""
+const { chromium } = require('playwright');
+const fs = require('fs');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const plan = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: plan.sizes[0][0], height: plan.sizes[0][1] } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(), null, { timeout: 60000 });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const settle = () => page.evaluate(async () => {
+    const sign = () => ['#shep-dx-fields', '#shep-dx-card', '#shep-dx-input-bd'].map((s) => {
+      const e = document.querySelector(s), r = e.getBoundingClientRect();
+      return [r.top, r.height, e.hasAttribute('__FOLDED__')].join(','); }).join('|');
+    let last = null;
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const now = sign();
+      if (now === last) { return i; }
+      last = now;
+    }
+    return -1;
+  });
+  const read = () => page.evaluate(() => {
+    const q = (s) => document.querySelector(s), card = q('#shep-dx-card');
+    const at = (s) => {
+      const e = q(s);
+      if (!e || !e.getClientRects().length) { return null; }
+      const b = e.getBoundingClientRect(), t = document.elementsFromPoint(b.left + b.width / 2, b.top + b.height / 2)[0];
+      return b.top >= 0 && b.bottom <= innerHeight && !!t && (t === e || e.contains(t));
+    };
+    return { folded: card.hasAttribute('__FOLDED__'), h: Math.round(card.getBoundingClientRect().height * 2) / 2,
+             actions: [at('#shep-dx-details-btn'), at('#shep-dx-change-btn'), at('#shep-dx-stop-btn')],
+             hpo: q('#dx_hpo_terms textarea').value, results: q('#shep-dx-results').innerText,
+             rows: document.querySelectorAll('#shep-dx-results-body tbody tr[data-key]').length };
+  });
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  await idle();
+  await page.click('#shep-tab-clinical-button', { force: true });
+  await page.waitForSelector('#shep-tab-clinical-button[aria-selected="true"]');
+  await idle();
+  if (plan.genes) { await page.fill('#dx_candidate_genes textarea', plan.genes); }
+  const box = '#dx_hpo_terms textarea';
+  const ask = async () => {
+    await page.click('#shep-dx-stop-btn');
+    await page.waitForSelector('#shep-dx-stop-now', { state: 'visible' });
+    await idle();
+    await settle();
+  };
+  const keep = async () => {
+    await page.click('#shep-dx-stop-keep');
+    await page.waitForSelector('#shep-dx-stop-now', { state: 'hidden' });
+    await idle();
+    await settle();
+  };
+  const out = [];
+  for (const [w, h] of plan.sizes) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await settle();
+    // A diagnosis on one term, its results drawn; the question opened over
+    // them and closed.
+    await page.fill(box, 'HP:0001250');
+    await idle();
+    await page.waitForSelector('#shep-dx-run-btn:not([disabled])', { timeout: 60000 });
+    await page.click('#shep-dx-run-btn');
+    await page.waitForFunction(() => document.querySelectorAll('#shep-dx-results-body tbody tr[data-key]').length > 0,
+                               null, { timeout: 120000 });
+    await idle();
+    await settle();
+    const before = await read();
+    await ask();
+    const asked = await read();
+    await keep();
+    const kept = await read();
+    // The question opened again and twelve lines typed into the HPO box.
+    await ask();
+    await page.evaluate(() => { for (const s of ['#shep-dx-fields', '#shep-dx-input-bd']) { document.querySelector(s).scrollTop = 0; } });
+    await settle();
+    await page.focus(box);
+    await frames();
+    const focus = await page.evaluate((s) => {
+      const ta = document.querySelector(s), r = ta.getBoundingClientRect(), f = document.querySelector('#shep-dx-fields');
+      const top = f.getBoundingClientRect().top + f.clientTop, t = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2)[0];
+      return { centre: t === ta ? 'box' : (t ? ((t.closest('[id]') || t).id || t.tagName) : 'nothing'),
+               shown: Math.round(Math.max(0, Math.min(r.bottom, top + f.clientHeight) - Math.max(r.top, top))) };
+    }, box);
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.press('Delete');
+    const lines = [], typed = [];
+    for (let i = 1; i <= 12; i++) {
+      typed.push(`HP:00012${String(i).padStart(2, '0')}`);
+      await page.keyboard.type(typed[i - 1]);
+      if (i < 12) { await page.keyboard.press('Enter'); }
+      await frames();
+      lines.push(await page.evaluate((s) => {
+        const ta = document.querySelector(s), st = getComputedStyle(ta), r = ta.getBoundingClientRect();
+        const y = r.bottom - parseFloat(st.paddingBottom) - (parseFloat(st.lineHeight) || 21) / 2
+          - (ta.scrollHeight - ta.clientHeight - ta.scrollTop);
+        if (y < 0 || y > innerHeight) { return 'offscreen'; }
+        const top = document.elementsFromPoint(r.left + 20, y)[0];
+        return top === ta ? 'box' : (top ? ((top.closest('[id]') || top).id || top.tagName) : 'nothing');
+      }, box));
+    }
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await idle();
+    await settle();
+    const typing = await read();
+    await keep();
+    const after = await read();
+    if (plan.shots) { await page.screenshot({ path: `${plan.shots}/kept_${w}x${h}.png` }); }
+    out.push({ size: `${w}x${h}`, before, asked, kept, focus, lines, typed: typed.join('\n'), typing, after });
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+""".replace("__FOLDED__", dp.FOLDED_ATTR)
+
+
+def test_the_stop_question_takes_the_card_actions_place_and_leaves_the_inputs_usable(monkeypatch,
+                                                                                      tmp_path):
+    """OPS-RECHECK-N1S (the verification of 5412cc4): an operator with a model
+    loaded and the footer's two warning lines opens Stop inference's
+    question. It was drawn under the card's actions (Details ›, Change
+    model…, ■ Stop inference), a box inside the card's padding, so even the
+    folded card was 333 px and the card and Run took 384 px of the input
+    column's 385: at 1280 x 600 the fields were 8 px, the column overflowed
+    (a second scroll region) and the focused HPO box showed 8 of its 83 px
+    under the card's head; at 1366 x 620 the fields were 21 px. In a real
+    browser (Node and Playwright, skipped without), the page served whole
+    with a disease and then a gene task model loaded, at 1850 x 960,
+    1280 x 600 and 1366 x 620, the question open:
+
+    - it takes the place of the card's actions (their row is not drawn) and
+      says every fact it said: the model it stops by its fingerprint, that
+      the diagnoses already accepted finish, that new ones are refused until
+      a model is loaded and that nothing reloads one by itself;
+    - the input column has one scroll region (the shared check) and holds
+      what it holds; the question, ■ Stop inference now, Keep serving and Run
+      Diagnosis are in view, each the topmost element at its centre;
+    - every input of the served task, focused from the fields region's top,
+      is the topmost element at its centre, and the region is at least the
+      HPO box's height; twelve lines typed into the box, the caret's line is
+      the box's own after each;
+    - Keep serving gives the card back as it was (folded or not, its height,
+      Details ›, Change model… and ■ Stop inference at their centres) and
+      leaves the inputs and the results (a diagnosis run first) as they
+      were, and after the twelve lines the typed text as typed.
+    Fails on 490587c (at 1280 x 600 two scroll regions in the input column,
+    the fields 8 px and the HPO box's centre under the card's head; the
+    actions drawn above the question)."""
+    from src.utils.version_checker import NOTICE
+    from src.webui import app, shell
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node, ui_problems, walk_ui
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    monkeypatch.setattr(app, "probe_runtime", lambda: {"status": NOTICE, "issues": _TWO_WARNINGS})
+    monkeypatch.setattr(app, "format_runtime_line", lambda report=None: "Python 3.12 · torch 2.10.0")
+    identities = {"disease": _served_identity(), "gene": _task_identity("gene_task")}
+    results = {"disease": _sample_result, "gene": _gene_result}
+    shown = {"task": "disease"}
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (
+        {**_status_serving(identities[shown["task"]]),
+         "checkpoint_meta": {"epoch": 0, "completed_epochs": 1}}, None))
+    monkeypatch.setattr(dp, "_call_diagnose", lambda *a, **k: results[shown["task"]]())
+    trained = _digest("dataset")
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": True, "serving": "demo",
+        "workspaces": [{"name": "demo", "dataset_fingerprint": trained}],
+        "item": {"architecture": "gatv2", "run": f"20261002-000000_{shown['task']}_bbbbbb",
+                 "completed_epochs": 1, "sha256": CHECKPOINT_SHA},
+        "item_problem": None, "recorded": {"state": "none"},
+        "trained": {"state": "read", "fingerprint": trained, "problem": None},
+        "cohorts": None})
+    with gr.Blocks(analytics_enabled=False, fill_width=True) as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+        shell.plain_html(app._runtime_footer(), elem_id="runtime_footer")
+    sizes = ([1850, 960], [1280, 600], [1366, 620])
+    question = {"click": "#shep-dx-stop-btn", "shown": "#shep-dx-stop-now",
+                "close": "#shep-dx-stop-keep"}
+    script = _STOP_TYPED_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+    walks, typed = {}, {}
+    with served(demo, **mount_options()) as base:
+        for task, genes in (("disease", None), ("gene", "SCN1A")):
+            shown["task"] = task
+            (tmp_path / task / "shots").mkdir(parents=True)
+            walks[task] = walk_ui(base[:-len("gradio_api")], tmp_path / task,
+                                  [{"size": size, "page": "clinical", "open": question}
+                                   for size in sizes],
+                                  extra_js=_STOP_QUESTION_JS, shots=tmp_path / task / "shots")
+            plan = tmp_path / task / "typed.json"
+            plan.write_text(json.dumps({"sizes": sizes, "genes": genes,
+                                        "shots": str(tmp_path / task / "shots")}))
+            typed[task] = run_node(script, tmp_path / task, base[:-len("gradio_api")], str(plan),
+                                   timeout=600)
+    inputs = {"disease": {"#dx_hpo_terms textarea", "#dx_patient_id input", "#dx_top_k input"},
+              "gene": {"#dx_hpo_terms textarea", "#dx_candidate_genes textarea",
+                       "#dx_patient_id input", "#dx_top_k input"}}
+    for task, seen in walks.items():
+        assert ui_problems(seen) == [], (task, ui_problems(seen))
+        for stop in seen:
+            where, got = (task, stop["size"]), stop["extra"]
+            assert got["layout"] == "side", (where, got)
+            assert got["footer"] >= (1 if stop["size"] == "1850x960" else 2), (where, got)
+            # In the actions' place, with every fact it says.
+            assert not got["actions"], (where, got)
+            words = " ".join(got["words"].split())
+            assert f"Stop inference of model {CHECKPOINT_SHA[:12]}?" in words, (where, words)
+            for fact in ("Diagnoses already accepted finish;",
+                         "new ones are refused until a model is loaded.",
+                         "Nothing reloads one by itself."):
+                assert fact in words, (where, fact, words)
+            assert got["column"]["content"] <= got["column"]["h"] + 0.5, (where, got["column"])
+            for name in ("question", "now", "keep", "run"):
+                assert got[name] and got[name]["inView"] and got[name]["hit"], (where, name, got[name])
+            assert set(got["inputs"]) == inputs[task], (where, got["inputs"])
+            assert set(got["inputs"].values()) == {"itself"}, (where, got["inputs"])
+            # The one scroll region holds the HPO box whole (8 px of its 83 at 490587c).
+            assert got["hpo"]["region"] >= got["hpo"]["box"], (where, got["hpo"])
+    card = ("folded", "h", "actions")
+    for task, stops in typed.items():
+        for stop in stops:
+            where = (task, stop["size"])
+            before, asked, kept = stop["before"], stop["asked"], stop["kept"]
+            assert before["rows"] > 0 and all(before["actions"]), (where, before)
+            assert asked["actions"] == [None] * 3, (where, asked)
+            # Keep serving: the card as it was, the inputs and the results untouched.
+            assert {k: kept[k] for k in card} == {k: before[k] for k in card}, (where, before, kept)
+            assert ({k: kept[k] for k in ("hpo", "results", "rows")}
+                    == {k: asked[k] for k in ("hpo", "results", "rows")}
+                    == {k: before[k] for k in ("hpo", "results", "rows")}), (where, before, asked, kept)
+            assert stop["focus"]["centre"] == "box", (where, stop["focus"])
+            assert stop["lines"] == ["box"] * 12, (where, stop["lines"])
+            typing, after = stop["typing"], stop["after"]
+            assert typing["actions"] == [None] * 3, (where, typing)
+            assert after["folded"] == before["folded"] and all(after["actions"]), (where, after)
+            assert after["hpo"] == typing["hpo"] == stop["typed"], (where, typing["hpo"], after["hpo"])
+            assert after["results"] == typing["results"], (where, typing, after)
 
 
 # ------------------------------------------------- the phenotype list and the API
@@ -3469,8 +3787,10 @@ def test_stop_inference_asks_first_naming_and_binding_the_model_shown():
     asked = dp.ask_stop_inference(ENABLED, _serving_card())
     assert (f'<code class="shep-fpv" title="{_SERVED_SHA}">{_SERVED_SHA[:12]}</code>'
             in asked["stop_text"])
-    assert "Diagnoses already accepted finish; new diagnoses are refused until a model is " \
-           "loaded" in asked["stop_text"]
+    # What the stop does, each fact said (OPS-RECHECK-N1S tightened the words, not the facts).
+    for fact in ("Diagnoses already accepted finish;", "new ones are refused until a model is loaded.",
+                 "Nothing reloads one by itself."):
+        assert fact in asked["stop_text"], fact
     assert asked["stop_asked"]["sha256"] == _SERVED_SHA
     assert _shown(asked["stop_now_btn"]) and _shown(asked["stop_keep_btn"])
     nothing = dp.ask_stop_inference(ENABLED, _serving_card(serving="stopping"))
