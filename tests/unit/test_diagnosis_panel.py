@@ -4042,6 +4042,178 @@ def test_the_card_shows_stop_inference_by_class_while_a_model_serves():
     assert not _shown(hidden["stop_btn"])
 
 
+#: OPS-RECHECK-N1S's review, F3 (Node and Playwright): where focus is after
+#: each Stop inference step, read once the step's requests are answered
+#: (`QUEUE_JS`) and two frames drawn: the focused element's id (or its tag),
+#: whether it is drawn, whether it matches ``:focus-visible`` and its outline
+#: style, and whether the question is open. ``plan.readonly``: the read-only
+#: viewer's ■ Stop inference (drawn, disabled), focused and Enter pressed.
+_STOP_FOCUS_TEST_JS = r"""
+const { chromium } = require('playwright');
+const fs = require('fs');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const plan = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 },
+                                                 ...(plan.headers ? { extraHTTPHeaders: plan.headers } : {}) })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(), null, { timeout: 60000 });
+  const asked = (open) => page.waitForSelector('#shep-dx-stop-now', { state: open ? 'visible' : 'hidden' });
+  const focus = async () => {
+    await idle();
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    return page.evaluate(() => {
+      const a = document.activeElement, on = !!a && a !== document.body;
+      return { on: on ? (a.id || a.tagName) : null, drawn: on && a.getClientRects().length > 0,
+               visible: on && a.matches(':focus-visible'), outline: on ? getComputedStyle(a).outlineStyle : null,
+               question: !!document.querySelector('#shep-dx-stop-text .shep-dx-stop-q') };
+    });
+  };
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  await idle();
+  await page.click('#shep-tab-clinical-button', { force: true });
+  await page.waitForSelector('#shep-tab-clinical-button[aria-selected="true"]');
+  const out = {};
+  if (plan.readonly) {
+    out.button = await page.$eval('#shep-dx-stop-btn', (b) => ({ drawn: b.getClientRects().length > 0, disabled: b.disabled }));
+    out.before = await focus();
+    await page.focus('#shep-dx-stop-btn');
+    await page.keyboard.press('Enter');
+    out.after = await focus();
+  } else {
+    // The HPO box holds focus while the question opens and closes (each
+    // button's click() moves no focus).
+    await page.focus('#dx_hpo_terms textarea');
+    await page.keyboard.type('HP:0001250');
+    await page.$eval('#shep-dx-stop-btn', (b) => b.click());
+    await asked(true);
+    out.typingAsked = await focus();
+    await page.$eval('#shep-dx-stop-keep', (b) => b.click());
+    await asked(false);
+    out.typingKept = await focus();
+    // The keyboard alone: Enter on ■ Stop inference, then on Keep serving
+    // (the next Enter goes where the first left focus: read and stop here
+    // when that is not Keep serving).
+    await page.focus('#shep-dx-stop-btn');
+    await page.keyboard.press('Enter');
+    await asked(true);
+    out.asked = await focus();
+    if (out.asked.on !== 'shep-dx-stop-keep') { console.log(JSON.stringify(out)); await browser.close(); return; }
+    await page.keyboard.press('Enter');
+    await asked(false);
+    out.kept = await focus();
+    // Enter on ■ Stop inference now, twice: the stop's stand-in releases
+    // nothing the first time and the model the second.
+    for (const name of ['stillServed', 'released']) {
+      await page.focus('#shep-dx-stop-btn');
+      await page.keyboard.press('Enter');
+      await asked(true);
+      await page.focus('#shep-dx-stop-now');
+      await page.keyboard.press('Enter');
+      await asked(false);
+      out[name] = await focus();
+    }
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_focus_the_stop_question_hides_goes_to_the_next_card_control(monkeypatch, tmp_path):
+    """OPS-RECHECK-N1S's review, F3: the question takes the place of the
+    card's actions, so Enter on ■ Stop inference hid the focused button and
+    focus fell to the page's body (at 490587c it stayed on the button); Keep
+    serving and ■ Stop inference now hide themselves too. Each of the three
+    events ends with one step (`dp.STOP_FOCUS_JS`) that, only when focus was
+    lost, focuses the first drawn and enabled of Keep serving, ■ Stop
+    inference and Change model…. In a real browser (Node and Playwright,
+    skipped without), an operator with a model loaded, at the owner's window:
+
+    - Enter on ■ Stop inference: Keep serving is focused, its focus drawn;
+    - Enter on Keep serving: ■ Stop inference is focused, its focus drawn;
+    - Enter on ■ Stop inference now: ■ Stop inference is focused while the
+      model still serves (the stop's stand-in released nothing), Change
+      model… once nothing does (it released the model);
+    - focus elsewhere is never taken: the HPO box being typed in keeps it
+      while the question opens and closes;
+    - the read-only viewer's ■ Stop inference is drawn and disabled: it takes
+      no focus and Enter opens nothing.
+    Fails on 44d29b6 (the focus on the body after Enter on ■ Stop inference)."""
+    from types import SimpleNamespace
+
+    from src.api.routes import pipeline
+    from src.webui import shell
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, READ_ONLY_HEADERS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    page = {"serving": True, "operator": True, "stops": 0}
+
+    def status(*args, **kwargs):
+        if not page["serving"]:
+            return dict(_NOTHING_SERVED), None
+        return {**_status_serving(_served_identity()),
+                "checkpoint_meta": {"epoch": 0, "completed_epochs": 1}}, None
+
+    def stop(request):
+        page["stops"] += 1
+        page["serving"] = page["stops"] < 2
+        return SimpleNamespace(success=not page["serving"], released=not page["serving"],
+                               message="Stop inference (the test's stand-in).",
+                               status=SimpleNamespace(model_dump=lambda: status()[0]))
+
+    monkeypatch.setattr(dp.card, "read_status_within", status)
+    monkeypatch.setattr(pipeline, "run_stop", stop)
+    monkeypatch.setattr(dp, "memory_after_stop_html", lambda resources=None: "")
+    trained = _digest("dataset")
+    monkeypatch.setattr(dp.card, "served_facts", lambda s, **k: {
+        "key": dp.card.served_key(s), "operator": page["operator"], "serving": "demo",
+        "workspaces": [{"name": "demo", "dataset_fingerprint": trained}],
+        "item": {"architecture": "gatv2", "run": "20261002-000000_disease_bbbbbb",
+                 "completed_epochs": 1, "sha256": CHECKPOINT_SHA},
+        "item_problem": None, "recorded": {"state": "none"},
+        "trained": {"state": "read", "fingerprint": trained, "problem": None},
+        "cohorts": None})
+    with gr.Blocks(analytics_enabled=False, fill_width=True) as demo:
+        shell.build_shell(demo, {**{name: (lambda ctx: None)
+                                    for name in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+    script = _STOP_FOCUS_TEST_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+    seen = {}
+    with served(demo, **mount_options()) as base:
+        for viewer, headers in (("operator", None), ("readonly", READ_ONLY_HEADERS)):
+            page["operator"] = viewer == "operator"
+            plan = tmp_path / f"{viewer}.json"
+            plan.write_text(json.dumps({"readonly": headers is not None, "headers": headers}))
+            seen[viewer] = run_node(script, tmp_path, base[:-len("gradio_api")], str(plan),
+                                    timeout=300)
+            page["serving"] = True
+    got = seen["operator"]
+    for step in ("typingAsked", "typingKept"):
+        assert got[step]["on"] == "TEXTAREA", (step, got[step])
+    expected = {"asked": ("shep-dx-stop-keep", True), "kept": ("shep-dx-stop-btn", False),
+                "stillServed": ("shep-dx-stop-btn", False),
+                "released": ("shep-dx-change-btn", False)}
+    for step, (control, question) in expected.items():
+        at = got.get(step)
+        assert at, (step, got)
+        assert at["on"] == control and at["drawn"] and at["question"] is question, (step, at)
+        assert at["visible"] and at["outline"] != "none", (step, at)
+    assert page["stops"] == 2
+    readonly = seen["readonly"]
+    assert readonly["button"] == {"drawn": True, "disabled": True}, readonly
+    # Enter went to whatever held focus before (the page's tab): nothing opened.
+    assert readonly["after"]["on"] == readonly["before"]["on"] != "shep-dx-stop-btn", readonly
+    assert not readonly["after"]["question"], readonly
+
+
 # --------------------------------------------------------------------------- status marks (R-1c, B72-N7)
 _RAW_HEX = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 _COLOUR_EMOJI = ("🟢", "🟡", "⚪", "🔴", "⚠")
