@@ -1429,20 +1429,29 @@ def graph_shape(listing: Mapping[str, Any], view: Any, tree: TreeView,
                   selected_run if selected_run in runs else None)
 
 
+def drawn_files(listing: Mapping[str, Any], view: Any, preset: Optional[Preset], run: Any, *,
+                search: Any = "", show_older: bool = True) -> Tuple[str, ...]:
+    """**A run's files as the list draws them** (`tree_view`: the view's rows,
+    a Task filter's context, a search's matches and the context it keeps), in
+    the list's order: each one a pick the list's one selection accepts and
+    shows. What is folded or selected changes none of them. Empty for a run
+    the list does not draw. A run's node selects among these (`run_choice`),
+    and the Models details offer these as its "Saved files"
+    (`models_page.detail_parts`)."""
+    tree = tree_view(listing, view, preset, search=search, show_older=show_older)
+    return next((drawn.files for group in tree.groups for drawn in group.runs
+                 if drawn.key == run), ())
+
+
 def run_choice(listing: Mapping[str, Any], view: Any, preset: Optional[Preset], run: Any,
-               current: Any, *, search: Any = "", fold: Optional[Mapping[str, Any]] = None,
-               show_older: bool = True) -> Optional[str]:
+               current: Any, *, search: Any = "", show_older: bool = True) -> Optional[str]:
     """**The checkpoint a run's node selects** (the family graph's body: G2,
-    I8): the run as the list draws it (its files the tree shows,
-    `tree_view`: a search's, the context it keeps), looked up there and never
-    taken on trust, chosen as a Run → Checkpoint choice chooses
+    I8): the run as the list draws it (`drawn_files`), looked up there and
+    never taken on trust, chosen as a Run → Checkpoint choice chooses
     (`chosen_in_run`): `current` while it is one of them, else the first in
     the list's order (the run's latest save). None for a run the list does
     not draw."""
-    tree = tree_view(listing, view, preset, search=search, fold=fold, selected=current,
-                     show_older=show_older)
-    files = next((drawn.files for group in tree.groups for drawn in group.runs
-                  if drawn.key == run), ())
+    files = drawn_files(listing, view, preset, run, search=search, show_older=show_older)
     items = {item_key(i): i for i in listing.get("items") or []}
     return chosen_in_run({key: items[key] for key in files}, run, current)
 
@@ -2523,8 +2532,9 @@ element.addEventListener('click', function (e) {
 #:   what it showed (`kept_unfolded`), and the lines the new selection takes
 #:   away above the node (the note of a selection in a folded branch, the
 #:   folded node's words, the note of a selection a filter hides) leave their
-#:   room above the graph until the pointer and the focus leave the rows or
-#:   the next drawing that is no pick's answer. The focus stays on the body:
+#:   room above the graph until the pointer and the focus leave the rows (the
+#:   room then given back as the region's scroll, so nothing in view moves)
+#:   or the next drawing that is no pick's answer. The focus stays on the body:
 #:   side by side, as Newest first keeps it on the row picked; stacked, where
 #:   Newest first takes it to the details below the list, that would scroll
 #:   the graph from under the pointer;
@@ -2636,10 +2646,19 @@ FAMILY_JS = r"""
     trigger('click', {run: run});
   };
   var forestOf = function () { var fam = root(); return fam && fam.querySelector('.shep-fam-forest'); };
+  // The room given back once the pointer and the focus have left the rows (a
+  // pick in the details' "Saved files" takes the focus there) as what scrolls
+  // the graph scrolls back by it, so nothing in view moves, as the hold gives
+  // its room back; only where the region is scrolled less than the room does
+  // the rest of it close.
   var letRoomGo = function () {
     if (!room || element.matches(':hover') || element.contains(document.activeElement)) { return; }
     var forest = forestOf();
-    if (forest) { forest.style.marginTop = ''; }
+    if (forest && forest.style.marginTop) {
+      var v = scroller(true), to = v.scrollTop - Math.min(room, v.scrollTop);
+      forest.style.marginTop = '';
+      v.scrollTop = to;
+    }
     room = 0;
   };
   element.addEventListener('pointerleave', letRoomGo);
@@ -3181,7 +3200,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             # as a Run → Checkpoint choice chooses it (`run_choice`), through
             # the selection a row's pick goes through below.
             key = run_choice(data, current_view, chosen, raw["run"], current, search=query,
-                             fold=fold_state, show_older=older)
+                             show_older=older)
         if key == "__older__":
             if data.get("runs_unread"):
                 # The runs not opened yet are read now (BACKLOG 39).
@@ -3390,6 +3409,7 @@ __all__ = [
     "confirmation_html",
     "count_line",
     "create_model_list",
+    "drawn_files",
     "facts_html",
     "family_views",
     "fold_open",

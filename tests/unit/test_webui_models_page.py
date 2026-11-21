@@ -1766,7 +1766,15 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert EVIL not in html and "in workspace <b>&lt;img" in html
     html = mp.identity_html(item, {"parent_state": "unavailable", "parent_problem": EVIL})
     assert '▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">parent unavailable: &lt;img' in html
-    assert EVIL not in html
+    assert EVIL not in html and "Parent unavailable" not in html     # short: whole in its row
+    # A reason the Parent row shortens is whole one "Details ›" away (the second
+    # round's review: the first round's run panel was its only whole copy).
+    long_reason = "the parent file " + EVIL + " was not found in any listed workspace; " * 4
+    html = mp.identity_html(item, {"parent_state": "unavailable", "parent_problem": long_reason})
+    more = html[html.index('<details class="shep-more"'):]
+    whole = " ".join(long_reason.split())
+    assert "…" in html[:html.index(more)] and e(whole) not in html[:html.index(more)]
+    assert "Parent unavailable" in more and e(whole) in more and EVIL not in html
     assert "none: a new run" in mp.identity_html({**item, "parent_sha256": None}, None)
     # The parent's digest is the one digest value: its 12 hex, the whole value
     # its title and one Copy away (G03; the review of B0c: a bare code without it).
@@ -2184,7 +2192,8 @@ def _sync_states(demo):
     sync = _fn(demo, "_sync")
     listing, data, stale, last, phase = sync.inputs[:5]
     return {"fn": sync, "listing": listing, "data": data, "stale": stale, "last": last,
-            "phase": phase, "selected": sync.inputs[-3], "view": sync.inputs[-1]}
+            "phase": phase, "selected": sync.inputs[-4], "view": sync.inputs[-2],
+            "search": sync.inputs[-1]}
 
 
 #: `_sync`'s `current` when a test does not name it: the list already holds the
@@ -2193,12 +2202,13 @@ HELD = object()
 
 
 def _sync(states, monkeypatch, listing, data, *, current=HELD, stale=False, last=None,
-          phase="idle", order=mp.NEWEST, task=mp.ALL_TASKS, selected=None, seg=mp.RECORDS):
+          phase="idle", order=mp.NEWEST, task=mp.ALL_TASKS, selected=None, seg=mp.RECORDS,
+          search=""):
     sync = states["fn"]
     if current is HELD:
         current = mp.shape(listing, data, mp.controls(data, order, task))
     out = sync.fn(listing, data, stale, last, phase, order, task, selected, seg, current,
-                  operator_request(monkeypatch))
+                  search, operator_request(monkeypatch))
     assert len(out) == len(sync.outputs)
     by = dict(zip(map(id, sync.outputs), out, strict=True))
     return {name: by[id(states[name])] for name in ("stale", "last", "selected", "data")} | {
@@ -2267,7 +2277,7 @@ def test_an_answer_writes_a_control_back_only_where_it_cannot_apply(world, monke
     refused = ml.list_models("demo", gradio_request(), family=True)
     sync = states["fn"]
     answer = sync.fn(refused, None, False, None, "idle", mp.BY_FAMILY, mp.ALL_TASKS, None,
-                     mp.RECORDS, None, gradio_request())
+                     mp.RECORDS, None, "", gradio_request())
     order = dict(zip(map(id, sync.outputs), answer, strict=True))[id(by_id["shep-mp-order"])]
     assert (order["value"], order["interactive"]) == (mp.NEWEST, False)
 
@@ -2405,14 +2415,17 @@ def test_controls_selection_and_segments_are_wired(world, monkeypatch):
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     states = _sync_states(demo)
     sync = states["fn"]
-    # One listener answers a new listing, a selection and the controls, so its
-    # answers for one session never overlap; the last trigger always runs.
+    # One listener answers a new listing, a selection, the controls and the
+    # list's search (By family's "Saved files" offers what the list draws), so
+    # its answers for one session never overlap; the last trigger always runs.
     # A pick of the Task select is one request (`shell.picked`: its blur), the
     # Order radio's its input; the view the list holds is read with them.
     assert {(demo.blocks[t[0]], t[1]) for t in sync.targets} == {
         (states["listing"], "change"), (states["selected"], "change"),
+        (by_id["shep-models-research-search"], "change"),
         (by_id["shep-mp-order"], "input"), (by_id["shep-mp-task"], "blur")}
     assert states["view"] in sync.inputs
+    assert states["search"] is by_id["shep-models-research-search"]
     assert not {"shep-mp-version", "shep-mp-metric", "shep-mp-scoring",
                 "shep-mp-independence"} & set(by_id)
     assert sync.trigger_mode == "always_last"
@@ -3837,9 +3850,19 @@ def test_the_details_name_a_runs_saved_files_and_pick_them_through_the_list(fami
     # One file, or Newest first: no row.
     assert saved(mp.detail_parts(listing, data, file_key("alpha-gene"), by_family)["top"]) is None
     assert saved(mp.detail_parts(listing, data, last, {"order": mp.NEWEST})["top"]) is None
-    # A file named with markup: text, never HTML, its key escaped too.
-    hostile = {**listing, "items": [
-        {**i, "filename": EVIL + ".pt", "key": run_key("alpha-base") + "/" + EVIL + ".pt"}
+    # A file named with markup: text, never HTML, its key escaped too (the family view's
+    # rows name it by the same key, so the list draws it).
+    evil_key = run_key("alpha-base") + "/" + EVIL + ".pt"
+
+    def renamed(value):
+        if isinstance(value, dict):
+            return {k: renamed(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [renamed(v) for v in value]
+        return evil_key if value == other else value
+
+    hostile = {**listing, "family": renamed(listing["family"]), "items": [
+        {**i, "filename": EVIL + ".pt", "key": evil_key}
         if ml.item_key(i) == other else i for i in listing["items"]]}
     row = saved(mp.detail_parts(hostile, data, last, by_family)["top"])
     assert "<img" not in row and html_lib.escape(EVIL, quote=True) in row
@@ -3859,6 +3882,97 @@ def test_the_details_name_a_runs_saved_files_and_pick_them_through_the_list(fami
 
     pick = answer({"act": ml.PICK_ACT, "key": other})
     assert pick[id(select.outputs[0])] == other and pick == answer({"key": other})
+
+
+def test_the_saved_files_offer_only_what_the_list_draws_and_say_which_is_in_use(family):
+    """G3, G7, I5 (the second round's reviews): "Saved files" offers the
+    run's files the list draws (`model_list.drawn_files`, the files a node's
+    body selects among), so each pick there is one the list's one selection
+    accepts and keeps drawn, and changes nothing the list shows but the file
+    selected: under a Task filter that keeps only a shown run's parent file,
+    no other file (a pick of it was refused, the button doing nothing); under
+    a search, what it shows (a file it hides, picked, put the "not shown by
+    this filter" line above the graph and moved it); none for a selection the
+    list does not draw. Each file keeps its words among all its run's files.
+    Another file of the run in use for diagnosis says so on its line (the
+    shown one's is the header's chip, said once)."""
+    from tests.fixtures.family_world import file_key, run_key
+
+    research = ml.PRESETS["research"]
+    base = run_key("alpha-base")
+    last, other = file_key("alpha-base"), file_key("alpha-base", "model-03.pt")
+    demo, _ctx = _page()
+    select = _fn(demo, "_select")
+
+    def offered(listing, data, key, task=mp.ALL_TASKS, **search):
+        top = mp.detail_parts(listing, data, key, {"order": mp.BY_FAMILY, "task": task},
+                              **search)["top"]
+        found = re.search(r'<dt class="shep-k">Saved files</dt><dd class="shep-v">(.*?)</dd>',
+                          top, re.S)
+        return None if found is None else [
+            {"key": html_lib.unescape(re.search(r'data-key="([^"]+)"', li).group(1)),
+             "words": _text(re.sub(r'<span class="shep-(?:muted|tag)[^"]*">.*?</span>', "", li)),
+             "button": "<button" in li, "in_use": "shep-tag-accent" in li}
+            for li in re.findall(r"<li[^>]*>.*?</li>", found.group(1), re.S)]
+
+    def drawn_by_tree(listing, view, search=""):
+        # The run's files as the list's tree draws them (the oracle, read apart).
+        return next((run.files for group in ml.tree_view(listing, view, research,
+                                                          search=search).groups
+                     for run in group.runs if run.key == base), ())
+
+    listing = _family_view()[0]
+    data = mp.read_page(listing)
+    listed = {ml.item_key(i): i for i in listing["items"]}
+    words = {k: w for w, k in ml.checkpoint_choices(listed, [last, other])}
+    seen = {}
+    for _label, task in mp.TASK_CHOICES:
+        view = mp.shape(listing, data, mp.controls(data, mp.BY_FAMILY, task))
+        drawn = drawn_by_tree(listing, view)
+        seen[task] = drawn
+        for key in drawn:
+            row = offered(listing, data, key, task)
+            if len(drawn) < 2:
+                assert row is None, (task, key)
+                continue
+            assert [f["key"] for f in row] == list(drawn), (task, key)
+            assert [f["words"].strip() for f in row] == [words[k] for k in drawn], (task, key)
+            for f in row:
+                assert f["button"] == (f["key"] != key), (task, key)
+                if f["button"]:
+                    out = select.fn(listing, key, False, view, "", {},
+                                    gr.EventData(None, {"act": ml.PICK_ACT, "key": f["key"]}),
+                                    gradio_request())
+                    assert out[0] == f["key"], (task, key, f["key"])     # accepted
+    # A Task filter that keeps the base run for one shown run's parent file draws that one.
+    assert seen[mp.ALL_TASKS] == (last, other) and seen["gene"] == (last,)
+    assert offered(listing, data, last, "gene") is None
+    # A search: what it shows; a selection it hides gets no row; cleared, both again.
+    plain = mp.shape(listing, data, mp.controls(data, mp.BY_FAMILY, mp.ALL_TASKS))
+    assert drawn_by_tree(listing, plain, "model-03") == (other,)
+    assert offered(listing, data, other, search="model-03") is None
+    assert offered(listing, data, last, search="model-03") is None
+    assert [f["key"] for f in offered(listing, data, last, search="")] == [last, other]
+    assert all(not f["in_use"] for f in offered(listing, data, last))
+    # The one lookup, shared with a node's body (`run_choice`).
+    for search in ("", "model-03", "ext"):
+        assert ml.drawn_files(listing, plain, research, base, search=search) == drawn_by_tree(
+            listing, plain, search)
+    # Another file of the run in use: said on its line; the shown one's is the header's.
+    family["served"]["value"] = _status(family["root"] / "demo",
+                                        family["shas"][("alpha-base", "model-03.pt")])
+    listing = _family_view()[0]
+    data = mp.read_page(listing)
+    row = offered(listing, data, last)
+    assert [(f["key"], f["in_use"]) for f in row] == [(last, False), (other, True)]
+    in_use = re.search(r"<li>.*?</li>", re.search(
+        r'<dt class="shep-k">Saved files</dt><dd class="shep-v">(.*?)</dd>',
+        mp.detail_parts(listing, data, last, {"order": mp.BY_FAMILY})["top"], re.S).group(1),
+        re.S).group(0)
+    assert r.chip(research.in_use_label, "accent") in in_use
+    assert not any(f["in_use"] for f in offered(listing, data, other))
+    assert "In use (Diagnosis)" in mp.detail_parts(listing, data, other,
+                                                   {"order": mp.BY_FAMILY})["header"]
 
 
 def test_a_selection_in_a_folded_branch_keeps_its_details_and_is_said(family):
@@ -4134,32 +4248,64 @@ const ROWS = '#shep-models-research-rows';
   await press(RUN.disease);
   out.unfolded = await state(page);
   // ---- A body clicked by the pointer: its run selected, nothing moved under the pointer.
-  const pickBody = async (run, center) => {
-    if (center) { await page.$eval(node(run), (n) => n.scrollIntoView({ block: 'center', inline: 'center' })); }
-    const box = (await look(page, run)).body, at = [box.x + box.w / 2, box.y + box.h / 2];
+  // `place`: 'center' (the node centred in the region), or 'cut' (its lower half below the
+  // region's bottom edge, the middle of the part in view clicked: a drawing located again
+  // would scroll the node into view).
+  const pickBody = async (run, place) => {
+    let cut = null;
+    if (place === 'center') { await page.$eval(node(run), (n) => n.scrollIntoView({ block: 'center', inline: 'center' })); }
+    if (place === 'cut') {
+      cut = await page.$eval(ROWS, (el, sel) => {
+        const b = document.querySelector(sel + ' .shep-fam-body');
+        b.scrollIntoView({ block: 'nearest', inline: 'center' });
+        const v = el.getBoundingClientRect(), r0 = b.getBoundingClientRect();
+        el.scrollTop += (r0.top + r0.height / 2) - v.bottom;
+        const r = b.getBoundingClientRect();
+        return { below: r.bottom - v.bottom, above: v.bottom - r.top, edge: v.bottom };
+      }, node(run));
+    }
+    const box = (await look(page, run)).body;
+    const at = [box.x + box.w / 2, (box.y + (cut ? Math.min(box.bottom, cut.edge) : box.bottom)) / 2];
     const before = await state(page);
     joins.length = 0;
     await page.mouse.click(...at);
     await selectedIs(run); await idle();
-    return { joins: joins.filter(Boolean), before, state: await state(page), moved: (await look(page, run)).body.y - box.y,
+    return { joins: joins.filter(Boolean), before, cut, state: await state(page), moved: (await look(page, run)).body.y - box.y,
              same: await page.evaluate(([x, y, sel]) => { const e = document.elementFromPoint(x, y); return !!e && document.querySelector(sel + ' .shep-fam-body').contains(e); }, [...at, node(run)]) };
   };
-  // A run with two saved files: its latest save, the other one picked in the details'
-  // "Saved files" (the graph not moved, the focus on the line that names it).
-  out.multi = await pickBody(RUN.base, true);
+  // A run with two saved files, half below the region's bottom edge: its latest save, the
+  // region not scrolled; the other one picked in the details' "Saved files" (the graph not
+  // moved, the focus on the line that names it, its ring as wide as its words).
+  out.multi = await pickBody(RUN.base, 'cut');
   const other = out.multi.state.saved.find(([cur]) => !cur);
+  const sBox = (await look(page, RUN.base)).body;
   joins.length = 0;
   await page.click(`#shep-mp-detail-top .shep-mp-files button[data-key="${other ? other[1] : ''}"]`);
   await page.waitForFunction((k) => { const h = document.querySelector('#shep-mp-detail-hd h2[data-key]'); return !!h && h.getAttribute('data-key') === k; }, other ? other[1] : '');
   await idle();
   out.savedPick = { joins: joins.filter(Boolean), before: out.multi.state, state: await state(page),
-                    active: await page.evaluate(() => { const a = document.activeElement; return [a.tagName, a.getAttribute('aria-current'), a.getAttribute('data-key')]; }) };
-  out.pick = await pickBody(RUN.ext1, true);
+                    moved: (await look(page, RUN.base)).body.y - sBox.y,
+                    active: await page.evaluate(() => { const a = document.activeElement; return [a.tagName, a.getAttribute('aria-current'), a.getAttribute('data-key')]; }),
+                    fit: await page.evaluate(() => { const a = document.activeElement, rg = document.createRange(); rg.selectNodeContents(a); return a.getBoundingClientRect().width - rg.getBoundingClientRect().width; }) };
+  // Searched for the file shown: "Saved files" offers what the list draws (here that one
+  // file: no row); cleared, both again.
+  await page.click('#shep-models-research-search input, #shep-models-research-search textarea');
+  await page.keyboard.type('model-03');
+  await page.waitForFunction(() => document.querySelector('#shep-models-research-count').innerText.includes('model-03'));
+  await idle();
+  out.savedSearched = await state(page);
+  await page.click('#shep-models-research-search-clear');
+  await page.waitForFunction(() => !document.querySelector('#shep-models-research-count').innerText.includes('“'));
+  await idle();
+  out.savedCleared = await state(page);
+  out.pick = await pickBody(RUN.ext1, 'center');
   // Folded over the selection: said on the folded node and above the graph; the focus to the arrow.
   await page.focus(node(RUN.ext1) + ' .shep-fam-body');
   await page.evaluate((sel) => document.querySelector(sel + ' .shep-fam-tog').click(), node(RUN.disease));
   await idle();
-  out.hidden = { state: await state(page), active: await page.evaluate(() => document.activeElement.className + '|' + (document.activeElement.closest('li') || {getAttribute: () => ''}).getAttribute('data-run')) };
+  out.hidden = { state: await state(page), active: await page.evaluate(() => document.activeElement.className + '|' + (document.activeElement.closest('li') || {getAttribute: () => ''}).getAttribute('data-run')),
+                 // The folded node's words in the colour of its own lines, never a link's.
+                 colors: await page.evaluate((sel) => { const n = document.querySelector(sel); return [n.querySelector(':scope > .shep-fam-held'), n.querySelector('.shep-fam-ln')].map((x) => getComputedStyle(x).color); }, node(RUN.disease)) };
   joins.length = 0;
   await page.click(`${ROWS} button.shep-fam-show`);
   await idle();
@@ -4168,7 +4314,14 @@ const ROWS = '#shep-models-research-rows';
   // (the note, the folded node's words) leave their room, so the node stays under the pointer.
   await press(RUN.disease);
   await page.mouse.move(2, 2);
-  out.room = await pickBody(RUN.frozen, true);
+  out.room = await pickBody(RUN.frozen, 'center');
+  // The pointer and then the focus gone from the rows (as a pick in "Saved files" takes it to
+  // the details): the room given back as the region's scroll, nothing in view moved.
+  const gBox = (await look(page, RUN.frozen)).body, gBefore = await state(page);
+  await page.mouse.move(2, 2);
+  await page.evaluate(() => document.querySelector('#shep-mp-detail-hd h2[data-key]').focus({ preventScroll: true }));
+  await page.waitForFunction((rows) => { const f = document.querySelector(rows + ' .shep-fam-forest'); return !!f && !f.style.marginTop; }, ROWS);
+  out.roomGone = { before: gBefore, state: await state(page), moved: (await look(page, RUN.frozen)).body.y - gBox.y };
   // ---- A search reveals a deeper match; clearing it brings the folds back (G7).
   out.beforeSearch = await state(page);
   await page.click('#shep-models-research-search input, #shep-models-research-search textarea');
@@ -4287,12 +4440,17 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
       ``{run}`` once and selects the run's latest save, the details following
       with its "Saved files" where it holds several; the other file picked
       there (``{act: "pick", key}``) is the selection, the focus on the line
-      that now names it; neither moves the graph (the node under the pointer,
-      the region's scroll and the orientation kept), and one run reads
-      selected, no run panel; folded away, the selection and its details
-      stay, the graph says where it is, on the folded node too, and the focus
-      moves to the arrow; "Show it" unfolds the way; folded again, a body
-      picked below keeps its place though the old selection's lines go;
+      that now names it (its ring as wide as its words); neither moves the
+      graph (the node under the pointer, the region's scroll and the
+      orientation kept, the node picked half below the region's edge too),
+      and one run reads selected, no run panel; a search hides the run's
+      other file, and "Saved files" no longer offers it; folded away, the
+      selection and its details stay, the graph says where it is, on the
+      folded node too (in its lines' colour: no link), and the focus moves to
+      the arrow; "Show it" unfolds the way; folded again, a body picked below
+      keeps its place though the old selection's lines go, and once the
+      pointer and the focus leave, their room is given back as the region's
+      scroll, nothing in view moved;
     - **a selection made elsewhere** (Newest first): its chain unfolded in
       By family; a pick in it, the region at its end, keeps the chain
       unfolded and the node under the pointer;
@@ -4385,17 +4543,25 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     multi = seen["multi"]
     base_last = runs["base"] + "/last.pt"
     assert multi["joins"] == [{"run": runs["base"]}] and multi["state"]["selected"] == base_last
+    # Picked half below the region's bottom edge: the answer is located already, the region
+    # not scrolled to show the rest of the node.
+    assert multi["cut"]["below"] > 0.5 and multi["cut"]["above"] > 0.5, multi["cut"]
     kept_still(multi)
     assert multi["state"]["panel"] == 0 and multi["state"]["currents"] == [runs["base"]]
     assert multi["state"]["saved"] == [[True, base_last], [False, runs["base"] + "/model-03.pt"]]
     saved = seen["savedPick"]
     other = runs["base"] + "/model-03.pt"
     assert saved["joins"] == [{"act": ml.PICK_ACT, "key": other}] and saved["state"]["selected"] == other
-    assert saved["state"]["scroll"] == saved["before"]["scroll"]
+    assert saved["state"]["scroll"] == saved["before"]["scroll"] and abs(saved["moved"]) < 0.5
     assert saved["state"]["orient"] == saved["before"]["orient"]
     assert saved["state"]["saved"] == [[False, base_last], [True, other]]
     assert saved["active"] == ["LI", "true", other], saved["active"]
+    assert abs(saved["fit"]) < 1, saved["fit"]               # the focus ring hugs its words
     assert saved["state"]["currents"] == [runs["base"]]
+    # Searched: "Saved files" offers only what the list draws (the run shows that one
+    # file: no row), the selection kept; cleared, both again.
+    assert seen["savedSearched"]["selected"] == other and seen["savedSearched"]["saved"] == []
+    assert seen["savedCleared"]["saved"] == [[False, base_last], [True, other]]
     pick = seen["pick"]
     assert pick["joins"] == [{"run": runs["ext1"]}] and pick["state"]["selected"].startswith(
         runs["ext1"] + "/")
@@ -4407,6 +4573,8 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     assert "folded branch under alpha-disease" in hidden["state"]["hidNote"]
     assert hidden["state"]["held"] == [[runs["disease"], ml.HOLDS_SELECTION]], hidden["state"]
     assert hidden["active"] == "shep-fam-tog|" + runs["disease"], hidden["active"]
+    # The folded node's words act on nothing: its own lines' colour, never a link's.
+    assert hidden["colors"][0] == hidden["colors"][1], hidden["colors"]
     again = seen["shownAgain"]
     assert runs["ext1"] in again["state"]["visible"] and again["state"]["hidNote"] is None
     assert again["joins"] == [{"tree": {t(runs["disease"]): True}, "searched": False}]
@@ -4418,6 +4586,14 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     assert room["state"]["hidNote"] is None and room["state"]["held"] == []
     assert room["state"]["selected"].startswith(runs["frozen"] + "/") and room["state"]["room"]
     kept_still(room)
+    # Pointer and focus gone from the rows: the room given back as the region's scroll, the
+    # node where it was (within the scroll position's own rounding).
+    gone = seen["roomGone"]
+    given = float(gone["before"]["room"].removesuffix("px"))
+    assert gone["before"]["scroll"]["top"] >= given and gone["state"]["room"] == "", gone
+    assert abs(gone["moved"]) <= 1, gone
+    assert abs(gone["before"]["scroll"]["top"] - gone["state"]["scroll"]["top"] - given) <= 1, gone
+    assert gone["state"]["orient"] == gone["before"]["orient"]
     searched, cleared = seen["searched"], seen["cleared"]
     assert runs["ext3"] in searched["visible"] and searched["count"].startswith("1 run matches")
     assert runs["ext3"] not in cleared["visible"]

@@ -747,13 +747,14 @@ button.shep-row {
 .shep-fam-ln { font-size: 14px; color: var(--shep-text-2); }
 /* The run holding the selected model: the selected look, the accent fill and the bar the
    tree's selected row has; hover keeps it. The folded ancestor it is in (I10): the bar and
-   its words (`.shep-fam-held`). */
+   its words (`.shep-fam-held`), in the colour of the node's own lines: they act on nothing,
+   so they never read as a link ("Show it" above the graph and the arrow show the way). */
 .shep-fam-node.shep-sel, .shep-fam-node.shep-sel:hover { border-color: var(--shep-accent); background: var(--shep-accent-50); }
 .shep-fam-node.shep-sel::before, .shep-fam-node.shep-fam-holds::before {
   content: ""; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 4px;
   border-radius: 8px 0 0 8px; background: var(--shep-accent); pointer-events: none;
 }
-.shep-fam-held { display: block; padding: 0 0.7em 0.45em; font-size: 14px; line-height: 1.35; color: var(--shep-accent-text); }
+.shep-fam-held { display: block; padding: 0 0.7em 0.45em; font-size: 14px; line-height: 1.35; color: var(--shep-text-2); }
 /* A run kept only for a shown run (a task filter's base, a search's ancestor): quieter. */
 .shep-fam-node.shep-ctx { border-style: dashed; }
 .shep-fam-node.shep-ctx .shep-fam-name .shep-w600 { font-weight: 400; }

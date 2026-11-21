@@ -4135,12 +4135,14 @@ selects or loads nothing. Each family shows its root and its direct children at 
 branch holding the selection or the model in use; a search unfolds what it finds while it is
 shown, and clearing it brings your own folds back. Clicking a node's body (or Enter or Space on
 it) selects that run, as choosing it in a Run select does: the file already selected stays when it
-is one of the run's, else its latest save; the details beside the graph show it, nothing is
-loaded (Load still asks), and the graph does not move under the pointer (since the stage-lineage
+is one of the run's, else its latest save; the details beside the graph (below it when the page
+stacks) show it, nothing is loaded (Load still asks), and the graph does not move under the
+pointer (since the stage-lineage
 round's second pass, 2026-11-21; its first pass showed the run in a panel under the graph). The
 run holding the selected model is the one highlighted. A parent in another workspace or not
 listed hangs above its run as a boundary ("Parent in workspace …", "▲ Parent unavailable", the
-reason in the selected file's details), and files with no readable model record are listed under
+reason in the selected file's details, a long one whole under its Details ›), and files with no
+readable model record are listed under
 "Not in a family". A selected model in a folded branch
 is said on the folded node ("Selected model in this folded branch") and above the graph, with
 "Show it". The detail names the exact parent file ("Parent: Best
@@ -4153,14 +4155,16 @@ score.
 
 **Selecting a row** shows its details as one list (since the ops-wiring round's B3): its model
 fingerprint (12 hex digits, Copy), its file (the title names its run, which two files of one run
-share; By family, a run with several saved files lists them under "Saved files", each as the
-Checkpoint select names it, the one shown saying "(selected)" and a click on another selecting
-it, since Newest first names them in its rows and the graph does not), its dataset by its
+share; By family, where the list shows several saved files of its run, those it shows (a Task
+filter or a search may show fewer) are listed under "Saved files", each as the Checkpoint select
+names it, the one shown saying "(selected)", another one in use for diagnosis marked "In use
+(Diagnosis)", and a click on another selecting it, since Newest first names them in its rows and
+the graph does not), its dataset by its
 relation to the workspace ("the selected workspace's current dataset", or which one it is), what
 it is, its operation, parent, family, encoder and relation to the reference recipe, the Trainer's
 validation figure as a row (never a box of its own), and under **Details ›** its run directory,
-its whole fingerprint and its parent's whole fingerprint; any warning, with ▲; and three
-segments:
+its whole fingerprint and its parent's whole fingerprint (and why the parent is unavailable, where
+the Parent row shortens it); any warning, with ▲; and three segments:
 
 - **Recorded results** ("Recorded test results" until research comparison Stage 6): every
   record the ledger holds for these weights, of any data kind and role, grouped by measurement

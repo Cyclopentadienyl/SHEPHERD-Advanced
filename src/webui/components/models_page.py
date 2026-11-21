@@ -43,9 +43,9 @@ context run; a parent in another workspace or not available a boundary);
 a node's body selects its run (the checkpoint already selected when it is one
 of the run's, else its latest save: the Run → Checkpoint choice,
 `model_list.run_choice`), and its arrow only folds or unfolds the runs under
-it; the detail then shows that checkpoint with its run's other saved files,
-each picked from there (`saved_files_html`); under All the records not read
-and the records not readable (a file without a model spec among them) follow, as
+it; the detail then shows that checkpoint with its run's other saved files
+the list draws, each picked from there (`saved_files_html`); under All the
+records not read and the records not readable (a file without a model spec among them) follow, as
 the table draws them. Every record is shown in the detail with its own metrics, as
 recorded (`RECORD_COLUMNS` names the two a Results table shows for a measurement this
 build describes).
@@ -131,7 +131,7 @@ import math
 import re
 import time
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Collection, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import gradio as gr
 
@@ -935,6 +935,11 @@ def controls(data: Mapping[str, Any], order: Any, task: Any) -> Dict[str, Any]:
     return {"task": chosen_task, "order": mode}
 
 
+#: How long an unavailable parent's reason is in the Parent row (`parent_html`);
+#: a longer one is whole one "Details ›" away (`identity_html`).
+PARENT_REASON_CHARS = 160
+
+
 def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]],
                 words: Optional[Tuple[str, str]] = None) -> str:
     """**The exact parent file a model's record names** (G03), "none: a new
@@ -964,9 +969,8 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]],
     elif state == "elsewhere":
         where = f'; in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
     elif state == "unavailable":
-        where = ('<div>' + r.status_mark(
-            "warn", "parent unavailable: "
-            + r.short_reason(row.get("parent_problem") or "not found", 160)) + "</div>")
+        reason = r.short_reason(row.get("parent_problem") or "not found", PARENT_REASON_CHARS)
+        where = "<div>" + r.status_mark("warn", "parent unavailable: " + reason) + "</div>"
     else:
         where = ""
     if where.startswith(";"):
@@ -1281,7 +1285,8 @@ def _served_line(listing: Mapping[str, Any]) -> str:
     return "nothing is in use for diagnosis"
 
 
-def saved_files_html(item: Mapping[str, Any], files: Sequence[Tuple[str, str]]) -> str:
+def saved_files_html(item: Mapping[str, Any], files: Sequence[Tuple[str, str]], *,
+                     in_use: Collection[str] = ()) -> str:
     """**The selected checkpoint's run's saved files** (By family's details:
     the graph's node is a run, so the files it holds are said here; G2, G3):
     each by its Run → Checkpoint words (`files`, `model_list.checkpoint_choices`:
@@ -1289,9 +1294,12 @@ def saved_files_html(item: Mapping[str, Any], files: Sequence[Tuple[str, str]]) 
     said so in words and ``aria-current`` (never by colour alone), each other
     one a button that picks it by the list's one selection
     (`model_list.PICK_ACT` through `renderers.TRIGGER_JS`, as a row's click
-    does: `create_models_page` gives this region to the list's ``picks``).
+    does: `create_models_page` gives this region to the list's ``picks``),
+    and another one served for diagnosis (`in_use`, its key) with the chip the
+    graph's node has (the shown one's is the header's, said once).
     Everything escaped."""
     shown = ml.item_key(item)
+    chip = r.chip(ml.PRESETS["research"].in_use_label, "accent")
     rows = []
     for label, key in files:
         if key == shown:
@@ -1299,14 +1307,15 @@ def saved_files_html(item: Mapping[str, Any], files: Sequence[Tuple[str, str]]) 
                         f' <span class="shep-muted">({r.e(SHOWN_FILE)})</span></li>')
         else:
             rows.append(f'<li><button type="button" class="shep-link" data-act="{ml.PICK_ACT}" '
-                        f'data-key="{r.e(key)}">{r.e(label)}</button></li>')
+                        f'data-key="{r.e(key)}">{r.e(label)}</button>'
+                        f'{chip if key in in_use else ""}</li>')
     return f'<ul class="shep-mp-files">{"".join(rows)}</ul>'
 
 
 def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
                   workspaces: Sequence[Mapping[str, Any]] = (),
                   parent_words: Optional[Tuple[str, str]] = None,
-                  files: Sequence[Tuple[str, str]] = ()) -> str:
+                  files: Sequence[Tuple[str, str]] = (), in_use: Collection[str] = ()) -> str:
     """**The selected checkpoint's details, as one summary list** (the
     skill's §4, README §5): its model fingerprint (12 hex with its Copy: the
     table shows each row's, this is the chosen one's to copy) and its file
@@ -1325,20 +1334,23 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
     its relation to the paper (axis 2: "matches the reference recipe" with
     what that recipe is, or the fields that differ); and the Trainer's
     validation figure, a row like every details list's (`renderers.validation_value`),
-    never a box of its own. With `files` (By family, a run with more than one
-    saved file: `detail_parts`), its run's saved files under the file, each
-    other one picked from there (`saved_files_html`). Its run directory, its
-    whole fingerprint and its parent's are one "Details ›" away (the skill's
-    §5: the full provenance one click away; G3: the exact parent's digest
-    read whole, not only copied). Model Facts' Task and Configuration rows say the kind and axis 1
-    elsewhere; neither is repeated here."""
+    never a box of its own. With `files` (By family, the run's files the list
+    draws, more than one: `detail_parts`), its run's saved files under the
+    file, each other one picked from there, the one in use said
+    (`saved_files_html`, `in_use`). Its run directory, its whole fingerprint
+    and its parent's are one "Details ›" away (the skill's §5: the full
+    provenance one click away; G3: the exact parent's digest read whole, not
+    only copied), and so is why the parent is unavailable where the Parent row
+    shortens it (`PARENT_REASON_CHARS`). Model Facts' Task and Configuration
+    rows say the kind and axis 1 elsewhere; neither is repeated here."""
     sha = item.get("sha256")
     architecture, run, filename = (item.get("architecture"), item.get("run"),
                                    item.get("filename"))
     unknown = r.status_mark("neutral", r.UNKNOWN)
     rows = [("Fingerprint", r.fingerprint_value(sha, what="model fingerprint")),
             ("File", r.ident_html(filename) if filename else unknown),
-            *([("Saved files", saved_files_html(item, files))] if len(files) > 1 else []),
+            *([("Saved files", saved_files_html(item, files, in_use=in_use))]
+              if len(files) > 1 else []),
             ("Dataset", r.dataset_relation_html(item, workspaces)),
             ("Kind", r.e(r.model_kind_text(item)))]
     if item.get("record") == "model":
@@ -1374,6 +1386,9 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
     if item.get("record") == "model" and r.is_digest(item.get("parent_sha256")):
         provenance.append(("Parent fingerprint",
                            r.fingerprint_value(item.get("parent_sha256"), full=True, copy=False)))
+        problem = " ".join(str((row or {}).get("parent_problem") or "").split())
+        if (row or {}).get("parent_state") == "unavailable" and len(problem) > PARENT_REASON_CHARS:
+            provenance.append(("Parent unavailable", r.e(problem)))
     return (r.summary_list(rows, classes="shep-mp-ident",
                            helps={"Fingerprint": ("model-fingerprint", "Model fingerprint"),
                                   "Validation": ("validation-trainer", "Validation (Trainer)")})
@@ -1381,11 +1396,12 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
 
 
 def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
-                 ctl: Mapping[str, Any]) -> Dict[str, Any]:
-    """The detail of the selected checkpoint (operator), or the read-only view.
-    Returns ``header``, ``top``, ``records``, ``usage`` (HTML) and ``seg``
-    (the segment labels, or None when the segments are not shown; Results'
-    content is its own handlers', `results_segment`)."""
+                 ctl: Mapping[str, Any], *, search: Any = "") -> Dict[str, Any]:
+    """The detail of the selected checkpoint (operator), or the read-only view,
+    for the controls `ctl` and the list's `search`. Returns ``header``,
+    ``top``, ``records``, ``usage`` (HTML) and ``seg`` (the segment labels, or
+    None when the segments are not shown; Results' content is its own
+    handlers', `results_segment`)."""
     if data.get("readonly"):
         return readonly_parts(data)
     item = ml.find_item(listing, key)
@@ -1432,12 +1448,28 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     listed = {ml.item_key(i): i for i in listing.get("items") or []}
     parent_words = (ml.pair_words(listed).get(parent)
                     if row and row.get("parent_state") == "listed" else None)
-    # By family draws a run as one node: its saved files are said here, as
-    # the Checkpoint select names them. Newest first names each in its rows.
-    files = (ml.checkpoint_choices(listed, ml.runs_of(listed).get(ml.item_run_key(item), []))
-             if ctl.get("order") == BY_FAMILY else [])
+    # The family graph draws a run as one node: its saved files are said
+    # here, the ones the list draws (`model_list.drawn_files`: a Task filter
+    # keeps a shown run's parent file only, a search its matches), each a pick
+    # the list's one selection accepts and draws, so a pick here changes
+    # nothing the list shows but the file selected; none for a selection the
+    # list does not draw (it says so above the graph). Each by its words among
+    # all its run's files, as the Checkpoint select names it. Newest first
+    # names each in its rows.
+    files: List[Tuple[str, str]] = []
+    view = shape(listing, data, ctl) if ctl.get("order") == BY_FAMILY else {}
+    if isinstance(view.get("edges"), (list, tuple)):
+        run = ml.item_run_key(item)
+        drawn = ml.drawn_files(listing, view, ml.PRESETS["research"], run, search=search)
+        if ml.item_key(item) in drawn:
+            files = [(label, k) for label, k in
+                     ml.checkpoint_choices(listed, ml.runs_of(listed).get(run, []))
+                     if k in drawn]
+    served_sha = listing.get("served_sha")
     top = (identity_html(item, row, workspaces=workspaces, parent_words=parent_words,
-                         files=files)
+                         files=files,
+                         in_use={k for _label, k in files
+                                 if served_sha and listed[k].get("sha256") == served_sha})
            + warnings)
     ledger = (data.get("ledgers") or {}).get(ml.item_key(item))
     chosen = next((w for w in workspaces if w.get("name") == listing.get("workspace")), {})
@@ -1738,11 +1770,12 @@ def create_models_page(ctx: Any) -> None:
                     parts["seg"], parts["records"], parts["usage"],
                     parts["results"]["column"]]
 
-    def detail_updates(listing, data, selected, ctl, seg_value) -> Tuple[Any, ...]:
+    def detail_updates(listing, data, selected, ctl, seg_value, query) -> Tuple[Any, ...]:
         """The detail's header, top, segments, records, usage history and the
         Results segment's column (its content is its own handlers'); the
-        segment shown is kept across selections."""
-        detail = detail_parts(listing, data, selected, ctl)
+        segment shown is kept across selections. `query` is the list's search
+        (By family's "Saved files" offers what the list draws)."""
+        detail = detail_parts(listing, data, selected, ctl, search=query)
         seg_shown = detail["seg"] is not None
         seg = seg_value if seg_value in (RECORDS, USAGE, RESULTS) else RECORDS
         return (detail["header"], detail["top"],
@@ -1752,7 +1785,7 @@ def create_models_page(ctx: Any) -> None:
                 gr.update(value=detail["usage"], visible=seg_shown and seg == USAGE),
                 gr.update(visible=seg_shown and seg == RESULTS))
 
-    def outputs_for(listing, data, ctl_values, selected, seg_value, condition, *,
+    def outputs_for(listing, data, ctl_values, selected, seg_value, condition, query, *,
                     new_data: bool) -> Tuple[Any, ...]:
         ctl = controls(data, *ctl_values)
         view = shape(listing, data, ctl)
@@ -1771,7 +1804,7 @@ def create_models_page(ctx: Any) -> None:
             options_html(data, view.get("refused")),
             left_header_html(listing, data, condition),
             ml.workspace_line_html(listing),
-            *detail_updates(listing, data, selected, ctl, seg_value),
+            *detail_updates(listing, data, selected, ctl, seg_value, query),
         )
 
     def read_for(listing) -> Dict[str, Any]:
@@ -1792,7 +1825,7 @@ def create_models_page(ctx: Any) -> None:
         # The detail of the selection the refresh kept (D04: a refresh keeps a
         # still-valid selection), not the empty detail.
         return (*shared, stale, *outputs_for(listing, data, (order, task), shared[1], seg_value,
-                                             condition, new_data=True))
+                                             condition, query, new_data=True))
 
     ctx.on_page_open("models", {
         "fn": _open,
@@ -1809,7 +1842,7 @@ def create_models_page(ctx: Any) -> None:
                                show_progress="hidden")
 
     def _answer(listing, data, stale, last, phase, order, task, selected, seg_value, current,
-                request):
+                query, request):
         ctl_values = (order, task)
         settled = phase != "loading"
         after_load = bool(stale) and settled
@@ -1842,9 +1875,9 @@ def create_models_page(ctx: Any) -> None:
             return (*states, *(gr.update() for _ in page_outputs[:4]),
                     options_html(data, view.get("refused")),
                     *(gr.update() for _ in page_outputs[5:-6]),
-                    *detail_updates(listing, data, key, ctl, seg_value))
+                    *detail_updates(listing, data, key, ctl, seg_value, query))
         condition = operator_access(request).condition
-        out = list(outputs_for(listing, data, ctl_values, key, seg_value, condition,
+        out = list(outputs_for(listing, data, ctl_values, key, seg_value, condition, query,
                                new_data=fresh))
         if again is not None:
             # A new view value, so the shared list draws its rows again with
@@ -1853,10 +1886,11 @@ def create_models_page(ctx: Any) -> None:
         return (*states, *out)
 
     def _sync(listing, data, stale, last, phase, order, task, selected, seg_value, current,
-              request: gr.Request):
+              query, request: gr.Request):
         """A new listing (a workspace chosen, the refresh after a Load), a
-        selection, or a control changed. The page reads its own data again for
-        a listing it has not read, and once after a Load has finished (the
+        selection, a control or the list's search changed (By family's "Saved
+        files" offers the files the list draws). The page reads its own data
+        again for a listing it has not read, and once after a Load has finished (the
         listing may be unchanged); after a Load it selects the last checkpoint
         again while its row is shown, when the shared refresh did not keep it.
         The list's view is shaped from the controls as they read now and is
@@ -1866,7 +1900,7 @@ def create_models_page(ctx: Any) -> None:
         the failure must not escape)."""
         try:
             return _answer(listing, data, stale, last, phase, order, task, selected, seg_value,
-                           current, request)
+                           current, query, request)
         except Exception as exc:  # noqa: BLE001 - the page says it and keeps what it shows
             logger.exception("The Models page could not answer")
             ctl = controls(data if isinstance(data, Mapping) else {}, order, task)
@@ -1874,10 +1908,11 @@ def create_models_page(ctx: Any) -> None:
                     *(gr.update() for _ in page_outputs[:4]), failed_html(ctl, exc),
                     *(gr.update() for _ in page_outputs[5:]))
 
-    gr.on([handle.listing.change, handle.selected.change,
+    gr.on([handle.listing.change, handle.selected.change, handle.search.change,
            *(picked(c) for c in control_inputs)],
           _sync, inputs=[handle.listing, data_state, stale_state, last_state, handle.phase,
-                         *control_inputs, handle.selected, parts["seg"], handle.view],
+                         *control_inputs, handle.selected, parts["seg"], handle.view,
+                         handle.search],
           outputs=[stale_state, last_state, handle.selected, *page_outputs],
           show_progress="hidden", trigger_mode="always_last")
 
@@ -2119,9 +2154,10 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mtbl td.shep-num .shep-sub {{ text-align: right; }}
 {_PAGE} .shep-mp-ident {{ font-size: 15px; }}
 /* By family's "Saved files" (`saved_files_html`): one file a line, the shown one in words,
-   each other one a link-like button that picks it. */
+   each other one a link-like button that picks it; each line as wide as its words, so the
+   shown one's focus ring hugs them as a button's does. */
 {_PAGE} .shep-mp-files {{ list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }}
-{_PAGE} .shep-mp-files > li {{ min-height: 24px; display: flex; align-items: center; flex-wrap: wrap; column-gap: 4px; }}
+{_PAGE} .shep-mp-files > li {{ width: fit-content; min-height: 24px; display: flex; align-items: center; flex-wrap: wrap; column-gap: 4px; }}
 {_PAGE} .shep-mp-files .shep-link {{ border: 0; background: none; padding: 0; min-height: 24px; color: var(--shep-accent-text); font: inherit; text-align: left; cursor: pointer; }}
 {_PAGE} .shep-mp-files .shep-link:hover {{ text-decoration: underline; }}
 {_PAGE} .shep-mp-files .shep-link:focus-visible, {_PAGE} .shep-mp-files > li:focus-visible {{ outline: 2px solid var(--shep-focus-ring); outline-offset: 2px; }}
