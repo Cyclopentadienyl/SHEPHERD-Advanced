@@ -3962,21 +3962,38 @@ Trainer 的驗證數值（訓練用來挑選 checkpoint 的指標，在 val 樣�
 紀錄附上 `deterministic_algorithms`；CPU 紀錄單憑 environment class 看不出來）。那裡沒有 Trainer 的
 驗證數值，也沒有 Load。
 
-**Order: Newest first | By family。** By family（自 K6 起）每個 family 一組，其 run 畫成一棵
-血統樹（自 ops-wiring 與 UI 回合的 T05 起；之前的 Lineage 欄已移除）：每個 run 放在其檔案所記錄的
-確切 parent 檔案所屬的 run 之下（以 SHA-256 比對，從不依名稱或時間猜測），依深度縮排，並以字詞
-寫出 operation；任務的 base 保留為脈絡 run；在另一個 workspace 或未列出的 parent 會寫在該 run 上
-（「Parent in workspace …」、「▲ parent unavailable: …」），細節區則指出它（「Parent: 4eebdf797543 of
-run demo-disease · 2026-11-16 20:43; listed here」）。同一 run 的兩個檔案是一個 run，從不被當成兩個
+**Order: Newest first | By family。** By family（自 K6 起；自 2026-11-21 的階段與血統回合起改為家族圖，
+之前的表格已移除）把每個 family 的 run 畫成以線相連的節點：每個 run 放在其檔案所記錄的確切 parent
+檔案所屬的 run 之下（以 SHA-256 比對，從不依名稱或時間猜測），不論多深；清單區域放得下時由左而右，
+放不下時由上而下（只在視窗或字級改變時重新決定，收合或挑選不會改變方向：展開超出區域寬度的分支時，
+在區域內橫向捲動到它）。節點寫出 run 的名稱、以字詞寫出的任務與 operation、存檔數與訓練到多少 epoch，
+parent run 有多個檔案時再寫出來自哪一個（「from Best LP accuracy」）；為任務篩選保留的 base 寫著
+「Parent of a shown run」。有子 run 的節點在指標移入或鍵盤焦點進入時才顯示箭頭（觸控螢幕上一直顯示）：
+箭頭只收合或展開其下的 run（收合時其下全部隱藏；展開時只顯示直接子代），不選取也不載入任何東西。
+每個 family 一開始顯示其根與直接子代，以及含有目前選取或使用中模型的分支；搜尋在顯示期間展開它找到的
+項目，清除搜尋即恢復您自己的收合。點選節點本體（或在其上按 Enter 或 Space）即選取該 run，與在 Run
+選單中選它相同：目前選取的檔案若屬於這個 run 就維持不變，否則選它最新的存檔；圖旁（頁面堆疊時在圖下方）
+的細節區隨即顯示它，
+不載入任何東西（Load 仍需確認），圖也不會在指標下移動（自 2026-11-21 階段與血統回合的第二輪起；第一輪
+是在圖下方的面板顯示該 run）。含有目前選取模型的 run 是唯一以底色標示的節點。在另一個
+workspace 或未列出的 parent 會以邊界框掛在該 run 上方（「Parent in workspace …」、「▲ Parent
+unavailable」，原因寫在所選檔案的細節區，較長的原因完整列在其 Details › 之下），沒有可讀模型紀錄的檔案列在
+「Not in a family」之下。位於已收合
+分支中的選取會在該收合節點上（「Selected model in this folded branch」）與圖上方說明，並附「Show it」。細節區指出確切的 parent 檔案（「Parent: Best LP
+accuracy · 86 epochs completed, of run demo-base · GATv2 2026-11-16 20:43」，接著是 12 個十六進位數字，
+完整指紋一次 Copy 即得，「listed here」）。同一 run 的兩個檔案是一個 run，從不被當成兩個
 operation。沒有任何排列方式依測試分數為模型排名：依測試分數排序已在 K8-6d 退役，連同它的角色設定、
 它的 Mode C 規則與每個 checkpoint 只取一筆紀錄的規則。每一筆紀錄都仍可在下方的細節區讀取，系統也從不
 依測試分數自動選擇模型。
 
 **選取一列**會以一份清單顯示其細節（自 ops-wiring 回合的 B3 起）：模型指紋（12 個十六進位數字，可
-Copy）、它的檔案（標題說的是它的 run，同一 run 的兩個檔案標題相同）、它的資料集與此 workspace 的關係（「the selected workspace's current dataset」，或說明是哪一
+Copy）、它的檔案（標題說的是它的 run，同一 run 的兩個檔案標題相同；By family 時，清單顯示其 run 的
+多個存檔時，另在「Saved files」列出清單顯示的那些（Task 篩選或搜尋可能顯示較少），各以 Checkpoint 選單的
+字詞命名，顯示中的那個寫著「(selected)」，另一個用於診斷的標示「In use (Diagnosis)」，點選另一個即選取它，
+因為 Newest first 在它的列中列出它們而圖不列出）、它的資料集與此 workspace 的關係（「the selected workspace's current dataset」，或說明是哪一
 個）、它是什麼、operation、parent、family、encoder 與參考配方的關係、作為一列的 Trainer 驗證數值
-（從不自成一個方框），以及 **Details ›** 之下的 run 目錄與完整指紋；任何警告以 ▲ 顯示；以及
-三個分段：
+（從不自成一個方框），以及 **Details ›** 之下的 run 目錄、完整指紋與其 parent 的完整指紋（Parent 列縮短
+parent 無法取得的原因時，也在此完整列出）；任何警告以 ▲ 顯示；以及三個分段：
 
 - **Recorded results**（research comparison Stage 6 之前為 "Recorded test results"）：ledger 為這組
   權重記錄的每一筆紀錄，不論資料種類與 role，依量測模式分組、依首次出現的順序排列，每種模式的標籤

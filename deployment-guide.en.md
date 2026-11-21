@@ -4119,25 +4119,52 @@ regime (device, deterministic on or off) is the one the record holds, as an oper
 this; a CPU record's environment class alone does not say it). There are no Trainer validation
 figures and no Load there.
 
-**Order: Newest first | By family.** By family (since K6) draws one group per family, its runs
-as a lineage tree (since the ops-wiring and UI round's T05; the Lineage column it had before is
-gone): each run under the run of the exact parent file its files record (matched by SHA-256,
-never guessed from names or times), indented by its depth, with its operation in words; a task's
-base kept as a context run; a parent in another workspace or not listed said on the run ("Parent
-in workspace …", "▲ parent unavailable: …"), and the detail naming it ("Parent: 4eebdf797543 of
-run demo-disease · 2026-11-16 20:43; listed here"). Two files of one run are one run, never two
-operations. No order ranks a model by a test score: ordering by test score
+**Order: Newest first | By family.** By family (since K6; a family graph since the
+stage-lineage round of 2026-11-21, the table it drew before is gone) draws each family's runs as
+nodes joined by lines: each run under the run of the exact parent file its files record (matched
+by SHA-256, never guessed from names or times), however deep, left to right where the list's
+region holds the graph and top to bottom where it does not (decided again when the window or the
+text size changes, never by a fold or a pick: a branch unfolded past the region is scrolled to
+sideways in the region). A node says the run's name, its task
+and operation in words, its saved files and how far it trained, and, where its parent run holds
+several files, which one it came from ("from Best LP accuracy"); a task's base kept for a task
+filter says "Parent of a shown run". A node with child runs shows its arrow while the pointer is
+over it or the keyboard focus is in it (always on a touch screen): the arrow folds or unfolds the
+runs under it (folding hides every run under it; unfolding shows its direct children) and
+selects or loads nothing. Each family shows its root and its direct children at first, and the
+branch holding the selection or the model in use; a search unfolds what it finds while it is
+shown, and clearing it brings your own folds back. Clicking a node's body (or Enter or Space on
+it) selects that run, as choosing it in a Run select does: the file already selected stays when it
+is one of the run's, else its latest save; the details beside the graph (below it when the page
+stacks) show it, nothing is loaded (Load still asks), and the graph does not move under the
+pointer (since the stage-lineage
+round's second pass, 2026-11-21; its first pass showed the run in a panel under the graph). The
+run holding the selected model is the one highlighted. A parent in another workspace or not
+listed hangs above its run as a boundary ("Parent in workspace …", "▲ Parent unavailable", the
+reason in the selected file's details, a long one whole under its Details ›), and files with no
+readable model record are listed under
+"Not in a family". A selected model in a folded branch
+is said on the folded node ("Selected model in this folded branch") and above the graph, with
+"Show it". The detail names the exact parent file ("Parent: Best
+LP accuracy · 86 epochs completed, of run demo-base · GATv2 2026-11-16 20:43", then its 12 hex
+digits with the whole fingerprint one Copy away, "listed here"). Two files of one run are one
+run, never two operations. No order ranks a model by a test score: ordering by test score
 retired in K8-6d, with its role setting, its Mode C rule and its one record per checkpoint. Every
 record stays readable in the detail below, and no model is ever chosen automatically by its test
 score.
 
 **Selecting a row** shows its details as one list (since the ops-wiring round's B3): its model
 fingerprint (12 hex digits, Copy), its file (the title names its run, which two files of one run
-share), its dataset by its relation to the workspace ("the selected
-workspace's current dataset", or which one it is), what it is, its operation, parent, family,
-encoder and relation to the reference recipe, the Trainer's validation figure as a row (never a
-box of its own), and under **Details ›** its run directory and whole fingerprint; any
-warning, with ▲; and three segments:
+share; By family, where the list shows several saved files of its run, those it shows (a Task
+filter or a search may show fewer) are listed under "Saved files", each as the Checkpoint select
+names it, the one shown saying "(selected)", another one in use for diagnosis marked "In use
+(Diagnosis)", and a click on another selecting it, since Newest first names them in its rows and
+the graph does not), its dataset by its
+relation to the workspace ("the selected workspace's current dataset", or which one it is), what
+it is, its operation, parent, family, encoder and relation to the reference recipe, the Trainer's
+validation figure as a row (never a box of its own), and under **Details ›** its run directory,
+its whole fingerprint and its parent's whole fingerprint (and why the parent is unavailable, where
+the Parent row shortens it); any warning, with ▲; and three segments:
 
 - **Recorded results** ("Recorded test results" until research comparison Stage 6): every
   record the ledger holds for these weights, of any data kind and role, grouped by measurement

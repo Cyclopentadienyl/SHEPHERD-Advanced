@@ -1389,8 +1389,10 @@ def test_the_research_preset_is_a_tree_with_in_use_on_its_own_row(root, serving,
 
 def test_a_pages_view_orders_and_filters_its_groups(root, serving, monkeypatch):
     """A page's view: its filter, its groups (each its own row group, B72-C5,
-    its runs in the order and depth it gives, the rest after them under the
-    rest title), its context rows counted apart, and its note beside Load."""
+    its runs in the order it gives, the rest after them), its context rows
+    counted apart, and its note beside Load. The table draws no group header
+    and no depth (the stage-lineage round: By family's families are the family
+    graph's, `_graph_html`, and a group's title is no header row of its own)."""
     listing = _listing(root, monkeypatch)
     keys = [ml.item_key(i) for i in listing["items"]]
     first, second = _key("model-01.pt"), _key("model-12.pt")
@@ -1403,15 +1405,16 @@ def test_a_pages_view_orders_and_filters_its_groups(root, serving, monkeypatch):
             "rest_title": "The rest",
             "note": "A note from the page <b>."}
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
-    ordered = html.index("Group A")
-    assert ordered < html.index(f'data-key="{first}"') < html.index(
-        f'data-key="{second}"') < html.index("The rest")
-    assert "Group B" not in html                       # a group with no row is not drawn
+    assert html.index(f'data-key="{first}"') < html.index(
+        f'data-key="{second}"') < html.index(f'data-key="{_key("model-05.pt")}"')
     for other in ("run_e4c2a9", "gene_aaaaaa", "base_aaaaaa", "run_dddddd"):
         assert other not in html, other                    # not disease models: filtered out
     bodies = re.findall(r"<tbody[^>]*>(.*?)</tbody>", html)
-    assert len(bodies) == 2 and all(body.count('scope="rowgroup"') == 1 for body in bodies)
-    assert 'class="shep-tree-name shep-d1"' in html     # the depth the page gives
+    assert len(bodies) == 2 and 'scope="rowgroup"' not in html     # Group B has no row
+    for retired in ("Group A", "Group B", "The rest"):
+        assert retired not in _visible(html), retired              # no group header row
+    for retired in ("shep-grp", "shep-d1", "shep-d0", "rowgroup"):
+        assert retired not in html, retired
     assert ml.count_line(listing, ml.PRESETS["research"], False, view) == "Disease: 3 of 8 runs"
     # The page's note beside Load only for a selected row Load can serve
     # (R-78): nothing before a selection, nor for a base, whose reason is said.
@@ -2040,8 +2043,10 @@ def test_the_tree_folds_runs_and_unfolds_the_selected_and_the_served(root, servi
     """D04: every run a summary row, its files folded; the run of the model in
     use and of the selection unfolded (each file still its own row); what the
     operator folds or unfolds is kept (the fold state) and wins over the
-    default; a folded group hides its runs; folding never changes what is
-    selected, and nothing is dropped from the table."""
+    default; a group has no toggle of its own (its title was By family's
+    header row, retired with the family table: the stage-lineage round), so a
+    group entry left in the fold state hides nothing; folding never changes
+    what is selected, and nothing is dropped from the table."""
     listing = _listing(root, monkeypatch)
     research = ml.PRESETS["research"]
     html = ml.list_html(listing, None, research)
@@ -2065,12 +2070,13 @@ def test_the_tree_folds_runs_and_unfolds_the_selected_and_the_served(root, servi
     assert files[picked] is True and files[_key("model-02.pt")] is False
     assert 'aria-current="true"' in _row_of_key(html, picked)
     assert 'aria-expanded="false"' in html and "▸" in html
-    # A folded group hides its runs and their files (By family's group here).
+    # A group draws no toggle; an old group entry hides none of its runs.
     view = {"groups": [{"node": "g:fam", "title": "Family A",
                         "keys": [_key("model-12.pt"), _key("model-08.pt")]}]}
     html = ml.list_html(listing, None, research, view=view, fold={"g:fam": False})
     body = re.search(r'<tbody data-node="g:fam">(.*?)</tbody>', html, re.S).group(1)
-    assert all(hidden for _cls, _key_, hidden in _rows(body)[1:]), body
+    assert 'data-fold="g:fam"' not in html and "Family A" not in html
+    assert [hidden for cls, _key_, hidden in _rows(body) if "shep-tree-run" in cls] == [False]
     assert ml.count_line(listing, research, False, view, fold={"g:fam": False}) == (
         ml.count_line(listing, research, False, view))           # folding hides, counts nothing
 
@@ -2080,8 +2086,9 @@ def test_a_search_finds_names_and_fingerprints_and_keeps_where_they_come_from(
     """D04's search: plain text, ignoring case, in a run's name or words or a
     file's name; a model fingerprint by its first hex digits (four or more) or
     whole; a match keeps the runs it comes from (the view's exact parent
-    files) as context; a file found by its own name or fingerprint has its run
-    unfolded; nothing matched says so; the selection never changes."""
+    files) as context, which the family graph draws quieter and says so; a file
+    found by its own name or fingerprint has its run unfolded; nothing matched
+    says so; the selection never changes."""
     listing = _listing(root, monkeypatch)
     research = ml.PRESETS["research"]
     sha = root["shas"]["model-03.pt"]
@@ -2104,7 +2111,17 @@ def test_a_search_finds_names_and_fingerprints_and_keeps_where_they_come_from(
     html = ml.list_html(listing, _key("model-12.pt"), research, view=view, search="gene")
     assert "Selected model not shown by this filter (search “gene”)" in html
     assert 'data-key="__clear_search__"' in html
-    assert "shep-ctx" in _run_row(html, "gatv2/20261001-000000_base_aaaaaa")
+    # The family graph (the same view with its edges) draws the run they come
+    # from as context: quieter, in words.
+    gene = "gatv2/20261015-080000_gene_aaaaaa"
+    graph = ml.list_html(listing, None, research, search="gene",
+                         view={**view, "edges": [{"from": _key("base.pt"), "to": gene}]})
+    base = graph[graph.index('data-run="gatv2/20261001-000000_base_aaaaaa"'):]
+    base = base[:base.index("</button>")]
+    assert "shep-fam-node shep-ctx" in base and ml.r.status_mark(
+        "neutral", "Parent of a shown run") in base
+    assert f'data-run="{gene}"' in graph and "shep-ctx" not in graph[
+        graph.index(f'<li class="shep-fam-li" data-run="{gene}"'):].split("</button>")[0]
     nothing = ml.list_html(listing, None, research, view=view, search="zzz")
     assert "No checkpoint matches “zzz” in this workspace." in nothing
     assert ml.count_line(listing, research, False, view, search="zzz") == "No run matches “zzz”"
@@ -2365,27 +2382,49 @@ def test_a_drawer_search_says_the_older_runs_it_has_not_searched(root, serving, 
         ml.list_html(full, None, clinical, search="zzz"))
 
 
-def test_a_search_unfolds_what_it_found(root, serving, monkeypatch):
-    """A match is never folded away: the search opens a group holding one and
-    a run holding a file found by its own name or fingerprint, whatever was
-    folded before (seen on the multi-family demo: a fingerprint found in a
-    family folded by hand showed no row)."""
+def test_a_search_reveals_what_it_found_and_clearing_it_brings_the_folds_back(
+        root, serving, monkeypatch):
+    """G7 (the stage-lineage round; it was "a search unfolds what it found",
+    which dropped the operator's own folds for good): a match is never folded
+    away while the search shows the list, a run holding a file found by its
+    own name or fingerprint revealed as the list is drawn, and the fold state
+    is not changed by it; what the operator folds while the search is shown
+    is that search's (``q:`` entries, `search_node`), so clearing the search
+    (or another search) drops it and brings the operator's own folds back.
+    The drawer's tree and the family graph read the one rule (`fold_open`)."""
     from src.webui.shell import standalone_context
 
     with gr.Blocks() as demo:
         ctx = standalone_context(demo)
         handle = ctx.create_model_list("research")
-    searched = next(fn for fn in demo.fns.values() if fn.name == "_searched")
+    fns = {fn.name: fn for fn in demo.fns.values()}
+    searched, cleared, select = fns["_searched"], fns["_cleared"], fns["_select"]
     listing = _listing(root, monkeypatch)
-    view = {"groups": [{"node": "g:fam", "title": "Family A",
-                        "keys": [_key("model-03.pt"), _key("model-02.pt")]}]}
     run = ml.run_node("gatv2/20261015-080000_gene_aaaaaa")
-    fold, rows, count = searched.fn(listing, None, False, view, root["shas"]["model-03.pt"][:8],
-                                    {"g:fam": False, run: False, "g:other": False})
-    assert fold == {"g:other": False}
-    assert not dict((k, h) for _c, k, h in _rows(rows) if k)[_key("model-03.pt")]
+    manual = {run: False, "g:other": False}
+
+    def hidden(rows):
+        return {k: h for _c, k, h in _rows(rows) if k}[_key("model-03.pt")]
+
+    query = root["shas"]["model-03.pt"][:8]
+    fold, rows, count = searched.fn(listing, None, False, None, query,
+                                    {**manual, ml.search_node(run): False})
+    assert fold == manual                      # the operator's folds kept; an old search's dropped
+    assert not hidden(rows)                    # revealed while the search shows the list
     assert count.startswith("1 run matches") and searched.outputs == [handle.fold, handle.rows,
                                                                        handle.count]
+    # Folded again while the search is shown: that search's, the manual entry untouched.
+    out = select.fn(listing, None, False, None, query, fold,
+                    gr.EventData(None, {"fold": run, "open": False, "searched": True}),
+                    gradio_request())
+    during = dict(zip(map(id, select.outputs), out, strict=True))[id(handle.fold)]
+    assert during == {**manual, ml.search_node(run): False}
+    assert hidden(ml.list_html(listing, None, ml.PRESETS["research"], search=query, fold=during))
+    # Cleared: the operator's own folds are back, the search's are gone.
+    box, fold, rows, _count = cleared.fn(listing, None, False, None, during)
+    assert box == "" and fold == manual and hidden(rows)
+    assert ml.fold_open(manual, run, "", False, True) is False
+    assert ml.fold_open(manual, run, query, True, False) is True
 
 
 def _selected_item(run, filename, completed, figure, top):
