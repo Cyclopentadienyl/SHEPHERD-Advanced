@@ -1689,7 +1689,10 @@ def details_list(rows: Iterable[Tuple[str, str]], *, of: Any = None,
 #: the region mounted was taken as drawn, its default never asked; the review
 #: of e1dda3e); the reader's own choice always wins over it (Training's
 #: failed-run banner: its output tail, closed on a short side-by-side window;
-#: UI ledger V-16).
+#: UI ledger V-16). **A region that keeps its own folds** (an element with
+#: ``data-shep-folds-own`` around them: the Models family graph's arrows,
+#: whose state the server draws from what the operator folded and a search
+#: reveals for its own time, `model_list.FAMILY_JS`) is left to its script.
 KEEP_OPEN_JS = r"""
 (function () {
   var MARK = 'data-shep-kept', chosen = {}, focused = null;
@@ -1729,6 +1732,9 @@ KEEP_OPEN_JS = r"""
     var seen = {}, all = [];
     element.querySelectorAll('details, [aria-expanded][aria-controls]').forEach(function (d) {
       if (d.tagName !== 'DETAILS' && !popover(d)) { return; }
+      // A region that keeps its own folds (the family graph's arrows,
+      // `model_list.FAMILY_JS`: the server draws them from its fold state).
+      if (d.closest('[data-shep-folds-own]')) { return; }
       var of = d.closest('[data-keep]'), named = of && element.contains(of);
       var key = (named ? of.getAttribute('data-keep') : '') + '\u0000' + words(d);
       seen[key] = (seen[key] || 0) + 1;

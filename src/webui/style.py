@@ -664,7 +664,6 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .shep-tbl tbody tr.shep-on td { background: var(--shep-accent-50); }
 .shep-tbl tbody tr.shep-on td:first-child { box-shadow: inset 4px 0 0 var(--shep-accent); }
 .shep-tbl tbody tr[data-key]:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: -2px; }
-.shep-tbl tr.shep-grp th { position: static; background: var(--shep-panel-2); font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 10px; border-bottom: 1px solid var(--shep-border); }
 .shep-tbl tbody tr.shep-row-dis td { background: var(--shep-grey-50); color: var(--shep-muted); cursor: default; }
 /* A greyed row that can still be chosen (an unreadable file: its details say why); a greyed row
    with no key (an entry the listing could not list) is no choice and keeps the default cursor. */
@@ -689,10 +688,9 @@ button.shep-row {
 .shep-tbl.shep-mtbl td { overflow-wrap: break-word; }
 .shep-mtbl-wrap + .shep-row-more { border: 1px solid var(--shep-border); border-top: 0; border-radius: 0 0 8px 8px; }
 /* The shared list's tree (D04, `model_list._tree_html`): each group its own row group,
-   its runs under it, indented by lineage, each run's saved files under it, folded by a
-   24 x 24 toggle (the skill's §10 target) whose glyph is its cue (aria-expanded says
-   its state); a row the search or a filter keeps only for a shown run is quieter, and
-   says so in words. Every row is drawn; a folded one is `hidden`. */
+   each run's saved files under it, folded by a 24 x 24 toggle (the skill's §10 target)
+   whose glyph is its cue (aria-expanded says its state). Every row is drawn; a folded
+   one is `hidden`. */
 .shep-mtree tr[hidden] { display: none; }
 .shep-mtree .shep-fold {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
@@ -704,23 +702,151 @@ button.shep-row {
 /* A toggle focused under the table's sticky header scrolls clear of it, as a row does
    (`model_list.MODEL_LIST_JS` keeps the header's height in `--shep-tbl-head-h`). */
 .shep-mtree .shep-fold { scroll-margin-top: calc(var(--shep-tbl-head-h, 0px) + 4px); }
-.shep-mtree tr.shep-grp th { padding: 4px 10px; color: var(--shep-text); }
-.shep-mtree tr.shep-grp th > * { vertical-align: middle; }
-.shep-mtree .shep-grp-n { float: right; line-height: 24px; font-weight: 400; color: var(--shep-text-2); }
 .shep-mtree .shep-tree-name { display: flex; align-items: center; min-height: 24px; }
 .shep-mtree .shep-tree-label { min-width: 0; overflow-wrap: break-word; }
-.shep-mtree .shep-d1 { padding-left: 22px; } .shep-mtree .shep-d2 { padding-left: 44px; }
-.shep-mtree .shep-d3 { padding-left: 66px; } .shep-mtree .shep-d4 { padding-left: 88px; }
 .shep-mtree .shep-tree-leaf { margin-left: 26px; }
 .shep-mtree tr.shep-tree-run { cursor: pointer; }
 .shep-mtree tr.shep-tree-run:hover td { background: var(--shep-panel-2); }
-.shep-mtree tr.shep-ctx td { color: var(--shep-text-2); }
-.shep-mtree tr.shep-ctx .shep-w600 { font-weight: 400; }
 .shep-mtree td.shep-num { white-space: nowrap; }
 /* A count is one figure; words in its place ("epochs not recorded") wrap as words do. */
 .shep-mtree td.shep-num .shep-muted { white-space: normal; }
 /* A saved file's name, then its In-use chip, under it when the column is narrow. */
 .shep-mtree .shep-tree-leaf { flex-wrap: wrap; column-gap: 6px; }
+/* **The family graph** (Models' By family, `model_list._graph_html`; G1-G9, I1-I10): each
+   family's runs as nested lists, a node a box as large as its text and padding (I1), the
+   lines drawn from the lists' boxes, each meeting its node's box at its name line
+   (`--shep-fam-anchor` from the node's top), so a node that grows down or a fold moves
+   no line off a box. Top to bottom by default; left to right where the region holds it
+   (`[data-fam-orient="h"]` on the region, set by `model_list.FAMILY_JS` from the graph's
+   measured width). A node with child runs has its arrow area beside its body: hidden
+   (focusable, of no size, I1) until the pointer is over the node or the keyboard's focus
+   is in it (one box, so the pointer crosses no gap, I4; focus a pointer's press leaves
+   on an arrow keeps nothing open, or the area closing as the press moves on would shift
+   what is under the pointer between its press and release, I7), then below the body top
+   to bottom (the
+   node grows down, the arrow centred, what follows moves down) and in the connector lane
+   to its right left to right (no other box moves, I2/I5); always shown where a pointer is
+   coarse or none hovers (I4); no transition under reduced motion (I7). Lines and node
+   borders meet 3:1 (the skill's §10). */
+.shep-fam {
+  --shep-fam-gap: 10px; --shep-fam-pad: 0.45em 0.7em; --shep-fam-anchor: calc(1px + 0.45em + 0.675em);
+  --shep-fam-act: 2em; --shep-fam-lane: calc(var(--shep-fam-act) + 0.6em); --shep-fam-stub: 1.2em;
+  --shep-fam-indent: 1.1em; --shep-fam-line: var(--shep-grey-500);
+  display: flex; flex-direction: column; gap: 12px; min-width: 0; font-size: 15px;
+}
+.shep-fam [hidden] { display: none !important; }
+.shep-fam ul { list-style: none; margin: 0; padding: 0; }
+.shep-fam-forest { display: flex; flex-direction: column; gap: 16px; }
+.shep-fam-tree { display: flex; flex-direction: column; gap: var(--shep-fam-gap); }
+.shep-fam-li { position: relative; }
+.shep-fam-node {
+  position: relative; box-sizing: border-box; width: max-content; max-width: min(100%, 30em);
+  border: 1px solid var(--shep-control-border); border-radius: 8px; background: #fff;
+}
+.shep-fam .shep-fam-body {
+  display: flex; flex-direction: column; gap: 2px; box-sizing: border-box; width: 100%; margin: 0;
+  padding: var(--shep-fam-pad); border: 0; border-radius: 7px; background: none; font: inherit;
+  color: var(--shep-text); text-align: left; line-height: 1.35; cursor: pointer; overflow-wrap: break-word;
+}
+.shep-fam .shep-fam-body:hover { background: var(--shep-panel-2); }
+.shep-fam .shep-fam-body:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: -3px; }
+.shep-fam-name { font-size: 15px; overflow-wrap: anywhere; }
+.shep-fam-ln { font-size: 14px; color: var(--shep-text-2); }
+/* The run focused (its panel shown): the accent box; hover differs by fill only. */
+.shep-fam-node.shep-on { border-color: var(--shep-accent); background: var(--shep-accent-50); }
+.shep-fam .shep-fam-node.shep-on .shep-fam-body:hover { background: none; }
+/* The run holding the selected model (or the folded ancestor it is in, I10): the accent bar
+   the tree's selected row has. */
+.shep-fam-node.shep-sel::before, .shep-fam-node.shep-fam-holds::before {
+  content: ""; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 4px;
+  border-radius: 8px 0 0 8px; background: var(--shep-accent); pointer-events: none;
+}
+/* A run kept only for a shown run (a task filter's base, a search's ancestor): quieter. */
+.shep-fam-node.shep-ctx { border-style: dashed; }
+.shep-fam-node.shep-ctx .shep-fam-name .shep-w600 { font-weight: 400; }
+/* A folded subtree: the box drawn as a stack, its arrow saying how many runs it hides. */
+.shep-fam-node.shep-fam-shut { box-shadow: 3px 3px 0 -1px #fff, 3px 3px 0 0 var(--shep-control-border); }
+/* A boundary: where a parent not listed here is, no choice (G5). */
+.shep-fam-bound {
+  display: flex; flex-direction: column; gap: 2px; padding: var(--shep-fam-pad); line-height: 1.35;
+  border-style: dashed; background: var(--shep-panel-2); color: var(--shep-text-2);
+}
+/* The arrow area: of no size until shown, its button still a tab stop. */
+.shep-fam-act { display: flex; justify-content: center; height: 0; overflow: hidden; opacity: 0; }
+.shep-fam-node:is(:hover, :has(:focus-visible)) > .shep-fam-act { height: auto; overflow: visible; padding: 2px 0 4px; opacity: 1; }
+.shep-fam .shep-fam-tog {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 24px;
+  padding: 0; border: 1px solid transparent; border-radius: 4px; background: none;
+  color: var(--shep-accent-text); cursor: pointer;
+}
+.shep-fam .shep-fam-tog:hover { border-color: var(--shep-grey-500); }
+.shep-fam .shep-fam-tog:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: -2px; }
+.shep-fam .shep-fam-tog svg { transform: rotate(90deg); }
+.shep-fam .shep-fam-tog[aria-expanded="true"] svg { transform: rotate(-90deg); }
+/* Top to bottom: each child run in from its parent's left edge, a line down from the parent
+   and across to the child's name line. */
+.shep-fam-kids { margin-left: var(--shep-fam-indent); }
+.shep-fam-kids > .shep-fam-li { padding: var(--shep-fam-gap) 0 0 var(--shep-fam-stub); }
+.shep-fam-kids > .shep-fam-li::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1px solid var(--shep-fam-line);
+}
+.shep-fam-kids > .shep-fam-li:last-child::before { bottom: auto; height: calc(var(--shep-fam-gap) + var(--shep-fam-anchor)); }
+.shep-fam-kids > .shep-fam-li::after {
+  content: ""; position: absolute; left: 0; width: var(--shep-fam-stub);
+  top: calc(var(--shep-fam-gap) + var(--shep-fam-anchor)); border-top: 1px solid var(--shep-fam-line);
+}
+/* Left to right: each run's children in a column after its connector lane, which a node
+   with child runs keeps whether they are shown or folded, so the arrow area shown in it
+   never pushes anything or widens the region. */
+[data-fam-orient="h"] .shep-fam-forest { width: max-content; }
+[data-fam-orient="h"] .shep-fam-tree { gap: 0; }
+[data-fam-orient="h"] .shep-fam-li { display: flex; align-items: flex-start; }
+[data-fam-orient="h"] .shep-fam-node { flex: none; max-width: 18em; margin: calc(var(--shep-fam-gap) / 2) 0; }
+[data-fam-orient="h"] .shep-fam-node.shep-fam-parent, [data-fam-orient="h"] .shep-fam-bound { margin-right: var(--shep-fam-lane); }
+[data-fam-orient="h"] .shep-fam-kids { position: relative; margin-left: 0; }
+[data-fam-orient="h"] .shep-fam-kids::before {
+  content: ""; position: absolute; left: calc(-1 * var(--shep-fam-lane)); width: var(--shep-fam-lane);
+  top: calc(var(--shep-fam-gap) / 2 + var(--shep-fam-anchor)); border-top: 1px solid var(--shep-fam-line);
+}
+[data-fam-orient="h"] .shep-fam-kids > .shep-fam-li { padding: 0 0 0 var(--shep-fam-stub); }
+[data-fam-orient="h"] .shep-fam-kids > .shep-fam-li::before { top: 0; bottom: 0; height: auto; }
+[data-fam-orient="h"] .shep-fam-kids > .shep-fam-li:first-child::before { top: calc(var(--shep-fam-gap) / 2 + var(--shep-fam-anchor)); }
+[data-fam-orient="h"] .shep-fam-kids > .shep-fam-li:last-child::before { bottom: auto; height: calc(var(--shep-fam-gap) / 2 + var(--shep-fam-anchor)); }
+[data-fam-orient="h"] .shep-fam-kids > .shep-fam-li:only-child::before { display: none; }
+[data-fam-orient="h"] .shep-fam-kids > .shep-fam-li::after { top: calc(var(--shep-fam-gap) / 2 + var(--shep-fam-anchor)); }
+[data-fam-orient="h"] .shep-fam-act {
+  position: absolute; left: calc(100% - 1px); top: -1px; bottom: -1px; box-sizing: border-box;
+  width: var(--shep-fam-act); height: auto; align-items: center; overflow: visible; padding: 0;
+  opacity: 0; pointer-events: none; border: 1px solid var(--shep-control-border); border-left: 0;
+  border-radius: 0 8px 8px 0; background: #fff;
+}
+[data-fam-orient="h"] .shep-fam-node:is(:hover, :has(:focus-visible)) > .shep-fam-act { opacity: 1; pointer-events: auto; padding: 0; }
+[data-fam-orient="h"] .shep-fam-node.shep-fam-parent:is(:hover, :has(:focus-visible)) { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right-color: transparent; }
+[data-fam-orient="h"] .shep-fam-node.shep-on > .shep-fam-act { border-color: var(--shep-accent); background: var(--shep-accent-50); }
+[data-fam-orient="h"] .shep-fam .shep-fam-tog { width: 24px; }
+[data-fam-orient="h"] .shep-fam .shep-fam-tog svg { transform: none; }
+[data-fam-orient="h"] .shep-fam .shep-fam-tog[aria-expanded="true"] svg { transform: rotate(180deg); }
+@media (prefers-reduced-motion: no-preference) {
+  [data-fam-orient="h"] .shep-fam-act { transition: opacity 0.12s ease; }
+}
+/* A coarse pointer, or none that hovers: the arrow area always there (I4). */
+@media (any-pointer: coarse), (hover: none) {
+  .shep-fam { --shep-fam-act: max(2em, 36px); }
+  .shep-fam-act { height: auto; overflow: visible; padding: 2px 0 4px; opacity: 1; }
+  .shep-fam .shep-fam-tog, [data-fam-orient="h"] .shep-fam .shep-fam-tog { width: 32px; height: 32px; }
+  [data-fam-orient="h"] .shep-fam-act { opacity: 1; pointer-events: auto; padding: 0; }
+  [data-fam-orient="h"] .shep-fam-node.shep-fam-parent { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right-color: transparent; }
+}
+/* The focused run's panel under the graph: its words, its exact parent and its saved files. */
+.shep-fam-none { margin: 0; font-size: 14px; }
+.shep-fam-run { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--shep-border); padding-top: 12px; }
+.shep-fam-run-hd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.shep-fam .shep-fam-run-t { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.shep-fam .shep-fam-back, .shep-fam .shep-fam-show { padding: 0 12px; }
+.shep-fam-back { margin-left: auto; }
+.shep-fam-files { margin: 0; }
+.shep-fam-files th { position: static; }
+.shep-fam .shep-fam-h { margin: 4px 0 0; font-size: 15px; font-weight: 600; }
 /* The shared list's search line (D04): "Search" beside its box, as a field row says it, and
    its Clear after it. */
 .shep-search-row { flex-wrap: nowrap !important; align-items: center !important; gap: 8px !important; min-width: 0; }

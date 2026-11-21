@@ -721,8 +721,8 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
 
 #: **What the shared model list's tree shows, read where the browser draws it**
 #: (D04, `model_list._tree_html`; a page init script): ``window.__shepTree(root)``
-#: gives its groups (each title, whether unfolded, its runs and files drawn),
-#: its runs (words, whether unfolded) and its files (key, words, selected),
+#: gives its groups (each its runs and files drawn), its runs (words, whether
+#: unfolded) and its files (key, words, selected),
 #: each drawn or folded away by what the page shows (`hidden`, a box), the
 #: count line beside it, and a selection the list says it does not show.
 TREE_JS = r"""
@@ -736,15 +736,12 @@ TREE_JS = r"""
     return {
       groups: [...el.querySelectorAll('tbody[data-node]')].map((body) => ({
         node: body.getAttribute('data-node'),
-        title: text(body.querySelector('.shep-grp-t')),
-        open: opened(body.querySelector('tr.shep-grp button.shep-fold')),
         runs: [...body.querySelectorAll('tr.shep-tree-run')].filter(shown).length,
         files: [...body.querySelectorAll('tr[data-key]')].filter(shown).length,
       })),
       runs: [...el.querySelectorAll('tr.shep-tree-run')].map((tr) => ({
         node: tr.getAttribute('data-fold'), words: text(tr.querySelector('td')),
         shown: shown(tr), open: opened(tr.querySelector('button.shep-fold')),
-        context: tr.classList.contains('shep-ctx'),
       })),
       files: [...el.querySelectorAll('tr[data-key]')].map((tr) => ({
         key: tr.getAttribute('data-key'), words: text(tr.querySelector('td')),

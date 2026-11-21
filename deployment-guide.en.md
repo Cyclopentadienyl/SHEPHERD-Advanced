@@ -4112,14 +4112,28 @@ regime (device, deterministic on or off) is the one the record holds, as an oper
 this; a CPU record's environment class alone does not say it). There are no Trainer validation
 figures and no Load there.
 
-**Order: Newest first | By family.** By family (since K6) draws one group per family, its runs
-as a lineage tree (since the ops-wiring and UI round's T05; the Lineage column it had before is
-gone): each run under the run of the exact parent file its files record (matched by SHA-256,
-never guessed from names or times), indented by its depth, with its operation in words; a task's
-base kept as a context run; a parent in another workspace or not listed said on the run ("Parent
-in workspace …", "▲ parent unavailable: …"), and the detail naming it ("Parent: 4eebdf797543 of
-run demo-disease · 2026-11-16 20:43; listed here"). Two files of one run are one run, never two
-operations. No order ranks a model by a test score: ordering by test score
+**Order: Newest first | By family.** By family (since K6; a family graph since the
+stage-lineage round of 2026-11-21, the table it drew before is gone) draws each family's runs as
+nodes joined by lines: each run under the run of the exact parent file its files record (matched
+by SHA-256, never guessed from names or times), however deep, left to right where the list's
+region holds the graph and top to bottom where it does not. A node says the run's name, its task
+and operation in words, its saved files and how far it trained, and, where its parent run holds
+several files, which one it came from ("from Best LP accuracy"); a task's base kept for a task
+filter says "Parent of a shown run". A node with child runs shows its arrow while the pointer is
+over it or the keyboard focus is in it (always on a touch screen): the arrow folds or unfolds the
+runs under it (folding hides every run under it; unfolding shows its direct children) and
+selects or loads nothing. Each family shows its root and its direct children at first, and the
+branch holding the selection or the model in use; a search unfolds what it finds while it is
+shown, and clearing it brings your own folds back. Clicking a node's body shows that run under
+the graph: the exact parent file by its words, its whole fingerprint and the operation, and the
+run's saved files, one of which you pick to see its details and Load it; the click itself
+selects nothing. A parent in another workspace or not listed hangs above its run as a boundary
+("Parent in workspace …", "▲ Parent unavailable", the reason in the run's panel), and files with
+no readable model record are listed under "Not in a family". A selected model in a folded branch
+is said above the graph, with "Show it". The detail names the exact parent file ("Parent: Best
+LP accuracy · 86 epochs completed, of run demo-base · GATv2 2026-11-16 20:43", then its 12 hex
+digits with the whole fingerprint one Copy away, "listed here"). Two files of one run are one
+run, never two operations. No order ranks a model by a test score: ordering by test score
 retired in K8-6d, with its role setting, its Mode C rule and its one record per checkpoint. Every
 record stays readable in the detail below, and no model is ever chosen automatically by its test
 score.

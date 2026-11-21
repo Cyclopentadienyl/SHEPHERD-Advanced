@@ -31,16 +31,19 @@ shared list's one filter vocabulary (`model_list.TASK_FILTERS`); a file whose
 record was refused or not read is listed under All only. Every row says what
 its file is (the shared list's first line, `renderers.model_kind_text`: the
 frozen-backbone control reads "Disease · frozen graph backbone"), under every
-order. The Order switch offers Newest first and By family; under either the
-shared list draws its tree (D04: every run a summary row, its files folded
-under it; search, folds and a selection kept, `model_list`). By family draws
-the families of the listing's family view (`model_list.family_views`, from
-the one listing, `family_view`), each run under the run of the exact parent
-file its files record, indented by depth, with its operation (this round's
-lineage view, RC-D; a task's base kept as a context run; a parent that is
-not available said in amber, "▲ parent unavailable: …"), and under All the
-records not read and the records not readable (a file without a model spec
-among them) as groups after them. Every record is shown in the detail with its own metrics, as
+order. The Order switch offers Newest first and By family; both are the
+shared list's one tree (D04: search, folds and a selection kept,
+`model_list`). Newest first draws it as a table, every run a summary row, its
+files folded under it. By family draws it as the family graph
+(`model_list._graph_html`, G1-G9, I1-I10): the families of the listing's
+family view (`model_list.family_views`, from the one listing, `family_view`),
+each run a node under the run of the exact parent file its files record,
+joined by the edges the view gives, however deep (a task's base kept as a
+context run; a parent in another workspace or not available a boundary);
+a node's body shows its run's saved files and exact parent under the graph,
+a file picked there being the selection; under All the records not read and
+the records not readable (a file without a model spec among them) follow, as
+the table draws them. Every record is shown in the detail with its own metrics, as
 recorded (`RECORD_COLUMNS` names the two a Results table shows for a measurement this
 build describes).
 Load is refused for a base or a record not readable before
@@ -123,7 +126,6 @@ import logging
 import math
 import re
 import time
-from collections import Counter
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -178,13 +180,6 @@ ALL_TASKS = "all"
 #: `results_segment`).
 RECORDS, USAGE, RESULTS = "records", "usage", "results"
 
-#: By family's groups and extra column (the files whose record was refused or
-#: never read are each grouped under their own `record_kind_text` word, the
-#: one their rows lead with).
-#: A family's group title on Models' By family order: its root run by its
-#: name (`renderers.run_parts`; two roots that read alike by their whole run
-#: words); how many runs and saved files it holds is said beside it.
-FAMILY_TITLE = "Family from {run}"
 FAMILY_NOT_READ = "the family view was not read with this list"
 #: A branch that changed no setting of its parent (`parent_changes` `{}`;
 #: ops-wiring round, decisions B1, B4): a new run from its parent's weights.
@@ -228,7 +223,7 @@ PAGE_HELP = {
         "Order",
         "How the list is ordered; the Task select chooses the rows.\n"
         "- Newest first: latest run first.\n"
-        "- By family: each base, then its finetuned models.",
+        "- By family: a graph of each family, each run under the checkpoint it came from.",
     ),
     "models-contested": (
         "Runs differ",
@@ -901,32 +896,43 @@ def controls(data: Mapping[str, Any], order: Any, task: Any) -> Dict[str, Any]:
     return {"task": chosen_task, "order": mode}
 
 
-def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> str:
-    """Where the exact parent file a model's record names is (its 12-hex and
-    run; listed here, in another listed workspace, or not available and why,
-    from the family view's row); "none: a new run" for a file with no parent.
-    The parent's fingerprint is the one digest value
-    (`renderers.fingerprint_value`, its whole value its title; its Copy is in
-    the parent's own details), its run named whole by the one run words
-    (`renderers.run_words`, `fit` False: the record names its directory
-    alone, so no layout), where it is, after a semicolon, so the row keeps
-    the words' one " · "."""
+def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]],
+                words: Optional[Tuple[str, str]] = None) -> str:
+    """**The exact parent file a model's record names** (G03), "none: a new
+    run" for a file with no parent: listed here, the file by the words of its
+    Run → Checkpoint pair (`words`, `model_list.pair_words`: what it is and
+    how far it trained, then "of run" and its run's option words, each a line
+    with one " · "), so two files of one parent run are never one parent;
+    not listed here, its run as the record names it (`renderers.run_words`,
+    `fit` False: no layout); then its fingerprint by the one digest value
+    with an icon Copy of the whole value (`renderers.fingerprint_value`), and
+    where it is, from the family view's row: listed here, in another listed
+    workspace, or not available and why. The operation is the row above it
+    (`identity_html`)."""
     sha = item.get("parent_sha256")
     if not r.is_digest(sha):
         return "none: a new run"
-    where = (f'{r.fingerprint_value(sha, what="parent fingerprint", copy=False)} of run '
-             f'{r.e(r.run_words(None, item.get("parent_run"), fit=False))}')
+    fingerprint = r.fingerprint_value(sha, what="parent fingerprint")
+    if words is not None:
+        named = (f'<div>{r.e(words[1])}</div>'
+                 f'<div class="shep-sub">of run {r.e(words[0])}</div>')
+    else:
+        named = (f'<div>run {r.e(r.run_words(None, item.get("parent_run"), fit=False))}'
+                 '</div>')
     state = (row or {}).get("parent_state")
     if state == "listed":
-        return f"{where}; listed here"
-    if state == "elsewhere":
-        return f'{where}; in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
-    if state == "unavailable":
-        return (f'{where}<div>'
-                + r.status_mark("warn", "parent unavailable: "
-                                 + r.short_reason(row.get("parent_problem") or "not found", 160))
-                + "</div>")
-    return where
+        where = "; listed here"
+    elif state == "elsewhere":
+        where = f'; in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
+    elif state == "unavailable":
+        where = ('<div>' + r.status_mark(
+            "warn", "parent unavailable: "
+            + r.short_reason(row.get("parent_problem") or "not found", 160)) + "</div>")
+    else:
+        where = ""
+    if where.startswith(";"):
+        return f'{named}<div>{fingerprint}{where}</div>'
+    return f'{named}<div>{fingerprint}</div>{where}'
 
 
 def changes_html(changes: Any) -> str:
@@ -945,35 +951,30 @@ def changes_html(changes: Any) -> str:
                      for name in names)
 
 
-def _run_note(row: Mapping[str, Any]) -> str:
-    """What a run's place adds under its operation, from the family view's row
-    of its topmost file: its exact parent file in another listed workspace
-    (named), or not available, in amber with why (`renderers.status_mark`)."""
-    state = row.get("parent_state")
-    if state == "elsewhere":
-        return (f'<div class="shep-sub">Parent in workspace '
-                f'<b>{r.e(row.get("parent_workspace"))}</b></div>')
-    if state == "unavailable":
-        return ('<div class="shep-sub">' + r.status_mark("warn", "parent unavailable: " + (
-            r.short_reason(row.get("parent_problem") or "not found"))) + "</div>")
-    return ""
-
-
 def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any]]:
-    """By family's tree for the Task filter (D04), from the listing's family
-    view (`model_list.family_views`, one listing): ``groups``, one per family
-    in the view's order, titled by its root run's name ("Family from
-    demo-base", `FAMILY_TITLE`), each with its runs in lineage order, **each
-    run under the run of the exact parent file its files record** (the
-    family view's parent keys, matched by SHA-256 on the server, never by a
-    name; another file of the same run is not its parent) with its depth and
-    what its parent's place adds (`_run_note`); under All the files whose
-    record was not read and those whose record is not readable, each group
-    under its own `record_kind_text` word. ``keys`` are the rows (context rows
-    included), ``context`` the rows kept only because a shown row descends
-    from them, ``parents`` each row's exact parent file (a search keeps a
-    match's ancestors by them). None when the listing carries no family
-    view."""
+    """**By family's graph for the Task filter** (D04; G1-G9), from the
+    listing's family view (`model_list.family_views`, one listing, nothing
+    read again): ``groups``, one per family in the view's order, each with its
+    runs in lineage order (a parent run before its children) and depth; under
+    All the files whose record was not read and those whose record is not
+    readable, each group under its own `record_kind_text` word (its
+    ``title``; a family's is its root node, so it has none). **Each run sits
+    under the exact parent file its files record** (the family view's parent
+    keys, matched by SHA-256 on the server, never by a name; another file of
+    the same run is not its parent): ``edges``, one per run under a listed
+    parent, ``{"from": <the exact parent file's key>, "to": <the run>}``, so
+    two runs from two files of one parent run are two edges from two files;
+    ``bounds``, per run whose topmost file's parent is not listed here, where
+    that parent is as the family view says it (``state`` "elsewhere" with its
+    ``workspace``, or "unavailable" with its ``problem``, the reader's words,
+    redacted) with the digest and run its record names: a boundary, never a
+    parent guessed. A run's place is its first file's (the family view lists
+    each parent before its children, and every file of a run records one
+    parent: a continuation writes a new run). ``keys`` are the rows (context
+    rows included), ``context`` the rows kept only because a shown row
+    descends from them, ``parents`` each row's exact parent file (a search
+    keeps a match's ancestors by them). None when the listing carries no
+    family view."""
     views = listing.get("family")
     if not isinstance(views, Mapping) or "all" not in views:
         return None
@@ -984,6 +985,8 @@ def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any
     depth: Dict[str, int] = {}
     parents: Dict[str, str] = {}
     context: List[str] = []
+    edges: List[Dict[str, str]] = []
+    bounds: Dict[str, Dict[str, Any]] = {}
     for row in rows:
         key = row.get("key")
         if key not in items:
@@ -1008,19 +1011,22 @@ def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any
             parent_run = run_of.get(parent) if parent in items else None
             level = depth.get(parent_run, -1) + 1 if parent_run and parent_run != run else 0
             depth[run] = level
-            group["runs"][run] = {"run": run, "depth": level, "note": _run_note(row)}
-    titles = Counter(name for kind, name in groups if kind == "family")
-    ordered = []
-    for (kind, name), group in groups.items():
-        if kind == "family":
-            what = r.run_parts(None, name)[0]
-            title = FAMILY_TITLE.format(run=what if titles[name] == 1 else r.run_words(None, name))
-        else:
-            title = name
-        ordered.append({"node": ml.group_node(name), "title": title, "family": kind == "family",
-                        "keys": group["keys"], "runs": list(group["runs"].values())})
+            group["runs"][run] = {"run": run, "depth": level}
+            if level:
+                edges.append({"from": parent, "to": run})
+            elif row.get("parent_state") in ("elsewhere", "unavailable"):
+                item = items[key]
+                bounds[run] = {"state": row.get("parent_state"),
+                               "workspace": row.get("parent_workspace"),
+                               "problem": row.get("parent_problem"),
+                               "sha256": item.get("parent_sha256"),
+                               "run": item.get("parent_run")}
+    ordered = [{"node": ml.group_node(name), "title": "" if kind == "family" else name,
+                "family": kind == "family", "keys": group["keys"],
+                "runs": list(group["runs"].values())}
+               for (kind, name), group in groups.items()]
     return {"keys": [key for group in ordered for key in group["keys"]], "groups": ordered,
-            "context": context, "parents": parents}
+            "context": context, "parents": parents, "edges": edges, "bounds": bounds}
 
 
 def family_row(listing: Mapping[str, Any], key: str) -> Optional[Mapping[str, Any]]:
@@ -1236,7 +1242,8 @@ def _served_line(listing: Mapping[str, Any]) -> str:
 
 
 def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
-                  workspaces: Sequence[Mapping[str, Any]] = ()) -> str:
+                  workspaces: Sequence[Mapping[str, Any]] = (),
+                  parent_words: Optional[Tuple[str, str]] = None) -> str:
     """**The selected checkpoint's details, as one summary list** (the
     skill's §4, README §5): its model fingerprint (12 hex with its Copy: the
     table shows each row's, this is the chosen one's to copy) and its file
@@ -1246,8 +1253,9 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
     current dataset", or which dataset, its fingerprint and "synthetic" where
     it is another); its kind
     (`renderers.model_kind_text`: a task model with a frozen graph backbone
-    says so); for a model record its operation, the exact parent file and
-    where it is (`parent_html`), for a branch the settings it changed from its
+    says so); for a model record its operation, the exact parent file (by
+    `parent_words`, its Run → Checkpoint pair, where it is listed here), its
+    whole fingerprint one Copy away and where it is (`parent_html`), for a branch the settings it changed from its
     parent, each with both values, or that it kept them all (`changes_html`),
     its family (its own run where it is the family's root, its parent's
     where the Parent row names that run, else the run by name), its encoder and
@@ -1281,7 +1289,7 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
         # The tree's own words for its run (`renderers.operation_words`: a
         # fine-tune full, frozen or partly frozen), one spelling on the screen.
         rows += [("Operation", r.e(r.operation_words(item))),
-                 ("Parent", parent_html(item, row)),
+                 ("Parent", parent_html(item, row, parent_words)),
                  *([("Settings changed", changes_html(item.get("parent_changes")))]
                    if operation == "branch" else []),
                  ("Family", r.e(OWN_FAMILY if family == item.get("run")
@@ -1348,7 +1356,12 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     # Dataset row say synthetic for this checkpoint).
     facts = r.facts_from_checkpoint(item, workspaces, listed=True)
     warnings = "".join(r.warning_html(h, d) for h, d in facts.warnings)
-    top = (identity_html(item, family_row(listing, ml.item_key(item)), workspaces=workspaces)
+    row = family_row(listing, ml.item_key(item))
+    parent = (row or {}).get("parent")
+    parent_words = (ml.pair_words({ml.item_key(i): i for i in listing.get("items") or []}
+                                  ).get(parent) if row and row.get("parent_state") == "listed"
+                    else None)
+    top = (identity_html(item, row, workspaces=workspaces, parent_words=parent_words)
            + warnings)
     ledger = (data.get("ledgers") or {}).get(ml.item_key(item))
     chosen = next((w for w in workspaces if w.get("name") == listing.get("workspace")), {})
@@ -2032,15 +2045,13 @@ PAGE_CSS = f"""
 {_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-main > .shep-model-body {{ display: none !important; }}
 {_PAGE} {_LIST}:has(.shep-mp-ro) {{ grid-template-columns: minmax(0, 30fr) minmax(0, 70fr); }}
 /* The list's and the detail's minimum widths (the layout rule's measure, `src/webui/shell.py`):
-   side by side, the grid's columns never go under them. The list's is the shared tree's
-   (`model_list._tree_html`) whole with its widest common rows, By family: a lineage two runs deep
-   under a 19-character run name, a record not readable (its Task words) and a file that records
-   no completed epochs ("recorded epoch 2") make it 656 px, and its frame's borders and padding
-   36 more (the Models browser test's world; the multi-family demo's is 609). At 450 px, the old
-   table's, the tree was cut at its Fingerprint column at 1280 x 900 (the demo's Newest first
-   565 px in a 531 px frame, By family 609) and at 1366 x 620 (By family). A longer name or a
-   deeper lineage scrolls the rows sideways in their own region. */
-{_PAGE} {_LIST} {{ --shep-mp-list-min: 692px; --shep-mp-detail-min: 480px; }}
+   side by side, the grid's columns never go under them. The list's is the shared tree's table
+   (`model_list._tree_html`, Newest first) whole with its widest common rows: a record not
+   readable (its Task words) and a file that records no completed epochs ("recorded epoch 2"),
+   581 px, and its frame's borders and padding 36 more (the Models browser test's world). By
+   family's graph takes the width it is given (left to right where it fits, else top to bottom,
+   `model_list.FAMILY_JS`). A longer name scrolls the rows sideways in their own region. */
+{_PAGE} {_LIST} {{ --shep-mp-list-min: 617px; --shep-mp-detail-min: 480px; }}
 {_PAGE} {_LIST} > .shep-model-main {{ --shep-panel-min: var(--shep-mp-list-min); }}
 {_PAGE} {_LIST} > .shep-model-foot {{ --shep-panel-min: var(--shep-mp-detail-min); }}
 {SIDE} {{
@@ -2119,7 +2130,6 @@ __all__ = [
     "ALL_TASKS",
     "BY_FAMILY",
     "D8_CONDITIONS",
-    "FAMILY_TITLE",
     "LIST_NOT_SHOWN",
     "LIST_REFUSED_REF",
     "LOAD_NOTE",
