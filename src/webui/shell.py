@@ -10,24 +10,29 @@ Navigation
 Two clickable levels, each a ``gr.Tabs`` (so ``gr.Tabs(selected=…)`` switches
 them from Python, and Gradio's tablist semantics and keyboard stay):
 
-- **Level 1** (``#shep-nav``): "Diagnosis (clinical)" (the first screen),
-  "Research (pre-clinical)", and "⚙ Settings" (``alignment="right"``). Drawn as a
-  segmented control: the selected stage is filled in the accent colour with
-  white text in the strong weight, and so is Settings when it is selected (one
-  look for level 1's selected item, which no other level has, R-20).
+- **Level 1** (``#shep-nav``, the tablist named "Area"): "Diagnosis (clinical)"
+  (the first screen), "Research (pre-clinical)", and "⚙ Settings"
+  (``alignment="right"``). Drawn as a segmented control: the selected area is
+  filled in the accent colour with white text in the strong weight, and so is
+  Settings when it is selected (one look for level 1's selected item, which no
+  other level has, R-20).
 - **Level 2** (``#shep-research-nav``, inside Research): Datasets · Training ·
-  Fine-tune · Test · Models, 32 px tabs in two groups, each under its caption
-  ("Prepare", "Evaluate"; D01, R-22): the captions sit on a tier of their own
-  above their group's first tab, aligned with its text, in the strong weight
-  and the muted colour, with a divider between the groups. They are CSS
-  generated content with empty alternative text and ``pointer-events: none``:
-  outside every tab's box, not clickable, not focusable, not part of a tab's
-  name; the tablist's ``aria-label`` gives the grouping to a screen reader.
-  The selected page has a 3 px accent underline, the accent text and the
-  strong weight; a tab under the pointer has a grey fill and a grey underline.
-  When both groups do not fit on one line, the Evaluate group moves whole onto
-  a line of its own with no divider at its start (``shep-rnav-wrapped``, set
-  by the head script's layout pass). The default inner page is Training.
+  Fine-tune · Test · Models, 32 px tabs in one row. The selected page has a
+  3 px accent underline, the accent text and the strong weight; a tab under
+  the pointer has a grey fill and darker text and never an underline, so only
+  the selected tab ever reads as selected. The default inner page is Training.
+- **The stage hint** (the stage-hint package of 2026-11-21, N1-N7): at the
+  right of the research pages' row, after their tablist (never inside it),
+  plain text says which stage of the research work the page shown belongs
+  to, "Stage: Prepare" (Datasets, Training, Fine-tune) or "Stage: Evaluate"
+  (Test, Models), from one mapping (`STAGES`, which also names the tablist,
+  `RESEARCH_TABLIST_LABEL`). The head script writes it (``textContent``) on
+  each of its passes from the tab selected, so a click, a key, a cross-link
+  and a reload's restore all move it, and puts it back when Gradio draws the
+  row again; it reads no job state and gates nothing. It is no control: no
+  role, focus stop, pointer or hover. When the row has no room for both, the
+  hint goes onto a line of its own, still at the right (the row wraps by
+  itself: no measure, no window size). Diagnosis and Settings show none.
 - Every tab of both levels shows keyboard focus as a 2 px ring in the focus
   token (``--shep-focus-ring``); hover, selected and focus cues are tokens in
   `src/webui/style.py`.
@@ -277,10 +282,27 @@ TITLES = {
     **{page: f"{LABELS[page]} · Research — {BRAND}" for page in RESEARCH_PAGES},
 }
 
-#: The research tablist's name for a screen reader (the visual group labels are
-#: generated content with empty alternative text).
-RESEARCH_TABLIST_LABEL = ("Research pages: Prepare (Datasets, Training, Fine-tune), "
-                          "Evaluate (Test, Models)")
+#: **The stage of the research work each research page belongs to** (the
+#: stage hint, module docstring): the one mapping, read by the research
+#: tablist's name and by the head script's hint.
+PREPARE, EVALUATE = "Prepare", "Evaluate"
+STAGES = {DATASETS: PREPARE, TRAINING: PREPARE, FINETUNE: PREPARE, TEST: EVALUATE, MODELS: EVALUATE}
+#: The hint's word before the stage ("Stage: Prepare").
+STAGE_WORD = "Stage"
+
+
+def _research_tablist_label() -> str:
+    groups: Dict[str, list] = {}
+    for page in RESEARCH_PAGES:
+        groups.setdefault(STAGES[page], []).append(LABELS[page])
+    return "Research pages: " + ", ".join(f"{stage} ({', '.join(pages)})"
+                                          for stage, pages in groups.items())
+
+
+#: The research tablist's name for a screen reader, its pages by stage
+#: (`STAGES`): "Research pages: Prepare (Datasets, Training, Fine-tune),
+#: Evaluate (Test, Models)".
+RESEARCH_TABLIST_LABEL = _research_tablist_label()
 
 #: The shared timers' periods, in seconds.
 FAST_SECONDS = 1.5
@@ -735,7 +757,7 @@ _SHELL_JS = r"""
       restoring = false;
     }
   }, true);
-  var TABLIST_LABELS = {'shep-nav': 'Stage', 'shep-research-nav': __RESEARCH_LABEL__};
+  var TABLIST_LABELS = {'shep-nav': 'Area', 'shep-research-nav': __RESEARCH_LABEL__};
   function selected(navId) {
     var b = document.querySelector('#' + navId + ' > .tab-wrapper [role="tab"][aria-selected="true"]');
     return b ? b.getAttribute('data-tab-id') : null;
@@ -761,25 +783,39 @@ _SHELL_JS = r"""
       }
     }
   }
-  // Row 1 holds the brand, the stage switch, the chips and Settings. When they
+  // **The stage hint** (module docstring): plain text after the research
+  // pages' tablist, never inside it, saying which stage (STAGES) the page
+  // shown belongs to; hidden when no research page is shown. Written from
+  // the tab selected on every pass (a click, a key, a cross-link, a reload's
+  // restore), its words by textContent, and put back when Gradio draws the
+  // row again. It reads no job state and is no control.
+  var STAGES = __STAGES__, STAGE_WORD = __STAGE_WORD__;
+  function stage() {
+    var row = document.querySelector('#shep-research-nav > .tab-wrapper');
+    if (!row) { return; }
+    var hint = row.querySelector(':scope > .shep-stage');
+    if (!hint) {
+      hint = document.createElement('p');
+      hint.className = 'shep-stage';
+      var word = document.createElement('span');
+      word.className = 'shep-stage-k';
+      word.textContent = STAGE_WORD + ':';
+      var value = document.createElement('span');
+      value.className = 'shep-stage-v';
+      hint.appendChild(word);
+      hint.appendChild(document.createTextNode(' '));
+      hint.appendChild(value);
+    }
+    if (row.lastElementChild !== hint) { row.appendChild(hint); }
+    var want = STAGES[shownKey()] || '', shown = hint.querySelector('.shep-stage-v');
+    if (shown.textContent !== want) { shown.textContent = want; }
+    if (hint.hidden !== !want) { hint.hidden = !want; }
+  }
+  // Row 1 holds the brand, the area switch, the chips and Settings. When they
   // do not fit on one row, the chips and Settings move onto a line of their
-  // own, under the stage switch however many lines it takes (at 480 px its
+  // own, under the area switch however many lines it takes (at 480 px its
   // two tabs take two): the chips sit where that line starts, measured, so
   // they never cover a tab.
-  // Row 2 holds the research pages in two groups, each under its caption.
-  // When both groups do not fit on one line, the Evaluate group goes whole
-  // onto a line of its own (`shep-rnav-wrapped`), measured from the tabs'
-  // own widths, so the measure does not depend on the state it sets. A row
-  // not shown (Research closed) keeps the state it had.
-  function researchLayout(shell) {
-    var row = document.querySelector('#shep-research-nav > .tab-wrapper > .tab-container');
-    if (!row || !row.clientWidth) { return; }
-    var tabs = row.querySelectorAll(':scope > button[role="tab"]'), s = getComputedStyle(row);
-    var need = (parseFloat(s.paddingLeft) || 0) + (parseFloat(s.paddingRight) || 0)
-      + (parseFloat(getComputedStyle(shell).getPropertyValue('--shep-group-gap')) || 0);
-    for (var i = 0; i < tabs.length; i++) { need += tabs[i].offsetWidth; }
-    shell.classList.toggle('shep-rnav-wrapped', need > row.clientWidth);
-  }
   // **The one layout decision** (the layout rule, module docstring): the
   // window's inner size first (no wider than tall: stacked), then whether the
   // page shown fits side by side by its panels' own minimum widths. Read from
@@ -902,7 +938,6 @@ _SHELL_JS = r"""
     var cues = document.querySelectorAll('.shep-scroll-cue');
     for (var c = 0; c < cues.length; c++) { cue(cues[c]); }
     var shell = document.getElementById('shep-shell');
-    if (shell) { researchLayout(shell); }
     var row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
     var chips = document.querySelector('#shep-chips .shep-chips');
     var brand = document.querySelector('#shep-brand .shep-brand');
@@ -951,7 +986,7 @@ _SHELL_JS = r"""
   function update() {
     if (queued) { return; }
     queued = true;
-    requestAnimationFrame(function () { queued = false; title(); labels(); layout(); titles(); });
+    requestAnimationFrame(function () { queued = false; title(); labels(); stage(); layout(); titles(); });
   }
   // A page shown, a panel shown or hidden (a drawer; Gradio's hidden class),
   // the page's own class that changes its panels: each lays the page out again.
@@ -981,6 +1016,8 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__DEFAULT__", DEFAULT_RESEARCH_PAGE)
               .replace("__KEPT__", KEPT_PAGE)
               .replace("__RESEARCH_LABEL__", as_json_for_script(RESEARCH_TABLIST_LABEL))
+              .replace("__STAGES__", as_json_for_script(STAGES))
+              .replace("__STAGE_WORD__", as_json_for_script(STAGE_WORD))
               .replace("__LAYOUT__", LAYOUT_ATTR).replace("__SHORT__", SHORT_ATTR)
               .replace("__SHORT_BELOW__", str(SHORT_BELOW))
               .replace("__FIT__", FIT).replace("__FIT_WIDE__", FIT_WIDE)
@@ -1007,6 +1044,8 @@ __all__ = [
     "RESEARCH_TABLIST_LABEL",
     "SETTINGS",
     "SHELL_HEAD",
+    "STAGES",
+    "STAGE_WORD",
     "TEST",
     "TITLES",
     "TRAINING",

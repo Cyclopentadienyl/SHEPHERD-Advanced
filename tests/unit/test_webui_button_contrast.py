@@ -368,21 +368,35 @@ def test_a_disabled_field_is_drawn_off_and_its_words_still_read():
 
 
 @pytest.mark.parametrize("cue, surfaces", [
-    ("--shep-tab-hover-line", ("--shep-tab-hover-bg", "--shep-panel")),
     ("--shep-tab-selected-line", ("--shep-panel", "--shep-tab-hover-bg")),
     ("--shep-focus-ring", ("--shep-panel", "--shep-panel-2", "--shep-bg", "--shep-accent-50")),
     ("--shep-control-border", ("--shep-panel", "--shep-panel-2", "--shep-bg")),
 ])
 def test_the_cues_that_identify_a_tab_or_a_control_show_at_three_to_one(cue, surfaces):
     """D01's cues (the WebUI skill's §10; hover against rest has no 3:1 rule,
-    the line that shows a tab is hovered or selected, a focus ring and a
-    control's border do): each is an alias of an existing colour, at least
-    3:1 on the surfaces it is drawn on."""
+    the line that shows a tab is selected, a focus ring and a control's
+    border do): each is an alias of an existing colour, at least 3:1 on the
+    surfaces it is drawn on. A tab under the pointer has no line of its own
+    (the stage-hint package's N7: its grey line made a second tab look
+    selected), so its token is gone."""
     declared = dict(re.findall(r"(--shep-[a-z0-9-]+)\s*:\s*([^;]+);", style.SHELL_CSS))
     assert declared[cue].strip().startswith("var(--shep-"), "an alias, never a new hex"
     for surface in surfaces:
         assert contrast(_alias(cue), _alias(surface)) >= 3.0, (cue, surface)
-    assert contrast(_alias("--shep-group-caption"), _alias("--shep-panel")) >= 4.5   # caption text
+    assert "--shep-tab-hover-line" not in declared
+
+
+def test_the_stage_hints_words_read_at_four_and_a_half_to_one():
+    """The stage hint (the stage-hint package, N2): "Stage:" in the muted
+    colour and the stage in the text colour, both tokens, each at 4.5:1 on
+    the research row's panel, where it is drawn."""
+    hint = _block("#shep-research-nav > .tab-wrapper > .shep-stage")
+    value = _block("#shep-research-nav > .tab-wrapper > .shep-stage > .shep-stage-v")
+    words = [re.search(r"(?<![-\w])color:\s*var\((--shep-[a-z0-9-]+)\)", rule).group(1) for rule in (hint, value)]
+    assert words == ["--shep-muted", "--shep-text"]
+    assert "background: var(--shep-panel)" in _block("#shep-research-nav > .tab-wrapper")
+    for token in words:
+        assert contrast(_alias(token), _alias("--shep-panel")) >= 4.5, token
 
 
 def test_the_header_chips_marks_are_status_tokens_and_normal_states_are_quiet():

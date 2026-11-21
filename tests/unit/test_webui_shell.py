@@ -32,7 +32,14 @@ The dashboard's shell (M5-2, UI-A): navigation, the page contract, the head.
   representative sizes and back (`ui_walk`): the layout decision at each, and
   the check's rules (no sideways page scroll, one scroll region per area,
   nothing over a focused control, text and type scale, borders and focus at
-  3:1, the group captions apart from the tabs, one " · " per option).
+  3:1, the stage hint plain text inside the research pages' row and off its
+  tabs, one " · " per option);
+- **the stage hint** (the stage-hint package of 2026-11-21, N1-N7): one
+  mapping of the research pages to their stage, the hint it feeds after the
+  research tablist, the hint per page and along every path that changes the
+  page (a click, keys, a cross-link, a reload) whatever job runs, none on
+  Diagnosis or Settings, a hovered tab never read as selected, and the hint
+  inside the row and off the tabs in a narrow window and with larger text.
 
 Module: tests/unit/test_webui_shell.py
 """
@@ -928,9 +935,13 @@ const QUEUE_JS = __QUEUE_JS__;
                                         return v !== '' && v !== b; }, before, { timeout: 20000 });
     return (await page.inputValue('#where textarea')).replace(/ #\d+$/, '');
   };
+  // The stage hint's words as drawn once the shell's pass after the last change has run (null: none drawn).
+  const hint = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => {
+    const h = document.querySelector('#shep-research-nav > .tab-wrapper > .shep-stage');
+    r(h && !h.hidden && h.getClientRects().length ? h.innerText.replace(/\s+/g, ' ').trim() : null); }))));
   const facts = async () => ({ outer: await chosen('shep-nav'), inner: await chosen('shep-research-nav'),
                                kept: await page.evaluate((k) => sessionStorage.getItem(k), '__KEPT__'),
-                               title: await page.title() });
+                               title: await page.title(), hint: await hint() });
   const loaded = async (outer) => {
     await page.waitForSelector(tab('shep-nav', outer) + '[aria-selected="true"]', { timeout: 30000 });
     await page.waitForFunction(() => window.ShepShell !== undefined);
@@ -972,7 +983,9 @@ def test_a_reload_comes_back_on_the_page_shown(tmp_path):
     Models open, a reload came back on Diagnosis. It comes back on Research ›
     Models now, with the session's location the server holds there too (what
     Models' poll reads), and the title; Settings and Diagnosis come back as
-    themselves. This browser tab keeps the page id alone."""
+    themselves. This browser tab keeps the page id alone. The stage hint
+    comes back with the page: "Stage: Evaluate" on Models after the reload,
+    none on Settings or Diagnosis (the stage-hint package, N03)."""
     from src.webui.app import mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -985,12 +998,312 @@ def test_a_reload_comes_back_on_the_page_shown(tmp_path):
     with served(demo, **mount_options()) as base:
         seen = run_node(script, tmp_path, base[:-len("gradio_api")])
     models = {"outer": "research", "inner": "models", "kept": "models",
-              "title": shell.TITLES["models"], "location": "models"}
+              "title": shell.TITLES["models"], "location": "models", "hint": "Stage: Evaluate"}
     assert seen["opened"] == models, seen
     assert seen["reloaded"] == models, seen
     assert seen["settings"]["outer"] == "settings" and seen["settings"]["kept"] == "settings"
     assert seen["settings"]["title"] == shell.TITLES["settings"]
     assert seen["clinical"]["outer"] == "clinical" and seen["clinical"]["kept"] == "clinical"
+    assert seen["settings"]["hint"] is None and seen["clinical"]["hint"] is None
+
+
+# --------------------------------------------------------------------------- the stage hint
+def _stage_page():
+    """The shell with stand-in pages and two cross-links, each a page's own
+    button that opens another as every cross-link does (`PageContext.go`):
+    Models › "Open Training", Training › "Open Test"."""
+    def link(target):
+        def build(ctx):
+            gr.Button(f"Open {shell.LABELS[target]}", elem_id=f"go-{target}").click(
+                lambda: ctx.go(target), outputs=ctx.nav_outputs, show_progress="hidden")
+        return build
+
+    pages = {**{page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS,
+                                                       shell.CLINICAL)},
+             shell.MODELS: link(shell.TRAINING), shell.TRAINING: link(shell.TEST)}
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, pages)
+    return demo
+
+
+#: The stage hint along every path that changes the page shown, at the owner's
+#: window, while the job runner's stand-in says a training job runs: what the
+#: two levels select, the hint's words as drawn (null when none is drawn) and
+#: the GPU chip's words, after each act once the page's requests are answered
+#: and the shell's next pass has run. Then each tab's look with the pointer on
+#: Test beside the selected Models, the hint's look under the pointer, where
+#: the keyboard goes after the last tab, and the hint taken out of the row (as
+#: a redraw of Gradio's does). Then the row in four windows: the owner's, a
+#: narrow one, the owner's at a browser zoom of 200 % (half the CSS pixels,
+#: twice the device pixels) and a narrow one with larger and wider text.
+_STAGE_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const ready = async (page) => {
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(base, { waitUntil: 'load' });
+    await page.waitForSelector('#shep-tab-clinical-button[aria-selected="true"]', { timeout: 30000 });
+    await page.waitForFunction(() => window.ShepShell !== undefined);
+  };
+  const idle = (page) => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
+                                              && window.__shepQueue.joins.every((j) => j.event_id !== null),
+                                              null, { timeout: 20000 });
+  const frame = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const tab = (nav, id) => `#${nav} > .tab-wrapper [role="tab"][data-tab-id="${id}"]`;
+  const seen = async (page) => {
+    await idle(page);
+    await frame(page);
+    return page.evaluate(() => {
+      const chosen = (n) => { const b = document.querySelector(`#${n} > .tab-wrapper [role="tab"][aria-selected="true"]`);
+                              return b ? b.getAttribute('data-tab-id') : null; };
+      const h = document.querySelector('#shep-research-nav > .tab-wrapper > .shep-stage');
+      const drawn = h && !h.hidden && h.getClientRects().length > 0;
+      const gpu = document.querySelector('#shep-chips .shep-chip-gpu .shep-chip-text');
+      return { outer: chosen('shep-nav'), inner: chosen('shep-research-nav'),
+               hint: drawn ? h.innerText.replace(/\s+/g, ' ').trim() : null,
+               hints: document.querySelectorAll('.shep-stage').length, gpu: gpu ? gpu.textContent : null,
+               focused: document.activeElement ? document.activeElement.id : null };
+    });
+  };
+  const out = { click: {}, keys: [], links: [] };
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await ready(page);
+  await page.waitForSelector('#shep-chips .shep-chip-gpu[data-state="busy"]', { timeout: 30000 });
+  out.clinical = await seen(page);
+  await page.click(tab('shep-nav', 'research'));
+  out.research = await seen(page);
+  for (const id of ['datasets', 'training', 'finetune', 'test', 'models']) {
+    await page.click(tab('shep-research-nav', id));
+    out.click[id] = await seen(page);
+  }
+  // Keys: the focus on Fine-tune, Enter; Tab to Test, Space; Shift+Tab back, Enter.
+  await page.focus(tab('shep-research-nav', 'finetune'));
+  for (const key of ['Enter', 'Tab', 'Space', 'Shift+Tab', 'Enter']) {
+    await page.keyboard.press(key);
+    out.keys.push({ key, ...(await seen(page)) });
+  }
+  // Cross-links: from Models to Training, from Training to Test.
+  await page.click(tab('shep-research-nav', 'models'));
+  await seen(page);
+  for (const id of ['training', 'test']) {
+    await page.click(`#go-${id}`);
+    out.links.push({ to: id, ...(await seen(page)) });
+  }
+  await page.click(tab('shep-nav', 'settings'));
+  out.settings = await seen(page);
+  await page.click(tab('shep-nav', 'research'));
+  out.back = await seen(page);
+  // A tab under the pointer beside the selected one: each tab's look.
+  await page.click(tab('shep-research-nav', 'models'));
+  await seen(page);
+  const looks = () => page.evaluate(() => [...document.querySelectorAll('#shep-research-nav > .tab-wrapper [role="tab"]')]
+    .map((t) => { const s = getComputedStyle(t);
+      return { id: t.getAttribute('data-tab-id'), selected: t.getAttribute('aria-selected') === 'true',
+               line: s.borderBottomColor, background: s.backgroundColor, color: s.color, weight: s.fontWeight }; }));
+  await page.mouse.move(2, 950);
+  out.rest = await looks();
+  await page.hover(tab('shep-research-nav', 'test'));
+  out.hovered = await looks();
+  // The hint: no control's look under the pointer, no focus stop, no role.
+  const hintLook = () => page.evaluate(() => { const h = document.querySelector('#shep-research-nav > .tab-wrapper > .shep-stage');
+    const s = getComputedStyle(h);
+    return { color: s.color, background: s.backgroundColor, border: s.borderBottomColor, cursor: s.cursor,
+             decoration: s.textDecorationLine, tag: h.tagName, role: h.getAttribute('role'),
+             tabindex: h.getAttribute('tabindex'), live: h.getAttribute('aria-live'), tabIndex: h.tabIndex,
+             controls: h.querySelectorAll('a, button, input, [role], [tabindex]').length,
+             parent: h.parentElement.className.includes('tab-wrapper'),
+             after: h.previousElementSibling && h.previousElementSibling.getAttribute('role'),
+             inTablist: !!h.closest('[role="tablist"]') }; });
+  await page.mouse.move(2, 950);
+  out.hintRest = await hintLook();
+  await page.hover('#shep-research-nav > .tab-wrapper > .shep-stage');
+  out.hintHover = await hintLook();
+  await page.focus(tab('shep-research-nav', 'models'));
+  await page.keyboard.press('Tab');
+  out.afterLastTab = await page.evaluate(() => ({ id: document.activeElement.id, tag: document.activeElement.tagName,
+    inHint: !!document.activeElement.closest('.shep-stage') }));
+  // Gradio draws the row again: the hint is put back, with its words.
+  await page.evaluate(() => document.querySelector('#shep-research-nav > .tab-wrapper > .shep-stage').remove());
+  out.redrawn = await seen(page);
+  await page.close();
+  // The row in four windows.
+  out.windows = {};
+  const LARGER = '#shep-research-nav > .tab-wrapper button[role="tab"], #shep-research-nav > .tab-wrapper > .shep-stage,'
+    + ' #shep-research-nav > .tab-wrapper > .shep-stage > * { font-size: 24px !important; letter-spacing: 0.12em !important; }'
+    + ' #shep-research-nav > .tab-wrapper button[role="tab"] { height: auto !important; min-height: var(--shep-tab-h); }';
+  for (const [name, w, h, dpr, css] of [['owner', 1850, 960, 1, ''], ['narrow', 420, 900, 1, ''],
+                                        ['zoom200', 925, 480, 2, ''], ['larger', 640, 900, 1, LARGER]]) {
+    const p = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: dpr })).newPage();
+    await ready(p);
+    if (css) { await p.addStyleTag({ content: css }); }
+    await p.click(tab('shep-nav', 'research'));
+    out.windows[name] = {};
+    for (const id of ['training', 'models']) {
+      await p.click(tab('shep-research-nav', id));
+      await seen(p);
+      out.windows[name][id] = await p.evaluate(() => {
+        const box = (e) => { const r = e.getBoundingClientRect();
+          return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
+        const row = document.querySelector('#shep-research-nav > .tab-wrapper');
+        const h = row.querySelector(':scope > .shep-stage'), r = box(h);
+        const at = document.elementsFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2)[0];
+        return { row: box(row), hint: r, words: h.innerText.replace(/\s+/g, ' ').trim(),
+                 margin: parseFloat(getComputedStyle(h).marginRight),
+                 tabs: [...row.querySelectorAll('[role="tab"]')].map(box),
+                 hit: !!at && h.contains(at), cut: h.scrollWidth > h.clientWidth + 1 || h.scrollHeight > h.clientHeight + 1,
+                 overX: document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth,
+                 width: innerWidth };
+      });
+    }
+    await p.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.fixture(scope="module")
+def stage_hint_seen(tmp_path_factory):
+    """`_STAGE_JS` once for this module (Node and Playwright, skipped
+    without), on the shell mounted as the service mounts it with stand-in
+    pages (`_stage_page`), while the job runner says a training job runs (the
+    runner's stand-in: its `active_job`, which the GPU chip reads)."""
+    from src.api.services.training_manager import training_manager
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    running = {"job_type": "training", "job_id": "stand-in", "status": "running", "pid": 12345,
+               "start_time": "2026-11-21T09:00:00+00:00"}
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(training_manager, "active_job", lambda: dict(running))
+        with served(_stage_page(), **mount_options()) as base:
+            return run_node(_STAGE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)),
+                            tmp_path_factory.mktemp("stage-hint"), base[:-len("gradio_api")])
+
+
+@pytest.mark.parametrize("page, words", [
+    ("datasets", "Stage: Prepare"), ("training", "Stage: Prepare"), ("finetune", "Stage: Prepare"),
+    ("test", "Stage: Evaluate"), ("models", "Stage: Evaluate")])
+def test_each_research_page_shows_its_stage_at_the_right_of_its_row(stage_hint_seen, page, words):
+    """N01-N02 (the stage-hint package of 2026-11-21), in a real browser: the
+    page's own tab clicked (the shell's switch), the row shows that page's
+    stage, once: "Stage: Prepare" for Datasets, Training and Fine-tune,
+    "Stage: Evaluate" for Test and Models. On 056b8b5 no hint was drawn (the
+    two captions stood above the tabs instead)."""
+    from tests.fixtures.browser import STAGE_HINTS
+
+    seen = stage_hint_seen["click"][page]
+    assert (seen["outer"], seen["inner"], seen["hint"], seen["hints"]) == ("research", page, words, 1), seen
+    assert STAGE_HINTS[page] == words
+
+
+def test_the_stage_hint_follows_keys_cross_links_and_returns_and_none_off_research(stage_hint_seen):
+    """N03 and N05 (package rows N03, N05): the hint follows every path that
+    changes the page shown, as the tab underline does: Research opened (its
+    default, Training), the keyboard (Enter on Fine-tune, Tab to Test and
+    Space, Shift+Tab back and Enter), a page's cross-link (Models › Training,
+    Training › Test) and a return to Research from Settings (the page it
+    showed). Diagnosis and Settings draw no hint. When the hint is taken out
+    of the row, as a redraw of Gradio's takes it, the shell's next pass puts it
+    back with its words. (After a reload: `test_a_reload_comes_back_on_the_page_shown`.)"""
+    seen = stage_hint_seen
+    assert (seen["clinical"]["outer"], seen["clinical"]["hint"]) == ("clinical", None)
+    assert (seen["research"]["inner"], seen["research"]["hint"]) == ("training", "Stage: Prepare")
+    keys = [(k["key"], k["focused"], k["inner"], k["hint"]) for k in seen["keys"]]
+    assert keys == [
+        ("Enter", "shep-page-finetune-button", "finetune", "Stage: Prepare"),
+        ("Tab", "shep-page-test-button", "finetune", "Stage: Prepare"),
+        ("Space", "shep-page-test-button", "test", "Stage: Evaluate"),
+        ("Shift+Tab", "shep-page-finetune-button", "test", "Stage: Evaluate"),
+        ("Enter", "shep-page-finetune-button", "finetune", "Stage: Prepare")], keys
+    links = [(k["to"], k["outer"], k["inner"], k["hint"]) for k in seen["links"]]
+    assert links == [("training", "research", "training", "Stage: Prepare"),
+                     ("test", "research", "test", "Stage: Evaluate")], links
+    assert (seen["settings"]["outer"], seen["settings"]["hint"]) == ("settings", None)
+    assert (seen["back"]["inner"], seen["back"]["hint"]) == ("test", "Stage: Evaluate")
+    redrawn = seen["redrawn"]
+    assert (redrawn["inner"], redrawn["hint"], redrawn["hints"]) == ("models", "Stage: Evaluate", 1)
+
+
+def test_the_stage_hint_says_the_page_shown_never_the_job_that_runs(stage_hint_seen):
+    """N4 (package row N04): a training job runs the whole time (the GPU chip
+    says so on every page, as it said before) and the hint says the stage of
+    the page shown: Evaluate on Test and Models, Prepare on Training. The
+    hint reads no job state and gates nothing (its script reads the selected
+    tab alone: `test_one_stage_mapping_names_the_tablist_and_feeds_the_hint_and_the_captions_are_gone`)."""
+    seen = stage_hint_seen
+    shown = [seen["clinical"], seen["research"], *seen["click"].values(), *seen["keys"], *seen["links"],
+             seen["settings"], seen["back"]]
+    assert {s["gpu"] for s in shown} == {"GPU job: training (job runner)"}
+    assert seen["click"]["test"]["hint"] == seen["click"]["models"]["hint"] == "Stage: Evaluate"
+    assert seen["click"]["training"]["hint"] == "Stage: Prepare"
+
+
+def test_a_tab_under_the_pointer_never_reads_as_selected_and_the_hint_is_no_control(stage_hint_seen):
+    """N7 (package row N05, its hover half; the owner's screenshot of Fine-tune
+    hovered beside Models selected showed two underlined tabs): with the
+    pointer on Test beside the selected Models, Test has a fill it lacks at
+    rest and keeps its rest line (no underline), weight and a colour that is
+    not the selected one; Models alone has the accent line, the accent text and
+    the strong weight. The hint (N2) is plain text after the tablist (a
+    paragraph, outside the tablist, no role, focus stop, live region or
+    control in it); under the pointer it looks as at rest with no pointer
+    hand, and the keyboard goes from the last tab past it."""
+    seen = stage_hint_seen
+    rest = {t["id"]: t for t in seen["rest"]}
+    hovered = {t["id"]: t for t in seen["hovered"]}
+    assert [t["id"] for t in seen["hovered"] if t["selected"]] == ["models"]
+    test, models = hovered["test"], hovered["models"]
+    assert test["background"] != rest["test"]["background"]
+    assert (test["line"], test["weight"]) == (rest["test"]["line"], rest["test"]["weight"])
+    assert test["line"] != models["line"] and test["weight"] != models["weight"]
+    assert test["color"] != models["color"]
+    selected_look = {(t["line"], t["weight"]) for t in seen["hovered"] if t["selected"]}
+    assert [t["id"] for t in seen["hovered"] if (t["line"], t["weight"]) in selected_look] == ["models"]
+    hint = seen["hintRest"]
+    assert (hint["tag"], hint["role"], hint["tabindex"], hint["live"], hint["tabIndex"], hint["controls"]) == (
+        "P", None, None, None, -1, 0), hint
+    assert hint["parent"] and hint["after"] == "tablist" and not hint["inTablist"], hint
+    assert seen["hintHover"] == hint and hint["cursor"] != "pointer" and hint["decoration"] == "none"
+    assert not seen["afterLastTab"]["inHint"], seen["afterLastTab"]
+
+
+@pytest.mark.parametrize("window", ["owner", "narrow", "zoom200", "larger"])
+def test_the_stage_hint_stays_inside_the_row_and_off_the_tabs_in_every_window(stage_hint_seen, window):
+    """N6 (package row N05, its layout half; package §六: relative geometry,
+    no fixed size decides), on Training and on Models: at the owner's window,
+    in a narrow one, at a browser zoom of 200 % of the owner's window and in a
+    narrow one with larger, wider text. In each the hint says its page's
+    stage, lies inside the research pages' row, over no tab, is the first
+    thing drawn at its centre, is not cut, and the page does not scroll
+    sideways. Where the row has room for the tabs and the hint, the hint is on
+    the tabs' line after them; where it has not, it is on a line of its own
+    under them; either way at the row's right (its own margin from the row's
+    right edge)."""
+    for page, words in (("training", "Stage: Prepare"), ("models", "Stage: Evaluate")):
+        facts = stage_hint_seen["windows"][window][page]
+        hint, row, tabs = facts["hint"], facts["row"], facts["tabs"]
+        assert facts["words"] == words, facts
+        assert (row["left"] - 0.5 <= hint["left"] and hint["right"] <= row["right"] + 0.5
+                and row["top"] - 0.5 <= hint["top"] and hint["bottom"] <= row["bottom"] + 0.5), facts
+        assert not any(hint["left"] < t["right"] - 0.5 and hint["right"] > t["left"] + 0.5
+                       and hint["top"] < t["bottom"] - 0.5 and hint["bottom"] > t["top"] + 0.5 for t in tabs), facts
+        assert facts["hit"] and not facts["cut"] and facts["overX"] <= 0, facts
+        assert abs(hint["right"] - (row["right"] - facts["margin"])) <= 0.5, facts
+        last = max(t["right"] for t in tabs)
+        own_line = hint["top"] >= max(t["bottom"] for t in tabs) - 0.5
+        if own_line:                                      # only when the tabs' line had no room for it
+            assert last + (hint["right"] - hint["left"]) > row["right"] - facts["margin"], facts
+        else:                                             # on the tabs' line: after them
+            assert hint["left"] >= last - 0.5, facts
+        assert own_line == (window in ("narrow", "larger")), facts      # both cases are walked
 
 
 #: Models opened while Diagnosis' mount-time select is still being answered
@@ -1256,31 +1569,50 @@ def test_one_pick_of_a_select_is_one_request_and_the_pages_write_is_none(tmp_pat
 
 
 # --------------------------------------------------------------------------- D01 and the shared tokens (T04)
-def test_the_group_captions_are_sentence_case_overlines_without_fitted_margins():
-    """R-22+R-37: PREPARE and EVALUATE were upper-case ::before labels on the
-    tabs' own line, set off by margins fitted to their widths (84 and 116 px).
-    They are captions on a tier of their own above the first tab of each
-    group, in sentence case at 14 px / 600, never hit (pointer-events none),
-    and the groups are a group gap apart; what the browser draws is
-    `test_the_research_navigation_and_shared_tokens_as_drawn`'s."""
+def test_one_stage_mapping_names_the_tablist_and_feeds_the_hint_and_the_captions_are_gone():
+    """N1-N3 (the stage-hint package of 2026-11-21): Prepare and Evaluate were
+    captions above the research tabs, kept twice (the tablist's hand-written
+    name and the style sheet's generated content on the Datasets and Test
+    tabs), with a divider, a group gap and a wrap measure of their own
+    (``researchLayout``, ``shep-rnav-wrapped``). One mapping (`shell.STAGES`)
+    now gives each research page its stage: the tablist's name is derived
+    from it, word for word as before, and the head script's hint reads it.
+    The captions, the divider, the wrap measure and their tokens are gone,
+    the style sheet names no stage, and the area switch (level 1) is named
+    "Area", so "Stage" names one thing on the screen."""
+    from src.webui.components.help import as_json_for_script
     from src.webui.style import SHELL_CSS
 
-    caption = _rule(SHELL_CSS, "#shep-page-datasets-button::before, #shep-page-test-button::before")
-    assert "bottom: calc(100% + 2px)" in caption and "pointer-events: none" in caption
-    assert "font-size: 14px" in caption and "font-weight: 600" in caption
-    assert "uppercase" not in caption and "letter-spacing" not in caption
-    assert "margin-left: 84px" not in SHELL_CSS and "margin-left: 116px" not in SHELL_CSS
-    assert "#shep-page-test-button { margin-left: var(--shep-group-gap); }" in SHELL_CSS
-    # The wrapped Evaluate line has no divider at its start (NEW-shell-nav-theme-2).
-    assert ("#shep-shell.shep-rnav-wrapped #shep-research-nav > .tab-wrapper > .tab-container"
-            " > #shep-page-test-button::after { display: none !important; }") in SHELL_CSS
+    assert shell.STAGES == {"datasets": "Prepare", "training": "Prepare", "finetune": "Prepare",
+                            "test": "Evaluate", "models": "Evaluate"}
+    assert set(shell.STAGES) == set(shell.RESEARCH_PAGES)
+    assert shell.RESEARCH_TABLIST_LABEL == (
+        "Research pages: Prepare (Datasets, Training, Fine-tune), Evaluate (Test, Models)")
     head = shell.SHELL_HEAD
-    assert "shell.classList.toggle('shep-rnav-wrapped', need > row.clientWidth);" in head
-    assert "if (shell) { researchLayout(shell); }" in head
+    assert f"var STAGES = {as_json_for_script(shell.STAGES)}, STAGE_WORD = \"Stage\";" in head
+    assert "title(); labels(); stage(); layout(); titles();" in head
+    assert "var TABLIST_LABELS = {'shep-nav': 'Area'," in head
+    # The hint's words by textContent, never markup; after the tablist, never in it.
+    stage = head[head.index("function stage()"):head.index("// Row 1 holds")]
+    assert "innerHTML" not in stage and "textContent" in stage
+    assert "#shep-research-nav > .tab-wrapper" in stage and "row.appendChild(hint)" in stage
+    assert "setAttribute('role'" not in stage and "tabindex" not in stage.lower()
+    assert not re.search(r"job|gpu|chip", stage, re.I)                 # N4: no job state read
+    for gone in ("Prepare", "Evaluate", "--shep-caption-h", "--shep-group-gap", "--shep-group-caption",
+                 "shep-rnav-wrapped", "#shep-page-test-button", "#shep-page-datasets-button",
+                 "--shep-tab-hover-line"):
+        assert gone not in SHELL_CSS, gone
+    for gone in ("researchLayout", "shep-rnav-wrapped", "--shep-group-gap", "'Stage'"):
+        assert gone not in head, gone
+    # The row wraps by itself: no window-size rule decides where the hint goes.
+    hint = _rule(SHELL_CSS, "#shep-research-nav > .tab-wrapper > .shep-stage")
+    assert "margin: 0 16px 0 auto" in hint and "cursor: default" in hint
+    assert "flex-wrap: wrap" in _rule(SHELL_CSS, "#shep-research-nav > .tab-wrapper")
+    assert "min-width: 0" in _rule(SHELL_CSS, "#shep-research-nav > .tab-wrapper > .tab-container")
 
 
 #: The dashboard as the service mounts it, at 1850 x 960 then 420 x 900 and
-#: back: the research row's geometry, captions and cues, level 1's selected
+#: back: the research row's geometry, stage hint and cues, level 1's selected
 #: look against a form's chosen radio, the accordion's chevron, the header
 #: chips, and on every page the type scale and every field's border, as
 #: drawn (`tests/fixtures/browser.py`, LOOK_JS). It waits for the page's own
@@ -1323,18 +1655,17 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
       tabs[id] = await rect(`#shep-page-${id}-button`);
     }
     return page.evaluate((tabs) => {
-      const shell = document.getElementById('shep-shell'), L = window.__shepLook;
-      const caps = {};
-      for (const id of ['datasets', 'test']) {
-        const c = L.pseudo(document.getElementById(`shep-page-${id}-button`), '::before');
-        c.hit = L.topAt(c.left + c.width / 2, c.top + c.height / 2);
-        caps[id] = c;
-      }
-      const divider = L.pseudo(document.getElementById('shep-page-test-button'), '::after');
-      return { tabs, caps, divider: { display: divider.display, left: divider.left },
-               wrapped: shell.classList.contains('shep-rnav-wrapped'),
-               headerAndTabs: document.querySelector('#shep-research-nav > .tab-wrapper')
-                 .getBoundingClientRect().bottom - shell.getBoundingClientRect().top,
+      const shell = document.getElementById('shep-shell');
+      const wrap = document.querySelector('#shep-research-nav > .tab-wrapper');
+      const box = (e) => { const r = e.getBoundingClientRect();
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, height: r.height }; };
+      const hint = wrap.querySelector(':scope > .shep-stage');
+      return { tabs, row: box(wrap), hint: box(hint), hintRight: parseFloat(getComputedStyle(hint).marginRight),
+               tabFont: parseFloat(getComputedStyle(document.getElementById('shep-page-training-button')).fontSize),
+               generated: [...wrap.querySelectorAll('[role="tab"]')].flatMap((t) => ['::before', '::after'].map((p) =>
+                 getComputedStyle(t, p).content)).filter((c) => !['none', 'normal', '""'].includes(c)),
+               headerAndTabs: wrap.getBoundingClientRect().bottom - shell.getBoundingClientRect().top,
+               row1: document.querySelector('#shep-nav > .tab-wrapper').getBoundingClientRect().height,
                hScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth };
     }, tabs);
   };
@@ -1381,13 +1712,12 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
       .querySelector('.icon');
     await Promise.all(icon.getAnimations().map((a) => a.finished));   // its turn, finished
     return { open: true, transform: getComputedStyle(icon).transform }; });
+  const frame = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await page.setViewportSize({ width: 420, height: 900 });
-  await page.waitForFunction(() => document.getElementById('shep-shell').classList.contains('shep-rnav-wrapped'),
-                             null, { timeout: 10000 });
+  await frame();
   out.narrow = await row();
   await page.setViewportSize({ width: 1850, height: 960 });
-  await page.waitForFunction(() => !document.getElementById('shep-shell').classList.contains('shep-rnav-wrapped'),
-                             null, { timeout: 10000 });
+  await frame();
   out.back = await row();
   console.log(JSON.stringify(out));
   await browser.close();
@@ -1479,15 +1809,16 @@ def test_the_research_navigation_and_shared_tokens_as_drawn(tmp_path, monkeypatc
     """D01 and UI-10 in a real browser (Node and Playwright, skipped without),
     the dashboard mounted as the service mounts it, for an operator:
 
-    - **D01 / R-22+R-37**: at 1850 x 960 header and tabs take about 100 px
-      (102), the research tabs are 32 px, each group's caption sits above its
-      first tab (not on its line), aligned with its text, in sentence case at
-      14 px / 600, and ``elementsFromPoint`` at a caption finds no tab; at
-      420 px the Evaluate group wraps whole onto its own line with no divider
-      at its start (NEW-shell-nav-theme-2), and back at 1850 one row again;
-    - **cues**: a tab under the pointer has a fill and an underline it lacks
-      at rest, the selected one the accent line and text, keyboard focus a
-      2 px ring in the focus token;
+    - **the research row** (the stage-hint package, N1 and N6; it was D01 /
+      R-22+R-37's captions over the tabs): at 1850 x 960 no caption tier and
+      no generated text on a tab (less room above the tabs than a line of
+      their text), the research tabs 32 px, the stage hint on the tabs' line
+      at the row's right; at 420 px the hint on a line of its own under the
+      tabs, still at the right, inside the row; back at 1850 as at first;
+    - **cues** (N7): a tab under the pointer has a fill it lacks at rest and
+      no line under it (its bottom border as at rest), so the selected tab
+      alone has the accent line, the accent text and the strong weight;
+      keyboard focus a 2 px ring in the focus token;
     - **R-20**: level 1's selected item (Research, and Settings) is the accent
       fill with white text; a form's chosen radio (Training's Device) is not;
     - **R-31**: a closed accordion's chevron points right, an open one down;
@@ -1511,30 +1842,31 @@ def test_the_research_navigation_and_shared_tokens_as_drawn(tmp_path, monkeypatc
     tokens = dict(re.findall(r"(--shep-[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{6})", style.SHELL_CSS))
 
     wide = seen["wide"]
-    assert 96 <= wide["headerAndTabs"] <= 104, wide["headerAndTabs"]
-    assert {round(t["height"]) for t in wide["tabs"].values()} == {32}
-    assert not wide["wrapped"] and not wide["hScroll"]
-    for group, first in (("datasets", "datasets"), ("test", "test")):
-        cap, tab = wide["caps"][group], wide["tabs"][first]
-        assert cap["top"] + cap["height"] <= tab["top"], (group, cap, tab)     # above, not on its line
-        assert abs(cap["left"] - (tab["left"] + 12)) <= 1, (group, cap, tab)   # with the tab's text
-        assert (cap["fontSize"], cap["fontWeight"], cap["textTransform"]) == ("14px", "600", "none")
-        assert cap["pointerEvents"] == "none" and cap["hit"] and not cap["hit"]["tab"], cap
-    assert wide["divider"]["display"] == "block"
-    assert wide["divider"]["left"] < wide["tabs"]["test"]["left"]
-    assert wide["divider"]["left"] > wide["tabs"]["finetune"]["right"]
+    tabs = wide["tabs"].values()
+    assert {round(t["height"]) for t in tabs} == {32}
+    assert wide["generated"] == [] and not wide["hScroll"]
+    assert min(t["top"] for t in tabs) - wide["row"]["top"] < wide["tabFont"]          # no caption tier
+    assert wide["headerAndTabs"] - wide["row1"] <= wide["row"]["bottom"] - wide["row"]["top"] + 0.5
+    hint = wide["hint"]
+    assert hint["top"] < min(t["bottom"] for t in tabs) and hint["bottom"] > max(t["top"] for t in tabs)
+    assert hint["left"] > max(t["right"] for t in tabs)                                  # after the tabs
+    assert abs(hint["right"] - (wide["row"]["right"] - wide["hintRight"])) <= 0.5        # at the right
     narrow = seen["narrow"]
-    assert narrow["wrapped"] and not narrow["hScroll"]
-    assert abs(narrow["tabs"]["test"]["left"] - narrow["tabs"]["datasets"]["left"]) <= 1
-    assert narrow["tabs"]["test"]["top"] > narrow["tabs"]["finetune"]["bottom"]
-    assert narrow["tabs"]["models"]["top"] == narrow["tabs"]["test"]["top"]          # the group whole
-    assert narrow["caps"]["test"]["top"] >= narrow["tabs"]["finetune"]["bottom"]
-    assert narrow["divider"]["display"] == "none"
-    assert seen["back"]["headerAndTabs"] == wide["headerAndTabs"] and not seen["back"]["wrapped"]
+    assert not narrow["hScroll"] and narrow["generated"] == []
+    assert narrow["hint"]["top"] >= max(t["bottom"] for t in narrow["tabs"].values()) - 0.5   # own line
+    assert abs(narrow["hint"]["right"] - (narrow["row"]["right"] - narrow["hintRight"])) <= 0.5
+    assert narrow["hint"]["bottom"] <= narrow["row"]["bottom"] + 0.5
+    def drawn_as(row):                       # the row and its hint, against the row's own box
+        hint, box = row["hint"], row["row"]
+        return (row["headerAndTabs"], hint["top"] - box["top"], hint["left"] - box["left"],
+                hint["right"] - box["right"], box["bottom"] - box["top"])
+    assert drawn_as(seen["back"]) == drawn_as(wide)
 
     rest, hover, selected = seen["rest"], seen["hover"], seen["selected"]
     assert hover["background-color"] != rest["background-color"]
-    assert hover["border-bottom-color"] != rest["border-bottom-color"]
+    assert hover["border-bottom-color"] == rest["border-bottom-color"]                 # no line under it
+    assert hover["font-weight"] == rest["font-weight"] != selected["font-weight"]
+    assert hover["color"] != selected["color"]
     assert selected["border-bottom-color"] == _rgb(tokens["--shep-accent"])
     assert selected["color"] == _rgb(tokens["--shep-accent-text"]) and selected["font-weight"] == "600"
     assert seen["focus"]["id"] == "shep-page-training-button"
@@ -1992,8 +2324,10 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     - no text under 14 px, only the type scale's sizes and weights, nothing
       upper case; every enabled field's border at 3:1; one field-label style
       per page, and no label cut by its own field;
-    - the Prepare / Evaluate captions above their tabs' line, outside the
-      tabs' hit area, taking no pointer, at 14 px or more;
+    - on a research page the stage hint in its page's words (`STAGE_HINTS`),
+      inside the research pages' row, over no tab, not cut, outside the
+      tablist, at 14 px or more and nothing a control would be (the
+      stage-hint package, N2, N5, N6); on Diagnosis and Settings none;
     - no choice or select option with more than one " · ".
     It failed before T04's measure part on the browser's own focus ring (the
     accent buttons' a faint grey) on every page and on Diagnosis' Top-K and
@@ -2014,7 +2348,7 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     for s in checked:
         assert s["focus"]["n"] >= (5 if s.get("open") else 10), (s["page"], s["size"], s["focus"])
         research = s["page"] not in ("clinical", "settings")
-        assert len(s["check"]["captions"]) == (2 if research else 0), (s["page"], s["size"])
+        assert (s["check"]["stage"] is not None) == research, (s["page"], s["size"])
     options = {s["page"]: s["options"] for s in ui_walk if "options" in s}
     assert all(options[page] for page in ("training", "finetune", "test", "models", "settings")), options
     drawer = [s for s in checked if s.get("open") == "#shep-dx-change"]

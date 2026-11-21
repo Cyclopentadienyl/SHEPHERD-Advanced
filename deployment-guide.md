@@ -3151,12 +3151,17 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文）；模型 family 或此 workspace 的結果，可比較與匯出（Results，自 research comparison Stage 8b 起） |
 | 頁首右側的 **⚙ Settings** | Runtime Settings：目前執行中與已儲存的記憶體配置器、記憶體配置器與 torch.compile 兩個欄位，接著是 Apply Settings 與 Restart Backend（見下文）。對唯讀的瀏覽器，這兩個欄位不能更改，這些按鈕（連同 Stop service）會停用並顯示鎖，"Operator controls only: <原因>" 只寫一次，在按鈕正上方的那一行；兩個欄位上方的一行說明原因寫在下方的操作旁 |
 
-- 選中的階段（Diagnosis 或 Research）以填色加粗體顯示；選中的研究頁面以底線加粗體顯示；
-  Settings 被選中時有淺色填色與底線。Prepare 與 Evaluate 是分組標籤，不是按鈕。欄位名稱是欄位
-  上方的一般文字，不是有底色的標籤。
+- 選中的區域（Diagnosis 或 Research）以填色加粗體顯示，Settings 被選中時也一樣；選中的研究頁面
+  以底線加粗體顯示，滑鼠停在其他研究頁面上時只加淺色底，不加底線，因此同一時間只有一個頁面看起來
+  是選中的。欄位名稱是欄位上方的一般文字，不是有底色的標籤。
+- 研究頁面那一列的右側以 "Stage: Prepare"（Datasets、Training、Fine-tune）或 "Stage: Evaluate"
+  （Test、Models）說明目前顯示的頁面屬於研究工作的哪個階段（自 2026-11-21 起；取代原本在分頁上方的
+  Prepare 與 Evaluate 分組標籤）。它是一般文字，不是按鈕；它跟著目前顯示的頁面（不論頁面是怎麼打開
+  的），不跟著背景執行中的工作（那由 GPU chip 說明），也不允許或拒絕任何操作。Diagnosis 與
+  Settings 不顯示。
 - 不會有任何分頁被收進選單。視窗較窄或放大倍率較高時，兩個 chip 與 Settings 會移到 Diagnosis 與
-  Research 下方自己的一行（不論這兩個分頁佔幾行），因此 chip 不會蓋住任何分頁；研究頁面的分頁也會
-  換行。
+  Research 下方自己的一行（不論這兩個分頁佔幾行），因此 chip 不會蓋住任何分頁；階段說明會移到研究
+  頁面下方自己的一行，仍在右側；研究頁面的分頁只在它們本身放不下時才換行。
 - 瀏覽器分頁的標題會說明目前位置，例如 `Training · Research — SHEPHERD-Advanced`。重新載入
   頁面會再次打開 Diagnosis：網址不保留位置。
 - 視窗至少 1400 × 760 CSS 像素時，頁面本身不捲動；某個區域的內容超出空間時，在它自己的面板
