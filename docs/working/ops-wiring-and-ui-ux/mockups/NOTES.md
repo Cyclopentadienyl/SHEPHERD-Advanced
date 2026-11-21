@@ -73,6 +73,11 @@ Choices:
   - 760: one row; header plus tabs is 151 px because the chips wrap in row 1.
   - 420: Prepare on one line and Evaluate on the next; 281 px.
   - Going back from narrow to wide returns to one row at 102 px.
+- **Superseded (2026-11-21):** the captions, the divider, the group gap, the grey hover line and the narrow group wrap
+  are retired by the external reviewer's package of 2026-11-21. The stage of the page shown is a plain-text "Stage:
+  Prepare / Evaluate" hint at the right of the research tab row, a hovered tab has a fill and no line, and header plus
+  tabs is about 84 px at 1850×960. See the round README §12, 2026-11-21 ("stage hint (N)"), and UI_LEDGER OPS-SL-N.
+  The text above is kept as T01's record.
 
 ## D04 Model list (Models page)
 
@@ -113,6 +118,11 @@ Choices:
   right, and the list does not pretend the model matches.
 - **Narrow.** The list's own width decides, through a container query, not the window (D02's direction). Below
   880 px a run's architecture and start time move under its name; the name never breaks.
+- **Superseded (2026-11-21), By family only:** the family heading rows and the indented run rows are retired under By
+  family. Each family is a node-link view: one node per run under the exact parent file it records; a node's body
+  selects its run, its arrow only folds the runs under it, and the run's saved files are in Details. Newest first and
+  the Diagnosis drawer keep the tree above. See the round README §12, 2026-11-21 ("By family, round 1" and "round 2"),
+  and UI_LEDGER OPS-SL-GI. The text above is kept as T01's record.
 
 ## D04 The Diagnosis "Change model" drawer (Load for inference)
 
