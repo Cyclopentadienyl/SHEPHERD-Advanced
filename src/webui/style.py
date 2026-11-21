@@ -49,7 +49,7 @@ from __future__ import annotations
 
 #: Width (CSS px) the brand takes over the level-1 tab row: its name in the
 #: body size and the strong weight (15 px, 600; the type scale's 20 px is a
-#: region's title, and at 20 px the stage switch no longer fits beside it at
+#: region's title, and at 20 px the area switch no longer fits beside it at
 #: 420 px) is 151 px in IBM Plex Sans.
 BRAND_WIDTH = 156
 
@@ -126,10 +126,9 @@ SHELL_CSS = """
   --shep-row1-h: 46px; --shep-brand-w: __BRAND__px;
   /* The cues every navigation level and control reads (D01, UI-10): aliases
      of the colours above, no new hex. */
-  --shep-tab-h: 32px; --shep-caption-h: 22px; --shep-group-gap: 32px;
-  --shep-tab-hover-bg: var(--shep-grey-50); --shep-tab-hover-line: var(--shep-grey-500);
+  --shep-tab-h: 32px; --shep-tab-hover-bg: var(--shep-grey-50);
   --shep-tab-selected-line: var(--shep-accent); --shep-tab-selected-text: var(--shep-accent-text);
-  --shep-focus-ring: var(--shep-accent-600); --shep-group-caption: var(--shep-muted);
+  --shep-focus-ring: var(--shep-accent-600);
   --shep-control-border: var(--shep-grey-500); --shep-control-border-hover: var(--shep-grey-600);
   --shep-disabled-bg: var(--shep-grey-50); --shep-disabled-border: var(--shep-grey-200);
   --shep-disabled-text: var(--shep-grey-600);
@@ -161,7 +160,7 @@ body { color: var(--shep-text); }
 .gradio-container b, .gradio-container strong, .gradio-container th { font-weight: var(--shep-weight-strong); }
 #shep-shell { position: relative; gap: 0 !important; background: var(--shep-bg); }
 
-/* ---------------------------------------------------------------- row 1: brand, stage switch, chips, Settings */
+/* ---------------------------------------------------------------- row 1: brand, area switch, chips, Settings */
 #shep-brand {
   position: absolute; top: 0; left: 16px; height: var(--shep-row1-h); z-index: 4;
   display: flex; align-items: center; pointer-events: none; padding: 0 !important;
@@ -228,7 +227,7 @@ body { color: var(--shep-text); }
 }
 #shep-nav > .tab-wrapper .right-tab-group > button[role="tab"]::before,
 #shep-nav > .tab-wrapper .right-tab-group > button[role="tab"]::after { display: none !important; }
-/* Level 1's one selected look (R-20): the stage switch's segment and Settings
+/* Level 1's one selected look (R-20): the area switch's segment and Settings
    alike are filled in the accent with white text, a look no other level has
    (level 2 is an underline, level 3 a raised white segment, a form's radio a
    tinted option with its dot). */
@@ -255,58 +254,47 @@ body { color: var(--shep-text); }
   top: var(--shep-chips-top, var(--shep-row1-h)); height: max(44px, calc(var(--shep-chips-h, 28px) + 12px));
 }
 
-/* ---------------------------------------------------------------- row 2: the research pages */
+/* ---------------------------------------------------------------- row 2: the research pages, the stage hint */
+/* The research pages' tabs in one row, 32 px, and after them the stage hint
+   (the shell's head script, `shell.STAGES`): the row wraps by itself, so when
+   it has no room for both the hint goes onto a line of its own, still at the
+   right, and the tabs wrap among themselves only when they alone do not fit
+   (no measure, no window size). The tablist sizes to its tabs and takes the
+   rest of its line. */
 #shep-research-nav > .tab-wrapper {
-  height: auto !important; padding: 0 !important; margin: 0 !important;
+  height: auto !important; padding: 0 !important; margin: 0 !important; flex-wrap: wrap; align-items: center;
   background: var(--shep-panel); border-bottom: 1px solid var(--shep-border);
 }
-/* D01: each group's caption sits on a tier of its own above its tabs (the
-   container's top padding), the tabs are 32 px, the groups are a group gap
-   apart with a divider between them. */
 #shep-research-nav > .tab-wrapper > .tab-container {
-  height: auto !important; min-height: calc(var(--shep-caption-h) + var(--shep-tab-h)); background: none !important;
-  padding: var(--shep-caption-h) 16px 0; row-gap: var(--shep-caption-h); align-items: flex-end; overflow: visible;
+  width: auto; flex: 1 1 auto; min-width: 0;
+  height: auto !important; min-height: var(--shep-tab-h); background: none !important;
+  padding: 4px 16px 0; align-items: flex-end; overflow: visible;
 }
 #shep-research-nav > .tab-wrapper > .tab-container::after { display: none; }
 #shep-research-nav > .tab-wrapper > .tab-container > button[role="tab"] {
   height: var(--shep-tab-h); padding: 0 12px; font-size: 15px; font-weight: 400; color: var(--shep-text-2);
   border-top: 0; border-bottom: 3px solid transparent; border-radius: 6px 6px 0 0; overflow: visible;
 }
+/* A tab under the pointer: a fill and darker text, never a line under it, so
+   the selected tab is the only one that reads as selected (N7). */
 #shep-research-nav > .tab-wrapper > .tab-container > button[role="tab"]:hover:not([aria-selected="true"]) {
-  background: var(--shep-tab-hover-bg); border-bottom-color: var(--shep-tab-hover-line); color: var(--shep-text);
+  background: var(--shep-tab-hover-bg); color: var(--shep-text);
 }
 #shep-research-nav > .tab-wrapper > .tab-container > button[role="tab"][aria-selected="true"] {
   color: var(--shep-tab-selected-text); border-bottom-color: var(--shep-tab-selected-line); font-weight: 600;
 }
 #shep-research-nav > .tab-wrapper > .tab-container > button[role="tab"]::after { display: none; }
-/* Group captions (R-22): generated content with empty alternative text, above
-   the first tab of each group and aligned with its text, outside every tab's
-   box: never clickable (pointer-events none), never focusable, no hover. */
-#shep-page-test-button { margin-left: var(--shep-group-gap); }
-#shep-page-datasets-button::before, #shep-page-test-button::before {
-  position: absolute; left: 12px; bottom: calc(100% + 2px); height: 18px; line-height: 18px;
-  font-size: 14px; font-weight: 600; color: var(--shep-group-caption); pointer-events: none; white-space: nowrap;
+/* The stage hint: plain text, "Stage:" in the muted colour and the stage in
+   the body text's strong weight; no control's look (no box, pointer or hover).
+   Its words break between them before they would ever run out of the row. */
+#shep-research-nav > .tab-wrapper > .shep-stage {
+  flex: 0 1 auto; min-width: 0; margin: 0 16px 0 auto; padding: 6px 0 4px; line-height: 1.4;
+  font-size: var(--shep-key-size); font-weight: 400; color: var(--shep-muted); text-align: right;
+  overflow-wrap: anywhere; cursor: default;
 }
-#shep-page-datasets-button::before { content: "Prepare"; content: "Prepare" / ""; }
-#shep-page-test-button::before { content: "Evaluate"; content: "Evaluate" / ""; }
-/* The divider between the groups, in the middle of the group gap, through the
-   caption tier. */
-#shep-research-nav > .tab-wrapper > .tab-container > #shep-page-test-button::after {
-  display: block !important; content: ""; position: absolute; left: calc(var(--shep-group-gap) / -2); width: 1px;
-  top: calc(2px - var(--shep-caption-h)); bottom: 6px; height: auto; right: auto;
-  background: var(--shep-border-2); transform: none; animation: none;
+#shep-research-nav > .tab-wrapper > .shep-stage > .shep-stage-v {
+  font-size: var(--shep-body-size); font-weight: var(--shep-weight-strong); color: var(--shep-text);
 }
-/* Not enough room for both groups on one line (the shell's layout pass,
-   ``shep-rnav-wrapped``): the Evaluate group goes whole onto a line of its
-   own, under a caption tier of its own, with no divider at its line's start. */
-#shep-shell.shep-rnav-wrapped #shep-research-nav > .tab-wrapper > .tab-container { row-gap: 0; }
-#shep-shell.shep-rnav-wrapped #shep-research-nav > .tab-wrapper > .tab-container::after {
-  display: block !important; content: ""; flex-basis: 100%; height: var(--shep-caption-h); order: 1;
-  position: static; background: none; border: 0;
-}
-#shep-shell.shep-rnav-wrapped #shep-page-test-button, #shep-shell.shep-rnav-wrapped #shep-page-models-button { order: 2; }
-#shep-shell.shep-rnav-wrapped #shep-page-test-button { margin-left: 0; }
-#shep-shell.shep-rnav-wrapped #shep-research-nav > .tab-wrapper > .tab-container > #shep-page-test-button::after { display: none !important; }
 
 /* ---------------------------------------------------------------- tab panels */
 #shep-nav > .tabitem, #shep-research-nav > .tabitem { padding: 0 !important; border: 0 !important; background: none !important; }

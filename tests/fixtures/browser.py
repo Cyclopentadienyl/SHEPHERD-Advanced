@@ -47,8 +47,8 @@ Gradio's effective styles, never the style sheet's text:
 **The shared UI measurement check** (D08, INT-AUDIT): `LOOK_JS` also measures
 one window of the page shown, ``check()`` (no sideways page scroll, its scroll
 regions with their panel and the regions they are inside, ``typeScale``,
-``fields``, ``labels``, the research tabs' group captions against their tabs'
-line and hit area, the words of its radios and segments) and
+``fields``, ``labels``, the stage hint of the research pages' row against
+the row and its tabs, the words of its radios and segments) and
 ``focusWalk(scope)``: each control drawn (in ``scope`` when given), focused as
 a keyboard focuses it, what is over its centre (another control's own
 overlay, the help bubble or an open list it leaves behind, aside) and its
@@ -306,28 +306,33 @@ LOOK_JS = r"""
                inside: found.filter((o) => o !== e && (o === se ? !fixed : o.contains(e))).map(named) };
     });
   };
-  /* The research tabs' group captions (a tab's ::before with content): where
-     they sit against their tabs' line and what is under their centre. */
-  const captions = () => {
-    const tabs = [...document.querySelectorAll('#shep-research-nav > .tab-wrapper [role="tab"]')].filter(drawn);
-    const boxes = tabs.map((t) => t.getBoundingClientRect());
-    return tabs.map((t, i) => ({ t, r: boxes[i], c: pseudo(t, '::before') }))
-      .filter(({ c }) => c.display !== 'none' && !['none', 'normal', '""', ''].includes(c.content) && c.width > 0)
-      .map(({ t, r, c }) => ({
-        tab: t.id, text: c.content, size: parseFloat(c.fontSize), pointer: c.pointerEvents,
-        bottom: c.top + c.height, line: Math.min(...boxes.filter((b) => Math.abs(b.top - r.top) < 2).map((b) => b.top)),
-        onTab: boxes.some((b) => c.left < b.right && c.left + c.width > b.left && c.top < b.bottom && c.top + c.height > b.top),
-        hit: topAt(c.left + c.width / 2, c.top + c.height / 2) }));
+  /* The stage hint (the shell's, after the research pages' tablist), when
+     drawn: its words, whether it lies inside the row and off every tab, is
+     cut, sits in the tablist, or could be taken for a control (a role, a
+     focus stop, a link or button, a live region, the pointer's hand). */
+  const stageHint = () => {
+    const row = document.querySelector('#shep-research-nav > .tab-wrapper');
+    const hint = row && row.querySelector(':scope > .shep-stage');
+    if (!hint || !drawn(hint) || !shown(hint)) { return null; }
+    const r = hint.getBoundingClientRect(), w = row.getBoundingClientRect();
+    const tabs = [...row.querySelectorAll('[role="tab"]')].filter(drawn).map((t) => t.getBoundingClientRect());
+    const CONTROL = 'a, button, input, select, textarea, [role], [tabindex], [aria-live], [contenteditable]';
+    return { words: words(hint).replace(/\s+/g, ' '), size: parseFloat(getComputedStyle(hint).fontSize),
+             inRow: r.left >= w.left - 0.5 && r.right <= w.right + 0.5 && r.top >= w.top - 0.5 && r.bottom <= w.bottom + 0.5,
+             overTab: tabs.some((b) => r.left < b.right - 0.5 && r.right > b.left + 0.5 && r.top < b.bottom - 0.5 && r.bottom > b.top + 0.5),
+             cut: hint.scrollWidth > hint.clientWidth + 1 || hint.scrollHeight > hint.clientHeight + 1,
+             inTablist: !!hint.closest('[role="tablist"]'),
+             control: hint.matches(CONTROL) || !!hint.querySelector(CONTROL) || getComputedStyle(hint).cursor === 'pointer' };
   };
   /* What a choice drawn in the page says: a radio's or a segment's words. */
   const choices = () => [...document.querySelectorAll('label:has(> input[type=radio]), .shep-seg label, [role=radio]')]
     .filter((e) => drawn(e) && shown(e)).map((e) => e.textContent.trim());
   /* What one window of the page shows: no sideways page scroll, its scroll
-     regions, its text, its fields, its labels, its captions, its choices. */
+     regions, its text, its fields, its labels, its stage hint, its choices. */
   const check = () => {
     const se = document.scrollingElement;
     return { overX: se.scrollWidth - se.clientWidth, regions: regions(), type: typeScale(), fields: fields(),
-             labels: labels(), captions: captions(), choices: choices() };
+             labels: labels(), stage: stageHint(), choices: choices() };
   };
   /* Each control drawn, focused as a keyboard focuses it (the caller pressed
      a key first, so a script's focus is :focus-visible): is anything but an
@@ -447,7 +452,7 @@ LOOK_JS = r"""
     }).filter((t) => t).join('\n');
   };
   window.__shepLook = { parse, ratio, behind, shown, typeScale, fields, labels, pseudo, topAt,
-                        shownPage, regions, captions, choices, check, focusWalk, repeats, tops, textBox,
+                        shownPage, regions, stageHint, choices, check, focusWalk, repeats, tops, textBox,
                         words };
 })();
 """
@@ -647,6 +652,11 @@ def walk_ui(page_url: str, tmp_path: Path, stops: list[dict[str, Any]], *,
     return run_node(script, tmp_path, *args, timeout=timeout)
 
 
+#: **The stage hint each research page shows** (`shell.STAGES`, pinned here
+#: in its words): Diagnosis and Settings show none.
+STAGE_HINTS = {"datasets": "Stage: Prepare", "training": "Stage: Prepare", "finetune": "Stage: Prepare",
+               "test": "Stage: Evaluate", "models": "Stage: Evaluate"}
+
 #: The type scale (the WebUI skill §2): region title, body, keys; two weights.
 TYPE_SIZES, TYPE_WEIGHTS = {"14", "15", "20"}, {"400", "600"}
 
@@ -667,8 +677,11 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
     - an enabled field's border, or a control's focus cue, under 3:1;
     - field labels drawn in more than one style on a page, or a label its
       field cuts (a box squeezed under its label's width);
-    - a group caption on its tabs' line, over a tab, hit-tested as a tab,
-      taking the pointer, or under 14 px;
+    - on a research page, no stage hint, or one whose words are not its
+      page's stage (`STAGE_HINTS`), that runs out of the research pages'
+      row, lies over a tab, is cut, sits inside the tablist, is drawn under
+      14 px or could be taken for a control; on Diagnosis or Settings, a
+      stage hint drawn;
     - a choice or a select's option with more than one " · "."""
     problems: list[str] = []
     for stop in (s for s in seen if "check" in s):
@@ -709,10 +722,15 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
         for label in check["labels"]:
             if label.get("cut"):
                 found(f"field label {label['text']!r} cut by its field")
-        for cap in check["captions"]:
-            if (cap["bottom"] > cap["line"] + 0.5 or cap["onTab"] or (cap["hit"] or {}).get("tab")
-                    or cap["pointer"] != "none" or cap["size"] < 14):
-                found(f"group caption {cap['text']} is not apart from the tabs: {cap}")
+        hint, want = check["stage"], STAGE_HINTS.get(stop["page"])
+        if want is None and hint is not None:
+            found(f"a stage hint drawn off the research pages: {hint}")
+        elif want is not None and hint is None:
+            found("no stage hint drawn")
+        elif hint is not None and (hint["words"] != want or not hint["inRow"] or hint["overTab"]
+                                   or hint["cut"] or hint["inTablist"] or hint["size"] < 14
+                                   or hint["control"]):
+            found(f"stage hint not plain text inside the row, off the tabs, saying {want!r}: {hint}")
         for words in (*check["choices"], *stop.get("options", ())):
             if words.count(" · ") > 1:
                 found(f"more than one ' · ' in {words!r}")
@@ -803,6 +821,6 @@ def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any
     return json.loads(result.stdout)
 
 
-__all__ = ["LOOK_JS", "PTR_SIZES", "QUEUE_JS", "READ_ONLY_HEADERS", "TREE_JS", "TYPE_SIZES", "TYPE_WEIGHTS",
+__all__ = ["LOOK_JS", "PTR_SIZES", "QUEUE_JS", "READ_ONLY_HEADERS", "STAGE_HINTS", "TREE_JS", "TYPE_SIZES", "TYPE_WEIGHTS",
            "UI_PAGES", "UI_SIZES", "UI_WALK_JS", "node_with_playwright", "repeat_problems", "run_node",
            "ui_problems", "walk_ui"]

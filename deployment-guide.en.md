@@ -3100,16 +3100,23 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below); the results of a model's family or the workspace, compared and exported (Results, since research comparison Stage 8b) |
 | **⚙ Settings**, at the right of the header | Runtime Settings: the memory allocator running against the one saved, the allocator and torch.compile, then Apply Settings and Restart Backend (below). For a read-only browser the two fields cannot be changed and the buttons (with Stop service) are disabled with the lock, with "Operator controls only: <reason>" once, on the line just above them; the line above the two fields says the reason is beside the actions below |
 
-- The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
-  underlined and bold; Settings, when selected, has a light fill and an underline. Prepare and
-  Evaluate are group labels, not buttons. A field's name is plain text over the field, never
-  a tinted chip.
+- The selected area (Diagnosis or Research) is filled and bold, and so is Settings when it is
+  selected; the selected research page is underlined and bold, and a research page under the
+  pointer is only shaded, never underlined, so one page at a time reads as selected. A field's
+  name is plain text over the field, never a tinted chip.
+- At the right of the research pages' row, "Stage: Prepare" (Datasets, Training, Fine-tune) or
+  "Stage: Evaluate" (Test, Models) says which stage of the research work the page shown belongs
+  to (since 2026-11-21; it replaces the Prepare and Evaluate labels that stood above the tabs).
+  It is plain text, not a button; it follows the page shown however it was opened, never a job
+  running in the background (the GPU chip says that), and allows or refuses nothing. Diagnosis
+  and Settings show none.
 - No tab is ever hidden in a menu. In a narrow window, or at a large zoom, the chips and
   Settings move onto a line of their own under Diagnosis and Research (however many lines
-  those two take), so no chip covers a tab, and the research pages wrap.
+  those two take), so no chip covers a tab; the stage goes onto a line of its own under the
+  research pages, still at the right, and the research pages wrap when they alone do not fit.
 - The browser tab's title says where you are, for example `Training · Research —
-  SHEPHERD-Advanced`. Reloading the page opens Diagnosis again: the address does not keep the
-  location.
+  SHEPHERD-Advanced`. Reloading the page comes back on the page shown, with its stage: this
+  browser tab keeps which page it showed (the address does not keep the location).
 - In a window at least 1400 × 760 CSS pixels the page itself does not scroll; a region too long
   for its space scrolls inside its own panel. Narrower, or in portrait, the regions stack and
   the page scrolls. The theme's smallest text is 14 px.
