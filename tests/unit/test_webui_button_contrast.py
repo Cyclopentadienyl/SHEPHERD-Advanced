@@ -158,7 +158,7 @@ def test_a_field_label_is_plain_text_with_four_and_a_half_to_one_where_fields_si
         assert contrast(_effective("--block-title-text-color"), colour) >= 4.5, name
 
 
-#: Level 1's one selected look: the stage switch's segment and Settings.
+#: Level 1's one selected look: the area switch's segment and Settings.
 LEVEL1_SELECTED = ('#shep-nav > .tab-wrapper > .tab-container > button[role="tab"][aria-selected="true"],\n'
                    '#shep-nav > .tab-wrapper .right-tab-group > button[role="tab"][aria-selected="true"]')
 

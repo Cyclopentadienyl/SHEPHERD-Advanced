@@ -769,8 +769,8 @@ def test_a_panels_header_sticks_to_the_top_of_the_region_that_scrolls():
     assert "position: sticky" not in stack(SHELL_CSS)
 
 
-def test_the_wrapped_chips_sit_on_their_own_line_under_the_stage_switch():
-    """B5 (leftover b): at 480 px the stage switch's two tabs take two lines,
+def test_the_wrapped_chips_sit_on_their_own_line_under_the_area_switch():
+    """B5 (leftover b): at 480 px the area switch's two tabs take two lines,
     and the chips, placed one header row down, covered the Research tab
     (measured with ``document.elementsFromPoint``). The header script now
     measures where the chips' and Settings' own line starts (the right tab
@@ -788,7 +788,7 @@ def test_the_wrapped_chips_sit_on_their_own_line_under_the_stage_switch():
 
 
 #: Opens the dashboard at 480 px, then 360, 420, 760, 1100 and 1850 (a resize
-#: runs the header's layout, as a load does), and reports for each stage tab
+#: runs the header's layout, as a load does), and reports for each area tab
 #: what ``document.elementsFromPoint`` finds on top at its centre and four
 #: inset corners: the tab itself or something inside it, or what covers it;
 #: and each header chip's left and right edges.
@@ -837,7 +837,7 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
     """B5 review: the chips' line was pinned only as source text. In a real
     browser (Node and Playwright, skipped without), the dashboard mounted as
     the service mounts it (`app.mount_options`: its CSS and head script): at
-    360, 420, 480, 760, 1100 and 1850 px each stage tab is what
+    360, 420, 480, 760, 1100 and 1850 px each area tab is what
     ``document.elementsFromPoint`` finds first at its centre and corners, the
     chips never over it; at 480 the header has wrapped onto its second line;
     every chip is inside the window (UI-02: at 360 px the D8 chip's left edge
@@ -1035,7 +1035,12 @@ def _stage_page():
 #: the keyboard goes after the last tab, and the hint taken out of the row (as
 #: a redraw of Gradio's does). Then the row in four windows: the owner's, a
 #: narrow one, the owner's at a browser zoom of 200 % (half the CSS pixels,
-#: twice the device pixels) and a narrow one with larger and wider text.
+#: twice the device pixels) and a narrow one with larger and wider text (as a
+#: browser's minimum font size and a text-spacing style sheet give: the text
+#: alone, every box's own size kept). Then, on Training and on Models, the
+#: row at the edge of its room: a window a few pixels narrower than the row
+#: needs for the tabs and the hint side by side (as drawn: the tablist with
+#: its right padding, the hint with its right margin), then a few wider.
 _STAGE_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
@@ -1131,11 +1136,32 @@ const QUEUE_JS = __QUEUE_JS__;
                               if (h) { h.remove(); } });
   out.redrawn = await seen(page);
   await page.close();
+  // The row as drawn: its box and the end of its content, the hint, its
+  // right margin, the tablist's right padding, the tabs; null with no hint.
+  const rowFacts = () => {
+    const box = (e) => { const r = e.getBoundingClientRect();
+      return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
+    const row = document.querySelector('#shep-research-nav > .tab-wrapper');
+    const h = row && row.querySelector(':scope > .shep-stage');
+    if (!h) { return null; }
+    const r = box(h), rs = getComputedStyle(row);
+    const list = row.querySelector('[role="tablist"]');
+    const at = document.elementsFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2)[0];
+    const tabs = [...row.querySelectorAll('[role="tab"]')].map(box);
+    const f = { row: box(row), end: box(row).right - parseFloat(rs.paddingRight) - parseFloat(rs.borderRightWidth),
+                hint: r, words: h.innerText.replace(/\s+/g, ' ').trim(),
+                margin: parseFloat(getComputedStyle(h).marginRight),
+                listPad: parseFloat(getComputedStyle(list).paddingRight), tabs,
+                hit: !!at && h.contains(at), cut: h.scrollWidth > h.clientWidth + 1 || h.scrollHeight > h.clientHeight + 1,
+                overX: document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth,
+                width: innerWidth };
+    f.needed = Math.max(...tabs.map((t) => t.right)) + f.listPad + (r.right - r.left) + f.margin;
+    return f;
+  };
   // The row in four windows.
   out.windows = {};
   const LARGER = '#shep-research-nav > .tab-wrapper button[role="tab"], #shep-research-nav > .tab-wrapper > .shep-stage,'
-    + ' #shep-research-nav > .tab-wrapper > .shep-stage > * { font-size: 24px !important; letter-spacing: 0.12em !important; }'
-    + ' #shep-research-nav > .tab-wrapper button[role="tab"] { height: auto !important; min-height: var(--shep-tab-h); }';
+    + ' #shep-research-nav > .tab-wrapper > .shep-stage > * { font-size: 24px !important; letter-spacing: 0.12em !important; }';
   for (const [name, w, h, dpr, css] of [['owner', 1850, 960, 1, ''], ['narrow', 420, 900, 1, ''],
                                         ['zoom200', 925, 480, 2, ''], ['larger', 640, 900, 1, LARGER]]) {
     const p = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: dpr })).newPage();
@@ -1146,24 +1172,33 @@ const QUEUE_JS = __QUEUE_JS__;
     for (const id of ['training', 'models']) {
       await p.click(tab('shep-research-nav', id));
       await seen(p);
-      out.windows[name][id] = await p.evaluate(() => {
-        const box = (e) => { const r = e.getBoundingClientRect();
-          return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
-        const row = document.querySelector('#shep-research-nav > .tab-wrapper');
-        const h = row.querySelector(':scope > .shep-stage');
-        if (!h) { return null; }
-        const r = box(h);
-        const at = document.elementsFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2)[0];
-        return { row: box(row), hint: r, words: h.innerText.replace(/\s+/g, ' ').trim(),
-                 margin: parseFloat(getComputedStyle(h).marginRight),
-                 tabs: [...row.querySelectorAll('[role="tab"]')].map(box),
-                 hit: !!at && h.contains(at), cut: h.scrollWidth > h.clientWidth + 1 || h.scrollHeight > h.clientHeight + 1,
-                 overX: document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth,
-                 width: innerWidth };
-      });
+      out.windows[name][id] = await p.evaluate(rowFacts);
     }
     await p.close();
   }
+  // The edge of the row's room, on each page: the window resized until the
+  // row's content ends 6 px short of what the tabs and the hint need side by
+  // side ('under'), then 6 px past it ('over').
+  out.edges = {};
+  const e = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await ready(e);
+  await e.click(tab('shep-nav', 'research'));
+  for (const id of ['training', 'models']) {
+    await e.setViewportSize({ width: 1850, height: 960 });
+    await e.click(tab('shep-research-nav', id));
+    await seen(e);
+    out.edges[id] = {};
+    for (const [side, by] of [['under', -6], ['over', 6]]) {
+      let f = await e.evaluate(rowFacts);
+      for (let i = 0; f && i < 5 && Math.abs(f.end - f.needed - by) > 1; i += 1) {
+        await e.setViewportSize({ width: Math.round(f.width - (f.end - f.needed - by)), height: 960 });
+        await seen(e);
+        f = await e.evaluate(rowFacts);
+      }
+      out.edges[id][side] = f;
+    }
+  }
+  await e.close();
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -1280,36 +1315,76 @@ def test_a_tab_under_the_pointer_never_reads_as_selected_and_the_hint_is_no_cont
     assert not seen["afterLastTab"]["inHint"], seen["afterLastTab"]
 
 
+def _hint_placed_by_the_rows_room(facts):
+    """N6 (package §六: the room as drawn decides, never a window size): the
+    stage hint lies inside the research pages' row, over no tab, at the row's
+    right (its own right margin from the end of the row's content), and it is
+    on a line of its own exactly when the row has no room for the tabs and the
+    hint side by side: when the tabs alone take more than one line, or when
+    the tablist as drawn (its last tab and its right padding) and the hint
+    (its width and its right margin) need more than the row's content. Else
+    it is on the tabs' line, after the last tab. Within a pixel of the edge
+    either is right (rounding). Returns whether it is on a line of its own."""
+    hint, row, tabs = facts["hint"], facts["row"], facts["tabs"]
+    assert (row["left"] - 0.5 <= hint["left"] and hint["right"] <= row["right"] + 0.5
+            and row["top"] - 0.5 <= hint["top"] and hint["bottom"] <= row["bottom"] + 0.5), facts
+    assert not any(hint["left"] < t["right"] - 0.5 and hint["right"] > t["left"] + 0.5
+                   and hint["top"] < t["bottom"] - 0.5 and hint["bottom"] > t["top"] + 0.5 for t in tabs), facts
+    assert abs(hint["right"] - (facts["end"] - facts["margin"])) <= 0.5, facts
+    last = max(t["right"] for t in tabs)
+    tabs_one_line = max(t["top"] for t in tabs) - min(t["top"] for t in tabs) < 0.5
+    needed = last + facts["listPad"] + (hint["right"] - hint["left"]) + facts["margin"]
+    own_line = hint["top"] >= max(t["bottom"] for t in tabs) - 0.5
+    if not tabs_one_line or needed > facts["end"] + 1:
+        assert own_line, ("no room on the tabs' line, yet the hint is on it", needed, facts)
+    elif needed < facts["end"] - 1:
+        assert not own_line, ("room on the tabs' line, yet the hint is on a line of its own", needed, facts)
+        assert hint["left"] >= last - 0.5, facts                                   # after the tabs
+        assert hint["top"] < min(t["bottom"] for t in tabs) and hint["bottom"] > max(t["top"] for t in tabs)
+    return own_line
+
+
 @pytest.mark.parametrize("window", ["owner", "narrow", "zoom200", "larger"])
 def test_the_stage_hint_stays_inside_the_row_and_off_the_tabs_in_every_window(stage_hint_seen, window):
     """N6 (package row N05, its layout half; package §六: relative geometry,
-    no fixed size decides), on Training and on Models: at the owner's window,
-    in a narrow one, at a browser zoom of 200 % of the owner's window and in a
-    narrow one with larger, wider text. In each the hint says its page's
-    stage, lies inside the research pages' row, over no tab, is the first
-    thing drawn at its centre, is not cut, and the page does not scroll
-    sideways. Where the row has room for the tabs and the hint, the hint is on
-    the tabs' line after them; where it has not, it is on a line of its own
-    under them; either way at the row's right (its own margin from the row's
-    right edge)."""
+    no window size decides), on Training and on Models: at the owner's
+    window, in a narrow one, at a browser zoom of 200 % of the owner's window
+    and in a narrow one with larger, wider text (the text alone, every box its
+    own size). In each the hint says its page's stage, is the first thing
+    drawn at its centre, is not cut, and the page does not scroll sideways;
+    it lies inside the research pages' row, over no tab, at the row's right,
+    on the tabs' line after them where the row has room for both as drawn and
+    on a line of its own where it has not (`_hint_placed_by_the_rows_room`).
+    The windows are inputs, never the pass condition: which line the hint
+    takes is judged by the row's room in each, and both outcomes are walked at
+    the edge of that room (`test_the_stage_hint_takes_a_line_of_its_own_exactly_when_the_row_has_no_room`)."""
     for page, words in (("training", "Stage: Prepare"), ("models", "Stage: Evaluate")):
         facts = stage_hint_seen["windows"][window][page]
         assert facts is not None, (window, page, "no stage hint drawn")
-        hint, row, tabs = facts["hint"], facts["row"], facts["tabs"]
         assert facts["words"] == words, facts
-        assert (row["left"] - 0.5 <= hint["left"] and hint["right"] <= row["right"] + 0.5
-                and row["top"] - 0.5 <= hint["top"] and hint["bottom"] <= row["bottom"] + 0.5), facts
-        assert not any(hint["left"] < t["right"] - 0.5 and hint["right"] > t["left"] + 0.5
-                       and hint["top"] < t["bottom"] - 0.5 and hint["bottom"] > t["top"] + 0.5 for t in tabs), facts
         assert facts["hit"] and not facts["cut"] and facts["overX"] <= 0, facts
-        assert abs(hint["right"] - (row["right"] - facts["margin"])) <= 0.5, facts
-        last = max(t["right"] for t in tabs)
-        own_line = hint["top"] >= max(t["bottom"] for t in tabs) - 0.5
-        if own_line:                                      # only when the tabs' line had no room for it
-            assert last + (hint["right"] - hint["left"]) > row["right"] - facts["margin"], facts
-        else:                                             # on the tabs' line: after them
-            assert hint["left"] >= last - 0.5, facts
-        assert own_line == (window in ("narrow", "larger")), facts      # both cases are walked
+        _hint_placed_by_the_rows_room(facts)
+
+
+def test_the_stage_hint_takes_a_line_of_its_own_exactly_when_the_row_has_no_room(stage_hint_seen):
+    """N6 at the edge of the row's room (the external review of b0d5fba: the
+    window test judged the line by a named window, and its own-line check left
+    out the tablist's 16 px right padding, so in a band of window widths 16 px
+    wide it would fail the product's correct wrap): on Training and on
+    Models, with the window 6 px short of the row's room for the tabs and the
+    hint side by side, the hint is on a line of its own; 6 px past it, on the
+    tabs' line after them. Both at the row's right, inside it, over no tab,
+    uncut, with no sideways page scroll. The edge is found from the row as
+    drawn at the owner's window, never from a window size."""
+    for page, words in (("training", "Stage: Prepare"), ("models", "Stage: Evaluate")):
+        edge = stage_hint_seen["edges"][page]
+        for side, own in (("under", True), ("over", False)):
+            facts = edge[side]
+            assert facts is not None, (page, side, "no stage hint drawn")
+            assert facts["words"] == words and facts["hit"] and not facts["cut"] and facts["overX"] <= 0, facts
+            short = facts["needed"] - facts["end"]
+            assert (short > 1) if own else (short < -1), (page, side, "the edge was not reached", facts)
+            assert _hint_placed_by_the_rows_room(facts) is own, (page, side, facts)
 
 
 #: Models opened while Diagnosis' mount-time select is still being answered
@@ -1666,7 +1741,10 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
       const box = (e) => { const r = e.getBoundingClientRect();
         return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, height: r.height }; };
       const hint = wrap.querySelector(':scope > .shep-stage');
-      return { tabs, row: box(wrap), hint: box(hint), hintRight: parseFloat(getComputedStyle(hint).marginRight),
+      const ws = getComputedStyle(wrap);
+      return { tabs, row: box(wrap), hint: hint && box(hint), margin: hint && parseFloat(getComputedStyle(hint).marginRight),
+               end: box(wrap).right - parseFloat(ws.paddingRight) - parseFloat(ws.borderRightWidth),
+               listPad: parseFloat(getComputedStyle(wrap.querySelector('[role="tablist"]')).paddingRight),
                tabFont: parseFloat(getComputedStyle(document.getElementById('shep-page-training-button')).fontSize),
                generated: [...wrap.querySelectorAll('[role="tab"]')].flatMap((t) => ['::before', '::after'].map((p) =>
                  getComputedStyle(t, p).content)).filter((c) => !['none', 'normal', '""'].includes(c)),
@@ -1818,9 +1896,11 @@ def test_the_research_navigation_and_shared_tokens_as_drawn(tmp_path, monkeypatc
     - **the research row** (the stage-hint package, N1 and N6; it was D01 /
       R-22+R-37's captions over the tabs): at 1850 x 960 no caption tier and
       no generated text on a tab (less room above the tabs than a line of
-      their text), the research tabs 32 px, the stage hint on the tabs' line
-      at the row's right; at 420 px the hint on a line of its own under the
-      tabs, still at the right, inside the row; back at 1850 as at first;
+      their text), the research tabs 32 px, the stage hint inside the row at
+      its right, and at 420 px too, on the tabs' line where the row has room
+      for both and on a line of its own where it has not
+      (`_hint_placed_by_the_rows_room`: the room as drawn decides, never the
+      window); back at 1850 as at first;
     - **cues** (N7): a tab under the pointer has a fill it lacks at rest and
       no line under it (its bottom border as at rest), so the selected tab
       alone has the accent line, the accent text and the strong weight;
@@ -1853,15 +1933,11 @@ def test_the_research_navigation_and_shared_tokens_as_drawn(tmp_path, monkeypatc
     assert wide["generated"] == [] and not wide["hScroll"]
     assert min(t["top"] for t in tabs) - wide["row"]["top"] < wide["tabFont"]          # no caption tier
     assert wide["headerAndTabs"] - wide["row1"] <= wide["row"]["bottom"] - wide["row"]["top"] + 0.5
-    hint = wide["hint"]
-    assert hint["top"] < min(t["bottom"] for t in tabs) and hint["bottom"] > max(t["top"] for t in tabs)
-    assert hint["left"] > max(t["right"] for t in tabs)                                  # after the tabs
-    assert abs(hint["right"] - (wide["row"]["right"] - wide["hintRight"])) <= 0.5        # at the right
     narrow = seen["narrow"]
     assert not narrow["hScroll"] and narrow["generated"] == []
-    assert narrow["hint"]["top"] >= max(t["bottom"] for t in narrow["tabs"].values()) - 0.5   # own line
-    assert abs(narrow["hint"]["right"] - (narrow["row"]["right"] - narrow["hintRight"])) <= 0.5
-    assert narrow["hint"]["bottom"] <= narrow["row"]["bottom"] + 0.5
+    for row in (wide, narrow, seen["back"]):  # the hint inside the row at its right, its line by the row's room
+        assert row["hint"] is not None, ("no stage hint drawn", row)
+        _hint_placed_by_the_rows_room({**row, "tabs": list(row["tabs"].values())})
     def drawn_as(row):                       # the row and its hint, against the row's own box
         hint, box = row["hint"], row["row"]
         return (row["headerAndTabs"], hint["top"] - box["top"], hint["left"] - box["left"],
