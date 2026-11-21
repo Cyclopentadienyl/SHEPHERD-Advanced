@@ -1109,6 +1109,7 @@ const QUEUE_JS = __QUEUE_JS__;
   out.hovered = await looks();
   // The hint: no control's look under the pointer, no focus stop, no role.
   const hintLook = () => page.evaluate(() => { const h = document.querySelector('#shep-research-nav > .tab-wrapper > .shep-stage');
+    if (!h) { return null; }
     const s = getComputedStyle(h);
     return { color: s.color, background: s.backgroundColor, border: s.borderBottomColor, cursor: s.cursor,
              decoration: s.textDecorationLine, tag: h.tagName, role: h.getAttribute('role'),
@@ -1119,14 +1120,15 @@ const QUEUE_JS = __QUEUE_JS__;
              inTablist: !!h.closest('[role="tablist"]') }; });
   await page.mouse.move(2, 950);
   out.hintRest = await hintLook();
-  await page.hover('#shep-research-nav > .tab-wrapper > .shep-stage');
+  if (out.hintRest) { await page.hover('#shep-research-nav > .tab-wrapper > .shep-stage'); }
   out.hintHover = await hintLook();
   await page.focus(tab('shep-research-nav', 'models'));
   await page.keyboard.press('Tab');
   out.afterLastTab = await page.evaluate(() => ({ id: document.activeElement.id, tag: document.activeElement.tagName,
     inHint: !!document.activeElement.closest('.shep-stage') }));
   // Gradio draws the row again: the hint is put back, with its words.
-  await page.evaluate(() => document.querySelector('#shep-research-nav > .tab-wrapper > .shep-stage').remove());
+  await page.evaluate(() => { const h = document.querySelector('#shep-research-nav > .tab-wrapper > .shep-stage');
+                              if (h) { h.remove(); } });
   out.redrawn = await seen(page);
   await page.close();
   // The row in four windows.
@@ -1148,7 +1150,9 @@ const QUEUE_JS = __QUEUE_JS__;
         const box = (e) => { const r = e.getBoundingClientRect();
           return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
         const row = document.querySelector('#shep-research-nav > .tab-wrapper');
-        const h = row.querySelector(':scope > .shep-stage'), r = box(h);
+        const h = row.querySelector(':scope > .shep-stage');
+        if (!h) { return null; }
+        const r = box(h);
         const at = document.elementsFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2)[0];
         return { row: box(row), hint: r, words: h.innerText.replace(/\s+/g, ' ').trim(),
                  margin: parseFloat(getComputedStyle(h).marginRight),
@@ -1268,6 +1272,7 @@ def test_a_tab_under_the_pointer_never_reads_as_selected_and_the_hint_is_no_cont
     selected_look = {(t["line"], t["weight"]) for t in seen["hovered"] if t["selected"]}
     assert [t["id"] for t in seen["hovered"] if (t["line"], t["weight"]) in selected_look] == ["models"]
     hint = seen["hintRest"]
+    assert hint is not None, "no stage hint drawn"
     assert (hint["tag"], hint["role"], hint["tabindex"], hint["live"], hint["tabIndex"], hint["controls"]) == (
         "P", None, None, None, -1, 0), hint
     assert hint["parent"] and hint["after"] == "tablist" and not hint["inTablist"], hint
@@ -1289,6 +1294,7 @@ def test_the_stage_hint_stays_inside_the_row_and_off_the_tabs_in_every_window(st
     right edge)."""
     for page, words in (("training", "Stage: Prepare"), ("models", "Stage: Evaluate")):
         facts = stage_hint_seen["windows"][window][page]
+        assert facts is not None, (window, page, "no stage hint drawn")
         hint, row, tabs = facts["hint"], facts["row"], facts["tabs"]
         assert facts["words"] == words, facts
         assert (row["left"] - 0.5 <= hint["left"] and hint["right"] <= row["right"] + 0.5
