@@ -11,7 +11,8 @@ it requires. What these pin, through the code itself:
   the script's checks after argparse's included (`measure_scorer.parse_args`);
 - **every page and field they name is the dashboard's**: the navigation of the
   built app (`create_gradio_app`), the research groups the shell states, the
-  Training page's labels and buttons; the retired names appear nowhere;
+  Training page's labels and buttons; the retired names appear nowhere; the
+  guides say what a reload opens (the page shown);
 - **a section that gives a command needing the service's settings points to
   the deployment guide for them**: the launcher to Settings › Data locations,
   where they are chosen, and to §4.12 (since UI-06, 2026-11-16: a start needs
@@ -293,6 +294,24 @@ def test_the_architecture_names_the_dashboard_s_pages_and_no_retired_control():
     for builder in PAGES.values():
         assert f"`{builder.__module__.rsplit('.', 1)[-1]}.py`" in row, builder.__module__
     assert "slider" not in text.lower()
+
+
+@pytest.mark.parametrize("guide, says, withdrawn", [
+    ("deployment-guide.en.md", "Reloading the page comes back on the page shown, with its stage",
+     "Reloading the page opens Diagnosis again"),
+    ("deployment-guide.md", "頁面會回到目前顯示的頁面，連同它的階段說明", "頁面會再次打開 Diagnosis"),
+])
+def test_the_guides_say_a_reload_comes_back_on_the_page_shown(guide, says, withdrawn):
+    """UI-14 and the stage-hint package's N03: the shell keeps the page shown
+    for the browser tab and a reload opens it again, its stage hint with it
+    (`tests/unit/test_webui_shell.py::test_a_reload_comes_back_on_the_page_shown`).
+    Both guides' navigation lists say so; neither still says a reload opens
+    Diagnosis (the external review of b0d5fba: that sentence, false since
+    UI-14, stood under the stage hint's, which says the hint follows the page
+    shown however it was opened)."""
+    text = _text(guide)
+    assert says in text
+    assert withdrawn not in text
 
 
 # ---------------------------------------------------------------------------
