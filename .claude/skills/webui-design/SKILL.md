@@ -46,11 +46,15 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
 
 ## 3. Navigation and what looks clickable
 
-- **Each navigation level looks different.** Level 1 is the header switch (Diagnosis / Research), level 2 the page
-  tabs (underline, at least two cues for the selected one), level 3 in-page segmented controls. No two levels share a
-  treatment, and in-page radios do not copy the level-1 switch.
-- **Group labels are not tabs.** PREPARE and EVALUATE carry no tab box, padding, hover, underline or pointer, sit
-  outside the tab row's hit area (set apart by position, spacing and weight at 14 px), and are not focusable.
+- **Each navigation level looks different.** Level 1 is the header switch (Diagnosis / Research; its accessible name
+  is "Area"), level 2 the page tabs (underline, at least two cues for the selected one; a tab under the pointer gets a
+  fill, never the underline), level 3 in-page segmented controls. No two levels share a treatment, and in-page radios
+  do not copy the level-1 switch.
+- **The research stage is a hint, not a tier of labels.** The research page tabs sit in one row with no group captions
+  above them; the stage of the page shown is plain text at the right of that row ("Stage: Prepare", "Stage: Evaluate"),
+  from the one mapping `shell.STAGES`. It is no control: no tab box, hover, underline, pointer, focus stop, role or live
+  region. It follows the page shown however it was opened, never a running job, and none shows off the research pages.
+  When the row has no room it takes a right-aligned line of its own; nothing is shrunk to fit.
 - **Labels are text, not chips.** Field labels are plain 14 px/600 text; a tinted pill reads as a tag or a button.
   Static headings get no background.
 - **A lock means "refused".** A gated button shows no lock while the operator may use it; when D8 refuses, the button
@@ -68,6 +72,7 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
 | A quantity or proportion | A bar or progress line with the number | 195 / 1000 epochs, 10 of 13 cases ranked |
 | A state | Status indicator (section 6) | Operator controls, GPU, a model loaded |
 | An explanation | One-sentence answer, then facts as key-value rows, the narrative collapsed | Evidence for a candidate |
+| A lineage (what was made from what) | Node-link tree drawn as DOM: one node per run, each edge from the exact parent file; nested lists, per node a body button (selects) and, with children, a sibling arrow button (folds only); an idle node is as large as its text, the arrow area shows on hover or keyboard focus and always on touch; details stay in the Details column | Models › By family |
 
 Text that runs past two lines gets structure: an answer-first lead, then bullets or key-value rows.
 
@@ -184,7 +189,7 @@ checks that already passed for the same code.
 | Wording, a label, an option or help text | the unit test that pins it (options: unique, short, one separator; help: the lead answers the question) |
 | A colour or theme token | the contrast test of the tokens it touches |
 | A widget or renderer (HTML, JS) | a unit or Node test of what it renders, escaping included; one look in the real app |
-| Layout or scrolling | geometry measured in the browser at the owner's window (about 1850 × 960) and the narrow layout: no horizontal page scroll, one scroll region, nothing sticky over a chart axis or a focused control (`document.elementsFromPoint`), the same after narrow → wide; a screenshot of each |
+| Layout or scrolling | geometry measured in the browser at the owner's window (about 1850 × 960) and the narrow layout: no horizontal page scroll, one scroll region, nothing sticky over a chart axis or a focused control (`document.elementsFromPoint`), the same after narrow → wide; a screenshot of each. Pass conditions are relative to what is drawn (inside its row, off its neighbours, the same control under the pointer), never a named window or a fixed pixel figure |
 | A broad layout change across pages | the above at more sizes (1920 × 1080, 1536 × 760, 960 × 1080, 1080 × 1920), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
 | A repeated fact (rule 1.2) | count the fingerprint, run id or name in one screen's visible text; more than one needs a reason |
 
@@ -208,3 +213,11 @@ measurements until it is.
   made; denominators, thresholds and the ordering and registration policy do not change. A change to the semantics is
   the owner's. *(2026-11-12: ordering by test score retired in K8-6d and Mode C's measurement in K8-6a and K8-6b, so
   no page offers that choice; kept Mode C records are still read and shown by the shared readers.)*
+- **Decided (2026-11-21, supersedes the first 2026-10-25 line's group labels):** the PREPARE / EVALUATE captions above
+  the research tabs are retired; the stage is a plain-text hint at the right of the tab row (§3). The owner and the
+  external reviewer found the captions read as a second tab tier and the hovered tab's underline as a second selection.
+- **Decided (2026-11-21):** Models › By family is a node-link family view drawn as DOM, with no graph library: a canvas
+  library cannot give real buttons, keyboard focus or a hierarchy assistive technology reads. The view data stays runs
+  plus edges keyed by the exact parent file, so a layout engine could place the same nodes if lineage ever has several
+  parents. Its orientation follows the measured room (left to right when it fits, else top to bottom), decided only when
+  the graph's content, the region's width or the fonts change, never by a hover, a fold or a selection.
