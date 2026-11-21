@@ -955,7 +955,8 @@ def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any
     """**By family's graph for the Task filter** (D04; G1-G9), from the
     listing's family view (`model_list.family_views`, one listing, nothing
     read again): ``groups``, one per family in the view's order, each with its
-    runs in lineage order (a parent run before its children) and depth; under
+    runs in lineage order (a parent run before its children; how deep each
+    is, its ``edges``); under
     All the files whose record was not read and those whose record is not
     readable, each group under its own `record_kind_text` word (its
     ``title``; a family's is its root node, so it has none). **Each run sits
@@ -1011,7 +1012,7 @@ def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any
             parent_run = run_of.get(parent) if parent in items else None
             level = depth.get(parent_run, -1) + 1 if parent_run and parent_run != run else 0
             depth[run] = level
-            group["runs"][run] = {"run": run, "depth": level}
+            group["runs"][run] = {"run": run}
             if level:
                 edges.append({"from": parent, "to": run})
             elif row.get("parent_state") in ("elsewhere", "unavailable"):
@@ -2109,6 +2110,9 @@ PAGE_CSS = f"""
   {_PAGE} {_LIST} > .shep-model-main {{ margin-bottom: 16px !important; }}
   {_PAGE} {_LIST} > .shep-model-confirm-box {{ grid-area: confirm; margin-top: 16px !important; overflow: visible; }}
   {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(5, max-content); grid-template-areas: "lhd" "ws" "wsline" "task" "ctl"; }}
+  /* By family's graph left to right, a subtree unfolded past the column: panned to in its
+     rows, never the page sideways (side by side the rows' region scrolls both ways). */
+  {_PAGE} #shep-models-research-rows:has(.shep-fam) {{ overflow-x: auto !important; }}
   {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; }}
 }}
 /* A phone's column: Load, its reason and the note each a row of their own

@@ -1309,9 +1309,14 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
 # ---------------------------------------------------------------------------
 # The family graph (Models' By family; G1-G9, I1-I10)
 # ---------------------------------------------------------------------------
-#: The word the graph's arrow is read by, a run's children counted: one
-#: label for both states, ``aria-expanded`` saying which (the APG disclosure).
-SUBTREE_LABEL = "{count} from {name}"
+#: The name the graph's arrow is read by: what it shows or hides, a run's
+#: child runs, counted; one name for both states, ``aria-expanded`` saying
+#: which (the APG disclosure).
+SUBTREE_LABEL = "Child runs of {name} ({count})"
+#: On a folded node holding the selected model's run (I10): said where the
+#: fold is, under the node's own text and arrow, so nothing moves under the
+#: pointer that folded it.
+HOLDS_SELECTION = "Selected model in this folded branch"
 #: Under the graph while no run is focused (a click on a node's body shows
 #: its saved files here).
 NO_RUN_FOCUSED = ("Choose a run in the graph to see its saved files and the exact checkpoint "
@@ -1490,29 +1495,34 @@ def _graph_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pre
     where its parent run holds several files, which one it came from ("from
     Best LP accuracy", `_parent_file_words`: G3); a run kept for a shown run
     only says so ("Parent of a shown run"), the model in use its chip. One
-    " · " a line at most. Its body is a button that **focuses the run**: the
-    run's panel under the graph shows its saved files (rows the list picks
-    from, `_file_cells`: picking one selects that checkpoint, the details
-    follow, Load is unchanged), the exact parent file by its words with its
-    whole fingerprint, and the operation; focusing never changes the
-    selection, loads or starts anything (G03, I06). A node with child runs
-    has a second button beside its body, never inside it: the arrow
-    (``aria-expanded``, ``aria-controls`` its children's list, its name the
-    children counted), shown while the pointer is over the node or the focus
-    is in it, always where the pointer is coarse (`style.SHELL_CSS`); a node
-    is as large as its text and padding (I1). The arrow folds its subtree in
-    the page at once and tells the server (`FAMILY_JS`); it never selects or
-    loads. A family's root unfolds by default, a deeper subtree where it
-    holds the selection, the model in use or, during a search, a run found
-    (`graph_shape`).
+    " · " a line at most. One look says "selected": the run holding the
+    selected model (its body ``aria-current``). Its body is a button that
+    **focuses the run** (``aria-controls`` its panel; the focused run only
+    outlined): the run's panel under the graph shows its saved files (rows
+    the list picks from, `_file_cells`: picking one selects that checkpoint,
+    the details follow, Load is unchanged), the exact parent file by its
+    words with its whole fingerprint, and the operation; focusing never
+    changes the selection, loads or starts anything (G03, I06). A node with
+    child runs has a second button beside its body, never inside it: the
+    arrow (``aria-expanded``, ``aria-controls`` its children's list, its name
+    its child runs counted), shown while the pointer is over the node or the
+    keyboard's focus is in it, always where the pointer is coarse
+    (`style.SHELL_CSS`); a node is as large as its text and padding (I1). The
+    arrow folds its subtree in the page at once and tells the server
+    (`FAMILY_JS`); it never selects or loads. A family's root unfolds by
+    default, a deeper subtree where it holds the selection, the model in use
+    or, during a search, a run found (`graph_shape`).
 
     A run whose parent is not listed here hangs from a **boundary**, a box
     that is no choice: where its parent is, in the family view's words (G5).
     The files the graph cannot place (no readable model record) follow under
     `NOT_IN_A_FAMILY`, as the tree draws them (`_tree_html`). The selection
-    in a folded branch is said above the graph with a way to show it (I10).
-    The graph decides its orientation by measured fit in the page
-    (`FAMILY_JS`): left to right where it fits, else top to bottom."""
+    in a folded branch is said on the folded node (`HOLDS_SELECTION`, under
+    its text and arrow) and above the graph with a way to show it (I10). The
+    graph decides its orientation by measured fit in the page (`FAMILY_JS`):
+    left to right where it fits as drawn, else top to bottom, again only
+    when what it is drawn from (``data-shape``), the region's width or the
+    fonts change."""
     shape = graph_shape(listing, view, tree, fold, selected)
     shown_keys = [k for run in shape.runs.values() for k in run.files]
     files = _files(listing, shown_keys)
@@ -1525,11 +1535,27 @@ def _graph_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pre
             p for p in r.run_parts(parts[0], parts[1], level, fit=False) if p))
     served = files.served
     ids: Dict[str, int] = {}
+    panel_id = {key: f"shep-fam-p{index}" for index, key in enumerate(shape.runs)}
+    # The selection in a folded branch (I10): the outermost folded run above
+    # the selected model's run, said on that node and above the graph; kept
+    # true in the page as the operator folds (`FAMILY_JS`).
+    holder, at = None, shape.selected_run
+    while at is not None and at in shape.parent_run:
+        at = shape.parent_run[at]
+        if at not in shape.open_runs:
+            holder = at
+    # What the graph's size is drawn from: each run, its place and its words,
+    # never what is folded, selected, focused or in use (`FAMILY_JS` decides
+    # the orientation again only when this changes, the region's width or the
+    # fonts do: never on a fold, a pick or a focus, I10).
+    drawn: List[str] = []
 
     def node_html(key: str) -> str:
         run = shape.runs[key]
         summary = _run_summary(listing, run)
         what, _sep, rest = names[key].partition(" · ")
+        # A start time's date and time on one line ("2026-11-01 00:00").
+        rest = re.sub(r"(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})", "\\1\u00a0\\2", rest)
         kids = shape.children.get(key, [])
         opened = key in shape.open_runs
         holds = served and any(items[f].get("sha256") == served for f in run.files)
@@ -1550,38 +1576,47 @@ def _graph_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pre
         if run.context:
             lines.append(f'<span class="shep-fam-ln">'
                          f'{r.status_mark("neutral", "Parent of a shown run")}</span>')
+        drawn.append("\x1f".join((key, shape.parent_run.get(key, ""), *lines)))
         if holds:
             lines.append(f'<span class="shep-fam-ln">{r.chip(preset.in_use_label, "accent")}'
                          '</span>')
+        # One look says "selected" (the run holding the selected model, its
+        # body `aria-current`); the run whose panel is shown is only outlined.
         classes = ["shep-fam-node"] + (["shep-on"] if key == shape.focus else []) + (
             ["shep-sel"] if key == shape.selected_run else []) + (
             ["shep-ctx"] if run.context else []) + (
             ["shep-fam-parent"] if kids else []) + (
-            ["shep-fam-shut"] if kids and not opened else [])
-        body = (f'<button type="button" class="shep-fam-body" data-run="{r.e(key)}"'
-                + (' aria-current="true"' if key == shape.focus else "")
+            ["shep-fam-shut"] if kids and not opened else []) + (
+            ["shep-fam-holds"] if key == holder else [])
+        body = (f'<button type="button" class="shep-fam-body" data-run="{r.e(key)}" '
+                f'aria-controls="{panel_id[key]}"'
+                + (' aria-current="true"' if key == shape.selected_run else "")
                 + f'>{"".join(lines)}</button>')
-        arrow = sub = ""
+        arrow = sub = held = ""
         if kids:
             ids[key] = len(ids)
             controls = f"shep-fam-k{ids[key]}"
-            label = SUBTREE_LABEL.format(count=_counted(len(kids), "run"), name=what)
+            label = SUBTREE_LABEL.format(count=len(kids), name=what)
             arrow = (f'<div class="shep-fam-act"><button type="button" class="shep-fam-tog" '
                      f'data-tree="{r.e(subtree_node(key))}" '
                      f'aria-expanded="{"true" if opened else "false"}" '
                      f'aria-controls="{controls}" aria-label="{r.e(label)}">{_CHEVRON}'
                      '</button></div>')
+            held = (f'<span class="shep-fam-held"{"" if key == holder else " hidden"}>'
+                    f'{r.e(HOLDS_SELECTION)}</span>')
             sub = (f'<ul class="shep-fam-kids" id="{controls}"{"" if opened else " hidden"}>'
                    + "".join(node_html(k) for k in kids) + "</ul>")
         return (f'<li class="shep-fam-li" data-run="{r.e(key)}">'
-                f'<div class="{" ".join(classes)}">{body}{arrow}</div>{sub}</li>')
+                f'<div class="{" ".join(classes)}">{body}{arrow}{held}</div>{sub}</li>')
 
     def root_html(key: str) -> str:
         bound = bounds.get(key) if isinstance(bounds.get(key), Mapping) else None
         if bound is None:
             return node_html(key)
+        lines = _bound_lines(bound)
+        drawn.append("\x1f".join(("bound", key, *lines)))
         return ('<li class="shep-fam-li shep-fam-bli"><div class="shep-fam-node shep-fam-bound">'
-                + "".join(_bound_lines(bound)) + '</div><ul class="shep-fam-kids">'
+                + "".join(lines) + '</div><ul class="shep-fam-kids">'
                 + node_html(key) + "</ul></li>")
 
     trees = []
@@ -1625,7 +1660,7 @@ def _graph_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pre
                 f'<td>{cells[1]}</td></tr>')
         shown = key == shape.focus
         panels.append(
-            f'<section class="shep-fam-run" data-run="{r.e(key)}"'
+            f'<section class="shep-fam-run" data-run="{r.e(key)}" id="{panel_id[key]}"'
             f' aria-label="{r.e("Saved files of " + names[key])}"{"" if shown else " hidden"}>'
             f'<div class="shep-fam-run-hd"><h3 class="shep-fam-run-t" tabindex="-1">'
             f'{r.e(names[key])}</h3><button type="button" class="shep-btn shep-linkish '
@@ -1637,13 +1672,6 @@ def _graph_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pre
             '</th><th scope="col">Fingerprint</th></tr></thead>'
             f'<tbody>{"".join(file_rows)}</tbody></table></div></section>')
 
-    # The selection in a folded branch, said above the graph (I10); kept
-    # true in the page as the operator folds (`FAMILY_JS`).
-    holder, at = None, shape.selected_run
-    while at is not None and at in shape.parent_run:
-        at = shape.parent_run[at]
-        if at not in shape.open_runs:
-            holder = at
     holder_words = names[holder].partition(" · ")[0] if holder else ""
     hid = (f'<div class="shep-list-outside shep-fam-hid"{"" if holder else " hidden"}>'
            + r.status_mark("neutral", f'{r.e(FOLDED_SELECTION)} <span class="shep-fam-hid-w">'
@@ -1666,10 +1694,12 @@ def _graph_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pre
         (key for key, run in shape.runs.items()
          if served and any(items[f].get("sha256") == served for f in run.files)), "")
     inner = hid + graph + runs_html + rest
-    # A token of this drawing: the page's script redraws its state for a new one
-    # (Gradio patches the region's HTML in place: `FAMILY_JS`).
+    # A token of this drawing (Gradio patches the region's HTML in place: the
+    # page's script tells a new drawing by it, `FAMILY_JS`), and one of what
+    # the graph's size is drawn from (``data-shape``).
     token = hashlib.sha1(inner.encode("utf-8")).hexdigest()[:12]
-    return (f'<div class="shep-fam" data-shep-folds-own data-draw="{token}" '
+    form = hashlib.sha1("\x1e".join(drawn).encode("utf-8")).hexdigest()[:12]
+    return (f'<div class="shep-fam" data-shep-folds-own data-draw="{token}" data-shape="{form}" '
             f'data-focus="{r.e(shape.focus or "")}" data-fam-locate="{r.e(locate)}"'
             + (' data-searched="1"' if tree.query else "") + f'>{inner}</div>')
 
@@ -2481,42 +2511,61 @@ element.addEventListener('click', function (e) {
 #:
 #: - **the orientation by measured fit** (``data-fam-orient`` on the region):
 #:   left to right where the graph, as drawn, fits the region's width, else
-#:   top to bottom; decided again only when a new drawing comes, the region's
-#:   width changes or fonts load, never on a hover, a focus or a fold, and
-#:   back to left to right only with room to spare (no flip-flop); no
-#:   fit-to-screen, no text shrunk;
+#:   top to bottom; decided again only when what the graph is drawn from
+#:   changes (``data-shape``: its runs, their places and words; never a fold,
+#:   a pick, a focus or a hover), the region's own width changes (not a
+#:   scroll bar coming or going) or fonts load, and back to left to right only
+#:   with room to spare (no flip-flop); no fit-to-screen, no text shrunk. A
+#:   subtree unfolded past the region's width is panned to in the region
+#:   (I6), the graph's orientation and the arrow under the pointer kept (I5);
 #: - **an arrow** folds or unfolds at once in the page and tells the server
 #:   (``{tree: {node: open}}``, the fold state's `subtree_node` entries, kept
 #:   for the search only while one is shown, `search_node`): folded, every
 #:   subtree under it folds too and the focus, were it inside, moves to the
-#:   arrow; unfolded, its direct children only show (I9, I10); one press is
-#:   one toggle and one request, nothing redrawn, nothing selected or loaded;
+#:   arrow; the graph's size held until the pointer and the focus have left
+#:   the node and the room it gives back is out of view, so nothing it hid
+#:   moves what is under the pointer; unfolded, its direct children only show
+#:   (I9, I10); one press is one toggle and one request, nothing redrawn,
+#:   nothing selected or loaded;
 #: - **a node's body** focuses its run: its panel shows, the server is told
-#:   once (``{focus: run}``, `FOCUS_NODE`); from the keyboard the focus moves
-#:   to the panel's title ("↑ Back to the graph" returns); the selection is
-#:   unchanged (G03, I06);
-#: - **the selection in a folded branch** is said above the graph, its
-#:   folded ancestor marked, "Show it" unfolding the way and bringing it into
-#:   view (I10); the selected run (else the one in use) is located once per
-#:   view, as the tree's rows are.
+#:   once (``{focus: run}``, `FOCUS_NODE`), the graph not moved under the
+#:   pointer; from the keyboard the focus moves to the panel's title, and
+#:   Shift+Tab there, Escape in the panel or "↑ Back to the graph" return it
+#:   to the node; the selection is unchanged (G03, I06);
+#: - **the selection in a folded branch** is said on the folded node and
+#:   above the graph, "Show it" unfolding the way and bringing it into view
+#:   (I10); the selected run (else the one in use) is located once per view,
+#:   as the tree's rows are, but a file picked in a run's panel is not: the
+#:   region stays where the pick was made (I5).
 #:
 #: Hovering reads nothing and changes nothing (the arrow area shows by the
-#: style sheet's ``:hover`` and ``:focus-within``).
+#: style sheet's ``:hover`` and keyboard focus, ``:focus-visible``).
 FAMILY_JS = r"""
 (function () {
   var ATTR = 'data-fam-orient';
   var root = function () { return element.querySelector('.shep-fam'); };
+  // The rows' region (the block the rows are drawn in): its own width is its
+  // border box's, which no scroll bar of its own changes.
+  var region = element.closest('.block') || element;
+  var wide = function () { return region.getBoundingClientRect().width; };
+  var viewFor = function () {
+    var marker = element.querySelector('.shep-view-for');
+    return marker ? marker.getAttribute('data-for') : '';
+  };
   var decide = function () {
+    element.__shepFamWidth = wide();
     var fam = root(), forest = fam && fam.querySelector('.shep-fam-forest');
     if (!forest) { return; }
     var width = fam.clientWidth;
     if (!width) { return; }
     var was = element.getAttribute(ATTR) || 'v';
+    var held = forest.style.minWidth;
+    forest.style.minWidth = '';
     element.setAttribute(ATTR, 'h');
     var need = forest.offsetWidth;
+    forest.style.minWidth = held;
     var slack = was === 'h' ? 0 : Math.max(24, 1.5 * parseFloat(getComputedStyle(fam).fontSize));
     element.setAttribute(ATTR, need <= width - slack ? 'h' : 'v');
-    element.__shepFamWidth = width;
   };
   // The outermost folded list a node is in, or null.
   var shut = function (node) {
@@ -2531,11 +2580,14 @@ FAMILY_JS = r"""
     var fam = root(), line = fam && fam.querySelector('.shep-fam-hid');
     if (!line) { return; }
     fam.querySelectorAll('.shep-fam-holds').forEach(function (n) { n.classList.remove('shep-fam-holds'); });
+    fam.querySelectorAll('.shep-fam-held').forEach(function (s) { s.hidden = true; });
     var sel = fam.querySelector('.shep-fam-node.shep-sel'), ul = sel ? shut(sel) : null;
     line.hidden = !ul;
     if (!ul) { return; }
     var holder = nodeOf(ul.parentElement);
     holder.classList.add('shep-fam-holds');
+    var held = holder.querySelector(':scope > .shep-fam-held');
+    if (held) { held.hidden = false; }
     var name = holder.querySelector('.shep-fam-name .shep-w600'), words = line.querySelector('.shep-fam-hid-w');
     var text = name ? name.textContent : '';
     if (words && words.textContent !== text) { words.textContent = text; }
@@ -2543,8 +2595,7 @@ FAMILY_JS = r"""
   var locate = function () {
     var fam = root();
     var run = fam ? fam.getAttribute('data-fam-locate') : '';
-    var marker = element.querySelector('.shep-view-for');
-    var token = run + '|' + (marker ? marker.getAttribute('data-for') : '');
+    var token = run + '|' + viewFor();
     if (!run || token === element.__shepFamLocated) { return; }
     element.__shepFamLocated = token;
     var li = Array.prototype.find.call(fam.querySelectorAll('li[data-run]'),
@@ -2553,20 +2604,32 @@ FAMILY_JS = r"""
     var ul = shut(li), node = ul ? nodeOf(ul.parentElement) : nodeOf(li);
     if (node) { node.scrollIntoView({block: 'nearest', inline: 'nearest'}); }
   };
+  // A file picked in a run's panel: the drawing that answers it is located
+  // already (the row is where the operator is), so the region stays put.
+  var pickedHere = function (row) {
+    var panel = row.closest('.shep-fam-run');
+    if (panel) { element.__shepFamLocated = panel.getAttribute('data-run') + '|' + viewFor(); }
+  };
   var drawn = function () {
     var fam = root(), token = fam ? fam.getAttribute('data-draw') : null;
     if (token === element.__shepFamDraw) { return; }
     element.__shepFamDraw = token;
-    if (!fam) { return; }
-    decide(); note(); locate();
+    if (!fam) { element.__shepFamShape = null; return; }
+    var form = fam.getAttribute('data-shape');
+    if (form !== element.__shepFamShape || wide() !== element.__shepFamWidth) {
+      element.__shepFamShape = form;
+      decide();
+    }
+    note(); locate();
   };
   new MutationObserver(drawn).observe(element, {childList: true, subtree: true,
                                                attributes: true, attributeFilter: ['data-draw']});
   if (window.ResizeObserver) {
+    // The region's own width (its border box: a scroll bar an unfolded subtree
+    // brings is no new width).
     new ResizeObserver(function () {
-      var fam = root();
-      if (fam && fam.clientWidth !== element.__shepFamWidth) { decide(); }
-    }).observe(element);
+      if (root() && wide() !== element.__shepFamWidth) { decide(); }
+    }).observe(region, {box: 'border-box'});
   }
   if (document.fonts && document.fonts.addEventListener) {
     document.fonts.addEventListener('loadingdone', decide);
@@ -2580,23 +2643,64 @@ FAMILY_JS = r"""
     var node = b.closest('.shep-fam-node');
     if (node) { node.classList.toggle('shep-fam-shut', !open); }
   };
-  // The graph's height held while the pointer or the focus is on the node just
-  // folded: what it hid would shorten the region, whose scroll would then move
-  // the arrow out from under the pointer (I5); let go once both have left.
+  // The graph's size held after a fold: what it hid would shorten (or, left to
+  // right, narrow) what the region scrolls, whose scroll would then be pulled
+  // back and move what is under the pointer (I5). Let go only once the pointer
+  // and the focus have left the node and giving the room back moves nothing in
+  // view: the room it held lies wholly beyond the view (else again as the
+  // operator scrolls).
+  var held = null;
+  // What scrolls the graph on an axis: the nearest box around it that does, else the page.
+  var scroller = function (down) {
+    for (var e = element; e && e !== document.body; e = e.parentElement) {
+      var cs = getComputedStyle(e), o = down ? cs.overflowY : cs.overflowX;
+      if ((o === 'auto' || o === 'scroll') && (down ? e.scrollHeight > e.clientHeight : e.scrollWidth > e.clientWidth)) { return e; }
+    }
+    return down ? document.scrollingElement : null;
+  };
+  // The forest's own size without the hold, read from what it draws.
+  var natural = function (forest) {
+    var box = forest.getBoundingClientRect(), last = forest.lastElementChild, w = 0;
+    if (forest.style.minWidth) {
+      forest.querySelectorAll('.shep-fam-node').forEach(function (n) {
+        var r = n.getBoundingClientRect();
+        if (r.height) { w = Math.max(w, r.right + parseFloat(getComputedStyle(n).marginRight) - box.left); }
+      });
+    }
+    return {h: last ? last.getBoundingClientRect().bottom - box.top : 0, w: w};
+  };
+  var letGo = function (e) {
+    if (!held) { return; }
+    var forest = held.forest, node = held.node;
+    if (forest.isConnected && node.isConnected) {
+      if (e && e.type === 'focusout' ? node.contains(e.relatedTarget) || node.matches(':hover')
+          : node.matches(':hover') || node.contains(document.activeElement)) { return; }
+      var v = scroller(true), x = scroller(false), size = held.size || (held.size = natural(forest));
+      var below = v.scrollHeight - v.scrollTop - v.clientHeight;
+      var beyond = x ? x.scrollWidth - x.scrollLeft - x.clientWidth : Infinity;
+      if (forest.offsetHeight - size.h > below + 0.5) { return; }
+      if (forest.style.minWidth && forest.offsetWidth - size.w > beyond + 0.5) { return; }
+      forest.style.minHeight = '';
+      forest.style.minWidth = '';
+    }
+    node.removeEventListener('pointerleave', letGo);
+    node.removeEventListener('focusout', letGo);
+    window.removeEventListener('scroll', letGo, true);
+    held = null;
+  };
   var hold = function (b) {
     var forest = root().querySelector('.shep-fam-forest'), node = b.closest('.shep-fam-node');
     if (!forest || !node) { return; }
+    if (held) {
+      held.node.removeEventListener('pointerleave', letGo);
+      held.node.removeEventListener('focusout', letGo);
+    }
     forest.style.minHeight = forest.offsetHeight + 'px';
-    var leave = function (e) {
-      var stays = e.type === 'focusout' ? node.contains(e.relatedTarget) || node.matches(':hover')
-        : node.contains(document.activeElement);
-      if (stays) { return; }
-      forest.style.minHeight = '';
-      node.removeEventListener('pointerleave', leave);
-      node.removeEventListener('focusout', leave);
-    };
-    node.addEventListener('pointerleave', leave);
-    node.addEventListener('focusout', leave);
+    if (element.getAttribute(ATTR) === 'h') { forest.style.minWidth = forest.offsetWidth + 'px'; }
+    held = {forest: forest, node: node, size: null};
+    node.addEventListener('pointerleave', letGo);
+    node.addEventListener('focusout', letGo);
+    window.addEventListener('scroll', letGo, true);
   };
   var toggle = function (b) {
     var open = b.getAttribute('aria-expanded') !== 'true', kids = kidsOf(b), set = {};
@@ -2612,25 +2716,13 @@ FAMILY_JS = r"""
     set[b.getAttribute('data-tree')] = open;
     trigger('click', {tree: set, searched: searched()});
     note();
-    // Left to right, a subtree unfolded past the region's width turns the graph top to
-    // bottom (never back on a fold: on a new drawing or a new width), the arrow kept in view.
-    var fam = root(), forest = fam && fam.querySelector('.shep-fam-forest');
-    if (open && forest && element.getAttribute(ATTR) === 'h' && forest.offsetWidth > fam.clientWidth) {
-      element.setAttribute(ATTR, 'v');
-      b.scrollIntoView({block: 'nearest', inline: 'nearest'});
-    }
   };
   var focusRun = function (body, keyboard) {
     var fam = root();
     if (!fam) { return; }
     var run = body.getAttribute('data-run'), panel = null;
-    fam.querySelectorAll('.shep-fam-node.shep-on').forEach(function (n) {
-      n.classList.remove('shep-on');
-      var b = n.querySelector('.shep-fam-body');
-      if (b) { b.removeAttribute('aria-current'); }
-    });
+    fam.querySelectorAll('.shep-fam-node.shep-on').forEach(function (n) { n.classList.remove('shep-on'); });
     body.closest('.shep-fam-node').classList.add('shep-on');
-    body.setAttribute('aria-current', 'true');
     fam.querySelectorAll('.shep-fam-run').forEach(function (p) {
       var mine = p.getAttribute('data-run') === run;
       p.hidden = !mine;
@@ -2642,9 +2734,17 @@ FAMILY_JS = r"""
       fam.setAttribute('data-focus', run);
       trigger('click', {focus: run});
     }
+    // From the keyboard the focus goes to the panel; a pointer's click moves
+    // nothing under the pointer (I5).
     var title = panel && panel.querySelector('.shep-fam-run-t');
-    if (!title) { return; }
-    if (keyboard) { title.focus(); } else { title.scrollIntoView({block: 'nearest'}); }
+    if (title && keyboard) { title.focus(); }
+  };
+  // Back from a run's panel to its node (or the folded node holding it).
+  var back = function () {
+    var on = root().querySelector('.shep-fam-node.shep-on');
+    var ul = on ? shut(on) : null, to = ul ? nodeOf(ul.parentElement) : on;
+    var body = to && to.querySelector('.shep-fam-body');
+    if (body) { body.scrollIntoView({block: 'nearest', inline: 'nearest'}); body.focus({preventScroll: true}); }
   };
   var reveal = function () {
     var fam = root(), sel = fam && fam.querySelector('.shep-fam-node.shep-sel');
@@ -2660,19 +2760,30 @@ FAMILY_JS = r"""
     var body = sel.querySelector('.shep-fam-body');
     if (body) { body.focus({preventScroll: true}); }
   };
-  element.addEventListener('click', function (e) {
+  var inside = function (e) {
     var at = e.target && e.target.closest ? e.target : null;
-    if (!at || !root() || !root().contains(at)) { return; }
+    return at && root() && root().contains(at) ? at : null;
+  };
+  element.addEventListener('click', function (e) {
+    var at = inside(e);
+    if (!at) { return; }
     var b = at.closest('button.shep-fam-tog');
     if (b) { toggle(b); return; }
     b = at.closest('button.shep-fam-body');
     if (b) { focusRun(b, e.detail === 0); return; }
     if (at.closest('button.shep-fam-show')) { reveal(); return; }
-    if (at.closest('button.shep-fam-back')) {
-      var on = root().querySelector('.shep-fam-node.shep-on');
-      var ul = on ? shut(on) : null, to = ul ? nodeOf(ul.parentElement) : on;
-      var body = to && to.querySelector('.shep-fam-body');
-      if (body) { body.scrollIntoView({block: 'nearest', inline: 'nearest'}); body.focus({preventScroll: true}); }
+    if (at.closest('button.shep-fam-back')) { back(); return; }
+    var row = at.closest('.shep-fam-run tr[data-key]');
+    if (row && !at.closest('button.shep-copy, button.shep-i')) { pickedHere(row); }
+  });
+  element.addEventListener('keydown', function (e) {
+    var at = inside(e), panel = at && at.closest('.shep-fam-run');
+    if (!panel) { return; }
+    if (e.key === 'Escape' || (e.key === 'Tab' && e.shiftKey && at.classList.contains('shep-fam-run-t'))) {
+      e.preventDefault();
+      back();
+    } else if ((e.key === 'Enter' || e.key === ' ') && at.matches('tr[data-key]')) {
+      pickedHere(at);
     }
   });
   drawn();

@@ -3959,16 +3959,18 @@ Trainer 的驗證數值（訓練用來挑選 checkpoint 的指標，在 val 樣�
 **Order: Newest first | By family。** By family（自 K6 起；自 2026-11-21 的階段與血統回合起改為家族圖，
 之前的表格已移除）把每個 family 的 run 畫成以線相連的節點：每個 run 放在其檔案所記錄的確切 parent
 檔案所屬的 run 之下（以 SHA-256 比對，從不依名稱或時間猜測），不論多深；清單區域放得下時由左而右，
-放不下時由上而下。節點寫出 run 的名稱、以字詞寫出的任務與 operation、存檔數與訓練到多少 epoch，
+放不下時由上而下（只在視窗或字級改變時重新決定，收合或挑選不會改變方向：展開超出區域寬度的分支時，
+在區域內橫向捲動到它）。節點寫出 run 的名稱、以字詞寫出的任務與 operation、存檔數與訓練到多少 epoch，
 parent run 有多個檔案時再寫出來自哪一個（「from Best LP accuracy」）；為任務篩選保留的 base 寫著
 「Parent of a shown run」。有子 run 的節點在指標移入或鍵盤焦點進入時才顯示箭頭（觸控螢幕上一直顯示）：
 箭頭只收合或展開其下的 run（收合時其下全部隱藏；展開時只顯示直接子代），不選取也不載入任何東西。
 每個 family 一開始顯示其根與直接子代，以及含有目前選取或使用中模型的分支；搜尋在顯示期間展開它找到的
-項目，清除搜尋即恢復您自己的收合。點選節點本體會在圖下方顯示該 run：確切 parent 檔案的字詞、其完整指紋
-與 operation，以及該 run 的存檔，從中挑一個即可看細節並 Load；點選本身不選取任何東西。在另一個
+項目，清除搜尋即恢復您自己的收合。點選節點本體會在圖下方顯示該 run（該節點加上外框，圖不移動）：確切 parent 檔案的字詞、其完整指紋
+與 operation，以及該 run 的存檔，從中挑一個即可看細節並 Load；點選本身不選取任何東西。含有目前選取
+模型的 run 是唯一以底色標示的節點。在另一個
 workspace 或未列出的 parent 會以邊界框掛在該 run 上方（「Parent in workspace …」、「▲ Parent
 unavailable」，原因寫在 run 的面板），沒有可讀模型紀錄的檔案列在「Not in a family」之下。位於已收合
-分支中的選取會在圖上方說明，並附「Show it」。細節區指出確切的 parent 檔案（「Parent: Best LP
+分支中的選取會在該收合節點上（「Selected model in this folded branch」）與圖上方說明，並附「Show it」。細節區指出確切的 parent 檔案（「Parent: Best LP
 accuracy · 86 epochs completed, of run demo-base · GATv2 2026-11-16 20:43」，接著是 12 個十六進位數字，
 完整指紋一次 Copy 即得，「listed here」）。同一 run 的兩個檔案是一個 run，從不被當成兩個
 operation。沒有任何排列方式依測試分數為模型排名：依測試分數排序已在 K8-6d 退役，連同它的角色設定、

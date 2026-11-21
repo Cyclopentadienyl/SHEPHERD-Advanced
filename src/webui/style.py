@@ -718,15 +718,18 @@ button.shep-row {
    (`--shep-fam-anchor` from the node's top), so a node that grows down or a fold moves
    no line off a box. Top to bottom by default; left to right where the region holds it
    (`[data-fam-orient="h"]` on the region, set by `model_list.FAMILY_JS` from the graph's
-   measured width). A node with child runs has its arrow area beside its body: hidden
-   (focusable, of no size, I1) until the pointer is over the node or the keyboard's focus
-   is in it (one box, so the pointer crosses no gap, I4; focus a pointer's press leaves
-   on an arrow keeps nothing open, or the area closing as the press moves on would shift
-   what is under the pointer between its press and release, I7), then below the body top
-   to bottom (the
-   node grows down, the arrow centred, what follows moves down) and in the connector lane
-   to its right left to right (no other box moves, I2/I5); always shown where a pointer is
-   coarse or none hovers (I4); no transition under reduced motion (I7). Lines and node
+   measured width; a subtree unfolded past it is panned to in the region). A node with
+   child runs has its arrow area beside its body: hidden (focusable, of no size, I1) until
+   the pointer is over the node or the keyboard's focus is in it (one box, one fill, so the
+   pointer crosses no gap, I2/I4; focus a pointer's press leaves on an arrow keeps nothing
+   open, or the area closing as the press moves on would shift what is under the pointer
+   between its press and release, I7), then below the body top to bottom (the node grows
+   down, the arrow centred, what follows moves down) and in the connector lane to its right
+   left to right, over the line (no other box moves, the arrow level with the name line, so
+   a line said under the body moves it nowhere, I2/I5); the whole area is the arrow's
+   button; always shown where a pointer is coarse or none hovers (I4); no transition under
+   reduced motion (I7). One look says "selected" (the run holding the selected model: the
+   accent fill and bar); the run whose panel is shown is only outlined. Lines and node
    borders meet 3:1 (the skill's §10). */
 .shep-fam {
   --shep-fam-gap: 10px; --shep-fam-pad: 0.45em 0.7em; --shep-fam-anchor: calc(1px + 0.45em + 0.675em);
@@ -736,7 +739,9 @@ button.shep-row {
 }
 .shep-fam [hidden] { display: none !important; }
 .shep-fam ul { list-style: none; margin: 0; padding: 0; }
-.shep-fam-forest { display: flex; flex-direction: column; gap: 16px; }
+.shep-fam-forest { display: flex; flex-direction: column; gap: 12px; }
+/* Families told apart by a rule between them, not only by space. */
+.shep-fam-tree + .shep-fam-tree { border-top: 1px solid var(--shep-border); padding-top: 12px; }
 .shep-fam-tree { display: flex; flex-direction: column; gap: var(--shep-fam-gap); }
 .shep-fam-li { position: relative; }
 .shep-fam-node {
@@ -748,19 +753,20 @@ button.shep-row {
   padding: var(--shep-fam-pad); border: 0; border-radius: 7px; background: none; font: inherit;
   color: var(--shep-text); text-align: left; line-height: 1.35; cursor: pointer; overflow-wrap: break-word;
 }
-.shep-fam .shep-fam-body:hover { background: var(--shep-panel-2); }
+.shep-fam-node:hover { background: var(--shep-panel-2); }
 .shep-fam .shep-fam-body:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: -3px; }
 .shep-fam-name { font-size: 15px; overflow-wrap: anywhere; }
 .shep-fam-ln { font-size: 14px; color: var(--shep-text-2); }
-/* The run focused (its panel shown): the accent box; hover differs by fill only. */
-.shep-fam-node.shep-on { border-color: var(--shep-accent); background: var(--shep-accent-50); }
-.shep-fam .shep-fam-node.shep-on .shep-fam-body:hover { background: none; }
-/* The run holding the selected model (or the folded ancestor it is in, I10): the accent bar
-   the tree's selected row has. */
+/* The run holding the selected model: the selected look, the accent fill and the bar the
+   tree's selected row has; hover keeps it. The folded ancestor it is in (I10): the bar and
+   its words (`.shep-fam-held`). The run whose panel is shown, if another: its outline only. */
+.shep-fam-node.shep-on { border-color: var(--shep-accent); }
+.shep-fam-node.shep-sel, .shep-fam-node.shep-sel:hover { border-color: var(--shep-accent); background: var(--shep-accent-50); }
 .shep-fam-node.shep-sel::before, .shep-fam-node.shep-fam-holds::before {
   content: ""; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 4px;
   border-radius: 8px 0 0 8px; background: var(--shep-accent); pointer-events: none;
 }
+.shep-fam-held { display: block; padding: 0 0.7em 0.45em; font-size: 14px; line-height: 1.35; color: var(--shep-accent-text); }
 /* A run kept only for a shown run (a task filter's base, a search's ancestor): quieter. */
 .shep-fam-node.shep-ctx { border-style: dashed; }
 .shep-fam-node.shep-ctx .shep-fam-name .shep-w600 { font-weight: 400; }
@@ -773,13 +779,13 @@ button.shep-row {
 }
 /* The arrow area: of no size until shown, its button still a tab stop. */
 .shep-fam-act { display: flex; justify-content: center; height: 0; overflow: hidden; opacity: 0; }
-.shep-fam-node:is(:hover, :has(:focus-visible)) > .shep-fam-act { height: auto; overflow: visible; padding: 2px 0 4px; opacity: 1; }
+.shep-fam-node:is(:hover, :has(:focus-visible)) > .shep-fam-act { height: auto; overflow: visible; opacity: 1; }
 .shep-fam .shep-fam-tog {
-  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 24px;
-  padding: 0; border: 1px solid transparent; border-radius: 4px; background: none;
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 100%; height: 30px;
+  padding: 0; border: 0; border-radius: 4px; background: none; font: inherit;
   color: var(--shep-accent-text); cursor: pointer;
 }
-.shep-fam .shep-fam-tog:hover { border-color: var(--shep-grey-500); }
+.shep-fam .shep-fam-tog:hover { background: var(--shep-grey-50); }
 .shep-fam .shep-fam-tog:focus-visible { outline: 2px solid var(--shep-focus-ring); outline-offset: -2px; }
 .shep-fam .shep-fam-tog svg { transform: rotate(90deg); }
 .shep-fam .shep-fam-tog[aria-expanded="true"] svg { transform: rotate(-90deg); }
@@ -815,15 +821,18 @@ button.shep-row {
 [data-fam-orient="h"] .shep-fam-kids > .shep-fam-li:only-child::before { display: none; }
 [data-fam-orient="h"] .shep-fam-kids > .shep-fam-li::after { top: calc(var(--shep-fam-gap) / 2 + var(--shep-fam-anchor)); }
 [data-fam-orient="h"] .shep-fam-act {
-  position: absolute; left: calc(100% - 1px); top: -1px; bottom: -1px; box-sizing: border-box;
-  width: var(--shep-fam-act); height: auto; align-items: center; overflow: visible; padding: 0;
+  position: absolute; z-index: 1; left: calc(100% - 1px); top: -1px; bottom: -1px; box-sizing: border-box;
+  width: var(--shep-fam-act); height: auto; align-items: stretch; overflow: visible; padding: 0;
   opacity: 0; pointer-events: none; border: 1px solid var(--shep-control-border); border-left: 0;
-  border-radius: 0 8px 8px 0; background: #fff;
+  border-radius: 0 8px 8px 0; background: inherit;
 }
 [data-fam-orient="h"] .shep-fam-node:is(:hover, :has(:focus-visible)) > .shep-fam-act { opacity: 1; pointer-events: auto; padding: 0; }
 [data-fam-orient="h"] .shep-fam-node.shep-fam-parent:is(:hover, :has(:focus-visible)) { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right-color: transparent; }
-[data-fam-orient="h"] .shep-fam-node.shep-on > .shep-fam-act { border-color: var(--shep-accent); background: var(--shep-accent-50); }
-[data-fam-orient="h"] .shep-fam .shep-fam-tog { width: 24px; }
+[data-fam-orient="h"] .shep-fam-node:is(.shep-on, .shep-sel) > .shep-fam-act { border-color: var(--shep-accent); }
+[data-fam-orient="h"] .shep-fam .shep-fam-tog {
+  height: auto; align-items: flex-start; padding-top: max(0px, calc(var(--shep-fam-anchor) - 9px));
+  border-radius: 0 7px 7px 0;
+}
 [data-fam-orient="h"] .shep-fam .shep-fam-tog svg { transform: none; }
 [data-fam-orient="h"] .shep-fam .shep-fam-tog[aria-expanded="true"] svg { transform: rotate(180deg); }
 @media (prefers-reduced-motion: no-preference) {
@@ -832,8 +841,8 @@ button.shep-row {
 /* A coarse pointer, or none that hovers: the arrow area always there (I4). */
 @media (any-pointer: coarse), (hover: none) {
   .shep-fam { --shep-fam-act: max(2em, 36px); }
-  .shep-fam-act { height: auto; overflow: visible; padding: 2px 0 4px; opacity: 1; }
-  .shep-fam .shep-fam-tog, [data-fam-orient="h"] .shep-fam .shep-fam-tog { width: 32px; height: 32px; }
+  .shep-fam-act { height: auto; overflow: visible; opacity: 1; }
+  .shep-fam .shep-fam-tog { height: 36px; }
   [data-fam-orient="h"] .shep-fam-act { opacity: 1; pointer-events: auto; padding: 0; }
   [data-fam-orient="h"] .shep-fam-node.shep-fam-parent { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right-color: transparent; }
 }

@@ -1588,10 +1588,11 @@ def test_by_family_draws_each_run_under_the_exact_parent_file_it_records(world, 
             for key in view["groups"][2]["keys"]} == {refused_word}
     assert view["groups"][0]["keys"] == [bundle_key("base"), bundle_key("disease"),
                                          bundle_key("gene")]
-    assert [(run["run"].split("/")[1], run["depth"]) for run in view["groups"][0]["runs"]] == [
-        ("20261001-000000_base_aaaaaa", 0), ("20261002-000000_disease_bbbbbb", 1),
-        ("20261003-000000_gene_cccccc", 1)]
-    assert all(set(run) == {"run", "depth"} for g in view["groups"] for run in g["runs"])
+    assert [run["run"].split("/")[1] for run in view["groups"][0]["runs"]] == [
+        "20261001-000000_base_aaaaaa", "20261002-000000_disease_bbbbbb",
+        "20261003-000000_gene_cccccc"]
+    # A run is its key only: how deep it is, the edges say (nothing kept that no one reads).
+    assert all(set(run) == {"run"} for g in view["groups"] for run in g["runs"])
     assert view["parents"][bundle_key("gene")] == bundle_key("base")
     # Each child run's edge from the exact parent file, keyed by that file.
     assert view["edges"] == [{"from": bundle_key("base"), "to": "gatv2/" + BUNDLES["disease"][0]},
@@ -3701,11 +3702,20 @@ def test_a_search_reveals_ancestors_and_an_arrow_or_a_focused_run_selects_nothin
     # A focused run shows its panel; the selection and its row stay as they were.
     html = ml.list_html(listing, picked, research, view=view,
                         fold={ml.FOCUS_NODE: run_key("beta-base")})
-    shown = re.findall(r'<section class="shep-fam-run" data-run="([^"]+)"(?: aria-label="[^"]*")>',
+    shown = re.findall(r'<section class="shep-fam-run" data-run="([^"]+)"[^>]*?(?<!hidden)>',
                        html)
     assert shown == [run_key("beta-base")]
-    assert 'aria-current="true"' in _node(html, run_key("beta-base"))
     assert f'data-key="{picked}"' in html and "shep-sel" in _node(html, run_key("alpha-gene"))
+    # One run looks selected and is ``aria-current``: the one holding the selected
+    # model; the focused run is only outlined (shep-on), its body controlling its panel.
+    forest = html[html.index('class="shep-fam-forest"'):html.index('class="shep-fam-none')]
+    assert forest.count('aria-current="true"') == 1
+    assert 'aria-current="true"' in _node(html, run_key("alpha-gene"))
+    focused = _node(html, run_key("beta-base"))
+    assert "shep-on" in focused and "shep-sel" not in focused
+    assert "aria-current" not in focused
+    controls = re.search(r'class="shep-fam-body"[^>]*aria-controls="([^"]+)"', focused).group(1)
+    assert f'data-run="{run_key("beta-base")}" id="{controls}"' in html
 
 
 def test_a_selection_in_a_folded_branch_keeps_its_details_and_is_said(family):
@@ -3722,12 +3732,81 @@ def test_a_selection_in_a_folded_branch_keeps_its_details_and_is_said(family):
     note = note[:note.index("</div>")]
     assert " hidden" not in note.split(">")[0] and "alpha-disease" in _text(note)
     assert "Show it" in note and ml.FOLDED_SELECTION in _text(note)
+    # Said on the folded node too, under its text and its arrow (where the fold is: the
+    # note above may be out of view); every other node's words hidden.
+    holder = _node(html, run_key("alpha-disease"))
+    assert "shep-fam-holds" in holder
+    held = re.findall(r'<span class="shep-fam-held"( hidden)?>([^<]*)</span>', html)
+    assert [h for h in held if not h[0]] == [("", ml.HOLDS_SELECTION)] and len(held) > 1
+    assert holder.index('class="shep-fam-held"') > holder.index('class="shep-fam-act"')
     assert 'data-fam-locate="' + run_key("alpha-ext-3") + '"' in html
     open_html = ml.list_html(listing, picked, ml.PRESETS["research"], view=view, fold={})
     hid = open_html[open_html.index('class="shep-list-outside shep-fam-hid"'):].split(">")[0]
-    assert " hidden" in hid
+    assert " hidden" in hid and "shep-fam-holds" not in open_html
+    assert all(h[0] for h in re.findall(r'<span class="shep-fam-held"( hidden)?>', open_html))
     data = mp.read_page(listing)
     assert f'data-key="{picked}"' in mp.detail_parts(listing, data, picked, {})["header"]
+
+
+def test_what_the_graph_is_sized_from_ignores_folds_picks_focus_and_the_model_in_use(family):
+    """I10, I5 (the server's half): the graph says what its size is drawn from
+    (``data-shape``: its runs, their places and words), the same whatever is
+    folded, selected, focused or in use, so the page decides its orientation
+    again only for a new graph (here a search's), a new width or new fonts,
+    never for a pick, a focus or a fold; the drawing's own token
+    (``data-draw``) still changes with each of them."""
+    from tests.fixtures.family_world import file_key, run_key
+
+    listing, view = _family_view()
+    research = ml.PRESETS["research"]
+
+    def tokens(selected=None, fold=None, search=""):
+        html = ml.list_html(listing, selected, research, view=view, fold=fold or {},
+                            search=search)
+        return (re.search(r'data-shape="([0-9a-f]+)"', html).group(1),
+                re.search(r'data-draw="([0-9a-f]+)"', html).group(1))
+
+    plain = tokens()
+    states = [tokens(file_key("alpha-gene")),
+              tokens(fold={ml.subtree_node(run_key("alpha-disease")): True}),
+              tokens(fold={ml.FOCUS_NODE: run_key("beta-base")})]
+    assert {shape for shape, _draw in states} == {plain[0]}
+    assert len({draw for _shape, draw in states} | {plain[1]}) == 4
+    family["served"]["value"] = _status(family["root"] / "demo",
+                                        family["shas"][("beta-base", "last.pt")])
+    listing, view = _family_view()
+    assert tokens()[0] == plain[0]                      # the model in use moved: same graph
+    assert tokens(search="ext-5")[0] != plain[0]        # a search draws another graph
+
+
+def test_a_node_keeps_its_start_time_whole_and_its_arrow_names_its_child_runs(family):
+    """P3 of the interaction review: a node's start time is one unbreakable
+    "date time" (a narrow node never leaves "00:00" alone on a line); the
+    arrow's name says what it shows or hides, its child runs counted
+    (``aria-expanded`` saying which)."""
+    from tests.fixtures.family_world import run_key
+
+    listing, view = _family_view()
+    html = ml.list_html(listing, None, ml.PRESETS["research"], view=view, fold={})
+    base = _node(html, run_key("alpha-base"))
+    assert re.search(r'<span class="shep-nowrap">2026-11-01\xa000:00</span>', base), base
+    label = re.search(r'class="shep-fam-tog"[^>]*aria-label="([^"]+)"', base).group(1)
+    assert label == "Child runs of alpha-base (4)"
+
+
+def test_a_cycle_in_a_hand_made_view_draws_each_run_once(family):
+    """G04, S03: the graph follows no cycle a hand-made view could give (a run
+    under its own descendant, a run under its own file): each run is drawn
+    once, every family still drawn, nothing lost."""
+    from tests.fixtures.family_world import RUNS, file_key, run_key
+
+    listing, view = _family_view()
+    looped = {**view, "edges": [{"from": file_key("alpha-ext-5"), "to": run_key("alpha-base")},
+                                {"from": file_key("beta-base"), "to": run_key("beta-base")},
+                                *view["edges"]]}
+    html = ml.list_html(listing, None, ml.PRESETS["research"], view=looped, fold={})
+    drawn = re.findall(r'<li class="shep-fam-li" data-run="([^"]+)"', html)
+    assert sorted(drawn) == sorted(run_key(label) for label, *_rest in RUNS)
 
 
 #: The family graph served whole (By family on the synthetic family world), by
@@ -3767,7 +3846,20 @@ const ROWS = '#shep-models-research-rows';
     range.selectNodeContents(body);
     const lines = new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top))).size;
     const kids = tog ? document.getElementById(tog.getAttribute('aria-controls')) : null;
+    // The fill a reader sees at a point: the first one drawn up from what is there.
+    const fill = (e) => { for (; e; e = e.parentElement) { const c = getComputedStyle(e).backgroundColor; if (c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') { return c; } } return null; };
+    const at = (x, y) => document.elementFromPoint(x, y);
+    const a = act ? act.getBoundingClientRect() : null;
+    // Inside each edge of the arrow area (clear of its rounded corners): the arrow there too.
+    const inner = a && a.height > 0 ? [[a.left + 2, a.top + a.height / 2], [a.right - 2, a.top + a.height / 2], [a.left + a.width / 2, a.top + 2], [a.left + a.width / 2, a.bottom - 2]] : [];
+    const centre = (r) => [r.left + r.width / 2, r.top + r.height / 2];
+    // Down the arrow area's middle, every point: what is drawn there (a line over it would not be the node's).
+    const column = [];
+    if (a && a.height > 0) { for (let y = Math.ceil(a.top) + 1; y < a.bottom - 1; y += 1) { column.push(at(a.left + a.width / 2, y)); } }
     return { node: box(n), body: box(body), act: box(act), tog: box(tog), lines,
+             fillBody: fill(at(...centre(body.getBoundingClientRect()))), fillAct: a && a.height > 0 ? fill(at(...centre(a))) : null,
+             edgesOnTog: inner.length ? inner.every(([x, y]) => { const e = at(x, y); return !!e && tog.contains(e); }) : null,
+             columnInNode: column.length ? column.every((e) => !!e && n.contains(e)) : null,
              actOpacity: act ? getComputedStyle(act).opacity : null,
              actTransition: act ? getComputedStyle(act).transitionDuration : null,
              expanded: tog ? tog.getAttribute('aria-expanded') : null,
@@ -3798,6 +3890,10 @@ const ROWS = '#shep-models-research-rows';
       hidNote: hid && !hid.hidden ? hid.innerText.replace(/\s+/g, ' ').trim() : null,
       holds: [...el.querySelectorAll('.shep-fam-holds')].map((n) => n.parentElement.getAttribute('data-run')),
       panel: [...el.querySelectorAll('.shep-fam-run')].filter((p) => !p.hidden).map((p) => p.getAttribute('data-run')),
+      currents: [...el.querySelectorAll('.shep-fam-body[aria-current="true"]')].map((b) => b.getAttribute('data-run')),
+      outlined: [...el.querySelectorAll('.shep-fam-node.shep-on')].map((n) => n.parentElement.getAttribute('data-run')),
+      held: [...el.querySelectorAll('.shep-fam-held')].filter((h) => !h.hidden && h.getBoundingClientRect().height > 0).map((h) => [h.closest('li').getAttribute('data-run'), h.textContent]),
+      scroll: { top: el.scrollTop, left: el.scrollLeft },
       count: document.querySelector('#shep-models-research-count').innerText.trim(),
     };
   }, ROWS);
@@ -3858,11 +3954,30 @@ const ROWS = '#shep-models-research-rows';
   await page.keyboard.press(' '); await idle();
   out.keys.space = await look(page, RUN.base);
   out.keys.joins = joins.slice();
+  // Enter on a body takes the focus to its run's panel; Shift+Tab there, or Escape, back to the node.
+  const activeRun = () => page.evaluate(() => { const a = document.activeElement; return (a.className || '') + '|' + ((a.closest('li') || a.closest('section') || {getAttribute: () => ''}).getAttribute('data-run')); });
+  await page.focus(node(RUN.base) + ' .shep-fam-body');
+  await page.keyboard.press('Enter');
+  out.keys.panel = await activeRun();
+  await page.keyboard.press('Shift+Tab');
+  out.keys.shiftTab = await activeRun();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Escape');
+  out.keys.escape = await activeRun();
+  await idle();
   // ---- A deep subtree: unfolded twice down, folded at the top, unfolded again (I9).
   const press = async (run) => { await page.hover(node(run) + ' .shep-fam-body'); await page.click(node(run) + ' .shep-fam-tog'); await idle(); };
-  await press(RUN.disease);
-  out.orientAfterDeep = (await state(page)).orient;
-  out.deepArrowInView = await page.evaluate((sel) => { const r = document.querySelector(sel + ' .shep-fam-tog').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }, node(RUN.disease));
+  // Unfolded past the region's width left to right: the graph keeps its orientation and the
+  // arrow stays under the pointer (I5, I10); the region, never the page, pans to what it shows.
+  await page.$eval(node(RUN.disease), (n) => n.scrollIntoView({ block: 'center', inline: 'nearest' }));
+  await page.hover(node(RUN.disease) + ' .shep-fam-body');
+  const dTog = (await look(page, RUN.disease)).tog, dAt = [dTog.x + dTog.w / 2, dTog.y + dTog.h / 2];
+  const onTog = () => page.evaluate(([x, y, sel]) => { const e = document.elementFromPoint(x, y); return !!e && document.querySelector(sel + ' .shep-fam-tog').contains(e); }, [...dAt, node(RUN.disease)]);
+  const dBefore = await state(page);
+  await page.mouse.click(...dAt); await idle();
+  const dAfter = await state(page);
+  out.deepPress = { before: dBefore.orient, after: dAfter.orient, onTog: await onTog(), expanded: (await look(page, RUN.disease)).expanded,
+                    pageOver: dAfter.pageOver, wider: await page.evaluate((rows) => { const e = document.querySelector(rows); return e.scrollWidth > e.clientWidth; }, ROWS) };
   await press(RUN.ext1); await press(RUN.ext2);
   out.deep = (await state(page)).visible;
   joins.length = 0;
@@ -3871,14 +3986,37 @@ const ROWS = '#shep-models-research-rows';
   await press(RUN.disease);
   out.unfolded = await state(page);
   // ---- A run focused, then one of its files picked; then its branch folded (I10).
+  // A pointer's click on a body far above the run panel: nothing moves under the pointer.
+  await page.$eval(node(RUN.top), (n) => n.scrollIntoView({ block: 'center', inline: 'center' }));
+  const tBody = (await look(page, RUN.top)).body, tAt = [tBody.x + tBody.w / 2, tBody.y + tBody.h / 2];
+  const tBefore = await state(page);
   joins.length = 0;
-  await page.click(node(RUN.ext1) + ' .shep-fam-body');
+  await page.mouse.click(...tAt);
   await idle();
-  out.focus = { joins: joins.slice(), state: await state(page) };
-  await page.click(`${ROWS} .shep-fam-run:not([hidden]) tr[data-key]`);
+  out.focusTop = { joins: joins.slice(), before: tBefore, state: await state(page),
+                   same: await page.evaluate(([x, y, sel]) => { const e = document.elementFromPoint(x, y); return !!e && document.querySelector(sel + ' .shep-fam-body').contains(e); }, [...tAt, node(RUN.top)]) };
+  joins.length = 0;
+  await page.$eval(node(RUN.ext1), (n) => n.scrollIntoView({ block: 'center', inline: 'center' }));
+  const eBody = (await look(page, RUN.ext1)).body, eAt = [eBody.x + eBody.w / 2, eBody.y + eBody.h / 2];
+  const fBefore = await state(page);
+  await page.mouse.click(...eAt);
+  await idle();
+  out.focus = { joins: joins.slice(), state: await state(page), before: fBefore,
+                same: await page.evaluate(([x, y, sel]) => { const e = document.elementFromPoint(x, y); return !!e && document.querySelector(sel + ' .shep-fam-body').contains(e); }, [...eAt, node(RUN.ext1)]) };
+  // A file picked in the panel: the region stays where the pick was made, the row in view (I5).
+  const row = `${ROWS} .shep-fam-run:not([hidden]) tr[data-key]`;
+  await page.$eval(row, (r) => r.scrollIntoView({ block: 'center' }));
+  const rowAt = await page.$eval(row, (r) => { const b = r.getBoundingClientRect(); return { x: b.x + 20, y: b.y + b.height / 2, key: r.getAttribute('data-key') }; });
+  const pBefore = await state(page);
+  await page.mouse.click(rowAt.x, rowAt.y);
   await page.waitForFunction(() => !!document.querySelector('#shep-mp-detail-hd h2[data-key]'));
   await idle();
   out.picked = await state(page);
+  out.pickedView = { before: pBefore, rowInView: await page.evaluate(([rows, key]) => {
+    const r = [...document.querySelectorAll(rows + ' tr[data-key]')].find((t) => t.getAttribute('data-key') === key && t.getBoundingClientRect().height > 0);
+    if (!r) { return false; }
+    const b = r.getBoundingClientRect(), v = document.querySelector(rows).getBoundingClientRect();
+    return b.top >= v.top && b.bottom <= v.bottom; }, [ROWS, rowAt.key]) };
   await page.focus(node(RUN.ext1) + ' .shep-fam-body');
   await page.evaluate((sel) => document.querySelector(sel + ' .shep-fam-tog').click(), node(RUN.disease));
   await idle();
@@ -3897,8 +4035,20 @@ const ROWS = '#shep-models-research-rows';
   await page.waitForFunction(() => !document.querySelector('#shep-models-research-count').innerText.includes('“'));
   await idle();
   out.cleared = await state(page);
-  // ---- Both orientations and the switch between them (the selection and the folds kept).
+  // ---- A pick decides no orientation again (I10): top to bottom for a narrower region with
+  // the chain unfolded, then the chain folded (it would fit left to right) and a file picked.
+  await page.setViewportSize({ width: 1848, height: 960 });
+  await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'v');
   await press(RUN.disease);                                        // fold the chain again
+  const vFolded = (await state(page)).orient;
+  await page.click(node(RUN.base) + ' .shep-fam-body');
+  await page.$eval(row, (r) => r.scrollIntoView({ block: 'center' }));
+  const was = (await state(page)).selected;
+  await page.click(row);
+  await page.waitForFunction((k) => { const h = document.querySelector('#shep-mp-detail-hd h2[data-key]'); return !!h && h.getAttribute('data-key') !== k; }, was);
+  await idle();
+  out.repick = { vFolded, state: await state(page) };
+  // ---- Both orientations and the switch between them (the selection and the folds kept).
   await page.setViewportSize({ width: 1849, height: 960 });
   await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'h');
   const wide = await state(page);
@@ -3918,6 +4068,7 @@ const ROWS = '#shep-models-research-rows';
   await page.hover(node(RUN.base) + ' .shep-fam-body');
   await page.waitForFunction((sel) => document.querySelector(sel + ' > .shep-fam-act').getBoundingClientRect().height > 0, node(RUN.base));
   out.vertical = { before: vBefore, after: await look(page, RUN.base), next: nextBefore, nextAfter: await look(page, RUN.branch) };
+  await page.mouse.move(2, 2);
   // ---- Larger type: the page at 150 % (its CSS pixels a third fewer).
   await page.setViewportSize({ width: 1233, height: 640 });
   await page.waitForTimeout(0);
@@ -3956,24 +4107,32 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     - **the pointer from a node's body onto its arrow** (I02-I05): the arrow
       area shows on the body and stays along the whole path, which never
       leaves the node; the body's box and lines are unchanged; left to right
-      the area lies to the body's right and covers no other node; nothing is
-      requested by a hover (S03);
+      the area lies to the body's right and covers no other node, no line
+      drawn over it, the body's fill its fill, the whole area the arrow;
+      nothing is requested by a hover (S03);
     - **one press, one toggle, one request** (I06, I09): ``{tree: ...}`` and
       nothing selected; the area goes when the pointer and the focus leave;
     - **the keyboard** (I05): Tab reaches the body and then the arrow, the
       area shown while the focus is in it; Enter and Space each toggle once;
+      Enter on a body takes the focus to its run's panel, Shift+Tab or Escape
+      back to the node;
     - **folding a subtree** (I07, I9): hides every run under it and clears
       their entries; unfolding shows its direct children only; a subtree
-      unfolded past the region's width turns the graph top to bottom, the
-      arrow kept in view;
+      unfolded past the region's width keeps the orientation and the arrow
+      under the pointer, the region (never the page) panning to it;
     - **a run focused, a file picked, its branch folded** (I08, I10, G03):
-      focusing selects nothing; a file picked in its panel is the selection;
+      a pointer's focus selects nothing and moves nothing under the pointer,
+      the run only outlined; a file picked in its panel is the selection, the
+      region left where the pick was made, one run reading selected;
       folded away, the selection and its details stay, the graph says where
-      it is and the focus moves to the arrow; "Show it" unfolds the way;
+      it is, on the folded node too, and the focus moves to the arrow; "Show
+      it" unfolds the way;
     - **a search** (G7): reveals a deeper match, clearing brings the folds back;
-    - **orientation** (I10): left to right wide, top to bottom narrow, and
-      back, the selection and folds kept; top to bottom the arrow area is
-      under the body, the node's top and text kept, the next node moved down;
+    - **orientation** (I10): decided again by a new width, never by a fold or
+      a pick; left to right wide, top to bottom narrow, and back, the
+      selection and folds kept; top to bottom the arrow area is under the
+      body, the whole band the arrow, the node's top and text kept, the next
+      node moved down;
     - **larger type** (I11): no sideways page scroll, the focus ring drawn;
     - **touch** (I05): arrows shown with no hover, a tap one toggle;
     - **reduced motion** (I09): no transition; Newest first draws the table."""
@@ -3984,7 +4143,8 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
-    runs = {"base": run_key("alpha-base"), "branch": run_key("alpha-branch"),
+    runs = {"top": run_key("beta-base"), "base": run_key("alpha-base"),
+            "branch": run_key("alpha-branch"),
             "disease": run_key("alpha-disease"), "ext1": run_key("alpha-ext-1"),
             "ext2": run_key("alpha-ext-2"), "ext3": run_key("alpha-ext-3")}
     script = (_FAMILY_PAGE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
@@ -3995,7 +4155,10 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     idle = seen["idle"]
     assert idle["orient"] == "h" and idle["overlaps"] == 0 and idle["pageOver"] <= 0
     assert any(n["parent"] for n in idle["idle"]) and any(not n["parent"] for n in idle["idle"])
-    assert all(n["dh"] <= 2.5 and n["dw"] <= 2.5 for n in idle["idle"]), idle["idle"]
+    # A node with child runs is its body's box as a leaf is: no band, no column kept (I01).
+    leaf = next(n for n in idle["idle"] if not n["parent"])
+    assert all(abs(n["dh"] - leaf["dh"]) < 0.5 and abs(n["dw"] - leaf["dw"]) < 0.5
+               for n in idle["idle"]), idle["idle"]
     hover = seen["hover"]
     assert hover["before"]["actOpacity"] == "0" and hover["shown"]["actOpacity"] == "1"
     assert all(p["same"] and p["opacity"] == "1" for p in hover["path"]), hover["path"]
@@ -4004,6 +4167,11 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     assert hover["after"]["lines"] == hover["before"]["lines"]
     assert hover["shown"]["act"]["x"] >= hover["shown"]["body"]["right"] - 1.5
     assert hover["others"] == 0 and hover["joins"] == 0
+    # One block (I2): the body's fill is the arrow area's; the whole area is the arrow
+    # (P3-5); no line drawn over it (I04: the line ends at the visible frame).
+    shown = hover["shown"]
+    assert shown["fillBody"] == shown["fillAct"] and shown["fillBody"] is not None, shown
+    assert shown["edgesOnTog"] and shown["columnInNode"], shown
     press = seen["press"]
     assert press["joins"] == [{"tree": {t(runs["base"]): False}, "searched": False}], press
     assert press["look"]["expanded"] == "false" and not press["look"]["kidsShown"]
@@ -4018,7 +4186,13 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     assert (keys["enter"]["expanded"], keys["space"]["expanded"]) == ("false", "true")
     assert keys["joins"] == [{"tree": {t(runs["base"]): False}, "searched": False},
                              {"tree": {t(runs["base"]): True}, "searched": False}], keys["joins"]
-    assert seen["orientAfterDeep"] == "v" and seen["deepArrowInView"]
+    # Enter on a body: the focus to the run's panel; Shift+Tab there or Escape: back to it.
+    assert keys["panel"] == "shep-fam-run-t|" + runs["base"], keys
+    assert keys["shiftTab"] == "shep-fam-body|" + runs["base"], keys
+    assert keys["escape"] == "shep-fam-body|" + runs["base"], keys
+    deep = seen["deepPress"]
+    assert (deep["before"], deep["after"], deep["expanded"]) == ("h", "h", "true"), deep
+    assert deep["onTog"] and deep["pageOver"] <= 0 and deep["wider"], deep
     assert {runs["ext1"], runs["ext2"], runs["ext3"]} <= set(seen["deep"])
     folded = seen["folded"]
     assert not {runs["ext1"], runs["ext2"], runs["ext3"]} & set(folded["visible"])
@@ -4027,15 +4201,27 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     unfolded = seen["unfolded"]
     assert runs["ext1"] in unfolded["visible"] and runs["ext2"] not in unfolded["visible"]
     assert unfolded["folds"][t(runs["ext1"])] == "false"
+    top = seen["focusTop"]
+    assert top["joins"] == [{"focus": runs["top"]}] and top["state"]["panel"] == [runs["top"]]
+    assert top["same"] and top["state"]["scroll"] == top["before"]["scroll"], top
     focus = seen["focus"]
     assert focus["joins"] == [{"focus": runs["ext1"]}] and focus["state"]["panel"] == [runs["ext1"]]
     assert focus["state"]["selected"] is None
+    # A pointer's focus moves nothing under the pointer; the focused run is outlined only.
+    assert focus["same"] and focus["state"]["scroll"] == focus["before"]["scroll"], focus
+    assert focus["state"]["outlined"] == [runs["ext1"]] and focus["state"]["currents"] == []
     picked = seen["picked"]
     assert picked["selected"].startswith(runs["ext1"] + "/")
+    # The pick answered where it was made: the region not moved, the row in view, the
+    # orientation not decided again; one run reads selected, the one holding the pick.
+    view = seen["pickedView"]
+    assert picked["scroll"] == view["before"]["scroll"] and view["rowInView"], view
+    assert picked["orient"] == view["before"]["orient"] and picked["currents"] == [runs["ext1"]]
     hidden = seen["hidden"]
     assert hidden["state"]["selected"] == picked["selected"]
     assert runs["ext1"] not in hidden["state"]["visible"] and hidden["state"]["holds"] == [runs["disease"]]
     assert "folded branch under alpha-disease" in hidden["state"]["hidNote"]
+    assert hidden["state"]["held"] == [[runs["disease"], ml.HOLDS_SELECTION]], hidden["state"]
     assert hidden["active"] == "shep-fam-tog|" + runs["disease"], hidden["active"]
     again = seen["shownAgain"]
     assert runs["ext1"] in again["state"]["visible"] and again["state"]["hidNote"] is None
@@ -4045,18 +4231,23 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     assert runs["ext3"] in searched["visible"] and searched["count"].startswith("1 run matches")
     assert runs["ext3"] not in cleared["visible"] and cleared["folds"] == again["state"]["folds"]
     assert cleared["selected"] == picked["selected"]
+    repick = seen["repick"]
+    assert repick["vFolded"] == "v" and repick["state"]["orient"] == "v", repick
+    assert repick["state"]["selected"].startswith(runs["base"] + "/")
     switch = seen["switch"]
     assert (switch["wide"]["orient"], switch["narrow"]["orient"], switch["back"]["orient"]) == (
         "h", "v", "h")
     for size in ("narrow", "back"):
         assert switch[size]["folds"] == switch["wide"]["folds"], size
-        assert switch[size]["selected"] == picked["selected"] and switch[size]["overlaps"] == 0
+        assert switch[size]["selected"] == repick["state"]["selected"]
+        assert switch[size]["overlaps"] == 0
         assert switch[size]["pageOver"] <= 0, size
     vertical = seen["vertical"]
     assert vertical["before"]["act"]["h"] == 0 and vertical["after"]["act"]["h"] > 0
     assert abs(vertical["after"]["node"]["y"] - vertical["before"]["node"]["y"]) < 0.5
     assert vertical["after"]["lines"] == vertical["before"]["lines"]
     assert vertical["after"]["act"]["y"] >= vertical["after"]["body"]["bottom"] - 0.5
+    assert vertical["after"]["edgesOnTog"], vertical["after"]
     centre = vertical["after"]["tog"]["x"] + vertical["after"]["tog"]["w"] / 2
     body = vertical["after"]["body"]
     assert abs(centre - (body["x"] + body["w"] / 2)) <= 1
@@ -4067,7 +4258,7 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     assert float(large["ring"].removesuffix("px")) >= 2                # the focus ring drawn
     assert seen["newest"] == {"table": True, "graph": False}
     touch = seen["touch"]
-    assert touch["before"]["actOpacity"] == "1" or touch["before"]["act"]["h"] > 0
+    assert touch["before"]["actOpacity"] == "1" and touch["before"]["act"]["h"] > 0
     assert touch["joins"] == [{"tree": {t(runs["base"]): False}, "searched": False}]
     assert touch["after"]["expanded"] == "false"
     assert seen["reduced"]["actTransition"] in ("0s", None)
