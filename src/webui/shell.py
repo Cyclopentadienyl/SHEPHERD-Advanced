@@ -17,10 +17,11 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   Settings when it is selected (one look for level 1's selected item, which no
   other level has, R-20).
 - **Level 2** (``#shep-research-nav``, inside Research): Datasets · Training ·
-  Fine-tune · Test · Models, 32 px tabs in one row. The selected page has a
-  3 px accent underline, the accent text and the strong weight; a tab under
-  the pointer has a grey fill and darker text and never an underline, so only
-  the selected tab ever reads as selected. The default inner page is Training.
+  Fine-tune · Test · Models, 32 px tabs in one row, which wraps only when
+  the tabs alone do not fit. The selected page has a 3 px accent underline,
+  the accent text and the strong weight; a tab under the pointer has a grey
+  fill and darker text and never an underline, so only the selected tab ever
+  reads as selected. The default inner page is Training.
 - **The stage hint** (the stage-hint package of 2026-11-21, N1-N7): at the
   right of the research pages' row, after their tablist (never inside it),
   plain text says which stage of the research work the page shown belongs

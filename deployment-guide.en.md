@@ -3115,8 +3115,8 @@ help control for every field. Nothing an operator sets changed; what moved is wh
   those two take), so no chip covers a tab; the stage goes onto a line of its own under the
   research pages, still at the right, and the research pages wrap when they alone do not fit.
 - The browser tab's title says where you are, for example `Training · Research —
-  SHEPHERD-Advanced`. Reloading the page opens Diagnosis again: the address does not keep the
-  location.
+  SHEPHERD-Advanced`. Reloading the page comes back on the page shown, with its stage: this
+  browser tab keeps which page it showed (the address does not keep the location).
 - In a window at least 1400 × 760 CSS pixels the page itself does not scroll; a region too long
   for its space scrolls inside its own panel. Narrower, or in portrait, the regions stack and
   the page scrolls. The theme's smallest text is 14 px.
