@@ -717,8 +717,8 @@ button.shep-row {
    a line said under the body moves it nowhere, I2/I5); the whole area is the arrow's
    button; always shown where a pointer is coarse or none hovers (I4); no transition under
    reduced motion (I7). One look says "selected" (the run holding the selected model: the
-   accent fill and bar); the run whose panel is shown is only outlined. Lines and node
-   borders meet 3:1 (the skill's §10). */
+   accent fill and bar; a node's body selects its run). Lines and node borders meet 3:1
+   (the skill's §10). */
 .shep-fam {
   --shep-fam-gap: 10px; --shep-fam-pad: 0.45em 0.7em; --shep-fam-anchor: calc(1px + 0.45em + 0.675em);
   --shep-fam-act: 2em; --shep-fam-lane: calc(var(--shep-fam-act) + 0.6em); --shep-fam-stub: 1.2em;
@@ -747,8 +747,7 @@ button.shep-row {
 .shep-fam-ln { font-size: 14px; color: var(--shep-text-2); }
 /* The run holding the selected model: the selected look, the accent fill and the bar the
    tree's selected row has; hover keeps it. The folded ancestor it is in (I10): the bar and
-   its words (`.shep-fam-held`). The run whose panel is shown, if another: its outline only. */
-.shep-fam-node.shep-on { border-color: var(--shep-accent); }
+   its words (`.shep-fam-held`). */
 .shep-fam-node.shep-sel, .shep-fam-node.shep-sel:hover { border-color: var(--shep-accent); background: var(--shep-accent-50); }
 .shep-fam-node.shep-sel::before, .shep-fam-node.shep-fam-holds::before {
   content: ""; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 4px;
@@ -816,7 +815,7 @@ button.shep-row {
 }
 [data-fam-orient="h"] .shep-fam-node:is(:hover, :has(:focus-visible)) > .shep-fam-act { opacity: 1; pointer-events: auto; padding: 0; }
 [data-fam-orient="h"] .shep-fam-node.shep-fam-parent:is(:hover, :has(:focus-visible)) { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right-color: transparent; }
-[data-fam-orient="h"] .shep-fam-node:is(.shep-on, .shep-sel) > .shep-fam-act { border-color: var(--shep-accent); }
+[data-fam-orient="h"] .shep-fam-node.shep-sel > .shep-fam-act { border-color: var(--shep-accent); }
 [data-fam-orient="h"] .shep-fam .shep-fam-tog {
   height: auto; align-items: flex-start; padding-top: max(0px, calc(var(--shep-fam-anchor) - 9px));
   border-radius: 0 7px 7px 0;
@@ -834,15 +833,7 @@ button.shep-row {
   [data-fam-orient="h"] .shep-fam-act { opacity: 1; pointer-events: auto; padding: 0; }
   [data-fam-orient="h"] .shep-fam-node.shep-fam-parent { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right-color: transparent; }
 }
-/* The focused run's panel under the graph: its words, its exact parent and its saved files. */
-.shep-fam-none { margin: 0; font-size: 14px; }
-.shep-fam-run { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--shep-border); padding-top: 12px; }
-.shep-fam-run-hd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
-.shep-fam .shep-fam-run-t { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
-.shep-fam .shep-fam-back, .shep-fam .shep-fam-show { padding: 0 12px; }
-.shep-fam-back { margin-left: auto; }
-.shep-fam-files { margin: 0; }
-.shep-fam-files th { position: static; }
+.shep-fam .shep-fam-show { padding: 0 12px; }
 .shep-fam .shep-fam-h { margin: 4px 0 0; font-size: 15px; font-weight: 600; }
 /* The shared list's search line (D04): "Search" beside its box, as a field row says it, and
    its Clear after it. */

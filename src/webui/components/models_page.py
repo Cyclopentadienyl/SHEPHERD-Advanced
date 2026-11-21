@@ -40,9 +40,12 @@ family view (`model_list.family_views`, from the one listing, `family_view`),
 each run a node under the run of the exact parent file its files record,
 joined by the edges the view gives, however deep (a task's base kept as a
 context run; a parent in another workspace or not available a boundary);
-a node's body shows its run's saved files and exact parent under the graph,
-a file picked there being the selection; under All the records not read and
-the records not readable (a file without a model spec among them) follow, as
+a node's body selects its run (the checkpoint already selected when it is one
+of the run's, else its latest save: the Run → Checkpoint choice,
+`model_list.run_choice`), and its arrow only folds or unfolds the runs under
+it; the detail then shows that checkpoint with its run's other saved files,
+each picked from there (`saved_files_html`); under All the records not read
+and the records not readable (a file without a model spec among them) follow, as
 the table draws them. Every record is shown in the detail with its own metrics, as
 recorded (`RECORD_COLUMNS` names the two a Results table shows for a measurement this
 build describes).
@@ -55,9 +58,10 @@ workspace's ("the selected workspace's current dataset", or which one it is),
 what it is (kind, operation, parent, family, encoder and its relation to the
 paper, README §5 axis 2: "matches the reference recipe" or the fields that
 differ), the Trainer's validation figure as a row (a selection metric on val,
-never beside a test result, never a box of its own), its run directory, file
-and whole fingerprint one "Details ›" away; Model Facts' warnings by the
-shared mark, and three
+never beside a test result, never a box of its own), By family its run's
+saved files where it holds several, its run directory, file, whole
+fingerprint and its parent's whole fingerprint one "Details ›" away; Model
+Facts' warnings by the shared mark, and three
 in-page segments: "Recorded results" (every record its ledger holds, grouped
 by mode in the order first shown, each mode's label once, as the API's record
 view shows a record by **one display for every mode** (R2, K8-6e.2), **each
@@ -184,6 +188,8 @@ FAMILY_NOT_READ = "the family view was not read with this list"
 #: A branch that changed no setting of its parent (`parent_changes` `{}`;
 #: ops-wiring round, decisions B1, B4): a new run from its parent's weights.
 SAME_SETTINGS = "Same settings as its parent"
+#: Beside the shown file among its run's saved files (`saved_files_html`).
+SHOWN_FILE = "selected"
 #: A model whose family is its own run (the family's root).
 OWN_FAMILY = "its own run (the family's root)"
 #: A model whose family is its parent's run, which the Parent row names
@@ -223,7 +229,8 @@ PAGE_HELP = {
         "Order",
         "How the list is ordered; the Task select chooses the rows.\n"
         "- Newest first: latest run first.\n"
-        "- By family: a graph of each family, each run under the checkpoint it came from.",
+        "- By family: a graph of each family, each run under the checkpoint it came from. "
+        "Clicking a run selects it; its arrow only folds or unfolds the runs under it.",
     ),
     "models-contested": (
         "Runs differ",
@@ -253,8 +260,10 @@ BACK_BUTTON = ('<button type="button" class="shep-btn shep-mp-back">↑ Back to 
 
 #: Narrow (the layout rule's stacked sizes), the detail is below the whole list:
 #: choosing a row (click, Enter or Space, as the shared list's own script takes
-#: them) scrolls to the detail and moves the focus to its title; "Back to the
-#: list" scrolls to the selected row and focuses it. It waits until the detail's
+#: them) scrolls to the detail and moves the focus to its title (a family graph
+#: node's body does not: that would move the graph from under the pointer,
+#: `model_list.FAMILY_JS`); "Back to the list" scrolls to the selected row, or
+#: By family's selected run, and focuses it. It waits until the detail's
 #: title names the chosen row (its ``data-key``, `detail_parts`; the title changes
 #: more than once before the server's answer is drawn), and places the detail
 #: again while the rest of it is drawn (the page grows under it), unless the
@@ -306,12 +315,42 @@ if (!window.__shepModelsScroll) {
     var back = e.target.closest ? e.target.closest('#shep-mp-detail-hd button.shep-mp-back') : null;
     if (!back) { return; }
     var rows = document.getElementById('shep-models-research-rows');
-    var row = rows ? (rows.querySelector('tr.shep-on') || rows) : null;
+    /* The selected row, or By family's selected run (the folded node that
+       holds it while its branch is folded). */
+    var body = rows ? Array.prototype.find.call(rows.querySelectorAll(
+      '.shep-fam-node.shep-sel > .shep-fam-body, .shep-fam-node.shep-fam-holds > .shep-fam-body'),
+      function (b) { return b.getClientRects().length > 0; }) : null;
+    var row = rows ? (rows.querySelector('tr.shep-on') || body || rows) : null;
     if (!row) { return; }
     row.scrollIntoView({block: 'center'});
-    if (row.tagName === 'TR') { row.focus({preventScroll: true}); }
+    if (row.tagName === 'TR' || row.tagName === 'BUTTON') { row.focus({preventScroll: true}); }
   });
 }
+"""
+
+
+#: **A saved file picked in the details' "Saved files"** (`saved_files_html`;
+#: on the details' top, after `renderers.TRIGGER_JS`, which sends the pick):
+#: the button picked is drawn again as the file shown, so the focus, which it
+#: took, goes to that line once it names the file picked (``aria-current``,
+#: ``data-key``), without scrolling; the graph is not moved (the selection
+#: stays in the run it located). Waits for the drawing, never a fixed time.
+PICKED_JS = r"""
+var wanted = null;
+element.addEventListener('click', function (e) {
+  var b = e.target.closest ? e.target.closest('.shep-mp-files button[data-key]') : null;
+  if (b) { wanted = b.getAttribute('data-key'); }
+});
+new MutationObserver(function () {
+  if (wanted === null) { return; }
+  var shown = element.querySelector('.shep-mp-files [aria-current="true"]');
+  if (!shown || shown.getAttribute('data-key') !== wanted) { return; }
+  wanted = null;
+  if (!document.activeElement || document.activeElement === document.body) {
+    shown.focus({preventScroll: true});
+  }
+}).observe(element, {childList: true, subtree: true, attributes: true,
+                     attributeFilter: ['aria-current', 'data-key']});
 """
 
 
@@ -1242,9 +1281,32 @@ def _served_line(listing: Mapping[str, Any]) -> str:
     return "nothing is in use for diagnosis"
 
 
+def saved_files_html(item: Mapping[str, Any], files: Sequence[Tuple[str, str]]) -> str:
+    """**The selected checkpoint's run's saved files** (By family's details:
+    the graph's node is a run, so the files it holds are said here; G2, G3):
+    each by its Run → Checkpoint words (`files`, `model_list.checkpoint_choices`:
+    what it is and how far it trained, in the list's order), the one shown
+    said so in words and ``aria-current`` (never by colour alone), each other
+    one a button that picks it by the list's one selection
+    (`model_list.PICK_ACT` through `renderers.TRIGGER_JS`, as a row's click
+    does: `create_models_page` gives this region to the list's ``picks``).
+    Everything escaped."""
+    shown = ml.item_key(item)
+    rows = []
+    for label, key in files:
+        if key == shown:
+            rows.append(f'<li aria-current="true" tabindex="-1" data-key="{r.e(key)}">{r.e(label)}'
+                        f' <span class="shep-muted">({r.e(SHOWN_FILE)})</span></li>')
+        else:
+            rows.append(f'<li><button type="button" class="shep-link" data-act="{ml.PICK_ACT}" '
+                        f'data-key="{r.e(key)}">{r.e(label)}</button></li>')
+    return f'<ul class="shep-mp-files">{"".join(rows)}</ul>'
+
+
 def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
                   workspaces: Sequence[Mapping[str, Any]] = (),
-                  parent_words: Optional[Tuple[str, str]] = None) -> str:
+                  parent_words: Optional[Tuple[str, str]] = None,
+                  files: Sequence[Tuple[str, str]] = ()) -> str:
     """**The selected checkpoint's details, as one summary list** (the
     skill's §4, README §5): its model fingerprint (12 hex with its Copy: the
     table shows each row's, this is the chosen one's to copy) and its file
@@ -1263,8 +1325,12 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
     its relation to the paper (axis 2: "matches the reference recipe" with
     what that recipe is, or the fields that differ); and the Trainer's
     validation figure, a row like every details list's (`renderers.validation_value`),
-    never a box of its own. Its run directory and whole fingerprint are one
-    "Details ›" away (the skill's §5: the full provenance one click away). Model Facts' Task and Configuration rows say the kind and axis 1
+    never a box of its own. With `files` (By family, a run with more than one
+    saved file: `detail_parts`), its run's saved files under the file, each
+    other one picked from there (`saved_files_html`). Its run directory, its
+    whole fingerprint and its parent's are one "Details ›" away (the skill's
+    §5: the full provenance one click away; G3: the exact parent's digest
+    read whole, not only copied). Model Facts' Task and Configuration rows say the kind and axis 1
     elsewhere; neither is repeated here."""
     sha = item.get("sha256")
     architecture, run, filename = (item.get("architecture"), item.get("run"),
@@ -1272,6 +1338,7 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
     unknown = r.status_mark("neutral", r.UNKNOWN)
     rows = [("Fingerprint", r.fingerprint_value(sha, what="model fingerprint")),
             ("File", r.ident_html(filename) if filename else unknown),
+            *([("Saved files", saved_files_html(item, files))] if len(files) > 1 else []),
             ("Dataset", r.dataset_relation_html(item, workspaces)),
             ("Kind", r.e(r.model_kind_text(item)))]
     if item.get("record") == "model":
@@ -1304,6 +1371,9 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
     provenance = [("Run directory", r.ident_html(f"{architecture}/{run}") if architecture and run
                    else unknown),
                   ("Whole fingerprint", r.fingerprint_value(sha, full=True, copy=False))]
+    if item.get("record") == "model" and r.is_digest(item.get("parent_sha256")):
+        provenance.append(("Parent fingerprint",
+                           r.fingerprint_value(item.get("parent_sha256"), full=True, copy=False)))
     return (r.summary_list(rows, classes="shep-mp-ident",
                            helps={"Fingerprint": ("model-fingerprint", "Model fingerprint"),
                                   "Validation": ("validation-trainer", "Validation (Trainer)")})
@@ -1359,10 +1429,15 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     warnings = "".join(r.warning_html(h, d) for h, d in facts.warnings)
     row = family_row(listing, ml.item_key(item))
     parent = (row or {}).get("parent")
-    parent_words = (ml.pair_words({ml.item_key(i): i for i in listing.get("items") or []}
-                                  ).get(parent) if row and row.get("parent_state") == "listed"
-                    else None)
-    top = (identity_html(item, row, workspaces=workspaces, parent_words=parent_words)
+    listed = {ml.item_key(i): i for i in listing.get("items") or []}
+    parent_words = (ml.pair_words(listed).get(parent)
+                    if row and row.get("parent_state") == "listed" else None)
+    # By family draws a run as one node: its saved files are said here, as
+    # the Checkpoint select names them. Newest first names each in its rows.
+    files = (ml.checkpoint_choices(listed, ml.runs_of(listed).get(ml.item_run_key(item), []))
+             if ctl.get("order") == BY_FAMILY else [])
+    top = (identity_html(item, row, workspaces=workspaces, parent_words=parent_words,
+                         files=files)
            + warnings)
     ledger = (data.get("ledgers") or {}).get(ml.item_key(item))
     chosen = next((w for w in workspaces if w.get("name") == listing.get("workspace")), {})
@@ -1638,7 +1713,8 @@ def create_models_page(ctx: Any) -> None:
                                             elem_id="shep-mp-detail-hd", js_on_load=SCROLL_JS)
             with gr.Column(elem_id="shep-mp-detail-bd", elem_classes=["shep-mp-detail-bd"]):
                 parts["detail_top"] = plain_html(detail_parts({}, {}, None, {})["top"],
-                                                 elem_id="shep-mp-detail-top")
+                                                 elem_id="shep-mp-detail-top",
+                                                 js_on_load=r.TRIGGER_JS + PICKED_JS)
                 parts["seg"] = gr.Radio(choices=[("Recorded results", RECORDS),
                                                  ("Usage history", USAGE),
                                                  ("Results", RESULTS)], value=RECORDS,
@@ -1652,7 +1728,9 @@ def create_models_page(ctx: Any) -> None:
         return column
 
     with gr.Row(elem_classes=["shep-page", "shep-models"], equal_height=False):
-        handle = ctx.create_model_list("research", head=head, foot=foot)
+        # The details' "Saved files" pick through the list's one selection.
+        handle = ctx.create_model_list("research", head=head, foot=foot,
+                                       picks=lambda: [parts["detail_top"]])
 
     control_inputs = [parts["order"], parts["task"]]
     page_outputs = [data_state, handle.view, parts["task"], parts["order"], parts["options"],
@@ -1896,6 +1974,9 @@ PAGE_CSS = f"""
   padding: 0 16px 12px !important; margin: 0 !important; flex-wrap: nowrap !important;
 }}
 {_PAGE} #shep-models-research-rows {{ flex: 1 1 auto !important; min-width: 0; }}
+/* By family keeps a node still under the pointer by its own rule (`model_list.FAMILY_JS`):
+   the browser's scroll anchoring would scroll the rows by what a pick takes away above it. */
+{_PAGE} #shep-models-research-rows:has(.shep-fam) {{ overflow-anchor: none; }}
 {_PAGE} #shep-models-research-facts {{ display: none !important; }}
 {_PAGE} {_LIST} > .shep-model-foot {{
   grid-area: foot; min-height: 0; display: grid !important; margin: 0 !important;
@@ -2037,6 +2118,13 @@ PAGE_CSS = f"""
 {_PAGE} #shep-mp-hd .shep-mp-ref {{ font-size: 14px; color: var(--shep-muted); }}
 {_PAGE} .shep-mtbl td.shep-num .shep-sub {{ text-align: right; }}
 {_PAGE} .shep-mp-ident {{ font-size: 15px; }}
+/* By family's "Saved files" (`saved_files_html`): one file a line, the shown one in words,
+   each other one a link-like button that picks it. */
+{_PAGE} .shep-mp-files {{ list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }}
+{_PAGE} .shep-mp-files > li {{ min-height: 24px; display: flex; align-items: center; flex-wrap: wrap; column-gap: 4px; }}
+{_PAGE} .shep-mp-files .shep-link {{ border: 0; background: none; padding: 0; min-height: 24px; color: var(--shep-accent-text); font: inherit; text-align: left; cursor: pointer; }}
+{_PAGE} .shep-mp-files .shep-link:hover {{ text-decoration: underline; }}
+{_PAGE} .shep-mp-files .shep-link:focus-visible, {_PAGE} .shep-mp-files > li:focus-visible {{ outline: 2px solid var(--shep-focus-ring); outline-offset: 2px; }}
 /* Read-only: no list, no workspace, no order; the reason is the header's. */
 {_PAGE} {_LIST}:has(.shep-mp-ro) .shep-model-head > .form,
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-mp-wsline,

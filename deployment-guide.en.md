@@ -4133,13 +4133,15 @@ over it or the keyboard focus is in it (always on a touch screen): the arrow fol
 runs under it (folding hides every run under it; unfolding shows its direct children) and
 selects or loads nothing. Each family shows its root and its direct children at first, and the
 branch holding the selection or the model in use; a search unfolds what it finds while it is
-shown, and clearing it brings your own folds back. Clicking a node's body shows that run under
-the graph (the node outlined; the graph does not move): the exact parent file by its words, its
-whole fingerprint and the operation, and the run's saved files, one of which you pick to see its
-details and Load it; the click itself selects nothing. The run holding the selected model is the
-one highlighted. A parent in another workspace or not listed hangs above its run as a boundary
-("Parent in workspace …", "▲ Parent unavailable", the reason in the run's panel), and files with
-no readable model record are listed under "Not in a family". A selected model in a folded branch
+shown, and clearing it brings your own folds back. Clicking a node's body (or Enter or Space on
+it) selects that run, as choosing it in a Run select does: the file already selected stays when it
+is one of the run's, else its latest save; the details beside the graph show it, nothing is
+loaded (Load still asks), and the graph does not move under the pointer (since the stage-lineage
+round's second pass, 2026-11-21; its first pass showed the run in a panel under the graph). The
+run holding the selected model is the one highlighted. A parent in another workspace or not
+listed hangs above its run as a boundary ("Parent in workspace …", "▲ Parent unavailable", the
+reason in the selected file's details), and files with no readable model record are listed under
+"Not in a family". A selected model in a folded branch
 is said on the folded node ("Selected model in this folded branch") and above the graph, with
 "Show it". The detail names the exact parent file ("Parent: Best
 LP accuracy · 86 epochs completed, of run demo-base · GATv2 2026-11-16 20:43", then its 12 hex
@@ -4151,11 +4153,14 @@ score.
 
 **Selecting a row** shows its details as one list (since the ops-wiring round's B3): its model
 fingerprint (12 hex digits, Copy), its file (the title names its run, which two files of one run
-share), its dataset by its relation to the workspace ("the selected
-workspace's current dataset", or which one it is), what it is, its operation, parent, family,
-encoder and relation to the reference recipe, the Trainer's validation figure as a row (never a
-box of its own), and under **Details ›** its run directory and whole fingerprint; any
-warning, with ▲; and three segments:
+share; By family, a run with several saved files lists them under "Saved files", each as the
+Checkpoint select names it, the one shown saying "(selected)" and a click on another selecting
+it, since Newest first names them in its rows and the graph does not), its dataset by its
+relation to the workspace ("the selected workspace's current dataset", or which one it is), what
+it is, its operation, parent, family, encoder and relation to the reference recipe, the Trainer's
+validation figure as a row (never a box of its own), and under **Details ›** its run directory,
+its whole fingerprint and its parent's whole fingerprint; any warning, with ▲; and three
+segments:
 
 - **Recorded results** ("Recorded test results" until research comparison Stage 6): every
   record the ledger holds for these weights, of any data kind and role, grouped by measurement
