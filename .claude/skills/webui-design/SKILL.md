@@ -221,6 +221,7 @@ measurements until it is.
   plus edges keyed by the exact parent file, so a layout engine could place the same nodes if lineage ever has several
   parents. Its orientation follows the measured room (left to right when it fits, else top to bottom), decided only when
   the graph's content, the region's width or the fonts change, never by a hover, a fold or a selection. A body pick
-  never moves the graph: no scroll, no new orientation, and the room of a line gone above it is given back as scroll.
+  never scrolls or re-orients the graph; the room of a line gone above it is kept until the pointer and focus leave,
+  then given back as scroll as far as the region has scrolled.
   Details' "Saved files" offers only the files the list draws. No run panel and nothing sticky: a panel under a tall
   graph is out of view after a click. A graph wider than its region pans inside the region, never the page.
