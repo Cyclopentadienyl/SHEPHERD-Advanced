@@ -3042,20 +3042,18 @@ def test_a_field_rows_action_is_its_boxes_height_and_stands_on_their_line(tmp_pa
     assert abs((test[1] - test[0]) - (seen["test@1850"]["boxes"][0][1] - seen["test@1850"]["boxes"][0][0])) <= 1
 
 
-def test_the_field_rows_share_one_class_and_two_tokens():
+def test_the_field_rows_share_one_class_and_two_tokens(built):
     """D03: the four rows of a select and an action (Fine-tune's base picker,
     Training's Continue drawer, Test's Run, the Diagnosis load drawer's head)
     carry the one field-row class; their own alignment patches are gone; a
     dense form's blocks (the shared `shep-form-dense`: Training's parameters
     and its drawer, Fine-tune's form) set the row's padding token with their
-    padding (one value, never two that drift)."""
-    from src.webui.components import (
-        diagnosis_panel,
-        finetune_page,
-        model_list,
-        test_page,
-        training_console,
-    )
+    padding (one value, never two that drift). Test's Run row is a bar of
+    whole groups since the sweep (L3): its select and ↻ are that bar's one
+    group, and that group is the field row; Diagnosis' Task segment keeps
+    the aside class beside a whole-label one (P2). Both are read from the
+    built page, not from their source's words."""
+    from src.webui.components import finetune_page, model_list, test_page, training_console
     from src.webui.style import SHELL_CSS
 
     assert "--shep-field-box-h: 41px; --shep-field-pad-b: 10px;" in SHELL_CSS
@@ -3063,10 +3061,26 @@ def test_the_field_rows_share_one_class_and_two_tokens():
     assert "height: var(--shep-field-box-h) !important" in button
     assert "margin: 0 0 var(--shep-field-pad-b) !important" in button
     assert '"shep-ft-parent-row", "shep-field-row"' in Path(finetune_page.__file__).read_text()
-    assert '"shep-test-model-row", "shep-field-row"' in Path(test_page.__file__).read_text()
+    demo, _ctx = built
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+
+    def row_of(block):          # the nearest gr.Row (Gradio puts a field in a Form of its own)
+        block = block.parent
+        while not isinstance(block, gr.Row):
+            block = block.parent
+        return block
+
+    run_row = row_of(by_id["shep-test-model-run"])
+    assert row_of(by_id["shep-test-model-reload"]) is run_row
+    assert {"shep-field-row", "shep-grp"} <= set(run_row.elem_classes or [])
+    assert "shep-bar" in (run_row.parent.elem_classes or [])
     assert '"shep-train-parent-row", "shep-field-row"' in Path(training_console.__file__).read_text()
     assert '["shep-field-row"] if chosen.layout == "drawer"' in Path(model_list.__file__).read_text()
-    assert '"shep-seg", "shep-field-aside"' in Path(diagnosis_panel.__file__).read_text()
+    # The Diagnosis Load drawer's head: its Task segment stands in the shared
+    # list's field row as an aside (its classes read from the built page).
+    task = by_id["shep-dx-change-task"]
+    assert {"shep-seg", "shep-field-aside"} <= set(task.elem_classes or [])
+    assert "shep-field-row" in (row_of(task).elem_classes or [])
     assert "margin-bottom: 4px" not in test_page.PAGE_CSS
     assert "#ft_refresh {" not in finetune_page.PAGE_CSS
     assert "#shep-train-refresh {" not in training_console.PAGE_CSS
