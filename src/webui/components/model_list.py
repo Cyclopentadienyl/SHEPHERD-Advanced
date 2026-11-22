@@ -3262,12 +3262,16 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     # review of 5171661). Two draws of
     # one list can be asked at once (Models' opening writes the token and the
     # view in one answer, and Gradio 6.30 checks "always_last" for both before
-    # either is sent). What keeps the last answer drawn the last one asked is
-    # the queue: one concurrency id per list, limit 1, so the server runs a
-    # list's draws one at a time in the order they were asked, and their
-    # answers arrive in that order on the page's one event stream;
-    # "always_last" keeps one draw asked while one is pending and sends it
-    # once that one is answered (none dropped). A draw sent outside the queue
+    # either is sent). When only the server is slow, what keeps the last
+    # answer drawn the last one asked is the queue: one concurrency id per
+    # list, limit 1, so the server runs a list's draws one at a time in the
+    # order they were asked and sends their answers in that order on the
+    # page's one event stream; "always_last" keeps one draw asked while one is
+    # pending and sends it once that one is answered. Two gaps are left
+    # (OPS-SL-R3): a network delay that holds back the join answer of the
+    # first draw past a later draw can leave the list stale until the next
+    # change, and a draw asked while the pending one fails is not sent until
+    # the next change. A draw sent outside the queue
     # (``queue=False``) was tried and withdrawn: its answers can arrive out
     # of the order asked (the adversarial check of 37912a9). A handler's own
     # inputs (the search box's text as a pick was clicked) choose what it
