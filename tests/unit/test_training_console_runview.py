@@ -215,7 +215,9 @@ def test_choosing_a_past_run_changes_only_the_view_and_the_job_drives_the_pill(
     assert f"gatv2/{PAST}" in chosen["head"]                               # its Details
     changed = {key for key in tc.VIEW_KEYS if chosen[key] != following[key]}
     assert changed == {"head", "view", "charts"}
-    assert chosen["pill"] == tc.pill_html(RUNNING) and "RUNNING · epoch 2/5" in chosen["pill"]
+    # The pill, then how far the job got as its bar (the job's, not the run viewed).
+    assert chosen["pill"].startswith(tc.pill_html(RUNNING)) and 'aria-valuenow="40"' in chosen["pill"]
+    assert "RUNNING · epoch 2/5" in chosen["pill"]
     # Export CSV names the chosen run, with its own log.
     csv = tc.training_chart_csv({"run": chosen["charts"]["run"]})
     assert csv["filename"] == f"training_metrics_gatv2_{PAST}.csv"

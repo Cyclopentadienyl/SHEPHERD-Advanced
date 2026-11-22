@@ -1127,11 +1127,11 @@ def test_an_invalid_or_off_list_branch_edit_is_refused_with_the_plans_words(chec
         assert said == "" and "Cannot branch." in text
         assert mode["parent"]["refused"] == tc.REFUSED_SETTINGS
         assert tc.continue_refusal(mode["parent"], c["state"], operation=tc.BRANCH) == (
-            "the check refuses a setting you edited; change it, then check again.")
+            "the check refuses a setting you edited. Change it, then check again.")
         view = tc.run_bar_view({"status": "idle"}, c["state"],
                                {"drawer": True, "operation": tc.BRANCH, "parent": mode["parent"]},
                                access=_allowed(), active=None, gpu=None)
-        assert ("Start branch disabled: the check refuses a setting you edited; change it, then "
+        assert ("Start branch disabled: the check refuses a setting you edited. Change it, then "
                 "check again.") in view["drawer_reason"]
         assert "cannot be branched" not in view["drawer_reason"]
     assert started == []
