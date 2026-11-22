@@ -792,6 +792,16 @@ def test_the_input_column_follows_the_row_and_no_window_media_query_decides_it()
     assert f"{dp._TAB} .shep-dx-options #dx_top_k {{ overflow: visible !important; }}" in css
 
 
+def test_the_empty_results_say_what_to_do_without_a_place_the_layout_moves():
+    """The empty results panel said "check the model in use on the left";
+    below the side-by-side width the input column stands above the results,
+    so a place word is wrong at some width. What to do names the control,
+    not where it is drawn."""
+    text = re.sub(r"<[^>]+>", " ", dp.empty_results_html())
+    assert "check the model in use, then Run Diagnosis" in text
+    assert not re.search(r"\b(left|right|above|below)\b", text)
+
+
 #: B-14 at each stop of the walk: the input column, the panel beside it and
 #: its minimum, Top-K's box in widths of its own "0", the fields region and
 #: Run, the fields' grid columns, and the Load drawer when it is open.

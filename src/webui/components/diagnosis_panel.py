@@ -1760,7 +1760,7 @@ def empty_results_html(notice: Optional[str] = None) -> str:
     if notice:
         return f'<div class="shep-dx-notice">{notice}</div>'
     return ('<div class="shep-dx-empty"><p class="shep-dx-empty-h">No result yet</p>'
-            '<p>Enter the HPO terms, check the model in use on the left, then Run Diagnosis.</p>'
+            '<p>Enter the HPO terms, check the model in use, then Run Diagnosis.</p>'
             '<p class="shep-note">Each result says what produced it, compared with the model in '
             'use.</p></div>')
 
