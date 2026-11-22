@@ -235,26 +235,25 @@ DETAIL_NOTHING = "Nothing to select yet: no checkpoint is listed."
 PAGE_HELP = {
     "models-ordering": (
         "Order",
-        "How the list is ordered; the Task select chooses the rows.\n"
-        "- Newest first: latest run first.\n"
-        "- By family: a graph of each family, each run under the checkpoint it came from. "
-        "Clicking a run selects it; its arrow only folds or unfolds the runs under it.",
+        "How the list is ordered. The Task select chooses which rows it shows.\n"
+        "- Newest first: the latest run first\n"
+        "- By family: a graph of families, each run under the checkpoint it came from\n"
+        "- A run in the graph: a click selects it\n"
+        "- Its arrow: only folds or unfolds the runs under it",
     ),
     "models-contested": (
         "Runs differ",
-        "Runs kept under this record's conditions in the version's report store differ.\n\n"
-        "- Every run is kept as recorded, and each can be registered.\n"
-        "- Without deterministic algorithms runs can differ; with them on, the runs were "
-        "expected to agree, so the difference is flagged.\n"
-        "- Investigate it, comparing environment facts first; notes on the Test page record "
-        "what was found and change nothing.",
+        "Runs kept under this record's conditions in the version's report store differ.\n"
+        "- Each run: kept as recorded, and each can be registered\n"
+        "- Flagged: only with deterministic algorithms on, as runs can differ without\n"
+        "- To investigate: compare the environment facts first\n"
+        "- Test page notes: record what was found and change nothing",
     ),
     "models-usage": (
         "Usage history",
-        "Each cohort version keeps an append-only usage history in its report store.\n\n"
-        "- Every test run and every registration, started here or from the command line.\n"
-        "- Model loads from a list once ordered by test score stay shown as they were "
-        "recorded.\n"
+        "Each cohort version keeps an append-only usage history in its report store.\n"
+        "- Lists: every test run and registration, from here or the command line\n"
+        "- Older model loads: from a list once ordered by test score, as recorded\n"
         "Ref: reports/usage.jsonl",
     ),
 }

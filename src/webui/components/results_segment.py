@@ -181,13 +181,11 @@ CROSS_WORKSPACE_GAP = (
 SEGMENT_HELP = {
     "models-results": (
         "Results",
-        "Every kept report and readable ledger record of this family or workspace.\n\n"
-        "- One table per protocol, newest run first; nothing is ordered by a metric.\n"
-        "- Compare shows the first five chosen side by side, as recorded, with no computed "
-        "difference.\n"
-        "- Export writes every chosen or shown row as CSV or JSON, uncapped.\n"
-        "Across workspaces: not built in this page yet; on the machine, the export script "
-        "joins them.\n"
+        "Every kept report and readable ledger record of this family or workspace.\n"
+        "- Tables: one per protocol, newest run first, never ordered by a metric\n"
+        "- Compare: the first five chosen side by side as recorded, nothing computed\n"
+        "- Export: every chosen or shown row as CSV or JSON, uncapped\n"
+        "- Across workspaces: the machine's export script joins them, not this page\n"
         f"{REF_PREFIX} {EXPORT_SCRIPT}",
     ),
 }

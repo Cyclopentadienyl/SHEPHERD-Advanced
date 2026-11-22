@@ -3658,6 +3658,25 @@ def test_the_order_note_and_the_details_empty_state_follow_what_is_listed():
     assert mp.DETAIL_SELECT in mp.detail_parts({}, {}, None, {})["top"]
 
 
+def test_every_models_help_text_is_within_the_text_budget():
+    """The text brief's §11 (TEXT_BUDGET): each ⓘ of Models (its own and the
+    Results segment's) a lead that answers the question in 90 characters or
+    fewer, then 2-4 items of one form, each 76 characters or fewer, 80 words
+    at most, no semicolon, Ref last (four texts were over it)."""
+    from src.webui.components import help as h
+    from src.webui.components import results_segment as rs
+
+    texts = {**mp.PAGE_HELP, **rs.SEGMENT_HELP}
+    assert set(texts) == {"models-ordering", "models-contested", "models-usage", "models-results"}
+    for key, (_title, text) in texts.items():
+        assert h.budget_problems(text, h.TEXT_BUDGET) == (), (key, h.budget_problems(text, h.TEXT_BUDGET))
+    # Every fact kept: the ones each text carried before it was laid out again.
+    assert "deterministic algorithms" in texts["models-contested"][1]
+    assert "Test page notes" in texts["models-contested"][1]
+    assert "Ref: reports/usage.jsonl" in texts["models-usage"][1]
+    assert "uncapped" in texts["models-results"][1] and "first five" in texts["models-results"][1]
+
+
 def test_the_load_note_is_a_row_under_load_and_results_actions_follow_their_fields():
     """The layout rules' "beside" (a message never shares a row with a button):
     what Load does (the view's note, two sentences) stood beside Load this
