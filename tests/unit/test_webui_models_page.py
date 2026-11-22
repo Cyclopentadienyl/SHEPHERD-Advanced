@@ -4726,7 +4726,8 @@ const [base, hold, entered, act] = process.argv.slice(2);
       runs: [...list.querySelectorAll('.shep-fam-body')].filter((e) => e.getClientRects().length).map((e) => e.dataset.run),
       graph: !!list.querySelector('.shep-fam'), table: !!list.querySelector('tr.shep-tree-run'),
       viewFor: marker ? marker.getAttribute('data-for') : null,
-      count: document.querySelector(count).innerText.trim(),
+      // The count's words as drawn, never a hidden status tracker's timer (a draw in flight).
+      count: (document.querySelector(count + ' .html-container') || document.querySelector(count)).innerText.trim(),
       current: current ? (current.getAttribute('data-key') || current.getAttribute('data-run') || (current.closest('li[data-run]') || { dataset: {} }).dataset.run || '') : null,
       outside: outside ? outside.innerText.trim() : '',
       selected: head ? head.getAttribute('data-key') : null,
@@ -4821,3 +4822,115 @@ def test_an_answer_that_comes_late_never_draws_an_older_state_in_a_browser(
     assert after["table"] and not after["graph"] and after["count"] == during["count"], (
         during, after)
     assert (after["current"] or "").startswith(picked + "/"), after
+
+
+#: A search answered late (G07; the review of 5171661, P2-1): "b" typed and
+#: drawn, then "e" (its search, asked with "be", held on the server: a file
+#: handshake, ``hold`` while it is held, ``entered`` once it is), Clear
+#: clicked and its drawing landed, then the search let go; what the page
+#: shows once every answer has come is read.
+_LATE_SEARCH_JS = r"""
+const { chromium } = require('playwright');
+const fs = require('fs');
+const QUEUE_JS = __QUEUE_JS__;
+const ROWS = '#shep-models-research-rows', COUNT = '#shep-models-research-count';
+const BOX = '#shep-models-research-search input, #shep-models-research-search textarea';
+const [base, hold, entered] = process.argv.slice(2);
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 });
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  const viewFor = (v) => page.waitForFunction((v) => { const m = document.querySelector('#shep-models-research-rows .shep-view-for'); return !!m && m.getAttribute('data-for') === v; }, v, { timeout: 30000 });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const shown = () => page.evaluate(([rows, count, box]) => {
+    const list = document.querySelector(rows);
+    return {
+      query: document.querySelector(box).value,
+      runs: [...list.querySelectorAll('.shep-fam-body')].filter((e) => e.getClientRects().length).map((e) => e.dataset.run),
+      count: (document.querySelector(count + ' .html-container') || document.querySelector(count)).innerText.trim(),
+    };
+  }, [ROWS, COUNT, BOX]);
+  const out = {};
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.click('#shep-page-models-button');
+  await viewFor('newest|all'); await idle();
+  await page.click('#shep-mp-order label:has-text("By family")');
+  await viewFor('family|all'); await idle(); await frames(); await idle();
+  out.before = await shown();
+  // "b" typed and drawn; then "e", its search held on the server.
+  await page.locator(BOX).pressSequentially('b');
+  await page.waitForFunction((c) => document.querySelector(c).innerText.includes('“b”'), COUNT, { timeout: 30000 });
+  await idle();
+  fs.writeFileSync(hold, 'hold');
+  await page.keyboard.press('e');
+  const start = Date.now();
+  while (!fs.existsSync(entered)) {
+    if (Date.now() - start > 30000) { throw new Error('the search never reached the server'); }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  // Clear, answered and drawn while the search is held.
+  await page.click('#shep-models-research-search-clear');
+  await page.waitForFunction(([count, box, full]) => document.querySelector(box).value === ''
+    && document.querySelector(count).innerText.trim() === full, [COUNT, BOX, out.before.count], { timeout: 30000 });
+  out.during = await shown();
+  // Let go, then everything answered and drawn.
+  fs.unlinkSync(entered); fs.unlinkSync(hold);
+  await idle(); await frames(); await idle(); await frames(); await idle();
+  out.after = await shown();
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_search_answered_after_its_clear_draws_no_search_in_a_browser(tmp_path, family):
+    """G07 (an update never applies an old state; the review of 5171661,
+    P2-1): By family, "b" typed and drawn, then "e", its search (asked with
+    "be") held on the server (a file handshake, no timed wait) while Clear is
+    clicked and its drawing lands; once the search is let go and every
+    request is answered,
+    the search box is empty and the runs drawn and the count are the whole
+    list's, as before the search: a search answered late draws the box as it
+    is, never the text it was typed with."""
+    import functools
+
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    hold, entered = tmp_path / "hold", tmp_path / "entered"
+    demo = create_gradio_app()
+    box = next(b for b in demo.blocks.values()
+               if getattr(b, "elem_id", None) == "shep-models-research-search")
+    (searched,) = [fn for fn in demo.fns.values()
+                   if fn.name == "_searched" and (box._id, "input") in fn.targets]
+    original = searched.fn
+
+    @functools.wraps(original)
+    def held(*args, **kwargs):
+        # The search's handler is processing; it waits here while held.
+        if hold.exists():
+            entered.write_text("in")
+            deadline = time.monotonic() + 60
+            while hold.exists():
+                if time.monotonic() > deadline:
+                    raise TimeoutError("the held search was never let go")
+                time.sleep(0.01)
+        return original(*args, **kwargs)
+
+    searched.fn = held
+    script = _LATE_SEARCH_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+    with served(demo, **mount_options()) as base:
+        try:
+            seen = run_node(script, tmp_path, base[:-len("gradio_api")], str(hold), str(entered))
+        finally:
+            hold.unlink(missing_ok=True)
+    before, during, after = seen["before"], seen["during"], seen["after"]
+    assert before["query"] == "" and len(before["runs"]) > 4, before
+    assert during == before, (before, during)
+    # Settled: the empty box, and the whole list drawn under it.
+    assert after == before, (before, after)

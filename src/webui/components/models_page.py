@@ -129,7 +129,6 @@ import json
 import logging
 import math
 import re
-import time
 from datetime import datetime
 from typing import Any, Collection, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -1885,7 +1884,7 @@ def create_models_page(ctx: Any) -> None:
         if again is not None:
             # A new view value, so the shared list draws its rows again with
             # the selection (and enables Load); the token means nothing else.
-            out[1] = {**out[1], "redraw": time.monotonic_ns()}
+            out[1] = {**out[1], "redraw": ml.draw_token()}
         return (*states, *out)
 
     def _sync(listing, data, stale, last, phase, order, task, selected, seg_value, current,

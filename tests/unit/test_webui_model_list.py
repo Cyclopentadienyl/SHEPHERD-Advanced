@@ -788,11 +788,12 @@ def _listing(root, monkeypatch):
     return ml.list_models("demo", operator_request(monkeypatch))
 
 
-def _drawn(demo, handle, listing, selected=None, older=False, view=None, search="", fold=None):
+def _drawn(demo, handle, listing, selected=None, older=False, view=None, search="", fold=None,
+           said=None):
     """The list's one draw (`_draw`, on its token's and its view's change) on
-    a session's state: what it draws, by component."""
+    a session's state and the search box: what it draws, by component."""
     (draw,) = [fn for fn in demo.fns.values() if fn.name == "_draw" and handle.rows in fn.outputs]
-    out = draw.fn(listing, selected, older, view, search, fold or {})
+    out = draw.fn(*[listing, selected, older, view, search, fold or {}, said][:len(draw.inputs)])
     return dict(zip(map(id, draw.outputs), out, strict=True))
 
 
@@ -1508,16 +1509,16 @@ def test_the_list_redraws_when_the_page_changes_its_view(root, serving, monkeypa
     # show the selection, whose details stay.
     disease = _key("model-12.pt")
     rows, count, facts, load, reason, note = redraw.fn(listing, disease, False,
-                                                       {"task": "gene"}, "", {})
+                                                       {"task": "gene"}, "", {}, None)
     assert "Selected model not shown by this filter (Task: Gene)" in rows
     assert disease not in re.findall(r'data-key="([^"]+)"', rows)
     assert "Select a model" not in facts and load["interactive"] is True and reason == ""
     _rows, _count, _facts, load, reason, _note = redraw.fn(listing, disease, False,
-                                                           {"task": "disease"}, "", {})
+                                                           {"task": "disease"}, "", {}, None)
     assert load["interactive"] is True and reason == ""
     assert "not shown by this filter" not in _rows
     # A selection the listing does not hold is drawn as none (never described).
-    gone = redraw.fn(listing, "gatv2/x/gone.pt", False, {"task": "disease"}, "", {})
+    gone = redraw.fn(listing, "gatv2/x/gone.pt", False, {"task": "disease"}, "", {}, None)
     assert "Select a model" in gone[2] and gone[3]["interactive"] is False
     assert handle.head_extra.value == "Full records" and handle.foot_extra.value == "Compare"
     assert handle.refresh["inputs"] == [handle.workspace, handle.show_older, handle.view,
@@ -1530,8 +1531,10 @@ def test_the_list_is_drawn_in_one_place_from_the_state_as_it_is_then(
     """G07 (the review of 00258f4, SL-R1: a pick answered after a newer search
     drew the list for no search): what the list shows (its rows, its count,
     the facts) is drawn by one listener per list, on its draw token's and its
-    view's change, from States only (Gradio reads them when the draw runs),
-    one draw of a list at a time and the last one asked for kept
+    view's change, from States (Gradio reads them when the draw runs) and the
+    search box (the page reads it when it asks for the draw; the review of
+    5171661: a search answered after a Clear drew its text again under the
+    empty box), one draw of a list at a time and the last one asked for kept
     ("always_last"); every event that changes what the list shows writes the
     token and none draws the rows or the count itself. The draw is pure:
     nothing is read from disk or listed again."""
@@ -1542,7 +1545,7 @@ def test_the_list_is_drawn_in_one_place_from_the_state_as_it_is_then(
         (draw,) = [fn for fn in demo.fns.values()
                    if fn.name == "_draw" and each.rows in fn.outputs]
         assert set(draw.targets) == {(each.drawn._id, "change"), (each.view._id, "change")}
-        assert draw.inputs and all(isinstance(i, gr.State) for i in draw.inputs)
+        assert [i for i in draw.inputs if not isinstance(i, gr.State)] == [each.search]
         assert draw.trigger_mode == "always_last" and draw.concurrency_limit == 1
         assert draw.concurrency_id == f"{each.elem_id}-draw"
         for part in (each.rows, each.count, each.facts):
@@ -1567,6 +1570,169 @@ def test_the_list_is_drawn_in_one_place_from_the_state_as_it_is_then(
                             search="disease", fold={})
     assert (again.rows, again.count, again.facts) == (
         drawn[id(handle.rows)], drawn[id(handle.count)], drawn[id(handle.facts)])
+
+
+class _Page:
+    """One session of a list's page, as Gradio 6.30 runs its events
+    (`served_page.ServedSession` for the real queue): a component's value is
+    the page's when the event is asked, a ``gr.State`` the session's when it
+    is processed, and an answer's outputs are applied before the states it
+    changed fire their ``.change`` (the list's draw, on its token's change).
+    `ask` gathers an event's component inputs; `run` processes it."""
+
+    def __init__(self, demo, handle):
+        self.handle = handle
+        self.values = {id(b): getattr(b, "value", None) for b in demo.blocks.values()}
+        (self.draw,) = [fn for fn in demo.fns.values()
+                        if fn.name == "_draw" and handle.rows in fn.outputs]
+        self.fns = {fn.name: fn for fn in demo.fns.values()
+                    if set(map(id, fn.inputs + fn.outputs)) & {
+                        id(handle.listing), id(handle.fold), id(handle.search),
+                        id(handle.selected), id(handle.plan), id(handle.drawn)}}
+
+    def __getitem__(self, block):
+        return self.values[id(block)]
+
+    def __setitem__(self, block, value):
+        self.values[id(block)] = value
+
+    def ask(self, name):
+        fn = self.fns[name] if isinstance(name, str) else name
+        return fn, {id(b): self.values[id(b)] for b in fn.inputs if not isinstance(b, gr.State)}
+
+    def run(self, asked, *, evt=None, request=None):
+        import inspect
+
+        fn, gathered = asked
+        inputs = iter([gathered.get(id(b), self.values[id(b)]) for b in fn.inputs])
+        args = []
+        # Gradio's special arguments by their parameter, the inputs in order.
+        for param in inspect.signature(fn.fn).parameters.values():
+            if param.name == "request":
+                args.append(request if request is not None else gradio_request())
+            elif param.name == "evt":
+                args.append(gr.EventData(None, evt or {}))
+            else:
+                value = next(inputs, inspect.Parameter.empty)
+                if value is inspect.Parameter.empty:
+                    break
+                args.append(value)
+        out = fn.fn(*args)
+        out = out if isinstance(out, tuple) else (out,)
+        changed = set()
+        for block, value in zip(fn.outputs, out, strict=True):
+            if isinstance(value, dict) and value.get("__type__") == "update":
+                if "value" not in value:
+                    continue
+                value = value["value"]
+            if isinstance(block, gr.State) and self.values[id(block)] != value:
+                changed.add(id(block))
+            self.values[id(block)] = value
+        if id(self.handle.drawn) in changed or id(self.handle.view) in changed:
+            self.run(self.ask(self.draw))
+
+    def act(self, name, **kw):
+        self.run(self.ask(name), **kw)
+
+
+def test_a_search_answered_after_its_clear_draws_the_box_as_it_is(root, serving, monkeypatch):
+    """G07 (the review of 5171661, P2-1: "be" typed, Clear clicked, the
+    search answered after Clear's: the list drew "be" under the empty box):
+    the draw reads the search box as it is when it is asked, never the text a
+    search was typed with, so a search answered late only asks for one more
+    drawing, which draws the box as it is. The search kept is said alike by
+    the count and the rows."""
+    demo, _ctx, handle, _ = _component("research")
+    page = _Page(demo, handle)
+    page[handle.listing] = listing = _listing(root, monkeypatch)
+    page.run(page.ask(page.draw))
+    full = page[handle.count]
+    page[handle.search] = "disease"
+    late = page.ask("_searched")                 # asked with "disease", not answered yet
+    page.act("_cleared")
+    assert page[handle.search] == "" and page[handle.count] == full
+    page.run(late)                               # answered after Clear's
+    assert page[handle.search] == ""
+    assert page[handle.count] == full and "“disease”" not in page[handle.count]
+    assert page[handle.rows] == ml.list_drawing(listing, None, ml.PRESETS["research"]).rows
+    # Typed and answered in order: the box's search drawn.
+    page[handle.search] = "disease"
+    page.act("_searched")
+    assert "“disease”" in page[handle.count]
+
+
+def test_what_was_said_beside_load_stays_while_its_selection_is_drawn(
+        root, serving, monkeypatch):
+    """The review of 5171661 (P3-1 of the interaction review, Nit-2 of the
+    correctness review): a refusal said beside Load when it was clicked is
+    the session's (``said``), drawn by the list's one draw while the
+    selection it was said for is drawn: a search, its Clear and "Show older
+    runs" keep it (each draws the list again); a new pick, a refresh or a
+    Load that opens its confirmation says the selection's own reason."""
+    demo, _ctx, handle, _ = _component("clinical")
+    page = _Page(demo, handle)
+    page[handle.listing] = listing = _listing(root, monkeypatch)
+    picked = _key("model-12.pt")
+    page.act("_select", evt={"key": picked})
+    assert page[handle.selected] == picked and page[handle.reason] == ""
+    # Load asked from a host D8 refuses: the refusal is said beside it.
+    page.act("_request", request=gradio_request(server=("192.0.2.10", 8264)))
+    refusal = page[handle.reason]
+    assert "shep-reason" in refusal and page[handle.plan] is None
+    page[handle.search] = "disease"
+    page.act("_searched")
+    assert "“disease”" in page[handle.count] and page[handle.reason] == refusal
+    page.act("_cleared")
+    assert page[handle.search] == "" and page[handle.reason] == refusal
+    page.act("_select", evt={"key": "__older__"})
+    assert page[handle.show_older] is True and page[handle.reason] == refusal
+    # Another selection: its own reason; picked again: the refusal is not its.
+    page.act("_select", evt={"key": _key("model-05.pt")})
+    assert page[handle.reason] == ""
+    page.act("_select", evt={"key": picked})
+    assert page[handle.selected] == picked and page[handle.reason] == ""
+    # Refused again, then the list read again: what was said was the list before.
+    page.act("_request", request=gradio_request(server=("192.0.2.10", 8264)))
+    assert page[handle.reason] == refusal
+    page[handle.workspace] = listing["workspace"]
+    page.act("_refresh")
+    assert page[handle.selected] == picked and page[handle.reason] == ""
+    assert page[handle.listing]["workspace"] == listing["workspace"]
+
+
+def test_a_draw_token_is_new_every_time_whatever_the_clock_reads(root, serving, monkeypatch):
+    """The review of 5171661 (P3-1 of the correctness review): Gradio fires a
+    state's change only when its value differs at the end of an event, and a
+    clock can read the same twice (Python 3.12 on Windows ticks
+    ``time.monotonic`` every 15.6 ms), so a token from the clock could leave
+    a change undrawn. The tokens are one count: with the clock held, two
+    changes write two tokens."""
+    demo, _ctx, handle, _ = _component("research")
+    cleared = next(fn for fn in demo.fns.values() if fn.name == "_cleared")
+    assert cleared.outputs[-1] is handle.drawn
+    monkeypatch.setattr(time, "monotonic_ns", lambda: 1)
+    monkeypatch.setattr(time, "monotonic", lambda: 1.0)
+    first, second = cleared.fn({})[-1], cleared.fn({})[-1]
+    assert first != second and 0 not in (first, second)
+    assert ml.draw_token() != ml.draw_token()
+
+
+def test_a_draw_that_fails_changes_nothing_drawn(root, serving, monkeypatch, caplog):
+    """Nit-1 of the review of 5171661: Gradio 6.30 drops a deferred call
+    after a failed one, so a draw that raised would leave a draw asked for
+    meanwhile undone; the draw says the failure in the log and changes
+    nothing (the list keeps its last drawing until the next change)."""
+    demo, _ctx, handle, _ = _component("research")
+    listing = _listing(root, monkeypatch)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("broken drawing")
+
+    monkeypatch.setattr(ml, "list_drawing", broken)
+    with caplog.at_level("ERROR", logger=ml.logger.name):
+        drawn = _drawn(demo, handle, listing)
+    assert all(value == gr.update() for value in drawn.values())
+    assert "could not be drawn" in caplog.text
 
 
 def test_the_research_load_is_off_for_a_base_or_refused_row_with_its_reason(
@@ -2494,11 +2660,10 @@ def test_a_search_reveals_what_it_found_and_clearing_it_brings_the_folds_back(
         return {k: h for _c, k, h in _rows(rows) if k}[_key("model-03.pt")]
 
     query = root["shas"]["model-03.pt"][:8]
-    fold, drawn_search, _token = searched.fn(query, {**manual, ml.search_node(run): False})
+    fold, _token = searched.fn({**manual, ml.search_node(run): False})
     assert fold == manual                      # the operator's folds kept; an old search's dropped
-    assert searched.outputs[0] is handle.fold and searched.outputs[2] is handle.drawn
-    assert drawn_search == query
-    drawn = _drawn(demo, handle, listing, None, False, None, drawn_search, fold)
+    assert searched.outputs == [handle.fold, handle.drawn]
+    drawn = _drawn(demo, handle, listing, None, False, None, query, fold)
     assert not hidden(drawn[id(handle.rows)])  # revealed while the search shows the list
     assert drawn[id(handle.count)].startswith("1 run matches")
     # Folded again while the search is shown: that search's, the manual entry untouched.
@@ -2509,8 +2674,8 @@ def test_a_search_reveals_what_it_found_and_clearing_it_brings_the_folds_back(
     assert during == {**manual, ml.search_node(run): False}
     assert hidden(ml.list_html(listing, None, ml.PRESETS["research"], search=query, fold=during))
     # Cleared: the operator's own folds are back, the search's are gone.
-    box, fold, drawn_search, _token = cleared.fn(during)
-    assert box == "" and fold == manual and drawn_search == ""
+    box, fold, _token = cleared.fn(during)
+    assert box == "" and fold == manual and cleared.outputs[0] is handle.search
     assert hidden(_drawn(demo, handle, listing, None, False, None, "", fold)[id(handle.rows)])
     assert ml.fold_open(manual, run, "", False, True) is False
     assert ml.fold_open(manual, run, query, True, False) is True
