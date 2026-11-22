@@ -723,7 +723,7 @@ def test_the_line_says_what_start_sends_and_reset_brings_back_each_tasks_referen
     assert record == [] and refused == "" and [u["value"] for u in updates] == fp.start_values(tasks)
     assert dict(zip(fp.FINETUNE_FIELDS, (u["value"] for u in updates)))["num_neighbors"] == ""
     assert reset_line == tc.set_by_line_html(
-        [], [], "each child takes its task’s reference values and this build’s defaults.")
+        [], [], "Each child takes its task’s reference values and this build’s defaults.")
     assert "Untouched, each child takes its task’s reference" in fp.hops_note_html(
         tasks, None, record, "")
     said, _stop, _beside = fp._on_finetune_start(operator, *_shown(ws, parents, key), ws,

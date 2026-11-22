@@ -1141,8 +1141,8 @@ def set_by_line_html(rows: Sequence[Tuple[str, str, str]], problems: Sequence[st
     takes without it, `without_words`), in the form's order. The first
     `SET_BY_SHOWN` are named and the rest counted ("and 4 more";
     `renderers.named_words`), every one a row of its "Details ›"
-    (`renderers.details_list`). With none: "Set by you: nothing; " and
-    `nothing`, what the run then takes; but "Set by you: nothing valid."
+    (`renderers.details_list`). With none: "Set by you: nothing." and
+    `nothing`, what the run then takes, a sentence of its own; but "Set by you: nothing valid."
     while Start would refuse, since no run then takes anything (OPS-R2: the
     line never says a reference is taken for a value refused). Then "Not
     valid: …", `problems`, what Start would refuse, each by its label.
@@ -1154,7 +1154,7 @@ def set_by_line_html(rows: Sequence[Tuple[str, str, str]], problems: Sequence[st
     elif problems:
         text = "Set by you: nothing valid."
     else:
-        text = f"Set by you: nothing; {nothing}"
+        text = f"Set by you: nothing. {nothing}"
     details = (r.details_list([(key, r.e(f"{value} ({without})")) for key, value, without in rows],
                               classes="shep-setby-kv")
                if len(rows) > SET_BY_SHOWN else "")
@@ -1179,7 +1179,7 @@ def set_by_you_html(values: Mapping[str, Any], touched: Collection[str]) -> str:
     each setting and spec field Start sends (`_base_reading`), in the form's
     order, by the form's name of it, with the value the run takes without it
     (the reference's; "default" where the recipe sets none and the run takes
-    this build's). With none: "the run takes the reference values", and this
+    this build's). With none: "The run takes the reference values", and this
     build's defaults where the recipe sets some. Its "Not valid: …" is what
     Start would refuse (`_base_reading`)."""
     references, sources = base_references()
@@ -1195,7 +1195,7 @@ def set_by_you_html(values: Mapping[str, Any], touched: Collection[str]) -> str:
                              _spec_words(key, getattr(getattr(spec, section), name)),
                              f"reference {_spec_words(key, _spec_reference(key))}"))
     defaults = any(name not in sources for name in BASE_FIELDS)
-    nothing = ("the run takes the reference values"
+    nothing = ("The run takes the reference values"
                + (" and this build's defaults." if defaults else "."))
     return set_by_line_html(rows, problems, nothing)
 
@@ -3490,7 +3490,7 @@ DEVICE_CHOICES = ("auto", "cuda", "cpu")
 #: Continue drawer's, Fine-tune's) says before any start what the start
 #: would refuse, and what to choose, as its info line; the refusal itself is
 #: the job runner's, in the same words (`training_device.unavailable_words`).
-DEVICE_NOTE = "No CUDA device here: auto and cuda are refused; choose cpu."
+DEVICE_NOTE = "No CUDA device here: auto and cuda are refused. Choose cpu."
 
 
 def device_note() -> Optional[str]:

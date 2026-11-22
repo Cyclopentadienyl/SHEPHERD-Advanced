@@ -297,7 +297,7 @@ def test_the_line_says_what_the_operator_set_with_the_value_the_run_takes_withou
     Start sends, with the reference's value, or this build's default where
     the recipe sets none; a value equal to the reference is still listed."""
     assert tc.set_by_you_html(_values(), []) == (
-        '<div class="shep-setby"><p>Set by you: nothing; the run takes the reference '
+        '<div class="shep-setby"><p>Set by you: nothing. The run takes the reference '
         "values and this build&#x27;s defaults.</p></div>")
     line = tc.set_by_you_html(
         _values(num_epochs=5, split_seed=0, num_neighbors="20, 10, 5"),

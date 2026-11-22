@@ -387,7 +387,7 @@ def set_by_html(tasks: Any, values: Mapping[str, Any], touched: Any) -> str:
              _without(name, chosen)) for name in FINETUNE_FIELDS if name in settings]
     defaults = any(name not in reference_settings("finetune", task)[1]
                    for task in chosen for name in offered_settings(chosen))
-    nothing = ("each child takes its task’s reference values"
+    nothing = ("Each child takes its task’s reference values"
                + (" and this build’s defaults." if defaults else "."))
     return tc.set_by_line_html(rows, problems, nothing)
 

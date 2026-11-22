@@ -3063,7 +3063,8 @@ def test_every_device_field_is_the_one_field_with_the_hosts_note(monkeypatch):
         return [by_id[key] for key in ("device", "continue_device", "ft_device")]
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    assert tc.DEVICE_NOTE == "No CUDA device here: auto and cuda are refused; choose cpu."
+    assert tc.DEVICE_NOTE == "No CUDA device here: auto and cuda are refused. Choose cpu."
+    assert ";" not in tc.DEVICE_NOTE                      # the text brief's §2: no semicolons
     for field in fields():
         assert isinstance(field, gr.Radio) and field.label == "Device"
         assert [c[1] for c in field.choices] == ["auto", "cuda", "cpu"] and field.value == "auto"
