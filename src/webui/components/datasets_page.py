@@ -52,9 +52,11 @@ renderer (`renderers.dataset_identity_html` and its pieces).
   the table's place shows the folder's notice (`workspaces.setting_notice`,
   drawn once by `renderers.notice_block`) as numbered steps: choose the
   folder (the notice's link to Settings › Data locations), then build a
-  dataset in it (`BUILD_STEP`); with a folder that lists no workspace, its
-  own empty words and the same step. Under a listed table, one quiet line
-  (`BUILD_LINE`); nothing else on the page repeats it.
+  dataset in it (`BUILD_STEP`), the commands a row each under the steps
+  (`commands_html`: the token and its Copy, never inside a sentence); with
+  a folder that lists no workspace, its own empty words, the same step and
+  rows. Under a listed table, one quiet line (`BUILD_LINE`) and the rows;
+  nothing else on the page repeats it.
 - **Laid out by what it holds** (the UI sweep of 2026-11-22): the two panels
   grow from their own bases (`--shep-panel-basis`, `--shep-panel-grow`), the
   table's panel no narrower than the table with its optional columns
@@ -78,7 +80,7 @@ import gradio as gr
 from src.evaluation import protocols
 from src.evaluation.caveats import DATA_KIND_WORDS, MEASUREMENT_NAMES, label_words
 from src.webui.components import renderers as r
-from src.webui.components.help import help_button
+from src.webui.components.help import copy_button, help_button
 from src.webui.components.served_status import read_status, serving_workspace
 from src.webui.components.workspaces import (
     OUTSIDE_PATH,
@@ -98,15 +100,20 @@ logger = logging.getLogger(__name__)
 
 #: How a dataset is built (no building in the WebUI, BACKLOG 29): the command
 #: that writes a trainable workspace (graph, samples, manifest and dataset
-#: record), and the demo's. Plain text: each command is drawn as a literal
-#: token where it is said (`renderers.literal_html`).
+#: record), and the demo's. Each is a key-value row of its own, the command a
+#: literal token with its Copy (`commands_html`), never inside a sentence (the
+#: text brief's §8: a token of over 30 characters, or a second one, is a row).
 BUILD_COMMAND = "scripts/build_knowledge_graph.py --generate-samples"
 DEMO_COMMAND = "scripts/setup_demo.py"
+#: The commands' rows: each key names what its command does.
+COMMANDS = (("Build", BUILD_COMMAND, "the build command"),
+            ("Demo", DEMO_COMMAND, "the demo's command"))
 #: The step after choosing the workspaces folder (the first-use notice's step
-#: 2), and the next step of a folder that lists no workspace yet.
-BUILD_STEP = f"Build a dataset in it on the server: {BUILD_COMMAND} (the demo: {DEMO_COMMAND})."
+#: 2), and the next step of a folder that lists no workspace yet: the act in
+#: words, its commands the rows under it.
+BUILD_STEP = "Build a dataset in it on the server, with a command below."
 #: The one quiet line under a listed table: how another dataset is added.
-BUILD_LINE = f"Add a dataset on the server: {BUILD_COMMAND} (the demo: {DEMO_COMMAND})."
+BUILD_LINE = "Add a dataset on the server, with a command below."
 #: A workspaces folder that is set and lists no workspace (its own words; the
 #: folder's notice is for a folder not set or not usable).
 NO_WORKSPACE_YET = "No workspace in this folder yet."
@@ -265,14 +272,23 @@ def empty_html(data: Mapping[str, Any]) -> str:
     build; a list that could not be read, its reason."""
     notice = data.get("notice")
     if notice:
-        steps = (BUILD_STEP,) if notice.get("kind", "neutral") == "neutral" else ()
-        inner = r.notice_block(notice, steps=steps)
+        build = notice.get("kind", "neutral") == "neutral"
+        inner = (r.notice_block(notice, steps=(BUILD_STEP,) if build else ())
+                 + (commands_html() if build else ""))
     elif data.get("problem"):
         inner = f'<p class="shep-empty">{r.status_mark("error", data["problem"])}</p>'
     else:
         inner = (f'<div class="shep-empty"><p>{r.e(NO_WORKSPACE_YET)}</p>'
-                 f"<p>{r.literal_html(BUILD_STEP)}</p></div>")
+                 f"<p>{r.e(BUILD_STEP)}</p></div>{commands_html()}")
     return f'<div class="shep-ds-empty">{inner}</div>'
+
+
+def commands_html() -> str:
+    """**The build commands**, a key-value row each (`COMMANDS`): its key,
+    the command a literal token broken only before its own separators, and
+    its Copy (the full command on the clipboard)."""
+    return r.summary_list([(key, f"{r.token_html(command)} {copy_button(command, what)}")
+                           for key, command, what in COMMANDS], classes="shep-ds-cmds")
 
 
 #: The columns a narrow table drops (the shell's fit, `style.FIT`), their
@@ -321,9 +337,9 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
 
 
 def build_line_html() -> str:
-    """The quiet line under a listed table (`BUILD_LINE`, each command a
-    literal token)."""
-    return f'<p class="shep-ds-build">{r.literal_html(BUILD_LINE)}</p>'
+    """The quiet line under a listed table (`BUILD_LINE`), its commands the
+    rows under it (`commands_html`)."""
+    return f'<p class="shep-ds-build">{r.e(BUILD_LINE)}</p>{commands_html()}'
 
 
 #: The first panel's one-line description, under its title.
@@ -629,6 +645,8 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ds-empty .shep-empty > p + p {{ margin-top: var(--shep-space-para); }}
 {_PAGE} #shep-ds-notes {{ padding: 0 var(--shep-inset) var(--shep-space-3); }}
 {_PAGE} .shep-ds-build {{ margin: 0; font-size: 14px; line-height: var(--shep-lh-prose); color: var(--shep-text-2); }}
+/* The build commands, a row each under the step or the line that names them. */
+{_PAGE} .shep-ds-cmds {{ margin-top: var(--shep-space-item); }}
 /* The build line belongs to a listed table: an empty list says how in its own place. */
 {_PAGE} .shep-ds-main:not(:has(table.shep-dstbl)) #shep-ds-notes {{ display: none !important; }}
 {_PAGE} #shep-ds-table .shep-tbl-wrap {{ margin: 10px var(--shep-inset); }}
@@ -687,6 +705,7 @@ __all__ = [
     "BUILD_COMMAND",
     "BUILD_LINE",
     "BUILD_STEP",
+    "COMMANDS",
     "DEMO_COMMAND",
     "DETAILS_NONE",
     "DETAILS_SELECT",
@@ -702,6 +721,7 @@ __all__ = [
     "USE_UNAVAILABLE",
     "admitted_measurements",
     "build_line_html",
+    "commands_html",
     "comparison_html",
     "create_datasets_page",
     "details_html",

@@ -492,13 +492,38 @@ def test_the_build_line_is_one_quiet_paragraph_drawn_only_under_a_listed_table()
     from src.webui.components import renderers as r
 
     line = dsp.build_line_html()
-    assert line == f'<p class="shep-ds-build">{r.literal_html(dsp.BUILD_LINE)}</p>'
-    assert "shep-reason" not in line and line.count('<code class="shep-tok">') == 3
+    assert line == f'<p class="shep-ds-build">{r.e(dsp.BUILD_LINE)}</p>{dsp.commands_html()}'
+    assert "shep-reason" not in line and line.count('<code class="shep-tok">') == 2
     assert "build_line_html()" in inspect.getsource(dsp.create_datasets_page)
     css = " ".join(dsp.PAGE_CSS.split())
     assert (f"{dsp._PAGE} .shep-ds-main:not(:has(table.shep-dstbl)) #shep-ds-notes "
             "{ display: none !important; }") in css
     assert f"{dsp._PAGE} #shep-ds-notes {{ padding: 0 var(--shep-inset) " in css
+
+
+def test_the_build_commands_are_rows_with_copy_never_inside_a_sentence():
+    """The independent check of the UI sweep (C2, the reviewer's GB10-UI-02:
+    the build command between ordinary words): the first-use step and the
+    line under a listed table said both commands in one sentence (51 and 21
+    characters, and a parenthesis), and at 1550 x 830 the step, at the
+    measure, broke "scripts/build_knowledge_graph" from ".py --generate-
+    samples". Each sentence now says the act in words, with no token; each
+    command is a key-value row of its own (the text brief's §8), its token
+    whole and its Copy holding the full command."""
+    import html as html_lib
+
+    from src.webui.components import renderers as r
+
+    for sentence in (dsp.BUILD_STEP, dsp.BUILD_LINE):
+        assert "shep-tok" not in r.literal_html(sentence), sentence
+        assert ";" not in sentence and "(" not in sentence
+    rows = dsp.commands_html()
+    assert rows.startswith('<dl class="shep-kv') and "shep-ds-cmds" in rows
+    keys = re.findall(r'<dt class="shep-k">(.*?)</dt>', rows)
+    assert keys == [key for key, _command, _what in dsp.COMMANDS]
+    for _key, command, _what in dsp.COMMANDS:
+        assert f'data-copy="{html_lib.escape(command, quote=True)}"' in rows
+        assert r.token_html(command) in rows
 
 
 def test_nothing_listed_says_why(monkeypatch):
@@ -531,12 +556,13 @@ def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch
     assert data["notice"] == notice_view(WORKSPACES_ROOT_NOTICE)
     table = dsp.table_html(data, None, None)
     assert table == (f'<div class="shep-ds-empty">'
-                     f'{r.notice_block(data["notice"], steps=(dsp.BUILD_STEP,))}</div>')
+                     f'{r.notice_block(data["notice"], steps=(dsp.BUILD_STEP,))}'
+                     f'{dsp.commands_html()}</div>')
     assert table.count('data-notice="workspaces_root"') == 1
     steps = re.search(r'<ol class="shep-nb-steps">(.*?)</ol>', table).group(1)
     first, second = re.findall(r"<li>(.*?)</li>", steps)
     assert 'data-shep-go="settings" data-shep-focus="shep-dl"' in first
-    assert second == r.literal_html(dsp.BUILD_STEP) and second.count("shep-tok") == 3
+    assert second == r.e(dsp.BUILD_STEP) and "shep-tok" not in second
     lead = table.split('<ol class="shep-nb-steps">')[0]
     assert "SHEPHERD_" not in re.sub(r"<[^>]+>", "", lead)                 # only under Details
     # Said once: the details and the button relate to it.
@@ -551,7 +577,8 @@ def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch
     # A folder set that lists no workspace: its own words and the build step, no notice.
     empty = {"rows": [], "notice": None, "problem": None}
     said = dsp.table_html(empty, None, None)
-    assert dsp.NO_WORKSPACE_YET in said and r.literal_html(dsp.BUILD_STEP) in said
+    assert dsp.NO_WORKSPACE_YET in said and r.e(dsp.BUILD_STEP) in said
+    assert dsp.commands_html() in said
     assert "data-notice" not in said and said.startswith('<div class="shep-ds-empty">')
     assert "No workspace is listed" in dsp.use_note_html(empty, None)
     # A folder set and not usable: its notice alone (the folder comes first, no build step).
@@ -590,9 +617,10 @@ def test_the_build_line_names_only_a_command_that_builds_a_dataset():
     Every script the line names exists and has a command-line entry; the
     command that writes a trainable workspace is the one named."""
     repo = Path(__file__).resolve().parents[2]
-    named = re.findall(r"scripts/[\w./-]+\.py", dsp.BUILD_LINE)
+    commands = " ".join(command for _key, command, _what in dsp.COMMANDS)
+    named = re.findall(r"scripts/[\w./-]+\.py", commands)
     assert "scripts/build_knowledge_graph.py" in named
-    assert "--generate-samples" in dsp.BUILD_LINE
+    assert "--generate-samples" in dsp.BUILD_COMMAND
     for script in named:
         text = (repo / script).read_text(encoding="utf-8")
         assert _PLANNED_STUB not in text, script
