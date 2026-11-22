@@ -1087,11 +1087,12 @@ button.shep-row {
 .shep-facts-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
 /* Its "↑ Back to the list" (`model_list.BACK_TO_LIST`), shown stacked only, at the title's end. */
 .shep-facts-title > .shep-back-list { display: none; margin-left: auto; font-weight: 400; }
-.shep-facts { display: flex; flex-direction: column; gap: 8px; }
-.shep-facts-sec { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
-.shep-facts-sec > h3 { padding: 8px 12px 0; font-weight: 600; font-size: 15px; margin: 0; }
-.shep-facts-bd { padding: 4px 12px 10px; }
-.shep-facts-warn { border-color: var(--shep-amber-300); background: var(--shep-amber-50); }
+/* Model Facts' sections are groups of their column, not boxes in it (the skill's §2: one
+   container level per region, one content edge per panel): each title and its rows start on
+   the column's edge, a section set apart by the heading's space above it. A warning keeps its
+   own mark and words (`renderers.warning_html`: ▲, amber). */
+.shep-facts { display: flex; flex-direction: column; gap: var(--shep-space-head-above); }
+.shep-facts-sec > h3 { font-weight: 600; font-size: 15px; margin: 0 0 var(--shep-space-head-below); }
 .shep-confirm { border: 1px solid var(--shep-accent-100); background: #fbfbff; border-radius: 10px; padding: 12px 14px; }
 .shep-confirm-q { font-size: 15px; font-weight: 600; margin: 4px 0 10px; }
 .shep-ftbl { border-collapse: separate; border-spacing: 0; width: 100%; max-width: 1080px; border: 1px solid var(--shep-accent-100); border-radius: 8px; background: #fff; }

@@ -2251,17 +2251,27 @@ _IMPORT_DRAWER = {"click": "#shep-test-import-open", "shown": "#shep-test-import
 _DRAWER_SIZES = ((1850, 960), (1366, 768), (960, 1080), (390, 844))
 
 
+#: The windows the configured walk opens the Load drawer at with a row chosen (its Model Facts
+#: beside the list, or under it on a phone), last, so the drawer's other stops see no choice.
+_PICKED_SIZES = ((1850, 960), (390, 844))
+
+
 def _layout_walk_stops(configured: bool):
     """**A state's layout walk**: every page at `browser.LAYOUT_SIZES` (`layout_stops`), then
     its drawers open at `_DRAWER_SIZES` (the Load drawer in every state; Continue and import
-    where `configured`), each stop's layout rules recorded, no focus walk."""
+    where `configured`), each stop's layout rules recorded, no focus walk. Configured, the
+    Load drawer is opened last with a row chosen (`_CHANGE_DRAWER`, at `_PICKED_SIZES`): its
+    chosen model's facts start on the drawer's edge (they sat 13 px in, in boxes of their own,
+    at 390 x 844)."""
     from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES, layout_stops
 
     drawers = [("clinical", _LOAD_DRAWER)] + ([("training", _CONTINUE_DRAWER), ("test", _IMPORT_DRAWER)]
                                              if configured else [])
+    picked = ([{"size": [w, h], "page": "clinical", "open": _CHANGE_DRAWER, "focus": False}
+               for w, h in _PICKED_SIZES] if configured else [])
     return layout_stops(UI_PAGES, LAYOUT_SIZES) + [
         {"size": [w, h], "page": page, "open": drawer, "focus": False}
-        for w, h in _DRAWER_SIZES for page, drawer in drawers]
+        for w, h in _DRAWER_SIZES for page, drawer in drawers] + picked
 
 #: A static page for the shared focus walk itself (`browser.LOOK_JS`'s
 #: `focusWalk`): two buttons that draw a 3 px ring on keyboard focus, with no
