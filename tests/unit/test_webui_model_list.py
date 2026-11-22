@@ -3064,6 +3064,34 @@ def test_a_pick_for_another_generation_is_refused_even_back_in_the_same_workspac
     assert ml.list_generation(True) is None and ml.list_generation("x") is None
 
 
+def test_a_newer_pick_stays_when_an_older_pick_answers_after_it(root, serving, monkeypatch):
+    """SL-R3a (the review of dcaed68, acceptance 3): a run's pick in ``demo``
+    held where it chooses the run's file; meanwhile ``other`` is chosen and a
+    file of it picked (the same relative keys there). The held pick answers
+    after that: it selects nothing, and the newer pick stays."""
+    shutil.copytree(root["workspace"], root["root"] / "other")
+    page, handle = _session("research")
+    operator_mode(monkeypatch)
+    page[handle.workspace] = "demo"
+    page.act("_refresh")
+    held_run, newer = _key("model-12.pt").rsplit("/", 1)[0], _key("model-05.pt")
+    original = ml.run_choice
+
+    def meanwhile(*args, **kwargs):
+        monkeypatch.setattr(ml, "run_choice", original)
+        page[handle.workspace] = "other"
+        page.act("_refresh")
+        page.act("_select", evt={"key": newer, "gen": "2"})
+        assert page[handle.selected] == newer
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ml, "run_choice", meanwhile)
+    page.act("_select", evt={"run": held_run, "gen": "1"})
+    assert page[handle.selected] == newer and page[handle.listing]["workspace"] == "other"
+    assert 'aria-current="true"' in _row_of(page[handle.rows], "model-05.pt")
+    assert 'aria-current="true"' not in _row_of(page[handle.rows], "model-12.pt")
+
+
 def test_the_folds_are_changed_in_place_and_never_written_back(root, serving, monkeypatch):
     """The fold-dict overwrite (OPS-SL-R3): the folds are the session's one
     dict, changed in place under the clock (a fold kept, a search's dropped,

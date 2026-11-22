@@ -5210,10 +5210,24 @@ const [base, hold, entered, mode] = process.argv.slice(2);
     }
   }
   out.during = await shown();
+  // From here on, every selection the details or the list show is noted.
+  await page.evaluate((rows) => {
+    const seen = window.__shepSeen = { keys: [], current: [] };
+    const note = () => {
+      const head = document.querySelector('#shep-mp-detail-hd h2[data-key]');
+      if (head && !seen.keys.includes(head.getAttribute('data-key'))) { seen.keys.push(head.getAttribute('data-key')); }
+      document.querySelectorAll(rows + ' [aria-current="true"]').forEach((e) => {
+        const run = e.getAttribute('data-key') || e.getAttribute('data-run') || (e.closest('li[data-run]') || { dataset: {} }).dataset.run || '';
+        if (!seen.current.includes(run)) { seen.current.push(run); }
+      });
+    };
+    ['#shep-mp-detail-hd', rows].forEach((sel) => new MutationObserver(note).observe(document.querySelector(sel), { childList: true, subtree: true, attributes: true, characterData: true }));
+  }, ROWS);
   fs.unlinkSync(entered); fs.unlinkSync(hold);
   if (mode === 'newer') { await selectedIs(RUN.other); }
   await idle(); await frames(); await idle(); await frames();
   out.after = await shown();
+  out.seen = await page.evaluate(() => window.__shepSeen);
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -5339,8 +5353,13 @@ def test_a_pick_made_in_the_new_workspace_stays_after_an_older_pick_is_let_go_in
     pick in ``demo`` held; ``other`` chosen and drawn; a body of ``other``
     picked before the held pick is let go (its request sent, queued behind
     it). Once every answer has come, the pick made in ``other`` is the
-    selection and the details' (the held one selected nothing), even with a
-    file at the held pick's relative key in ``other``."""
+    selection and the details', and the held one never selected anything on
+    the way (neither the details nor the list showed it once it was let go),
+    even with a file at the held pick's relative key in ``other``. Gradio
+    runs one list's picks one at a time, so here the newer pick is answered
+    after the held one; the held answer landing after the newer pick is the
+    unit test's (`test_webui_model_list.py::
+    test_a_newer_pick_stays_when_an_older_pick_answers_after_it`)."""
     from tests.fixtures.browser import node_with_playwright
     from tests.fixtures.family_world import OTHER_BASE_RUN, run_key
 
@@ -5352,6 +5371,9 @@ def test_a_pick_made_in_the_new_workspace_stays_after_an_older_pick_is_let_go_in
                      {"first": run_key("gamma-disease"), "other": other}, "run_choice")
     during, after = seen["during"], seen["after"]
     assert during["workspace"] == "other" and during["selected"] is None, during
+    held = run_key("gamma-disease")
+    assert not [k for k in seen["seen"]["keys"] if k.startswith(held + "/")], seen["seen"]
+    assert held not in seen["seen"]["current"], seen["seen"]
     assert after["workspace"] == "other" and after["selected"].startswith(other + "/"), after
     assert after["current"] == [other] and after["detail"].startswith("gamma-base"), after
     assert after["loadEnabled"] is False                        # a base: never loaded
