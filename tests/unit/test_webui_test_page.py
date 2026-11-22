@@ -4791,7 +4791,7 @@ def test_the_help_says_what_the_measurement_options_are():
     # R-79: the batch size and the device each have their own ⓘ (one beside
     # Batch size explained both, and Device had none).
     assert "test-fixed" not in tp.TOPIC_HELP
-    for topic, title, says in (("test-batch", "Batch size", "job runner fixes"),
+    for topic, title, says in (("test-batch", "Batch size", "fixed by the job runner"),
                                ("test-device", "Device", "deployment's device")):
         got, text = tp.TOPIC_HELP[topic]
         lead = text.split("\n")[0]
@@ -4803,18 +4803,18 @@ def test_the_help_says_what_the_measurement_options_are():
     title, text = tp.FIELD_HELP["shep-test-measurement"]
     lead = text.split("\n")[0]
     assert title == "Measurement" and len(lead) <= 100 and len(text.split()) <= 80
-    assert "measurements this build implements" in lead
+    assert "this build implements" in lead
     # A base is offered the KG link-prediction measurement (research comparison
     # Stage 5), never told its test is not implemented.
-    assert "A base is offered KG link prediction only" in text and "Mode C" not in text
+    assert "A base: offered KG link prediction only" in text and "Mode C" not in text
     assert "not implemented" not in text
     # Offered by what the model offers (Stage 3), not by a stage list.
     assert "capabilities meet" in text and "learning stage" not in text
     title, text = tp.FIELD_HELP["shep-test-model"]
     assert title == "Checkpoint" and len(text.split("\n")[0]) <= 100
     assert tp.FIELD_HELP["shep-test-model-run"][0] == "Run"
-    assert "a file without a model spec is listed only" in text
-    assert "its LP head on a KG edge set" in text and "a base" not in text
+    assert "No model spec: the file is listed, never measured" in text
+    assert "its LP head" in text and "a base" not in text
     assert "measured by that task" not in text and "capabilities meet" in text
     assert len(text.split()) <= 85
 
@@ -5140,6 +5140,30 @@ def test_with_no_kg_edge_set_the_data_panel_names_the_import_command(site, monke
                         "“Import a new version…”."))
     assert tp.kg_edges_empty_html({**page, "registry_problem": "unset"}) == ""
     assert tp.version_html({**page, "registry_problem": "unset"}, LABEL, None) == ""
+
+
+
+
+def test_the_pages_help_texts_meet_the_text_budget():
+    """The sweep's text brief §11 (`help.TEXT_BUDGET`): each of the page's
+    registered help texts has a lead that answers the question in two bubble
+    lines, then none or two to four items of one form, each two lines at most,
+    80 words at most, Ref last, plain words. Before: 14 of 21 over. A
+    described measurement's result note is the governed caveat's own text
+    (`caveats.mode_note`, shown on Models and Results too), each sentence a
+    line: it is kept as written, never reworded here."""
+    from src.evaluation.caveats import mode_note
+    from src.webui.components.help import TEXT_BUDGET, budget_notes, budget_problems
+
+    texts = {**{k: v for k, (_t, v) in tp.FIELD_HELP.items()},
+             **{k: v for k, (_t, v) in tp.TOPIC_HELP.items()}}
+    governed = {tp._MODE_HELP[mode]: mode for mode in tp._RESULT_WORDS}
+    for key, text in texts.items():
+        if key in governed:
+            assert text == sentence_lines(mode_note(governed[key])), key
+            continue
+        assert budget_problems(text, TEXT_BUDGET) == (), (key, budget_problems(text, TEXT_BUDGET))
+        assert budget_notes(text, TEXT_BUDGET) == (), key
 
 
 def test_the_measurement_options_follow_the_model_and_the_chosen_versions_kind(

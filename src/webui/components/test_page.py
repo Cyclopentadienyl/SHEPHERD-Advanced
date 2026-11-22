@@ -274,10 +274,10 @@ RECORD_LABEL = "Register when the run ends"
 FIELD_HELP = {
     "shep-test-workspace": (
         "Workspace",
-        "A workspace in the server's workspaces folder, shown by its dataset fingerprint.\n\n"
-        "- Its graph is what a data version is imported against and a test run measures on.\n"
-        "- Its checkpoints are the models offered.\n"
-        "- The folder is set in Settings › Data locations.",
+        "One of the server's workspaces, shown by its dataset fingerprint.\n\n"
+        "- Graph: what a data version is imported against and a run measures on\n"
+        "- Models: its checkpoints are the ones offered\n"
+        "- Folder: the workspaces folder, chosen in Settings › Data locations",
     ),
     "shep-test-version": (
         "Data version",
@@ -285,66 +285,60 @@ FIELD_HELP = {
         "- A supplied cohort: source cases mapped to one graph's nodes (Import).\n"
         "- A KG edge set: one part of a model's edge split, with fixed pairs.\n"
         "- A generated split: the workspace's own patients.\n"
-        "Immutable, identified by its cohort.json's digest, and measured only on the workspace "
-        "whose graph it was mapped against.",
+        "- Immutable: named by its cohort.json digest, measured on its own graph only.",
     ),
     "shep-test-model-run": (
         "Run",
-        "The workspace's training runs whose checkpoints the server lists, latest first.\n\n"
-        "- Each is shown by its name or its start time.\n"
-        "- Choosing a run chooses its latest save; a workspace's only testable checkpoint is "
-        "chosen already.\n"
-        "- Listing opens every checkpoint, so it is an operator control.",
+        "The workspace's training runs with checkpoints the server lists, latest first.\n\n"
+        "- Shown: by its name or its start time\n"
+        "- Choosing a run: chooses its latest save\n"
+        "- One testable checkpoint: chosen already\n"
+        "- Operators only: listing opens every checkpoint",
     ),
     "shep-test-model": (
         "Checkpoint",
         "The chosen run's checkpoints, each by what the file is and how far it trained.\n\n"
-        "- What its record says it is shows under it; a file without a model spec is listed "
-        "only.\n"
-        "- What its capabilities meet is measured: its task head, or its LP head on a KG edge "
-        "set.\n"
-        "- The run refuses before measuring if the file holds other bytes than the fingerprint "
-        "shown.",
+        "- Under it: what its record says it is\n"
+        "- No model spec: the file is listed, never measured\n"
+        "- Measured: what its capabilities meet, its task or its LP head\n"
+        "- Other bytes than its fingerprint: the run refuses before measuring",
     ),
     "shep-test-measurement": (
         "Measurement",
-        "What the run measures: one of the measurements this build implements for the model.\n\n"
-        "- Offered: what its capabilities meet for the version's kind, a task's on a cohort or "
-        "split, KG link prediction on a KG edge set.\n"
-        "- A base is offered KG link prediction only.\n"
-        "- A single option is chosen already; of several, choose one. Each Start runs one, "
-        "recorded as its report's mode.",
+        "The measurement one Start runs and records, of those this build implements.\n\n"
+        "- Offered: what the model's capabilities meet for the version's kind\n"
+        "- Kinds: a task's on a cohort or split, KG link prediction on an edge set\n"
+        "- A base: offered KG link prediction only\n"
+        "- Choice: a lone option is chosen already, else choose one",
     ),
     "shep-test-record": (
         RECORD_LABEL,
-        "Checked, the report is registered in the ledger beside the checkpoint when the run ends.\n\n"
-        "- Unchecked: it is kept in the registry's report store, unregistered, and can be "
-        "registered later with Register this report.\n"
-        "- A later registration takes the whole report, whatever the version's kind.\n"
-        "- Every run keeps its report either way.\n"
+        "Checked, the run's report is registered in the ledger beside its checkpoint.\n\n"
+        "- When: as the run ends\n"
+        "- Unchecked: kept unregistered in the registry's report store\n"
+        "- Later: Register this report takes it whole, whatever the version's kind\n"
+        "- Either way: every run keeps its report\n"
         "Ref: D5",
     ),
     "shep-test-deterministic": (
         "Deterministic execution",
-        "Runs with PyTorch's deterministic algorithms, cuDNN deterministic and its benchmark "
-        "off.\n\n"
-        "- An operation with no deterministic implementation refuses the run; it never falls "
-        "back.\n"
-        "- It is recorded: deterministic runs are their own condition group, expected to agree, "
-        "and a difference asks for an investigation.\n"
-        "- It guards against known non-deterministic operations; it does not certify a number.",
+        "Deterministic PyTorch and cuDNN algorithms, cuDNN benchmark off.\n\n"
+        "- No deterministic version: the operation refuses the run, never falls back\n"
+        "- Recorded: deterministic runs are a condition group of their own\n"
+        "- Expected: its runs agree, and a difference asks for an investigation\n"
+        "- Limit: guards known non-deterministic operations, certifies no number",
     ),
     "shep-test-intake": (
         INTAKE_LABEL,
-        "The shepherd-cases/1 files (*.json) the operator placed in the server's import folder.\n\n"
-        "- The folder is outside the repository, set in Settings › Data locations.\n"
-        "- The server finds the chosen name there again and refuses anything else, a link "
-        "leaving it included.\n"
-        "- Nothing is uploaded from the browser.",
+        "The shepherd-cases/1 files (*.json) placed in the server's import folder.\n\n"
+        "- Folder: outside the repository, set in Settings › Data locations\n"
+        "- Checked: the server finds the chosen name there again\n"
+        "- Refused: any other name, a link leaving the folder included\n"
+        "- Upload: none, the operator places each file on the server",
     ),
     "shep-test-label": (
         "Version label",
-        "The new version's name in the registry: lowercase letters, digits, '-' and '_'.\n\n"
+        "The version's name in the registry: lowercase letters, digits, '-' and '_'.\n\n"
         "Versions are immutable, so a label is used once.",
     ),
     "shep-test-role": (
@@ -354,7 +348,7 @@ FIELD_HELP = {
     ),
     "shep-test-partial": (
         "Lost terms",
-        "What a case that loses some, but not all, of its phenotype terms in mapping becomes.\n\n"
+        "What a case becomes when mapping loses some, not all, of its phenotype terms.\n\n"
         "- Ranked on the terms that map, or excluded.\n"
         "- Recorded in the version.",
     ),
@@ -367,25 +361,28 @@ FIELD_HELP = {
     "shep-test-note-what": (
         "What was found",
         "What the investigation found.\n\n"
-        "The note is kept in the report store with this condition group's reports; it deletes "
+        "The note is kept in the report store with this condition group's reports. It deletes "
         "no report and changes nothing.",
     ),
 }
-#: Help a rendered ⓘ names.
+#: Help a rendered ⓘ names. A described measurement's result note is the
+#: governed caveat's own text (`caveats.mode_note`, shown on Models and
+#: Results too), each sentence a line (`sentence_lines`), never reworded here.
 TOPIC_HELP = {
     "test-preview-id": (
         "Preview id",
         "The first 16 hex digits of the SHA-256 of the would-be version manifest.\n\n"
-        "- It covers the source bytes and file name, the graph's digests, the dataset record, "
-        "the label, the role, the policy and every count.\n"
-        "- Commit prepares again from the same inputs and refuses unless it gives the same id: "
-        "what is committed is what was previewed.",
+        "- Covers: the source's bytes and file name, the graph's digests\n"
+        "- Also: the dataset record, label, role, policy and every count\n"
+        "- Commit: prepares again from the same inputs, refused unless the id matches\n"
+        "- So: what is committed is what was previewed",
     ),
     **{_MODE_HELP[mode]: (f"{words} result", sentence_lines(mode_note(mode)))
        for mode, words in _RESULT_WORDS.items()},
     "test-batch": (
         "Batch size",
-        "The cases scored at once: the measurement's default, which the job runner fixes.\n"
+        "Cases scored at once, fixed by the job runner.\n"
+        "- It is the measurement's default.\n"
         "- A test run has no reason to vary it.\n"
         "- It is recorded with the run.\n"
         "Ref: D5",
@@ -393,19 +390,17 @@ TOPIC_HELP = {
     "test-device": (
         "Device",
         "Where a test run measures: the deployment's device, with no fallback.\n"
-        "- Set on the server, not on this page.\n"
-        "- Recorded with the run: a CPU run is a different measurement from a CUDA run.\n"
-        "Ref: D5; SHEPHERD_DEVICE",
+        "- Set: on the server, not on this page\n"
+        "- Recorded: with the run, so a CPU and a CUDA run are different measurements\n"
+        "Ref: D5, SHEPHERD_DEVICE",
     ),
     "test-evidence": (
         "R10 evidence",
         "Where a supplied cohort's run looks for the inputs the checkpoint records.\n"
-        "- It counts their overlap with the cohort's cases: the measured workspace always, and "
-        "the training evidence folders (Settings › Data locations).\n"
-        "- Only bytes whose digest the checkpoint records count; otherwise a label is "
-        "unverifiable, never 0.\n"
-        "- A KG edge set or a generated split has no overlap labels: its run is given no "
-        "directory.\n"
+        "- Counts: their overlap with the cohort's cases\n"
+        "- Looks in: the workspace, always, and Settings' training evidence folders\n"
+        "- Digests: only bytes it records count, else a label is unverifiable, never 0\n"
+        "- KG edge set, generated split: no overlap labels, so given no folder\n"
         "Ref: R10",
     ),
 }
