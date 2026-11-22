@@ -1535,7 +1535,7 @@ def test_the_list_is_drawn_in_one_place_from_the_state_as_it_is_then(
     search box (the page reads it when it asks for the draw; the review of
     5171661: a search answered after a Clear drew its text again under the
     empty box), one draw of a list at a time and the last one asked for kept
-    ("always_last"), not queued; every event that changes what the list shows writes the
+    ("always_last"); every event that changes what the list shows writes the
     token and none draws the rows or the count itself. The draw is pure:
     nothing is read from disk or listed again."""
     import builtins
@@ -1546,10 +1546,8 @@ def test_the_list_is_drawn_in_one_place_from_the_state_as_it_is_then(
                    if fn.name == "_draw" and each.rows in fn.outputs]
         assert set(draw.targets) == {(each.drawn._id, "change"), (each.view._id, "change")}
         assert [i for i in draw.inputs if not isinstance(i, gr.State)] == [each.search]
-        # One draw of a list at a time, the last one asked for kept (the
-        # page's "always_last"), sent straight to the server (no queue round
-        # trip: the draw reads the session's state and writes none).
-        assert draw.trigger_mode == "always_last" and draw.queue is False
+        assert draw.trigger_mode == "always_last" and draw.concurrency_limit == 1
+        assert draw.concurrency_id == f"{each.elem_id}-draw"
         for part in (each.rows, each.count, each.facts):
             assert [fn for fn in demo.fns.values() if part in fn.outputs] == [draw]
         for name in ("_refresh", "_select", "_searched", "_cleared"):
