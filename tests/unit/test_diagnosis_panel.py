@@ -3768,7 +3768,7 @@ def test_the_change_drawer_filters_its_list_by_task(monkeypatch):
     (fn,) = [f for f in demo.fns.values() if f.fn is dp.task_view]
     assert fn.targets == [(control._id, "input")]
     (view,) = fn.outputs
-    assert any(f.name == "_redraw" and (view._id, "change") in f.targets
+    assert any(f.name == "_draw" and (view._id, "change") in f.targets
                for f in demo.fns.values())
     assert dp.task_view("gene") == {"task": "gene"}
     assert dp.task_view("history") == {"task": "all"}

@@ -129,7 +129,6 @@ import json
 import logging
 import math
 import re
-import time
 from datetime import datetime
 from typing import Any, Collection, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -1086,8 +1085,8 @@ def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str,
 
     Newest first: the Task filter and the Load note; the shared list draws
     every run, latest first, its files folded. By family: the families' tree
-    (`family_view`); without a family view, newest first and why
-    (``refused``)."""
+    (`family_view`) and the workspace its keys were read from; without a
+    family view, newest first and why (``refused``)."""
     if data.get("readonly"):
         return {"note": ""}
     task = ctl.get("task") or ALL_TASKS
@@ -1096,7 +1095,9 @@ def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str,
         family = family_view(listing, task)
         if family is None:
             return {**newest, "refused": FAMILY_NOT_READ}
-        return {"task": task, **family, "note": LOAD_NOTE, "shaped_for": shaped_for(ctl)}
+        # Its keys are this workspace's (`model_list.view_for_listing`).
+        return {"task": task, **family, "workspace": listing.get("workspace"),
+                "note": LOAD_NOTE, "shaped_for": shaped_for(ctl)}
     return newest
 
 
@@ -1831,7 +1832,8 @@ def create_models_page(ctx: Any) -> None:
         "fn": _open,
         "inputs": [*handle.refresh["inputs"], *control_inputs, parts["seg"], handle.phase],
         "outputs": [*handle.refresh["outputs"], stale_state, *page_outputs],
-        "show_progress": "minimal"})
+        "show_progress": "minimal",
+        "show_progress_on": [*handle.refresh["show_progress_on"], *page_outputs]})
 
     def _load_started():
         return True
@@ -1882,7 +1884,7 @@ def create_models_page(ctx: Any) -> None:
         if again is not None:
             # A new view value, so the shared list draws its rows again with
             # the selection (and enables Load); the token means nothing else.
-            out[1] = {**out[1], "redraw": time.monotonic_ns()}
+            out[1] = {**out[1], "redraw": ml.draw_token()}
         return (*states, *out)
 
     def _sync(listing, data, stale, last, phase, order, task, selected, seg_value, current,
@@ -1908,7 +1910,9 @@ def create_models_page(ctx: Any) -> None:
                     *(gr.update() for _ in page_outputs[:4]), failed_html(ctl, exc),
                     *(gr.update() for _ in page_outputs[5:]))
 
-    gr.on([handle.listing.change, handle.selected.change, handle.search.change,
+    # The list's search is followed on its search token, never on the box's
+    # change, which the list's search alone listens to (`ModelList.searched`).
+    gr.on([handle.listing.change, handle.selected.change, handle.searched.change,
            *(picked(c) for c in control_inputs)],
           _sync, inputs=[handle.listing, data_state, stale_state, last_state, handle.phase,
                          *control_inputs, handle.selected, parts["seg"], handle.view,

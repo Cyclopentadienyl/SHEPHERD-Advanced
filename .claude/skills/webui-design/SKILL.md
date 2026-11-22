@@ -216,8 +216,9 @@ measurements until it is.
 - **Decided (2026-11-21, supersedes the first 2026-10-25 line's group labels):** the PREPARE / EVALUATE captions above
   the research tabs are retired; the stage is a plain-text hint at the right of the tab row (§3). The owner and the
   external reviewer found the captions read as a second tab tier and the hovered tab's underline as a second selection.
-- **Decided (2026-11-21):** Models › By family is a node-link family view drawn as DOM, with no graph library: a canvas
-  library cannot give real buttons, keyboard focus or a hierarchy assistive technology reads. The view data stays runs
+- **Decided (2026-11-21):** Models › By family is a node-link family view drawn as DOM, with no graph library, because
+  DOM nodes give this view real buttons, keyboard focus and a hierarchy that assistive technology reads, with no new
+  dependency: a choice for this view, not a rule against a graph library later. The view data stays runs
   plus edges keyed by the exact parent file, so a layout engine could place the same nodes if lineage ever has several
   parents. Its orientation follows the measured room (left to right when it fits, else top to bottom), decided only when
   the graph's content, the region's width or the fonts change, never by a hover, a fold or a selection. A body pick
