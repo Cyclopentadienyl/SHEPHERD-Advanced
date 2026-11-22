@@ -616,12 +616,21 @@ def test_the_gpu_line_comes_from_the_runner_and_the_lock_holder():
             "held_by": "train_model.py (pid 41822)"}
     cli = tc._gpu_line(None, held, None, operator=False)
     assert cli == {"text": "GPU job: train_model.py (pid 41822, since 09:58 UTC)",
-                   "test": False}
+                   "test": False, "unset": False, "notice": None}
     assert tc._gpu_line(None, {"configured": True, "held_by": None}, None,
                         operator=True) is None
     problem = tc._gpu_line(None, {"configured": True, "problem": "/srv/lock is a directory"},
                            None, operator=False)
     assert problem["text"] == "the GPU lock cannot be used"            # no path to read-only
+    # The contract the page's notice reads (the UI sweep's shim, `workspaces.lock_notice`):
+    # the lock's notice and whether no workspaces folder is the cause; no path to read-only.
+    assert problem["unset"] is False and problem["notice"]["kind"] == "error"
+    assert "/srv/lock" not in repr(problem["notice"])
+    unset = tc._gpu_line(None, {"configured": False, "unset": True, "problem": "x"}, None,
+                         operator=True)
+    assert unset["unset"] is True and unset["notice"]["key"] == "gpu_lock"
+    assert unset["notice"]["cause"] == "workspaces_root"
+    assert test["unset"] is False and test["notice"] is None
 
 
 # --------------------------------------------------------------------------- the run view

@@ -88,6 +88,8 @@ const TARGETS = {
             parts: Array.from(b.querySelector(".shep-bubble-bd").children).map((el) => ({
               tag: el.tagName.toLowerCase(), cls: el.className, text: el.textContent,
               weight: getComputedStyle(el).fontWeight,
+              above: parseFloat(getComputedStyle(el).marginTop),
+              itemsAbove: Array.from(el.querySelectorAll(":scope > li")).map((li) => parseFloat(getComputedStyle(li).marginTop)),
               items: Array.from(el.querySelectorAll(":scope > li")).map((li) => li.textContent),
               terms: Array.from(el.querySelectorAll("strong")).map((t) => ({
                 text: t.textContent, weight: getComputedStyle(t).fontWeight })),

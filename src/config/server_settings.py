@@ -191,6 +191,9 @@ PATIENT_LEVEL_DATA = "patient-level data"
 __all__ = [
     "ACCEPTS_NETWORK_BIND",
     "BindDecision",
+    "CHOOSE_IN_DATA_LOCATIONS",
+    "CREATE_SUGGESTED",
+    "DATA_LOCATIONS_TARGET",
     "DEFAULT_BIND_HOST",
     "DirectoryRefused",
     "DirectoryUncheckable",
@@ -205,15 +208,27 @@ __all__ = [
     "ENV_WORKSPACES_ROOT",
     "FIELD_NAMES",
     "GPU_LOCK_FILE_NAME",
+    "GPU_LOCK_GUIDE",
     "GPU_LOCK_NOT_CONFIGURED",
+    "GPU_LOCK_NOTICE",
     "LOCAL_ENTRY",
+    "NO_RESULTS_REGISTRY",
+    "NO_WORKSPACES_FOLDER",
+    "Notice",
+    "OUTSIDE_REPOSITORY",
     "MODE_OFF_STATE",
     "OPERATOR_DEPLOYMENT_MODE",
+    "REGISTRY_NOTICE",
+    "REGISTRY_NOT_SET",
+    "REGISTRY_OPTION",
     "SAVED_VARIABLES",
     "SOURCE_ENVIRONMENT",
     "SOURCE_LOCAL_DEFAULT",
     "SOURCE_SAVED",
+    "SUGGESTED_WORKSPACES",
     "Setting",
+    "WORKSPACES_ROOT_NOTICE",
+    "WORKSPACES_ROOT_NOT_SET",
     "all_settings",
     "check_data_location",
     "check_operator_directory",
@@ -617,14 +632,92 @@ _check_workspaces_root = partial(check_operator_directory, what="the workspaces 
 _check_intake_directory = partial(check_operator_directory, what="the intake directory",
                                   holds=PATIENT_LEVEL_DATA, outside_repository=True)
 
+# ---------------------------------------------------------------------------
+# A setting's state in parts (the WebUI's notices) and as one sentence
+# ---------------------------------------------------------------------------
+class Notice(NamedTuple):
+    """**A setting's state said in parts** (the WebUI's first-use notices).
+    The WebUI shows `summary` and `action` and keeps the rest one click away
+    (`renderers.notice_block`); the CLI, the API and the logs keep the whole
+    sentence (the ``*_NOT_SET`` constants), which is built from the same part
+    strings, so no fact can drift between the two. A notice is chosen by a
+    reader's ``unset`` flag (`workspaces.setting_notice`), never by its words.
+
+    - `key`: which notice (``workspaces_root``, ``gpu_lock``, ``registry``):
+      tests, de-duplication on one screen and the page's ``data-notice``;
+    - `summary`: the state, one front-loaded sentence ("No workspaces folder
+      is set.");
+    - `short`: the state as a relation says it, lower case and without a
+      full stop ("no workspaces folder is set": "Start unavailable: …");
+    - `action`: the next step, by its place in the GUI ("Choose one in
+      Settings › Data locations");
+    - `target`: where that step is, ``"<page>#<element id>"`` (the WebUI's
+      link opens the page and focuses the element's heading);
+    - `details`: term rows, ``"Term: text"`` each, the why and how behind
+      "Details ›", no server path in them;
+    - `ref`: the trailing reference line's items (the variable, a guide
+      section);
+    - `cause`: the key of the notice this one follows from (the GPU lock's
+      is the workspaces folder's): one screen says them as one.
+    """
+
+    key: str
+    summary: str
+    short: str
+    action: str
+    target: str
+    details: Tuple[str, ...]
+    ref: Tuple[str, ...]
+    cause: Optional[str] = None
+
+
+#: The parts the notices and the whole sentences share (`Notice`).
+NO_WORKSPACES_FOLDER = "No workspaces folder is set"
+NO_RESULTS_REGISTRY = "No results registry is set"
+#: The Data locations button that makes the suggested folder
+#: (`data_locations.CREATE_LABEL`).
+CREATE_SUGGESTED = "Create suggested folder"
+#: Where the GPU lock's rule is written down for an operator.
+GPU_LOCK_GUIDE = "deployment guide §4.11"
+#: The commands' option that names the registry.
+REGISTRY_OPTION = "--registry"
+#: Where the registry must be.
+OUTSIDE_REPOSITORY = "a folder outside the repository"
+#: The suggested workspaces folder in words (`deployment_settings.suggested_words`).
+SUGGESTED_WORKSPACES = deployment_settings.suggested_words(KEY_WORKSPACES_ROOT)
+#: The next step of every unset data location, and where it is in the GUI.
+CHOOSE_IN_DATA_LOCATIONS = f"Choose one in {DATA_LOCATIONS}"
+DATA_LOCATIONS_TARGET = "settings#shep-dl"
+
+
+def _relation(state: str) -> str:
+    """A state's words as a relation says them: its first letter lower case."""
+    return state[:1].lower() + state[1:]
+
+
 #: Why nothing is listed with no workspaces folder set (`workspaces_root`).
 #: It names the one suggested folder Settings offers
 #: (`deployment_settings.suggested_words`), never another.
 WORKSPACES_ROOT_NOT_SET = (
-    "No workspaces folder is set, so the server lists no workspace. Choose the folder whose "
-    f"subfolders are the workspaces in {DATA_LOCATIONS}; its Create suggested folder makes "
-    f"{deployment_settings.suggested_words(KEY_WORKSPACES_ROOT)}. No default is assumed. "
+    f"{NO_WORKSPACES_FOLDER}, so the server lists no workspace. Choose the folder whose "
+    f"subfolders are the workspaces in {DATA_LOCATIONS}; its {CREATE_SUGGESTED} makes "
+    f"{SUGGESTED_WORKSPACES}. No default is assumed. "
     f"Ref: {ENV_WORKSPACES_ROOT}"
+)
+#: `WORKSPACES_ROOT_NOT_SET` in parts.
+WORKSPACES_ROOT_NOTICE = Notice(
+    key="workspaces_root",
+    summary=f"{NO_WORKSPACES_FOLDER}.",
+    short=_relation(NO_WORKSPACES_FOLDER),
+    action=CHOOSE_IN_DATA_LOCATIONS,
+    target=DATA_LOCATIONS_TARGET,
+    details=(
+        "Workspaces: one per subfolder",
+        "Unset: the server lists no workspace",
+        f"Suggested: {SUGGESTED_WORKSPACES} ({CREATE_SUGGESTED})",
+        "Default: none is assumed",
+    ),
+    ref=(ENV_WORKSPACES_ROOT,),
 )
 
 
@@ -643,10 +736,26 @@ def workspaces_root(environ: Optional[Mapping[str, str]] = None) -> Setting:
 #: Why every managed GPU job is refused when no workspaces root is set
 #: (`gpu_lock_location`; review of 8242b47, P2-4).
 GPU_LOCK_NOT_CONFIGURED = (
-    "No workspaces folder is set, so the GPU lock is not configured and every managed GPU "
+    f"{NO_WORKSPACES_FOLDER}, so the GPU lock is not configured and every managed GPU "
     "job is refused rather than run without excluding the others. Choose the folder in "
     f"{DATA_LOCATIONS}: the lock is {GPU_LOCK_FILE_NAME} in it, the one file every process "
-    f"that uses the folder takes (deployment guide §4.11). Ref: {ENV_WORKSPACES_ROOT}"
+    f"that uses the folder takes ({GPU_LOCK_GUIDE}). Ref: {ENV_WORKSPACES_ROOT}"
+)
+#: `GPU_LOCK_NOT_CONFIGURED` in parts; it follows from the workspaces folder's
+#: notice, so a screen that says that one says this one with it.
+GPU_LOCK_NOTICE = Notice(
+    key="gpu_lock",
+    summary="GPU jobs are refused until a workspaces folder is set.",
+    short="GPU jobs need a workspaces folder",
+    action=CHOOSE_IN_DATA_LOCATIONS,
+    target=DATA_LOCATIONS_TARGET,
+    details=(
+        f"GPU lock: {GPU_LOCK_FILE_NAME} in the workspaces folder",
+        "Taken by: every process that uses the folder",
+        "GPU jobs: refused while it is unset, never run without the lock",
+    ),
+    ref=(ENV_WORKSPACES_ROOT, GPU_LOCK_GUIDE),
+    cause=WORKSPACES_ROOT_NOTICE.key,
 )
 
 
@@ -696,9 +805,23 @@ def gpu_lock_location(environ: Optional[Mapping[str, str]] = None) -> Setting:
 
 #: Why the cohort features are off with no registry set (`cohort_registry`).
 REGISTRY_NOT_SET = (
-    "No results registry is set, so the features that read the cohort registry are off. "
-    f"Choose it in {DATA_LOCATIONS}: a folder outside the repository, the one the commands "
-    f"take as --registry. Ref: {ENV_REGISTRY}"
+    f"{NO_RESULTS_REGISTRY}, so the features that read the cohort registry are off. "
+    f"Choose it in {DATA_LOCATIONS}: {OUTSIDE_REPOSITORY}, the one the commands "
+    f"take as {REGISTRY_OPTION}. Ref: {ENV_REGISTRY}"
+)
+#: `REGISTRY_NOT_SET` in parts.
+REGISTRY_NOTICE = Notice(
+    key="registry",
+    summary=f"{NO_RESULTS_REGISTRY}.",
+    short=_relation(NO_RESULTS_REGISTRY),
+    action=CHOOSE_IN_DATA_LOCATIONS,
+    target=DATA_LOCATIONS_TARGET,
+    details=(
+        "Holds: the cohort versions and registered reports",
+        "Off while unset: every feature that reads the registry",
+        f"Where: {OUTSIDE_REPOSITORY}, the commands' {REGISTRY_OPTION}",
+    ),
+    ref=(ENV_REGISTRY,),
 )
 
 

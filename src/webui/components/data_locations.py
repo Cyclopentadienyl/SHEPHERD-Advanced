@@ -709,7 +709,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-create {{ gap: 8px !important; align-items: baseline; padding-left: calc(8em + 8px); }}
 {_PAGE} .shep-dl-create > [id^="dl_suggest_"] {{ flex: 1 1 max-content !important; }}
 {_PAGE} .shep-dl-create:not(:has(button:not([hidden]))) {{ display: none !important; }}
-{_PAGE} [id^="dl_lock_"] .shep-reason {{ justify-content: flex-end; }}
+{_PAGE} [id^="dl_lock_"] .shep-reason {{ width: fit-content; margin-inline-start: auto; }}
 {_PAGE} .shep-dl-kv {{ gap: 4px 12px; }}
 {_PAGE} .shep-dl-kv > dt {{ width: 8em; }}
 {_PAGE} .shep-dl-v {{ margin-right: 8px; }}
@@ -723,7 +723,7 @@ PAGE_CSS = f"""
 @media (max-width: 899px) {{
   {_PAGE} .shep-dl-left {{ flex-basis: 100% !important; }}
   {_PAGE} .shep-dl-set {{ flex-wrap: wrap; }}
-  {_PAGE} [id^="dl_lock_"] .shep-reason {{ justify-content: flex-start; }}
+  {_PAGE} [id^="dl_lock_"] .shep-reason {{ margin-inline-start: 0; }}
   {_PAGE} .shep-dl-create {{ padding-left: 0; }}
   {_PAGE} .shep-dl-set > .block:not(.shep-dl-keycell) {{ flex: 1 1 16em !important; min-width: min(16em, 100%) !important; }}
   {_PAGE} #dl_box_{KEY_TRAINING_EVIDENCE_DIRS} {{ flex-basis: 100% !important; }}

@@ -38,11 +38,38 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
 - **One scroll region per area.** Header and status rows are in flow, the content row takes `minmax(0, 1fr)` and is
   the only thing that scrolls. Nothing sticky or fixed may cover a chart's plot or axes, a table row or a focused
   control; a status line is a row of its own (the run view: header, charts, resources).
+- **A message never shares a row with fields or buttons.** Only a one-line relation (`renderers.see_above`:
+  "Start unavailable: no workspaces folder is set.") sits beside the control it explains; anything longer is
+  the full-width note under its group (`.shep-bar-note`), from the group's left edge, at the measure.
+- **Bars wrap groups whole.** A bar (`.shep-bar`) is a wrapping row of groups (`.shep-grp`, `-grow`, `-end`); a
+  group moves to the next line whole, and a text box keeps its floor (`--shep-input-floor`): its group wraps
+  first, never a squeezed box. Choice groups are whole too: one line, or one option per line when a whole line
+  cannot hold them (the layout pass's mark), never one option alone. In a row of fields a choice group takes
+  its one-line width; in a column it keeps the column's width, on its edge.
+- **One content edge per panel.** Every heading, text, label and field of a panel column starts on one edge
+  (`--shep-inset`; Gradio blocks in a panel pad vertically only, so a form's row keeps
+  `--shep-gap-between` between its fields and draws no ground of its own). Indent only for subordination:
+  list text, a Details body, the words after a status mark (which keeps a column of its own).
+- **Panels sized by what they hold** (`.shep-sized`: `--shep-panel-basis`, `--shep-panel-grow`,
+  `--shep-panel-min`, in rem or em), not by `scale=` shares fitted to one window.
 - **Charts are never squeezed.** Each plot keeps a floor (`PLOT_MIN_HEIGHT`, 170 px of plot area; about 200 px
   at the owner's window, where the four plots measure 198 px each, the shared epoch axis labelled once under them),
   2 × 2 when the chart area is about 1000 px wide or more, one column below; when the floor does not fit, the chart
   region scrolls. Lines meet 3:1 against the plot; series differ by more than colour, and the legend and tooltip
   swatches draw each series' own dash pattern.
+
+### Text layout
+
+- **Measure and rhythm.** Prose takes `max-width: var(--shep-measure)` (56ch: about 73 characters a line);
+  tables, key-value rows, options and code rows are exempt. Spacing comes from the tokens, never from
+  `<br><br>` or a first-line indent: item 4 px < paragraph 8 px < above a heading 16 px, below a heading
+  4 px; line height 1.45 for text that wraps, 1.3 for one or two lines. Text that can wrap is start-aligned.
+- **Message shape** (reasons, refusals, notices, empty states): one lead of 20 words or fewer with the state
+  and its consequence, then the next step or who can act, as a sentence or one link; why and how as term rows
+  under `Details ›`; environment variables, lock files, guide sections and codes only there or in Ref. No
+  semicolons, "please", "sorry", "oops", "invalid", "an error occurred" or "we".
+- **Literal tokens** (paths, variables, flags) in the monospace token (`code`, `.shep-mono`), at least 14 px,
+  breaking only before their own separators (`renderers.token_html`), never `break-all` on words, never U+200B.
 
 ## 3. Navigation and what looks clickable
 
@@ -50,6 +77,10 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
   is "Area"), level 2 the page tabs (underline, at least two cues for the selected one; a tab under the pointer gets a
   fill, never the underline), level 3 in-page segmented controls. No two levels share a treatment, and in-page radios
   do not copy the level-1 switch.
+- **The research tabs are drawn in groups** (decided by the owner, 2026-11-22): "Datasets │ Training Fine-tune
+  │ Test Models" (`shell.TAB_GROUPS`). The groups are not stages (Datasets is still Prepare): a gap before each
+  later group's first tab and a decorative line in it (an empty `::before`: no node, role, focus stop or text),
+  drawn only while the tabs sit on one line; no tab moves and the tab order is unchanged.
 - **The research stage is a hint, not a tier of labels.** The research page tabs sit in one row with no group captions
   above them; the stage of the page shown is plain text at the right of that row ("Stage: Prepare", "Stage: Evaluate"),
   from the one mapping `shell.STAGES`. It is no control: no tab box, hover, underline, pointer, focus stop, role or live
@@ -117,8 +148,9 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry the same colours.
 
 - A bubble is a **toggletip**: click, Enter or Space opens and pins it; Esc and an outside click close it; hover and
   focus preview it (hover after a short delay). Pinned, it is a dialog; a hover preview is a tooltip.
-- **Budget (guidance):** a lead of about 90 characters that answers the question; then a few short bullets or rows;
-  about 60–80 words in all; a width of about 320 px.
+- **Budget (guidance):** a lead of about 90 characters that answers the question (aim at 78: two lines of a
+  320 px bubble); then none or 2–4 items or term rows of one form, each 76 characters at most; about 60–80
+  words in all; Ref last. `help.budget_problems(text, help.TEXT_BUDGET)` names what a text runs over.
 - **Never the only place for must-know facts.** Formats, units, refusals and states that change what happens are
   visible text (`info=` under the field, or the reason line). A bubble explains; it does not warn.
 - **Placement never covers the field it explains**: try beside, then above, then below (Floating UI's flip order).
@@ -150,7 +182,12 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry the same colours.
 ## 9. Empty, waiting and refused states
 
 Every empty region says, in its own words per cause, what will appear and the next step, with at most one action:
-first use, waiting for a job, filtered to nothing, not recorded, refused. A refusal says who can act ("Operator
+first use, waiting for a job, filtered to nothing, not recorded, refused. **First use** (no workspaces folder, no
+results registry): each cause once per screen, where it empties a region, through the one notice
+(`renderers.notice_block` / `notices_block`, from `server_settings.Notice` via `workspaces.setting_notice` and
+`lock_notice`), its GUI path as the link ("Choose one in Settings › Data locations"), the rest under Details ›;
+every control that depends on it says a relation (`see_above`), never the notice again. An empty state is in
+the flow (`.shep-empty`), never an overlay. A refusal says who can act ("Operator
 controls only: request not local"). Refusals stay visible inline next to what they disable; nothing auto-dismisses.
 
 ## 10. Accessibility floor
@@ -174,7 +211,11 @@ Copy buttons included); correct roles (tablist/tab, listbox/option, dialog for a
   pinned, be maintained and render safely (escape what it shows). Otherwise build the small widget as `gr.HTML` with
   `js_on_load`, event delegation on `element`, and every value escaped in Python.
 - Target only `elem_id`, `elem_classes`, the documented `<elem_id>-button` tab ids and ARIA attributes; keep a tested
-  inventory of any Gradio-internal class used. If such overrides keep growing across milestones, record the decision
+  inventory of any Gradio-internal class used (since the 2026-11-22 sweep: `fieldset.block` with its options'
+  `.wrap`, `.wrap:has(> .wrap-inner)`, `.block.padded` and `--block-padding`, a panel's `.form` ground and
+  gap, `.row` as a row of fields).
+- Gradio's reset (`.gradio-container-<version> p, ol, ul { margin: 0; padding: 0 }`) is one class and an
+  element: a rule that spaces a paragraph or a list needs two classes. If such overrides keep growing across milestones, record the decision
   between `gr.HTML` islands and a custom frontend on `gr.Server`.
 
 ## 12. Before delivering UI work
@@ -196,7 +237,11 @@ checks that already passed for the same code.
 The layout, scrolling, type, border and focus rows are measured on every page at the representative sizes by one
 shared check, which a layout, token or navigation change runs rather than a script of its own:
 `tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check` (`walk_ui` and
-`ui_problems` in `tests/fixtures/browser.py`; its screenshots in the test's temporary `ui-walk*/shots`). The same
+`ui_problems` in `tests/fixtures/browser.py`; its screenshots in the test's temporary `ui-walk*/shots`). **The
+layout rules** (beside, narrow-box, overlap, orphan, centred, split-group, edge, clipped, empty-region,
+help-on-page, notice-repeat, tab-groups; `layout_problems`) are measured in the same walk and, with the
+**first-use and empty-folder walks** (`walk_state("first_use" | "empty", …)`, `layout_stops`), held at zero once
+every page is laid out again; a page's change runs them on its own pages at first use and configured. The same
 walk counts each fingerprint drawn in a screen's visible text (`repeat_problems`), and walks PLAN_TEST_RESULTS §6's
 other sizes with Diagnosis' largest Top-K answered on long disease names, and every page as a read-only viewer
 (`acceptance_walk`). axe-core is not installed here: those rows' accessibility checks are the walk's own
@@ -216,6 +261,10 @@ measurements until it is.
 - **Decided (2026-11-21, supersedes the first 2026-10-25 line's group labels):** the PREPARE / EVALUATE captions above
   the research tabs are retired; the stage is a plain-text hint at the right of the tab row (§3). The owner and the
   external reviewer found the captions read as a second tab tier and the hovered tab's underline as a second selection.
+- **Decided (2026-11-22, the owner):** the research tabs are grouped "Datasets │ Training Fine-tune │ Test
+  Models" with decorative separators drawn only while the tabs sit on one line (§3); the Stage hint is unchanged.
+  First use is said once per screen by the one notice, its GUI path as the link (§9); text follows the measure,
+  the spacing tokens and the message shape (§2).
 - **Decided (2026-11-21):** Models › By family is a node-link family view drawn as DOM, with no graph library, because
   DOM nodes give this view real buttons, keyboard focus and a hierarchy that assistive technology reads, with no new
   dependency: a choice for this view, not a rule against a graph library later. The view data stays runs

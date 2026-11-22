@@ -179,15 +179,34 @@ class HelpBudget:
     """The WebUI skill's §7 budget, as the test over every registered text
     reads it: a lead of about 90 characters (`lead_chars` the most), a few
     items, about 60-80 words in all without the Ref line, no sentence over
-    25 words, and internal codes (`CODE`) only in the trailing Ref line."""
+    25 words, and internal codes (`CODE`) only in the trailing Ref line.
+
+    **The text layout's budget** (`TEXT_BUDGET`; the UI sweep of 2026-11-22,
+    its text brief's §11 and §14 #8) adds what a 320 px bubble draws in
+    lines of about 39 characters: a lead of two lines (`lead_note`: a
+    longer one is noted, `budget_notes`), none or 2-4 items (`items_min`),
+    each of two lines at most (`item_chars`), all of one form
+    (`one_item_form`: all term rows or none, all sentences with a full stop
+    or all fragments without), and plain words (`plain_words`: no semicolon,
+    no "please", "sorry", "oops", "invalid", "an error occurred" or "we")."""
 
     lead_chars: int = 100
     words: int = 80
     sentence_words: int = 25
     items: int = 4
+    lead_note: Optional[int] = None
+    item_chars: Optional[int] = None
+    items_min: int = 0
+    one_item_form: bool = False
+    plain_words: bool = False
 
 
 HELP_BUDGET = HelpBudget()
+#: The text layout's budget (`HelpBudget`): every registered text is to meet
+#: it once its page is laid out again (the sweep's lanes; enforced at their
+#: integration, not before).
+TEXT_BUDGET = HelpBudget(lead_chars=90, lead_note=78, item_chars=76, items_min=2,
+                         one_item_form=True, plain_words=True)
 
 #: Internal codes a help text names only in its trailing Ref line (the WebUI
 #: skill's §5): setting names, decision, review and README codes, a source
@@ -195,6 +214,8 @@ HELP_BUDGET = HelpBudget()
 CODE = re.compile(r"SHEPHERD_[A-Z_]+|\b[DR]\d{1,2}\b|\bREADME\b|@[0-9a-f]{7,}|"
                   r"\b\w+\.py\b|\bMode [A-Z]\b|\bM\d\b")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+#: Words a message never says (the text brief's §1 and §14 #11).
+NOT_SAID = re.compile(r"\b(?:please|sorry|oops|invalid|an error occurred|we)\b", re.IGNORECASE)
 
 
 def budget_problems(text: str, budget: HelpBudget = HELP_BUDGET) -> Tuple[str, ...]:
@@ -225,7 +246,38 @@ def budget_problems(text: str, budget: HelpBudget = HELP_BUDGET) -> Tuple[str, .
     refs = [i for i, line in enumerate(lines) if line.kind == "ref"]
     if refs and refs != [len(lines) - 1]:
         problems.append("a Ref line that is not the last line")
+    listed = [line for line in lines if line.kind == "item"]
+    if budget.items_min and 0 < len(listed) < budget.items_min:
+        problems.append(f"{len(listed)} list item (none, or {budget.items_min} at least)")
+    for line in listed:
+        whole = f"{line.term}: {line.text}" if line.term else line.text
+        if budget.item_chars and len(whole) > budget.item_chars:
+            problems.append(f"an item of {len(whole)} characters (at most {budget.item_chars}): "
+                            f"{whole[:40]}…")
+    if budget.one_item_form and len(listed) > 1:
+        if len({line.term is None for line in listed}) > 1:
+            problems.append("items of two forms (term rows and plain items)")
+        if len({line.text.rstrip().endswith((".", "!", "?")) for line in listed}) > 1:
+            problems.append("items of two forms (sentences and fragments)")
+    if budget.plain_words:
+        for line in body:
+            whole = f"{line.term}: {line.text}" if line.term else line.text
+            if ";" in whole:
+                problems.append(f"a semicolon: {whole[:40]}…")
+            found = NOT_SAID.search(whole)
+            if found:
+                problems.append(f"a word a message never says: {found.group(0)!r}")
     return tuple(problems)
+
+
+def budget_notes(text: str, budget: HelpBudget = TEXT_BUDGET) -> Tuple[str, ...]:
+    """What in `text` is within the budget but worth a look (`HelpBudget`'s
+    `lead_note`): a lead of three bubble lines."""
+    lines = help_lines(text)
+    if lines and budget.lead_note and budget.lead_note < len(lines[0].text) <= budget.lead_chars:
+        return (f"a lead of {len(lines[0].text)} characters (three lines over "
+                f"{budget.lead_note})",)
+    return ()
 
 #: The ⓘ glyph: an inline SVG, so no font or network is needed.
 _I_ICON = ('<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" '
@@ -901,7 +953,7 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
   max-height: calc(100vh - 16px); display: flex; flex-direction: column;
   background: #fff; border: 1px solid var(--shep-border-2); border-radius: 10px;
   box-shadow: 0 10px 28px rgba(20, 24, 40, .16), 0 2px 6px rgba(20, 24, 40, .08);
-  padding: 12px 14px 10px; font-size: 15px; line-height: 1.45; color: var(--shep-text);
+  padding: 12px 14px 10px; font-size: 15px; line-height: var(--shep-lh-prose, 1.45); color: var(--shep-text);
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
   text-align: left; white-space: normal; font-weight: 400;
 }
@@ -921,12 +973,19 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
   display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 20px; cursor: pointer;
 }
 .shep-bubble-bd { overflow-wrap: anywhere; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
-.shep-bubble-bd > p, .shep-bubble-bd > ul { margin: 0; }
-.shep-bubble-bd > * + * { margin-top: 6px; }
+/* Every part starts at no margin (one weight with the rule below, which comes later, so the
+   space between parts is the text tokens' and nothing else's). */
+.shep-bubble-bd > * { margin: 0; }
+/* The text layout's tokens (style.py; the text brief's §6): a paragraph's space between the
+   bubble's parts, an item's between list items; prose wraps evenly, the lead balanced. */
+.shep-bubble-bd { text-wrap: pretty; }
+.shep-bubble-bd > * + * { margin-top: var(--shep-space-para, 8px); }
 .shep-bubble-lead, .shep-bubble-term { font-weight: 600; }
+.shep-bubble-lead { text-wrap: balance; }
 .shep-bubble-list { padding: 0 0 0 18px; list-style: disc outside; }
 .shep-bubble-list > li { margin: 0; padding: 0; }
-.shep-bubble-list > li + li { margin-top: 2px; }
+.shep-bubble-list > li::marker { color: var(--shep-muted); }
+.shep-bubble-list > li + li { margin-top: var(--shep-space-item, 4px); }
 .shep-bubble-bd > .shep-bubble-ref { font-size: 14px; color: var(--shep-muted); }
 .shep-bubble-hd, .shep-bubble-ft { flex: none; }
 .shep-bubble-ft[hidden] { display: none; }
@@ -958,6 +1017,8 @@ __all__ = [
     "BULLET",
     "CODE",
     "HELP_BUDGET",
+    "NOT_SAID",
+    "TEXT_BUDGET",
     "HelpBudget",
     "HelpEntry",
     "HelpLine",
@@ -968,6 +1029,7 @@ __all__ = [
     "TERM_PATTERN",
     "TEXT_ID_PREFIX",
     "as_json_for_script",
+    "budget_notes",
     "budget_problems",
     "copy_button",
     "help_button",

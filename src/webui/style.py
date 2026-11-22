@@ -122,7 +122,11 @@ SHELL_CSS = """
   --shep-status-ok: var(--shep-green-800); --shep-status-neutral: var(--shep-grey-800);
   --shep-status-warn: var(--shep-amber-800); --shep-status-error: var(--shep-red-700);
   --shep-status-info: var(--shep-accent-text);
-  --shep-mono: 'IBM Plex Mono', 'DejaVu Sans Mono', 'Liberation Mono', monospace;
+  /* Code, paths and variables (M7, the sweep's decision 2): the system's monospace faces, scaled
+     to Plex Sans' x-height (`font-size-adjust` on every element drawn in it), so a token sits in
+     a sentence at the body's size. No monospace font file ships. */
+  --shep-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
+  --shep-mono-adjust: 0.516;
   --shep-row1-h: 46px; --shep-brand-w: __BRAND__px;
   /* The cues every navigation level and control reads (D01, UI-10): aliases
      of the colours above, no new hex. */
@@ -143,7 +147,31 @@ SHELL_CSS = """
   /* The room every scroll region keeps under what it brings into view (R-25): a line of a text
      box (21 px) and a little more. */
   --shep-caret-room: 32px;
+  /* **The spacing scale and the text layout** (the WebUI skill's §2; the text brief's §6): one
+     scale; a panel's one content edge; the gap inside a group and between groups; the measure
+     of prose (56 characters of its own size: about 73 a line); unitless line heights for text
+     that wraps and for one or two lines; the order item < paragraph < above a heading, and a
+     heading closer to its content than to what is above it. */
+  --shep-space-1: 4px; --shep-space-2: 8px; --shep-space-3: 12px; --shep-space-4: 16px;
+  --shep-space-5: 24px; --shep-space-6: 32px;
+  --shep-inset: 16px;
+  --shep-gap-in: var(--shep-space-2); --shep-gap-between: var(--shep-space-4);
+  --shep-page-gap: var(--shep-space-4);
+  --shep-measure: 56ch;
+  --shep-lh-prose: 1.45; --shep-lh-compact: 1.3; --shep-lh-title: 1.3;
+  --shep-space-para: 8px; --shep-space-item: 4px;
+  --shep-space-head-above: 16px; --shep-space-head-below: 4px;
+  /* The narrowest a text box is drawn (its group wraps first) and the room a select takes
+     when it has it (M2). */
+  --shep-input-floor: 12ch; --shep-select-floor: 14rem;
+  /* The gap before the first tab of each later tab group, its separator in the middle (M8). */
+  --shep-tabgroup-gap: 20px;
 }
+/* A panel's size by what it holds (M4): registered, so every reader (the layout pass's measure
+   included) reads a length in px whatever unit a page writes it in (rem, em). */
+@property --shep-panel-min { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --shep-panel-basis { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --shep-panel-grow { syntax: '<number>'; inherits: false; initial-value: 1; }
 
 /* ---------------------------------------------------------------- page frame */
 :root { color-scheme: light; }
@@ -154,7 +182,14 @@ body { color: var(--shep-text); }
 .gradio-container > .main { padding: 0 !important; }
 .gradio-container > .main > .wrap, .gradio-container .contain { padding: 0 !important; max-width: none !important; }
 .gradio-container sub, .gradio-container small { font-size: 14px; vertical-align: baseline; }
-.gradio-container code { font-family: var(--shep-mono) !important; font-size: 14px; }
+.gradio-container code { font-family: var(--shep-mono) !important; font-size: 14px; font-size-adjust: var(--shep-mono-adjust); }
+/* **Monospace where a page asks for it** (M7): a literal token, a log, an identifier. Two
+   classes, so the mount's rule that draws everything in Plex Sans (`app.DASHBOARD_CSS`,
+   ``.gradio-container *``) does not win over it. */
+.gradio-container .shep-mono, .gradio-container .shep-fpv, .gradio-container .shep-full,
+.gradio-container :is(code, .shep-mono) * {
+  font-family: var(--shep-mono) !important; font-size-adjust: var(--shep-mono-adjust);
+}
 /* Two weights (the type scale): bold text in rendered HTML and Markdown is the
    strong weight, never the browser's 700. */
 .gradio-container b, .gradio-container strong, .gradio-container th { font-weight: var(--shep-weight-strong); }
@@ -442,7 +477,7 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
 
 /* ---------------------------------------------------------------- shared pieces */
 .shep-muted { color: var(--shep-muted); }
-.shep-note { font-size: 14px; color: var(--shep-muted); }
+.shep-note { font-size: 14px; color: var(--shep-muted); max-width: var(--shep-measure); }
 .shep-note p { font-size: 14px; }
 .shep-sep { color: var(--shep-border-2); }
 .shep-nowrap { white-space: nowrap; }
@@ -480,9 +515,23 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
    and word are one inline run (`shep-st-in`), so the tag's flex gap is the shape's margin. */
 .shep-st-sp { font-size: 0; }
 .shep-st-chip .shep-spinner { margin-right: 4px; }
-.shep-reason { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; color: var(--shep-text-2); line-height: 1.45; }
+/* **A reason** (why a control is off, what a list cannot show): text in one flow, never a row of
+   columns (M5: as a flex box its text and each element in it were columns of their own), at the
+   measure, start-aligned. Led by a mark hidden from a screen reader (a lock, a status shape), the
+   mark keeps a column of its own and every line of the words starts on one edge: the mark and
+   one element of words after it (`data_locations.reason_line`, `renderers.see_above`), as every
+   producer draws it. The words' column is as wide as they are (at most the line), so a page's
+   own `justify-content` still places the reason. */
+.shep-reason {
+  display: block; font-size: 14px; color: var(--shep-text-2); line-height: var(--shep-lh-prose);
+  max-width: var(--shep-measure); text-align: start;
+}
+.shep-reason:has(> :first-child[aria-hidden="true"]) {
+  display: grid; grid-template-columns: auto minmax(0, max-content); column-gap: 6px; align-items: baseline;
+}
+.shep-reason:has(> :first-child[aria-hidden="true"]) > :not(:first-child) { grid-column: 2; }
 .shep-reason-grey { border: 1px solid var(--shep-grey-200); background: var(--shep-grey-50); border-radius: 8px; padding: 10px 12px; color: var(--shep-grey-800); }
-.shep-notice { border-radius: 6px; padding: 8px 10px; font-size: 14px; }
+.shep-notice { border-radius: 6px; padding: 8px 10px; font-size: 14px; max-width: var(--shep-measure); }
 .shep-notice-amber { border: 1px solid var(--shep-amber-300); border-left: 4px solid var(--shep-amber-600); background: var(--shep-amber-50); color: var(--shep-amber-800); }
 .shep-notice-red { border: 1px solid var(--shep-red-200); border-left: 4px solid var(--shep-red-700); background: var(--shep-red-50); color: var(--shep-red-700); }
 .shep-touch-lost { margin-top: 4px; }
@@ -637,6 +686,156 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .shep-rec-notes ul { margin: 4px 0 0; padding-left: 18px; font-size: 15px; }
 .shep-digest { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }
 .shep-digest .shep-dl { grid-column: 1 / -1; font-size: 14px; font-weight: 600; color: var(--shep-text-2); }
+
+/* ---------------------------------------------------------------- the notice (M1) */
+/* **The one notice** (`renderers.notice_block`, `notices_block`, `see_above`; the text brief's
+   §1): one line at the body size, its status mark in a column of its own so a wrapped line
+   starts under the words; the page's consequence and the next step, a link to its place, in the
+   same flow; the why and how under "Details ›" at 14 px, its references muted. Prose at the
+   measure, start-aligned, in the secondary text colour; no box of its own (one container per
+   region). Steps, Details and a second line hang on the words' edge, never under the mark. */
+.shep-nb {
+  --shep-nb-mark-w: 1em; --shep-nb-mark-gap: 6px;
+  display: flex; flex-direction: column; gap: var(--shep-space-item); max-width: var(--shep-measure);
+  font-size: var(--shep-body-size); line-height: var(--shep-lh-prose); color: var(--shep-text-2);
+  text-align: start; text-wrap: pretty;
+}
+.shep-nb-line, .shep-nb-rel {
+  display: grid !important; grid-template-columns: var(--shep-nb-mark-w, 1em) minmax(0, 1fr);
+  column-gap: var(--shep-nb-mark-gap, 6px); align-items: baseline; margin: 0;
+}
+.shep-nb-rel { --shep-nb-mark-w: 1em; --shep-nb-mark-gap: 6px; }
+.shep-nb-mark { font-size: 15px; line-height: inherit; text-align: center; }
+.shep-nb-text { min-width: 0; }
+/* Two classes: Gradio's reset (``.gradio-container-<version> p, ol``: margin and padding 0) is
+   one class and an element. */
+.shep-nb > :is(.shep-nb-next, .shep-nb-steps, .shep-nb-more) {
+  margin: 0 0 0 calc(var(--shep-nb-mark-w) + var(--shep-nb-mark-gap));
+}
+.shep-nb > .shep-nb-steps { padding: 0 0 0 1.25em; list-style: decimal outside; }
+.shep-nb-steps > li + li { margin-top: var(--shep-space-item); }
+.shep-nb-steps > li::marker { color: var(--shep-muted); }
+.shep-nb-more { font-size: 14px; line-height: var(--shep-lh-prose); }
+.shep-nb-more[open] > summary { margin-bottom: var(--shep-space-item); }
+.shep-nb .shep-nb-kv { gap: var(--shep-space-item) 12px; font-size: 14px; }
+.shep-nb .shep-nb-kv > .shep-v { font-size: 14px; overflow-wrap: break-word; }
+.shep-nb .shep-nb-ref { margin: var(--shep-space-item) 0 0; font-size: 14px; color: var(--shep-muted); }
+/* The next step: a link in the sentence (underlined, the accent text), a button to the keyboard. */
+.gradio-container button.shep-nb-go {
+  display: inline; margin: 0; padding: 0; border: 0; background: none; font: inherit;
+  color: var(--shep-accent-text); text-align: start; cursor: pointer;
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+}
+.gradio-container button.shep-nb-go:hover { text-decoration-thickness: 2px; }
+/* A literal token in a sentence (`renderers.token_html`): breaks only at its <wbr>, no hyphen. */
+.gradio-container code.shep-tok { hyphens: none; white-space: normal; overflow-wrap: normal; }
+.gradio-container code.shep-tok > span { white-space: nowrap; }
+/* **An empty region's words** (the WebUI skill's §9; M9): in the flow, never an overlay. */
+.shep-empty {
+  margin: 0; padding: var(--shep-space-2) 0; max-width: var(--shep-measure); font-size: var(--shep-body-size);
+  line-height: var(--shep-lh-prose); color: var(--shep-text-2); text-align: start; text-wrap: pretty;
+}
+/* **Paragraphs** (M5, the text brief's §2): Gradio's reset draws every paragraph with no margin;
+   a region spaces its paragraphs by its own gap (``--shep-space-para``), never by a margin of a
+   page's own or a <br><br>. Prose in a panel keeps the measure; at no specificity, so a page's
+   own class (a table's, a summary list's) keeps its width. */
+:where(.shep-panel p) { max-width: var(--shep-measure); text-wrap: pretty; }
+:where(.shep-panel h2, .shep-panel h3) { text-wrap: balance; }
+
+/* ---------------------------------------------------------------- bars and groups (M2) */
+/* **A bar is a wrapping row of groups** (Training's run bar, a list's tools, a run's header): a
+   group never splits, it moves to the next line whole; a message is never a group, it is the
+   bar's note, a row of its own the bar's whole width (hidden while it says nothing). Give a
+   ``gr.Row`` the class ``shep-bar`` and its parts ``shep-grp`` (``-grow``: takes the line's
+   room, from ``--shep-grp-basis``; ``-end``: at the line's end; ``-wrap``: its aside may go under
+   its field); the note ``shep-bar-note``. A text box in a group keeps its floor
+   (``--shep-input-floor``): the group wraps before the box would shrink under it. */
+.shep-bar {
+  display: flex !important; flex-wrap: wrap !important; align-items: flex-end !important;
+  gap: var(--shep-space-2) var(--shep-gap-between) !important;
+}
+.shep-bar > .shep-grp {
+  flex: 0 1 auto !important; flex-wrap: nowrap !important; align-items: flex-end !important;
+  gap: var(--shep-gap-in) !important; width: auto !important;
+  min-width: min(var(--shep-grp-min, 0px), 100%) !important;
+}
+.shep-bar > .shep-grp-grow { flex: 1 1 var(--shep-grp-basis, 20rem) !important; }
+.shep-bar > .shep-grp-end { margin-inline-start: auto !important; }
+.shep-bar > .shep-grp-wrap { flex-wrap: wrap !important; }
+.shep-bar > .shep-bar-note { flex: 1 1 100% !important; min-width: 0 !important; }
+.shep-bar > .shep-bar-note:not(:has(.html-container > *, .prose > *)) { display: none !important; }
+.shep-grp :is(input[type=text], input[type=search], textarea):not([role=combobox]) { min-width: var(--shep-input-floor); }
+.shep-grp > :is(.block, .form):has(input[type=text]:not([role=combobox]), textarea) {
+  flex: 1 1 18ch !important; min-width: calc(var(--shep-input-floor) + 24px) !important;
+}
+.shep-grp > button { flex: none !important; width: auto !important; min-width: max-content !important; white-space: nowrap; }
+/* A column of groups (a form's sections): the gap between groups, a smaller one inside each. */
+.shep-stack { display: flex !important; flex-direction: column !important; gap: var(--shep-gap-between) !important; }
+.shep-stack > .shep-grp-v { display: flex; flex-direction: column; gap: var(--shep-gap-in); }
+
+/* ---------------------------------------------------------------- fields and choice groups (M3) */
+/* **A row of fields** (``shep-fields``): each field takes its basis (``--shep-field-basis``) and
+   never goes under its floor (``--shep-field-min``); the row wraps whole fields. A grid of fields
+   (``shep-field-grid``): as many columns of at least ``--shep-field-min`` as fit. */
+.shep-fields {
+  display: flex !important; flex-wrap: wrap !important; align-items: flex-end !important;
+  gap: var(--shep-space-2) var(--shep-space-4) !important;
+}
+.shep-fields > :is(.block, .form) {
+  flex: 1 1 var(--shep-field-basis, 12rem) !important; min-width: min(var(--shep-field-min, 10rem), 100%) !important;
+}
+.shep-field-grid {
+  display: grid !important; gap: var(--shep-space-2) var(--shep-space-4) !important;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--shep-field-min, 15rem), 100%), 1fr));
+}
+.shep-field-grid > fieldset.block:has(input[type=radio], input[type=checkbox]) { grid-column: 1 / -1; }
+/* **A choice group is whole or one per line** (M3; Gradio draws a radio or checkbox group as a
+   fieldset block): in a row of fields it takes its one-line width and moves to the next line
+   whole; in a column it keeps the column's width, on its edge (Gradio centres an auto-margin
+   block, and a form's grey ground showed beside it); its options never wrap inside their words.
+   When even a whole line cannot hold them, the layout pass marks it (`NARROW_ATTR`, its fit
+   measured with the mark off) and they stand one per line: never one option alone under the
+   others. */
+.gradio-container fieldset.block:has(input[type=radio], input[type=checkbox]):not(.shep-seg) {
+  max-width: 100% !important; margin-inline: 0 !important;
+}
+.gradio-container :is(.row, .shep-fields, .shep-bar, .shep-grp, .shep-field-row) > fieldset.block:has(input[type=radio], input[type=checkbox]):not(.shep-seg),
+.gradio-container :is(.row, .shep-fields, .shep-bar, .shep-grp, .shep-field-row) > .form > fieldset.block:has(input[type=radio], input[type=checkbox]):not(.shep-seg) {
+  flex: 0 1 auto !important; width: max-content !important;
+}
+.gradio-container fieldset.block:not(.shep-seg) > .wrap:has(> label) > label > span { white-space: nowrap; }
+.gradio-container fieldset.block[__NARROW__]:not(.shep-seg) > .wrap:has(> label) {
+  flex-direction: column !important; align-items: flex-start !important;
+}
+/* A select's box never runs past its container (M9; Training's Viewing was 520 px in 358). */
+.gradio-container .wrap:has(> .wrap-inner) { max-width: 100%; }
+
+/* ---------------------------------------------------------------- one content edge (M5) */
+/* **Inside a panel every heading, text, label and field starts on one edge** (the panel's inset,
+   ``--shep-inset``): a Gradio block's padding is vertical only there (it added 12 px beside its
+   label and box, so fields stood right of the text above them), its vertical padding the field
+   row's measure; a block placed straight in a panel, with no padded column around it, takes the
+   inset itself. */
+.shep-panel, .shep-edge { --block-padding: var(--shep-field-pad-b) 0; }
+.shep-panel > .block.padded, .shep-panel > .form > .block.padded { padding-inline: var(--shep-inset); }
+/* With no padding beside its blocks, a form's row of fields keeps the gap between fields (its
+   boxes touched); a form's ground (Gradio draws it in the border colour, its gaps 0) showed grey
+   wherever its blocks left part of a line empty: it is the panel's. */
+.shep-panel .form, .shep-edge .form { column-gap: var(--shep-gap-between) !important; background: none !important; }
+/* A region drawn as a column of a panel without its class (the shared model list's columns) takes
+   the same edge with ``shep-edge``. A notice's link focuses its target's heading (the shell's go
+   link): a heading is no control, so it draws no focus ring. */
+.shep-panel-hd :is(h2, h3)[tabindex="-1"]:focus { outline: none; }
+
+/* ---------------------------------------------------------------- tables that fit (M6) */
+/* **A table drops its optional columns before it scrolls**: a wide table is a FIT box's wide form
+   (``shep-fit`` on its wrapper, ``shep-fit-wide`` on the table); a cell of a column its row's
+   details also show carries ``shep-col-opt``. While the whole table does not fit, the layout
+   pass marks the wrapper narrow and those columns are not drawn; when even that does not fit,
+   the wrapper scrolls sideways (its own region). A word breaks in a cell only when it alone is
+   wider than its column. */
+[__NARROW__] :is(th, td, col).shep-col-opt { display: none !important; }
+.shep-tbl td { overflow-wrap: break-word; }
 
 /* HTML the dashboard renders itself (`shell.plain_html`): no Gradio padding. */
 .shep-html > .html-container { padding: 0 !important; }
@@ -838,9 +1037,14 @@ button.shep-row {
 .shep-fam .shep-fam-h { margin: 4px 0 0; font-size: 15px; font-weight: 600; }
 /* The shared list's search line (D04): "Search" beside its box, as a field row says it, and
    its Clear after it. */
-.shep-search-row { flex-wrap: nowrap !important; align-items: center !important; gap: 8px !important; min-width: 0; }
-.shep-search-row > * { min-width: 0 !important; }
-.shep-search-row > :first-child, .shep-search-row > button { flex: none !important; width: auto !important; }
+.shep-search-row { flex-wrap: nowrap !important; align-items: center !important; gap: 8px !important; }
+.shep-search-row > :first-child, .shep-search-row > button { flex: none !important; width: auto !important; min-width: max-content !important; }
+/* The box is a group's text box (M2): it takes the line's room and never goes under its floor;
+   where the row has not that room its parent wraps it whole (a bar) or it scrolls in its region,
+   never a 22 px box with Clear over it (B-03: every child here was allowed to shrink to 0). */
+.shep-search-row > :not(:first-child):not(button) {
+  flex: 1 1 18ch !important; min-width: calc(var(--shep-input-floor) + 24px) !important;
+}
 .shep-search-lbl { font-size: 15px; color: var(--shep-text-2); white-space: nowrap; }
 .shep-list-outside { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 8px; font-size: 14px; color: var(--shep-text-2); }
 .shep-facts-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
@@ -926,6 +1130,10 @@ __SIDE__ {
   .shep-page { min-height: 0; height: 100%; align-items: stretch !important; flex-wrap: nowrap !important; }
   .shep-page > .shep-panel { min-height: 0; max-height: 100%; display: flex; flex-direction: column; min-width: var(--shep-panel-min) !important; }
   .shep-page > .shep-panel > .block { flex: none; }
+  /* **A panel sized by what it holds** (M4): a panel of class ``shep-sized`` grows from its
+     basis by its share (``--shep-panel-basis``, ``--shep-panel-grow``, in rem or em) in place of
+     Gradio's ``scale=``, and never under its ``--shep-panel-min``. */
+  .shep-page > .shep-panel.shep-sized { flex: var(--shep-panel-grow) 1 var(--shep-panel-basis) !important; }
   & footer, #runtime_footer { flex: none; }
   /* A panel's header stays where it is when its body scrolls (M5-3: the Test
      Result panel's title scrolled away with the report): a header drawn inside
@@ -956,7 +1164,7 @@ __STACK__ {
   .shep-page > .shep-panel { width: 100% !important; }
   .shep-tbl-wrap { overflow-x: auto; overflow-y: hidden; }
   .shep-tbl th { position: static; }
-  .shep-tbl td { overflow-wrap: anywhere; }
+  .shep-tbl td { overflow-wrap: break-word; }
   /* "↑ Back to the list" keeps its words' width, on one line; the title wraps its items, so the
      button takes a line of its own, at its end, when the name and its chip leave it no room (it got
      what they left: 57 px at 390 x 844, its words on three lines in its 32 px box; V-23). */
@@ -964,7 +1172,8 @@ __STACK__ {
   .shep-facts-title > .shep-back-list { display: inline-flex; align-items: center; flex: none; white-space: nowrap; }
 }
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK) \
-    .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART)
+    .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART) \
+    .replace("__NARROW__", NARROW_ATTR)
 
 
 __all__ = ["BRAND_WIDTH", "FIT", "FIT_WIDE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",

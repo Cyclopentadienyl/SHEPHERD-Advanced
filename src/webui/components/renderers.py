@@ -95,37 +95,37 @@ DATASET_NOT_RECORDED = "Dataset not recorded."
 RENDERER_HELP = {
     "dataset-fingerprint": (
         "Dataset fingerprint",
-        "The SHA-256 of this workspace's split manifest: equal ones mean the same build.\n\n"
-        "- The manifest binds by digest the graph, the three tensors, the train and val "
-        "samples and the dataset record.\n"
-        "- It also records the recipe, the seeds and the split.\n"
-        "- 12 of its 64 hex digits are shown; every comparison uses all 64.\n"
-        "- The files themselves are checked against it when a run or a load reads them.\n"
+        "The split manifest's SHA-256: equal fingerprints mean the same build.\n\n"
+        "- Binds by digest: graph, three tensors, both sample files, dataset record\n"
+        "- Records: the recipe, the seeds and the split\n"
+        "- Shown: the first 12 of 64 hex digits, all 64 compared\n"
+        "- Checked: the files against it, when a run or a load reads them\n"
         "Ref: split_manifest.json",
     ),
     "model-fingerprint": (
         "Model fingerprint",
         "The SHA-256 of the checkpoint file's bytes, as the server read them.\n\n"
-        "- 12 of its 64 hex digits are shown; every comparison uses all 64.\n"
-        "- A test record, a usage history entry and the served identity name the model by it.",
+        "- Shown: the first 12 of 64 hex digits, all 64 compared\n"
+        "- Named by it: a test record, a usage history entry, the served identity",
     ),
     # The exposure caveat's own parts, a line each (`caveats.EXPOSURE_CAVEAT`,
     # which records and the API keep whole): the skill's §13 lets a governed
-    # text change its presentation, never its words' meaning.
+    # text change its presentation, never its words' meaning. Its parts are
+    # sentences longer than a bubble's two-line item, so each is a paragraph.
     "kg-exposure": (
         "Exposure (KG edge sets)",
         f"{EXPOSURE_SCOPE}.\n"
-        f"{EXPOSURE_EVIDENCE[:1].upper()}{EXPOSURE_EVIDENCE[1:]}.\n\n"
-        f"- {EXPOSURE_NOT_EXHAUSTIVE}.\n"
-        f"- Negatives: {EXPOSURE_NEGATIVES}.\n"
-        f"- They are {EXPOSURE_NOT_PROVEN}.",
+        f"{EXPOSURE_EVIDENCE[:1].upper()}{EXPOSURE_EVIDENCE[1:]}.\n"
+        f"{EXPOSURE_NOT_EXHAUSTIVE}.\n"
+        f"Negatives: {EXPOSURE_NEGATIVES}.\n"
+        f"They are {EXPOSURE_NOT_PROVEN}.",
     ),
     "validation-trainer": (
         "Validation (Trainer)",
         "The Trainer's own figure on the val samples, recorded in the checkpoint.\n"
         "- Base: LP accuracy.\n"
         "- Task model: pooled MRR.\n"
-        "Training selects a checkpoint by it, so it is not an independent test; recorded "
+        "Training selects a checkpoint by it, so it is not an independent test. Recorded "
         "test results are kept apart from it.",
     ),
 }
@@ -793,6 +793,217 @@ def reason_lead(text: Any) -> str:
     internal code only after a plain label), and a row says the words before
     the reference; the whole reason is its details'."""
     return " ".join(str(text or "").partition("; Ref: ")[0].split())
+
+
+# ---------------------------------------------------------------------------
+# The notice: a setting's state, said once per screen (one renderer)
+# ---------------------------------------------------------------------------
+#: **A literal token inside a sentence** (the text brief's §8): an environment
+#: variable, a command's option, a file of a kind the dashboard names, or a
+#: path; drawn in the monospace token (`literal_html`), never a label.
+_LITERAL = re.compile(r"SHEPHERD_[A-Z0-9_]+|(?<![\w-])--[a-z][\w-]*"
+                      r"|(?<![\w/])[\w~-]*(?:\.[\w~-]+)*\.(?:lock|json|pt|py|sh|cmd)\b"
+                      r"|(?<![\w/])[\w.~-]+(?:/[\w.~-]+)+/?")
+#: Where a token may break: before its own separators, never inside a word,
+#: and never with a hyphen drawn (`token_html`).
+_TOKEN_BREAKS = "/._-"
+#: A notice's detail row (`server_settings.Notice.details`): "Term: text".
+_ROW = re.compile(r"^([A-Z][^:.!?]{0,31}):\s+(\S.*)$")
+#: The word of the disclosure every notice's why and how sit behind.
+DETAILS_WORD = "Details ›"
+
+
+def token_html(token: Any) -> str:
+    """**One literal token** (a path, a file name, a variable) escaped and in
+    code style, breakable only before its own separators: its pieces each
+    kept on one line (a span, ``white-space: nowrap``: the browser's own
+    break after a hyphen is not taken) with a ``<wbr>`` between them, so no
+    hyphen is drawn and a copy keeps the token whole (never U+200B)."""
+    text = "" if token is None else str(token)
+    pieces, start = [], 0
+    for i, ch in enumerate(text):
+        if i and ch in _TOKEN_BREAKS and text[i - 1] not in _TOKEN_BREAKS:
+            pieces.append(text[start:i])
+            start = i
+    pieces.append(text[start:])
+    return ('<code class="shep-tok">'
+            + "<wbr>".join(f"<span>{e(piece)}</span>" for piece in pieces if piece) + "</code>")
+
+
+def literal_html(text: Any) -> str:
+    """`text` escaped, with each literal token in it (`_LITERAL`) drawn by
+    `token_html`: the one way a sentence of a notice, a step or a Ref line
+    shows a path or a variable."""
+    words, out, at = "" if text is None else str(text), [], 0
+    for found in _LITERAL.finditer(words):
+        out.append(e(words[at:found.start()]))
+        out.append(token_html(found.group(0)))
+        at = found.end()
+    out.append(e(words[at:]))
+    return "".join(out)
+
+
+def _as_notice(notice: Any) -> Optional[Dict[str, Any]]:
+    """A notice as `notice_block` reads it: the dict a page keeps
+    (`workspaces.notice_view`), a `server_settings.Notice`, or a plain string
+    (an older caller's whole text: no details, no link); None or "" for none."""
+    if not notice:
+        return None
+    if isinstance(notice, str):
+        return {"key": "", "kind": "neutral", "summary": notice, "short": notice, "action": "",
+                "target": "", "details": (), "ref": (), "cause": None}
+    if hasattr(notice, "_asdict"):
+        notice = {**notice._asdict(), "kind": "neutral"}
+    found = dict(notice)
+    found.setdefault("kind", "neutral")
+    found["kind"] = found["kind"] if found["kind"] in STATUS_MARKS else "neutral"
+    return found
+
+
+def _marked(kind: str, inner: str, classes: str, attrs: str = "") -> str:
+    """A line led by a status mark in a column of its own, so its wrapped
+    lines align with its words, never under the mark (the text brief's §4):
+    the mark's shape (hidden from a screen reader, which reads the words),
+    then the words, coloured by the state's token as `status_mark` colours
+    them. Its text reads shape, space, words (`MARK_SPACE`)."""
+    shape, token = STATUS_MARKS[kind]
+    mark = (f'<span class="shep-nb-mark shep-st-{token}" aria-hidden="true">'
+            f'{shape or ""}{MARK_SPACE}</span>')
+    return f'<p class="{classes}"{attrs}>{mark}<span class="shep-nb-text">{inner}</span></p>'
+
+
+def _go(notice: Mapping[str, Any], go: bool) -> str:
+    """A notice's next step: a link-styled button to its place in the GUI
+    (``data-shep-go``: the page; ``data-shep-focus``: the element whose
+    heading takes the focus; the shell's head script opens it, from its own
+    list of places), or its words as a sentence when `go` is off or it names
+    no place."""
+    action = str(notice.get("action") or "")
+    if not action:
+        return ""
+    page, _, focus = str(notice.get("target") or "").partition("#")
+    if not go or not page:
+        return f'<span class="shep-nb-act">{e(action)}.</span>'
+    focus_attr = f' data-shep-focus="{e(focus)}"' if focus else ""
+    return (f'<button type="button" class="shep-link shep-nb-go" data-shep-go="{e(page)}"'
+            f'{focus_attr}>{e(action)}</button>')
+
+
+def _detail_rows(notices: Sequence[Mapping[str, Any]]) -> Tuple[str, str]:
+    """The Details of `notices`, once each: their term rows as one summary
+    list (each value's tokens in code style), and one Ref line of their
+    references, each once."""
+    rows, refs = [], []
+    for notice in notices:
+        for row in notice.get("details") or ():
+            found = _ROW.match(str(row))
+            rows.append((found.group(1), literal_html(found.group(2))) if found
+                        else ("", literal_html(row)))
+        refs += [ref for ref in notice.get("ref") or () if ref not in refs]
+    kv = summary_list(rows, classes="shep-nb-kv") if rows else ""
+    ref = (f'<p class="shep-nb-ref">Ref: {", ".join(literal_html(x) for x in refs)}</p>'
+           if refs else "")
+    return kv, ref
+
+
+def _details(notices: Sequence[Mapping[str, Any]]) -> str:
+    """The notices' "Details ›": their rows and one Ref line; none when they
+    hold no row (a Ref line alone is not worth a disclosure: the notice's link
+    leads to where its why is said)."""
+    kv, ref = _detail_rows(notices)
+    if not kv:
+        return ""
+    return (f'<details class="shep-more shep-nb-more"><summary>{e(DETAILS_WORD)}</summary>'
+            f'{kv}{ref}</details>')
+
+
+def _keys(notices: Iterable[Mapping[str, Any]]) -> str:
+    return " ".join(dict.fromkeys(str(n["key"]) for n in notices if n.get("key")))
+
+
+def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterable[Any] = (),
+                 steps: Iterable[str] = (), go: bool = True) -> str:
+    """**The one notice** (a setting's state, said once per screen where it
+    empties a region; the text brief's §1 and §10): one line, its status mark
+    in a column of its own, the state (`summary`), what it means here
+    (`consequence`, the page's own words, one short sentence) and the next
+    step as a link to its place in the GUI (`_go`); the why and how one click
+    away, under "Details ›" (its term rows and one Ref line). `also`: notices
+    that follow from this one (the GPU lock's, from the workspaces
+    folder's): their details join this one's and they are never drawn apart
+    (``data-notice-also``). `steps`: further steps, the action then step 1
+    of a numbered list (each step's tokens in code style). Every value is
+    escaped. ``data-notice`` names the key, so a screen can count each
+    notice once."""
+    found = _as_notice(notice)
+    if found is None:
+        return ""
+    extra = [n for n in map(_as_notice, also) if n and n.get("key") != found.get("key")]
+    kind = found["kind"]
+    act = _go(found, go)
+    steps = [str(step) for step in steps if step]
+    inner = f'<span class="shep-st-w shep-st-{STATUS_MARKS[kind][1]}">{e(found["summary"])}</span>'
+    if consequence:
+        inner += f' <span class="shep-nb-then">{e(consequence)}</span>'
+    if act and not steps:
+        inner += f" {act}"
+    keys = f' data-notice="{e(found.get("key") or "")}"' if found.get("key") else ""
+    also_keys = _keys(extra)
+    if also_keys:
+        keys += f' data-notice-also="{e(also_keys)}"'
+    listed = "".join(f"<li>{literal_html(step)}</li>" for step in steps)
+    ol = (f'<ol class="shep-nb-steps">{f"<li>{act}</li>" if act else ""}{listed}</ol>'
+          if steps else "")
+    return (f'<div class="shep-nb shep-nb-{kind}"{keys}>'
+            f'{_marked(kind, inner, "shep-nb-line")}{ol}{_details([found, *extra])}</div>')
+
+
+def notices_block(notices: Iterable[Any], *, consequence: Optional[str] = None,
+                  go: bool = True) -> str:
+    """**Several notices said once, as one block** (the Test page's data
+    panel: the registry and the workspaces folder): each state on a line of
+    its own with its mark, then what they mean here and one next step when
+    every notice's step is the same (each its own after its state, else);
+    one "Details ›" with every notice's rows and one Ref line. One notice is
+    `notice_block`'s; none, ""."""
+    found = [n for n in map(_as_notice, notices) if n]
+    if len(found) <= 1:
+        return notice_block(found[0], consequence=consequence, go=go) if found else ""
+    one = len({(n.get("action"), n.get("target")) for n in found}) == 1
+    lines = []
+    for n in found:
+        inner = (f'<span class="shep-st-w shep-st-{STATUS_MARKS[n["kind"]][1]}">'
+                 f'{e(n["summary"])}</span>')
+        if not one and _go(n, go):
+            inner += f" {_go(n, go)}"
+        lines.append(_marked(n["kind"], inner, "shep-nb-line"))
+    after = " ".join(part for part in (
+        f'<span class="shep-nb-then">{e(consequence)}</span>' if consequence else "",
+        _go(found[0], go) if one else "") if part)
+    next_line = f'<p class="shep-nb-next">{after}</p>' if after else ""
+    kind = "error" if any(n["kind"] == "error" for n in found) else "neutral"
+    return (f'<div class="shep-nb shep-nb-{kind}" data-notice="{e(_keys(found))}">'
+            f'{"".join(lines)}{next_line}{_details(found)}</div>')
+
+
+def see_above(lead: str, notice: Any, *, where: Optional[str] = None,
+              details: bool = False) -> str:
+    """**A control's relation to the notice its screen shows** (said once,
+    `notice_block`): one line beside the control it explains, its status
+    mark, the control's state and the notice's short words ("Start
+    unavailable: no workspaces folder is set."), with where the notice is
+    when it is not in view of the control (`where`: "see above", "see Data").
+    With `details`, the notice's "Details ›" under it (where the screen shows
+    the notice's line elsewhere but not its details). ``data-notice-rel``
+    names the notice: a relation is not the notice said again."""
+    found = _as_notice(notice)
+    if found is None:
+        return ""
+    words = f"{lead}: {found['short']}" + (f" (see {where})" if where else "") + "."
+    rel = f' data-notice-rel="{e(found["key"])}"' if found.get("key") else ""
+    inner = f'<span class="shep-st-w shep-st-{STATUS_MARKS[found["kind"]][1]}">{e(words)}</span>'
+    line = _marked(found["kind"], inner, "shep-reason shep-nb-rel", rel)
+    return line + (_details([found]) if details else "")
 
 
 #: Why a workspace without a readable manifest is not trainable, in short words:
@@ -2320,7 +2531,7 @@ R10_HELP = (
     "diseases, and their test cases.\n"
     "Phenotype-set overlap: test cases matching an input case's disease and phenotype set, of "
     "all test cases.\n"
-    "- Sets ignore order and repeats, so the scoring inputs may differ.\n"
+    "Sets ignore order and repeats, so the scoring inputs may differ.\n"
     "Ref: R10",
 )
 #: The R10 table's ⓘ, wherever a recorded result shows it (`record_html`).
@@ -3006,6 +3217,12 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
 
 __all__ = [
     "CURRENT_DATASET",
+    "DETAILS_WORD",
+    "literal_html",
+    "notice_block",
+    "notices_block",
+    "see_above",
+    "token_html",
     "LP_MODE",
     "lp_metric_names",
     "lp_metric_words",
