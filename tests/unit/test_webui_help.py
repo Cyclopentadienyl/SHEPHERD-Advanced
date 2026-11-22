@@ -212,6 +212,72 @@ def test_the_shared_renderers_texts_meet_the_text_layout_budget():
         assert h.budget_problems(text, h.TEXT_BUDGET) == (), key
 
 
+def _dashboard_help(monkeypatch):
+    """Every help text the built dashboard registers, by key (`shell.help_texts` is handed the
+    one registry after every page has registered its own)."""
+    from src.webui import app, shell
+
+    seen, real = [], shell.help_texts
+    monkeypatch.setattr(shell, "help_texts", lambda registry: seen.append(registry) or real(registry))
+    app.create_gradio_app()
+    (registry,) = seen
+    return {entry.key: entry.text for entry in registry.entries()}
+
+
+#: A help text keyed by a field's name carries that field's spec description as its lead (the
+#: Training form's, the Continue drawer's branch fields, Fine-tune's).
+_FIELD_KEY = re.compile(r"(?:branch_|ft_)?(?P<name>[a-z_]+)")
+
+
+def _exempt_source(key: str, text: str):
+    """**The one exemption from the text budget**: the words a text keeps verbatim from its
+    source, which the WebUI may not change. A lead that is its field's API wording
+    (`training_fields.FieldSpec.description`, which the schema and the refusals share), or a
+    text that is a governed note (`caveats.MODE_RESULT_NOTES`, the Test page's measurement
+    notes), as (the exempt words, their source); None for every other text."""
+    from src.config import training_fields as tf
+    from src.evaluation import caveats
+
+    if key.startswith("test-mode-"):
+        mode = key[len("test-mode-"):]
+        return " ".join(text.split("\n")), caveats.MODE_RESULT_NOTES.get(mode)
+    found = _FIELD_KEY.fullmatch(key)
+    spec = {f.name: f for f in tf.FIELDS}.get(found.group("name")) if found else None
+    lead = h.help_lines(text)[0].text
+    if spec is not None and spec.description and lead == spec.description:
+        return lead, spec.description
+    return None
+
+
+def test_every_registered_help_text_meets_the_text_budget_but_its_verbatim_source(monkeypatch):
+    """E2 of the sweep's integration (its decision 6): every help text the dashboard registers,
+    on every page, meets the text layout's budget (`help.TEXT_BUDGET`: a lead of 90 characters
+    at most, none or 2-4 items of one form each 76 at most, 80 words, plain words, Ref last).
+    The one exemption is words the WebUI may not change: a lead that is its field's API wording
+    (`FieldSpec.description`, equal to it exactly; the rest of its text, its source line and
+    term rows, meets the budget) and a governed measurement note (`caveats.MODE_RESULT_NOTES`,
+    the whole text equal to it, a sentence a line). A lead over 78 characters (three bubble
+    lines) stays a note (`help.budget_notes`), not a failure."""
+    texts = _dashboard_help(monkeypatch)
+    assert len(texts) >= 140, len(texts)
+    exempt, over = {}, {}
+    for key, text in texts.items():
+        problems = h.budget_problems(text, h.TEXT_BUDGET)
+        source = _exempt_source(key, text) if problems else None
+        if source is not None:
+            words, original = source
+            assert original is not None and words == original, (key, words, original)
+            exempt[key] = words
+            # The governed note is the whole text; a field's text past its API-worded lead (its
+            # source line, its term rows) still meets the budget.
+            rest = "" if key.startswith("test-mode-") else text.split("\n", 1)[-1]
+            problems = h.budget_problems("Lead.\n" + rest, h.TEXT_BUDGET) if rest.strip() else ()
+        if problems:
+            over[key] = problems
+    assert over == {}, over
+    assert all(k.startswith("test-mode-") or _FIELD_KEY.fullmatch(k) for k in exempt), sorted(exempt)
+
+
 def test_the_budget_names_what_a_text_runs_over():
     assert h.budget_problems("A short lead.\n- one\n- two\nRef: D5; SHEPHERD_DEVICE") == ()
     long_lead = h.budget_problems("x" * 101)
