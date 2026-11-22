@@ -764,6 +764,120 @@ def test_the_page_css_is_registered_and_scoped_to_the_page():
         line for line in rules if not line.lstrip().startswith(dp._TAB)]
 
 
+def test_the_input_column_follows_the_row_and_no_window_media_query_decides_it():
+    """B-14 (the UI sweep of 2026-11-22): the input column was 300, 320 or
+    370 px by the window's width (two ``@media (min-width)`` queries), the
+    fields one or two columns by a third (``max-width: 760px``); the Load and
+    identity drawers were placed from that width. Now the column's width is
+    a share of the page's row between a floor and a cap (`DX_IN_W`, on the
+    row: the column's flex container and the drawers' containing block, so
+    one width places all three), and the fields' columns follow the input
+    column's own width (a container query). No window media query is left
+    on the page. Top-K's box holds ten widths of "0" in its own type (`ch`),
+    as every text box does, and its block (drawn as no box) clips nothing."""
+    css = " ".join(dp.PAGE_CSS.split())
+    assert "@media" not in css
+    assert dp.DX_IN_W.startswith("clamp(") and "%" in dp.DX_IN_W
+    assert f"{dp._TAB} #shep-dx {{ --dx-in-w: {dp.DX_IN_W}; position: relative; gap: 16px;" in css
+    assert f"{dp._TAB} #shep-dx-input {{ flex: 0 0 var(--dx-in-w) !important;" in css
+    assert "calc(var(--dx-in-w) + 16px)" in css and "100% - var(--dx-in-w)" in css
+    assert f"{dp._TAB} #shep-dx-input {{ container: shep-dx-in / inline-size; }}" in css
+    assert (f"@container shep-dx-in (max-width: {dp.DX_FIELDS_ONE_COLUMN}) {{ {dp._TAB} "
+            ".shep-dx-fields { grid-template-columns: minmax(0, 1fr) !important; } }") in css
+    width = re.search(re.escape(f"{dp._TAB} #dx_top_k input[type=number] {{ width: calc(")
+                      + r"(\d+)ch \+ (\d+)px\); }", css)
+    pad = re.search(re.escape(f"{dp._TAB} #dx_top_k input[type=number] {{ height: 34px; padding: ")
+                    + r"\d+px (\d+)px; }", css)
+    assert width and pad and int(width.group(1)) >= 10 and int(width.group(2)) >= 2 * int(pad.group(1))
+    assert f"{dp._TAB} .shep-dx-options #dx_top_k {{ overflow: visible !important; }}" in css
+
+
+#: B-14 at each stop of the walk: the input column, the panel beside it and
+#: its minimum, Top-K's box in widths of its own "0", the fields region and
+#: Run, the fields' grid columns, and the Load drawer when it is open.
+_COLUMN_JS = r"""() => {
+  const q = (s) => document.querySelector(s);
+  const box = (e) => (e && e.getClientRects().length ? e.getBoundingClientRect() : null);
+  const k = q('#dx_top_k input'), ks = getComputedStyle(k);
+  const c = document.createElement('canvas').getContext('2d');
+  c.font = `${ks.fontWeight} ${ks.fontSize} ${ks.fontFamily}`;
+  const input = box(q('#shep-dx-input')), change = box(q('#shep-dx-change')), run = box(q('#shep-dx-run-btn'));
+  const fields = q('#shep-dx-fields');
+  return { layout: document.documentElement.getAttribute('data-shep-layout'),
+           input: input && [input.left, input.right, input.width],
+           min: parseFloat(getComputedStyle(q('#shep-dx-input')).getPropertyValue('--shep-panel-min')) || 0,
+           gap: parseFloat(getComputedStyle(q('#shep-dx')).columnGap) || 0,
+           results: box(q('#shep-dx-results')) && box(q('#shep-dx-results')).left,
+           change: change && change.left,
+           zeros: (k.getBoundingClientRect().width - parseFloat(ks.paddingLeft) - parseFloat(ks.paddingRight))
+             / c.measureText('0').width,
+           fields: { h: fields.clientHeight, content: fields.scrollHeight },
+           run: run && run.top >= 0 && run.bottom <= innerHeight,
+           columns: getComputedStyle(q('.shep-dx-fields')).gridTemplateColumns.split(' ').filter(Boolean).length };
+}"""
+
+
+def test_in_a_browser_the_input_column_follows_the_row_and_top_k_holds_its_value(monkeypatch,
+                                                                                tmp_path):
+    """B-14 and the first-use walk's findings (the UI sweep of 2026-11-22) as
+    the dashboard draws them, nothing served, an operator: at every walked
+    window Top-K holds at least ten widths of its own "0" and no control of
+    the page is cut, overlapped, squeezed or centred in a tall row (the
+    layout rules); side by side the input column is never under its panel
+    minimum, grows with the row (wider at 1550 than at 1366 than at 1280,
+    which a window media query held at one width), Run Diagnosis is in view
+    and the fields region holds the rest (the one scroll region); the Load
+    drawer starts where the column's row gap ends; stacked, the fields take
+    two columns in a wide column and one in a narrow one. Fails on 8e4c7b6
+    (Top-K 6.2 "0", cut by its block; the column 300 px at 1280 to 1550)."""
+    from src.utils.version_checker import NOTICE
+    from src.webui import app, shell
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import layout_problems, node_with_playwright, walk_ui
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    monkeypatch.setattr(app, "probe_runtime", lambda: {"status": NOTICE, "issues": []})
+    monkeypatch.setattr(app, "format_runtime_line", lambda report=None: "Python 3.12 · torch 2.10.0")
+    monkeypatch.setattr(dp.card, "read_status_within", lambda *a, **k: (
+        {"initialized": False, **_NOT_LOADED, "not_serving": {
+            "state": "not_loaded", "lead": "Nothing has been loaded since the service started",
+            "at": None, "model_sha12": None}}, None))
+    with gr.Blocks(analytics_enabled=False, fill_width=True) as demo:
+        shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                    for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                 shell.CLINICAL: dp.create_diagnosis_tab})
+        shell.plain_html(app._runtime_footer(), elem_id="runtime_footer")
+    load = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
+            "close": "#shep-dx-change-close button"}
+    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720], [800, 900], [390, 844])
+    stops = [{"size": size, "page": "clinical", "focus": False} for size in sizes]
+    stops += [{"size": [1366, 768], "page": "clinical", "focus": False, "open": load}]
+    with served(demo, **mount_options()) as base:
+        seen = walk_ui(base[:-len("gradio_api")], tmp_path, stops, extra_js=_COLUMN_JS)
+    rules = ("beside", "narrow-box", "overlap", "orphan", "centred", "clipped", "edge")
+    assert layout_problems([s for s in seen if not s.get("open")], rules=rules) == []
+    at = {s["size"]: s["extra"] for s in seen if not s.get("open")}
+    for size, got in at.items():
+        assert got["zeros"] >= 10, (size, got)
+    side = {size: got for size, got in at.items() if got["layout"] == "side"}
+    assert {"1850x960", "1550x830", "1366x768", "1280x720"} <= set(side), at
+    for size, got in side.items():
+        assert got["input"][2] >= got["min"] - 0.5, (size, got)
+        assert got["run"], (size, got)
+        assert got["fields"]["h"] > 0, (size, got)
+        assert abs(got["results"] - (got["input"][1] + got["gap"])) <= 1, (size, got)
+    widths = [side[size]["input"][2] for size in ("1280x720", "1366x768", "1550x830")]
+    assert widths == sorted(widths) and widths[0] < widths[-1], widths
+    opened = next(s["extra"] for s in seen if s.get("open"))
+    assert abs(opened["change"] - (opened["input"][1] + opened["gap"])) <= 1, opened
+    assert at["800x900"]["layout"] == "stack" and at["800x900"]["columns"] == 2, at["800x900"]
+    assert at["390x844"]["columns"] == 1, at["390x844"]
+
+
 def test_the_page_css_hides_a_view_by_its_class_and_keeps_the_confirmation_in_view():
     """The views are hidden by `VIEW_OFF` (never ``visible``), so the page's
     stylesheet must hide that class. Seen in review: the Load confirmation's
@@ -3737,15 +3851,23 @@ def test_path_settings_are_not_applicable_where_no_path_is_discovered():
 def test_the_task_help_texts_answer_first_within_their_budget():
     """Skill §5/§7: each new text leads with its answer (about 90 characters),
     about 80 words, sentences of 25 words at most; each field's title is its
-    label (`test_webui_help.py` pins that against the built app)."""
-    texts = [dp.FIELD_HELP["dx_candidate_genes"], dp.FIELD_HELP["dx_reference_cohort"],
-             dp.TOPIC_HELP["dx-gene-score"], dp.TOPIC_HELP["dx-similarity"],
-             dp.TOPIC_HELP["dx-run-no-cohort"]]
-    for title, text in texts:
-        lead = re.split(r"(?<=[.!?])\s+", text)[0]
-        assert len(lead) <= 95, (title, lead)
-        assert len(text.split()) <= 80, title
-        assert max(len(s.split()) for s in re.split(r"(?<=[.!?])\s+", text)) <= 25, title
+    label (`test_webui_help.py` pins that against the built app). The UI
+    sweep of 2026-11-22 (the text brief's §11): every help text of this page,
+    the card's included, meets the text layout's budget (`help.TEXT_BUDGET`:
+    a lead of two bubble lines, none or 2-4 items of one form, each of two
+    lines at most, no semicolon); 14 of them ran over it (items of 80 to 167
+    characters, semicolons, term rows mixed with sentences)."""
+    from src.webui.components import diagnosis_card as card
+    from src.webui.components import help as h
+
+    texts = {**dp.FIELD_HELP, **dp.TOPIC_HELP}
+    assert texts["dx-card"] == card.CARD_HELP
+    over = {key: h.budget_problems(text, h.TEXT_BUDGET) for key, (_title, text) in texts.items()}
+    assert {key: found for key, found in over.items() if found} == {}
+    for key in ("dx_candidate_genes", "dx_reference_cohort", "dx-gene-score", "dx-similarity",
+                "dx-run-no-cohort"):
+        title, text = texts[key]
+        assert len(h.help_lines(text)[0].text) <= 90, (title, text)
     assert [dp.FIELD_HELP[k][0] for k in ("dx_candidate_genes", "dx_reference_cohort")] == [
         "Candidate genes", "Reference cohort"]
 
@@ -4586,7 +4708,7 @@ def test_matching_phenotypes_are_split_annotated_or_not_name_first():
     assert _visible(html).startswith(
         "Annotated to this disease (1) Global developmental delay HP:0001263 "
         "Not annotated (1) Seizure HP:0001250 ")
-    assert ('Global developmental delay <span class="shep-dx-id">HP:0001263</span>') in html
+    assert ('Global developmental delay <span class="shep-dx-id shep-mono">HP:0001263</span>') in html
     assert dp._e(dp.MATCHING_NOTE) in html
     nameless = {**result, "_names": {}}
     assert "<li><code>HP:0001263</code></li>" in dp.phenotypes_html(
@@ -4606,7 +4728,7 @@ def test_paths_show_the_three_shortest_named_and_the_rest_behind_more():
     html = dp.paths_html(result["candidates"][0], result)
     shown = html.split("<details")[0]
     assert shown.count('<li class="shep-dx-path">') == 3
-    assert ('<span class="shep-dx-step">Global developmental delay <span class="shep-dx-id">'
+    assert ('<span class="shep-dx-step">Global developmental delay <span class="shep-dx-id shep-mono">'
             'HP:0001263</span></span>') in shown
     assert '<span class="shep-dx-step"><code>SCN1A</code></span>' in shown
     assert "More paths (2) ›</summary>" in html and 'start="4"' in html
@@ -4635,7 +4757,7 @@ def test_a_run_names_its_terms_from_its_own_graph_only(served):
     assert names == served_status.node_names(digest, dp._wanted_names(result))
     assert set(names) >= {SEIZURE, DELAY}
     used = out["results_body"].split("Used (2)</dt>")[1].split("</dd>")[0]
-    assert (f'{dp._e(names[SEIZURE])} <span class="shep-dx-id">{SEIZURE}</span>') in used
+    assert (f'{dp._e(names[SEIZURE])} <span class="shep-dx-id shep-mono">{SEIZURE}</span>') in used
     assert served_status.node_names("0" * 64, [SEIZURE]) == {}
     assert served_status.node_names(None, [SEIZURE]) == {}
 
