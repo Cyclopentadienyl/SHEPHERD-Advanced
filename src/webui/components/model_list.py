@@ -65,8 +65,9 @@ it). By default every run is folded but the selection's and the model in
 use's, which is located (scrolled into view once per view). **Nothing
 changes what is selected but a click on a row**: a filter, a search, a fold
 or a refresh keeps a selection still listed (`kept_selection`), and one the
-list does not show is said (`outside_html`). A lone candidate is chosen
-(R-27).
+list does not show is said (`outside_html`); one a refresh no longer lists is
+cleared and said beside Load (`SELECTION_GONE`), never replaced by another
+file. A lone candidate is chosen when a workspace is first listed (R-27).
 
 **A page shapes its view** through ``ModelList.view`` (a `gr.State` the page
 sets; the list is drawn again on its ``.change``), never by drawing rows itself:
@@ -189,7 +190,11 @@ answered after a newer pick set the selection back): the list's handlers
 commit through the session's one `ListClock`, which says whether an answer
 still belongs to the workspace the list now shows (the listing's generation,
 `GENERATION`, said by the rows a pick is made in) and keeps a newer
-selection, fold or "Show older runs" from being written over.
+selection, fold or "Show older runs" from being written over. A handler reads
+everything first and commits last (the review of bd5e678, SL-R3c: a page's
+own read after the commit wrote back what it had committed), so a page that
+reads more for a listing does so between the refresh's two steps
+(``ModelList.read_list``, ``ModelList.commit_list``).
 
 **Per browser session**: the listing, the selection, the view, what was said
 beside Load, the confirmation and the list's clock are `gr.State`; nothing a
@@ -824,23 +829,31 @@ def refused_line(listing: Mapping[str, Any]) -> str:
     return f"{operator_only(listing.get('condition'))}."
 
 
+#: Said beside Load when the list read again no longer lists the checkpoint
+#: selected (`kept_selection`, `ListClock.commit_listing`): what the list
+#: shows now, never why (the file may be elsewhere, or unreadable).
+SELECTION_GONE = "The checkpoint selected before is not in the list now. Select one again."
+
+
 def kept_selection(previous: Any, listing: Mapping[str, Any], key: Any,
                    view: Any = None, preset: Optional[Preset] = None, *,
                    search: Any = "") -> Optional[str]:
-    """**The selection a new listing keeps** (D04): `key` when the listing is
-    of the same workspace as `previous` and still lists that checkpoint among
-    the rows its preset ever shows, whatever the view's filter, the search or
-    the fold state show (a selection the list does not show says so,
-    `outside_html`, and keeps its details); else, when exactly one row is
-    shown and it can be loaded, that row (R-27: a lone candidate is no dead
-    end); else None."""
+    """**The selection a new listing keeps** (D04; the owner's rule after the
+    recheck of bd5e678). Of the same workspace as `previous` (the list read
+    again): `key` while the listing still lists that checkpoint among the rows
+    its preset ever shows, whatever the view's filter, the search or the fold
+    state show (a selection the list does not show says so, `outside_html`,
+    and keeps its details); else None: a selection gone is cleared, never
+    replaced by another file, not even a lone candidate (the clock says so
+    beside Load, `SELECTION_GONE`), and a re-read with nothing selected
+    chooses nothing. A first listing (`previous` None, or another workspace):
+    the lone row shown, when exactly one is and it can be loaded (R-27: a
+    lone candidate is no dead end; a preselection loads nothing); else None."""
     if listing.get("refused"):
         return None
-    if key and isinstance(previous, Mapping) and previous.get("workspace") == listing.get(
-            "workspace"):
-        item = find_item(listing, key)
-        if item is not None and item in shown_items(listing, None, preset):
-            return key
+    if isinstance(previous, Mapping) and previous.get("workspace") == listing.get("workspace"):
+        item = find_item(listing, key) if key else None
+        return key if item is not None and item in shown_items(listing, None, preset) else None
     shown = [i for i in shown_items(listing, view, preset) if search_hit(i, search)]
     return lone_key(shown, can_load)
 
@@ -3106,12 +3119,32 @@ def load_closed_js(elem_id: str) -> str:
 
 class Refreshed(NamedTuple):
     """What a re-read of the list committed (`ListClock.commit_listing`): the
-    listing (carrying its generation), the selection kept and "Show older
-    runs"."""
+    listing (carrying its generation), the selection kept, "Show older runs",
+    and what it says beside Load (``said``, `list_drawing`): None, or, where
+    it cleared a selection the listing no longer lists, `SELECTION_GONE`
+    for no selection."""
 
     listing: Dict[str, Any]
     selected: Optional[str]
     older: bool
+    said: Optional[Dict[str, Any]] = None
+
+
+class ListRead(NamedTuple):
+    """**A re-read of the list, read and not committed yet** (the review of
+    bd5e678, SL-R3c): the refresh's read step (``ModelList.read_list``)
+    returns it and its commit step (``ModelList.commit_list``) commits it, so
+    a page that reads more for the same listing (Models' cohort versions and
+    usage history) does so between the two, never after the commit. The
+    session's clock, what the clock said as the read began, the listing read,
+    the view, search and folds it is judged with."""
+
+    session: ListClock
+    began: Tuple[int, int]
+    listing: Dict[str, Any]
+    view: Any
+    search: Any
+    fold: Dict[str, Any]
 
 
 class ListClock:
@@ -3137,10 +3170,12 @@ class ListClock:
       workspace's listing was committed since it began; of the same
       workspace, it writes the listing and keeps the selection committed
       last (a pick made while it read), judged by the one rule
-      (`kept_selection`: still listed, or cleared, or a lone candidate),
-      never the selection it began with; it keeps "Show older runs", and its
-      answer is dropped where "Show older runs" was asked while it read only
-      the latest runs;
+      (`kept_selection`: kept while still listed, else cleared and said
+      beside Load, never replaced by another file), never the selection it
+      began with; a first listing, or another workspace's, preselects a lone
+      candidate (R-27); it keeps "Show older runs", and its answer is
+      dropped where "Show older runs" was asked while it read only the
+      latest runs;
     - **the folds** are the session's one dict (the ``fold`` State), changed
       in place under this lock by each handler that changes them and
       returned by none, so no answer writes back an older copy.
@@ -3151,11 +3186,23 @@ class ListClock:
     so every handler of a session holds the same clock; a deep copy is a new
     clock with its own lock.
 
-    **The limit**: the check runs as a handler ends, and Gradio writes the
-    handler's outputs to the session just after it returns. Two commits can
-    still cross in that instant (one checked, the other checked and written,
-    then the first written); nothing here holds or delays an event to close
-    it."""
+    **The rule every handler keeps** (the review of bd5e678, SL-R3c: Models'
+    opening committed the list's re-read, then read its cohort versions and
+    usage history, then wrote what it had committed; a pick or another
+    workspace committed during those reads was set back): a handler does
+    every read that can wait (files, `list_models`, a page's own data)
+    *before* it commits here, and builds its outputs after the commit from
+    what it read and what the commit returned only, with no read and no
+    wait (a refresh's two steps, `ListRead`).
+
+    **The limit**: the check runs once a handler's reads are done, and Gradio
+    writes the handler's outputs to the session just after it returns. Two
+    commits can still cross between a handler's commit and Gradio writing
+    its outputs (one checked, the other checked and written, then the first
+    written); the gap stays that short only because every handler keeps the
+    rule above, and a handler that read or waited after its commit would
+    widen it by as long as that takes. Nothing here holds or delays an event
+    to close it."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -3212,14 +3259,18 @@ class ListClock:
                        view: Any, preset: Optional[Preset], search: Any,
                        fold: Dict[str, Any]) -> Optional[Refreshed]:
         """Commit a re-read (`began` its start), or None where its answer is
-        stale (the class's rules). Another workspace's listing starts afresh:
-        a new generation, nothing selected but a lone candidate, no fold,
-        "Show older runs" off."""
+        stale (the class's rules). Of the same workspace: the selection
+        committed last while still listed; one the listing no longer lists is
+        cleared, never replaced, and said beside Load (`SELECTION_GONE`).
+        Another workspace's listing, or the first, starts afresh: a new
+        generation, nothing selected but a lone candidate, no fold, "Show
+        older runs" off."""
         with self.lock:
             generation, asked = began
             if generation != self.generation:
                 return None
             workspace = listing.get("workspace")
+            gone = False
             if self.listed and workspace == self.workspace:
                 if self.older and listing.get("runs_unread"):
                     if asked != self.older_asked:
@@ -3230,6 +3281,7 @@ class ListClock:
                     older = self.older
                 key = kept_selection({"workspace": workspace}, listing, self.selected, view,
                                      preset, search=search)
+                gone = self.selected is not None and key is None and not listing.get("refused")
             else:
                 self.generation += 1
                 self.listed, self.workspace = True, workspace
@@ -3237,7 +3289,9 @@ class ListClock:
                 key = kept_selection(None, listing, None, view, preset, search=search)
                 fold.clear()
             self.selected, self.older = key, older
-            return Refreshed({**listing, GENERATION: self.generation}, key, older)
+            said = ({"key": None, "html": f'<div class="shep-reason shep-reason-grey">'
+                                          f'{r.e(SELECTION_GONE)}</div>'} if gone else None)
+            return Refreshed({**listing, GENERATION: self.generation}, key, older, said)
 
     def commit_pick(self, listing: Any, sent: Any, key: str, fold: Dict[str, Any],
                     unfold: Mapping[str, Any]) -> bool:
@@ -3331,6 +3385,14 @@ class ModelList:
       ``ctx.on_page_open("models", handle.refresh)``; it changes the
       session's state and the draw token, and the list is drawn from that
       state by its one draw (``drawn``, `list_drawing`);
+    - ``read_list`` and ``commit_list``: the refresh's two steps, for a page
+      that reads more for the same listing (Models' opening, `ListRead`):
+      ``read_list`` takes the refresh's inputs (the request after the
+      selection, the clock last) and reads the list, committing nothing;
+      ``commit_list`` commits that read through the clock and returns the
+      refresh's outputs, or None where another workspace was committed since
+      it began (then nothing may change). The page reads between the two,
+      never after the commit (`ListClock`);
     - the rendered parts: ``count``, ``rows``, ``facts``, ``reason``, ``note``,
       ``load_button``, ``confirm``, ``confirm_html``, ``reload_button``,
       ``keep_button``; ``head_extra`` and ``foot_extra``, what the page's
@@ -3374,6 +3436,8 @@ class ModelList:
     drawn: Any = None
     searched: Any = None
     clock: Any = None
+    read_list: Optional[Callable[..., ListRead]] = None
+    commit_list: Optional[Callable[[ListRead], Optional[Tuple[Any, ...]]]] = None
 
 
 def loading_buttons(plan: Any) -> Tuple[Any, Any, Any]:
@@ -3539,14 +3603,20 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     # changes, never what is drawn: an answer that comes late (a pick held
     # while a search was answered) draws nothing from them. What a handler
     # commits is judged by the session's clock (`ListClock`; the review of
-    # dcaed68, SL-R3) as it ends: an answer for another workspace than the
-    # list now shows (the listing's generation) is refused, a re-read keeps a
-    # pick made while it read, and the folds are changed in place, never
-    # written back. The check runs as the handler ends and Gradio writes its
-    # outputs just after: two commits can still cross in that instant.
+    # dcaed68, SL-R3) once its reads are done: an answer for another workspace
+    # than the list now shows (the listing's generation) is refused, a re-read
+    # keeps a pick made while it read, and the folds are changed in place,
+    # never written back. Every handler reads first (files, the listing, a
+    # page's own data) and commits last, building its outputs from what it
+    # read and what the commit returned only (the review of bd5e678, SL-R3c:
+    # Models' opening read its own data after the commit and wrote back what
+    # it had committed over a pick made meanwhile). Gradio writes a handler's
+    # outputs just after it returns: two commits can still cross between a
+    # commit and that write, a gap only that short because no handler reads
+    # or waits after its commit (`ListClock`).
 
-    def _refresh(name, older, current_view, previous, key, request: gr.Request, query="",
-                 fold_state=None, session=None):
+    def _read(name, older, current_view, previous, key, request: gr.Request, query="",
+              fold_state=None, session=None) -> ListRead:
         # A selection still listed in the same workspace stays selected (M5-3
         # review UI-3: the re-read after a Load dropped a row picked meanwhile;
         # D04: whatever the filter, the search or the folds show), and so does
@@ -3558,7 +3628,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         # The selection kept is the one committed last (a pick made while
         # this read, the review of dcaed68, SL-R3b), never the one it began
         # with; an answer read before another workspace was committed changes
-        # nothing (`ListClock.commit_listing`).
+        # nothing (`ListClock.commit_listing`). This step reads and commits
+        # nothing; `_commit` commits it.
         session = session if isinstance(session, ListClock) else ListClock.seeded(
             previous, key, older)
         fold_state = fold_state if isinstance(fold_state, dict) else {}
@@ -3567,19 +3638,33 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             "workspace") == name
         data = list_models(name, request, family=chosen.family,
                            latest_runs=None if older else chosen.latest_runs)
-        current_view = view_for_listing(current_view, previous, data)
-        done = session.commit_listing(began, data, view=current_view, preset=chosen,
-                                      search=query, fold=fold_state)
+        return ListRead(session, began, data, view_for_listing(current_view, previous, data),
+                        query, fold_state)
+
+    def _commit(read: ListRead) -> Optional[Tuple[Any, ...]]:
+        # The refresh's outputs, from the read and the commit only (no read,
+        # no wait after it); None where its answer is stale.
+        done = read.session.commit_listing(read.began, read.listing, view=read.view,
+                                           preset=chosen, search=read.search, fold=read.fold)
         if done is None:
-            return (gr.update(),) * len(refresh_outputs)
-        choices = r.workspace_choices(data.get("workspaces") or [])
+            return None
+        choices = r.workspace_choices(read.listing.get("workspaces") or [])
         # Reading the list is no act: a refused read says why in the list
         # (`refused_line`); Load's reason is said when Load is clicked, or
         # beside it at once for a row whose record is never loaded. What was
-        # said beside Load was said of the list read before.
+        # said beside Load was said of the list read before; a selection the
+        # list no longer lists is cleared and said (`Refreshed.said`).
         return (done.listing, done.selected,
-                gr.update(choices=choices, value=data.get("workspace")), done.older, None,
-                draw_token())
+                gr.update(choices=choices, value=read.listing.get("workspace")), done.older,
+                done.said, draw_token())
+
+    def _refresh(name, older, current_view, previous, key, request: gr.Request, query="",
+                 fold_state=None, session=None):
+        # The list read, then committed (`_read`, `_commit`); a stale answer
+        # changes nothing.
+        done = _commit(_read(name, older, current_view, previous, key, request, query,
+                             fold_state, session))
+        return done if done is not None else (gr.update(),) * len(refresh_outputs)
 
     # What the list draws, where the page shows that it is being read.
     read_into = [workspace, count, rows, facts, load, reason, note]
@@ -3834,7 +3919,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     return ModelList(chosen, elem_id, workspace, listing, selected, plan, view, phase,
                      show_older, count, rows, facts, reason, note, load, confirm,
                      confirm_html, reload_button, keep_button, refresh, head_extra, foot_extra,
-                     reload_done, after_close_js, search, clear, fold, drawn, searched, clock)
+                     reload_done, after_close_js, search, clear, fold, drawn, searched, clock,
+                     _read, _commit)
 
 
 __all__ = [
@@ -3849,6 +3935,7 @@ __all__ = [
     "GENERATION",
     "ListClock",
     "ListDrawing",
+    "ListRead",
     "LoadStep",
     "MODEL_LIST_JS",
     "ModelList",
@@ -3859,6 +3946,7 @@ __all__ = [
     "PRESETS",
     "Preset",
     "REPLACES_NOTE",
+    "SELECTION_GONE",
     "TASK_FILTERS",
     "TO_CHANGED",
     "can_load",
