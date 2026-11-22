@@ -5273,6 +5273,68 @@ def test_the_reports_panel_says_why_it_is_empty_in_its_own_words_per_cause():
         assert ";" not in words and len(words.split(". ")) <= 2, words
 
 
+def test_the_panels_are_sized_by_what_they_hold():
+    """The sweep's M4 and B-04 (DECISIONS 7): the three panels carry no
+    Gradio share fitted to one window (`scale=`) but the shared sizing
+    (`.shep-sized`): a basis, a growth and a floor in rem each, the basis at
+    least the floor; while the Reports panel draws no table (an empty state)
+    its floor and growth are smaller, so Data and Run take the room it left
+    blank (at 1366 x 768 at first use the Run panel scrolled 100 px while
+    Reports stood 90 % blank). The import drawer's width is in rem too."""
+    from tests.unit.test_webui_shell import side, stack
+
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    rules = dict(_css_rules(tp.PAGE_CSS))
+    sizes = {}
+    for panel in ("shep-test-cohort", "shep-test-run", "shep-test-result"):
+        column = by_id[panel]
+        assert "shep-sized" in column.elem_classes and column.scale in (None, 1), panel
+        found = dict(re.findall(r"--shep-panel-(\w+): ([\d.]+)(?:rem)?;", rules[f"#{panel}"]))
+        assert set(found) == {"basis", "grow", "min"}, panel
+        sizes[panel] = {k: float(v) for k, v in found.items()}
+        assert re.search(r"--shep-panel-(basis|min): [\d.]+rem", rules[f"#{panel}"]), panel
+        assert sizes[panel]["basis"] >= sizes[panel]["min"], panel
+    blank = {k: float(v) for k, v in re.findall(
+        r"--shep-panel-(\w+): ([\d.]+)", rules["#shep-test-result:not(:has(.shep-test-reps))"])}
+    full = sizes["shep-test-result"]
+    assert blank["min"] < full["min"] and blank["grow"] < full["grow"]
+    assert blank["grow"] < min(sizes["shep-test-cohort"]["grow"], sizes["shep-test-run"]["grow"])
+    for css in (side(tp.PAGE_CSS), stack(tp.PAGE_CSS)):
+        drawer = re.search(r"\.shep-test-drawer \{[^}]*width: (min\([^)]*\))", css).group(1)
+        assert "rem" in drawer and "px" not in drawer, drawer
+
+
+def test_the_run_panels_rows_are_bars_of_whole_groups():
+    """The sweep's M2 (`.shep-bar`): the Run select and its ↻ are one group of
+    a bar (they never part, the button on the box's line); the foot's job row
+    is a bar whose state grows and whose Cancel sits at the line's end, on a
+    line of its own when the state leaves it no room (it was a row that never
+    wrapped, so a long state squeezed). The job's output is drawn in the
+    monospace face (`.shep-mono`; the page's own family lost to the mount's
+    rule, B-15)."""
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    def row_of(block):
+        while not isinstance(block, gr.Row):
+            block = block.parent
+        return block
+
+    row = row_of(by_id["shep-test-model-run"])
+    assert {"shep-grp", "shep-grp-grow", "shep-field-row"} <= set(row.elem_classes)
+    assert row_of(by_id["shep-test-model-reload"]) is row
+    assert "shep-bar" in row.parent.elem_classes and row.parent.children == [row]
+    top = row_of(by_id["shep-test-job-head"])
+    assert {"shep-test-job-top", "shep-bar"} <= set(top.elem_classes)
+    assert "shep-grp-grow" in by_id["shep-test-job-head"].elem_classes
+    assert "shep-grp-end" in by_id["shep-test-cancel"].elem_classes
+    assert "nowrap" not in dict(_css_rules(tp.PAGE_CSS)).get(".shep-test-job-top", "")
+    ended = {"status": "failed", "inputs": {}, "log": ["a line"], "end_time": "2026-11-14T05:00:00Z",
+             "outcome": {"kept": False, "registered": False, "summary": "Failed."}}
+    assert 'class="shep-test-log shep-mono"' in tp.job_body_html(ended, [], ("none", ""))
+    assert "font-family" not in dict(_css_rules(tp.PAGE_CSS))[".shep-test-log"]
+
+
 def test_the_pages_help_texts_meet_the_text_budget():
     """The sweep's text brief §11 (`help.TEXT_BUDGET`): each of the page's
     registered help texts has a lead that answers the question in two bubble

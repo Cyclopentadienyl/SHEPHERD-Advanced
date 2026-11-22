@@ -2045,7 +2045,7 @@ def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
     lines = [redact(case_free(line), roots) for line in job.get("log") or []]
     if lines:
         more.append((f"Output, last {len(lines)} lines",
-                     f'<pre class="shep-test-log">{e(chr(10).join(lines))}</pre>'))
+                     f'<pre class="shep-test-log shep-mono">{e(chr(10).join(lines))}</pre>'))
     foot = ""
     _kind, words = gpu
     if status in _BUSY:
@@ -3010,10 +3010,13 @@ def create_test_page(ctx: Any) -> None:
 
     with gr.Row(elem_classes=["shep-page", "shep-test"], elem_id="shep-test-row", equal_height=False):
         # ------------------------------------------------------------ Cohort
-        with gr.Column(elem_classes=["shep-panel", "shep-test-col"], elem_id="shep-test-cohort",
-                       scale=9, min_width=300):
+        # Each panel sized by what it holds (`.shep-sized`: its basis, growth
+        # and floor in rem, `PAGE_CSS`), never a share fitted to one window.
+        with gr.Column(elem_classes=["shep-panel", "shep-sized", "shep-test-col"],
+                       elem_id="shep-test-cohort"):
             cohort_hd = plain_html(cohort_header_html({}), elem_id="shep-test-cohort-hd")
-            with gr.Column(elem_classes=["shep-test-bd"]):
+            # Its one scroll region says when there is more below (R-73).
+            with gr.Column(elem_classes=["shep-test-bd", "shep-scroll-cue"]):
                 workspace = gr.Dropdown(label="Workspace", choices=[], value=None,
                                         elem_id="shep-test-workspace", interactive=True,
                                         elem_classes=["shep-test-select"])
@@ -3069,10 +3072,10 @@ def create_test_page(ctx: Any) -> None:
         # the job's state and Cancel are on screen whatever the model's
         # details or the output's length. Narrow, the three follow one another
         # in flow.
-        with gr.Column(elem_classes=["shep-panel", "shep-test-col"], elem_id="shep-test-run",
-                       scale=10, min_width=320):
+        with gr.Column(elem_classes=["shep-panel", "shep-sized", "shep-test-col"],
+                       elem_id="shep-test-run"):
             plain_html(run_header_html(), elem_id="shep-test-run-hd")
-            with gr.Column(elem_classes=["shep-test-bd"]):
+            with gr.Column(elem_classes=["shep-test-bd", "shep-scroll-cue"]):
                 # The model as Run → Checkpoint, the shared cascading pair
                 # (`model_list.parents_update`), one under the other so each
                 # 40-character option shows whole in the column; ↻ lists the
@@ -3080,14 +3083,17 @@ def create_test_page(ctx: Any) -> None:
                 # refuses, why both lists are empty and ↻ is locked
                 # (`listing_why_html`), once.
                 model_why = plain_html("", elem_id="shep-test-model-why")
-                with gr.Row(elem_classes=["shep-test-model-row", "shep-field-row"]):
-                    run_select = gr.Dropdown(label="Run", choices=[], value=None,
-                                             elem_id="shep-test-model-run", interactive=False,
-                                             elem_classes=["shep-test-select"])
-                    model_reload = gr.Button(GATED_LABELS["reload"], variant="secondary",
-                                             size="sm", scale=0,
-                                             elem_id="shep-test-model-reload",
-                                             elem_classes=["shep-icon-btn"], interactive=False)
+                # A bar of one group (the select and its ↻ never part), its
+                # button on the box's line (`shep-field-row`).
+                with gr.Row(elem_classes=["shep-test-model-row", "shep-bar"]):
+                    with gr.Row(elem_classes=["shep-grp", "shep-grp-grow", "shep-field-row"]):
+                        run_select = gr.Dropdown(label="Run", choices=[], value=None,
+                                                 elem_id="shep-test-model-run", interactive=False,
+                                                 elem_classes=["shep-test-select"])
+                        model_reload = gr.Button(GATED_LABELS["reload"], variant="secondary",
+                                                 size="sm", scale=0,
+                                                 elem_id="shep-test-model-reload",
+                                                 elem_classes=["shep-icon-btn"], interactive=False)
                 model = gr.Dropdown(label="Checkpoint", choices=[], value=None,
                                     elem_id="shep-test-model", interactive=False,
                                     elem_classes=["shep-test-select"])
@@ -3115,20 +3121,25 @@ def create_test_page(ctx: Any) -> None:
                                   interactive=False, elem_id="shep-test-start")
                 start_reason = plain_html("", elem_id="shep-test-start-reason")
                 action_out = plain_html("", elem_id="shep-test-action")
-                with gr.Row(elem_classes=["shep-test-job-top"]):
-                    job_head = plain_html(job_head_html({}), elem_id="shep-test-job-head")
+                # A bar: the job's state, its words free to wrap, then Cancel
+                # at the line's end, on a line of its own when they leave it
+                # no room (never a squeezed state).
+                with gr.Row(elem_classes=["shep-test-job-top", "shep-bar"]):
+                    job_head = plain_html(job_head_html({}), elem_id="shep-test-job-head",
+                                          elem_classes=["shep-grp-grow"])
                     # Drawn only while a run is busy (R-81: an idle Cancel
                     # nothing can use took the foot's room).
                     cancel = gr.Button(GATED_LABELS["cancel"], variant="stop",
                                        interactive=False, visible=False,
-                                       elem_id="shep-test-cancel", scale=0, size="sm")
+                                       elem_id="shep-test-cancel", scale=0, size="sm",
+                                       elem_classes=["shep-grp-end"])
                 cancel_reason = plain_html("", elem_id="shep-test-cancel-reason")
         # ------------------------------------------------------------ Result
         # The reports as a compact single-select table at the panel's top, the
         # chosen report's result under it, both in the panel's one scroll
         # region; the title, the note form and Register are in flow.
-        with gr.Column(elem_classes=["shep-panel", "shep-test-col"], elem_id="shep-test-result",
-                       scale=16, min_width=360):
+        with gr.Column(elem_classes=["shep-panel", "shep-sized", "shep-test-col"],
+                       elem_id="shep-test-result"):
             reports_hd = plain_html(reports_header_html({}), elem_id="shep-test-reports-hd")
             # Its one scroll region says when there is more below (R-73).
             with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush", "shep-scroll-cue"]):
@@ -3821,27 +3832,31 @@ _PAGE = "#" + page_elem_id(PAGE)
 #: Result panel's top (32-40 px rows, the skill's §8), in the panel's one scroll
 #: region with the result under it; its header does not stick (the region
 #: scrolls the table away under the result, and nothing sticky covers a row).
-#: The three panels' minimum widths (``--shep-panel-min``, the layout rule's
-#: measure, `src/webui/shell.py`): the version's identity line, the two
-#: checkboxes on one line, the reports' table.
+#: **The three panels are sized by what they hold** (``.shep-sized``, the
+#: sweep's M4): a basis and a growth in rem, never a share fitted to one
+#: window, and a floor (``--shep-panel-min``, the layout rule's measure,
+#: `src/webui/shell.py`): the version's identity line, the two checkboxes on
+#: one line, the reports' table. While the Reports panel draws no table (an
+#: empty state: first use, no version, no report yet) its floor is its empty
+#: state's and it grows less, so Data and Run take the room it would leave
+#: blank (the sweep's B-04: a panel scrolled while its neighbour stood blank).
 PAGE_CSS = f"""
 {_PAGE} #shep-test-row {{ position: relative; gap: 12px; }}
-{_PAGE} .shep-test-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
+{_PAGE} .shep-test-bd {{ padding: var(--shep-space-3) var(--shep-inset) !important; gap: 10px !important; }}
 {_PAGE} .shep-test-bd > *, {_PAGE} .shep-test-col > *, {_PAGE} .shep-test-drawer > * {{ flex-shrink: 0 !important; }}
 {_PAGE} .shep-test-bd-flush {{ padding: 0 !important; }}
-{_PAGE} .shep-test-pad {{ padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }}
+{_PAGE} .shep-test-pad {{ padding: var(--shep-space-3) var(--shep-inset); display: flex; flex-direction: column; gap: 10px; }}
 {_PAGE} .shep-test-reason {{ margin: 2px 0; }}
 {_PAGE} .shep-test-actions {{ gap: 10px !important; align-items: center !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-actions > button {{ flex: none !important; }}
 {_PAGE} .shep-test-ident {{ font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-ident > div {{ margin: 1px 0; }}
-{_PAGE} .shep-test-model-row {{ flex-wrap: nowrap !important; gap: 8px !important; }}
 {_PAGE} #shep-test-model-why:not(:has(.shep-reason)) {{ display: none !important; }}
 {_PAGE} .shep-test-checks, {_PAGE} .shep-test-checks > .form {{ gap: 4px 18px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-checks > .form {{ background: none !important; border: 0 !important; box-shadow: none !important; }}
 {_PAGE} .shep-test-checks > .form > .block {{ flex: 0 0 auto !important; min-width: 0 !important; width: auto !important; margin: 0 !important; }}
 {_PAGE} .shep-test-checks label > span {{ white-space: nowrap; }}
-{_PAGE} .shep-test-replist {{ padding: 12px 16px 0; }}
+{_PAGE} .shep-test-replist {{ padding: var(--shep-space-3) var(--shep-inset) 0; }}
 {_PAGE} .shep-test-repwrap {{ margin: 0 !important; overflow: visible; }}
 {_PAGE} .shep-test-reps th {{ position: static; }}
 {_PAGE} .shep-test-reps td {{ padding: 7px 10px; overflow-wrap: anywhere; }}
@@ -3851,15 +3866,15 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-res-hd h3 {{ margin: 0; font-size: 15px; font-weight: 600; }}
 {_PAGE} .shep-test-vd-why {{ margin-top: 6px; }}
 {_PAGE} .shep-test-job {{ border: 1px solid var(--shep-border); border-radius: 10px; background: var(--shep-panel-2); padding: 0 0 8px; display: flex; flex-direction: column; gap: 4px; }}
-{_PAGE} .shep-test-job-top {{ align-items: center !important; flex-wrap: nowrap !important; gap: 8px !important; }}
-{_PAGE} .shep-test-job-top > .block {{ flex: 1 1 auto !important; min-width: 0 !important; }}
-{_PAGE} .shep-test-job-top > button {{ flex: none !important; white-space: nowrap; }}
+{_PAGE} .shep-test-job-top {{ align-items: center !important; }}
+{_PAGE} #shep-test-job-head {{ --shep-grp-basis: 12rem; min-width: 0; }}
+{_PAGE} #shep-test-cancel {{ flex: none !important; white-space: nowrap; }}
 {_PAGE} .shep-test-job-hd {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
 {_PAGE} .shep-test-job-hd h3, {_PAGE} .shep-test-job-title {{ margin: 0; font-size: 15px; font-weight: 600; }}
 {_PAGE} .shep-test-job-title {{ padding: 10px 14px 4px; }}
 {_PAGE} .shep-test-job-bd {{ padding: 0 14px; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-job-ft {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 14px 0; }}
-{_PAGE} .shep-test-log {{ margin: 0; padding: 8px 10px; background: #fff; border: 1px solid var(--shep-border); border-radius: 6px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--shep-mono); }}
+{_PAGE} .shep-test-log {{ margin: 0; padding: 8px 10px; background: #fff; border: 1px solid var(--shep-border); border-radius: 6px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-fail {{ color: var(--shep-red-700); font-size: 15px; }}
 {_PAGE} .shep-test-units {{ font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-test-kgempty {{ display: flex; flex-direction: column; gap: var(--shep-space-1); margin-top: var(--shep-space-2); }}
@@ -3871,15 +3886,17 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-noteform {{ padding: 10px 16px 8px !important; gap: 6px !important; border-top: 1px solid var(--shep-border); }}
 {_PAGE} .shep-test-noterow {{ gap: 10px !important; flex-wrap: wrap !important; align-items: flex-start !important; }}
 {_PAGE} .shep-test-noteform .shep-test-actions > .block {{ flex: 1 1 200px !important; min-width: 0 !important; }}
-{_PAGE} .shep-test-terms {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1px 12px; font-size: 14px; margin-top: 2px; }}
+{_PAGE} .shep-test-terms {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(min(13.75rem, 100%), 1fr)); gap: 1px 12px; font-size: 14px; margin-top: 2px; }}
 {_PAGE} .shep-test-preview .shep-kv {{ padding: 10px 12px; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-preview .shep-notice, {_PAGE} .shep-test-preview .shep-reason {{ margin: 0 12px 10px; }}
 {_PAGE} .shep-test-drawer {{ box-shadow: -8px 0 24px rgba(20, 24, 40, .14); }}
-{_PAGE} .shep-test-drawer-hd {{ flex-wrap: nowrap !important; align-items: center !important; }}
-{_PAGE} .shep-test-drawer-hd > .block {{ flex: 1 1 auto !important; }}
-{_PAGE} #shep-test-import-title h2 {{ display: inline; margin-right: 10px; font-size: var(--shep-title-size); font-weight: 600; }}
+{_PAGE} .shep-test-drawer-hd {{ flex-wrap: nowrap !important; align-items: flex-start !important; }}
+{_PAGE} .shep-test-drawer-hd > .block {{ flex: 1 1 auto !important; min-width: 0; }}
+{_PAGE} #shep-test-import-title h2 {{ margin: 0; font-size: var(--shep-title-size); font-weight: 600; }}
+{_PAGE} #shep-test-import-title .shep-sub {{ margin: var(--shep-space-head-below) 0 0; line-height: var(--shep-lh-prose); }}
+{_PAGE} #shep-test-import-close {{ flex: none !important; width: auto !important; min-width: max-content !important; white-space: nowrap; }}
 {_PAGE} .shep-test-form {{ gap: 10px !important; flex-wrap: wrap !important; }}
-{_PAGE} .shep-test-form > * {{ min-width: 180px !important; }}
+{_PAGE} .shep-test-form > * {{ min-width: min(11.25rem, 100%) !important; }}
 {_PAGE} #shep-test-start {{ width: 100%; }}
 {_PAGE} .shep-test-runft {{ padding: 10px 16px 12px !important; gap: 10px !important; border-top: 1px solid var(--shep-border); }}
 {_PAGE} .shep-test-select input {{ padding-right: 26px !important; }}
@@ -3891,18 +3908,19 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-more button {{ font: inherit; font-size: 15px; color: var(--shep-accent-text); background: none; border: 0; padding: 2px 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }}
 {_PAGE} .shep-panel-ft > button, {_PAGE} .shep-test-actions > button {{ white-space: nowrap; flex: none !important; }}
 {_PAGE} .shep-panel-ft > .block {{ flex: 1 1 200px !important; min-width: 0 !important; }}
-{_PAGE} #shep-test-cohort {{ --shep-panel-min: 315px; }}
-{_PAGE} #shep-test-run {{ --shep-panel-min: 360px; }}
-{_PAGE} #shep-test-result {{ --shep-panel-min: 515px; }}
+{_PAGE} #shep-test-cohort {{ --shep-panel-basis: 22rem; --shep-panel-grow: 1; --shep-panel-min: 19.7rem; }}
+{_PAGE} #shep-test-run {{ --shep-panel-basis: 24rem; --shep-panel-grow: 1; --shep-panel-min: 22.5rem; }}
+{_PAGE} #shep-test-result {{ --shep-panel-basis: 32.2rem; --shep-panel-grow: 1.5; --shep-panel-min: 32.2rem; }}
+{_PAGE} #shep-test-result:not(:has(.shep-test-reps)) {{ --shep-panel-basis: 20rem; --shep-panel-grow: 0.5; --shep-panel-min: 20rem; }}
 {SIDE} {{
   {_PAGE} .shep-test-col > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-test-noteform {{ max-height: 50%; overflow: auto !important; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-test-runft {{ flex: none !important; }}
-  {_PAGE} .shep-test-drawer {{ position: absolute !important; top: 0; right: 0; bottom: 0; width: min(780px, 62%) !important; z-index: 50; display: flex; flex-direction: column; max-height: 100%; }}
+  {_PAGE} .shep-test-drawer {{ position: absolute !important; top: 0; right: 0; bottom: 0; width: min(48rem, 62%) !important; z-index: 50; display: flex; flex-direction: column; max-height: 100%; }}
   {_PAGE} .shep-test-drawer > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
 }}
 {STACK} {{
-  {_PAGE} .shep-test-drawer {{ position: fixed !important; top: 0; right: 0; bottom: 0; width: min(640px, 100%) !important; max-width: 100% !important; z-index: 60; display: flex; flex-direction: column; flex-wrap: nowrap !important; border-radius: 0 !important; }}
+  {_PAGE} .shep-test-drawer {{ position: fixed !important; top: 0; right: 0; bottom: 0; width: min(40rem, 100%) !important; max-width: 100% !important; z-index: 60; display: flex; flex-direction: column; flex-wrap: nowrap !important; border-radius: 0 !important; }}
   {_PAGE} .shep-test-drawer > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
 }}
 """
