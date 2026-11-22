@@ -1301,73 +1301,79 @@ def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
 # =============================================================================
 def task_setting_help(name: str) -> Tuple[str, str]:
     """A task setting's help, ``(title, text)``: its label, what it is (its
-    field spec's description, as every form's help says it), each task's
-    reference (the one fill, `run_plan.new_run_values`, of each task whose
-    run takes it), and where its field starts and what is sent."""
-    each = "; ".join(f"{TASK_NAMES[task]} {r.setting_words(name, values[name])}"
-                     for task in TASKS
-                     for values in [new_run_values("finetune", task, {})] if name in values)
+    field spec's description, as every form's help says it, the API's words
+    and so its lead), where its field starts and what is sent, then each
+    task's reference (the one fill, `run_plan.new_run_values`, of each task
+    whose run takes it), a term row each, or one sentence for one task (the
+    bubble's grammar, `help.help_lines`; the text brief's §11)."""
+    references = [(TASK_NAMES[task], r.setting_words(name, values[name]))
+                  for task in TASKS
+                  for values in [new_run_values("finetune", task, {})] if name in values]
     if name in ANY_TASKS:
-        where = ("With one task it starts at that task's reference. With several, left "
-                 "untouched each child takes its own; a value you set is every child's, until "
-                 "Reset to reference.")
+        where = ("With one task it starts at that task's reference. Untouched with several, "
+                 "each child takes its own.\n"
+                 "A value you set is every child's until Reset to reference. Only a value you "
+                 "edit is sent.")
     else:
-        where = ("Offered with one task, starting at its reference; with several, each child "
-                 "takes its own.")
-    return (r.SETTING_LABELS[name],
-            f"{by_name(name).description}\n\nReference, by task: {each}.\n\n{where} Only a "
-            "value you edit is sent. Each reference is a provisional default from the source.")
+        where = ("Offered with one task, starting at its reference. With several, each child "
+                 "takes its own.\nOnly a value you edit is sent.")
+    if len(references) > 1:
+        listed = "Each task's reference, a provisional default from the source:\n" + "\n".join(
+            f"- {task}: {words}" for task, words in references)
+    else:
+        listed = ("Reference: " + ", ".join(f"{task} {words}" for task, words in references)
+                  + ", a provisional default from the source.")
+    return (r.SETTING_LABELS[name], f"{by_name(name).description}\n\n{where}\n{listed}")
 
 
 #: The fields' help, behind the shared ⓘ: ``{elem_id: (title, text)}``, each
-#: title its field's label.
+#: title its field's label; each text a lead that answers what the field is,
+#: then a few term rows (the text brief's §11, `help.TEXT_BUDGET`).
 FIELD_HELP = {
     "ft_dataset": (
         "Dataset",
-        "The workspace the children train on, from the server's list as on Research › "
-        "Datasets.\n\n"
-        "- It starts from the Training page's dataset and never changes it.\n"
-        "- Start sends the dataset fingerprint shown; the server refuses the start if the "
-        "workspace changed since.",
+        "The workspace the children train on, from the server's list.\n\n"
+        "- List: the same as on Research › Datasets\n"
+        "- Starts at: the Training page's dataset, never changing it\n"
+        "- Start sends: the dataset fingerprint shown\n"
+        "- Refused: a start whose workspace changed since it was shown",
     ),
     "ft_run": (
         "Run",
-        "The runs holding a base checkpoint, latest first, each led by its name or start "
-        "time.\n\n"
-        "- Its architecture and start time follow; its directory is in the summary.\n"
-        "- Only bases are offered: a task model is never a parent (children never chain).\n"
-        "- A file without a model spec is never trained from here.",
+        "The runs holding a base checkpoint, latest first.\n\n"
+        "- Option: its name or start time, then its architecture and time\n"
+        "- Directory: in the base's summary under the lists\n"
+        "- Offered: bases only, never a task model (children never chain)\n"
+        "- Never offered: a file without a model spec",
     ),
     "ft_checkpoint": (
         "Checkpoint",
-        "The base to fine-tune, from the chosen run, newest first. Its summary is under the "
-        "list.\n\n"
-        "- Latest save, Best (by the selection its files record, named by its metric) or "
-        "Top-k save.\n"
-        "- A weights-only or early-stopped base can be fine-tuned.\n"
-        "- Start sends its model fingerprint; the server reads the file against it.\n"
-        "- Listing opens each checkpoint, so it is an operator control.",
+        "The chosen run's base to fine-tune, newest first, its summary under the list.\n\n"
+        "- Kinds: Latest save, Best (named by its recorded metric) or Top-k save\n"
+        "- Also offered: a weights-only or early-stopped base\n"
+        "- Start sends: its model fingerprint, the file read against it\n"
+        "- Listing: opens each checkpoint, so it is an operator control",
     ),
     "ft_tasks": (
         "Tasks",
         "The task models to train from the base: one child run each, in this order.\n\n"
-        "- Ready: the dataset can be trained, and for Gene and Patients-like-me the gene "
-        "task's functional fixture was derived from this build of it.\n"
-        "- Before anything starts, the server checks the parent, its graph and each fixture "
-        "again; the training process checks the fixture's files.",
+        "- Ready: the dataset can be trained\n"
+        "- Gene, Patients-like-me: the gene task's fixture is of this build too\n"
+        "- Before a start: the server checks parent, graph and fixtures again\n"
+        "- In training: the process checks the fixture's files",
     ),
     **{f"ft_{name}": tc.setting_help(name, built_values(), FINETUNE_SOURCES)
        for name in COMMON_SHOWN + MORE_FIELDS},
     **{f"ft_{name}": task_setting_help(name) for name in TASK_FIELDS},
     "ft_device": (
         "Device",
-        "Where the children train; they never fall back to the CPU on their own.\n\n"
+        "Where the children train. They never fall back to the CPU on their own.\n\n"
         "- auto: the GPU (CUDA). With no CUDA device visible, Start is refused.\n"
         "- cpu: for development, recorded as asked.",
     ),
     "ft_run_name": (
         "Run name",
-        "Optional. Each child gets a new folder, named by start time, this name and task:\n"
+        "Optional. Each child's new folder is named by start time, this name and task:\n"
         "<workspace>/runs/<architecture>/<date-time>_<name>-<task>_<id>/",
     ),
 }
@@ -1376,14 +1382,11 @@ FIELD_HELP = {
 TOPIC_HELP = {
     "finetune-best-save": (
         "Best save",
-        "The child's saved file with the best value of its recorded selection metric; ties "
-        "share it.\n\n"
-        "- Its metric and direction are named under the file: a task model selects on "
-        "validation pooled MRR, higher is better.\n"
-        "- It is the Trainer's figure on the val samples, not a test result: test the model "
-        "on Research › Test.\n"
-        "- Shown to the operator once the child has ended (reading it opens the run's "
-        "checkpoints).",
+        "The child's saved file with the best recorded selection metric.\n\n"
+        "- Metric: validation pooled MRR, higher is better, named under the file\n"
+        "- Source: the Trainer's figure on val, not a Research › Test result\n"
+        "- Ties: several saved files can share it\n"
+        "- Shown: to the operator once the child has ended",
     ),
 }
 
