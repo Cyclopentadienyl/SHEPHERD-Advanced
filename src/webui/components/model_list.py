@@ -3235,11 +3235,17 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     # landed, and the draw that follows the last change reads it. The box is
     # read as it is then: typing writes no state but the token (a search
     # answered late asks for one more draw, which reads the box as it is,
-    # never the text it was typed with; the review of 5171661). The draws of
-    # one list run one at a time (one concurrency id, limit 1), and a draw
-    # asked for while one runs waits and runs after it ("always_last": one is
-    # kept, none dropped), so the last draw to run is one asked for after the
-    # last change, and its answer is the last one drawn. A handler's own
+    # never the text it was typed with; the review of 5171661). The page
+    # sends one draw of a list at a time and keeps a draw asked for while one
+    # runs to send after it ("always_last": one is kept, none dropped), so the
+    # last draw to run is one asked for after the last change, and its answer
+    # is the last one drawn. The draw is sent straight to the server, not
+    # through the queue (`queue=False`: one request, no queue round trip; it
+    # reads the session's state and writes none, so no other session's draw
+    # can change what it reads). That shortens the wait the one draw adds
+    # (sandbox medians, the same machine: a pick's selected look 0.9 s,
+    # against 1.3 s queued and 0.3 s before the one draw; a search's results
+    # 1.1 s, against 1.4 s before it). A handler's own
     # inputs (the search box's text as a pick was clicked) choose what it
     # changes, never what is drawn: an answer that comes late (a pick held
     # while a search was answered) draws nothing from them.
@@ -3381,7 +3387,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     gr.on([drawn.change, view.change], _draw,
           inputs=[listing, selected, show_older, view, search, fold, said],
           outputs=[rows, count, facts, load, reason, note], show_progress="hidden",
-          trigger_mode="always_last", concurrency_id=f"{elem_id}-draw", concurrency_limit=1)
+          trigger_mode="always_last", queue=False)
 
     def _request(data, key, request: gr.Request):
         # A refusal is said beside Load for the selection asked (`said`), by
