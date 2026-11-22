@@ -1104,3 +1104,46 @@ def test_the_panels_are_sized_by_what_they_hold_and_the_table_drops_optional_col
     assert optional == ["Built (UTC)", "Sources"]
     for row in re.findall(r"<tr[^>]*data-key=.*?</tr>", html, re.S):
         assert row.count("shep-col-opt") == 2
+
+
+#: At first use, as drawn: the notice's and the title's left edges, how many
+#: notices the page draws, whether the build line is drawn, and the gap
+#: between the Use for training relation's mark and its words.
+_FIRST_USE_JS = r"""() => {
+  const q = (s) => document.querySelector(s);
+  const drawn = (e) => !!e && e.getClientRects().length > 0;
+  const page = q('#shep-page-datasets'), head = q('#shep-ds-header h2'), nb = q('#shep-ds-table .shep-nb');
+  const mark = q('#shep-ds-use-note .shep-nb-mark'), words = q('#shep-ds-use-note .shep-nb-text');
+  const left = (e) => e.getBoundingClientRect().left + parseFloat(getComputedStyle(e).paddingLeft);
+  // Where each is drawn: the glyphs, not their boxes (a grid column stretches the mark's box).
+  const ink = (e) => { const r = document.createRange(); r.selectNodeContents(e);
+    return [...r.getClientRects()].filter((x) => x.width > 0); };
+  const shape = mark ? ink(mark)[0] : null, text = words ? ink(words)[0] : null;
+  return { notices: [...page.querySelectorAll('[data-notice]')].filter(drawn).length,
+           edge: nb && head ? Math.round(left(nb) - left(head)) : null,
+           build: drawn(q('#shep-ds-notes')),
+           markGap: shape && text ? Math.round(text.left - shape.right) : null };
+}"""
+
+
+def test_in_a_browser_at_first_use_the_cause_is_said_once_on_the_panels_edge(tmp_path):
+    """B-07 and the owner's screenshot 03 as the dashboard draws them with no
+    workspaces folder (the first-use walk's service): at every walked window
+    the list's place holds the folder's one notice, starting on the title's
+    edge (it started 16 px left of it), the build line is not drawn under an
+    empty list, the page's layout rules find nothing, and the relation beside
+    Use for training keeps its mark beside its words (it grew to the
+    footer's width, its mark 56 px from them)."""
+    from tests.fixtures.browser import layout_problems, node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    sizes = ([1850, 960], [1366, 768], [800, 900], [390, 844])
+    stops = [{"size": size, "page": "datasets", "focus": False} for size in sizes]
+    seen = walk_state("first_use", tmp_path, stops, extra_js=_FIRST_USE_JS)
+    assert layout_problems(seen, pages=("datasets",)) == []
+    for stop in seen:
+        got = stop["extra"]
+        assert got["notices"] == 1 and got["edge"] is not None and abs(got["edge"]) <= 1, stop
+        assert got["build"] is False, stop
+        assert got["markGap"] is not None and got["markGap"] <= 12, stop
