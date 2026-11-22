@@ -56,15 +56,17 @@ the served file marked in its own row; each group its own ``<tbody>``
 digits or whole; a match keeps the files it comes from, as context; while
 the search is shown, a run holding a file found by its own name or
 fingerprint is unfolded as the list is drawn, the operator's folds
-untouched, and clearing it brings them back: G7, `fold_open`), Clear, and
-the fold state (`gr.State`, ``{node: bool}``, what the operator folded or
-unfolded; a fold toggle folds in the page at once, `MODEL_LIST_JS`,
-`FAMILY_JS`, and the server only keeps it). By default every run is folded
-but the selection's and the model in use's, which is located (scrolled into
-view once per view). **Nothing changes what is selected but a click on a
-row**: a filter, a search, a fold or a refresh keeps a selection still listed
-(`kept_selection`), and one the list does not show is said
-(`outside_html`). A lone candidate is chosen (R-27).
+untouched, and clearing it brings them back: G7, `fold_open`; searched on
+every change of its text, whatever made it, the box's ``change``), Clear
+(the box emptied in the page), and the fold state (`gr.State`,
+``{node: bool}``, what the operator folded or unfolded; a fold toggle folds
+in the page at once, `MODEL_LIST_JS`, `FAMILY_JS`, and the server only keeps
+it). By default every run is folded but the selection's and the model in
+use's, which is located (scrolled into view once per view). **Nothing
+changes what is selected but a click on a row**: a filter, a search, a fold
+or a refresh keeps a selection still listed (`kept_selection`), and one the
+list does not show is said (`outside_html`). A lone candidate is chosen
+(R-27).
 
 **A page shapes its view** through ``ModelList.view`` (a `gr.State` the page
 sets; the list is drawn again on its ``.change``), never by drawing rows itself:
@@ -2450,9 +2452,14 @@ def read_again() -> str:
 # ---------------------------------------------------------------------------
 # The component
 # ---------------------------------------------------------------------------
+#: Clear, a front-end function: the search box emptied in the page (its
+#: ``change`` is the search's one path, `create_model_list`).
+CLEAR_SEARCH_JS = "() => ''"
+
 #: The page side: row clicks (and Enter or Space on a focused table row) and
-#: "Read again" become the component's ``click`` event with ``{"key": …}``;
-#: a row focused under its table's sticky header scrolls clear of it.
+#: "Read again" become the component's ``click`` event with ``{"key": …}``,
+#: "Clear search" clicks the list's Clear; a row focused under its table's
+#: sticky header scrolls clear of it.
 MODEL_LIST_JS = r"""
 // A run's fold toggle (D04) folds or unfolds its files at once in the page:
 // every row is in the table, a folded one hidden, so this only shows or hides
@@ -2469,8 +2476,15 @@ var foldRows = function (node, open) {
 };
 // A row chosen (a click, Enter or Space) is said to the server and marked on
 // the list, so its facts (`FACTS_JS`) know they answer the operator's choice.
+// "Clear search" is the list's Clear, clicked here: the box emptied in the
+// page, its change the search's one path (`CLEAR_SEARCH_JS`).
 var pick = function (key) {
   var list = element.closest('.shep-model-list');
+  if (key === '__clear_search__') {
+    var clear = list && document.getElementById(list.id + '-search-clear');
+    if (clear) { clear.click(); }
+    return;
+  }
   if (list && key.indexOf('__') !== 0) { list.setAttribute('data-shep-picked', key); }
   trigger('click', {key: key});
 };
@@ -3229,13 +3243,14 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     # the state and the search box as they are when it runs. Why the last draw
     # is never stale: Gradio reads a `gr.State` input when the event is
     # processed, and the page reads a component's value (the search box) when
-    # it asks for the event, not before; a change's outputs (a state, the box
-    # Clear empties) are written before its answer is applied and its state
-    # changes fire, so the page asks for the draw only once the change has
-    # landed, and the draw that follows the last change reads it. The box is
-    # read as it is then: typing writes no state but the token (a search
-    # answered late asks for one more draw, which reads the box as it is,
-    # never the text it was typed with; the review of 5171661). Two draws of
+    # it asks for the event, not before; a change's outputs (a state) are
+    # written before its answer is applied and its state changes fire, so the
+    # page asks for the draw only once the change has landed, and the draw
+    # that follows the last change reads it. The box is read as it is then:
+    # a change of its text (whatever made it; Clear empties it in the page)
+    # writes no state but the token and the folds, the search's dropped (a
+    # search answered late asks for one more draw, which reads the box as it
+    # is, never the text it was typed with; the review of 5171661). Two draws of
     # one list can be asked at once (Models' opening writes the token and the
     # view in one answer, and Gradio 6.30 checks "always_last" for both before
     # either is sent). What keeps the last answer drawn the last one asked is
@@ -3287,13 +3302,15 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
 
     def _select(data, current, older, current_view, query, fold_state, evt: gr.EventData,
                 request: gr.Request):
-        # What it changes: (selected, show_older, fold, listing, search box,
-        # what was said beside Load, the draw token); what it was asked with
-        # (`query`: the box's text as the pick was made) chooses, never draws.
+        # What it changes: (selected, show_older, fold, listing, what was
+        # said beside Load, the draw token); what it was asked with (`query`:
+        # the box's text as the pick was made) chooses, never draws. The
+        # list's "Clear search" is no act of it: the page clicks the list's
+        # Clear (`MODEL_LIST_JS`).
         raw = getattr(evt, "_data", None)
         raw = raw if isinstance(raw, Mapping) else {}
         same = gr.update()
-        nothing = (same,) * 7
+        nothing = (same,) * 6
         fold_state = dict(fold_state) if isinstance(fold_state, Mapping) else {}
         tree = raw.get("tree") if isinstance(raw.get("tree"), Mapping) else None
         if isinstance(raw.get("fold"), str) or tree is not None:
@@ -3308,7 +3325,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             for node, opened in (tree or {}).items():
                 if isinstance(node, str) and node.startswith("t:"):
                     fold_state[store(node)] = bool(opened)
-            return (same, same, fold_state, same, same, same, same)
+            return (same, same, fold_state, same, same, same)
         key = raw.get("key")
         if "act" in raw and (raw["act"] != PICK_ACT or not isinstance(key, str)
                              or key.startswith("__")):
@@ -3325,9 +3342,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             # The runs not opened yet are read now (BACKLOG 39).
             read = (list_models(data.get("workspace"), request, family=chosen.family)
                     if data.get("runs_unread") else same)
-            return (same, True, same, read, same, same, draw_token())
-        if key == "__clear_search__":
-            return (same, same, same, same, "", same, draw_token())
+            return (same, True, same, read, same, draw_token())
         item = find_item(data, key)
         if item is None or item not in shown_items(data, current_view, chosen):
             return nothing
@@ -3337,13 +3352,13 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                              search=query, show_older=older)
         fold_state.update(kept)
         # A pick is a new selection: what was said beside Load is not its.
-        return (key, same, fold_state if kept else same, same, same, None, draw_token())
+        return (key, same, fold_state if kept else same, same, None, draw_token())
 
     # A row's pick, and a page region's (`picks`: ``{act: "pick", key}``), are
     # one selection.
     gr.on([rows.click, *(region.click for region in (picks() if picks else ()))], _select,
           inputs=[listing, selected, show_older, view, search, fold],
-          outputs=[selected, show_older, fold, listing, search, said, drawn],
+          outputs=[selected, show_older, fold, listing, said, drawn],
           show_progress="hidden", trigger_mode="multiple")
 
     def _searched(fold_state):
@@ -3360,13 +3375,21 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             search_node(""))} if isinstance(fold_state, Mapping) else {}
         return fold_state, draw_token()
 
-    search.input(_searched, inputs=[fold], outputs=[fold, drawn],
-                 show_progress="hidden", trigger_mode="always_last")
+    # **One path for every change of the search** (the adversarial check of
+    # 37912a9, F2): the box's ``change``, which Gradio 6.30's Textbox sends
+    # for each new value, whatever made it (a key typed, Backspace or Delete,
+    # a cut, a paste, an input method's composition, Clear, the list's "Clear
+    # search"), and never as the page loads. Its ``input`` was sent from the
+    # box's keypress handler alone, so a deleted or pasted text was never
+    # searched: the list kept drawing the old search under the box.
+    search.change(_searched, inputs=[fold], outputs=[fold, drawn],
+                  show_progress="hidden", trigger_mode="always_last")
 
-    def _cleared(fold_state):
-        return ("", *_searched(fold_state))
-
-    clear.click(_cleared, inputs=[fold], outputs=[search, fold, drawn], show_progress="hidden")
+    # Clear empties the box in the page, with no request of its own: the box's
+    # change is the search's one path (Gradio 6.30 applies a front-end
+    # function's return to its outputs). The list's "Clear search" clicks it.
+    clear.click(None, inputs=None, outputs=[search], js=CLEAR_SEARCH_JS,
+                show_progress="hidden")
 
     def _draw(data, key, older, current_view, query, fold_state, said_now):
         # The page changed its view (a filter, an order), or the state
@@ -3498,6 +3521,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
 __all__ = [
     "BASE_REFUSAL",
     "BACK_TO_LIST",
+    "CLEAR_SEARCH_JS",
     "FACTS_JS",
     "FAMILY_FILTERS",
     "FAMILY_JS",

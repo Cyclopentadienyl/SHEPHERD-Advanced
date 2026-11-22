@@ -1550,7 +1550,7 @@ def test_the_list_is_drawn_in_one_place_from_the_state_as_it_is_then(
         assert draw.concurrency_id == f"{each.elem_id}-draw"
         for part in (each.rows, each.count, each.facts):
             assert [fn for fn in demo.fns.values() if part in fn.outputs] == [draw]
-        for name in ("_refresh", "_select", "_searched", "_cleared"):
+        for name in ("_refresh", "_select", "_searched"):
             changers = [fn for fn in demo.fns.values() if fn.name == name
                         and (each.drawn in fn.outputs or each.listing in fn.inputs)]
             assert changers and all(each.drawn in fn.outputs for fn in changers), name
@@ -1576,15 +1576,21 @@ class _Page:
     """One session of a list's page, as Gradio 6.30 runs its events
     (`served_page.ServedSession` for the real queue): a component's value is
     the page's when the event is asked, a ``gr.State`` the session's when it
-    is processed, and an answer's outputs are applied before the states it
-    changed fire their ``.change`` (the list's draw, on its token's change).
-    `ask` gathers an event's component inputs; `run` processes it."""
+    is processed, and an answer's outputs are applied before the changes they
+    make fire their ``.change`` (the list's draw, on its token's change; the
+    search, on the box's). `ask` gathers an event's component inputs; `run`
+    processes it; `type` and `clear` change the box in the page, as a key
+    typed, a delete or a paste, and Clear, do."""
 
     def __init__(self, demo, handle):
+        self.demo = demo
         self.handle = handle
         self.values = {id(b): getattr(b, "value", None) for b in demo.blocks.values()}
         (self.draw,) = [fn for fn in demo.fns.values()
                         if fn.name == "_draw" and handle.rows in fn.outputs]
+        # The box's change listeners: what the page asks when its text changes.
+        self.on_search = [fn for fn in demo.fns.values()
+                          if (handle.search._id, "change") in fn.targets]
         self.fns = {fn.name: fn for fn in demo.fns.values()
                     if set(map(id, fn.inputs + fn.outputs)) & {
                         id(handle.listing), id(handle.fold), id(handle.search),
@@ -1625,40 +1631,122 @@ class _Page:
                 if "value" not in value:
                     continue
                 value = value["value"]
-            if isinstance(block, gr.State) and self.values[id(block)] != value:
+            if (isinstance(block, gr.State) or block is self.handle.search) \
+                    and self.values[id(block)] != value:
                 changed.add(id(block))
             self.values[id(block)] = value
         if id(self.handle.drawn) in changed or id(self.handle.view) in changed:
             self.run(self.ask(self.draw))
+        if id(self.handle.search) in changed:
+            for each in [self.ask(fn) for fn in self.on_search]:
+                self.run(each)
 
     def act(self, name, **kw):
         self.run(self.ask(name), **kw)
+
+    def type(self, text, *, answered=True):
+        """The box's text changed in the page (a key typed, Backspace, a
+        paste): its change listeners asked with the page as it is now, and
+        answered unless `answered` is False (then returned, to run later)."""
+        moved = self[self.handle.search] != text
+        self[self.handle.search] = text
+        asked = [self.ask(fn) for fn in self.on_search] if moved else []
+        if answered:
+            for each in asked:
+                self.run(each)
+        return asked
+
+    def clear(self, *, answered=True):
+        """Clear: a front-end function (no request of its own) whose return
+        is the box's text, then the box's change, as `type`."""
+        (fn,) = [fn for fn in self.demo.fns.values()
+                 if (self.handle.search_clear._id, "click") in fn.targets]
+        assert fn.fn is None and fn.outputs == [self.handle.search], fn
+        assert fn.js == ml.CLEAR_SEARCH_JS == "() => ''"
+        return self.type("", answered=answered)
 
 
 def test_a_search_answered_after_its_clear_draws_the_box_as_it_is(root, serving, monkeypatch):
     """G07 (the review of 5171661, P2-1: "be" typed, Clear clicked, the
     search answered after Clear's: the list drew "be" under the empty box):
     the draw reads the search box as it is when it is asked, never the text a
-    search was typed with, so a search answered late only asks for one more
-    drawing, which draws the box as it is. The search kept is said alike by
-    the count and the rows."""
+    search was typed with, so a search answered once Clear has emptied the
+    box draws the box as it is (Clear's own change, asked behind it, draws it
+    again). The search kept is said alike by the count and the rows."""
     demo, _ctx, handle, _ = _component("research")
     page = _Page(demo, handle)
     page[handle.listing] = listing = _listing(root, monkeypatch)
     page.run(page.ask(page.draw))
     full = page[handle.count]
-    page[handle.search] = "disease"
-    late = page.ask("_searched")                 # asked with "disease", not answered yet
-    page.act("_cleared")
-    assert page[handle.search] == "" and page[handle.count] == full
-    page.run(late)                               # answered after Clear's
+    late = page.type("disease", answered=False)  # its search asked, not answered yet
+    behind = page.clear(answered=False)          # the box emptied in the page
+    assert late and behind and page[handle.search] == ""
+    for asked in late:                           # answered after Clear
+        page.run(asked)
     assert page[handle.search] == ""
     assert page[handle.count] == full and "“disease”" not in page[handle.count]
     assert page[handle.rows] == ml.list_drawing(listing, None, ml.PRESETS["research"]).rows
+    for asked in behind:
+        page.run(asked)
+    assert page[handle.count] == full
     # Typed and answered in order: the box's search drawn.
-    page[handle.search] = "disease"
-    page.act("_searched")
+    page.type("disease")
     assert "“disease”" in page[handle.count]
+
+
+def test_every_change_of_the_search_box_is_searched_by_one_path(root, serving, monkeypatch):
+    """The adversarial check of 37912a9 (F2): Gradio 6.30's Textbox sends
+    ``input`` from its keypress handler alone, so Backspace, Delete, a cut, a
+    paste and an input method's composition never searched (the list kept
+    drawing the old search under the box). The search is the box's
+    ``change``, which Gradio sends for each new value, whatever made it, the
+    last one asked kept ("always_last"). Clear is a front-end function that
+    empties the box, with no request of its own, and the list's "Clear
+    search" clicks Clear; no answer writes the box (a change it made would be
+    searched once more). So each way the box changes drops the search's folds
+    (`search_node`), keeps the operator's own and draws the box's text."""
+    demo, _ctx, handle, other = _component("clinical", both=True)
+    for each in (handle, other):
+        on_box = [fn for fn in demo.fns.values()
+                  if {(each.search._id, "input"), (each.search._id, "change")} & set(fn.targets)]
+        (searched,) = [fn for fn in on_box if fn.name == "_searched"]
+        assert searched.targets == [(each.search._id, "change")]
+        assert searched.trigger_mode == "always_last"
+        assert searched.outputs == [each.fold, each.drawn]
+        (clear,) = [fn for fn in demo.fns.values()
+                    if (each.search_clear._id, "click") in fn.targets]
+        assert clear.fn is None and clear.outputs == [each.search]
+        assert clear.js == ml.CLEAR_SEARCH_JS == "() => ''"
+        assert [fn.name for fn in demo.fns.values() if fn.fn and each.search in fn.outputs] == []
+    # "Clear search" is clicked as the list's Clear, in the page; the server
+    # knows no such act (a page sending it changes nothing).
+    assert "key === '__clear_search__'" in ml.MODEL_LIST_JS
+    assert "list.id + '-search-clear'" in ml.MODEL_LIST_JS
+    page = _Page(demo, handle)
+    page[handle.listing] = listing = _listing(root, monkeypatch)
+    page.run(page.ask(page.draw))
+    full = page[handle.count]
+    own, searched_fold = {"g:other": False}, ml.search_node(
+        ml.run_node("gatv2/20261015-080000_gene_aaaaaa"))
+    page[handle.fold] = {**own, searched_fold: False}
+    page.act("_select", evt={"key": "__clear_search__"})
+    assert page[handle.fold] == {**own, searched_fold: False} and page[handle.count] == full
+
+    def drawn_for(query):
+        return ml.list_drawing(listing, None, ml.PRESETS["clinical"], search=query,
+                               fold=own).count
+
+    # Typed; Backspace; select all and Delete; pasted; Clear: each drops the
+    # search's folds (one folded while the search before it was shown) and
+    # draws the box's text.
+    for text, act in (("disease", page.type), ("diseas", page.type), ("", page.type),
+                      ("disease", page.type), ("", lambda _text: page.clear())):
+        page[handle.fold] = {**page[handle.fold], searched_fold: False}
+        act(text)
+        assert page[handle.search] == text
+        assert page[handle.fold] == own, text
+        assert page[handle.count] == drawn_for(text), text
+    assert "“diseas”" in drawn_for("diseas")
 
 
 def test_what_was_said_beside_load_stays_while_its_selection_is_drawn(
@@ -1679,10 +1767,9 @@ def test_what_was_said_beside_load_stays_while_its_selection_is_drawn(
     page.act("_request", request=gradio_request(server=("192.0.2.10", 8264)))
     refusal = page[handle.reason]
     assert "shep-reason" in refusal and page[handle.plan] is None
-    page[handle.search] = "disease"
-    page.act("_searched")
+    page.type("disease")
     assert "“disease”" in page[handle.count] and page[handle.reason] == refusal
-    page.act("_cleared")
+    page.clear()
     assert page[handle.search] == "" and page[handle.reason] == refusal
     page.act("_select", evt={"key": "__older__"})
     assert page[handle.show_older] is True and page[handle.reason] == refusal
@@ -1708,11 +1795,11 @@ def test_a_draw_token_is_new_every_time_whatever_the_clock_reads(root, serving, 
     a change undrawn. The tokens are one count: with the clock held, two
     changes write two tokens."""
     demo, _ctx, handle, _ = _component("research")
-    cleared = next(fn for fn in demo.fns.values() if fn.name == "_cleared")
-    assert cleared.outputs[-1] is handle.drawn
+    searched = next(fn for fn in demo.fns.values() if fn.name == "_searched")
+    assert searched.outputs[-1] is handle.drawn
     monkeypatch.setattr(time, "monotonic_ns", lambda: 1)
     monkeypatch.setattr(time, "monotonic", lambda: 1.0)
-    first, second = cleared.fn({})[-1], cleared.fn({})[-1]
+    first, second = searched.fn({})[-1], searched.fn({})[-1]
     assert first != second and 0 not in (first, second)
     assert ml.draw_token() != ml.draw_token()
 
@@ -2651,7 +2738,7 @@ def test_a_search_reveals_what_it_found_and_clearing_it_brings_the_folds_back(
         ctx = standalone_context(demo)
         handle = ctx.create_model_list("research")
     fns = {fn.name: fn for fn in demo.fns.values()}
-    searched, cleared, select = fns["_searched"], fns["_cleared"], fns["_select"]
+    searched, select = fns["_searched"], fns["_select"]
     listing = _listing(root, monkeypatch)
     run = ml.run_node("gatv2/20261015-080000_gene_aaaaaa")
     manual = {run: False, "g:other": False}
@@ -2673,9 +2760,13 @@ def test_a_search_reveals_what_it_found_and_clearing_it_brings_the_folds_back(
     during = dict(zip(map(id, select.outputs), out, strict=True))[id(handle.fold)]
     assert during == {**manual, ml.search_node(run): False}
     assert hidden(ml.list_html(listing, None, ml.PRESETS["research"], search=query, fold=during))
-    # Cleared: the operator's own folds are back, the search's are gone.
-    box, fold, _token = cleared.fn(during)
-    assert box == "" and fold == manual and cleared.outputs[0] is handle.search
+    # Cleared (Clear empties the box in the page, and its change is the
+    # search's): the operator's own folds are back, the search's are gone.
+    (clear,) = [fn for fn in demo.fns.values() if (handle.search_clear._id, "click") in fn.targets]
+    assert clear.fn is None and clear.outputs == [handle.search]
+    assert searched.targets == [(handle.search._id, "change")]
+    fold, _token = searched.fn(during)
+    assert fold == manual
     assert hidden(_drawn(demo, handle, listing, None, False, None, "", fold)[id(handle.rows)])
     assert ml.fold_open(manual, run, "", False, True) is False
     assert ml.fold_open(manual, run, query, True, False) is True

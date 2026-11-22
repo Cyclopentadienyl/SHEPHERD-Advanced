@@ -4827,8 +4827,9 @@ def test_an_answer_that_comes_late_never_draws_an_older_state_in_a_browser(
 #: A search answered late (G07; the review of 5171661, P2-1): "b" typed and
 #: drawn, then "e" (its search, asked with "be", held on the server: a file
 #: handshake, ``hold`` while it is held, ``entered`` once it is), Clear
-#: clicked and its drawing landed, then the search let go; what the page
-#: shows once every answer has come is read.
+#: clicked (the box emptied in the page; its own search waits behind the held
+#: one, "always_last"), then the search let go; what the page shows once
+#: every answer has come is read.
 _LATE_SEARCH_JS = r"""
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -4870,10 +4871,10 @@ const [base, hold, entered] = process.argv.slice(2);
     if (Date.now() - start > 30000) { throw new Error('the search never reached the server'); }
     await new Promise((r) => setTimeout(r, 10));
   }
-  // Clear, answered and drawn while the search is held.
+  // Clear while the search is held: the box emptied in the page at once.
   await page.click('#shep-models-research-search-clear');
-  await page.waitForFunction(([count, box, full]) => document.querySelector(box).value === ''
-    && document.querySelector(count).innerText.trim() === full, [COUNT, BOX, out.before.count], { timeout: 30000 });
+  await page.waitForFunction((box) => document.querySelector(box).value === '', BOX, { timeout: 30000 });
+  await frames();
   out.during = await shown();
   // Let go, then everything answered and drawn.
   fs.unlinkSync(entered); fs.unlinkSync(hold);
@@ -4889,11 +4890,11 @@ def test_a_search_answered_after_its_clear_draws_no_search_in_a_browser(tmp_path
     """G07 (an update never applies an old state; the review of 5171661,
     P2-1): By family, "b" typed and drawn, then "e", its search (asked with
     "be") held on the server (a file handshake, no timed wait) while Clear is
-    clicked and its drawing lands; once the search is let go and every
-    request is answered,
-    the search box is empty and the runs drawn and the count are the whole
-    list's, as before the search: a search answered late draws the box as it
-    is, never the text it was typed with."""
+    clicked (the box emptied in the page, its own search asked once the held
+    one is answered); "be" is never drawn, and once the search is let go and
+    every request is answered, the search box is empty and the runs drawn
+    and the count are the whole list's, as before the search: a search
+    answered late draws the box as it is, never the text it was typed with."""
     import functools
 
     from src.webui.app import create_gradio_app, mount_options
@@ -4907,7 +4908,7 @@ def test_a_search_answered_after_its_clear_draws_no_search_in_a_browser(tmp_path
     box = next(b for b in demo.blocks.values()
                if getattr(b, "elem_id", None) == "shep-models-research-search")
     (searched,) = [fn for fn in demo.fns.values()
-                   if fn.name == "_searched" and (box._id, "input") in fn.targets]
+                   if fn.name == "_searched" and (box._id, "change") in fn.targets]
     original = searched.fn
 
     @functools.wraps(original)
@@ -4931,6 +4932,133 @@ def test_a_search_answered_after_its_clear_draws_no_search_in_a_browser(tmp_path
             hold.unlink(missing_ok=True)
     before, during, after = seen["before"], seen["during"], seen["after"]
     assert before["query"] == "" and len(before["runs"]) > 4, before
-    assert during == before, (before, during)
+    assert during["query"] == "" and "“be”" not in during["count"], (before, during)
     # Settled: the empty box, and the whole list drawn under it.
     assert after == before, (before, after)
+
+
+#: Every way the search box's text changes (the adversarial check of
+#: 37912a9, F2): By family, a body picked, then "d" and "e" typed, Backspace,
+#: select all and Delete, "al" filled (one input event, no key, as a paste),
+#: "beta" composed by an input method (Chromium's own, over CDP: no key
+#: event), and the list's "Clear search" where "beta" hides the selection;
+#: what each typed text draws is read as the reference. After each act the
+#: page waits for the count to say the box's search (at most 10 s: an act
+#: whose search never runs is read as it is then), then for every request
+#: to be answered.
+_SEARCH_EDITS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__, RUN = __RUNS__;
+const ROWS = '#shep-models-research-rows', COUNT = '#shep-models-research-count';
+const BOX = '#shep-models-research-search input, #shep-models-research-search textarea';
+const [base] = process.argv.slice(2);
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 });
+  await page.addInitScript(QUEUE_JS);
+  const cdp = await page.context().newCDPSession(page);
+  const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  const viewFor = (v) => page.waitForFunction((v) => { const m = document.querySelector('#shep-models-research-rows .shep-view-for'); return !!m && m.getAttribute('data-for') === v; }, v, { timeout: 30000 });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const settled = async () => { await frames(); await idle(); await frames(); await idle(); };
+  const shown = () => page.evaluate(([rows, count, box]) => {
+    const list = document.querySelector(rows);
+    const current = list.querySelector('[aria-current="true"]');
+    const outside = list.querySelector('.shep-list-outside');
+    const head = document.querySelector('#shep-mp-detail-hd h2[data-key]');
+    return {
+      query: document.querySelector(box).value,
+      runs: [...list.querySelectorAll('.shep-fam-body')].filter((e) => e.getClientRects().length).map((e) => e.dataset.run),
+      count: (document.querySelector(count + ' .html-container') || document.querySelector(count)).innerText.trim(),
+      current: current ? (current.getAttribute('data-key') || current.getAttribute('data-run') || (current.closest('li[data-run]') || { dataset: {} }).dataset.run || '') : null,
+      outside: outside ? outside.innerText.trim() : '',
+      selected: head ? head.getAttribute('data-key') : null,
+    };
+  }, [ROWS, COUNT, BOX]);
+  // The count saying the search `q` (none for ''), then every request answered.
+  const drawnFor = async (q) => {
+    try {
+      await page.waitForFunction(([c, q]) => { const t = document.querySelector(c).innerText;
+        return q ? t.includes('\u201c' + q + '\u201d') : !t.includes('\u201c'); }, [COUNT, q], { timeout: 10000 });
+    } catch (e) { /* never drawn: read as it is */ }
+    await settled();
+    return shown();
+  };
+  const box = async () => { await page.locator(BOX).focus(); };
+  const emptied = async () => { await box(); await page.keyboard.press('Control+A'); await page.keyboard.press('Delete'); };
+  const out = {};
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.click('#shep-page-models-button');
+  await viewFor('newest|all'); await idle();
+  await page.click('#shep-mp-order label:has-text("By family")');
+  await viewFor('family|all'); await settled();
+  // A body picked: the selection every act keeps.
+  await page.click(`${ROWS} li[data-run="${RUN.picked}"] > .shep-fam-node .shep-fam-body`);
+  await page.waitForFunction((r) => { const h = document.querySelector('#shep-mp-detail-hd h2[data-key]'); return !!h && h.getAttribute('data-key').startsWith(r + '/'); }, RUN.picked, { timeout: 30000 });
+  out.full = await drawnFor('');
+  await box(); await page.keyboard.type('d'); out.d = await drawnFor('d');
+  await box(); await page.keyboard.type('e'); out.de = await drawnFor('de');
+  await box(); await page.keyboard.press('Backspace'); out.backspace = await drawnFor('d');
+  await emptied(); out.deleted = await drawnFor('');
+  await page.locator(BOX).fill('al'); out.filled = await drawnFor('al');
+  await emptied(); await drawnFor('');
+  await box(); await page.keyboard.type('al'); out.typedAl = await drawnFor('al');
+  await emptied(); await drawnFor('');
+  await box();
+  for (const t of ['b', 'be', 'bet', 'beta']) { await cdp.send('Input.imeSetComposition', { text: t, selectionStart: t.length, selectionEnd: t.length }); }
+  await cdp.send('Input.insertText', { text: 'beta' });
+  out.composed = await drawnFor('beta');
+  await emptied(); await drawnFor('');
+  await box(); await page.keyboard.type('beta'); out.typedBeta = await drawnFor('beta');
+  await page.click(`${ROWS} .shep-list-outside button[data-key="__clear_search__"]`);
+  out.clearSearch = await drawnFor('');
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_every_change_of_the_search_box_draws_its_search_in_a_browser(tmp_path, family):
+    """The adversarial check of 37912a9 (F2: Gradio 6.30's Textbox sends
+    ``input`` from its keypress handler alone, so a deleted or pasted text
+    was never searched and the list kept drawing the old search under the
+    box): By family, a body picked, then "de" typed; Backspace draws "d" as
+    typing "d" did; select all and Delete draws the whole list again; "al"
+    filled as a paste (no key) and "beta" composed by an input method (no
+    key) draw as the same text typed; the list's "Clear search" (where
+    "beta" hides the selection) draws the whole list. The selection is kept
+    throughout, and the box, the runs drawn and the count agree each time."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.family_world import run_key
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    picked = run_key("alpha-base")
+    script = (_SEARCH_EDITS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__RUNS__", json.dumps({"picked": picked})))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")])
+    full = seen["full"]
+    assert full["query"] == "" and len(full["runs"]) > 4, full
+    assert full["selected"].startswith(picked + "/") and "“" not in full["count"], full
+    assert all(seen[step]["selected"] == full["selected"] for step in seen), seen
+    d, de = seen["d"], seen["de"]
+    assert (d["query"], de["query"]) == ("d", "de"), (d, de)
+    assert "“d”" in d["count"] and "“de”" in de["count"], (d, de)
+    # Backspace: "d" drawn, as typed.
+    assert seen["backspace"] == d, (d, seen["backspace"])
+    # Select all and Delete: the whole list, as before the search.
+    assert seen["deleted"] == full, (full, seen["deleted"])
+    # Filled (a paste's one input event, no key): "al" drawn, as typed.
+    assert seen["typedAl"]["query"] == "al" and "“al”" in seen["typedAl"]["count"]
+    assert seen["filled"] == seen["typedAl"], (seen["typedAl"], seen["filled"])
+    # Composed by an input method: "beta" drawn, as typed; the selection said
+    # as not shown by it, with "Clear search".
+    beta = seen["typedBeta"]
+    assert "“beta”" in beta["count"] and "search “beta”" in beta["outside"], beta
+    assert seen["composed"] == beta, (beta, seen["composed"])
+    # "Clear search": the whole list again.
+    assert seen["clearSearch"] == full, (full, seen["clearSearch"])
