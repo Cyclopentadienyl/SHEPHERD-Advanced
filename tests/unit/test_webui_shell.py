@@ -3113,7 +3113,7 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     js_path.write_text(shell._SHELL_JS.replace("__TITLES__", "{}").replace("__RESEARCH_LABEL__", '""')
                        .replace("__STAGES__", "{}").replace("__STAGE_WORD__", '""')
                        .replace("__LAYOUT__", "data-shep-layout").replace("__SHORT__", "data-shep-short")
-                       .replace("__SHORT_BELOW__", "900"), encoding="utf-8")
+                       .replace("__SHORT_BELOW__", "900").replace("__GO__", "{}"), encoding="utf-8")
     seen = run_node(_CUE_JS, tmp_path, str(css_path), str(js_path))
     assert seen["top"] == {"more": True, "mask": True}, seen
     assert seen["end"] == {"more": False, "mask": False}, seen
