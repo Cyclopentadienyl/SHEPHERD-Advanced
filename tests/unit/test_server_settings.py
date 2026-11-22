@@ -1481,3 +1481,94 @@ class TestTheOneViewOfTheDataLocations:
         assert f"in effect: {folders['workspaces'].resolve()}" in text.stdout
         assert "source:    saved settings file (applied)" in text.stdout
         assert f"Settings file: {path} (named by SHEPHERD_SETTINGS_FILE)" in text.stdout
+
+
+# ---------------------------------------------------------------------------
+# The notices: a setting's state in parts, the whole sentences from the same parts
+# ---------------------------------------------------------------------------
+#: The whole sentences the CLI, the API and the logs say, byte for byte (the
+#: notices add parts; these never change: the UI sweep of 2026-11-22).
+WHOLE = {
+    "WORKSPACES_ROOT_NOT_SET": (
+        "No workspaces folder is set, so the server lists no workspace. Choose the folder whose "
+        "subfolders are the workspaces in Settings › Data locations; its Create suggested folder "
+        "makes SHEPHERD-data/workspaces in the service account's home folder. No default is "
+        "assumed. Ref: SHEPHERD_WORKSPACES_ROOT"),
+    "GPU_LOCK_NOT_CONFIGURED": (
+        "No workspaces folder is set, so the GPU lock is not configured and every managed GPU "
+        "job is refused rather than run without excluding the others. Choose the folder in "
+        "Settings › Data locations: the lock is .shepherd-gpu.lock in it, the one file every "
+        "process that uses the folder takes (deployment guide §4.11). Ref: "
+        "SHEPHERD_WORKSPACES_ROOT"),
+    "REGISTRY_NOT_SET": (
+        "No results registry is set, so the features that read the cohort registry are off. "
+        "Choose it in Settings › Data locations: a folder outside the repository, the one the "
+        "commands take as --registry. Ref: SHEPHERD_REGISTRY"),
+}
+#: Each notice beside its whole sentence, and the facts the sentence says that
+#: its parts must say too.
+NOTICE_OF = {
+    "WORKSPACES_ROOT_NOT_SET": ("WORKSPACES_ROOT_NOTICE", (
+        "No workspaces folder is set", "Settings › Data locations",
+        "SHEPHERD-data/workspaces in the service account's home folder",
+        "Create suggested folder", "the server lists no workspace", "SHEPHERD_WORKSPACES_ROOT")),
+    "GPU_LOCK_NOT_CONFIGURED": ("GPU_LOCK_NOTICE", (
+        "Settings › Data locations", ".shepherd-gpu.lock", "§4.11", "SHEPHERD_WORKSPACES_ROOT",
+        "every process that uses the folder")),
+    "REGISTRY_NOT_SET": ("REGISTRY_NOTICE", (
+        "No results registry is set", "Settings › Data locations",
+        "a folder outside the repository", "--registry", "SHEPHERD_REGISTRY")),
+}
+
+
+def _parts(notice) -> str:
+    return "\n".join((notice.summary, notice.short, notice.action, *notice.details, *notice.ref))
+
+
+@pytest.mark.parametrize("name", sorted(WHOLE))
+def test_each_whole_sentence_is_unchanged_and_its_notice_says_every_fact(name):
+    """The CLI's and the API's sentence is kept byte for byte, built from the
+    parts its notice shares (the folder's state, Data locations, the suggested
+    folder, the lock file, the guide section, the variable, ``--registry``),
+    and every one of those facts is in the notice's own parts too: the WebUI's
+    short form drops none of them, it moves them behind "Details ›"."""
+    assert getattr(ss, name) == WHOLE[name]
+    notice_name, facts = NOTICE_OF[name]
+    parts = _parts(getattr(ss, notice_name))
+    for fact in facts:
+        assert fact.lower() in parts.lower(), (name, fact)
+        assert fact in WHOLE[name] or fact.lower() in WHOLE[name].lower(), (name, fact)
+    # The readers still answer with the whole sentence.
+    assert ss.workspaces_root({}).problem == WHOLE["WORKSPACES_ROOT_NOT_SET"]
+    assert ss.gpu_lock_location({}).problem == WHOLE["GPU_LOCK_NOT_CONFIGURED"]
+    assert ss.cohort_registry({}).problem == WHOLE["REGISTRY_NOT_SET"]
+
+
+def test_the_notices_parts_are_short_front_loaded_and_name_no_server_path():
+    """The text brief's message shape: a summary of one front-loaded sentence
+    (its first two words carry the state) of 60 characters or fewer; a short
+    form a relation reads ("Start unavailable: no workspaces folder is
+    set."); the next step by its place in the GUI; the details as term rows,
+    each term said once across the three notices (one screen may merge them);
+    the codes only in the Ref items; and no server path anywhere."""
+    notices = (ss.WORKSPACES_ROOT_NOTICE, ss.GPU_LOCK_NOTICE, ss.REGISTRY_NOTICE)
+    assert [n.key for n in notices] == ["workspaces_root", "gpu_lock", "registry"]
+    assert ss.GPU_LOCK_NOTICE.cause == "workspaces_root"
+    assert ss.WORKSPACES_ROOT_NOTICE.cause is None and ss.REGISTRY_NOTICE.cause is None
+    terms = []
+    for n in notices:
+        assert n.summary.endswith(".") and len(n.summary) <= 60, n.summary
+        assert n.summary.split()[:2] in (["No", "workspaces"], ["No", "results"], ["GPU", "jobs"])
+        assert n.short == n.short.strip() and not n.short.endswith(".") and len(n.short) <= 40
+        assert n.short[0].islower() or n.short.startswith("GPU"), n.short
+        assert n.action == "Choose one in Settings › Data locations"
+        assert n.target == "settings#shep-dl"
+        for row in n.details:
+            term, _, text = row.partition(": ")
+            assert term and text and term[0].isupper() and len(term) <= 32, row
+            assert not text.endswith(".") and ";" not in row, row
+            terms.append(term)
+        assert n.ref and all("SHEPHERD_" not in row for row in (n.summary, n.short, n.action))
+        for part in (n.summary, n.short, n.action, *n.details, *n.ref):
+            assert "/home" not in part and not part.startswith("/") and " /" not in part, part
+    assert len(terms) == len(set(terms)), terms

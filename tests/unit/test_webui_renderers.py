@@ -1520,3 +1520,160 @@ def test_every_digest_code_element_is_drawn_by_fingerprint_value():
         "split_manifest": {"sha256": "c" * 64}, "task_fixture": None}}))
     assert f'<code class="shep-fpv" title="{"c" * 64}">{"c" * 12}</code>' in lines[
         "Split manifest"]
+
+
+# --------------------------------------------------------------------------- the notice
+def _notices():
+    from src.config import server_settings as ss
+    from src.webui.components import workspaces as w
+
+    return (w.setting_notice(ss.workspaces_root({})), w.lock_notice({"problem": "x", "unset": True}),
+            w.setting_notice(ss.cohort_registry({})))
+
+
+def test_a_settings_notice_is_chosen_by_its_flags_never_by_its_words(tmp_path):
+    """`workspaces.setting_notice`: usable, none; unset, its notice (a normal
+    setup step: neutral, never red); set and refused, its own short words in
+    red with where to see why and no value or path of the setting. The lock
+    (`lock_notice`): unset, the GPU notice, which follows from the folder's;
+    another problem, its reason as a Details row for an operator only."""
+    from src.config import server_settings as ss
+    from src.webui.components import workspaces as w
+
+    assert w.setting_notice(ss.workspaces_root({"SHEPHERD_WORKSPACES_ROOT": str(tmp_path)})) is None
+    unset = w.setting_notice(ss.workspaces_root({}))
+    assert unset["kind"] == "neutral" and unset["key"] == "workspaces_root"
+    assert unset["summary"] == ss.WORKSPACES_ROOT_NOTICE.summary
+    refused = w.setting_notice(ss.workspaces_root({"SHEPHERD_WORKSPACES_ROOT": str(tmp_path / "gone")}))
+    assert refused["kind"] == "error" and refused["key"] == "workspaces_root"
+    assert refused["summary"] == "The workspaces folder cannot be used."
+    assert refused["action"] == "See why in Settings › Data locations" and refused["details"] == ()
+    assert str(tmp_path) not in repr(refused)
+    registry = w.setting_notice(ss.cohort_registry({"SHEPHERD_REGISTRY": "relative"}))
+    assert registry["kind"] == "error" and registry["summary"] == "The results registry cannot be used."
+    assert w.lock_notice(None) is None and w.lock_notice({"problem": None}) is None
+    gpu = w.lock_notice({"problem": "x", "unset": True})
+    assert gpu["key"] == "gpu_lock" and gpu["cause"] == "workspaces_root" and gpu["kind"] == "neutral"
+    other = {"problem": "the lock /srv/x/.shepherd-gpu.lock cannot be opened", "unset": False}
+    assert w.lock_notice(other)["details"] == ()
+    assert w.lock_notice(other, operator=True)["details"] == (f"Why: {other['problem']}",)
+    assert w.lock_notice(other)["summary"] == "The GPU lock cannot be used."
+
+
+def test_the_workspace_list_carries_its_notice_from_the_same_read(tmp_path, monkeypatch):
+    from src.webui.components import workspaces as w
+
+    for name in ("SHEPHERD_WORKSPACES_ROOT", "SHEPHERD_SETTINGS_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SHEPHERD_SETTINGS_FILE", str(tmp_path / "none.json"))
+    unset = w.read_workspaces({"SHEPHERD_SETTINGS_FILE": str(tmp_path / "none.json")})
+    assert unset["rows"] == [] and unset["notice"]["key"] == "workspaces_root"
+    (tmp_path / "ws").mkdir()
+    usable = w.read_workspaces({"SHEPHERD_WORKSPACES_ROOT": str(tmp_path / "ws")})
+    assert usable["notice"] is None and usable["problem"] is None
+
+
+def test_a_notice_is_one_line_its_link_and_details_one_click_away():
+    """`renderers.notice_block` (the text brief's §1, §12): the state with its
+    status mark in a column of its own, the page's consequence, the next step
+    as a button to its place (``data-shep-go``, ``data-shep-focus``), and the
+    why and how under "Details ›": term rows and one Ref line, the notices it
+    merges (`also`) said once there and named by ``data-notice-also``."""
+    ws, gpu, _registry = _notices()
+    html = r.notice_block(ws, consequence="Start is unavailable until one is chosen.", also=(gpu,))
+    assert html.startswith('<div class="shep-nb shep-nb-neutral" data-notice="workspaces_root" '
+                           'data-notice-also="gpu_lock">')
+    line = html.split("</p>", 1)[0]
+    assert '<span class="shep-nb-mark shep-st-neutral" aria-hidden="true">○' in line
+    assert ">No workspaces folder is set.</span>" in line
+    assert '<span class="shep-nb-then">Start is unavailable until one is chosen.</span>' in line
+    assert ('<button type="button" class="shep-link shep-nb-go" data-shep-go="settings" '
+            'data-shep-focus="shep-dl">Choose one in Settings › Data locations</button>') in line
+    assert "GPU jobs are refused" not in html                    # merged: its details only
+    more = html.split('<details class="shep-more shep-nb-more"><summary>Details ›</summary>')[1]
+    for term in ("Workspaces", "Unset", "Suggested", "Default", "GPU lock", "Taken by", "GPU jobs"):
+        assert f'<dt class="shep-k">{term}</dt>' in more, term
+    assert ('<code class="shep-tok">.shepherd<wbr>-gpu<wbr>.lock</code>') in more
+    assert more.count("Ref:") == 1 and "deployment guide §4.11" in more
+    assert re.sub(r"<[^>]+>", "", more).count("SHEPHERD_WORKSPACES_ROOT") == 1
+    assert r.notice_block(None) == "" and r.notice_block("") == ""
+    # An older caller's whole text: the line alone, no link, no details.
+    old = r.notice_block("Something is off.")
+    assert "Something is off." in old and "data-shep-go" not in old and "<details" not in old
+    # No link where the page asks for none: the step is a sentence.
+    assert '<span class="shep-nb-act">Choose one in Settings › Data locations.</span>' in \
+        r.notice_block(ws, go=False)
+
+
+def test_a_notice_with_steps_numbers_them_with_its_action_first():
+    ws, _gpu, _registry = _notices()
+    html = r.notice_block(ws, steps=("Build a dataset in it: scripts/build_knowledge_graph.py "
+                                     "--generate-samples",))
+    line, rest = html.split("</p>", 1)
+    assert "data-shep-go" not in line
+    steps = rest.split('<ol class="shep-nb-steps">')[1].split("</ol>")[0]
+    first, second = re.findall(r"<li>(.*?)</li>", steps)
+    assert "data-shep-go" in first
+    assert second == ('Build a dataset in it: <code class="shep-tok">scripts<wbr>/build<wbr>'
+                      '_knowledge<wbr>_graph<wbr>.py</code> <code class="shep-tok">'
+                      '--generate<wbr>-samples</code>')
+
+
+def test_several_notices_are_one_block_with_one_action_when_their_steps_agree():
+    from src.webui.components import workspaces as w
+
+    ws, _gpu, registry = _notices()
+    html = r.notices_block([registry, ws], consequence="Import and Start are unavailable.")
+    assert html.count("shep-nb-line") == 2 and html.count("data-shep-go") == 1
+    assert 'data-notice="registry workspaces_root"' in html
+    assert html.count("<details") == 1 and html.count("Ref:") == 1
+    apart = dict(ws, action="Open Datasets", target="datasets")
+    split = r.notices_block([registry, apart])
+    assert split.count("data-shep-go") == 2 and 'data-shep-go="datasets"' in split
+    assert r.notices_block([None, ws]) == r.notice_block(ws)
+    assert r.notices_block([]) == ""
+    refused = w.setting_notice(__import__("src.config.server_settings", fromlist=["x"])
+                               .cohort_registry({"SHEPHERD_REGISTRY": "relative"}))
+    assert r.notices_block([refused, ws]).startswith('<div class="shep-nb shep-nb-error"')
+
+
+def test_a_relation_says_the_notice_short_and_is_not_the_notice_again():
+    ws, gpu, _registry = _notices()
+    rel = r.see_above("Start unavailable", ws)
+    assert rel.startswith('<p class="shep-reason shep-nb-rel" data-notice-rel="workspaces_root">')
+    assert ">Start unavailable: no workspaces folder is set.</span>" in rel
+    assert "data-notice=" not in rel and "<details" not in rel
+    assert ">Import disabled: GPU jobs need a workspaces folder (see Data).</span>" in \
+        r.see_above("Import disabled", gpu, where="Data")
+    assert "<details" in r.see_above("Start unavailable", gpu, details=True)
+    assert r.see_above("Start unavailable", None) == ""
+
+
+PAYLOAD = "<img src=x onerror=alert(1)>"
+
+
+def test_every_part_of_a_notice_is_escaped():
+    """No markup comes from a notice: each part, the key and the place
+    included, is drawn as text (an ``<img src=x onerror=…>`` in every part
+    shows as its characters)."""
+    bad = {"key": PAYLOAD, "kind": "error", "summary": PAYLOAD, "short": PAYLOAD,
+           "action": PAYLOAD, "target": f'{PAYLOAD}#"{PAYLOAD}', "details": (f"Why: {PAYLOAD}",
+                                                                              PAYLOAD),
+           "ref": (PAYLOAD,), "cause": None}
+    html = (r.notice_block(bad, consequence=PAYLOAD, also=(dict(bad, key="b"),), steps=(PAYLOAD,))
+            + r.notices_block([bad, dict(bad, key="c", target="x")], consequence=PAYLOAD)
+            + r.see_above(PAYLOAD, bad, where=PAYLOAD, details=True)
+            + r.notice_block(PAYLOAD) + r.literal_html(PAYLOAD) + r.token_html(PAYLOAD))
+    assert "<img" not in html and "onerror=alert(1)>" not in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+    assert 'data-shep-go="&lt;img' in html
+
+
+def test_a_token_breaks_only_at_its_own_separators():
+    assert r.token_html("SHEPHERD_WORKSPACES_ROOT") == \
+        '<code class="shep-tok">SHEPHERD<wbr>_WORKSPACES<wbr>_ROOT</code>'
+    assert r.token_html("--registry") == '<code class="shep-tok">--registry</code>'
+    assert "​" not in r.literal_html("a/b/c.json and SHEPHERD_X")
+    assert r.literal_html("Settings › Data locations, deployment guide §4.11") == \
+        "Settings › Data locations, deployment guide §4.11"
+    assert r.literal_html("the lock .shepherd-gpu.lock here").count("<code") == 1

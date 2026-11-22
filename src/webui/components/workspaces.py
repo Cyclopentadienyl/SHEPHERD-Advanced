@@ -23,6 +23,15 @@ dashboard shows besides:
   one redaction of a text that may name any of them (`redact_server`): the
   Test page's job output and Models' notes problems read the same pair.
 
+**The notices** (the WebUI's first-use messages, said once per screen): a
+setting's state in parts (`server_settings.Notice`), chosen by the reader's
+``unset`` flag, never by its words: `setting_notice` (the workspaces folder or
+the results registry: unset, a normal setup step; set but refused, its own
+short words and where to see why), `lock_notice` (the GPU lock: unset, which
+follows from the workspaces folder; another problem, said to an operator) and
+`read_workspaces`' ``notice``, from the read it already makes. Each is plain
+data for `renderers.notice_block`, `notices_block` and `see_above`.
+
 It also holds the one way a page says whether a registered cohort version was
 mapped against a workspace's graph (`workspace_binding`, `binding_state`,
 `version_row`): the Test page's version select and the Diagnosis panel's
@@ -41,6 +50,15 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from src.config.server_settings import (
+    DATA_LOCATIONS,
+    ENV_REGISTRY,
+    ENV_WORKSPACES_ROOT,
+    GPU_LOCK_NOTICE,
+    REGISTRY_NOTICE,
+    WORKSPACES_ROOT_NOTICE,
+    Notice,
+)
 from src.utils.path_redaction import SERVER_PATH, redact_paths
 from src.webui.components import renderers as r
 
@@ -132,18 +150,89 @@ def redact_server(text: Any, roots: Sequence[Tuple[str, str]]) -> str:
     return redact_paths(text, roots, other=SERVER_PATH)
 
 
+def _root_of(setting: Any) -> Tuple[Optional[Path], Optional[str]]:
+    """A workspaces root setting as `workspaces_root` says it."""
+    if setting.available:
+        return setting.value, None
+    if setting.problem and " is refused:" in setting.problem:
+        return None, ROOT_REFUSED
+    return None, redact(setting.problem, None)
+
+
 def workspaces_root(environ: Optional[Mapping[str, str]] = None
                     ) -> Tuple[Optional[Path], Optional[str]]:
     """The workspaces root, or why there is none: unset (its own words, which
     name no path) or refused (`ROOT_REFUSED`: the setting's path is not shown)."""
     from src.config import server_settings
 
-    setting = server_settings.workspaces_root(environ)
-    if setting.available:
-        return setting.value, None
-    if setting.problem and " is refused:" in setting.problem:
-        return None, ROOT_REFUSED
-    return None, redact(setting.problem, None)
+    return _root_of(server_settings.workspaces_root(environ))
+
+
+# ---------------------------------------------------------------------------
+# The notices (module docstring)
+# ---------------------------------------------------------------------------
+#: The notice of each setting a page says a notice for, by its variable.
+NOTICES = {ENV_WORKSPACES_ROOT: WORKSPACES_ROOT_NOTICE, ENV_REGISTRY: REGISTRY_NOTICE}
+#: **A setting that is set and cannot be used** (refused by its check, or its
+#: saved file not readable): its state in short words, by its variable. Why is
+#: said in Settings › Data locations, to an operator, with its path; a page
+#: says where to see it (`SEE_WHY`), never the setting's own words.
+NOT_USABLE = {ENV_WORKSPACES_ROOT: "The workspaces folder cannot be used.",
+              ENV_REGISTRY: "The results registry cannot be used."}
+#: The GPU lock set and not usable (a problem that is not "unset").
+LOCK_NOT_USABLE = "The GPU lock cannot be used."
+#: Where an operator sees why a setting that is set cannot be used.
+SEE_WHY = f"See why in {DATA_LOCATIONS}"
+
+
+def notice_view(notice: Notice, kind: str = "neutral") -> Dict[str, Any]:
+    """`notice` as the plain data a page keeps and `renderers.notice_block`
+    draws: its fields, and its `kind` (``neutral``: a missing setting, a
+    normal setup step, never red; ``error``: a value set and refused)."""
+    return {**notice._asdict(), "details": tuple(notice.details), "ref": tuple(notice.ref),
+            "kind": kind}
+
+
+def _short(summary: str) -> str:
+    return summary[:1].lower() + summary[1:].rstrip(".")
+
+
+def _not_usable(base: Notice, summary: str, details: Tuple[str, ...] = ()) -> Dict[str, Any]:
+    """A notice for a setting that is set and cannot be used: its own short
+    words, the same key, place and reference, and where to see why."""
+    return {**notice_view(base, "error"), "summary": summary, "short": _short(summary),
+            "action": SEE_WHY, "details": details}
+
+
+def setting_notice(setting: Any) -> Optional[Dict[str, Any]]:
+    """**The notice of a setting as read now** (`server_settings.Setting`):
+    None while it is usable; unset, its notice (`NOTICES`, kind ``neutral``);
+    set and not usable, its short words (`NOT_USABLE`, kind ``error``) and
+    where to see why, never the setting's value or path. Chosen by
+    ``unset`` and ``available``, never by the words."""
+    if setting is None or setting.available:
+        return None
+    base = NOTICES.get(setting.variable)
+    if base is None:
+        return None
+    if setting.unset:
+        return notice_view(base)
+    return _not_usable(base, NOT_USABLE[setting.variable])
+
+
+def lock_notice(lock: Optional[Mapping[str, Any]], *, operator: bool = False
+                ) -> Optional[Dict[str, Any]]:
+    """**The GPU lock's notice** (`gpu_lock.lock_state`'s answer): None while
+    it can be used; unset (no workspaces folder), `GPU_LOCK_NOTICE`, which
+    follows from the workspaces folder's (its ``cause``); another problem,
+    `LOCK_NOT_USABLE`, with the problem itself as a Details row for an
+    operator only (it may name a server path), as the header chip says it."""
+    if not lock or not lock.get("problem"):
+        return None
+    if lock.get("unset"):
+        return notice_view(GPU_LOCK_NOTICE)
+    details = (f"Why: {' '.join(str(lock['problem']).split())}",) if operator else ()
+    return _not_usable(GPU_LOCK_NOTICE, LOCK_NOT_USABLE, details)
 
 
 #: What the manifest binds: each file's role in the manifest and its plain
@@ -200,15 +289,20 @@ def read_workspaces(environ: Optional[Mapping[str, str]] = None) -> Dict[str, An
     """The listed workspaces as plain data: ``rows`` (each item's fields, its
     ``manifest`` state, every reason without an absolute path), ``directories``
     (each listed name's resolved directory, from one listing of the root),
-    ``root`` and ``problem`` (why none is listed, without a path)."""
+    ``root``, ``problem`` (why none is listed, without a path) and ``notice``
+    (the workspaces folder's notice, `setting_notice`, from the same read of
+    the setting; None while the folder is usable)."""
     from src.api.services.server_lists import (
         ServerListRefused,
         list_workspaces,
         resolve_workspaces,
     )
 
+    from src.config import server_settings
+
     listing = list_workspaces(environ=environ)
-    root, root_problem = workspaces_root(environ)
+    setting = server_settings.workspaces_root(environ)
+    root, root_problem = _root_of(setting)
     try:
         directories = resolve_workspaces(environ=environ)
     except ServerListRefused:
@@ -230,7 +324,8 @@ def read_workspaces(environ: Optional[Mapping[str, str]] = None) -> Dict[str, An
     problem = None
     if listing.problem:
         problem = root_problem if root is None and root_problem else redact(listing.problem, root)
-    return {"rows": rows, "directories": directories, "root": root, "problem": problem}
+    return {"rows": rows, "directories": directories, "root": root, "problem": problem,
+            "notice": setting_notice(setting)}
 
 
 # ---------------------------------------------------------------------------
@@ -329,14 +424,21 @@ def binding_state(version: Mapping[str, Any], binding: Optional[Mapping[str, Any
 __all__ = [
     "BOUND_ROLES",
     "CHANGED_CONTENTS",
+    "LOCK_NOT_USABLE",
+    "NOTICES",
+    "NOT_USABLE",
     "OUTSIDE_PATH",
     "ROOT_REFUSED",
+    "SEE_WHY",
     "binding_state",
     "contents_reason",
+    "lock_notice",
     "manifest_facts",
     "manifest_state",
+    "notice_view",
     "read_workspaces",
     "redact",
+    "setting_notice",
     "shown_path",
     "version_row",
     "workspace_binding",
