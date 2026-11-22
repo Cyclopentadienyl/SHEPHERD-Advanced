@@ -3231,6 +3231,12 @@ def _groups_page():
         with gr.Column(elem_id="shep-dl", elem_classes=["shep-panel"]):
             shell.plain_html('<div class="shep-panel-hd"><h2>Data locations</h2></div>')
             gr.Textbox(label="Workspaces folder", elem_id="stand-in-field")
+            with gr.Column(elem_id="groups-col"):
+                gr.CheckboxGroup(["Disease", "Gene"], label="Tasks", elem_id="groups-col-choice")
+            with gr.Row(elem_id="groups-row"):
+                gr.Textbox(label="Epochs", elem_id="groups-row-a")
+                gr.Textbox(label="Seed", elem_id="groups-row-b")
+                gr.Radio(["Trained", "Frozen"], label="Graph backbone", elem_id="groups-row-choice")
 
     pages = {**{page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS,
                                                        shell.CLINICAL)},
@@ -3292,6 +3298,17 @@ const QUEUE_JS = __QUEUE_JS__;
   out.landed = await page.evaluate(() => ({ text: document.activeElement.textContent.trim(),
     inDl: !!document.activeElement.closest('#shep-dl'), tabindex: document.activeElement.getAttribute('tabindex'),
     title: document.title }));
+  // Fields in a panel: a choice group in a column keeps the column's width on its edge; a form's
+  // row keeps a gap between its fields' boxes, its own choice group at its one-line width; no
+  // form shows a ground of its own.
+  out.fields = await page.evaluate(() => {
+    const box = (sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width }; };
+    const input = (sel) => box(sel + ' :is(input, textarea)');
+    return { col: box('#groups-col'), colChoice: box('#groups-col-choice'),
+             a: input('#groups-row-a'), b: input('#groups-row-b'), rowChoice: box('#groups-row-choice'),
+             options: box('#groups-row-choice > .wrap'),
+             grounds: [...document.querySelectorAll('#shep-dl .form')].map((f) => getComputedStyle(f).backgroundColor) };
+  });
   // An element the script does not list for the page: the page opens, the focus stays.
   await page.click('#shep-tab-research-button');
   await page.waitForSelector('#groups-notice .shep-nb');
@@ -3320,7 +3337,12 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
       keyboard's Tab moves from tab to tab, meeting no separator;
     - the notice's link opens Settings and moves the focus to the Data
       locations heading; a link to a place the script does not list does
-      nothing, and an element it does not list for the page gets no focus."""
+      nothing, and an element it does not list for the page gets no focus;
+    - fields in a panel (style.py's M3 and M5): a choice group in a column
+      keeps the column's width on its edge (Gradio centred it at its
+      one-line width, a form's grey ground beside it); in a row the fields'
+      boxes keep a gap (they touched once a block lost its side padding) and
+      the row's choice group its one-line width; no form draws a ground."""
     from src.webui.app import mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -3349,6 +3371,14 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
     assert seen["landed"] == {"text": "Data locations", "inDl": True, "tabindex": "-1",
                               "title": shell.TITLES["settings"]}, seen["landed"]
     assert seen["unlisted"] != "shep-settings"
+    fields = seen["fields"]
+    col, choice = fields["col"], fields["colChoice"]
+    assert abs(choice["left"] - col["left"]) < 1, fields
+    assert abs(choice["width"] - col["width"]) < 1, fields
+    assert fields["b"]["left"] - fields["a"]["right"] >= 15.5, fields
+    assert fields["rowChoice"]["left"] - fields["b"]["right"] >= 15.5, fields
+    assert fields["rowChoice"]["width"] < 2 * fields["options"]["width"], fields
+    assert fields["grounds"] and set(fields["grounds"]) == {"rgba(0, 0, 0, 0)"}, fields
 
 
 # --------------------------------------------------------------------------- the first-use and empty walks

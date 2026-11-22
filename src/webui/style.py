@@ -787,12 +787,18 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .shep-field-grid > fieldset.block:has(input[type=radio], input[type=checkbox]) { grid-column: 1 / -1; }
 /* **A choice group is whole or one per line** (M3; Gradio draws a radio or checkbox group as a
-   fieldset block): it takes its one-line width and, in a row, moves to the next line whole; its
-   options never wrap inside their words. When even a whole line cannot hold them, the layout
-   pass marks it (`NARROW_ATTR`, its fit measured with the mark off) and they stand one per line:
-   never one option alone under the others. */
+   fieldset block): in a row of fields it takes its one-line width and moves to the next line
+   whole; in a column it keeps the column's width, on its edge (Gradio centres an auto-margin
+   block, and a form's grey ground showed beside it); its options never wrap inside their words.
+   When even a whole line cannot hold them, the layout pass marks it (`NARROW_ATTR`, its fit
+   measured with the mark off) and they stand one per line: never one option alone under the
+   others. */
 .gradio-container fieldset.block:has(input[type=radio], input[type=checkbox]):not(.shep-seg) {
-  flex: 0 1 auto !important; width: max-content !important; max-width: 100% !important;
+  max-width: 100% !important; margin-inline: 0 !important;
+}
+.gradio-container :is(.row, .shep-fields, .shep-bar, .shep-grp, .shep-field-row) > fieldset.block:has(input[type=radio], input[type=checkbox]):not(.shep-seg),
+.gradio-container :is(.row, .shep-fields, .shep-bar, .shep-grp, .shep-field-row) > .form > fieldset.block:has(input[type=radio], input[type=checkbox]):not(.shep-seg) {
+  flex: 0 1 auto !important; width: max-content !important;
 }
 .gradio-container fieldset.block:not(.shep-seg) > .wrap:has(> label) > label > span { white-space: nowrap; }
 .gradio-container fieldset.block[__NARROW__]:not(.shep-seg) > .wrap:has(> label) {
@@ -809,6 +815,10 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
    inset itself. */
 .shep-panel, .shep-edge { --block-padding: var(--shep-field-pad-b) 0; }
 .shep-panel > .block.padded, .shep-panel > .form > .block.padded { padding-inline: var(--shep-inset); }
+/* With no padding beside its blocks, a form's row of fields keeps the gap between fields (its
+   boxes touched); a form's ground (Gradio draws it in the border colour, its gaps 0) showed grey
+   wherever its blocks left part of a line empty: it is the panel's. */
+.shep-panel .form, .shep-edge .form { column-gap: var(--shep-gap-between) !important; background: none !important; }
 /* A region drawn as a column of a panel without its class (the shared model list's columns) takes
    the same edge with ``shep-edge``. A notice's link focuses its target's heading (the shell's go
    link): a heading is no control, so it draws no focus ring. */
