@@ -2263,11 +2263,11 @@ PAGE_CSS = f"""
    `--shep-select-floor`) and its table's narrow form: the shared tree drops its optional columns
    (Epochs, Files, Fingerprint: the selected model's details say them) while it does not fit,
    before it scrolls sideways in its own region (`model_list.OPTIONAL_COLUMNS`; the UI sweep's M6),
-   so Model, Task and Operation stay whole beside a run name of about 50 characters, which never
+   so Model, Task and Operation stay whole beside a run name of about 52 characters, which never
    breaks at its own hyphens (D8). It was 617 px, the whole table of one world: a longer name
    scrolled the rows sideways at every laptop size. By family's graph takes the width it is given
    (left to right where it fits, else top to bottom, `model_list.FAMILY_JS`). */
-{_PAGE} {_LIST} {{ --shep-mp-list-min: 38.5rem; --shep-mp-detail-min: 30rem; }}
+{_PAGE} {_LIST} {{ --shep-mp-list-min: 39rem; --shep-mp-detail-min: 30rem; }}
 {_PAGE} {_LIST} > .shep-model-main {{ --shep-panel-min: var(--shep-mp-list-min); }}
 {_PAGE} {_LIST} > .shep-model-foot {{ --shep-panel-min: var(--shep-mp-detail-min); }}
 {SIDE} {{
