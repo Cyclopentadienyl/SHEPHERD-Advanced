@@ -235,7 +235,7 @@ DETAIL_NOTHING = "Nothing to select yet: no checkpoint is listed."
 PAGE_HELP = {
     "models-ordering": (
         "Order",
-        "How the list is ordered. The Task select chooses which rows it shows.\n"
+        "How the list is ordered, of the rows the Task select chooses.\n"
         "- Newest first: the latest run first\n"
         "- By family: a graph of families, each run under the checkpoint it came from\n"
         "- A run in the graph: a click selects it\n"

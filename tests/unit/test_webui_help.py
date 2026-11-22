@@ -1317,23 +1317,34 @@ def test_every_registered_help_text_is_within_the_budget(built):
     assert len(over) >= 146
 
 
+#: Where one sentence ends and the next begins (the budget's own split).
+_SENTENCES = re.compile(r"(?<=[.!?])\s+(?=\S)")
+
+
 def _words(text: str) -> int:
     return sum(len(f"{line.term or ''} {line.text}".split()) for line in h.help_lines(text)
                if line.kind != "ref")
 
 
-def test_the_test_and_models_texts_are_an_answer_and_three_items_at_most(built):
+def test_the_test_and_models_texts_are_an_answer_and_the_budgets_items_at_most(built):
     """R-74: the Test and Models (Results included) texts are one answer
-    sentence and at most three items, about 60 words, their codes in the Ref
-    line (the budget above)."""
+    sentence and a few items, about 60 words (70 at most), their codes in the
+    Ref line. How many items is one rule, in one place: the text budget every
+    registered text meets (`help.TEXT_BUDGET`, the skill's §7: none or 2-4).
+    R-74 said three before that budget existed; the sweep wrote these texts
+    to the budget (lanes L3 and L4), and a page's own count beside it would be
+    a second rule for the same thing."""
     _demo, registry, _texts = built
     keys = [e.key for e in registry.entries()
             if e.key.startswith(("shep-test-", "test-", "models-"))]
     assert len(keys) >= 24
+    budget = h.TEXT_BUDGET
     for entry in registry.entries():
         if entry.key in keys:
             lines = h.help_lines(entry.text)
-            assert sum(line.kind == "item" for line in lines) <= 3, entry.key
+            assert len(_SENTENCES.split(lines[0].text)) == 1, (entry.key, lines[0].text)
+            items = sum(line.kind == "item" for line in lines)
+            assert items == 0 or budget.items_min <= items <= budget.items, (entry.key, items)
             assert _words(entry.text) <= 70, (entry.key, _words(entry.text))
 
 
