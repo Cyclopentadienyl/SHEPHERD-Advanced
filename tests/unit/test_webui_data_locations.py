@@ -110,6 +110,37 @@ def test_the_settings_page_has_the_data_locations_panel_beside_runtime_settings(
     assert len(opens) == 1 and opens[0].queue is False
 
 
+def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
+    """The UI sweep of 2026-11-22: each row's name and what needs it stood in
+    a column beside its box and buttons (the registry's 120 characters beside
+    its box at 1850 x 960: a message never shares a row with fields or
+    buttons); at 390 x 844 Save wrapped alone and Check stood centred in a
+    row three lines tall; a window media query (899 px) chose the narrow
+    form. Now the name and its words are above the row's facts, Check and
+    Save are one group that wraps whole, the narrow form is a query on the
+    panel's own width (no window media query), and the panel's heading is
+    the go link's focus target (``#shep-dl`` and its ``h2``, a heading that
+    takes focus, no control)."""
+    from src.webui.app import create_gradio_app
+
+    css = " ".join(dl.PAGE_CSS.split())
+    assert "@media" not in css
+    assert f"{dl._PAGE} #shep-dl {{ container: shep-dl / inline-size; }}" in css
+    assert (f"{dl._PAGE} .shep-dl-row > :is(.shep-dl-left, .shep-dl-main) "
+            "{ flex: 1 1 100% !important;") in css
+    assert f"@container shep-dl (max-width: {dl.DL_NARROW}) {{" in css
+    app = create_gradio_app()
+    blocks = {getattr(b, "elem_id", None): b for b in app.blocks.values()}
+    for key in KEYS:
+        check, save = blocks[f"dl_check_{key}"], blocks[f"dl_save_{key}"]
+        group = check.parent
+        assert group is save.parent and {"shep-dl-acts", "shep-grp"} <= set(group.elem_classes)
+        assert blocks[f"dl_box_{key}"].parent is group.parent      # the box beside the group
+    head = blocks["shep-dl-hd"].value
+    assert '<h2 tabindex="-1">Data locations</h2>' in head
+    assert blocks["shep-dl-hd"].parent is blocks["shep-dl"]
+
+
 def test_a_first_start_says_nothing_is_set_and_offers_the_suggested_folders(dl, monkeypatch):
     rows, panel = _parts(dl, dl._on_locations_open(operator_request(monkeypatch)))
     assert dl.NOTHING_SET in panel["notice"]["value"]
@@ -754,7 +785,8 @@ const QUEUE_JS = __QUEUE_JS__;
         for (const part of ['check', 'save', 'create']) {
           const b = document.getElementById(`dl_${part}_${key}`);
           if (!b || b.offsetParent === null) { continue; }
-          b.scrollIntoView({ block: 'nearest' });
+          // Brought to the middle of the view (the panel scrolls since its rows read top to bottom).
+          b.scrollIntoView({ block: 'center' });
           await frame();
           const own = reasons.filter((e) => rowOf(e) === rowOf(b));
           const near = (own.length ? own : reasons).map((e) => [gaps(b, e), e])
@@ -788,7 +820,10 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
     button has the short phrase (`ROW_LOCKED`, the lock and "Operator
     controls only") in its own row, on the line next to it (its words at
     most 24 px above or below the button), both wholly on screen when the
-    button is brought into view; the panel's long reason is said once on the
+    button is brought to the middle of the view (the UI sweep of 2026-11-22
+    laid each row out top to bottom, so the panel scrolls at 1850 x 960 and
+    a button brought only as far as the view's edge left its phrase under
+    it out of view); the panel's long reason is said once on the
     page; beside Check and Save across too (its words at most 24 px to their
     left or right: the UI sweep's shared reason grid filled the row, so the
     phrase sat under the label column, 500 px from them). An operator sees
@@ -987,3 +1022,65 @@ def test_the_suggested_folder_is_whole_beside_or_under_create(dl, tmp_path, monk
             if outside:
                 problems.append(f"{where}: past the row's edge: {outside}")
     assert not problems, "\n".join(problems)
+
+
+def test_in_a_browser_no_row_of_settings_puts_words_beside_its_fields(dl, tmp_path, monkeypatch):
+    """The first-use walk's Settings findings (the UI sweep of 2026-11-22),
+    as the dashboard draws them for an operator with nothing set, at the
+    walk's windows (the owner's, his Firefox width, the laptops, a portrait
+    column and a phone): no text block of 100 characters or more beside a
+    field or button (the registry's words beside its box at 1850 x 960), no
+    control centred in a row much taller than itself (Check in the 115 px
+    set row at 390 x 844), no group split over lines, no control cut,
+    overlapped or squeezed; in every row the name's words end above the
+    row's box, Check and Save share one line, and a line with nothing to
+    say (no result, no lock) is not drawn (its rule looked for an empty
+    container that always holds the block's own element, so each empty
+    line was drawn 0 px tall and still took a gap). Fails on 8e4c7b6."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import layout_problems, node_with_playwright, walk_ui
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
+    rows_js = """() => [...document.querySelectorAll('.shep-dl-row')].map((row) => {
+      const box = (s) => { const e = row.querySelector(s); return e && e.getClientRects().length
+        ? e.getBoundingClientRect() : null; };
+      const name = box('.shep-dl-name p'), field = box('input, textarea');
+      const check = box('[id^="dl_check_"]'), save = box('[id^="dl_save_"]');
+      // A line with nothing to say takes no room (its block drawn 0 px tall still took a gap).
+      const empties = [...row.querySelectorAll('.shep-dl-main > *')].filter((e) =>
+        e.getClientRects().length && e.getBoundingClientRect().height < 0.5).map((e) => e.id || e.className);
+      return { id: row.id, above: !!name && !!field && name.bottom <= field.top + 0.5,
+               oneLine: !!check && !!save && Math.abs(check.top - save.top) < 1, empties };
+    })"""
+    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720], [800, 900], [390, 844])
+    stops = [{"size": size, "page": "settings", "focus": False} for size in sizes]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = walk_ui(base[:-len("gradio_api")], tmp_path, stops, extra_js=rows_js)
+    rules = ("beside", "narrow-box", "overlap", "orphan", "centred", "split-group", "clipped")
+    assert layout_problems(seen, rules=rules) == []
+    for stop in seen:
+        assert len(stop["extra"]) == len(KEYS), stop
+        for row in stop["extra"]:
+            assert row["above"] and row["oneLine"] and row["empties"] == [], (stop["size"], row)
+
+
+def test_the_settings_help_texts_meet_the_text_budget():
+    """The UI sweep of 2026-11-22 (the text brief's §11): Settings' two help
+    texts (Runtime settings' allocator and torch.compile) ran over the text
+    layout's budget (items of 136 and 147 characters, a semicolon); every
+    fact is kept as a term row of two bubble lines at most."""
+    from src.webui.components import help as h
+    from src.webui.components import runtime_settings as rs
+
+    over = {key: h.budget_problems(text, h.TEXT_BUDGET) for key, (_title, text) in rs.FIELD_HELP.items()}
+    assert {key: found for key, found in over.items() if found} == {}
+    allocator, compile_ = rs.FIELD_HELP["allocator_preset"][1], rs.FIELD_HELP["torch_compile"][1]
+    for fact in ("Restart Backend", "launch environment", "CPU run", "diagnosis"):
+        assert fact.lower() in allocator.lower(), fact
+    for fact in ("graph-break", "eager", "GATv2, the one architecture built today", "Restart"):
+        assert fact in compile_, fact

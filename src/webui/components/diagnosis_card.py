@@ -163,14 +163,11 @@ _TIMED_OUT = re.compile(r"timed out \((?P<seconds>[0-9.]+) s\)")
 #: The card's ⓘ (registered by the page as a topic).
 CARD_HELP = (
     "Model in use",
-    "What every session is served now, from the server's status.\n\n"
-    "- The model (its task, architecture, run, epoch), its fingerprint, its recorded dataset "
-    "and synthetic data.\n"
-    "- State: the server's word, its reason under Details.\n"
-    "- Read with its recorded tests when Diagnosis is shown, after a diagnosis or model change, "
-    "and with ↻; the status also every 5 s.\n"
-    "- Grey: a read failed or is older than the result, so it is the last known state.\n"
-    "Nothing loads a model by itself.",
+    "What every session is served now. Nothing loads a model by itself.\n\n"
+    "- Shows: task, architecture, run, epoch, fingerprint, dataset, synthetic data\n"
+    "- State: the server's word (reason under Details), grey if stale or failed\n"
+    "- Read: with recorded tests on opening, after a diagnosis, change or ↻\n"
+    "- Status: from the server, read again every 5 s",
 )
 
 

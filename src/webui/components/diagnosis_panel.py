@@ -1540,24 +1540,24 @@ FIELD_HELP = {
     "dx_hpo_terms": (
         "HPO terms",
         "Paste HPO ids in any format: one per line, or separated by commas or spaces.\n\n"
-        "- Names and stray punctuation are ignored; only HP:####### ids are used.\n"
-        "- Repeats are sent as typed; the service removes them and says how many.",
+        "- Names and stray punctuation are ignored. Only HP:####### ids are used.\n"
+        "- Repeats are sent as typed. The service removes them and says how many.",
     ),
     "dx_candidate_genes": (
         "Candidate genes",
         "The patient's candidate genes, which a gene task model ranks.\n\n"
-        "- Enter gene symbols (SCN1A) or gene ids (disgenet:PTEN), one per line or separated "
-        "by commas, spaces or semicolons.\n"
-        "- They are sent as typed, repeats included; the service counts any that name no gene "
-        "of the model's graph.",
+        "- Enter gene symbols (SCN1A) or gene ids (disgenet:PTEN).\n"
+        "- Put one per line, or separate them by commas, spaces or semicolons.\n"
+        "- They are sent as typed, repeats included.\n"
+        "- The service counts any that name no gene of the model's graph.",
     ),
     "dx_reference_cohort": (
         "Reference cohort",
-        "The cohort version whose patients a patients-like-me model ranks for this query.\n\n"
-        "- Every version in the server's registry is listed.\n"
-        "- One mapped against another graph, a KG edge set, a generated split, or one that "
-        "cannot be read is marked; the server refuses it.\n"
-        "- Under the select: the chosen version's fingerprint and its graph check.",
+        "The cohort version whose patients a patients-like-me model ranks here.\n\n"
+        "- Listed: every version in the server's registry\n"
+        "- Marked and refused: a version mapped against another graph\n"
+        "- Also refused: a KG edge set, a generated split, an unreadable version\n"
+        "- Under the select: the chosen version's fingerprint and its graph check",
     ),
     "dx_patient_id": (
         "Patient ID (optional)",
@@ -1582,13 +1582,11 @@ TOPIC_HELP = {
     "dx-card": card.CARD_HELP,
     "dx-badge": (
         "Compared with the model in use",
-        "The whole served identity is compared part by part, never the checkpoint alone.\n\n"
-        "- Parts: checkpoint, knowledge graph, workspace manifest, shortest-path table, "
-        "dataset record, scoring mode, device, mixing weight eta, path settings and phenotype "
-        "rule.\n"
-        "- The model in use is the card's last status read. A read that failed, or one older "
-        "than the result, never shows \"Produced by the model in use\".\n"
-        "- The result, its CSV and its report keep their own identity whatever the badge says.",
+        "The whole served identity is compared part by part, not the checkpoint alone.\n\n"
+        "- Files: checkpoint, knowledge graph, manifest, shortest-path table, record\n"
+        "- Settings: scoring mode, device, mixing weight eta, paths, phenotype rule\n"
+        "- Model in use: the card's last read, never a failed or older one\n"
+        "- Result: its CSV and report keep their own identity, whatever the badge",
     ),
     "dx-score": (
         "Score",
@@ -1599,55 +1597,53 @@ TOPIC_HELP = {
     "dx-gene-score": (
         "Score",
         GENE_SCORE_RANKS + "\n\n"
-        "- It is not a calibrated probability.\n"
-        "- Model similarity: the gene head's similarity to the patient, from −1 to 1.\n"
-        "- SP similarity: the gene's mean hop distance to the phenotypes, scaled by the model's "
-        "fixed bounds and not clipped.\n"
-        "- η is the model's own (This result › Mixing weight eta).",
+        "- Probability: it is not a calibrated one\n"
+        "- Model similarity: the gene head's similarity to the patient, −1 to 1\n"
+        "- SP similarity: mean hops to the phenotypes, scaled to set bounds, unclipped\n"
+        "- Eta (η): the model's own, under This result › Mixing weight eta",
     ),
     "dx-similarity": (
         "Similarity",
         SIMILARITY_RANKS + "\n\n"
         f"- {SIMILARITY_CAVEAT}\n"
-        "- The model's patient tower compares this query's phenotypes with each reference "
-        "patient's recorded terms.\n"
-        "- The diagnosis, causal genes and terms shown are what the cohort recorded: context, "
-        "never an input of this query.",
+        "- The patient tower compares the query's phenotypes with each patient's terms.\n"
+        "- The diagnosis, genes and terms shown are what the cohort recorded.\n"
+        "- They are context, never an input of this query.",
     ),
     "dx-exports": (
         "Exports",
-        "Two downloads of this result; both say what produced it.\n\n"
-        "- CSV: one row per candidate (all Top-K) for spreadsheets, in the result kind's "
-        "columns, with result_kind on every row.\n"
-        "- Report: every candidate's details, such as a disease's evidence and explanation or "
-        "a reference patient's recorded terms.\n"
-        "- What produced it: the CSV's served_ columns, the report's identity section.",
+        "Two downloads of this result, each saying what produced it.\n\n"
+        "- CSV: a row per candidate (all Top-K) in its kind's columns, for spreadsheets\n"
+        "- Kind: result_kind on every CSV row\n"
+        "- Report: each candidate's details (evidence, explanation, recorded terms)\n"
+        "- What produced it: the CSV's served_ columns, the report's identity section",
     ),
     "dx-phenotypes": (
         "Phenotypes",
         "How many of the query's phenotypes, as used, the graph annotates directly to this "
         "disease.\n\n"
-        "- The exact term only: not ancestors or descendants, not gene-mediated.\n"
-        "- 0 does not mean no clinical overlap.\n"
+        "- Only the exact term counts, never ancestors, descendants or gene links.\n"
+        "- A 0 does not mean no clinical overlap.\n"
         "- Matching phenotypes, in the candidate's details, names each.",
     ),
     "dx-candidate": (
         "Candidate details",
         "Select a row of Diagnosis results to show that candidate here.\n\n"
         "- Click it, or focus it and press Enter.\n"
-        "- Evidence, explanation, matching phenotypes and paths come from this result only.",
+        "- Evidence, explanation, matching phenotypes and paths are this result's own.",
     ),
     "dx-run-no-model": (
         "Run Diagnosis is disabled",
         "Nothing is served on this server, so nothing would compute a diagnosis.\n\n"
-        "- The card above says why; an operator loads a model with its \"Load a model…\".\n"
+        "- The card above says why.\n"
+        "- An operator loads a model with the card's \"Load a model…\".\n"
         "- An API client asking now is refused, with the server's reason.",
     ),
     "dx-run-stopping": (
         "Run Diagnosis is disabled",
-        "Inference is stopping: the diagnoses already accepted finish; new ones are refused.\n\n"
-        "- Then nothing is served until an operator loads a model again with \"Load a "
-        "model…\" on the card above.\n"
+        "Inference is stopping: accepted diagnoses finish, new ones are refused.\n\n"
+        "- Then nothing is served until a model is loaded again.\n"
+        "- An operator loads one with \"Load a model…\" on the card above.\n"
         "- An API client asking now is refused, with the server's reason.",
     ),
     "dx-run-change": (
@@ -1658,17 +1654,18 @@ TOPIC_HELP = {
     "dx-run-loading": (
         "Run Diagnosis is disabled",
         "This page started a model load, which reloads the pipeline for every session.\n\n"
-        "- Run Diagnosis waits for its answer, so no result is produced here while what is "
-        "served changes.\n"
-        "- The card shows the server's state. Closing the drawer does not stop the load.",
+        "- Run Diagnosis waits for the load's answer.\n"
+        "- No result is produced here while what is served changes.\n"
+        "- The card shows the server's state.\n"
+        "- Closing the drawer does not stop the load.",
     ),
     "dx-run-no-cohort": (
         "Run Diagnosis is disabled",
-        "This model ranks a reference cohort's patients, and no such version can be read.\n\n"
-        "- The registry is not set or refused, holds no version yet, or holds only KG edge "
-        "sets and versions marked \"cannot be read\".\n"
-        "- An operator imports a cohort in Research › Test, or corrects the server's cohort "
-        "registry setting.",
+        "This model ranks reference cohort patients, and no such version can be read.\n\n"
+        "- The registry may be not set or refused, or hold no version yet.\n"
+        "- It may hold only KG edge sets and versions marked \"cannot be read\".\n"
+        "- An operator imports a cohort in Research › Test.\n"
+        "- Or an operator corrects the server's cohort registry setting.",
     ),
     **{f"dx-banner-{key}": (headline, detail) for key, (headline, detail) in IDENTITY_BANNERS.items()},
 }
@@ -1684,11 +1681,11 @@ RUN_DISABLED_LOADING = "Disabled until the model load started here answers."
 #: registry setting's own words (its name, a command's flag) are an
 #: operator's and never reach this reason (Research › Test shows them).
 RUN_DISABLED_NO_COHORT = "Disabled: no reference cohort version can be read."
-NO_COHORT_REGISTRY = ("The server's results registry is not set or cannot be used; an operator "
+NO_COHORT_REGISTRY = ("The server's results registry is not set or cannot be used. An operator "
                       "sets it in Settings\u00a0› Data locations.")
-NO_COHORT_VERSION = ("The registry holds no cohort version yet; an operator imports one in "
+NO_COHORT_VERSION = ("The registry holds no cohort version yet. An operator imports one in "
                      "Research\u00a0› Test.")
-NO_READABLE_VERSION = ("Every version in the registry is marked “cannot be read”; an operator "
+NO_READABLE_VERSION = ("Every version in the registry is marked “cannot be read”. An operator "
                        "imports a readable one in Research\u00a0› Test.")
 #: Every readable version is of another kind (a KG edge set, a generated
 #: split), which is not a supplied cohort (`diagnosis_card.NOT_A_COHORT`).
@@ -1763,7 +1760,7 @@ def empty_results_html(notice: Optional[str] = None) -> str:
     if notice:
         return f'<div class="shep-dx-notice">{notice}</div>'
     return ('<div class="shep-dx-empty"><p class="shep-dx-empty-h">No result yet</p>'
-            '<p>Enter the HPO terms, check the model in use on the left, then Run Diagnosis.</p>'
+            '<p>Enter the HPO terms, check the model in use, then Run Diagnosis.</p>'
             '<p class="shep-note">Each result says what produced it, compared with the model in '
             'use.</p></div>')
 
@@ -1937,7 +1934,7 @@ def term_html(term: Any, names: Mapping[str, str]) -> str:
     name = _name_for(names, term)
     if not name or name == shown:
         return f'<code>{_e(shown)}</code>'
-    return f'{_e(name)} <span class="shep-dx-id">{_e(shown)}</span>'
+    return f'{_e(name)} <span class="shep-dx-id shep-mono">{_e(shown)}</span>'
 
 
 def _md_term(term: Any, names: Mapping[str, str]) -> str:
@@ -2212,7 +2209,7 @@ def evidence_html(candidate: Mapping[str, Any], explanations: bool = True) -> st
         summary = None
     if genes:
         rows.append(("Supporting genes", '<span class="shep-dx-genes">' + "".join(
-            f'<span class="shep-dx-gene">{_e(g)}</span>' for g in genes) + "</span>"))
+            f'<span class="shep-dx-gene shep-mono">{_e(g)}</span>' for g in genes) + "</span>"))
     if rows:
         parts.append(_summary_list(rows, classes="shep-dx-ev"))
     if summary:
@@ -2257,7 +2254,7 @@ def explanation_html(candidate: Mapping[str, Any], result: Optional[Mapping[str,
     genes = candidate.get("supporting_genes") or []
     if genes:
         rows.append(("Supporting genes", '<span class="shep-dx-genes">' + "".join(
-            f'<span class="shep-dx-gene">{_e(g)}</span>' for g in genes) + "</span>"))
+            f'<span class="shep-dx-gene shep-mono">{_e(g)}</span>' for g in genes) + "</span>"))
     paths = _paths(candidate)
     if paths:
         rows.append(("Direct paths", f'{len(paths)} · <button type="button" class="shep-dx-link" '
@@ -2348,7 +2345,7 @@ def task_details_html(candidate: Mapping[str, Any], kind: str,
     rows = [("Recorded diagnosis", _diagnosis_html(candidate)
              + (f' <code>{_e(_clean_disease_id(candidate.get("disease_id")))}</code>'
                 if candidate.get("disease_name") and candidate.get("disease_id") else "")),
-            ("Causal genes", "".join(f'<span class="shep-dx-gene">{_e(g)}</span> ' for g in genes)
+            ("Causal genes", "".join(f'<span class="shep-dx-gene shep-mono">{_e(g)}</span> ' for g in genes)
              .strip() or _not_recorded()),
             (f"Recorded HPO terms ({len(terms)})",
              ", ".join(term_html(t, _names(result)) for t in terms) or _not_recorded())]
@@ -4270,12 +4267,23 @@ DRAWER_TREE_ROOM = f"calc(100cqw - {DRAWER_FACTS_MIN + DRAWER_GAP}px)"
 #: Run Diagnosis in view (a minimum height there put a second scroll region
 #: around the fields and Run out of view; the review of 90c375e).
 FIELDS_FLOOR = 166
+#: **The input column's width** (``--dx-in-w``; B-14): a quarter of the page's
+#: row, never under the HPO field's floor (300 px: its label, info line and
+#: box, and the card's lines) nor over 26rem (wider adds only blank beside
+#: short fields). It was 300, 320 or 370 px by the window's width (three
+#: media queries), so at 1366 and 1280 the column was 300 px whatever the
+#: row held beside it.
+DX_IN_W = "clamp(300px, 24%, 26rem)"
+#: Below this width of its own (stacked), the input column draws its fields
+#: in one column (it was a window of 760 px, the column about 728 px).
+DX_FIELDS_ONE_COLUMN = "45rem"
 
 PAGE_CSS = f"""
-{_TAB} {{ --dx-in-w: 300px; }}
-@media (min-width: 1600px) {{ {_TAB} {{ --dx-in-w: 320px; }} }}
-@media (min-width: 1800px) {{ {_TAB} {{ --dx-in-w: 370px; }} }}
-{_TAB} #shep-dx {{ position: relative; gap: 16px; align-items: stretch; }}
+/* **The input column's width, from the row's** (`DX_IN_W`; no window media query): a share of the
+   page's row between a floor and a cap. The row is the column's flex container and the drawers'
+   containing block (positioned), so its percentage means the same width in each: the Load drawer
+   starts after the column, the identity drawer leaves it in view. */
+{_TAB} #shep-dx {{ --dx-in-w: {DX_IN_W}; position: relative; gap: 16px; align-items: stretch; }}
 /* Drawn only by the page's gate (`ANSWER_GATE_CSS`). */
 {_TAB} #shep-dx-stale, {_TAB} #shep-dx-details-stale-hd, {_TAB} #shep-dx-details-stale {{ display: none !important; }}
 {_TAB} #shep-dx-input {{ flex: 0 0 var(--dx-in-w) !important; width: var(--dx-in-w); max-width: var(--dx-in-w); }}
@@ -4298,6 +4306,9 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-fields [data-testid="block-info"] {{ margin-bottom: 4px !important; }}
 {_TAB} #shep-dx-options .form {{ display: contents !important; }}
 {_TAB} #shep-dx-options .block.padded {{ padding: 0 !important; }}
+/* Top-K's block draws no box of its own (display: contents, below), so it clips nothing: Gradio's
+   hidden overflow on it is not a box's. */
+{_TAB} .shep-dx-options #dx_top_k {{ overflow: visible !important; }}
 {_TAB} #dx_top_k input[type=number] {{ height: 34px; padding: 4px 8px; }}
 /* Options (R-24): its label over its controls, no box of its own; each control a row of one grid,
    its key, its ⓘ and its control in three columns (the keys as wide as the longest), the
@@ -4318,7 +4329,9 @@ PAGE_CSS = f"""
 {_TAB} :is(#dx_top_k, #dx_explanations) label > button.shep-i {{ grid-column: 2; grid-row: 1; }}
 {_TAB} :is(#dx_top_k, #dx_explanations) label > input {{ grid-column: 3; grid-row: 1; justify-self: start; margin: 0; }}
 {_TAB} .shep-dx-opt {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); }}
-{_TAB} #dx_top_k input[type=number] {{ width: 72px; }}
+/* Top-K's box holds a value of up to two digits with room to type it, as every text box does
+   (the walk's floor: ten widths of "0" in its own type, `ch`), beside its spin arrows. */
+{_TAB} #dx_top_k input[type=number] {{ width: calc(11ch + 16px); }}
 {_TAB} #shep-dx-input-bd > *, {_TAB} #shep-dx-sticky > *, {_TAB} #shep-dx-card > * {{ flex: none !important; }}
 {_TAB} .shep-dx-sticky {{ gap: 0 !important; margin: 0 -16px !important;
   width: calc(100% + 32px) !important; max-width: none !important; background: var(--shep-panel); }}
@@ -4450,12 +4463,12 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-ev {{ margin: 0 0 8px; }}
 {_TAB} .shep-dx-ev-why {{ margin: 0 0 8px; color: var(--shep-text-2); overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-ev-more p {{ margin: 4px 0 0; color: var(--shep-text-2); overflow-wrap: anywhere; }}
-{_TAB} .shep-dx-id {{ font-family: var(--shep-mono); font-size: 14px; color: var(--shep-muted); }}
+{_TAB} .shep-dx-id {{ font-size: 14px; color: var(--shep-muted); }}
 {_TAB} #shep-dx-details-body p.shep-dx-sub-h {{ margin: 8px 0 4px; font-size: 14px; }}
 {_TAB} .shep-dx-step {{ display: inline-block; border: 1px solid var(--shep-border); border-radius: 6px; padding: 1px 6px; background: var(--shep-panel-2); }}
 {_TAB} .shep-dx-paths-more > summary {{ margin: 2px 0 6px; }}
 {_TAB} .shep-dx-genes {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }}
-{_TAB} .shep-dx-gene {{ font-family: var(--shep-mono); font-size: 14px; border: 1px solid var(--shep-accent-100); background: var(--shep-accent-50); border-radius: 6px; padding: 2px 8px; }}
+{_TAB} .shep-dx-gene {{ font-size: 14px; border: 1px solid var(--shep-accent-100); background: var(--shep-accent-50); border-radius: 6px; padding: 2px 8px; }}
 {_TAB} .shep-dx-list, {_TAB} .shep-dx-paths {{ margin: 0 0 8px; padding-left: 22px; }}
 {_TAB} .shep-dx-paths li {{ margin: 0 0 6px; overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-arrow {{ color: var(--shep-muted); }}
@@ -4590,8 +4603,11 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx-change .shep-model-body {{ flex-direction: column !important; }}
   {_TAB} #shep-dx-change .shep-model-body > * {{ width: 100% !important; flex: none !important; }}
 }}
-@media (max-width: 760px) {{
-  {_TAB} .shep-dx-fields {{ grid-template-columns: minmax(0, 1fr); }}
+/* The input column is its fields' container (a query on its own width, not the window's): stacked
+   and narrow, the fields take one column. */
+{_TAB} #shep-dx-input {{ container: shep-dx-in / inline-size; }}
+@container shep-dx-in (max-width: {DX_FIELDS_ONE_COLUMN}) {{
+  {_TAB} .shep-dx-fields {{ grid-template-columns: minmax(0, 1fr) !important; }}
 }}
 """
 
@@ -4599,6 +4615,8 @@ PAGE_CSS = f"""
 __all__ = [
     "ANSWER_GATE_CSS",
     "CLOSE_WHILE_LOADING",
+    "DX_FIELDS_ONE_COLUMN",
+    "DX_IN_W",
     "EXPORTS_HIDDEN",
     "FIELD_HELP",
     "INPUTS_CHANGED",

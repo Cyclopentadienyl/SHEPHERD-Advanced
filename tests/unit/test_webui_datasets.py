@@ -230,9 +230,15 @@ def test_the_details_show_what_the_manifest_binds(root, monkeypatch):
                      r'\d+ / \d+</dd>', html)
     assert '<dt class="shep-k">Feature seed</dt>' in html
     # Beside its row: no Path row (it is the name), nor what the selected row
-    # shows (built, sources, samples; the skill's §1.2).
+    # shows (built, sources, samples; the skill's §1.2). Built and Sources,
+    # the columns a narrow table drops, are drawn here only while it drops
+    # them (`optional_html`, `PAGE_CSS`).
+    optional = dsp.optional_html(next(x for x in data["rows"] if x["name"] == "demo"))
+    assert optional in html
+    rest = html.replace(optional, "")
     for key in ("Path", "Built (UTC)", "Sources", "Samples (train / val)"):
-        assert f'<dt class="shep-k">{key}</dt>' not in html, key
+        assert f'<dt class="shep-k">{key}</dt>' not in rest, key
+    assert re.findall(r'<dt class="shep-k">([^<]+)</dt>', optional) == ["Built (UTC)", "Sources"]
     assert "workspace root" not in html
     assert "Select a dataset" in dsp.details_html(data, None)
 
@@ -316,7 +322,8 @@ def test_a_row_is_one_line_and_in_use_is_no_input_box(root, monkeypatch):
     built = r.built_date(row["build"])
     assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d", built)
     cells = _row(html, "resampled")
-    assert f'<td class="shep-nowrap shep-ds-date">{built}</td>' in cells and "UTC" not in cells
+    assert (f'<td class="shep-nowrap shep-ds-date shep-col-opt">{built}</td>' in cells
+            and "UTC" not in cells)
     assert '<td class="shep-num shep-nowrap">20 / 5</td>' in cells
     assert r.status_mark("ok", "in your Training run bar") in cells
     for retired in ("shep-mark-outline", "shep-mark-grey", "shep-mark-serve-same", "shep-ds-wide",
@@ -358,8 +365,10 @@ def test_origin_record_and_sources_have_one_form_and_the_details_name_no_row(
     for record in ("record verified", "Verified", r.record_chip(row)):
         assert record not in table, record
     for name in ("demo", "resampled", ODD):
-        assert f'<td class="shep-ds-src">{r.SYNTHETIC_SOURCES}</td>' in _row(table, name), name
-    assert r.SYNTHETIC_SOURCES not in details                     # the row beside it says it
+        assert (f'<td class="shep-ds-src shep-col-opt">{r.SYNTHETIC_SOURCES}</td>'
+                in _row(table, name)), name
+    # The row beside it says it; the details only while the table drops the column.
+    assert r.SYNTHETIC_SOURCES not in details.replace(dsp.optional_html(row), "")
 
 
 def test_what_the_run_bar_marker_means_is_said_once(root, monkeypatch):
@@ -470,14 +479,26 @@ def test_the_reason_beside_use_for_training_is_escaped_and_names_no_path(root, m
     assert "Select a dataset" in dsp.use_note_html(data, None)
 
 
-def test_the_build_line_is_one_paragraph_in_its_reason_row():
-    """M5-3: the reason row is a flex row, so the build line's text and code
-    chips, as its direct children, became four columns at 1536 x 760; the
-    line is one span, one flex item."""
+def test_the_build_line_is_one_quiet_paragraph_drawn_only_under_a_listed_table():
+    """M5-3: the reason row was a flex row, so the build line's text and code
+    chips became four columns at 1536 x 760. The UI sweep of 2026-11-22
+    (B-07): the line sat in body text as a reason under an empty list, 80 px
+    below the list's own reason, with its own left edge. Now it is one
+    paragraph, each command a literal token (never broken inside a word), on
+    the panel's content edge, and drawn only under a listed table: an empty
+    list says how in its own place (`empty_html`)."""
     import inspect
 
-    source = inspect.getsource(dsp.create_datasets_page)
-    assert '<div class="shep-reason"><span>{BUILD_LINE}</span></div>' in source
+    from src.webui.components import renderers as r
+
+    line = dsp.build_line_html()
+    assert line == f'<p class="shep-ds-build">{r.literal_html(dsp.BUILD_LINE)}</p>'
+    assert "shep-reason" not in line and line.count('<code class="shep-tok">') == 3
+    assert "build_line_html()" in inspect.getsource(dsp.create_datasets_page)
+    css = " ".join(dsp.PAGE_CSS.split())
+    assert (f"{dsp._PAGE} .shep-ds-main:not(:has(table.shep-dstbl)) #shep-ds-notes "
+            "{ display: none !important; }") in css
+    assert f"{dsp._PAGE} #shep-ds-notes {{ padding: 0 var(--shep-inset) " in css
 
 
 def test_nothing_listed_says_why(monkeypatch):
@@ -486,6 +507,59 @@ def test_nothing_listed_says_why(monkeypatch):
     data = dsp.read_datasets()
     assert data["rows"] == [] and "No workspaces folder is set" in data["problem"]
     assert "No workspaces folder is set" in dsp.table_html(data, None, None)
+
+
+def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch):
+    """The UI sweep of 2026-11-22 (B-07, GB10-UI-02, the owner's screenshot
+    03): with no workspaces folder the list's place drew the whole server
+    sentence (296 characters, the variable inside it) as a reason with its
+    own left edge, 16 px off the title's, and the build command 80 px below
+    it in body text. Now it is the folder's one notice (`notice_block`,
+    from the setting's parts, never from its words) on the panel's content
+    edge: its state, then numbered steps, its link to Settings › Data
+    locations first, the build second (its commands literal tokens); the
+    variable only under Details ›. The details and Use for training say a
+    relation, never the notice again; with a folder that lists nothing, the
+    list's own words and the same build step."""
+    from src.webui.components import renderers as r
+    from src.webui.components.workspaces import notice_view
+    from src.config.server_settings import WORKSPACES_ROOT_NOTICE
+
+    monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    monkeypatch.setattr(dsp, "read_status", lambda: (None, "x"))
+    data = dsp.read_datasets()
+    assert data["notice"] == notice_view(WORKSPACES_ROOT_NOTICE)
+    table = dsp.table_html(data, None, None)
+    assert table == (f'<div class="shep-ds-empty">'
+                     f'{r.notice_block(data["notice"], steps=(dsp.BUILD_STEP,))}</div>')
+    assert table.count('data-notice="workspaces_root"') == 1
+    steps = re.search(r'<ol class="shep-nb-steps">(.*?)</ol>', table).group(1)
+    first, second = re.findall(r"<li>(.*?)</li>", steps)
+    assert 'data-shep-go="settings" data-shep-focus="shep-dl"' in first
+    assert second == r.literal_html(dsp.BUILD_STEP) and second.count("shep-tok") == 3
+    lead = table.split('<ol class="shep-nb-steps">')[0]
+    assert "SHEPHERD_" not in re.sub(r"<[^>]+>", "", lead)                 # only under Details
+    # Said once: the details and the button relate to it.
+    screen = (dsp.header_html(data) + table + dsp.details_html(data, None)
+              + dsp.use_note_html(data, None))
+    assert screen.count("data-notice=") == 1 and screen.count("No workspaces folder is set.") == 1
+    note = dsp.use_note_html(data, None)
+    assert note == r.see_above(dsp.USE_UNAVAILABLE, data["notice"])
+    assert 'data-notice-rel="workspaces_root"' in note
+    assert dsp.DETAILS_NONE in dsp.details_html(data, None)
+    assert dsp.DETAILS_SELECT not in dsp.details_html(data, None)
+    # A folder set that lists no workspace: its own words and the build step, no notice.
+    empty = {"rows": [], "notice": None, "problem": None}
+    said = dsp.table_html(empty, None, None)
+    assert dsp.NO_WORKSPACE_YET in said and r.literal_html(dsp.BUILD_STEP) in said
+    assert "data-notice" not in said and said.startswith('<div class="shep-ds-empty">')
+    assert "No workspace is listed" in dsp.use_note_html(empty, None)
+    # A folder set and not usable: its notice alone (the folder comes first, no build step).
+    refused = {**data["notice"], "kind": "error", "summary": "The workspaces folder cannot be used."}
+    assert "shep-nb-steps" not in dsp.table_html({"rows": [], "notice": refused}, None, None)
+    # On the panel's content edge, as the title and the intro are.
+    css = " ".join(dsp.PAGE_CSS.split())
+    assert f"{dsp._PAGE} .shep-ds-empty {{ padding: var(--shep-space-2) var(--shep-inset) " in css
 
 
 def test_the_model_lists_workspace_select_reads_the_same_list_the_same_way(root, monkeypatch):
@@ -723,8 +797,8 @@ def test_the_versions_not_listed_under_a_workspace_are_counted_by_why(
                     "unknown": 1, "problem": None}
     html = dsp.details_html(data, "demo")
     assert 'Data versions <span class="shep-muted">(2)</span>' in html
-    assert ('<p class="shep-sub">Not listed here: 1 version mapped against another graph; '
-            "1 whose files changed after the import; 1 that cannot be read or checked "
+    assert ('<p class="shep-sub">Not listed here: 1 version mapped against another graph, '
+            "1 whose files changed after the import, 1 that cannot be read or checked "
             "now.</p>") in html
     assert ">ref-other<" not in html and ">broken-import<" not in html
     assert ">ref-changed<" not in html
@@ -773,8 +847,18 @@ def test_the_registry_is_read_once_per_refresh_and_its_absence_is_said(
     _serving(monkeypatch, None)
     data = dsp.read_datasets()
     html = dsp.details_html(data, "demo")
-    assert "No registry is listed: No results registry is set" in html
-    assert "<table" not in html.split("Data versions", 1)[1]
+    # The registry's notice (`notice_block`), said once, here: the workspaces
+    # folder is set, so its link is this screen's one link to Data locations.
+    from src.webui.components import renderers as r
+
+    assert data["registry_notice"]["key"] == "registry" and data["notice"] is None
+    versions = html.split("Data versions", 1)[1]
+    assert r.notice_block(data["registry_notice"]) in versions
+    assert 'data-notice="registry"' in versions and "No results registry is set." in versions
+    assert "<table" not in versions and "No registry is listed" not in versions
+    # With the workspaces folder's notice on the screen too, no second link.
+    both = {**data, "notice": {"key": "workspaces_root"}}
+    assert "data-shep-go" not in dsp.versions_html(both, data["rows"][0])
 
 
 def test_a_workspace_no_version_was_mapped_against_says_where_versions_come_from(
@@ -906,17 +990,37 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.click('#shep-page-datasets-button');
   await page.waitForSelector('#shep-ds-table tr[data-key="demo"]', { timeout: 60000 });
   await idle();
-  const out = [];
-  for (let w = 1400; w <= 1560; w += 10) {
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const facts = (w) => page.evaluate((w) => {
+    const drawn = (e) => !!e && e.getClientRects().length > 0;
+    const wrap = document.querySelector('#shep-ds-table .shep-tbl-wrap');
+    const main = document.querySelector('.shep-ds-main').getBoundingClientRect();
+    const det = document.querySelector('.shep-ds-details').getBoundingClientRect();
+    return { w, layout: document.documentElement.getAttribute('data-shep-layout'),
+             over: wrap.scrollWidth - wrap.clientWidth, narrow: wrap.hasAttribute('data-shep-narrow'),
+             optional: [...wrap.querySelectorAll('.shep-col-opt')].filter(drawn).length,
+             optkv: drawn(document.querySelector('#shep-ds-details .shep-ds-optkv')),
+             beside: Math.abs(main.top - det.top) < 1 && det.left >= main.right };
+  }, w);
+  const out = { sweep: [] };
+  for (let w = 1000; w <= 1700; w += 20) {
     await page.setViewportSize({ width: w, height: 960 });
     // The shell lays the page out in the frame after a resize (`update`): two frames on, it has.
-    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    out.push(await page.evaluate((w) => {
-      const wrap = document.querySelector('#shep-ds-table .shep-tbl-wrap');
-      return [w, document.documentElement.getAttribute('data-shep-layout'),
-              wrap.scrollWidth - wrap.clientWidth,
-              document.querySelector('#shep-ds-table table').getBoundingClientRect().width];
-    }, w));
+    await frames();
+    out.sweep.push(await facts(w));
+  }
+  // At the narrowest window that sets the page side by side, a row still opens its details.
+  const first = out.sweep.find((s) => s.layout === 'side');
+  if (first) {
+    await page.setViewportSize({ width: first.w, height: 960 });
+    await frames();
+    await page.click('#shep-ds-table tr[data-key="resampled"] td:first-child');
+    await page.waitForSelector('#shep-ds-table tr[data-key="resampled"][aria-current="true"]');
+    await idle();
+    await frames();
+    out.picked = { ...(await facts(first.w)),
+      head: await page.evaluate(() => document.querySelector('#shep-ds-details .shep-panel-hd h2').innerText),
+      fingerprint: await page.evaluate(() => !!document.querySelector('#shep-ds-details .shep-fpv')) };
   }
   console.log(JSON.stringify(out));
   await browser.close();
@@ -924,16 +1028,23 @@ const QUEUE_JS = __QUEUE_JS__;
 """
 
 
-def test_in_a_browser_the_table_never_scrolls_sideways_once_side_by_side(root, tmp_path, monkeypatch):
+def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
+        root, tmp_path, monkeypatch):
     """The layout rule puts Datasets side by side when its panels' minimum
-    widths fit (`--shep-panel-min`). The table's panel minimum is its
-    narrowest drawn width: below it, the windows just past the switch drew
-    the table side by side and scrolling sideways in its own box (860 px
-    against a 853 px table with its margins: 28 px of scroll at 1410 px),
-    and a build date in proportional figures moved that width with the
-    minute it names (1 px over at 890 px). Swept across the switch, a
-    side-by-side table never scrolls sideways, and the page is still
-    stacked below it and side by side above it."""
+    widths fit (`--shep-panel-min`). Before the UI sweep of 2026-11-22 the
+    list's minimum was its whole six-column table's (912 px, whatever the
+    list held: an empty list too), so the page stacked below about 1460 px of
+    window (the owner's 1366 and 1280 laptops), and above it the table never
+    scrolled sideways only because the minimum reserved all of it. Now the
+    list's panel keeps the table with its optional columns dropped (Built,
+    Sources; the shell's fit drops them while the whole table does not fit,
+    and the selected row's details say them then). Swept across the switch:
+    stacked below it and side by side above it, the two panels beside each
+    other; side by side the table never scrolls sideways; while it drops its
+    optional columns the details say them and while it draws them they do
+    not; the page is side by side at windows where the whole table does not
+    fit (so from the narrow table's minimum); and there a row still opens
+    its details."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -944,6 +1055,95 @@ def test_in_a_browser_the_table_never_scrolls_sideways_once_side_by_side(root, t
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_SWITCH_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
-    layouts = [layout for _w, layout, _over, *_rest in seen]
-    assert layouts[0] == "stack" and layouts[-1] == "side", seen
-    assert [(w, over) for w, layout, over, *_rest in seen if layout == "side" and over > 0] == [], seen
+    sweep = seen["sweep"]
+    layouts = [s["layout"] for s in sweep]
+    assert layouts[0] == "stack" and layouts[-1] == "side", sweep
+    side = [s for s in sweep if s["layout"] == "side"]
+    assert all(s["beside"] for s in side), side
+    assert [s for s in side if s["over"] > 0] == [], side
+    for s in sweep:
+        assert (s["optional"] == 0) == s["narrow"] and s["optkv"] == s["narrow"], s
+    assert any(s["narrow"] for s in side), side                 # side by side from the narrow table
+    assert any(not s["narrow"] for s in side), side             # and whole where it fits
+    picked = seen["picked"]
+    assert picked["head"].startswith(dsp.DETAILS_TITLE) and picked["fingerprint"], picked
+    assert picked["layout"] == "side" and picked["over"] == 0, picked
+    assert picked["optkv"] == picked["narrow"], picked
+
+
+def test_the_panels_are_sized_by_what_they_hold_and_the_table_drops_optional_columns(
+        root, monkeypatch):
+    """B-04 and R4 (the UI sweep of 2026-11-22): the two panels were given
+    fixed shares (``scale=`` 17:10) and the list a minimum of its whole
+    table's width in px, 912 px with nothing listed too. Now each panel
+    grows from its own basis (the shared `shep-sized`, in rem), the list's
+    minimum is the narrow table's while a table is drawn and only its words'
+    measure otherwise (no px), and the table is the shell's fit box with
+    Built and Sources its optional columns."""
+    from src.webui.style import FIT, FIT_WIDE
+
+    css = " ".join(dsp.PAGE_CSS.split())
+    assert "912px" not in css and "495px" not in css and "min-height: 120px" not in css
+    mins = dict(re.findall(r"(\.shep-panel\.shep-ds-main(?::has\(table\.shep-dstbl\))?) \{[^}]*"
+                           r"--shep-panel-min: ([\d.]+)rem", css))
+    empty, table = float(mins[".shep-panel.shep-ds-main"]), float(
+        mins[".shep-panel.shep-ds-main:has(table.shep-dstbl)"])
+    assert empty < table, mins
+    assert re.search(r"\.shep-panel\.shep-ds-details \{[^}]*--shep-panel-basis: [\d.]+rem; "
+                     r"--shep-panel-grow: 1; --shep-panel-min: [\d.]+rem", css)
+    demo, _ctx, _fns = _page()
+    columns = [b for b in demo.blocks.values()
+               if {"shep-ds-main", "shep-ds-details"} & set(getattr(b, "elem_classes", None) or [])]
+    assert len(columns) == 2 and all("shep-sized" in b.elem_classes for b in columns)
+    assert len({b.scale for b in columns}) == 1               # Gradio's default: no share of a window
+    _serving(monkeypatch, None)
+    html = dsp.table_html(dsp.read_datasets(), None, "demo")
+    assert f'<div class="shep-tbl-wrap {FIT}">' in html and f'shep-dstbl {FIT_WIDE}"' in html
+    heads = re.findall(r"<th([^>]*)>(.*?)</th>", html)
+    optional = [re.sub(r"<[^>]+>", "", text) for attrs, text in heads if "shep-col-opt" in attrs]
+    assert optional == ["Built (UTC)", "Sources"]
+    for row in re.findall(r"<tr[^>]*data-key=.*?</tr>", html, re.S):
+        assert row.count("shep-col-opt") == 2
+
+
+#: At first use, as drawn: the notice's and the title's left edges, how many
+#: notices the page draws, whether the build line is drawn, and the gap
+#: between the Use for training relation's mark and its words.
+_FIRST_USE_JS = r"""() => {
+  const q = (s) => document.querySelector(s);
+  const drawn = (e) => !!e && e.getClientRects().length > 0;
+  const page = q('#shep-page-datasets'), head = q('#shep-ds-header h2'), nb = q('#shep-ds-table .shep-nb');
+  const mark = q('#shep-ds-use-note .shep-nb-mark'), words = q('#shep-ds-use-note .shep-nb-text');
+  const left = (e) => e.getBoundingClientRect().left + parseFloat(getComputedStyle(e).paddingLeft);
+  // Where each is drawn: the glyphs, not their boxes (a grid column stretches the mark's box).
+  const ink = (e) => { const r = document.createRange(); r.selectNodeContents(e);
+    return [...r.getClientRects()].filter((x) => x.width > 0); };
+  const shape = mark ? ink(mark)[0] : null, text = words ? ink(words)[0] : null;
+  return { notices: [...page.querySelectorAll('[data-notice]')].filter(drawn).length,
+           edge: nb && head ? Math.round(left(nb) - left(head)) : null,
+           build: drawn(q('#shep-ds-notes')),
+           markGap: shape && text ? Math.round(text.left - shape.right) : null };
+}"""
+
+
+def test_in_a_browser_at_first_use_the_cause_is_said_once_on_the_panels_edge(tmp_path):
+    """B-07 and the owner's screenshot 03 as the dashboard draws them with no
+    workspaces folder (the first-use walk's service): at every walked window
+    the list's place holds the folder's one notice, starting on the title's
+    edge (it started 16 px left of it), the build line is not drawn under an
+    empty list, the page's layout rules find nothing, and the relation beside
+    Use for training keeps its mark beside its words (it grew to the
+    footer's width, its mark 56 px from them)."""
+    from tests.fixtures.browser import layout_problems, node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    sizes = ([1850, 960], [1366, 768], [800, 900], [390, 844])
+    stops = [{"size": size, "page": "datasets", "focus": False} for size in sizes]
+    seen = walk_state("first_use", tmp_path, stops, extra_js=_FIRST_USE_JS)
+    assert layout_problems(seen, pages=("datasets",)) == []
+    for stop in seen:
+        got = stop["extra"]
+        assert got["notices"] == 1 and got["edge"] is not None and abs(got["edge"]) <= 1, stop
+        assert got["build"] is False, stop
+        assert got["markGap"] is not None and got["markGap"] <= 12, stop

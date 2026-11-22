@@ -812,7 +812,7 @@ def test_a_task_model_misses_no_sp_table(root, mode):
             and "no SP table" not in details)
     rows = re.findall(r'<dd class="shep-v">([^<]*)</dd>', data)
     assert '<dt class="shep-k">Graph</dt>' in data and not [v for v in rows if " · " in v]
-    assert "its task" in card.CARD_HELP[1]
+    assert "Shows: task, architecture, run, epoch" in card.CARD_HELP[1]
 
 
 @pytest.fixture(scope="module")
