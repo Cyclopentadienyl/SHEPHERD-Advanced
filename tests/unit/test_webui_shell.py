@@ -2170,8 +2170,10 @@ _LAYOUT_FACTS_JS = r"""() => {
                    'shep-train-continue', 'shep-train-stop', 'shep-train-pill']
       .map((i) => document.getElementById(i).getBoundingClientRect())
       .filter((r) => r.width > 0 && r.height > 0);
-    runbar = { h: Math.round(bar.getBoundingClientRect().height),
-               lines: new Set(items.map((r) => Math.round((r.top + r.bottom) / 2 / 24))).size };
+    // On one line: one horizontal band crosses every item (the lowest top above the highest
+    // bottom), whatever each item's own height.
+    runbar = { h: Math.round(bar.getBoundingClientRect().height), items: items.length,
+               oneLine: items.length > 0 && Math.max(...items.map((r) => r.top)) < Math.min(...items.map((r) => r.bottom)) };
   }
   // A box's top and bottom as drawn, or null when it is not drawn.
   const at = (e) => { if (!e) { return null; } const r = e.getBoundingClientRect();
@@ -2311,16 +2313,15 @@ def _walk_stops():
 
 
 @pytest.fixture(scope="module")
-def ui_walk(tmp_path_factory, _suite_gpu_lock):
-    """The shared UI measurement walk, once for this module: the service in a
-    process of its own (`served_page.served_service`, mode M1, an operator) on
-    the demo workspace with a base and a disease child trained on it where the
-    server lists them (`trained_children.train_children`, 1 epoch each on the
-    CPU), the disease child served (the Diagnosis card as an operator sees
-    it); one browser through `_walk_stops` (`browser.walk_ui`), the layout
-    facts at every stop, the shared check and a screenshot at the checked ones
-    (under the module's ``ui-walk*/shots``)."""
-    from tests.fixtures.browser import node_with_playwright, walk_ui
+def ui_world(tmp_path_factory, _suite_gpu_lock):
+    """The configured service, once for this module: in a process of its own
+    (`served_page.served_service`, mode M1, an operator) on the demo
+    workspace with a base and a disease child trained on it where the server
+    lists them (`trained_children.train_children`, 1 epoch each on the CPU),
+    the disease child served (the Diagnosis card as an operator sees it).
+    Yields its page and its folder; the walks of this state (`ui_walk`,
+    `ui_walk_configured`) share it."""
+    from tests.fixtures.browser import node_with_playwright
     from tests.fixtures.registered_cohort import write_demo_workspace
     from tests.fixtures.served_page import served_service
     from tests.fixtures.trained_children import train_children
@@ -2331,13 +2332,39 @@ def ui_walk(tmp_path_factory, _suite_gpu_lock):
     demo = write_demo_workspace(root / "workspaces" / "demo")
     served = train_children(demo, ("disease",))["disease"]
     (root / "registry").mkdir()
-    (root / "shots").mkdir()
     settings = {"SHEPHERD_WORKSPACES_ROOT": str(root / "workspaces"),
                 "SHEPHERD_REGISTRY": str(root / "registry"), "SHEPHERD_DEPLOYMENT_MODE": "M1",
                 "SHEPHERD_DEVICE": "cpu", "SHEPHERD_KG_PATH": str(demo / "kg.json"),
                 "SHEPHERD_CHECKPOINT_PATH": str(served), "SHEPHERD_DATA_DIR": str(demo)}
     with served_service(root / "service", settings) as page:
-        return walk_ui(page, root, _walk_stops(), extra_js=_LAYOUT_FACTS_JS, shots=root / "shots")
+        yield {"page": page, "root": root}
+
+
+@pytest.fixture(scope="module")
+def ui_walk(ui_world):
+    """The shared UI measurement walk on the configured service (`ui_world`):
+    one browser through `_walk_stops` (`browser.walk_ui`), the layout facts at
+    every stop, the shared check and a screenshot at the checked ones (under
+    the module's ``ui-walk*/shots``)."""
+    from tests.fixtures.browser import walk_ui
+
+    root = ui_world["root"]
+    (root / "shots").mkdir()
+    return walk_ui(ui_world["page"], root, _walk_stops(), extra_js=_LAYOUT_FACTS_JS,
+                   shots=root / "shots")
+
+
+@pytest.fixture(scope="module")
+def ui_walk_configured(ui_world):
+    """**The configured walk at the layout sizes** (the sweep's integration, its
+    decision 4): every page of the configured service (`ui_world`) at
+    `browser.LAYOUT_SIZES`, the layout rules recorded at each stop (no focus
+    walk), screenshots under the module's ``ui-walk*/layout/shots``."""
+    from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES, layout_stops, walk_ui
+
+    root = ui_world["root"] / "layout"
+    (root / "shots").mkdir(parents=True)
+    return walk_ui(ui_world["page"], root, layout_stops(UI_PAGES, LAYOUT_SIZES), shots=root / "shots")
 
 
 def test_one_layout_decision_at_every_size_and_back(ui_walk):
@@ -2392,9 +2419,10 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
     for s in ui_walk[-3:]:
         facts = s["extra"]
         assert facts["layout"] == ("stack" if facts["need"] > facts["width"] + 0.5 else "side"), s
-    # R-38: at the owner's window the Training run bar is one row (it was two, 119 px).
+    # R-38: at the owner's window the Training run bar is one row (it was two, 119 px): every
+    # item drawn (Dataset, its chip, Run name, Start, Continue…, the pill) on one line.
     (training, *_) = [s for s in wide if s["page"] == "training"]
-    assert training["extra"]["runbar"]["lines"] == 1 and training["extra"]["runbar"]["h"] < 90, training
+    assert training["extra"]["runbar"]["items"] >= 5 and training["extra"]["runbar"]["oneLine"], training
 
 
 def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
@@ -3399,41 +3427,47 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
 _HEADER_FACTS_JS = r"""() => ({
   wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
   gpu: ((document.querySelector('#shep-chips .shep-chip-gpu .shep-chip-text') || {}).textContent || '').trim() })"""
-#: The first-use walk's windows (the layout measure's, `browser.LAYOUT_SIZES`, less the laptop
-#: sizes the shared walk covers): the owner's, the owner's Firefox width, 1280 x 720, a portrait
-#: column and a phone.
-_STATE_SIZES = ((1850, 960), (1550, 830), (1280, 720), (800, 900), (390, 844))
-
-
 @pytest.fixture(scope="module")
 def ui_walk_first_use(tmp_path_factory):
     """**The first-use walk** (the UI sweep of 2026-11-22): the service as a
     first start serves it (no workspaces folder, no results registry, the
     launcher's local start: `browser.state_settings("first_use")`), every
-    page at `_STATE_SIZES`, the layout rules recorded at each stop (no focus
-    walk), screenshots under the module's ``ui-walk-first-use*/shots``."""
-    from tests.fixtures.browser import UI_PAGES, layout_stops, node_with_playwright, walk_state
+    page at `browser.LAYOUT_SIZES`, the layout rules recorded at each stop (no
+    focus walk), screenshots under the module's ``ui-walk-first-use*/shots``."""
+    from tests.fixtures.browser import (
+        LAYOUT_SIZES,
+        UI_PAGES,
+        layout_stops,
+        node_with_playwright,
+        walk_state,
+    )
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     root = tmp_path_factory.mktemp("ui-walk-first-use")
     (root / "shots").mkdir()
-    return walk_state("first_use", root, layout_stops(UI_PAGES, _STATE_SIZES), shots=root / "shots",
+    return walk_state("first_use", root, layout_stops(UI_PAGES, LAYOUT_SIZES), shots=root / "shots",
                       extra_js=_HEADER_FACTS_JS)
 
 
 @pytest.fixture(scope="module")
 def ui_walk_empty(tmp_path_factory):
     """**The empty-folder walk**: an empty workspaces folder and an empty
-    registry (`browser.state_settings("empty")`), every page at the owner's
-    window and a phone's."""
-    from tests.fixtures.browser import UI_PAGES, layout_stops, node_with_playwright, walk_state
+    registry (`browser.state_settings("empty")`), every page at
+    `browser.LAYOUT_SIZES`."""
+    from tests.fixtures.browser import (
+        LAYOUT_SIZES,
+        UI_PAGES,
+        layout_stops,
+        node_with_playwright,
+        walk_state,
+    )
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     root = tmp_path_factory.mktemp("ui-walk-empty")
     (root / "shots").mkdir()
-    return walk_state("empty", root, layout_stops(UI_PAGES, ((1850, 960), (390, 844))),
+    return walk_state("empty", root, layout_stops(UI_PAGES, LAYOUT_SIZES),
                       shots=root / "shots", extra_js=_HEADER_FACTS_JS)
 
 
@@ -3460,8 +3494,7 @@ def test_at_first_use_the_header_and_tab_groups_hold_on_every_page_and_size(ui_w
     start or while they wrap, nothing but a tab is in the tablist; no help
     text is drawn on the page and no notice twice on a screen. The page
     rules (`browser.layout_problems`: beside, narrow-box, orphan, edge, …)
-    are each page's to bring to zero; they are held at zero for every page
-    once the sweep's lanes land (its integration), not here."""
+    are held at zero by `test_every_page_of_every_state_has_no_layout_finding`."""
     _state_walk_holds_the_shells_rules(ui_walk_first_use, "GPU jobs: not set up")
 
 
@@ -3772,3 +3805,27 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
     assert not [c for c in found["clipped"] if "#dc-btn" in c], found["clipped"]
     assert not [o for o in found["overlap"] if "#under" in o], found["overlap"]
     assert [o for o in found["overlap"] if "#o1" in o and "#o2" in o], found["overlap"]
+
+
+@pytest.mark.parametrize("state", ["first_use", "empty", "configured", "configured-shared-walk"])
+def test_every_page_of_every_state_has_no_layout_finding(state, request):
+    """**The layout rules held at zero** (the sweep's integration, its decision 4; no allow-list):
+    every page as an operator sees it, at every layout size (`browser.LAYOUT_SIZES`: the owner's
+    window, the owner's Firefox width, two laptops, a portrait column and a phone, then the
+    owner's again), at first use (no workspaces folder, no results registry: the owner's six
+    screenshots), with an empty workspaces folder and registry, and configured (the demo
+    workspace, a child served), has none of the layout rules' findings
+    (`browser.layout_problems`: beside, narrow-box, overlap, orphan, centred, split-group,
+    edge, clipped, empty-region, help-on-page, notice-repeat, tab-groups). The shared
+    measurement walk (`ui_walk`: its other windows, the Diagnosis Load drawer and Training's
+    Continue drawer open) has none either. One service a state, one browser a walk."""
+    from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES, layout_problems
+
+    seen = request.getfixturevalue({"first_use": "ui_walk_first_use", "empty": "ui_walk_empty",
+                                    "configured": "ui_walk_configured",
+                                    "configured-shared-walk": "ui_walk"}[state])
+    checked = [s for s in seen if "check" in s and "layout" in s["check"]]
+    if state != "configured-shared-walk":            # what was measured, so that none means something
+        assert {(s["page"], s["size"]) for s in checked} == {
+            (page, f"{w}x{h}") for page in UI_PAGES for w, h in LAYOUT_SIZES}
+    assert checked and layout_problems(seen) == []
