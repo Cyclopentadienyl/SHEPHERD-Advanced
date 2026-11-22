@@ -103,7 +103,10 @@ reasons name no server path.
 **Per browser session:** the page's data, its controls and the selection are
 `gr.State` or component values; nothing here is module state. Nothing ticks: the
 page is read when it is opened (`ctx.on_page_open`), when the workspace changes
-and after every Load. A Load marks the page's data stale ("Reload with …"
+and after every Load. Its opening reads the list and its own data first, then
+commits the list's state, then writes what it read and what the commit kept
+(the review of bd5e678, SL-R3c), so a pick or a workspace chosen while it read
+is never set back. A Load marks the page's data stale ("Reload with …"
 clicked) and the page reads it again once the Load has finished, even when the
 listing the shared refresh reads afterwards is unchanged (a refused reload, the
 model in use reloaded): what changed meanwhile is then shown. The shared
@@ -1819,24 +1822,38 @@ def create_models_page(ctx: Any) -> None:
             return read_readonly()
         return read_page(listing)
 
-    shared_refresh = handle.refresh["fn"]
     # The list's clock last among the opening's inputs (`_open`'s last argument).
     refresh_inputs = [i for i in handle.refresh["inputs"] if i is not handle.clock]
     open_outputs = [*handle.refresh["outputs"], stale_state, *page_outputs]
 
     def _open(name, older, current_view, previous, key, query, fold, order, task, seg_value,
               phase, request: gr.Request, clock=None):
-        shared = shared_refresh(name, older, current_view, previous, key, request, query, fold,
+        # **Read, then commit, then build** (the review of bd5e678, SL-R3c:
+        # the page's own data was read after the list's re-read had committed,
+        # and a pick or another workspace committed during that read was set
+        # back by the outputs captured at the commit). Every read first: the
+        # list (`ModelList.read_list`), this page's data for that listing (the
+        # cohort versions and usage histories, `read_page`; or the read-only
+        # view's) and D8's condition; then the commit through the list's clock
+        # (`ModelList.commit_list`); then the outputs, from what was read and
+        # what the commit kept only (the selection committed last), with no
+        # read and no wait after it (`model_list.ListClock`).
+        read = handle.read_list(name, older, current_view, previous, key, request, query, fold,
                                 clock)
-        listing = shared[0]
-        if listing == gr.update():
-            # The list's re-read was answered after another workspace's
-            # listing was committed (the review of dcaed68, SL-R3): it
-            # changed nothing, and neither does the page; that listing's
-            # change draws the page (`_sync`).
-            return (gr.update(),) * len(open_outputs)
-        data = read_for(listing)
+        data = read_for(read.listing)
         condition = operator_access(request).condition
+        shared = handle.commit_list(read)
+        if shared is None:
+            # Another workspace's listing was committed while this read (the
+            # review of dcaed68, SL-R3): it changes nothing, and neither does
+            # the page; that listing's change draws the page (`_sync`).
+            return (gr.update(),) * len(open_outputs)
+        listing = shared[0]
+        # The page's data is of the listing committed, which carries its
+        # generation (`model_list.GENERATION`): its key is that listing's, so
+        # the listing's change does not read it again (`_sync`).
+        if not data.get("readonly"):
+            data = {**data, "listing_key": listing_key(listing)}
         # Read now; a Load still running reads again once it has finished.
         stale = False if phase != "loading" else gr.update()
         # The detail of the selection the refresh committed (D04: a refresh

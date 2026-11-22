@@ -5137,7 +5137,10 @@ def test_every_change_of_the_search_box_draws_its_search_in_a_browser(tmp_path, 
 #: - ``workspace`` (SL-R3a): a body's pick in ``demo`` held; ``other`` chosen
 #:   and its rows drawn; the pick let go;
 #: - ``newer`` (the same, then a body of ``other`` picked before the held pick
-#:   is let go: its request sent, queued behind it).
+#:   is let go: its request sent, queued behind it);
+#: - ``reopen-workspace`` (SL-R3c, the recheck of bd5e678): alpha-base picked;
+#:   Models left and opened again, its opening held; ``other`` chosen and its
+#:   rows drawn with nothing selected meanwhile; the opening let go.
 #:
 #: What the page shows once every answer has come is read.
 _HELD_ANSWER_JS = r"""
@@ -5183,7 +5186,7 @@ const [base, hold, entered, mode] = process.argv.slice(2);
   await viewFor('newest|all'); await idle();
   await page.click('#shep-mp-order label:has-text("By family")');
   await viewFor('family|all'); await idle(); await frames();
-  if (mode === 'refresh') {
+  if (mode === 'refresh' || mode === 'reopen-workspace') {
     await page.click(body(RUN.first));
     await selectedIs(RUN.first); await idle(); await frames();
     out.before = await shown();
@@ -5191,9 +5194,19 @@ const [base, hold, entered, mode] = process.argv.slice(2);
     fs.writeFileSync(hold, 'hold');
     await page.click('#shep-page-models-button');
     await inside();
-    // The newer pick, made and drawn while the re-read is held.
-    await page.click(body(RUN.newer));
-    await selectedIs(RUN.newer); await frames();
+    if (mode === 'refresh') {
+      // The newer pick, made and drawn while the re-read is held.
+      await page.click(body(RUN.newer));
+      await selectedIs(RUN.newer); await frames();
+    } else {
+      // Another workspace chosen, its rows drawn with nothing selected,
+      // while the opening is held.
+      await page.click('#shep-models-research-workspace input');
+      await page.getByRole('option', { name: /^other(?:\s|$)/ }).click();
+      await page.waitForFunction((sel) => !!document.querySelector(sel), body(RUN.other), { timeout: 30000 });
+      await page.waitForFunction(() => !document.querySelector('#shep-mp-detail-hd h2[data-key]'), null, { timeout: 30000 });
+      await frames();
+    }
   } else {
     fs.writeFileSync(hold, 'hold');
     await page.click(body(RUN.first));
@@ -5260,18 +5273,19 @@ def _held_world(family, tmp_path, monkeypatch, *, same_key=False):
     return key, shas
 
 
-def _held_run(tmp_path, monkeypatch, mode, runs, held_fn):
-    """Serve the dashboard with `held_fn` (``run_choice`` or ``list_models``)
-    held while ``hold`` exists (a refresh's read only once armed), run
-    `_HELD_ANSWER_JS` in `mode`, and return what the page showed, with every
-    selection the list's draw was asked to draw, by workspace (``drawn``: the
-    session's state as each draw read it)."""
+def _held_run(tmp_path, monkeypatch, mode, runs, held_fn, module=ml):
+    """Serve the dashboard with `held_fn` of `module` (the list's
+    ``run_choice`` or ``list_models``; this page's ``read_page``) held while
+    ``hold`` exists (a refresh's read only once armed), run `_HELD_ANSWER_JS`
+    in `mode`, and return what the page showed, with every selection the
+    list's draw was asked to draw, by workspace (``drawn``: the session's
+    state as each draw read it)."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, run_node
     from tests.fixtures.served_page import served
 
     hold, entered = tmp_path / "hold", tmp_path / "entered"
-    original = getattr(ml, held_fn)
+    original = getattr(module, held_fn)
 
     def held(*args, **kwargs):
         # The handler has read its inputs; it waits here while held.
@@ -5284,7 +5298,7 @@ def _held_run(tmp_path, monkeypatch, mode, runs, held_fn):
                 time.sleep(0.01)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(ml, held_fn, held)
+    monkeypatch.setattr(module, held_fn, held)
     drawn, drawing = [], ml.list_drawing
 
     def noted(listing, key, *args, **kwargs):
@@ -5392,3 +5406,133 @@ def test_a_pick_made_in_the_new_workspace_stays_after_an_older_pick_is_let_go_in
     assert after["workspace"] == "other" and after["selected"].startswith(other + "/"), after
     assert after["current"] == [other] and after["detail"].startswith("gamma-base"), after
     assert after["loadEnabled"] is False                        # a base: never loaded
+
+
+def test_a_pick_made_while_the_opening_reads_the_pages_data_stays_in_a_browser(
+        tmp_path, family, monkeypatch):
+    """SL-R3c (the recheck of bd5e678), the opening's own read: alpha-base
+    picked; Models left and opened again, the page's data (`read_page`: the
+    cohort versions and usage histories) held on the server while beta-base
+    is picked and drawn in the list and its details; once the read is let go
+    and every answer has come, beta-base is still the selection, never set
+    back to the selection the opening's commit kept (it read its data after
+    the commit, then wrote what it had committed)."""
+    from tests.fixtures.browser import node_with_playwright
+    from tests.fixtures.family_world import run_key
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    first, newer = run_key("alpha-base"), run_key("beta-base")
+    seen = _held_run(tmp_path, monkeypatch, "refresh", {"first": first, "newer": newer},
+                     "read_page", module=mp)
+    before, during, after = seen["before"], seen["during"], seen["after"]
+    assert before["selected"].startswith(first + "/"), before
+    assert during["selected"].startswith(newer + "/") and during["current"] == [newer], during
+    assert after["selected"] == during["selected"], (during, after)
+    assert after["current"] == [newer] and after["detail"].startswith("beta-base"), after
+    # Once let go, neither the details nor the list showed alpha-base again.
+    assert not [k for k in seen["seen"]["keys"] if k.startswith(first + "/")], seen["seen"]
+    assert first not in seen["seen"]["current"], seen["seen"]
+    assert after["gen"] == "1" and after["workspace"] == "demo", after
+
+
+def test_another_workspace_chosen_while_the_opening_reads_the_pages_data_stays_in_a_browser(
+        tmp_path, family, monkeypatch):
+    """SL-R3c (the recheck of bd5e678), the opening's own read: alpha-base
+    picked in ``demo``; Models left and opened again, the page's data held on
+    the server while ``other`` is chosen and its rows drawn with nothing
+    selected; once the read is let go and every answer has come, the
+    workspace, the list and the details are still ``other``'s with nothing
+    selected and Load off: the opening, answered for a workspace the list no
+    longer shows, changed nothing (never ``demo`` and alpha-base again)."""
+    from tests.fixtures.browser import node_with_playwright
+    from tests.fixtures.family_world import OTHER_BASE_RUN, run_key
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    first, other = run_key("alpha-base"), "gatv2/" + OTHER_BASE_RUN
+    seen = _held_run(tmp_path, monkeypatch, "reopen-workspace",
+                     {"first": first, "other": other}, "read_page", module=mp)
+    before, during, after = seen["before"], seen["during"], seen["after"]
+    assert before["selected"].startswith(first + "/") and before["workspace"] == "demo", before
+    assert during["workspace"] == "other" and during["selected"] is None, during
+    assert during["gen"] == "2", during
+    assert after["workspace"] == "other" and after["selected"] is None, after
+    assert after["current"] == [] and not after["loadEnabled"], after
+    assert "Select a model" in after["detail"] and "alpha-base" not in after["detail"], after
+    assert after["gen"] == "2", after                          # other's rows, never demo's
+    assert seen["seen"] == {"keys": [], "current": []}, seen["seen"]
+
+
+def test_the_opening_reads_everything_before_it_commits_and_writes_only_what_it_committed(
+        world, monkeypatch):
+    """SL-R3c (the recheck of bd5e678): Models' opening reads the list and
+    its own data (`read_page`) first, then commits through the list's clock,
+    then builds its outputs from what it read and what the commit kept, with
+    no read after the commit. A pick committed while the page's data is read
+    is the selection it writes, with its details; another workspace's listing
+    committed meanwhile makes it change nothing at all (no listing,
+    workspace, selection, page data, view or details). The page's data is
+    keyed by the listing committed, so its change reads nothing again."""
+    demo, _ctx = _page()
+    opened = _fn(demo, "_open")
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    request = operator_request(monkeypatch)
+    clock = ml.ListClock()
+    rest = ("", {}, mp.BY_FAMILY, mp.ALL_TASKS, mp.RECORDS, "idle", request, clock)
+    out = opened.fn("demo", False, None, None, None, *rest)
+    listing = out[0]
+    first, newer = _key(world, "model-05.pt"), _key(world, "model-08.pt")
+    assert clock.commit_pick(listing, None, first, {}, {})
+    real_read, real_commit, order = mp.read_page, ml.ListClock.commit_listing, []
+    committed = []
+
+    def commit(self, *args, **kwargs):
+        order.append("commit")
+        done = real_commit(self, *args, **kwargs)
+        committed.append(True)
+        return done
+
+    def never(name):
+        def read(*args, **kwargs):
+            assert not committed, f"{name} read after the commit"
+            return {"read_page": real_read, "list_models": real_list,
+                    "read_status": real_status, "read_versions": real_versions}[name](
+                        *args, **kwargs)
+        return read
+
+    real_list, real_status, real_versions = ml.list_models, mp.read_status, mp.read_versions
+    monkeypatch.setattr(ml.ListClock, "commit_listing", commit)
+    monkeypatch.setattr(ml, "list_models", never("list_models"))
+    monkeypatch.setattr(mp, "read_status", never("read_status"))
+    monkeypatch.setattr(mp, "read_versions", never("read_versions"))
+
+    def meanwhile(read):
+        order.append("read_page")
+        assert clock.commit_pick(listing, None, newer, {}, {})    # a newer pick, committed
+        return never("read_page")(read)
+
+    monkeypatch.setattr(mp, "read_page", meanwhile)
+    out = opened.fn("demo", False, None, listing, first, *rest)
+    by = dict(zip(map(id, opened.outputs), out, strict=True))
+    assert order == ["read_page", "commit"]
+    assert out[1] == newer and clock.selected == newer
+    assert f'data-key="{newer}"' in by[id(by_id["shep-mp-detail-hd"])]
+    assert world["shas"]["model-08.pt"] in by[id(by_id["shep-mp-detail-top"])]
+    data = next(v for v in out if isinstance(v, dict) and "listing_key" in v)
+    assert data["listing_key"] == mp.listing_key(out[0])
+    assert out[0][ml.GENERATION] == 1
+
+    # Another workspace's listing committed while the page's data is read.
+    committed.clear()
+
+    def switched(read):
+        committed.clear()
+        real_commit(clock, clock.began(), {**listing, "workspace": "other"}, view=None,
+                    preset=ml.PRESETS["research"], search="", fold={})
+        return real_read(read)
+
+    monkeypatch.setattr(mp, "read_page", switched)
+    out = opened.fn("demo", False, None, listing, newer, *rest)
+    assert len(out) == len(opened.outputs) and all(v == gr.update() for v in out), out
+    assert clock.workspace == "other" and clock.generation == 2 and clock.selected is None
