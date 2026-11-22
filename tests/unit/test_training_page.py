@@ -546,8 +546,13 @@ def test_the_run_bars_actions_and_their_one_reason():
                      "test": False})
     assert "train_model.py (pid 41822" in cli["reason"] and "open-test" not in cli["reason"]
 
-    none = _view(ws={"row": None})
+    none = _view(ws={"row": None, "choices": [["demo", "demo"]]})
     assert none["start"] is False and "select a dataset" in none["reason"]
+    # None listed yet (an empty workspaces folder): nothing to select, so it says so.
+    unlisted = _view(ws={"row": None, "choices": []})
+    assert unlisted["start"] is False and "select" not in unlisted["reason"]
+    assert "Start and Continue… disabled: no dataset is listed yet." in unlisted["reason"]
+    assert "The server lists no dataset yet." in tc.chip_html({"choices": []})
     untrainable = _view(ws={"row": {"name": "scratch_ws", "trainable": False,
                                     "not_trainable": "x", "manifest": "absent"}})
     assert "scratch_ws is not trainable: no split manifest" in untrainable["reason"]
@@ -586,7 +591,7 @@ def test_with_the_drawer_open_continue_training_follows_the_chosen_parent():
     edited = _view(ws=ws, mode={"drawer": True, "operation": "branch",
                                 "parent": {"chosen": True, "refused": tc.REFUSED_SETTINGS}})
     assert edited["resume"] is False
-    assert ("Start branch disabled: the check refuses a setting you edited; change it, then "
+    assert ("Start branch disabled: the check refuses a setting you edited. Change it, then "
             "check again.") in edited["drawer_reason"]
     for source, action in ((tc.CONTINUE_FROM_LIST, "Refresh the list, then check it again."),
                            (tc.CONTINUE_FROM_PATH,
@@ -631,6 +636,88 @@ def test_the_gpu_line_comes_from_the_runner_and_the_lock_holder():
     assert unset["unset"] is True and unset["notice"]["key"] == "gpu_lock"
     assert unset["notice"]["cause"] == "workspaces_root"
     assert test["unset"] is False and test["notice"] is None
+
+
+def test_first_use_is_one_notice_under_the_bar_and_one_relation_beside_start(monkeypatch):
+    """The UI sweep of 2026-11-22 (B-01, GB10-UI-01, R2; the WebUI skill's §9):
+    with no workspaces folder the run bar drew the folder's whole problem (296
+    characters) in the dataset chip and the GPU lock's (403 characters) as the
+    reason beside Start, the same cause three times on one screen. Now the
+    cause is said once, where it empties the bar: the folder's notice (its
+    state and its place in the GUI, the rest under Details ›) in the note
+    under the controls, the GPU lock's merged into it (it follows from the
+    folder); beside Start one line, a relation to it; the drawer's start a
+    relation too; the chip and the charts say no more of it. The notice is
+    chosen by the readers' ``unset`` flags (`workspaces.setting_notice`,
+    `lock_notice`), never by their words. A read-only request sees the same
+    notice (it names no server path) beside D8's refusal, and never the
+    lock's other problems."""
+    from src.config.server_settings import (
+        GPU_LOCK_NOT_CONFIGURED,
+        WORKSPACES_ROOT_NOT_SET,
+        WORKSPACES_ROOT_NOTICE,
+    )
+    from src.webui.components.workspaces import lock_notice, notice_view
+
+    ws = {**tc.empty_workspace(), "problem": WORKSPACES_ROOT_NOT_SET,
+          "notice": notice_view(WORKSPACES_ROOT_NOTICE)}
+    unset = {"configured": False, "unset": True, "problem": GPU_LOCK_NOT_CONFIGURED}
+    gpu = tc._gpu_line(None, unset, None, operator=True)
+    view = _view(ws=ws, gpu=gpu)
+    assert (view["start"], view["cont"]) == (False, False)
+    assert view["reason"] == ""                                   # no reason line of its own
+    assert view["why"] == r.see_above("Start unavailable", gpu["notice"])
+    assert ">Start unavailable: GPU jobs need a workspaces folder.<" in view["why"]
+    assert "(see above)." in view["drawer_reason"] and "Continue Training unavailable" in view[
+        "drawer_reason"]
+    note = tc.note_html(view)
+    assert note.count('data-notice="workspaces_root"') == 1 and 'data-notice-also="gpu_lock"' in note
+    assert note.count("No workspaces folder is set.") == 1
+    assert 'data-shep-go="settings"' in note and "Details ›" in note
+    for whole in (WORKSPACES_ROOT_NOT_SET, GPU_LOCK_NOT_CONFIGURED):
+        assert whole not in note and r.e(whole) not in note and whole not in view["why"]
+    assert "SHEPHERD_WORKSPACES_ROOT" not in view["why"]          # a token only in Details
+    chip = tc.chip_html(ws)
+    assert "workspaces" not in chip.lower() and "shep-muted" not in chip
+    assert tc.no_run_words(ws, operator=True) == ("No run to show: no workspaces folder is set "
+                                                  "(see above).")
+    # The drawer open: the run bar draws no action, so neither reason nor relation; the
+    # notice stays, the screen's one word on its setup.
+    opened = _view(ws=ws, gpu=gpu, mode={"drawer": True})
+    assert opened["reason"] == opened["why"] == "" and opened["notice"] == ws["notice"]
+    # A read-only request: D8's refusal, and the same notice under it.
+    refused = _view(ws=ws, gpu=tc._gpu_line(None, unset, None, operator=False),
+                    access=_Access(False, "not_loopback"))
+    assert "Operator controls only" in refused["reason"] and refused["why"] == ""
+    assert 'data-notice="workspaces_root"' in tc.note_html(refused)
+    # A lock that cannot be used for another reason, the folder set: its own notice, its
+    # problem a Details row for an operator only, never in the words of the line.
+    problem = {"configured": True, "problem": "/srv/workspaces/.shepherd-gpu.lock is a directory"}
+    for operator in (True, False):
+        line = tc._gpu_line(None, problem, None, operator=operator)
+        seen = _view(gpu=line)
+        drawn = tc.note_html(seen)
+        assert "The GPU lock cannot be used." in drawn and seen["why"].count("unavailable") == 1
+        assert ("/srv/workspaces" in drawn) is operator
+        assert "/srv" not in seen["why"]
+    # Nothing to say: no note, so its row takes no room.
+    assert tc.note_html(_view()) == ""
+    assert lock_notice({"configured": True, "problem": None}) is None
+
+
+def test_the_run_view_says_why_it_has_no_run_by_cause():
+    """The skill's §9, the UI sweep: the run view's empty sentence names its
+    own cause: no workspaces folder (a relation to the run bar's notice), no
+    dataset listed, none chosen, then no run yet (by who can start one)."""
+    assert tc.no_run_words({"choices": [], "notice": None}, operator=True) == tc.NO_DATASET_LISTED
+    assert tc.no_run_words({"choices": [["demo", "demo"]]}, operator=True) == tc.NO_DATASET_CHOSEN
+    chosen = {"row": {"name": "demo"}}
+    assert tc.no_run_words(chosen, operator=True) == tc.NO_RUN_YET
+    assert tc.no_run_words(chosen, operator=False) == tc.NO_RUN_YET_READ_ONLY
+    assert tc._chart_token(None, {}, operator=True, ws={"choices": []}) == {
+        "run": None, "rev": 0, "empty": tc.NO_DATASET_LISTED}
+    for words in (tc.NO_DATASET_LISTED, tc.NO_DATASET_CHOSEN):
+        assert words.startswith("No run to show: ") and ";" not in words
 
 
 # --------------------------------------------------------------------------- the run view
@@ -1408,8 +1495,9 @@ def test_every_write_of_the_run_bars_workspace_is_in_one_queued_group_of_one():
                                            "_on_training_workspace", "_render_view",
                                            "_render_changed"}
     drawn = {by_id[elem_id] for elem_id in (
-        "shep-train-dataset", "shep-train-chip", "shep-train-reason", "shep-train-start",
-        "shep-train-continue", "shep-train-stop", "shep-train-resume", "shep-train-runbar",
+        "shep-train-dataset", "shep-train-chip", "shep-train-reason", "shep-train-why",
+        "shep-train-start", "shep-train-continue", "shep-train-stop", "shep-train-resume",
+        "shep-train-runbar",
         "shep-train-page", "shep-train-run-head", "shep-train-view-run", "shep-train-charts",
         "shep-train-drawer-why")}
     cache = poll.inputs[3]
@@ -1543,7 +1631,8 @@ def test_a_late_tick_never_writes_back_the_workspace_it_started_from(root, monke
 #: choice and check.
 DRAWN_FROM_THE_SELECTION = (
     "shep-train-dataset", "shep-train-chip", "shep-train-pill", "shep-train-reason",
-    "shep-train-start", "shep-train-continue", "shep-train-stop", "shep-train-resume",
+    "shep-train-why", "shep-train-start", "shep-train-continue", "shep-train-stop",
+    "shep-train-resume",
     "shep-train-runbar", "shep-train-page", "shep-train-banner", "shep-train-run-head",
     "shep-train-view-run", "shep-train-charts", "shep-train-drawer-why",
     "shep-train-parents-note", "continue_run", "checkpoint_dropdown", "manual_checkpoint",
@@ -1852,7 +1941,7 @@ def test_new_epochs_reach_the_charts_and_the_run_head_while_nobody_acts(
         training_page, root, monkeypatch):
     """Served: while the job runs, nobody acting, each new epoch (its log's
     rows, the epoch the runner reports) is handed over and drawn: the chart
-    token's rows, the progress in the reason line; the run's first saved
+    token's rows, the progress beside the status pill; the run's first saved
     state puts the used dataset fingerprint in the run head. A tick that
     finds nothing new hands nothing over."""
     job, page = training_page
@@ -1872,9 +1961,9 @@ def test_new_epochs_reach_the_charts_and_the_run_head_while_nobody_acts(
     log.write_text(json.dumps(_metrics(2)))
     job.status = {**RUNNING, "current_epoch": 2}
     changed = page.tick()
-    assert {"charts", "reason"} <= set(changed)
+    assert {"charts", "pill"} <= set(changed)
     assert page.shown("shep-train-charts")["rev"] > rows
-    assert 'aria-valuenow="50"' in page.shown("shep-train-reason")
+    assert 'aria-valuenow="50"' in page.shown("shep-train-pill")
     (job_run / "checkpoints").mkdir()
     (job_run / "checkpoints" / "last.pt").write_bytes(b"saved state")
     assert "head" in page.tick()
@@ -2517,7 +2606,7 @@ def test_a_parent_listed_for_another_workspace_is_never_continued_on_this_one(ro
     chosen = tc._chosen(tc.CONTINUE_FROM_LIST, "gatv2/r/last.pt", "", parents, ws)
     assert chosen["workspace"] == "demo"
     why = tc.continue_refusal(chosen, ws)
-    assert why.startswith("the run list shows demo’s runs, not resampled’s; refresh the list")
+    assert why.startswith("the run list shows demo’s runs, not resampled’s. Refresh the list")
     path, why, _item_ = tc._parent_path(tc.CONTINUE_FROM_LIST, "gatv2/r/last.pt", "", ws,
                                         parents)
     assert path is None and "the run list shows demo’s runs" in why
@@ -2933,7 +3022,7 @@ def test_the_device_help_says_auto_needs_cuda_as_the_trainer_does():
 
 def test_the_chart_help_leads_with_the_gestures_in_paragraphs():
     title, text = tc.TOPIC_HELP["training-charts"]
-    assert text.startswith(tc.charts.GESTURES + "\n\n") and "\n- The wheel over the epoch axis" in text
+    assert text.startswith(tc.charts.GESTURES + "\n\n") and "\n- Wheel: the epoch axis" in text
     for key in ("manual_checkpoint", "checkpoint_dropdown", "continue_device", "run_name",
                 "continue_run"):
         help_text = {**tc.FIELD_HELP, **tc.TOPIC_HELP}[key][1]
@@ -3065,7 +3154,7 @@ def test_with_the_drawer_open_the_run_bar_draws_no_action_and_the_drawer_one_clo
     assert tc._on_source_link(tc.CONTINUE_FROM_LIST, _Evt("other")) == (gr.update(), gr.update())
     # Its text is the typed path's own help (the radio's went with it).
     assert "continue_source" not in tc.FIELD_HELP
-    assert "only finds a checkpoint that list has" in tc.FIELD_HELP["manual_checkpoint"][1]
+    assert "only a checkpoint that list has" in tc.FIELD_HELP["manual_checkpoint"][1]
 
 
 def test_a_failed_runs_output_tail_is_a_disclosure_fitted_to_the_window():
@@ -3116,11 +3205,17 @@ def test_the_page_styles_hold_the_reviewed_layout():
     assert any("padding-right: 30px" in b for _s, b in _rules(css, "#continue_run input"))
     assert any("grey" in b for _s, b in _rules(css, "input:disabled"))
     # Disabled actions: neutral grey, full opacity.
-    disabled = [b for _s, b in _rules(css, ".shep-rb-row > button:disabled")]
+    disabled = [b for _s, b in _rules(css, ".shep-rb-grp > button:disabled")]
     assert disabled and "opacity: 1" in disabled[0] and "--shep-grey-50" in disabled[0]
-    # The reason line's icon stays beside its sentence.
+    # The reason line's mark or tag keeps a column of its own beside its words, which start on
+    # one edge and at the measure (the UI sweep: right-aligned and as wide as a column once).
     why = [b for s, b in _rules(css, ".shep-rb-why") if s == f"{tc._PAGE} .shep-rb-why"]
-    assert any("flex-wrap: nowrap" in b for b in why) and not any("flex-wrap: wrap" in b for b in why)
+    assert any("display: grid" in b and "grid-template-columns: auto minmax(0, max-content)" in b
+               and "text-align: start" in b and "var(--shep-measure)" in b for b in why), why
+    assert "text-align: right" not in css and "justify-content: flex-end" not in css
+    # No group of the run bar is flattened into another (B-01: two rows' items were the
+    # bar's own, `display: contents`, so messages became columns among the controls).
+    assert "display: contents !important" not in css
     # A failed run's tail: four lines at a time when wide, never an inner scroll when narrow.
     from tests.unit.test_webui_shell import side, stack
 
@@ -3269,7 +3364,7 @@ def test_the_details_popover_is_drawn_over_the_parameter_labels():
     to 242 px under the 292 px fingerprint line, whose Copy and ⓘ ran past it,
     so the ⓘ's bubble, placed beside the box, covered the ⓘ)."""
     assert tc.CHIP_Z_INDEX > 40
-    assert (f"#shep-train-chip {{ flex: 0 1 340px !important; min-width: min-content !important; "
+    assert (f"#shep-train-chip {{ flex: 0 1 auto !important; min-width: min-content !important; "
             f"position: relative; z-index: {tc.CHIP_Z_INDEX}; }}") in tc.PAGE_CSS
 
 
@@ -3283,10 +3378,16 @@ def test_the_drawers_start_sits_in_its_footer_beside_its_reason():
     run bar says one sentence, why its own Start waits."""
     _demo, _ctx, by_id = _page()
     footer = by_id["shep-train-drawer-ft"]
-    # R-49: one closer, the × in the drawer's header; no Cancel beside the start.
-    assert [getattr(child, "elem_id", None) for child in footer.children] == [
-        "shep-train-step-start", "shep-train-resume", "shep-train-drawer-why",
-        "shep-train-drawer-notice"]
+    # R-49: one closer, the × in the drawer's header; no Cancel beside the start. The
+    # footer is a bar (the UI sweep): the step and the start, one group, then the start's
+    # reason and its notice, each a row of its own under them, never beside the button.
+    group, *notes = footer.children
+    assert "shep-grp" in group.elem_classes and "shep-bar" in footer.elem_classes
+    assert [child.elem_id for child in group.children] == ["shep-train-step-start",
+                                                           "shep-train-resume"]
+    assert [child.elem_id for child in notes] == ["shep-train-drawer-why",
+                                                  "shep-train-drawer-notice"]
+    assert all("shep-bar-note" in child.elem_classes for child in notes)
     drawer = by_id["shep-train-drawer"]
     assert drawer.children.index(by_id["shep-train-drawer-bd"]) < drawer.children.index(footer)
     runbar = by_id["shep-train-runbar"]
@@ -3788,28 +3889,40 @@ def test_a_details_the_reader_opened_stays_open_when_their_own_edit_draws_it_aga
     assert "Epochs 7" in seen["again"]["text"] and seen["again"]["open"] is False, seen
 
 
-#: The Training page for an operator: at each window, once the run bar's
-#: reason says the text the second argument names and the page's requests
-#: are answered, the run bar's content box, the box of each line of the
-#: reason's text, the page's scroll width, and what
-#: `document.elementFromPoint` finds at the centre of each run bar control
-#: drawn (a screenshot of each window where a third argument names its
-#: path's start).
+#: The Training page for an operator: at each window, once the page shows
+#: what the second argument's selector names and the page's requests are
+#: answered and its boxes hold still, the run bar's content box, each group
+#: of its bar and the controls in it, the actions' group, the note under them
+#: and each line of it, every text of the run bar beside a control, the
+#: relation beside Start, the charts' empty sentence (its box and the part of
+#: it its clipping ancestors leave drawn), the notices drawn, the page's
+#: scroll width, and what `document.elementFromPoint` finds at the centre of
+#: each run bar control (a screenshot of each window where a third argument
+#: names its path's start).
 _RUNBAR_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[960, 1080], [1280, 900], [390, 844], [1850, 960]]) {
+  for (const [w, h] of [[1850, 960], [1366, 768], [960, 1080], [390, 844]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
     await page.addInitScript(QUEUE_JS);
     await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
     await page.click('#shep-tab-research-button', { timeout: 60000 });
-    await page.waitForFunction((said) => {
-      const r = document.querySelector('#shep-train-reason');
-      return r && r.innerText.includes(said) && window.__shepQueue.idle();
+    await page.waitForFunction((sel) => {
+      const msg = document.querySelector('#shep-train-charts .shep-charts-msg');
+      return document.querySelector(sel) && msg && !/loading/i.test(msg.textContent) && window.__shepQueue.idle();
     }, process.argv[3], { timeout: 60000 });
+    await page.evaluate(async () => {
+      let last = null;
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const now = JSON.stringify(document.querySelector('#shep-train-runbar').getBoundingClientRect());
+        if (now === last) { return; }
+        last = now;
+      }
+    });
     if (process.argv[4]) { await page.screenshot({ path: `${process.argv[4]}_${w}x${h}.png` }); }
     out[`${w}x${h}`] = await page.evaluate(() => {
       const box = (r) => [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)];
@@ -3817,18 +3930,72 @@ const QUEUE_JS = __QUEUE_JS__;
       const bar = document.querySelector('#shep-train-runbar'), cs = getComputedStyle(bar), b = bar.getBoundingClientRect();
       const inner = [Math.round(b.left + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft)), Math.round(b.top),
                      Math.round(b.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight)), Math.round(b.bottom)];
-      const why = document.querySelector('#shep-train-reason .shep-rb-why') || document.querySelector('#shep-train-reason');
-      const range = document.createRange(); range.selectNodeContents(why);
-      const lines = [...range.getClientRects()].filter((r) => r.width > 0).map(box);
-      const scroll = document.documentElement.scrollWidth;
-      const controls = ['#shep-train-dataset input', '#run_name input', '#shep-train-start', '#shep-train-continue', '#shep-train-stop']
-        .map((sel) => [sel, document.querySelector(sel)]).filter(([, el]) => el && shown(el));
-      return { bar: inner, reason: box(why.getBoundingClientRect()), lines, scroll, width: window.innerWidth,
-        controls: controls.map(([sel, el]) => {
-          el.scrollIntoView({ block: 'center' });
-          const r = el.getBoundingClientRect(), at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-          return { sel, box: box(r), hit: el === at || el.contains(at), at: at ? (at.id || at.className.toString().slice(0, 40) || at.tagName) : null };
-        }) };
+      // A control: a button, a text box, a select's box (its input is the box's); not a ⓘ, a
+      // Copy or a link in a sentence.
+      const controlsOf = (root) => [...root.querySelectorAll('button, input:not([type=hidden]), .wrap:has(> .wrap-inner)')]
+        .filter((c) => shown(c) && !c.matches('.shep-i, .shep-copy, .shep-link') && !(c.matches('input') && c.closest('.wrap:has(> .wrap-inner)')));
+      const groups = [...bar.querySelectorAll('.shep-rb-bar > .shep-grp')].filter(shown).map((g) => ({
+        cls: g.className.split(/\s+/).filter((c) => c.startsWith('shep-rb-') && c !== 'shep-rb-grp').join(' '),
+        box: box(g.getBoundingClientRect()), parts: controlsOf(g).map((c) => box(c.getBoundingClientRect())) }));
+      const act = document.querySelector('.shep-rb-act');
+      const actions = [...act.querySelectorAll(':scope > button')].filter(shown).map((c) => box(c.getBoundingClientRect()));
+      const note = document.querySelector('#shep-train-reason');
+      let lines = [];
+      if (note && shown(note)) {
+        const range = document.createRange(); range.selectNodeContents(note);
+        lines = [...range.getClientRects()].filter((r) => r.width > 0.5).map(box);
+      }
+      // Every text of 30 or more characters in the run bar beside one of its controls (over
+      // half the control's height level with it, left or right of it), but the dataset's
+      // identity, the relation beside Start and the job's state, which belong beside them.
+      const controls = controlsOf(bar);
+      const beside = [];
+      const walker = document.createTreeWalker(bar, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const el = n.parentElement;
+        if (n.textContent.trim().length < 30 || !el || !shown(el) || el.closest('#shep-train-chip, #shep-train-why, #shep-train-pill')) { continue; }
+        const range = document.createRange(); range.selectNodeContents(n);
+        for (const r of [...range.getClientRects()].filter((q) => q.width > 0.5)) {
+          for (const c of controls) {
+            const q = c.getBoundingClientRect(), over = Math.min(q.bottom, r.bottom) - Math.max(q.top, r.top);
+            if (over > 0.5 * q.height && (q.right <= r.left + 2 || q.left >= r.right - 2)) {
+              beside.push(`${n.textContent.trim().slice(0, 50)} beside ${c.id || c.className.toString().slice(0, 30)}`);
+            }
+          }
+        }
+      }
+      const why = document.querySelector('#shep-train-why');
+      const whyText = why && shown(why) ? why.querySelector('.shep-reason') : null;
+      const msg = document.querySelector('#shep-train-charts .shep-charts-msg');
+      let seen = null, whole = null;
+      if (msg && shown(msg)) {
+        const r = msg.getBoundingClientRect();
+        let L = r.left, T = r.top, R = r.right, B = r.bottom;
+        for (let a = msg.parentElement; a && a !== document.body; a = a.parentElement) {
+          const s = getComputedStyle(a);
+          if (s.overflowX !== 'visible' || s.overflowY !== 'visible') {
+            const q = a.getBoundingClientRect();
+            L = Math.max(L, q.left); T = Math.max(T, q.top); R = Math.min(R, q.right); B = Math.min(B, q.bottom);
+          }
+        }
+        whole = box(r); seen = [Math.round(L), Math.round(T), Math.round(R), Math.round(B)];
+      }
+      const start = document.querySelector('#shep-train-start');
+      const hit = controls.map((el) => {
+        el.scrollIntoView({ block: 'center' });
+        const r = el.getBoundingClientRect(), at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return { el: el.id || el.className.toString().slice(0, 30), hit: el === at || el.contains(at) };
+      });
+      window.scrollTo(0, 0);
+      return { bar: inner, groups, actions, act: box(act.getBoundingClientRect()),
+        note: note && shown(note) ? box(note.getBoundingClientRect()) : null, lines, beside,
+        why: whyText ? { box: box(whyText.getBoundingClientRect()), text: whyText.querySelector('.shep-nb-text').textContent.trim(),
+                         lh: parseFloat(getComputedStyle(whyText).lineHeight) } : null,
+        start: start && shown(start) ? box(start.getBoundingClientRect()) : null,
+        msg: msg && shown(msg) ? { text: msg.textContent.trim(), whole, seen } : null,
+        notices: [...document.querySelectorAll('[data-notice]')].filter(shown).map((e) => e.getAttribute('data-notice')),
+        also: [...document.querySelectorAll('[data-notice-also]')].filter(shown).map((e) => e.getAttribute('data-notice-also')),
+        covered: hit.filter((c) => !c.hit), scroll: document.documentElement.scrollWidth, width: window.innerWidth };
     });
     await page.close();
   }
@@ -3841,49 +4008,101 @@ const QUEUE_JS = __QUEUE_JS__;
 #: a phone's run bar (the review of 5033d29 on fd313af).
 LONG_NAME = "hospital_a_rare_disease_cohort_2026_11_16_reimport_v3"
 
+#: What each case waits for (`_RUNBAR_JS`'s second argument): the setup notice
+#: under the bar at first use, the dataset's identity with a dataset chosen,
+#: the reason line for a workspace that cannot be trained.
+_RUNBAR_SHOWN = {"first_use": '#shep-train-reason [data-notice="workspaces_root"]',
+                 "configured": "#shep-train-chip .shep-fpv",
+                 "long_name": "#shep-train-reason .shep-rb-why"}
 
-@pytest.mark.parametrize("case", ["gpu_lock", "long_name"])
-def test_no_run_bar_control_is_under_the_reason_at_any_window(case, monkeypatch, tmp_path):
-    """The verification of fcc3dea (pre-existing, seen by the T08 fix lane):
-    at 960 x 1080, for an operator with no workspaces folder set, the run
-    bar's reason (the GPU lock's refusal, several lines) ran over Start and
-    Continue…, and `elementFromPoint` at Start's centre found the reason's
-    text: its slot shrank below its words (its longest word and the GPU
-    tag), which ran on over the buttons. The review of 5033d29: the fix
-    (fd313af) made the slot never narrower than its words, but a word wider
-    than the run bar (a workspace's long name) then widened the slot past
-    the bar at 390 x 844, cutting the reason off at the panel's edge
-    (`overflow-wrap: break-word` does not lower a word's min-content). The
-    slot is as wide as its words but never wider than the run bar, so where
-    they do not fit beside the controls the line takes a row of its own (the
-    skill's §2) and a word wider than that row breaks inside it: at 960 x
-    1080, 1280 x 900, 390 x 844 and 1850 x 960, for the GPU lock's refusal
-    and for a workspace's long name, every run bar control drawn is the
-    first thing at its centre, every line of the reason lies inside the run
-    bar, and the page does not scroll sideways."""
+
+@pytest.mark.parametrize("case", ["first_use", "configured", "long_name"])
+def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
+        case, built, monkeypatch, tmp_path):
+    """The UI sweep of 2026-11-22 (B-01, B-02, B-05, B-06, GB10-UI-01; the
+    WebUI skill's §2 and §9). At first use the run bar drew the workspaces
+    folder's whole problem (296 characters) as a column beside the Dataset
+    select and the GPU lock's (403 characters) as a right-aligned column
+    beside Start; the bar grew to 291 px at 1850 x 960 and 616 px at 390 x
+    844, Start centred in it, Start and Continue… on different lines once it
+    wrapped, and at 1366 x 768 the charts' empty sentence was not drawn (an
+    overlay at 40 % of a body with no height, cut by the charts' box). The
+    verification of fcc3dea and the review of 5033d29 (kept): no control
+    under the reason, and a workspace's long name never widening the bar.
+
+    For an operator at first use (no workspaces folder), with a dataset and
+    no run yet, and with a workspace of a long name that cannot be trained,
+    at 1850 x 960, 1366 x 768, 960 x 1080 and 390 x 844, measured relative to
+    what is drawn: every group of the bar holds its controls on one line;
+    the actions (Start and Continue…) on one line, their group at the bar's
+    end (with a dataset chosen, at 1850 x 960, on the one line of every
+    group: R-38); every control inside the bar's padding; the note, when it says
+    something, under every control, from the bar's edge, each line inside
+    the bar; no text of the run bar beside a
+    control but the dataset's identity, the job's state and the relation
+    beside Start, which is one line where it stands level with Start; the
+    setup notice drawn once (the GPU lock's merged into it); the charts'
+    empty sentence drawn whole, in its own words per cause; every control
+    the first thing at its centre; and the page never scrolls sideways."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     operator_mode(monkeypatch)
-    if case == "gpu_lock":
+    if case == "first_use":
         monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
-        said = "GPU lock"
+        sentence = "No run to show: no workspaces folder is set (see above)."
+    elif case == "configured":
+        shutil.copytree(built[0], tmp_path / "root" / "demo")
+        monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
+        sentence = tc.NO_RUN_YET
     else:
         (tmp_path / "root" / LONG_NAME).mkdir(parents=True)
         monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
-        said = f"{LONG_NAME} is not trainable"
+        sentence = tc.NO_RUN_YET
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_RUNBAR_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
-                        base[:-len("gradio_api")], said)
-    assert set(seen) == {"960x1080", "1280x900", "390x844", "1850x960"}, seen
+                        base[:-len("gradio_api")], _RUNBAR_SHOWN[case])
+    assert set(seen) == {"1850x960", "1366x768", "960x1080", "390x844"}, seen
     for size, drawn in seen.items():
-        names = [control["sel"] for control in drawn["controls"]]
-        assert {"#shep-train-start", "#shep-train-continue"} <= set(names), (size, drawn)
-        covered = [control for control in drawn["controls"] if not control["hit"]]
-        assert covered == [], (size, drawn)
         left, _top, right, _bottom = drawn["bar"]
-        outside = [line for line in drawn["lines"] if line[0] < left - 1 or line[2] > right + 1]
-        assert drawn["lines"] and outside == [], (size, drawn)
-        assert drawn["scroll"] <= drawn["width"], (size, drawn)
+        where = (case, size, drawn)
+        for group in drawn["groups"]:
+            parts = group["parts"]
+            assert not parts or max(p[1] for p in parts) < min(p[3] for p in parts), (group, where)
+        actions = drawn["actions"]
+        assert len(actions) >= 2, where
+        assert max(a[1] for a in actions) < min(a[3] for a in actions), where
+        assert abs(drawn["act"][2] - right) <= 2, where
+        if case == "configured" and size == "1850x960":
+            # R-38: at the owner's window, a dataset chosen, the bar is one row.
+            assert len({group["box"][1] for group in drawn["groups"]}) == 1, where
+        controls = [p for group in drawn["groups"] for p in group["parts"]]
+        # Every control inside the bar's padding (a select's floor against its whole field,
+        # label and ⓘ beside it, pushed the Dataset box 14 px past it at 390 x 844).
+        assert all(c[0] >= left - 1 and c[2] <= right + 1 for c in controls), where
+        if case in ("first_use", "long_name"):
+            note = drawn["note"]
+            assert note is not None and note[1] >= max(c[3] for c in controls) - 1, where
+            assert abs(note[0] - left) <= 2, where
+            assert drawn["lines"] and all(line[0] >= left - 1 and line[2] <= right + 1
+                                          for line in drawn["lines"]), where
+        else:
+            assert drawn["note"] is None, where
+        assert drawn["beside"] == [], where
+        why = drawn["why"]
+        if case == "first_use":
+            assert why["text"] == "Start unavailable: GPU jobs need a workspaces folder.", where
+            start = drawn["start"]
+            level = min(start[3], why["box"][3]) - max(start[1], why["box"][1])
+            if level > 0.5 * (start[3] - start[1]):
+                assert why["box"][3] - why["box"][1] <= 1.6 * why["lh"], where
+            assert drawn["notices"] == ["workspaces_root"] and drawn["also"] == ["gpu_lock"], where
+        else:
+            assert why is None and drawn["notices"] == [], where
+        msg = drawn["msg"]
+        assert msg is not None and msg["text"] == sentence, where
+        assert msg["whole"][3] > msg["whole"][1] and msg["seen"] == msg["whole"], where
+        assert drawn["covered"] == [], where
+        assert drawn["scroll"] <= drawn["width"], where
