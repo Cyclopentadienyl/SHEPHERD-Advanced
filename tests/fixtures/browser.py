@@ -822,6 +822,11 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
   // A stop's drawer (`stop.open`: its opener, the drawer and its close): opened
   // once the page is shown, its requests answered; closed again after the stop.
   const drawer = async (spec, open) => {
+    // The opener is clicked where it is drawn once the page has settled at the
+    // stop's size: a forced click right after a resize lands where the layout
+    // pass is about to move it from (Diagnosis' card folds at 1280 x 600 and
+    // its Details › moves), and that click missed its button.
+    if (open) { await idle(); await settle(); }
     await page.click(open ? spec.click : spec.close, { force: true });
     await page.waitForSelector(spec.shown, { state: open ? 'visible' : 'hidden' });
     await idle();
