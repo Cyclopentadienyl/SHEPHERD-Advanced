@@ -1910,7 +1910,9 @@ def create_models_page(ctx: Any) -> None:
                     *(gr.update() for _ in page_outputs[:4]), failed_html(ctl, exc),
                     *(gr.update() for _ in page_outputs[5:]))
 
-    gr.on([handle.listing.change, handle.selected.change, handle.search.change,
+    # The list's search is followed on its search token, never on the box's
+    # change, which the list's search alone listens to (`ModelList.searched`).
+    gr.on([handle.listing.change, handle.selected.change, handle.searched.change,
            *(picked(c) for c in control_inputs)],
           _sync, inputs=[handle.listing, data_state, stale_state, last_state, handle.phase,
                          *control_inputs, handle.selected, parts["seg"], handle.view,

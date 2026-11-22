@@ -3066,6 +3066,9 @@ class ModelList:
       folded during a search, `search_node`);
     - ``drawn``: `gr.State`, the draw token: an event that changes what the
       list shows writes a new one, and the list draws on its change;
+    - ``searched``: `gr.State`, the search token: each change of the search
+      writes a new one once the list has handled it; a page that follows the
+      search listens to its change, never to the box's (`create_model_list`);
     - ``phase``: `gr.State`, ``"idle"``, ``"confirming"`` or ``"loading"``
       (Diagnosis disables Run Diagnosis while it is not idle);
     - ``refresh``: keyword arguments for an event that (re)reads the list:
@@ -3113,6 +3116,7 @@ class ModelList:
     search_clear: Any = None
     fold: Any = None
     drawn: Any = None
+    searched: Any = None
 
 
 def loading_buttons(plan: Any) -> Tuple[Any, Any, Any]:
@@ -3169,6 +3173,10 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     #: The draw token: each event that changes what the list shows writes a new
     #: one (`draw_token`), and the list is drawn on its change (`_draw`).
     drawn = gr.State(0)
+    #: The search token: each change of the search writes a new one, so a page
+    #: follows the search once the list has handled it (Models' details) and
+    #: never listens to the box's change itself (`_searched`).
+    searched = gr.State(0)
     # The page preset (Models) keeps its header and its rows in one column
     # (``shep-model-main``), so the page can scroll them as one region when
     # they do not fit together (M5-3 review UI-1); the drawer's rows need none.
@@ -3248,9 +3256,10 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     # page asks for the draw only once the change has landed, and the draw
     # that follows the last change reads it. The box is read as it is then:
     # a change of its text (whatever made it; Clear empties it in the page)
-    # writes no state but the token and the folds, the search's dropped (a
-    # search answered late asks for one more draw, which reads the box as it
-    # is, never the text it was typed with; the review of 5171661). Two draws of
+    # writes no state but the tokens (the draw's, the search's) and the folds,
+    # the search's dropped (a search answered late asks for one more draw,
+    # which reads the box as it is, never the text it was typed with; the
+    # review of 5171661). Two draws of
     # one list can be asked at once (Models' opening writes the token and the
     # view in one answer, and Gradio 6.30 checks "always_last" for both before
     # either is sent). What keeps the last answer drawn the last one asked is
@@ -3373,7 +3382,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         # search brings the operator's folds back (G7).
         fold_state = {k: v for k, v in fold_state.items() if not str(k).startswith(
             search_node(""))} if isinstance(fold_state, Mapping) else {}
-        return fold_state, draw_token()
+        token = draw_token()
+        return fold_state, token, token
 
     # **One path for every change of the search** (the adversarial check of
     # 37912a9, F2): the box's ``change``, which Gradio 6.30's Textbox sends
@@ -3381,8 +3391,15 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     # a cut, a paste, an input method's composition, Clear, the list's "Clear
     # search"), and never as the page loads. Its ``input`` was sent from the
     # box's keypress handler alone, so a deleted or pasted text was never
-    # searched: the list kept drawing the old search under the box.
-    search.change(_searched, inputs=[fold], outputs=[fold, drawn],
+    # searched: the list kept drawing the old search under the box. This is
+    # the box's one listener: a page follows the search on the search token
+    # (`searched`), which this writes. Gradio 6.30 sends a listener it held
+    # back ("always_last") by dispatching its whole event again, so two such
+    # listeners of the box's change (this and Models' `_sync`, as it was) set
+    # each other off without end (measured: `_searched`, `_sync` and a draw,
+    # again and again, while the page stayed open); a state's change is
+    # dispatched to each of its listeners alone.
+    search.change(_searched, inputs=[fold], outputs=[fold, drawn, searched],
                   show_progress="hidden", trigger_mode="always_last")
 
     # Clear empties the box in the page, with no request of its own: the box's
@@ -3515,7 +3532,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     return ModelList(chosen, elem_id, workspace, listing, selected, plan, view, phase,
                      show_older, count, rows, facts, reason, note, load, confirm,
                      confirm_html, reload_button, keep_button, refresh, head_extra, foot_extra,
-                     reload_done, after_close_js, search, clear, fold, drawn)
+                     reload_done, after_close_js, search, clear, fold, drawn, searched)
 
 
 __all__ = [

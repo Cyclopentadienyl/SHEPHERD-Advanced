@@ -2432,11 +2432,18 @@ def test_controls_selection_and_segments_are_wired(world, monkeypatch):
     # list's search (By family's "Saved files" offers what the list draws), so
     # its answers for one session never overlap; the last trigger always runs.
     # A pick of the Task select is one request (`shell.picked`: its blur), the
-    # Order radio's its input; the view the list holds is read with them.
+    # Order radio's its input; the view the list holds is read with them. The
+    # search is followed on the list's search token, never on the box's change
+    # (the list's search is its one listener: two "always_last" listeners of
+    # one event set each other off without end in Gradio 6.30).
+    box = by_id["shep-models-research-search"]
+    searched = next(fn for fn in demo.fns.values() if (box._id, "change") in fn.targets)
     assert {(demo.blocks[t[0]], t[1]) for t in sync.targets} == {
         (states["listing"], "change"), (states["selected"], "change"),
-        (by_id["shep-models-research-search"], "change"),
+        (searched.outputs[2], "change"),
         (by_id["shep-mp-order"], "input"), (by_id["shep-mp-task"], "blur")}
+    assert [fn.name for fn in demo.fns.values() if (box._id, "change") in fn.targets] == [
+        "_searched"]
     assert states["view"] in sync.inputs
     assert states["search"] is by_id["shep-models-research-search"]
     assert not {"shep-mp-version", "shep-mp-metric", "shep-mp-scoring",
@@ -4828,8 +4835,8 @@ def test_an_answer_that_comes_late_never_draws_an_older_state_in_a_browser(
 #: drawn, then "e" (its search, asked with "be", held on the server: a file
 #: handshake, ``hold`` while it is held, ``entered`` once it is), Clear
 #: clicked (the box emptied in the page; its own search waits behind the held
-#: one, "always_last"), then the search let go; what the page shows once
-#: every answer has come is read.
+#: one, the search's handler running one at a time), then the search let go;
+#: what the page shows once every answer has come is read.
 _LATE_SEARCH_JS = r"""
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -4890,8 +4897,8 @@ def test_a_search_answered_after_its_clear_draws_no_search_in_a_browser(tmp_path
     """G07 (an update never applies an old state; the review of 5171661,
     P2-1): By family, "b" typed and drawn, then "e", its search (asked with
     "be") held on the server (a file handshake, no timed wait) while Clear is
-    clicked (the box emptied in the page, its own search asked once the held
-    one is answered); "be" is never drawn, and once the search is let go and
+    clicked (the box emptied in the page, its own search answered once the
+    held one is); "be" is never drawn, and once the search is let go and
     every request is answered, the search box is empty and the runs drawn
     and the count are the whole list's, as before the search: a search
     answered late draws the box as it is, never the text it was typed with."""

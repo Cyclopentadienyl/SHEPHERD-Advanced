@@ -1700,7 +1700,9 @@ def test_every_change_of_the_search_box_is_searched_by_one_path(root, serving, m
     paste and an input method's composition never searched (the list kept
     drawing the old search under the box). The search is the box's
     ``change``, which Gradio sends for each new value, whatever made it, the
-    last one asked kept ("always_last"). Clear is a front-end function that
+    last one asked kept ("always_last"), and its one listener: a page follows
+    the search on the search token it writes. Clear is a front-end function
+    that
     empties the box, with no request of its own, and the list's "Clear
     search" clicks Clear; no answer writes the box (a change it made would be
     searched once more). So each way the box changes drops the search's folds
@@ -1712,7 +1714,12 @@ def test_every_change_of_the_search_box_is_searched_by_one_path(root, serving, m
         (searched,) = [fn for fn in on_box if fn.name == "_searched"]
         assert searched.targets == [(each.search._id, "change")]
         assert searched.trigger_mode == "always_last"
-        assert searched.outputs == [each.fold, each.drawn]
+        assert searched.outputs == [each.fold, each.drawn, each.searched]
+        # The box's one listener: two "always_last" listeners of one event set
+        # each other off without end in Gradio 6.30 (a page follows the search
+        # on `searched`; Models' wiring test checks it there).
+        assert [fn.name for fn in demo.fns.values()
+                if (each.search._id, "change") in fn.targets] == ["_searched"]
         (clear,) = [fn for fn in demo.fns.values()
                     if (each.search_clear._id, "click") in fn.targets]
         assert clear.fn is None and clear.outputs == [each.search]
@@ -1796,10 +1803,10 @@ def test_a_draw_token_is_new_every_time_whatever_the_clock_reads(root, serving, 
     changes write two tokens."""
     demo, _ctx, handle, _ = _component("research")
     searched = next(fn for fn in demo.fns.values() if fn.name == "_searched")
-    assert searched.outputs[-1] is handle.drawn
+    assert searched.outputs[1] is handle.drawn
     monkeypatch.setattr(time, "monotonic_ns", lambda: 1)
     monkeypatch.setattr(time, "monotonic", lambda: 1.0)
-    first, second = searched.fn({})[-1], searched.fn({})[-1]
+    first, second = searched.fn({})[1], searched.fn({})[1]
     assert first != second and 0 not in (first, second)
     assert ml.draw_token() != ml.draw_token()
 
@@ -2747,9 +2754,9 @@ def test_a_search_reveals_what_it_found_and_clearing_it_brings_the_folds_back(
         return {k: h for _c, k, h in _rows(rows) if k}[_key("model-03.pt")]
 
     query = root["shas"]["model-03.pt"][:8]
-    fold, _token = searched.fn({**manual, ml.search_node(run): False})
+    fold, _token, _searched = searched.fn({**manual, ml.search_node(run): False})
     assert fold == manual                      # the operator's folds kept; an old search's dropped
-    assert searched.outputs == [handle.fold, handle.drawn]
+    assert searched.outputs == [handle.fold, handle.drawn, handle.searched]
     drawn = _drawn(demo, handle, listing, None, False, None, query, fold)
     assert not hidden(drawn[id(handle.rows)])  # revealed while the search shows the list
     assert drawn[id(handle.count)].startswith("1 run matches")
@@ -2765,7 +2772,7 @@ def test_a_search_reveals_what_it_found_and_clearing_it_brings_the_folds_back(
     (clear,) = [fn for fn in demo.fns.values() if (handle.search_clear._id, "click") in fn.targets]
     assert clear.fn is None and clear.outputs == [handle.search]
     assert searched.targets == [(handle.search._id, "change")]
-    fold, _token = searched.fn(during)
+    fold, _token, _searched = searched.fn(during)
     assert fold == manual
     assert hidden(_drawn(demo, handle, listing, None, False, None, "", fold)[id(handle.rows)])
     assert ml.fold_open(manual, run, "", False, True) is False
