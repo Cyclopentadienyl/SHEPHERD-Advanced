@@ -5255,11 +5255,13 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-chip .shep-ds-built, {_PAGE} .shep-rb-chip .shep-ds-built + .shep-sep {{ display: none; }}
 /* The dataset's group: its select keeps the select floor while a line has room for it; its
    identity, a group of its own beside it (or under it, whole), drawn only while it says something;
-   the run's name: a box of its floor at least. */
+   the run's name: from its basis (its label and a box past the input floor) it takes what room
+   its line leaves, up to 20rem, so with a dataset chosen the bar is one row at the owner's
+   1850 x 960 (R-38: a 20rem name and select moved the actions to a second line). */
 {_PAGE} .shep-rb-data {{ --shep-grp-min: 20rem; }}
 {_PAGE} .shep-rb-ident {{ min-height: 40px; }}
 {_PAGE} .shep-rb-ident:not(:has(.shep-rb-chip > *)) {{ display: none !important; }}
-{_PAGE} .shep-rb-name {{ flex: 0 1 20rem !important; }}
+{_PAGE} .shep-rb-name {{ flex: 1 1 14rem !important; max-width: 20rem; }}
 {_PAGE} #shep-train-dataset {{ flex: 0 1 auto !important; min-width: 0 !important; }}
 {_PAGE} #run_name {{ flex: 1 1 auto !important; min-width: min-content !important; }}
 {_PAGE} #shep-train-view-run {{ flex: 0 1 auto !important; min-width: 0 !important; max-width: 100%; }}
@@ -5272,7 +5274,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
    header) moves to the next line whole, so a field is narrower than its content only alone on a
    line too narrow for it, and there no floor fits (the select floor against the whole field, its
    label and ⓘ beside it, pushed the box 14 px into the bar's padding at 390 x 844). */
-{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner) {{ flex: 0 1 auto; width: 20rem; min-width: 0 !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner) {{ flex: 0 1 auto; width: 18rem; min-width: 0 !important; }}
 /* A run's option is 40 characters at most (`renderers.OPTION_CHARS`), its end the start time that
    tells same-name runs apart, and the closed select is the header's one name for the run viewed: its
    box is sized by those 40 characters, never by the window (19vw cut 33 of them at 1536 x 760). The

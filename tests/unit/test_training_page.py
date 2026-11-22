@@ -4035,7 +4035,8 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
     at 1850 x 960, 1366 x 768, 960 x 1080 and 390 x 844, measured relative to
     what is drawn: every group of the bar holds its controls on one line;
     the actions (Start and Continue…) on one line, their group at the bar's
-    end; every control inside the bar's padding; the note, when it says
+    end (with a dataset chosen, at 1850 x 960, on the one line of every
+    group: R-38); every control inside the bar's padding; the note, when it says
     something, under every control, from the bar's edge, each line inside
     the bar; no text of the run bar beside a
     control but the dataset's identity, the job's state and the relation
@@ -4074,6 +4075,9 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
         assert len(actions) >= 2, where
         assert max(a[1] for a in actions) < min(a[3] for a in actions), where
         assert abs(drawn["act"][2] - right) <= 2, where
+        if case == "configured" and size == "1850x960":
+            # R-38: at the owner's window, a dataset chosen, the bar is one row.
+            assert len({group["box"][1] for group in drawn["groups"]}) == 1, where
         controls = [p for group in drawn["groups"] for p in group["parts"]]
         # Every control inside the bar's padding (a select's floor against its whole field,
         # label and ⓘ beside it, pushed the Dataset box 14 px past it at 390 x 844).
