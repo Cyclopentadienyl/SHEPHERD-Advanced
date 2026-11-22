@@ -1287,7 +1287,7 @@ def _served_line(listing: Mapping[str, Any]) -> str:
 
 
 def saved_files_html(item: Mapping[str, Any], files: Sequence[Tuple[str, str]], *,
-                     in_use: Collection[str] = ()) -> str:
+                     in_use: Collection[str] = (), generation: Optional[int] = None) -> str:
     """**The selected checkpoint's run's saved files** (By family's details:
     the graph's node is a run, so the files it holds are said here; G2, G3):
     each by its Run → Checkpoint words (`files`, `model_list.checkpoint_choices`:
@@ -1297,7 +1297,9 @@ def saved_files_html(item: Mapping[str, Any], files: Sequence[Tuple[str, str]], 
     (`model_list.PICK_ACT` through `renderers.TRIGGER_JS`, as a row's click
     does: `create_models_page` gives this region to the list's ``picks``),
     and another one served for diagnosis (`in_use`, its key) with the chip the
-    graph's node has (the shown one's is the header's, said once).
+    graph's node has (the shown one's is the header's, said once). The list
+    says the `generation` of the listing it was drawn from (``data-gen``), sent
+    with each pick, as the list's rows send theirs (`model_list.ListClock`).
     Everything escaped."""
     shown = ml.item_key(item)
     chip = r.chip(ml.PRESETS["research"].in_use_label, "accent")
@@ -1310,13 +1312,15 @@ def saved_files_html(item: Mapping[str, Any], files: Sequence[Tuple[str, str]], 
             rows.append(f'<li><button type="button" class="shep-link" data-act="{ml.PICK_ACT}" '
                         f'data-key="{r.e(key)}">{r.e(label)}</button>'
                         f'{chip if key in in_use else ""}</li>')
-    return f'<ul class="shep-mp-files">{"".join(rows)}</ul>'
+    gen = f' data-gen="{int(generation)}"' if generation is not None else ""
+    return f'<ul class="shep-mp-files"{gen}>{"".join(rows)}</ul>'
 
 
 def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
                   workspaces: Sequence[Mapping[str, Any]] = (),
                   parent_words: Optional[Tuple[str, str]] = None,
-                  files: Sequence[Tuple[str, str]] = (), in_use: Collection[str] = ()) -> str:
+                  files: Sequence[Tuple[str, str]] = (), in_use: Collection[str] = (),
+                  generation: Optional[int] = None) -> str:
     """**The selected checkpoint's details, as one summary list** (the
     skill's §4, README §5): its model fingerprint (12 hex with its Copy: the
     table shows each row's, this is the chosen one's to copy) and its file
@@ -1350,7 +1354,8 @@ def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]], *,
     unknown = r.status_mark("neutral", r.UNKNOWN)
     rows = [("Fingerprint", r.fingerprint_value(sha, what="model fingerprint")),
             ("File", r.ident_html(filename) if filename else unknown),
-            *([("Saved files", saved_files_html(item, files, in_use=in_use))]
+            *([("Saved files", saved_files_html(item, files, in_use=in_use,
+                                                generation=generation))]
               if len(files) > 1 else []),
             ("Dataset", r.dataset_relation_html(item, workspaces)),
             ("Kind", r.e(r.model_kind_text(item)))]
@@ -1470,7 +1475,8 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     top = (identity_html(item, row, workspaces=workspaces, parent_words=parent_words,
                          files=files,
                          in_use={k for _label, k in files
-                                 if served_sha and listed[k].get("sha256") == served_sha})
+                                 if served_sha and listed[k].get("sha256") == served_sha},
+                         generation=ml.list_generation(listing))
            + warnings)
     ledger = (data.get("ledgers") or {}).get(ml.item_key(item))
     chosen = next((w for w in workspaces if w.get("name") == listing.get("workspace")), {})
@@ -1814,24 +1820,36 @@ def create_models_page(ctx: Any) -> None:
         return read_page(listing)
 
     shared_refresh = handle.refresh["fn"]
+    # The list's clock last among the opening's inputs (`_open`'s last argument).
+    refresh_inputs = [i for i in handle.refresh["inputs"] if i is not handle.clock]
+    open_outputs = [*handle.refresh["outputs"], stale_state, *page_outputs]
 
     def _open(name, older, current_view, previous, key, query, fold, order, task, seg_value,
-              phase, request: gr.Request):
-        shared = shared_refresh(name, older, current_view, previous, key, request, query, fold)
+              phase, request: gr.Request, clock=None):
+        shared = shared_refresh(name, older, current_view, previous, key, request, query, fold,
+                                clock)
         listing = shared[0]
+        if listing == gr.update():
+            # The list's re-read was answered after another workspace's
+            # listing was committed (the review of dcaed68, SL-R3): it
+            # changed nothing, and neither does the page; that listing's
+            # change draws the page (`_sync`).
+            return (gr.update(),) * len(open_outputs)
         data = read_for(listing)
         condition = operator_access(request).condition
         # Read now; a Load still running reads again once it has finished.
         stale = False if phase != "loading" else gr.update()
-        # The detail of the selection the refresh kept (D04: a refresh keeps a
-        # still-valid selection), not the empty detail.
+        # The detail of the selection the refresh committed (D04: a refresh
+        # keeps a still-valid selection; one picked while it read is the one
+        # kept, `model_list.ListClock`), the list drawing the same, never the
+        # selection the opening began with.
         return (*shared, stale, *outputs_for(listing, data, (order, task), shared[1], seg_value,
                                              condition, query, new_data=True))
 
     ctx.on_page_open("models", {
         "fn": _open,
-        "inputs": [*handle.refresh["inputs"], *control_inputs, parts["seg"], handle.phase],
-        "outputs": [*handle.refresh["outputs"], stale_state, *page_outputs],
+        "inputs": [*refresh_inputs, *control_inputs, parts["seg"], handle.phase, handle.clock],
+        "outputs": open_outputs,
         "show_progress": "minimal",
         "show_progress_on": [*handle.refresh["show_progress_on"], *page_outputs]})
 
@@ -1844,7 +1862,7 @@ def create_models_page(ctx: Any) -> None:
                                show_progress="hidden")
 
     def _answer(listing, data, stale, last, phase, order, task, selected, seg_value, current,
-                query, request):
+                query, request, clock):
         ctl_values = (order, task)
         settled = phase != "loading"
         after_load = bool(stale) and settled
@@ -1857,8 +1875,11 @@ def create_models_page(ctx: Any) -> None:
                 and last.get("workspace") == listing.get("workspace"):
             # Selected again while it is listed, whatever the controls show
             # (D04: a filter never changes what is selected; the list says
-            # when it does not show it).
-            if ml.find_item(listing, last.get("key")) is not None:
+            # when it does not show it), through the list's clock: a pick
+            # made meanwhile, or another workspace's listing, stays
+            # (`model_list.ListClock.reselect`).
+            if ml.find_item(listing, last.get("key")) is not None and clock.reselect(
+                    listing, last["key"]):
                 key = again = last["key"]
         states = (False if fresh and settled else gr.update(),
                   ({"workspace": listing.get("workspace"), "key": key} if key is not None
@@ -1888,7 +1909,7 @@ def create_models_page(ctx: Any) -> None:
         return (*states, *out)
 
     def _sync(listing, data, stale, last, phase, order, task, selected, seg_value, current,
-              query, request: gr.Request):
+              query, request: gr.Request, clock=None):
         """A new listing (a workspace chosen, the refresh after a Load), a
         selection, a control or the list's search changed (By family's "Saved
         files" offers the files the list draws). The page reads its own data
@@ -1900,9 +1921,11 @@ def create_models_page(ctx: Any) -> None:
         that fails changes nothing and says, under the options, what was not
         applied (a deferred call is dropped by Gradio after a failed one, so
         the failure must not escape)."""
+        clock = clock if isinstance(clock, ml.ListClock) else ml.ListClock.seeded(
+            listing, selected)
         try:
             return _answer(listing, data, stale, last, phase, order, task, selected, seg_value,
-                           current, query, request)
+                           current, query, request, clock)
         except Exception as exc:  # noqa: BLE001 - the page says it and keeps what it shows
             logger.exception("The Models page could not answer")
             ctl = controls(data if isinstance(data, Mapping) else {}, order, task)
@@ -1916,7 +1939,7 @@ def create_models_page(ctx: Any) -> None:
            *(picked(c) for c in control_inputs)],
           _sync, inputs=[handle.listing, data_state, stale_state, last_state, handle.phase,
                          *control_inputs, handle.selected, parts["seg"], handle.view,
-                         handle.search],
+                         handle.search, handle.clock],
           outputs=[stale_state, last_state, handle.selected, *page_outputs],
           show_progress="hidden", trigger_mode="always_last")
 

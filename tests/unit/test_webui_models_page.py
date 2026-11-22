@@ -2193,12 +2193,13 @@ def test_the_workspace_line_shows_the_dataset_identity_under_the_select(world, m
 
 
 def _sync_states(demo):
-    """The one listener's States, by their place among its inputs."""
+    """The one listener's States, by their place among its inputs (the list's
+    clock last, `_sync`'s last argument)."""
     sync = _fn(demo, "_sync")
     listing, data, stale, last, phase = sync.inputs[:5]
     return {"fn": sync, "listing": listing, "data": data, "stale": stale, "last": last,
-            "phase": phase, "selected": sync.inputs[-4], "view": sync.inputs[-2],
-            "search": sync.inputs[-1]}
+            "phase": phase, "selected": sync.inputs[-5], "view": sync.inputs[-3],
+            "search": sync.inputs[-2], "clock": sync.inputs[-1]}
 
 
 #: `_sync`'s `current` when a test does not name it: the list already holds the
@@ -2208,12 +2209,12 @@ HELD = object()
 
 def _sync(states, monkeypatch, listing, data, *, current=HELD, stale=False, last=None,
           phase="idle", order=mp.NEWEST, task=mp.ALL_TASKS, selected=None, seg=mp.RECORDS,
-          search=""):
+          search="", clock=None):
     sync = states["fn"]
     if current is HELD:
         current = mp.shape(listing, data, mp.controls(data, order, task))
     out = sync.fn(listing, data, stale, last, phase, order, task, selected, seg, current,
-                  search, operator_request(monkeypatch))
+                  search, operator_request(monkeypatch), clock)
     assert len(out) == len(sync.outputs)
     by = dict(zip(map(id, sync.outputs), out, strict=True))
     return {name: by[id(states[name])] for name in ("stale", "last", "selected", "data")} | {
@@ -2440,7 +2441,7 @@ def test_controls_selection_and_segments_are_wired(world, monkeypatch):
     searched = next(fn for fn in demo.fns.values() if (box._id, "change") in fn.targets)
     assert {(demo.blocks[t[0]], t[1]) for t in sync.targets} == {
         (states["listing"], "change"), (states["selected"], "change"),
-        (searched.outputs[2], "change"),
+        (searched.outputs[1], "change"),
         (by_id["shep-mp-order"], "input"), (by_id["shep-mp-task"], "blur")}
     assert [fn.name for fn in demo.fns.values() if (box._id, "change") in fn.targets] == [
         "_searched"]
@@ -3734,18 +3735,20 @@ def test_a_search_reveals_ancestors_an_arrow_selects_nothing_and_a_body_selects_
     assert run_key("alpha-base") not in cleared.open_runs
     demo, _ctx = _page()
     select = _fn(demo, "_select")
-    handle_fold = next(o for o in select.outputs if getattr(o, "value", None) == {})
+    # The folds are the session's one dict, changed in place (`ListClock`), never an output.
+    assert not [o for o in select.outputs if getattr(o, "value", None) == {}]
     handle_selected, handle_drawn = select.outputs[0], select.outputs[-1]
     picked = file_key("alpha-gene")
 
     def answer(raw, current=picked, view_=view):
-        out = select.fn(listing, current, False, view_, "", {}, gr.EventData(None, raw),
+        fold = {}
+        out = select.fn(listing, current, False, view_, "", fold, gr.EventData(None, raw),
                         gradio_request())
         by = dict(zip(map(id, select.outputs), out, strict=True))
         # The draw token: whether a draw is asked for (its value is a time).
         if by[id(handle_drawn)] != gr.update():
             by[id(handle_drawn)] = "draw"
-        return by
+        return {**by, "fold": fold}
 
     for raw, kept in (
             ({"tree": {ml.subtree_node(run_key("alpha-disease")): True,
@@ -3755,8 +3758,8 @@ def test_a_search_reveals_ancestors_an_arrow_selects_nothing_and_a_body_selects_
             ({"tree": {ml.subtree_node(run_key("alpha-disease")): False}, "searched": True},
              {ml.search_node(ml.subtree_node(run_key("alpha-disease"))): False})):
         by = answer(raw)
-        assert by[id(handle_fold)] == kept, raw
-        assert all(v == gr.update() for k, v in by.items() if k != id(handle_fold)), raw
+        assert by["fold"] == kept, raw
+        assert all(v == gr.update() for k, v in by.items() if k != "fold"), raw
     # A body's pick: the run's latest save (the selection is another run's) ...
     base_last, base_03 = file_key("alpha-base"), file_key("alpha-base", "model-03.pt")
     assert ml.item_key(next(i for i in listing["items"] if ml.item_run_key(i) == run_key(
@@ -3775,7 +3778,8 @@ def test_a_search_reveals_ancestors_an_arrow_selects_nothing_and_a_body_selects_
                        ({"act": "test", "key": base_last}, view),
                        ({"act": ml.PICK_ACT, "key": "__older__"}, view),
                        ({"focus": run_key("beta-base")}, view)):
-        assert all(v == gr.update() for v in answer(raw, view_=view_).values()), raw
+        by = answer(raw, view_=view_)
+        assert by.pop("fold") == {} and all(v == gr.update() for v in by.values()), raw
     html = ml.list_html(listing, picked, research, view=view, fold={})
     # One run looks selected and is ``aria-current``: the one holding the selected model;
     # no run panel, no body controlling one, no focused run's outline.
@@ -3807,15 +3811,16 @@ def test_a_pick_in_the_graph_folds_nothing_it_shows(family):
     assert all(f'data-tree="{node}" aria-expanded="true"' in shown for node in chain)
     demo, _ctx = _page()
     select = _fn(demo, "_select")
-    handle_fold = next(o for o in select.outputs if getattr(o, "value", None) == {})
-    out = select.fn(listing, deep, False, view, "", {},
+    # The session's one fold dict, changed in place by the pick (`ListClock`).
+    fold = {}
+    out = select.fn(listing, deep, False, view, "", fold,
                     gr.EventData(None, {"run": run_key("beta-base")}), gradio_request())
     by = dict(zip(map(id, select.outputs), out, strict=True))
     assert by[id(select.outputs[0])] == file_key("beta-base")
-    assert by[id(handle_fold)] == dict.fromkeys(chain, True)
+    assert fold == dict.fromkeys(chain, True)
     # The drawing that answers it (the list's one draw, from the state it left).
     rows = ml.list_drawing(listing, file_key("beta-base"), research, view=view,
-                           fold=by[id(handle_fold)]).rows
+                           fold=fold).rows
     assert all(f'data-tree="{node}" aria-expanded="true"' in rows for node in chain)
     visible = re.findall(r'<li class="shep-fam-li" data-run="([^"]+)"', rows)
     assert visible == re.findall(r'<li class="shep-fam-li" data-run="([^"]+)"', shown)
@@ -3834,11 +3839,12 @@ def test_a_pick_in_the_graph_folds_nothing_it_shows(family):
     newest = mp.shape(listing, mp.read_page(listing), mp.controls(mp.read_page(listing),
                                                                      mp.NEWEST, mp.ALL_TASKS))
     assert ml.kept_unfolded(listing, newest, research, {}, deep, file_key("beta-base")) == {}
-    out = select.fn(listing, file_key("alpha-base"), False, view, "", {},
+    fold = {}
+    out = select.fn(listing, file_key("alpha-base"), False, view, "", fold,
                     gr.EventData(None, {"act": ml.PICK_ACT,
                                         "key": file_key("alpha-base", "model-03.pt")}),
                     gradio_request())
-    assert dict(zip(map(id, select.outputs), out, strict=True))[id(handle_fold)] == gr.update()
+    assert out[0] == file_key("alpha-base", "model-03.pt") and fold == {}
 
 
 def test_the_details_name_a_runs_saved_files_and_pick_them_through_the_list(family):
@@ -4455,6 +4461,26 @@ const ROWS = '#shep-models-research-rows';
 """
 
 
+def _acts_said_with(seen, generation):
+    """`seen` with each act the page sent (its ``joins``) checked to carry the
+    generation of the listing its rows were drawn from (``gen``, the rows'
+    `model_list.generation_marker`; Models' "Saved files" say it too), then
+    without it, so an act reads as what it asks."""
+    if isinstance(seen, list):
+        return [_acts_said_with(v, generation) for v in seen]
+    if not isinstance(seen, dict):
+        return seen
+    out = {}
+    for key, value in seen.items():
+        if key == "joins" and isinstance(value, list):
+            for act in value:
+                assert not isinstance(act, dict) or act.get("gen") == generation, act
+            value = [{k: v for k, v in act.items() if k != "gen"} if isinstance(act, dict)
+                     else act for act in value]
+        out[key] = _acts_said_with(value, generation)
+    return out
+
+
 def test_the_family_graph_in_a_browser(tmp_path, family):
     """G6-G8, I1-I10 on the page as the dashboard mounts it, by real events
     (relative geometry only, no pixel figure: the stage-lineage package §6):
@@ -4523,6 +4549,8 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
               .replace("__RUNS__", json.dumps(runs)))
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(script, tmp_path, base[:-len("gradio_api")], timeout=600)
+    # Each page opened is a session of its own, its one workspace read once.
+    seen = _acts_said_with(seen, "1")
     t = ml.subtree_node
     idle = seen["idle"]
     assert idle["orient"] == "h" and idle["overlaps"] == 0 and idle["pageOver"] <= 0

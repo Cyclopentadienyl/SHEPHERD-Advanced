@@ -48,6 +48,7 @@ Module: tests/unit/test_webui_model_list.py
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -1523,7 +1524,7 @@ def test_the_list_redraws_when_the_page_changes_its_view(root, serving, monkeypa
     assert handle.head_extra.value == "Full records" and handle.foot_extra.value == "Compare"
     assert handle.refresh["inputs"] == [handle.workspace, handle.show_older, handle.view,
                                         handle.listing, handle.selected, handle.search,
-                                        handle.fold]
+                                        handle.fold, handle.clock]
 
 
 def test_the_list_is_drawn_in_one_place_from_the_state_as_it_is_then(
@@ -1585,7 +1586,10 @@ class _Page:
     def __init__(self, demo, handle):
         self.demo = demo
         self.handle = handle
-        self.values = {id(b): getattr(b, "value", None) for b in demo.blocks.values()}
+        # A session's own copy of each State's first value, as Gradio gives
+        # each session (the list's clock a new one, its folds a new dict).
+        self.values = {id(b): (copy.deepcopy(b.value) if isinstance(b, gr.State)
+                               else getattr(b, "value", None)) for b in demo.blocks.values()}
         (self.draw,) = [fn for fn in demo.fns.values()
                         if fn.name == "_draw" and handle.rows in fn.outputs]
         # The box's change listeners: what the page asks when its text changes.
@@ -1714,7 +1718,9 @@ def test_every_change_of_the_search_box_is_searched_by_one_path(root, serving, m
         (searched,) = [fn for fn in on_box if fn.name == "_searched"]
         assert searched.targets == [(each.search._id, "change")]
         assert searched.trigger_mode == "always_last"
-        assert searched.outputs == [each.fold, each.drawn, each.searched]
+        # The folds changed in place (`ListClock`), never an output.
+        assert searched.inputs == [each.fold, each.clock]
+        assert searched.outputs == [each.drawn, each.searched]
         # The box's one listener: two "always_last" listeners of one event set
         # each other off without end in Gradio 6.30 (a page follows the search
         # on `searched`; Models' wiring test checks it there).
@@ -1766,7 +1772,10 @@ def test_what_was_said_beside_load_stays_while_its_selection_is_drawn(
     Load that opens its confirmation says the selection's own reason."""
     demo, _ctx, handle, _ = _component("clinical")
     page = _Page(demo, handle)
-    page[handle.listing] = listing = _listing(root, monkeypatch)
+    operator_mode(monkeypatch)
+    page[handle.workspace] = "demo"
+    page.act("_refresh")
+    listing = page[handle.listing]
     picked = _key("model-12.pt")
     page.act("_select", evt={"key": picked})
     assert page[handle.selected] == picked and page[handle.reason] == ""
@@ -1803,10 +1812,10 @@ def test_a_draw_token_is_new_every_time_whatever_the_clock_reads(root, serving, 
     changes write two tokens."""
     demo, _ctx, handle, _ = _component("research")
     searched = next(fn for fn in demo.fns.values() if fn.name == "_searched")
-    assert searched.outputs[1] is handle.drawn
+    assert searched.outputs[0] is handle.drawn
     monkeypatch.setattr(time, "monotonic_ns", lambda: 1)
     monkeypatch.setattr(time, "monotonic", lambda: 1.0)
-    first, second = searched.fn({})[1], searched.fn({})[1]
+    first, second = searched.fn({})[0], searched.fn({})[0]
     assert first != second and 0 not in (first, second)
     assert ml.draw_token() != ml.draw_token()
 
@@ -1891,10 +1900,12 @@ def test_a_view_shaped_for_another_workspace_never_hides_this_workspaces_rows(
     operator_mode(monkeypatch)
 
     def refresh(view, previous):
-        out = handle.refresh["fn"]("demo", False, view, previous, None, gradio_request())
+        fold = {}
+        out = handle.refresh["fn"]("demo", False, view, previous, None, gradio_request(), "",
+                                   fold)
         by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
         return by, _drawn(demo, handle, by[id(handle.listing)], by[id(handle.selected)],
-                          by[id(handle.show_older)], view, "", by[id(handle.fold)])
+                          by[id(handle.show_older)], view, "", fold)
 
     by, drawn = refresh(family, {**ml.empty_listing(), "workspace": "other"})
     rows = drawn[id(handle.rows)]
@@ -2291,7 +2302,7 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
         session = uuid.uuid4().hex
         answers = []
         with TestClient(app, base_url=base_url) as client:
-            for fn, data in ((refresh, [None, False, None, None, None, "", {}]),
+            for fn, data in ((refresh, [None, False, None, None, None, "", {}, None]),
                              (draw, [None] * len(draw.inputs))):
                 started = client.post(f"/ui/gradio_api/call/{fn.api_name}",
                                       json={"data": data, "session_hash": session})
@@ -2482,17 +2493,20 @@ def test_the_refresh_keeps_the_selection_and_the_folds_and_a_lone_row_is_chosen(
     before = ml.list_models("demo", request)
     picked = _key("model-03.pt")
     fold = {ml.run_node("gatv2/20261013-080000_disease_cccccc"): True}
+    # The session's one fold dict: a refresh changes it in place, never returns it.
+    session_fold = dict(fold)
+    assert handle.fold not in handle.refresh["outputs"]
     out = handle.refresh["fn"]("demo", False, {"task": "disease"}, before, picked, request,
-                               "nothing matches this", fold)
+                               "nothing matches this", session_fold)
     by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
-    assert by[id(handle.selected)] == picked and by[id(handle.fold)] == fold
+    assert by[id(handle.selected)] == picked and session_fold == fold
     drawn = _drawn(demo, handle, by[id(handle.listing)], picked, False, {"task": "disease"},
-                   "nothing matches this", fold)
+                   "nothing matches this", session_fold)
     assert "Selected model not shown by this filter (Task: Disease" in drawn[id(handle.rows)]
     out = handle.refresh["fn"]("demo", False, None, {**before, "workspace": "other"}, picked,
-                               request, "", fold)
+                               request, "", session_fold)
     by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
-    assert by[id(handle.selected)] is None and by[id(handle.fold)] == {}
+    assert by[id(handle.selected)] is None and session_fold == {}
     # A lone candidate (the drawer's one task model) is chosen.
     lone = {**before, "items": [i for i in before["items"] if i["filename"] == "model-03.pt"]}
     assert ml.kept_selection(None, lone, None, None, ml.PRESETS["clinical"]) == picked
@@ -2513,14 +2527,16 @@ def test_a_fold_toggle_is_kept_and_draws_nothing_again(root, serving, monkeypatc
     assert select.trigger_mode == "multiple"
     listing = _listing(root, monkeypatch)
     node = ml.run_node("gatv2/20261015-080000_gene_aaaaaa")
-    out = select.fn(listing, None, False, None, "", {}, gr.EventData(None, {"fold": node,
-                                                                          "open": True}),
+    fold = {}
+    out = select.fn(listing, None, False, None, "", fold, gr.EventData(None, {"fold": node,
+                                                                            "open": True}),
                     gradio_request())
     by = dict(zip(map(id, select.outputs), out, strict=True))
-    assert by[id(handle.fold)] == {node: True}
+    # Kept in the session's one fold dict, in place (`ListClock`), never an output.
+    assert fold == {node: True} and handle.fold not in select.outputs
     # Nothing else changed, and no draw asked for (the draw token unchanged).
     assert handle.drawn in select.outputs and handle.rows not in select.outputs
-    assert all(v == gr.update() for k, v in by.items() if k != id(handle.fold))
+    assert all(v == gr.update() for v in by.values())
     assert "foldRows(node, open)" in ml.MODEL_LIST_JS and "scrollIntoView" in ml.MODEL_LIST_JS
 
 
@@ -2754,17 +2770,18 @@ def test_a_search_reveals_what_it_found_and_clearing_it_brings_the_folds_back(
         return {k: h for _c, k, h in _rows(rows) if k}[_key("model-03.pt")]
 
     query = root["shas"]["model-03.pt"][:8]
-    fold, _token, _searched = searched.fn({**manual, ml.search_node(run): False})
+    fold = {**manual, ml.search_node(run): False}
+    searched.fn(fold)
     assert fold == manual                      # the operator's folds kept; an old search's dropped
-    assert searched.outputs == [handle.fold, handle.drawn, handle.searched]
+    assert searched.outputs == [handle.drawn, handle.searched]
     drawn = _drawn(demo, handle, listing, None, False, None, query, fold)
     assert not hidden(drawn[id(handle.rows)])  # revealed while the search shows the list
     assert drawn[id(handle.count)].startswith("1 run matches")
     # Folded again while the search is shown: that search's, the manual entry untouched.
-    out = select.fn(listing, None, False, None, query, fold,
-                    gr.EventData(None, {"fold": run, "open": False, "searched": True}),
-                    gradio_request())
-    during = dict(zip(map(id, select.outputs), out, strict=True))[id(handle.fold)]
+    select.fn(listing, None, False, None, query, fold,
+              gr.EventData(None, {"fold": run, "open": False, "searched": True}),
+              gradio_request())
+    during = dict(fold)
     assert during == {**manual, ml.search_node(run): False}
     assert hidden(ml.list_html(listing, None, ml.PRESETS["research"], search=query, fold=during))
     # Cleared (Clear empties the box in the page, and its change is the
@@ -2772,7 +2789,8 @@ def test_a_search_reveals_what_it_found_and_clearing_it_brings_the_folds_back(
     (clear,) = [fn for fn in demo.fns.values() if (handle.search_clear._id, "click") in fn.targets]
     assert clear.fn is None and clear.outputs == [handle.search]
     assert searched.targets == [(handle.search._id, "change")]
-    fold, _token, _searched = searched.fn(during)
+    fold = dict(during)
+    searched.fn(fold)
     assert fold == manual
     assert hidden(_drawn(demo, handle, listing, None, False, None, "", fold)[id(handle.rows)])
     assert ml.fold_open(manual, run, "", False, True) is False
