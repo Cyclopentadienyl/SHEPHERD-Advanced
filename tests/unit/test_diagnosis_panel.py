@@ -802,7 +802,7 @@ def test_the_load_drawers_note_is_a_row_under_load_and_its_task_segment_stays_wh
     and Cancel, at the measure, as Models says it. The drawer's Task segment kept its labels
     whole by wrapping them, and at 390 x 844 left one alone on a line (3 + 1, "orphan"): it is
     a segment whose labels stay whole (`style.SEG_WHOLE`), one row or one label a line, by the
-    layout pass's mark. The whole drawer is walked at zero findings by the shared walk
+    layout pass's mark. The drawer is walked open at zero findings in every state
     (`test_webui_shell.py::test_every_page_of_every_state_has_no_layout_finding`)."""
     from src.webui.style import SEG_WHOLE, SHELL_CSS
 

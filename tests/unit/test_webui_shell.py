@@ -2239,6 +2239,29 @@ _CHANGE_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
 #: the × in its header (R-49).
 _CONTINUE_DRAWER = {"click": "#shep-train-continue", "shown": "#shep-train-drawer",
                     "close": "#shep-train-drawer-close"}
+#: The drawers the layout walks open (`_layout_walk_stops`), as a reader first sees each: the
+#: Diagnosis Load drawer (no row chosen), and where a run and a registry let them open
+#: (configured), Training's Continue drawer and the Test page's import drawer.
+_LOAD_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
+                "close": "#shep-dx-change-close button"}
+_IMPORT_DRAWER = {"click": "#shep-test-import-open", "shown": "#shep-test-import",
+                  "close": "#shep-test-import-close"}
+#: The windows a drawer is opened at in a layout walk: the owner's, a laptop, a portrait column
+#: and a phone (where the drawers' foot, header and fields change their layout).
+_DRAWER_SIZES = ((1850, 960), (1366, 768), (960, 1080), (390, 844))
+
+
+def _layout_walk_stops(configured: bool):
+    """**A state's layout walk**: every page at `browser.LAYOUT_SIZES` (`layout_stops`), then
+    its drawers open at `_DRAWER_SIZES` (the Load drawer in every state; Continue and import
+    where `configured`), each stop's layout rules recorded, no focus walk."""
+    from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES, layout_stops
+
+    drawers = [("clinical", _LOAD_DRAWER)] + ([("training", _CONTINUE_DRAWER), ("test", _IMPORT_DRAWER)]
+                                             if configured else [])
+    return layout_stops(UI_PAGES, LAYOUT_SIZES) + [
+        {"size": [w, h], "page": page, "open": drawer, "focus": False}
+        for w, h in _DRAWER_SIZES for page, drawer in drawers]
 
 #: A static page for the shared focus walk itself (`browser.LOOK_JS`'s
 #: `focusWalk`): two buttons that draw a 3 px ring on keyboard focus, with no
@@ -2358,13 +2381,14 @@ def ui_walk(ui_world):
 def ui_walk_configured(ui_world):
     """**The configured walk at the layout sizes** (the sweep's integration, its
     decision 4): every page of the configured service (`ui_world`) at
-    `browser.LAYOUT_SIZES`, the layout rules recorded at each stop (no focus
-    walk), screenshots under the module's ``ui-walk*/layout/shots``."""
-    from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES, layout_stops, walk_ui
+    `browser.LAYOUT_SIZES` and its drawers open (`_layout_walk_stops`), the
+    layout rules recorded at each stop (no focus walk), screenshots under the
+    module's ``ui-walk*/layout/shots``."""
+    from tests.fixtures.browser import walk_ui
 
     root = ui_world["root"] / "layout"
     (root / "shots").mkdir(parents=True)
-    return walk_ui(ui_world["page"], root, layout_stops(UI_PAGES, LAYOUT_SIZES), shots=root / "shots")
+    return walk_ui(ui_world["page"], root, _layout_walk_stops(True), shots=root / "shots")
 
 
 def test_one_layout_decision_at_every_size_and_back(ui_walk):
@@ -3432,21 +3456,16 @@ def ui_walk_first_use(tmp_path_factory):
     """**The first-use walk** (the UI sweep of 2026-11-22): the service as a
     first start serves it (no workspaces folder, no results registry, the
     launcher's local start: `browser.state_settings("first_use")`), every
-    page at `browser.LAYOUT_SIZES`, the layout rules recorded at each stop (no
-    focus walk), screenshots under the module's ``ui-walk-first-use*/shots``."""
-    from tests.fixtures.browser import (
-        LAYOUT_SIZES,
-        UI_PAGES,
-        layout_stops,
-        node_with_playwright,
-        walk_state,
-    )
+    page at `browser.LAYOUT_SIZES` and the Load drawer open (`_layout_walk_stops`), the
+    layout rules recorded at each stop (no focus walk), screenshots under the module's
+    ``ui-walk-first-use*/shots``."""
+    from tests.fixtures.browser import node_with_playwright, walk_state
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     root = tmp_path_factory.mktemp("ui-walk-first-use")
     (root / "shots").mkdir()
-    return walk_state("first_use", root, layout_stops(UI_PAGES, LAYOUT_SIZES), shots=root / "shots",
+    return walk_state("first_use", root, _layout_walk_stops(False), shots=root / "shots",
                       extra_js=_HEADER_FACTS_JS)
 
 
@@ -3454,20 +3473,14 @@ def ui_walk_first_use(tmp_path_factory):
 def ui_walk_empty(tmp_path_factory):
     """**The empty-folder walk**: an empty workspaces folder and an empty
     registry (`browser.state_settings("empty")`), every page at
-    `browser.LAYOUT_SIZES`."""
-    from tests.fixtures.browser import (
-        LAYOUT_SIZES,
-        UI_PAGES,
-        layout_stops,
-        node_with_playwright,
-        walk_state,
-    )
+    `browser.LAYOUT_SIZES` and the Load drawer open (`_layout_walk_stops`)."""
+    from tests.fixtures.browser import node_with_playwright, walk_state
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     root = tmp_path_factory.mktemp("ui-walk-empty")
     (root / "shots").mkdir()
-    return walk_state("empty", root, layout_stops(UI_PAGES, LAYOUT_SIZES),
+    return walk_state("empty", root, _layout_walk_stops(False),
                       shots=root / "shots", extra_js=_HEADER_FACTS_JS)
 
 
@@ -3807,25 +3820,27 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
     assert [o for o in found["overlap"] if "#o1" in o and "#o2" in o], found["overlap"]
 
 
-@pytest.mark.parametrize("state", ["first_use", "empty", "configured", "configured-shared-walk"])
+@pytest.mark.parametrize("state", ["first_use", "empty", "configured"])
 def test_every_page_of_every_state_has_no_layout_finding(state, request):
     """**The layout rules held at zero** (the sweep's integration, its decision 4; no allow-list):
     every page as an operator sees it, at every layout size (`browser.LAYOUT_SIZES`: the owner's
     window, the owner's Firefox width, two laptops, a portrait column and a phone, then the
     owner's again), at first use (no workspaces folder, no results registry: the owner's six
     screenshots), with an empty workspaces folder and registry, and configured (the demo
-    workspace, a child served), has none of the layout rules' findings
-    (`browser.layout_problems`: beside, narrow-box, overlap, orphan, centred, split-group,
-    edge, clipped, empty-region, help-on-page, notice-repeat, tab-groups). The shared
-    measurement walk (`ui_walk`: its other windows, the Diagnosis Load drawer and Training's
-    Continue drawer open) has none either. One service a state, one browser a walk."""
+    workspace, a child served), and its drawers open as a reader first sees them (the Diagnosis
+    Load drawer in every state; Training's Continue drawer and the Test page's import drawer
+    configured), has none of the layout rules' findings (`browser.layout_problems`: beside,
+    narrow-box, overlap, orphan, centred, split-group, edge, clipped, empty-region,
+    help-on-page, notice-repeat, tab-groups). One service a state, one browser a walk."""
     from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES, layout_problems
 
     seen = request.getfixturevalue({"first_use": "ui_walk_first_use", "empty": "ui_walk_empty",
-                                    "configured": "ui_walk_configured",
-                                    "configured-shared-walk": "ui_walk"}[state])
-    checked = [s for s in seen if "check" in s and "layout" in s["check"]]
-    if state != "configured-shared-walk":            # what was measured, so that none means something
-        assert {(s["page"], s["size"]) for s in checked} == {
-            (page, f"{w}x{h}") for page in UI_PAGES for w, h in LAYOUT_SIZES}
-    assert checked and layout_problems(seen) == []
+                                    "configured": "ui_walk_configured"}[state])
+    pages = [s for s in seen if not s.get("open") and "check" in s and "layout" in s["check"]]
+    # What was measured, so that none means something: every page at every size, every drawer.
+    assert {(s["page"], s["size"]) for s in pages} == {
+        (page, f"{w}x{h}") for page in UI_PAGES for w, h in LAYOUT_SIZES}
+    drawers = {"#shep-dx-change"} | ({"#shep-train-drawer", "#shep-test-import"}
+                                     if state == "configured" else set())
+    assert {s["open"] for s in seen if s.get("open")} == drawers
+    assert layout_problems(seen) == []
