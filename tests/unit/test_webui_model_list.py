@@ -2970,6 +2970,87 @@ def test_a_re_read_clears_a_newer_pick_no_longer_listed_and_never_sets_back_its_
     assert "Select a model" in page[handle.facts]
 
 
+def test_a_selection_gone_from_a_re_read_is_cleared_and_said_never_replaced(
+        root, serving, monkeypatch):
+    """The owner's selection rule (the recheck of bd5e678), in the shared
+    rule (`kept_selection`, `ListClock.commit_listing`): (a) a first listing,
+    or another workspace's, with nothing selected preselects its lone
+    loadable row (R-27; a preselection loads nothing); (c) a search or a
+    filter that hides the selection keeps it, said as not shown; (b) the same
+    workspace read again without the checkpoint selected clears it and never
+    selects another file, not even the lone loadable row left, and says so
+    beside Load (the list's `said`), Load off and the facts empty; a re-read
+    with nothing selected chooses nothing, and a pick is the selection."""
+    shutil.copytree(root["workspace"], root["root"] / "other")
+    page, handle = _session("research")
+    operator_mode(monkeypatch)
+    said = handle.refresh["outputs"][4]
+    preset = ml.PRESETS["research"]
+    chosen, lone = _key("model-12.pt"), _key("model-05.pt")
+    original = ml.list_models
+
+    def only(*keys):
+        def read(*args, **kwargs):
+            listing = original(*args, **kwargs)
+            return {**listing, "items": [i for i in listing["items"] if ml.item_key(i) in keys]}
+        return read
+
+    # (a) The first listing: its lone loadable row preselected, nothing said.
+    monkeypatch.setattr(ml, "list_models", only(lone))
+    page[handle.workspace] = "demo"
+    page.act("_refresh")
+    assert page[handle.selected] == lone and page[said] is None
+    # (c) Read again whole (the preselection kept), another row picked, a
+    # search hiding it, read again: kept, said as not shown.
+    monkeypatch.setattr(ml, "list_models", original)
+    page.act("_refresh")
+    assert page[handle.selected] == lone and page[said] is None
+    page.act("_select", evt={"key": chosen, "gen": "1"})
+    assert page[handle.selected] == chosen
+    page.type("gene")
+    page.act("_refresh")
+    assert page[handle.selected] == chosen and page[said] is None
+    assert "Selected model not shown" in page[handle.rows]
+    page.clear()
+    # (b) Read again without it, one loadable row left: cleared and said, never
+    # that row; Load off, no facts.
+    monkeypatch.setattr(ml, "list_models", only(lone))
+    page.act("_refresh")
+    assert page[handle.selected] is None and page[handle.clock].selected is None
+    assert page[said] == {"key": None, "html": f'<div class="shep-reason shep-reason-grey">'
+                                               f'{ml.SELECTION_GONE}</div>'}
+    assert ml.SELECTION_GONE in page[handle.reason]
+    assert "Select a model" in page[handle.facts]
+    assert 'aria-current="true"' not in page[handle.rows]
+    drawing = ml.list_drawing(page[handle.listing], page[handle.selected], preset,
+                              said=page[said])
+    assert drawing.load["interactive"] is False and ml.SELECTION_GONE in drawing.reason
+    # A search keeps what was said (`said` is the list's state, drawn with no selection).
+    page.type("disease")
+    assert ml.SELECTION_GONE in page[handle.reason]
+    page.clear()
+    # Read again with nothing selected: still nothing chosen, nothing said.
+    page.act("_refresh")
+    assert page[handle.selected] is None and page[said] is None
+    assert ml.SELECTION_GONE not in page[handle.reason]
+    # A pick is the selection, and nothing is said beside Load.
+    page.act("_select", evt={"key": lone, "gen": "1"})
+    assert page[handle.selected] == lone and page[said] is None
+    # (a) Another workspace, one loadable row: preselected, nothing said.
+    page[handle.workspace] = "other"
+    page.act("_refresh")
+    assert page[handle.listing][ml.GENERATION] == 2
+    assert page[handle.selected] == lone and page[said] is None
+    # The rule alone: of the same workspace never a lone candidate.
+    listing = only(lone)("demo", gradio_request())
+    same = {"workspace": "demo"}
+    assert ml.kept_selection(same, listing, chosen, None, preset) is None
+    assert ml.kept_selection(same, listing, None, None, preset) is None
+    assert ml.kept_selection(same, listing, lone, None, preset) == lone
+    assert ml.kept_selection(None, listing, None, None, preset) == lone
+    assert ml.kept_selection({"workspace": "other"}, listing, chosen, None, preset) == lone
+
+
 def test_a_re_read_answered_after_another_workspace_was_chosen_changes_nothing(
         root, serving, monkeypatch):
     """SL-R3 (the opening's re-read held while another workspace is chosen and

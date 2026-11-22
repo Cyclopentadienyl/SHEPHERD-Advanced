@@ -65,8 +65,9 @@ it). By default every run is folded but the selection's and the model in
 use's, which is located (scrolled into view once per view). **Nothing
 changes what is selected but a click on a row**: a filter, a search, a fold
 or a refresh keeps a selection still listed (`kept_selection`), and one the
-list does not show is said (`outside_html`). A lone candidate is chosen
-(R-27).
+list does not show is said (`outside_html`); one a refresh no longer lists is
+cleared and said beside Load (`SELECTION_GONE`), never replaced by another
+file. A lone candidate is chosen when a workspace is first listed (R-27).
 
 **A page shapes its view** through ``ModelList.view`` (a `gr.State` the page
 sets; the list is drawn again on its ``.change``), never by drawing rows itself:
@@ -828,23 +829,31 @@ def refused_line(listing: Mapping[str, Any]) -> str:
     return f"{operator_only(listing.get('condition'))}."
 
 
+#: Said beside Load when the list read again no longer lists the checkpoint
+#: selected (`kept_selection`, `ListClock.commit_listing`): what the list
+#: shows now, never why (the file may be elsewhere, or unreadable).
+SELECTION_GONE = "The checkpoint selected before is not in the list now. Select one again."
+
+
 def kept_selection(previous: Any, listing: Mapping[str, Any], key: Any,
                    view: Any = None, preset: Optional[Preset] = None, *,
                    search: Any = "") -> Optional[str]:
-    """**The selection a new listing keeps** (D04): `key` when the listing is
-    of the same workspace as `previous` and still lists that checkpoint among
-    the rows its preset ever shows, whatever the view's filter, the search or
-    the fold state show (a selection the list does not show says so,
-    `outside_html`, and keeps its details); else, when exactly one row is
-    shown and it can be loaded, that row (R-27: a lone candidate is no dead
-    end); else None."""
+    """**The selection a new listing keeps** (D04; the owner's rule after the
+    recheck of bd5e678). Of the same workspace as `previous` (the list read
+    again): `key` while the listing still lists that checkpoint among the rows
+    its preset ever shows, whatever the view's filter, the search or the fold
+    state show (a selection the list does not show says so, `outside_html`,
+    and keeps its details); else None: a selection gone is cleared, never
+    replaced by another file, not even a lone candidate (the clock says so
+    beside Load, `SELECTION_GONE`), and a re-read with nothing selected
+    chooses nothing. A first listing (`previous` None, or another workspace):
+    the lone row shown, when exactly one is and it can be loaded (R-27: a
+    lone candidate is no dead end; a preselection loads nothing); else None."""
     if listing.get("refused"):
         return None
-    if key and isinstance(previous, Mapping) and previous.get("workspace") == listing.get(
-            "workspace"):
-        item = find_item(listing, key)
-        if item is not None and item in shown_items(listing, None, preset):
-            return key
+    if isinstance(previous, Mapping) and previous.get("workspace") == listing.get("workspace"):
+        item = find_item(listing, key) if key else None
+        return key if item is not None and item in shown_items(listing, None, preset) else None
     shown = [i for i in shown_items(listing, view, preset) if search_hit(i, search)]
     return lone_key(shown, can_load)
 
@@ -3110,12 +3119,15 @@ def load_closed_js(elem_id: str) -> str:
 
 class Refreshed(NamedTuple):
     """What a re-read of the list committed (`ListClock.commit_listing`): the
-    listing (carrying its generation), the selection kept and "Show older
-    runs"."""
+    listing (carrying its generation), the selection kept, "Show older runs",
+    and what it says beside Load (``said``, `list_drawing`): None, or, where
+    it cleared a selection the listing no longer lists, `SELECTION_GONE`
+    for no selection."""
 
     listing: Dict[str, Any]
     selected: Optional[str]
     older: bool
+    said: Optional[Dict[str, Any]] = None
 
 
 class ListRead(NamedTuple):
@@ -3158,10 +3170,12 @@ class ListClock:
       workspace's listing was committed since it began; of the same
       workspace, it writes the listing and keeps the selection committed
       last (a pick made while it read), judged by the one rule
-      (`kept_selection`: still listed, or cleared, or a lone candidate),
-      never the selection it began with; it keeps "Show older runs", and its
-      answer is dropped where "Show older runs" was asked while it read only
-      the latest runs;
+      (`kept_selection`: kept while still listed, else cleared and said
+      beside Load, never replaced by another file), never the selection it
+      began with; a first listing, or another workspace's, preselects a lone
+      candidate (R-27); it keeps "Show older runs", and its answer is
+      dropped where "Show older runs" was asked while it read only the
+      latest runs;
     - **the folds** are the session's one dict (the ``fold`` State), changed
       in place under this lock by each handler that changes them and
       returned by none, so no answer writes back an older copy.
@@ -3245,14 +3259,18 @@ class ListClock:
                        view: Any, preset: Optional[Preset], search: Any,
                        fold: Dict[str, Any]) -> Optional[Refreshed]:
         """Commit a re-read (`began` its start), or None where its answer is
-        stale (the class's rules). Another workspace's listing starts afresh:
-        a new generation, nothing selected but a lone candidate, no fold,
-        "Show older runs" off."""
+        stale (the class's rules). Of the same workspace: the selection
+        committed last while still listed; one the listing no longer lists is
+        cleared, never replaced, and said beside Load (`SELECTION_GONE`).
+        Another workspace's listing, or the first, starts afresh: a new
+        generation, nothing selected but a lone candidate, no fold, "Show
+        older runs" off."""
         with self.lock:
             generation, asked = began
             if generation != self.generation:
                 return None
             workspace = listing.get("workspace")
+            gone = False
             if self.listed and workspace == self.workspace:
                 if self.older and listing.get("runs_unread"):
                     if asked != self.older_asked:
@@ -3263,6 +3281,7 @@ class ListClock:
                     older = self.older
                 key = kept_selection({"workspace": workspace}, listing, self.selected, view,
                                      preset, search=search)
+                gone = self.selected is not None and key is None and not listing.get("refused")
             else:
                 self.generation += 1
                 self.listed, self.workspace = True, workspace
@@ -3270,7 +3289,9 @@ class ListClock:
                 key = kept_selection(None, listing, None, view, preset, search=search)
                 fold.clear()
             self.selected, self.older = key, older
-            return Refreshed({**listing, GENERATION: self.generation}, key, older)
+            said = ({"key": None, "html": f'<div class="shep-reason shep-reason-grey">'
+                                          f'{r.e(SELECTION_GONE)}</div>'} if gone else None)
+            return Refreshed({**listing, GENERATION: self.generation}, key, older, said)
 
     def commit_pick(self, listing: Any, sent: Any, key: str, fold: Dict[str, Any],
                     unfold: Mapping[str, Any]) -> bool:
@@ -3631,10 +3652,11 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         # Reading the list is no act: a refused read says why in the list
         # (`refused_line`); Load's reason is said when Load is clicked, or
         # beside it at once for a row whose record is never loaded. What was
-        # said beside Load was said of the list read before.
+        # said beside Load was said of the list read before; a selection the
+        # list no longer lists is cleared and said (`Refreshed.said`).
         return (done.listing, done.selected,
                 gr.update(choices=choices, value=read.listing.get("workspace")), done.older,
-                None, draw_token())
+                done.said, draw_token())
 
     def _refresh(name, older, current_view, previous, key, request: gr.Request, query="",
                  fold_state=None, session=None):
@@ -3924,6 +3946,7 @@ __all__ = [
     "PRESETS",
     "Preset",
     "REPLACES_NOTE",
+    "SELECTION_GONE",
     "TASK_FILTERS",
     "TO_CHANGED",
     "can_load",
