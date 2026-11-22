@@ -154,7 +154,14 @@ def test_listing_the_bases_is_an_operator_control(root, monkeypatch):
 
 
 def test_an_empty_list_says_why(root, operator):
-    assert "Select a dataset first." in fp._on_finetune_bases(operator, {}, None)[3]
+    # A listed dataset not chosen: the line asks for one. None listed, or no
+    # workspaces folder: the identity line or the setup notice says why, and
+    # this line says nothing (each cause once on a screen).
+    listed = {"choices": [["demo", "demo"]]}
+    assert "Select a dataset first." in fp._on_finetune_bases(operator, listed, None)[3]
+    assert fp._on_finetune_bases(operator, {}, None)[3] == ""
+    notice = {"key": "workspaces_root", "summary": "No workspaces folder is set."}
+    assert fp._on_finetune_bases(operator, {**listed, "notice": notice}, None)[3] == ""
     assert "train one on Research › Training" in fp.bases_note_html({}, None)
     assert "&lt;img" in fp.bases_note_html({}, TAG) and "<img" not in fp.bases_note_html({}, TAG)
 
@@ -235,11 +242,12 @@ def test_the_task_options_carry_readiness_and_follow_the_skill(readiness):
 def test_why_a_task_is_not_ready_is_said_under_the_group():
     note = fp.tasks_note_html({"disease": None, "gene": "no functional fixture",
                                "patients_like_me": "no functional fixture"})
-    assert "Not ready: Gene and Patients-like-me: no functional fixture." in note
+    # One sentence per reason, one colon, no semicolon (the text brief's §2).
+    assert "Gene and Patients-like-me are not ready: no functional fixture." in note
     assert fp.tasks_note_html({"disease": None, "gene": None, "patients_like_me": None}) == ""
     mixed = fp.tasks_note_html({"disease": TAG, "gene": "x", "patients_like_me": "x"})
-    assert "<img" not in mixed and "Disease: &lt;img" in mixed and "Gene and Patients-like-me: x" \
-        in mixed
+    assert "<img" not in mixed and "Disease is not ready: &lt;img" in mixed
+    assert "Gene and Patients-like-me are not ready: x." in mixed and ";" not in note
 
 
 def test_the_page_opens_on_its_own_dataset_starting_from_trainings(root):
@@ -358,7 +366,7 @@ def test_a_frozen_graph_backbone_reaches_the_start_and_the_note_says_what_trains
     note = fp.freeze_note_html("graph_side")
     assert note == (f'<p class="shep-ft-why">{fp.FROZEN_NOTE}</p>')
     assert "only the patient encoder and the task head train" in note
-    assert "the LP term trains nothing" in note
+    assert "The LP term trains nothing" in note and ";" not in note
 
 
 @pytest.mark.parametrize("change, words", [
@@ -646,9 +654,11 @@ def test_a_change_of_tasks_starts_each_task_setting_again():
                                                    *_fields())
     assert dict(zip(fp.TASK_FIELDS, updates, strict=True))["num_neighbors"]["value"] == (
         "15, 10, 5")
+    # Each child's reference as a term row under the lead, no semicolon.
     note = fp.hops_note_html(["disease", "gene"], None)
-    assert "Untouched, each child takes its task’s reference: Disease 15, 10, 5; Gene all " \
-           "neighbours, 10, 5." in note
+    assert fp.HOPS_EACH_LEAD in note and ";" not in note
+    assert '<dt class="shep-k">Disease</dt><dd class="shep-v">15, 10, 5</dd>' in note
+    assert '<dt class="shep-k">Gene</dt><dd class="shep-v">all neighbours, 10, 5</dd>' in note
     assert fp.hops_note_html(["disease", "patients_like_me"], None) == ""
     # The record leaves the browser's keys as they are but those dropped.
     assert fp.TASK_OWN_FIELDS == tuple(n for n in fp.TASK_FIELDS if n not in fp.ANY_TASKS)
@@ -758,7 +768,7 @@ def test_the_hop_list_against_the_bases_encoder_is_the_starts_own_check(root, op
         assert view[1]["visible"] is True and view[2]["visible"] is True, tasks
         assert "open" not in view[0]
         note = view[-3]
-        assert r.status_mark("warn", f"{fp.HOPS_REFERENCE_LEAD}: {labelled}") in note, note
+        assert r.status_mark("warn", f"{fp.HOPS_REFERENCE_LEAD}. {labelled}") in note, note
         # Beside Start: where the field is, the sentence said once (beside it).
         assert view[-1] == ('<span class="shep-ft-hops-warn">' + r.status_mark(
             "warn", "Neighbours per hop does not fit this base: see the field under Epochs.")
@@ -1043,6 +1053,90 @@ def test_start_and_stop_follow_the_training_run_bars_states():
     assert held["start"] is False and "<img" not in held["reason"]
 
 
+def _words(html):
+    """What a reader reads of `html`: its text, spaces collapsed."""
+    return " ".join(re.sub(r"<[^>]+>", " ", html).split())
+
+
+def test_at_first_use_the_form_says_the_missing_folder_once(monkeypatch, operator):
+    """First use (the UI sweep of 2026-11-22: GB10-UI-02, B-10, R2): with no
+    workspaces folder, the form's setup notice says it once, at the top of the
+    form it empties: its state, what it means for Start, its next step a link
+    to Settings › Data locations and the rest under "Details ›", the GPU
+    lock's notice merged into it (it follows from the folder's). The
+    identity, base and task lines say nothing of it, and Start's reason is a
+    one-line relation to it. It drew the whole server sentence under Dataset
+    (296 characters) and the GPU refusal beside Start (389), and the cause
+    said three times."""
+    from src.config.server_settings import (GPU_LOCK_NOT_CONFIGURED, GPU_LOCK_NOTICE,
+                                            WORKSPACES_ROOT_NOT_SET, WORKSPACES_ROOT_NOTICE)
+
+    monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    ws, _dataset, identity, _tasks, tasks_note = fp._open({}, None, [])
+    assert ws["notice"]["key"] == "workspaces_root"
+    bases_note = fp._on_finetune_bases(operator, ws, None)[3]
+    card, _start, _stop, reason, stop_reason, _ask, setup, _cache = fp._card_view(
+        {}, {}, operator, ws)
+    screen = "".join((setup, identity, tasks_note, bases_note, reason, stop_reason, card))
+    # Said once: one notice, its key once, its summary once; the GPU lock's
+    # merged into it, never drawn apart.
+    assert screen.count("data-notice=") == 1 and 'data-notice="workspaces_root"' in setup
+    assert 'data-notice-also="gpu_lock"' in setup
+    assert _words(screen).count(WORKSPACES_ROOT_NOTICE.summary) == 1
+    assert GPU_LOCK_NOTICE.summary not in _words(screen)
+    assert identity == tasks_note == bases_note == ""
+    # The notice: the state, the consequence, the link, the why one click away.
+    assert fp.SETUP_CONSEQUENCE in setup and 'data-shep-go="settings"' in setup
+    assert "Details ›" in setup
+    # No long server sentence anywhere on the form.
+    assert WORKSPACES_ROOT_NOT_SET not in screen and GPU_LOCK_NOT_CONFIGURED not in screen
+    # Start's reason: a relation to the notice, on one line beside Start.
+    assert 'data-notice-rel="gpu_lock"' in reason and "Details" not in reason
+    assert "Start disabled: GPU jobs need a workspaces folder (see above)." in _words(reason)
+    assert len(_words(reason)) < 100
+    # A usable folder holding no workspace: no notice; the identity line says
+    # what to do in its own words.
+    assert fp.setup_html(None, None) == "" and fp.identity_html({"choices": []}) == (
+        f'<p class="shep-muted">{r.e(fp.NO_WORKSPACE_YET)}</p>')
+
+
+def test_starts_gpu_reason_is_one_line_relation_never_the_notice_again():
+    """B-10, the text brief's §12: Start's GPU reason was "Start disabled —
+    the GPU lock cannot be used (" and the whole refusal (389 characters)
+    beside Start. Now: with the lock's notice said by the setup notice
+    (`said_above`), the relation's one line ("(see above)", no Details); not
+    said there, its own short words with the notice's why under "Details ›"
+    (an operator's own for a lock set and not usable); a GPU job of the
+    runner's own keeps the lock line's words. Escaped."""
+    from src.webui.components.workspaces import lock_notice
+
+    unset = {"text": "the GPU lock cannot be used", "test": False, "unset": True,
+             "notice": lock_notice({"problem": "x", "unset": True})}
+    above = fp.actions_view({"status": "idle"}, access=_Access(True), gpu=unset,
+                            confirming=False, said_above=True)
+    assert above["start"] is False and 'data-notice-rel="gpu_lock"' in above["reason"]
+    assert _words(above["reason"]).endswith(
+        "Start disabled: GPU jobs need a workspaces folder (see above).")
+    assert "<details" not in above["reason"]
+    apart = fp.actions_view({"status": "idle"}, access=_Access(True), gpu=unset,
+                            confirming=False)
+    assert "(see above)" not in apart["reason"] and "<details" in apart["reason"]
+    assert "Start disabled: GPU jobs need a workspaces folder." in _words(apart["reason"])
+    broken = {"text": "the GPU lock cannot be used", "test": False, "unset": False,
+              "notice": lock_notice({"problem": f"{TAG} is a directory"}, operator=True)}
+    said = fp.actions_view({"status": "idle"}, access=_Access(True), gpu=broken,
+                           confirming=False)
+    assert "Start disabled: the GPU lock cannot be used." in _words(said["reason"])
+    assert "<img" not in said["reason"] and "&lt;img" in said["reason"]
+    # The setup notice merges the lock's only while it follows from the folder's.
+    folder = {"key": "workspaces_root", "kind": "neutral", "summary": "No workspaces folder.",
+              "short": "no folder", "action": "", "target": "", "details": (), "ref": ()}
+    assert 'data-notice-also="gpu_lock"' in fp.setup_html(folder, unset)
+    assert "data-notice-also" not in fp.setup_html(folder, broken)
+    assert fp.SETUP_CONSEQUENCE not in fp.setup_html(folder, None)
+    assert fp.setup_html(None, unset) == ""
+
+
 def test_start_and_stop_are_labelled_by_the_one_gated_rule(monkeypatch):
     """`_card_view` labels Start and Stop by `chips.gated` from this
     request's D8 answer: no lock while allowed; refused, disabled with the
@@ -1051,14 +1145,14 @@ def test_start_and_stop_are_labelled_by_the_one_gated_rule(monkeypatch):
     status = _status(_child("disease", "running", "r"))
     monkeypatch.setattr(fp.training_manager, "get_status", lambda: status)
     operator_mode(monkeypatch)
-    card, start, stop, reason, stop_reason, confirm, _cache = fp._card_view({}, {},
-                                                                            gradio_request())
+    card, start, stop, reason, stop_reason, confirm, _setup, _cache = fp._card_view(
+        {}, {}, gradio_request())
     assert start["value"] == fp.START_LABEL and "🔒" not in start["value"]
     assert stop["value"] == fp.STOP_LABEL and stop["interactive"] is True
     assert "Operator controls only" not in reason + stop_reason
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE")
-    card, start, stop, reason, stop_reason, confirm, _cache = fp._card_view({}, {},
-                                                                            gradio_request())
+    card, start, stop, reason, stop_reason, confirm, _setup, _cache = fp._card_view(
+        {}, {}, gradio_request())
     assert (start["value"], start["interactive"]) == (f"🔒 {fp.START_LABEL}", False)
     assert (stop["value"], stop["interactive"]) == (f"🔒 {fp.STOP_LABEL}", False)
     for line in (reason, stop_reason):
@@ -1158,7 +1252,7 @@ def test_the_page_polls_on_the_slow_timer_without_the_queue_only_when_shown(monk
     assert tick.inputs[0] is ctx.location and tick.show_progress == "hidden"
     monkeypatch.setattr(fp.training_manager, "get_status",
                         lambda: pytest.fail("a tick on another page read the status"))
-    assert fp._poll("training", {}, {}, gradio_request()) == (gr.update(),) * 7
+    assert fp._poll("training", {}, {}, gradio_request()) == (gr.update(),) * fp.CARD_OUTPUTS
     assert not [b for b in demo.blocks.values() if isinstance(b, gr.Timer)
                 and b not in (ctx.timer_fast, ctx.timer_slow)]
 
@@ -1268,9 +1362,39 @@ def test_the_page_follows_the_contract():
     # the deployment window (each row wraps on a narrow form).
     assert row("ft_identity") is row("ft_dataset")
     assert row("ft_run") is row("ft_checkpoint") is row("ft_refresh")
-    # Start, its reason and its refusal on one row; Stop's notice beside Stop.
-    assert row("ft_notice") is row("ft_start") is row("ft_reason")
-    assert row("ft_stop_notice") is row("ft_stop")
+    # Start and why it is off, one bar (B-10, the skill's §2): Start at the
+    # bar's top, its reasons (one-line relations: the GPU lock's, the hop
+    # note's pointer) a column beside it that goes under it when the row is
+    # narrow; what Start would refuse and a refusal (sentences) notes the
+    # bar's width under it, never a column beside the button. Stop the same.
+    bar = row("ft_start")
+    assert bar is row("ft_notice") is row("ft_reason") is row("ft_refused")
+    assert "shep-bar" in bar.elem_classes and by_id["ft_start"].parent is bar
+    why = by_id["ft_reason"].parent
+    assert isinstance(why, gr.Column) and "shep-ft-start-why" in why.elem_classes
+    assert why.parent is bar and by_id["ft_hops_warn"].parent is why
+    for note in ("ft_refused", "ft_notice"):
+        assert by_id[note].parent is bar and "shep-bar-note" in by_id[note].elem_classes, note
+    assert row("ft_stop_notice") is row("ft_stop") and "shep-bar" in row("ft_stop").elem_classes
+    assert "shep-bar-note" in by_id["ft_stop_notice"].elem_classes
+    starts = re.search(r"\.shep-ft-start-row, [^{]*\{\{?([^}]*)\}", fp.PAGE_CSS).group(1)
+    assert "align-items: baseline" in starts and "center" not in starts
+    # The setup notice first in the form's body (a stack), over both columns.
+    body = by_id["ft_form_bd"]
+    assert body.children[0] is by_id["ft_setup"] and "shep-stack" in body.elem_classes
+    assert f"{fp._PAGE} #ft_setup:not(:has(.shep-nb))" in fp.PAGE_CSS
+    # Panels sized by what they hold (M4: a basis, a share, a minimum, in
+    # rem; no `scale=`), the form's columns by what each holds on a line.
+    for panel in ("shep-ft-form", "shep-ft-job"):
+        assert "shep-sized" in by_id[panel].elem_classes, panel
+        sized = re.search(rf"#{panel} \{{\{{?([^}}]*)\}}", fp.PAGE_CSS).group(1)
+        for prop in ("--shep-panel-basis", "--shep-panel-grow", "--shep-panel-min"):
+            assert prop in sized, (panel, prop)
+        assert "px" not in sized, sized
+    # Field rows wrap whole fields; a choice group in one is whole or one
+    # option per line (the shared rule).
+    for name in ("num_epochs", "device"):
+        assert "shep-fields" in row(f"ft_{name}").elem_classes, name
     # The note starts empty (Trained) and is hidden while empty; the field's
     # change redraws it; Start takes the fields in `FINETUNE_FIELDS` order.
     assert by_id["ft_freeze_note"].value == ""
@@ -1365,6 +1489,70 @@ def test_the_page_follows_the_contract():
     (guards,) = [fn for fn in fns if fn.fn is fp._on_guards]
     assert {block.elem_id for block in guards.outputs} == {
         "ft_warmup_steps", "ft_min_lr_ratio", "ft_amp_dtype"}
+
+
+#: The first-use walk's windows for this page (B-10; the L0 report's §7): the
+#: owner's, a short laptop where Start stood centred against its refusal, and
+#: a phone, where the reason goes under Start.
+FIRST_USE_SIZES = ((1850, 960), (1280, 720), (390, 844))
+
+#: What the first-use walk reads of Start's bar at each stop: Start, its bar,
+#: the first line of its reason's words (a range over them, as drawn) and the
+#: notices drawn on the page.
+_START_ROW_JS = r"""() => {
+  const box = (e) => { const b = e.getBoundingClientRect();
+                       return { top: b.top, bottom: b.bottom, left: b.left, right: b.right }; };
+  const drawn = (e) => !!e && e.getClientRects().length > 0;
+  const start = document.querySelector('#ft_start');
+  const words = document.querySelector('#ft_reason .shep-nb-rel .shep-nb-text');
+  let first = null;
+  if (drawn(words)) {
+    const range = document.createRange();
+    range.selectNodeContents(words);
+    const rects = [...range.getClientRects()].filter((r) => r.width > 0);
+    first = rects.length ? { top: rects[0].top, bottom: rects[0].bottom, left: rects[0].left } : null;
+  }
+  return { start: box(start), bar: box(start.closest('.shep-ft-start-row')), first,
+           notices: [...document.querySelectorAll('#shep-page-finetune [data-notice]')]
+             .filter(drawn).map((e) => e.getAttribute('data-notice')) };
+}"""
+
+
+def test_at_first_use_start_stands_on_its_bar_and_the_notice_is_said_once(tmp_path):
+    """B-10 and the L0 report's §7 (the UI sweep of 2026-11-22), in a browser
+    (Node and Playwright, skipped without), the service at first use (no
+    workspaces folder, no registry: `browser.walk_state`), at the owner's
+    window, a short laptop and a phone: no text of 100 characters or more
+    beside a field or button, no control centred in a row much taller than
+    itself, no choice group leaving one option alone, each notice once
+    (the shared layout rules, `browser.layout_problems`, measured relative
+    to what is drawn); the setup notice drawn; Start at its bar's top, its
+    reason's first line beside it on its line, or under it. Fails on
+    8e4c7b6: the dataset sentence beside the fields, the 389-character
+    refusal beside Start, Start centred in its 105 px row at 1280."""
+    from tests.fixtures.browser import (layout_problems, layout_stops, node_with_playwright,
+                                        walk_state)
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    seen = walk_state("first_use", tmp_path, layout_stops(("finetune",), FIRST_USE_SIZES),
+                      extra_js=_START_ROW_JS)
+    assert [stop["size"] for stop in seen] == [f"{w}x{h}" for w, h in FIRST_USE_SIZES]
+    found = layout_problems(seen, rules=("beside", "centred", "orphan", "notice-repeat"),
+                            pages=("finetune",))
+    assert found == [], found
+    for stop in seen:
+        at, facts = stop["size"], stop["extra"]
+        assert facts["notices"] == ["workspaces_root"], (at, facts)
+        start, bar, first = facts["start"], facts["bar"], facts["first"]
+        assert abs(start["top"] - bar["top"]) <= 1, (at, facts)
+        assert first is not None, (at, facts)
+        if first["top"] < start["bottom"]:
+            middle = (first["top"] + first["bottom"]) / 2
+            assert first["left"] >= start["right"] and start["top"] <= middle <= start["bottom"], (
+                at, facts)
+        else:
+            assert first["left"] < start["right"], (at, facts)        # under Start, not beside
 
 
 #: The Fine-tune page served whole (the shell's layout and style sheets), the

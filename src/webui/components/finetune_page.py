@@ -11,6 +11,13 @@ Module: src/webui/components/finetune_page.py
 
 **The form** (left panel; K6 decision 11):
 
+- **The setup notice** (the UI sweep of 2026-11-22; the WebUI skill's §9):
+  while no workspaces folder can be used, the folder's notice is said once,
+  at the top of the form it empties (`setup_html`: its state, what it means
+  for Start, its next step a link to Settings › Data locations, the rest
+  under "Details ›"), the GPU lock's merged into it; the identity, base and
+  task lines then say nothing of it and Start's reason is a one-line
+  relation to it (`renderers.see_above`).
 - **Dataset**: its own select over the server's workspace list
   (`workspaces.read_workspaces`, the shared option label), starting from the
   Training run bar's selection the first time the page opens and never
@@ -63,10 +70,20 @@ Module: src/webui/components/finetune_page.py
   `set_by_html`, `training_console.set_by_line_html`) and **Reset to
   reference** (`training_console.reset_outputs`), which empties the record
   and puts every field where it starts for the chosen tasks.
-- Device and Run name; **Start**, its reason line, and any refusal beside it
+- Device and Run name; **Start**, a bar (the skill's §2): its reason, a
+  one-line relation beside it (under it on a narrow form), and under it the
+  notes the bar's width, what Start would refuse of a value and a refusal
   (the shared mark of a refusal, escaped): the page's own check of a value,
   or the job runner's refusal in its words, a setting it names first by the
   field's label (`training_console.labelled_problem`).
+
+**Layout** (the UI sweep of 2026-11-22): each panel sized by what it holds
+(`shep-sized`: a basis, a share and a minimum in rem, no `scale=`); the
+form's two columns side by side while it holds both at their basis (the
+base's, and the children's widest row: the three tasks, or Epochs, Seed and
+Graph backbone), else one under the other; field rows wrap whole fields and a
+choice group is whole on its line or one option per line (`shep-fields`, the
+shared rule).
 
 **Start** (D8 first): the Dataset and Run selects as Start's own request
 carries them, against what the session read for them (`shell.unread_choice`):
@@ -196,7 +213,7 @@ TASK_OWN_FIELDS = tuple(name for name in TASK_FIELDS if name not in ANY_TASKS)
 #: What a Frozen graph backbone leaves to train, said under the fields while
 #: it is chosen (the WebUI skill §7: a fact that changes what happens is
 #: visible text, not only a bubble).
-FROZEN_NOTE = ("Frozen graph backbone: only the patient encoder and the task head train; the LP "
+FROZEN_NOTE = ("Frozen graph backbone: only the patient encoder and the task head train. The LP "
                "term trains nothing.")
 #: A child's states after which its run's saved files are final.
 ENDED = ("completed", "failed", "stopped")
@@ -224,9 +241,9 @@ def task_choices(readiness: Mapping[str, Optional[str]]) -> List[Tuple[str, str]
 
 
 def tasks_note_html(readiness: Mapping[str, Optional[str]]) -> str:
-    """Why each task that is not ready is not, grouped by reason ("Not ready:
-    Gene and Patients-like-me: no functional fixture."), escaped; empty when
-    every task is ready."""
+    """Why each task that is not ready is not, one sentence per reason, its
+    tasks named together ("Gene and Patients-like-me are not ready: no
+    functional fixture."), escaped; empty when every task is ready."""
     reasons: Dict[str, List[str]] = {}
     for task in TASKS:
         why = readiness.get(task)
@@ -234,10 +251,9 @@ def tasks_note_html(readiness: Mapping[str, Optional[str]]) -> str:
             reasons.setdefault(why, []).append(TASK_NAMES[task])
     if not reasons:
         return ""
-    parts = []
-    for why, names in reasons.items():
-        parts.append(f"{task_list_text(names)}: {why}")
-    return f'<p class="shep-ft-why">Not ready: {r.e("; ".join(parts))}.</p>'
+    parts = [f"{task_list_text(names)} {'is' if len(names) == 1 else 'are'} not ready: {why}."
+             for why, names in reasons.items()]
+    return f'<p class="shep-ft-why">{r.e(" ".join(parts))}</p>'
 
 
 def _readiness(ws: Mapping[str, Any]) -> Dict[str, Optional[str]]:
@@ -247,9 +263,13 @@ def _readiness(ws: Mapping[str, Any]) -> Dict[str, Optional[str]]:
 
 
 def _tasks_update(ws: Mapping[str, Any], chosen: Any) -> Tuple[Any, str]:
+    """The Tasks options for the workspace `ws` and why a task is not ready,
+    said once a dataset is listed; with none, the form's setup notice or the
+    identity line says why (`setup_html`, `identity_html`), never this line."""
     readiness = _readiness(ws)
     kept = [task for task in TASKS if task in (chosen or ())]
-    return gr.update(choices=task_choices(readiness), value=kept), tasks_note_html(readiness)
+    note = tasks_note_html(readiness) if ws.get("row") else ""
+    return gr.update(choices=task_choices(readiness), value=kept), note
 
 
 # ----------------------------------------------------------------- the settings
@@ -400,8 +420,12 @@ def hops_problems(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any = 
     return out
 
 
-#: The lead of the hop note when the reference does not fit the chosen base.
+#: The lead of the hop note when the reference does not fit the chosen base
+#: (a sentence of its own before the start's: one colon a sentence).
 HOPS_REFERENCE_LEAD = "The reference does not fit this base"
+#: The lead of the hop note when several tasks' references differ (each
+#: task's reference under it, as term rows).
+HOPS_EACH_LEAD = "Untouched, each child takes its task’s reference:"
 
 
 def hops_note_html(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any = (),
@@ -411,24 +435,24 @@ def hops_note_html(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any =
     sentence beside the ▲ of a condition to watch, led by
     `HOPS_REFERENCE_LEAD` while it is a task's reference; else, with several
     tasks whose references differ and the field untouched, each child's
-    ("Untouched, each child takes its task's reference: Disease 15, 10, 5;
-    Gene all neighbours, 10, 5."; once touched, Reset to reference makes it
-    so again); else empty."""
+    (`HOPS_EACH_LEAD`, then each task's reference as a term row: "Disease
+    15, 10, 5", "Gene all neighbours, 10, 5"; once touched, Reset to
+    reference makes it so again); else empty."""
     problems = hops_problems(tasks, item, touched, value)
     touched_hops = "num_neighbors" in tc.touched_keys(touched)
     if problems:
         words = " ".join(problems)
         if not touched_hops:
-            words = f"{HOPS_REFERENCE_LEAD}: {words}"
+            words = f"{HOPS_REFERENCE_LEAD}. {words}"
         return f'<p class="shep-ft-hops">{r.status_mark("warn", words)}</p>'
     chosen = chosen_tasks(tasks)
     references = {task: new_run_hops("finetune", task, {}) for task in chosen}
     if touched_hops or len({tuple(hops) for hops in references.values()}) < 2:
         return ""
-    each = "; ".join(f"{TASK_NAMES[task]} {r.setting_words('num_neighbors', hops)}"
-                     for task, hops in references.items())
-    text = f"Untouched, each child takes its task’s reference: {each}."
-    return f'<p class="shep-ft-why">{r.e(text)}</p>'
+    rows = [(TASK_NAMES[task], r.e(r.setting_words("num_neighbors", hops)))
+            for task, hops in references.items()]
+    return (f'<div class="shep-ft-why"><p>{r.e(HOPS_EACH_LEAD)}</p>'
+            f'{r.summary_list(rows, classes="shep-ft-each")}</div>')
 
 
 def hops_warning_html(tasks: Any, item: Optional[Mapping[str, Any]], touched: Any = (),
@@ -489,17 +513,60 @@ def task_settings_view(tasks: Any, item: Optional[Mapping[str, Any]], touched: A
             hops_warning_html(chosen, item, touched, value)]
 
 
+#: Why no dataset can be chosen with a usable workspaces folder that holds
+#: none yet (the Datasets page says how one is built).
+NO_WORKSPACE_YET = "No workspace in the folder yet: Research › Datasets says how to build one."
+
+
 def identity_html(ws: Mapping[str, Any]) -> str:
     """The chosen dataset's identity (the one place its fingerprint is
-    shown), or why there is none."""
+    shown), or why there is none; nothing while the form's setup notice says
+    why (the workspaces folder's notice, `setup_html`: said once a screen)."""
     row = ws.get("row")
     if not row:
+        if ws.get("notice"):
+            return ""
         why = ws.get("problem") or ("No dataset selected: choose one from the server's list."
-                                    if ws.get("choices") else "The server lists no workspace.")
+                                    if ws.get("choices") else NO_WORKSPACE_YET)
         return f'<p class="shep-muted">{r.e(why)}</p>'
     return (f'<div class="shep-ft-ds">'
             f'{r.dataset_identity_html(row, name=False, digits=ws.get("digits") or r.SHORT_HEX)}'
             "</div>")
+
+
+#: **What the form's setup notice says** (`setup_html`) while the workspaces
+#: folder cannot be used: what it means for Start (the GPU lock is in that
+#: folder, so every managed GPU job is refused until one is chosen).
+SETUP_CONSEQUENCE = "Start is disabled until one is chosen."
+#: Start's relation to the notice that says why it is disabled
+#: (`renderers.see_above`, `actions_view`).
+START_DISABLED = "Start disabled"
+
+
+def _said_above(ws_notice: Any, gpu: Optional[Mapping[str, Any]]) -> bool:
+    """Whether the form's setup notice says the GPU lock's notice: the lock
+    cannot be used because no workspaces folder is set (`gpu`'s ``unset``,
+    `training_console.gpu_view`) while the folder's notice is shown."""
+    return bool(ws_notice and gpu and gpu.get("unset") and gpu.get("notice"))
+
+
+def setup_html(ws_notice: Any, gpu: Optional[Mapping[str, Any]] = None) -> str:
+    """**The form's setup notice** (the WebUI skill's §9, the text brief's
+    §10): the workspaces folder's notice (`workspaces.setting_notice`, kept
+    with the page's workspace, `_workspace`), said once, at the top of the
+    form it empties (no dataset, base or task to choose): its state, the next
+    step as a link to Settings › Data locations, the rest under "Details ›"
+    (`renderers.notice_block`). With it the GPU lock's notice when the lock
+    cannot be used because of it (`_said_above`; it follows from the
+    folder's, ``also``), and what that means for Start (`SETUP_CONSEQUENCE`).
+    Start's reason is then a relation to it (`actions_view`), the identity,
+    base and task lines say nothing of it. Empty while the folder can be
+    used."""
+    if not ws_notice:
+        return ""
+    merged = _said_above(ws_notice, gpu)
+    return r.notice_block(ws_notice, consequence=SETUP_CONSEQUENCE if merged else None,
+                          also=(gpu["notice"],) if merged else ())
 
 
 def bases_note_html(parents: Mapping[str, Any], problem: Optional[str]) -> str:
@@ -837,7 +904,8 @@ def child_job(status: Mapping[str, Any]) -> bool:
 
 
 def actions_view(status: Mapping[str, Any], *, access: Any,
-                 gpu: Optional[Mapping[str, Any]], confirming: bool) -> Dict[str, Any]:
+                 gpu: Optional[Mapping[str, Any]], confirming: bool,
+                 said_above: bool = False) -> Dict[str, Any]:
     """Start and Stop (interactive or not, and whether Stop is drawn) and
     their reason lines, as one decision for the tick and after every action,
     in the states the Training run bar uses (`training_console.run_bar_view`):
@@ -851,7 +919,15 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
     one gated-button rule) and that the job is ending while it stops; not
     drawn, nothing. Stop stops a running Fine-tune child (and so cancels the
     queued ones), never another page's job. An enabled Start has no reason
-    beside it."""
+    beside it.
+
+    **The GPU lock's reason is one line** (the text brief's §12): with its
+    notice (`gpu`'s ``notice``), Start's relation to it
+    (`renderers.see_above`: "Start disabled: GPU jobs need a workspaces
+    folder (see above)."), the notice itself said once, in the form's setup
+    notice, while `said_above` (`_said_above`); else its own short words with
+    its why under "Details ›" (an operator's only). A GPU job of the runner's
+    own is said in the lock line's words."""
     s = status.get("status") or "idle"
     child_running = running_child(status) is not None
     shown = tc.stop_shown(status, child_job)
@@ -869,6 +945,10 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
     elif s == "running":
         view["reason"] = _why(tc.NO_ICON, "Start disabled: a training job is running "
                                           "(Research › Training).")
+    elif gpu and gpu.get("notice"):
+        view["reason"] = r.see_above(START_DISABLED, gpu["notice"],
+                                     where="above" if said_above else None,
+                                     details=not said_above)
     elif gpu:
         view["reason"] = _why(tc.NO_ICON, f"Start disabled — {gpu['text']}.")
     else:
@@ -878,10 +958,13 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
 
 
 def _card_view(mode: Optional[Mapping[str, Any]], cache: Optional[Mapping[str, Any]],
-               request: Any) -> Tuple[Any, ...]:
+               request: Any, ws: Optional[Mapping[str, Any]] = None) -> Tuple[Any, ...]:
     """The card, Start, Stop, Start's and Stop's reason lines, the stop
-    question's row and the session's cache, read now for this request. The products are read
-    for an operator only (they open checkpoints)."""
+    question's row, the form's setup notice (`setup_html`, from the page's
+    workspace `ws`, and the GPU line read here, so Start's relation and the
+    notice it points to are one decision) and the session's cache, read now
+    for this request. The products are read for an operator only (they open
+    checkpoints)."""
     cache = dict(cache or {})
     access = operator_access(request)
     status = training_manager.get_status()
@@ -889,7 +972,9 @@ def _card_view(mode: Optional[Mapping[str, Any]], cache: Optional[Mapping[str, A
     busy = (status.get("status") or "idle") in ("running", "stopping")
     gpu = None if busy else tc.gpu_view(active, cache, access.allowed)
     asking = tc.confirming(status, dict(mode or {}))
-    view = actions_view(status, access=access, gpu=gpu, confirming=asking)
+    ws_notice = (ws or {}).get("notice")
+    view = actions_view(status, access=access, gpu=gpu, confirming=asking,
+                        said_above=_said_above(ws_notice, gpu))
     products: Dict[str, Any] = {}
     if access.allowed:
         products = products_of(status.get("finetune"), cache.get("products") or {})
@@ -903,29 +988,46 @@ def _card_view(mode: Optional[Mapping[str, Any]], cache: Optional[Mapping[str, A
                       visible=view["stop_shown"]),
             f'<div class="shep-ft-reasons">{view["reason"]}</div>',
             f'<div class="shep-ft-reasons">{view["stop_reason"]}</div>',
-            gr.update(visible=asking), cache)
+            gr.update(visible=asking), setup_html(ws_notice, gpu), cache)
 
 
-def _refresh_card(mode, cache, request: gr.Request):
-    """After every action: the card and the actions as they are now."""
-    return _card_view(mode, cache, request)
+#: How many outputs the card step answers (`_card_view`).
+CARD_OUTPUTS = 8
 
 
-def _poll(location, mode, cache, request: gr.Request):
+def _refresh_card(mode, cache, request: gr.Request, ws=None):
+    """After every action: the card, the actions and the setup notice as
+    they are now."""
+    return _card_view(mode, cache, request, ws)
+
+
+def _poll(location, mode, cache, request: gr.Request, ws=None):
     """The shell's slow timer (``queue=False``), while Fine-tune is shown: the
-    card and the actions; nothing while another page is shown."""
+    card, the actions and the setup notice; nothing while another page is
+    shown."""
     if location != PAGE:
-        return (gr.update(),) * 7
+        return (gr.update(),) * CARD_OUTPUTS
     try:
-        return _card_view(mode, cache, request)
+        return _card_view(mode, cache, request, ws)
     except Exception:  # noqa: BLE001 - a tick that raises would stop the page's updates
         logger.exception("The Fine-tune job could not be read")
-        return (gr.update(),) * 7
+        return (gr.update(),) * CARD_OUTPUTS
 
 
 # =============================================================================
 # The handlers
 # =============================================================================
+def _workspace(name: Optional[str], listed: Optional[Mapping[str, Any]] = None
+               ) -> Dict[str, Any]:
+    """The page's workspace (`training_console.workspace_state`) with the
+    workspaces folder's notice (``notice``: `read_workspaces`' own, None while
+    the folder can be used), both from one read of the server's list."""
+    listed = listed if listed is not None else read_workspaces()
+    state = tc.workspace_state(name, listed)
+    state["notice"] = listed.get("notice")
+    return state
+
+
 def _open(ws, preferred, chosen):
     """The page shown: the server's list read again, the dataset chosen: this
     session's own, else the Training run bar's (``ctx.training_workspace``;
@@ -936,7 +1038,7 @@ def _open(ws, preferred, chosen):
     if choice is None:
         trainable = [row["name"] for row in listed["rows"] if row.get("trainable")]
         choice = trainable[0] if trainable else (names[0] if names else None)
-    state = tc.workspace_state(choice, listed)
+    state = _workspace(choice, listed)
     tasks, note = _tasks_update(state, chosen)
     return state, tc.dataset_choices_update(state), identity_html(state), tasks, note
 
@@ -944,7 +1046,7 @@ def _open(ws, preferred, chosen):
 def _on_dataset(name, chosen):
     """A dataset chosen here: its record read now, the tasks' readiness for
     it; the base list follows (`_on_finetune_bases`)."""
-    state = tc.workspace_state(name)
+    state = _workspace(name)
     tasks, note = _tasks_update(state, chosen)
     return state, identity_html(state), tasks, note
 
@@ -973,7 +1075,11 @@ def _on_finetune_bases(request: gr.Request, ws, current):
         return {}, empty, empty, f'<div class="shep-ft-reasons">{why}</div>', refresh
     name = (ws or {}).get("name")
     if not name:
-        return {}, empty, empty, bases_note_html({}, "Select a dataset first."), refresh
+        # With no dataset listed the setup notice or the identity line says
+        # why (`setup_html`, `identity_html`); this line only asks for a choice.
+        listed = (ws or {}).get("choices") and not (ws or {}).get("notice")
+        note = bases_note_html({}, "Select a dataset first.") if listed else ""
+        return {}, empty, empty, note, refresh
     from src.api.services.server_lists import list_checkpoints
 
     parents, problem = tc.checkpoint_items(list_checkpoints(name, learning_stage="base"))
@@ -1154,7 +1260,7 @@ def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
         return "Not started: choose a base checkpoint from the list.", False
     if item.get("workspace") != row.get("name"):
         return (f"Not started: the list shows {item.get('workspace')}’s bases, not "
-                f"{row.get('name')}’s; list them again (Refresh).", False)
+                f"{row.get('name')}’s. List them again (Refresh).", False)
     chosen = chosen_tasks(tasks)
     if not chosen:
         return "Not started: choose at least one task.", False
@@ -1172,7 +1278,8 @@ def _start(ws, parents, key, tasks, device, run_name, values: Mapping[str, Any],
         path = resolve_checkpoint(row["name"], item["architecture"], item["run"],
                                   item["filename"])
     except ServerListRefused as exc:
-        return (f"Not started: {redact(exc, workspaces_root()[0])}; list the bases again "
+        why = str(redact(exc, workspaces_root()[0]))
+        return (f"Not started: {why}{'' if why.endswith('.') else '.'} List the bases again "
                 "(Refresh).", False)
     result = training_manager.start_finetune(
         FinetuneInputs(data_dir=str(directory), finetune_from=str(path), tasks=chosen,
@@ -1299,18 +1406,24 @@ def create_finetune_page(ctx: Any) -> None:
 
     with gr.Row(elem_id="shep-ft-row", elem_classes=["shep-page", "shep-ft"], equal_height=False):
         # ------------------------------------------------------------- the form
-        # The form takes the most of the width (its two columns, B27-1); the
-        # job panel keeps its own minimum (`PAGE_CSS`).
-        with gr.Column(elem_id="shep-ft-form", elem_classes=["shep-panel"], scale=16,
-                       min_width=360):
+        # Each panel sized by what it holds (`shep-sized`, `PAGE_CSS`: a basis,
+        # a share of the room left and a minimum, in rem, no `scale=`): the
+        # form grows the most (its two columns, B27-1).
+        with gr.Column(elem_id="shep-ft-form", elem_classes=["shep-panel", "shep-sized"],
+                       min_width=0):
             plain_html('<div class="shep-panel-hd"><h2>Fine-tune a base</h2>'
                        '<span class="shep-panel-right">one child run per task</span></div>',
                        elem_id="ft_form_hd")
-            with gr.Column(elem_id="ft_form_bd", elem_classes=["shep-ft-bd", "shep-form-dense"]):
+            with gr.Column(elem_id="ft_form_bd",
+                           elem_classes=["shep-ft-bd", "shep-form-dense", "shep-stack"]):
+                # The setup notice (`setup_html`): what empties the form, said
+                # once over both columns, its next step a link; hidden while
+                # empty.
+                setup = plain_html("", elem_id="ft_setup")
                 # Two columns where the form is wide enough for both (B27-1: one
                 # column scrolled 183 px at 1850 x 960 with nothing expanded),
-                # one under the other where it is not, by their own minimum
-                # widths (`PAGE_CSS`, no window size): the base (its dataset,
+                # one under the other where it is not, by their own basis
+                # (`PAGE_CSS`, in rem; no window size): the base (its dataset,
                 # Run and Checkpoint, its summary), then its children (the
                 # tasks, their settings, the device and the run name).
                 with gr.Row(elem_classes=["shep-ft-cols"]):
@@ -1343,17 +1456,21 @@ def create_finetune_page(ctx: Any) -> None:
                         values = built_values()
                         unread = not_read_by_rules(values)
                         fields: Dict[str, Any] = {}
-                        with gr.Row(elem_classes=["shep-ft-settings"]):
+                        # A row of fields (`shep-fields`): Graph backbone a
+                        # choice group, whole on its line or one option per line.
+                        with gr.Row(elem_classes=["shep-ft-settings", "shep-fields"]):
                             for name in COMMON_SHOWN:
                                 fields[name] = tc.setting_field(name, values[name], elem_id=f"ft_{name}")
                         freeze_note = plain_html(freeze_note_html(values["frozen_parts"]),
                                                  elem_id="ft_freeze_note")
                         # The hop list, offered for any task set, under the common
-                        # settings with its note beside it (`task_settings_view`): the
+                        # settings with its note under it (`task_settings_view`): the
                         # start's sentence when the reference does not fit the base is
-                        # in view without opening anything (2b).
+                        # in view without opening anything (2b); a sentence takes the
+                        # row's width, never a column beside the field.
                         with gr.Row(visible=False, elem_id="ft_hops_row",
-                                    elem_classes=["shep-ft-settings", "shep-ft-hops-row"]) as hops_row:
+                                    elem_classes=["shep-ft-settings", "shep-ft-hops-row",
+                                                  "shep-fields"]) as hops_row:
                             for name in ANY_TASKS:
                                 fields[name] = tc.setting_field(name, values[name],
                                                                 elem_id=f"ft_{name}", visible=False)
@@ -1380,36 +1497,42 @@ def create_finetune_page(ctx: Any) -> None:
                                                 elem_id="ft_setby")
                             reset = gr.Button("Reset to reference", size="sm", scale=0,
                                               elem_id="ft_reset")
-                        with gr.Row(elem_classes=["shep-ft-settings"]):
+                        with gr.Row(elem_classes=["shep-ft-settings", "shep-fields"]):
                             device = tc.device_field("ft_device")
                             run_name = gr.Textbox(label="Run name", value="", max_lines=1,
                                                   elem_id="ft_run_name")
             with gr.Column(elem_id="ft_start_ft", elem_classes=["shep-panel-ft"]):
-                # Start, its reason and its refusal on one row (the skill's §9:
-                # a refusal beside what it refuses).
-                with gr.Row(elem_classes=["shep-ft-start-row"]):
+                # Start and why it is off, a bar (the skill's §2 and §9): its
+                # reason a one-line relation beside it, on Start's first line
+                # (under it when the row is narrow); what Start would refuse
+                # of a value and the runner's refusal, sentences, a note the
+                # bar's width under it, never a column beside the button.
+                with gr.Row(elem_classes=["shep-ft-start-row", "shep-bar"]):
                     start = gr.Button(START_LABEL, variant="primary", interactive=False,
                                       scale=0, elem_id="ft_start")
-                    reason = plain_html("", elem_id="ft_reason")
-                    hops_warn = plain_html("", elem_id="ft_hops_warn")
-                    refused = plain_html("", elem_id="ft_refused")
-                    notice = plain_html("", elem_id="ft_notice")
+                    with gr.Column(elem_classes=["shep-ft-start-why"], min_width=0):
+                        reason = plain_html("", elem_id="ft_reason")
+                        hops_warn = plain_html("", elem_id="ft_hops_warn")
+                    refused = plain_html("", elem_id="ft_refused", elem_classes=["shep-bar-note"])
+                    notice = plain_html("", elem_id="ft_notice", elem_classes=["shep-bar-note"])
         # ------------------------------------------------------------- the job
-        with gr.Column(elem_id="shep-ft-job", elem_classes=["shep-panel"], scale=7,
-                       min_width=360):
+        with gr.Column(elem_id="shep-ft-job", elem_classes=["shep-panel", "shep-sized"],
+                       min_width=0):
             plain_html('<div class="shep-panel-hd"><h2>Fine-tune job</h2>'
                        '<span class="shep-panel-right">the latest start</span></div>',
                        elem_id="ft_job_hd")
             with gr.Column(elem_id="ft_job_bd", elem_classes=["shep-ft-bd"]):
                 card = plain_html(job_card_html({"status": "idle"}, operator=False),
                                   elem_id="ft_card", js_on_load=r.TRIGGER_JS)
-                with gr.Row(elem_classes=["shep-ft-stop-row"]):
+                # Stop as Start: its reason beside it, a notice under it.
+                with gr.Row(elem_classes=["shep-ft-stop-row", "shep-bar"]):
                     # Drawn only while a child of this page's start runs or
                     # stops (`actions_view`'s ``stop_shown``): none at first.
                     stop = gr.Button(STOP_LABEL, variant="secondary", interactive=False,
                                      scale=0, elem_id="ft_stop", visible=False)
                     stop_reason = plain_html("", elem_id="ft_stop_reason")
-                    stop_notice = plain_html("", elem_id="ft_stop_notice")
+                    stop_notice = plain_html("", elem_id="ft_stop_notice",
+                                             elem_classes=["shep-bar-note"])
                 with gr.Row(visible=False, elem_id="ft_confirm_row") as confirm_row:
                     stop_text = plain_html("", elem_id="ft_stop_text")
                     stop_confirm = gr.Button("■ Stop training", variant="stop", scale=0,
@@ -1419,8 +1542,8 @@ def create_finetune_page(ctx: Any) -> None:
     # =========================================================================
     # Wiring
     # =========================================================================
-    card_step = {"fn": _refresh_card, "inputs": [mode, cache],
-                 "outputs": [card, start, stop, reason, stop_reason, confirm_row, cache],
+    card_step = {"fn": _refresh_card, "inputs": [mode, cache, ws],
+                 "outputs": [card, start, stop, reason, stop_reason, confirm_row, setup, cache],
                  "show_progress": "hidden"}
     bases_step = {"fn": _on_finetune_bases, "inputs": [ws, checkpoint],
                   "outputs": [parents, run_select, checkpoint, bases_note, refresh],
@@ -1450,8 +1573,8 @@ def create_finetune_page(ctx: Any) -> None:
         "show_progress": "hidden"}).then(**card_step).then(**bases_step).then(
         **base_step).then(**task_view_step).then(**ctx.chip_refresh)
     # The shell's slow timer, a read-only poll without the queue.
-    ctx.timer_slow.tick(_poll, inputs=[ctx.location, mode, cache],
-                        outputs=[card, start, stop, reason, stop_reason, confirm_row, cache],
+    ctx.timer_slow.tick(_poll, inputs=[ctx.location, mode, cache, ws],
+                        outputs=[card, start, stop, reason, stop_reason, confirm_row, setup, cache],
                         queue=False, show_progress="hidden")
 
     # Every choice is kept ("multiple", `shell.picked`): one made while the
@@ -1540,51 +1663,68 @@ RUN_FLOOR = "76px"
 #: Nothing under 14 px; status colours only through the ``--shep-status-*``
 #: tokens.
 PAGE_CSS = f"""
-{_PAGE} .shep-ft-bd {{ padding: 8px 16px 12px !important; gap: 8px !important; }}
-/* The form's two columns (B27-1): side by side while the form holds both at their minimum width,
-   else one under the other (they wrap: no window size decides it), each its fields with the
-   body's gap. */
-{_PAGE} .shep-ft-cols {{ flex-wrap: wrap !important; align-items: flex-start !important; gap: 8px 24px !important; }}
-{_PAGE} .shep-ft-cols > .shep-ft-col {{ flex: 1 1 480px !important; min-width: 0 !important; gap: 8px !important; }}
-{_PAGE} #ft_run, {_PAGE} #ft_checkpoint {{ flex: 1 1 300px !important; min-width: 0 !important; }}
-{_PAGE} .shep-ft-settings {{ flex-wrap: wrap !important; gap: 8px 16px !important; }}
+{_PAGE} .shep-ft-bd {{ padding: var(--shep-space-2) var(--shep-inset) var(--shep-space-3) !important; }}
+{_PAGE} #ft_job_bd {{ gap: var(--shep-space-2) !important; }}
+/* The two panels sized by what they hold (`shep-sized`, the shared rule; no `scale=`): the form's
+   basis and the larger share of the room left, the job panel's basis; each never under its
+   minimum (the layout rule's measure, `src/webui/shell.py`): the form's base summary list keeps
+   its key column whole from 30rem; from 27.5rem the job's card holds the ended children's table
+   whole in the dashboard's type (else the card shows their lists: the shell's fit). */
+{_PAGE} #shep-ft-form {{ --shep-panel-basis: 32rem; --shep-panel-grow: 3; --shep-panel-min: 30rem; }}
+{_PAGE} #shep-ft-job {{ --shep-panel-basis: 24rem; --shep-panel-grow: 1; --shep-panel-min: 27.5rem; }}
+/* The setup notice over both columns (`setup_html`), hidden while it says nothing. */
+{_PAGE} #ft_setup:not(:has(.shep-nb)) {{ display: none !important; }}
+/* The form's two columns (B27-1): side by side while the form holds both at their basis, else
+   one under the other (they wrap: no window size decides it), each its fields with the body's
+   gap. Each basis is what its column holds on a line: the base's selects and summary list, and
+   the children's widest row, the three tasks or Epochs, Seed and Graph backbone, each whole. */
+{_PAGE} .shep-ft-cols {{ flex-wrap: wrap !important; align-items: flex-start !important; gap: var(--shep-space-2) var(--shep-space-5) !important; }}
+{_PAGE} .shep-ft-cols > .shep-ft-col {{ flex: 1 1 24rem !important; min-width: 0 !important; gap: var(--shep-space-2) !important; }}
+{_PAGE} .shep-ft-cols > #ft_children_col {{ flex-basis: 30rem !important; }}
+/* Run and Checkpoint side by side where the column holds both, else one under the other; their
+   group keeps a select's floor beside Refresh, so Refresh stays on the last box's line. */
+{_PAGE} .shep-ft-parent-row > .form {{ flex: 1 1 14rem !important; min-width: min(14rem, 100%) !important; }}
+{_PAGE} #ft_run, {_PAGE} #ft_checkpoint {{ flex: 1 1 18rem !important; min-width: 0 !important; }}
 {_PAGE} .shep-ft-ds {{ font-size: 15px; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }}
-{_PAGE} .shep-ft-ds-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
-{_PAGE} .shep-ft-ds-row > .form:has(#ft_dataset) {{ flex: 1 1 280px !important; min-width: 0 !important; }}
-{_PAGE} #ft_identity {{ flex: 2 1 420px !important; min-width: 0 !important; padding-bottom: 6px; }}
+{_PAGE} .shep-ft-ds-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: var(--shep-space-2) var(--shep-space-3) !important; }}
+{_PAGE} .shep-ft-ds-row > .form:has(#ft_dataset) {{ flex: 1 1 17.5rem !important; min-width: 0 !important; }}
+{_PAGE} #ft_identity {{ flex: 2 1 26rem !important; min-width: 0 !important; padding-bottom: 6px; }}
 /* The chosen base's details: the one summary list in the parameters' panel, no box of its own
    (`base_summary_html`; the skill's §2). */
 {_PAGE} .shep-ft-base .shep-kv {{ font-size: 14px; gap: 2px 14px; }}
-{_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)), {_PAGE} #ft_freeze_note:not(:has(p)), {_PAGE} #ft_hops_note:not(:has(p)), {_PAGE} #ft_several_note:not(:has(p)) {{ display: none !important; }}
+/* Lines that say nothing take no room (and no gap of their column). */
+{_PAGE} #ft_identity:not(:has(.shep-ft-ds, p)), {_PAGE} #ft_bases_note:not(:has(p, .shep-ft-reason)), {_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)), {_PAGE} #ft_freeze_note:not(:has(p)), {_PAGE} #ft_hops_note:not(:has(p)), {_PAGE} #ft_several_note:not(:has(p)) {{ display: none !important; }}
 /* The line on what the operator set beside Reset to reference (the base form's; its text is the
    shared `.shep-setby`). */
-{_PAGE} .shep-ft-setby-row {{ align-items: flex-start !important; flex-wrap: nowrap !important; gap: 8px 12px !important; }}
+{_PAGE} .shep-ft-setby-row {{ align-items: flex-start !important; flex-wrap: nowrap !important; gap: var(--shep-space-2) var(--shep-space-3) !important; }}
 {_PAGE} #ft_setby {{ flex: 1 1 auto !important; min-width: 0 !important; }}
 {_PAGE} #ft_reset {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
-{_PAGE} .shep-ft-why {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
-/* The hop list and its note beside it (`hops_note_html`): the note takes the rest of the row and
-   wraps under the field when the row is narrow. */
-{_PAGE} .shep-ft-hops-row {{ align-items: flex-start !important; }}
-{_PAGE} .shep-ft-hops-row > .form:has(#ft_num_neighbors) {{ flex: 1 1 280px !important; min-width: 0 !important; }}
-{_PAGE} #ft_hops_note {{ flex: 2 1 240px !important; min-width: 0 !important; align-self: center; }}
+{_PAGE} .shep-ft-why {{ margin: 0; font-size: 14px; line-height: var(--shep-lh-prose); color: var(--shep-text-2); }}
+{_PAGE} .shep-ft-why > .shep-ft-each {{ margin-top: var(--shep-space-1); font-size: 14px; gap: var(--shep-space-1) 12px; }}
+/* The hop list, its note under it the row's width (`hops_note_html`): a sentence never stands as a
+   column beside the field. */
+{_PAGE} .shep-ft-hops-row > .form:has(#ft_num_neighbors) {{ flex: 0 1 20rem !important; }}
+{_PAGE} #ft_hops_note {{ flex: 1 1 100% !important; min-width: 0 !important; }}
 /* The settings under an accordion in columns of one width, as the base form's grid lays them. */
-{_PAGE} .shep-ft-grid > .form {{ display: grid !important; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 16px !important; background: transparent !important; border: 0 !important; box-shadow: none !important; }}
+{_PAGE} .shep-ft-grid > .form {{ display: grid !important; grid-template-columns: repeat(auto-fill, minmax(min(14rem, 100%), 1fr)); gap: var(--shep-space-2) var(--shep-space-4) !important; background: transparent !important; border: 0 !important; box-shadow: none !important; }}
 {_PAGE} .shep-ft-hops {{ margin: 0; font-size: 14px; overflow-wrap: anywhere; }}
-{_PAGE} .shep-ft-start-row, {_PAGE} .shep-ft-stop-row {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
+/* Start and Stop (`shep-bar`): the reason beside each on the button's first line (baselines
+   aligned, so the button stands at the bar's top whatever follows), under it when the row cannot
+   hold both; a note (what Start would refuse, a refusal) the bar's width under them. */
+{_PAGE} .shep-ft-start-row, {_PAGE} .shep-ft-stop-row {{ align-items: baseline !important; }}
 {_PAGE} .shep-ft-start-row > button, {_PAGE} .shep-ft-stop-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; }}
-{_PAGE} #ft_reason, {_PAGE} #ft_stop_reason, {_PAGE} #ft_notice, {_PAGE} #ft_stop_notice, {_PAGE} #ft_hops_warn, {_PAGE} #ft_refused {{ flex: 1 1 240px !important; min-width: 0 !important; }}
-/* The hop note's pointer beside Start (`hops_warning_html`) and what Start would refuse of a value
-   (`refused_html`); they, and Start's reason, take no room while empty, so whichever is said sits
-   next to Start. */
-{_PAGE} #ft_hops_warn, {_PAGE} #ft_refused {{ font-size: 15px; }}
-{_PAGE} #ft_hops_warn:not(:has(.shep-ft-hops-warn)), {_PAGE} #ft_reason:not(:has(.shep-ft-reason)), {_PAGE} #ft_refused:not(:has(.shep-ft-refused)) {{ display: none !important; }}
+{_PAGE} .shep-ft-start-why, {_PAGE} #ft_stop_reason {{ flex: 1 1 20rem !important; min-width: 0 !important; gap: var(--shep-space-1) !important; }}
+{_PAGE} .shep-ft-start-why:not(:has(.shep-ft-reason, .shep-nb-rel, .shep-ft-hops-warn)) {{ display: none !important; }}
+{_PAGE} #ft_hops_warn:not(:has(.shep-ft-hops-warn)), {_PAGE} #ft_reason:not(:has(.shep-ft-reason, .shep-nb-rel)), {_PAGE} #ft_refused:not(:has(.shep-ft-refused)) {{ display: none !important; }}
+{_PAGE} #ft_hops_warn {{ font-size: 14px; line-height: var(--shep-lh-prose); }}
+{_PAGE} #ft_refused {{ font-size: 15px; line-height: var(--shep-lh-prose); }}
 /* The configuration's "Details ›" beside its line (`base_summary_html`); opened, the spec's list
    takes the lines under it. */
 {_PAGE} .shep-ft-base .shep-v > .shep-more {{ display: inline-block; margin-left: 8px; vertical-align: top; }}
-{_PAGE} .shep-ft-reason {{ display: inline-flex; align-items: flex-start; gap: 6px; font-size: 15px; color: var(--shep-text-2); }}
+{_PAGE} .shep-ft-reason {{ display: inline-flex; align-items: flex-start; gap: 6px; font-size: 14px; line-height: var(--shep-lh-prose); color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-reason > svg {{ flex: none; margin-top: 3px; }}
-/* Start's and Stop's notices, each beside its button: a refusal carries the shared mark of a
-   refusal (`training_console.notice_html`); an empty one takes no room. */
+/* Start's and Stop's notices, each a note under its button: a refusal carries the shared mark of
+   a refusal (`training_console.notice_html`); an empty one takes no room. */
 {_PAGE} #ft_notice, {_PAGE} #ft_stop_notice {{ font-size: 15px; overflow-wrap: anywhere; }}
 {_PAGE} #ft_notice:not(:has(.shep-notice-t)), {_PAGE} #ft_stop_notice:not(:has(.shep-notice-t)) {{ display: none !important; }}
 {_PAGE} .shep-ft-card {{ display: flex; flex-direction: column; gap: 10px; font-size: 15px; }}
@@ -1627,12 +1767,6 @@ PAGE_CSS = f"""
 {_PAGE} #ft_stop_text {{ flex: 1 1 320px !important; }}
 {_PAGE} .shep-rb-confirm-q {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-radius: 8px; padding: 8px 12px; font-size: 15px; }}
 {_PAGE} .shep-html svg {{ display: inline-block; vertical-align: -2px; }}
-/* The two panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the form's
-   base summary list keeps its key column whole from 480 px; from 440 the job's card is 406 px,
-   where the ended children's table is drawn whole in the dashboard's type (else the card shows
-   their lists: the shell's fit). */
-{_PAGE} #shep-ft-form {{ --shep-panel-min: 480px; }}
-{_PAGE} #shep-ft-job {{ --shep-panel-min: 440px; }}
 {SIDE} {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
   {_PAGE} #ft_form_bd, {_PAGE} #ft_job_bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
