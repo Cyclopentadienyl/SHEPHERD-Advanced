@@ -176,6 +176,42 @@ def test_a_help_text_reads_as_a_lead_items_terms_and_a_ref_line():
     assert f"BULLET = {json.dumps(h.BULLET)}" in h.HELP_HEAD
 
 
+def test_the_text_layout_budget_counts_what_a_320_px_bubble_draws():
+    """The UI sweep of 2026-11-22 (its text brief's §11 and §14 #8): the text
+    layout's budget (`help.TEXT_BUDGET`) adds to the skill's what a 320 px
+    bubble draws in lines of about 39 characters: a lead of 90 at most (one
+    over 78, three lines, is noted), none or 2-4 items of 76 characters at
+    most, all of one form, and plain words (no semicolon, no "please",
+    "sorry", "oops", "invalid", "an error occurred" or "we"). The skill's own
+    budget (`HELP_BUDGET`) is unchanged: every registered text meets it."""
+    tb = h.TEXT_BUDGET
+    good = "Says what it is in a short lead.\n- First: one fact\n- Second: another fact\nRef: X"
+    assert h.budget_problems(good, tb) == () and h.budget_notes(good) == ()
+    assert any("lead of 91" in p for p in h.budget_problems("x" * 91, tb))
+    assert h.budget_problems("x" * 91) == ()                       # the skill's: 100
+    assert h.budget_notes("x" * 80) == ("a lead of 80 characters (three lines over 78)",)
+    assert any("1 list item" in p for p in h.budget_problems("Lead.\n- only one", tb))
+    assert any("an item of 77" in p for p in h.budget_problems("Lead.\n- " + "y" * 77 + "\n- b", tb))
+    assert any("two forms (term rows" in p for p in h.budget_problems("Lead.\n- A: b\n- plain", tb))
+    assert any("two forms (sentences" in p for p in h.budget_problems("Lead.\n- One.\n- two", tb))
+    assert any("semicolon" in p for p in h.budget_problems("Lead.\nOne; two.", tb))
+    for word in ("please", "Sorry", "invalid", "we", "an error occurred"):
+        assert any("never says" in p for p in h.budget_problems(f"Lead.\nThen {word} here.", tb)), word
+    assert h.budget_problems("Lead.\nRef: a; b", tb) == ()        # the Ref line holds codes
+    assert h.HELP_BUDGET == h.HelpBudget()
+
+
+def test_the_shared_renderers_texts_meet_the_text_layout_budget():
+    """The texts the shared renderers' ⓘ name (`renderers.RENDERER_HELP`, the
+    shell registers them) meet the text layout's budget; the governed ones
+    (the exposure caveat, R10) keep their words, as paragraphs where a part
+    is longer than a two-line item."""
+    from src.webui.components import renderers as r
+
+    for key, (_title, text) in r.RENDERER_HELP.items():
+        assert h.budget_problems(text, h.TEXT_BUDGET) == (), key
+
+
 def test_the_budget_names_what_a_text_runs_over():
     assert h.budget_problems("A short lead.\n- one\n- two\nRef: D5; SHEPHERD_DEVICE") == ()
     long_lead = h.budget_problems("x" * 101)

@@ -228,6 +228,7 @@ from src.webui.components.chips import (busy_words, chips_on_change, gated, gpu_
                                          operator_only)
 from src.webui.components.help import REF_PREFIX
 from src.webui.components.workspaces import (
+    lock_notice,
     manifest_facts,
     read_workspaces,
     redact,
@@ -1577,7 +1578,10 @@ def _gpu_line(active: Optional[Mapping[str, Any]], lock: Optional[Mapping[str, A
     job, from the job runner (a test run) or the GPU lock's holder record (a
     process this server did not start: a formal CLI, or another server's
     runner on the same lock; or a lock that cannot be used): ``{"text",
-    "test"}`` or None."""
+    "test", "unset", "notice"}`` or None. ``unset``: the lock cannot be used
+    because no workspaces folder is set; ``notice``: the lock's notice
+    (`workspaces.lock_notice`, for `renderers.notice_block` and `see_above`),
+    None while the lock is not the reason. ``text`` keeps its words."""
     if active and active.get("job_type") == "test":
         inputs = (test or {}).get("inputs") or {}
         label = inputs.get("version_label")
@@ -1591,7 +1595,7 @@ def _gpu_line(active: Optional[Mapping[str, Any]], lock: Optional[Mapping[str, A
         text = "GPU job: test run" + (f" ({detail})" if detail else " (job runner)")
         if active.get("status") == "stopping":
             text += " · stopping"
-        return {"text": text, "test": True}
+        return {"text": text, "test": True, "unset": False, "notice": None}
     if active or lock is None:
         return None
     chip = gpu_chip_from(None, lock, operator=operator)
@@ -1601,7 +1605,8 @@ def _gpu_line(active: Optional[Mapping[str, Any]], lock: Optional[Mapping[str, A
         text = busy_words(chip) if chip.kind == "busy" else "the GPU lock cannot be used"
         if lock.get("problem") and operator:
             text += f" ({lock['problem']})"
-        return {"text": text, "test": False}
+        return {"text": text, "test": False, "unset": bool(lock.get("unset")),
+                "notice": lock_notice(lock, operator=operator)}
     return None
 
 

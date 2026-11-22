@@ -95,37 +95,37 @@ DATASET_NOT_RECORDED = "Dataset not recorded."
 RENDERER_HELP = {
     "dataset-fingerprint": (
         "Dataset fingerprint",
-        "The SHA-256 of this workspace's split manifest: equal ones mean the same build.\n\n"
-        "- The manifest binds by digest the graph, the three tensors, the train and val "
-        "samples and the dataset record.\n"
-        "- It also records the recipe, the seeds and the split.\n"
-        "- 12 of its 64 hex digits are shown; every comparison uses all 64.\n"
-        "- The files themselves are checked against it when a run or a load reads them.\n"
+        "The split manifest's SHA-256: equal fingerprints mean the same build.\n\n"
+        "- Binds by digest: graph, three tensors, both sample files, dataset record\n"
+        "- Records: the recipe, the seeds and the split\n"
+        "- Shown: the first 12 of 64 hex digits, all 64 compared\n"
+        "- Checked: the files against it, when a run or a load reads them\n"
         "Ref: split_manifest.json",
     ),
     "model-fingerprint": (
         "Model fingerprint",
         "The SHA-256 of the checkpoint file's bytes, as the server read them.\n\n"
-        "- 12 of its 64 hex digits are shown; every comparison uses all 64.\n"
-        "- A test record, a usage history entry and the served identity name the model by it.",
+        "- Shown: the first 12 of 64 hex digits, all 64 compared\n"
+        "- Named by it: a test record, a usage history entry, the served identity",
     ),
     # The exposure caveat's own parts, a line each (`caveats.EXPOSURE_CAVEAT`,
     # which records and the API keep whole): the skill's §13 lets a governed
-    # text change its presentation, never its words' meaning.
+    # text change its presentation, never its words' meaning. Its parts are
+    # sentences longer than a bubble's two-line item, so each is a paragraph.
     "kg-exposure": (
         "Exposure (KG edge sets)",
         f"{EXPOSURE_SCOPE}.\n"
-        f"{EXPOSURE_EVIDENCE[:1].upper()}{EXPOSURE_EVIDENCE[1:]}.\n\n"
-        f"- {EXPOSURE_NOT_EXHAUSTIVE}.\n"
-        f"- Negatives: {EXPOSURE_NEGATIVES}.\n"
-        f"- They are {EXPOSURE_NOT_PROVEN}.",
+        f"{EXPOSURE_EVIDENCE[:1].upper()}{EXPOSURE_EVIDENCE[1:]}.\n"
+        f"{EXPOSURE_NOT_EXHAUSTIVE}.\n"
+        f"Negatives: {EXPOSURE_NEGATIVES}.\n"
+        f"They are {EXPOSURE_NOT_PROVEN}.",
     ),
     "validation-trainer": (
         "Validation (Trainer)",
         "The Trainer's own figure on the val samples, recorded in the checkpoint.\n"
         "- Base: LP accuracy.\n"
         "- Task model: pooled MRR.\n"
-        "Training selects a checkpoint by it, so it is not an independent test; recorded "
+        "Training selects a checkpoint by it, so it is not an independent test. Recorded "
         "test results are kept apart from it.",
     ),
 }
@@ -815,12 +815,19 @@ DETAILS_WORD = "Details ›"
 
 def token_html(token: Any) -> str:
     """**One literal token** (a path, a file name, a variable) escaped and in
-    code style, breakable only before its own separators (``<wbr>``: no
-    hyphen is drawn, and a copy keeps the token whole; never U+200B)."""
+    code style, breakable only before its own separators: its pieces each
+    kept on one line (a span, ``white-space: nowrap``: the browser's own
+    break after a hyphen is not taken) with a ``<wbr>`` between them, so no
+    hyphen is drawn and a copy keeps the token whole (never U+200B)."""
     text = "" if token is None else str(token)
-    parts = [("<wbr>" if i and ch in _TOKEN_BREAKS and text[i - 1] not in _TOKEN_BREAKS else "")
-             + e(ch) for i, ch in enumerate(text)]
-    return f'<code class="shep-tok">{"".join(parts)}</code>'
+    pieces, start = [], 0
+    for i, ch in enumerate(text):
+        if i and ch in _TOKEN_BREAKS and text[i - 1] not in _TOKEN_BREAKS:
+            pieces.append(text[start:i])
+            start = i
+    pieces.append(text[start:])
+    return ('<code class="shep-tok">'
+            + "<wbr>".join(f"<span>{e(piece)}</span>" for piece in pieces if piece) + "</code>")
 
 
 def literal_html(text: Any) -> str:
@@ -900,8 +907,11 @@ def _detail_rows(notices: Sequence[Mapping[str, Any]]) -> Tuple[str, str]:
 
 
 def _details(notices: Sequence[Mapping[str, Any]]) -> str:
+    """The notices' "Details ›": their rows and one Ref line; none when they
+    hold no row (a Ref line alone is not worth a disclosure: the notice's link
+    leads to where its why is said)."""
     kv, ref = _detail_rows(notices)
-    if not kv and not ref:
+    if not kv:
         return ""
     return (f'<details class="shep-more shep-nb-more"><summary>{e(DETAILS_WORD)}</summary>'
             f'{kv}{ref}</details>')
@@ -2521,7 +2531,7 @@ R10_HELP = (
     "diseases, and their test cases.\n"
     "Phenotype-set overlap: test cases matching an input case's disease and phenotype set, of "
     "all test cases.\n"
-    "- Sets ignore order and repeats, so the scoring inputs may differ.\n"
+    "Sets ignore order and repeats, so the scoring inputs may differ.\n"
     "Ref: R10",
 )
 #: The R10 table's ⓘ, wherever a recorded result shows it (`record_html`).

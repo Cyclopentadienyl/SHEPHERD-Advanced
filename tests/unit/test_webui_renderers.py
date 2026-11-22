@@ -1593,7 +1593,8 @@ def test_a_notice_is_one_line_its_link_and_details_one_click_away():
     more = html.split('<details class="shep-more shep-nb-more"><summary>Details ›</summary>')[1]
     for term in ("Workspaces", "Unset", "Suggested", "Default", "GPU lock", "Taken by", "GPU jobs"):
         assert f'<dt class="shep-k">{term}</dt>' in more, term
-    assert ('<code class="shep-tok">.shepherd<wbr>-gpu<wbr>.lock</code>') in more
+    assert ('<code class="shep-tok"><span>.shepherd</span><wbr><span>-gpu</span><wbr>'
+            '<span>.lock</span></code>') in more
     assert more.count("Ref:") == 1 and "deployment guide §4.11" in more
     assert re.sub(r"<[^>]+>", "", more).count("SHEPHERD_WORKSPACES_ROOT") == 1
     assert r.notice_block(None) == "" and r.notice_block("") == ""
@@ -1614,9 +1615,10 @@ def test_a_notice_with_steps_numbers_them_with_its_action_first():
     steps = rest.split('<ol class="shep-nb-steps">')[1].split("</ol>")[0]
     first, second = re.findall(r"<li>(.*?)</li>", steps)
     assert "data-shep-go" in first
-    assert second == ('Build a dataset in it: <code class="shep-tok">scripts<wbr>/build<wbr>'
-                      '_knowledge<wbr>_graph<wbr>.py</code> <code class="shep-tok">'
-                      '--generate<wbr>-samples</code>')
+    assert second == ('Build a dataset in it: <code class="shep-tok"><span>scripts</span><wbr>'
+                      '<span>/build</span><wbr><span>_knowledge</span><wbr><span>_graph</span>'
+                      '<wbr><span>.py</span></code> <code class="shep-tok"><span>--generate</span>'
+                      '<wbr><span>-samples</span></code>')
 
 
 def test_several_notices_are_one_block_with_one_action_when_their_steps_agree():
@@ -1670,9 +1672,15 @@ def test_every_part_of_a_notice_is_escaped():
 
 
 def test_a_token_breaks_only_at_its_own_separators():
-    assert r.token_html("SHEPHERD_WORKSPACES_ROOT") == \
-        '<code class="shep-tok">SHEPHERD<wbr>_WORKSPACES<wbr>_ROOT</code>'
-    assert r.token_html("--registry") == '<code class="shep-tok">--registry</code>'
+    """The text brief's §8: a path or a variable breaks only before its own
+    separators, never inside a piece and never with a drawn hyphen: each piece
+    is kept on one line (the browser would break after a hyphen by itself)
+    and a ``<wbr>`` stands between pieces; a copy reads the token whole."""
+    assert r.token_html("SHEPHERD_WORKSPACES_ROOT") == (
+        '<code class="shep-tok"><span>SHEPHERD</span><wbr><span>_WORKSPACES</span><wbr>'
+        '<span>_ROOT</span></code>')
+    assert r.token_html("--registry") == '<code class="shep-tok"><span>--registry</span></code>'
+    assert re.sub(r"<[^>]+>", "", r.token_html("a/b-c.d_e")) == "a/b-c.d_e"
     assert "​" not in r.literal_html("a/b/c.json and SHEPHERD_X")
     assert r.literal_html("Settings › Data locations, deployment guide §4.11") == \
         "Settings › Data locations, deployment guide §4.11"
