@@ -2143,7 +2143,12 @@ def test_the_page_is_read_when_shown_and_shapes_the_shared_list(world, monkeypat
     assert (ctx.page_tokens["models"]._id, "change") in opened.targets
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     lst = by_id["shep-models-research-rows"]
-    assert lst in opened.outputs and by_id["shep-mp-records"] in opened.outputs
+    # The list's rows are drawn by its one draw, which the opening asks for
+    # (its draw token among the opening's outputs), with a progress cue there.
+    (draw,) = [fn for fn in demo.fns.values() if lst in fn.outputs]
+    assert draw.name == "_draw" and by_id["shep-mp-records"] in opened.outputs
+    token = next(o for o in opened.outputs if (o._id, "change") in draw.targets)
+    assert isinstance(token, gr.State) and lst in opened.show_progress_on
     states = [o for o in opened.outputs if isinstance(o, gr.State)]
     assert len(states) >= 4                    # listing, selected, page data, view, stale
     inputs = [getattr(i, "elem_id", None) for i in opened.inputs]
@@ -2315,13 +2320,21 @@ def test_the_rows_say_the_view_they_were_drawn_for_and_another_workspace_drops_i
     """The shared list's rows carry the view's ``shaped_for`` (escaped), an
     empty list's too; another workspace's listing is drawn with the view's
     filter only and not as shaped for anything, so the page's "Applying …"
-    line shows until the page shapes the view for it."""
+    line shows until the page shapes the view for it. By family's view names
+    the workspace its keys were read from, so the list's one draw tells
+    (`model_list.list_drawing`)."""
     listing, data = _read(world, monkeypatch)
     family = mp.shape(listing, data, mp.controls(data, mp.BY_FAMILY, mp.ALL_TASKS))
     assert family["shaped_for"] == "family|all" and "keys" in family
-    other = ml.view_for_listing(family, {"workspace": "elsewhere"}, listing)
+    assert family["workspace"] == listing["workspace"] == "demo"
+    elsewhere = {**listing, "workspace": "elsewhere"}
+    other = ml.view_for_listing(family, listing, elsewhere)
     assert "shaped_for" not in other and "keys" not in other and other["note"] == mp.LOAD_NOTE
+    # The view's own workspace, whatever the listing before: this one's keys apply.
+    assert ml.view_for_listing(family, elsewhere, listing) is family
     assert ml.view_for_listing(family, listing, listing) is family
+    drawn = ml.list_drawing(elsewhere, None, ml.PRESETS["research"], view=family)
+    assert "shep-view-for" not in drawn.rows and "shep-fam" not in drawn.rows
     newest = mp.shape(listing, data, mp.controls(data, mp.NEWEST, "gene"))
     assert ml.view_for_listing(newest, {"workspace": "elsewhere"}, listing) is newest
     assert ml.view_marker({"shaped_for": '"><img src=x onerror=alert(1)>'}) == (
@@ -3715,13 +3728,17 @@ def test_a_search_reveals_ancestors_an_arrow_selects_nothing_and_a_body_selects_
     demo, _ctx = _page()
     select = _fn(demo, "_select")
     handle_fold = next(o for o in select.outputs if getattr(o, "value", None) == {})
-    handle_selected = select.outputs[0]
+    handle_selected, handle_drawn = select.outputs[0], select.outputs[-1]
     picked = file_key("alpha-gene")
 
     def answer(raw, current=picked, view_=view):
         out = select.fn(listing, current, False, view_, "", {}, gr.EventData(None, raw),
                         gradio_request())
-        return dict(zip(map(id, select.outputs), out, strict=True))
+        by = dict(zip(map(id, select.outputs), out, strict=True))
+        # The draw token: whether a draw is asked for (its value is a time).
+        if by[id(handle_drawn)] != gr.update():
+            by[id(handle_drawn)] = "draw"
+        return by
 
     for raw, kept in (
             ({"tree": {ml.subtree_node(run_key("alpha-disease")): True,
@@ -3789,7 +3806,9 @@ def test_a_pick_in_the_graph_folds_nothing_it_shows(family):
     by = dict(zip(map(id, select.outputs), out, strict=True))
     assert by[id(select.outputs[0])] == file_key("beta-base")
     assert by[id(handle_fold)] == dict.fromkeys(chain, True)
-    rows = by[id(select.outputs[2])]
+    # The drawing that answers it (the list's one draw, from the state it left).
+    rows = ml.list_drawing(listing, file_key("beta-base"), research, view=view,
+                           fold=by[id(handle_fold)]).rows
     assert all(f'data-tree="{node}" aria-expanded="true"' in rows for node in chain)
     visible = re.findall(r'<li class="shep-fam-li" data-run="([^"]+)"', rows)
     assert visible == re.findall(r'<li class="shep-fam-li" data-run="([^"]+)"', shown)
@@ -3878,7 +3897,10 @@ def test_the_details_name_a_runs_saved_files_and_pick_them_through_the_list(fami
     def answer(raw):
         out = select.fn(listing, last, False, view, "", {}, gr.EventData(None, raw),
                         gradio_request())
-        return dict(zip(map(id, select.outputs), out, strict=True))
+        by = dict(zip(map(id, select.outputs), out, strict=True))
+        # The draw token asked for (its value is a time).
+        assert by.pop(id(select.outputs[-1])) != gr.update()
+        return by
 
     pick = answer({"act": ml.PICK_ACT, "key": other})
     assert pick[id(select.outputs[0])] == other and pick == answer({"key": other})
@@ -4656,3 +4678,146 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     assert touch["joins"] == [{"tree": {t(runs["base"]): False}, "searched": False}]
     assert touch["after"]["expanded"] == "false"
     assert seen["reduced"]["actTransition"] in ("0s", None)
+
+
+#: A pick whose answer comes late (G07; the review of 00258f4, SL-R1): the
+#: server's handling of a body's pick is held where it chooses the run's file
+#: (a file handshake: ``hold`` while it is held, ``entered`` once it is), a
+#: newer search (``search``) or a newer order (``order``) is answered
+#: meanwhile, then the pick is let go; what the page shows once every answer
+#: has come is read.
+_LATE_PICK_JS = r"""
+const { chromium } = require('playwright');
+const fs = require('fs');
+const QUEUE_JS = __QUEUE_JS__, RUN = __RUNS__;
+const ROWS = '#shep-models-research-rows', COUNT = '#shep-models-research-count';
+const [base, hold, entered, act] = process.argv.slice(2);
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 });
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  const viewFor = (v) => page.waitForFunction((v) => { const m = document.querySelector('#shep-models-research-rows .shep-view-for'); return !!m && m.getAttribute('data-for') === v; }, v, { timeout: 30000 });
+  const selectedIs = (run) => page.waitForFunction((r) => { const h = document.querySelector('#shep-mp-detail-hd h2[data-key]'); return !!h && h.getAttribute('data-key').startsWith(r + '/'); }, run, { timeout: 30000 });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  // The pick held on the server: asked with `hold` there, until the server says it is in.
+  const pickHeld = async (run) => {
+    fs.writeFileSync(hold, 'hold');
+    await page.click(`${ROWS} li[data-run="${run}"] > .shep-fam-node .shep-fam-body`);
+    const start = Date.now();
+    while (!fs.existsSync(entered)) {
+      if (Date.now() - start > 30000) { throw new Error('the pick never reached the server'); }
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
+  // Let go, then everything answered: the selection in the details, the queue idle, drawn.
+  const release = async (run) => {
+    fs.unlinkSync(entered); fs.unlinkSync(hold);
+    await selectedIs(run); await idle(); await frames(); await idle();
+  };
+  const shown = () => page.evaluate(([rows, count]) => {
+    const list = document.querySelector(rows), marker = list.querySelector('.shep-view-for');
+    const box = document.querySelector('#shep-models-research-search input, #shep-models-research-search textarea');
+    const current = list.querySelector('[aria-current="true"]');
+    const outside = list.querySelector('.shep-list-outside');
+    const head = document.querySelector('#shep-mp-detail-hd h2[data-key]');
+    return {
+      query: box.value,
+      runs: [...list.querySelectorAll('.shep-fam-body')].filter((e) => e.getClientRects().length).map((e) => e.dataset.run),
+      graph: !!list.querySelector('.shep-fam'), table: !!list.querySelector('tr.shep-tree-run'),
+      viewFor: marker ? marker.getAttribute('data-for') : null,
+      count: document.querySelector(count).innerText.trim(),
+      current: current ? (current.getAttribute('data-key') || current.getAttribute('data-run') || (current.closest('li[data-run]') || { dataset: {} }).dataset.run || '') : null,
+      outside: outside ? outside.innerText.trim() : '',
+      selected: head ? head.getAttribute('data-key') : null,
+    };
+  }, [ROWS, COUNT]);
+  const out = {};
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.click('#shep-page-models-button');
+  await viewFor('newest|all'); await idle();
+  await page.click('#shep-mp-order label:has-text("By family")');
+  await viewFor('family|all'); await idle();
+  await pickHeld(RUN.picked);
+  if (act === 'search') {
+    // A search typed and answered while the pick is held.
+    const box = page.locator('#shep-models-research-search input, #shep-models-research-search textarea');
+    await box.pressSequentially('beta');
+    await page.waitForFunction((c) => document.querySelector(c).innerText.includes('“beta”'), COUNT, { timeout: 30000 });
+  } else {
+    // The Order changed and drawn while the pick is held.
+    await page.click('#shep-mp-order label:has-text("Newest first")');
+    await viewFor('newest|all');
+  }
+  out.during = await shown();
+  await release(RUN.picked);
+  out.after = await shown();
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.parametrize("act", ["search", "order"])
+def test_an_answer_that_comes_late_never_draws_an_older_state_in_a_browser(
+        tmp_path, family, monkeypatch, act):
+    """G07 (an update never applies an old state; the review of 00258f4,
+    SL-R1): By family, a body's pick is held on the server (a file
+    handshake, no timed wait) while a search is typed and answered; once the
+    pick's answer has come and every request is answered, the search box,
+    the runs drawn and the count agree (the search's), and the pick is the
+    selection, said above the graph as not shown by the search. The same
+    root, a pick held while the Order changes: the list then draws the new
+    order (Newest first's table, its count) with the pick selected in it."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.family_world import run_key
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    hold, entered = tmp_path / "hold", tmp_path / "entered"
+    original = ml.run_choice
+
+    def held(*args, **kwargs):
+        # The pick's handler has read its inputs; it waits here while held.
+        if hold.exists():
+            entered.write_text("in")
+            deadline = time.monotonic() + 60
+            while hold.exists():
+                if time.monotonic() > deadline:
+                    raise TimeoutError("the held pick was never let go")
+                time.sleep(0.01)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ml, "run_choice", held)
+    picked = run_key("alpha-base")
+    script = (_LATE_PICK_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__RUNS__", json.dumps({"picked": picked})))
+    with served(create_gradio_app(), **mount_options()) as base:
+        try:
+            seen = run_node(script, tmp_path, base[:-len("gradio_api")], str(hold), str(entered),
+                            act)
+        finally:
+            hold.unlink(missing_ok=True)
+    during, after = seen["during"], seen["after"]
+    # Settled: the pick made before the newer act is the selection.
+    assert after["selected"].startswith(picked + "/"), after
+    if act == "search":
+        assert during["query"] == "beta" and "“beta”" in during["count"], during
+        assert during["runs"] and all("beta" in run for run in during["runs"]), during
+        # The box, the runs drawn and the count are the search's, and the
+        # selection is said as not shown by it.
+        assert after["query"] == "beta", after
+        assert after["runs"] == during["runs"] and after["count"] == during["count"], (
+            during, after)
+        assert "not shown by this filter" in after["outside"], after
+        assert "search “beta”" in after["outside"], after
+        return
+    assert during["viewFor"] == "newest|all" and during["table"] and not during["graph"], during
+    # Newest first's table and count, the pick selected in it.
+    assert after["viewFor"] == "newest|all", after
+    assert after["table"] and not after["graph"] and after["count"] == during["count"], (
+        during, after)
+    assert (after["current"] or "").startswith(picked + "/"), after

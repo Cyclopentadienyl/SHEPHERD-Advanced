@@ -67,7 +67,7 @@ row**: a filter, a search, a fold or a refresh keeps a selection still listed
 (`outside_html`). A lone candidate is chosen (R-27).
 
 **A page shapes its view** through ``ModelList.view`` (a `gr.State` the page
-sets; the list redraws on its ``.change``), never by drawing rows itself:
+sets; the list is drawn again on its ``.change``), never by drawing rows itself:
 ``{"task": "disease"}`` lists the rows of one filter (`TASK_FILTERS`: all,
 base, disease, gene, patients_like_me, task_models; `matches`, on the
 server's one predicate `server_lists.record_matches`); ``"keys"`` lists exactly
@@ -88,9 +88,9 @@ values it shaped the view for) is said by the rows drawn with it
 (`view_marker`), so the page can tell rows that answer its controls from rows
 drawn before (Models' "Applying …" line). What a view names by key (``keys``,
 ``groups``, ``context``, ``parents``, ``edges``, ``bounds``) belongs to the
-workspace it was read from: another workspace's listing is drawn with the
-view's filter and note only, and not as shaped for anything
-(`view_for_listing`), until the page shapes its view again.
+workspace it was read from (the view's ``workspace``): another workspace's
+listing is drawn with the view's filter and note only, and not as shaped for
+anything (`view_for_listing`), until the page shapes its view again.
 ``create_model_list(head=…, foot=…)`` places a page's own components (a
 filter, links) in the list's header and footer rows.
 
@@ -167,8 +167,19 @@ selection (`renderers.best_saves`), a best-k member by its run's records
 (`CheckpointItem.in_best_k`), never from its name. A page that names a file
 other than the chosen one names it by the same two options (`pair_words`).
 
-**Per browser session**: the listing, the selection, the view and the
-confirmation are `gr.State`; nothing here is module state.
+**One draw, from the session's state** (G07; the review of 00258f4,
+SL-R1: a pick answered after a newer search drew the list for no search,
+under the search box still saying it): every event that changes what the list
+shows (a pick, "Show older runs", a search and its Clear, a refresh, the
+page's view) changes the session's state only, and one listener draws the
+rows, the count and what describes the selection (the facts, Load, its
+reason, the note) from that state as it is when it runs (`list_drawing`), one
+draw of a list at a time and the last one asked for always run. What an event
+was asked with (the search box's text as a row was clicked) chooses what it
+changes, never what is drawn.
+
+**Per browser session**: the listing, the selection, the view, the search
+drawn and the confirmation are `gr.State`; nothing here is module state.
 
 Module: src/webui/components/model_list.py
 """
@@ -178,6 +189,7 @@ import contextlib
 import hashlib
 import logging
 import re
+import time
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -724,19 +736,22 @@ _KEYED_VIEW_PARTS = ("keys", "groups", "context", "parents", "edges", "bounds")
 
 
 def view_for_listing(view: Any, previous: Any, listing: Mapping[str, Any]) -> Any:
-    """The page's view as it applies to a listing just read (the shared
-    refresh draws it before the page shapes a new view): what the view names
+    """The page's view as it applies to `listing` (a listing just read is
+    drawn before the page shapes a new view for it): what the view names
     by key (a family's rows, an order's groups, its context rows, parents, edges and
-    boundaries) was read from
-    the `previous` listing's workspace, so for another workspace's listing it
-    is left out and the view's filter and note apply. Another
-    workspace's keys would hide every row of this one. Rows drawn so are not
-    what the page shaped the view for, so its ``shaped_for`` goes too
+    boundaries) was read from the workspace the view names (its
+    ``workspace``), else from the `previous` listing's, so for another
+    workspace's listing it is left out and the view's filter and note apply.
+    Another workspace's keys would hide every row of this one. Rows drawn so
+    are not what the page shaped the view for, so its ``shaped_for`` goes too
     (`view_marker`): the page's controls are not applied until it shapes the
     view for this listing."""
     current = _view(view)
-    if (isinstance(previous, Mapping) and previous.get("workspace") == listing.get("workspace")) \
-            or not any(part in current for part in _KEYED_VIEW_PARTS):
+    if not any(part in current for part in _KEYED_VIEW_PARTS):
+        return view
+    read_from = current.get("workspace", previous.get("workspace")
+                            if isinstance(previous, Mapping) else None)
+    if read_from == listing.get("workspace"):
         return view
     return {k: v for k, v in current.items() if k not in (*_KEYED_VIEW_PARTS, "shaped_for")}
 
@@ -1943,6 +1958,41 @@ def note_html(view: Any, item: Optional[Mapping[str, Any]] = None) -> str:
             if note and item is not None and can_load(item) else "")
 
 
+class ListDrawing(NamedTuple):
+    """What the list draws from one state (`list_drawing`): the rows, the
+    count line, the facts, Load's arguments (`load_button`), its reason and
+    the view's note."""
+
+    rows: str
+    count: str
+    facts: str
+    load: Dict[str, Any]
+    reason: str
+    note: str
+
+
+def list_drawing(listing: Mapping[str, Any], key: Any, preset: Preset, *,
+                 show_older: Any = False, view: Any = None, search: Any = "",
+                 fold: Any = None) -> ListDrawing:
+    """**Everything the list shows, from one state** (G07; the review of
+    00258f4, SL-R1): the rows, the count, and what describes the selection
+    (the facts, Load, its reason, the note), all from the same listing,
+    selection, "Show older runs", view, search and folds. Pure: nothing is
+    read from disk or listed again. A selection the listing does not hold
+    (another workspace's) is drawn as none; a view whose keys were read from
+    another workspace applies its filter and note only (`view_for_listing`)."""
+    view = view_for_listing(view, listing, listing)
+    fold = fold if isinstance(fold, Mapping) else {}
+    item = find_item(listing, key)
+    key = key if item is not None else None
+    older, search = bool(show_older), search or ""
+    return ListDrawing(
+        list_html(listing, key, preset, show_older=older, view=view, search=search, fold=fold),
+        count_line(listing, preset, older, view, search=search, fold=fold),
+        facts_html(listing, key), load_button(listing, item), load_reason_html(item, listing),
+        note_html(view, item))
+
+
 # ---------------------------------------------------------------------------
 # The Load (server side)
 # ---------------------------------------------------------------------------
@@ -2968,16 +3018,20 @@ class ModelList:
       open confirmation (`gr.State`);
     - ``view``: `gr.State`, None or the page's view of the list
       (``task``, ``keys``, ``groups``, ``context``, ``parents``, ``edges``,
-      ``bounds``, ``note``, ``shaped_for``: the module docstring); the
-      list redraws on its ``.change``;
+      ``bounds``, ``workspace``, ``note``, ``shaped_for``: the module
+      docstring); the list is drawn again on its ``.change``;
     - ``search``, ``search_clear``: the search box and its Clear (`search_hit`);
       ``fold``: `gr.State`, what the operator folded and unfolded
       (`tree_view`; the family graph's subtrees, `subtree_node`; what was
       folded during a search, `search_node`);
+    - ``drawn``: `gr.State`, the draw token: an event that changes what the
+      list shows writes a new one, and the list draws on its change;
     - ``phase``: `gr.State`, ``"idle"``, ``"confirming"`` or ``"loading"``
       (Diagnosis disables Run Diagnosis while it is not idle);
     - ``refresh``: keyword arguments for an event that (re)reads the list:
-      ``ctx.on_page_open("models", handle.refresh)``;
+      ``ctx.on_page_open("models", handle.refresh)``; it changes the
+      session's state and the draw token, and the list is drawn from that
+      state by its one draw (``drawn``, `list_drawing`);
     - the rendered parts: ``count``, ``rows``, ``facts``, ``reason``, ``note``,
       ``load_button``, ``confirm``, ``confirm_html``, ``reload_button``,
       ``keep_button``; ``head_extra`` and ``foot_extra``, what the page's
@@ -3018,6 +3072,7 @@ class ModelList:
     search: Any = None
     search_clear: Any = None
     fold: Any = None
+    drawn: Any = None
 
 
 def loading_buttons(plan: Any) -> Tuple[Any, Any, Any]:
@@ -3069,6 +3124,11 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     show_older = gr.State(False)
     #: What the operator folded and unfolded, ``{node: bool}`` (`tree_view`).
     fold = gr.State({})
+    #: The search the list draws: the box's text as its own listener applied it.
+    applied_search = gr.State("")
+    #: The draw token: each event that changes what the list shows writes a new
+    #: one (`_changed`), and the list is drawn on its change (`_draw`).
+    drawn = gr.State(0)
     # The page preset (Models) keeps its header and its rows in one column
     # (``shep-model-main``), so the page can scroll them as one region when
     # they do not fit together (M5-3 review UI-1); the drawer's rows need none.
@@ -3132,6 +3192,29 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                                           elem_id=f"{elem_id}-reload")
                 keep_button = gr.Button("Keep", scale=0, elem_id=f"{elem_id}-keep")
 
+    # **The list is drawn in one place, from the session's state** (G07; the
+    # review of 00258f4, SL-R1). Every event that changes what the list shows
+    # (a pick, "Show older runs", a search and its Clear, a refresh: the page's
+    # opening, a workspace chosen, the Load's and Diagnosis' re-reads) only
+    # changes the state and writes a new draw token (`_changed`); a page
+    # changes the list's view, which is a state too. `_draw` runs on the
+    # token's and the view's change and draws the rows, the count and what
+    # describes the selection (`list_drawing`) from the state as it is when it
+    # runs. Why the last draw is never stale: Gradio reads a `gr.State` input
+    # when the event is processed, not when it is asked, and a state output is
+    # written before its event is answered; the page asks for the draw only
+    # once the change's answer has come (its token, or the view, changed), so
+    # the draw that follows the last change reads that change. The draws of one
+    # list run one at a time (one concurrency id, limit 1), and a draw asked
+    # for while one runs waits and runs after it ("always_last": one is kept,
+    # none dropped), so the last draw to run is one asked for after the last
+    # change, and its answer is the last one drawn. A handler's own inputs
+    # (the search box's text as a pick was clicked) choose what it changes,
+    # never what is drawn: an answer that comes late (a pick held while a
+    # search was answered) draws nothing from them.
+    def _changed() -> int:
+        return time.monotonic_ns()
+
     def _refresh(name, older, current_view, previous, key, request: gr.Request, query="",
                  fold_state=None):
         # A selection still listed in the same workspace stays selected (M5-3
@@ -3150,36 +3233,37 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         fold_state = dict(fold_state) if same and isinstance(fold_state, Mapping) else {}
         current_view = view_for_listing(current_view, previous, data)
         key = kept_selection(previous, data, key, current_view, chosen, search=query)
-        item = find_item(data, key)
         choices = r.workspace_choices(data.get("workspaces") or [])
         # Reading the list is no act: a refused read says why in the list
         # (`refused_line`); Load's reason is said when Load is clicked, or
         # beside it at once for a row whose record is never loaded.
-        return (data, key, gr.update(choices=choices, value=data.get("workspace")),
-                count_line(data, chosen, older, current_view, search=query, fold=fold_state),
-                list_html(data, key, chosen, show_older=older, view=current_view, search=query,
-                          fold=fold_state),
-                facts_html(data, key), gr.update(**load_button(data, item)),
-                load_reason_html(item, data), note_html(current_view, item), fold_state, older)
+        return (data, key, gr.update(choices=choices, value=data.get("workspace")), fold_state,
+                older, _changed())
 
-    refresh_outputs = [listing, selected, workspace, count, rows, facts, load, reason, note, fold,
-                       show_older]
+    # What the list draws, where the page shows that it is being read.
+    read_into = [workspace, count, rows, facts, load, reason, note]
+    refresh_outputs = [listing, selected, workspace, fold, show_older, drawn]
     refresh = {"fn": _refresh,
                "inputs": [workspace, show_older, view, listing, selected, search, fold],
-               "outputs": refresh_outputs, "show_progress": "minimal"}
+               "outputs": refresh_outputs, "show_progress": "minimal",
+               "show_progress_on": read_into}
     picked(workspace)(**refresh)
 
     def _select(data, current, older, current_view, query, fold_state, evt: gr.EventData,
                 request: gr.Request):
+        # What it changes: (selected, show_older, fold, listing, search box,
+        # the search drawn, the draw token); what it was asked with (`query`:
+        # the box's text as the pick was made) chooses, never draws.
         raw = getattr(evt, "_data", None)
         raw = raw if isinstance(raw, Mapping) else {}
-        keep = (gr.update(),) * 7
+        same = gr.update()
+        nothing = (same,) * 7
         fold_state = dict(fold_state) if isinstance(fold_state, Mapping) else {}
         tree = raw.get("tree") if isinstance(raw.get("tree"), Mapping) else None
         if isinstance(raw.get("fold"), str) or tree is not None:
             # The page folded or unfolded it already (`MODEL_LIST_JS`; the
             # family graph's arrows, `FAMILY_JS`); the state keeps it for the
-            # next drawing, which nothing redraws now. What is folded while a
+            # next drawing, which nothing asks for now. What is folded while a
             # search shows the list is that search's (`search_node`): clearing
             # it brings the operator's own back.
             store = search_node if raw.get("searched") else str
@@ -3188,13 +3272,13 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             for node, opened in (tree or {}).items():
                 if isinstance(node, str) and node.startswith("t:"):
                     fold_state[store(node)] = bool(opened)
-            return (*keep, fold_state, gr.update(), gr.update(), gr.update())
+            return (same, same, fold_state, same, same, same, same)
         key = raw.get("key")
         if "act" in raw and (raw["act"] != PICK_ACT or not isinstance(key, str)
                              or key.startswith("__")):
             # A page's region picks a listed file only (`PICK_ACT`), never
             # the list's own acts.
-            return (*keep, gr.update(), gr.update(), gr.update(), gr.update())
+            return nothing
         if isinstance(raw.get("run"), str):
             # A family graph node's body (`FAMILY_JS`): its run's checkpoint,
             # as a Run → Checkpoint choice chooses it (`run_choice`), through
@@ -3202,65 +3286,31 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             key = run_choice(data, current_view, chosen, raw["run"], current, search=query,
                              show_older=older)
         if key == "__older__":
-            if data.get("runs_unread"):
-                # The runs not opened yet are read now (BACKLOG 39).
-                data = list_models(data.get("workspace"), request, family=chosen.family)
-            return (gr.update(), True,
-                    list_html(data, current, chosen, show_older=True, view=current_view,
-                              search=query, fold=fold_state),
-                    count_line(data, chosen, True, current_view, search=query, fold=fold_state),
-                    gr.update(), gr.update(), gr.update(), fold_state, data, gr.update(),
-                    gr.update())
+            # The runs not opened yet are read now (BACKLOG 39).
+            read = (list_models(data.get("workspace"), request, family=chosen.family)
+                    if data.get("runs_unread") else same)
+            return (same, True, same, read, same, same, _changed())
         if key == "__clear_search__":
-            return (gr.update(), older,
-                    list_html(data, current, chosen, show_older=older, view=current_view,
-                              fold=fold_state),
-                    count_line(data, chosen, older, current_view, fold=fold_state),
-                    gr.update(), gr.update(), gr.update(), fold_state, gr.update(), "",
-                    gr.update())
+            return (same, same, same, same, "", "", _changed())
         item = find_item(data, key)
         if item is None or item not in shown_items(data, current_view, chosen):
-            return (*keep, gr.update(), gr.update(), gr.update(), gr.update())
+            return nothing
         # In the family graph a pick folds nothing it shows (I5): what was
         # unfolded only for the selection before it stays unfolded.
         kept = kept_unfolded(data, current_view, chosen, fold_state, current, key,
                              search=query, show_older=older)
         fold_state.update(kept)
-        return (key, older,
-                list_html(data, key, chosen, show_older=older, view=current_view, search=query,
-                          fold=fold_state),
-                count_line(data, chosen, older, current_view, search=query, fold=fold_state),
-                facts_html(data, key), gr.update(**load_button(data, item)),
-                load_reason_html(item, data), fold_state if kept else gr.update(), gr.update(),
-                gr.update(), note_html(current_view, item))
+        return (key, same, fold_state if kept else same, same, same, same, _changed())
 
     # A row's pick, and a page region's (`picks`: ``{act: "pick", key}``), are
     # one selection.
     gr.on([rows.click, *(region.click for region in (picks() if picks else ()))], _select,
           inputs=[listing, selected, show_older, view, search, fold],
-          outputs=[selected, show_older, rows, count, facts, load, reason, fold, listing,
-                   search, note],
+          outputs=[selected, show_older, fold, listing, search, applied_search, drawn],
           show_progress="hidden", trigger_mode="multiple")
 
-    def _redraw(data, key, older, current_view, query, fold_state):
-        # The page changed its view (a filter, an order): the selection stays,
-        # said where the view does not show it (D04: a filter never changes
-        # what is selected).
-        if find_item(data, key) is None:
-            key = None
-        item = find_item(data, key)
-        return (key, list_html(data, key, chosen, show_older=older, view=current_view,
-                               search=query, fold=fold_state),
-                count_line(data, chosen, older, current_view, search=query, fold=fold_state),
-                facts_html(data, key), gr.update(**load_button(data, item)),
-                load_reason_html(item, data), note_html(current_view, item))
-
-    view.change(_redraw, inputs=[listing, selected, show_older, view, search, fold],
-                outputs=[selected, rows, count, facts, load, reason, note],
-                show_progress="hidden")
-
-    def _searched(data, key, older, current_view, query, fold_state):
-        # The search draws the list again; the selection stays. What it finds
+    def _searched(query, fold_state):
+        # The search is the list's to draw; the selection stays. What it finds
         # is revealed as the list is drawn (`fold_open`: a run holding a file
         # found by its own name or fingerprint, the graph's ancestors of a run
         # found), the operator's own folds untouched; what was folded while
@@ -3268,22 +3318,30 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         # search brings the operator's folds back (G7).
         fold_state = {k: v for k, v in fold_state.items() if not str(k).startswith(
             search_node(""))} if isinstance(fold_state, Mapping) else {}
-        if find_item(data, key) is None:
-            key = None
-        return (fold_state,
-                list_html(data, key, chosen, show_older=older, view=current_view, search=query,
-                          fold=fold_state),
-                count_line(data, chosen, older, current_view, search=query, fold=fold_state))
+        return fold_state, query or "", _changed()
 
-    search_inputs = [listing, selected, show_older, view, search, fold]
-    search.input(_searched, inputs=search_inputs, outputs=[fold, rows, count],
+    search.input(_searched, inputs=[search, fold], outputs=[fold, applied_search, drawn],
                  show_progress="hidden", trigger_mode="always_last")
 
-    def _cleared(data, key, older, current_view, fold_state):
-        return ("", *_searched(data, key, older, current_view, "", fold_state))
+    def _cleared(fold_state):
+        return ("", *_searched("", fold_state))
 
-    clear.click(_cleared, inputs=[listing, selected, show_older, view, fold],
-                outputs=[search, fold, rows, count], show_progress="hidden")
+    clear.click(_cleared, inputs=[fold], outputs=[search, fold, applied_search, drawn],
+                show_progress="hidden")
+
+    def _draw(data, key, older, current_view, query, fold_state):
+        # The page changed its view (a filter, an order), or the state
+        # changed (the token): the selection stays, said where the view does
+        # not show it (D04: a filter never changes what is selected).
+        drawing = list_drawing(data, key, chosen, show_older=older, view=current_view,
+                               search=query, fold=fold_state)
+        return (drawing.rows, drawing.count, drawing.facts, gr.update(**drawing.load),
+                drawing.reason, drawing.note)
+
+    gr.on([drawn.change, view.change], _draw,
+          inputs=[listing, selected, show_older, view, applied_search, fold],
+          outputs=[rows, count, facts, load, reason, note], show_progress="hidden",
+          trigger_mode="always_last", concurrency_id=f"{elem_id}-draw", concurrency_limit=1)
 
     def _request(data, key, request: gr.Request):
         new_plan, html_ = request_load(data, key, request)
@@ -3382,7 +3440,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     return ModelList(chosen, elem_id, workspace, listing, selected, plan, view, phase,
                      show_older, count, rows, facts, reason, note, load, confirm,
                      confirm_html, reload_button, keep_button, refresh, head_extra, foot_extra,
-                     reload_done, after_close_js, search, clear, fold)
+                     reload_done, after_close_js, search, clear, fold, drawn)
 
 
 __all__ = [
@@ -3393,6 +3451,7 @@ __all__ = [
     "FAMILY_JS",
     "FILTER_WORDS",
     "FROM_CHANGED",
+    "ListDrawing",
     "LoadStep",
     "MODEL_LIST_JS",
     "ModelList",
@@ -3420,6 +3479,7 @@ __all__ = [
     "kept_unfolded",
     "kept_selection",
     "older_html",
+    "list_drawing",
     "list_html",
     "list_models",
     "load_answered_js",

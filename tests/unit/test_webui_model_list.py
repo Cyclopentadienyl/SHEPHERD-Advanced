@@ -788,6 +788,14 @@ def _listing(root, monkeypatch):
     return ml.list_models("demo", operator_request(monkeypatch))
 
 
+def _drawn(demo, handle, listing, selected=None, older=False, view=None, search="", fold=None):
+    """The list's one draw (`_draw`, on its token's and its view's change) on
+    a session's state: what it draws, by component."""
+    (draw,) = [fn for fn in demo.fns.values() if fn.name == "_draw" and handle.rows in fn.outputs]
+    out = draw.fn(listing, selected, older, view, search, fold or {})
+    return dict(zip(map(id, draw.outputs), out, strict=True))
+
+
 def test_load_needs_d8_on_its_own_request_and_resolves_nothing_when_refused(
         root, serving, monkeypatch):
     from src.api.services import server_lists
@@ -1492,27 +1500,73 @@ def test_the_list_redraws_when_the_page_changes_its_view(root, serving, monkeypa
         handle = ctx.create_model_list("research", head=lambda: gr.Button("Full records"),
                                        foot=lambda: gr.Button("Compare"))
     (redraw,) = [fn for fn in demo.fns.values() if (handle.view._id, "change") in fn.targets]
-    assert redraw.outputs == [handle.selected, handle.rows, handle.count, handle.facts,
-                              handle.load_button, handle.reason, handle.note]
+    assert redraw.name == "_draw" and (handle.drawn._id, "change") in redraw.targets
+    assert redraw.outputs == [handle.rows, handle.count, handle.facts, handle.load_button,
+                              handle.reason, handle.note]
     listing = _listing(root, monkeypatch)
     # D04: a filter never changes what is selected; the list says it does not
     # show the selection, whose details stay.
     disease = _key("model-12.pt")
-    key, rows, count, facts, load, reason, note = redraw.fn(listing, disease, False,
-                                                            {"task": "gene"}, "", {})
-    assert key == disease and "Selected model not shown by this filter (Task: Gene)" in rows
+    rows, count, facts, load, reason, note = redraw.fn(listing, disease, False,
+                                                       {"task": "gene"}, "", {})
+    assert "Selected model not shown by this filter (Task: Gene)" in rows
     assert disease not in re.findall(r'data-key="([^"]+)"', rows)
     assert "Select a model" not in facts and load["interactive"] is True and reason == ""
-    key, _rows, _count, _facts, load, reason, _note = redraw.fn(listing, disease, False,
-                                                                {"task": "disease"}, "", {})
-    assert key == disease and load["interactive"] is True and reason == ""
+    _rows, _count, _facts, load, reason, _note = redraw.fn(listing, disease, False,
+                                                           {"task": "disease"}, "", {})
+    assert load["interactive"] is True and reason == ""
     assert "not shown by this filter" not in _rows
+    # A selection the listing does not hold is drawn as none (never described).
     gone = redraw.fn(listing, "gatv2/x/gone.pt", False, {"task": "disease"}, "", {})
-    assert gone[0] is None and gone[4]["interactive"] is False
+    assert "Select a model" in gone[2] and gone[3]["interactive"] is False
     assert handle.head_extra.value == "Full records" and handle.foot_extra.value == "Compare"
     assert handle.refresh["inputs"] == [handle.workspace, handle.show_older, handle.view,
                                         handle.listing, handle.selected, handle.search,
                                         handle.fold]
+
+
+def test_the_list_is_drawn_in_one_place_from_the_state_as_it_is_then(
+        root, serving, monkeypatch):
+    """G07 (the review of 00258f4, SL-R1: a pick answered after a newer search
+    drew the list for no search): what the list shows (its rows, its count,
+    the facts) is drawn by one listener per list, on its draw token's and its
+    view's change, from States only (Gradio reads them when the draw runs),
+    one draw of a list at a time and the last one asked for kept
+    ("always_last"); every event that changes what the list shows writes the
+    token and none draws the rows or the count itself. The draw is pure:
+    nothing is read from disk or listed again."""
+    import builtins
+
+    demo, _ctx, handle, other = _component("clinical", both=True)
+    for each in (handle, other):
+        (draw,) = [fn for fn in demo.fns.values()
+                   if fn.name == "_draw" and each.rows in fn.outputs]
+        assert set(draw.targets) == {(each.drawn._id, "change"), (each.view._id, "change")}
+        assert draw.inputs and all(isinstance(i, gr.State) for i in draw.inputs)
+        assert draw.trigger_mode == "always_last" and draw.concurrency_limit == 1
+        assert draw.concurrency_id == f"{each.elem_id}-draw"
+        for part in (each.rows, each.count, each.facts):
+            assert [fn for fn in demo.fns.values() if part in fn.outputs] == [draw]
+        for name in ("_refresh", "_select", "_searched", "_cleared"):
+            changers = [fn for fn in demo.fns.values() if fn.name == name
+                        and (each.drawn in fn.outputs or each.listing in fn.inputs)]
+            assert changers and all(each.drawn in fn.outputs for fn in changers), name
+    listing = _listing(root, monkeypatch)
+    picked = _key("model-12.pt")
+    with monkeypatch.context() as patched:
+        patched.setattr(ml, "list_models", lambda *a, **k: pytest.fail("the draw listed"))
+        patched.setattr(ml, "read_status", lambda *a, **k: pytest.fail("the draw read the status"))
+        patched.setattr(builtins, "open", lambda *a, **k: pytest.fail("the draw read a file"))
+        drawn = _drawn(demo, handle, listing, picked, False, {"task": "disease"}, "disease")
+    assert 'aria-current="true"' in _row_of(drawn[id(handle.rows)], "model-12.pt")
+    assert drawn[id(handle.count)].startswith("Disease: ") and "“disease”" in drawn[
+        id(handle.count)]
+    assert drawn[id(handle.load_button)]["interactive"] is True
+    # The pure function the draw calls, the same from the same state.
+    again = ml.list_drawing(listing, picked, ml.PRESETS["clinical"], view={"task": "disease"},
+                            search="disease", fold={})
+    assert (again.rows, again.count, again.facts) == (
+        drawn[id(handle.rows)], drawn[id(handle.count)], drawn[id(handle.facts)])
 
 
 def test_the_research_load_is_off_for_a_base_or_refused_row_with_its_reason(
@@ -1526,36 +1580,41 @@ def test_the_research_load_is_off_for_a_base_or_refused_row_with_its_reason(
         ctx = standalone_context(demo)
         handle = ctx.create_model_list("research")
     select = next(fn for fn in demo.fns.values() if fn.name == "_select")
-    assert select.outputs[5:7] == [handle.load_button, handle.reason]
+    assert select.outputs[0] is handle.selected and handle.drawn in select.outputs
     listing = _listing(root, monkeypatch)
 
     def pick(name):
-        return select.fn(listing, None, False, None, "", {},
-                         gr.EventData(None, {"key": _key(name)}), gradio_request())
+        out = select.fn(listing, None, False, None, "", {},
+                        gr.EventData(None, {"key": _key(name)}), gradio_request())
+        assert out[0] == _key(name)
+        return _drawn(demo, handle, listing, out[0])
 
     for name, why in (("base.pt", ml.BASE_REFUSAL),
                       ("model-07.pt", f"Record not readable: {WRITTEN_BEFORE_SPEC}.")):
-        out = pick(name)
-        assert out[0] == _key(name) and out[5]["interactive"] is False
-        assert out[6] == f'<div class="shep-reason shep-reason-grey">{why}</div>'
-    out = pick("model-05.pt")
-    assert out[5]["interactive"] is True and out[6] == ""
+        drawn = pick(name)
+        assert drawn[id(handle.load_button)]["interactive"] is False
+        assert drawn[id(handle.reason)] == f'<div class="shep-reason shep-reason-grey">{why}</div>'
+    drawn = pick("model-05.pt")
+    assert drawn[id(handle.load_button)]["interactive"] is True
+    assert drawn[id(handle.reason)] == ""
     operator_mode(monkeypatch)
     refreshed = handle.refresh["fn"]("demo", False, None, listing, _key("base.pt"),
                                      gradio_request())
     by = dict(zip(map(id, handle.refresh["outputs"]), refreshed, strict=True))
-    assert by[id(handle.load_button)]["interactive"] is False
-    assert ml.BASE_REFUSAL in by[id(handle.reason)]
+    drawn = _drawn(demo, handle, by[id(handle.listing)], by[id(handle.selected)])
+    assert drawn[id(handle.load_button)]["interactive"] is False
+    assert ml.BASE_REFUSAL in drawn[id(handle.reason)]
 
 
 def test_a_view_shaped_for_another_workspace_never_hides_this_workspaces_rows(
         root, serving, monkeypatch):
-    """Choosing another workspace redraws the list (the shared refresh) with
-    the page's view before the page shapes a new one. What a view names by key
-    (a family view's rows, its groups and cells) was read from one workspace's
-    listing, so on another workspace's listing it is left out and the view's
-    filter, column and note apply: never "No checkpoint is listed in this
-    workspace." over a workspace that holds checkpoints, nor another
+    """Choosing another workspace draws the list (the shared refresh, then
+    the one draw) with the page's view before the page shapes a new one. What
+    a view names by key (a family view's rows, its groups and cells) was read
+    from one workspace's listing (the view's ``workspace``; else the listing
+    before the refresh), so on another workspace's listing it is left out and
+    the view's filter, column and note apply: never "No checkpoint is listed
+    in this workspace." over a workspace that holds checkpoints, nor another
     workspace's family titles. The same workspace's listing (the refresh after
     a Load) keeps the view whole."""
     from src.webui.shell import standalone_context
@@ -1567,27 +1626,34 @@ def test_a_view_shaped_for_another_workspace_never_hides_this_workspaces_rows(
     family = {"task": "disease", "keys": [elsewhere],
               "groups": [{"title": "Family from run 2026-09-01 00:00 · 1 file",
                           "keys": [elsewhere]}],
-              "column": "Lineage", "cells": {elsewhere: "New run"}, "note": "Reloads."}
+              "column": "Lineage", "cells": {elsewhere: "New run"}, "note": "Reloads.",
+              "workspace": "other"}
     operator_mode(monkeypatch)
 
     def refresh(view, previous):
         out = handle.refresh["fn"]("demo", False, view, previous, None, gradio_request())
-        return dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
+        by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
+        return by, _drawn(demo, handle, by[id(handle.listing)], by[id(handle.selected)],
+                          by[id(handle.show_older)], view, "", by[id(handle.fold)])
 
-    by = refresh(family, {**ml.empty_listing(), "workspace": "other"})
-    rows = by[id(handle.rows)]
+    by, drawn = refresh(family, {**ml.empty_listing(), "workspace": "other"})
+    rows = drawn[id(handle.rows)]
     for name in ("model-12.pt", "model-08.pt", "model-05.pt", "model-01.pt"):
         assert f'data-key="{_key(name)}"' in rows, name
     assert "Family from run" not in rows and "Group" not in rows
-    assert by[id(handle.count)] == "Disease: 3 of 8 runs"
+    assert drawn[id(handle.count)] == "Disease: 3 of 8 runs"
     # Nothing is selected: no note beside Load (R-78).
-    assert by[id(handle.note)] == ""
-    # The same workspace: the view's own rows and groups.
+    assert drawn[id(handle.note)] == ""
+    # A view that names no workspace was read from the listing before the refresh.
     listing = by[id(handle.listing)]
-    mine = {**family, "keys": [_key("model-05.pt")],
+    unnamed = {k: v for k, v in family.items() if k != "workspace"}
+    assert "keys" not in ml.view_for_listing(unnamed, {"workspace": "other"}, listing)
+    assert ml.view_for_listing(unnamed, listing, listing) is unnamed
+    # The same workspace: the view's own rows and groups.
+    mine = {**family, "workspace": "demo", "keys": [_key("model-05.pt")],
             "groups": [{"title": "Family from run 2026-10-01 00:00 · 1 file",
                         "keys": [_key("model-05.pt")]}]}
-    rows = refresh(mine, listing)[id(handle.rows)]
+    rows = refresh(mine, listing)[1][id(handle.rows)]
     assert rows.count(" data-key=") == 1 and "Family from run 2026-10-01" in rows
     assert "Group" not in rows
 
@@ -1954,26 +2020,37 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
         handle = ctx.create_model_list("clinical")
     app = FastAPI()
     gr.mount_gradio_app(app, demo, path="/ui")
+    import uuid
+
     refresh = next(d for d in demo.fns.values() if d.name == "_refresh")
+    draw = next(d for d in demo.fns.values() if d.name == "_draw")
     operator_mode(monkeypatch)
 
     def call(base_url):
+        # One session: the refresh, then the draw it asks for (its token's change).
+        session = uuid.uuid4().hex
+        answers = []
         with TestClient(app, base_url=base_url) as client:
-            started = client.post(f"/ui/gradio_api/call/{refresh.api_name}",
-                                  json={"data": [None, False, None, None, None, "", {}]})
-            assert started.status_code == 200, started.text
-            stream = client.get(f"/ui/gradio_api/call/{refresh.api_name}/"
-                                f"{started.json()['event_id']}")
-        lines = stream.text.splitlines()
-        return json.loads(lines[lines.index("event: complete") + 1][len("data:"):])
+            for fn, data in ((refresh, [None, False, None, None, None, "", {}]),
+                             (draw, [None] * len(draw.inputs))):
+                started = client.post(f"/ui/gradio_api/call/{fn.api_name}",
+                                      json={"data": data, "session_hash": session})
+                assert started.status_code == 200, started.text
+                stream = client.get(f"/ui/gradio_api/call/{fn.api_name}/"
+                                    f"{started.json()['event_id']}")
+                lines = stream.text.splitlines()
+                answers.append(json.loads(lines[lines.index("event: complete") + 1]
+                                          [len("data:"):]))
+        return answers
 
     # The outputs a client sees: the listing itself is session state (not
-    # returned), then the workspace choice, the count, the rows, the facts.
+    # returned: a State's place holds nothing), so the refresh answers the
+    # workspace choice; the draw, the rows, the count, the facts, from that
+    # session's listing.
     refused = call("http://192.0.2.10")
     assert "Operator controls only: request not local." in json.dumps(refused)
     assert "disease_8c2e7a" not in json.dumps(refused)
-    listed = call(OPERATOR_BASE_URL)
-    _state, _selected, workspace, count, rows = listed[:5]
+    (_listing, _selected, workspace, *_states), (rows, count, *_rest) = call(OPERATOR_BASE_URL)
     assert workspace["value"] == "demo"
     # The drawer opened the latest runs only (BACKLOG 39), so how many older
     # runs hold a model is not said.
@@ -2020,16 +2097,18 @@ def test_a_selection_made_after_a_load_survives_the_lists_re_read(root, serving,
     out = refresh["fn"]("demo", False, None, before, picked, request)
     by = dict(zip(map(id, refresh["outputs"]), out, strict=True))
     assert by[id(handle.selected)] == picked
-    assert by[id(handle.load_button)]["interactive"] is True
-    assert 'aria-current="true"' in _row_of(by[id(handle.rows)], "model-12.pt")
-    assert "Select a model" not in by[id(handle.facts)]
+    drawn = _drawn(demo, handle, by[id(handle.listing)], picked)
+    assert drawn[id(handle.load_button)]["interactive"] is True
+    assert 'aria-current="true"' in _row_of(drawn[id(handle.rows)], "model-12.pt")
+    assert "Select a model" not in drawn[id(handle.facts)]
     elsewhere = ({**before, "workspace": "other"}, picked)
     gone = (before, "gatv2/x/gone.pt")
     for previous, key in (elsewhere, gone):
         out = refresh["fn"]("demo", False, None, previous, key, request)
         by = dict(zip(map(id, refresh["outputs"]), out, strict=True))
         assert by[id(handle.selected)] is None
-        assert by[id(handle.load_button)]["interactive"] is False
+        drawn = _drawn(demo, handle, by[id(handle.listing)], None)
+        assert drawn[id(handle.load_button)]["interactive"] is False
 
 
 # --------------------------------------------------------------------------- the tree (D04)
@@ -2147,7 +2226,9 @@ def test_the_refresh_keeps_the_selection_and_the_folds_and_a_lone_row_is_chosen(
                                "nothing matches this", fold)
     by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
     assert by[id(handle.selected)] == picked and by[id(handle.fold)] == fold
-    assert "Selected model not shown by this filter (Task: Disease" in by[id(handle.rows)]
+    drawn = _drawn(demo, handle, by[id(handle.listing)], picked, False, {"task": "disease"},
+                   "nothing matches this", fold)
+    assert "Selected model not shown by this filter (Task: Disease" in drawn[id(handle.rows)]
     out = handle.refresh["fn"]("demo", False, None, {**before, "workspace": "other"}, picked,
                                request, "", fold)
     by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
@@ -2177,7 +2258,9 @@ def test_a_fold_toggle_is_kept_and_draws_nothing_again(root, serving, monkeypatc
                     gradio_request())
     by = dict(zip(map(id, select.outputs), out, strict=True))
     assert by[id(handle.fold)] == {node: True}
-    assert all(by[id(c)] == gr.update() for c in (handle.rows, handle.selected, handle.facts))
+    # Nothing else changed, and no draw asked for (the draw token unchanged).
+    assert handle.drawn in select.outputs and handle.rows not in select.outputs
+    assert all(v == gr.update() for k, v in by.items() if k != id(handle.fold))
     assert "foldRows(node, open)" in ml.MODEL_LIST_JS and "scrollIntoView" in ml.MODEL_LIST_JS
 
 
@@ -2312,17 +2395,18 @@ def test_the_drawer_opens_only_the_runs_it_shows_and_the_rest_on_show_older_runs
                      "model-12.pt"], first
     listing = by[id(handle.listing)]
     assert listing["runs_unread"] == 3
-    assert "Show older runs (up to 3 more)" in by[id(handle.rows)]
-    assert by[id(handle.count)] == "Latest 4 runs, 5 saved files"
+    drawn = _drawn(demo, handle, listing)
+    assert "Show older runs (up to 3 more)" in drawn[id(handle.rows)]
+    assert drawn[id(handle.count)] == "Latest 4 runs, 5 saved files"
     select = next(fn for fn in demo.fns.values() if fn.name == "_select")
     opened.clear()
     out = select.fn(listing, None, False, None, "", {}, gr.EventData(None, {"key": "__older__"}),
                     gradio_request())
     shown = dict(zip(map(id, select.outputs), out, strict=True))
     assert {"model-01.pt", "base.pt", "model-07.pt"} <= set(opened)
-    assert "disease_cccccc" in shown[id(handle.rows)]
     older = shown[id(handle.listing)]
     assert older["runs_unread"] == 0 and shown[id(handle.show_older)] is True
+    assert "disease_cccccc" in _drawn(demo, handle, older, None, True)[id(handle.rows)]
     # Another workspace picked after "Show older runs" lists its latest runs
     # only (its every file was opened: "Show older runs" was kept for the
     # session); the same workspace read again keeps what was asked.
@@ -2332,7 +2416,8 @@ def test_the_drawer_opens_only_the_runs_it_shows_and_the_rest_on_show_older_runs
     by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
     assert sorted(opened) == first, sorted(opened)
     assert by[id(handle.listing)]["workspace"] == "other" and by[id(handle.show_older)] is False
-    assert "Show older runs (up to 3 more)" in by[id(handle.rows)]
+    assert "Show older runs (up to 3 more)" in _drawn(demo, handle, by[id(handle.listing)])[
+        id(handle.rows)]
     out = handle.refresh["fn"]("demo", True, None, older, None, gradio_request())
     by = dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
     assert by[id(handle.show_older)] is True and by[id(handle.listing)]["runs_unread"] == 0
@@ -2374,8 +2459,10 @@ def test_a_drawer_search_says_the_older_runs_it_has_not_searched(root, serving, 
     out = select.fn(listing, None, False, None, "cccccc", {},
                     gr.EventData(None, {"key": "__older__"}), gradio_request())
     shown = dict(zip(map(id, select.outputs), out, strict=True))
-    assert "disease_cccccc" in shown[id(handle.rows)]
-    assert shown[id(handle.count)] == "1 run matches “cccccc”"
+    drawn = _drawn(demo, handle, shown[id(handle.listing)], None, shown[id(handle.show_older)],
+                   None, "cccccc")
+    assert "disease_cccccc" in drawn[id(handle.rows)]
+    assert drawn[id(handle.count)] == "1 run matches “cccccc”"
     # Every run read: the whole workspace's words.
     full = ml.list_models("demo", gradio_request())
     assert "No model finetuned for a task matches “zzz” in this workspace." in _visible(
@@ -2407,12 +2494,13 @@ def test_a_search_reveals_what_it_found_and_clearing_it_brings_the_folds_back(
         return {k: h for _c, k, h in _rows(rows) if k}[_key("model-03.pt")]
 
     query = root["shas"]["model-03.pt"][:8]
-    fold, rows, count = searched.fn(listing, None, False, None, query,
-                                    {**manual, ml.search_node(run): False})
+    fold, drawn_search, _token = searched.fn(query, {**manual, ml.search_node(run): False})
     assert fold == manual                      # the operator's folds kept; an old search's dropped
-    assert not hidden(rows)                    # revealed while the search shows the list
-    assert count.startswith("1 run matches") and searched.outputs == [handle.fold, handle.rows,
-                                                                       handle.count]
+    assert searched.outputs[0] is handle.fold and searched.outputs[2] is handle.drawn
+    assert drawn_search == query
+    drawn = _drawn(demo, handle, listing, None, False, None, drawn_search, fold)
+    assert not hidden(drawn[id(handle.rows)])  # revealed while the search shows the list
+    assert drawn[id(handle.count)].startswith("1 run matches")
     # Folded again while the search is shown: that search's, the manual entry untouched.
     out = select.fn(listing, None, False, None, query, fold,
                     gr.EventData(None, {"fold": run, "open": False, "searched": True}),
@@ -2421,8 +2509,9 @@ def test_a_search_reveals_what_it_found_and_clearing_it_brings_the_folds_back(
     assert during == {**manual, ml.search_node(run): False}
     assert hidden(ml.list_html(listing, None, ml.PRESETS["research"], search=query, fold=during))
     # Cleared: the operator's own folds are back, the search's are gone.
-    box, fold, rows, _count = cleared.fn(listing, None, False, None, during)
-    assert box == "" and fold == manual and hidden(rows)
+    box, fold, drawn_search, _token = cleared.fn(during)
+    assert box == "" and fold == manual and drawn_search == ""
+    assert hidden(_drawn(demo, handle, listing, None, False, None, "", fold)[id(handle.rows)])
     assert ml.fold_open(manual, run, "", False, True) is False
     assert ml.fold_open(manual, run, query, True, False) is True
 

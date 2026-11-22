@@ -1086,8 +1086,8 @@ def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str,
 
     Newest first: the Task filter and the Load note; the shared list draws
     every run, latest first, its files folded. By family: the families' tree
-    (`family_view`); without a family view, newest first and why
-    (``refused``)."""
+    (`family_view`) and the workspace its keys were read from; without a
+    family view, newest first and why (``refused``)."""
     if data.get("readonly"):
         return {"note": ""}
     task = ctl.get("task") or ALL_TASKS
@@ -1096,7 +1096,9 @@ def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str,
         family = family_view(listing, task)
         if family is None:
             return {**newest, "refused": FAMILY_NOT_READ}
-        return {"task": task, **family, "note": LOAD_NOTE, "shaped_for": shaped_for(ctl)}
+        # Its keys are this workspace's (`model_list.view_for_listing`).
+        return {"task": task, **family, "workspace": listing.get("workspace"),
+                "note": LOAD_NOTE, "shaped_for": shaped_for(ctl)}
     return newest
 
 
@@ -1831,7 +1833,8 @@ def create_models_page(ctx: Any) -> None:
         "fn": _open,
         "inputs": [*handle.refresh["inputs"], *control_inputs, parts["seg"], handle.phase],
         "outputs": [*handle.refresh["outputs"], stale_state, *page_outputs],
-        "show_progress": "minimal"})
+        "show_progress": "minimal",
+        "show_progress_on": [*handle.refresh["show_progress_on"], *page_outputs]})
 
     def _load_started():
         return True
