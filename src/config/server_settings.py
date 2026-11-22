@@ -192,6 +192,7 @@ __all__ = [
     "ACCEPTS_NETWORK_BIND",
     "BindDecision",
     "CHOOSE_IN_DATA_LOCATIONS",
+    "CHOOSE_THEM_IN_DATA_LOCATIONS",
     "CREATE_SUGGESTED",
     "DATA_LOCATIONS_TARGET",
     "DEFAULT_BIND_HOST",
@@ -211,14 +212,23 @@ __all__ = [
     "GPU_LOCK_GUIDE",
     "GPU_LOCK_NOT_CONFIGURED",
     "GPU_LOCK_NOTICE",
+    "IMPORT_FOLDER",
+    "INTAKE_DIR_NOTICE",
+    "INTAKE_DIR_NOT_SET",
+    "INTAKE_FORMAT",
     "LOCAL_ENTRY",
+    "NO_IMPORT_FOLDER",
     "NO_RESULTS_REGISTRY",
     "NO_WORKSPACES_FOLDER",
     "Notice",
+    "OPEN_DATA_LOCATIONS",
     "OUTSIDE_REPOSITORY",
+    "PLACE_ACTIONS",
     "MODE_OFF_STATE",
     "OPERATOR_DEPLOYMENT_MODE",
     "REGISTRY_NOTICE",
+    "RESULTS_REGISTRY",
+    "SEVERAL_ACTIONS",
     "REGISTRY_NOT_SET",
     "REGISTRY_OPTION",
     "SAVED_VARIABLES",
@@ -227,6 +237,7 @@ __all__ = [
     "SOURCE_SAVED",
     "SUGGESTED_WORKSPACES",
     "Setting",
+    "WORKSPACES_FOLDER",
     "WORKSPACES_ROOT_NOTICE",
     "WORKSPACES_ROOT_NOT_SET",
     "all_settings",
@@ -658,7 +669,11 @@ class Notice(NamedTuple):
     - `ref`: the trailing reference line's items (the variable, a guide
       section);
     - `cause`: the key of the notice this one follows from (the GPU lock's
-      is the workspaces folder's): one screen says them as one.
+      is the workspaces folder's): one screen says them as one;
+    - `name`: the setting's plain name, as Settings › Data locations names
+      its row ("Results registry"); where several notices are said as one
+      block, it heads this notice's rows under "Details ›", so the state is
+      said once on the screen ("" for a notice that has no row there).
     """
 
     key: str
@@ -669,11 +684,20 @@ class Notice(NamedTuple):
     details: Tuple[str, ...]
     ref: Tuple[str, ...]
     cause: Optional[str] = None
+    name: str = ""
 
 
+#: Each data location's plain name (a notice's `name`; the Settings row's,
+#: `deployment_view.FIELD_WORDS`).
+WORKSPACES_FOLDER = "Workspaces folder"
+RESULTS_REGISTRY = "Results registry"
+IMPORT_FOLDER = "Import folder"
 #: The parts the notices and the whole sentences share (`Notice`).
 NO_WORKSPACES_FOLDER = "No workspaces folder is set"
 NO_RESULTS_REGISTRY = "No results registry is set"
+NO_IMPORT_FOLDER = "No import folder is set"
+#: The format of an import source the import folder holds.
+INTAKE_FORMAT = "shepherd-cases/1"
 #: The Data locations button that makes the suggested folder
 #: (`data_locations.CREATE_LABEL`).
 CREATE_SUGGESTED = "Create suggested folder"
@@ -688,6 +712,15 @@ SUGGESTED_WORKSPACES = deployment_settings.suggested_words(KEY_WORKSPACES_ROOT)
 #: The next step of every unset data location, and where it is in the GUI.
 CHOOSE_IN_DATA_LOCATIONS = f"Choose one in {DATA_LOCATIONS}"
 DATA_LOCATIONS_TARGET = "settings#shep-dl"
+#: **One next step for several notices** (the WebUI's `notices_block`: a screen that says two
+#: unset locations draws one link to their one place): their one action as several notices say
+#: it (`SEVERAL_ACTIONS`; an action not listed reads the same for several), or, where their
+#: actions differ, the place itself (`PLACE_ACTIONS`, by target). Chosen by the parts, never by
+#: reading a sentence's words.
+CHOOSE_THEM_IN_DATA_LOCATIONS = f"Choose them in {DATA_LOCATIONS}"
+OPEN_DATA_LOCATIONS = f"Open {DATA_LOCATIONS}"
+SEVERAL_ACTIONS = {CHOOSE_IN_DATA_LOCATIONS: CHOOSE_THEM_IN_DATA_LOCATIONS}
+PLACE_ACTIONS = {DATA_LOCATIONS_TARGET: OPEN_DATA_LOCATIONS}
 
 
 def _relation(state: str) -> str:
@@ -718,6 +751,7 @@ WORKSPACES_ROOT_NOTICE = Notice(
         "Default: none is assumed",
     ),
     ref=(ENV_WORKSPACES_ROOT,),
+    name=WORKSPACES_FOLDER,
 )
 
 
@@ -822,6 +856,7 @@ REGISTRY_NOTICE = Notice(
         f"Where: {OUTSIDE_REPOSITORY}, the commands' {REGISTRY_OPTION}",
     ),
     ref=(ENV_REGISTRY,),
+    name=RESULTS_REGISTRY,
 )
 
 
@@ -895,9 +930,24 @@ def deployment_registry_refusal(registry: Path,
 
 #: Why no import source is offered with no import folder set.
 INTAKE_DIR_NOT_SET = (
-    "No import folder is set, so no import source is offered. Choose it in "
-    f"{DATA_LOCATIONS}: a folder outside the repository where you place shepherd-cases/1 "
+    f"{NO_IMPORT_FOLDER}, so no import source is offered. Choose it in "
+    f"{DATA_LOCATIONS}: {OUTSIDE_REPOSITORY} where you place {INTAKE_FORMAT} "
     f"files. Ref: {ENV_INTAKE_DIR}"
+)
+#: `INTAKE_DIR_NOT_SET` in parts (the Test page's import drawer).
+INTAKE_DIR_NOTICE = Notice(
+    key="intake_dir",
+    summary=f"{NO_IMPORT_FOLDER}.",
+    short=_relation(NO_IMPORT_FOLDER),
+    action=CHOOSE_IN_DATA_LOCATIONS,
+    target=DATA_LOCATIONS_TARGET,
+    details=(
+        f"Offers: the {INTAKE_FORMAT} files you place in it",
+        "Until set: no import source is offered",
+        f"Location: {OUTSIDE_REPOSITORY}",
+    ),
+    ref=(ENV_INTAKE_DIR,),
+    name=IMPORT_FOLDER,
 )
 
 

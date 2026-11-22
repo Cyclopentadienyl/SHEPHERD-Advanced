@@ -2134,6 +2134,31 @@ def test_the_intake_note_names_what_is_not_offered_without_its_path(site):
     assert "leaves.json resolves to a server path" in note and str(site.root) not in note
 
 
+def test_with_no_import_folder_the_drawer_says_its_notice_not_the_whole_sentence(monkeypatch):
+    """S13 of the sweep's integration (the lanes' L3 R4): with no import folder set the import
+    drawer said the setting's whole sentence (`server_settings.INTAKE_DIR_NOT_SET`, its variable
+    and the folder's rule in the flow). It says the folder's notice
+    (`server_settings.INTAKE_DIR_NOTICE` through `workspaces.setting_notice`, chosen by the
+    setting's flags): one line, its link to Settings › Data locations, the rest under
+    "Details ›" (the variable only in its Ref line); a folder set but refused says it cannot be
+    used and where to see why, never its path."""
+    from src.config import server_settings as ss
+    from tests.fixtures.operator_access import operator_request
+
+    monkeypatch.delenv("SHEPHERD_INTAKE_DIR", raising=False)
+    listing = tp.open_import(operator_request(monkeypatch), environ={})
+    assert listing["items"] == [] and listing["notice"]["key"] == "intake_dir"
+    note = tp.intake_note_html(listing, [])
+    assert note.count('data-notice="intake_dir"') == 1 and 'data-shep-go="settings"' in note
+    line = note.split("<details", 1)[0]
+    assert ss.NO_IMPORT_FOLDER in line and "SHEPHERD_INTAKE_DIR" not in line
+    assert ss.INTAKE_DIR_NOT_SET not in note
+    assert "SHEPHERD_INTAKE_DIR" in re.sub(r"<[^>]+>", "", note.split("<details", 1)[1])
+    refused = tp.open_import(operator_request(monkeypatch), environ={"SHEPHERD_INTAKE_DIR": "relative"})
+    said = tp.intake_note_html(refused, [])
+    assert "The import folder cannot be used." in said and "relative" not in said
+
+
 def test_the_import_source_is_named_by_the_folder_settings_chooses():
     """T06: the select read "File in the intake directory (server)" while
     Settings › Data locations, where the folder is chosen, names it "Import
@@ -5194,7 +5219,8 @@ def test_at_first_use_the_screen_says_each_setting_once_and_each_control_its_rel
     text = _plain(html)
     for said in ("No results registry is set.", "No workspaces folder is set."):
         assert text.count(said) == 1, said
-    assert html.count("data-shep-go=") == 1 and "Choose one in Settings › Data locations" in text
+    # One link for both, in the settings' words for several (the sweep's S12).
+    assert html.count("data-shep-go=") == 1 and server_settings.CHOOSE_THEM_IN_DATA_LOCATIONS in text
     # The settings' whole sentences, the env vars and the old lines are said nowhere.
     for whole in (server_settings.REGISTRY_NOT_SET, server_settings.WORKSPACES_ROOT_NOT_SET):
         assert whole[:40] not in text

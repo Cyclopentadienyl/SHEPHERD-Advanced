@@ -36,6 +36,7 @@ from typing import (Any, Callable, Dict, Hashable, Iterable, List, Mapping, Name
                     Optional, Sequence, Tuple)
 
 from src.config.recipe import FROZEN_PARTS, unread_settings
+from src.config.server_settings import PLACE_ACTIONS, SEVERAL_ACTIONS
 from src.evaluation.caveats import (
     EXPOSURE_EVIDENCE,
     EXPOSURE_NEGATIVES,
@@ -906,15 +907,37 @@ def _detail_rows(notices: Sequence[Mapping[str, Any]]) -> Tuple[str, str]:
     return kv, ref
 
 
-def _details(notices: Sequence[Mapping[str, Any]]) -> str:
+def _details(notices: Sequence[Mapping[str, Any]], *, grouped: bool = False) -> str:
     """The notices' "Details ›": their rows and one Ref line; none when they
     hold no row (a Ref line alone is not worth a disclosure: the notice's link
-    leads to where its why is said)."""
+    leads to where its why is said). `grouped` (several notices said as one
+    block): each notice's rows under its setting's name (the notice's
+    `name`; its state is said once, on its line above), so a row is read as
+    the fact of the setting it explains; one Ref line under them all."""
     kv, ref = _detail_rows(notices)
     if not kv:
         return ""
+    if grouped and len(notices) > 1:
+        kv = "".join((f'<p class="shep-nb-sub">{e(n["name"])}</p>' if n.get("name") else "") + rows
+                     for n in notices for rows in [_detail_rows([n])[0]] if rows)
     return (f'<details class="shep-more shep-nb-more"><summary>{e(DETAILS_WORD)}</summary>'
             f'{kv}{ref}</details>')
+
+
+def _shared_step(notices: Sequence[Mapping[str, Any]]) -> Optional[Dict[str, str]]:
+    """**The one next step of several notices** (`notices_block`): when every
+    notice's step leads to one place, that place once, in the words the
+    settings' source gives several notices (`server_settings.SEVERAL_ACTIONS`
+    for their one action, else `PLACE_ACTIONS` for the place), never words
+    built here; None when their places differ or a step has no words."""
+    targets = {str(n.get("target") or "") for n in notices}
+    actions = list(dict.fromkeys(str(n.get("action") or "") for n in notices))
+    if len(targets) != 1 or not all(actions):
+        return None
+    target = next(iter(targets))
+    words = (SEVERAL_ACTIONS.get(actions[0], actions[0]) if len(actions) == 1
+             else PLACE_ACTIONS.get(target))
+    return {"action": words, "target": target} if words else None
 
 
 def _keys(notices: Iterable[Mapping[str, Any]]) -> str:
@@ -962,28 +985,29 @@ def notices_block(notices: Iterable[Any], *, consequence: Optional[str] = None,
                   go: bool = True) -> str:
     """**Several notices said once, as one block** (the Test page's data
     panel: the registry and the workspaces folder): each state on a line of
-    its own with its mark, then what they mean here and one next step when
-    every notice's step is the same (each its own after its state, else);
-    one "Details ›" with every notice's rows and one Ref line. One notice is
-    `notice_block`'s; none, ""."""
+    its own with its mark, then what they mean here and one next step for
+    the block when every notice's step leads to one place (`_shared_step`:
+    "Choose them in Settings › Data locations"; each its own after its state,
+    else); one "Details ›" with each notice's rows under its setting's
+    name and one Ref line. One notice is `notice_block`'s; none, ""."""
     found = [n for n in map(_as_notice, notices) if n]
     if len(found) <= 1:
         return notice_block(found[0], consequence=consequence, go=go) if found else ""
-    one = len({(n.get("action"), n.get("target")) for n in found}) == 1
+    shared = _shared_step(found)
     lines = []
     for n in found:
         inner = (f'<span class="shep-st-w shep-st-{STATUS_MARKS[n["kind"]][1]}">'
                  f'{e(n["summary"])}</span>')
-        if not one and _go(n, go):
+        if shared is None and _go(n, go):
             inner += f" {_go(n, go)}"
         lines.append(_marked(n["kind"], inner, "shep-nb-line"))
     after = " ".join(part for part in (
         f'<span class="shep-nb-then">{e(consequence)}</span>' if consequence else "",
-        _go(found[0], go) if one else "") if part)
+        _go(shared, go) if shared else "") if part)
     next_line = f'<p class="shep-nb-next">{after}</p>' if after else ""
     kind = "error" if any(n["kind"] == "error" for n in found) else "neutral"
     return (f'<div class="shep-nb shep-nb-{kind}" data-notice="{e(_keys(found))}">'
-            f'{"".join(lines)}{next_line}{_details(found)}</div>')
+            f'{"".join(lines)}{next_line}{_details(found, grouped=True)}</div>')
 
 
 def see_above(lead: str, notice: Any, *, where: Optional[str] = None,

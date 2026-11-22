@@ -205,6 +205,7 @@ from src.webui.components.workspaces import (
     contents_reason,
     path_roots,
     redact_server as redact,
+    setting_notice,
     version_row,
     workspace_binding,
 )
@@ -2483,6 +2484,12 @@ def intake_choices(listing: Mapping[str, Any]) -> List[Tuple[str, str]]:
 
 
 def intake_note_html(listing: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
+    """What the import drawer says under its select: the import folder's
+    notice when it is unset or refused (one line, its link to Settings › Data
+    locations, the rest under "Details ›"), else the listing's own problem,
+    else what the folder offers and why any file in it is not offered."""
+    if listing.get("notice"):
+        return r.notice_block(listing["notice"])
     if listing.get("problem"):
         return _reason_html(redact(listing["problem"], roots))
     items = listing.get("items") or []
@@ -2837,14 +2844,21 @@ IMPORT_TITLE_HTML = ('<h2>Import a new cohort version</h2><p class="shep-sub">Ma
 
 def open_import(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """"Import a new version…": D8 on this request (the intake directory holds
-    patient-level data), then the server's intake listing."""
+    patient-level data), then the server's intake listing; when nothing is
+    listed because the import folder is unset or refused, its notice
+    (`workspaces.setting_notice`, chosen by the setting's flags, never by the
+    listing's words), which the drawer says in place of the sentence."""
     from src.api.services.server_lists import list_intake_files
+    from src.config import server_settings
 
     access = operator_access(request)
     if not access.allowed:
-        return {"refused": access.refusal, "items": [], "problem": None}
+        return {"refused": access.refusal, "items": [], "problem": None, "notice": None}
     listing = list_intake_files(environ=environ)
-    return {"refused": None, "items": [asdict(i) for i in listing.items], "problem": listing.problem}
+    notice = (setting_notice(server_settings.intake_directory(environ)) if listing.problem
+              else None)
+    return {"refused": None, "items": [asdict(i) for i in listing.items], "problem": listing.problem,
+            "notice": notice}
 
 
 def _import_inputs(workspace: Any, file: Any, label: Any, role: Any, policy: Any) -> Dict[str, Any]:

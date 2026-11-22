@@ -1639,6 +1639,39 @@ def test_several_notices_are_one_block_with_one_action_when_their_steps_agree():
     assert r.notices_block([refused, ws]).startswith('<div class="shep-nb shep-nb-error"')
 
 
+def test_several_notices_share_one_step_in_the_sources_words_and_group_their_details():
+    """S12 of the sweep's integration (the lanes' L3 R2): several notices whose steps lead to one
+    place draw one link for the block, in the words the settings' source gives several notices
+    (`server_settings.SEVERAL_ACTIONS`: "Choose them in …", where one notice's "Choose one in …"
+    was drawn for two; where their actions differ, the place itself, `PLACE_ACTIONS`), never
+    words built from a sentence; and the block's "Details ›" holds each notice's rows under its
+    setting's name (`Notice.name`), so a row reads as the fact of the setting it explains, and
+    each state is said once in the block."""
+    from src.config import server_settings as ss
+    from src.webui.components import workspaces as w
+
+    ws, _gpu, registry = _notices()
+    html = r.notices_block([registry, ws], consequence="Testing waits for both.")
+    links = re.findall(r'<button[^>]*data-shep-go="settings"[^>]*>([^<]*)</button>', html)
+    assert links == [r.e(ss.CHOOSE_THEM_IN_DATA_LOCATIONS)], links
+    assert ss.CHOOSE_IN_DATA_LOCATIONS not in html
+    details = html.split("<details", 1)[1]
+    subs = re.findall(r'<p class="shep-nb-sub">([^<]*)</p>', details)
+    assert subs == [ss.RESULTS_REGISTRY, ss.WORKSPACES_FOLDER], subs
+    for state in (registry["summary"], ws["summary"]):
+        assert html.count(r.e(state)) == 1, state
+    first, second = details.split('<p class="shep-nb-sub">')[1:3]
+    assert "Holds" in first and "Holds" not in second and "Workspaces" in second, details
+    assert details.count("Ref:") == 1
+    refused = w.setting_notice(ss.cohort_registry({"SHEPHERD_REGISTRY": "relative"}))
+    mixed = r.notices_block([refused, ws])
+    assert re.findall(r"data-shep-go[^>]*>([^<]*)</button>", mixed) == [r.e(ss.OPEN_DATA_LOCATIONS)]
+    both = r.notices_block([refused, w.setting_notice(ss.workspaces_root({"SHEPHERD_WORKSPACES_ROOT": "x"}))])
+    assert re.findall(r"data-shep-go[^>]*>([^<]*)</button>", both) == [r.e(w.SEE_WHY)]
+    # One notice keeps its own words.
+    assert r.e(ss.CHOOSE_IN_DATA_LOCATIONS) in r.notices_block([ws])
+
+
 def test_a_relation_says_the_notice_short_and_is_not_the_notice_again():
     ws, gpu, _registry = _notices()
     rel = r.see_above("Start unavailable", ws)
@@ -1664,6 +1697,7 @@ def test_every_part_of_a_notice_is_escaped():
            "ref": (PAYLOAD,), "cause": None}
     html = (r.notice_block(bad, consequence=PAYLOAD, also=(dict(bad, key="b"),), steps=(PAYLOAD,))
             + r.notices_block([bad, dict(bad, key="c", target="x")], consequence=PAYLOAD)
+            + r.notices_block([bad, dict(bad, key="d")], consequence=PAYLOAD)
             + r.see_above(PAYLOAD, bad, where=PAYLOAD, details=True)
             + r.notice_block(PAYLOAD) + r.literal_html(PAYLOAD) + r.token_html(PAYLOAD))
     assert "<img" not in html and "onerror=alert(1)>" not in html

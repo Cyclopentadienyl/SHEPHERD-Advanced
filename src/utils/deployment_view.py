@@ -68,15 +68,15 @@ HIDDEN_PATH = SERVER_PATH
 #: order Settings shows them. The variable names appear only beside them.
 FIELD_WORDS: Dict[str, Tuple[str, str]] = {
     KEY_WORKSPACES_ROOT: (
-        "Workspaces folder",
+        server_settings.WORKSPACES_FOLDER,
         "Datasets, runs and saved models. Needed by every Research page, model loading and "
         "GPU jobs."),
     KEY_REGISTRY: (
-        "Results registry",
+        server_settings.RESULTS_REGISTRY,
         "Cohort versions and registered reports. Needed by Test to measure a cohort and "
         "register, and by Diagnosis' reference cohorts."),
     KEY_INTAKE_DIR: (
-        "Import folder",
+        server_settings.IMPORT_FOLDER,
         "Case files you place here to import as a cohort version (Test › Import)."),
     KEY_TRAINING_EVIDENCE_DIRS: (
         "Training evidence folders",

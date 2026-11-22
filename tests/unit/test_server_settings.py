@@ -1504,6 +1504,10 @@ WHOLE = {
         "No results registry is set, so the features that read the cohort registry are off. "
         "Choose it in Settings › Data locations: a folder outside the repository, the one the "
         "commands take as --registry. Ref: SHEPHERD_REGISTRY"),
+    "INTAKE_DIR_NOT_SET": (
+        "No import folder is set, so no import source is offered. Choose it in Settings › Data "
+        "locations: a folder outside the repository where you place shepherd-cases/1 files. "
+        "Ref: SHEPHERD_INTAKE_DIR"),
 }
 #: Each notice beside its whole sentence, and the facts the sentence says that
 #: its parts must say too.
@@ -1518,6 +1522,9 @@ NOTICE_OF = {
     "REGISTRY_NOT_SET": ("REGISTRY_NOTICE", (
         "No results registry is set", "Settings › Data locations",
         "a folder outside the repository", "--registry", "SHEPHERD_REGISTRY")),
+    "INTAKE_DIR_NOT_SET": ("INTAKE_DIR_NOTICE", (
+        "No import folder is set", "Settings › Data locations", "no import source is offered",
+        "a folder outside the repository", "shepherd-cases/1", "SHEPHERD_INTAKE_DIR")),
 }
 
 
@@ -1542,6 +1549,7 @@ def test_each_whole_sentence_is_unchanged_and_its_notice_says_every_fact(name):
     assert ss.workspaces_root({}).problem == WHOLE["WORKSPACES_ROOT_NOT_SET"]
     assert ss.gpu_lock_location({}).problem == WHOLE["GPU_LOCK_NOT_CONFIGURED"]
     assert ss.cohort_registry({}).problem == WHOLE["REGISTRY_NOT_SET"]
+    assert ss.intake_directory({}).problem == WHOLE["INTAKE_DIR_NOT_SET"]
 
 
 def test_the_notices_parts_are_short_front_loaded_and_name_no_server_path():
@@ -1551,14 +1559,16 @@ def test_the_notices_parts_are_short_front_loaded_and_name_no_server_path():
     set."); the next step by its place in the GUI; the details as term rows,
     each term said once across the three notices (one screen may merge them);
     the codes only in the Ref items; and no server path anywhere."""
-    notices = (ss.WORKSPACES_ROOT_NOTICE, ss.GPU_LOCK_NOTICE, ss.REGISTRY_NOTICE)
-    assert [n.key for n in notices] == ["workspaces_root", "gpu_lock", "registry"]
+    notices = (ss.WORKSPACES_ROOT_NOTICE, ss.GPU_LOCK_NOTICE, ss.REGISTRY_NOTICE, ss.INTAKE_DIR_NOTICE)
+    assert [n.key for n in notices] == ["workspaces_root", "gpu_lock", "registry", "intake_dir"]
     assert ss.GPU_LOCK_NOTICE.cause == "workspaces_root"
     assert ss.WORKSPACES_ROOT_NOTICE.cause is None and ss.REGISTRY_NOTICE.cause is None
+    assert ss.INTAKE_DIR_NOTICE.cause is None
     terms = []
     for n in notices:
         assert n.summary.endswith(".") and len(n.summary) <= 60, n.summary
-        assert n.summary.split()[:2] in (["No", "workspaces"], ["No", "results"], ["GPU", "jobs"])
+        assert n.summary.split()[:2] in (["No", "workspaces"], ["No", "results"], ["GPU", "jobs"],
+                                         ["No", "import"])
         assert n.short == n.short.strip() and not n.short.endswith(".") and len(n.short) <= 40
         assert n.short[0].islower() or n.short.startswith("GPU"), n.short
         assert n.action == "Choose one in Settings › Data locations"

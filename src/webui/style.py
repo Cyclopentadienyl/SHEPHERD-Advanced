@@ -731,6 +731,9 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .shep-nb .shep-nb-kv { gap: var(--shep-space-item) 12px; font-size: 14px; }
 .shep-nb .shep-nb-kv > .shep-v { font-size: 14px; overflow-wrap: break-word; }
 .shep-nb .shep-nb-ref { margin: var(--shep-space-item) 0 0; font-size: 14px; color: var(--shep-muted); }
+/* Several notices' Details (`renderers.notices_block`): each notice's rows under its setting's name. */
+.shep-nb .shep-nb-sub { margin: 0 0 var(--shep-space-item); font-size: 14px; font-weight: 600; }
+.shep-nb .shep-nb-kv + .shep-nb-sub { margin-top: var(--shep-space-para); }
 /* The next step: a link in the sentence (underlined, the accent text), a button to the keyboard. */
 .gradio-container button.shep-nb-go {
   display: inline; margin: 0; padding: 0; border: 0; background: none; font: inherit;
