@@ -337,8 +337,9 @@ CHART_CSS = """
 .shep-chart-tip .shep-sw { margin-right: 6px; }
 .shep-charts .shep-charts-new { position: absolute; top: 2px; right: 2px; z-index: 4; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--shep-accent-100); background: #fff; color: var(--shep-accent-text); font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(20,24,40,.12); }
 .shep-charts-new[hidden] { display: none; }
-.shep-charts-msg { position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
-.shep-charts-msg[hidden] { display: none; }
+.shep-charts-grid:empty { display: none; }
+.shep-charts .shep-charts-msg { flex: none; align-self: center; margin: auto 0; padding: 24px 0; max-width: var(--shep-measure); text-align: start; text-wrap: pretty; font-size: 15px; line-height: var(--shep-lh-prose); color: var(--shep-text-2); }
+.shep-charts .shep-charts-msg[hidden] { display: none; }
 .shep-charts[aria-busy="true"] .shep-charts-grid, .shep-charts[aria-busy="true"] .shep-charts-xl, .shep-charts[aria-busy="true"] .shep-charts-new, .shep-charts[aria-busy="true"] .shep-charts-zoom, .shep-charts[aria-busy="true"] .shep-charts-stale, .shep-charts[aria-busy="true"] .shep-charts-msg { visibility: hidden; }
 .shep-charts[aria-busy="true"] .shep-charts-body::after { content: "@LOADING@"; position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
 @STACK@ {
@@ -347,7 +348,6 @@ CHART_CSS = """
   @container (max-width: @COLUMNS@px) { .shep-charts-grid { grid-template-columns: minmax(0, 1fr); } }
   .shep-chart-plot { flex: none; height: 260px; touch-action: pan-y; }
   .shep-chart-plot .u-wrap { touch-action: pan-y; }
-  .shep-charts-msg { position: static; padding: 24px 0; }
   .shep-charts[aria-busy="true"] .shep-charts-body { min-height: 72px; }
 }
 """.replace("@LOADING@", LOADING).replace("@COLUMNS@", str(TWO_COLUMNS_FROM - 1)).replace(

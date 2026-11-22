@@ -2671,6 +2671,28 @@ NO_EPOCH_LOGGED = "This run logged no epoch, so it has no curves: choose another
 NO_RUN_DIR_ENDED = ("This run has no run directory, so it logged no epoch: choose another run "
                     "in Viewing.")
 NO_LONGER_LISTED = "This run is no longer listed: choose another run in Viewing."
+#: The run view with no run because the run bar has no dataset, in its own
+#: words per cause (the skill's §9): the server lists none yet, or none is
+#: chosen. With no workspaces folder (or one that cannot be used) it says a
+#: relation to the run bar's notice instead (`no_run_words`).
+NO_DATASET_LISTED = "No run to show: the server lists no dataset yet."
+NO_DATASET_CHOSEN = "No run to show: choose a dataset first."
+
+
+def no_run_words(ws: Optional[Mapping[str, Any]], *, operator: bool) -> str:
+    """What the run view says with no run to show, by its cause (the skill's
+    §9): the workspaces folder's notice, which the run bar's note says (a
+    relation to it, in the notice's own short words: "No run to show: no
+    workspaces folder is set (see above)."); no dataset listed; none chosen;
+    else no run in the dataset yet (`NO_RUN_YET`, to a read-only request
+    `NO_RUN_YET_READ_ONLY`)."""
+    ws = ws or {}
+    notice = ws.get("notice")
+    if not ws.get("row") and notice:
+        return f"No run to show: {notice['short']} (see above)."
+    if not ws.get("row"):
+        return NO_DATASET_CHOSEN if ws.get("choices") else NO_DATASET_LISTED
+    return NO_RUN_YET if operator else NO_RUN_YET_READ_ONLY
 
 
 def _logging_now(path: Path) -> bool:
@@ -2739,17 +2761,21 @@ def training_chart_csv(data: Any) -> Dict[str, Any]:
 
 
 def _chart_token(run: Optional[RunRef], cache: Dict[str, Any], *,
-                 operator: bool, live: bool = False) -> Dict[str, Any]:
+                 operator: bool, live: bool = False,
+                 ws: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """The component's token for the run viewed: its id and how many rows its
     metrics log holds, counted again only when the log file changed (a stat).
     No run, and a run whose directory does not exist, are not asked for (the
     component would say "no longer listed" of a run that was never listed):
-    the token's line says why there is nothing and what comes next
-    (`NO_RUN_YET` to an `operator`, `NO_RUN_YET_READ_ONLY` to a request D8
-    refuses; `WAITING_FOR_EPOCH` while the training job, `live`, has not made
-    it yet; `NO_RUN_DIR_ENDED`)."""
+    the token's line says why there is nothing and what comes next, by its
+    cause (`no_run_words`, from the run bar's workspace `ws`: no workspaces
+    folder, no dataset listed or chosen, then `NO_RUN_YET` to an `operator`
+    and `NO_RUN_YET_READ_ONLY` to a request D8 refuses; `WAITING_FOR_EPOCH`
+    while the training job, `live`, has not made it yet; `NO_RUN_DIR_ENDED`).
+    Without `ws` the dataset is taken as chosen."""
     if run is None:
-        return charts.token(None, 0, empty=NO_RUN_YET if operator else NO_RUN_YET_READ_ONLY)
+        chosen = ws if ws is not None else {"row": True}
+        return charts.token(None, 0, empty=no_run_words(chosen, operator=operator))
     try:
         exists = Path(run["path"]).is_dir()
     except OSError:
@@ -2939,7 +2965,7 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         # listing a workspace's runs is not checkpoint inspection).
         "view": (tuple(view_choices(ws, _runs_of(ws, cache), run)),
                  run["id"] if run is not None else None),
-        "charts": _chart_token(run, cache, operator=access.allowed, live=live),
+        "charts": _chart_token(run, cache, operator=access.allowed, live=live, ws=ws),
         "drawer_reason": (f'<div class="shep-drawer-why">{view["drawer_reason"]}</div>'
                           if view["drawer_reason"] else ""),
         "training_workspace": ws.get("name"),
@@ -4687,8 +4713,11 @@ def create_training_tab(ctx: Any) -> None:
         with gr.Row(elem_id="shep-train-page", elem_classes=["shep-page", "shep-train-page"],
                     equal_height=False) as page:
             # ------------------------------------------------------- parameters
-            with gr.Column(elem_id="shep-train-params", elem_classes=["shep-panel"], scale=10,
-                           min_width=360):
+            # Each panel sized by what it holds (`style.py`'s ``shep-sized``,
+            # its basis, share and minimum in `PAGE_CSS`), not by a share fitted
+            # to one window.
+            with gr.Column(elem_id="shep-train-params", elem_classes=["shep-panel", "shep-sized"],
+                           min_width=0):
                 # Stacked, the parameters start folded under their title, so the
                 # run view's charts follow the run bar on the first screen (R-60);
                 # side by side the body is always shown and the toggle is not.
@@ -4756,8 +4785,8 @@ def create_training_tab(ctx: Any) -> None:
             # 1. Run, 2. Checkpoint, 3. Check, then 4. Start in the footer, the
             # start beside its reason (the skill's §9); the body scrolls above
             # it when it does not fit, the footer never.
-            with gr.Column(elem_id="shep-train-drawer", elem_classes=["shep-panel"], scale=10,
-                           min_width=360):
+            with gr.Column(elem_id="shep-train-drawer", elem_classes=["shep-panel", "shep-sized"],
+                           min_width=0):
                 with gr.Row(elem_classes=["shep-panel-hd", "shep-drawer-hd"]):
                     plain_html(f'<h2>{r.e(DRAWER_TITLE)}</h2><span class="shep-muted">in place of '
                                'the parameters</span>',
@@ -4850,7 +4879,8 @@ def create_training_tab(ctx: Any) -> None:
                     drawer_notice = plain_html("", elem_id="shep-train-drawer-notice")
 
             # ------------------------------------------------------- run view
-            with gr.Column(elem_id="shep-train-runview", elem_classes=["shep-panel"], scale=22):
+            with gr.Column(elem_id="shep-train-runview", elem_classes=["shep-panel", "shep-sized"],
+                           min_width=0):
                 # Three rows (`PAGE_CSS`): the header (the Viewing select, the
                 # run viewed's relation to the training job, its state and
                 # Details), the charts, and the resources line.
@@ -5151,7 +5181,8 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-row {{ align-items: center !important; gap: 10px 14px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-rb-row > * {{ min-width: 0; }}
 {_PAGE} .shep-rb-row > .block {{ width: auto !important; }}
-{_PAGE} #shep-train-dataset, {_PAGE} #run_name, {_PAGE} #shep-train-view-run {{ flex: 0 0 auto !important; width: auto !important; }}
+{_PAGE} #shep-train-dataset, {_PAGE} #run_name {{ flex: 0 0 auto !important; width: auto !important; }}
+{_PAGE} #shep-train-view-run {{ flex: 0 1 auto !important; min-width: 0 !important; max-width: 100%; }}
 {_PAGE} #shep-train-dataset > div:not(.wrap), {_PAGE} #run_name > label, {_PAGE} #shep-train-view-run > div:not(.wrap) {{ display: flex !important; align-items: center; gap: 8px; }}
 {_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"], {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: auto !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color) !important; }}
 {_PAGE} #shep-train-dataset .wrap {{ width: clamp(220px, 16vw, 320px); min-width: 0 !important; }}
@@ -5161,8 +5192,10 @@ PAGE_CSS = charts.CHART_CSS + f"""
    text has 40ch (40 digits' width: an option of dates, digits and lowercase names fits whole; one of
    mostly capitals may still end in the shell's titled ellipsis), and the box adds what Gradio draws
    around it: the chevron's 30 px in the input, its 2 x 4 px margins, the 2 x 12 px padding and the
-   border. The header's words beside it wrap to their own line where it does not fit. */
-{_PAGE} #shep-train-view-run .wrap {{ width: calc({r.OPTION_CHARS}ch + 64px); min-width: 0 !important; }}
+   border: its basis, which it shrinks from with the panel (B-12: a 520 px box in a 358 px panel at
+   390 x 844), never under the select floor while the line has it. The header's words beside it wrap
+   to their own line where it does not fit. */
+{_PAGE} #shep-train-view-run .wrap:has(> .wrap-inner) {{ flex: 0 1 auto; width: calc({r.OPTION_CHARS}ch + 64px); min-width: min(var(--shep-select-floor), 100%) !important; }}
 {_PAGE} #shep-train-dataset input, {_PAGE} #shep-train-view-run input {{ flex: 1 1 auto !important; width: 0 !important; min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset .secondary-wrap, {_PAGE} #shep-train-view-run .secondary-wrap {{ min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #shep-train-view-run .icon-wrap {{ flex: none !important; }}
@@ -5313,7 +5346,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
    1536 x 760 drew them in three lines over the plots' room). */
 {_PAGE} #shep-train-rv-top {{ flex: none !important; align-items: center !important; flex-wrap: wrap !important; gap: 6px 14px !important; padding: 6px 16px !important; }}
 {_PAGE} #shep-train-rv-top > * {{ min-width: 0; }}
-{_PAGE} #shep-train-run-head {{ flex: 1 1 540px !important; }}
+{_PAGE} #shep-train-run-head {{ flex: 1 1 34rem !important; min-width: 0 !important; }}
 {_PAGE} .shep-rv-hd {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }}
 {_PAGE} .shep-rv-rel {{ font-size: 15px; font-weight: 600; color: var(--shep-text); }}
 {_PAGE} .shep-rv-from {{ display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--shep-text-2); }}
@@ -5379,11 +5412,14 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-train-setby-row {{ align-items: flex-start !important; flex-wrap: nowrap !important; gap: 8px 12px !important; }}
 {_PAGE} #shep-train-setby {{ flex: 1 1 auto !important; min-width: 0 !important; }}
 {_PAGE} #shep-train-reset {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
-/* The panels' minimum widths (the layout rule's measure, `src/webui/shell.py`): the form, or the
-   Continue drawer in its place; the run view, whose four plots keep about 400 px each. */
-{_PAGE} #shep-train-params {{ --shep-panel-min: 360px; }}
-{_PAGE} #shep-train-drawer {{ --shep-panel-min: 400px; }}
-{_PAGE} #shep-train-runview {{ --shep-panel-min: 860px; }}
+/* **The panels sized by what they hold** (``shep-sized``, M4 of the UI sweep; `style.py`): each a
+   basis and a share of the room left, in rem, never under its minimum (the layout rule's measure,
+   `src/webui/shell.py`): the form, or the Continue drawer in its place, a column of fields; the
+   run view, whose four plots keep about 25rem each. The bases stand as the shares do (1 : 2.2), so
+   the two panels keep the proportion they had at every width (10 : 22 of the room). */
+{_PAGE} #shep-train-params {{ --shep-panel-basis: 22.5rem; --shep-panel-grow: 1; --shep-panel-min: 22.5rem; }}
+{_PAGE} #shep-train-drawer {{ --shep-panel-basis: 22.5rem; --shep-panel-grow: 1; --shep-panel-min: 25rem; }}
+{_PAGE} #shep-train-runview {{ --shep-panel-basis: 49.5rem; --shep-panel-grow: 2.2; --shep-panel-min: 53.75rem; }}
 {SIDE} {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
   {_PAGE} #shep-train {{ flex: 1 1 auto; min-height: 0; height: 100%; flex-wrap: nowrap !important; }}

@@ -5,6 +5,8 @@ Research › Prepare › Training: the run view (the ops-wiring round's B1b).
 
 - **the run bar keeps its own height** (BACKLOG 52 F): its column's scale is
   0, so Gradio's inline flex-grow never gives it a share of the page's room;
+  the panels under it are sized by what they hold (``shep-sized``), not by
+  ``scale=`` shares;
 - **a past run can be viewed** (BACKLOG 52 H): the Viewing select lists the
   run bar's workspace's runs, latest first, by the one rule of a run's
   option (short, name first, valued by the run resolver's full id); choosing
@@ -90,12 +92,32 @@ def test_the_run_bar_keeps_its_own_height_and_the_run_view_takes_the_rest():
     as its flex-grow, which outranks the page's ``flex: none``; at the
     default 1 the run bar took half the room the run view left and drew it
     blank under its two rows (189 px for 97 px of rows at 1850 x 960, more
-    with every section collapsed). At 0 it is its rows' height."""
+    with every section collapsed). At 0 it is its rows' height. The panels
+    under it are sized by what they hold (the UI sweep's M4: ``shep-sized``,
+    a basis, a share and a minimum in rem), not by ``scale=`` shares fitted
+    to one window: each basis stands to the other as its share does, so the
+    form and the run view keep the proportion they had (10 : 22) at every
+    width their minimums allow."""
+    import re
+
     _demo, _ctx, by_id = _page()
     assert by_id["shep-train-runbar"].scale == 0
-    assert by_id["shep-train-runview"].scale == 22 and by_id["shep-train-params"].scale == 10
     assert "#shep-train-runbar {" in tc.PAGE_CSS and "flex: none;" in tc.PAGE_CSS.split(
         "#shep-train-runbar {", 1)[1].split("}", 1)[0]
+
+    def sized(elem_id):
+        rule = tc.PAGE_CSS.split(f"#{elem_id} {{ --shep-panel-basis:", 1)[1].split("}", 1)[0]
+        found = dict(re.findall(r"--shep-panel-(\w+): ([0-9.]+)rem", "--shep-panel-basis:" + rule))
+        grow = float(re.search(r"--shep-panel-grow: ([0-9.]+);", rule).group(1))
+        return float(found["basis"]), grow, float(found["min"])
+
+    for elem_id in ("shep-train-params", "shep-train-drawer", "shep-train-runview"):
+        assert "shep-sized" in by_id[elem_id].elem_classes, elem_id
+        basis, grow, minimum = sized(elem_id)
+        assert basis <= minimum or elem_id == "shep-train-runview", elem_id
+    form, view = sized("shep-train-params"), sized("shep-train-runview")
+    assert abs(form[0] / view[0] - form[1] / view[1]) < 1e-9       # the bases stand as the shares
+    assert abs(form[1] / (form[1] + view[1]) - 10 / 32) < 1e-9     # the proportion the page had
 
 
 def test_the_header_drops_use_continue_while_the_continue_drawer_is_open(runs, monkeypatch,
@@ -139,15 +161,23 @@ def test_the_viewing_box_holds_a_whole_option_at_any_window_width():
     option's end is the start time that tells same-name runs apart: its box
     is sized by the option's 40 characters (`renderers.OPTION_CHARS`, as
     40ch beside Gradio's chevron, margins, padding and border), never by the
-    window (``clamp(300px, 19vw, 360px)`` cut 33 of them at 1536 x 760). The
+    window (``clamp(300px, 19vw, 360px)`` cut 33 of them at 1536 x 760). That
+    width is its basis, never more than its panel: it shrinks with the panel
+    (B-12, the UI sweep: a 520 px box in a 358 px panel at 390 x 844, cut by
+    179 px), never under the select floor while the line has it. The
     header's words beside it take a line of their own under it where they
     would need more than two lines (their basis, about a state line and
     Details ›). The browser check measures both at each size."""
-    rule = tc.PAGE_CSS.split("#shep-train-view-run .wrap {", 1)[1].split("}", 1)[0]
+    rule = tc.PAGE_CSS.split("#shep-train-view-run .wrap:has(> .wrap-inner) {", 1)[1].split(
+        "}", 1)[0]
     assert f"width: calc({r.OPTION_CHARS}ch + 64px);" in rule and "vw" not in rule
+    assert "flex: 0 1 auto;" in rule and "min-width: min(var(--shep-select-floor), 100%)" in rule
     assert r.OPTION_CHARS == 40
+    block = tc.PAGE_CSS.split("#shep-train-view-run {", 1)[1].split("}", 1)[0]
+    assert "flex: 0 1 auto !important;" in block and "min-width: 0 !important;" in block
+    assert "flex: 0 0 auto" not in block
     head = tc.PAGE_CSS.split("#shep-train-run-head {", 1)[1].split("}", 1)[0]
-    assert "flex: 1 1 540px !important;" in head
+    assert "flex: 1 1 34rem !important;" in head
 
 
 def test_the_run_viewed_is_offered_first_when_it_is_not_listed(runs, monkeypatch, operator):  # noqa: F811

@@ -586,3 +586,27 @@ def test_an_empty_chart_gives_its_plot_and_axis_label_way_to_its_own_line():
     js = (STATIC / charts.MODULE).read_text(encoding="utf-8")
     assert '<div class="shep-chart-none" hidden></div>' in js
     assert 'inst.root.classList.toggle("shep-charts-blank", specs.length > 0 && empty);' in js
+
+
+def test_the_figures_one_line_is_drawn_in_the_flow_never_over_it():
+    """The UI sweep of 2026-11-22 (B-05; the WebUI skill's §9: an empty state
+    is in the flow, never an overlay): the figure's line ("No run in this
+    workspace yet…", a cause's own words) was absolute, at 40 % of a body
+    whose height came from the grid; with no chart drawn the body had none,
+    and in a short window the charts' box, which clips, cut the line away
+    (Training at 1536, 1366 and 1280 wide with no run). Now an empty grid
+    takes no room and the line is the body's content: a box at the measure,
+    centred where the body has room to spare and its own height where it has
+    none, its lines start-aligned, the empty state's type and colour."""
+    css = charts.CHART_CSS
+    line = css.split(".shep-charts .shep-charts-msg {", 1)[1].split("}", 1)[0]
+    assert "position: absolute" not in line and "inset" not in line
+    for rule in ("flex: none;", "margin: auto 0;", "max-width: var(--shep-measure);",
+                 "text-align: start;", "line-height: var(--shep-lh-prose);",
+                 "color: var(--shep-text-2);"):
+        assert rule in line, rule
+    assert ".shep-charts-grid:empty { display: none; }" in css
+    assert ".shep-charts .shep-charts-msg[hidden] { display: none; }" in css
+    assert "position: absolute; inset: 40%" not in css.split(".shep-charts-body::after", 1)[0]
+    # The busy figure still says it loads over its hidden content.
+    assert f'.shep-charts-body::after {{ content: "{charts.LOADING}";' in css
