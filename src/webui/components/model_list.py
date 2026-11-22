@@ -94,8 +94,9 @@ drawn before (Models' "Applying …" line). What a view names by key (``keys``,
 workspace it was read from (the view's ``workspace``): another workspace's
 listing is drawn with the view's filter and note only, and not as shaped for
 anything (`view_for_listing`), until the page shapes its view again.
-``create_model_list(head=…, foot=…)`` places a page's own components (a
-filter, links) in the list's header and footer rows.
+``create_model_list(head=…, tools=…, foot=…)`` places a page's own components
+(a filter, links) in the list's header row, in its tools row after the
+search (Models' Order: one bar, `create_model_list`) and in its footer row.
 
 **The Load**, in three steps, each a handler of its own:
 
@@ -244,6 +245,7 @@ from src.webui.components.served_status import (
 )
 from src.webui.operator_access import operator_access
 from src.webui.shell import picked, plain_html
+from src.webui.style import FIT, FIT_WIDE
 
 logger = logging.getLogger(__name__)
 
@@ -658,7 +660,8 @@ def list_models(workspace: Any, request: Any, *, family: bool = False,
     names = [w["name"] for w in rows]
     chosen = workspace if workspace in names else (serving if serving in names else
                                                    (names[0] if names else None))
-    listing = {**empty_listing(listed["problem"]), "workspaces": rows, "workspace": chosen,
+    listing = {**empty_listing(listed["problem"]), "notice": listed.get("notice"),
+               "workspaces": rows, "workspace": chosen,
                "served_sha": served_checkpoint_sha(status), "serving": serving,
                "status_problem": status_problem, "status_read": True}
     if chosen is None:
@@ -877,25 +880,45 @@ def runs_unread(listing: Mapping[str, Any], show_older: bool) -> int:
     return 0 if show_older else int(listing.get("runs_unread") or 0)
 
 
+#: **The list's empty states, per cause** (the skill's §9: what will appear and
+#: the next step, in the flow, `.shep-empty`): no workspace in the workspaces
+#: folder, none chosen, no checkpoint in the workspace chosen. The workspaces
+#: folder not set (or not usable) is its notice instead (`_no_items_html`).
+NO_WORKSPACE = "No workspace in the workspaces folder yet. Build a dataset first (Research › Datasets)."
+NO_CHECKPOINT = "No checkpoint is listed in this workspace."
+
+
 def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Preset],
                    search: Any = "", show_older: bool = True) -> str:
-    """Why the list shows no row, in its own words per cause: the search, the
-    filter (each "in this workspace", or "in the latest runs" with what "Show
-    older runs" does, drawn under it, while runs are not read), nothing
-    listed."""
+    """Why the list shows no row, in its own words per cause, in the flow
+    (`.shep-empty`, the skill's §9): the search, the filter (each "in this
+    workspace", or "in the latest runs" with what "Show older runs" does,
+    drawn under it, while runs are not read), nothing listed. The workspaces
+    folder not set or not usable is said by its one notice
+    (`renderers.notice_block`, from the listing's ``notice``: its state, the
+    way to Settings › Data locations, the rest under Details), the list's
+    empty state on every page that draws it; an empty folder and a workspace
+    with no checkpoint in their own words (`NO_WORKSPACE`, `NO_CHECKPOINT`)."""
     chosen = _rows_filter(view, preset)
     query = str(search or "").strip()
     unread = bool(runs_unread(listing, show_older))
     what = FILTER_WORDS[chosen][1]
     if listing.get("items") and query:
-        why = (f"No {what} matches “{query}” in the latest runs; Show older runs searches the "
+        why = (f"No {what} matches “{query}” in the latest runs. Show older runs searches the "
                "rest." if unread else f"No {what} matches “{query}” in this workspace.")
     elif listing.get("items") and chosen != "all":
-        why = (f"No {what} is listed in the latest runs; Show older runs reads the rest."
+        why = (f"No {what} is listed in the latest runs. Show older runs reads the rest."
                if unread else f"No {what} is listed in this workspace.")
+    elif listing.get("notice") and not listing.get("items"):
+        return r.notice_block(listing["notice"])
+    elif listing.get("problem"):
+        why = listing["problem"]
+    elif listing.get("status_read") and listing.get("workspace") is None \
+            and not listing.get("workspaces"):
+        why = NO_WORKSPACE
     else:
-        why = listing.get("problem") or "No checkpoint is listed in this workspace."
-    return f'<div class="shep-reason">{r.e(why)}</div>'
+        why = NO_CHECKPOINT
+    return f'<p class="shep-empty">{r.e(why)}</p>'
 
 
 def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Preset, *,
@@ -956,6 +979,16 @@ def older_html(listing: Mapping[str, Any], tree: TreeView, show_older: bool) -> 
 #: score column: validations of different tasks are never put on one scale,
 #: and a file's figures are its details.
 TREE_COLUMNS = ("Model", "Task", "Operation", "Epochs", "Files", "Fingerprint")
+#: **The tree's optional columns** (the UI sweep's M6: a table drops them
+#: before it scrolls sideways): what the selected model's details say again
+#: (its epochs, its run's saved files, its fingerprint), so the table needs
+#: only Model, Task and Operation. Their cells carry `COL_OPT`; the table is
+#: a fit box's wide form (`style.FIT`, `style.FIT_WIDE`): while it does not
+#: fit with every column, the shell's layout pass marks its frame narrow and
+#: the shared style sheet draws no optional cell; when even that does not fit,
+#: the frame scrolls sideways, its own region.
+OPTIONAL_COLUMNS = ("Epochs", "Files", "Fingerprint")
+COL_OPT = "shep-col-opt"
 #: A hex query this long or longer is also read as a fingerprint's start.
 FINGERPRINT_PREFIX = 4
 _HEX = re.compile(r"[0-9a-f]+")
@@ -1306,7 +1339,9 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
     list reads its own name and where it sits (`renderers.entry_place`) and
     why, and is no choice: a plain row, with no key the page could choose, no
     hover and no tab stop (V-21: it looked choosable, and a click on it left
-    the details on the model chosen before). The table names the row it
+    the details on the model chosen before). Epochs, Files and Fingerprint
+    are optional columns (`OPTIONAL_COLUMNS`): the table drops them while it
+    does not fit its frame, before it scrolls sideways. The table names the row it
     locates (``data-locate``: the selection, else the model in use) unless
     `locate` is off and it shows neither."""
     shown_keys = [k for g in tree.groups for run in g.runs for k in run.files]
@@ -1321,8 +1356,14 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
         lambda parts, level: " · ".join(
             p for p in r.run_parts(parts[0], parts[1], level, fit=False) if p))
     span = len(TREE_COLUMNS)
-    head = "".join(f'<th scope="col"{" class=shep-num" if h in ("Epochs", "Files") else ""}>'
-                   f'{r.e(h)}</th>' for h in TREE_COLUMNS)
+
+    def th_classes(h: str) -> str:
+        found = (["shep-num"] if h in ("Epochs", "Files") else []) + (
+            [COL_OPT] if h in OPTIONAL_COLUMNS else [])
+        return f' class="{" ".join(found)}"' if found else ""
+
+    head = "".join(f'<th scope="col"{th_classes(h)}>{r.e(h)}</th>' for h in TREE_COLUMNS)
+    opt, num_opt = f' class="{COL_OPT}"', f' class="shep-num {COL_OPT}"'
     bodies = []
     for group in tree.groups:
         rows = []
@@ -1360,8 +1401,8 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                 f'<span class="shep-tree-label">{label}</span></div></td>'
                 f'<td>{_whole_words(r.record_kind_text(summary))}</td>'
                 f'<td><span class="shep-op">{_whole_words(r.operation_words(summary))}</span></td>'
-                f'<td class="shep-num">{_epochs_cell([items[k] for k in run.files])}</td>'
-                f'<td class="shep-num">{r.e(count)}</td><td></td></tr>')
+                f'<td{num_opt}>{_epochs_cell([items[k] for k in run.files])}</td>'
+                f'<td{num_opt}>{r.e(count)}</td><td{opt}></td></tr>')
             words = _file_names(items, files.run_files[run.key])
             for key in run.files:
                 attrs, name, cells = _file_cells(files, key, words[key], selected, preset,
@@ -1372,16 +1413,16 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                     continue
                 epochs, fingerprint = cells
                 rows.append(f'<tr {attrs}><td>{name}</td><td></td><td></td>'
-                            f'<td class="shep-num">{epochs}</td><td></td>'
-                            f'<td>{fingerprint}</td></tr>')
+                            f'<td{num_opt}>{epochs}</td><td{opt}></td>'
+                            f'<td{opt}>{fingerprint}</td></tr>')
         bodies.append(f'<tbody data-node="{r.e(group.node)}">{"".join(rows)}</tbody>')
     served = files.served
     found = selected if selected in shown_keys else next(
         (k for k in shown_keys if served and items[k].get("sha256") == served), "")
     mark = (f' data-locate="{r.e(found or "")}"' if locate or found else "") + (
         ' data-searched="1"' if tree.query else "")
-    return (f'<div class="shep-tbl-wrap shep-mtbl-wrap"{mark}>'
-            '<table class="shep-tbl shep-mtbl shep-mtree" aria-label="Models">'
+    return (f'<div class="shep-tbl-wrap shep-mtbl-wrap {FIT}"{mark}>'
+            f'<table class="shep-tbl shep-mtbl shep-mtree {FIT_WIDE}" aria-label="Models">'
             f'<thead><tr>{head}</tr></thead>{"".join(bodies)}</table></div>')
 
 
@@ -3454,6 +3495,7 @@ def loading_buttons(plan: Any) -> Tuple[Any, Any, Any]:
 
 def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[str] = None,
                       head: Optional[Callable[[], Any]] = None,
+                      tools: Optional[Callable[[], Any]] = None,
                       foot: Optional[Callable[[], Any]] = None,
                       on_loading: Optional[Mapping[str, Any]] = None,
                       close_while_loading: Optional[Mapping[str, Any]] = None,
@@ -3464,7 +3506,15 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     refreshed and its ``served_model_changed`` trigger set after a Load.
     `elem_id` defaults to ``shep-models-<preset>``, so both presets can sit in
     one page. `head` and `foot`, when given, are called inside the list's
-    header and footer rows to place the page's own components there.
+    header and footer rows to place the page's own components there; `tools`
+    inside its tools row, after the search group: on a page (the ``page``
+    layout) the tools row is one bar (`style.py`'s ``.shep-bar``) whose
+    groups wrap whole, the search group (label, box, Clear) growing from its
+    basis and never under its box's floor, so a page's own group (Models'
+    Order, a ``.shep-grp``) shares the line while both fit and moves under
+    it whole when they do not; a message the page adds there, and the count
+    line, are the bar's notes (``.shep-bar-note``), each a row of its own
+    under the groups. The drawer layout keeps its field row (no tools).
     `on_loading` (``{"fn", "inputs", "outputs"}``) adds the page's own outputs
     to the step "Reload with …" runs before the reload, in the same answer (so
     they show before the reload holds the server): ``fn(plan, *inputs)``
@@ -3505,8 +3555,10 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     # The page preset (Models) keeps its header and its rows in one column
     # (``shep-model-main``), so the page can scroll them as one region when
     # they do not fit together (M5-3 review UI-1); the drawer's rows need none.
+    # The column is a panel's (``shep-edge``, `style.py`'s one content edge):
+    # its fields' labels and boxes stand on the edge its title and text do.
     with gr.Column(elem_id=elem_id, elem_classes=["shep-model-list", f"shep-preset-{preset}"]):
-        main = (gr.Column(elem_classes=["shep-model-main"]) if chosen.layout == "page"
+        main = (gr.Column(elem_classes=["shep-model-main", "shep-edge"]) if chosen.layout == "page"
                 else contextlib.nullcontext())
         with main:
             # A row of fields (the drawer's head) lines up on the boxes (D03,
@@ -3521,12 +3573,14 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                 head_extra = head() if head is not None else None
             # The search and what the list shows, on a line of their own under
             # the head (R-27: the count line never wraps beside a select).
-            tools_classes = ["shep-model-tools"] + (["shep-field-row"] if chosen.layout == "drawer"
-                                                    else [])
+            drawer = chosen.layout == "drawer"
+            tools_classes = ["shep-model-tools"] + (["shep-field-row"] if drawer else ["shep-bar"])
             with gr.Row(elem_classes=tools_classes):
                 # "Search" said beside its box, as "Order" is (no line of its
-                # own above it), its Clear after it: one line of the head.
-                with gr.Row(elem_id=f"{elem_id}-searchrow", elem_classes=["shep-search-row"]):
+                # own above it), its Clear after it: one group of the bar.
+                with gr.Row(elem_id=f"{elem_id}-searchrow",
+                            elem_classes=["shep-search-row"] + (
+                                [] if drawer else ["shep-grp", "shep-grp-grow"])):
                     plain_html('<span class="shep-search-lbl">Search</span>',
                                elem_id=f"{elem_id}-search-lbl")
                     search = gr.Textbox(label="Search", show_label=False, container=False,
@@ -3535,8 +3589,10 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                                         scale=1, min_width=96, autoscroll=False)
                     clear = gr.Button("Clear", size="sm", scale=0, min_width=0,
                                       elem_id=f"{elem_id}-search-clear")
+                if tools is not None:
+                    tools()
                 count = plain_html("", elem_id=f"{elem_id}-count",
-                                   elem_classes=["shep-field-aside"])
+                                   elem_classes=["shep-field-aside" if drawer else "shep-bar-note"])
             with gr.Row(elem_classes=["shep-model-body"]):
                 # Two areas, each its own region where it scrolls (UI-07; the
                 # shared UI check's ``shep-area``): the rows and the facts.
