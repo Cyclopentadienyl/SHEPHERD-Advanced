@@ -2424,6 +2424,33 @@ def test_after_a_load_the_page_reads_again_and_selects_the_same_checkpoint(world
     assert out["selected"] == key and "groups" in out["page"][1]
 
 
+def test_after_a_load_a_pick_made_meanwhile_is_never_set_back(world, monkeypatch):
+    """The review of dcaed68 (SL-R3): the page selects the last checkpoint
+    again after a Load through the list's clock (`model_list.ListClock`), only
+    while nothing is selected there and the listing is the one committed now:
+    a pick made while the Load's re-read was answered stays, and a listing of
+    a generation the list no longer shows selects nothing again."""
+    demo, _ctx = _page()
+    states = _sync_states(demo)
+    assert states["clock"] is next(o for o in _fn(demo, "_select").inputs
+                                   if isinstance(getattr(o, "value", None), ml.ListClock))
+    listing, data = _read(world, monkeypatch)
+    last_key, newer = _key(world, "model-05.pt"), _key(world, "model-12.pt")
+    last = {"workspace": "demo", "key": last_key}
+    clock = ml.ListClock.seeded(listing)
+    clock.selected = newer                       # picked meanwhile; its change not yet in
+    out = _sync(states, monkeypatch, listing, data, stale=True, last=last, clock=clock)
+    assert out["selected"] == gr.update() and clock.selected == newer
+    clock = ml.ListClock.seeded({**listing, ml.GENERATION: 2})
+    out = _sync(states, monkeypatch, {**listing, ml.GENERATION: 1}, data, stale=True,
+                last=last, clock=clock)
+    assert out["selected"] == gr.update() and clock.selected is None
+    # Nothing picked, the listing the one committed: selected again, as before.
+    clock = ml.ListClock.seeded(listing)
+    out = _sync(states, monkeypatch, listing, data, stale=True, last=last, clock=clock)
+    assert out["selected"] == last_key and clock.selected == last_key
+
+
 def test_controls_selection_and_segments_are_wired(world, monkeypatch):
     demo, _ctx = _page()
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
@@ -5097,3 +5124,234 @@ def test_every_change_of_the_search_box_draws_its_search_in_a_browser(tmp_path, 
     assert seen["composed"] == beta, (beta, seen["composed"])
     # "Clear search": the whole list again.
     assert seen["clearSearch"] == full, (full, seen["clearSearch"])
+
+
+#: **An answer made for a state the list no longer shows** (G07; the review of
+#: dcaed68, SL-R3), By family, by real events; one handler held on the server
+#: by a file handshake (``hold`` while it is held, ``entered`` once it is), no
+#: timed wait:
+#:
+#: - ``refresh`` (SL-R3b): alpha-base picked; Models left and opened again,
+#:   its re-read held; beta-base picked and its details drawn meanwhile; the
+#:   re-read let go;
+#: - ``workspace`` (SL-R3a): a body's pick in ``demo`` held; ``other`` chosen
+#:   and its rows drawn; the pick let go;
+#: - ``newer`` (the same, then a body of ``other`` picked before the held pick
+#:   is let go: its request sent, queued behind it).
+#:
+#: What the page shows once every answer has come is read.
+_HELD_ANSWER_JS = r"""
+const { chromium } = require('playwright');
+const fs = require('fs');
+const QUEUE_JS = __QUEUE_JS__, RUN = __RUNS__;
+const ROWS = '#shep-models-research-rows';
+const [base, hold, entered, mode] = process.argv.slice(2);
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 });
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const viewFor = (v) => page.waitForFunction((v) => { const m = document.querySelector('#shep-models-research-rows .shep-view-for'); return !!m && m.getAttribute('data-for') === v; }, v, { timeout: 30000 });
+  const selectedIs = (run) => page.waitForFunction((r) => { const h = document.querySelector('#shep-mp-detail-hd h2[data-key]'); return !!h && h.getAttribute('data-key').startsWith(r + '/'); }, run, { timeout: 30000 });
+  const body = (run) => `${ROWS} li[data-run="${run}"] > .shep-fam-node .shep-fam-body`;
+  const inside = async () => {
+    const start = Date.now();
+    while (!fs.existsSync(entered)) {
+      if (Date.now() - start > 30000) { throw new Error('the held answer never reached the server'); }
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
+  const shown = () => page.evaluate((rows) => {
+    const head = document.querySelector('#shep-mp-detail-hd h2[data-key]');
+    const current = [...document.querySelectorAll(rows + ' [aria-current="true"]')].map((e) => e.getAttribute('data-key') || e.getAttribute('data-run') || (e.closest('li[data-run]') || { dataset: {} }).dataset.run || '');
+    const load = document.querySelector('#shep-models-research-load');
+    const gen = document.querySelector(rows + ' .shep-list-gen');
+    return {
+      workspace: document.querySelector('#shep-models-research-workspace input').value,
+      selected: head ? head.getAttribute('data-key') : null,
+      detail: document.querySelector('#shep-mp-detail').innerText,
+      current,
+      loadEnabled: !!load && !load.disabled,
+      gen: gen ? gen.getAttribute('data-gen') : null,
+    };
+  }, ROWS);
+  const out = {};
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.click('#shep-page-models-button');
+  await viewFor('newest|all'); await idle();
+  await page.click('#shep-mp-order label:has-text("By family")');
+  await viewFor('family|all'); await idle(); await frames();
+  if (mode === 'refresh') {
+    await page.click(body(RUN.first));
+    await selectedIs(RUN.first); await idle(); await frames();
+    out.before = await shown();
+    await page.click('#shep-page-training-button'); await idle();
+    fs.writeFileSync(hold, 'hold');
+    await page.click('#shep-page-models-button');
+    await inside();
+    // The newer pick, made and drawn while the re-read is held.
+    await page.click(body(RUN.newer));
+    await selectedIs(RUN.newer); await frames();
+  } else {
+    fs.writeFileSync(hold, 'hold');
+    await page.click(body(RUN.first));
+    await inside();
+    await page.click('#shep-models-research-workspace input');
+    await page.getByRole('option', { name: /^other(?:\s|$)/ }).click();
+    await page.waitForFunction((sel) => !!document.querySelector(sel), body(RUN.other), { timeout: 30000 });
+    await frames();
+    if (mode === 'newer') {
+      // Picked in other's rows before the held pick is let go: sent, queued behind it.
+      const joins = await page.evaluate(() => window.__shepQueue.joins.length);
+      await page.click(body(RUN.other));
+      await page.waitForFunction((n) => window.__shepQueue.joins.length > n, joins, { timeout: 30000 });
+    }
+  }
+  out.during = await shown();
+  fs.unlinkSync(entered); fs.unlinkSync(hold);
+  if (mode === 'newer') { await selectedIs(RUN.other); }
+  await idle(); await frames(); await idle(); await frames();
+  out.after = await shown();
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def _held_world(family, tmp_path, monkeypatch, *, same_key=False):
+    """The family world copied for one test (the module's is shared), served:
+    with `same_key`, ``other`` holds a file at gamma-disease's relative key
+    too, another checkpoint (epoch 42, another fingerprint) the shared reader
+    reads and would load. Returns that key and both fingerprints."""
+    from src.utils.checkpoint_io import read_checkpoint, write_checkpoint
+    from tests.fixtures.family_world import file_key, run_key
+
+    root = shutil.copytree(family["root"], tmp_path / "world", symlinks=True)
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
+    family["served"]["value"] = _status(root / "demo", family["shas"][("alpha-disease",
+                                                                      "last.pt")])
+    key = file_key("gamma-disease")
+    shas = {"demo": family["shas"][("gamma-disease", "last.pt")], "other": None}
+    if same_key:
+        source = root / "demo" / "runs" / run_key("gamma-disease") / "checkpoints" / "last.pt"
+        target = root / "other" / "runs" / run_key("gamma-disease") / "checkpoints" / "last.pt"
+        payload = read_checkpoint(source, map_location="cpu", weights_only=False).checkpoint
+        payload["epoch"] = 42
+        shas["other"] = write_checkpoint(payload, target)
+        assert shas["other"] != shas["demo"]
+        other = ml.list_models("other", gradio_request(), family=True)
+        assert ml.can_load(ml.find_item(other, key))           # read, and loadable, today
+    return key, shas
+
+
+def _held_run(tmp_path, monkeypatch, mode, runs, held_fn):
+    """Serve the dashboard with `held_fn` (``run_choice`` or ``list_models``)
+    held while ``hold`` exists (a refresh's read only once armed), run
+    `_HELD_ANSWER_JS` in `mode`, and return what the page showed."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, run_node
+    from tests.fixtures.served_page import served
+
+    hold, entered = tmp_path / "hold", tmp_path / "entered"
+    original = getattr(ml, held_fn)
+
+    def held(*args, **kwargs):
+        # The handler has read its inputs; it waits here while held.
+        if hold.exists() and not entered.exists():
+            entered.write_text("in")
+            deadline = time.monotonic() + 60
+            while hold.exists():
+                if time.monotonic() > deadline:
+                    raise TimeoutError("the held answer was never let go")
+                time.sleep(0.01)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ml, held_fn, held)
+    script = (_HELD_ANSWER_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__RUNS__", json.dumps(runs)))
+    with served(create_gradio_app(), **mount_options()) as base:
+        try:
+            return run_node(script, tmp_path, base[:-len("gradio_api")], str(hold),
+                            str(entered), mode)
+        finally:
+            hold.unlink(missing_ok=True)
+
+
+def test_a_re_read_answered_after_a_newer_pick_never_sets_it_back_in_a_browser(
+        tmp_path, family, monkeypatch):
+    """SL-R3b (the review of dcaed68): alpha-base picked; Models left and
+    opened again, its re-read held on the server while beta-base is picked
+    and its details drawn (the page lets the operator pick meanwhile); once
+    the re-read is let go and every answer has come, beta-base is still the
+    selection, in the details and in the list alike, never the selection the
+    re-read began with."""
+    from tests.fixtures.browser import node_with_playwright
+    from tests.fixtures.family_world import run_key
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    first, newer = run_key("alpha-base"), run_key("beta-base")
+    seen = _held_run(tmp_path, monkeypatch, "refresh", {"first": first, "newer": newer},
+                     "list_models")
+    before, during, after = seen["before"], seen["during"], seen["after"]
+    assert before["selected"].startswith(first + "/"), before
+    assert during["selected"].startswith(newer + "/") and during["current"] == [newer], during
+    assert after["selected"] == during["selected"], (during, after)
+    assert after["current"] == [newer] and after["detail"].startswith("beta-base"), after
+    assert after["gen"] == "1" and after["workspace"] == "demo", after
+
+
+@pytest.mark.parametrize("same_key", [False, True], ids=["no-file-there", "same-key-other-file"])
+def test_a_pick_answered_after_another_workspace_was_chosen_selects_nothing_in_a_browser(
+        tmp_path, family, monkeypatch, same_key):
+    """SL-R3a (the review of dcaed68): By family in ``demo``, gamma-disease's
+    body picked, its answer held on the server; ``other`` chosen and its rows
+    drawn (nothing selected, Load off); the pick let go. Once every answer has
+    come nothing is selected in ``other``, Load stays off and no details are
+    drawn, whether ``other`` lists no file at that relative key or another
+    checkpoint at the same key (epoch 42, another fingerprint, one the
+    shared reader reads and would load): the same relative key is not the
+    file that was picked."""
+    from tests.fixtures.browser import node_with_playwright
+    from tests.fixtures.family_world import OTHER_BASE_RUN, run_key
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    key, shas = _held_world(family, tmp_path, monkeypatch, same_key=same_key)
+    seen = _held_run(tmp_path, monkeypatch, "workspace",
+                     {"first": run_key("gamma-disease"), "other": "gatv2/" + OTHER_BASE_RUN},
+                     "run_choice")
+    during, after = seen["during"], seen["after"]
+    assert during["workspace"] == "other" and during["selected"] is None, during
+    assert not during["loadEnabled"] and during["gen"] == "2", during
+    assert after["workspace"] == "other" and after["selected"] is None, after
+    assert not after["loadEnabled"] and after["current"] == [], after
+    assert "Select a model" in after["detail"] and "epoch 42" not in after["detail"], after
+    if same_key:
+        assert shas["other"][:12] not in after["detail"], after
+
+
+def test_a_pick_made_in_the_new_workspace_stays_after_an_older_pick_is_let_go_in_a_browser(
+        tmp_path, family, monkeypatch):
+    """SL-R3a, the newer act (the review of dcaed68, acceptance 3): a body's
+    pick in ``demo`` held; ``other`` chosen and drawn; a body of ``other``
+    picked before the held pick is let go (its request sent, queued behind
+    it). Once every answer has come, the pick made in ``other`` is the
+    selection and the details' (the held one selected nothing), even with a
+    file at the held pick's relative key in ``other``."""
+    from tests.fixtures.browser import node_with_playwright
+    from tests.fixtures.family_world import OTHER_BASE_RUN, run_key
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    _held_world(family, tmp_path, monkeypatch, same_key=True)
+    other = "gatv2/" + OTHER_BASE_RUN
+    seen = _held_run(tmp_path, monkeypatch, "newer",
+                     {"first": run_key("gamma-disease"), "other": other}, "run_choice")
+    during, after = seen["during"], seen["after"]
+    assert during["workspace"] == "other" and during["selected"] is None, during
+    assert after["workspace"] == "other" and after["selected"].startswith(other + "/"), after
+    assert after["current"] == [other] and after["detail"].startswith("gamma-base"), after
+    assert after["loadEnabled"] is False                        # a base: never loaded

@@ -2869,3 +2869,226 @@ def test_the_tree_names_tied_best_and_top_k_saves_as_its_selects_do():
         assert [_visible(c).strip() for c in _cells(
             _row_of_key(found, f"gatv2/{full}/model-02-0.3900.pt"))][0] == "Top-k save"
         assert found.count('class="shep-tree-file') == 1
+
+
+# --------------------------------------------------------------------------- the list's clock
+# The review of dcaed68 (SL-R3): a handler wrote session state computed from
+# what it read as it began, over what another handler committed meanwhile. A
+# handler that waits inside another is held by patching what it reads
+# (`list_models`), so what commits meanwhile is run in order, no thread, no
+# timed wait.
+def _session(preset="research"):
+    demo, _ctx, handle, _ = _component(preset)
+    return _Page(demo, handle), handle
+
+
+def test_the_lists_clock_is_one_object_per_session_and_no_handler_returns_it(
+        root, serving, monkeypatch):
+    """Gradio 6.30 gives each session a deep copy of a State's first value and
+    passes that object itself to every handler that reads the State; one no
+    handler returns is the session's one object. The clock deep-copies into
+    a new clock (its own lock, nothing committed), and neither it nor the
+    folds (changed in place under it) is any handler's output; every list
+    handler that reads the list's state reads the clock."""
+    demo, _ctx, handle, other = _component("clinical", both=True)
+    for each in (handle, other):
+        assert isinstance(each.clock, gr.State) and isinstance(each.clock.value, ml.ListClock)
+        for fn in demo.fns.values():
+            assert each.clock not in fn.outputs and each.fold not in fn.outputs, fn.name
+        for name in ("_refresh", "_select", "_searched", "_draw"):
+            fns = [f for f in demo.fns.values() if f.name == name and each.fold in f.inputs]
+            assert fns and all(f.inputs[-1] is each.clock for f in fns), name
+    assert handle.clock is not other.clock
+    clock = handle.clock.value
+    clock.generation, clock.selected = 3, _key("model-12.pt")
+    copied = copy.deepcopy(clock)
+    assert isinstance(copied, ml.ListClock) and copied is not clock
+    assert copied.lock is not clock.lock
+    assert (copied.generation, copied.selected, copied.listed) == (0, None, False)
+    # Two sessions of one page: two clocks.
+    one, two = _Page(demo, handle), _Page(demo, handle)
+    assert one[handle.clock] is not two[handle.clock] and one[handle.fold] is not two[handle.fold]
+
+
+def test_a_re_read_keeps_a_pick_a_fold_and_show_older_runs_committed_while_it_read(
+        root, serving, monkeypatch):
+    """SL-R3b: the list read again (Models' opening, the re-read after a
+    Load) while a newer pick, a fold and "Show older runs" are committed: its
+    answer writes the listing and keeps them (the selection committed last,
+    judged by `kept_selection`), never the selection, folds or "Show older
+    runs" it began with."""
+    page, handle = _session("research")
+    operator_mode(monkeypatch)
+    page[handle.workspace] = "demo"
+    page.act("_refresh")
+    first, newer = _key("model-12.pt"), _key("model-05.pt")
+    page.act("_select", evt={"key": first, "gen": "1"})
+    node = ml.run_node("gatv2/20261015-080000_gene_aaaaaa")
+    original = ml.list_models
+
+    def meanwhile(*args, **kwargs):
+        monkeypatch.setattr(ml, "list_models", original)
+        page.act("_select", evt={"key": newer, "gen": "1"})
+        page.act("_select", evt={"fold": node, "open": False, "gen": "1"})
+        page.act("_select", evt={"key": "__older__", "gen": "1"})
+        assert page[handle.selected] == newer and page[handle.show_older] is True
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ml, "list_models", meanwhile)
+    page.act("_refresh")
+    assert page[handle.selected] == newer
+    assert page[handle.fold] == {node: False} and page[handle.show_older] is True
+    # The drawing agrees: the newer pick is the one current.
+    assert 'aria-current="true"' in _row_of(page[handle.rows], "model-05.pt")
+    assert page[handle.listing][ml.GENERATION] == 1               # the same workspace
+    assert handle.clock.value is not page[handle.clock]          # the session's own
+    assert page[handle.clock].selected == newer
+
+
+def test_a_re_read_clears_a_newer_pick_no_longer_listed_and_never_sets_back_its_own(
+        root, serving, monkeypatch):
+    """The latest selection judged by the shared rule (`kept_selection`): a
+    pick made while the list was read, whose file the read no longer lists,
+    is cleared, never replaced by the selection the re-read began with."""
+    page, handle = _session("research")
+    operator_mode(monkeypatch)
+    page[handle.workspace] = "demo"
+    page.act("_refresh")
+    first, newer = _key("model-12.pt"), _key("model-05.pt")
+    page.act("_select", evt={"key": first, "gen": "1"})
+    original = ml.list_models
+
+    def meanwhile(*args, **kwargs):
+        monkeypatch.setattr(ml, "list_models", original)
+        page.act("_select", evt={"key": newer, "gen": "1"})
+        read = original(*args, **kwargs)
+        return {**read, "items": [i for i in read["items"] if ml.item_key(i) != newer]}
+
+    monkeypatch.setattr(ml, "list_models", meanwhile)
+    page.act("_refresh")
+    assert page[handle.selected] is None
+    assert "Select a model" in page[handle.facts]
+
+
+def test_a_re_read_answered_after_another_workspace_was_chosen_changes_nothing(
+        root, serving, monkeypatch):
+    """SL-R3 (the opening's re-read held while another workspace is chosen and
+    drawn): its answer is of a workspace the list no longer shows, so it
+    changes nothing, the workspace chosen, its listing and its selection
+    kept. And "Show older runs" asked while the drawer read its latest runs
+    only drops that read (what it holds is less than what is shown)."""
+    shutil.copytree(root["workspace"], root["root"] / "other")
+    page, handle = _session("research")
+    operator_mode(monkeypatch)
+    page[handle.workspace] = "demo"
+    page.act("_refresh")
+    original = ml.list_models
+
+    def meanwhile(*args, **kwargs):
+        monkeypatch.setattr(ml, "list_models", original)
+        page[handle.workspace] = "other"
+        page.act("_refresh")
+        page.act("_select", evt={"key": _key("model-05.pt"), "gen": "2"})
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ml, "list_models", meanwhile)
+    page[handle.workspace] = "demo"
+    page.act("_refresh")
+    assert page[handle.listing]["workspace"] == "other"
+    assert page[handle.listing][ml.GENERATION] == 2
+    assert page[handle.selected] == _key("model-05.pt")
+    assert page[handle.clock].workspace == "other"
+
+    drawer, handle = _session("clinical")
+    drawer[handle.workspace] = "demo"
+    drawer.act("_refresh")
+    assert drawer[handle.listing]["runs_unread"] == 3
+
+    def older_meanwhile(*args, **kwargs):
+        monkeypatch.setattr(ml, "list_models", original)
+        drawer.act("_select", evt={"key": "__older__", "gen": "1"})
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ml, "list_models", older_meanwhile)
+    drawer.act("_refresh")
+    assert drawer[handle.show_older] is True and drawer[handle.listing]["runs_unread"] == 0
+
+
+def test_a_pick_for_another_generation_is_refused_even_back_in_the_same_workspace(
+        root, serving, monkeypatch):
+    """SL-R3a: a pick is committed only for the listing the list shows now,
+    the one it was judged on and the rows it was made in (the generation the
+    page sends, `generation_marker`). A pick answered after another workspace
+    was chosen, one sent from the rows before the switch, and one from before
+    a switch away and back (A, B, then A again: the same relative key, the
+    same workspace) select nothing; a fold sent from them changes no fold. A
+    pick of the rows drawn now is the selection."""
+    shutil.copytree(root["workspace"], root["root"] / "other")
+    page, handle = _session("research")
+    operator_mode(monkeypatch)
+    key = _key("model-05.pt")
+    page[handle.workspace] = "demo"
+    page.act("_refresh")
+    before = page[handle.listing]
+    # Asked from demo's rows, processed once other's listing is committed
+    # (Gradio reads a State as the event is processed: other's listing).
+    queued = page.ask("_select")
+    page[handle.workspace] = "other"
+    page.act("_refresh")
+    assert ml.find_item(page[handle.listing], key) is not None   # the same key there
+    page.run(queued, evt={"key": key, "gen": "1"})
+    assert page[handle.selected] is None
+    assert 'data-gen="2"' in page[handle.rows]                   # what the rows say now
+    page.act("_select", evt={"key": key, "gen": "1"})            # sent from demo's rows
+    assert page[handle.selected] is None
+    page.act("_select", evt={"fold": ml.run_node("gatv2/20261015-080000_gene_aaaaaa"),
+                             "open": False, "gen": "1"})
+    assert page[handle.fold] == {}
+    # Back to demo: a third generation; an act of the first is not a new one.
+    page[handle.workspace] = "demo"
+    page.act("_refresh")
+    page.act("_select", evt={"key": key, "gen": "1"})
+    assert page[handle.selected] is None
+    assert page[handle.listing][ml.GENERATION] == 3 and 'data-gen="3"' in page[handle.rows]
+    held = page.ask("_select")
+    page[handle.listing] = before                # judged on the first listing, held inside
+    page.run(held, evt={"key": key})
+    assert page[handle.selected] is None
+    page[handle.listing] = {**before, ml.GENERATION: 3}
+    for sent in ("x", "", "1.0"):                                # never a generation
+        page.act("_select", evt={"key": key, "gen": sent})
+        assert page[handle.selected] is None, sent
+    page.act("_select", evt={"key": key, "gen": "3"})
+    assert page[handle.selected] == key
+    assert ml.list_generation("3") == 3 and ml.list_generation({ml.GENERATION: 3}) == 3
+    assert ml.list_generation(True) is None and ml.list_generation("x") is None
+
+
+def test_the_folds_are_changed_in_place_and_never_written_back(root, serving, monkeypatch):
+    """The fold-dict overwrite (OPS-SL-R3): the folds are the session's one
+    dict, changed in place under the clock (a fold kept, a search's dropped,
+    a pick's unfolds, another workspace's cleared) and returned by no handler,
+    so an answer that began before a fold cannot write an older copy back."""
+    page, handle = _session("research")
+    operator_mode(monkeypatch)
+    page[handle.workspace] = "demo"
+    page.act("_refresh")
+    folds = page[handle.fold]
+    node = ml.run_node("gatv2/20261015-080000_gene_aaaaaa")
+    page.act("_select", evt={"fold": node, "open": False, "gen": "1"})
+    page.type("disease")
+    page.act("_select", evt={"fold": node, "open": True, "searched": True, "gen": "1"})
+    assert page[handle.fold] is folds and folds == {node: False, ml.search_node(node): True}
+    page.clear()
+    assert page[handle.fold] is folds and folds == {node: False}
+    # A search's change held while a fold is kept: the fold stays.
+    late = page.type("gene", answered=False)
+    page.act("_select", evt={"fold": ml.run_node("gatv2/20261013-080000_disease_cccccc"),
+                             "open": True, "gen": "1"})
+    for asked in late:
+        page.run(asked)
+    assert folds == {node: False, ml.run_node("gatv2/20261013-080000_disease_cccccc"): True}
+    shutil.copytree(root["workspace"], root["root"] / "other")
+    page[handle.workspace] = "other"
+    page.act("_refresh")
+    assert page[handle.fold] is folds and folds == {}
