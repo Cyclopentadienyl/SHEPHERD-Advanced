@@ -4035,8 +4035,9 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
     at 1850 x 960, 1366 x 768, 960 x 1080 and 390 x 844, measured relative to
     what is drawn: every group of the bar holds its controls on one line;
     the actions (Start and Continue…) on one line, their group at the bar's
-    end; the note, when it says something, under every control, from the
-    bar's edge, each line inside the bar; no text of the run bar beside a
+    end; every control inside the bar's padding; the note, when it says
+    something, under every control, from the bar's edge, each line inside
+    the bar; no text of the run bar beside a
     control but the dataset's identity, the job's state and the relation
     beside Start, which is one line where it stands level with Start; the
     setup notice drawn once (the GPU lock's merged into it); the charts'
@@ -4074,6 +4075,9 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
         assert max(a[1] for a in actions) < min(a[3] for a in actions), where
         assert abs(drawn["act"][2] - right) <= 2, where
         controls = [p for group in drawn["groups"] for p in group["parts"]]
+        # Every control inside the bar's padding (a select's floor against its whole field,
+        # label and ⓘ beside it, pushed the Dataset box 14 px past it at 390 x 844).
+        assert all(c[0] >= left - 1 and c[2] <= right + 1 for c in controls), where
         if case in ("first_use", "long_name"):
             note = drawn["note"]
             assert note is not None and note[1] >= max(c[3] for c in controls) - 1, where

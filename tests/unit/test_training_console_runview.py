@@ -164,14 +164,16 @@ def test_the_viewing_box_holds_a_whole_option_at_any_window_width():
     window (``clamp(300px, 19vw, 360px)`` cut 33 of them at 1536 x 760). That
     width is its basis, never more than its panel: it shrinks with the panel
     (B-12, the UI sweep: a 520 px box in a 358 px panel at 390 x 844, cut by
-    179 px), never under the select floor while the line has it. The
+    179 px), and only where its line is narrower than the field. The
     header's words beside it take a line of their own under it where they
     would need more than two lines (their basis, about a state line and
     Details ›). The browser check measures both at each size."""
     rule = tc.PAGE_CSS.split("#shep-train-view-run .wrap:has(> .wrap-inner) {", 1)[1].split(
         "}", 1)[0]
     assert f"width: calc({r.OPTION_CHARS}ch + 64px);" in rule and "vw" not in rule
-    assert "flex: 0 1 auto;" in rule and "min-width: min(var(--shep-select-floor), 100%)" in rule
+    # It shrinks only with its line (a floor against the whole field, its label and ⓘ beside it,
+    # would push it past the panel's padding where the line is narrower than the field).
+    assert "flex: 0 1 auto;" in rule and "min-width: 0 !important;" in rule
     assert r.OPTION_CHARS == 40
     block = tc.PAGE_CSS.split("#shep-train-view-run {", 1)[1].split("}", 1)[0]
     assert "flex: 0 1 auto !important;" in block and "min-width: 0 !important;" in block

@@ -5268,7 +5268,11 @@ PAGE_CSS = charts.CHART_CSS + f"""
    under the other. */
 {_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"] {{ min-width: 5em; }}
 {_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"], {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: auto !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color) !important; }}
-{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner) {{ flex: 0 1 auto; width: 20rem; min-width: min(var(--shep-select-floor), 100%) !important; }}
+/* A select's box is its width's basis and shrinks only with its field: a group (and the run view's
+   header) moves to the next line whole, so a field is narrower than its content only alone on a
+   line too narrow for it, and there no floor fits (the select floor against the whole field, its
+   label and ⓘ beside it, pushed the box 14 px into the bar's padding at 390 x 844). */
+{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner) {{ flex: 0 1 auto; width: 20rem; min-width: 0 !important; }}
 /* A run's option is 40 characters at most (`renderers.OPTION_CHARS`), its end the start time that
    tells same-name runs apart, and the closed select is the header's one name for the run viewed: its
    box is sized by those 40 characters, never by the window (19vw cut 33 of them at 1536 x 760). The
@@ -5276,9 +5280,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
    mostly capitals may still end in the shell's titled ellipsis), and the box adds what Gradio draws
    around it: the chevron's 30 px in the input, its 2 x 4 px margins, the 2 x 12 px padding and the
    border: its basis, which it shrinks from with the panel (B-12: a 520 px box in a 358 px panel at
-   390 x 844), never under the select floor while the line has it. The header's words beside it wrap
-   to their own line where it does not fit. */
-{_PAGE} #shep-train-view-run .wrap:has(> .wrap-inner) {{ flex: 0 1 auto; width: calc({r.OPTION_CHARS}ch + 64px); min-width: min(var(--shep-select-floor), 100%) !important; }}
+   390 x 844), only where its line is narrower than the field. The header's words beside it wrap to
+   their own line where it does not fit. */
+{_PAGE} #shep-train-view-run .wrap:has(> .wrap-inner) {{ flex: 0 1 auto; width: calc({r.OPTION_CHARS}ch + 64px); min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset input, {_PAGE} #shep-train-view-run input {{ flex: 1 1 auto !important; width: 0 !important; min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset .secondary-wrap, {_PAGE} #shep-train-view-run .secondary-wrap {{ min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #shep-train-view-run .icon-wrap {{ flex: none !important; }}
