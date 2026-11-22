@@ -213,10 +213,10 @@ _DOWNLOAD = ('<svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"
              '<path d="M8 2.5v7.5M4.8 7l3.2 3.2L11.2 7M3 13.2h10" fill="none" stroke="currentColor" '
              'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
-#: The gestures in one line: the lead of the figure's ⓘ (the page's help
+#: The gestures in one sentence: the lead of the figure's ⓘ (the page's help
 #: topic), not text kept on the toolbar (the GB10 WebUI recheck: one line less
-#: over the plots).
-GESTURES = "Wheel: zoom · drag: pan · double-click: reset"
+#: over the plots); the bubble's lead, so a sentence, not a chain of " · ".
+GESTURES = "Zoom with the wheel, pan by dragging, and double-click to reset."
 
 
 def figure_template(*, series_fn: str, csv_fn: Optional[str], help_key: Optional[str],

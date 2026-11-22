@@ -367,31 +367,33 @@ FIELD_FORMATS: Dict[str, str] = {
 #: says that; a setting whose values are a study's arms, not a tuned value,
 #: says what each arm is instead.
 _SETTING_CLOSINGS = {
-    "frozen_parts": "Not a tuned value: Trained is the source's full fine-tune, and Frozen is "
+    "frozen_parts": "not a tuned value. Trained is the source's full fine-tune, and Frozen is "
                     "the frozen-backbone control.",
 }
-_PROVISIONAL = "A provisional default from the source, not tuned on this data."
+_PROVISIONAL = "a provisional default from the source, not tuned on this data."
 
 
 def setting_help(name: str, references: Mapping[str, Any], sources: Mapping[str, str]
                  ) -> Tuple[str, str]:
-    """A setting's help, ``(title, text)``: its label, then what it is (its
-    field spec's description, `training_fields.FieldSpec.description`, the
-    one text of it), then the value a run takes when the operator sets none:
-    the reference's, with the source of that value (`src.config.recipe`) and
-    what that reference is (`_SETTING_CLOSINGS`, else a provisional default
-    from the source), or this build's default where the reference recipe
-    sets none (`sources` names no source for it). The source, a repository
-    file and its lines, is the text's trailing "Ref:" line (the bubble's
-    grammar, `help.help_lines`)."""
+    """A setting's help, ``(title, text)``, in the bubble's grammar
+    (`help.help_lines`; the UI sweep's text budget): its label; the lead,
+    what it is (its field spec's description,
+    `training_fields.FieldSpec.description`, the one text of it, API wording
+    kept as it is); then one term row, the value a run takes when the
+    operator sets none: "Reference: <value>, <what it is>" (the reference's,
+    `_SETTING_CLOSINGS`, else a provisional default from the source), or
+    "Default: <value>, set by this build. The reference recipe sets none."
+    where the recipe sets none (`sources` names no source for it); then, for
+    a reference, the trailing "Ref:" line, its source (a repository file and
+    its lines). Fine-tune's settings take the same shape (its ``ft_`` help)."""
     lead = by_name(name).description
     shown = r.setting_words(name, references[name])
     if name not in sources:
         return (r.SETTING_LABELS[name],
-                f"{lead}\n\nDefault: {shown}, this build's; the reference recipe sets none.")
+                f"{lead}\n\nDefault: {shown}, set by this build. The reference recipe sets none.")
     return (r.SETTING_LABELS[name],
             f"{lead}\n\n"
-            f"Reference: {shown}. {_SETTING_CLOSINGS.get(name, _PROVISIONAL)}\n"
+            f"Reference: {shown}, {_SETTING_CLOSINGS.get(name, _PROVISIONAL)}\n"
             f"{REF_PREFIX} {sources[name]}")
 
 
@@ -3598,15 +3600,22 @@ def _branch_form_value(name: str, value: Any) -> Any:
             else value)
 
 
+#: Where a Branch field's value starts, what is sent and what is kept, as the
+#: help's term rows (`branch_setting_help`).
+BRANCH_FIELD_ROWS = (
+    "- Starts: at the parent's value, once Check checkpoint has read it",
+    "- Sent: only a field you edit",
+    "- Recorded: a value other than the parent's, as the branch's change",
+)
+
+
 def branch_setting_help(name: str) -> Tuple[str, str]:
     """A Branch field's help, ``(title, text)``: its label, what it is (its
     field spec's description, as the base form's help says it), and where
-    its value starts and what is sent."""
+    its value starts, what is sent and what its record keeps
+    (`BRANCH_FIELD_ROWS`, the bubble's term rows)."""
     return (r.SETTING_LABELS[name],
-            f"{by_name(name).description}\n\n"
-            "It starts at the parent's value once Check checkpoint has read it. Only a field "
-            "you edit is sent; a value other than the parent's is the branch's change, and "
-            "its record keeps it.")
+            f"{by_name(name).description}\n\n" + "\n".join(BRANCH_FIELD_ROWS))
 
 
 def branch_sent(touched: Any, values: Sequence[Any]) -> Tuple[Dict[str, Any], List[str]]:
@@ -4482,9 +4491,9 @@ def _toggle_continue_source(source):
 SPEC_FIELD_WORDS = {
     "input.dim": "The width of each node's learned input vector.",
     "input.type_embedding": "Adds a learned vector for each node's type to its input vector.",
-    "encoder.layers": "The encoder's GATv2 layers; the sampler takes one hop per layer.",
-    "encoder.hidden": "Each head's width in the middle layers; the first layer multiplies it.",
-    "encoder.output": "Each head's width in the last layer; the encoder's output is this × heads.",
+    "encoder.layers": "The encoder's GATv2 layers. The sampler takes one hop per layer.",
+    "encoder.hidden": "Each head's width in the middle layers. The first layer multiplies it.",
+    "encoder.output": "Each head's width in the last layer. The encoder's output is this × heads.",
     "encoder.heads": "Attention heads in every layer, their outputs concatenated.",
     "encoder.first_hidden_multiplier": "The first layer's width per head is Hidden × this.",
     "encoder.dropout": "Dropout after every layer but the last: a fraction, 0 or more and under 1.",
@@ -4495,13 +4504,13 @@ SPEC_FIELD_WORDS = {
                                   "edge."),
     "encoder.add_self_loops": "Each node also attends to itself, through an added self-loop edge.",
     "encoder.share_weights": "One weight matrix for both ends of each message.",
-    "encoder.concat": "Joins the heads' outputs; GATv2 needs it on, its width being output × heads.",
+    "encoder.concat": "Joins the heads' outputs. GATv2 needs it on, its width being output × heads.",
     "encoder.residual": "Adds each layer's input, projected, to its output.",
     "lp_head.margin": "The hinge loss margin: how far a positive edge's score should beat its negative's.",
 }
 #: What a spec field's reference is, where it is not a tunable default.
 _SPEC_CLOSINGS = {
-    "encoder.concat": "Not a tuned value: the source's GATv2 concatenates its heads.",
+    "encoder.concat": "not a tuned value. The source's GATv2 concatenates its heads.",
 }
 #: The `REFERENCE_SOURCES` entry a spec field's reference value comes from,
 #: where it is not the field's own path: the attention defaults are one
@@ -4530,7 +4539,7 @@ def spec_field_help(spec_field: SpecField) -> Tuple[str, str]:
         text += f"Reference: {shown}, this build's reference spec."
     else:
         closing = _SPEC_CLOSINGS.get(spec_field.path, _PROVISIONAL)
-        text += f"Reference: {shown}. {closing}\n{REF_PREFIX} {source}"
+        text += f"Reference: {shown}, {closing}\n{REF_PREFIX} {source}"
     return r.field_words(spec_field.path.split(".", 1)[1]), text
 
 
@@ -4541,80 +4550,76 @@ FIELD_HELP = {
     "shep-train-dataset": (
         "Dataset",
         "The workspace to train on, from the server's list as on Research › Datasets.\n\n"
-        "- Choosing one only reads it; nothing changes on the server.\n"
-        "- Start sends the dataset fingerprint shown; the server refuses the start if the "
-        "workspace changed since.",
+        "- Choosing one only reads it. Nothing changes on the server.\n"
+        "- Start sends the dataset fingerprint shown with the run.\n"
+        "- The server refuses the start if the workspace changed since.",
     ),
     "run_name": (
         "Run name",
-        "Optional. Each run is saved in a new folder of its own:\n"
-        "<workspace>/runs/<architecture>/<date-time>_<name>_<id>/\n\n"
-        "Letters, digits and hyphens are kept; blank uses \"run\". It names a continued or "
-        "branched run too. The run view shows the name once training starts.",
+        "Optional. It names the new run's folder, always a new folder of its own.\n\n"
+        "- Kept: letters, digits and hyphens\n"
+        "- Blank: the name \"run\"\n"
+        "- Also names: a continued or branched run\n"
+        "- Shown: in the run view once training starts\n"
+        "Ref: <workspace>/runs/<architecture>/<date-time>_<name>_<id>/",
     ),
     # The base form: each setting's label, what it is, and the value a run
     # takes without it, with its source (`setting_help`).
     **{name: setting_help(name, *base_references()) for name in BASE_FIELDS},
     "device": (
         "Device",
-        "Where the run trains; it never falls back to the CPU on its own.\n\n"
+        "Where the run trains. It never falls back to the CPU on its own.\n\n"
         "- auto: the GPU (CUDA). With no CUDA device visible, Start is refused.\n"
         "- cpu: for development, recorded as asked.\n"
         "- Continue… has its own Device, which starts from this one.",
     ),
     "continue_operation": (
         "Operation",
-        "What the drawer does from the chosen checkpoint, which is never changed.\n\n"
-        "- Continue: resume a paused run, or extend a finished one by Extra epochs. Every "
-        "setting stays the checkpoint's.\n"
-        "- Branch: a new run from its weights, with a new optimizer and schedule. Change the "
-        "settings its stage allows, or none for the same settings.\n"
-        "Both train a new run of their own.",
+        "Both train a new run from the chosen checkpoint, which never changes.\n\n"
+        "- Continue: resume a paused run, or extend a finished one by Extra epochs\n"
+        "- Continue keeps: every setting of the checkpoint\n"
+        "- Branch: a new run from its weights, with a new optimizer and schedule\n"
+        "- Branch changes: what its stage allows, or none for the same settings",
     ),
     "manual_checkpoint": (
         "Checkpoint path",
         "A checkpoint by its typed path, instead of the run list's Run and Checkpoint.\n\n"
-        "- It only finds a checkpoint that list has (the run bar's dataset's bases and task "
-        "models); any other file is refused, unopened.\n"
-        "- It is checked as a listed one is, and a file without a model spec is never "
-        "continued here.\n"
-        "- \"Choose from the list instead ›\" goes back to the run list.",
+        "- Found: only a checkpoint that list has, this dataset's bases and task models\n"
+        "- Refused, unopened: any other file\n"
+        "- Checked: as a listed one is, never continued without a model spec\n"
+        "- Back: \"Choose from the list instead ›\" returns to the run list",
     ),
     "continue_run": (
         STEP_RUN,
-        "The run to continue or branch from, latest first, each led by its name or start "
-        "time.\n\n"
-        "Its architecture and start time follow; its directory is in the table. Either trains "
-        "a new run of its own; the run chosen here is not changed.",
+        "The run to continue or branch from, latest first.\n\n"
+        "- Each option: its name or start time, then architecture and start time\n"
+        "- Directory: in the table under Checkpoint\n"
+        "- Chosen run: never changed, as either trains a new run of its own",
     ),
     "checkpoint_dropdown": (
         STEP_CHECKPOINT,
-        "The chosen run's checkpoints, newest first.\n\n"
-        "- Latest save: last.pt, the run's last training state.\n"
-        "- Best (its metric named): the run's best value of the selection metric its files "
-        "record, in their direction; files that tie share it.\n"
-        "- Top-k save: another file the run kept by that metric.\n\n"
-        "The metric is the Trainer's validation figure, not a test result. The table under it "
-        "names the file and its model fingerprint, which the server checks the file's bytes "
-        "against.",
+        "The chosen run's checkpoints, newest first, each by what the file is.\n\n"
+        "- Latest save: last.pt, the run's last training state\n"
+        "- Best, by its metric: the best recorded value in its direction, ties shared\n"
+        "- Top-k save: another file the run kept by that metric\n"
+        "- Metric: the Trainer's validation figure, never a test result\n\n"
+        "The table under it names the file and the model fingerprint the server checks.",
     ),
     "continue_device": (
         "Device",
-        "Where the new run trains: auto is the GPU (CUDA); choose cpu for development.\n\n"
-        "- auto: with no CUDA device visible, the start is refused.\n"
-        "- Check checkpoint and the start (Continue Training or Start branch) both use it.\n"
-        "- Mixed precision works only on CUDA; the check says when the checkpoint's setting "
-        "would not hold here.\n\n"
-        "It starts from the Parameters' Device each time Continue… opens.",
+        "Where the new run trains, from Parameters' Device each time Continue… opens.\n\n"
+        "- auto: the GPU (CUDA). With no CUDA device visible, the start is refused.\n"
+        "- cpu: for development, recorded as asked.\n"
+        "- Check checkpoint, Continue Training and Start branch all use it.\n"
+        "- Mixed precision needs CUDA. The check says when it would not hold here.",
     ),
     "extend_epochs": (
         EXTEND_WORDS["extend_epochs"],
-        "Extend a finished run by this many epochs, trained at the fixed rate shown in the "
-        "check result.",
+        "Extra epochs for a finished run, trained at the fixed rate the check shows.",
     ),
     "extend_lr": (
         EXTEND_WORDS["extend_lr"],
-        "The rate the Extra epochs train at in the parameter groups whose rate ended at 0.\n\n"
+        "The Extra epochs' rate in the parameter groups whose rate ended at 0.\n\n"
         "Shown only for such a checkpoint: extending at 0 would not train those groups, and "
         "no rate is guessed. The other groups keep the rate they ended at.",
     ),
@@ -4625,11 +4630,10 @@ FIELD_HELP = {
     "shep-train-view-run": (
         "Viewing",
         "The run whose curves and Export CSV the run view shows.\n\n"
-        "- The run bar's dataset's runs, latest first, each led by its name or start time.\n"
-        "- Choosing one changes only the view. The run bar and its status pill always show "
-        "the training job.\n"
-        "- Beside it, how the run stands to that job: the running job, or a past run.\n"
-        "- A job started later is shown as it starts. Its directory is in Details.",
+        "- Options: the dataset's runs, latest first, by name or start time\n"
+        "- Choosing one: changes only the view, never the run bar's training job\n"
+        "- Beside it: how the run stands to that job, running or past\n"
+        "- A later job: shown as it starts, its directory in Details",
     ),
 }
 
@@ -4638,12 +4642,11 @@ TOPIC_HELP = {
     "training-charts": (
         "Chart gestures",
         charts.GESTURES + "\n\n"
-        "- The wheel over the epoch axis zooms all four charts' epochs; over a value axis, that "
-        "chart; inside a plot, both.\n"
-        "- Keys, a chart focused: + and − zoom, x or y one axis (Shift zooms out), arrows pan, "
-        "End the latest epochs, 0 resets.\n"
-        "- The view is kept per run in this tab, its epochs never below 0.\n"
-        "- Zoomed in a live run, a button counts new epochs beyond the view.",
+        "- Wheel: the epoch axis zooms all charts, a value axis its chart, a plot both\n"
+        "- Keys, a chart focused: + and − zoom, x or y one axis, Shift zooms out\n"
+        "- More keys: arrows pan, End shows the latest epochs, 0 resets\n"
+        "- View: kept per run in this tab, its epochs never below 0\n\n"
+        "Zoomed in on a live run, a button counts the new epochs beyond the view.",
     ),
 }
 

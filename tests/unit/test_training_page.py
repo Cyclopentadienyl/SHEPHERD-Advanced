@@ -2933,7 +2933,7 @@ def test_the_device_help_says_auto_needs_cuda_as_the_trainer_does():
 
 def test_the_chart_help_leads_with_the_gestures_in_paragraphs():
     title, text = tc.TOPIC_HELP["training-charts"]
-    assert text.startswith(tc.charts.GESTURES + "\n\n") and "\n- The wheel over the epoch axis" in text
+    assert text.startswith(tc.charts.GESTURES + "\n\n") and "\n- Wheel: the epoch axis" in text
     for key in ("manual_checkpoint", "checkpoint_dropdown", "continue_device", "run_name",
                 "continue_run"):
         help_text = {**tc.FIELD_HELP, **tc.TOPIC_HELP}[key][1]
@@ -3065,7 +3065,7 @@ def test_with_the_drawer_open_the_run_bar_draws_no_action_and_the_drawer_one_clo
     assert tc._on_source_link(tc.CONTINUE_FROM_LIST, _Evt("other")) == (gr.update(), gr.update())
     # Its text is the typed path's own help (the radio's went with it).
     assert "continue_source" not in tc.FIELD_HELP
-    assert "only finds a checkpoint that list has" in tc.FIELD_HELP["manual_checkpoint"][1]
+    assert "only a checkpoint that list has" in tc.FIELD_HELP["manual_checkpoint"][1]
 
 
 def test_a_failed_runs_output_tail_is_a_disclosure_fitted_to_the_window():

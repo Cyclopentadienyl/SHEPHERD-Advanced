@@ -43,6 +43,7 @@ from src.utils.run_plan import new_run_settings, new_run_values  # noqa: E402
 from src.webui import shell  # noqa: E402
 from src.webui.components import renderers as r  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
+from src.webui.components.help import TEXT_BUDGET, budget_problems, help_lines  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 
 #: A request D8 allows once the deployment is in mode M1 (`_operator_mode`):
@@ -570,14 +571,39 @@ def test_each_settings_help_leads_with_its_field_specs_description():
         lead = text.split("\n", 1)[0]
         assert title == r.SETTING_LABELS[name] and lead == tf.by_name(name).description
         assert len(lead) <= 90, (name, lead)
+        # One term row after the lead (the bubble's grammar, the UI sweep's text budget), then
+        # the source on the trailing Ref line; no semicolon in the WebUI's own words.
+        rows = [line for line in help_lines(text)[1:] if line.kind != "ref"]
+        assert len(rows) == 1 and rows[0].kind == "para", (name, rows)
+        assert ";" not in rows[0].text, name
         if name in BASE:
-            assert f"Reference: {r.setting_words(name, BASE[name])}." in text
-            assert BASE_SOURCES[name] in text
+            assert rows[0].term == "Reference", name
+            assert rows[0].text.startswith(f"{r.setting_words(name, BASE[name])}, ")
+            assert text.endswith(f"\nRef: {BASE_SOURCES[name]}"), name
         else:
             assert name not in sources
-            assert (f"Default: {r.setting_words(name, references[name])}, this build's; the "
-                    "reference recipe sets none.") in text
+            assert rows[0].term == "Default", name
+            assert rows[0].text == (f"{r.setting_words(name, references[name])}, set by this "
+                                    "build. The reference recipe sets none.")
     assert not hasattr(tc, "_SETTING_LEADS")
+
+
+def test_every_training_help_text_meets_the_text_budget_but_an_api_worded_lead():
+    """The UI sweep of 2026-11-22 (its text brief's §11; `help.TEXT_BUDGET`):
+    48 of Training's 65 bubbles ran over (semicolons in the page's own words,
+    items of two or three bubble lines, items of two forms, a 95-character
+    lead). Each now reads as the bubble's grammar: a lead that answers, then
+    none or 2-4 items of one form, each of two lines at most, Ref last. The
+    one thing left is a lead that is a field spec's description
+    (`FieldSpec.description`, API wording the schema and the refusals share,
+    which the page keeps as it is): its own semicolon, and nothing else."""
+    described = {spec.description for spec in tf.FIELDS}
+    for key, (_title, text) in {**tc.FIELD_HELP, **tc.TOPIC_HELP}.items():
+        lead = help_lines(text)[0].text
+        problems = list(budget_problems(text, TEXT_BUDGET))
+        if lead in described:
+            problems = [p for p in problems if p != f"a semicolon: {lead[:40]}…"]
+        assert problems == [], (key, problems)
 
 
 def test_the_patience_lead_names_the_forms_word_for_none():
@@ -638,16 +664,17 @@ def test_the_freeze_field_shows_plain_words_and_sends_the_field_specs_values():
     title, text = tc.setting_help("frozen_parts", FINETUNE, FINETUNE_SOURCES)
     lead = text.split("\n", 1)[0]
     assert title == "Graph backbone" and len(lead) < 90, lead
-    assert "Reference: Trained." in text and FINETUNE_SOURCES["frozen_parts"] in text
+    assert "Reference: Trained, " in text and FINETUNE_SOURCES["frozen_parts"] in text
     # The freeze is a study's two arms, not a tuned value: its help says what
     # each is, never "a provisional default ... not tuned" (review of A2).
-    # Its source is the text's trailing Ref line (the bubble's grammar, R-42).
-    assert text.endswith("\n\nReference: Trained. Not a tuned value: Trained is the source's "
+    # Its source is the text's trailing Ref line (the bubble's grammar, R-42);
+    # one colon a sentence (the UI sweep's text brief).
+    assert text.endswith("\n\nReference: Trained, not a tuned value. Trained is the source's "
                          "full fine-tune, and Frozen is the frozen-backbone control.\n"
                          f"Ref: {FINETUNE_SOURCES['frozen_parts']}")
     assert "provisional" not in text
     epochs = tc.setting_help("num_epochs", FINETUNE, FINETUNE_SOURCES)[1]
-    assert epochs.endswith("A provisional default from the source, not tuned on this data.\n"
+    assert epochs.endswith(", a provisional default from the source, not tuned on this data.\n"
                            f"Ref: {FINETUNE_SOURCES['num_epochs']}")
     assert tc.sent_settings({"frozen_parts": "graph_side"}, ["frozen_parts"]) == (
         {"frozen_parts": "graph_side"}, [])
