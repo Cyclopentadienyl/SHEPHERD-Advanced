@@ -1033,7 +1033,10 @@ def test_in_a_browser_no_row_of_settings_puts_words_beside_its_fields(dl, tmp_pa
     control centred in a row much taller than itself (Check in the 115 px
     set row at 390 x 844), no group split over lines, no control cut,
     overlapped or squeezed; in every row the name's words end above the
-    row's box, and Check and Save share one line. Fails on 8e4c7b6."""
+    row's box, Check and Save share one line, and a line with nothing to
+    say (no result, no lock) is not drawn (its rule looked for an empty
+    container that always holds the block's own element, so each empty
+    line was drawn 0 px tall and still took a gap). Fails on 8e4c7b6."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import layout_problems, node_with_playwright, walk_ui
     from tests.fixtures.operator_access import operator_mode
@@ -1048,8 +1051,11 @@ def test_in_a_browser_no_row_of_settings_puts_words_beside_its_fields(dl, tmp_pa
         ? e.getBoundingClientRect() : null; };
       const name = box('.shep-dl-name p'), field = box('input, textarea');
       const check = box('[id^="dl_check_"]'), save = box('[id^="dl_save_"]');
+      // A line with nothing to say takes no room (its block drawn 0 px tall still took a gap).
+      const empties = [...row.querySelectorAll('.shep-dl-main > *')].filter((e) =>
+        e.getClientRects().length && e.getBoundingClientRect().height < 0.5).map((e) => e.id || e.className);
       return { id: row.id, above: !!name && !!field && name.bottom <= field.top + 0.5,
-               oneLine: !!check && !!save && Math.abs(check.top - save.top) < 1 };
+               oneLine: !!check && !!save && Math.abs(check.top - save.top) < 1, empties };
     })"""
     sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720], [800, 900], [390, 844])
     stops = [{"size": size, "page": "settings", "focus": False} for size in sizes]
@@ -1060,7 +1066,7 @@ def test_in_a_browser_no_row_of_settings_puts_words_beside_its_fields(dl, tmp_pa
     for stop in seen:
         assert len(stop["extra"]) == len(KEYS), stop
         for row in stop["extra"]:
-            assert row["above"] and row["oneLine"], (stop["size"], row)
+            assert row["above"] and row["oneLine"] and row["empties"] == [], (stop["size"], row)
 
 
 def test_the_settings_help_texts_meet_the_text_budget():
@@ -1076,5 +1082,5 @@ def test_the_settings_help_texts_meet_the_text_budget():
     allocator, compile_ = rs.FIELD_HELP["allocator_preset"][1], rs.FIELD_HELP["torch_compile"][1]
     for fact in ("Restart Backend", "launch environment", "CPU run", "diagnosis"):
         assert fact.lower() in allocator.lower(), fact
-    for fact in ("graph-break", "eager", "GATv2", "Restart"):
+    for fact in ("graph-break", "eager", "GATv2, the one architecture built today", "Restart"):
         assert fact in compile_, fact

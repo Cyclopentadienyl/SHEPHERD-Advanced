@@ -728,9 +728,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-path {{ overflow-wrap: anywhere; }}
 {_PAGE} .shep-dl-problem {{ color: var(--shep-text-2); font-size: 14px; }}
 {_PAGE} .shep-dl-adv {{ font-size: 14px; margin-top: 2px; }}
-{_PAGE} [id^="dl_result_"]:has(.html-container:empty), {_PAGE} #dl_status:has(.html-container:empty),
-{_PAGE} [id^="dl_suggest_"]:has(.html-container:empty),
-{_PAGE} [id^="dl_lock_"]:has(.html-container:empty) {{ display: none !important; }}
+{_PAGE} [id^="dl_result_"]:has(.shep-html:empty), {_PAGE} #dl_status:has(.shep-html:empty),
+{_PAGE} [id^="dl_suggest_"]:has(.shep-html:empty),
+{_PAGE} [id^="dl_lock_"]:has(.shep-html:empty) {{ display: none !important; }}
 @container shep-dl (max-width: {DL_NARROW}) {{
   {_PAGE} .shep-dl-set > .block.shep-dl-keycell {{ flex-basis: 100% !important; }}
   {_PAGE} .shep-dl-set > .block:not(.shep-dl-keycell) {{ flex-basis: 100% !important; }}

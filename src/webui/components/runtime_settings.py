@@ -503,7 +503,7 @@ FIELD_HELP = {
         "Compile the model (torch.compile)",
         "Compiles supported model regions to cut overhead.\n\n"
         "- PyG workloads: may graph-break, fall back to eager or run slower\n"
-        "- GATv2: the one architecture built today, not measured with it yet\n"
+        "- Not yet measured with it: GATv2, the one architecture built today\n"
         "- Restart: none needed",
     ),
 }
