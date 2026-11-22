@@ -4306,9 +4306,6 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-fields [data-testid="block-info"] {{ margin-bottom: 4px !important; }}
 {_TAB} #shep-dx-options .form {{ display: contents !important; }}
 {_TAB} #shep-dx-options .block.padded {{ padding: 0 !important; }}
-/* Top-K's block draws no box of its own (display: contents, below), so it clips nothing: Gradio's
-   hidden overflow on it is not a box's. */
-{_TAB} .shep-dx-options #dx_top_k {{ overflow: visible !important; }}
 {_TAB} #dx_top_k input[type=number] {{ height: 34px; padding: 4px 8px; }}
 /* Options (R-24): its label over its controls, no box of its own; each control a row of one grid,
    its key, its ⓘ and its control in three columns (the keys as wide as the longest), the

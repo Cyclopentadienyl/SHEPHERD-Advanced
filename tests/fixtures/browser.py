@@ -341,19 +341,24 @@ LOOK_JS = r"""
      draws, each measured relative to what is drawn, never against a window size or a pixel
      figure of one screen:
      - beside: a text block of 100 or more characters (no field in it) that stands beside a field
-       or a button of its panel, overlapping its line by half the control's height;
+       or a button of its region (its panel; outside every panel, its bar: Training's run bar),
+       overlapping its line by half the control's height;
      - narrow: a text box or a select whose inner width holds fewer than 10 of its own "0";
      - overlap: two controls that overlap by more than 2 x 2 px (a ⓘ's cover over its disabled
-       button aside);
+       button aside, and a control of an open drawer where the drawer is drawn over the other: a
+       layer, absolute or fixed and no control, that holds one and not the other and is the top
+       element where they meet);
      - orphan: a choice group on two or more lines whose last line holds one option and whose
        first holds more;
      - centred: a field or a button centred in a row more than twice its height plus 24 px, 20 px
        or more below the row's top;
-     - split: the controls of one group (`.shep-grp`) not on one line;
+     - split: the controls of one group (`.shep-grp`) not on one line (a ⓘ, a Copy and a
+       "Details ›" link aside);
      - edge: in a panel's left part, a heading, paragraph, reason, notice, empty state, field
        label or field box whose left edge is 1 px to 2em off the panel heading's (lists, tables,
        term rows and the words after a status mark aside);
-     - clipped: a control cut by an ancestor that hides its overflow and is no scroll region;
+     - clipped: a control cut by an ancestor that hides its overflow and is no scroll region (a
+       box of ``display: contents`` draws no box, so it clips nothing);
      - empty: a panel with no visible words or control under its header;
      - help: a registered help text drawn on the page outside the bubble;
      - notices: each notice key (`data-notice`, `data-notice-also`) and how often it is drawn;
@@ -405,6 +410,7 @@ LOOK_JS = r"""
     let L = r.left, T = r.top, R = r.right, B = r.bottom;
     for (let a = e.parentElement; a && a !== document.documentElement; a = a.parentElement) {
       const s = getComputedStyle(a);
+      if (s.display === 'contents') { continue; }
       if (s.overflowX !== 'visible' || s.overflowY !== 'visible') {
         const q = a.getBoundingClientRect();
         if (s.overflowX !== 'visible') { L = Math.max(L, q.left); R = Math.min(R, q.right); }
@@ -414,6 +420,18 @@ LOOK_JS = r"""
     }
     return { left: L, top: T, right: R, bottom: B, width: Math.max(0, R - L), height: Math.max(0, B - T),
              whole: r.width * r.height };
+  };
+  /* **A control drawn in an open drawer, over another** (`overlap`): `a` lies in a layer that
+     does not hold `b` (a box drawn absolute or fixed that is no control, below the first box
+     they share), and at the point (x, y) that layer, not `b`, is drawn. A control drawn over
+     another in their own box (a Clear over a switch) is an overlap. */
+  const drawnOver = (a, b, x, y) => {
+    let layer = null;
+    for (let p = a.parentElement; p && p !== document.body && !p.contains(b); p = p.parentElement) {
+      if (/^(absolute|fixed)$/.test(getComputedStyle(p).position) && !p.matches(INTERACTIVE)) { layer = p; break; }
+    }
+    const top = layer && document.elementFromPoint(x, y);
+    return !!top && layer.contains(top);
   };
   /* Where an element's own words or box start: a box (a field, a select's wrap) at its border,
      text at its content edge (after its padding and border). */
@@ -434,6 +452,15 @@ LOOK_JS = r"""
     const scope = tab || document.body, out = { beside: [], narrow: [], overlap: [], orphan: [], centred: [],
       split: [], edge: [], clipped: [], empty: [], help: [], notices: {}, tabs: null };
     const panelOf = (e) => panels.findIndex((p) => p.contains(e));
+    /* A text's region for `beside`: its panel, else the outermost bar it is in (Training's run
+       bar is no panel), else none (-1 on a page with no panels). */
+    const regionOf = (e) => {
+      const k = panelOf(e);
+      if (k >= 0) { return k; }
+      let bar = null;
+      for (let b = e.closest('.shep-bar'); b; b = b.parentElement && b.parentElement.closest('.shep-bar')) { bar = b; }
+      return bar || (panels.length ? null : -1);
+    };
     const ctl = [...scope.querySelectorAll(INTERACTIVE)].filter((e) => !e.closest(SKIP) && visible(e));
     const fieldsAndButtons = ctl.filter((c) => c.matches('input, textarea, button, [role=combobox]')
       && !c.matches('.shep-i, .shep-copy, .shep-nb-go, .shep-link'));
@@ -444,9 +471,10 @@ LOOK_JS = r"""
       if (!b || b === scope || b.querySelector('input, textarea, select')) { continue; }
       const words = (b.innerText || '').trim();
       if (words.length < 100) { continue; }
-      const r = b.getBoundingClientRect(), k = panelOf(b);
+      const r = b.getBoundingClientRect(), k = regionOf(b);
+      if (k === null) { continue; }
       const near = fieldsAndButtons.filter((c) => {
-        if (panelOf(c) !== k || (k < 0 && panels.length) || b.contains(c)) { return false; }
+        if (regionOf(c) !== k || b.contains(c)) { return false; }
         const q = c.getBoundingClientRect(), over = Math.min(q.bottom, r.bottom) - Math.max(q.top, r.top);
         return over > 0.5 * q.height && (q.right <= r.left + 2 || q.left >= r.right - 2);
       });
@@ -469,7 +497,11 @@ LOOK_JS = r"""
         if (la && la === b.closest('label')) { continue; }
         const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
         const h = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
-        if (w > 2 && h > 2) { out.overlap.push(`${named(a)} and ${named(b)} by ${Math.round(w)} x ${Math.round(h)} px`); }
+        if (w <= 2 || h <= 2) { continue; }
+        // Where they meet, an open drawer holding one is drawn over the other: no overlap.
+        const x = Math.max(ra.left, rb.left) + w / 2, y = Math.max(ra.top, rb.top) + h / 2;
+        if (drawnOver(a, b, x, y) || drawnOver(b, a, x, y)) { continue; }
+        out.overlap.push(`${named(a)} and ${named(b)} by ${Math.round(w)} x ${Math.round(h)} px`);
       }
     }
     // clipped: cut by an ancestor that hides overflow, before any scroll region (what a scroll
@@ -479,6 +511,7 @@ LOOK_JS = r"""
       if (r.width <= 2 || r.height <= 2) { continue; }
       for (let a = e.parentElement; a && a !== document.documentElement; a = a.parentElement) {
         const s = getComputedStyle(a);
+        if (s.display === 'contents') { continue; }
         if (s.position === 'fixed' || /(auto|scroll)/.test(s.overflowX + ' ' + s.overflowY)) { break; }
         if (!/(hidden|clip)/.test(s.overflowX + ' ' + s.overflowY)) { continue; }
         const q = a.getBoundingClientRect();
@@ -520,7 +553,7 @@ LOOK_JS = r"""
     // split
     for (const g of scope.querySelectorAll('.shep-grp')) {
       const parts = [...g.querySelectorAll('input:not([type=radio]):not([type=checkbox]), textarea, button, .wrap:has(> .wrap-inner)')]
-        .filter((c) => visible(c) && !c.matches('.shep-i, .shep-copy') && !c.closest('.wrap:has(> .wrap-inner) input') )
+        .filter((c) => visible(c) && !c.matches('.shep-i, .shep-copy, .shep-link') && !c.closest('.wrap:has(> .wrap-inner) input') )
         .map((c) => c.getBoundingClientRect());
       if (parts.length > 1 && Math.max(...parts.map((r) => r.top)) >= Math.min(...parts.map((r) => r.bottom))) {
         out.split.push(`${named(g)} on ${new Set(parts.map((r) => Math.round(r.top / 8))).size} lines`);
@@ -1017,15 +1050,19 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
     shared walk holds these at zero once every page is laid out again (the
     sweep's integration); a page's lane runs them on its own pages:
 
-    - ``beside``: a text block of 100+ characters beside a field or button of its panel;
+    - ``beside``: a text block of 100+ characters beside a field or button of its panel (or of
+      its bar, outside every panel);
     - ``narrow-box``: a text box or select holding fewer than 10 of its own "0";
-    - ``overlap``: two controls overlapping by more than 2 x 2 px;
+    - ``overlap``: two controls overlapping by more than 2 x 2 px (one an open drawer lies over
+      aside);
     - ``orphan``: a choice group whose last line holds one option, its first more;
     - ``centred``: a control centred in a row over twice its height plus 24 px;
-    - ``split-group``: the controls of one ``.shep-grp`` on more than one line;
+    - ``split-group``: the controls of one ``.shep-grp`` on more than one line (a ⓘ, a Copy and a
+      "Details ›" link aside);
     - ``edge``: a heading, paragraph, notice, label or field 1 px to 2em off its panel
       heading's left edge;
-    - ``clipped``: a control cut by an ancestor that hides overflow and does not scroll;
+    - ``clipped``: a control cut by an ancestor that hides overflow and does not scroll (a box of
+      ``display: contents`` clips nothing);
     - ``empty-region``: a panel with nothing under its header;
     - ``help-on-page``: a help text drawn outside the bubble;
     - ``notice-repeat``: a notice key drawn more than once on one screen;

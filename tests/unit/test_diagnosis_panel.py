@@ -789,7 +789,10 @@ def test_the_input_column_follows_the_row_and_no_window_media_query_decides_it()
     pad = re.search(re.escape(f"{dp._TAB} #dx_top_k input[type=number] {{ height: 34px; padding: ")
                     + r"\d+px (\d+)px; }", css)
     assert width and pad and int(width.group(1)) >= 10 and int(width.group(2)) >= 2 * int(pad.group(1))
-    assert f"{dp._TAB} .shep-dx-options #dx_top_k {{ overflow: visible !important; }}" in css
+    # Its block draws no box, so it clips nothing (the shared walk's clipped rule reads it so:
+    # the page set no overflow of its own for the checker's sake).
+    assert re.search(re.escape(f"{dp._TAB} .shep-dx-options #dx_top_k,") + r"[^{]*\{ display: contents !important; \}", css)
+    assert "#dx_top_k { overflow" not in css
 
 
 def test_the_empty_results_say_what_to_do_without_a_place_the_layout_moves():

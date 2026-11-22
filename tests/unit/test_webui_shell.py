@@ -3699,3 +3699,76 @@ def test_the_layout_pass_keeps_a_fit_boxs_sideways_scroll_and_the_pages_scroll(p
     before, after = pieces_seen["scroll"]["before"], pieces_seen["scroll"]["after"]
     assert before["wide"] and before["fit"] > 0 and before["page"] > 0, before
     assert after == {"fit": before["fit"], "page": before["page"]}, (before, after)
+
+
+#: A static page for the layout rules themselves (`browser.LOOK_JS`'s ``layout``): one page shown
+#: as the shell shows one (its tab selected, its panels), with a panel and, outside it, a bar
+#: (Training's run bar is no panel) whose long words stand beside its button; in the panel a
+#: group whose "Details ›" link wraps under its box, a button in a box drawn as no box (``display:
+#: contents``) that hides its overflow, a drawer (absolute, over the panel) whose button lies over
+#: a control of the panel, and one button drawn over another.
+_LAYOUT_RULES_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  const words = 'Words that explain the button beside them at length, more than a hundred characters, '
+    + 'as a long refusal once stood beside Start in the run bar.';
+  await page.setContent(`<!doctype html><html><head><style>
+    body { margin: 0; font: 15px sans-serif; background: #fff; }
+    button, input { font: inherit; height: 32px; }
+    .shep-panel { position: relative; width: 900px; height: 420px; border: 1px solid #ccc; }
+    .shep-bar { display: flex; align-items: flex-start; gap: 16px; width: 900px; margin-top: 16px; }
+    #g1 { display: flex; flex-wrap: wrap; width: 260px; gap: 4px; }
+    #g1 input { width: 220px; }
+    #dc { display: contents; overflow: hidden; }
+    #under { position: absolute; left: 520px; top: 200px; width: 160px; }
+    #drawer { position: absolute; z-index: 5; top: 60px; left: 480px; width: 400px; height: 340px; background: #fff; }
+    #in-drawer { position: absolute; left: 60px; top: 136px; width: 160px; }
+    #o2 { position: absolute; left: 40px; top: 4px; }
+  </style></head><body>
+    <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
+    <div id="shep-tab-x"><div class="shep-page">
+      <div class="shep-panel" id="p1">
+        <div class="shep-panel-hd"><h2>A panel</h2></div>
+        <div class="shep-grp" id="g1"><input type="text" id="g1-in"><button type="button" class="shep-link" id="g1-link">Details ›</button></div>
+        <div id="dc"><button type="button" id="dc-btn">In a box drawn as no box</button></div>
+        <button type="button" id="under">Under the drawer</button>
+        <div id="drawer"><button type="button" id="in-drawer">The drawer's</button></div>
+        <div style="position: relative; margin-top: 16px"><button type="button" id="o1">The first button</button><button type="button" id="o2">Over it</button></div>
+      </div>
+      <div class="shep-bar" id="bar"><button type="button" id="bar-btn">Start</button><p id="bar-text">${words}</p></div>
+    </div></div></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  const layout = await page.evaluate(() => window.__shepLook.check().layout);
+  console.log(JSON.stringify(layout));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(tmp_path):
+    """S10 of the sweep's integration (the lanes' L1 4 and 5, L5 3, L3 R5): the layout rules
+    (`browser.LOOK_JS`'s ``layout``), on a static page shown as the shell shows one:
+
+    - ``beside`` reads a bar outside every panel as a region of its own (Training's run bar: its
+      long words beside Start were never measured);
+    - ``split-group`` does not count a group's "Details ›" link (``shep-link``) as one of its
+      controls, as it does not count a ⓘ or a Copy;
+    - ``clipped`` passes over a box drawn as no box (``display: contents``), which clips nothing
+      (Gradio's hidden overflow on Diagnosis' Top-K block was read as a cut);
+    - ``overlap`` does not count a control an open drawer lies over (the Test page's import
+      drawer: 13 pairs, each a panel control under the drawer), and still counts a button drawn
+      over another."""
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    found = run_node(_LAYOUT_RULES_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS)), tmp_path,
+                     timeout=120)
+    assert [b for b in found["beside"] if "#bar-text" in b and "#bar-btn" in b], found["beside"]
+    assert not [s for s in found["split"] if "#g1" in s], found["split"]
+    assert not [c for c in found["clipped"] if "#dc-btn" in c], found["clipped"]
+    assert not [o for o in found["overlap"] if "#under" in o], found["overlap"]
+    assert [o for o in found["overlap"] if "#o1" in o and "#o2" in o], found["overlap"]
