@@ -182,9 +182,19 @@ was clicked) chooses what it changes, never what is drawn. What an act said
 beside Load (a refusal, the status read again) is state too, said while its
 selection is drawn, so no drawing drops it (the review of 5171661).
 
+**What a handler commits is checked against what was committed meanwhile**
+(the review of dcaed68, SL-R3: a pick answered after another workspace was
+chosen selected that workspace's file at the same relative key; a re-read
+answered after a newer pick set the selection back): the list's handlers
+commit through the session's one `ListClock`, which says whether an answer
+still belongs to the workspace the list now shows (the listing's generation,
+`GENERATION`, said by the rows a pick is made in) and keeps a newer
+selection, fold or "Show older runs" from being written over.
+
 **Per browser session**: the listing, the selection, the view, what was said
-beside Load and the confirmation are `gr.State`; nothing a session sees is
-module state (the draw tokens are one count for the process, `draw_token`).
+beside Load, the confirmation and the list's clock are `gr.State`; nothing a
+session sees is module state (the draw tokens are one count for the process,
+`draw_token`).
 
 Module: src/webui/components/model_list.py
 """
@@ -772,6 +782,39 @@ def view_marker(view: Any) -> str:
     return f'<span class="shep-view-for" hidden data-for="{r.e(shaped)}"></span>'
 
 
+#: **The key a listing committed to a session carries its generation under**
+#: (`ListClock`): which reading of a workspace in this session it is, a new
+#: one each time another workspace's listing is committed. A count of the
+#: session's own events only, never part of a checkpoint, a ledger or a record.
+GENERATION = "generation"
+
+
+def list_generation(value: Any) -> Optional[int]:
+    """The generation a listing carries (``listing[GENERATION]``) or a page's
+    act was sent with (the rows' ``data-gen``, as text), or None where none
+    is said or it is no whole number."""
+    if isinstance(value, Mapping):
+        value = value.get(GENERATION)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return None
+
+
+def generation_marker(listing: Mapping[str, Any]) -> str:
+    """What the rows say they were drawn from: the generation of their
+    listing as a hidden element (``span.shep-list-gen``, its ``data-gen``),
+    which every act made in them is sent with (`MODEL_LIST_JS`, `FAMILY_JS`),
+    so the server refuses one made in rows of another workspace
+    (`ListClock.current`); nothing for a listing no session committed."""
+    generation = list_generation(listing)
+    if generation is None:
+        return ""
+    return f'<span class="shep-list-gen" hidden data-gen="{generation}"></span>'
+
+
 def refused_line(listing: Mapping[str, Any]) -> str:
     """Why a refused listing lists nothing, as every page says an operator
     control that is off for this request (`chips.operator_only`): "Operator
@@ -849,14 +892,16 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
     `_tree_html`), the latest runs then "Show older runs" where the preset
     shows the latest only (`older_html`); the view's filter or rows and
     groups, the search (`search_hit`), the fold state, a selection the list
-    does not show said (`outside_html`), and what the view was shaped for
-    (`view_marker`), an empty list's too."""
+    does not show said (`outside_html`), what the view was shaped for
+    (`view_marker`), an empty list's too, and the listing's generation
+    (`generation_marker`)."""
     if listing.get("refused"):
         # A listing is no act: the short line every page uses for an operator
         # control off for this request, not "Refused … Nothing was done."
         return f'<div class="shep-reason shep-reason-grey">{r.e(refused_line(listing))}</div>'
-    return _list_body(listing, selected, preset, show_older=show_older, view=view,
-                      search=search, fold=fold) + view_marker(view)
+    return (_list_body(listing, selected, preset, show_older=show_older, view=view,
+                       search=search, fold=fold) + view_marker(view)
+            + generation_marker(listing))
 
 
 def _list_body(listing: Mapping[str, Any], selected: Optional[str], preset: Preset, *,
@@ -2474,6 +2519,15 @@ var foldRows = function (node, open) {
     if (tr.getAttribute('data-in') === node) { tr.hidden = !open; }
   });
 };
+// Every act made in the rows is sent with the generation of the listing they
+// were drawn from (`generation_marker`), so the server refuses one made in
+// rows of another workspace than the list now shows (`ListClock`); the family
+// graph's script, after this one, sends its acts so too.
+var listGen = function (data) {
+  var mark = element.querySelector('.shep-list-gen');
+  if (mark) { data.gen = mark.getAttribute('data-gen'); }
+  return data;
+};
 // A row chosen (a click, Enter or Space) is said to the server and marked on
 // the list, so its facts (`FACTS_JS`) know they answer the operator's choice.
 // "Clear search" is the list's Clear, clicked here: the box emptied in the
@@ -2486,7 +2540,7 @@ var pick = function (key) {
     return;
   }
   if (list && key.indexOf('__') !== 0) { list.setAttribute('data-shep-picked', key); }
-  trigger('click', {key: key});
+  trigger('click', listGen({key: key}));
 };
 element.addEventListener('click', function (e) {
   if (e.target.closest && e.target.closest('button.shep-copy, button.shep-i')) { return; }
@@ -2499,7 +2553,7 @@ element.addEventListener('click', function (e) {
     foldRows(node, open);
     // Folded while a search shows the list: kept for that search only (G7).
     var searched = !!element.querySelector('[data-searched]');
-    trigger('click', {fold: node, open: open, searched: searched});
+    trigger('click', listGen({fold: node, open: open, searched: searched}));
     return;
   }
   var row = e.target.closest ? e.target.closest('[data-key]') : null;
@@ -2606,7 +2660,9 @@ element.addEventListener('click', function (e) {
 #:   graph's orientation and the arrow under the pointer kept (I5);
 #: - **an arrow** folds or unfolds at once in the page and tells the server
 #:   (``{tree: {node: open}}``, the fold state's `subtree_node` entries, kept
-#:   for the search only while one is shown, `search_node`): folded, every
+#:   for the search only while one is shown, `search_node`; like every act of
+#:   the rows, with their listing's generation, `MODEL_LIST_JS`'s ``listGen``):
+#:   folded, every
 #:   subtree under it folds too and the focus, were it inside, moves to the
 #:   arrow; the graph's size held until the pointer and the focus have left
 #:   the node and the room it gives back is out of view, so nothing it hid
@@ -2733,7 +2789,7 @@ FAMILY_JS = r"""
     // The answer's drawing is located already: the region stays where the pick was made.
     element.__shepFamLocated = run + '|' + viewFor();
     picked = {run: run, at: node.getBoundingClientRect().top, lines: gone(node), user: false};
-    trigger('click', {run: run});
+    trigger('click', listGen({run: run}));
   };
   var forestOf = function () { var fam = root(); return fam && fam.querySelector('.shep-fam-forest'); };
   // The room given back once the pointer and the focus have left the rows (a
@@ -2869,7 +2925,7 @@ FAMILY_JS = r"""
     }
     setOpen(b, open);
     set[b.getAttribute('data-tree')] = open;
-    trigger('click', {tree: set, searched: searched()});
+    trigger('click', listGen({tree: set, searched: searched()}));
     note();
   };
   var reveal = function () {
@@ -2880,7 +2936,7 @@ FAMILY_JS = r"""
       var b = ul.hidden ? nodeOf(ul.parentElement).querySelector('button.shep-fam-tog') : null;
       if (b) { setOpen(b, true); set[b.getAttribute('data-tree')] = true; any = true; }
     }
-    if (any) { trigger('click', {tree: set, searched: searched()}); }
+    if (any) { trigger('click', listGen({tree: set, searched: searched()})); }
     note();
     sel.scrollIntoView({block: 'nearest', inline: 'nearest'});
     var body = sel.querySelector('.shep-fam-body');
@@ -3048,6 +3104,202 @@ def load_closed_js(elem_id: str) -> str:
     return _LOAD_CLOSED_JS.replace("__LIST__", as_json_for_script(elem_id))
 
 
+class Refreshed(NamedTuple):
+    """What a re-read of the list committed (`ListClock.commit_listing`): the
+    listing (carrying its generation), the selection kept and "Show older
+    runs"."""
+
+    listing: Dict[str, Any]
+    selected: Optional[str]
+    older: bool
+
+
+class ListClock:
+    """**One list's clock in one session** (G07; the review of dcaed68,
+    SL-R3): what the list's handlers have committed to the session's state,
+    so that an answer is written only where it is still the newest of its
+    part. A handler reads its inputs as Gradio gives them when the event is
+    processed, then reads files or waits; another handler of the same
+    session may commit meanwhile (another workspace chosen, a newer pick, a
+    fold, "Show older runs"), and an answer computed from what was read at
+    the start would write over it. Every commit goes through this clock,
+    under its lock:
+
+    - **the generation**: a count bumped each time a listing of another
+      workspace than the one before is committed (A, then B, then A again
+      are three), carried by the listing (`GENERATION`) and said by the rows
+      drawn from it (`generation_marker`). A pick, a fold or "Show older
+      runs" is refused unless the listing it was judged on and the rows it
+      was made in are of the generation committed now (`current`): the same
+      relative key in another workspace, or in the same one read again after
+      a switch, is not the file that was picked;
+    - **a re-read** (`commit_listing`) changes nothing when another
+      workspace's listing was committed since it began; of the same
+      workspace, it writes the listing and keeps the selection committed
+      last (a pick made while it read), judged by the one rule
+      (`kept_selection`: still listed, or cleared, or a lone candidate),
+      never the selection it began with; it keeps "Show older runs", and its
+      answer is dropped where "Show older runs" was asked while it read only
+      the latest runs;
+    - **the folds** are the session's one dict (the ``fold`` State), changed
+      in place under this lock by each handler that changes them and
+      returned by none, so no answer writes back an older copy.
+
+    One per session: Gradio gives each session a deep copy of a State's
+    first value (`gradio.state_holder.SessionState`) and passes that object
+    itself to every handler that reads the State, and no handler returns it,
+    so every handler of a session holds the same clock; a deep copy is a new
+    clock with its own lock.
+
+    **The limit**: the check runs as a handler ends, and Gradio writes the
+    handler's outputs to the session just after it returns. Two commits can
+    still cross in that instant (one checked, the other checked and written,
+    then the first written); nothing here holds or delays an event to close
+    it."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        #: Bumped each time a listing of another workspace is committed.
+        self.generation = 0
+        #: Whether a listing was committed, and its workspace.
+        self.listed = False
+        self.workspace: Any = None
+        #: The selection committed last.
+        self.selected: Optional[str] = None
+        #: "Show older runs" as committed last, and how many times it was asked.
+        self.older = False
+        self.older_asked = 0
+
+    def __deepcopy__(self, memo: Any) -> "ListClock":
+        return type(self)()
+
+    @classmethod
+    def seeded(cls, listing: Any = None, selected: Any = None, older: Any = False) -> "ListClock":
+        """A clock holding what a handler's inputs say: for a handler called
+        with no session clock (a test, a direct call), so it judges by the
+        listing and the selection it is given, as one session would."""
+        clock = cls()
+        if isinstance(listing, Mapping):
+            clock.listed, clock.workspace = True, listing.get("workspace")
+            clock.generation = list_generation(listing) or 0
+        clock.selected = selected if isinstance(selected, str) else None
+        clock.older = bool(older)
+        return clock
+
+    def began(self) -> Tuple[int, int]:
+        """What a re-read's commit is judged against: the generation and the
+        times "Show older runs" was asked, as the re-read begins."""
+        with self.lock:
+            return self.generation, self.older_asked
+
+    def _current(self, listing: Any, sent: Any) -> bool:
+        own = listing.get(GENERATION) if isinstance(listing, Mapping) else None
+        if own is not None and list_generation(own) != self.generation:
+            return False
+        if sent is not None and list_generation(sent) != self.generation:
+            return False
+        return not (self.listed and isinstance(listing, Mapping)
+                    and listing.get("workspace") != self.workspace)
+
+    def current(self, listing: Any, sent: Any = None) -> bool:
+        """Whether an act judged on `listing` (and made in rows that said the
+        generation `sent`, when the page sent one) is of the list as it is
+        committed now."""
+        with self.lock:
+            return self._current(listing, sent)
+
+    def commit_listing(self, began: Tuple[int, int], listing: Mapping[str, Any], *,
+                       view: Any, preset: Optional[Preset], search: Any,
+                       fold: Dict[str, Any]) -> Optional[Refreshed]:
+        """Commit a re-read (`began` its start), or None where its answer is
+        stale (the class's rules). Another workspace's listing starts afresh:
+        a new generation, nothing selected but a lone candidate, no fold,
+        "Show older runs" off."""
+        with self.lock:
+            generation, asked = began
+            if generation != self.generation:
+                return None
+            workspace = listing.get("workspace")
+            if self.listed and workspace == self.workspace:
+                if self.older and listing.get("runs_unread"):
+                    if asked != self.older_asked:
+                        return None
+                    # Read with the latest runs only: what it holds is shown so.
+                    older = False
+                else:
+                    older = self.older
+                key = kept_selection({"workspace": workspace}, listing, self.selected, view,
+                                     preset, search=search)
+            else:
+                self.generation += 1
+                self.listed, self.workspace = True, workspace
+                older = False
+                key = kept_selection(None, listing, None, view, preset, search=search)
+                fold.clear()
+            self.selected, self.older = key, older
+            return Refreshed({**listing, GENERATION: self.generation}, key, older)
+
+    def commit_pick(self, listing: Any, sent: Any, key: str, fold: Dict[str, Any],
+                    unfold: Mapping[str, Any]) -> bool:
+        """Commit a pick of `key` judged on `listing` (and what it keeps
+        unfolded, `kept_unfolded`), or refuse it (`current`)."""
+        with self.lock:
+            if not self._current(listing, sent):
+                return False
+            self.selected = key
+            fold.update(unfold)
+            return True
+
+    def commit_folds(self, listing: Any, sent: Any, fold: Dict[str, Any],
+                     changes: Mapping[str, Any]) -> bool:
+        """Keep what the page folded or unfolded in `listing`'s rows, or
+        refuse it (`current`)."""
+        with self.lock:
+            if not self._current(listing, sent):
+                return False
+            fold.update(changes)
+            return True
+
+    def commit_older(self, generation: int, listing: Any, sent: Any,
+                     read: Optional[Mapping[str, Any]]) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """Commit "Show older runs" asked in `listing`'s rows, with `read`
+        (every run of its workspace, or None where none was unread): refused
+        where another workspace's listing was committed since it was asked
+        (`generation`) or `read` is of another workspace than `listing`.
+        Returns whether it
+        was, and the listing to write."""
+        with self.lock:
+            if generation != self.generation or not self._current(listing, sent):
+                return False, None
+            if read is not None and (not isinstance(listing, Mapping)
+                                     or read.get("workspace") != listing.get("workspace")):
+                return False, None
+            self.older = True
+            self.older_asked += 1
+            return True, ({**read, GENERATION: self.generation} if read is not None else None)
+
+    def reselect(self, listing: Any, key: str) -> bool:
+        """Select `key` again after a Load (Models), only while nothing is
+        selected and `listing` is the one committed now: a pick made
+        meanwhile stays."""
+        with self.lock:
+            if self.selected is not None or not self._current(listing, None):
+                return False
+            self.selected = key
+            return True
+
+    def drop_search_folds(self, fold: Dict[str, Any]) -> None:
+        """Drop what was folded while a search showed the list (`search_node`)."""
+        with self.lock:
+            for node in [k for k in fold if str(k).startswith(search_node(""))]:
+                del fold[node]
+
+    def folds(self, fold: Any) -> Dict[str, Any]:
+        """The folds as they are now, a copy read under the lock."""
+        with self.lock:
+            return dict(fold) if isinstance(fold, Mapping) else {}
+
+
 @dataclass
 class ModelList:
     """The components of one model list, for the page that places it.
@@ -3063,12 +3315,16 @@ class ModelList:
     - ``search``, ``search_clear``: the search box and its Clear (`search_hit`);
       ``fold``: `gr.State`, what the operator folded and unfolded
       (`tree_view`; the family graph's subtrees, `subtree_node`; what was
-      folded during a search, `search_node`);
+      folded during a search, `search_node`), the session's one dict,
+      changed in place under the list's clock and returned by no handler;
     - ``drawn``: `gr.State`, the draw token: an event that changes what the
       list shows writes a new one, and the list draws on its change;
     - ``searched``: `gr.State`, the search token: each change of the search
       writes a new one once the list has handled it; a page that follows the
       search listens to its change, never to the box's (`create_model_list`);
+    - ``clock``: `gr.State`, the session's `ListClock`, which no handler
+      returns: a page handler that writes the list's selection commits it
+      there (Models' selection again after a Load, `ListClock.reselect`);
     - ``phase``: `gr.State`, ``"idle"``, ``"confirming"`` or ``"loading"``
       (Diagnosis disables Run Diagnosis while it is not idle);
     - ``refresh``: keyword arguments for an event that (re)reads the list:
@@ -3117,6 +3373,7 @@ class ModelList:
     fold: Any = None
     drawn: Any = None
     searched: Any = None
+    clock: Any = None
 
 
 def loading_buttons(plan: Any) -> Tuple[Any, Any, Any]:
@@ -3166,8 +3423,12 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     view = gr.State(None)
     phase = gr.State("idle")
     show_older = gr.State(False)
-    #: What the operator folded and unfolded, ``{node: bool}`` (`tree_view`).
+    #: What the operator folded and unfolded, ``{node: bool}`` (`tree_view`):
+    #: the session's one dict, changed in place under the clock, never an output.
     fold = gr.State({})
+    #: The session's clock (`ListClock`): never an output, so every handler of
+    #: a session holds the same one.
+    clock = gr.State(ListClock())
     #: What an act said beside Load, ``{"key", "html"}`` (`list_drawing`).
     said = gr.State(None)
     #: The draw token: each event that changes what the list shows writes a new
@@ -3276,10 +3537,16 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     # of the order asked (the adversarial check of 37912a9). A handler's own
     # inputs (the search box's text as a pick was clicked) choose what it
     # changes, never what is drawn: an answer that comes late (a pick held
-    # while a search was answered) draws nothing from them.
+    # while a search was answered) draws nothing from them. What a handler
+    # commits is judged by the session's clock (`ListClock`; the review of
+    # dcaed68, SL-R3) as it ends: an answer for another workspace than the
+    # list now shows (the listing's generation) is refused, a re-read keeps a
+    # pick made while it read, and the folds are changed in place, never
+    # written back. The check runs as the handler ends and Gradio writes its
+    # outputs just after: two commits can still cross in that instant.
 
     def _refresh(name, older, current_view, previous, key, request: gr.Request, query="",
-                 fold_state=None):
+                 fold_state=None, session=None):
         # A selection still listed in the same workspace stays selected (M5-3
         # review UI-3: the re-read after a Load dropped a row picked meanwhile;
         # D04: whatever the filter, the search or the folds show), and so does
@@ -3288,43 +3555,61 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         # asked of one workspace: another workspace picked opens its latest
         # runs (it opened every checkpoint of it, the session's "Show older
         # runs" kept); the same one read again keeps it, as it keeps the folds.
+        # The selection kept is the one committed last (a pick made while
+        # this read, the review of dcaed68, SL-R3b), never the one it began
+        # with; an answer read before another workspace was committed changes
+        # nothing (`ListClock.commit_listing`).
+        session = session if isinstance(session, ListClock) else ListClock.seeded(
+            previous, key, older)
+        fold_state = fold_state if isinstance(fold_state, dict) else {}
+        began = session.began()
         older = bool(older) and isinstance(previous, Mapping) and previous.get(
             "workspace") == name
         data = list_models(name, request, family=chosen.family,
                            latest_runs=None if older else chosen.latest_runs)
-        same = isinstance(previous, Mapping) and previous.get("workspace") == data.get("workspace")
-        fold_state = dict(fold_state) if same and isinstance(fold_state, Mapping) else {}
         current_view = view_for_listing(current_view, previous, data)
-        key = kept_selection(previous, data, key, current_view, chosen, search=query)
+        done = session.commit_listing(began, data, view=current_view, preset=chosen,
+                                      search=query, fold=fold_state)
+        if done is None:
+            return (gr.update(),) * len(refresh_outputs)
         choices = r.workspace_choices(data.get("workspaces") or [])
         # Reading the list is no act: a refused read says why in the list
         # (`refused_line`); Load's reason is said when Load is clicked, or
         # beside it at once for a row whose record is never loaded. What was
         # said beside Load was said of the list read before.
-        return (data, key, gr.update(choices=choices, value=data.get("workspace")), fold_state,
-                older, None, draw_token())
+        return (done.listing, done.selected,
+                gr.update(choices=choices, value=data.get("workspace")), done.older, None,
+                draw_token())
 
     # What the list draws, where the page shows that it is being read.
     read_into = [workspace, count, rows, facts, load, reason, note]
-    refresh_outputs = [listing, selected, workspace, fold, show_older, said, drawn]
+    refresh_outputs = [listing, selected, workspace, show_older, said, drawn]
     refresh = {"fn": _refresh,
-               "inputs": [workspace, show_older, view, listing, selected, search, fold],
+               "inputs": [workspace, show_older, view, listing, selected, search, fold, clock],
                "outputs": refresh_outputs, "show_progress": "minimal",
                "show_progress_on": read_into}
     picked(workspace)(**refresh)
 
     def _select(data, current, older, current_view, query, fold_state, evt: gr.EventData,
-                request: gr.Request):
-        # What it changes: (selected, show_older, fold, listing, what was
-        # said beside Load, the draw token); what it was asked with (`query`:
-        # the box's text as the pick was made) chooses, never draws. The
-        # list's "Clear search" is no act of it: the page clicks the list's
-        # Clear (`MODEL_LIST_JS`).
+                request: gr.Request, session=None):
+        # What it changes: (selected, show_older, listing, what was said
+        # beside Load, the draw token; the folds in place); what it was asked
+        # with (`query`: the box's text as the pick was made) chooses, never
+        # draws. The list's "Clear search" is no act of it: the page clicks
+        # the list's Clear (`MODEL_LIST_JS`). Each act is committed only for
+        # the listing the list shows now: judged on that listing, made in rows
+        # drawn from it (the generation the page sends, ``gen``;
+        # `ListClock.current`), so an act answered after another workspace
+        # was chosen, or one waiting in the queue across the switch, selects
+        # nothing there (the review of dcaed68, SL-R3a).
+        session = session if isinstance(session, ListClock) else ListClock.seeded(
+            data, current, older)
         raw = getattr(evt, "_data", None)
         raw = raw if isinstance(raw, Mapping) else {}
+        sent = raw.get("gen")
         same = gr.update()
-        nothing = (same,) * 6
-        fold_state = dict(fold_state) if isinstance(fold_state, Mapping) else {}
+        nothing = (same,) * 5
+        fold_state = fold_state if isinstance(fold_state, dict) else {}
         tree = raw.get("tree") if isinstance(raw.get("tree"), Mapping) else None
         if isinstance(raw.get("fold"), str) or tree is not None:
             # The page folded or unfolded it already (`MODEL_LIST_JS`; the
@@ -3333,12 +3618,14 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             # search shows the list is that search's (`search_node`): clearing
             # it brings the operator's own back.
             store = search_node if raw.get("searched") else str
+            changes = {}
             if isinstance(raw.get("fold"), str):
-                fold_state[store(raw["fold"])] = bool(raw.get("open"))
+                changes[store(raw["fold"])] = bool(raw.get("open"))
             for node, opened in (tree or {}).items():
                 if isinstance(node, str) and node.startswith("t:"):
-                    fold_state[store(node)] = bool(opened)
-            return (same, same, fold_state, same, same, same)
+                    changes[store(node)] = bool(opened)
+            session.commit_folds(data, sent, fold_state, changes)
+            return nothing
         key = raw.get("key")
         if "act" in raw and (raw["act"] != PICK_ACT or not isinstance(key, str)
                              or key.startswith("__")):
@@ -3353,28 +3640,35 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                              show_older=older)
         if key == "__older__":
             # The runs not opened yet are read now (BACKLOG 39).
+            began, _asked = session.began()
+            if not session.current(data, sent):
+                return nothing
             read = (list_models(data.get("workspace"), request, family=chosen.family)
-                    if data.get("runs_unread") else same)
-            return (same, True, same, read, same, draw_token())
+                    if data.get("runs_unread") else None)
+            done, listed = session.commit_older(began, data, sent, read)
+            if not done:
+                return nothing
+            return (same, True, listed if listed is not None else same, same, draw_token())
         item = find_item(data, key)
         if item is None or item not in shown_items(data, current_view, chosen):
             return nothing
         # In the family graph a pick folds nothing it shows (I5): what was
         # unfolded only for the selection before it stays unfolded.
-        kept = kept_unfolded(data, current_view, chosen, fold_state, current, key,
+        kept = kept_unfolded(data, current_view, chosen, session.folds(fold_state), current, key,
                              search=query, show_older=older)
-        fold_state.update(kept)
+        if not session.commit_pick(data, sent, key, fold_state, kept):
+            return nothing
         # A pick is a new selection: what was said beside Load is not its.
-        return (key, same, fold_state if kept else same, same, None, draw_token())
+        return (key, same, same, None, draw_token())
 
     # A row's pick, and a page region's (`picks`: ``{act: "pick", key}``), are
     # one selection.
     gr.on([rows.click, *(region.click for region in (picks() if picks else ()))], _select,
-          inputs=[listing, selected, show_older, view, search, fold],
-          outputs=[selected, show_older, fold, listing, said, drawn],
+          inputs=[listing, selected, show_older, view, search, fold, clock],
+          outputs=[selected, show_older, listing, said, drawn],
           show_progress="hidden", trigger_mode="multiple")
 
-    def _searched(fold_state):
+    def _searched(fold_state, session=None):
         # The search is the list's to draw, from the box as it is when the
         # list is drawn (never the text this was typed with: an answer that
         # comes late, after a Clear, would draw that text again under the
@@ -3383,11 +3677,13 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         # found by its own name or fingerprint, the graph's ancestors of a run
         # found), the operator's own folds untouched; what was folded while
         # the search before this one showed the list is dropped, so a cleared
-        # search brings the operator's folds back (G7).
-        fold_state = {k: v for k, v in fold_state.items() if not str(k).startswith(
-            search_node(""))} if isinstance(fold_state, Mapping) else {}
+        # search brings the operator's folds back (G7); in place, under the
+        # session's clock.
+        session = session if isinstance(session, ListClock) else ListClock()
+        if isinstance(fold_state, dict):
+            session.drop_search_folds(fold_state)
         token = draw_token()
-        return fold_state, token, token
+        return token, token
 
     # **One path for every change of the search** (the adversarial check of
     # 37912a9, F2): the box's ``change``, which Gradio 6.30's Textbox sends
@@ -3403,7 +3699,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     # each other off without end (measured: `_searched`, `_sync` and a draw,
     # again and again, while the page stayed open); a state's change is
     # dispatched to each of its listeners alone.
-    search.change(_searched, inputs=[fold], outputs=[fold, drawn, searched],
+    search.change(_searched, inputs=[fold, clock], outputs=[drawn, searched],
                   show_progress="hidden", trigger_mode="always_last")
 
     # Clear empties the box in the page, with no request of its own: the box's
@@ -3412,16 +3708,18 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     clear.click(None, inputs=None, outputs=[search], js=CLEAR_SEARCH_JS,
                 show_progress="hidden")
 
-    def _draw(data, key, older, current_view, query, fold_state, said_now):
+    def _draw(data, key, older, current_view, query, fold_state, said_now, session=None):
         # The page changed its view (a filter, an order), or the state
         # changed (the token): the selection stays, said where the view does
         # not show it (D04: a filter never changes what is selected). A draw
         # that fails changes nothing (the list keeps its last drawing): Gradio
         # 6.30 drops a deferred call after a failed one, so the failure must
-        # not escape (as Models' `_sync`).
+        # not escape (as Models' `_sync`). The folds are read under the
+        # session's clock (another handler changes them in place).
+        session = session if isinstance(session, ListClock) else ListClock()
         try:
             drawing = list_drawing(data, key, chosen, show_older=older, view=current_view,
-                                   search=query, fold=fold_state, said=said_now)
+                                   search=query, fold=session.folds(fold_state), said=said_now)
         except Exception:  # noqa: BLE001 - the next change draws the list again
             logger.exception("The model list could not be drawn")
             return (gr.update(),) * 6
@@ -3429,7 +3727,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                 drawing.reason, drawing.note)
 
     gr.on([drawn.change, view.change], _draw,
-          inputs=[listing, selected, show_older, view, search, fold, said],
+          inputs=[listing, selected, show_older, view, search, fold, said, clock],
           outputs=[rows, count, facts, load, reason, note], show_progress="hidden",
           trigger_mode="always_last", concurrency_id=f"{elem_id}-draw", concurrency_limit=1)
 
@@ -3536,7 +3834,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     return ModelList(chosen, elem_id, workspace, listing, selected, plan, view, phase,
                      show_older, count, rows, facts, reason, note, load, confirm,
                      confirm_html, reload_button, keep_button, refresh, head_extra, foot_extra,
-                     reload_done, after_close_js, search, clear, fold, drawn, searched)
+                     reload_done, after_close_js, search, clear, fold, drawn, searched, clock)
 
 
 __all__ = [
@@ -3548,6 +3846,8 @@ __all__ = [
     "FAMILY_JS",
     "FILTER_WORDS",
     "FROM_CHANGED",
+    "GENERATION",
+    "ListClock",
     "ListDrawing",
     "LoadStep",
     "MODEL_LIST_JS",
@@ -3569,6 +3869,7 @@ __all__ = [
     "facts_html",
     "family_views",
     "fold_open",
+    "generation_marker",
     "graph_shape",
     "find_item",
     "finish_load",
@@ -3577,6 +3878,7 @@ __all__ = [
     "kept_selection",
     "older_html",
     "list_drawing",
+    "list_generation",
     "list_html",
     "list_models",
     "load_answered_js",

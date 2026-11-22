@@ -1801,11 +1801,18 @@ KEEP_OPEN_JS = r"""
 #: a click on an element with ``data-act`` sends the region's ``click`` with
 #: ``{act, key}``, which its listener reads (`event_act`): cross-links such as
 #: Training's "Open Test ›", Fine-tune's "Charts on Research › Training" and
-#: Models' "Test this model ›", and Training's banner's Dismiss.
+#: Models' "Test this model ›", and Training's banner's Dismiss. An act inside
+#: an element of the region that says a model list's generation
+#: (``data-gen``: Models' "Saved files", `model_list.ListClock`) is sent with
+#: it (``gen``).
 TRIGGER_JS = r"""
 element.addEventListener('click', function (e) {
   var a = e.target.closest ? e.target.closest('[data-act]') : null;
-  if (a) { trigger('click', {act: a.getAttribute('data-act'), key: a.getAttribute('data-key') || ''}); }
+  if (!a) { return; }
+  var data = {act: a.getAttribute('data-act'), key: a.getAttribute('data-key') || ''};
+  var gen = a.closest('[data-gen]');
+  if (gen && element.contains(gen)) { data.gen = gen.getAttribute('data-gen'); }
+  trigger('click', data);
 });
 """
 
