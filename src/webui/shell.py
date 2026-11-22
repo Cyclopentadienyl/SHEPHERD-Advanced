@@ -254,7 +254,7 @@ from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
 from src.webui.components.help import HelpRegistry, as_json_for_script
 from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
 from src.webui.style import (FIT, FIT_WIDE, FOLD, FOLD_FLOOR, FOLD_ROOM, FOLDED_ATTR, LAYOUT_ATTR,
-                              NARROW_ATTR, SHORT_ATTR, SHORT_BELOW)
+                              NARROW_ATTR, SEG_WHOLE, SHORT_ATTR, SHORT_BELOW)
 
 BRAND = "SHEPHERD-Advanced"
 
@@ -927,9 +927,10 @@ _SHELL_JS = r"""
   var ON_ONE_LINE = 'flex-wrap:nowrap !important;flex-direction:row !important;'
     + 'width:max-content !important;max-width:none !important;';
   // **A choice group whole or one per line** (style.py's M3): a radio or checkbox group (a
-  // fieldset block, not a segmented control) whose options do not fit one line of its room is
-  // marked NARROW, and its options stand one per line, never one alone under the others.
-  var CHOICE = 'fieldset.block:not(.shep-seg)';
+  // fieldset block, not a segmented control, or a segmented control whose labels stay whole,
+  // SEG_WHOLE) whose options do not fit one line of its room is marked NARROW, and its options
+  // stand one per line, never one alone under the others.
+  var CHOICE = 'fieldset.block:not(.shep-seg), fieldset.block.__SEG_WHOLE__';
   // The scroll positions of `el`'s ancestors are held across the measure and put back: drawn
   // out of flow at its narrowest, `el` no longer fills a box that scrolls around it, and reading
   // its width clamps that box's scroll (a FIT table's sideways scroll went back to 0 on every
@@ -1181,7 +1182,7 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__LAYOUT__", LAYOUT_ATTR).replace("__SHORT__", SHORT_ATTR)
               .replace("__SHORT_BELOW__", str(SHORT_BELOW))
               .replace("__FIT__", FIT).replace("__FIT_WIDE__", FIT_WIDE)
-              .replace("__NARROW__", NARROW_ATTR)
+              .replace("__NARROW__", NARROW_ATTR).replace("__SEG_WHOLE__", SEG_WHOLE)
               .replace("__FOLD__", FOLD).replace("__FOLD_ROOM__", FOLD_ROOM)
               .replace("__FOLD_FLOOR__", FOLD_FLOOR).replace("__FOLDED__", FOLDED_ATTR)
               .replace("__TABS_WRAPPED__", TABS_WRAPPED_ATTR)

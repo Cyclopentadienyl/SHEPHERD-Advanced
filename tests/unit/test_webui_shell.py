@@ -3187,7 +3187,7 @@ def test_the_fit_pass_measures_each_box_with_its_own_mark_off():
         off, measure, back = (block.index("removeAttribute(NARROW)"), block.index("measured("),
                               block.index("setAttribute(NARROW, '')"))
         assert off < measure < back
-    assert "var CHOICE = 'fieldset.block:not(.shep-seg)';" in head
+    assert "var CHOICE = 'fieldset.block:not(.shep-seg), fieldset.block.shep-seg-whole';" in head
     assert "':scope > .wrap:has(> label)'" in fits
     from src.webui.style import SHELL_CSS
 

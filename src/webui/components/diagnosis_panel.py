@@ -139,7 +139,7 @@ from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.components.renderers import STATUS_MARKS as _STATUS_MARKS
 from src.webui.components.renderers import status_mark as _status_mark
 from src.webui.operator_access import operator_access
-from src.webui.style import FOLD, FOLD_FLOOR, FOLD_ROOM, FOLDED_ATTR, SIDE, SIDE_SHORT, STACK
+from src.webui.style import FOLD, FOLD_FLOOR, FOLD_ROOM, FOLDED_ATTR, SEG_WHOLE, SIDE, SIDE_SHORT, STACK
 
 logger = logging.getLogger(__name__)
 
@@ -3657,8 +3657,9 @@ def _event_key(evt: Any) -> Optional[str]:
     return key if isinstance(key, str) else None
 
 
-#: Under the drawer's list, beside Load (R-27): what Load does next, in plain
-#: words; the confirmation then shows what changes.
+#: Under the drawer's list, a row of its own under Load (R-27; a message never shares a row
+#: with a button): what Load does next, in plain words; the confirmation then shows what
+#: changes.
 CHANGE_NOTE = ("Choose a model, then Load: you see what changes and confirm it before every "
                "session is served it. Results already produced keep their own identity.")
 
@@ -3837,7 +3838,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                     # The Task control: its `.input` sets the shared list's view.
                     links["task"] = gr.Radio(choices=list(TASK_VIEWS), value="all",
                                              label="Task", show_label=False, container=False,
-                                             elem_classes=["shep-seg", "shep-field-aside"],
+                                             elem_classes=["shep-seg", SEG_WHOLE, "shep-field-aside"],
                                              elem_id="shep-dx-change-task")
                     # Each "›" keeps to the word before it (a no-break space):
                     # at 1440 x 900 the last one was left alone on a line.
@@ -4480,11 +4481,10 @@ PAGE_CSS = f"""
 /* A drawer's head and the Load drawer's task segment take their words' width and give way to
    the drawer, never past it (V-19: held at their one line's width, the Load drawer's title note
    ran 217 px and its task segment 49 px past the drawer's edge at 390 x 844, cut): a title
-   wraps its words; the task segment keeps every label whole and wraps them onto another line
-   (the shared segment's one row, `.shep-seg`, would end three of its four labels in an
-   ellipsis in a phone's 324 px). */
+   wraps its words; the task segment keeps every label whole (`style.SEG_WHOLE`: one row while
+   it fits, else one label a line; the shared segment's one row would end three of its four
+   labels in an ellipsis in a phone's 324 px, and wrapping left one alone on a line). */
 {_TAB} .shep-dx-drawer-hd > *, {_TAB} #shep-dx-change-task {{ flex: 0 1 auto !important; width: auto !important; min-width: 0 !important; }}
-{_TAB} #shep-dx-change-task .wrap {{ display: inline-flex !important; flex-wrap: wrap; }}
 {_TAB} .shep-dx-drawer-hd h2 {{ font-size: var(--shep-title-size); font-weight: 600; margin: 0; display: inline; }}
 {_TAB} .shep-dx-drawer-note {{ margin-left: 10px; font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} #shep-dx-identity-close, {_TAB} #shep-dx-change-close {{ margin-left: auto; }}
@@ -4538,10 +4538,12 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change .shep-model-body > .shep-model-facts {{ --shep-panel-min: {DRAWER_FACTS_MIN}px; flex: 2 1 0 !important; min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-foot {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important;
   border-top: 1px solid var(--shep-border); padding-top: 10px !important; }}
-/* Load and Cancel keep their words' width; the note beside them takes the rest and wraps (it
-   took its one line's width, 926 px, and was cut past the drawer's edge from 1280 x 900 down). */
+/* Load and Cancel keep their words' width, Load's reason beside it (one line); what Load does,
+   two sentences, is a row of its own under them, from the foot's edge and at the measure, as
+   Models says it (a message never shares a row with a button: it stood beside Load). */
 {_TAB} #shep-dx-change .shep-model-foot > :not(#shep-dx-change-note) {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
-{_TAB} #shep-dx-change .shep-model-foot > #shep-dx-change-note {{ flex: 1 1 280px !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-change .shep-model-foot > #shep-dx-change-note {{ flex: 1 1 100% !important; min-width: 0 !important; order: 1; }}
+{_TAB} #shep-dx-change-note .shep-note {{ display: block; max-width: var(--shep-measure); font-size: 14px; }}
 {_TAB} #shep-dx-change .shep-model-confirm-box > .row > button {{ flex: 0 0 auto !important; white-space: nowrap; }}
 {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-foot {{ display: none !important; }}
 {_TAB} #shep-dx-change .shep-confirm .shep-ftbl th, {_TAB} #shep-dx-change .shep-confirm .shep-ftbl td {{ padding-top: 5px; padding-bottom: 5px; }}

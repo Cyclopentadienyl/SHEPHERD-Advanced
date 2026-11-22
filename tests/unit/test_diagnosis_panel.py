@@ -795,6 +795,28 @@ def test_the_input_column_follows_the_row_and_no_window_media_query_decides_it()
     assert "#dx_top_k { overflow" not in css
 
 
+def test_the_load_drawers_note_is_a_row_under_load_and_its_task_segment_stays_whole(monkeypatch):
+    """P2 and the walk's drawer stops (the sweep's integration; the lanes' L4 d): in the Load
+    drawer's foot, what Load does (`CHANGE_NOTE`, two sentences) stood beside Load (the layout
+    rules' "beside" at 1850 x 960, 1366 x 768 and 960 x 1080); it is a row of its own under Load
+    and Cancel, at the measure, as Models says it. The drawer's Task segment kept its labels
+    whole by wrapping them, and at 390 x 844 left one alone on a line (3 + 1, "orphan"): it is
+    a segment whose labels stay whole (`style.SEG_WHOLE`), one row or one label a line, by the
+    layout pass's mark. The whole drawer is walked at zero findings by the shared walk
+    (`test_webui_shell.py::test_every_page_of_every_state_has_no_layout_finding`)."""
+    from src.webui.style import SEG_WHOLE, SHELL_CSS
+
+    css = " ".join(dp.PAGE_CSS.split())
+    assert (f"{dp._TAB} #shep-dx-change .shep-model-foot > #shep-dx-change-note "
+            "{ flex: 1 1 100% !important; min-width: 0 !important; order: 1; }") in css
+    assert f"{dp._TAB} #shep-dx-change-note .shep-note {{ display: block; max-width: var(--shep-measure);" in css
+    assert "#shep-dx-change-task .wrap { display: inline-flex !important; flex-wrap: wrap; }" not in css
+    demo, _ctx = _build_tab(monkeypatch)
+    (task,) = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-dx-change-task"]
+    assert {"shep-seg", SEG_WHOLE} <= set(task.elem_classes), task.elem_classes
+    assert f".shep-seg.{SEG_WHOLE}[data-shep-narrow] .wrap {{ flex-direction: column !important;" in SHELL_CSS
+
+
 def test_the_empty_results_say_what_to_do_without_a_place_the_layout_moves():
     """The empty results panel said "check the model in use on the left";
     below the side-by-side width the input column stands above the results,

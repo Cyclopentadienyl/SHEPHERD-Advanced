@@ -81,6 +81,10 @@ SHORT_BELOW = 900
 #: host's text metrics cannot make the wide form overflow its box.
 FIT = "shep-fit"
 FIT_WIDE = "shep-fit-wide"
+#: **A segmented control whose labels stay whole** (with ``shep-seg``): one row while the row
+#: holds them, else one label a line (the layout pass's narrow mark, `NARROW_ATTR`, measured as
+#: a choice group's), never a label ended in an ellipsis nor one left alone on a line.
+SEG_WHOLE = "shep-seg-whole"
 #: **A column a narrow table drops** (the shared ``[data-shep-narrow]`` rule below): a cell of a
 #: column whose facts the row's details also show carries it, so a `FIT_WIDE` table drops that
 #: column before its box scrolls sideways.
@@ -358,6 +362,10 @@ body { color: var(--shep-text); }
 }
 .shep-seg .wrap label { min-width: 0 !important; }
 .shep-seg .wrap label span { margin-left: 0 !important; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A segment whose labels stay whole (`SEG_WHOLE`): one row while it fits, one label a line when
+   the layout pass marks it narrow (as a choice group), never one alone under the others. */
+.shep-seg.__SEG_WHOLE__ .wrap { display: inline-flex !important; flex-wrap: nowrap !important; }
+.shep-seg.__SEG_WHOLE__[__NARROW__] .wrap { flex-direction: column !important; align-items: stretch !important; }
 
 /* ---------------------------------------------------------------- primary buttons */
 /* White text on every primary button at a contrast of at least 4.5:1, at rest
@@ -1202,9 +1210,9 @@ __STACK__ {
 }
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK) \
     .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART) \
-    .replace("__NARROW__", NARROW_ATTR).replace("__COL_OPT__", COL_OPT)
+    .replace("__NARROW__", NARROW_ATTR).replace("__COL_OPT__", COL_OPT).replace("__SEG_WHOLE__", SEG_WHOLE)
 
 
-__all__ = ["BRAND_WIDTH", "COL_OPT", "FIT", "FIT_WIDE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
+__all__ = ["BRAND_WIDTH", "COL_OPT", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
            "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT", "SHORT_ATTR",
            "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK"]
