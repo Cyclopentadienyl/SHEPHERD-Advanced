@@ -789,7 +789,10 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
     controls only") in its own row, on the line next to it (its words at
     most 24 px above or below the button), both wholly on screen when the
     button is brought into view; the panel's long reason is said once on the
-    page. An operator sees no lock and no phrase. Fails on d7ebfc3. The
+    page; beside Check and Save across too (its words at most 24 px to their
+    left or right: the UI sweep's shared reason grid filled the row, so the
+    phrase sat under the label column, 500 px from them). An operator sees
+    no lock and no phrase. Fails on d7ebfc3. The
     recheck of d4209c4 read Create 30 px from its row's phrase at 390 x 844
     on its host: Create was centred against a suggestion that wrapped to
     more lines. A pass with the panel's words 0.04em apart (another host's
@@ -824,6 +827,8 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
                 assert button["text"].startswith("🔒 ") and button["disabled"], (size, key, part)
                 assert button["reason"] == f"🔒 {phrase}", (size, key, part, button)
                 assert button["sameRow"] and button["dy"] <= 24, (size, key, part, button)
+                if part in ("check", "save"):
+                    assert button["dx"] <= 24, (size, key, part, button)
                 assert button["whole"] and button["reasonWhole"], (size, key, part, button)
 
 

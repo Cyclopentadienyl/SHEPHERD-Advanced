@@ -518,13 +518,16 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
 /* **A reason** (why a control is off, what a list cannot show): text in one flow, never a row of
    columns (M5: as a flex box its text and each element in it were columns of their own), at the
    measure, start-aligned. Led by a mark hidden from a screen reader (a lock, a status shape), the
-   mark keeps a column of its own and every line of the words starts on one edge. */
+   mark keeps a column of its own and every line of the words starts on one edge: the mark and
+   one element of words after it (`data_locations.reason_line`, `renderers.see_above`), as every
+   producer draws it. The words' column is as wide as they are (at most the line), so a page's
+   own `justify-content` still places the reason. */
 .shep-reason {
   display: block; font-size: 14px; color: var(--shep-text-2); line-height: var(--shep-lh-prose);
   max-width: var(--shep-measure); text-align: start;
 }
 .shep-reason:has(> :first-child[aria-hidden="true"]) {
-  display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 6px; align-items: baseline;
+  display: grid; grid-template-columns: auto minmax(0, max-content); column-gap: 6px; align-items: baseline;
 }
 .shep-reason:has(> :first-child[aria-hidden="true"]) > :not(:first-child) { grid-column: 2; }
 .shep-reason-grey { border: 1px solid var(--shep-grey-200); background: var(--shep-grey-50); border-radius: 8px; padding: 10px 12px; color: var(--shep-grey-800); }

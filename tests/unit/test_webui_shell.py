@@ -3214,7 +3214,8 @@ def _groups_page():
     """The shell with stand-in pages: Datasets draws a notice (`notice_block`,
     its link to Settings › Data locations) and two links the script must not
     follow as asked (a place it does not list; an element it does not list);
-    Settings draws a stand-in Data locations panel with its heading."""
+    Settings draws a stand-in Data locations panel with its heading and a
+    link to a research page (Models)."""
     from src.config import server_settings as ss
     from src.webui.components import renderers as r
     from src.webui.components import workspaces as w
@@ -3229,7 +3230,9 @@ def _groups_page():
 
     def settings(ctx):
         with gr.Column(elem_id="shep-dl", elem_classes=["shep-panel"]):
-            shell.plain_html('<div class="shep-panel-hd"><h2>Data locations</h2></div>')
+            shell.plain_html('<div class="shep-panel-hd"><h2>Data locations</h2></div>'
+                             '<button type="button" id="go-models" data-shep-go="models">'
+                             'Models</button>')
             gr.Textbox(label="Workspaces folder", elem_id="stand-in-field")
             with gr.Column(elem_id="groups-col"):
                 gr.CheckboxGroup(["Disease", "Gene"], label="Tasks", elem_id="groups-col-choice")
@@ -3309,8 +3312,13 @@ const QUEUE_JS = __QUEUE_JS__;
              options: box('#groups-row-choice > .wrap'),
              grounds: [...document.querySelectorAll('#shep-dl .form')].map((f) => getComputedStyle(f).backgroundColor) };
   });
+  // A link to a research page from Settings: the research area opens on that page.
+  await page.click('#go-models');
+  await page.waitForSelector('#shep-tab-research-button[aria-selected="true"]', { timeout: 10000 });
+  await page.waitForSelector('#shep-page-models-button[aria-selected="true"]', { timeout: 10000 });
+  out.research = await page.evaluate(() => document.querySelector('#shep-nav > .tab-wrapper [role="tab"][aria-selected="true"]').getAttribute('data-tab-id'));
   // An element the script does not list for the page: the page opens, the focus stays.
-  await page.click('#shep-tab-research-button');
+  await page.click('#shep-page-datasets-button');
   await page.waitForSelector('#groups-notice .shep-nb');
   await page.click('#go-unlisted');
   await page.waitForSelector('#shep-tab-settings-button[aria-selected="true"]');
@@ -3336,8 +3344,11 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
     - the tablist holds the five tabs only, in `RESEARCH_PAGES`' order; the
       keyboard's Tab moves from tab to tab, meeting no separator;
     - the notice's link opens Settings and moves the focus to the Data
-      locations heading; a link to a place the script does not list does
-      nothing, and an element it does not list for the page gets no focus;
+      locations heading; a link to a research page from Settings opens the
+      research area on that page (its outer tab was looked up by a page's
+      id, so nothing opened); a link to a place the script does not list
+      does nothing, and an element it does not list for the page gets no
+      focus;
     - fields in a panel (style.py's M3 and M5): a choice group in a column
       keeps the column's width on its edge (Gradio centred it at its
       one-line width, a form's grey ground beside it); in a row the fields'
@@ -3370,6 +3381,7 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
     assert seen["evil"] == "research"
     assert seen["landed"] == {"text": "Data locations", "inDl": True, "tabindex": "-1",
                               "title": shell.TITLES["settings"]}, seen["landed"]
+    assert seen["research"] == "research"
     assert seen["unlisted"] != "shep-settings"
     fields = seen["fields"]
     col, choice = fields["col"], fields["colChoice"]

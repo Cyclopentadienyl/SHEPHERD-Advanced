@@ -1116,8 +1116,8 @@ _SHELL_JS = r"""
   // its heading. Only the places GO_TARGETS lists are opened; any other value does nothing.
   var GO = __GO__;
   function tabButton(page) {
-    return document.getElementById(page === 'settings' || page === 'clinical'
-      ? 'shep-tab-' + page + '-button' : 'shep-page-' + page + '-button');
+    var outer = page === 'settings' || page === 'clinical' || page === RESEARCH;
+    return document.getElementById((outer ? 'shep-tab-' : 'shep-page-') + page + '-button');
   }
   function land(focusId, tries) {
     var el = focusId ? document.getElementById(focusId) : null;

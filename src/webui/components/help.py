@@ -973,7 +973,9 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
   display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 20px; cursor: pointer;
 }
 .shep-bubble-bd { overflow-wrap: anywhere; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
-.shep-bubble-bd > p, .shep-bubble-bd > ul { margin: 0; }
+/* Every part starts at no margin (one weight with the rule below, which comes later, so the
+   space between parts is the text tokens' and nothing else's). */
+.shep-bubble-bd > * { margin: 0; }
 /* The text layout's tokens (style.py; the text brief's §6): a paragraph's space between the
    bubble's parts, an item's between list items; prose wraps evenly, the lead balanced. */
 .shep-bubble-bd { text-wrap: pretty; }

@@ -293,7 +293,11 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
     hit target is at least 24 × 24; "Esc to close" shows only pinned
     (R-29); the field's text shows a bold lead, its "- " lines as one list,
     a bold "Term:" and a muted Ref line (R-9), a hostile text in each part is
-    literal text and runs nothing; Esc closes it back to a tooltip."""
+    literal text and runs nothing; Esc closes it back to a tooltip. The parts
+    are set apart by the text tokens (the UI sweep of 2026-11-22): a
+    paragraph's space above each part after the first, an item's above each
+    list item after the first, none above the first (a reset of ``p`` and
+    ``ul`` outweighed the tokens, so every part touched the next)."""
     found = node_with_playwright()
     if found is None:
         pytest.skip("Node with Playwright is not installed")
@@ -338,6 +342,8 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
         assert int(field[1]["terms"][0]["weight"]) >= 600
         assert field[2]["text"] == f"Default: 200, {HOSTILE}" and field[2]["terms"][0]["text"] == "Default:"
         assert field[3]["text"] == "Ref: SHEPHERD_X hparams.py:18"
+        assert [p["above"] for p in field] == [0, 8, 8, 8], size        # --shep-space-para
+        assert field[1]["itemsAbove"] == [0, 4], size                    # --shep-space-item
         assert [p["tag"] for p in targets["region"]["pinned"]["parts"]] == ["p", "ul"]
 
 
