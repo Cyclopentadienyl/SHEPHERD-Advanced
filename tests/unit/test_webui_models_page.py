@@ -4364,11 +4364,23 @@ const ROWS = '#shep-models-research-rows';
   await page.waitForFunction((sel) => document.querySelector(sel + ' > .shep-fam-act').getBoundingClientRect().height > 0, node(RUN.base));
   out.vertical = { before: vBefore, after: await look(page, RUN.base), next: nextBefore, nextAfter: await look(page, RUN.branch) };
   await page.mouse.move(2, 2);
-  // ---- Larger type: the page at 150 % (its CSS pixels a third fewer).
+  // ---- Larger type: the page at 150 % (its CSS pixels a third fewer). The body reached by
+  // the keyboard (a focus set by the page after a pointer is no keyboard focus): from it Tab
+  // onto its arrow, Shift+Tab back. Its ring read where it is drawn (2 px inside the body's
+  // edge, `outline-offset: -3px`): what is there on each side is the body.
   await page.setViewportSize({ width: 1233, height: 640 });
   await page.waitForTimeout(0);
   await page.focus(node(RUN.base) + ' .shep-fam-body');
-  out.large = { state: await state(page), ring: await page.evaluate(() => getComputedStyle(document.activeElement).outlineWidth) };
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Shift+Tab');
+  out.large = { state: await state(page), ring: await page.evaluate(() => {
+    const a = document.activeElement, cs = getComputedStyle(a), r = a.getBoundingClientRect();
+    const sides = [[r.left + 2, r.top + r.height / 2], [r.right - 2, r.top + r.height / 2],
+                   [r.left + r.width / 2, r.top + 2], [r.left + r.width / 2, r.bottom - 2]];
+    return { body: a.classList.contains('shep-fam-body'), keyboard: a.matches(':focus-visible'),
+             style: cs.outlineStyle, width: cs.outlineWidth,
+             clear: sides.map(([x, y]) => { const e = document.elementFromPoint(x, y); return !!e && a.contains(e); }) };
+  }) };
   // ---- Newest first draws the table again.
   await page.setViewportSize({ width: 1850, height: 960 });
   await page.click('#shep-mp-order label:has-text("Newest first")');
@@ -4460,7 +4472,10 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
       selection and folds kept; top to bottom the arrow area is under the
       body, the whole band the arrow, the node's top and text kept, the next
       node moved down;
-    - **larger type** (I11): no sideways page scroll, the focus ring drawn;
+    - **larger type** (I11): no sideways page scroll; a body reached by the
+      keyboard (Tab onto its arrow, Shift+Tab back: a focus the page sets
+      after a pointer is no keyboard focus, so ``:focus-visible`` is not
+      set) has its focus ring drawn and covered by nothing;
     - **touch** (I05): arrows shown with no hover, a tap one toggle;
     - **reduced motion** (I09): no transition; Newest first draws the table."""
     from src.webui.app import create_gradio_app, mount_options
@@ -4631,7 +4646,10 @@ def test_the_family_graph_in_a_browser(tmp_path, family):
     assert abs(moved - vertical["after"]["act"]["h"]) < 1, (moved, vertical)
     large = seen["large"]
     assert large["state"]["pageOver"] <= 0 and large["state"]["overlaps"] == 0
-    assert float(large["ring"].removesuffix("px")) >= 2                # the focus ring drawn
+    # The keyboard's focus on the body: its ring drawn, nothing over it on any side.
+    ring = large["ring"]
+    assert ring["body"] and ring["keyboard"] and ring["style"] != "none", ring
+    assert float(ring["width"].removesuffix("px")) >= 2 and all(ring["clear"]), ring
     assert seen["newest"] == {"table": True, "graph": False}
     touch = seen["touch"]
     assert touch["before"]["actOpacity"] == "1" and touch["before"]["act"]["h"] > 0
