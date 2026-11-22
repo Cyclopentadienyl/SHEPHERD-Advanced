@@ -771,9 +771,12 @@ const QUEUE_JS = __QUEUE_JS__;
       // A line's drawn words, not its block's width.
       const words = (e) => { const r = document.createRange(); r.selectNodeContents(e);
         return r.getBoundingClientRect(); };
+      // Where a button's phrase lies from it: in its column (their spans across overlap),
+      // and on the line next to it (no more than the button's own height between them).
       const gaps = (a, b) => { const p = box(a), q = words(b);
-        return { dx: Math.round(Math.max(0, p.left - q.right, q.left - p.right)),
-                 dy: Math.round(Math.max(0, p.top - q.bottom, q.top - p.bottom)) }; };
+        const dy = Math.max(0, p.top - q.bottom, q.top - p.bottom);
+        return { column: q.left < p.right && q.right > p.left, nextLine: dy <= p.height,
+                 dy: Math.round(dy) }; };
       const rowOf = (e) => e.closest('.shep-dl-row');
       const panel = document.getElementById('shep-dl');
       // The lines that say why: the lock mark, then words, in no button.
@@ -818,14 +821,14 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
     Create offered here, 38-556 and 190-1,371). In a real browser, nothing
     set (Create offered), a request D8 refuses: each row's visible locked
     button has the short phrase (`ROW_LOCKED`, the lock and "Operator
-    controls only") in its own row, on the line next to it (its words at
-    most 24 px above or below the button), both wholly on screen when the
+    controls only") in its own row, on the line next to it (no more than
+    the button's own height above or below it), both wholly on screen when the
     button is brought to the middle of the view (the UI sweep of 2026-11-22
     laid each row out top to bottom, so the panel scrolls at 1850 x 960 and
     a button brought only as far as the view's edge left its phrase under
     it out of view); the panel's long reason is said once on the
-    page; beside Check and Save across too (its words at most 24 px to their
-    left or right: the UI sweep's shared reason grid filled the row, so the
+    page; in Check's and Save's column too (its words overlap each one's
+    span across: the UI sweep's shared reason grid filled the row, so the
     phrase sat under the label column, 500 px from them). An operator sees
     no lock and no phrase. Fails on d7ebfc3. The
     recheck of d4209c4 read Create 30 px from its row's phrase at 390 x 844
@@ -861,9 +864,9 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
             for part, button in buttons.items():
                 assert button["text"].startswith("🔒 ") and button["disabled"], (size, key, part)
                 assert button["reason"] == f"🔒 {phrase}", (size, key, part, button)
-                assert button["sameRow"] and button["dy"] <= 24, (size, key, part, button)
+                assert button["sameRow"] and button["nextLine"], (size, key, part, button)
                 if part in ("check", "save"):
-                    assert button["dx"] <= 24, (size, key, part, button)
+                    assert button["column"], (size, key, part, button)
                 assert button["whole"] and button["reasonWhole"], (size, key, part, button)
 
 
