@@ -3295,9 +3295,9 @@ def test_a_long_report_list_shows_the_newest_and_keeps_the_selected():
     assert "<h2>Reports</h2>" in head and "20 of the selected version" in head
     # Its rows select by click and by Enter or Space on a focused row.
     assert "tr[data-key]" in tp._REPORTS_JS and "'Enter'" in tp._REPORTS_JS
-    # A version with no report: its note, and no empty table.
+    # A version with no report: its empty state, and no empty table.
     empty = tp.reports_html({"label": LABEL, "runs": []}, None)
-    assert "<table" not in empty and "No run has kept a report on this version yet." in empty
+    assert "<table" not in empty and tp.e(tp.REPORTS_NONE_YET) in empty
 
 
 def test_a_run_that_ended_with_no_report_is_a_row_until_the_next():
@@ -3307,7 +3307,7 @@ def test_a_run_that_ended_with_no_report_is_a_row_until_the_next():
                  "outcome": {"report_dir": None, "kept": False, "registered": False}}
     html = tp.reports_html({"label": LABEL, "runs": []}, None, job=cancelled)
     assert 'data-status="cancelled"' in html and "interrupted: cancelled" in html
-    assert "no report kept" in html and "No run has kept a report" not in html
+    assert "no report kept" in html and tp.e(tp.REPORTS_NONE_YET) not in html
     failed = dict(cancelled, status="failed", exit_meaning="refused before anything was written")
     assert "failed (refused before anything was written)" in tp.reports_html(
         {"label": LABEL, "runs": []}, None, job=failed)
@@ -5125,14 +5125,19 @@ def test_the_data_panel_lists_every_kind_by_kind_and_role_with_its_counts(
 
 def test_with_no_kg_edge_set_the_data_panel_names_the_import_command(site, monkeypatch):
     """The KG edge sets' empty state (skill §9): with none in the registry,
-    one line under the chosen version, whatever it is, says what one is for
-    and names the command that imports one on the machine, escaped; none when
-    the registry is not available."""
+    one line under the chosen version, whatever it is, says what one is for;
+    the command that imports one on the machine, escaped, is a row of its own
+    under "Details ›" and the guide's section is on its Ref line (the text
+    brief's §8: never a command or a section in the sentence); none when the
+    registry is not available."""
     page, _request = _page(monkeypatch)
     empty = tp.kg_edges_empty_html(page)
     assert empty and "No KG edge set in the registry yet" in empty
     assert ("scripts/import_cohort.py --kind kg_edges --from-checkpoint &lt;checkpoint&gt;"
             in empty and "<checkpoint>" not in empty)
+    lead, details = empty.split("<details", 1)
+    assert "scripts/" not in lead and "§" not in lead and "<code" not in lead
+    assert "scripts/import_cohort.py" in details and "Ref: deployment guide §4.9" in details
     assert tp.version_html(page, LABEL, None).endswith(empty)
     assert tp.version_html(page, None, None).endswith(empty)
     assert tp.version_html({**page, "versions": []}, None, None).startswith(
@@ -5142,6 +5147,130 @@ def test_with_no_kg_edge_set_the_data_panel_names_the_import_command(site, monke
     assert tp.version_html({**page, "registry_problem": "unset"}, LABEL, None) == ""
 
 
+def _first_use_screen(page, gpu=("unread", "GPU jobs: not set up")):
+    """What the Test page draws for `page` with nothing chosen (an operator):
+    Data, Run (its fields' details, Start's reason) and Reports, as the page
+    open writes them; `gpu` the GPU chip's line (not set up while no
+    workspaces folder is)."""
+    allowed = bool((page.get("access") or {}).get("allowed"))
+    empty = {"label": None, "runs": []}
+    can, why = tp.start_state(page, dict(tp._EMPTY_MODELS), None, None, None, None, gpu)
+    return {
+        "data": tp.cohort_header_html(page) + tp.workspace_html(page, None)
+        + tp.version_html(page, None, None) + tp.import_reason_html(page, None),
+        "run": tp.model_html(page, dict(tp._EMPTY_MODELS), None) + tp.evidence_html(page, None)
+        + tp.fixed_html(page) + tp.start_reason_html(page, allowed, can, why),
+        "reports": tp.reports_header_html(empty) + tp.reports_html(empty, None, page=page)
+        + tp.result_html(empty, None, []),
+    }, (can, why)
+
+
+def _unset(monkeypatch, *names):
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_at_first_use_the_screen_says_each_setting_once_and_each_control_its_relation(
+        monkeypatch, tmp_path):
+    """The sweep's B-09 and R2 (the skill's §9; the owner's first start, GB10-UI-02):
+    with no results registry and no workspaces folder, the screen says each
+    once, in the Data panel's one notice (its state, what it means here, one
+    link to Settings › Data locations, the rest under Details ›); the header's
+    right side is empty while it shows; the Workspace select draws nothing
+    under it; Import and Start each say a one-line relation to it (Start's
+    reason the words `start_state` gives); the Reports panel says why it is
+    empty. It said the registry's whole sentence in the Data header, the
+    workspaces folder's under the Workspace select, "registry: not
+    available" at the header's right and "Disabled: …" lines beside Import and
+    Start, with the Reports panel blank. Then each setting alone."""
+    from src.config import server_settings
+
+    _unset(monkeypatch, "SHEPHERD_WORKSPACES_ROOT", "SHEPHERD_REGISTRY")
+    page = tp.read_page(operator_request(monkeypatch))
+    screen, (can, why) = _first_use_screen(page)
+    html = "".join(screen.values())
+    keys = re.findall(r'data-notice="([^"]+)"', html)
+    assert sorted(k for found in keys for k in found.split()) == ["registry", "workspaces_root"]
+    text = _plain(html)
+    for said in ("No results registry is set.", "No workspaces folder is set."):
+        assert text.count(said) == 1, said
+    assert html.count("data-shep-go=") == 1 and "Choose one in Settings › Data locations" in text
+    # The settings' whole sentences, the env vars and the old lines are said nowhere.
+    for whole in (server_settings.REGISTRY_NOT_SET, server_settings.WORKSPACES_ROOT_NOT_SET):
+        assert whole[:40] not in text
+    outside = _plain(re.sub(r"<details.*?</details>", " ", html, flags=re.S))
+    assert "SHEPHERD_" not in outside and "registry: " not in text and "Disabled: no" not in text
+    assert 'class="shep-panel-right"' not in screen["data"] + screen["reports"]
+    assert tp.workspace_html(page, None) == ""
+    # Each control a relation, never the notice: Import's and Start's, one line each.
+    rels = re.findall(r'data-notice-rel="([^"]+)"', html)
+    assert rels == ["registry", "registry"]
+    assert "Import disabled: no results registry is set." in _plain(screen["data"])
+    assert (can, why) == (False, "Start disabled: no results registry is set (see Data).")
+    assert why in _plain(screen["run"])
+    # The Reports panel's empty state, in the flow.
+    assert f'<p class="shep-empty">{tp.e(tp.REPORTS_NO_REGISTRY)}</p>' in screen["reports"]
+
+    # The registry set (empty), the workspaces folder not: its notice alone,
+    # and the controls' relations to it.
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    page = tp.read_page(operator_request(monkeypatch))
+    screen, (can, why) = _first_use_screen(page)
+    html = "".join(screen.values())
+    assert re.findall(r'data-notice="([^"]+)"', html) == ["workspaces_root"]
+    assert _plain(html).count("No workspaces folder is set.") == 1
+    assert "Testing waits for it." in _plain(screen["data"])
+    assert (can, why) == (False, "Start disabled: no workspaces folder is set (see Data).")
+    assert "Import disabled: no workspaces folder is set." in _plain(screen["data"])
+    assert tp.e(tp.REPORTS_NO_VERSION) in screen["reports"]
+
+    # Both set, both empty: no notice; each empty place in its own words.
+    folder = tmp_path / "workspaces"
+    folder.mkdir()
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(folder))
+    page = tp.read_page(operator_request(monkeypatch))
+    screen, (can, why) = _first_use_screen(page, ("none", "GPU jobs: none"))
+    html = "".join(screen.values())
+    assert "data-notice" not in html and "registry: server setting" in screen["data"]
+    assert tp.NO_WORKSPACE_YET in _plain(screen["data"])
+    assert why == "Disabled: no workspace is listed (see Data)."
+    assert "Disabled: no workspace to import against." in _plain(screen["data"])
+    assert tp.e(tp.REPORTS_NO_VERSION) in screen["reports"]
+
+
+def test_the_reports_panel_says_why_it_is_empty_in_its_own_words_per_cause():
+    """The skill's §9: an empty Reports panel says what will appear and the
+    next step, by its cause, in the flow (`.shep-empty`): no registry, a
+    registry set and not usable, no version in it, none chosen, a version no
+    run has kept a report on; a store that could not be listed says its
+    problem instead, never "no report". Its title says a count only while it
+    lists any (the empty state says why there is none, once)."""
+    neutral = {"key": "registry", "kind": "neutral", "short": "no results registry is set"}
+    refused = dict(neutral, kind="error")
+    none = {"label": None, "runs": []}
+    for page, words in (({"registry_notice": neutral, "registry_problem": "x"},
+                         tp.REPORTS_NO_REGISTRY),
+                        ({"registry_notice": refused, "registry_problem": "x"},
+                         tp.REPORTS_REGISTRY_REFUSED),
+                        ({"versions": []}, tp.REPORTS_NO_VERSION),
+                        ({"versions": [{"label": LABEL}]}, tp.REPORTS_CHOOSE_VERSION)):
+        html = tp.reports_html(none, None, page=page)
+        assert html == ('<div class="shep-test-replist"><p class="shep-empty">'
+                        f'{tp.e(words)}</p></div>')
+    assert tp.reports_html(none, None) == ""          # before the page is read
+    empty = tp.reports_html({"label": LABEL, "runs": []}, None)
+    assert f'<p class="shep-empty">{tp.e(tp.REPORTS_NONE_YET)}</p>' in empty and "<table" not in empty
+    broken = tp.reports_html({"label": LABEL, "runs": [], "problem": "the store is busy"}, None)
+    assert "shep-empty" not in broken and "the store is busy" in broken
+    for reports in (none, {"label": LABEL, "runs": []}):
+        assert "shep-panel-right" not in tp.reports_header_html(reports)
+    assert "2 of the selected version" in tp.reports_header_html(
+        {"label": LABEL, "runs": _runs(2)})
+    for words in (tp.REPORTS_NO_REGISTRY, tp.REPORTS_REGISTRY_REFUSED, tp.REPORTS_NO_VERSION,
+                  tp.REPORTS_CHOOSE_VERSION, tp.REPORTS_NONE_YET):
+        assert ";" not in words and len(words.split(". ")) <= 2, words
 
 
 def test_the_pages_help_texts_meet_the_text_budget():

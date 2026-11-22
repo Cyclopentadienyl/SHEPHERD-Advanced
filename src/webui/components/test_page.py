@@ -552,11 +552,13 @@ def read_page(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> D
     """The page's server lists for one session: D8's answer for this request,
     the workspaces (the dashboard's one reader), the serving workspace, the
     registry's cohort versions (their manifests only), the evidence setting and
-    the device. Opens no checkpoint."""
+    the device, and the workspaces folder's and the registry's notices
+    (`workspaces.setting_notice`: None while each can be used). Opens no
+    checkpoint."""
     from src.api.services.server_lists import list_cohort_versions
     from src.config import server_settings
     from src.webui.components.served_status import read_status, serving_workspace
-    from src.webui.components.workspaces import read_workspaces
+    from src.webui.components.workspaces import read_workspaces, setting_notice
 
     roots = path_roots(environ)
     listed = read_workspaces(environ)
@@ -582,6 +584,13 @@ def read_page(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> D
         "workspaces": listed["rows"],
         "directories": {name: str(path) for name, path in listed["directories"].items()},
         "workspaces_problem": listed["problem"],
+        # Each setting's state in parts (`workspaces.setting_notice`), from the
+        # same reads as the problems beside them (kept for the API-shaped
+        # state): the Data panel says each once (`data_notice_html`), every
+        # control it turns off a relation to it (`renderers.see_above`). None
+        # while the setting can be used.
+        "workspaces_notice": listed["notice"],
+        "registry_notice": setting_notice(registry),
         "serving": serving,
         "registry_problem": None if registry.available else registry.problem,
         "versions": [version_row(item) for item in versions.items] if versions else [],
@@ -1019,22 +1028,90 @@ def default_version(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]
 # ---------------------------------------------------------------------------
 # Rendering: Cohort
 # ---------------------------------------------------------------------------
+#: What the settings the Data panel's notice names mean on this page, said
+#: once with them (`data_notice_html`; the text brief's §1: the state, its
+#: consequence, then the next step): by how many it names.
+TESTING_WAITS = {1: "Testing waits for it.", 2: "Testing waits for both."}
+#: A control's relation to the notice (`renderers.see_above`): its state,
+#: then the notice's short words ("Import disabled: no results registry is
+#: set."), never the notice again (the skill's §9).
+IMPORT_DISABLED = "Import disabled"
+START_DISABLED = "Start disabled"
+#: Where Start's relation points: the panel that shows the notice.
+NOTICE_PANEL = "Data"
+#: Under the Workspace select when the workspaces folder can be used and
+#: holds none (the empty-folder state; the skill's §9).
+NO_WORKSPACE_YET = "The workspaces folder holds no workspace yet."
+
+
+def _notice(page: Mapping[str, Any], key: str) -> Optional[Mapping[str, Any]]:
+    found = page.get(key)
+    return found if isinstance(found, Mapping) else None
+
+
+def data_notices(page: Mapping[str, Any]) -> List[Mapping[str, Any]]:
+    """**The settings this page waits for**, as their notices
+    (`read_page`: `workspaces.setting_notice`), the results registry first
+    (the versions, an import, a run and its reports read it), then the
+    workspaces folder (every workspace, its checkpoints and the GPU lock are
+    in it): each said once on the screen, by the Data panel
+    (`data_notice_html`); none while both can be used."""
+    return [n for n in (_notice(page, "registry_notice"), _notice(page, "workspaces_notice"))
+            if n is not None]
+
+
+def data_notice_html(page: Mapping[str, Any]) -> str:
+    """**The Data panel's one notice** (the skill's §9: each cause once per
+    screen, where it empties a region): the registry's and the workspaces
+    folder's states, one line each with its mark, what they mean here
+    (`TESTING_WAITS`) and one next step when their places agree, the why and
+    how under "Details ›" (`renderers.notices_block`). "" while both can be
+    used."""
+    notices = data_notices(page)
+    if not notices:
+        return ""
+    return r.notices_block(notices, consequence=TESTING_WAITS[min(len(notices), 2)])
+
+
+def relation_html(lead: str, notice: Mapping[str, Any], *, where: Optional[str] = None) -> str:
+    """A control's one line on the notice it waits for (`renderers.see_above`)."""
+    return r.see_above(lead, notice, where=where)
+
+
+def relation_words(lead: str, notice: Mapping[str, Any], *, where: Optional[str] = None) -> str:
+    """`relation_html`'s words as plain text, for a reason a function gives as
+    text (`start_state`): the same lead, the notice's short words and where."""
+    return f"{lead}: {notice['short']}" + (f" (see {where})" if where else "") + "."
+
+
 def cohort_header_html(page: Mapping[str, Any]) -> str:
-    right = ("registry: server setting" if not page.get("registry_problem")
-             else "registry: not available")
-    head = (f'<div class="shep-panel-hd"><h2>Data</h2><span class="shep-panel-right">'
-            f'{e(right)}</span></div>')
-    problem = page.get("registry_problem")
-    if problem:
-        head += (f'<div class="shep-test-pad">{_reason_html(redact(problem, page.get("roots") or []))}'
-                 '</div>')
-    return head
+    """The Data panel's title and, under it, the notice of the settings the
+    page waits for (`data_notice_html`), said once: the title's right side
+    names where the registry comes from only while no notice shows."""
+    notice = data_notice_html(page)
+    if notice:
+        return (f'<div class="shep-panel-hd"><h2>Data</h2></div>'
+                f'<div class="shep-test-pad">{notice}</div>')
+    if page.get("registry_problem"):
+        # A page read without its notices: the registry's own words (`read_page`
+        # always gives the notice with the problem).
+        return ('<div class="shep-panel-hd"><h2>Data</h2></div><div class="shep-test-pad">'
+                f'{_reason_html(redact(page["registry_problem"], page.get("roots") or []))}</div>')
+    return ('<div class="shep-panel-hd"><h2>Data</h2><span class="shep-panel-right">'
+            'registry: server setting</span></div>')
 
 
 def workspace_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
+    """The chosen workspace's identity under its select; nothing while the
+    workspaces folder cannot be used (the panel's notice says it, once);
+    otherwise why none is shown: the listing's problem, an empty folder
+    (`NO_WORKSPACE_YET`) or none chosen."""
     row = find(page.get("workspaces") or [], "name", workspace)
     if row is None:
-        why = page.get("workspaces_problem") or "No workspace is chosen."
+        if _notice(page, "workspaces_notice") is not None:
+            return ""
+        why = page.get("workspaces_problem") or (
+            "No workspace is chosen." if page.get("workspaces") else NO_WORKSPACE_YET)
         return _reason_html(why)
     digits = r.distinguishing_digits(w.get("dataset_fingerprint")
                                      for w in page.get("workspaces") or [])
@@ -1053,15 +1130,20 @@ KG_EDGES_IMPORT = "scripts/import_cohort.py --kind kg_edges --from-checkpoint <c
 
 def kg_edges_empty_html(page: Mapping[str, Any]) -> str:
     """The empty state of the KG edge sets (the skill's §9): when the registry
-    lists none, one line saying what a KG edge set is for and the command
-    that makes one on the machine (`KG_EDGES_IMPORT`); "" when it lists one,
-    or the registry is not available."""
+    lists none, one line saying what a KG edge set is for, and under "Details ›"
+    the command that makes one on the machine (`KG_EDGES_IMPORT`, a row of its
+    own: never a command in a sentence, the text brief's §8) and the guide's
+    section on the Ref line; "" when it lists one, or the registry is not
+    available."""
     if page.get("registry_problem") or any(
             v.get("kind") == protocols.KG_EDGES for v in page.get("versions") or []):
         return ""
-    return ('<div class="shep-sub">No KG edge set in the registry yet: KG link prediction '
-            f"measures one. Import one on the machine with <code>{e(KG_EDGES_IMPORT)}</code> "
-            "(deployment guide §4.9).</div>")
+    command = r.summary_list([("Import one on the machine", f"<code>{e(KG_EDGES_IMPORT)}</code>")],
+                             wide=("Import one on the machine",))
+    return ('<div class="shep-test-kgempty"><p class="shep-sub">No KG edge set in the registry '
+            'yet. KG link prediction measures one.</p>'
+            f'<details class="shep-more"><summary>{e(r.DETAILS_WORD)}</summary>{command}'
+            '<p class="shep-test-ref">Ref: deployment guide §4.9</p></details></div>')
 
 
 def _version_counts(version: Mapping[str, Any]) -> str:
@@ -1365,19 +1447,51 @@ REPORT_COLUMNS = ("Report", "Model", "Measurement", "State")
 def reports_header_html(reports: Mapping[str, Any]) -> str:
     """The Result panel's title: the reports of the version chosen in Data
     (named there, so here by its relation, `SELECTED_VERSION`), with their
-    count (the skill's §8: a table's title with its count)."""
-    label = reports.get("label")
+    count (the skill's §8: a table's title with its count) while it lists
+    any; with none, the panel's empty state says why (`reports_empty_html`),
+    once."""
     count = len(reports.get("runs") or [])
-    right = (f"{count} of {SELECTED_VERSION}, kept in the registry's report store"
-             if label else "choose a data version")
-    return (f'<div class="shep-panel-hd"><h2>Reports</h2><span class="shep-panel-right">'
-            f'{e(right)}</span></div>')
+    right = (f'<span class="shep-panel-right">{count} of {e(SELECTED_VERSION)}, kept in the '
+             "registry's report store</span>" if reports.get("label") and count else "")
+    return f'<div class="shep-panel-hd"><h2>Reports</h2>{right}</div>'
+
+
+#: **The Reports panel's empty state**, in its own words by cause (the
+#: skill's §9: what will appear and the next step; in the flow, `.shep-empty`):
+#: the registry not set, or set and not usable (the Data panel's notice says
+#: which and where to choose it); no data version in it; none chosen; a
+#: version no run has kept a report on.
+REPORTS_NO_REGISTRY = "No report yet. Reports appear here once a results registry is set."
+REPORTS_REGISTRY_REFUSED = ("No report yet. Reports appear here once the results registry can "
+                            "be used.")
+REPORTS_NO_VERSION = "No report yet. Reports appear here once a data version is imported."
+REPORTS_CHOOSE_VERSION = "Choose a data version to see its reports."
+REPORTS_NONE_YET = "No report on this version yet. A test run's report appears here once it ends."
+
+
+def _empty(words: str) -> str:
+    return f'<p class="shep-empty">{e(words)}</p>'
+
+
+def reports_empty_html(page: Mapping[str, Any]) -> str:
+    """The Reports panel's empty state while no data version is chosen, by its
+    cause (`REPORTS_NO_REGISTRY` and the rest)."""
+    registry = _notice(page, "registry_notice")
+    if registry is not None or page.get("registry_problem"):
+        words = (REPORTS_REGISTRY_REFUSED if registry is not None and registry.get("kind") == "error"
+                 else REPORTS_NO_REGISTRY)
+    elif not page.get("versions") and not page.get("versions_problem"):
+        words = REPORTS_NO_VERSION
+    else:
+        words = REPORTS_CHOOSE_VERSION
+    return f'<div class="shep-test-replist">{_empty(words)}</div>'
 
 
 def reports_html(reports: Mapping[str, Any], selected: Optional[str], *,
                  models: Optional[Mapping[str, Any]] = None, job: Optional[Mapping[str, Any]] = None,
                  roots: Sequence[Tuple[str, str]] = (),
-                 selection: Optional["Selection"] = None) -> str:
+                 selection: Optional["Selection"] = None,
+                 page: Optional[Mapping[str, Any]] = None) -> str:
     """**The version's report store as a compact single-select table** at the
     top of the Result panel (the skill's §4: many things, the same fields;
     §8: a row selects the report, shown under the table), newest first: each
@@ -1391,10 +1505,13 @@ def reports_html(reports: Mapping[str, Any], selected: Optional[str], *,
     (a version with hundreds of runs would otherwise push the result a page
     long down): the older rows are sent marked and shown by that control in
     the browser, so the choice survives the list's updates. A plain table's
-    selected row is ``aria-current`` (the skill's §8)."""
+    selected row is ``aria-current`` (the skill's §8). With no version chosen,
+    the panel's empty state by its cause, from the `page` read
+    (`reports_empty_html`); with a version that holds no report and no run row,
+    its own (`REPORTS_NONE_YET`)."""
     label = reports.get("label")
     if not label:
-        return ""
+        return reports_empty_html(page) if page is not None else ""
     models = models or {}
     runs = reports.get("runs") or []
     words = ml.pair_words(model_parents(models))
@@ -1429,9 +1546,10 @@ def reports_html(reports: Mapping[str, Any], selected: Optional[str], *,
              '<div class="shep-tbl-wrap shep-test-repwrap"><table class="shep-tbl shep-test-reps" '
              f'aria-label="Reports of {e(label)}"><thead><tr>{heads}</tr></thead>'
              f'<tbody>{"".join(entries)}</tbody></table></div>')
-    notes = ("" if entries else
-             '<div class="shep-list-note">No run has kept a report on this version yet.</div>')
     problem = reports.get("problem")
+    # The store's problem is the list's reason when it could not be read: no
+    # empty state claims there is no report then.
+    notes = "" if entries or problem else _empty(REPORTS_NONE_YET)
     if problem:
         notes += f'<div class="shep-list-note">{e(redact(problem, roots))}</div>'
     return f'<div class="shep-test-replist">{table}{more}{notes}</div>'
@@ -1693,19 +1811,70 @@ def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]
                              (version or {}).get("counts"))
 
 
+def import_reason_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
+    """Why "Import a new version…" is off, under it: a request D8 refuses,
+    the lock and D8's words; a setting the Data panel's notice names, the
+    button's relation to it (`IMPORT_DISABLED`: the registry first, a version
+    is written there; then the workspaces folder, a version is mapped against
+    one of its workspaces); else no workspace chosen; "" while it can be
+    used."""
+    access = page.get("access") or {}
+    if not access.get("allowed"):
+        return _reason_html(operator_only(access), kind="lock")
+    registry, folder = _notice(page, "registry_notice"), _notice(page, "workspaces_notice")
+    if registry is not None:
+        return relation_html(IMPORT_DISABLED, registry)
+    if page.get("registry_problem"):
+        return _reason_html("Disabled: no cohort registry is available.")
+    if workspace:
+        return ""
+    if folder is not None:
+        return relation_html(IMPORT_DISABLED, folder)
+    return _reason_html("Disabled: choose a workspace to import against." if page.get("workspaces")
+                        else "Disabled: no workspace to import against.")
+
+
+def start_notice(page: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    """**The setting Start waits for**, as the notice the Data panel shows
+    (`data_notices`, its first: the results registry, a run's reports are kept
+    in it; then the workspaces folder, which holds every workspace and the GPU
+    lock), or None when both can be used. Start's reason is its relation
+    (`start_state`, `start_reason_html`)."""
+    found = data_notices(page)
+    return found[0] if found else None
+
+
+def start_reason_html(page: Mapping[str, Any], allowed: bool, can_start: bool,
+                      why: Optional[str]) -> str:
+    """Start's reason as drawn under it: a request D8 refuses, its lock and
+    D8's words; a setting the Data panel's notice names, Start's relation to
+    it (`renderers.see_above`, the words `start_state` gives); else
+    `start_state`'s reason."""
+    notice = start_notice(page) if allowed and not can_start else None
+    if notice is not None:
+        return relation_html(START_DISABLED, notice, where=NOTICE_PANEL)
+    return _reason_html(why, kind="lock" if not allowed else "")
+
+
 def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Optional[str],
                 label: Optional[str], key: Optional[str], binding: Optional[Mapping[str, Any]],
                 gpu: Tuple[str, str], *, protocol: Optional[str] = None
                 ) -> Tuple[bool, Optional[str]]:
     """Whether "Start test" can be used now for the measurement `protocol`
     (the Measurement radio's value; None: none chosen), and why not, in the
-    order an operator fixes things: a busy or unread GPU lock comes before the
-    choices, since no choice would enable Start while it lasts. Only a
-    display: the handler checks D8 and the runner refuses again at start."""
+    order an operator fixes things: a setting the Data panel's notice names
+    first, as Start's relation to it (`start_notice`, `relation_words`: its
+    short words, never the notice again), then a busy or unread GPU lock
+    before the choices, since no choice would enable Start while it lasts.
+    Only a display: the handler checks D8 and the runner refuses again at
+    start."""
     access = page.get("access") or {}
     roots = page.get("roots") or []
     if not access.get("allowed"):
         return False, operator_only(access)
+    notice = start_notice(page)
+    if notice is not None:
+        return False, relation_words(START_DISABLED, notice, where=NOTICE_PANEL)
     if page.get("registry_problem"):
         return False, "Disabled: no registry is available (see Data)."
     kind, words = gpu
@@ -1719,7 +1888,9 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, "Disabled: the GPU lock cannot be read or used just now (see the GPU chip)."
     workspace_row = find(page.get("workspaces") or [], "name", workspace)
     if workspace_row is None:
-        return False, "Disabled: choose a workspace."
+        # An empty folder says so under the Workspace select (`NO_WORKSPACE_YET`).
+        return False, ("Disabled: choose a workspace." if page.get("workspaces")
+                       else "Disabled: no workspace is listed (see Data).")
     version = find(page.get("versions") or [], "label", label)
     if version is None:
         return False, "Disabled: choose a data version."
@@ -2656,6 +2827,14 @@ def add_note(reports: Mapping[str, Any], run_id: Any, who: Any, what: Any, reque
     return True, "The note was kept with this group's reports. It records what was found and changes nothing."
 
 
+#: The import drawer's title and what the import is, under it (two short
+#: sentences, never a chain beside Close; the workspace by its relation, its
+#: name being its select's in Data): Close stands on the title's line.
+IMPORT_TITLE_HTML = ('<h2>Import a new cohort version</h2><p class="shep-sub">Mapped against the '
+                     'selected workspace and read on the CPU by this service. Nothing is written '
+                     'before Commit.</p>')
+
+
 def open_import(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """"Import a new version…": D8 on this request (the intake directory holds
     patient-level data), then the server's intake listing."""
@@ -2853,8 +3032,7 @@ def create_test_page(ctx: Any) -> None:
         with gr.Column(visible=False, elem_classes=["shep-panel", "shep-test-drawer"],
                        elem_id="shep-test-import") as drawer:
             with gr.Row(elem_classes=["shep-panel-hd", "shep-test-drawer-hd"]):
-                drawer_title = plain_html(
-                    '<h2>Import a new cohort version</h2>', elem_id="shep-test-import-title")
+                drawer_title = plain_html(IMPORT_TITLE_HTML, elem_id="shep-test-import-title")
                 import_close = gr.Button("✕ Close", variant="secondary", size="sm", scale=0,
                                          elem_id="shep-test-import-close")
             with gr.Column(elem_classes=["shep-test-bd"]):
@@ -3025,7 +3203,7 @@ def create_test_page(ctx: Any) -> None:
         can_start, why = start_state(page, models, ws, label, key, binding, gpu,
                                      protocol=protocol)
         return [gated_update("start", page, interactive=can_start),
-                _reason_html(why, kind="lock" if not allowed else "")]
+                start_reason_html(page, allowed, can_start, why)]
 
     def _measurement_outputs(page, models, label, key, protocol):
         """The Measurement radio for the chosen model on the chosen version
@@ -3103,7 +3281,8 @@ def create_test_page(ctx: Any) -> None:
         chosen = selection_of(page, models, binding, ws, label, key)
         return [
             reports_header_html(reports),
-            reports_html(reports, run_id, models=models, job=job, roots=roots, selection=chosen),
+            reports_html(reports, run_id, models=models, job=job, roots=roots, selection=chosen,
+                         page=page),
             result_html(reports, run_id, roots, job=job, notes=reports.get("notes"),
                         notes_problems=reports.get("notes_problems") or (), selection=chosen,
                         models=models, workspaces=page.get("workspaces") or []),
@@ -3132,12 +3311,7 @@ def create_test_page(ctx: Any) -> None:
         return refine_registration(page, reports, run_id, models, request=request), run_id
 
     def _cohort_outputs(page, binding, ws, label):
-        allowed = bool((page.get("access") or {}).get("allowed"))
         registry_ok = not page.get("registry_problem")
-        import_why = (operator_only(page.get("access") or {}) if not allowed
-                      else None if registry_ok and ws else
-                      "Disabled: no cohort registry is available." if not registry_ok
-                      else "Disabled: choose a workspace to import against.")
         return [
             cohort_header_html(page),
             _dd(r.workspace_choices(page.get("workspaces") or []), ws),
@@ -3145,7 +3319,7 @@ def create_test_page(ctx: Any) -> None:
             _dd(version_choices(page), label, interactive=registry_ok),
             version_html(page, label, binding),
             gated_update("import", page, interactive=registry_ok and bool(ws)),
-            _reason_html(import_why, kind="lock" if not allowed else ""),
+            import_reason_html(page, ws),
         ]
 
     cohort_outputs = [cohort_hd, workspace, workspace_info, version, version_info, import_open,
@@ -3567,11 +3741,8 @@ def create_test_page(ctx: Any) -> None:
             return (gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
                     gr.update(), _outcome_box("amber", listing["refused"]), gr.update(),
                     gr.update())
-        sub = (f'<h2>Import a new cohort version</h2><span class="shep-muted">workspace '
-               f'{e(ws)} · read on the CPU by this service · nothing is written before Commit'
-               '</span>')
         return (gr.update(visible=True), _dd(intake_choices(listing), None),
-                intake_note_html(listing, roots), sub,
+                intake_note_html(listing, roots), IMPORT_TITLE_HTML,
                 gr.update(choices=role_choices(page or {})), None,
                 gr.update(interactive=False, value="Commit"), "", "", "")
 
@@ -3691,6 +3862,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-log {{ margin: 0; padding: 8px 10px; background: #fff; border: 1px solid var(--shep-border); border-radius: 6px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--shep-mono); }}
 {_PAGE} .shep-test-fail {{ color: var(--shep-red-700); font-size: 15px; }}
 {_PAGE} .shep-test-units {{ font-size: 14px; color: var(--shep-text-2); }}
+{_PAGE} .shep-test-kgempty {{ display: flex; flex-direction: column; gap: var(--shep-space-1); margin-top: var(--shep-space-2); }}
+{_PAGE} .shep-test-kgempty .shep-kv {{ font-size: 14px; }}
+{_PAGE} .shep-test-ref {{ margin: var(--shep-space-1) 0 0; font-size: 14px; color: var(--shep-muted); }}
 {_PAGE} .shep-test-units > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
 {_PAGE} .shep-test-outcome {{ display: flex; flex-direction: column; gap: 6px; font-size: 15px; }}
 {_PAGE} .shep-test-chips {{ display: flex; flex-wrap: wrap; gap: 6px 8px; }}
