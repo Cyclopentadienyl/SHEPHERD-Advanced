@@ -218,7 +218,7 @@ def test_an_operator_lists_the_serving_workspace_with_the_one_in_use_located(
     assert listing["served_sha"] == root["shas"]["model-05.pt"]
     assert len(listing["items"]) == 9
     html = ml.list_html(listing, None, ml.PRESETS["clinical"])
-    assert html.count('<table class="shep-tbl shep-mtbl shep-mtree"') == 1
+    assert html.count('<table class="shep-tbl shep-mtbl shep-mtree ') == 1
     assert "In use now" not in html and "pinned above" not in html
     served = _row_of(html, "model-05.pt")
     assert html.count('shep-tag-accent">In use<') == 1 and 'In use<' in served
@@ -1379,7 +1379,7 @@ def test_the_research_preset_is_a_tree_with_in_use_on_its_own_row(root, serving,
     run is unfolded and located."""
     listing = _listing(root, monkeypatch)
     research = ml.list_html(listing, None, ml.PRESETS["research"])
-    assert '<table class="shep-tbl shep-mtbl shep-mtree"' in research
+    assert '<table class="shep-tbl shep-mtbl shep-mtree ' in research
     assert "In use now" not in research
     heads = re.findall(r'<th scope="col"[^>]*>([^<]*)</th>', research)
     assert heads == list(ml.TREE_COLUMNS) == ["Model", "Task", "Operation", "Epochs", "Files",
@@ -1474,7 +1474,7 @@ def test_one_filter_vocabulary_and_the_drawer_lists_task_models_only(root, servi
     assert "base.pt" not in shown(None, clinical) and "model-07.pt" not in shown(None, clinical)
     assert shown({"task": "base"}, clinical) == []
     assert ml.list_html(listing, None, clinical, view={"task": "base"}) == (
-        '<div class="shep-reason">No base is listed in this workspace.</div>')
+        '<p class="shep-empty">No base is listed in this workspace.</p>')
     no_gene = {**listing, "items": [i for i in listing["items"] if i.get("task") != "gene"]}
     assert "No gene model is listed in this workspace." in ml.list_html(
         no_gene, None, research, view={"task": "gene"})
@@ -2560,7 +2560,8 @@ def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, mon
     html = ml.list_html(data, "gatv2/m/model-03.pt", research)
     assert "<b>x" not in html and "&lt;b&gt;x" in html and "aria-selected" not in html
     assert "Another dataset" in _row_of_key(html, "gatv2/m/model-03.pt")
-    cells = re.findall(r"<td>(.*?)</td>", _row_of_key(html, _key("model-03.pt")), re.S)
+    cells = re.findall(r"<td(?: class=\"[^\"]*\")?>(.*?)</td>", _row_of_key(html, _key("model-03.pt")),
+                       re.S)
     assert cells[-1] == r_fingerprint(item["sha256"], listing)
     (entry,) = _entry_rows(html)
     assert "bad\\xff" in entry and "a folder in runs/" in entry and "RUNS" not in entry
@@ -2717,7 +2718,7 @@ def test_a_drawer_search_says_the_older_runs_it_has_not_searched(root, serving, 
     assert listing["runs_unread"] == 3
     html = ml.list_html(listing, None, clinical, search="cccccc")
     assert "in this workspace" not in html
-    assert ("No model finetuned for a task matches “cccccc” in the latest runs; Show older runs "
+    assert ("No model finetuned for a task matches “cccccc” in the latest runs. Show older runs "
             "searches the rest.") in _visible(html)
     assert "Show older runs (up to 3 more)" in html
     assert ml.count_line(listing, clinical, False, search="cccccc") == (
@@ -2728,7 +2729,7 @@ def test_a_drawer_search_says_the_older_runs_it_has_not_searched(root, serving, 
         "Disease: 2 of the latest 4 runs")
     no_plm = {**listing, "items": [i for i in listing["items"] if "patients" not in i["run"]]}
     empty = ml.list_html(no_plm, None, clinical, view={"task": "patients_like_me"})
-    assert ("No patients-like-me model is listed in the latest runs; Show older runs reads the "
+    assert ("No patients-like-me model is listed in the latest runs. Show older runs reads the "
             "rest.") in _visible(empty) and "Show older runs (up to 3 more)" in empty
     # Show older runs reads the rest, and the search finds the older run.
     select = next(fn for fn in demo.fns.values() if fn.name == "_select")
@@ -3201,3 +3202,117 @@ def test_the_folds_are_changed_in_place_and_never_written_back(root, serving, mo
     page[handle.workspace] = "other"
     page.act("_refresh")
     assert page[handle.fold] is folds and folds == {}
+
+
+# --------------------------------------------------------------------------- the UI sweep of 2026-11-22
+def test_a_pages_tools_share_one_bar_with_the_search_and_the_drawer_keeps_its_row():
+    """GB10-UI-03, B-03 (the sweep's M2): a page's own tools (`tools`) are
+    built inside the list's tools row right after the search group, so a
+    page's group (Models' Order) and the search share one bar
+    (``shep-bar``): the search group (``shep-grp shep-grp-grow``) grows and
+    keeps its box's floor, a group that does not fit moves under it whole, and
+    the count line is the bar's note (a row of its own). The page's column is
+    on the panel's one content edge (``shep-edge``). The Diagnosis drawer
+    passes no tools and keeps its field row, its search row and its count
+    beside the search, as before."""
+    from src.webui.shell import standalone_context
+
+    def tools_of(preset, tools=None):
+        with gr.Blocks() as demo:
+            ctx = standalone_context(demo)
+            ctx.create_model_list(preset, tools=tools)
+        config = demo.get_config_file()
+        known = {c["id"]: (c.get("props") or {}) for c in config["components"]}
+        props = type("Props", (dict,), {"__missing__": lambda self, key: {}})(known)
+
+        def walk(node):
+            yield node
+            for child in node.get("children", []):
+                yield from walk(child)
+
+        row = next(n for n in walk(config["layout"])
+                   if "shep-model-tools" in (props[n["id"]].get("elem_classes") or []))
+        kids = [(props[c["id"]].get("elem_id"), props[c["id"]].get("elem_classes") or [])
+                for c in row.get("children", [])]
+        main = [props[n["id"]].get("elem_classes") or [] for n in walk(config["layout"])
+                if "shep-model-main" in (props[n["id"]].get("elem_classes") or [])]
+        return props[row["id"]].get("elem_classes") or [], kids, main
+
+    def tools():
+        with gr.Row(elem_id="page-order", elem_classes=["shep-grp"]):
+            gr.Radio(choices=["a", "b"], show_label=False, container=False)
+
+    classes, kids, main = tools_of("research", tools)
+    assert "shep-bar" in classes and "shep-field-row" not in classes
+    assert [k for k, _c in kids] == ["shep-models-research-searchrow", "page-order",
+                                     "shep-models-research-count"]
+    assert {"shep-search-row", "shep-grp", "shep-grp-grow"} <= set(kids[0][1])
+    assert "shep-bar-note" in kids[2][1]
+    assert main and "shep-edge" in main[0]
+    # The drawer: no tools, its field row, its search row and count as they were.
+    classes, kids, main = tools_of("clinical")
+    assert "shep-field-row" in classes and "shep-bar" not in classes and main == []
+    assert kids == [("shep-models-clinical-searchrow", ["shep-search-row"]),
+                    ("shep-models-clinical-count", ["shep-html", "shep-field-aside"])]
+
+
+def test_the_trees_optional_columns_are_marked_and_its_frame_is_a_fit_box(root, monkeypatch):
+    """B-13 and the sweep's M6: the tree's Epochs, Files and Fingerprint are
+    optional columns (``shep-col-opt`` on their header and on every cell of
+    theirs, a run's and a file's), so the table can drop them while it does not
+    fit, before its frame scrolls sideways; Model, Task and Operation never
+    carry the mark. The frame is a fit box (``style.FIT``) whose wide form is
+    the table (``style.FIT_WIDE``): the shell's layout pass measures it and
+    marks it narrow (`style.NARROW_ATTR`). A row that spans the columns (an
+    unreadable file, an entry not listed) still spans them."""
+    from src.webui.style import FIT, FIT_WIDE
+
+    listing = _listing(root, monkeypatch)
+    research = ml.PRESETS["research"]
+    view = {"keys": None}
+    tree = ml.tree_view(listing, None, research, show_older=True,
+                        fold={ml.run_node(ml.item_run_key(i)): True for i in listing["items"]})
+    html = ml._tree_html(listing, None, research, view, tree)
+    assert f'class="shep-tbl-wrap shep-mtbl-wrap {FIT}"' in html
+    assert f'class="shep-tbl shep-mtbl shep-mtree {FIT_WIDE}"' in html
+    heads = re.findall(r'<th scope="col"( class="([^"]*)")?>([^<]+)</th>', html)
+    marked = {name: "shep-col-opt" in (classes or "") for _a, classes, name in heads}
+    assert marked == {"Model": False, "Task": False, "Operation": False, "Epochs": True,
+                      "Files": True, "Fingerprint": True}, heads
+    assert ml.OPTIONAL_COLUMNS == ("Epochs", "Files", "Fingerprint")
+    for row in re.findall(r"<tr class=\"shep-tree-(?:run|file)[^>]*>(.*?)</tr>", html):
+        cells = re.findall(r"<td([^>]*)>", row)
+        if len(cells) == len(ml.TREE_COLUMNS):
+            assert ["shep-col-opt" in c for c in cells] == [False, False, False, True, True, True], row
+        else:                                     # a row spanning the columns after Model
+            assert len(cells) == 2 and f'colspan="{len(ml.TREE_COLUMNS) - 1}"' in cells[1], row
+
+
+def test_the_lists_empty_state_says_each_cause_once_in_the_flow(monkeypatch, tmp_path):
+    """The skill's §9 and the sweep's first use: the list with no workspaces
+    folder set drew the folder's whole problem (296 characters, its variable in
+    the sentence) as a bare reason; it is now the folder's one notice
+    (`renderers.notice_block`: its state, the way to Settings › Data
+    locations, the rest under Details ›), which the listing carries
+    (``notice``, from `workspaces.read_workspaces`). An empty workspaces folder
+    says there is no workspace yet and the next step; a workspace with no
+    checkpoint says so. Each is in the flow (``.shep-empty``), never a bare
+    reason, and names no variable in its words."""
+    research = ml.PRESETS["research"]
+    monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    first = ml.list_models(None, operator_request(monkeypatch))
+    assert first["notice"]["key"] == "workspaces_root" and first["workspace"] is None
+    html = ml.list_html(first, None, research)
+    assert 'data-notice="workspaces_root"' in html and 'data-shep-go="settings"' in html
+    assert "SHEPHERD_WORKSPACES_ROOT" not in _visible(html).split("Details")[0]
+    assert "shep-reason" not in html
+    empty_root = tmp_path / "workspaces"
+    empty_root.mkdir()
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(empty_root))
+    empty = ml.list_models(None, operator_request(monkeypatch))
+    assert empty["notice"] is None and empty["workspaces"] == []
+    assert ml.list_html(empty, None, research).startswith(f'<p class="shep-empty">{ml.NO_WORKSPACE}</p>')
+    (empty_root / "demo").mkdir()
+    none_listed = {**empty, "workspace": "demo", "workspaces": [{"name": "demo"}]}
+    assert ml.list_html(none_listed, None, research).startswith(
+        f'<p class="shep-empty">{ml.NO_CHECKPOINT}</p>')

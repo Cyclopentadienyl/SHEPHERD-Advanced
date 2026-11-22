@@ -225,30 +225,35 @@ NO_LOAD_HERE = ("No validation figures here: they need the checkpoint files; Loa
 RECORDS_MODEL_CHANGED = ("The model in use changed while its recorded results were read; open "
                          "the page again.")
 
+#: The Details panel's empty state, per cause (`detail_parts`): a list to
+#: select from, or none listed yet (the list's own empty state says why).
+DETAIL_SELECT = ("Select a model to see its fingerprints, its validation figure and its "
+                 "recorded results.")
+DETAIL_NOTHING = "Nothing to select yet: no checkpoint is listed."
+
 #: The help texts this page's ⓘ name (registered through `ctx.help`).
 PAGE_HELP = {
     "models-ordering": (
         "Order",
-        "How the list is ordered; the Task select chooses the rows.\n"
-        "- Newest first: latest run first.\n"
-        "- By family: a graph of each family, each run under the checkpoint it came from. "
-        "Clicking a run selects it; its arrow only folds or unfolds the runs under it.",
+        "How the list is ordered. The Task select chooses which rows it shows.\n"
+        "- Newest first: the latest run first\n"
+        "- By family: a graph of families, each run under the checkpoint it came from\n"
+        "- A run in the graph: a click selects it\n"
+        "- Its arrow: only folds or unfolds the runs under it",
     ),
     "models-contested": (
         "Runs differ",
-        "Runs kept under this record's conditions in the version's report store differ.\n\n"
-        "- Every run is kept as recorded, and each can be registered.\n"
-        "- Without deterministic algorithms runs can differ; with them on, the runs were "
-        "expected to agree, so the difference is flagged.\n"
-        "- Investigate it, comparing environment facts first; notes on the Test page record "
-        "what was found and change nothing.",
+        "Runs kept under this record's conditions in the version's report store differ.\n"
+        "- Each run: kept as recorded, and each can be registered\n"
+        "- Flagged: only with deterministic algorithms on, as runs can differ without\n"
+        "- To investigate: compare the environment facts first\n"
+        "- Test page notes: record what was found and change nothing",
     ),
     "models-usage": (
         "Usage history",
-        "Each cohort version keeps an append-only usage history in its report store.\n\n"
-        "- Every test run and every registration, started here or from the command line.\n"
-        "- Model loads from a list once ordered by test score stay shown as they were "
-        "recorded.\n"
+        "Each cohort version keeps an append-only usage history in its report store.\n"
+        "- Lists: every test run and registration, from here or the command line\n"
+        "- Older model loads: from a list once ordered by test score, as recorded\n"
         "Ref: reports/usage.jsonl",
     ),
 }
@@ -1161,11 +1166,16 @@ def left_header_html(listing: Mapping[str, Any], data: Mapping[str, Any],
     return f'<div class="shep-panel-hd">{title}</div>'
 
 
-def options_html(data: Mapping[str, Any], refused: Optional[str] = None) -> str:
-    """Under the order options: when the order asked could not be applied
-    (`refused`, the view's: By family without a family view), that the list
-    stays newest first and why."""
+def options_html(data: Mapping[str, Any], refused: Optional[str] = None,
+                 listing: Optional[Mapping[str, Any]] = None) -> str:
+    """Under the order options (the tools bar's note): when the order asked
+    could not be applied (`refused`, the view's: By family without a family
+    view), that the list stays newest first and why; nothing while `listing`
+    lists no file (first use, an empty workspace: there is no list to order,
+    and the list's own empty state says why)."""
     if data.get("readonly") or not refused:
+        return ""
+    if listing is not None and not listing.get("items"):
         return ""
     return (f'<div class="shep-reason shep-amber-t">Not ordered, so the list stays newest '
             f'first: {r.e(r.short_reason(refused, 240))}</div>')
@@ -1415,10 +1425,13 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
         return readonly_parts(data)
     item = ml.find_item(listing, key)
     if item is None:
+        # Its empty state by cause (the skill's §9): nothing listed to select
+        # (first use, an empty folder or workspace: the list says why, once),
+        # else what selecting a row shows.
+        nothing = listing.get("status_read") and not listing.get("items")
         return {"header": ('<div class="shep-panel-hd"><h2>Details</h2>'
                            f'<span class="shep-panel-right">{_served_line(listing)}</span></div>'),
-                "top": ('<p class="shep-muted shep-mp-p">Select a model to see its fingerprints, '
-                        'its validation figure and its recorded results.</p>'),
+                "top": f'<p class="shep-empty">{r.e(DETAIL_NOTHING if nothing else DETAIL_SELECT)}</p>',
                 "records": "", "usage": "", "seg": None}
     in_use = bool(listing.get("served_sha")) and item.get("sha256") == listing.get("served_sha")
     # In use: its tag says so, and what is served is this model, said once;
@@ -1737,20 +1750,30 @@ def create_models_page(ctx: Any) -> None:
         parts["wsline"] = plain_html("", elem_id="shep-mp-wsline")
         parts["task"] = gr.Dropdown(label="Task", choices=TASK_CHOICES, value=ALL_TASKS,
                                     interactive=True, elem_id="shep-mp-task")
-        with gr.Column(elem_id="shep-mp-controls", elem_classes=["shep-mp-controls"]):
-            with gr.Row(elem_classes=["shep-mp-order-row"]):
-                plain_html('<span class="shep-mp-lbl">Order</span>', elem_id="shep-mp-order-lbl")
-                parts["order"] = gr.Radio(choices=ORDER_CHOICES, value=NEWEST, label="Order",
-                                          show_label=False, interactive=False,
-                                          elem_id="shep-mp-order", elem_classes=["shep-seg"],
-                                          container=False)
-                plain_html(help_button("models-ordering", "Order"), elem_id="shep-mp-order-i")
-            parts["options"] = plain_html("", elem_id="shep-mp-options")
-            plain_html(PENDING_HTML, elem_id="shep-mp-pending", js_on_load=PENDING_JS)
         return parts
 
+    def tools() -> None:
+        # The Order group in the list's tools bar, after the search group
+        # (`model_list.create_model_list`'s `tools`): one line while both fit,
+        # Order under Search, whole, when they do not (B-03: the note beside
+        # it squeezed the search box to 22 px). What the order could not do
+        # and the "Applying …" line are the bar's notes, rows of their own.
+        with gr.Row(elem_id="shep-mp-controls", elem_classes=["shep-grp", "shep-mp-controls",
+                                                             "shep-mp-order-row"]):
+            plain_html('<span class="shep-mp-lbl">Order</span>', elem_id="shep-mp-order-lbl")
+            parts["order"] = gr.Radio(choices=ORDER_CHOICES, value=NEWEST, label="Order",
+                                      show_label=False, interactive=False,
+                                      elem_id="shep-mp-order", elem_classes=["shep-seg"],
+                                      container=False)
+            plain_html(help_button("models-ordering", "Order"), elem_id="shep-mp-order-i")
+        parts["options"] = plain_html("", elem_id="shep-mp-options",
+                                      elem_classes=["shep-bar-note"])
+        plain_html(PENDING_HTML, elem_id="shep-mp-pending", js_on_load=PENDING_JS,
+                   elem_classes=["shep-bar-note"])
+
     def foot() -> Any:
-        with gr.Column(elem_id="shep-mp-detail", elem_classes=["shep-mp-detail"]) as column:
+        with gr.Column(elem_id="shep-mp-detail", elem_classes=["shep-mp-detail", "shep-edge"]) \
+                as column:
             parts["detail_hd"] = plain_html(detail_parts({}, {}, None, {})["header"],
                                             elem_id="shep-mp-detail-hd", js_on_load=SCROLL_JS)
             with gr.Column(elem_id="shep-mp-detail-bd", elem_classes=["shep-mp-detail-bd"]):
@@ -1771,7 +1794,7 @@ def create_models_page(ctx: Any) -> None:
 
     with gr.Row(elem_classes=["shep-page", "shep-models"], equal_height=False):
         # The details' "Saved files" pick through the list's one selection.
-        handle = ctx.create_model_list("research", head=head, foot=foot,
+        handle = ctx.create_model_list("research", head=head, tools=tools, foot=foot,
                                        picks=lambda: [parts["detail_top"]])
 
     control_inputs = [parts["order"], parts["task"]]
@@ -1811,7 +1834,7 @@ def create_models_page(ctx: Any) -> None:
             # Always offered to an operator; off for a read-only request.
             gr.update(interactive=not data.get("readonly"),
                       **({"value": ctl["order"]} if ctl["order"] != order else {})),
-            options_html(data, view.get("refused")),
+            options_html(data, view.get("refused"), listing),
             left_header_html(listing, data, condition),
             ml.workspace_line_html(listing),
             *detail_updates(listing, data, selected, ctl, seg_value, query),
@@ -1913,7 +1936,7 @@ def create_models_page(ctx: Any) -> None:
             # The line under the options too: a failure said there is gone
             # once an answer applies the controls.
             return (*states, *(gr.update() for _ in page_outputs[:4]),
-                    options_html(data, view.get("refused")),
+                    options_html(data, view.get("refused"), listing),
                     *(gr.update() for _ in page_outputs[5:-6]),
                     *detail_updates(listing, data, key, ctl, seg_value, query))
         condition = operator_access(request).condition
@@ -2014,40 +2037,49 @@ PAGE_CSS = f"""
   background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px;
   padding: 0 !important; margin: 0 !important;
 }}
+/* The list panel's header: its title the panel's width, then Workspace and Task on one
+   line, each a select of at least the select floor's width while the line holds both (Task,
+   whose longest option is "Patients-like-me", no wider than that floor; L0's §7: it was
+   170 px, 9.8 of its "0"s), Task under Workspace, whole, when it does not; the workspace's
+   line under them (its fingerprint and "synthetic", once). A row of fields, not a grid of
+   areas: nothing here is sized for one window. */
 {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{
-  flex: none; display: grid !important; gap: 10px 10px !important; align-items: start;
-  align-content: start;
-  /* The workspace select takes the row but what the task select needs for its
-     longest option, "Patients-like-me" (the workspace option is its name; the
-     identity line under it says its fingerprint and "synthetic", once). */
-  grid-template-columns: minmax(0, 1fr) 170px;
-  grid-template-rows: repeat(4, max-content);
-  grid-template-areas: "lhd lhd" "ws task" "wsline wsline" "ctl ctl";
+  flex: none; display: flex !important; flex-wrap: wrap !important; align-items: flex-end !important;
+  gap: var(--shep-space-2) var(--shep-gap-between) !important;
   background: none; border: 0; padding: 0 16px 8px !important; margin: 0 !important;
 }}
-{_PAGE} {_LIST} > .shep-model-main > .shep-model-head > * {{ min-width: 0 !important; }}
-{_PAGE} #shep-mp-hd {{ grid-area: lhd; margin: 0 -16px; width: calc(100% + 32px) !important; max-width: none; }}
-{_PAGE} {_LIST} .shep-model-head > .form:has(#shep-models-research-workspace) {{ grid-area: ws; }}
-{_PAGE} {_LIST} .shep-model-head > .form:has(#shep-mp-task) {{ grid-area: task; }}
-{_PAGE} #shep-mp-wsline {{ grid-area: wsline; margin-top: -4px; }}
+{_PAGE} {_LIST} > .shep-model-main > .shep-model-head > :not(.form) {{ min-width: 0 !important; }}
+{_PAGE} #shep-mp-hd {{ order: 0; flex: 0 0 calc(100% + 32px) !important; margin: 0 -16px; max-width: none; }}
+{_PAGE} {_LIST} .shep-model-head > .form:has(#shep-models-research-workspace) {{
+  order: 1; flex: 1 1 var(--shep-select-floor) !important; min-width: min(var(--shep-select-floor), 100%) !important;
+}}
+{_PAGE} {_LIST} .shep-model-head > .form:has(#shep-mp-task) {{
+  order: 2; flex: 0 1 var(--shep-select-floor) !important; min-width: min(var(--shep-select-floor), 100%) !important;
+}}
+{_PAGE} #shep-mp-wsline {{ order: 3; flex: 1 1 100% !important; margin-top: -4px; }}
 /* A value too long for its select ends in "…" before the chevron, never under it (the
    titled ellipsis is the shell's rule for every select). */
 {_PAGE} #shep-models-research-workspace input, {_PAGE} #shep-mp-task input {{
   padding-right: 24px !important;
 }}
-{_PAGE} #shep-mp-controls {{ grid-area: ctl; gap: 8px !important; }}
+/* **The list's tools: one bar** (`model_list.create_model_list`'s `tools`; the shared
+   ``.shep-bar``): the search group (Search, its box, Clear) grows from its basis and never
+   puts its box under the box's floor; Order is a group beside it while the line holds both,
+   under it, whole, when it does not (B-03, GB10-UI-03: the note "Not ordered…" widened a grid
+   track and squeezed the box to 22 px, Clear over it). What the order could not do, the
+   "Applying …" line and the count are the bar's notes, each a row of its own under the
+   groups (a message never shares a row with a control). */
+{_PAGE} {_LIST} > .shep-model-main > .shep-model-tools {{
+  flex: none; background: none; border: 0; padding: 0 16px 8px !important; margin: 0 !important;
+}}
+{_PAGE} #shep-models-research-searchrow {{ --shep-grp-basis: 16rem; --shep-grp-min: 16rem; }}
+/* "Search" and Clear on the box's middle line, as Order's label and ⓘ are on the switch's:
+   a label beside its box is no label above it (the bar stands its groups on one bottom line). */
+{_PAGE} #shep-models-research-searchrow.shep-grp {{ align-items: center !important; }}
 /* The "Applying …" line takes no room while nothing is pending (`PENDING_JS`). */
 {_PAGE} #shep-mp-pending:not(:has(.shep-mp-pending.shep-on)) {{ display: none !important; }}
 {_PAGE} .shep-mp-pending {{ font-size: 14px; }}
-{_PAGE} #shep-models-research-count {{ grid-area: count; font-size: 14px; color: var(--shep-text-2); }}
-/* The shared list's search line (D04): the box and its Clear, then what the list shows. */
-{_PAGE} {_LIST} > .shep-model-main > .shep-model-tools {{
-  flex: none; display: grid !important; grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "srch" "count"; gap: 8px 10px !important; align-items: center;
-  background: none; border: 0; padding: 0 16px 8px !important; margin: 0 !important;
-}}
-{_PAGE} {_LIST} > .shep-model-main > .shep-model-tools > * {{ min-width: 0 !important; }}
-{_PAGE} #shep-models-research-searchrow {{ grid-area: srch; }}
+{_PAGE} #shep-models-research-count {{ font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} {_LIST} > .shep-model-main > .shep-model-body {{
   min-height: 0; background: none; border: 0; border-radius: 0 0 10px 10px;
   padding: 0 16px 12px !important; margin: 0 !important; flex-wrap: nowrap !important;
@@ -2057,18 +2089,23 @@ PAGE_CSS = f"""
    the browser's scroll anchoring would scroll the rows by what a pick takes away above it. */
 {_PAGE} #shep-models-research-rows:has(.shep-fam) {{ overflow-anchor: none; }}
 {_PAGE} #shep-models-research-facts {{ display: none !important; }}
+/* The detail's foot: Load, then why it is off beside it (one line, `model_list.load_reason_html`),
+   then what Load does (the view's note, two sentences) on a row of its own under them, from the
+   panel's edge: a message never shares a row with a button (the layout rules' "beside"). */
 {_PAGE} {_LIST} > .shep-model-foot {{
   grid-area: foot; min-height: 0; display: grid !important; margin: 0 !important;
-  grid-template-columns: auto minmax(0, auto) minmax(min(16em, 33%), 1fr);
-  grid-template-rows: minmax(0, 1fr) auto;
-  grid-template-areas: "detail detail detail" "load reason note";
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-areas: "detail detail" "load reason" "note note";
   align-items: center; gap: 0 12px !important; padding: 0 !important;
   background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px;
 }}
 {_PAGE} {_LIST} > .shep-model-foot > #shep-mp-detail {{ grid-area: detail; align-self: stretch; min-height: 0; gap: 0 !important; }}
 {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ grid-area: load; margin: 12px 0 12px 16px; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ grid-area: reason; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note {{ grid-area: note; padding-right: 16px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ grid-area: reason; padding-right: 16px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note {{ grid-area: note; padding: 0 16px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note:has(.shep-note) {{ padding-bottom: 12px; margin-top: -4px; }}
+{_PAGE} #shep-models-research-note .shep-note {{ display: block; max-width: var(--shep-measure); font-size: 14px; }}
 {_PAGE} {_LIST} > .shep-model-foot::after {{
   content: ""; grid-row: 2; grid-column: 1 / -1; border-top: 1px solid var(--shep-border);
   align-self: start; pointer-events: none;
@@ -2082,7 +2119,7 @@ PAGE_CSS = f"""
 {_PAGE} #shep-mp-detail-bd > * {{ flex-shrink: 0 !important; }}
 {_PAGE} #shep-mp-seg {{ overflow: visible !important; }}
 {_PAGE} #shep-mp-detail-hd .shep-panel-hd h2, {_PAGE} #shep-mp-hd .shep-panel-hd h2 {{ overflow-wrap: anywhere; }}
-{_PAGE} .shep-mp-order-row {{ align-items: center !important; gap: 8px !important; flex-wrap: nowrap !important; }}
+{_PAGE} #shep-mp-controls.shep-mp-order-row {{ align-items: center !important; gap: 8px !important; flex-wrap: nowrap !important; }}
 {_PAGE} .shep-mp-order-row > * {{ flex: 0 0 auto !important; min-width: 0 !important; width: auto !important; }}
 {_PAGE} .shep-mp-lbl {{ font-size: 15px; color: var(--shep-text-2); white-space: nowrap; }}
 {_PAGE} .shep-mp-back {{ display: none; }}
@@ -2129,12 +2166,21 @@ PAGE_CSS = f"""
    its own words, sits one step in under the sub-heading that says its path
    (a plain cell styled as a heading, `results_segment.compare_html`). */
 {_PAGE} .shep-rs {{ gap: 12px !important; }}
-{_PAGE} .shep-rs-row {{ align-items: flex-end !important; gap: 8px !important; flex-wrap: wrap !important; }}
+{_PAGE} .shep-rs-row {{ align-items: flex-end !important; gap: 8px var(--shep-gap-between) !important; flex-wrap: wrap !important; }}
+/* Its rows are rows of fields (``shep-field-row``, the shared D03 rule): an action (Read again,
+   Export) as wide as its words, as tall as a box, on the boxes' bottom line beside the fields it
+   acts on; Export's two choices as wide as their options, so Export follows them (the
+   2026-11-22 check: a 318 px Export at the row's far end, under the choices' line). */
+{_PAGE} .shep-rs-row > .form:has(> fieldset.block) {{ flex: 0 1 auto !important; width: auto !important; }}
 {_PAGE} .shep-rs-wrap {{ margin: 0 !important; overflow-x: auto;
   background: linear-gradient(to left, var(--shep-panel) 14px, transparent) right / 28px 100% no-repeat local,
     linear-gradient(to left, rgba(20, 24, 40, .12), transparent) right / 14px 100% no-repeat scroll,
     var(--shep-panel); }}
 {_PAGE} .shep-rs-wrap + .shep-mp-p {{ margin-top: 16px; }}
+/* An empty Results segment (`results_segment.tables_html`): its paragraphs a paragraph apart,
+   the command in a muted Ref line. */
+{_PAGE} .shep-rs-empty > p + p {{ margin-top: var(--shep-space-para); }}
+{_PAGE} .shep-rs-empty > p.shep-rs-ref {{ font-size: 14px; color: var(--shep-muted); }}
 /* A table's units, said once under it (B72-C2: a KG link prediction's), close to
    its table; the next table's title 16 px below. */
 {_PAGE} .shep-rs-wrap + .shep-rs-units-h {{ margin-top: 8px; font-size: 14px; font-weight: 600; }}
@@ -2208,19 +2254,20 @@ PAGE_CSS = f"""
 /* Read-only: no list, no workspace, no order; the reason is the header's. */
 {_PAGE} {_LIST}:has(.shep-mp-ro) .shep-model-head > .form,
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-mp-wsline,
-{_PAGE} {_LIST}:has(.shep-mp-ro) #shep-mp-controls,
-{_PAGE} {_LIST}:has(.shep-mp-ro) #shep-models-research-count,
 {_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-main > .shep-model-tools,
 {_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-main > .shep-model-body {{ display: none !important; }}
 {_PAGE} {_LIST}:has(.shep-mp-ro) {{ grid-template-columns: minmax(0, 30fr) minmax(0, 70fr); }}
 /* The list's and the detail's minimum widths (the layout rule's measure, `src/webui/shell.py`):
-   side by side, the grid's columns never go under them. The list's is the shared tree's table
-   (`model_list._tree_html`, Newest first) whole with its widest common rows: a record not
-   readable (its Task words) and a file that records no completed epochs ("recorded epoch 2"),
-   581 px, and its frame's borders and padding 36 more (the Models browser test's world). By
-   family's graph takes the width it is given (left to right where it fits, else top to bottom,
-   `model_list.FAMILY_JS`). A longer name scrolls the rows sideways in their own region. */
-{_PAGE} {_LIST} {{ --shep-mp-list-min: 617px; --shep-mp-detail-min: 480px; }}
+   side by side, the grid's columns never go under them, in rem so the browser's text size moves
+   them. The list's holds its header on one line (Workspace and Task each at the select floor,
+   `--shep-select-floor`) and its table's narrow form: the shared tree drops its optional columns
+   (Epochs, Files, Fingerprint: the selected model's details say them) while it does not fit,
+   before it scrolls sideways in its own region (`model_list.OPTIONAL_COLUMNS`; the UI sweep's M6),
+   so Model, Task and Operation stay whole beside a run name of about 52 characters, which never
+   breaks at its own hyphens (D8). It was 617 px, the whole table of one world: a longer name
+   scrolled the rows sideways at every laptop size. By family's graph takes the width it is given
+   (left to right where it fits, else top to bottom, `model_list.FAMILY_JS`). */
+{_PAGE} {_LIST} {{ --shep-mp-list-min: 39rem; --shep-mp-detail-min: 30rem; }}
 {_PAGE} {_LIST} > .shep-model-main {{ --shep-panel-min: var(--shep-mp-list-min); }}
 {_PAGE} {_LIST} > .shep-model-foot {{ --shep-panel-min: var(--shep-mp-detail-min); }}
 {SIDE} {{
@@ -2242,28 +2289,22 @@ PAGE_CSS = f"""
   }}
   {_PAGE} {_LIST} > .shep-model-confirm-box > #shep-models-research-confirm {{ flex: 1 1 auto; min-height: 0; overflow: auto !important; }}
   {_PAGE} {_LIST} > .shep-model-confirm-box > .row {{ flex: none; }}
-  /* **One scroll region** (the skill's §2): the header rows (the title, the
-     workspace and task, the workspace's line, the order, the count) are in
-     flow and the rows' region, the panel's last grid row, is the one thing
-     that scrolls, its table's header sticking to its own top; nothing sticky
-     covers a row (the closing check: a sticky title over the panel's scroll
-     region hid three to six rows below 1000 px tall). The header row's items
-     are laid out in the panel's own grid (the row itself draws no box). The
-     rows take what the header leaves (``minmax(0, 1fr)``): a floor of 160 px
-     made the panel scroll around the rows' own region below about 660 px of
-     window, two scroll regions in one panel (1366 x 620, 1280 x 600); only a
-     header taller than the panel scrolls the panel, its title with it. */
+  /* **One scroll region** (the skill's §2): the header and the tools bar are in flow and the
+     rows' region, the panel's last grid row, is the one thing that scrolls, its table's header
+     sticking to its own top; nothing sticky covers a row (the closing check: a sticky title
+     over the panel's scroll region hid three to six rows below 1000 px tall). The rows take
+     what the header and the bar leave (``minmax(0, 1fr)``): a floor of 160 px made the panel
+     scroll around the rows' own region below about 660 px of window, two scroll regions in one
+     panel (1366 x 620, 1280 x 600); only a header taller than the panel scrolls the panel, its
+     title with it. The header and the bar are boxes of their own (a row of fields, a bar of
+     groups), never flattened into the panel's grid. */
   {_PAGE} {_LIST} > .shep-model-main {{
-    display: grid !important; align-items: start; align-content: start; gap: 10px 10px !important;
-    grid-template-columns: minmax(0, 1fr) auto 170px;
-    grid-template-rows: repeat(5, max-content) minmax(0, 1fr);
-    grid-template-areas: "lhd lhd lhd" "ws ws task" "wsline wsline wsline" "srch ctl ctl" "count count count" "body body body";
-    padding: 0 16px !important;
+    display: grid !important; align-items: start; align-content: start; gap: 0 !important;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: max-content max-content minmax(0, 1fr);
   }}
-  {_PAGE} {_LIST} > .shep-model-main > .shep-model-head,
-  {_PAGE} {_LIST} > .shep-model-main > .shep-model-tools {{ display: contents !important; }}
   {_PAGE} {_LIST} > .shep-model-main > .shep-model-body {{
-    grid-area: body; padding: 0 0 12px !important;
+    padding: 0 16px 12px !important;
     align-self: stretch; min-height: 0; overflow: hidden; display: flex !important;
   }}
   {_PAGE} #shep-models-research-rows {{ overflow: auto !important; min-height: 0; max-height: 100%; }}
@@ -2277,7 +2318,6 @@ PAGE_CSS = f"""
   {_PAGE} {_LIST}:has(.shep-mp-ro) {{ grid-template-columns: minmax(0, 1fr); }}
   {_PAGE} {_LIST} > .shep-model-main {{ margin-bottom: 16px !important; }}
   {_PAGE} {_LIST} > .shep-model-confirm-box {{ grid-area: confirm; margin-top: 16px !important; overflow: visible; }}
-  {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(5, max-content); grid-template-areas: "lhd" "ws" "wsline" "task" "ctl"; }}
   /* By family's graph left to right, a subtree unfolded past the column: panned to in its
      rows, never the page sideways (side by side the rows' region scrolls both ways). */
   {_PAGE} #shep-models-research-rows:has(.shep-fam) {{ overflow-x: auto !important; }}
@@ -2285,8 +2325,10 @@ PAGE_CSS = f"""
 }}
 /* A phone's column: Load, its reason and the note each a row of their own
    (one row squeezed the reason into an 84 px column; verification of
-   fcc3dea, V-RB2-4). */
-@media (max-width: 599px) {{
+   fcc3dea, V-RB2-4). Measured on the list's own width (a container query:
+   side by side the list is never this narrow), never the window's. */
+{_PAGE} {_LIST} {{ container: shep-mp-list / inline-size; }}
+@container shep-mp-list (max-width: 36rem) {{
   {_PAGE} {_LIST} > .shep-model-foot {{
     grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto auto;
     grid-template-areas: "detail" "load" "reason" "note";

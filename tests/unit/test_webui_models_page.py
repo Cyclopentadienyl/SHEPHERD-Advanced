@@ -2795,9 +2795,11 @@ def test_the_list_panel_has_one_scroll_region_at_every_wide_height():
     from tests.unit.test_webui_shell import side
 
     wide = side(mp.PAGE_CSS)
-    assert ("> .shep-model-main > .shep-model-head,\n  #shep-page-models #shep-models-research "
-            "> .shep-model-main > .shep-model-tools { display: contents !important; }") in wide
-    assert "grid-template-rows: repeat(5, max-content) minmax(0, 1fr);" in wide
+    # The header and the tools bar are boxes of their own in flow (a row of fields, a bar of
+    # groups; the UI sweep of 2026-11-22: flattened into the panel's grid, a note in the
+    # tools widened a track and squeezed the search box), the rows' region the last row.
+    assert "display: contents" not in mp.PAGE_CSS
+    assert "grid-template-rows: max-content max-content minmax(0, 1fr);" in wide
     assert "#shep-models-research-rows { overflow: auto !important; min-height: 0;" in wide
     assert "> .shep-model-main { height: 100%; overflow-y: auto; }" in wide
     assert "#shep-mp-hd { position: sticky" not in mp.PAGE_CSS
@@ -3076,7 +3078,7 @@ def test_one_screen_says_each_fingerprint_and_the_dataset_once(world, monkeypatc
     assert _visible_words(run + row + detail["header"] + detail["top"]).count(words) == 2
     # The table's Fingerprint column: a model's 12 hex only, the header one word.
     assert ">Fingerprint</th>" in table and "Fingerprints:" not in table
-    cell = re.findall(r"<td>(.*?)</td>", row, re.S)[-1]
+    cell = re.findall(r"<td(?: class=\"[^\"]*\")?>(.*?)</td>", row, re.S)[-1]
     assert cell == r.fingerprint_value(sha, what="model fingerprint", copy=False,
                                        digits=r.distinguishing_digits(
                                            i.get("sha256") for i in listing["items"]))
@@ -3564,6 +3566,301 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
     assert phone["reason"]["top"] >= phone["load"]["bottom"], phone
     for size in ("960x1080", "1850x960"):
         assert seen[size]["reason"]["left"] >= seen[size]["load"]["right"], seen[size]
+
+
+# --------------------------------------------------------------------------- the UI sweep of 2026-11-22
+def _layout_children(demo, elem_id):
+    """The config's layout node of the component `elem_id` and its children's
+    (elem_id, elem_classes) in order."""
+    config = demo.get_config_file()
+    props = {c["id"]: (c.get("props") or {}) for c in config["components"]}
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+
+    def find(node, wanted):
+        if node.get("id") == wanted:
+            return node
+        for child in node.get("children", []):
+            hit = find(child, wanted)
+            if hit:
+                return hit
+        return None
+
+    def named(node):
+        p = props[node["id"]]
+        return p.get("elem_id"), p.get("elem_classes") or []
+
+    node = find(config["layout"], by_id[elem_id]._id)
+    return node, [named(c) for c in node.get("children", [])], named, find, config
+
+
+def test_order_is_a_group_of_the_lists_tools_bar_after_the_search():
+    """GB10-UI-03 and B-03 (P2): the "Not ordered…" note sat in the head's grid
+    area beside Search and widened its track until the search box was 22 px,
+    Clear over it. Order is now a group (``shep-grp``) of the list's tools bar
+    (``shep-bar``, `model_list.create_model_list`'s `tools`), right after the
+    search group (``shep-grp shep-grp-grow``); the note, the "Applying …" line
+    and the count are the bar's notes, rows of their own under the groups; the
+    head holds the title, Workspace, Task and the workspace's line only. Every
+    elem_id the page wires is still there."""
+    demo, _ctx = _page()
+    listing, kids, named, find, config = _layout_children(demo, "shep-models-research")
+    main = next(c for c in listing["children"] if "shep-model-main" in named(c)[1])
+    head, tools = [c for c in main["children"]
+                   if {"shep-model-head", "shep-model-tools"} & set(named(c)[1])]
+    assert "shep-model-head" in named(head)[1] and "shep-model-tools" in named(tools)[1]
+    assert "shep-bar" in named(tools)[1] and "shep-edge" in named(main)[1]
+    in_tools = [named(c) for c in tools["children"]]
+    ids = [i for i, _cls in in_tools]
+    assert ids == ["shep-models-research-searchrow", "shep-mp-controls", "shep-mp-options",
+                   "shep-mp-pending", "shep-models-research-count"], in_tools
+    classes = dict(in_tools)
+    assert {"shep-grp", "shep-grp-grow"} <= set(classes["shep-models-research-searchrow"])
+    assert "shep-grp" in classes["shep-mp-controls"]
+    for note in ("shep-mp-options", "shep-mp-pending", "shep-models-research-count"):
+        assert "shep-bar-note" in classes[note], (note, classes[note])
+    order_group = find(tools, next(c["id"] for c in tools["children"]
+                                   if named(c)[0] == "shep-mp-controls"))
+    assert [named(c)[0] for c in order_group["children"]] == [
+        "shep-mp-order-lbl", "shep-mp-order", "shep-mp-order-i"]
+
+    def ids_under(node):
+        out = [named(node)[0]]
+        for child in node.get("children", []):
+            out += ids_under(child)
+        return out
+
+    assert "shep-mp-controls" not in ids_under(head) and "shep-mp-task" in ids_under(head)
+    # No track sized for one window: Task is a select at the select floor, the header a
+    # row of fields, nothing flattened into the panel's grid.
+    css = mp.PAGE_CSS
+    assert "170px" not in css and "display: contents" not in css
+    assert "flex: 0 1 var(--shep-select-floor)" in css
+
+
+def test_the_order_note_and_the_details_empty_state_follow_what_is_listed():
+    """GB10-UI-03 and the skill's §9: "Not ordered…" says why By family could
+    not order a list, so it is said only where there is a list (first use and
+    an empty workspace list nothing: the list's own empty state says why), and
+    the Details panel's empty state says, per cause, what selecting shows or
+    that nothing is listed to select (it said "Select a model…" with no list)."""
+    refused = mp.FAMILY_NOT_READ
+    data = {"readonly": False}
+    nothing = {**ml.empty_listing(), "status_read": True}
+    listed = {**nothing, "workspace": "demo", "items": [{"run": "r", "filename": "last.pt"}]}
+    assert mp.options_html(data, refused, nothing) == ""
+    assert "Not ordered, so the list stays newest first" in mp.options_html(data, refused, listed)
+    assert "Not ordered" in mp.options_html(data, refused)           # no listing given: as before
+    assert mp.options_html(data, None, listed) == ""
+    empty = mp.detail_parts(nothing, {}, None, {})["top"]
+    assert mp.DETAIL_NOTHING in empty and 'class="shep-empty"' in empty
+    assert mp.DETAIL_SELECT in mp.detail_parts(listed, {}, None, {})["top"]
+    # Before the list is read, nothing is said to be missing.
+    assert mp.DETAIL_SELECT in mp.detail_parts({}, {}, None, {})["top"]
+
+
+def test_every_models_help_text_is_within_the_text_budget():
+    """The text brief's §11 (TEXT_BUDGET): each ⓘ of Models (its own and the
+    Results segment's) a lead that answers the question in 90 characters or
+    fewer, then 2-4 items of one form, each 76 characters or fewer, 80 words
+    at most, no semicolon, Ref last (four texts were over it)."""
+    from src.webui.components import help as h
+    from src.webui.components import results_segment as rs
+
+    texts = {**mp.PAGE_HELP, **rs.SEGMENT_HELP}
+    assert set(texts) == {"models-ordering", "models-contested", "models-usage", "models-results"}
+    for key, (_title, text) in texts.items():
+        assert h.budget_problems(text, h.TEXT_BUDGET) == (), (key, h.budget_problems(text, h.TEXT_BUDGET))
+    # Every fact kept: the ones each text carried before it was laid out again.
+    assert "deterministic algorithms" in texts["models-contested"][1]
+    assert "Test page notes" in texts["models-contested"][1]
+    assert "Ref: reports/usage.jsonl" in texts["models-usage"][1]
+    assert "uncapped" in texts["models-results"][1] and "first five" in texts["models-results"][1]
+
+
+def test_the_load_note_is_a_row_under_load_and_results_actions_follow_their_fields():
+    """The layout rules' "beside" (a message never shares a row with a button):
+    what Load does (the view's note, two sentences) stood beside Load this
+    model in the foot's one row; it is a row of its own under Load and its
+    reason, at the panel's edge, the reason (one line) beside the button. A
+    phone's column stacks all three, measured on the list's own width (a
+    container query, never the window's). In Models › Results (the L0 check's
+    item 5) Export and Read again were stretched to the row's far end, under
+    the choices' line: its rows are the shared rows of fields (a button as
+    wide as its words, on the boxes' bottom line) and Export's two choices as
+    wide as their options, so the button follows them."""
+    css = mp.PAGE_CSS
+    assert 'grid-template-areas: "detail detail" "load reason" "note note";' in css
+    assert "@media" not in css and "@container shep-mp-list (max-width: 36rem)" in css
+    assert "container: shep-mp-list / inline-size;" in css
+    assert ".shep-rs-row > .form:has(> fieldset.block) { flex: 0 1 auto !important;" in css
+    from src.webui.components import results_segment as rs
+
+    with gr.Blocks():
+        parts = rs.create_results_segment()
+    rows = [b for b in parts["column"].children if "shep-rs-row" in (b.elem_classes or [])]
+    assert len(rows) == 4 and all("shep-field-row" in row.elem_classes for row in rows)
+
+
+def test_an_empty_results_segment_says_what_will_appear_and_keeps_its_command_in_ref():
+    """The text brief's §8 and §9: the Results segment with nothing to show
+    said its gap across workspaces with the command inside the sentence and a
+    semicolon; it is an empty state in the flow, what is missing, what will
+    appear, the gap, and the command in a Ref line only."""
+    from src.webui.components import results_segment as rs
+
+    html = rs.tables_html({**rs.EMPTY_STATE, "read_id": 1, "read_at": "now"},
+                          {"scope": rs.WORKSPACE, "workspace": "demo"},
+                          {"shown": [], "in_scope": 0, "unplaced_in_scope": 0})
+    assert 'class="shep-empty shep-rs-empty"' in html and ";" not in rs.CROSS_WORKSPACE_GAP
+    sentences = html.split('<p class="shep-rs-ref">')[0]
+    assert rs.EXPORT_SCRIPT not in sentences and "export_results" not in sentences
+    assert '<p class="shep-rs-ref">Ref: <code class="shep-tok">' in html
+
+
+#: Models at first use (no workspaces folder), By family chosen, at each window: the search
+#: box, Clear, the Order group and the notes, as drawn.
+_FIRST_USE_TOOLS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1536, height: 864 }, deviceScaleFactor: 1 })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.click('#shep-page-models-button');
+  await page.waitForSelector('#shep-mp-order input[value="family"]:not([disabled])', { timeout: 60000 });
+  await idle();
+  await page.click('#shep-mp-order label:has(input[value="family"])');
+  await page.waitForFunction(() => {
+    const m = document.querySelector('#shep-models-research-rows .shep-view-for');
+    return !!m && m.getAttribute('data-for').startsWith('family');
+  }, null, { timeout: 30000 });
+  await idle();
+  const out = {};
+  for (const [w, h] of [[1536, 864], [1366, 768], [1280, 720], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const q = (s) => document.querySelector(s);
+      const box = (e) => { const r = e.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width }; };
+      const input = q('#shep-models-research-search input, #shep-models-research-search textarea');
+      const shown = (e) => !!e && e.getClientRects().length > 0 && (e.innerText || '').trim() !== '';
+      return { input: box(input), floor: parseFloat(getComputedStyle(input).minWidth) || 0,
+               clear: box(q('#shep-models-research-search-clear')),
+               search: box(q('#shep-models-research-searchrow')), order: box(q('#shep-mp-controls')),
+               panel: box(q('#shep-page-models .shep-model-main')),
+               note: shown(q('#shep-mp-options')),
+               notices: document.querySelectorAll('#shep-page-models [data-notice="workspaces_root"]').length,
+               detail: (q('#shep-mp-detail-top') || {}).innerText || '' };
+    });
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_at_first_use_the_search_keeps_its_floor_and_order_moves_whole_in_a_browser(
+        tmp_path, monkeypatch):
+    """GB10-UI-03 (P2), B-03, as the owner saw it (Node and Playwright, skipped
+    without): no workspaces folder, By family chosen. The search box was a
+    22 px sliver at 1536 x 864, 1366 x 768 and 1280 x 720, Clear over it (and,
+    once the box kept its floor, Clear over Order). At every window now the box
+    is at least its floor, Clear beside it on its line, Order a group of its
+    own that never overlaps the search group (beside it or under it, whole),
+    both inside the panel; no "Not ordered" note (there is no list to order);
+    the workspaces folder's notice once, as the list's empty state; Details
+    says there is nothing to select. Fails before the sweep's L4 lane."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    monkeypatch.delenv("SHEPHERD_REGISTRY", raising=False)
+    operator_request(monkeypatch)
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_FIRST_USE_TOOLS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    for size, at in seen.items():
+        box, clear, search, order, panel = at["input"], at["clear"], at["search"], at["order"], at["panel"]
+        assert at["floor"] > 0 and box["width"] >= at["floor"] - 0.5, (size, at)
+        assert clear["left"] >= box["right"] - 0.5, (size, at)                     # beside, after it
+        assert clear["top"] < box["bottom"] and clear["bottom"] > box["top"], (size, at)
+        apart = (order["left"] >= search["right"] - 0.5 or order["top"] >= search["bottom"] - 0.5)
+        assert apart, (size, at)                                                   # never over it
+        for part in (search, order):
+            assert panel["left"] - 0.5 <= part["left"] and part["right"] <= panel["right"] + 0.5, (size, at)
+        assert not at["note"] and at["notices"] == 1, (size, at)
+        assert mp.DETAIL_NOTHING in at["detail"], (size, at)
+
+
+#: Newest first at a laptop's window and a wide column: the tree's frame, its optional
+#: columns and whether it scrolls sideways.
+_OPTIONAL_COLUMNS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1366, height: 768 }, deviceScaleFactor: 1 })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  await page.click('#shep-page-models-button');
+  await page.waitForSelector('#shep-models-research-rows table.shep-mtree', { timeout: 60000 });
+  await idle();
+  const out = {};
+  for (const [w, h] of [[1366, 768], [1440, 1600]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const table = document.querySelector('#shep-models-research-rows table.shep-mtree'), wrap = table.parentElement;
+      const rows = document.querySelector('#shep-models-research-rows');
+      const opt = [...table.querySelectorAll('thead th')].filter((th) => th.classList.contains('shep-col-opt'));
+      return { layout: document.documentElement.getAttribute('data-shep-layout'),
+               sideways: Math.max(wrap.scrollWidth - wrap.clientWidth, rows.scrollWidth - rows.clientWidth),
+               optional: opt.map((th) => th.textContent), drawn: opt.filter((th) => th.getClientRects().length).length,
+               heads: [...table.querySelectorAll('thead th')].filter((th) => th.getClientRects().length).map((th) => th.textContent) };
+    });
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_browser(
+        tmp_path, world, monkeypatch):
+    """B-13 and the sweep's M6 (Node and Playwright, skipped without): with a
+    run whose name is long (a family of fine-tunes), Newest first's table was
+    wider than its panel at 1366 x 768 and scrolled sideways inside it, its
+    Epochs, Files and Fingerprint off to the right. Those columns are optional
+    (the selected model's details say each): the table drops them while it does
+    not fit, so nothing scrolls sideways and Model, Task and Operation stay;
+    where the whole table fits (a tall window's single column), every column is
+    drawn. Fails before the sweep's L4 lane."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_request(monkeypatch)
+    shas = _add_bundles(world)
+    _add_child(world, "20261005-000000_disease-fine-tune-of-the-long-named-family_ffffff",
+               shas["disease"], BUNDLES["disease"][0])
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_OPTIONAL_COLUMNS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    laptop, column = seen["1366x768"], seen["1440x1600"]
+    assert laptop["optional"] == ["Epochs", "Files", "Fingerprint"] == column["optional"], seen
+    assert laptop["layout"] == "side" and laptop["sideways"] <= 0, laptop
+    assert laptop["drawn"] == 0 and laptop["heads"] == ["Model", "Task", "Operation"], laptop
+    assert column["layout"] == "stack" and column["drawn"] == 3 and column["sideways"] <= 0, column
 
 
 # --------------------------------------------------------------------------- the family graph (G/I)

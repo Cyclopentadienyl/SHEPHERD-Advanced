@@ -174,20 +174,18 @@ EXPORT_FORMATS = [("CSV", "csv"), ("JSON", "json")]
 EXPORT_SCRIPT = "scripts/export_results.py"
 #: Said where the scope holds nothing, and in the help: a gap, not a rule.
 CROSS_WORKSPACE_GAP = (
-    "Comparing results across workspaces is not built in this page yet; on the machine, "
-    f"{EXPORT_SCRIPT} joins workspaces through the same results service.")
+    "Comparing results across workspaces is not built in this page yet. On the machine, the "
+    "export script joins workspaces through the same results service.")
 
 #: The help texts this segment's ⓘ name (registered by Models' page builder).
 SEGMENT_HELP = {
     "models-results": (
         "Results",
-        "Every kept report and readable ledger record of this family or workspace.\n\n"
-        "- One table per protocol, newest run first; nothing is ordered by a metric.\n"
-        "- Compare shows the first five chosen side by side, as recorded, with no computed "
-        "difference.\n"
-        "- Export writes every chosen or shown row as CSV or JSON, uncapped.\n"
-        "Across workspaces: not built in this page yet; on the machine, the export script "
-        "joins them.\n"
+        "Every kept report and readable ledger record of this family or workspace.\n"
+        "- Tables: one per protocol, newest run first, never ordered by a metric\n"
+        "- Compare: the first five chosen side by side as recorded, nothing computed\n"
+        "- Export: every chosen or shown row as CSV or JSON, uncapped\n"
+        "- Across workspaces: the machine's export script joins them, not this page\n"
         f"{REF_PREFIX} {EXPORT_SCRIPT}",
     ),
 }
@@ -690,13 +688,17 @@ def tables_html(state: Mapping[str, Any], scope: Mapping[str, Any],
     results = [row for row in listed if row.get("result") != service.UNREADABLE]
     unreadable = [row for row in listed if row.get("result") == service.UNREADABLE]
     parts = []
-    empty = (f'<p class="shep-mp-p">No result of {r.e(scope_words(scope))} yet: a Test run '
-             'that keeps a report, or a registered record, is listed here. '
-             f'{r.e(CROSS_WORKSPACE_GAP)}</p>')
+    # The empty state in the flow (the skill's §9): what is missing and what
+    # will appear, then the gap across workspaces, its command in the Ref line
+    # only (the text brief's §8: no token in a sentence).
+    empty = (f'<div class="shep-empty shep-rs-empty"><p>No result of {r.e(scope_words(scope))} '
+             'yet. A Test run that keeps a report, or a registered record, is listed here.</p>'
+             f'<p>{r.e(CROSS_WORKSPACE_GAP)}</p>'
+             f'<p class="shep-rs-ref">Ref: {r.token_html(EXPORT_SCRIPT)}</p></div>')
     if not results:
         if shown.get("in_scope"):
-            parts.append(f'<p class="shep-mp-p">No result of {r.e(scope_words(scope))} matches '
-                         f'these filters; choose All to see its {shown["in_scope"]} '
+            parts.append(f'<p class="shep-empty">No result of {r.e(scope_words(scope))} matches '
+                         f'these filters. Choose All to see its {shown["in_scope"]} '
                          'results.</p>')
         else:
             parts.append(empty)
@@ -1806,18 +1808,18 @@ def create_results_segment() -> Dict[str, Any]:
     parts: Dict[str, Any] = {"state": gr.State(dict(EMPTY_STATE))}
     with gr.Column(visible=False, elem_id="shep-rs", elem_classes=["shep-rs"]) as column:
         parts["column"] = column
-        with gr.Row(elem_classes=["shep-rs-row"]):
+        with gr.Row(elem_classes=["shep-rs-row", "shep-field-row"]):
             parts["scope"] = gr.Radio(choices=SCOPE_CHOICES, value=FAMILY, label="Scope",
                                       show_label=False, elem_id="shep-rs-scope",
                                       elem_classes=["shep-seg"], container=False)
             parts["again"] = gr.Button("↻ Read again", size="sm", elem_id="shep-rs-again")
-        with gr.Row(elem_classes=["shep-rs-row"]):
+        with gr.Row(elem_classes=["shep-rs-row", "shep-field-row"]):
             for name, label in FILTERS:
                 parts[name] = gr.Dropdown(choices=[("All", ALL)], value=ALL, label=label,
                                           interactive=True, elem_id=f"shep-rs-{name}")
         parts["status"] = plain_html("", elem_id="shep-rs-status")
         parts["tables"] = plain_html(tables_html(EMPTY_STATE, {}, {}), elem_id="shep-rs-tables")
-        with gr.Row(elem_classes=["shep-rs-row"]):
+        with gr.Row(elem_classes=["shep-rs-row", "shep-field-row"]):
             # No cap on the choice: Compare shows the first five and says
             # so, and Export › Selected writes every one chosen (O6).
             parts["chosen"] = gr.Dropdown(choices=[], value=[], multiselect=True,
@@ -1827,7 +1829,7 @@ def create_results_segment() -> Dict[str, Any]:
                                                elem_id="shep-rs-differences")
         parts["compare"] = plain_html(compare_html([], True), elem_id="shep-rs-compare",
                                       js_on_load=COMPARE_JS)
-        with gr.Row(elem_classes=["shep-rs-row"]):
+        with gr.Row(elem_classes=["shep-rs-row", "shep-field-row"]):
             parts["which"] = gr.Radio(choices=EXPORT_ROWS, value=SHOWN, label="Export",
                                       elem_id="shep-rs-which")
             parts["format"] = gr.Radio(choices=EXPORT_FORMATS, value="csv", label="Format",
