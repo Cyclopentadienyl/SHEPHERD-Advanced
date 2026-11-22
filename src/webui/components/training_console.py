@@ -5342,7 +5342,6 @@ PAGE_CSS = charts.CHART_CSS + f"""
    footer's) is its mark or tag in a column of its own and its words after it, start-aligned at the
    measure; a word wider than its line (a long workspace or run name) breaks inside it (the review of
    5033d29: such a word widened its slot past the run bar at 390 x 844). */
-{_PAGE} #shep-train-reason:not(:has(.shep-rb-note)) {{ display: none !important; }}
 {_PAGE} .shep-rb-note {{ display: flex; flex-direction: column; align-items: flex-start; gap: var(--shep-space-para); }}
 {_PAGE} .shep-rb-why {{ display: grid; grid-template-columns: auto minmax(0, max-content); column-gap: 6px; align-items: start; max-width: min(100%, var(--shep-measure)); font-size: 15px; line-height: var(--shep-lh-prose); color: var(--shep-text-2); text-align: start; }}
 {_PAGE} .shep-rb-why > svg {{ margin-top: 4px; }}
@@ -5369,8 +5368,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-confirming .shep-rb-confirm {{ display: flex !important; align-items: flex-start !important; }}
 {_PAGE} .shep-rb-confirming :is(.shep-rb-name, #shep-train-start, #shep-train-continue, #shep-train-stop, #shep-train-why, #shep-train-reason) {{ display: none !important; }}
 {_PAGE} .shep-rb-confirm-q {{ max-width: var(--shep-measure); background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-radius: 8px; padding: 8px 12px; font-size: 15px; line-height: var(--shep-lh-prose); }}
-{_PAGE} #shep-train-notice:empty, {_PAGE} #shep-train-notice .html-container:empty {{ display: none; }}
-{_PAGE} #shep-train-notice:has(.html-container:empty), {_PAGE} #shep-train-banner:not(:has(.shep-banner)) {{ display: none !important; }}
+{_PAGE} #shep-train-notice:has(.shep-html:empty), {_PAGE} #shep-train-banner:not(:has(.shep-banner)) {{ display: none !important; }}
 {_PAGE} #shep-train-notice {{ font-size: 15px; overflow-wrap: anywhere; }}
 {_PAGE} .shep-banner {{ border-radius: 8px; border: 1px solid; padding: 10px 14px; margin-bottom: 6px; font-size: 15px; }}
 {_PAGE} .shep-banner-red {{ background: var(--shep-red-50); border-color: var(--shep-red-200); border-left: 4px solid var(--shep-red-700); color: var(--shep-red-700); }}
@@ -5390,9 +5388,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-drawer {{ display: none !important; }}
 {_PAGE} .shep-train-drawer-open #shep-train-drawer {{ display: flex !important; }}
 {_PAGE} .shep-train-drawer-open #shep-train-params {{ display: none !important; }}
-/* The drawer's header is a row of its own height: a long body never squeezes it (its title and
-   its note wrapped to two lines ran under the body at 1366 x 768, the header held to 48 px). */
-{_PAGE} .shep-drawer-hd {{ flex-wrap: nowrap !important; flex: none !important; }}
+/* The drawer's header keeps its title and Close on one line (its height is the shared panel
+   header's own: a long body never squeezes it). */
+{_PAGE} .shep-drawer-hd {{ flex-wrap: nowrap !important; }}
 {_PAGE} #shep-train-drawer-title {{ flex: 1 1 auto !important; }}
 {_PAGE} #shep-train-drawer-title .html-container > div {{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }}
 {_PAGE} #shep-train-drawer-title h2 {{ font-size: var(--shep-title-size); font-weight: 600; margin: 0; }}

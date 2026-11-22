@@ -3469,3 +3469,233 @@ def test_with_an_empty_workspaces_folder_the_header_and_tab_groups_hold(ui_walk_
     """The same shell rules with an empty workspaces folder and an empty
     registry: the GPU lock is set up, so the chip says "GPU jobs: none"."""
     _state_walk_holds_the_shells_rules(ui_walk_empty, "GPU jobs: none")
+
+
+# --------------------------------------------------------------------------- the shared pieces as drawn
+def _pieces_page():
+    """The shell with one stand-in research page (Datasets) drawing the shared pieces the sweep's
+    lanes reported on (each in its own element, measured by `_PIECES_JS`): a relation led by a
+    mark in a box wider than its words, and one its page places at the line's end; a bar with an
+    empty note and a note that says something, and a search row in a bar; a panel's header in a
+    column too short for it; a row of fields and a grid of fields (their fields in Gradio's one
+    form), a choice group with an ⓘ in a field row; a wrapped name in the shared tree; and a wide
+    table in a fit box above a tall page."""
+    from src.config import server_settings as ss
+    from src.webui.components import renderers as r
+    from src.webui.components import workspaces as w
+    from src.webui.style import FIT, FIT_WIDE
+
+    notice = w.setting_notice(ss.workspaces_root({}))
+    cells = "".join(f'<td class="shep-nowrap">a cell that never breaks {i:02d}</td>' for i in range(12))
+    tree = ('<table class="shep-tbl shep-mtree" id="pc-tree"><tbody><tr><td><div class="shep-tree-name">'
+            '<button type="button" class="shep-fold" aria-expanded="true">▾</button>'
+            '<span class="shep-tree-label">a run named at length so that it wraps over three lines</span>'
+            '</div></td></tr></tbody></table>')
+
+    def datasets(ctx):
+        with gr.Column(elem_id="pc-panel", elem_classes=["shep-panel"]):
+            shell.plain_html('<div class="shep-panel-hd"><h2>Shared pieces</h2></div>')
+            shell.plain_html(r.see_above("Start unavailable", notice), elem_id="pc-rel")
+            shell.plain_html(r.see_above("Import unavailable", notice).replace(
+                'class="shep-reason', 'style="justify-content: end; max-width: none" class="shep-reason', 1),
+                elem_id="pc-rel-end")
+            with gr.Row(elem_id="pc-bar", elem_classes=["shep-bar"]):
+                with gr.Row(elem_id="pc-search", elem_classes=["shep-search-row", "shep-grp", "shep-grp-grow"]):
+                    shell.plain_html('<span class="shep-search-lbl">Search</span>', elem_id="pc-search-lbl")
+                    gr.Textbox(show_label=False, container=False, elem_id="pc-search-box", lines=1, max_lines=1)
+                    gr.Button("Clear", size="sm", scale=0, min_width=0, elem_id="pc-search-clear")
+                shell.plain_html("", elem_id="pc-note-empty", elem_classes=["shep-bar-note"])
+                shell.plain_html("<p>A note that says something.</p>", elem_id="pc-note-said",
+                                 elem_classes=["shep-bar-note"])
+            with gr.Column(elem_id="pc-squeeze"):
+                with gr.Row(elem_id="pc-squeeze-hd", elem_classes=["shep-panel-hd"]):
+                    shell.plain_html("<h2>A header whose title runs over two or three lines in a narrow "
+                                     "column</h2>", elem_id="pc-squeeze-title")
+                shell.plain_html('<div style="height: 600px">A tall body.</div>', elem_id="pc-squeeze-bd")
+            with gr.Row(elem_id="pc-fields", elem_classes=["shep-fields"]):
+                for name in ("Epochs", "Seed", "Learning rate"):
+                    gr.Textbox(label=name, elem_id=f"pc-fields-{name[:2].lower()}")
+            with gr.Row(elem_id="pc-grid", elem_classes=["shep-field-grid"]):
+                for name in ("Warmup", "Decay", "Patience", "Clip"):
+                    gr.Textbox(label=name, elem_id=f"pc-grid-{name.lower()}")
+            with gr.Row(elem_id="pc-frow", elem_classes=["shep-field-row"]):
+                gr.Textbox(label="Name", elem_id="pc-frow-name")
+                gr.Radio(["Trained", "Frozen"], label="Graph backbone", elem_id="pc-frow-choice")
+            ctx.help.field("pc-frow-choice", "Graph backbone", "What the base's graph layers do here.")
+            shell.plain_html(tree, elem_id="pc-tree-box")
+            shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-fit"><table class="shep-tbl {FIT_WIDE}">'
+                             f'<tbody><tr>{cells}</tr></tbody></table></div>'
+                             '<div style="height: 2400px"></div>', elem_id="pc-fit-box")
+
+    pages = {**{page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS,
+                                                       shell.CLINICAL)},
+             shell.DATASETS: datasets}
+    with gr.Blocks() as demo:
+        ctx = shell.build_shell(demo, pages)
+        shell.help_texts(ctx.help)
+    return demo
+
+
+#: The stand-in page's facts as drawn (`_pieces_page`), at 800 x 900 (stacked: the page itself
+#: scrolls) with the panel held to 640 px, the squeezed column to 240 px with its body a scroll region, and the field row's and
+#: grid's floors set (16rem, 12rem).
+_PIECES_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 800, height: 900 } });
+  await page.addInitScript(QUEUE_JS);
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForFunction(() => window.ShepShell !== undefined, null, { timeout: 30000 });
+  await page.click('#shep-tab-research-button');
+  await page.click('#shep-page-datasets-button');
+  await page.waitForSelector('#pc-panel');
+  await page.addStyleTag({ content: `
+    #pc-panel { max-width: 640px !important; }
+    #pc-squeeze { height: 240px !important; max-height: 240px !important; flex: none !important; width: 260px !important; }
+    #pc-squeeze-bd { flex: 1 1 auto !important; min-height: 0 !important; overflow: auto !important; }
+    #pc-fields { --shep-field-min: 16rem; }
+    #pc-grid { --shep-field-min: 12rem; }
+    #pc-tree-box { width: 180px; }` });
+  const frames = (n) => page.evaluate((n) => new Promise((r) => { const f = (k) => k ? requestAnimationFrame(() => f(k - 1)) : r(); f(n); }), n);
+  await page.waitForSelector('#pc-frow-choice .shep-i');
+  await page.waitForSelector('#pc-fit[data-shep-narrow]');
+  await frames(4);
+  const out = await page.evaluate(() => {
+    const q = (s) => document.querySelector(s);
+    const box = (e) => e.getBoundingClientRect();
+    const ink = (e) => { const r = document.createRange(); r.selectNodeContents(e);
+      return [...r.getClientRects()].filter((x) => x.width > 0); };
+    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const rel = (id) => { const p = q(`#${id} .shep-reason`), mark = ink(p.querySelector('.shep-nb-mark'))[0],
+      words = ink(p.querySelector('.shep-nb-text'));
+      return { gap: words[0].left - mark.right, colGap: parseFloat(getComputedStyle(p).columnGap),
+               wordsRight: Math.max(...words.map((x) => x.right)), boxRight: box(p).right,
+               boxLeft: box(p).left, markLeft: mark.left }; };
+    const mid = (e) => { const r = box(e); return (r.top + r.bottom) / 2; };
+    const title = q('#pc-frow-choice [data-testid="block-info"]'), info = q('#pc-frow-choice .shep-i');
+    const lines = ink(q('#pc-tree .shep-tree-label')), fold = box(q('#pc-tree .shep-fold'));
+    const hd = q('#pc-squeeze-hd');
+    return {
+      rel: rel('pc-rel'), relEnd: rel('pc-rel-end'),
+      notes: { empty: getComputedStyle(q('#pc-note-empty')).display, said: getComputedStyle(q('#pc-note-said')).display },
+      search: { box: mid(q('#pc-search-box input, #pc-search-box textarea')), label: mid(q('#pc-search-lbl .shep-search-lbl')),
+                clear: mid(q('#pc-search-clear')) },
+      header: { client: hd.clientHeight, scroll: hd.scrollHeight, title: box(q('#pc-squeeze-title')).height,
+                height: box(hd).height },
+      fields: { floor: 16 * rem, boxes: [...document.querySelectorAll('#pc-fields .block:has(input, textarea)')]
+        .map((e) => ({ width: box(e).width, top: Math.round(box(e).top), left: Math.round(box(e).left) })),
+        row: box(q('#pc-fields')).width },
+      grid: { floor: 12 * rem, boxes: [...document.querySelectorAll('#pc-grid .block:has(input, textarea)')]
+        .map((e) => ({ width: box(e).width, left: Math.round(box(e).left) })), row: box(q('#pc-grid')).width },
+      choice: { title: box(title), info: box(info) },
+      tree: { lines: lines.length, first: { top: lines[0].top, bottom: lines[0].bottom },
+              fold: { top: fold.top, bottom: fold.bottom } },
+    };
+  });
+  // The fit box scrolled sideways and the page scrolled to its end, then anything drawn: the
+  // layout pass runs and measures the box, and neither scroll moves.
+  await page.evaluate(() => { const fit = document.getElementById('pc-fit'); fit.scrollLeft = 120;
+    window.scrollTo(0, document.scrollingElement.scrollHeight); });
+  await frames(2);
+  out.scroll = { before: await page.evaluate(() => ({ fit: document.getElementById('pc-fit').scrollLeft, page: window.scrollY,
+                                                      wide: document.getElementById('pc-fit').scrollWidth > document.getElementById('pc-fit').clientWidth })) };
+  await page.evaluate(() => document.body.appendChild(document.createElement('div')));
+  await frames(4);
+  out.scroll.after = await page.evaluate(() => ({ fit: document.getElementById('pc-fit').scrollLeft, page: window.scrollY }));
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.fixture(scope="module")
+def pieces_seen(tmp_path_factory):
+    """`_PIECES_JS` on `_pieces_page`, served as the service mounts it, once for the module."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    with served(_pieces_page(), **mount_options()) as base:
+        return run_node(_PIECES_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)),
+                        tmp_path_factory.mktemp("pieces"), base[:-len("gradio_api")])
+
+
+def test_a_relations_words_start_beside_its_mark_and_its_page_still_places_it(pieces_seen):
+    """S1 of the sweep's integration (the lanes' L2 R-a, L3 R1, L5 R2): a relation led by a mark
+    (`renderers.see_above`) in a box wider than its words starts its words one column gap after
+    its mark (the mark's ``auto`` column took the room the words left: 74 px on Fine-tune, 209 px
+    on Test), and a page that places it at its line's end (``justify-content``) still does."""
+    rel, end = pieces_seen["rel"], pieces_seen["relEnd"]
+    assert rel["gap"] <= rel["colGap"] + 1, rel
+    assert abs(rel["markLeft"] - rel["boxLeft"]) <= 1, rel
+    assert end["gap"] <= end["colGap"] + 1 and abs(end["wordsRight"] - end["boxRight"]) <= 1, end
+
+
+def test_an_empty_bar_note_takes_no_room_and_a_note_that_says_something_is_drawn(pieces_seen):
+    """S2 (L1 R1): a bar's note (``shep-bar-note``, a ``gr.HTML``, which always draws its
+    container and the element in it) is hidden while it says nothing and drawn once it does;
+    the shared rule tested the container, so no empty note was ever hidden."""
+    assert pieces_seen["notes"] == {"empty": "none", "said": "block"}, pieces_seen["notes"]
+
+
+def test_a_panels_header_keeps_its_words_in_a_column_too_short_for_it(pieces_seen):
+    """S3 (L1 R3): a panel's header (``shep-panel-hd``, a row in a column) never shrinks under
+    its words when the column is too short for its body (a drawer's header was squeezed to its
+    48 px floor at 1366 x 768, its two lines of title under the body)."""
+    hd = pieces_seen["header"]
+    assert hd["scroll"] <= hd["client"] + 1 and hd["height"] >= hd["title"], hd
+
+
+def test_a_search_rows_label_and_clear_stand_on_the_boxs_middle_line_in_a_bar(pieces_seen):
+    """S5 (L4 b): in a bar, whose groups stand on one bottom line, a search row's "Search" and
+    Clear stay on its box's middle line (they sank to its bottom; Models set it by its id)."""
+    s = pieces_seen["search"]
+    assert abs(s["label"] - s["box"]) <= 1.5 and abs(s["clear"] - s["box"]) <= 1.5, s
+
+
+def test_a_row_of_fields_and_a_grid_of_fields_reach_the_fields_in_gradios_form(pieces_seen):
+    """S7 (L2 R-b): Gradio draws a row's adjacent fields in one ``.form``; the shared row of
+    fields (``shep-fields``) and grid of fields (``shep-field-grid``) reach them there: each
+    field at least its floor (``--shep-field-min``), a row wrapping whole fields where one line
+    cannot hold them at their floors (they stood on one line in equal shares under it), a grid's
+    fields in columns of one width (the form stood in the grid's first column, one field a
+    line)."""
+    f, g = pieces_seen["fields"], pieces_seen["grid"]
+    assert len(f["boxes"]) == 3 and all(b["width"] >= f["floor"] - 0.5 for b in f["boxes"]), f
+    assert len({b["top"] for b in f["boxes"]}) > 1, f                      # wrapped, whole fields
+    assert len(g["boxes"]) == 4 and all(b["width"] >= g["floor"] - 0.5 for b in g["boxes"]), g
+    assert len({b["left"] for b in g["boxes"]}) > 1, g
+    assert max(b["width"] for b in g["boxes"]) - min(b["width"] for b in g["boxes"]) <= 1, g
+
+
+def test_a_choice_groups_title_and_its_help_stay_on_one_line_in_a_field_row(pieces_seen):
+    """S8 (L2 R-c): in a field row (``shep-field-row``), a choice group's title and the ⓘ after it
+    (its own children) stand on one line (the row drew each field as a column, so the ⓘ took a
+    line of its own under the title)."""
+    c = pieces_seen["choice"]
+    assert c["info"]["top"] < c["title"]["bottom"] and c["info"]["bottom"] > c["title"]["top"], c
+    assert c["info"]["left"] >= c["title"]["right"] - 1, c
+
+
+def test_a_wrapped_names_fold_toggle_stands_on_its_first_line(pieces_seen):
+    """S4 (L4 a): in the shared tree (``shep-mtree``) the fold toggle of a name that wraps stands
+    on its first line (it was centred on the middle of three or four lines), and the first line
+    lies within the toggle's height."""
+    t = pieces_seen["tree"]
+    assert t["lines"] >= 2, t
+    assert t["fold"]["top"] <= t["first"]["top"] + 1 and t["first"]["bottom"] <= t["fold"]["bottom"] + 1, t
+
+
+def test_the_layout_pass_keeps_a_fit_boxs_sideways_scroll_and_the_pages_scroll(pieces_seen):
+    """S9 (L5 R1): the layout pass measures a fit box's table out of flow at its narrowest; it
+    holds the scroll of the box's ancestors across the measure and puts it back, so a table
+    scrolled sideways stays where it was and a page scrolled to its end does not move when
+    anything is drawn (the box went back to 0 on every pass, the page jumped, and the shared
+    focus check found Datasets' focused "In use" ⓘ out of view at 390 x 844)."""
+    before, after = pieces_seen["scroll"]["before"], pieces_seen["scroll"]["after"]
+    assert before["wide"] and before["fit"] > 0 and before["page"] > 0, before
+    assert after == {"fit": before["fit"], "page": before["page"]}, (before, after)

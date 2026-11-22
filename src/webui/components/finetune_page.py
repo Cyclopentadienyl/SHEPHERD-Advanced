@@ -1479,7 +1479,7 @@ def create_finetune_page(ctx: Any) -> None:
                                                                 elem_id=f"ft_{name}", visible=False)
                             hops_note = plain_html("", elem_id="ft_hops_note")
                         with gr.Accordion("More settings", open=False, elem_id="ft_more"):
-                            with gr.Row(elem_classes=["shep-ft-settings", "shep-ft-grid"]):
+                            with gr.Row(elem_classes=["shep-ft-settings", "shep-ft-grid", "shep-field-grid"]):
                                 for name in MORE_FIELDS:
                                     fields[name] = tc.setting_field(name, values[name],
                                                                     elem_id=f"ft_{name}",
@@ -1487,7 +1487,7 @@ def create_finetune_page(ctx: Any) -> None:
                         # A task's own settings (`task_settings_view`), with one task.
                         with gr.Accordion(task_settings_label(()), open=False, visible=False,
                                           elem_id="ft_task_more") as task_more:
-                            with gr.Row(elem_classes=["shep-ft-settings", "shep-ft-grid"]):
+                            with gr.Row(elem_classes=["shep-ft-settings", "shep-ft-grid", "shep-field-grid"]):
                                 for name in TASK_OWN_FIELDS:
                                     fields[name] = tc.setting_field(name, values[name],
                                                                     elem_id=f"ft_{name}", visible=False)
@@ -1708,8 +1708,9 @@ PAGE_CSS = f"""
    column beside the field. */
 {_PAGE} .shep-ft-hops-row > .form:has(#ft_num_neighbors) {{ flex: 0 1 20rem !important; }}
 {_PAGE} #ft_hops_note {{ flex: 1 1 100% !important; min-width: 0 !important; }}
-/* The settings under an accordion in columns of one width, as the base form's grid lays them. */
-{_PAGE} .shep-ft-grid > .form {{ display: grid !important; grid-template-columns: repeat(auto-fill, minmax(min(14rem, 100%), 1fr)); gap: var(--shep-space-2) var(--shep-space-4) !important; background: transparent !important; border: 0 !important; box-shadow: none !important; }}
+/* The settings under an accordion in columns of one width (the shared grid of fields,
+   ``shep-field-grid``), as the base form's grid lays them. */
+{_PAGE} .shep-ft-grid {{ --shep-field-min: 14rem; }}
 {_PAGE} .shep-ft-hops {{ margin: 0; font-size: 14px; overflow-wrap: anywhere; }}
 /* Start and Stop (`shep-bar`): the reason beside each on the button's first line (baselines
    aligned, so the button stands at the bar's top whatever follows), under it when the row cannot

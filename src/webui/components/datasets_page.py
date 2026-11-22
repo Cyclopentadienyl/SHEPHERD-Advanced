@@ -661,8 +661,9 @@ PAGE_CSS = f"""
 {_PAGE} #shep-ds-details .shep-panel-bd > .shep-kv,
 {_PAGE} #shep-ds-details .shep-ds-optkv > .shep-kv {{ grid-template-columns: 10em minmax(0, 1fr); }}
 /* What "Use for training ›" does: beside it while its one line fits there, else a line of its own
-   under it (never a column of words beside a button). */
-{_PAGE} #shep-ds-use-note {{ flex: 0 1 max-content !important; min-width: 0 !important; }}
+   under it (never a column of words beside a button): its one line's width, never shrunk, at most
+   the footer's (it shrank to a column of three lines beside the button at 1850 x 960). */
+{_PAGE} #shep-ds-use-note {{ flex: 0 0 max-content !important; max-width: 100%; min-width: 0 !important; }}
 /* **The two panels, sized by what they hold** (M4, the shared `shep-sized`): each grows from its
    basis, the list three times as fast; the details keep their digest grid's four columns (31rem); the
    list keeps the table with its optional columns dropped (Name, the fingerprint, Train / val and

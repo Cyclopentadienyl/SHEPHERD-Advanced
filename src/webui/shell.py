@@ -930,11 +930,24 @@ _SHELL_JS = r"""
   // fieldset block, not a segmented control) whose options do not fit one line of its room is
   // marked NARROW, and its options stand one per line, never one alone under the others.
   var CHOICE = 'fieldset.block:not(.shep-seg)';
+  // The scroll positions of `el`'s ancestors are held across the measure and put back: drawn
+  // out of flow at its narrowest, `el` no longer fills a box that scrolls around it, and reading
+  // its width clamps that box's scroll (a FIT table's sideways scroll went back to 0 on every
+  // pass, the page near its end jumped to its top, a focused control left the view).
   function measured(el, extra, read) {
+    var held = [];
+    for (var a = el.parentElement; a; a = a.parentElement) {
+      if (a.scrollLeft || a.scrollTop) { held.push([a, a.scrollLeft, a.scrollTop]); }
+    }
     var kept = el.getAttribute('style');
     el.setAttribute('style', (kept ? kept + ';' : '') + extra);
     var value = read(el);
     if (kept === null) { el.removeAttribute('style'); } else { el.setAttribute('style', kept); }
+    for (var i = 0; i < held.length; i++) {
+      var h = held[i];
+      if (h[0].scrollLeft !== h[1]) { h[0].scrollLeft = h[1]; }
+      if (h[0].scrollTop !== h[2]) { h[0].scrollTop = h[2]; }
+    }
     return value;
   }
   function roomOf(box) {

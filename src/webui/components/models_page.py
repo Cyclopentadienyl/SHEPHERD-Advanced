@@ -2073,9 +2073,6 @@ PAGE_CSS = f"""
   flex: none; background: none; border: 0; padding: 0 16px 8px !important; margin: 0 !important;
 }}
 {_PAGE} #shep-models-research-searchrow {{ --shep-grp-basis: 16rem; --shep-grp-min: 16rem; }}
-/* "Search" and Clear on the box's middle line, as Order's label and ⓘ are on the switch's:
-   a label beside its box is no label above it (the bar stands its groups on one bottom line). */
-{_PAGE} #shep-models-research-searchrow.shep-grp {{ align-items: center !important; }}
 /* The "Applying …" line takes no room while nothing is pending (`PENDING_JS`). */
 {_PAGE} #shep-mp-pending:not(:has(.shep-mp-pending.shep-on)) {{ display: none !important; }}
 {_PAGE} .shep-mp-pending {{ font-size: 14px; }}

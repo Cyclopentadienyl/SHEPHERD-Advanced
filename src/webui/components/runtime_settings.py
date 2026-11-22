@@ -670,8 +670,10 @@ PAGE_CSS = f"""
 {_PAGE} #shep-settings-ft > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}
 {_PAGE} #shep-settings-ft > #runtime_access_reason {{ flex-basis: 100% !important; }}
 {_PAGE} #shep-settings-out {{ padding: 0 16px 12px !important; gap: 6px !important; }}
-{_PAGE} #runtime_status:has(.html-container:empty),
-{_PAGE} #runtime_restart_status:has(.html-container:empty) {{ display: none !important; }}
+/* A status line takes no room while it says nothing (`gr.HTML` always draws its container: what
+   is empty is the element inside it). */
+{_PAGE} #runtime_status:has(.shep-html:empty),
+{_PAGE} #runtime_restart_status:has(.shep-html:empty) {{ display: none !important; }}
 {_PAGE} #runtime_confirm > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}
 {_PAGE} #runtime_confirm > button {{ flex: none !important; min-width: max-content !important; }}
 {_PAGE} #runtime_confirm p {{ margin: 0; }}
