@@ -2129,7 +2129,11 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
     js = shell.SHELL_HEAD
     assert f"var LAYOUT = '{LAYOUT_ATTR}'" in js and f"SHORT_BELOW = {SHORT_BELOW}" in js
     assert "var want = w > h && sideFits(shownTab()) ? 'side' : 'stack';" in js
-    assert "getPropertyValue('--shep-panel-min')" in js
+    # Each panel's minimum read in px whatever unit its page writes (M4, the UI sweep of
+    # 2026-11-22): the property is registered as a length, and where a browser has no @property
+    # a rem or em value is converted by the font size (`lengthPx`), never by a probe.
+    assert "lengthPx(kids[j], '--shep-panel-min')" in js and "getPropertyValue(prop)" in js
+    assert "@property --shep-panel-min { syntax: '<length>'; inherits: false; initial-value: 0px; }" in head
     for page_css in (head,):
         assert side(page_css) and stack(page_css)
     # Every page with panels side by side says what its panels need.
@@ -2358,13 +2362,16 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
     Nothing covering a focused control, at every size, is the shared check's
     (`test_every_page_at_every_size_passes_the_ui_measurement_check`)."""
     portrait = {"1440x1600", "1000x1000", "1080x1920", "760x1000", "960x1080", "390x844"}
-    datasets_stacked = {"1280x900", "1366x620", "1280x600"}          # its own minimum, about 1400 px
+    # Side by side exactly when the shown panels' own minimums and gaps fit the row (relative:
+    # a page's panels sized by what they hold, the UI sweep's M4, move no pin here). Datasets at
+    # 1280 x 900, 1366 x 620 and 1280 x 600 stacked by that measure when this was written.
+    datasets_stacked = {"1280x900", "1366x620", "1280x600"}
     for s in ui_walk:
         where, facts = (s["size"], s["page"]), s["extra"]
         assert facts["overX"] == 0, (where, facts)
         assert facts["short"] == (int(s["size"].split("x")[1]) < 900), (where, facts)
         narrow_datasets = s["page"] == "datasets" and s["size"] in datasets_stacked
-        want = "stack" if s["size"] in portrait or narrow_datasets else "side"
+        want = "stack" if s["size"] in portrait or facts["need"] > facts["width"] + 0.5 else "side"
         assert facts["layout"] == want, (where, facts)
         if want == "side":
             assert facts["need"] <= facts["width"] + 0.5, (where, facts)
@@ -2372,7 +2379,7 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
             assert facts["overY"] <= 0, (where, facts)
         elif len(facts["tops"]) > 1:
             assert facts["tops"] == sorted(facts["tops"]) and len(set(facts["tops"])) == len(facts["tops"]), (where, facts)
-        if narrow_datasets:
+        if narrow_datasets and want == "stack":
             assert facts["need"] > facts["width"], s                  # its own measure, no global gate
     wide = [s for s in ui_walk if s["size"] == "1850x960" and not s.get("open")]
     # The layout's facts, not a page's own (`drawer`, `finetune`: their test's).
@@ -2380,8 +2387,11 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
     for page in {s["page"] for s in wide}:
         first, *_, last = [layout(s["extra"]) for s in wide if s["page"] == page]
         assert first == last, (page, first, last)
-    assert [(s["page"], s["extra"]["layout"]) for s in ui_walk[-3:]] == [
-        ("training", "side"), ("datasets", "stack"), ("finetune", "side")]
+    # Opened at a size, not only resized to it: each page decided by its own panels as drawn.
+    assert [s["page"] for s in ui_walk[-3:]] == ["training", "datasets", "finetune"]
+    for s in ui_walk[-3:]:
+        facts = s["extra"]
+        assert facts["layout"] == ("stack" if facts["need"] > facts["width"] + 0.5 else "side"), s
     # R-38: at the owner's window the Training run bar is one row (it was two, 119 px).
     (training, *_) = [s for s in wide if s["page"] == "training"]
     assert training["extra"]["runbar"]["lines"] == 1 and training["extra"]["runbar"]["h"] < 90, training
@@ -3128,3 +3138,292 @@ def test_the_training_parameters_fold_when_stacked_and_show_side_by_side():
     assert ('#shep-train-params:has(.shep-train-fold[aria-expanded="false"]) > #shep-train-params-bd '
             "{ display: none !important; }") in stack(tc.PAGE_CSS)
     assert ".shep-train-fold { display: none; }" in side(tc.PAGE_CSS)
+
+
+# --------------------------------------------------------------------------- the tab groups and the go link
+def test_the_tab_groups_flatten_to_the_research_pages_and_their_style_is_generated():
+    """The owner's decision of 2026-11-22: "Datasets │ Training Fine-tune │
+    Test Models", a grouping drawn by position, never a stage (`STAGES` and
+    the tablist's name are unchanged) and never a node of the tablist: each
+    later group's first tab keeps a gap (`TAB_GROUP_GAP`) in whose middle an
+    empty ``::before`` draws the separator, through the documented
+    ``<elem_id>-button`` ids only; no role, tab stop or text is added. Not
+    drawn while the tabs wrap (`TABS_WRAPPED_ATTR`, the head script's mark);
+    the gap stays, so the mark changes nothing the pass measures."""
+    from src.webui.app import dashboard_head
+
+    assert tuple(page for group in shell.TAB_GROUPS for page in group) == shell.RESEARCH_PAGES
+    assert shell.TAB_GROUPS == (("datasets",), ("training", "finetune"), ("test", "models"))
+    css = shell.TAB_GROUP_CSS
+    assert css in dashboard_head()
+    for first in ("training", "test"):
+        tab = f"#shep-research-nav > .tab-wrapper > .tab-container > #shep-page-{first}-button"
+        assert f"{tab} {{ position: relative; margin-inline-start: var(--shep-tabgroup-gap) !important; }}" in css
+        sep = _rule(css, f"{tab}::before")
+        assert 'content: ""' in sep and "pointer-events: none" in sep and "width: 1px" in sep
+        assert (f"#shep-research-nav[{shell.TABS_WRAPPED_ATTR}] > .tab-wrapper > .tab-container > "
+                f"#shep-page-{first}-button::before {{ display: none; }}") in css
+    assert "#shep-page-datasets-button" not in css and "#shep-page-finetune-button" not in css
+    assert not re.search(r"role|tabindex|content: \"[^\"]", css)
+    head = shell.SHELL_HEAD
+    lines = head[head.index("function tabLines()"):head.index("var FOLD = ")]
+    # The pass reads the tabs' own tops and writes only the mark, which no rule of a tab's box reads.
+    assert "offsetTop" in lines and "toggleAttribute(TABS_WRAPPED, wrapped)" in lines
+    assert "style" not in lines and "margin" not in lines
+    assert "    tabLines();" in head[head.index("function layout()"):]
+
+
+def test_the_fit_pass_measures_each_box_with_its_own_mark_off():
+    """M3 and M6 (the UI sweep): a box the pass marks narrow (a wide table
+    whose optional columns the mark hides, a choice group the mark stacks)
+    is measured with that mark taken off and put back before anything is
+    painted, so what it measures never depends on what it set; a choice group
+    is a fieldset block that is not a segmented control, its options on one
+    line for the measure alone."""
+    head = shell.SHELL_HEAD
+    fits = head[head.index("function fits()"):head.index("var TABS_WRAPPED")]
+    assert fits.count("removeAttribute(NARROW)") == 2 and fits.count("setAttribute(NARROW, '')") == 2
+    for block in fits.split("var groups")[0], fits.split("var groups")[1]:
+        off, measure, back = (block.index("removeAttribute(NARROW)"), block.index("measured("),
+                              block.index("setAttribute(NARROW, '')"))
+        assert off < measure < back
+    assert "var CHOICE = 'fieldset.block:not(.shep-seg)';" in head
+    assert "':scope > .wrap:has(> label)'" in fits
+    from src.webui.style import SHELL_CSS
+
+    assert "fieldset.block[data-shep-narrow]:not(.shep-seg) > .wrap:has(> label)" in SHELL_CSS
+    assert "[data-shep-narrow] :is(th, td, col).shep-col-opt { display: none !important; }" in SHELL_CSS
+
+
+def test_a_notices_link_opens_only_a_listed_place():
+    """The notice's next step (`renderers.notice_block`'s ``data-shep-go``):
+    the head script opens a page only from `GO_TARGETS` (Settings, focusing
+    only its Data locations panel; the research pages, no focus), never a
+    value from the page itself."""
+    assert shell.GO_TARGETS == {"settings": ("shep-dl",), **{p: () for p in shell.RESEARCH_PAGES}}
+    head = shell.SHELL_HEAD
+    go = head[head.index("var GO = "):head.index("window.ShepShell = {")]
+    assert "var GO = {\"settings\": [\"shep-dl\"], \"datasets\": []" in go
+    assert "if (!Object.prototype.hasOwnProperty.call(GO, page)) { return; }" in go
+    assert "if (GO[page].indexOf(focusId) < 0) { focusId = ''; }" in go
+    assert "innerHTML" not in go and "eval(" not in go and "location.href" not in go
+    assert "head.focus({preventScroll: true})" in go
+
+
+def _groups_page():
+    """The shell with stand-in pages: Datasets draws a notice (`notice_block`,
+    its link to Settings › Data locations) and two links the script must not
+    follow as asked (a place it does not list; an element it does not list);
+    Settings draws a stand-in Data locations panel with its heading."""
+    from src.config import server_settings as ss
+    from src.webui.components import renderers as r
+    from src.webui.components import workspaces as w
+
+    notice = r.notice_block(w.setting_notice(ss.workspaces_root({})))
+    stray = ('<button type="button" id="go-evil" data-shep-go="evil">Elsewhere</button>'
+             '<button type="button" id="go-unlisted" data-shep-go="settings" '
+             'data-shep-focus="shep-settings">Settings, unlisted focus</button>')
+
+    def datasets(ctx):
+        shell.plain_html(notice + stray, elem_id="groups-notice")
+
+    def settings(ctx):
+        with gr.Column(elem_id="shep-dl", elem_classes=["shep-panel"]):
+            shell.plain_html('<div class="shep-panel-hd"><h2>Data locations</h2></div>')
+            gr.Textbox(label="Workspaces folder", elem_id="stand-in-field")
+
+    pages = {**{page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS,
+                                                       shell.CLINICAL)},
+             shell.DATASETS: datasets, shell.SETTINGS: settings}
+    with gr.Blocks() as demo:
+        shell.build_shell(demo, pages)
+    return demo
+
+
+_GROUPS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const base = process.argv[2];
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 } });
+  await page.addInitScript(QUEUE_JS);
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForSelector('#shep-tab-clinical-button[aria-selected="true"]', { timeout: 30000 });
+  await page.waitForFunction(() => window.ShepShell !== undefined);
+  const frame = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.click('#shep-tab-research-button');
+  await page.click('#shep-page-datasets-button');
+  await page.waitForSelector('#groups-notice .shep-nb');
+  const row = () => page.evaluate(() => {
+    const list = document.querySelector('#shep-research-nav > .tab-wrapper > .tab-container');
+    const tabs = [...list.children];
+    return { kids: tabs.map((t) => [t.tagName, t.getAttribute('role'), t.getAttribute('data-tab-id')]),
+             wrapped: document.getElementById('shep-research-nav').hasAttribute('data-shep-tabs-wrapped'),
+             tabs: tabs.map((t) => { const r = t.getBoundingClientRect(), s = getComputedStyle(t, '::before');
+               const drawn = s.content !== 'none' && s.content !== 'normal' && s.display !== 'none';
+               return { id: t.getAttribute('data-tab-id'), left: r.left, right: r.right, top: Math.round(r.top),
+                        sep: drawn ? { x: r.left + parseFloat(s.left), content: s.content, top: parseFloat(s.top),
+                                       bottom: parseFloat(s.bottom), width: parseFloat(s.width) } : null }; }) };
+  });
+  const out = {};
+  for (const [name, w, h] of [['wide', 1850, 960], ['narrow', 390, 844], ['back', 1850, 960]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await frame(); await frame();
+    out[name] = await row();
+  }
+  // The keyboard: from Datasets' tab, Tab moves tab to tab, past no separator.
+  await page.focus('#shep-page-datasets-button');
+  const keys = [];
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press('Tab');
+    keys.push(await page.evaluate(() => document.activeElement.getAttribute('data-tab-id')));
+  }
+  await page.click('#shep-page-datasets-button');
+  await page.waitForSelector('#groups-notice .shep-nb');
+  // A link to a place the script does not list does nothing.
+  await page.click('#go-evil');
+  await frame(); await frame();
+  out.evil = await page.evaluate(() => document.querySelector('#shep-nav > .tab-wrapper [role="tab"][aria-selected="true"]').getAttribute('data-tab-id'));
+  // The notice's link: Settings opens and Data locations' heading takes the focus.
+  await page.click('#groups-notice .shep-nb-go');
+  await page.waitForSelector('#shep-tab-settings-button[aria-selected="true"]');
+  await page.waitForFunction(() => document.activeElement && document.activeElement.tagName === 'H2', null, { timeout: 10000 });
+  out.landed = await page.evaluate(() => ({ text: document.activeElement.textContent.trim(),
+    inDl: !!document.activeElement.closest('#shep-dl'), tabindex: document.activeElement.getAttribute('tabindex'),
+    title: document.title }));
+  // An element the script does not list for the page: the page opens, the focus stays.
+  await page.click('#shep-tab-research-button');
+  await page.waitForSelector('#groups-notice .shep-nb');
+  await page.click('#go-unlisted');
+  await page.waitForSelector('#shep-tab-settings-button[aria-selected="true"]');
+  await frame(); await frame();
+  out.unlisted = await page.evaluate(() => document.activeElement.id);
+  out.keys = keys;
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
+    """The tab groups and the notice's link as drawn (Node and Playwright,
+    skipped without), the shell mounted as the service mounts it:
+
+    - at the owner's window the tabs are on one line, a separator drawn in
+      the gap before Training and before Test (between the tabs, never over
+      one, empty, 1 px), none before Datasets or the second tab of a group;
+    - at a phone's width the tabs wrap: the row is marked and no separator
+      is drawn (a line never starts with one); back at the owner's window,
+      as before;
+    - the tablist holds the five tabs only, in `RESEARCH_PAGES`' order; the
+      keyboard's Tab moves from tab to tab, meeting no separator;
+    - the notice's link opens Settings and moves the focus to the Data
+      locations heading; a link to a place the script does not list does
+      nothing, and an element it does not list for the page gets no focus."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    with served(_groups_page(), **mount_options()) as base:
+        seen = run_node(_GROUPS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    wide = seen["wide"]
+    assert wide["kids"] == [["BUTTON", "tab", page] for page in shell.RESEARCH_PAGES], wide
+    assert not wide["wrapped"] and len({t["top"] for t in wide["tabs"]}) == 1, wide
+    drawn = {t["id"]: t["sep"] for t in wide["tabs"] if t["sep"]}
+    assert set(drawn) == {"training", "test"}, wide
+    by = {t["id"]: t for t in wide["tabs"]}
+    for first, before in (("training", "datasets"), ("test", "finetune")):
+        sep = drawn[first]
+        assert sep["content"] == '""' and sep["width"] == 1, sep
+        assert by[before]["right"] < sep["x"] < by[first]["left"], (sep, by[before], by[first])
+    narrow = seen["narrow"]
+    assert narrow["wrapped"] and len({t["top"] for t in narrow["tabs"]}) > 1, narrow
+    assert not any(t["sep"] for t in narrow["tabs"]), narrow
+    assert seen["back"] == wide
+    assert seen["keys"] == ["training", "finetune", "test", "models"], seen["keys"]
+    assert seen["evil"] == "research"
+    assert seen["landed"] == {"text": "Data locations", "inDl": True, "tabindex": "-1",
+                              "title": shell.TITLES["settings"]}, seen["landed"]
+    assert seen["unlisted"] != "shep-settings"
+
+
+# --------------------------------------------------------------------------- the first-use and empty walks
+#: The header's facts at a stop of a state walk: whether the chips and Settings went onto a
+#: second line, and the GPU chip's words.
+_HEADER_FACTS_JS = r"""() => ({
+  wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
+  gpu: ((document.querySelector('#shep-chips .shep-chip-gpu .shep-chip-text') || {}).textContent || '').trim() })"""
+#: The first-use walk's windows (the layout measure's, `browser.LAYOUT_SIZES`, less the laptop
+#: sizes the shared walk covers): the owner's, the owner's Firefox width, 1280 x 720, a portrait
+#: column and a phone.
+_STATE_SIZES = ((1850, 960), (1550, 830), (1280, 720), (800, 900), (390, 844))
+
+
+@pytest.fixture(scope="module")
+def ui_walk_first_use(tmp_path_factory):
+    """**The first-use walk** (the UI sweep of 2026-11-22): the service as a
+    first start serves it (no workspaces folder, no results registry, the
+    launcher's local start: `browser.state_settings("first_use")`), every
+    page at `_STATE_SIZES`, the layout rules recorded at each stop (no focus
+    walk), screenshots under the module's ``ui-walk-first-use*/shots``."""
+    from tests.fixtures.browser import UI_PAGES, layout_stops, node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    root = tmp_path_factory.mktemp("ui-walk-first-use")
+    (root / "shots").mkdir()
+    return walk_state("first_use", root, layout_stops(UI_PAGES, _STATE_SIZES), shots=root / "shots",
+                      extra_js=_HEADER_FACTS_JS)
+
+
+@pytest.fixture(scope="module")
+def ui_walk_empty(tmp_path_factory):
+    """**The empty-folder walk**: an empty workspaces folder and an empty
+    registry (`browser.state_settings("empty")`), every page at the owner's
+    window and a phone's."""
+    from tests.fixtures.browser import UI_PAGES, layout_stops, node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    root = tmp_path_factory.mktemp("ui-walk-empty")
+    (root / "shots").mkdir()
+    return walk_state("empty", root, layout_stops(UI_PAGES, ((1850, 960), (390, 844))),
+                      shots=root / "shots", extra_js=_HEADER_FACTS_JS)
+
+
+def _state_walk_holds_the_shells_rules(seen, gpu_words):
+    from tests.fixtures.browser import UI_PAGES, layout_problems
+
+    assert {s["page"] for s in seen} == set(UI_PAGES)
+    for s in seen:
+        width = int(s["size"].split("x")[0])
+        assert s["extra"]["gpu"] == gpu_words, s["extra"]
+        if width >= 1280:                                 # one header line from a laptop's width
+            assert not s["extra"]["wrapped"], (s["page"], s["size"])
+        assert "layout" in s["check"] and s["check"]["layout"]["tabs"] is not None \
+            or s["page"] in ("clinical", "settings"), (s["page"], s["size"])
+    assert layout_problems(seen, rules=("tab-groups", "help-on-page", "notice-repeat")) == []
+
+
+def test_at_first_use_the_header_and_tab_groups_hold_on_every_page_and_size(ui_walk_first_use):
+    """B-11 and the owner's tab groups, at first use (no workspaces folder, no
+    registry; the state of the owner's six screenshots): the GPU chip says
+    "GPU jobs: not set up" and the header is one line from 1280 px wide up
+    (it wrapped at 1280 on "GPU jobs: refused, no workspaces folder"); the
+    research tabs keep their order, a separator is never drawn at a line's
+    start or while they wrap, nothing but a tab is in the tablist; no help
+    text is drawn on the page and no notice twice on a screen. The page
+    rules (`browser.layout_problems`: beside, narrow-box, orphan, edge, …)
+    are each page's to bring to zero; they are held at zero for every page
+    once the sweep's lanes land (its integration), not here."""
+    _state_walk_holds_the_shells_rules(ui_walk_first_use, "GPU jobs: not set up")
+
+
+def test_with_an_empty_workspaces_folder_the_header_and_tab_groups_hold(ui_walk_empty):
+    """The same shell rules with an empty workspaces folder and an empty
+    registry: the GPU lock is set up, so the chip says "GPU jobs: none"."""
+    _state_walk_holds_the_shells_rules(ui_walk_empty, "GPU jobs: none")

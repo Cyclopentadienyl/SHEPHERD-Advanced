@@ -65,6 +65,15 @@ diagnosis at a stop (``diagnose``), and can walk as a read-only viewer
 `PTR_SIZES` are PLAN_TEST_RESULTS §6's acceptance windows the representative
 ones leave out (T06-D: INT-AUDIT, PTR-LAYOUT).
 
+**The layout rules** (the UI sweep of 2026-11-22): `LOOK_JS`'s ``layout``
+(recorded in every checked stop's ``check``) measures what the sweep's
+findings were (a message beside fields, a squeezed box, a choice group
+leaving one option alone, two left edges, a notice said twice, the tab
+groups' separators); `layout_problems` turns it into lines. A walk can serve
+the dashboard at first use or with an empty workspaces folder
+(`walk_state`, `WALK_STATES`) and measure each page at the layout windows
+(`layout_stops`, `LAYOUT_SIZES`).
+
 Module: tests/fixtures/browser.py
 """
 from __future__ import annotations
@@ -327,12 +336,260 @@ LOOK_JS = r"""
   /* What a choice drawn in the page says: a radio's or a segment's words. */
   const choices = () => [...document.querySelectorAll('label:has(> input[type=radio]), .shep-seg label, [role=radio]')]
     .filter((e) => drawn(e) && shown(e)).map((e) => e.textContent.trim());
+
+  /* **The layout rules** (the UI sweep of 2026-11-22; `layout_problems`): what the page shown
+     draws, each measured relative to what is drawn, never against a window size or a pixel
+     figure of one screen:
+     - beside: a text block of 100 or more characters (no field in it) that stands beside a field
+       or a button of its panel, overlapping its line by half the control's height;
+     - narrow: a text box or a select whose inner width holds fewer than 10 of its own "0";
+     - overlap: two controls that overlap by more than 2 x 2 px (a ⓘ's cover over its disabled
+       button aside);
+     - orphan: a choice group on two or more lines whose last line holds one option and whose
+       first holds more;
+     - centred: a field or a button centred in a row more than twice its height plus 24 px, 20 px
+       or more below the row's top;
+     - split: the controls of one group (`.shep-grp`) not on one line;
+     - edge: in a panel's left part, a heading, paragraph, reason, notice, empty state, field
+       label or field box whose left edge is 1 px to 2em off the panel heading's (lists, tables,
+       term rows and the words after a status mark aside);
+     - clipped: a control cut by an ancestor that hides its overflow and is no scroll region;
+     - empty: a panel with no visible words or control under its header;
+     - help: a registered help text drawn on the page outside the bubble;
+     - notices: each notice key (`data-notice`, `data-notice-also`) and how often it is drawn;
+     - tabs: the research tabs' lines, their order, and each separator drawn while the tabs wrap
+       or at a line's start, and anything in the tablist that is not a tab. */
+  const INTERACTIVE = 'button, input:not([type=hidden]), textarea, select, a[href], [role=button], '
+    + '[role=tab], [role=radio], [role=checkbox], [role=switch], summary';
+  const SKIP = 'script, style, noscript, .sr-only, .shep-vh, [hidden], #shep-help-texts, '
+    + '#shep-help-bubble, ul.option-list';
+  const BOXES = 'input[type=text], input[type=number], input[type=search], input:not([type]), '
+    + 'input[role=combobox], textarea';
+  const visible = (e) => {
+    if (!shown(e)) { return false; }
+    for (let a = e; a && a !== document.body; a = a.parentElement) {
+      if (+getComputedStyle(a).opacity < 0.05) { return false; }
+    }
+    return true;
+  };
+  const blockOf = (el) => {
+    let e = el;
+    while (e && e !== document.body && /^(inline|contents)/.test(getComputedStyle(e).display)) { e = e.parentElement; }
+    return e;
+  };
+  const zeroOf = (e) => {
+    const s = getComputedStyle(e);
+    const c = (zeroOf.c || (zeroOf.c = document.createElement('canvas'))).getContext('2d');
+    c.font = `${s.fontStyle} ${s.fontWeight} ${s.fontSize} ${s.fontFamily}`;
+    return c.measureText('0').width || parseFloat(s.fontSize) * 0.55;
+  };
+  const textNodes = (root) => {
+    const out = [], w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const t = n.textContent.trim(), el = n.parentElement;
+      if (!t || !el || el.closest(SKIP) || !visible(el)) { continue; }
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      const rects = [...range.getClientRects()].filter((r) => r.width > 0.5 && r.height > 0.5);
+      if (rects.length) { out.push({ node: n, el, t, rects }); }
+    }
+    return out;
+  };
+  const clip = (s, n = 60) => s.replace(/\s+/g, ' ').trim().slice(0, n);
+  /* A ⓘ's cover over the disabled button it explains (the gated-button rule) is meant to lie
+     over it. */
+  const coverOf = (a, b) => a.matches('.shep-i-cover') || b.matches('.shep-i-cover');
+  /* The part of an element its ancestors that clip or scroll leave in view. */
+  const seenRect = (e) => {
+    const r = e.getBoundingClientRect();
+    let L = r.left, T = r.top, R = r.right, B = r.bottom;
+    for (let a = e.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+      const s = getComputedStyle(a);
+      if (s.overflowX !== 'visible' || s.overflowY !== 'visible') {
+        const q = a.getBoundingClientRect();
+        if (s.overflowX !== 'visible') { L = Math.max(L, q.left); R = Math.min(R, q.right); }
+        if (s.overflowY !== 'visible') { T = Math.max(T, q.top); B = Math.min(B, q.bottom); }
+      }
+      if (s.position === 'fixed') { break; }
+    }
+    return { left: L, top: T, right: R, bottom: B, width: Math.max(0, R - L), height: Math.max(0, B - T),
+             whole: r.width * r.height };
+  };
+  /* Where an element's own words or box start: a box (a field, a select's wrap) at its border,
+     text at its content edge (after its padding and border). */
+  const startOf = (e) => {
+    const r = e.getBoundingClientRect();
+    if (e.matches('input, textarea, .wrap')) { return r.left; }
+    const s = getComputedStyle(e);
+    return r.left + (parseFloat(s.paddingLeft) || 0) + (parseFloat(s.borderLeftWidth) || 0);
+  };
+  const layout = () => {
+    const shownNow = shownPage(), tab = shownNow.tab;
+    /* The page's panels: its outermost `.shep-panel`s (a run bar, a drawer included), else the
+       children of its innermost one-child box. */
+    const outer = tab ? [...tab.querySelectorAll('.shep-panel')]
+      .filter((p) => visible(p) && !p.parentElement.closest('.shep-panel')) : [];
+    const panels = outer.length ? outer
+      : shownNow.panels.filter((p) => !p.matches('[data-testid="status-tracker"]'));
+    const scope = tab || document.body, out = { beside: [], narrow: [], overlap: [], orphan: [], centred: [],
+      split: [], edge: [], clipped: [], empty: [], help: [], notices: {}, tabs: null };
+    const panelOf = (e) => panels.findIndex((p) => p.contains(e));
+    const ctl = [...scope.querySelectorAll(INTERACTIVE)].filter((e) => !e.closest(SKIP) && visible(e));
+    const fieldsAndButtons = ctl.filter((c) => c.matches('input, textarea, button, [role=combobox]')
+      && !c.matches('.shep-i, .shep-copy, .shep-nb-go, .shep-link'));
+    const texts = textNodes(scope);
+    // beside
+    const blocks = new Set(texts.filter((x) => x.t.length > 30).map((x) => blockOf(x.el)));
+    for (const b of blocks) {
+      if (!b || b === scope || b.querySelector('input, textarea, select')) { continue; }
+      const words = (b.innerText || '').trim();
+      if (words.length < 100) { continue; }
+      const r = b.getBoundingClientRect(), k = panelOf(b);
+      const near = fieldsAndButtons.filter((c) => {
+        if (panelOf(c) !== k || (k < 0 && panels.length) || b.contains(c)) { return false; }
+        const q = c.getBoundingClientRect(), over = Math.min(q.bottom, r.bottom) - Math.max(q.top, r.top);
+        return over > 0.5 * q.height && (q.right <= r.left + 2 || q.left >= r.right - 2);
+      });
+      if (near.length) { out.beside.push(`${named(b)} "${clip(words, 50)}" beside ${named(near[0])}`); }
+    }
+    // narrow
+    for (const f of [...scope.querySelectorAll(BOXES)].filter((e) => !e.closest(SKIP) && visible(e))) {
+      const s = getComputedStyle(f), r = f.getBoundingClientRect();
+      const inner = r.width - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight), zeros = inner / zeroOf(f);
+      if (zeros < 10) { out.narrow.push(`${named(f.closest('.block[id], [id]') || f)} holds ${zeros.toFixed(1)} "0"`); }
+    }
+    // overlap and clipped
+    const boxes = ctl.map((e) => [e, seenRect(e)]).filter(([, r]) => r.width > 2 && r.height > 2
+                                                         && r.width * r.height > 0.5 * r.whole);
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const [a, ra] = boxes[i], [b, rb] = boxes[j];
+        if (a.contains(b) || b.contains(a) || coverOf(a, b) || coverOf(b, a)) { continue; }
+        const la = a.closest('label');
+        if (la && la === b.closest('label')) { continue; }
+        const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+        const h = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+        if (w > 2 && h > 2) { out.overlap.push(`${named(a)} and ${named(b)} by ${Math.round(w)} x ${Math.round(h)} px`); }
+      }
+    }
+    // clipped: cut by an ancestor that hides overflow, before any scroll region (what a scroll
+    // region holds beyond its box is scrolled out of view, not cut)
+    for (const e of ctl) {
+      const r = e.getBoundingClientRect();
+      if (r.width <= 2 || r.height <= 2) { continue; }
+      for (let a = e.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+        const s = getComputedStyle(a);
+        if (s.position === 'fixed' || /(auto|scroll)/.test(s.overflowX + ' ' + s.overflowY)) { break; }
+        if (!/(hidden|clip)/.test(s.overflowX + ' ' + s.overflowY)) { continue; }
+        const q = a.getBoundingClientRect();
+        const cut = (/(hidden|clip)/.test(s.overflowX) && (r.left < q.left - 1 || r.right > q.right + 1))
+          || (/(hidden|clip)/.test(s.overflowY) && (r.top < q.top - 1 || r.bottom > q.bottom + 1));
+        if (cut && getComputedStyle(e).textOverflow !== 'ellipsis') { out.clipped.push(`${named(e)} cut by ${named(a)}`); break; }
+      }
+    }
+    // centred
+    const rows = new Set();
+    for (const c of fieldsAndButtons) {
+      const q = c.getBoundingClientRect();
+      for (let a = c.parentElement; a && a !== scope; a = a.parentElement) {
+        const s = getComputedStyle(a), ar = a.getBoundingClientRect();
+        if ((s.display.includes('flex') && s.flexDirection.startsWith('row')) || s.display.includes('grid')) {
+          if (ar.height > 2 * q.height + 24 && q.top - ar.top >= 20
+              && Math.abs((q.top + q.bottom) / 2 - (ar.top + ar.bottom) / 2) < 0.2 * ar.height && !rows.has(a)) {
+            rows.add(a);
+            out.centred.push(`${named(c)} in ${named(a)} (${Math.round(ar.height)} px tall)`);
+          }
+          break;
+        }
+        if (ar.height > q.height + 8) { break; }
+      }
+    }
+    // orphan
+    const groups = new Set([...scope.querySelectorAll('input[type=radio], input[type=checkbox]')]
+      .filter((i) => visible(i.closest('label') || i)).map((i) => (i.closest('label') || i).parentElement));
+    for (const g of groups) {
+      const items = [...g.children].filter((c) => visible(c) && c.querySelector('input[type=radio], input[type=checkbox]'));
+      if (items.length < 2) { continue; }
+      const lines = {};
+      for (const it of items) { const k = Math.round(it.getBoundingClientRect().top / 6); lines[k] = (lines[k] || 0) + 1; }
+      const counts = Object.keys(lines).sort((a, b) => a - b).map((k) => lines[k]);
+      if (counts.length > 1 && counts[counts.length - 1] === 1 && counts[0] > 1) {
+        out.orphan.push(`${named(g.closest('.block[id]') || g)}: ${counts.join(' + ')} options a line`);
+      }
+    }
+    // split
+    for (const g of scope.querySelectorAll('.shep-grp')) {
+      const parts = [...g.querySelectorAll('input:not([type=radio]):not([type=checkbox]), textarea, button, .wrap:has(> .wrap-inner)')]
+        .filter((c) => visible(c) && !c.matches('.shep-i, .shep-copy') && !c.closest('.wrap:has(> .wrap-inner) input') )
+        .map((c) => c.getBoundingClientRect());
+      if (parts.length > 1 && Math.max(...parts.map((r) => r.top)) >= Math.min(...parts.map((r) => r.bottom))) {
+        out.split.push(`${named(g)} on ${new Set(parts.map((r) => Math.round(r.top / 8))).size} lines`);
+      }
+    }
+    // edge
+    const EDGE = 'h2, h3, p, .shep-reason, .shep-nb, .shep-empty, span[data-testid="block-info"], '
+      + 'input[type=text], input[type=number], textarea, .wrap:has(> .wrap-inner)';
+    const HANG = 'li, td, th, dd, dt, .shep-nb-text, .shep-nb-next, .shep-nb-steps, .shep-nb-more, '
+      + '.shep-kv, table, .shep-seg, [role=tablist], .shep-bubble, .shep-panel-hd .shep-panel-right';
+    for (const p of panels) {
+      const head = p.querySelector('.shep-panel-hd h2, .shep-panel-hd h3, h2');
+      if (!head || !visible(head)) { continue; }
+      const pr = p.getBoundingClientRect(), edge = startOf(head);
+      const em = parseFloat(getComputedStyle(head).fontSize) * 2;
+      const off = [...p.querySelectorAll(EDGE)].filter((e) => visible(e) && !e.closest(HANG) && !e.closest(SKIP))
+        .filter((e) => { const r = e.getBoundingClientRect(); return r.left < pr.left + 0.4 * pr.width && getComputedStyle(e).textAlign !== 'center'; })
+        .map((e) => [e, Math.round(startOf(e) - edge)])
+        .filter(([, dx]) => Math.abs(dx) > 1 && Math.abs(dx) <= em);
+      for (const [e, dx] of off.slice(0, 6)) { out.edge.push(`${named(e)} ${dx > 0 ? '+' : ''}${dx} px off ${named(head)}`); }
+    }
+    // empty
+    for (const p of panels) {
+      const said = textNodes(p).some((x) => !x.el.closest('.shep-panel-hd') && /[A-Za-z0-9]/.test(x.t));
+      const acts = [...p.querySelectorAll(INTERACTIVE)].some((e) => !e.closest(SKIP) && visible(e));
+      if (!said && !acts) { out.empty.push(named(p)); }
+    }
+    // help texts drawn on the page
+    const helps = [...document.querySelectorAll('#shep-help-texts [id^="shep-help-text-"]')]
+      .map((h) => clip(h.textContent, 40)).filter((h) => h.length >= 20);
+    for (const x of textNodes(document.body)) {
+      const t = clip(x.t, 40);
+      if (t.length >= 20 && helps.some((h) => h.startsWith(t) || t.startsWith(h))) { out.help.push(`${named(x.el)} "${t}"`); }
+    }
+    // notices
+    for (const e of document.querySelectorAll('[data-notice], [data-notice-also]')) {
+      if (!visible(e)) { continue; }
+      for (const key of `${e.getAttribute('data-notice') || ''} ${e.getAttribute('data-notice-also') || ''}`.split(/\s+/)) {
+        if (key) { out.notices[key] = (out.notices[key] || 0) + 1; }
+      }
+    }
+    // the research tabs
+    const list = document.querySelector('#shep-research-nav > .tab-wrapper > .tab-container');
+    if (list && drawn(list)) {
+      const kids = [...list.children].filter((k) => drawn(k));
+      const tabs = kids.filter((k) => k.getAttribute('role') === 'tab');
+      const lines = [], seps = [];
+      let lastTop = null;
+      for (const t of tabs) {
+        const top = Math.round(t.offsetTop / 4), first = lastTop === null || top !== lastTop;
+        if (first) { lines.push([]); }
+        lines[lines.length - 1].push(t.getAttribute('data-tab-id'));
+        const before = getComputedStyle(t, '::before');
+        if (before.content !== 'none' && before.content !== 'normal' && before.display !== 'none'
+            && parseFloat(before.width) > 0) { seps.push({ tab: t.getAttribute('data-tab-id'), lineStart: first }); }
+        lastTop = top;
+      }
+      out.tabs = { lines, seps, others: kids.filter((k) => k.getAttribute('role') !== 'tab').map(named),
+                   focusable: [...list.querySelectorAll('[tabindex]:not([role=tab])')].map(named) };
+    }
+    return out;
+  };
   /* What one window of the page shows: no sideways page scroll, its scroll
-     regions, its text, its fields, its labels, its stage hint, its choices. */
+     regions, its text, its fields, its labels, its stage hint, its choices, and
+     the layout rules' findings (`layout`). */
   const check = () => {
     const se = document.scrollingElement;
     return { overX: se.scrollWidth - se.clientWidth, regions: regions(), type: typeScale(), fields: fields(),
-             labels: labels(), stage: stageHint(), choices: choices() };
+             labels: labels(), stage: stageHint(), choices: choices(), layout: layout() };
   };
   /* Each control drawn, focused as a keyboard focuses it (the caller pressed
      a key first, so a script's focus is :focus-visible): is anything but an
@@ -453,7 +710,7 @@ LOOK_JS = r"""
   };
   window.__shepLook = { parse, ratio, behind, shown, typeScale, fields, labels, pseudo, topAt,
                         shownPage, regions, stageHint, choices, check, focusWalk, repeats, tops, textBox,
-                        words };
+                        words, layout };
 })();
 """
 
@@ -480,7 +737,8 @@ READ_ONLY_HEADERS = {"X-Forwarded-For": "203.0.113.7"}
 #: level 1, ``shep-page-<id>-button`` under Research).
 UI_PAGES = ("clinical", "datasets", "training", "finetune", "test", "models", "settings")
 
-#: The walk (`walk_ui`): one browser, one page, the stops in order. A stop
+#: The walk (`walk_ui`): one browser, one page, the stops in order (a stop with
+#: ``"focus": false`` records no focus walk: a layout measure's own walks). A stop
 #: sets the window, opens its page if another is shown (a click, the tab
 #: selected, the page's requests answered), waits until what the page draws
 #: holds still for two frames and records the caller's `extra`; unless it
@@ -614,8 +872,12 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
       if (stop.tag) { seen.tag = stop.tag; }
       const name = `${stop.page}${stop.tag ? '_' + stop.tag : ''}${stop.open ? '_' + stop.open.shown.replace(/[^\w-]/g, '') : ''}_${w}x${h}`;
       if (shots) { await page.screenshot({ path: `${shots}/${name}.png` }); }
-      await page.keyboard.press('Tab');
-      seen.focus = await page.evaluate((scope) => window.__shepLook.focusWalk(scope), stop.open ? stop.open.shown : null);
+      if (stop.focus !== false) {
+        await page.keyboard.press('Tab');
+        seen.focus = await page.evaluate((scope) => window.__shepLook.focusWalk(scope), stop.open ? stop.open.shown : null);
+      } else {
+        seen.focus = { n: 0, covered: [], cues: [] };
+      }
       await page.evaluate(() => window.scrollTo(0, 0));
     }
     if (stop.options) { seen.options = await options(); }
@@ -737,6 +999,125 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
     return problems
 
 
+#: **The layout rules** (the UI sweep of 2026-11-22; `LOOK_JS`'s ``layout``, each
+#: relative to what is drawn): the key of each, as `layout_problems` names it.
+LAYOUT_RULES = ("beside", "narrow-box", "overlap", "orphan", "centred", "split-group", "edge",
+                "clipped", "empty-region", "help-on-page", "notice-repeat", "tab-groups")
+_LAYOUT_KEYS = {"beside": "beside", "narrow-box": "narrow", "overlap": "overlap", "orphan": "orphan",
+                "centred": "centred", "split-group": "split", "edge": "edge", "clipped": "clipped",
+                "empty-region": "empty", "help-on-page": "help"}
+
+
+def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_RULES,
+                    pages: tuple[str, ...] | None = None) -> list[str]:
+    """**What the layout rules find in a walk** (`walk_ui`; `LOOK_JS`'s
+    ``layout``), one line per finding, ``"<size> <page>: <rule>: <what>"``,
+    for the `rules` asked (all, `LAYOUT_RULES`, by default) and the `pages`
+    asked (every page walked by default). Not part of `ui_problems` yet: the
+    shared walk holds these at zero once every page is laid out again (the
+    sweep's integration); a page's lane runs them on its own pages:
+
+    - ``beside``: a text block of 100+ characters beside a field or button of its panel;
+    - ``narrow-box``: a text box or select holding fewer than 10 of its own "0";
+    - ``overlap``: two controls overlapping by more than 2 x 2 px;
+    - ``orphan``: a choice group whose last line holds one option, its first more;
+    - ``centred``: a control centred in a row over twice its height plus 24 px;
+    - ``split-group``: the controls of one ``.shep-grp`` on more than one line;
+    - ``edge``: a heading, paragraph, notice, label or field 1 px to 2em off its panel
+      heading's left edge;
+    - ``clipped``: a control cut by an ancestor that hides overflow and does not scroll;
+    - ``empty-region``: a panel with nothing under its header;
+    - ``help-on-page``: a help text drawn outside the bubble;
+    - ``notice-repeat``: a notice key drawn more than once on one screen;
+    - ``tab-groups``: a separator drawn at a line's start or while the research tabs wrap,
+      anything but a tab in the tablist, a focus stop that is not a tab, or the tabs out of
+      `RESEARCH_PAGES`' order."""
+    from src.webui.shell import RESEARCH_PAGES
+
+    problems: list[str] = []
+    for stop in (s for s in seen if "check" in s and "layout" in s["check"]):
+        if pages is not None and stop["page"] not in pages:
+            continue
+        where = " ".join(p for p in (stop["size"], stop["page"], stop.get("tag"), stop.get("open")) if p)
+        found = stop["check"]["layout"]
+        for rule in rules:
+            if rule in _LAYOUT_KEYS:
+                for what in found.get(_LAYOUT_KEYS[rule], ()):
+                    problems.append(f"{where}: {rule}: {what}")
+        if "notice-repeat" in rules:
+            for key, times in found.get("notices", {}).items():
+                if times > 1:
+                    problems.append(f"{where}: notice-repeat: {key} drawn {times} times")
+        tabs = found.get("tabs")
+        if "tab-groups" in rules and tabs:
+            order = [page for line in tabs["lines"] for page in line]
+            if order != list(RESEARCH_PAGES):
+                problems.append(f"{where}: tab-groups: tabs in the order {order}")
+            for sep in tabs["seps"]:
+                if len(tabs["lines"]) > 1 or sep["lineStart"]:
+                    problems.append(f"{where}: tab-groups: a separator before {sep['tab']} "
+                                    f"drawn while the tabs take {len(tabs['lines'])} lines")
+            for other in (*tabs["others"], *tabs["focusable"]):
+                problems.append(f"{where}: tab-groups: {other} in the tablist")
+    return problems
+
+
+#: **The states a walk can serve** (`state_settings`): ``first_use`` (no
+#: workspaces folder, no results registry: every first start), ``empty`` (an
+#: empty workspaces folder and an empty registry); a configured world is the
+#: caller's own (the shared walk's `ui_walk`).
+WALK_STATES = ("first_use", "empty")
+
+
+def state_settings(state: str, root: Path) -> dict[str, str]:
+    """The service's settings for a walk's `state` (`WALK_STATES`), its folders
+    made under `root`: the launcher's local start (operator controls on for a
+    request on this machine's loopback, `SHEPHERD_LOCAL_ENTRY`), the CPU, and
+    for ``empty`` an empty workspaces folder and an empty registry.
+    `served_page.served_service` gives the service a home, configuration,
+    state and settings file of its own, so nothing of the account is read."""
+    settings = {"SHEPHERD_LOCAL_ENTRY": "1", "SHEPHERD_BIND_HOST": "127.0.0.1",
+                "SHEPHERD_DEVICE": "cpu"}
+    if state == "first_use":
+        return settings
+    if state == "empty":
+        for name in ("workspaces", "registry"):
+            (root / name).mkdir(parents=True, exist_ok=True)
+        return {**settings, "SHEPHERD_WORKSPACES_ROOT": str(root / "workspaces"),
+                "SHEPHERD_REGISTRY": str(root / "registry")}
+    raise ValueError(f"no walk state {state!r}")
+
+
+#: The layout measure's windows (the sweep's plan §6.2): the owner's, the
+#: owner's Firefox width, a laptop, a short laptop, a portrait column and a
+#: phone, then the owner's again.
+LAYOUT_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720), (800, 900), (390, 844),
+                (1850, 960))
+
+
+def layout_stops(pages: tuple[str, ...] = UI_PAGES, sizes: tuple[tuple[int, int], ...] = LAYOUT_SIZES,
+                 *, focus: bool = False) -> list[dict[str, Any]]:
+    """The stops of a layout measure: each page at each size, checked (the
+    layout rules included), with no focus walk unless `focus`."""
+    return [{"size": [w, h], "page": page, **({} if focus else {"focus": False})}
+            for page in pages for w, h in sizes]
+
+
+def walk_state(state: str, tmp_path: Path, stops: list[dict[str, Any]], *,
+               shots: Path | None = None, extra_js: str | None = None,
+               timeout: int = 1500) -> list[dict[str, Any]]:
+    """**Serve the dashboard in a walk state and walk it** (`WALK_STATES`,
+    `state_settings`; `served_page.served_service`, `walk_ui`): what each stop
+    recorded. A page's lane measures its own pages at first use with
+    ``layout_problems(walk_state("first_use", tmp, layout_stops(("training",))))``."""
+    from tests.fixtures.served_page import served_service
+
+    root = Path(tmp_path)
+    settings = state_settings(state, root / "data")
+    with served_service(root / "service", settings) as page:
+        return walk_ui(page, root, stops, shots=shots, extra_js=extra_js, timeout=timeout)
+
+
 #: **What the shared model list's tree shows, read where the browser draws it**
 #: (D04, `model_list._tree_html`; a page init script): ``window.__shepTree(root)``
 #: gives its groups (each its runs and files drawn), its runs (words, whether
@@ -821,6 +1202,7 @@ def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any
     return json.loads(result.stdout)
 
 
-__all__ = ["LOOK_JS", "PTR_SIZES", "QUEUE_JS", "READ_ONLY_HEADERS", "STAGE_HINTS", "TREE_JS", "TYPE_SIZES", "TYPE_WEIGHTS",
-           "UI_PAGES", "UI_SIZES", "UI_WALK_JS", "node_with_playwright", "repeat_problems", "run_node",
-           "ui_problems", "walk_ui"]
+__all__ = ["LAYOUT_RULES", "LAYOUT_SIZES", "LOOK_JS", "PTR_SIZES", "QUEUE_JS", "READ_ONLY_HEADERS",
+           "STAGE_HINTS", "TREE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES", "UI_WALK_JS",
+           "WALK_STATES", "layout_problems", "layout_stops", "node_with_playwright", "repeat_problems",
+           "run_node", "state_settings", "ui_problems", "walk_state", "walk_ui"]
