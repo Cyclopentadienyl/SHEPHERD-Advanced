@@ -81,6 +81,10 @@ SHORT_BELOW = 900
 #: host's text metrics cannot make the wide form overflow its box.
 FIT = "shep-fit"
 FIT_WIDE = "shep-fit-wide"
+#: **A column a narrow table drops** (the shared ``[data-shep-narrow]`` rule below): a cell of a
+#: column whose facts the row's details also show carries it, so a `FIT_WIDE` table drops that
+#: column before its box scrolls sideways.
+COL_OPT = "shep-col-opt"
 NARROW_ATTR = "data-shep-narrow"
 #: **A box drawn whole while its column has the room** (OPS-FIX-N1; the layout
 #: pass's fold, `src/webui/shell.py`): side by side, a box of class `FOLD`
@@ -851,7 +855,7 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
    pass marks the wrapper narrow and those columns are not drawn; when even that does not fit,
    the wrapper scrolls sideways (its own region). A word breaks in a cell only when it alone is
    wider than its column. */
-[__NARROW__] :is(th, td, col).shep-col-opt { display: none !important; }
+[__NARROW__] :is(th, td, col).__COL_OPT__ { display: none !important; }
 .shep-tbl td { overflow-wrap: break-word; }
 
 /* HTML the dashboard renders itself (`shell.plain_html`): no Gradio padding. */
@@ -1195,9 +1199,9 @@ __STACK__ {
 }
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK) \
     .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART) \
-    .replace("__NARROW__", NARROW_ATTR)
+    .replace("__NARROW__", NARROW_ATTR).replace("__COL_OPT__", COL_OPT)
 
 
-__all__ = ["BRAND_WIDTH", "FIT", "FIT_WIDE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
+__all__ = ["BRAND_WIDTH", "COL_OPT", "FIT", "FIT_WIDE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
            "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT", "SHORT_ATTR",
            "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK"]

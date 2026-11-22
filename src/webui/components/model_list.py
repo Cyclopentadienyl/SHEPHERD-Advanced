@@ -245,7 +245,7 @@ from src.webui.components.served_status import (
 )
 from src.webui.operator_access import operator_access
 from src.webui.shell import picked, plain_html
-from src.webui.style import FIT, FIT_WIDE
+from src.webui.style import COL_OPT, FIT, FIT_WIDE
 
 logger = logging.getLogger(__name__)
 
@@ -988,7 +988,6 @@ TREE_COLUMNS = ("Model", "Task", "Operation", "Epochs", "Files", "Fingerprint")
 #: the shared style sheet draws no optional cell; when even that does not fit,
 #: the frame scrolls sideways, its own region.
 OPTIONAL_COLUMNS = ("Epochs", "Files", "Fingerprint")
-COL_OPT = "shep-col-opt"
 #: A hex query this long or longer is also read as a fingerprint's start.
 FINGERPRINT_PREFIX = 4
 _HEX = re.compile(r"[0-9a-f]+")

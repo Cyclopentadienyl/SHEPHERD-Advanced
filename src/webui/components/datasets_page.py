@@ -92,7 +92,7 @@ from src.webui.components.workspaces import (
     workspace_binding,
 )
 from src.webui.shell import page_elem_id, plain_html
-from src.webui.style import FIT, FIT_WIDE, NARROW_ATTR, SIDE
+from src.webui.style import COL_OPT, FIT, FIT_WIDE, NARROW_ATTR, SIDE
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +277,7 @@ def empty_html(data: Mapping[str, Any]) -> str:
 
 #: The columns a narrow table drops (the shell's fit, `style.FIT`), their
 #: facts then said by the selected row's details (`optional_html`).
-_OPT = ' class="shep-col-opt"'
+_OPT = f' class="{COL_OPT}"'
 
 
 def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Optional[str]) -> str:
@@ -302,10 +302,10 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
             f'<tr class="{"shep-on" if on else ""}" data-key="{r.e(name)}" tabindex="0"'
             f'{CURRENT if on else ""}>'
             f'<td class="shep-ds-name shep-w600">{r.e(name)}</td>'
-            f'<td class="shep-nowrap shep-ds-date shep-col-opt">'
+            f'<td class="shep-nowrap shep-ds-date {COL_OPT}">'
             f'{r.e(built) if built else r.NOT_RECORDED.lower()}</td>'
             f'<td class="shep-nowrap">{fp_cell}</td>'
-            f'<td class="shep-ds-src shep-col-opt">{r.sources_html(row)}</td>'
+            f'<td class="shep-ds-src {COL_OPT}">{r.sources_html(row)}</td>'
             f'<td class="shep-num shep-nowrap">'
             f'{r.e(r.pair_text(row.get("train_samples"), row.get("val_samples")))}</td>'
             f'<td class="shep-ds-use">{_marks(row, data, run_bar)}</td></tr>')
