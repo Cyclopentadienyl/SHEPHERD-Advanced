@@ -5263,7 +5263,9 @@ def _held_world(family, tmp_path, monkeypatch, *, same_key=False):
 def _held_run(tmp_path, monkeypatch, mode, runs, held_fn):
     """Serve the dashboard with `held_fn` (``run_choice`` or ``list_models``)
     held while ``hold`` exists (a refresh's read only once armed), run
-    `_HELD_ANSWER_JS` in `mode`, and return what the page showed."""
+    `_HELD_ANSWER_JS` in `mode`, and return what the page showed, with every
+    selection the list's draw was asked to draw, by workspace (``drawn``: the
+    session's state as each draw read it)."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, run_node
     from tests.fixtures.served_page import served
@@ -5283,14 +5285,22 @@ def _held_run(tmp_path, monkeypatch, mode, runs, held_fn):
         return original(*args, **kwargs)
 
     monkeypatch.setattr(ml, held_fn, held)
+    drawn, drawing = [], ml.list_drawing
+
+    def noted(listing, key, *args, **kwargs):
+        drawn.append((listing.get("workspace"), key))
+        return drawing(listing, key, *args, **kwargs)
+
+    monkeypatch.setattr(ml, "list_drawing", noted)
     script = (_HELD_ANSWER_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
               .replace("__RUNS__", json.dumps(runs)))
     with served(create_gradio_app(), **mount_options()) as base:
         try:
-            return run_node(script, tmp_path, base[:-len("gradio_api")], str(hold),
+            seen = run_node(script, tmp_path, base[:-len("gradio_api")], str(hold),
                             str(entered), mode)
         finally:
             hold.unlink(missing_ok=True)
+    return {**seen, "drawn": drawn}
 
 
 def test_a_re_read_answered_after_a_newer_pick_never_sets_it_back_in_a_browser(
@@ -5339,12 +5349,16 @@ def test_a_pick_answered_after_another_workspace_was_chosen_selects_nothing_in_a
                      "run_choice")
     during, after = seen["during"], seen["after"]
     assert during["workspace"] == "other" and during["selected"] is None, during
-    assert not during["loadEnabled"] and during["gen"] == "2", during
+    assert not during["loadEnabled"], during
+    # The session's selection never held the picked key, in either workspace.
+    assert [ws for ws, k in seen["drawn"] if k == key] == [], seen["drawn"]
     assert after["workspace"] == "other" and after["selected"] is None, after
     assert not after["loadEnabled"] and after["current"] == [], after
     assert "Select a model" in after["detail"] and "epoch 42" not in after["detail"], after
     if same_key:
         assert shas["other"][:12] not in after["detail"], after
+    # The rows say the generation they were drawn from: other's, the second.
+    assert during["gen"] == after["gen"] == "2", (during, after)
 
 
 def test_a_pick_made_in_the_new_workspace_stays_after_an_older_pick_is_let_go_in_a_browser(
@@ -5372,6 +5386,7 @@ def test_a_pick_made_in_the_new_workspace_stays_after_an_older_pick_is_let_go_in
     during, after = seen["during"], seen["after"]
     assert during["workspace"] == "other" and during["selected"] is None, during
     held = run_key("gamma-disease")
+    assert [k for _ws, k in seen["drawn"] if k and k.startswith(held + "/")] == [], seen["drawn"]
     assert not [k for k in seen["seen"]["keys"] if k.startswith(held + "/")], seen["seen"]
     assert held not in seen["seen"]["current"], seen["seen"]
     assert after["workspace"] == "other" and after["selected"].startswith(other + "/"), after
