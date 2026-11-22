@@ -48,7 +48,7 @@ from typing import Any, Callable, Dict, Mapping, NamedTuple, Optional
 
 import gradio as gr
 
-from src.config.server_settings import DATA_LOCATIONS
+from src.config.server_settings import DATA_LOCATIONS, GPU_LOCK_NOTICE
 from src.utils.gpu_lock import SERVING_JOB_TYPE, held_by_inference, lock_state
 from src.utils.operator_access import CONDITIONS, OperatorAccess, reason_parts
 from src.webui.components.help import REF_PREFIX, help_button
@@ -95,21 +95,22 @@ def gated(label: str, allowed: bool, *, interactive: bool = True) -> Dict[str, A
     return {"value": label if allowed else f"{LOCK} {label}",
             "interactive": bool(allowed and interactive)}
 
-#: Every operator control, as the D8 chip's ⓘ lists them (no exception remains).
+#: Every operator control, as the D8 chip's ⓘ lists them (no exception
+#: remains): a term row per area, each of two bubble lines at most.
 D8_SCOPE = (
-    "- import, test start and cancel, registration, model load, stopping inference;\n"
-    "- checkpoint list, training start and stop, pipeline reload, saving settings and data "
-    "locations, restart, stopping the service."
+    "Data and tests: import, test start and cancel, registration\n"
+    "Models: checkpoint list, model load, stopping inference, pipeline reload\n"
+    "Training: training start and stop\n"
+    "Service: saving settings and data locations, restart, stopping the service"
 )
-#: How to reach them; the codes and the SSH command in the trailing Ref line
-#: (each D8 chip's ⓘ ends with it, `d8_chip`).
+#: How to reach them; the start-up script, the codes and the SSH command in
+#: the trailing Ref line (each D8 chip's ⓘ ends with it, `d8_chip`).
 D8_HOW = (
-    "They need a service started here (desktop entry or launch_shepherd.sh) and a request "
-    "that:\n"
-    "- arrives on this machine's loopback, directly or through an SSH forward;\n"
-    "- has no forwarding header (no reverse proxy) and comes from this dashboard.\n"
-    "Ref: deployment mode M1 (SHEPHERD_DEPLOYMENT_MODE); ssh -L 8264:localhost:8264 <server>, "
-    "then http://localhost:8264/ui"
+    "They need a service started here and a request that:\n"
+    "- Arrives on this machine's loopback, directly or through an SSH forward\n"
+    "- Has no forwarding header (no reverse proxy), from this dashboard\n"
+    "Ref: desktop entry or launch_shepherd.sh; deployment mode M1 (SHEPHERD_DEPLOYMENT_MODE); "
+    "ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui"
 )
 #: Each D8 chip's lead (the bubble's first line, `help.help_lines`), which
 #: the list of controls (`D8_SCOPE`) follows.
@@ -119,9 +120,8 @@ D8_READONLY_LEAD = "This request may not use the operator controls:"
 #: What the GPU chip's ⓘ always says, after its state's words (`gpu_detail`).
 GPU_SCOPE = (
     "One GPU lock covers:\n"
-    "- training and test runs, from the job runner (here or through the API) or the formal "
-    "command-line scripts;\n"
-    "- this service's inference, which holds it while a model is loaded on CUDA.\n"
+    "- Training and test runs, from this dashboard, the API or the formal scripts\n"
+    "- This service's inference, while a model is loaded on CUDA\n"
     "A second holder is refused, not queued. Inference on the CPU takes no lock."
 )
 #: The scripts `GPU_SCOPE` names in words, said in its trailing Ref line.
@@ -136,18 +136,21 @@ GPU_INFERENCE = "GPU: inference (this service)"
 #: every research start it disables (`busy_words`) and in the chip's ⓘ.
 STOP_INFERENCE_HERE = "stop it with Stop inference on Diagnosis"
 GPU_NOT_READ = "GPU jobs: not read"
-GPU_NOT_CONFIGURED = "GPU jobs: refused, no workspaces folder"
-#: What the chip's ⓘ says with no workspaces root set (review of 8242b47,
-#: P2-4), and its references; it names no server path, so every request may
-#: see it.
-GPU_NOT_CONFIGURED_DETAIL = (
-    "No workspaces folder is set, so the GPU lock is not configured.\n"
-    "The job runner refuses every training and test run until one is chosen in "
-    f"{DATA_LOCATIONS}."
-)
-GPU_NOT_CONFIGURED_REF = "SHEPHERD_WORKSPACES_ROOT (the lock: .shepherd-gpu.lock in that folder)"
+#: **No workspaces folder, so no GPU lock** (review of 8242b47, P2-4; the UI
+#: sweep of 2026-11-22): a missing setting in its own short words, grey, the
+#: header on one line at a laptop's width ("GPU jobs: refused, no workspaces
+#: folder" took 308 px and wrapped the header at 1280).
+GPU_NOT_CONFIGURED = "GPU jobs: not set up"
+#: What the chip's ⓘ says then, from the GPU notice's own parts
+#: (`server_settings.GPU_LOCK_NOTICE`, the one source the pages' notices read):
+#: its state, its next step and where the lock is and who takes it (its last
+#: row restates the state, which is the lead here), its references in the Ref
+#: line. It names no server path, so every request may see it.
+GPU_NOT_CONFIGURED_DETAIL = "\n".join((GPU_LOCK_NOTICE.summary, f"{GPU_LOCK_NOTICE.action}.",
+                                       *GPU_LOCK_NOTICE.details[:-1]))
+GPU_NOT_CONFIGURED_REF = "; ".join(GPU_LOCK_NOTICE.ref)
 #: The chip's ⓘ before its first read (`CHIPS_PLACEHOLDER`).
-NOT_READ_YET = "Not read yet; the page reads it once it has loaded."
+NOT_READ_YET = "Not read yet. The page reads it once it has loaded."
 #: Where a request that may not see the lock's problem is told to look.
 GPU_LOCK_WHY_HIDDEN = f"An operator sees why in {DATA_LOCATIONS}."
 _RUNNER_NOUN = {"training": "training", "test": "test run"}

@@ -305,6 +305,48 @@ def _research_tablist_label() -> str:
 #: Evaluate (Test, Models)".
 RESEARCH_TABLIST_LABEL = _research_tablist_label()
 
+#: **The research tabs in groups** (the owner's decision of 2026-11-22): data
+#: (Datasets), training (Training, Fine-tune), evaluation (Test, Models),
+#: drawn "Datasets │ Training Fine-tune │ Test Models". A visual grouping only:
+#: not the stages (`STAGES`: Datasets is still Prepare), no tab moves, and the
+#: tab order, the tablist's name and the stage hint are unchanged. The first
+#: tab of each later group keeps a gap before it (`TAB_GROUP_GAP`), in which a
+#: decorative line is drawn while the tabs sit on one line (`TAB_GROUP_CSS`).
+TAB_GROUPS = ((DATASETS,), (TRAINING, FINETUNE), (TEST, MODELS))
+#: The gap before a later group's first tab (the style token it reads).
+TAB_GROUP_GAP = "var(--shep-tabgroup-gap)"
+#: Set on ``#shep-research-nav`` by the head script's layout pass while its
+#: tabs take more than one line: the separators are not drawn then (a line
+#: never starts with one); the gaps stay, so the mark changes nothing the
+#: pass measures.
+TABS_WRAPPED_ATTR = "data-shep-tabs-wrapped"
+
+
+def _tab_group_css() -> str:
+    """The tab groups' style, generated from `TAB_GROUPS` only, through the
+    documented ``<elem_id>-button`` ids: the gap before each later group's
+    first tab, and its separator, an empty ``::before`` (no node of the
+    tablist, no role, no focus stop, no text: nothing a screen reader or the
+    keyboard meets), drawn in the gap's middle, never over the tab's hit
+    target, and not drawn while the tabs wrap (`TABS_WRAPPED_ATTR`)."""
+    rules = []
+    for group in TAB_GROUPS[1:]:
+        tab = f"#shep-research-nav > .tab-wrapper > .tab-container > #{page_elem_id(group[0])}-button"
+        rules.append(f"{tab} {{ position: relative; margin-inline-start: {TAB_GROUP_GAP} !important; }}")
+        rules.append(f"{tab}::before {{ content: \"\"; position: absolute; top: 8px; bottom: 8px; "
+                     f"inset-inline-start: calc({TAB_GROUP_GAP} / -2 - 0.5px); width: 1px; "
+                     "background: var(--shep-border-2); pointer-events: none; }")
+        rules.append(f"#shep-research-nav[{TABS_WRAPPED_ATTR}] > .tab-wrapper > .tab-container > "
+                     f"#{page_elem_id(group[0])}-button::before {{ display: none; }}")
+    return "\n".join(rules) + "\n"
+
+
+#: **Where a notice's next step may lead** (`renderers.notice_block`'s
+#: ``data-shep-go`` and ``data-shep-focus``): each page by its id, with the
+#: elements on it whose heading the link may focus. The head script opens
+#: only a page listed here and focuses only an element listed for it.
+GO_TARGETS = {SETTINGS: ("shep-dl",), **{page: () for page in RESEARCH_PAGES}}
+
 #: The shared timers' periods, in seconds.
 FAST_SECONDS = 1.5
 SLOW_SECONDS = 5.0
@@ -392,6 +434,11 @@ def tab_elem_id(tab: str) -> str:
 
 def page_elem_id(page: str) -> str:
     return f"shep-page-{page}"
+
+
+#: The tab groups' style (`_tab_group_css`), for the head's style element
+#: (`app.dashboard_head`).
+TAB_GROUP_CSS = _tab_group_css()
 
 
 @dataclass
@@ -832,6 +879,15 @@ _SHELL_JS = r"""
     return document.getElementById('shep-tab-' + outer);
   }
   function drawn(el) { return el.getClientRects().length > 0; }
+  // A length a style sheet gives in a custom property, in px: registered (style.py's @property),
+  // it computes to px; where a browser has no @property, a value in rem or em is converted by
+  // the root's or the element's own font size (no probe element, no state read).
+  function lengthPx(el, prop) {
+    var raw = getComputedStyle(el).getPropertyValue(prop).trim(), n = parseFloat(raw) || 0;
+    if (/rem$/.test(raw)) { return n * (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16); }
+    if (/em$/.test(raw)) { return n * (parseFloat(getComputedStyle(el).fontSize) || 16); }
+    return n;
+  }
   function sideFits(tab) {
     var rows = tab ? tab.querySelectorAll('.shep-page') : [], box = null, kids = [];
     for (var i = 0; i < rows.length && !box; i++) { if (drawn(rows[i])) { box = rows[i]; } }
@@ -843,7 +899,7 @@ _SHELL_JS = r"""
     var s = getComputedStyle(box), n = 0;
     var need = (parseFloat(s.paddingLeft) || 0) + (parseFloat(s.paddingRight) || 0);
     for (var j = 0; j < kids.length; j++) {
-      var min = parseFloat(getComputedStyle(kids[j]).getPropertyValue('--shep-panel-min')) || 0;
+      var min = lengthPx(kids[j], '--shep-panel-min');
       if (min > 0) { need += min; n += 1; }
     }
     if (n > 1) { need += (n - 1) * (parseFloat(s.columnGap) || 0); }
@@ -867,21 +923,68 @@ _SHELL_JS = r"""
   var FIT = '__FIT__', FIT_WIDE = '__FIT_WIDE__', NARROW = '__NARROW__';
   var AT_NARROWEST = 'position:absolute !important;visibility:hidden !important;'
     + 'width:min-content !important;min-width:0 !important;max-width:none !important;';
+  // A choice group's options laid out on one line, for the measure alone.
+  var ON_ONE_LINE = 'flex-wrap:nowrap !important;flex-direction:row !important;'
+    + 'width:max-content !important;max-width:none !important;';
+  // **A choice group whole or one per line** (style.py's M3): a radio or checkbox group (a
+  // fieldset block, not a segmented control) whose options do not fit one line of its room is
+  // marked NARROW, and its options stand one per line, never one alone under the others.
+  var CHOICE = 'fieldset.block:not(.shep-seg)';
+  function measured(el, extra, read) {
+    var kept = el.getAttribute('style');
+    el.setAttribute('style', (kept ? kept + ';' : '') + extra);
+    var value = read(el);
+    if (kept === null) { el.removeAttribute('style'); } else { el.setAttribute('style', kept); }
+    return value;
+  }
+  function roomOf(box) {
+    var s = getComputedStyle(box);
+    return box.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
+  }
+  function width(el) { return el.getBoundingClientRect().width; }
+  // Each box is measured with its own mark taken off (put back before anything is painted; an
+  // attribute this pass does not listen to), so what it measures never depends on the state it
+  // sets: a table whose optional columns the mark hides, a group the mark stacks.
   function fits() {
     var boxes = document.querySelectorAll('.' + FIT);
     for (var i = 0; i < boxes.length; i++) {
       var box = boxes[i], wide = box.querySelector('.' + FIT_WIDE);
       if (!wide || !drawn(box)) { continue; }
-      var kept = wide.getAttribute('style');
-      wide.setAttribute('style', (kept ? kept + ';' : '') + AT_NARROWEST + 'display:'
-        + (wide.tagName === 'TABLE' ? 'table' : 'block') + ' !important;');
-      var need = wide.getBoundingClientRect().width;
-      if (kept === null) { wide.removeAttribute('style'); } else { wide.setAttribute('style', kept); }
-      var s = getComputedStyle(box);
-      var room = box.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
+      var was = box.hasAttribute(NARROW);
+      if (was) { box.removeAttribute(NARROW); }
+      var need = measured(wide, AT_NARROWEST + 'display:' + (wide.tagName === 'TABLE' ? 'table' : 'block')
+        + ' !important;', width);
+      var room = roomOf(box);
+      if (was) { box.setAttribute(NARROW, ''); }
       var narrow = need > room + 0.5;
       if (box.hasAttribute(NARROW) !== narrow) { box.toggleAttribute(NARROW, narrow); }
     }
+    var groups = document.querySelectorAll(CHOICE);
+    for (var g = 0; g < groups.length; g++) {
+      var group = groups[g], options = group.querySelector(':scope > .wrap:has(> label)'), stack = false;
+      if (options && options.children.length > 1 && drawn(group)) {
+        var had = group.hasAttribute(NARROW);
+        if (had) { group.removeAttribute(NARROW); }
+        var space = roomOf(group);
+        stack = measured(options, ON_ONE_LINE, width) > space + 0.5;
+        if (had) { group.setAttribute(NARROW, ''); }
+      } else if (!options || !drawn(group)) { continue; }
+      if (group.hasAttribute(NARROW) !== stack) { group.toggleAttribute(NARROW, stack); }
+    }
+  }
+  // **The tab groups' separators only while the research tabs sit on one line** (TAB_GROUPS):
+  // the pass marks the research tabs' row when its tabs take more than one line, from the
+  // tabs' own tops; the gaps before each group stay in both states, so the mark moves nothing.
+  var TABS_WRAPPED = '__TABS_WRAPPED__';
+  function tabLines() {
+    var nav = document.getElementById('shep-research-nav');
+    if (!nav || !drawn(nav)) { return; }
+    var tabs = nav.querySelectorAll(':scope > .tab-wrapper > .tab-container > button[role="tab"]'), tops = {};
+    for (var i = 0; i < tabs.length; i++) {
+      if (drawn(tabs[i])) { tops[Math.round(tabs[i].offsetTop / 4)] = true; }
+    }
+    var wrapped = Object.keys(tops).length > 1;
+    if (nav.hasAttribute(TABS_WRAPPED) !== wrapped) { nav.toggleAttribute(TABS_WRAPPED, wrapped); }
   }
   // **A box whole only while its column has the room** (the layout rule's
   // fold, module docstring): side by side, each box of class FOLD drawn is
@@ -936,6 +1039,7 @@ _SHELL_JS = r"""
     orientation();
     fits();
     folds();
+    tabLines();
     var cues = document.querySelectorAll('.shep-scroll-cue');
     for (var c = 0; c < cues.length; c++) { cue(cues[c]); }
     var shell = document.getElementById('shep-shell');
@@ -1006,7 +1110,49 @@ _SHELL_JS = r"""
       if (chips && shell) { ro.observe(chips); ro.observe(shell); clearInterval(watch); }
     }, 200);
   }
-  window.ShepShell = {update: update, title: title, titles: titles, kept: kept, sent: sent,
+  // **A notice's next step** (`renderers.notice_block`'s link): a click on a button with
+  // data-shep-go opens that page as a tab click does (the research area first for a research
+  // page), then brings the element named by data-shep-focus into view and moves the focus to
+  // its heading. Only the places GO_TARGETS lists are opened; any other value does nothing.
+  var GO = __GO__;
+  function tabButton(page) {
+    return document.getElementById(page === 'settings' || page === 'clinical'
+      ? 'shep-tab-' + page + '-button' : 'shep-page-' + page + '-button');
+  }
+  function land(focusId, tries) {
+    var el = focusId ? document.getElementById(focusId) : null;
+    if (!el || !drawn(el)) {
+      if (focusId && tries > 0) { requestAnimationFrame(function () { land(focusId, tries - 1); }); }
+      return;
+    }
+    var head = el.querySelector('h1, h2, h3') || el;
+    if (!head.hasAttribute('tabindex')) { head.setAttribute('tabindex', '-1'); }
+    head.scrollIntoView({block: 'start'});
+    head.focus({preventScroll: true});
+  }
+  function goTo(page, focusId, tries) {
+    var research = page !== 'settings' && page !== 'clinical';
+    var outer = tabButton(research ? RESEARCH : page);
+    if (research && outer && outer.getAttribute('aria-selected') !== 'true') { outer.click(); }
+    var tab = tabButton(page);
+    if (!tab || !drawn(tab)) {
+      if (tries > 0) { requestAnimationFrame(function () { goTo(page, focusId, tries - 1); }); }
+      return;
+    }
+    if (tab.getAttribute('aria-selected') !== 'true') { tab.click(); }
+    land(focusId, 120);
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('button[data-shep-go]') : null;
+    if (!b) { return; }
+    var page = b.getAttribute('data-shep-go') || '', focusId = b.getAttribute('data-shep-focus') || '';
+    if (!Object.prototype.hasOwnProperty.call(GO, page)) { return; }
+    if (GO[page].indexOf(focusId) < 0) { focusId = ''; }
+    e.preventDefault();
+    restoring = false;
+    goTo(page, focusId, 120);
+  });
+  window.ShepShell = {update: update, title: title, titles: titles, kept: kept, sent: sent, go: goTo,
                      restored: function () { restoring = false; update(); }};
 })();
 """
@@ -1025,6 +1171,8 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__NARROW__", NARROW_ATTR)
               .replace("__FOLD__", FOLD).replace("__FOLD_ROOM__", FOLD_ROOM)
               .replace("__FOLD_FLOOR__", FOLD_FLOOR).replace("__FOLDED__", FOLDED_ATTR)
+              .replace("__TABS_WRAPPED__", TABS_WRAPPED_ATTR)
+              .replace("__GO__", as_json_for_script({k: list(v) for k, v in GO_TARGETS.items()}))
               + "</script>")
 
 
@@ -1034,6 +1182,7 @@ __all__ = [
     "DATASETS",
     "DEFAULT_RESEARCH_PAGE",
     "FINETUNE",
+    "GO_TARGETS",
     "KEPT_PAGE",
     "LABELS",
     "LOCATION_WRITES",
@@ -1047,6 +1196,9 @@ __all__ = [
     "SHELL_HEAD",
     "STAGES",
     "STAGE_WORD",
+    "TABS_WRAPPED_ATTR",
+    "TAB_GROUPS",
+    "TAB_GROUP_CSS",
     "TEST",
     "TITLES",
     "TRAINING",

@@ -122,7 +122,9 @@ DASHBOARD_CSS = """
         font-display: swap;
     }
 
-    /* CSS fallback stack (not in theme font= to avoid Gradio trying to load them as files) */
+    /* CSS fallback stack (not in theme font= to avoid Gradio trying to load them as files).
+       Code, paths and identifiers keep the monospace token over this rule by a rule of two
+       classes (style.py's `.gradio-container .shep-mono`, `code`). */
     .gradio-container, .gradio-container * {
         font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
     }
@@ -164,8 +166,9 @@ PAGE_CSS = (
 def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
     """The page's head (M5-2), given to the mount (`mount_options`):
 
-    - **one ``<style>`` element: the shared ⓘ's, the shell's and every page's
-      style sheet** (`PAGE_CSS`). Gradio 6.30 rewrites the mount's ``css=``:
+    - **one ``<style>`` element: the shared ⓘ's, the shell's (with the research
+      tab groups', `shell.TAB_GROUP_CSS`) and every page's style sheet**
+      (`PAGE_CSS`). Gradio 6.30 rewrites the mount's ``css=``:
       inside an ``@media`` rule it keeps only a copy of each selector prefixed
       with ``.gradio-container … .contain``, so a media query there cannot
       reach the page frame above ``.contain`` (the one-screen layout needs
@@ -186,7 +189,7 @@ def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
       component exists, so each works by document-level (or window-level)
       delegation.
     """
-    return ("<style>" + HELP_CSS + SHELL_CSS + "".join(page_css) + "</style>"
+    return ("<style>" + HELP_CSS + SHELL_CSS + shell.TAB_GROUP_CSS + "".join(page_css) + "</style>"
             + HELP_HEAD + shell.SHELL_HEAD + training_console.TOUCH_HEAD
             + diagnosis_panel.INPUTS_HEAD + diagnosis_panel.STOP_FOCUS_HEAD
             + exports.DOWNLOAD_HEAD)
@@ -202,11 +205,18 @@ TEXT_SIZE = gr.themes.Size(name="shepherd", xxs="14px", xs="14px", sm="14px", md
                            lg="15px", xl="20px", xxl="20px")
 
 
+#: The monospace faces Gradio's own pieces name (its ``--font-mono``): the
+#: system's, as the style sheet's ``--shep-mono`` names them (no monospace
+#: font file ships; `style.py`, M7).
+FONT_MONO = ("ui-monospace", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", "monospace")
+
+
 def _dashboard_theme() -> gr.themes.Base:
-    """The Soft theme with IBM Plex (the font files are declared in DASHBOARD_CSS)."""
+    """The Soft theme with IBM Plex Sans (its files are declared in DASHBOARD_CSS)
+    and the system's monospace faces (`FONT_MONO`)."""
     return gr.themes.Soft(
         font=["IBM Plex Sans"],
-        font_mono=["IBM Plex Mono"],
+        font_mono=list(FONT_MONO),
         text_size=TEXT_SIZE,
     )
 

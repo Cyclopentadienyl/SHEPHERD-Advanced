@@ -103,7 +103,7 @@ def test_nothing_running_is_none_never_free():
     longer says inference is outside the lock."""
     chip = c.gpu_chip_from(None, LOCK_FREE, operator=True)
     assert (chip.kind, chip.text) == ("none", "GPU jobs: none")
-    assert "inference, which holds it while a model is loaded on CUDA" in chip.detail
+    assert "This service's inference, while a model is loaded on CUDA" in chip.detail
     assert "Inference on the CPU takes no lock" in chip.detail
     assert "outside the lock" not in chip.detail and chip.remedy == ""
 
@@ -167,7 +167,8 @@ def test_the_chip_and_the_research_starts_read_this_services_real_holding(monkey
     try:
         assert c.read_gpu_chip(Idle(), operator=False).text == c.GPU_INFERENCE
         line = tc._gpu_line(None, lock_state(), None, operator=True)
-        assert line == {"text": f"{c.GPU_INFERENCE}; {c.STOP_INFERENCE_HERE}", "test": False}
+        assert line == {"text": f"{c.GPU_INFERENCE}; {c.STOP_INFERENCE_HERE}", "test": False,
+                        "unset": False, "notice": None}
         kind, words = tp.gpu_line(manager=Idle(), operator=True)
         assert (kind, words) == ("busy", f"{c.GPU_INFERENCE}; {c.STOP_INFERENCE_HERE}")
     finally:
@@ -206,7 +207,13 @@ def test_a_holder_that_exited_is_not_named_as_the_holder():
 def test_a_lock_not_configured_says_so_and_that_jobs_are_refused(monkeypatch):
     """Review of 8242b47, P2-4: with no workspaces root set every job is
     refused, and the chip says so to every request (no path in it); it used to
-    read "none in the job runner", as if jobs ran unlocked."""
+    read "none in the job runner", as if jobs ran unlocked. The UI sweep of
+    2026-11-22: the chip says the missing setting in short words ("GPU jobs:
+    not set up"; "refused, no workspaces folder" wrapped the header at 1280),
+    and its ⓘ is the GPU notice's own parts (`server_settings.GPU_LOCK_NOTICE`,
+    the one source the pages read): the refusal first, the next step, where
+    the lock is and who takes it, its references in the Ref line."""
+    from src.config.server_settings import GPU_LOCK_NOTICE
     from src.utils.gpu_lock import lock_state
 
     monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
@@ -214,14 +221,14 @@ def test_a_lock_not_configured_says_so_and_that_jobs_are_refused(monkeypatch):
     assert lock["unset"] is True and lock["configured"] is False and lock["problem"]
     for operator in (True, False):
         chip = c.gpu_chip_from(None, lock, operator=operator)
-        assert (chip.kind, chip.text) == ("unread", "GPU jobs: refused, no workspaces folder")
+        assert (chip.kind, chip.text) == ("unread", "GPU jobs: not set up")
         # Plain words that point to where a clinician sets it (UI-06, item 9);
         # the variable only as a trailing "Ref:" for the command line.
-        assert chip.detail.startswith("No workspaces folder is set, so the GPU lock is not "
-                                      "configured")
-        assert "Settings › Data locations" in chip.detail
-        assert "Ref: SHEPHERD_WORKSPACES_ROOT" in chip.detail
-        assert "refuses every training and test run" in chip.detail
+        assert chip.detail.startswith(f"{GPU_LOCK_NOTICE.summary}\n{GPU_LOCK_NOTICE.action}.\n")
+        assert "GPU jobs are refused until a workspaces folder is set." in chip.detail
+        assert "Choose one in Settings › Data locations." in chip.detail
+        assert "GPU lock: .shepherd-gpu.lock in the workspaces folder" in chip.detail
+        assert "Ref: SHEPHERD_WORKSPACES_ROOT; deployment guide §4.11" in chip.detail
         assert read_gpu_chip_now(operator) == chip
 
 
@@ -474,6 +481,10 @@ def test_every_chip_bubble_is_within_the_help_budget(state, chip):
 
     assert h.budget_problems(chip.detail) == (), (state, chip.detail)
     assert h.help_lines(chip.detail)[-1].kind == "ref", state
+    # The text layout's budget (the UI sweep of 2026-11-22): two-line items of one form, plain
+    # words. A read-only chip's reason is D8's own refusal, the API's words, which may not.
+    if not state.startswith("read-only"):
+        assert h.budget_problems(chip.detail, h.TEXT_BUDGET) == (), (state, chip.detail)
 
 
 def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
@@ -489,13 +500,15 @@ def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
         assert len(lines[0].text) <= 100, lines[0].text
         assert all(not line.text.startswith("•") for line in lines), state
     on = h.help_lines(c.d8_chip(ENABLED).detail)
-    assert [line.kind for line in on] == ["lead", "item", "item", "para", "item", "item", "ref"]
+    assert [line.kind for line in on] == ["lead", "para", "para", "para", "para", "para", "item",
+                                          "item", "ref"]
+    assert [line.term for line in on[1:5]] == ["Data and tests", "Models", "Training", "Service"]
     assert on[0].text == c.D8_ON_LEAD and "ssh -L 8264:localhost:8264" in on[-1].text
     assert "M1" in on[-1].text and "SHEPHERD_DEPLOYMENT_MODE" in on[-1].text
     unset = c.gpu_chip_from(None, {**LOCK_FREE, "unset": True}, operator=True).detail
     assert unset.splitlines()[-1] == (
-        "Ref: SHEPHERD_WORKSPACES_ROOT (the lock: .shepherd-gpu.lock in that folder); the "
-        "formal scripts train_model.py, measure_scorer.py")
+        "Ref: SHEPHERD_WORKSPACES_ROOT; deployment guide §4.11; the formal scripts "
+        "train_model.py, measure_scorer.py")
     refused = c.d8_chip(OperatorAccess(False, "not_loopback", "why")).detail
     assert refused.startswith(f"{c.D8_READONLY_LEAD}\n{c.D8_SCOPE}\n\nFor this request: why")
     assert c.gpu_chip_from(None, lock_broken, operator=True).detail.startswith(
@@ -555,8 +568,7 @@ justify-content: flex-end; padding: 12px; }} {h.HELP_CSS}</style>{h.HELP_HEAD}</
         assert classes[0] == "shep-bubble-lead", (which, parts)
         assert classes.count("shep-bubble-ref") == 1 and classes[-1] == "shep-bubble-ref", (
             which, classes)
-    assert seen["gpu"][0]["text"] == ("No workspaces folder is set, so the GPU lock is not "
-                                      "configured.")
+    assert seen["gpu"][0]["text"] == "GPU jobs are refused until a workspaces folder is set."
     assert seen["gpu"][-1]["text"].startswith("Ref: SHEPHERD_WORKSPACES_ROOT")
     assert "train_model.py" in seen["gpu"][-1]["text"]
     assert not any("train_model.py" in part["text"] for part in seen["gpu"][:-1])
