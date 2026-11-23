@@ -1450,8 +1450,11 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
                                and not listing.get("status_problem"))
               else f'<span class="shep-panel-right">{_served_line(listing)}</span>')
     # The title names the row (`SCROLL_JS` waits for it) and takes the focus.
+    # The model in use and Back to the list (drawn stacked) are one end group: they stay together
+    # at the header's end, on the title's line or wrapped under it as one.
+    end = f'<span class="shep-mp-hd-end">{served}{BACK_BUTTON}</span>' if served else BACK_BUTTON
     header = (f'<div class="shep-panel-hd"><h2 tabindex="-1" data-key="{r.e(ml.item_key(item))}">'
-              f'{r.model_name_html(item)}</h2>{tag}{served}{BACK_BUTTON}</div>')
+              f'{r.model_name_html(item)}</h2>{tag}{end}</div>')
     workspaces = listing.get("workspaces") or []
     if not ml.loadable(item):
         # Its state and why in visible words (never a hover title alone,
@@ -2130,6 +2133,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-order-row > * {{ flex: 0 0 auto !important; min-width: 0 !important; width: auto !important; }}
 {_PAGE} .shep-mp-lbl {{ font-size: 15px; color: var(--shep-text-2); white-space: nowrap; }}
 {_PAGE} .shep-mp-back {{ display: none; }}
+{_PAGE} .shep-mp-hd-end {{ margin-left: auto; display: inline-flex; flex-wrap: wrap; justify-content: flex-end;
+  align-items: center; gap: 10px; }}
+{_PAGE} .shep-mp-hd-end > .shep-panel-right {{ margin-left: 0; }}
 {_PAGE} .shep-mp-p {{ margin: 0; font-size: 15px; color: var(--shep-text-2); line-height: 1.45; }}
 {_PAGE} .shep-mp-p.shep-amber-t {{ color: var(--shep-amber-800); }}
 {_PAGE} .shep-mp-recwrap {{ margin: 0 !important; }}
@@ -2337,10 +2343,11 @@ PAGE_CSS = f"""
   /* Back to the list stays on the title's first line when the title wraps (centred on a title of
      three lines it stood between them, apart from the words it follows). */
   {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; align-self: flex-start; }}
-  /* After the header's aside (the model in use, `.shep-panel-right`, itself pushed to the end), Back
-     follows it at the gap: two pushed ends split the line's room, and on a wrapped header's second
-     line the aside stood mid-line, on no edge. */
-  {_PAGE} .shep-panel-right + .shep-mp-back {{ margin-left: 0; }}
+  /* With the model in use beside it, Back is the end of one group (`shep-mp-hd-end`), which keeps the
+     title's first line or wraps under it whole, at the end: two pushed ends split the line's room, and
+     on a wrapped header's second line the model in use stood mid-line, on no edge. */
+  {_PAGE} .shep-mp-hd-end {{ align-self: flex-start; }}
+  {_PAGE} .shep-mp-hd-end > .shep-mp-back {{ margin-left: 0; align-self: auto; }}
 }}
 """
 
