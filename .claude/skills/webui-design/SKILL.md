@@ -10,6 +10,7 @@ requirements (BACKLOG 27), the GB10 WebUI acceptance and recheck (2026-10-24/25)
 systems, Gradio, ML tools, clinical decision-support guidance and agent review workflows
 (`docs/working/WEBUI_UX_REVIEW_2026-10-25.md`; sources in `references/sources.md`). When a screen cannot meet a rule,
 say why in the delivery.
+The design brief and the text brief are `references/design-brief.md` and `references/text-brief.md`; this skill wins.
 
 **How this skill applies.** `AGENTS.md`'s rules on the scale of a fix and when verification stops come first. The
 skill says how to do the UI work a task asks for; it never widens a task's scope or adds a gate to it, and a finding

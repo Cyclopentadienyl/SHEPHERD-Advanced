@@ -3119,7 +3119,10 @@ help control for every field. Nothing an operator sets changed; what moved is wh
   browser tab keeps which page it showed (the address does not keep the location).
 - In a window at least 1400 × 760 CSS pixels the page itself does not scroll; a region too long
   for its space scrolls inside its own panel. Narrower, or in portrait, the regions stack and
-  the page scrolls. The theme's smallest text is 14 px.
+  the page scrolls. Since 2026-11-23 the layout shrinks no further than a display floor of
+  1280 × 720 CSS pixels (864 pixels in both directions for a window no wider than tall): in a
+  smaller window it is drawn as at the floor and the browser scrolls the whole page. The theme's
+  smallest text is 14 px.
 - The dashboard is always drawn in its light colours, whatever dark mode the system or the
   browser asks for (its colours have no dark version, and Gradio's dark mode left its text
   unreadable on the page); the address gains `?__theme=light`. Gradio's own footer (its API
