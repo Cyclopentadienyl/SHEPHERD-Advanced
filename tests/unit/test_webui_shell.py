@@ -3294,7 +3294,7 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     read in, so its scrollbar is in view whenever the box is. Both measured
     in a browser on a page of their own (Node and Playwright, skipped without)."""
     from src.webui.components import models_page, test_page
-    from src.webui.style import SHELL_CSS
+    from src.webui.style import FLOOR_VAR, SHELL_CSS, STACK_FLOOR_WIDTH
     from tests.fixtures.browser import node_with_playwright, run_node
 
     if node_with_playwright() is None:
@@ -3306,7 +3306,9 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
                        .replace("__STAGES__", "{}").replace("__STAGE_WORD__", '""')
                        .replace("__LAYOUT__", "data-shep-layout").replace("__SHORT__", "data-shep-short")
                        .replace("__SHORT_BELOW__", "900").replace("__GO__", "{}")
-                       .replace("__FLOOR_W__", "1280").replace("__FLOOR_H__", "720"), encoding="utf-8")
+                       .replace("__FLOOR_W__", "1280").replace("__FLOOR_H__", "720")
+                       .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR),
+                       encoding="utf-8")
     seen = run_node(_CUE_JS, tmp_path, str(css_path), str(js_path))
     assert seen["top"] == {"more": True, "mask": True}, seen
     assert seen["end"] == {"more": False, "mask": False}, seen
@@ -3629,7 +3631,7 @@ _HEADER_FACTS_JS = r"""() => {
            runview: res && foot !== null && view.scrollHeight <= view.clientHeight + 1
              ? { resBottom: res.bottom, foot } : null,
            runbar: start ? { start: { top: start.top, bottom: start.bottom, mid: (start.top + start.bottom) / 2 },
-                             state: words('#shep-train-pill .shep-st'), why: words('#shep-train-why') } : null };
+                             state: words('#shep-train-pill .shep-st-w'), why: words('#shep-train-why') } : null };
 }"""
 @pytest.fixture(scope="module")
 def ui_walk_first_use(tmp_path_factory):
@@ -3700,7 +3702,9 @@ def test_at_first_use_the_job_state_stands_on_the_run_bars_line(ui_walk_first_us
     """LOOK2 (SW-LK5, partly): at 1850 x 960 at first use the job state ("○ Idle · …") shared
     the line of Start and its relation but stood about 5 px higher, top-aligned with the
     40 px buttons. Wherever the state shares Start's line, its words' middle is the line's
-    middle, as Start's relation's is (the walk's layout sizes)."""
+    middle, as Start's relation's is (the walk's layout sizes). The words are the mark's words
+    (``.shep-st-w``), not its shape, whose glyph box is the font's own (the portrait stop at
+    1080 x 1920 read the ring's box, 1.25 px over the line's middle, the words 0.75)."""
     stops = [s for s in ui_walk_first_use if s["page"] == "training" and not s.get("open")]
     shared = 0
     for stop in stops:
