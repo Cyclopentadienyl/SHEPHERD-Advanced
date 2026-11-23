@@ -1082,7 +1082,7 @@ def _on_finetune_bases(request: gr.Request, ws, current):
         # for a choice.
         notice = (ws or {}).get("notice")
         if notice:
-            return {}, empty, empty, r.see_above("Run", notice, where="see above"), refresh
+            return {}, empty, empty, r.see_above("Run", notice, where="above"), refresh
         listed = (ws or {}).get("choices")
         note = bases_note_html({}, "Select a dataset first.") if listed else ""
         return {}, empty, empty, note, refresh

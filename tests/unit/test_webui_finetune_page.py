@@ -167,7 +167,8 @@ def test_an_empty_list_says_why(root, operator):
 
     notice = notice_view(NOTICES[ENV_WORKSPACES_ROOT])
     why = fp._on_finetune_bases(operator, {**listed, "notice": notice}, None)[3]
-    assert why == r.see_above("Run", notice, where="see above")
+    assert why == r.see_above("Run", notice, where="above")
+    assert "Run disabled: no workspaces folder is set (see above)." in why
     assert 'data-notice-rel="workspaces_root"' in why and "data-notice=" not in why
     assert "train one on Research › Training" in fp.bases_note_html({}, None)
     assert "&lt;img" in fp.bases_note_html({}, TAG) and "<img" not in fp.bases_note_html({}, TAG)
