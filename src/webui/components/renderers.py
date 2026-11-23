@@ -294,14 +294,19 @@ def warn_chip(text: str) -> str:
 SEP = '<span class="shep-sep" aria-hidden="true">\u00a0· </span>'
 
 
-def chain_html(*facts: Any) -> str:
+def chain_html(*facts: Any, tail: str = "") -> str:
     """**Facts of one line joined by the shared separator** (`SEP`), each
     escaped and drawn as one unit (``shep-fact``): it moves to the next line
     whole where the line cannot hold it, and wraps inside only when it is
     wider than a line (L7 SW-LK7: "GATv2 2026-10-02 00:00, 1 epoch complete"
     and "recipe changed in 5 fields" broke inside though a line held them).
-    Empty facts are left out."""
-    return SEP.join(f'<span class="shep-fact">{e(fact)}</span>' for fact in facts if fact)
+    `tail`, HTML, ends the last fact's unit: the "Details ›" that opens that
+    fact moves with it (L7 SW-LK7: Fine-tune's "Details ›" under "recipe
+    changed in 5 fields"). Empty facts are left out."""
+    shown = [e(fact) for fact in facts if fact]
+    if tail and shown:
+        shown[-1] += " " + tail
+    return SEP.join(f'<span class="shep-fact">{fact}</span>' for fact in shown)
 
 
 def whole_words(words: Any) -> str:

@@ -613,7 +613,8 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
         # ended a line at a hyphen at 390 px, reading hyphenated).
         ("Run", r.token_html(f"{item.get('architecture')}/{item.get('run')}")),
         ("File", r.token_html(item.get("filename"))),
-        ("Configuration", r.e(r.configuration_text(item)) + r.model_spec_html(item.get("spec"))[1]),
+        ("Configuration", r.chain_html(*r.configuration_facts(item),
+                                       tail=r.model_spec_html(item.get("spec"))[1])),
         ("Holds", r.e(tc.CHECKPOINT_KINDS.get(kind or "", "not recorded"))),
         ("Validation", r.e(r.validation_value(r.validation_figure(item),
                                               read=r.record_read(item)))),
@@ -1725,9 +1726,9 @@ PAGE_CSS = f"""
 {_PAGE} #ft_hops_warn:not(:has(.shep-ft-hops-warn)), {_PAGE} #ft_reason:not(:has(.shep-ft-reason, .shep-nb-rel)), {_PAGE} #ft_refused:not(:has(.shep-ft-refused)) {{ display: none !important; }}
 {_PAGE} #ft_hops_warn {{ font-size: 14px; line-height: var(--shep-lh-prose); }}
 {_PAGE} #ft_refused {{ font-size: 15px; line-height: var(--shep-lh-prose); }}
-/* The configuration's "Details ›" beside its line (`base_summary_html`); opened, the spec's list
-   takes the lines under it. */
-{_PAGE} .shep-ft-base .shep-v > .shep-more {{ display: inline-block; margin-left: 8px; vertical-align: top; }}
+/* The configuration's "Details ›" beside its fact, in that fact's unit (`base_summary_html`,
+   `chain_html`'s tail); opened, the spec's list takes the lines under it. */
+{_PAGE} .shep-ft-base .shep-v .shep-fact > .shep-more {{ display: inline-block; vertical-align: top; }}
 {_PAGE} .shep-ft-reason {{ display: inline-flex; align-items: flex-start; gap: 6px; font-size: 14px; line-height: var(--shep-lh-prose); color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-reason > svg {{ flex: none; margin-top: 3px; }}
 {_PAGE} .shep-ft-reason > .shep-nb-mark {{ flex: none; }}

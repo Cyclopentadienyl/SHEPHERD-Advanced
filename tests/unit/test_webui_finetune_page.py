@@ -172,7 +172,9 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     html = fp._on_base_chosen(f"gatv2/{BASE_RUN}/model-03-0.8300.pt", parents)
     for words in ("Run", r.token_html(f"gatv2/{BASE_RUN}"), r.token_html("model-03-0.8300.pt"),
                   "Configuration",
-                  "GATv2 · recipe changed in", '<summary>Details ›</summary>',
+                  r.chain_html(*r.configuration_facts(item),
+                               tail=r.model_spec_html(item["spec"])[1]),
+                  '<summary>Details ›</summary>',
                   "Holds", "Validation", "LP accuracy (Trainer)",
                   "0.8300", "Selection", "Trained on", "not recorded", "Split seed",
                   "Model fingerprint", item["sha256"][:12], f'data-copy="{item["sha256"]}"'):
@@ -213,10 +215,15 @@ def test_the_bases_split_seed_and_model_are_facts_of_its_summary_never_fields(ro
     # list's spec (`record.listed_spec`, without the recipe's notes), each
     # field that differs with the reference's value, the encoder's layers the
     # hop list must fit among them (review of B2).
+    # Its "Details ›" ends the unit of the fact it opens, so the two move to
+    # a line together (L7 SW-LK7: drawn under "recipe changed in 5 fields"
+    # though one line held both).
     words, details = r.model_spec_html(item["spec"])
     assert "Unknown" not in words and details
-    assert (f"<dt class=\"shep-k\">Configuration</dt><dd class=\"shep-v\">"
-            f"{r.e(r.configuration_text(item))}{details}</dd>") in seeded
+    *before, last = r.configuration_facts(item)
+    assert before and (f"<dt class=\"shep-k\">Configuration</dt><dd class=\"shep-v\">"
+                       f"{r.chain_html(*before)}{r.SEP}"
+                       f'<span class="shep-fact">{r.e(last)} {details}</span></dd>') in seeded
     assert ('<dt class="shep-k" title="encoder.layers">Encoder › Layers</dt>'
             '<dd class="shep-v">1 (reference 3)</dd>') in details
     for tasks in ([], ["disease"], ["gene"], ["disease", "gene", "patients_like_me"]):

@@ -939,6 +939,11 @@ def test_model_facts_show_the_task_and_the_configuration_escaped():
     # Each fact of a " · " line one unit (L7 SW-LK7: "recipe changed in 5
     # fields" and the name line's "GATv2 …, 1 epoch complete" broke inside).
     assert '<span class="shep-fact">&lt;B&gt;ODD</span>' in odd
+    # A tail (the Details › that opens the last fact) ends that fact's unit,
+    # escaped facts and empty ones left out as before.
+    assert r.chain_html("a<", "", "b", tail="<i>t</i>") == (
+        f'<span class="shep-fact">a&lt;</span>{r.SEP}<span class="shep-fact">b <i>t</i></span>')
+    assert r.chain_html("", tail="<i>t</i>") == ""
     bare = r.model_facts_html(r.ModelFacts(
         name_line="n", run=None, checkpoint_file=None, workspace=None, model_fingerprint=None,
         trained_on_fingerprint=None, trained_on_names=(), synthetic=False, sources="",
