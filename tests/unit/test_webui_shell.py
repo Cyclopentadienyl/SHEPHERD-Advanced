@@ -3969,6 +3969,9 @@ const LOOK_JS = __LOOK_JS__;
     #o2 { position: absolute; left: 40px; top: 4px; }
     .c-row { display: flex; height: 105px; margin-top: 16px; }
     .c-row button { height: 40px; }
+    .c-grid { display: grid; grid-template-rows: 60px 40px 60px; margin-top: 16px; }
+    .c-grid1 { display: grid; height: 105px; align-items: center; margin-top: 16px; }
+    .c-grid button, .c-grid1 button { height: 40px; }
   </style></head><body>
     <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
     <div id="shep-tab-x"><div class="shep-page">
@@ -3985,6 +3988,8 @@ const LOOK_JS = __LOOK_JS__;
       <div class="shep-bar" id="bar3"><button type="button" id="bar3-btn">Start</button><p id="bar3-text">Start disabled: no folder.</p></div>
       <div class="c-row" style="align-items: center"><button type="button" id="c-mid">Start</button></div>
       <div class="c-row" style="align-items: flex-start"><button type="button" id="c-top">Start</button></div>
+      <div class="c-grid"><div>Above</div><button type="button" id="c-grid-mid">Start</button><div>Under</div></div>
+      <div class="c-grid1"><button type="button" id="c-grid-one">Start</button></div>
     </div></div></body></html>`);
   await page.addScriptTag({ content: LOOK_JS });
   const layout = await page.evaluate(() => window.__shepLook.check().layout);
@@ -4012,7 +4017,10 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
       beside Start passed), and passes a one-line relation;
     - ``centred`` finds a button centred in a row about two and a half times its height (Fine-tune's
       Start, 40 px, in its 105 px row at 1280, which the rule's earlier form found: three times
-      the button's height let it pass) and passes the same button on the row's top."""
+      the button's height let it pass) and passes the same button on the row's top; of a grid,
+      a row is its row track (the sweep's L7: Models' foot stacks Load and its reason in tracks of
+      their own at 390 px, Load near the foot's middle): a button in the middle track of three
+      passes, one centred in a grid of one tall track is found."""
     from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
 
     if node_with_playwright() is None:
@@ -4028,6 +4036,8 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
     assert not [b for b in found["beside"] if "#bar3-text" in b], found["beside"]
     assert [c for c in found["centred"] if "#c-mid" in c], found["centred"]
     assert not [c for c in found["centred"] if "#c-top" in c], found["centred"]
+    assert not [c for c in found["centred"] if "#c-grid-mid" in c], found["centred"]
+    assert [c for c in found["centred"] if "#c-grid-one" in c], found["centred"]
 
 
 #: A static page for the rules the after screenshots asked for (the sweep's L7; `browser.LOOK_JS`'s

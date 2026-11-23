@@ -4542,14 +4542,15 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change .shep-model-body > .shep-model-facts {{ --shep-panel-min: {DRAWER_FACTS_MIN}px; flex: 2 1 0 !important; min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-foot {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important;
   border-top: 1px solid var(--shep-border); padding-top: 10px !important; }}
-/* Load and Cancel keep their words' width, Load's reason beside it (one line); what Load does,
+/* Load and Cancel keep their words' width, side by side; what Load does,
    two sentences, is a row of its own under them, from the foot's edge and at the measure, as
    Models says it (a message never shares a row with a button: it stood beside Load). */
 {_TAB} #shep-dx-change .shep-model-foot > :not(#shep-dx-change-note) {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-foot > #shep-dx-change-note {{ flex: 1 1 100% !important; min-width: 0 !important; order: 1; }}
-/* Load's reason (`model_list.load_reason_html`: every disabled Load says why) wraps in the foot
-   where a narrow drawer cannot hold it beside Load on one line (390 x 844). */
-{_TAB} #shep-dx-change .shep-model-foot > #shep-models-clinical-reason {{ flex: 0 1 auto !important; max-width: 100%; }}
+/* Load's reason (`model_list.load_reason_html`: every disabled Load says why) is a line of its
+   own under Load and Cancel, before the note: beside Load it took two lines (a reason beside its
+   button is one line or none), and wrapped between them it parted Cancel from Load (390 x 844). */
+{_TAB} #shep-dx-change .shep-model-foot > #shep-models-clinical-reason {{ flex: 1 1 100% !important; min-width: 0 !important; order: 1; }}
 {_TAB} #shep-dx-change-note .shep-note {{ display: block; max-width: var(--shep-measure); font-size: 14px; }}
 {_TAB} #shep-dx-change .shep-model-confirm-box > .row > button {{ flex: 0 0 auto !important; white-space: nowrap; }}
 {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-foot {{ display: none !important; }}

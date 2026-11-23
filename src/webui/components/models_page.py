@@ -50,7 +50,7 @@ the table draws them. Every record is shown in the detail with its own metrics, 
 recorded (`RECORD_COLUMNS` names the two a Results table shows for a measurement this
 build describes).
 Load is refused for a base or a record not readable before
-anything is read (`model_list.load_refusal`), its reason beside the button.
+anything is read (`model_list.load_refusal`), its reason under the button.
 
 **The detail** of the selected checkpoint, one summary list (`identity_html`):
 its model fingerprint (12 hex, Copy), its dataset by its relation to the
@@ -2088,22 +2088,25 @@ PAGE_CSS = f"""
    the browser's scroll anchoring would scroll the rows by what a pick takes away above it. */
 {_PAGE} #shep-models-research-rows:has(.shep-fam) {{ overflow-anchor: none; }}
 {_PAGE} #shep-models-research-facts {{ display: none !important; }}
-/* The detail's foot: Load, then why it is off beside it (one line, `model_list.load_reason_html`),
-   then what Load does (the view's note, two sentences) on a row of its own under them, from the
-   panel's edge: a message never shares a row with a button (the layout rules' "beside"). */
+/* The detail's foot: Load, then why it is off (`model_list.load_reason_html`) on a row of its
+   own under it, then what Load does (the view's note, two sentences), each from the panel's
+   edge, at every width: a reason beside its button is one line or none (the layout rules'
+   "beside"), and Load's reasons ("disabled: choose a model in the list first.", a read-only
+   viewer's) need more than the line a detail column leaves beside Load (the sweep's L7: two
+   lines beside it at 1550, 1366 and 1280; V-RB2-4: never a squeezed column). */
 {_PAGE} {_LIST} > .shep-model-foot {{
   grid-area: foot; min-height: 0; display: grid !important; margin: 0 !important;
-  grid-template-columns: auto minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto auto;
-  grid-template-areas: "detail detail" "load reason" "note note";
-  align-items: center; gap: 0 12px !important; padding: 0 !important;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto auto;
+  grid-template-areas: "detail" "load" "reason" "note";
+  align-items: center; gap: 0 !important; padding: 0 !important;
   background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px;
 }}
 {_PAGE} {_LIST} > .shep-model-foot > #shep-mp-detail {{ grid-area: detail; align-self: stretch; min-height: 0; gap: 0 !important; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ grid-area: load; margin: 12px 0 12px 16px; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ grid-area: reason; padding-right: 16px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ grid-area: load; justify-self: start; margin: 12px 0 12px 16px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ grid-area: reason; padding: 0 16px; }}
 {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note {{ grid-area: note; padding: 0 16px; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note:has(.shep-note) {{ padding-bottom: 12px; margin-top: -4px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note:has(.shep-note) {{ padding: 4px 16px 12px; }}
 {_PAGE} #shep-models-research-note .shep-note {{ display: block; max-width: var(--shep-measure); font-size: 14px; }}
 {_PAGE} {_LIST} > .shep-model-foot::after {{
   content: ""; grid-row: 2; grid-column: 1 / -1; border-top: 1px solid var(--shep-border);
@@ -2325,20 +2328,6 @@ PAGE_CSS = f"""
      rows, never the page sideways (side by side the rows' region scrolls both ways). */
   {_PAGE} #shep-models-research-rows:has(.shep-fam) {{ overflow-x: auto !important; }}
   {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; }}
-}}
-/* A phone's column: Load, its reason and the note each a row of their own
-   (one row squeezed the reason into an 84 px column; verification of
-   fcc3dea, V-RB2-4). Measured on the list's own width (a container query:
-   side by side the list is never this narrow), never the window's. */
-{_PAGE} {_LIST} {{ container: shep-mp-list / inline-size; }}
-@container shep-mp-list (max-width: 36rem) {{
-  {_PAGE} {_LIST} > .shep-model-foot {{
-    grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto auto;
-    grid-template-areas: "detail" "load" "reason" "note";
-  }}
-  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ justify-self: start; }}
-  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ padding: 0 16px; }}
-  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note {{ padding: 4px 16px 12px; }}
 }}
 """
 

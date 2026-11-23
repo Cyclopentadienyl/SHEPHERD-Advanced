@@ -3554,7 +3554,10 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
     the reason beside Load this model was an 84 px column eight lines tall,
     its left edge inside the button's box: the foot is one grid row (load,
     reason, note) at every width. On a phone's column each takes a row of
-    its own; wider, the reason stays beside the button. Fails on fcc3dea."""
+    its own. Fails on fcc3dea. The sweep's L7: beside the button a reason is
+    one line or none (the layout rules' "beside"); the read-only reason
+    took two lines beside it, so it stands under the button wherever it
+    cannot be one line beside it."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -3570,8 +3573,9 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
         assert apart and reason["width"] >= 200 and at["lines"] <= 3, (size, at)
     phone = seen["390x844"]
     assert phone["reason"]["top"] >= phone["load"]["bottom"], phone
-    for size in ("960x1080", "1850x960"):
-        assert seen[size]["reason"]["left"] >= seen[size]["load"]["right"], seen[size]
+    for size, at in seen.items():
+        beside = at["reason"]["top"] < at["load"]["bottom"]
+        assert not beside or at["lines"] == 1, (size, at)
 
 
 # --------------------------------------------------------------------------- the UI sweep of 2026-11-22
@@ -3687,17 +3691,17 @@ def test_the_load_note_is_a_row_under_load_and_results_actions_follow_their_fiel
     """The layout rules' "beside" (a message never shares a row with a button):
     what Load does (the view's note, two sentences) stood beside Load this
     model in the foot's one row; it is a row of its own under Load and its
-    reason, at the panel's edge, the reason (one line) beside the button. A
-    phone's column stacks all three, measured on the list's own width (a
-    container query, never the window's). In Models › Results (the L0 check's
+    reason, at the panel's edge. Since the sweep's L7 the reason is a row of
+    its own under Load at every width too (it took two lines beside Load at
+    1550, 1366 and 1280, and a reason beside its button is one line or
+    none), so no width needs a query of its own. In Models › Results (the L0 check's
     item 5) Export and Read again were stretched to the row's far end, under
     the choices' line: its rows are the shared rows of fields (a button as
     wide as its words, on the boxes' bottom line) and Export's two choices as
     wide as their options, so the button follows them."""
     css = mp.PAGE_CSS
-    assert 'grid-template-areas: "detail detail" "load reason" "note note";' in css
-    assert "@media" not in css and "@container shep-mp-list (max-width: 36rem)" in css
-    assert "container: shep-mp-list / inline-size;" in css
+    assert 'grid-template-areas: "detail" "load" "reason" "note";' in css
+    assert "@media" not in css and "@container" not in css
     assert ".shep-rs-row > .form:has(> fieldset.block) { flex: 0 1 auto !important;" in css
     from src.webui.components import results_segment as rs
 

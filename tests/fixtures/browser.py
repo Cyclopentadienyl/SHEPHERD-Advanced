@@ -565,10 +565,25 @@ LOOK_JS = r"""
       for (let a = c.parentElement; a && a !== scope; a = a.parentElement) {
         const s = getComputedStyle(a), ar = a.getBoundingClientRect();
         if ((s.display.includes('flex') && s.flexDirection.startsWith('row')) || s.display.includes('grid')) {
-          if (ar.height > 2.5 * q.height && q.top - ar.top >= q.height / 2
-              && Math.abs((q.top + q.bottom) / 2 - (ar.top + ar.bottom) / 2) < 0.2 * ar.height && !rows.has(a)) {
+          // A grid's row is its row track: of a grid of several rows, the tracks the control's box
+          // spans (Models' foot stacks its details, Load, Load's reason and its note in four
+          // tracks at 390 px: Load stood near the foot's middle in a track of its own height).
+          let top = ar.top, bottom = ar.bottom;
+          const tracks = s.display.includes('grid')
+            ? s.gridTemplateRows.split(' ').map(parseFloat).filter((n) => !isNaN(n)) : [];
+          if (tracks.length > 1) {
+            let y = ar.top + parseFloat(s.borderTopWidth) + parseFloat(s.paddingTop), first = null, last = null;
+            for (const t of tracks) {
+              if (y + t > q.top + 0.5 && y < q.bottom - 0.5) { first = first === null ? y : first; last = y + t; }
+              y += t + (parseFloat(s.rowGap) || 0);
+            }
+            if (first !== null) { top = first; bottom = last; }
+          }
+          const h = bottom - top;
+          if (h > 2.5 * q.height && q.top - top >= q.height / 2
+              && Math.abs((q.top + q.bottom) / 2 - (top + bottom) / 2) < 0.2 * h && !rows.has(a)) {
             rows.add(a);
-            out.centred.push(`${named(c)} in ${named(a)} (${Math.round(ar.height)} px tall)`);
+            out.centred.push(`${named(c)} in ${named(a)} (${Math.round(h)} px tall)`);
           }
           break;
         }
