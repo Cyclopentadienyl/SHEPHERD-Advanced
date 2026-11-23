@@ -674,8 +674,12 @@ PAGE_CSS = f"""
    page (the skill's §1.1; the sweep's L7, SW-LK1: at 1366 x 768 the page itself scrolled and
    Apply Settings was out of view). */
 {_PAGE} .shep-panel.shep-dl {{ --shep-panel-basis: 40rem; --shep-panel-grow: 11; --shep-panel-min: 30rem; }}
-{_PAGE} .shep-panel.shep-settings {{ --shep-panel-basis: 30rem; --shep-panel-grow: 9; --shep-panel-min: 24rem; max-width: 1040px; }}
+{_PAGE} .shep-panel.shep-settings {{ --shep-panel-basis: 30rem; --shep-panel-grow: 9; --shep-panel-min: 24rem; }}
+/* Side by side Runtime settings grows to a readable width at most; stacked, it is as wide as Data
+   locations above it, the two panels on one edge each side (a portrait window 1080 px wide drew it
+   8 px short of Data locations' right edge). */
 {SIDE} {{
+  {_PAGE} .shep-panel.shep-settings {{ max-width: 1040px; }}
   {_PAGE} #shep-settings-cols {{ align-items: flex-start !important; }}
   {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) {{ flex: 0 1 auto !important; min-height: 0 !important; overflow: auto !important; }}
   {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) > * {{ flex-shrink: 0 !important; }}
