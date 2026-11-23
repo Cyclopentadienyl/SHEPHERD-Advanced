@@ -5569,10 +5569,12 @@ PAGE_CSS = charts.CHART_CSS + f"""
 }}
 /* A run view too short for one row of plots scrolls as a whole, its plots in flow (the plots'
    body no longer a region of its own): each plot can be brought wholly into view, nothing drawn
-   over it (the header is not sticky, the resources line ends the scroll). */
+   over it (the header is not sticky, the resources line ends the scroll). The charts' row keeps
+   what it holds (never shrunk) and takes the room left: with no plot to draw (an empty state)
+   the resources line stays at the panel's foot, never mid-panel over a blank. */
 @container shep-train-page (max-height: {RUN_VIEW_ONE_ROW}px) {{
   {_PAGE} #shep-train-runview {{ overflow-y: auto !important; }}
-  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: none !important; }}
+  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: 1 0 auto !important; }}
   {_PAGE} #shep-train-charts .shep-charts-body {{ flex: none; overflow-y: visible; }}
 }}
 {SIDE_SHORT} {{

@@ -3472,9 +3472,18 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
 # --------------------------------------------------------------------------- the first-use and empty walks
 #: The header's facts at a stop of a state walk: whether the chips and Settings went onto a
 #: second line, and the GPU chip's words.
-_HEADER_FACTS_JS = r"""() => ({
-  wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
-  gpu: ((document.querySelector('#shep-chips .shep-chip-gpu .shep-chip-text') || {}).textContent || '').trim() })"""
+_HEADER_FACTS_JS = r"""() => {
+  const box = (s) => { const e = document.querySelector(s);
+    return e && e.getClientRects().length ? e.getBoundingClientRect() : null; };
+  // Training's run view: its resources line and the panel's content bottom (its padding box).
+  const view = document.getElementById('shep-train-runview'), res = box('#shep-train-runview > #resource_display');
+  const foot = view && res ? view.getBoundingClientRect().bottom - (parseFloat(getComputedStyle(view).borderBottomWidth) || 0)
+                              - (parseFloat(getComputedStyle(view).paddingBottom) || 0) : null;
+  return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
+           gpu: ((document.querySelector('#shep-chips .shep-chip-gpu .shep-chip-text') || {}).textContent || '').trim(),
+           runview: res && foot !== null && view.scrollHeight <= view.clientHeight + 1
+             ? { resBottom: res.bottom, foot } : null };
+}"""
 @pytest.fixture(scope="module")
 def ui_walk_first_use(tmp_path_factory):
     """**The first-use walk** (the UI sweep of 2026-11-22): the service as a
@@ -3520,6 +3529,21 @@ def _state_walk_holds_the_shells_rules(seen, gpu_words):
         assert "layout" in s["check"] and s["check"]["layout"]["tabs"] is not None \
             or s["page"] in ("clinical", "settings"), (s["page"], s["size"])
     assert layout_problems(seen, rules=("tab-groups", "help-on-page", "notice-repeat")) == []
+
+
+def test_at_first_use_trainings_resources_line_ends_its_run_view(ui_walk_first_use):
+    """The independent check of the UI sweep (C10): at 1280 x 720 at first use
+    (no run to draw) the run view's charts row shrank to its empty message in
+    a run view too short for one row of plots, so the resources line stood
+    mid-panel over 190 px of blank; at 1366 x 768 it was at the panel's foot.
+    Wherever the run view does not scroll, its resources line is its last row,
+    on the panel's content bottom, at every layout size."""
+    stops = [s for s in ui_walk_first_use
+             if s["page"] == "training" and not s.get("open") and s["extra"].get("runview")]
+    assert {s["size"] for s in stops} >= {"1850x960", "1366x768", "1280x720"}, stops
+    for stop in stops:
+        facts = stop["extra"]["runview"]
+        assert abs(facts["resBottom"] - facts["foot"]) <= 1, (stop["size"], facts)
 
 
 def test_at_first_use_the_header_and_tab_groups_hold_on_every_page_and_size(ui_walk_first_use):
