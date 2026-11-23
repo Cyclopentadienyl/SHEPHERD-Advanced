@@ -4298,11 +4298,11 @@ DRAWER_TREE_ROOM = f"calc(100cqw - {DRAWER_FACTS_MIN + DRAWER_GAP}px)"
 #: edge fell in the gap under the HPO box, so the cue faded nothing drawn and
 #: Patient ID read as absent (configured, 1280 x 720, the card unfolded).
 #: Since the sweep's L7 check (D7), the floor holds the Patient ID field whole
-#: (its label, info line and box: 280 px in the column `DX_IN_W` gives at
-#: 1280 x 720), so a loaded model's card folds before it hides that box
-#: (configured, 1280 x 720: the card unfolded in the wider column left the
-#: fields 248 px and Patient ID's box half under the edge; folded, 380).
-FIELDS_FLOOR = 280
+#: (its label, info line and box: it ends 302 px down in the 390 px column
+#: `DX_IN_W` gives at 1366 x 768), so a loaded model's card folds before it
+#: hides that box (configured, 1366 x 768: the card unfolded left the fields
+#: 296 px, the box's foot under the edge).
+FIELDS_FLOOR = 304
 #: **The input column's width** (``--dx-in-w``; B-14): about a third of the
 #: page's row, never under the HPO field's floor (300 px: its label, info line
 #: and box, and the card's lines) nor over 31rem (wider adds only blank beside
@@ -4314,8 +4314,13 @@ FIELDS_FLOOR = 280
 #: d3040ca drew it) and hid Patient ID's box at 1366 and 1280, while the two
 #: panels beside held one empty-state sentence each in the rest of the row.
 #: At 32 % the column is 486 px at 1550 and its fields are whole in both
-#: states; at 1366 and 1280 Patient ID's box is in view.
-DX_IN_W = "clamp(300px, 32%, 31rem)"
+#: states; at 1366 and 1280 Patient ID's box is in view. It takes that third
+#: only as far as the results' and the details' minimums leave (`RESULTS_MIN`,
+#: `DETAILS_MIN` and the two 16 px gaps): at 1280 x 720 a third ran the row
+#: 45 px past the page's right edge.
+RESULTS_MIN = 532
+DETAILS_MIN = 380
+DX_IN_W = f"clamp(300px, min(32%, 100% - {RESULTS_MIN + DETAILS_MIN + 32}px), 31rem)"
 
 PAGE_CSS = f"""
 /* **The input column's width, from the row's** (`DX_IN_W`; no window media query): a share of the
@@ -4333,8 +4338,8 @@ PAGE_CSS = f"""
    columns' min-content, 495 px measured with the Phenotypes k/N column and the evidence label
    wrapping, plus the region's padding and border); the details. */
 {_TAB} #shep-dx-input {{ --shep-panel-min: 300px; }}
-{_TAB} #shep-dx-results {{ --shep-panel-min: 532px; }}
-{_TAB} #shep-dx-details {{ --shep-panel-min: 380px; }}
+{_TAB} #shep-dx-results {{ --shep-panel-min: {RESULTS_MIN}px; }}
+{_TAB} #shep-dx-details {{ --shep-panel-min: {DETAILS_MIN}px; }}
 {_TAB} .shep-dx-scroll {{ gap: 12px !important; padding: 14px 16px !important; }}
 {_TAB} .shep-dx-scroll > * {{ flex-shrink: 0 !important; }}
 {_TAB} #shep-dx-input-bd {{ padding-top: 12px !important; padding-bottom: 0 !important; gap: 0 !important; }}
