@@ -69,12 +69,13 @@ ones leave out (T06-D: INT-AUDIT, PTR-LAYOUT).
 (recorded in every checked stop's ``check``) measures what the sweep's
 findings were (a message beside fields, a squeezed box, a choice group
 leaving one option alone, two left edges, a notice said twice, the tab
-groups' separators); `layout_problems` turns it into lines. A walk can serve
-the dashboard at first use or with an empty workspaces folder
-(`walk_state`, `WALK_STATES`) and measure each page at the layout windows
-(`layout_stops`, `LAYOUT_SIZES`); a stop measures once the page's requests
-have been answered for ten frames in a row (a page's opening chain is idle
-for an instant between two of its events).
+groups' separators) and what the L6 after screenshots saw that those missed (a
+page cut at its foot with no scroll cue, words or a table cut by a box);
+`layout_problems` turns it into lines. A walk can serve the dashboard at first use or with an
+empty workspaces folder (`walk_state`, `WALK_STATES`) and measure each page at
+the layout windows (`layout_stops`, `LAYOUT_SIZES`); a stop measures once the
+page's requests have been answered for ten frames in a row (a page's opening
+chain is idle for an instant between two of its events).
 
 Module: tests/fixtures/browser.py
 """
@@ -469,7 +470,7 @@ LOOK_JS = r"""
     const panels = outer.length ? outer
       : shownNow.panels.filter((p) => !p.matches('[data-testid="status-tracker"]'));
     const scope = tab || document.body, out = { beside: [], narrow: [], overlap: [], orphan: [], centred: [],
-      split: [], edge: [], clipped: [], empty: [], help: [], notices: {}, tabs: null };
+      split: [], edge: [], clipped: [], empty: [], help: [], notices: {}, tabs: null, inview: [], cue: [] };
     const panelOf = (e) => panels.findIndex((p) => p.contains(e));
     /* A text's region for `beside`: its panel, else the outermost bar it is in (Training's run
        bar is no panel), else none (-1 on a page with no panels). */
@@ -643,7 +644,140 @@ LOOK_JS = r"""
       out.tabs = { lines, seps, others: kids.filter((k) => k.getAttribute('role') !== 'tab').map(named),
                    focusable: [...list.querySelectorAll('[tabindex]:not([role=tab])')].map(named) };
     }
+    seeAll(scope, panels, texts, ctl, regionOf, panelOf, out);
     return out;
+  };
+  /* **What the after screenshots saw** (the sweep's L7: SW-LK1..5, SW-LK8; `layout_problems`'
+     in-view, scroll-cue and clipped text), each a relation to what is drawn, never a pixel
+     figure of one screen:
+     - inview: a control or a text line drawn past the window's bottom or right edge that no
+       scroll region in view holds (`layout_problems` holds it at the owner's windows only,
+       `OWNER_SIZES`, where a page's task fits or one region scrolls inside, never the page);
+     - cue: a scroll region (the page's own tab item included, never the document) whose drawn
+       content runs past its edge, below it with no scroll cue (the shared R-73 cue,
+       ``shep-scroll-cue``: a mask drawn while more is below), sideways with no sideways cue (a
+       mask, or the drawn cue just before it, Compare's ``shep-rs-cue``); what runs past a
+       nested region is that region's own;
+     - clipped (text): a text line cut by an ancestor that hides its overflow in that axis (no
+       scroll region of that axis between them), a cut to an ellipsis included unless the whole
+       words are its ``title``.
+     Words a closed disclosure holds (laid out, never drawn) and words hidden on purpose for a
+     screen reader are not judged. */
+  const seeAll = (scope, panels, allTexts, allCtl, regionOf, panelOf, out) => {
+    // A closed disclosure's body is laid out (a geometry query lays it out) but not drawn.
+    const folded = (e) => { const d = e.closest('details:not([open])'), s = e.closest('summary');
+      return !!d && !(s && s.parentElement === d); };
+    const texts = allTexts.filter((x) => !folded(x.el)), ctl = allCtl.filter((c) => !folded(c));
+    const flow = (e, axis) => getComputedStyle(e)[axis === 'y' ? 'overflowY' : 'overflowX'];
+    const scrolls = (e, axis) => /(auto|scroll)/.test(flow(e, axis));
+    const hides = (e, axis) => /(hidden|clip)/.test(flow(e, axis));
+    // An element's padding box: where its overflow is cut or scrolled.
+    const pad = (e) => { const r = e.getBoundingClientRect(), left = r.left + e.clientLeft, top = r.top + e.clientTop;
+      return { left, top, right: left + e.clientWidth, bottom: top + e.clientHeight }; };
+    const masked = (e) => { const s = getComputedStyle(e), m = s.maskImage || s.webkitMaskImage;
+      return !!m && m !== 'none'; };
+    const say = (e) => clip((e.innerText || e.getAttribute('aria-label') || e.value || e.getAttribute('placeholder')
+      || e.id || '').trim(), 30);
+    // Words hidden on purpose and kept for a screen reader (a 1 px box that clips them, or a
+    // ``clip`` rectangle: the icon Copy's label): never drawn, so never cut.
+    const quiet = new Map();
+    const unseen = (e) => {
+      if (quiet.has(e)) { return quiet.get(e); }
+      const s = getComputedStyle(e), r = e.getBoundingClientRect();
+      const found = (s.clip !== 'auto' && s.clip !== '' && s.position === 'absolute')
+        || (/(hidden|clip)/.test(s.overflowX + s.overflowY) && (r.width <= 1 || r.height <= 1))
+        || (!!e.parentElement && e.parentElement !== document.body && unseen(e.parentElement));
+      quiet.set(e, found);
+      return found;
+    };
+    // What a page draws, each line of text and each control, with the element it belongs to.
+    const items = [...texts.flatMap((x) => x.rects.map((r) => ({ el: x.el, r, t: x.t }))),
+                   ...ctl.map((c) => ({ el: c, r: c.getBoundingClientRect(), t: say(c) }))]
+      .filter((it) => it.r.width > 0.5 && it.r.height > 0.5 && !unseen(it.el));
+    // The scroll region of an axis an element is in (itself, when it is one), below the document.
+    const nearest = new Map();
+    const scroller = (e, axis) => {
+      const cache = nearest.get(e) || {};
+      if (axis in cache) { return cache[axis]; }
+      let found = null;
+      for (let a = e; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+        if (scrolls(a, axis)) { found = a; break; }
+      }
+      cache[axis] = found; nearest.set(e, cache);
+      return found;
+    };
+    // inview
+    const outs = new Set();
+    for (const it of items) {
+      const outY = it.r.bottom > innerHeight + 1, outX = it.r.right > innerWidth + 1;
+      if ((!outY && !outX) || outs.has(it.el)) { continue; }
+      let reach = false;
+      for (let a = it.el; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+        if ((outY && scrolls(a, 'y')) || (outX && scrolls(a, 'x'))) {
+          const q = a.getBoundingClientRect();
+          if (q.bottom <= innerHeight + 1 && q.right <= innerWidth + 1) { reach = true; break; }
+        }
+      }
+      if (reach) { continue; }
+      outs.add(it.el);
+      if (outs.size <= 8) {
+        out.inview.push(`${named(it.el)} "${clip(it.t, 30)}" drawn ${outY ? Math.round(it.r.bottom - innerHeight) + ' px under the window' : Math.round(it.r.right - innerWidth) + ' px right of the window'}, in no scroll region in view`);
+      }
+    }
+    if (outs.size > 8) { out.inview.push(`and ${outs.size - 8} more out of view`); }
+    // cue
+    const boxes = [scope, ...scope.querySelectorAll('*')].filter((e) => drawn(e) && visible(e)
+      && !e.matches('textarea, select, input') && !e.closest('#shep-help-bubble, ul.option-list, #shep-help-texts'));
+    for (const g of boxes) {
+      const sy = scrolls(g, 'y') && g.scrollHeight > g.clientHeight + 1;
+      const sx = scrolls(g, 'x') && g.scrollWidth > g.clientWidth + 1;
+      if (!sy && !sx) { continue; }
+      const box = pad(g), mine = items.filter((it) => g.contains(it.el));
+      if (sy && !masked(g)) {
+        const below = mine.filter((it) => scroller(it.el, 'y') === g && it.r.bottom > box.bottom + 1)
+          .sort((a, b) => a.r.top - b.r.top);
+        if (below.length) {
+          out.cue.push(`${named(g)} holds ${Math.round(Math.max(...below.map((it) => it.r.bottom)) - box.bottom)} px `
+            + `of content under its edge with no scroll cue (first: "${clip(below[0].t, 30)}")`);
+        }
+      }
+      const before = g.previousElementSibling;
+      if (sx && !masked(g) && !(before && before.matches('.shep-rs-cue') && visible(before) && drawn(before))) {
+        const right = mine.filter((it) => scroller(it.el, 'x') === g && it.r.right > box.right + 1)
+          .sort((a, b) => a.r.left - b.r.left);
+        if (right.length) {
+          out.cue.push(`${named(g)} holds ${Math.round(Math.max(...right.map((it) => it.r.right)) - box.right)} px `
+            + `of content past its right edge with no sideways cue (cut: "${clip(right[0].t, 30)}")`);
+        }
+      }
+    }
+    // clipped text
+    const cutAt = new Set();
+    for (const x of texts) {
+      if (unseen(x.el)) { continue; }
+      for (const r of x.rects) {
+        let doneX = false, doneY = false, cut = null;
+        for (let a = x.el; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+          const s = getComputedStyle(a);
+          if (s.display === 'contents') { continue; }
+          const q = pad(a);
+          if (!doneX && hides(a, 'x') && (r.left < q.left - 1 || r.right > q.right + 1)) { cut = [a, 'x', Math.max(q.left - r.left, r.right - q.right)]; break; }
+          if (!doneY && hides(a, 'y') && (r.top < q.top - 1 || r.bottom > q.bottom + 1)) { cut = [a, 'y', Math.max(q.top - r.top, r.bottom - q.bottom)]; break; }
+          doneX = doneX || scrolls(a, 'x'); doneY = doneY || scrolls(a, 'y');
+          if ((doneX && doneY) || s.position === 'fixed') { break; }
+        }
+        if (!cut || cutAt.has(x.node)) { continue; }
+        const [a, axis, by] = cut;
+        // An ellipsis says the words go on; its whole words are then the element's title.
+        if (axis === 'x' && getComputedStyle(a).textOverflow === 'ellipsis') {
+          const titled = x.el.closest('[title]');
+          if (titled && clip(titled.getAttribute('title') || '', 400).includes(clip(x.t, 200))) { continue; }
+        }
+        cutAt.add(x.node);
+        out.clipped.push(`text "${clip(x.t, 30)}" (${named(x.el)}) cut by ${named(a)} by ${Math.round(by)} px `
+          + `${axis === 'x' ? 'sideways' : 'at its foot'}`);
+      }
+    }
   };
   /* What one window of the page shows: no sideways page scroll, its scroll
      regions, its text, its fields, its labels, its stage hint, its choices, and
@@ -1079,10 +1213,15 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
 #: **The layout rules** (the UI sweep of 2026-11-22; `LOOK_JS`'s ``layout``, each
 #: relative to what is drawn): the key of each, as `layout_problems` names it.
 LAYOUT_RULES = ("beside", "narrow-box", "overlap", "orphan", "centred", "split-group", "edge",
-                "clipped", "empty-region", "help-on-page", "notice-repeat", "tab-groups")
+                "clipped", "empty-region", "help-on-page", "notice-repeat", "tab-groups", "in-view",
+                "scroll-cue")
 _LAYOUT_KEYS = {"beside": "beside", "narrow-box": "narrow", "overlap": "overlap", "orphan": "orphan",
                 "centred": "centred", "split-group": "split", "edge": "edge", "clipped": "clipped",
-                "empty-region": "empty", "help-on-page": "help"}
+                "empty-region": "empty", "help-on-page": "help", "scroll-cue": "cue"}
+#: **The owner's windows** (the skill's §1.1; both in `LAYOUT_SIZES`): where a page's controls
+#: and its panels' rows are in view without scrolling the page, or inside the area's one scroll
+#: region (`layout_problems`' ``in-view``, held at these windows only).
+OWNER_SIZES = ((1850, 960), (1550, 830))
 
 
 def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_RULES,
@@ -1112,7 +1251,14 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
     - ``notice-repeat``: a notice key drawn more than once on one screen;
     - ``tab-groups``: a separator drawn at a line's start or while the research tabs wrap,
       anything but a tab in the tablist, a focus stop that is not a tab, or the tabs out of
-      `RESEARCH_PAGES`' order."""
+      `RESEARCH_PAGES`' order;
+    - ``in-view`` (at the owner's windows, `OWNER_SIZES`, only): a control or a text line of the
+      page drawn past the window's bottom or right edge that no scroll region in view holds;
+    - ``scroll-cue``: a scroll region whose drawn content runs past its edge with no cue: below
+      it, no R-73 scroll cue (``shep-scroll-cue``'s mask); sideways, no mask and no drawn cue
+      just before it (Compare's ``shep-rs-cue``): a table wider than its panel, its cells cut;
+    - ``clipped`` also holds a text line cut by an ancestor that hides its overflow in that axis,
+      a cut to an ellipsis included unless its whole words are its ``title``."""
     from src.webui.shell import RESEARCH_PAGES
 
     problems: list[str] = []
@@ -1140,6 +1286,9 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
                                     f"drawn while the tabs take {len(tabs['lines'])} lines")
             for other in (*tabs["others"], *tabs["focusable"]):
                 problems.append(f"{where}: tab-groups: {other} in the tablist")
+        if "in-view" in rules and tuple(int(n) for n in stop["size"].split("x")) in OWNER_SIZES:
+            for what in found.get("inview", ()):
+                problems.append(f"{where}: in-view: {what}")
     return problems
 
 
@@ -1283,7 +1432,7 @@ def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any
     return json.loads(result.stdout)
 
 
-__all__ = ["LAYOUT_RULES", "LAYOUT_SIZES", "LOOK_JS", "PTR_SIZES", "QUEUE_JS", "READ_ONLY_HEADERS",
+__all__ = ["LAYOUT_RULES", "LAYOUT_SIZES", "LOOK_JS", "OWNER_SIZES", "PTR_SIZES", "QUEUE_JS", "READ_ONLY_HEADERS",
            "STAGE_HINTS", "TREE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES", "UI_WALK_JS",
            "WALK_STATES", "layout_problems", "layout_stops", "node_with_playwright", "repeat_problems",
            "run_node", "state_settings", "ui_problems", "walk_state", "walk_ui"]

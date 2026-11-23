@@ -3932,6 +3932,169 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
     assert not [c for c in found["centred"] if "#c-top" in c], found["centred"]
 
 
+#: A static page for the rules the after screenshots asked for (the sweep's L7; `browser.LOOK_JS`'s
+#: ``layout``, `seeAll`): one page shown as the shell shows one, in panels placed side by side, each
+#: rule's bad case beside its good one (each named in the test).
+_LAYOUT_L7_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const lines = [1, 2, 3, 4, 5, 6].map((i) => `<p>Line ${i} of a region taller than its box.</p>`).join('');
+  const wide = '<table style="width: 420px; table-layout: fixed"><tr><td>Name</td><td>Fingerprint</td>'
+    + '<td>Not admitted: Gene, Patients-like-me ›</td></tr></table>';
+  const long = 'serving reads this workspace · in your Training run bar, said in more words than one line holds';
+  await page.setContent(`<!doctype html><html><head><style>
+    body { margin: 0; font: 15px sans-serif; background: #fff; }
+    p { margin: 0; }
+    button, input { font: inherit; height: 32px; }
+    .shep-panel { position: absolute; width: 440px; border: 1px solid #ccc; }
+    .shep-scroll-cue[data-shep-more] { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+      mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+    .rg { overflow: auto; height: 44px; margin-bottom: 6px; }
+    .sw { overflow-x: auto; overflow-y: hidden; width: 200px; }
+    .shep-bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; width: 400px; margin-bottom: 8px; }
+    .shep-grp { display: flex; gap: 4px; }
+    .rt { display: flex; gap: 16px; margin-bottom: 8px; }
+    .rt .block { width: 180px; }
+    .mono { font: 14px monospace; margin-bottom: 6px; }
+    .mono code { font: inherit; }
+  </style></head><body>
+    <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
+    <div id="shep-tab-x"><div class="shep-page">
+      <div class="shep-panel" id="p1" style="left: 0; top: 40px; height: 440px">
+        <div class="rg" id="cue-bad">${lines}</div>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-good">${lines}</div>
+        <div class="rg" id="cue-pad" style="padding-bottom: 80px"><p>One short line, then room.</p></div>
+        <div class="sw" id="side-bad">${wide}</div>
+        <div class="shep-rs-cue">Wider than the panel: scroll sideways.</div>
+        <div class="sw" id="side-good">${wide}</div>
+        <div id="clip-bad" style="width: 120px; overflow: hidden; white-space: nowrap">A long sentence that runs past its box</div>
+        <span id="clip-ell" title="A long value cut to an ellipsis, whole here"
+          style="display: inline-block; width: 120px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis">A long value cut to an ellipsis, whole here</span>
+        <span id="clip-ell-bad"
+          style="display: inline-block; width: 120px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis">Another value cut, with no title</span>
+        <span id="clip-sr" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">Copy the value</span>
+      </div>
+      <div class="shep-panel" id="p2" style="left: 460px; top: 40px; height: 440px">
+        <div class="shep-bar" id="bar-end"><div class="shep-grp" style="width: 300px"><input type="text" style="width: 290px"></div>
+          <div class="shep-grp" style="width: 200px; margin-left: auto"><button type="button">Start</button></div></div>
+        <div class="shep-bar" id="bar-start"><div class="shep-grp" style="width: 300px"><input type="text" style="width: 290px"></div>
+          <div class="shep-grp" style="width: 200px"><button type="button">Start</button></div></div>
+        <div class="rt" id="rt-bad" style="align-items: flex-end">
+          <div class="block" id="rt-bad-a"><span data-testid="block-info">Device</span><div>No CUDA device here.</div><input type="text"></div>
+          <div class="block" id="rt-bad-b"><span data-testid="block-info">Run name</span><input type="text"></div></div>
+        <div class="rt" id="rt-good" style="align-items: flex-start">
+          <div class="block" id="rt-good-a"><span data-testid="block-info">Device</span><div>No CUDA device here.</div><input type="text"></div>
+          <div class="block" id="rt-good-b"><span data-testid="block-info">Run name</span><input type="text"></div></div>
+        <div class="shep-bar" id="bar-note"><div class="shep-grp"><button type="button" class="primary" id="dis-bar" disabled>Start</button></div>
+          <div class="shep-bar-note" style="flex-basis: 100%"><p>Start disabled: no dataset is listed yet.</p></div></div>
+        <div style="display: flex; gap: 16px">
+          <div class="shep-area"><button type="button" id="area-btn">Show older runs</button></div>
+          <div class="shep-area"><p id="area-words" style="width: 160px">Not a certified medical device; decision support for a clinician.</p></div></div>
+      </div>
+      <div class="shep-panel" id="p3" style="left: 920px; top: 40px; height: 440px">
+        <p class="mono" style="width: 20ch"><code id="tok-flag"><span style="white-space: nowrap">run.py --generate</span><wbr><span style="white-space: nowrap">-samples</span></code></p>
+        <p class="mono" style="width: 14ch; overflow-wrap: anywhere"><code id="tok-hyphen">/tmp/abc-0/-home-user-aaaa-bbbb-cccc</code></p>
+        <p class="mono" style="width: 12ch"><code id="tok-path"><span style="white-space: nowrap">/very_long</span><wbr><span style="white-space: nowrap">/path_to</span><wbr><span style="white-space: nowrap">/a_file.py</span></code></p>
+        <p class="mono" style="width: 30ch"><code id="tok-fp">3f563f74bb04</code></p>
+        <p class="mono" id="sep-bad" style="width: 14ch; font-size: 15px">alpha&nbsp;· beta&nbsp;· gamma delta</p>
+        <p class="mono" id="sep-good" style="width: 40ch; font-size: 15px">alpha&nbsp;· beta&nbsp;· gamma delta</p>
+        <p class="mono" id="chain-bad" style="width: 26ch; font-size: 15px">trained on demo&nbsp;· dataset fingerprint</p>
+        <p class="mono" id="chain-long" style="width: 12ch; font-size: 15px">a&nbsp;· a fact much longer than its box</p>
+      </div>
+      <div class="shep-panel" id="p4" style="left: 0; top: 500px; height: 260px">
+        <button type="button" class="primary" id="dis-bad" disabled>Register this report</button>
+        <div style="height: 24px"></div>
+        <button type="button" id="dis-reason" disabled>Import a new version</button>
+        <p class="shep-reason" style="margin-top: 4px">Import disabled: no results registry is set.</p>
+        <button type="button" class="primary" id="dis-under" disabled style="position: absolute; left: 260px; top: 120px">Commit</button>
+        <div id="layer" style="position: absolute; left: 240px; top: 100px; width: 180px; height: 70px; background: #fff; z-index: 3"></div>
+        <div style="position: absolute; left: 16px; top: 200px"><button type="button" class="primary" id="dis-own" disabled>Use for training</button>
+          <span class="shep-note" style="margin-left: 12px">No workspace is listed to use yet.</span></div>
+      </div>
+      <div class="shep-panel" id="p5" style="left: 460px; top: 500px; height: 180px">
+        <div data-notice="workspaces_root">No workspaces folder is set.</div>
+        <div style="height: 60px"></div>
+        <button type="button" id="dis-sec" disabled>Refresh</button>
+        <button type="button" class="primary" id="dis-prim" disabled style="margin-left: 120px">Load this model</button>
+      </div>
+      <div class="shep-panel" id="p6" style="left: 920px; top: 500px; height: 180px">
+        <div class="sw" id="rh-bad"><table style="width: 520px; table-layout: fixed"><colgroup><col style="width: 150px"><col style="width: 150px"><col style="width: 220px"></colgroup>
+          <tr id="rh-bad-row"><td>demo</td><td>3f56</td><td>${long}</td></tr></table></div>
+        <div class="sw" id="rh-good"><table style="width: 520px; table-layout: fixed"><colgroup><col style="width: 150px"><col style="width: 150px"><col style="width: 220px"></colgroup>
+          <tr id="rh-good-row"><td>demo</td><td>3f56</td><td>in use</td></tr></table></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="iv-region"><div style="height: 1200px"></div><button type="button" id="iv-in">Apply</button></div>
+        <button type="button" id="iv-out" style="position: absolute; left: 16px; top: 1000px">Apply Settings</button>
+      </div>
+    </div></div></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  const layout = await page.evaluate(() => window.__shepLook.check().layout);
+  console.log(JSON.stringify(layout));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.fixture(scope="module")
+def l7_rules_seen(tmp_path_factory):
+    """The layout rules' findings on `_LAYOUT_L7_PAGE_JS`, once for the module."""
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    return run_node(_LAYOUT_L7_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS)),
+                    tmp_path_factory.mktemp("l7-rules"), timeout=120)
+
+
+def _hits(found, key, element):
+    return [line for line in found[key] if element in line]
+
+
+def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_seen):
+    """SW-LK1, SW-LK2, SW-LK5 and SW-LK8 (the L6 after screenshots): Settings' Data locations,
+    Fine-tune's form, Training's charts and Diagnosis' inputs ran past their scroll region's foot
+    with no cue, and the walk found nothing. ``in-view`` finds a control drawn past the window
+    that no scroll region in view holds (and passes one a region in view holds); ``scroll-cue``
+    finds a region whose words run past its foot with no cue (and passes the R-73 cue's mask and a
+    region whose overflow is only its padding), and a box whose table runs past its right edge with
+    no sideways cue (and passes one with Compare's drawn cue before it)."""
+    found = l7_rules_seen
+    assert _hits(found, "inview", "#iv-out"), found["inview"]
+    assert not _hits(found, "inview", "#iv-in"), found["inview"]
+    assert _hits(found, "cue", "#cue-bad holds"), found["cue"]
+    assert not _hits(found, "cue", "#cue-good") and not _hits(found, "cue", "#cue-pad"), found["cue"]
+    assert _hits(found, "cue", "#side-bad holds"), found["cue"]
+    assert not _hits(found, "cue", "#side-good"), found["cue"]
+    assert not _hits(found, "cue", "#iv-region"), found["cue"]
+
+
+def test_the_clipped_rule_finds_words_a_box_cuts(l7_rules_seen):
+    """SW-LK3 and SW-LK4: words cut by a box that hides its overflow were never measured (only
+    controls were). ``clipped`` finds a text cut by its box and an ellipsis with no title, and
+    passes an ellipsis whose whole words are its title and a screen reader's hidden words."""
+    found = l7_rules_seen
+    assert [c for c in found["clipped"] if "cut by #clip-bad" in c], found["clipped"]
+    assert [c for c in found["clipped"] if "cut by #clip-ell-bad" in c], found["clipped"]
+    assert not [c for c in found["clipped"] if "cut by #clip-ell " in c or "#clip-sr" in c], found["clipped"]
+
+
+def test_the_layout_problems_hold_in_view_at_the_owners_windows():
+    """``in-view`` is held at the owner's windows only (`browser.OWNER_SIZES`: a page scrolls
+    on a phone)."""
+    from tests.fixtures.browser import OWNER_SIZES, layout_problems
+
+    def stop(size, inview=()):
+        return {"size": size, "page": "settings", "check": {"layout": {"inview": list(inview), "tabs": None}}}
+
+    owner = "x".join(map(str, OWNER_SIZES[0]))
+    found = layout_problems([stop(owner, ["#x \"Apply\" drawn 40 px under the window"]),
+                             stop("390x844", ["#x \"Apply\" drawn 900 px under the window"])],
+                            rules=("in-view",))
+    assert found == [f"{owner} settings: in-view: #x \"Apply\" drawn 40 px under the window"], found
+
+
 @pytest.mark.parametrize("state", ["first_use", "empty", "configured"])
 def test_every_page_of_every_state_has_no_layout_finding(state, request):
     """**The layout rules held at zero** (the sweep's integration, its decision 4; no allow-list):
@@ -3943,7 +4106,8 @@ def test_every_page_of_every_state_has_no_layout_finding(state, request):
     Load drawer in every state; Training's Continue drawer and the Test page's import drawer
     configured), has none of the layout rules' findings (`browser.layout_problems`: beside,
     narrow-box, overlap, orphan, centred, split-group, edge, clipped, empty-region,
-    help-on-page, notice-repeat, tab-groups). One service a state, one browser a walk."""
+    help-on-page, notice-repeat, tab-groups, and since L7 in-view at the owner's windows and
+    scroll-cue). One service a state, one browser a walk."""
     from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES, layout_problems
 
     seen = request.getfixturevalue({"first_use": "ui_walk_first_use", "empty": "ui_walk_empty",
