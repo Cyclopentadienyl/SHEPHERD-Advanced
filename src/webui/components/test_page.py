@@ -3121,13 +3121,19 @@ def create_test_page(ctx: Any) -> None:
                     preview_btn = gr.Button("Preview", variant="secondary",
                                             elem_id="shep-test-preview", scale=0)
                 preview_out = plain_html("", elem_id="shep-test-preview-card")
-            with gr.Row(elem_classes=["shep-panel-ft"]):
-                commit_btn = gr.Button("Commit", variant="primary", interactive=False,
-                                       elem_id="shep-test-commit", scale=0)
+            # A bar: Commit, then its notes each a line of its own under it (the
+            # skill's §2: a message never shares a row with a button; L7: the
+            # reason Commit is off wrapped to two lines beside it).
+            with gr.Row(elem_classes=["shep-panel-ft", "shep-bar"]):
+                with gr.Row(elem_classes=["shep-grp"]):
+                    commit_btn = gr.Button("Commit", variant="primary", interactive=False,
+                                           elem_id="shep-test-commit", scale=0)
+                commit_out = plain_html("", elem_id="shep-test-commit-out",
+                                        elem_classes=["shep-bar-note"])
                 plain_html(
                     '<span class="shep-note">Commit prepares again and refuses if the preview id '
-                    "changed.</span>", elem_id="shep-test-commit-note")
-                commit_out = plain_html("", elem_id="shep-test-commit-out")
+                    "changed.</span>", elem_id="shep-test-commit-note",
+                    elem_classes=["shep-bar-note"])
         # ------------------------------------------------------------ Run
         # Three rows at wide sizes: the title; the body, the panel's one
         # scroll region, with the choices and then the job's details; and the
