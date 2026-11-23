@@ -3313,6 +3313,28 @@ def test_the_tab_groups_flatten_to_the_research_pages_and_their_style_is_generat
     assert "display: none" not in css and "tabs-wrapped" not in shell.SHELL_HEAD + css
 
 
+def test_words_beside_a_control_take_their_own_line_when_they_would_take_two_lines():
+    """The display floor's walk at 2560 x 1440 (the owner's decision of 2026-11-23): Training's
+    "Set by you: nothing. The run takes the reference values…" stood beside Reset to reference
+    on two lines (the ``beside`` rule): its box's basis was its words' one line, but a panel's
+    prose is capped at the measure, so in the wide row the measure and the button fitted side
+    by side and the sentence wrapped there. The shell's layout pass now marks words of a
+    ``shep-beside-row`` that stand beside a control on two lines or more
+    (``data-shep-own-line``), measured with the mark off (put back before anything is painted),
+    and they take the row's next line. What the browser draws is the layout walk's
+    (`test_every_page_of_every_state_has_no_layout_finding` at 2560 x 1440)."""
+    from src.webui.style import SHELL_CSS
+
+    head = shell.SHELL_HEAD
+    besides = head[head.index("function besides()"):head.index("function layout()")]
+    off, measure, back = (besides.index("box.removeAttribute(OWN_LINE)"), besides.index("lines(box) > 1"),
+                          besides.index("box.setAttribute(OWN_LINE, '')"))
+    assert off < measure < back
+    assert "'.shep-beside-row > .shep-beside'" in besides
+    assert "    besides();" in head[head.index("function layout()"):]
+    assert ".shep-beside-row > .shep-beside[data-shep-own-line] { flex-basis: 100% !important; }" in SHELL_CSS
+
+
 def test_the_fit_pass_measures_each_box_with_its_own_mark_off():
     """M3 and M6 (the UI sweep): a box the pass marks narrow (a wide table
     whose optional columns the mark hides, a choice group the mark stacks)

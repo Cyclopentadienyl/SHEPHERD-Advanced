@@ -1130,6 +1130,49 @@ _SHELL_JS = r"""
       if (g.hasAttribute(ALONE) !== alone) { g.toggleAttribute(ALONE, alone); }
     }
   }
+  // **Words beside a control only while they are one line** (style.py's ``shep-beside-row``):
+  // the words of such a row (``shep-beside``) that stand beside its control on two lines or more
+  // (a sentence capped at the measure in a wide row: Training's "Set by you" line at 2560 px) are
+  // marked OWN_LINE and take the row's next line, from its start. Each is measured with its mark
+  // off (put back before anything is painted), so the mark never changes what it measured.
+  var OWN_LINE = 'data-shep-own-line';
+  // The lines an element's words are drawn on: its text's own boxes, top to bottom.
+  function lines(el) {
+    var boxes = [], walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (var t = walk.nextNode(); t; t = walk.nextNode()) {
+      if (!t.data.trim()) { continue; }
+      var range = document.createRange();
+      range.selectNodeContents(t);
+      var rects = range.getClientRects();
+      for (var j = 0; j < rects.length; j++) { if (rects[j].width > 0.5 && rects[j].height > 0.5) { boxes.push(rects[j]); } }
+    }
+    boxes.sort(function (a, b) { return a.top - b.top; });
+    var n = 0, bottom = -Infinity;
+    for (var i = 0; i < boxes.length; i++) {
+      var q = boxes[i];
+      if (q.top > bottom - q.height / 2) { n += 1; bottom = q.bottom; } else { bottom = Math.max(bottom, q.bottom); }
+    }
+    return n;
+  }
+  function besides() {
+    var all = document.querySelectorAll('.shep-beside-row > .shep-beside');
+    for (var i = 0; i < all.length; i++) {
+      var box = all[i], own = false;
+      if (drawn(box)) {
+        var was = box.hasAttribute(OWN_LINE);
+        if (was) { box.removeAttribute(OWN_LINE); }
+        var b = box.getBoundingClientRect(), beside = false;
+        for (var k = box.parentElement.firstElementChild; k; k = k.nextElementSibling) {
+          if (k === box || !drawn(k)) { continue; }
+          var q = k.getBoundingClientRect();
+          if (q.height >= 1 && q.top < b.bottom - 1 && q.bottom > b.top + 1) { beside = true; }
+        }
+        own = beside && lines(box) > 1;
+        if (was) { box.setAttribute(OWN_LINE, ''); }
+      }
+      if (box.hasAttribute(OWN_LINE) !== own) { box.toggleAttribute(OWN_LINE, own); }
+    }
+  }
   function layout() {
     orientation();
     fits();
@@ -1137,6 +1180,7 @@ _SHELL_JS = r"""
     cues();
     seps();
     ends();
+    besides();
     var shell = document.getElementById('shep-shell');
     var row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
     var chips = document.querySelector('#shep-chips .shep-chips');

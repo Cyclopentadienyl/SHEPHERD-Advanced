@@ -685,6 +685,10 @@ span.shep-note { display: inline-block; }
 .shep-beside-row { flex-wrap: wrap !important; align-items: baseline !important; gap: var(--shep-space-2) var(--shep-space-3) !important; }
 .shep-beside-row > button { flex: none !important; width: auto !important; min-width: max-content !important; }
 .shep-beside { flex: 1 1 max-content !important; min-width: 0 !important; }
+/* Words that would stand beside the control on two lines or more (their sentence longer than the
+   measure that caps it, in a row wide enough to hold the measure and the control: 2560 px) take
+   the row's next line: the shell's layout pass marks them (``data-shep-own-line``). */
+.shep-beside-row > .shep-beside[data-shep-own-line] { flex-basis: 100% !important; }
 .shep-intro { padding: 12px 16px 0; margin: 0; font-size: 14px; color: var(--shep-text-2); }
 .shep-card { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
 .shep-card-hd .shep-muted { font-weight: 400; font-size: 14px; }
