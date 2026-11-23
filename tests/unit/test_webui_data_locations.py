@@ -121,13 +121,21 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
     Save are one group that wraps whole, the narrow form is a query on the
     panel's own width (no window media query), and the panel's heading is
     the go link's focus target (``#shep-dl`` and its ``h2``, a heading that
-    takes focus, no control)."""
+    takes focus, no control).
+    The sweep's L7 (SW-LK1): the name took a line of its own above the facts
+    at every width, the right half of it empty, and Create a line of its own
+    under the buttons: the four rows no longer fit the owner's window (1850 x
+    960, 223 px under the panel's foot at first use). Each row's head now
+    holds its name and, beside it, what is in effect and its "Advanced:
+    source ›" (words and a disclosure, no field or button); Create and its
+    suggestion are one more whole group of the Set-to bar, after Check and
+    Save."""
     from src.webui.app import create_gradio_app
 
     css = " ".join(dl.PAGE_CSS.split())
     assert "@media" not in css
     assert f"{dl._PAGE} #shep-dl {{ container: shep-dl / inline-size; }}" in css
-    assert (f"{dl._PAGE} .shep-dl-row > :is(.shep-dl-left, .shep-dl-main) "
+    assert (f"{dl._PAGE} .shep-dl-row > :is(.shep-dl-head, .shep-dl-main) "
             "{ flex: 1 1 100% !important;") in css
     assert f"@container shep-dl (max-width: {dl.DL_NARROW}) {{" in css
     app = create_gradio_app()
@@ -136,7 +144,16 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
         check, save = blocks[f"dl_check_{key}"], blocks[f"dl_save_{key}"]
         group = check.parent
         assert group is save.parent and {"shep-dl-acts", "shep-grp"} <= set(group.elem_classes)
-        assert blocks[f"dl_box_{key}"].parent is group.parent      # the box beside the group
+        bar = group.parent
+        assert blocks[f"dl_box_{key}"].parent is bar      # the box beside the group
+        create = blocks[f"dl_create_{key}"].parent
+        assert create.parent is bar and {"shep-dl-create", "shep-grp"} <= set(create.elem_classes)
+        assert blocks[f"dl_suggest_{key}"].parent is create
+        facts = blocks[f"dl_state_{key}"].parent
+        assert blocks[f"dl_adv_{key}"].parent is facts and "shep-dl-facts" in facts.elem_classes
+        head = facts.parent
+        assert "shep-dl-head" in head.elem_classes and head.parent is blocks[f"dl_row_{key}"]
+        assert ["shep-dl-left" in (c.elem_classes or []) for c in head.children] == [True, False]
     head = blocks["shep-dl-hd"].value
     assert '<h2 tabindex="-1">Data locations</h2>' in head
     assert blocks["shep-dl-hd"].parent is blocks["shep-dl"]

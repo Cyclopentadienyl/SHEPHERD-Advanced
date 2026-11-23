@@ -4553,7 +4553,6 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change .shep-confirm .shep-ftbl th, {_TAB} #shep-dx-change .shep-confirm .shep-ftbl td {{ padding-top: 5px; padding-bottom: 5px; }}
 {_TAB} #shep-dx-change .shep-confirm .shep-ftbl tbody th {{ white-space: nowrap; }}
 {SIDE} {{
-  {_TAB} > .column {{ height: 100%; box-sizing: border-box; }}
   {_TAB} #shep-dx {{ height: 100%; }}
   {_TAB} #shep-dx > .shep-panel {{ max-height: 100%; }}
   {_TAB} .shep-dx-scroll {{ flex: 1 1 auto !important; min-height: 0; overflow: auto; }}

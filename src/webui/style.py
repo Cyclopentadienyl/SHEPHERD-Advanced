@@ -1200,6 +1200,9 @@ __SIDE__ {
   #shep-research-nav { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   #shep-research-nav > .tabitem { flex: 1 1 auto; min-height: 0; overflow: auto; }
   #shep-research-nav > .tabitem > .column { min-height: 100%; }
+  /* A level-1 page laid out as a row of panels (`.shep-page`: Diagnosis, Settings) fills its tab,
+     so its panels take the page's height and scroll inside, never the tab. */
+  #shep-nav > .tabitem > .column:has(> .shep-page) { height: 100%; box-sizing: border-box; }
   .shep-page { min-height: 0; height: 100%; align-items: stretch !important; flex-wrap: nowrap !important; }
   .shep-page > .shep-panel { min-height: 0; max-height: 100%; display: flex; flex-direction: column; min-width: var(--shep-panel-min) !important; }
   .shep-page > .shep-panel > .block { flex: none; }
