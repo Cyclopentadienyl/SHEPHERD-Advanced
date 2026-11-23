@@ -2315,6 +2315,12 @@ _DRAWER_SIZES = ((1850, 960), (1366, 768), (1280, 720), (1024, 640))
 #: The windows the configured walk opens the Load drawer at with a row chosen (its Model Facts
 #: beside the list), last, so the drawer's other stops see no choice: the owner's and the floor.
 _PICKED_SIZES = ((1850, 960), (1280, 720))
+#: Models with a row chosen (its details beside the list; the sweep's L7 check, C2: no rule had
+#: measured it, and its title broke inside the date at 1550, 1366 and 1280): the row stays chosen
+#: (no closer), so these stops come last, at the owner's windows, a laptop and the floor.
+_MODELS_PICK = {"click": "#shep-models-research-rows tr[data-key]:not([hidden])",
+                "shown": "#shep-mp-detail h2[data-key]"}
+_MODELS_PICK_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720))
 
 
 def _layout_walk_stops(configured: bool):
@@ -2329,7 +2335,9 @@ def _layout_walk_stops(configured: bool):
     drawers = [("clinical", _LOAD_DRAWER)] + ([("training", _CONTINUE_DRAWER), ("test", _IMPORT_DRAWER)]
                                              if configured else [])
     picked = ([{"size": [w, h], "page": "clinical", "open": _CHANGE_DRAWER, "focus": False}
-               for w, h in _PICKED_SIZES] if configured else [])
+               for w, h in _PICKED_SIZES] + [{"size": [w, h], "page": "models", "open": _MODELS_PICK,
+                                              "focus": False} for w, h in _MODELS_PICK_SIZES]
+              if configured else [])
     return layout_stops(UI_PAGES, LAYOUT_SIZES) + [
         {"size": [w, h], "page": page, "open": drawer, "focus": False}
         for w, h in _DRAWER_SIZES for page, drawer in drawers] + picked
@@ -4401,7 +4409,7 @@ def _walk_coverage(seen: list, state: str) -> list:
         (s["page"], s["size"]) for s in pages}
     if missing:
         problems.append(f"pages not measured: {sorted(missing)}")
-    drawers = {"#shep-dx-change"} | ({"#shep-train-drawer", "#shep-test-import"}
+    drawers = {"#shep-dx-change"} | ({"#shep-train-drawer", "#shep-test-import", _MODELS_PICK["shown"]}
                                      if state == "configured" else set())
     opened = {s["open"] for s in seen if s.get("open")}
     if opened != drawers:
@@ -4425,7 +4433,7 @@ def test_the_walks_coverage_names_a_row_chosen_stop_that_did_not_run():
              for page in UI_PAGES for w, h in LAYOUT_SIZES]
     drawers = [{"page": page, "size": "1850x960", "open": shown}
                for page, shown in (("clinical", "#shep-dx-change"), ("training", "#shep-train-drawer"),
-                                   ("test", "#shep-test-import"))]
+                                   ("test", "#shep-test-import"), ("models", _MODELS_PICK["shown"]))]
     picked = [{"page": "clinical", "size": f"{w}x{h}", "open": "#shep-dx-change", "picked": "a/b.pt"}
               for w, h in _PICKED_SIZES]
     assert _walk_coverage(pages + drawers + picked, "configured") == []
