@@ -1340,6 +1340,12 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
     if (stop.open) { await drawer(stop.open, true); }
     const seen = { size: `${w}x${h}`, page: stop.page, frames: await settle() };
     if (stop.open) { seen.open = stop.open.shown; }
+    // A drawer opened with a row chosen (`stop.open.pick`): the chosen model whose facts it drew,
+    // so a walk can show that its row-chosen stops ran with their choice (the sweep's L7, FX-2).
+    if (stop.open && stop.open.pick) {
+      seen.picked = await page.$eval(stop.open.picked, (el) => el.getAttribute('data-facts-key')
+        || el.textContent.trim()).catch(() => '');
+    }
     if (EXTRA) { seen.extra = await page.evaluate(EXTRA); }
     if (stop.check !== false) {
       seen.check = await page.evaluate(() => window.__shepLook.check());

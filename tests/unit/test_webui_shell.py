@@ -4226,18 +4226,64 @@ def test_every_page_of_every_state_has_no_layout_finding(state, request):
     help-on-page, notice-repeat, tab-groups, and since L7 in-view at the owner's windows,
     scroll-cue, wrap-end, disabled-reason, token-break, sep-end, chain-break, row-top,
     row-height). One service a state, one browser a walk."""
-    from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES, layout_problems
+    from tests.fixtures.browser import layout_problems
 
     seen = request.getfixturevalue({"first_use": "ui_walk_first_use", "empty": "ui_walk_empty",
                                     "configured": "ui_walk_configured"}[state])
+    # What was measured, so that none means something: every page at every size, every drawer,
+    # and (configured) the Load drawer with a row chosen at each of its sizes.
+    assert _walk_coverage(seen, state) == []
+    assert layout_problems(seen) == []
+
+
+def _walk_coverage(seen: list, state: str) -> list:
+    """**What a layout walk of `state` must have measured** (E1's coverage), as the
+    problems found: every page at every layout size; every drawer the state opens; and,
+    configured, the Load drawer with a row chosen at each of `_PICKED_SIZES`, its chosen
+    model's facts drawn (B-L6-4; the sweep's L7, FX-2: the walk recorded only which drawers
+    opened, so removing the row-chosen stops passed unseen); no other state chooses a row."""
+    from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES
+
+    problems = []
     pages = [s for s in seen if not s.get("open") and "check" in s and "layout" in s["check"]]
-    # What was measured, so that none means something: every page at every size, every drawer.
-    assert {(s["page"], s["size"]) for s in pages} == {
-        (page, f"{w}x{h}") for page in UI_PAGES for w, h in LAYOUT_SIZES}
+    missing = {(page, f"{w}x{h}") for page in UI_PAGES for w, h in LAYOUT_SIZES} - {
+        (s["page"], s["size"]) for s in pages}
+    if missing:
+        problems.append(f"pages not measured: {sorted(missing)}")
     drawers = {"#shep-dx-change"} | ({"#shep-train-drawer", "#shep-test-import"}
                                      if state == "configured" else set())
-    assert {s["open"] for s in seen if s.get("open")} == drawers
-    assert layout_problems(seen) == []
+    opened = {s["open"] for s in seen if s.get("open")}
+    if opened != drawers:
+        problems.append(f"drawers opened {sorted(opened)}, wanted {sorted(drawers)}")
+    picked = {s["size"] for s in seen if s.get("open") == "#shep-dx-change" and s.get("picked")}
+    wanted = {f"{w}x{h}" for w, h in _PICKED_SIZES} if state == "configured" else set()
+    if picked != wanted:
+        problems.append(f"Load drawer stops with a row chosen at {sorted(picked)}, wanted "
+                        f"{sorted(wanted)}")
+    return problems
+
+
+def test_the_walks_coverage_names_a_row_chosen_stop_that_did_not_run():
+    """FX-2 (the sweep's L7): E1 checked which drawers opened, not that the configured
+    walk's row-chosen Load drawer stops ran; with them removed it still passed. The coverage
+    now names each `_PICKED_SIZES` stop that did not choose a row and draw its facts, and a
+    state that chose one where none is asked."""
+    from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES
+
+    pages = [{"page": page, "size": f"{w}x{h}", "check": {"layout": {}}}
+             for page in UI_PAGES for w, h in LAYOUT_SIZES]
+    drawers = [{"page": page, "size": "1850x960", "open": shown}
+               for page, shown in (("clinical", "#shep-dx-change"), ("training", "#shep-train-drawer"),
+                                   ("test", "#shep-test-import"))]
+    picked = [{"page": "clinical", "size": f"{w}x{h}", "open": "#shep-dx-change", "picked": "a/b.pt"}
+              for w, h in _PICKED_SIZES]
+    assert _walk_coverage(pages + drawers + picked, "configured") == []
+    gone = _walk_coverage(pages + drawers + picked[:-1], "configured")
+    assert len(gone) == 1 and "row chosen" in gone[0] and "390x844" in gone[0], gone
+    blank = [{**stop, "picked": ""} for stop in picked]           # facts never drawn
+    assert _walk_coverage(pages + drawers + blank, "configured"), blank
+    assert _walk_coverage(pages + drawers[:1], "first_use") == []
+    assert _walk_coverage(pages + drawers[:1] + picked, "first_use")
 
 
 def test_prose_in_a_region_on_a_panels_edge_keeps_the_measure_and_a_reason_draws_no_box(built):
