@@ -1002,7 +1002,7 @@ const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [390, 844]]) {
+  for (const [w, h] of [[1850, 960], [1280, 720]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1,
                                                    reducedMotion: 'reduce' })).newPage();
     await page.goto('file://' + process.argv[2]);
@@ -1062,7 +1062,7 @@ def test_a_status_marks_text_reads_shape_space_word_and_its_look_is_kept(tmp_pat
     ``innerText``), and a chip's read the shape and the word as two lines.
     Now every mark, as text and as a chip, reads shape, space, word, copied
     and as ``innerText`` (a chip copied alone ends its line, as any box of
-    its own does), at 1850 x 960 and 390 x 844; the shape stays
+    its own does), at 1850 x 960 and the display floor's 1280 x 720; the shape stays
     hidden from a screen reader, so it reads the word; and the look is kept:
     4 px from the shape to the word (6 px after the spinner), as on fcc3dea,
     the space having no width. The sweep's L7 (SW-LK7): the space was a

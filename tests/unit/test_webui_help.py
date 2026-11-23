@@ -23,8 +23,8 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   Playwright, skipped without): a hover previews after a delay as a tooltip
   without "Esc to close", a click pins a dialog named by its title with it,
   the pinned bubble never covers the field it explains (beside, then above,
-  then below), a card heading's ⓘ never covers its card, at a wide and a
-  narrow window, its width stays within the budget, the ⓘ's hit target is at
+  then below), a card heading's ⓘ never covers its card, at a wide window
+  and the display floor, its width stays within the budget, the ⓘ's hit target is at
   least 24 × 24 px, the lead is bold, "- " lines are one list and a "Term:"
   is bold, and a hostile text shows as literal text in each part; a bubble
   whose ⓘ is scrolled out of view (the window or a region) is not drawn and
@@ -347,8 +347,8 @@ that fill the card's width so a bubble beside its title would cover them.</p>
 
 
 def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_path):
-    """In a real browser, at the deployment window (1850 × 960) and a narrow
-    one (420 × 800), for a field's ⓘ, a grid-row field's (its block
+    """In a real browser, at the deployment window (1850 × 960) and the
+    display floor (1280 × 720), for a field's ⓘ, a grid-row field's (its block
     ``display: contents``, so it has no box of its own: the bubble covered
     the ⓘ and the field, D08), a key-value row's and a table row's: a
     hover opens nothing before the delay and a tooltip after it; a click pins
@@ -372,7 +372,7 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
                             capture_output=True, text=True, timeout=240)
     assert result.returncode == 0, result.stderr
     sizes = json.loads(result.stdout)
-    assert set(sizes) == {"1850x960", "420x800"}
+    assert set(sizes) == {"1850x960", "1280x720"}
     for size, targets in sizes.items():
         assert set(targets) == {"field", "grid", "kv", "row", "region"}
         for which, seen in targets.items():
@@ -497,7 +497,7 @@ const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [420, 800]]) {
+  for (const [w, h] of [[1850, 960], [1280, 720]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.clock.install();
     await page.goto('file://' + process.argv[2]);
@@ -582,7 +582,7 @@ def test_a_focus_preview_closes_though_it_slid_under_a_resting_pointer(tmp_path)
     stays only for the reader's own pointer moving in it: here it closes and
     the page under the pointer is reached again, while a pointer moved from
     the ⓘ into its hover preview still keeps the bubble until it leaves (at
-    1850 x 960 and 420 x 800)."""
+    1850 x 960 and the display floor's 1280 x 720)."""
     found = node_with_playwright()
     if found is None:
         pytest.skip("Node with Playwright is not installed")
@@ -605,7 +605,7 @@ def test_a_focus_preview_closes_though_it_slid_under_a_resting_pointer(tmp_path)
                             text=True, timeout=240)
     assert result.returncode == 0, result.stderr
     seen = json.loads(result.stdout)
-    assert set(seen) == {"1850x960", "420x800"}
+    assert set(seen) == {"1850x960", "1280x720"}
     for size, s in seen.items():
         # The scene as the walk met it: a focus preview, the pointer resting
         # outside it, then the bubble under that pointer with no pointer move.
@@ -642,7 +642,7 @@ const { chromium } = require('playwright');
   const browser = await chromium.launch();
   const out = {};
   const I = '#fld button.shep-i';
-  for (const [w, h] of [[1850, 960], [960, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600]]) {
     for (const where of ['window', 'region']) {
       const away = where === 'window' ? 2000 : 300;
       const file = 'file://' + process.argv[where === 'window' ? 2 : 3];
@@ -754,7 +754,7 @@ def test_a_bubble_whose_i_left_view_is_not_drawn_over_other_controls(tmp_path):
     the reader sees is not eaten by a bubble they cannot see). Closed by its
     ×, it stays closed: focus given back to its ⓘ opened a preview with no
     ⓘ to follow, which a scroll left drawn over the page. At 1850 x 960 and
-    960 x 1080, the window scrolled by 2000 px and an inner region by
+    1440 x 1600, the window scrolled by 2000 px and an inner region by
     300 px."""
     found = node_with_playwright()
     if found is None:
@@ -834,7 +834,7 @@ const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [420, 800]]) {
+  for (const [w, h] of [[1850, 960], [1280, 720]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.clock.install();
     await page.goto('file://' + process.argv[2]);
@@ -903,7 +903,7 @@ def test_a_focus_preview_lets_the_click_through_to_the_control_under_it(tmp_path
     and out does not close it (WCAG 1.4.13, persistent). A preview the pointer
     opened stays the pointer's (the resting pointer's test: the pointer moved
     into it keeps it) and a pinned bubble is a dialog. At 1850 x 960 and
-    420 x 800."""
+    the display floor's 1280 x 720."""
     found = node_with_playwright()
     if found is None:
         pytest.skip("Node with Playwright is not installed")
@@ -935,7 +935,7 @@ def test_a_focus_preview_lets_the_click_through_to_the_control_under_it(tmp_path
                             text=True, timeout=240)
     assert result.returncode == 0, result.stderr
     seen = json.loads(result.stdout)
-    assert set(seen) == {"1850x960", "420x800"}
+    assert set(seen) == {"1850x960", "1280x720"}
     for size, s in seen.items():
         # The scene T08 met: focus on Seed's ⓘ, its preview a tooltip over a radio.
         assert s["tabbed"]["focus"] == "seed-i" and s["tabbed"]["shown"], (size, s)
@@ -1074,7 +1074,7 @@ const QUEUE_JS = __QUEUE_JS__;
   const base = process.argv[2], ids = JSON.parse(process.argv[3]), expected = JSON.parse(process.argv[4]);
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [960, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.addInitScript(QUEUE_JS);
     const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle());
@@ -1149,7 +1149,7 @@ def test_tab_reaches_each_checkboxs_i_and_box_in_the_order_they_are_drawn(tmp_pa
     (R-24: the words in the key column, the box in the control column with
     Top-K's box), but Gradio puts a checkbox's box before its words and the
     shared help puts the ⓘ after the words, so Tab reached the box before the
-    ⓘ. In the served dashboard, at 1850 x 960 and 960 x 1080, every checkbox
+    ⓘ. In the served dashboard, at 1850 x 960 and 1440 x 1600, every checkbox
     with field help drawn on Diagnosis, Training (its Parameters unfolded and
     its accordions open), Fine-tune, Test and Settings: Tab from the control
     before it reaches its ⓘ and its box in the order they are drawn
@@ -1189,7 +1189,7 @@ def test_tab_reaches_each_checkboxs_i_and_box_in_the_order_they_are_drawn(tmp_pa
         seen = run_node(_CHECKBOX_ORDER_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")], json.dumps(sorted(helped)), json.dumps(expected),
                         timeout=600)
-    assert set(seen) == {"1850x960", "960x1080"}
+    assert set(seen) == {"1850x960", "1440x1600"}
     for size, rows in seen.items():
         assert set(rows) == helped - {"branch_use_amp"}, (size, sorted(helped - set(rows)))
         for k, row in rows.items():

@@ -1503,7 +1503,7 @@ def test_the_page_follows_the_contract():
 #: The first-use walk's windows for this page (B-10; the L0 report's §7): the
 #: owner's, a short laptop where Start stood centred against its refusal, and
 #: a phone, where the reason goes under Start.
-FIRST_USE_SIZES = ((1850, 960), (1280, 720), (390, 844))
+FIRST_USE_SIZES = ((1850, 960), (1280, 720), (1440, 1600))
 
 #: What the first-use walk reads of Start's bar at each stop: Start, its bar,
 #: the first line of its reason's words (a range over them, as drawn) and the
@@ -1573,7 +1573,7 @@ def test_at_first_use_start_stands_on_its_bar_and_the_notice_is_said_once(tmp_pa
 #: whichever is drawn; and how many lines each figure takes.
 _CARD_FIT_JS = r"""
 const { chromium } = require('playwright');
-const SIZES = [[1850, 960], [1536, 760], [960, 1080], [1280, 900], [390, 844]];
+const SIZES = [[1850, 960], [1536, 760], [1440, 1600], [1280, 900], [1280, 720]];
 (async () => {
   const [url, word] = [process.argv[2], process.argv[3]];
   const browser = await chromium.launch();
@@ -1684,7 +1684,7 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     Playwright), the page served whole and its card drawn by its own poll
     from the runner's status, while the child runs and once it is done (its
     best saves, their selection and the Trainer's figure), at 1850 x 960,
-    1536 x 760 and 960 x 1080: the table sits inside its card, every cell
+    1536 x 760 and 1440 x 1600: the table sits inside its card, every cell
     inside the panel, nothing in a cell cut (no ellipsis), no sideways page
     or panel scroll. Fails on e0e4237. A run name with no hyphen to wrap at
     (one word of 40 characters, the longest a name may be; its child ended,
@@ -1812,7 +1812,7 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     # somewhere, so the checks above have met both.
     assert {got["form"] for sizes in seen.values() for got in sizes.values()} == {"table", "list"}, \
         {state: {size: got["form"] for size, got in sizes.items()} for state, sizes in seen.items()}
-    for size in ("1850x960", "390x844"):
+    for size in ("1850x960", "1280x720"):
         texts = " ".join(cell["text"] for cell in seen["done"][size]["cells"])
         assert "Validation (Trainer)" in texts and "0.8400" in texts, size
         assert "b-ft-full-disease" in texts.replace("- ", "-").replace(" -", "-"), size

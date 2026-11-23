@@ -926,7 +926,7 @@ def test_a_workspace_no_version_was_mapped_against_says_where_versions_come_from
 
 # --------------------------------------------------------------------------- in a browser
 #: Research › Datasets in a browser at the owner's window (1850 x 960), then
-#: narrow (960 x 1080): a row chosen and put in the Training run bar ("Use for
+#: narrow (1440 x 1600): a row chosen and put in the Training run bar ("Use for
 #: training ›", then back), each step waited for by what it draws (the row's
 #: `aria-current`, the Training tab selected, the marker drawn) and the page's
 #: queue idle (`QUEUE_JS`), never by a fixed time.
@@ -936,7 +936,7 @@ const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [960, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
     await page.addInitScript(QUEUE_JS);
     const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
@@ -1054,7 +1054,7 @@ const QUEUE_JS = __QUEUE_JS__;
              beside: Math.abs(main.top - det.top) < 1 && det.left >= main.right };
   }, w);
   const out = { sweep: [] };
-  for (let w = 1000; w <= 1700; w += 20) {
+  for (let w = __FLOOR_W__; w <= 1700; w += 20) {
     await page.setViewportSize({ width: w, height: 960 });
     // The shell lays the page out in the frame after a resize (`update`): two frames on, it has.
     await frames();
@@ -1089,14 +1089,16 @@ def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
     scrolled sideways only because the minimum reserved all of it. Now the
     list's panel keeps the table with its optional columns dropped (Built,
     Sources; the shell's fit drops them while the whole table does not fit,
-    and the selected row's details say them then). Swept across the switch:
-    stacked below it and side by side above it, the two panels beside each
-    other; side by side the table never scrolls sideways; while it drops its
+    and the selected row's details say them then). Swept from the display
+    floor's width up (below it the page is drawn as at it; the switch lies
+    there now): side by side at every width, the two panels beside each
+    other; the table never scrolls sideways; while it drops its
     optional columns the details say them and while it draws them they do
     not; the page is side by side at windows where the whole table does not
     fit (so from the narrow table's minimum); and there a row still opens
     its details."""
     from src.webui.app import create_gradio_app, mount_options
+    from src.webui.style import FLOOR_WIDTH
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
 
@@ -1104,12 +1106,13 @@ def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
         pytest.skip("Node with Playwright is not installed")
     _serving(monkeypatch, None)
     with served(create_gradio_app(), **mount_options()) as base:
-        seen = run_node(_SWITCH_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+        seen = run_node(_SWITCH_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+                        .replace("__FLOOR_W__", str(FLOOR_WIDTH)), tmp_path,
                         base[:-len("gradio_api")])
     sweep = seen["sweep"]
     layouts = [s["layout"] for s in sweep]
-    assert layouts[0] == "stack" and layouts[-1] == "side", sweep
-    side = [s for s in sweep if s["layout"] == "side"]
+    assert set(layouts) == {"side"}, sweep
+    side = sweep
     assert all(s["beside"] for s in side), side
     assert [s for s in side if s["over"] > 0] == [], side
     for s in sweep:
@@ -1255,7 +1258,7 @@ def test_in_a_browser_at_first_use_the_cause_is_said_once_on_the_panels_edge(tmp
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
-    sizes = ([1850, 960], [1366, 768], [800, 900], [390, 844])
+    sizes = ([1850, 960], [1366, 768], [1280, 720], [1440, 1600])
     stops = [{"size": size, "page": "datasets", "focus": False} for size in sizes]
     seen = walk_state("first_use", tmp_path, stops, extra_js=_FIRST_USE_JS)
     assert layout_problems(seen, pages=("datasets",)) == []

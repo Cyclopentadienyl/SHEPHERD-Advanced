@@ -3479,7 +3479,7 @@ const { chromium } = require('playwright');
   const base = process.argv[2];
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [960, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h },
                                                    deviceScaleFactor: 1 })).newPage();
     // The page's State keeps its heartbeat stream open: wait for what is drawn.
@@ -3564,7 +3564,7 @@ def test_the_details_popovers_stay_as_the_reader_left_them_across_redraws(tmp_pa
     element's attributes to the new HTML's, which draws each popover closed,
     and the popover's open state was kept in those attributes only. In a real
     browser (skipped without Node and Playwright), at 1850 x 960 and
-    960 x 1080, both with the page's own ``js_on_load`` and drawn by their
+    1440 x 1600, both with the page's own ``js_on_load`` and drawn by their
     own renderers, the server pushing each next drawing as a running job's
     render does (the header's relation and state words, the chip's "in use
     by the running job" coming and going): a popover the reader opened stays
@@ -3662,7 +3662,7 @@ const { chromium } = require('playwright');
   const [base, shots] = [process.argv[2], process.argv[3]];
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [960, 1080], [1920, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600], [1920, 1080]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h },
                                                    deviceScaleFactor: 1 })).newPage();
     await page.goto(base, { waitUntil: 'load' });
@@ -3715,7 +3715,7 @@ def test_a_failed_runs_output_tail_starts_by_the_window_and_keeps_the_readers_ch
     reader's choice over it while the banner names the same failed job. In
     a real browser (skipped without Node and Playwright), with the
     dashboard's head deciding the layout: run A's tail drawn by its default
-    at 1850 x 960 (side by side, short: closed), 960 x 1080 (stacked: open)
+    at 1850 x 960 (side by side, short: closed), 1440 x 1600 (stacked: open)
     and 1920 x 1080 (side by side, tall: open); the reader opens or closes
     it, and the same failure drawn again keeps that; run B's tail starts at
     the default again. Fails on d8d1828, where run B's tail took run A's
@@ -3744,7 +3744,7 @@ def test_a_failed_runs_output_tail_starts_by_the_window_and_keeps_the_readers_ch
     shots.mkdir()
     with served(page, **mount_options()) as base:
         seen = run_node(_BANNER_TAIL_JS, tmp_path, base[:-len("gradio_api")], str(shots))
-    for size, default in (("1850x960", False), ("960x1080", True), ("1920x1080", True)):
+    for size, default in (("1850x960", False), ("1440x1600", True), ("1920x1080", True)):
         got = seen[size]
         assert got["drawn"]["open"] is default, (size, got)
         assert got["chosen"]["open"] is not default, (size, got)
@@ -3753,7 +3753,7 @@ def test_a_failed_runs_output_tail_starts_by_the_window_and_keeps_the_readers_ch
         # Each failure's tail is its own disclosure: its block names its job.
         assert got["drawn"]["of"] == "TRAIN-a" and got["next"]["of"] == "TRAIN-b", (size, got)
     assert seen["1850x960"]["drawn"]["layout"] == "side"
-    assert seen["960x1080"]["drawn"]["layout"] == "stack"
+    assert seen["1440x1600"]["drawn"]["layout"] == "stack"
 
 
 #: A failed run's banner whose HTML holds the failure when it mounts (its tab
@@ -3766,7 +3766,7 @@ const { chromium } = require('playwright');
   const [base, shots] = [process.argv[2], process.argv[3]];
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [960, 1080], [1920, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600], [1920, 1080]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h },
                                                    deviceScaleFactor: 1 })).newPage();
     await page.goto(base, { waitUntil: 'load' });
@@ -3795,7 +3795,7 @@ def test_a_failed_runs_output_tail_drawn_as_the_banner_mounts_starts_by_the_wind
     after the failure) was drawn as its HTML says, open, whatever the
     window. Now the keeper's first pass runs after the region's own script:
     the tail starts at the banner's default, closed at 1850 x 960 (side by
-    side, short) and open at 960 x 1080 and 1920 x 1080. In a real browser
+    side, short) and open at 1440 x 1600 and 1920 x 1080. In a real browser
     (skipped without Node and Playwright), the dashboard's head deciding the
     layout. Fails on e1dda3e (open at 1850 x 960); d8d1828's banner applied
     its default by a script of its own, which 5d8e6d5 retired."""
@@ -3818,10 +3818,10 @@ def test_a_failed_runs_output_tail_drawn_as_the_banner_mounts_starts_by_the_wind
     shots.mkdir()
     with served(page, **mount_options()) as base:
         seen = run_node(_BANNER_MOUNT_JS, tmp_path, base[:-len("gradio_api")], str(shots))
-    for size, default in (("1850x960", False), ("960x1080", True), ("1920x1080", True)):
+    for size, default in (("1850x960", False), ("1440x1600", True), ("1920x1080", True)):
         assert seen[size]["unmounted"], (size, seen)
         assert seen[size]["open"] is default, (size, seen)
-    assert seen["1850x960"]["layout"] == "side" and seen["960x1080"]["layout"] == "stack"
+    assert seen["1850x960"]["layout"] == "side" and seen["1440x1600"]["layout"] == "stack"
 
 
 #: The Training page as the service mounts it: four settings typed, so the
@@ -3909,7 +3909,7 @@ const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [1366, 768], [960, 1080], [390, 844]]) {
+  for (const [w, h] of [[1850, 960], [1366, 768], [1440, 1600], [1280, 720]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
     await page.addInitScript(QUEUE_JS);
     await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
@@ -4038,7 +4038,8 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
 
     For an operator at first use (no workspaces folder), with a dataset and
     no run yet, and with a workspace of a long name that cannot be trained,
-    at 1850 x 960, 1366 x 768, 960 x 1080 and 390 x 844, measured relative to
+    at 1850 x 960, 1366 x 768, 1440 x 1600 (stacked) and the display floor's 1280 x 720
+    (390 x 844 and 960 x 1080 are below the floor, drawn as at it), measured relative to
     what is drawn: every group of the bar holds its controls on one line;
     the actions (Start and Continue…) on one line, their group at the end
     of a line it shares, and starting a line it has alone, on the bar's
@@ -4072,7 +4073,7 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_RUNBAR_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")], _RUNBAR_SHOWN[case])
-    assert set(seen) == {"1850x960", "1366x768", "960x1080", "390x844"}, seen
+    assert set(seen) == {"1850x960", "1366x768", "1440x1600", "1280x720"}, seen
     for size, drawn in seen.items():
         left, _top, right, _bottom = drawn["bar"]
         where = (case, size, drawn)

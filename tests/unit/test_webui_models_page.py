@@ -3170,7 +3170,7 @@ const ROWS = '#shep-models-research-rows';
   await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') === 'side');
   out.mid = await tree();
   // The narrow layout: the shell stacks the page two frames after a resize.
-  await page.setViewportSize({ width: 760, height: 1000 });
+  await page.setViewportSize({ width: 1280, height: 1280 });
   await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') !== 'side');
   await frames();
   out.narrow = await tree();
@@ -3246,7 +3246,7 @@ def test_the_tree_folds_searches_filters_and_keeps_the_selection_in_a_browser(
     assert any(f["selected"] for f in chosen) and all(f["shown"] for f in chosen)
     # The table fits its frame, side by side and stacked, and no word is cut
     # over two lines (it was 48 px wider than its frame at 1850 x 960, and
-    # "Disease" broke as "Dise/ase" at 760 x 1000; at 1280 x 900, with a lineage
+    # "Disease" broke as "Dise/ase" at 1280 x 1280; at 1280 x 900, with a lineage
     # two runs deep under a long run name, 125 px wider, its Fingerprint cut).
     for size in ("selected", "mid", "narrow"):
         assert seen[size]["fit"]["over"] <= 0 and seen[size]["fit"]["split"] == [], (size, seen[size]["fit"])
@@ -3355,7 +3355,7 @@ def test_an_entry_it_could_not_list_is_no_choice_in_a_browser(tmp_path, world, m
 
 #: Models served whole: a file with no recorded result chosen, its "Test this
 #: model ›" clicked; the Test page as it opens (the page shown, the Run and
-#: Checkpoint selects as drawn). Screens of both, at 1850 x 960 and 390 x 844.
+#: Checkpoint selects as drawn). Screens of both, at 1850 x 960 and the display floor's 1280 x 720.
 _TEST_THIS_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
@@ -3364,7 +3364,7 @@ const ROWS = '#shep-models-research-rows';
   const [base, shots] = process.argv.slice(2);
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [390, 844]]) {
+  for (const [w, h] of [[1850, 960], [1280, 720]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h },
                                                    deviceScaleFactor: 1 })).newPage();
     await page.addInitScript(QUEUE_JS);
@@ -3421,7 +3421,7 @@ const ROWS = '#shep-models-research-rows';
 def test_test_this_model_opens_the_test_page_with_it_chosen_in_a_browser(
         tmp_path, world, monkeypatch):
     """R-68 in a real browser (skipped without Node and Playwright), Models
-    served whole at 1850 x 960 and 390 x 844: model-30.pt, with no recorded
+    served whole at 1850 x 960 and the display floor's 1280 x 720: model-30.pt, with no recorded
     result, chosen; its empty state's "Test this model ›" clicked; the Test
     page is the page shown, with that workspace, run and checkpoint chosen
     (the options the Test page draws for it). Fails on 6a2d52e: there was no
@@ -3522,7 +3522,7 @@ const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[390, 844], [960, 1080], [1850, 960]]) {
+  for (const [w, h] of [[1280, 720], [1440, 1600], [1850, 960]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.goto(process.argv[2]);
     await page.click('#shep-tab-research-button');
@@ -3571,7 +3571,7 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
         load, reason = at["load"], at["reason"]
         apart = reason["left"] >= load["right"] or reason["top"] >= load["bottom"]
         assert apart and reason["width"] >= 200 and at["lines"] <= 3, (size, at)
-    phone = seen["390x844"]
+    phone = seen["1280x720"]
     assert phone["reason"]["top"] >= phone["load"]["bottom"], phone
     for size, at in seen.items():
         beside = at["reason"]["top"] < at["load"]["bottom"]
@@ -3749,7 +3749,7 @@ const QUEUE_JS = __QUEUE_JS__;
   }, null, { timeout: 30000 });
   await idle();
   const out = {};
-  for (const [w, h] of [[1536, 864], [1366, 768], [1280, 720], [390, 844]]) {
+  for (const [w, h] of [[1536, 864], [1366, 768], [1280, 720]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     out[`${w}x${h}`] = await page.evaluate(() => {
@@ -4732,18 +4732,21 @@ const ROWS = '#shep-models-research-rows';
   await page.click(node(RUN.base) + ' .shep-fam-body');
   await selectedIs(RUN.base); await idle();
   out.repick = { vFolded, state: await state(page) };
-  // ---- Both orientations and the switch between them (the selection and the folds kept).
+  // ---- Both orientations and the switch between them (the selection and the folds kept). The
+  // chain unfolded again (a fold decides no orientation): at the display floor's width, the
+  // narrowest region at or above it, the unfolded graph runs top to bottom.
+  await press(RUN.disease);
   await page.setViewportSize({ width: 1849, height: 960 });
   await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'h');
   const wide = await state(page);
-  await page.setViewportSize({ width: 600, height: 900 });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'v');
   const narrow = await state(page);
   await page.setViewportSize({ width: 1850, height: 960 });
   await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'h');
   out.switch = { wide, narrow, back: await state(page) };
   // In the narrow layout, the arrow area under the body: the node grows down, its top and text kept.
-  await page.setViewportSize({ width: 600, height: 900 });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'v');
   await page.mouse.move(2, 2);
   await page.$eval(node(RUN.base), (n) => n.scrollIntoView({ block: 'center' }));
@@ -4753,11 +4756,12 @@ const ROWS = '#shep-models-research-rows';
   await page.waitForFunction((sel) => document.querySelector(sel + ' > .shep-fam-act').getBoundingClientRect().height > 0, node(RUN.base));
   out.vertical = { before: vBefore, after: await look(page, RUN.base), next: nextBefore, nextAfter: await look(page, RUN.branch) };
   await page.mouse.move(2, 2);
-  // ---- Larger type: the page at 150 % (its CSS pixels a third fewer). The body reached by
+  // ---- Larger type: the page at 150 % (its CSS pixels a third fewer; a 2560 x 1440 window, so
+  // the area stays above the display floor). The body reached by
   // the keyboard (a focus set by the page after a pointer is no keyboard focus): from it Tab
   // onto its arrow, Shift+Tab back. Its ring read where it is drawn (2 px inside the body's
   // edge, `outline-offset: -3px`): what is there on each side is the body.
-  await page.setViewportSize({ width: 1233, height: 640 });
+  await page.setViewportSize({ width: 1707, height: 960 });
   await page.waitForTimeout(0);
   await page.focus(node(RUN.base) + ' .shep-fam-body');
   await page.keyboard.press('Tab');

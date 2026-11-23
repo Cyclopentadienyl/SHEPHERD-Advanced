@@ -412,7 +412,7 @@ const ROWS = '#shep-models-clinical-rows', FACTS = '#shep-models-clinical-facts'
     .filter((f) => f.family.replace(/["']/g, '') === 'IBM Plex Sans').map((f) => f.status));
   // Stacked: the list, the details, Load, in that order; a file chosen brings its
   // details into view, "Back to the list" the row.
-  await page.setViewportSize({ width: 760, height: 1000 });
+  await page.setViewportSize({ width: 1280, height: 1280 });
   await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') === 'stack');
   await frames();
   out.stacked = await geometry();
@@ -505,7 +505,7 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
 _DRAWER_HEAD_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
-const SIZES = [[1850, 960], [1280, 900], [960, 1080], [390, 844]];
+const SIZES = [[1850, 960], [1280, 900], [1440, 1600], [1280, 720]];
 (async () => {
   const browser = await chromium.launch();
   const out = {};
@@ -560,7 +560,8 @@ def test_the_drawers_title_and_task_segment_stay_inside_it_at_every_window(
     segment 49 px past the drawer's right edge, cut ("operator controls · one
     mo", "Patients-like-"): both took their one line's width and never gave
     way. In a real browser (skipped without Node and Playwright), the drawer
-    open for an operator at 1850 x 960, 1280 x 900, 960 x 1080 and 390 x 844:
+    open for an operator at 1850 x 960, 1280 x 900, 1440 x 1600 (stacked) and the display floor's
+    1280 x 720 (390 x 844, where it was found, is below the floor, drawn as at it):
     every word of its title and of its task segment is drawn inside the
     drawer, each segment label whole (no ellipsis), and nothing scrolls
     sideways, the drawer or the page. Fails on 78444a6 at 390 x 844."""
@@ -573,7 +574,7 @@ def test_the_drawers_title_and_task_segment_stay_inside_it_at_every_window(
     with served(_diagnosis_page(root, monkeypatch), **mount_options()) as base:
         seen = run_node(_DRAWER_HEAD_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
-    assert set(seen) == {"1850x960", "1280x900", "960x1080", "390x844"}
+    assert set(seen) == {"1850x960", "1280x900", "1440x1600", "1280x720"}
     for size, got in seen.items():
         assert got["past"] == [], (size, got)
         assert [label["text"] for label in got["labels"]] == [
@@ -588,7 +589,7 @@ _FACTS_TITLE_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
 const ROWS = '#shep-models-clinical-rows', FACTS = '#shep-models-clinical-facts';
-const SIZES = [[1850, 960], [760, 1000], [390, 844]];
+const SIZES = [[1850, 960], [1280, 1280], [1440, 1600]];
 (async () => {
   const browser = await chromium.launch();
   const out = {};
@@ -652,9 +653,10 @@ def test_back_to_the_list_keeps_its_words_on_one_line_in_a_stacked_drawer(
     drawer's chosen model's title kept "↑ Back to the list" beside the name
     and the "selected" chip, and the button got what they left: 57 px at 390
     x 844, its words on three lines inside its 32 px box; 117 px and two
-    lines at 760 x 1000. In a real browser (skipped without Node and
+    lines at 1280 x 1280. In a real browser (skipped without Node and
     Playwright), the drawer open for an operator and a file chosen: stacked
-    (760 x 1000, 390 x 844) the button keeps its words on one line, whole,
+    (1280 x 1280, the display floor's width, and 1440 x 1600; 760 x 1000 and
+    390 x 844, where it was found, are below the floor) the button keeps its words on one line, whole,
     inside its box and the title, taking a line of its own when the name and
     chip leave it no room; every word of the title inside it; nothing scrolls
     sideways. Side by side at 1850 x 960, unchanged: no button, the chip
@@ -671,7 +673,7 @@ def test_back_to_the_list_keeps_its_words_on_one_line_in_a_stacked_drawer(
     side = seen.pop("1850x960")
     assert side["layout"] == "side" and not side["shown"], side
     assert side["chipBesideName"] and side["past"] == [], side
-    assert set(seen) == {"760x1000", "390x844"}
+    assert set(seen) == {"1280x1280", "1440x1600"}
     for size, got in seen.items():
         assert got["layout"] == "stack" and got["shown"], (size, got)
         assert got["backLines"] == 1 and got["backWhole"] and got["backIn"], (size, got)

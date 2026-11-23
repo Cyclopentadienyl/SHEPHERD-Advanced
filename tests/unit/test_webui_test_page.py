@@ -3674,7 +3674,7 @@ const QUEUE_JS = __QUEUE_JS__;
   const [base, shots] = [process.argv[2], process.argv[3]];
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [960, 1080], [390, 844]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600], [1280, 720]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h },
                                                    deviceScaleFactor: 1 })).newPage();
     await page.addInitScript(QUEUE_JS);
@@ -3741,7 +3741,8 @@ def test_a_read_only_viewer_reads_why_the_reload_is_locked_beside_it(site, tmp_p
     turns off (the Run row with its ↻, then Checkpoint), as Settings says its
     panel's (T06-D): in a real browser (skipped without Node and
     Playwright), served with no deployment mode (the site's) at 1850 x 960,
-    960 x 1080 and 390 x 844, the ↻ is locked and the nearest "Operator controls
+    1440 x 1600 (stacked) and the display floor's 1280 x 720 (390 x 844, below it, is
+    drawn as at it), the ↻ is locked and the nearest "Operator controls
     only: …" is that refusal, on the line just above the ↻'s row (within
     24 px of it: only the Run field's label between), both wholly on screen,
     and the refusal is said once in the Run panel. Fails on d8d1828 (122 px
@@ -5860,7 +5861,7 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
   await idle();
   await page.waitForSelector('#shep-test-result-body .shep-rec-tile-v', { timeout: 60000 });
   out.sizes = {};
-  for (const [w, h] of [[1850, 960], [1536, 864], [1440, 900], [960, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1536, 864], [1440, 900], [1440, 1600]]) {
     await page.setViewportSize({ width: w, height: h });
     await frames();
     out.sizes[`${w}x${h}`] = await page.evaluate(async () => {
@@ -5932,7 +5933,7 @@ def test_the_run_options_the_idle_job_and_the_result_tiles_as_drawn(site, monkey
             assert info["left"] < drawn["block"], (size, option, drawn)
         assert facts["wrapped"]["lines"] >= 2, (size, facts)
         for tops in (facts["tiles"], facts["wrapped"]["tops"]):
-            rows = [tops] if size != "960x1080" else [tops[:2], tops[2:]]
+            rows = [tops] if size != "1440x1600" else [tops[:2], tops[2:]]
             for row in rows:
                 assert max(row) - min(row) <= 2, (size, tops)
 

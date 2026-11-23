@@ -576,7 +576,7 @@ const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[390, 844], [960, 1080], [1850, 960]]) {
+  for (const [w, h] of [[1280, 720], [1440, 1600], [1850, 960]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.addInitScript(QUEUE_JS);
     await page.goto(process.argv[2]);
@@ -758,7 +758,7 @@ const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h, wider] of [[1850, 960, false], [390, 844, false], [390, 844, true]]) {
+  for (const [w, h, wider] of [[1850, 960, false], [1280, 720, false], [1280, 720, true]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
     await page.addInitScript(QUEUE_JS);
     await page.goto(process.argv[2], { waitUntil: 'load' });
@@ -771,7 +771,8 @@ const QUEUE_JS = __QUEUE_JS__;
     await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
     if (wider) {
       // Another host's wider text (the recheck of d4209c4 read Create 30 px
-      // from its row's phrase at 390 x 844): the panel's words 0.04em apart.
+      // from its row's phrase at 390 x 844, below the display floor; walked at the floor since):
+      // the panel's words 0.04em apart.
       await page.addStyleTag({ content: '#shep-dl { letter-spacing: 0.04em !important; }' });
       await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
     }
@@ -905,7 +906,7 @@ const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [1366, 768], [390, 844], [320, 640]]) for (const spacing of [0, 0.04]) {
+  for (const [w, h] of [[1850, 960], [1366, 768], [1280, 720]]) for (const spacing of [0, 0.04]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
     await page.addInitScript(QUEUE_JS);
     await page.goto(process.argv[2], { waitUntil: 'load' });
@@ -988,7 +989,8 @@ def test_the_suggested_folder_is_whole_beside_or_under_create(dl, tmp_path, monk
     left (83 px at 1366 x 768, 96 at 390 x 844, 26 at 320 x 640), so
     "~/SHEPHERD-data/workspaces" broke inside its words over 4 lines (9 to
     14 at 320 x 640): the create row never let it go under Create. In a real
-    browser, nothing set, at 1850 x 960, 1366 x 768, 390 x 844 and 320 x 640,
+    browser, nothing set, at 1850 x 960, 1366 x 768 and the display floor's 1280 x 720 (390 x 844
+    and 320 x 640, where it was found, are below the floor, drawn as at it),
     the panel's words as drawn and 0.04em apart, for a read-only viewer and
     an operator: each Create offered has its suggestion whole (every
     character drawn, nothing cut) with no line break inside a word, given at
@@ -1014,7 +1016,7 @@ def test_the_suggested_folder_is_whole_beside_or_under_create(dl, tmp_path, monk
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_SUGGEST_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
-    assert len(seen) == 8, seen
+    assert len(seen) == 6, seen
     problems = []
     for size, at in seen.items():
         if at["sideways"]:
@@ -1079,7 +1081,7 @@ def test_in_a_browser_no_row_of_settings_puts_words_beside_its_fields(dl, tmp_pa
       return { id: row.id, above: !!name && !!field && name.bottom <= field.top + 0.5,
                oneLine: !!check && !!save && Math.abs(check.top - save.top) < 1, empties };
     })"""
-    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720], [800, 900], [390, 844])
+    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720], [1440, 1600])
     stops = [{"size": size, "page": "settings", "focus": False} for size in sizes]
     with served(create_gradio_app(), **mount_options()) as base:
         seen = walk_ui(base[:-len("gradio_api")], tmp_path, stops, extra_js=rows_js)

@@ -18,7 +18,7 @@
 "use strict";
 const { chromium } = require("playwright");
 
-const SIZES = [[1850, 960], [420, 800]];
+const SIZES = [[1850, 960], [1280, 720]];
 const TARGETS = {
   field: { button: "#fld button.shep-i", field: "#fld" },
   grid: { button: "#gfld button.shep-i", field: "#gfld > label" },
