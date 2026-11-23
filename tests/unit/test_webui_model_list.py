@@ -1947,9 +1947,15 @@ def _run_row(html, run):
     return html[start:html.index("</tr>", at)]
 
 
+#: An optional column's fact said in its row while the column is dropped (`style.COL_TWIN`):
+#: drawn only in the narrow form, so a cell as the wide form shows it leaves it out.
+_TWIN = re.compile(r'<div class="shep-col-twin[^"]*">.*?</div>')
+
+
 def _cells(row):
-    """A table row's cells as the words they show (tags dropped)."""
-    return [re.sub(r"<[^>]+>", "", cell) for cell in re.findall(r"<td[^>]*>(.*?)</td>", row)]
+    """A table row's cells as the words the wide form shows (tags dropped)."""
+    return [re.sub(r"<[^>]+>", "", _TWIN.sub("", cell))
+            for cell in re.findall(r"<td[^>]*>(.*?)</td>", row)]
 
 
 def _visible(html):
@@ -2866,9 +2872,13 @@ def test_the_tree_names_tied_best_and_top_k_saves_as_its_selects_do():
     for preset in ("research", "clinical"):
         html = ml.list_html(listing, None, ml.PRESETS[preset], show_older=True)
         for (run, name), (what, epochs) in expected.items():
-            cells = [_visible(cell).strip()
-                     for cell in _cells(_row_of_key(html, f"gatv2/{run}/{name}"))]
+            row = _row_of_key(html, f"gatv2/{run}/{name}")
+            cells = [_visible(cell).strip() for cell in _cells(row)]
             assert [cells[0], cells[3]] == [what, epochs], (preset, run, name, cells)
+            # The narrow form, its Epochs column dropped, says how far it trained under its
+            # name (the sweep's L7, SW-LK4: a file row showed its name and empty cells).
+            twin = _visible(_TWIN.search(row).group(0)).strip()
+            assert twin.startswith(epochs + " epoch") or twin == f"recorded epoch {epochs}", (row, twin)
         # The selects' options lead with the same words (one rule).
         for run in (full, frozen, twins):
             parents = {item["key"]: item for item in items if item["run"] == run}
@@ -3327,3 +3337,4 @@ def test_the_lists_empty_state_says_each_cause_once_in_the_flow(monkeypatch, tmp
     none_listed = {**empty, "workspace": "demo", "workspaces": [{"name": "demo"}]}
     assert ml.list_html(none_listed, None, research).startswith(
         f'<p class="shep-empty">{ml.NO_CHECKPOINT}</p>')
+

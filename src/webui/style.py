@@ -89,6 +89,10 @@ SEG_WHOLE = "shep-seg-whole"
 #: column whose facts the row's details also show carries it, so a `FIT_WIDE` table drops that
 #: column before its box scrolls sideways.
 COL_OPT = "shep-col-opt"
+#: **An optional column's fact said in its row while the column is dropped** (the shared
+#: ``[data-shep-narrow]`` rule below): drawn only while its FIT box is narrow, so the fact is
+#: said once in either form (the model tree's file rows: how far each file trained).
+COL_TWIN = "shep-col-twin"
 #: **A table cell whose value reads as one** (``white-space: nowrap``): a value of a closed set (a
 #: model's task, its operation), so its column takes the value's width and a column of names or
 #: prose wraps instead (the L6 check: the Models table broke "Fine-tune, full" and "Record not
@@ -902,6 +906,12 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
    the wrapper scrolls sideways (its own region). A word breaks in a cell only when it alone is
    wider than its column. */
 [__NARROW__] :is(th, td, col).__COL_OPT__ { display: none !important; }
+/* **A dropped column's fact said in its row while its column is not drawn** (``shep-col-twin``):
+   a row whose only facts beside its name are in optional columns (the model tree's saved files:
+   how far each trained) says the one a reader compares rows by under its name, only while the
+   wrapper is narrow, so each fact is drawn once in either form (the sweep's L7, SW-LK4: "Latest
+   save" and "Best pooled MRR" rows showed a name and empty cells). */
+.__FIT_BOX__:not([__NARROW__]) .__COL_TWIN__ { display: none !important; }
 .shep-tbl td { overflow-wrap: break-word; }
 .shep-tbl td.__CELL_WHOLE__ { white-space: nowrap; }
 
@@ -1264,10 +1274,10 @@ __STACK__ {
 }
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK) \
     .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART) \
-    .replace("__NARROW__", NARROW_ATTR).replace("__COL_OPT__", COL_OPT).replace("__SEG_WHOLE__", SEG_WHOLE) \
+    .replace("__NARROW__", NARROW_ATTR).replace("__COL_OPT__", COL_OPT).replace("__COL_TWIN__", COL_TWIN).replace("__FIT_BOX__", FIT).replace("__SEG_WHOLE__", SEG_WHOLE) \
     .replace("__CELL_WHOLE__", CELL_WHOLE)
 
 
-__all__ = ["BRAND_WIDTH", "CELL_WHOLE", "COL_OPT", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
+__all__ = ["BRAND_WIDTH", "CELL_WHOLE", "COL_OPT", "COL_TWIN", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
            "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT", "SHORT_ATTR",
            "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK"]

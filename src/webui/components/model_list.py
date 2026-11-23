@@ -245,7 +245,7 @@ from src.webui.components.served_status import (
 )
 from src.webui.operator_access import operator_access
 from src.webui.shell import picked, plain_html
-from src.webui.style import CELL_WHOLE, COL_OPT, FIT, FIT_WIDE
+from src.webui.style import CELL_WHOLE, COL_OPT, COL_TWIN, FIT, FIT_WIDE
 
 logger = logging.getLogger(__name__)
 
@@ -1407,7 +1407,10 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                                 f'{_unreadable_words(items[key])}</td></tr>')
                     continue
                 epochs, fingerprint = cells
-                rows.append(f'<tr {attrs}><td>{name}</td><td></td><td></td>'
+                # How far it trained, under its name while the Epochs column is dropped.
+                twin = (f'<div class="{COL_TWIN} shep-sub">'
+                        f'{r.e(r.epoch_words(items[key]))}</div>')
+                rows.append(f'<tr {attrs}><td>{name}{twin}</td><td></td><td></td>'
                             f'<td{num_opt}>{epochs}</td><td{opt}></td>'
                             f'<td{opt}>{fingerprint}</td></tr>')
         bodies.append(f'<tbody data-node="{r.e(group.node)}">{"".join(rows)}</tbody>')

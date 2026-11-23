@@ -3820,14 +3820,16 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.waitForSelector('#shep-models-research-rows table.shep-mtree', { timeout: 60000 });
   await idle();
   const out = {};
-  for (const [w, h] of [[1366, 768], [1440, 1600]]) {
+  for (const [w, h] of [[1850, 960], [1550, 830], [1366, 768], [1440, 1600]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     out[`${w}x${h}`] = await page.evaluate(() => {
       const table = document.querySelector('#shep-models-research-rows table.shep-mtree'), wrap = table.parentElement;
       const rows = document.querySelector('#shep-models-research-rows');
       const opt = [...table.querySelectorAll('thead th')].filter((th) => th.classList.contains('shep-col-opt'));
+      const list = document.querySelector('#shep-page-models .shep-model-main'), detail = document.querySelector('#shep-mp-detail');
       return { layout: document.documentElement.getAttribute('data-shep-layout'),
+               list: list.getBoundingClientRect().width, detail: detail.getBoundingClientRect().width,
                sideways: Math.max(wrap.scrollWidth - wrap.clientWidth, rows.scrollWidth - rows.clientWidth),
                optional: opt.map((th) => th.textContent), drawn: opt.filter((th) => th.getClientRects().length).length,
                heads: [...table.querySelectorAll('thead th')].filter((th) => th.getClientRects().length).map((th) => th.textContent) };
@@ -3848,7 +3850,13 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     (the selected model's details say each): the table drops them while it does
     not fit, so nothing scrolls sideways and Model, Task and Operation stay;
     where the whole table fits (a tall window's single column), every column is
-    drawn. Fails before the sweep's L4 lane."""
+    drawn. Fails before the sweep's L4 lane.
+    The sweep's L7 (SW-LK4): the list took 46 parts of 100 beside an empty
+    details panel wider than it, so at the owner's window (1850 x 960) the
+    tree dropped its Epochs, Files and Fingerprint (file rows a name and empty
+    cells, no fingerprint for "Name or fingerprint"). Side by side, the list,
+    the page's main region, is now at least as wide as the details, and at the
+    owner's windows the whole tree is drawn, nothing sideways."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -3863,6 +3871,11 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
         seen = run_node(_OPTIONAL_COLUMNS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
     laptop, column = seen["1366x768"], seen["1440x1600"]
+    for size in ("1850x960", "1550x830"):
+        owner = seen[size]
+        assert owner["layout"] == "side" and owner["drawn"] == 3 and owner["sideways"] <= 0, (size, owner)
+    for size in ("1850x960", "1550x830", "1366x768"):
+        assert seen[size]["list"] >= seen[size]["detail"], (size, seen[size])
     assert laptop["optional"] == ["Epochs", "Files", "Fingerprint"] == column["optional"], seen
     assert laptop["layout"] == "side" and laptop["sideways"] <= 0, laptop
     assert laptop["drawn"] == 0 and laptop["heads"] == ["Model", "Task", "Operation"], laptop
@@ -4592,7 +4605,12 @@ const ROWS = '#shep-models-research-rows';
   await page.keyboard.press(' ');
   await selectedIs(RUN.top); await idle();
   out.keys.spaceSelect = { joins: joins.filter(Boolean), state: await state(page), active: await activeRun() };
-  // ---- A deep subtree: unfolded twice down, folded at the top, unfolded again (I9).
+  // ---- A deep subtree: unfolded twice down, folded at the top, unfolded again (I9). In a window
+  // whose list region is as wide as the owner's was when the list took 46 parts of 100 (it takes
+  // two thirds since the sweep's L7, SW-LK4), so the unfolded chain runs past it.
+  await page.setViewportSize({ width: 1292, height: 960 });
+  await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'h');
+  await idle();
   const press = async (run) => { await page.hover(node(run) + ' .shep-fam-body'); await page.click(node(run) + ' .shep-fam-tog'); await idle(); };
   // Unfolded past the region's width left to right: the graph keeps its orientation and the
   // arrow stays under the pointer (I5, I10); the region, never the page, pans to what it shows.
@@ -4701,7 +4719,9 @@ const ROWS = '#shep-models-research-rows';
   // ---- A pick decides no orientation again (I10): top to bottom for a narrower region with
   // the chain unfolded, then the chain folded (it would fit left to right) and a body picked.
   await press(RUN.disease);                                        // the chain unfolded again
-  await page.setViewportSize({ width: 1848, height: 960 });
+  // A narrower window, still side by side: the list's region about as wide as at 1848 px when the
+  // list took 46 parts of 100 (it takes two thirds since the sweep's L7, SW-LK4).
+  await page.setViewportSize({ width: 1290, height: 960 });
   await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'v');
   await press(RUN.disease);                                        // fold the chain again
   const vFolded = (await state(page)).orient;

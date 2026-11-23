@@ -2261,14 +2261,20 @@ PAGE_CSS = f"""
    (Epochs, Files, Fingerprint: the selected model's details say them) while it does not fit,
    before it scrolls sideways in its own region (`model_list.OPTIONAL_COLUMNS`; the UI sweep's M6),
    so Model, Task and Operation stay whole beside a run name of about 52 characters, which never
-   breaks at its own hyphens (D8). It was 617 px, the whole table of one world: a longer name
-   scrolled the rows sideways at every laptop size. By family's graph takes the width it is given
-   (left to right where it fits, else top to bottom, `model_list.FAMILY_JS`). */
-{_PAGE} {_LIST} {{ --shep-mp-list-min: 39rem; --shep-mp-detail-min: 30rem; }}
+   breaks at its own hyphens (D8), with Task and Operation each one unit (`style.CELL_WHOLE`:
+   "Record not readable", "Fine-tune, full"): that narrow form is 704 px at its narrowest, plus
+   the frame's insets (46.5rem; 39rem left the rows scrolling sideways at 1550 and 1366, the
+   sweep's L7, SW-LK4). It was 617 px, the whole table of one world: a longer name scrolled the
+   rows sideways at every laptop size. By family's graph takes the width it is given (left to
+   right where it fits, else top to bottom, `model_list.FAMILY_JS`).
+   **The list is the page's main region** (the skill's §2): side by side it grows twice as fast
+   as the details (a 46 / 54 share gave the empty details 973 px and the list 829 at 1850 x 960,
+   so the tree dropped its Epochs, Files and Fingerprint there); each keeps its minimum. */
+{_PAGE} {_LIST} {{ --shep-mp-list-min: 46.5rem; --shep-mp-detail-min: 30rem; }}
 {_PAGE} {_LIST} > .shep-model-main {{ --shep-panel-min: var(--shep-mp-list-min); }}
 {_PAGE} {_LIST} > .shep-model-foot {{ --shep-panel-min: var(--shep-mp-detail-min); }}
 {SIDE} {{
-  {_PAGE} {_LIST} {{ grid-template-columns: minmax(var(--shep-mp-list-min), 46fr) minmax(var(--shep-mp-detail-min), 54fr); }}
+  {_PAGE} {_LIST} {{ grid-template-columns: minmax(var(--shep-mp-list-min), 2fr) minmax(var(--shep-mp-detail-min), 1fr); }}
   {_PAGE} > .column {{ height: 100%; }}
   {_PAGE} .shep-models {{ height: 100%; min-height: 0; }}
   {_PAGE} {_LIST} {{ height: 100%; min-height: 0; }}
