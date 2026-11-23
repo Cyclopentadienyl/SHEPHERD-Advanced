@@ -253,8 +253,8 @@ scroll-cue, wrap-end, disabled-reason, token-break, sep-end, chain-break, row-to
 the marks are the floor's and the page scrolls; `layout_problems`) are measured in the same walk and, with the
 **first-use and empty-folder walks** (`walk_state("first_use" | "empty", …)`, `layout_stops`), held at zero on
 every page at `LAYOUT_SIZES` (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, 1024 × 640 and
-1850 × 960 again) in all three states, first use, empty and configured
-(`test_every_page_of_every_state_has_no_layout_finding`); a page's change runs them on its own pages at first
+1850 × 960 again) in all three states, first use, empty and configured, and configured as a read-only
+viewer (`test_every_page_of_every_state_has_no_layout_finding`); a page's change runs them on its own pages at first
 use and configured. The same
 walk counts each fingerprint drawn in a screen's visible text (`repeat_problems`), and walks PLAN_TEST_RESULTS §6's
 other sizes with Diagnosis' largest Top-K answered on long disease names, and every page as a read-only viewer

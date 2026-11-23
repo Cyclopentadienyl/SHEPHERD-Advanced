@@ -2470,6 +2470,22 @@ def ui_walk_configured(ui_world):
     return walk_ui(ui_world["page"], root, _layout_walk_stops(True), shots=root / "shots")
 
 
+@pytest.fixture(scope="module")
+def ui_walk_read_only(ui_world):
+    """**The read-only walk at the layout sizes** (the sweep's L7 check, C5: the read-only
+    viewer was in no layout walk, and the walk's own rules found 13 findings there): every
+    page of the configured service (`ui_world`) at `browser.LAYOUT_SIZES` as a request D8
+    refuses sees it (`browser.READ_ONLY_HEADERS`: a forwarded request), the layout rules
+    recorded at each stop, no drawer (Load is an operator control), screenshots under the
+    module's ``ui-walk*/read-only/shots``."""
+    from tests.fixtures.browser import LAYOUT_SIZES, READ_ONLY_HEADERS, UI_PAGES, layout_stops, walk_ui
+
+    root = ui_world["root"] / "read-only"
+    (root / "shots").mkdir(parents=True)
+    return walk_ui(ui_world["page"], root, layout_stops(UI_PAGES, LAYOUT_SIZES), shots=root / "shots",
+                   headers=READ_ONLY_HEADERS)
+
+
 def test_one_layout_decision_at_every_size_and_back(ui_walk):
     """D02 (FL-UI-02, PTR-LAYOUT in part) in a real browser (Node and
     Playwright, skipped without), the service on the demo workspace, for an
@@ -4369,7 +4385,7 @@ def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_
     assert drawn == [f"{fw}x{fh} settings: tab-groups: a separator before test drawn at a line's start"], drawn
 
 
-@pytest.mark.parametrize("state", ["first_use", "empty", "configured"])
+@pytest.mark.parametrize("state", ["first_use", "empty", "configured", "read_only"])
 def test_every_page_of_every_state_has_no_layout_finding(state, request):
     """**The layout rules held at zero** (the sweep's integration, its decision 4; no allow-list):
     every page as an operator sees it, at every layout size (`browser.LAYOUT_SIZES`: the owner's
@@ -4383,12 +4399,14 @@ def test_every_page_of_every_state_has_no_layout_finding(state, request):
     help-on-page, notice-repeat, tab-groups, and since L7 scroll-cue, wrap-end,
     disabled-reason, token-break, sep-end, chain-break, row-top, row-height, and with the display
     floor in-view and sideways-scroll at every window at or above it and ``floor``: below it the
-    layout pass's marks and the frame are the floor's and the document scrolls). One service a
-    state, one browser a walk."""
+    layout pass's marks and the frame are the floor's and the document scrolls). Since the
+    sweep's L7 check (C5), the configured service as a read-only viewer sees it too, every
+    page at every layout size (`ui_walk_read_only`). One service a state, one browser a walk."""
     from tests.fixtures.browser import layout_problems
 
     seen = request.getfixturevalue({"first_use": "ui_walk_first_use", "empty": "ui_walk_empty",
-                                    "configured": "ui_walk_configured"}[state])
+                                    "configured": "ui_walk_configured",
+                                    "read_only": "ui_walk_read_only"}[state])
     # What was measured, so that none means something: every page at every size, every drawer,
     # and (configured) the Load drawer with a row chosen at each of its sizes.
     assert _walk_coverage(seen, state) == []
@@ -4397,7 +4415,8 @@ def test_every_page_of_every_state_has_no_layout_finding(state, request):
 
 def _walk_coverage(seen: list, state: str) -> list:
     """**What a layout walk of `state` must have measured** (E1's coverage), as the
-    problems found: every page at every layout size; every drawer the state opens; and,
+    problems found: every page at every layout size; every drawer the state opens (none for a
+    read-only viewer); and,
     configured, the Load drawer with a row chosen at each of `_PICKED_SIZES`, its chosen
     model's facts drawn (B-L6-4; the sweep's L7, FX-2: the walk recorded only which drawers
     opened, so removing the row-chosen stops passed unseen); no other state chooses a row."""
@@ -4409,8 +4428,8 @@ def _walk_coverage(seen: list, state: str) -> list:
         (s["page"], s["size"]) for s in pages}
     if missing:
         problems.append(f"pages not measured: {sorted(missing)}")
-    drawers = {"#shep-dx-change"} | ({"#shep-train-drawer", "#shep-test-import", _MODELS_PICK["shown"]}
-                                     if state == "configured" else set())
+    drawers = set() if state == "read_only" else {"#shep-dx-change"} | (
+        {"#shep-train-drawer", "#shep-test-import", _MODELS_PICK["shown"]} if state == "configured" else set())
     opened = {s["open"] for s in seen if s.get("open")}
     if opened != drawers:
         problems.append(f"drawers opened {sorted(opened)}, wanted {sorted(drawers)}")
@@ -4443,6 +4462,10 @@ def test_the_walks_coverage_names_a_row_chosen_stop_that_did_not_run():
     assert _walk_coverage(pages + drawers + blank, "configured"), blank
     assert _walk_coverage(pages + drawers[:1], "first_use") == []
     assert _walk_coverage(pages + drawers[:1] + picked, "first_use")
+    # A read-only viewer opens no drawer (Load is an operator control) and sees every page.
+    assert _walk_coverage(pages, "read_only") == []
+    assert _walk_coverage(pages + drawers[:1], "read_only")
+    assert _walk_coverage(pages[1:], "read_only")
 
 
 def test_prose_in_a_region_on_a_panels_edge_keeps_the_measure_and_a_reason_draws_no_box(built):
