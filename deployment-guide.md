@@ -4127,7 +4127,7 @@ in Settings.」）。再從桌面項目或 `launch_shepherd.sh` 啟動它。對�
 每個按鈕都會顯示鎖，"Operator controls only: <原因>" 寫在旁邊。
 
 **執行環境那一行**在每個頁面的底部，先寫問題的後果，再寫原因：「▲ No CUDA device visible: GPU
-training is unavailable. torch is built for CUDA 13.0; check the driver and CUDA libraries.」（失去某項
+training is unavailable. torch is built for CUDA 13.0. Check the driver and CUDA libraries.」（失去某項
 能力時為紅色 ✕，例如「GNN scoring cannot run: torch is not importable (…)」）；沒有問題時寫
 「Runtime: every checked module imports.」。版本（torch、CUDA、PyG、原生擴充、Voyager）在
 **Versions ›** 下，點一下即可看到。`GET /api/v1/system/runtime` 以相同的文字回傳相同的問題。

@@ -344,6 +344,8 @@ def test_footer_leads_with_the_consequence_and_keeps_versions_one_click_away(mon
     report = probe_runtime(force=True)
     (issue,) = [i for i in report["issues"] if "CUDA" in i]
     assert issue.startswith("No CUDA device visible: GPU training is unavailable.")
+    # One fact a sentence, no semicolon (TEXT_BRIEF §1; the sweep's L7, SW-LK9).
+    assert "; " not in issue and issue.endswith("Check the driver and CUDA libraries."), issue
     footer = webui_app._runtime_footer()
     assert "shep-st-warn" in footer and "▲" in footer
     lead, versions = footer.split("<summary>Versions ›</summary>")

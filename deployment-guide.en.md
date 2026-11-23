@@ -4343,7 +4343,7 @@ browser the fields cannot be changed and every button shows the lock, with "Oper
 only: <reason>" beside them.
 
 **The runtime line** at the foot of every page leads with what a problem costs, then its cause:
-"▲ No CUDA device visible: GPU training is unavailable. torch is built for CUDA 13.0; check the
+"▲ No CUDA device visible: GPU training is unavailable. torch is built for CUDA 13.0. Check the
 driver and CUDA libraries." (a ✕ in red when a capability is gone, such as "GNN scoring cannot
 run: torch is not importable (…)"); with no problem it reads "Runtime: every checked module
 imports.". The versions (torch, CUDA, PyG, the native extensions, Voyager) are one click away
