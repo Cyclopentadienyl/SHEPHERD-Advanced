@@ -4099,8 +4099,11 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
         state = [g for g in drawn["groups"] if g["cls"] == "shep-rb-state"]
         assert len(state) == 1, where
         if case == "configured" and size == "1850x960":
-            # R-38: at the owner's window, a dataset chosen, the bar is one row.
-            assert len({group["box"][1] for group in drawn["groups"]}) == 1, where
+            # R-38: at the owner's window, a dataset chosen, the bar is one row: every group
+            # shares one line (the job state stands on the line's centre, not its top, since
+            # 289e51b, so the groups' tops differ by design).
+            boxes = [group["box"] for group in drawn["groups"]]
+            assert max(b[1] for b in boxes) < min(b[3] for b in boxes), where
         controls = [p for group in drawn["groups"] for p in group["parts"]]
         # Every control inside the bar's padding (a select's floor against its whole field,
         # label and ⓘ beside it, pushed the Dataset box 14 px past it at 390 x 844).
