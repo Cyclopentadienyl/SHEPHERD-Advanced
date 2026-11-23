@@ -1436,7 +1436,8 @@ def create_finetune_page(ctx: Any) -> None:
                         with gr.Row(elem_classes=["shep-ft-ds-row"]):
                             dataset = gr.Dropdown(label="Dataset", choices=[], value=None,
                                                   elem_id="ft_dataset")
-                            identity = plain_html(identity_html({}), elem_id="ft_identity")
+                            identity = plain_html(identity_html({}), elem_id="ft_identity",
+                                                  elem_classes=["shep-beside"])
                         # Run → Checkpoint, two cascading selects side by side (the
                         # skill's §4), then the list's Refresh; on a narrow form they
                         # wrap, one under the other.
@@ -1494,10 +1495,10 @@ def create_finetune_page(ctx: Any) -> None:
                         several_note = plain_html("", elem_id="ft_several_note")
                         # What the operator set (decision S2), and Reset to reference:
                         # the base form's one line and Reset.
-                        with gr.Row(elem_classes=["shep-ft-setby-row"]):
+                        with gr.Row(elem_classes=["shep-ft-setby-row", "shep-beside-row"]):
                             set_by = plain_html(set_by_html((), {name: tc.form_value(values[name])
                                                                  for name in FINETUNE_FIELDS}, []),
-                                                elem_id="ft_setby")
+                                                elem_id="ft_setby", elem_classes=["shep-beside"])
                             reset = gr.Button("Reset to reference", size="sm", scale=0,
                                               elem_id="ft_reset")
                         with gr.Row(elem_classes=["shep-ft-settings", "shep-fields"]):
@@ -1513,7 +1514,7 @@ def create_finetune_page(ctx: Any) -> None:
                 with gr.Row(elem_classes=["shep-ft-start-row", "shep-bar"]):
                     start = gr.Button(START_LABEL, variant="primary", interactive=False,
                                       scale=0, elem_id="ft_start")
-                    with gr.Column(elem_classes=["shep-ft-start-why"], min_width=0):
+                    with gr.Column(elem_classes=["shep-ft-start-why", "shep-beside"], min_width=0):
                         reason = plain_html("", elem_id="ft_reason")
                         hops_warn = plain_html("", elem_id="ft_hops_warn")
                     refused = plain_html("", elem_id="ft_refused", elem_classes=["shep-bar-note"])
@@ -1533,7 +1534,8 @@ def create_finetune_page(ctx: Any) -> None:
                     # stops (`actions_view`'s ``stop_shown``): none at first.
                     stop = gr.Button(STOP_LABEL, variant="secondary", interactive=False,
                                      scale=0, elem_id="ft_stop", visible=False)
-                    stop_reason = plain_html("", elem_id="ft_stop_reason")
+                    stop_reason = plain_html("", elem_id="ft_stop_reason",
+                                             elem_classes=["shep-beside"])
                     stop_notice = plain_html("", elem_id="ft_stop_notice",
                                              elem_classes=["shep-bar-note"])
                 with gr.Row(visible=False, elem_id="ft_confirm_row") as confirm_row:
@@ -1691,17 +1693,15 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-ds {{ font-size: 15px; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }}
 {_PAGE} .shep-ft-ds-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: var(--shep-space-2) var(--shep-space-3) !important; }}
 {_PAGE} .shep-ft-ds-row > .form:has(#ft_dataset) {{ flex: 1 1 17.5rem !important; min-width: 0 !important; }}
-{_PAGE} #ft_identity {{ flex: 2 1 26rem !important; min-width: 0 !important; padding-bottom: 6px; }}
+/* The dataset's identity beside its select only while it is one line (the shared `shep-beside`). */
+{_PAGE} #ft_identity {{ padding-bottom: 6px; }}
 /* The chosen base's details: the one summary list in the parameters' panel, no box of its own
    (`base_summary_html`; the skill's §2). */
 {_PAGE} .shep-ft-base .shep-kv {{ font-size: 14px; gap: 2px 14px; }}
 /* Lines that say nothing take no room (and no gap of their column). */
 {_PAGE} #ft_identity:not(:has(.shep-ft-ds, p)), {_PAGE} #ft_bases_note:not(:has(p, .shep-ft-reason)), {_PAGE} #ft_base:not(:has(.shep-ft-base)), {_PAGE} #ft_tasks_note:not(:has(p)), {_PAGE} #ft_freeze_note:not(:has(p)), {_PAGE} #ft_hops_note:not(:has(p)), {_PAGE} #ft_several_note:not(:has(p)) {{ display: none !important; }}
-/* The line on what the operator set beside Reset to reference (the base form's; its text is the
-   shared `.shep-setby`). */
-{_PAGE} .shep-ft-setby-row {{ align-items: flex-start !important; flex-wrap: nowrap !important; gap: var(--shep-space-2) var(--shep-space-3) !important; }}
-{_PAGE} #ft_setby {{ flex: 1 1 auto !important; min-width: 0 !important; }}
-{_PAGE} #ft_reset {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
+/* The line on what the operator set and Reset to reference: the shared row of words beside a
+   control only while they are one line (`shep-beside-row`; its text the shared `.shep-setby`). */
 {_PAGE} .shep-ft-why {{ margin: 0; font-size: 14px; line-height: var(--shep-lh-prose); color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-why > .shep-ft-each {{ margin-top: var(--shep-space-1); font-size: 14px; gap: var(--shep-space-1) 12px; }}
 /* The hop list, its note under it the row's width (`hops_note_html`): a sentence never stands as a
@@ -1717,7 +1717,8 @@ PAGE_CSS = f"""
    hold both; a note (what Start would refuse, a refusal) the bar's width under them. */
 {_PAGE} .shep-ft-start-row, {_PAGE} .shep-ft-stop-row {{ align-items: baseline !important; }}
 {_PAGE} .shep-ft-start-row > button, {_PAGE} .shep-ft-stop-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; }}
-{_PAGE} .shep-ft-start-why, {_PAGE} #ft_stop_reason {{ flex: 1 1 20rem !important; min-width: 0 !important; gap: var(--shep-space-1) !important; }}
+/* Each reason beside its button only while it is one line (the shared `shep-beside`). */
+{_PAGE} .shep-ft-start-why, {_PAGE} #ft_stop_reason {{ gap: var(--shep-space-1) !important; }}
 {_PAGE} .shep-ft-start-why:not(:has(.shep-ft-reason, .shep-nb-rel, .shep-ft-hops-warn)) {{ display: none !important; }}
 {_PAGE} #ft_hops_warn:not(:has(.shep-ft-hops-warn)), {_PAGE} #ft_reason:not(:has(.shep-ft-reason, .shep-nb-rel)), {_PAGE} #ft_refused:not(:has(.shep-ft-refused)) {{ display: none !important; }}
 {_PAGE} #ft_hops_warn {{ font-size: 14px; line-height: var(--shep-lh-prose); }}

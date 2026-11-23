@@ -3809,6 +3809,8 @@ const LOOK_JS = __LOOK_JS__;
         <div style="position: relative; margin-top: 16px"><button type="button" id="o1">The first button</button><button type="button" id="o2">Over it</button></div>
       </div>
       <div class="shep-bar" id="bar"><button type="button" id="bar-btn">Start</button><p id="bar-text">${words}</p></div>
+      <div class="shep-bar" id="bar2"><button type="button" id="bar2-btn">Start</button><p id="bar2-text" style="width: 12em">Start disabled: GPU jobs need a workspaces folder.</p></div>
+      <div class="shep-bar" id="bar3"><button type="button" id="bar3-btn">Start</button><p id="bar3-text">Start unavailable: no folder.</p></div>
     </div></div></body></html>`);
   await page.addScriptTag({ content: LOOK_JS });
   const layout = await page.evaluate(() => window.__shepLook.check().layout);
@@ -3830,7 +3832,10 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
       (Gradio's hidden overflow on Diagnosis' Top-K block was read as a cut);
     - ``overlap`` does not count a control an open drawer lies over (the Test page's import
       drawer: 13 pairs, each a panel control under the drawer), and still counts a button drawn
-      over another."""
+      over another;
+    - ``beside`` reads words drawn on two lines beside a button however few they are (the
+      independent check, C4: it counted 100 characters, so a 51-character reason on two lines
+      beside Start passed), and passes a one-line relation."""
     from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
 
     if node_with_playwright() is None:
@@ -3842,6 +3847,8 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
     assert not [c for c in found["clipped"] if "#dc-btn" in c], found["clipped"]
     assert not [o for o in found["overlap"] if "#under" in o], found["overlap"]
     assert [o for o in found["overlap"] if "#o1" in o and "#o2" in o], found["overlap"]
+    assert [b for b in found["beside"] if "#bar2-text" in b and "#bar2-btn" in b], found["beside"]
+    assert not [b for b in found["beside"] if "#bar3-text" in b], found["beside"]
 
 
 @pytest.mark.parametrize("state", ["first_use", "empty", "configured"])

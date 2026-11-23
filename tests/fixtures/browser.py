@@ -340,9 +340,10 @@ LOOK_JS = r"""
   /* **The layout rules** (the UI sweep of 2026-11-22; `layout_problems`): what the page shown
      draws, each measured relative to what is drawn, never against a window size or a pixel
      figure of one screen:
-     - beside: a text block of 100 or more characters (no field in it) that stands beside a field
-       or a button of its region (its panel; outside every panel, its bar: Training's run bar),
-       overlapping its line by half the control's height;
+     - beside: a text block (no field in it) drawn on more than one line that stands beside a
+       field or a button of its region (its panel; outside every panel, its bar: Training's run
+       bar), overlapping its line by half the control's height: only a one-line relation sits
+       beside the control it explains (the skill's §2);
      - narrow: a text box or a select whose inner width holds fewer than 10 of its own "0";
      - overlap: two controls that overlap by more than 2 x 2 px (a ⓘ's cover over its disabled
        button aside, and a control of an open drawer where the drawer is drawn over the other: a
@@ -401,6 +402,20 @@ LOOK_JS = r"""
     return out;
   };
   const clip = (s, n = 60) => s.replace(/\s+/g, ' ').trim().slice(0, n);
+  /* How many lines an element's words are drawn on: its text's boxes in order, a box that
+     overlaps the line before it by half its own height on that line (a status mark and the
+     words after it share one). */
+  const linesOf = (el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const rects = [...range.getClientRects()].filter((q) => q.width > 0.5 && q.height > 0.5)
+      .sort((a, b) => a.top - b.top);
+    let n = 0, bottom = -Infinity;
+    for (const q of rects) {
+      if (q.top > bottom - q.height / 2) { n += 1; bottom = q.bottom; } else { bottom = Math.max(bottom, q.bottom); }
+    }
+    return n;
+  };
   /* A ⓘ's cover over the disabled button it explains (the gated-button rule) is meant to lie
      over it. */
   const coverOf = (a, b) => a.matches('.shep-i-cover') || b.matches('.shep-i-cover');
@@ -466,17 +481,27 @@ LOOK_JS = r"""
       && !c.matches('.shep-i, .shep-copy, .shep-nb-go, .shep-link'));
     const texts = textNodes(scope);
     // beside
-    const blocks = new Set(texts.filter((x) => x.t.length > 30).map((x) => blockOf(x.el)));
+    const blocks = new Set(texts.map((x) => blockOf(x.el)));
     for (const b of blocks) {
       if (!b || b === scope || b.querySelector('input, textarea, select')) { continue; }
+      // A table's cells, a summary list's rows and a control's own words are their own forms,
+      // not a message beside a control.
+      if (b.closest('table, dl, label, [role=tablist]') || b.closest(INTERACTIVE)) { continue; }
+      // A closed disclosure's body is laid out but not drawn.
+      if (b.closest('details:not([open])') && !b.closest('summary')) { continue; }
       const words = (b.innerText || '').trim();
-      if (words.length < 100) { continue; }
+      if (linesOf(b) < 2) { continue; }
       const r = b.getBoundingClientRect(), k = regionOf(b);
       if (k === null) { continue; }
       const near = fieldsAndButtons.filter((c) => {
         if (regionOf(c) !== k || b.contains(c)) { return false; }
         const q = c.getBoundingClientRect(), over = Math.min(q.bottom, r.bottom) - Math.max(q.top, r.top);
-        return over > 0.5 * q.height && (q.right <= r.left + 2 || q.left >= r.right - 2);
+        if (!(over > 0.5 * q.height && (q.right <= r.left + 2 || q.left >= r.right - 2))) { return false; }
+        // Beside it in one row, not a column of a form beside another: the branch that holds the
+        // words, under the box that holds both, has no field of its own.
+        let branch = b;
+        while (branch.parentElement && !branch.parentElement.contains(c)) { branch = branch.parentElement; }
+        return !branch.querySelector('input:not([type=hidden]), textarea, select');
       });
       if (near.length) { out.beside.push(`${named(b)} "${clip(words, 50)}" beside ${named(near[0])}`); }
     }
@@ -1055,8 +1080,8 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
     shared walk holds these at zero once every page is laid out again (the
     sweep's integration); a page's lane runs them on its own pages:
 
-    - ``beside``: a text block of 100+ characters beside a field or button of its panel (or of
-      its bar, outside every panel);
+    - ``beside``: a text block drawn on two or more lines beside a field or button of its panel
+      (or of its bar, outside every panel);
     - ``narrow-box``: a text box or select holding fewer than 10 of its own "0";
     - ``overlap``: two controls overlapping by more than 2 x 2 px (one an open drawer lies over
       aside);

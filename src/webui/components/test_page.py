@@ -3190,7 +3190,8 @@ def create_test_page(ctx: Any) -> None:
             with gr.Row(elem_classes=["shep-panel-ft"]):
                 register = gr.Button(GATED_LABELS["register"], variant="primary",
                                      interactive=False, elem_id="shep-test-register", scale=0)
-                register_reason = plain_html("", elem_id="shep-test-register-reason")
+                register_reason = plain_html("", elem_id="shep-test-register-reason",
+                                             elem_classes=["shep-beside"])
                 register_out = plain_html("", elem_id="shep-test-register-out")
     # The poll's hand-off to the selection's group (`_poll`): a hidden
     # component, not a State, because the answer to a queue=False request
@@ -3921,7 +3922,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-more {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0 0; }}
 {_PAGE} .shep-test-more button {{ font: inherit; font-size: 15px; color: var(--shep-accent-text); background: none; border: 0; padding: 2px 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }}
 {_PAGE} .shep-panel-ft > button, {_PAGE} .shep-test-actions > button {{ white-space: nowrap; flex: none !important; }}
-{_PAGE} .shep-panel-ft > .block {{ flex: 1 1 200px !important; min-width: 0 !important; }}
+{_PAGE} .shep-panel-ft > .block:not(.shep-beside) {{ flex: 1 1 200px !important; min-width: 0 !important; }}
 {_PAGE} #shep-test-cohort {{ --shep-panel-basis: 22rem; --shep-panel-grow: 1; --shep-panel-min: 19.7rem; }}
 {_PAGE} #shep-test-run {{ --shep-panel-basis: 24rem; --shep-panel-grow: 1; --shep-panel-min: 22.5rem; }}
 {_PAGE} #shep-test-result {{ --shep-panel-basis: 32.2rem; --shep-panel-grow: 1.5; --shep-panel-min: 32.2rem; }}

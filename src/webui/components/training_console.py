@@ -4833,10 +4833,11 @@ def create_training_tab(ctx: Any) -> None:
                                             spec_field.reference, elem_id=spec_field.elem_id,
                                             info=FIELD_FORMATS.get(spec_field.path))
                     # What the operator set (decision S2), and Reset to reference.
-                    with gr.Row(elem_classes=["shep-train-setby-row"]):
+                    # The line beside Reset only while it is one line (`shep-beside`).
+                    with gr.Row(elem_classes=["shep-train-setby-row", "shep-beside-row"]):
                         set_by = plain_html(set_by_you_html(dict(zip(
                             base_form_keys(), base_form_defaults(), strict=True)), []),
-                            elem_id="shep-train-setby")
+                            elem_id="shep-train-setby", elem_classes=["shep-beside"])
                         reset_btn = gr.Button("Reset to reference", size="sm", scale=0,
                                               elem_id="shep-train-reset")
                     # torch.compile is configured in the Runtime Settings tab (it is an
@@ -5493,11 +5494,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-spec-facts .shep-note {{ margin: 0 0 6px; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-train-spec-facts {{ font-size: 14px; gap: 2px 14px; }}
 {_PAGE} .shep-train-sub {{ margin: 6px 0 0; font-size: 15px; font-weight: 600; }}
-/* The base form's line on what the operator set (decision S2) beside Reset to reference (the
-   line's text is the shared `.shep-setby`, `src/webui/style.py`). */
-{_PAGE} .shep-train-setby-row {{ align-items: flex-start !important; flex-wrap: nowrap !important; gap: 8px 12px !important; }}
-{_PAGE} #shep-train-setby {{ flex: 1 1 auto !important; min-width: 0 !important; }}
-{_PAGE} #shep-train-reset {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
+/* The base form's line on what the operator set (decision S2) and Reset to reference: the
+   shared row of words beside a control only while they are one line (`shep-beside-row`, the
+   line's text the shared `.shep-setby`, `src/webui/style.py`). */
 /* **The panels sized by what they hold** (``shep-sized``, M4 of the UI sweep; `style.py`): each a
    basis and a share of the room left, in rem, never under its minimum (the layout rule's measure,
    `src/webui/shell.py`): the form, or the Continue drawer in its place, a column of fields; the
