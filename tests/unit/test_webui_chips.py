@@ -507,12 +507,11 @@ def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
     assert "M1" in on[-1].text and "SHEPHERD_DEPLOYMENT_MODE" in on[-1].text
     unset = c.gpu_chip_from(None, {**LOCK_FREE, "unset": True}, operator=True).detail
     assert unset.splitlines()[-1] == (
-        "Ref: SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11, the formal scripts "
-        "train_model.py, measure_scorer.py")
+        "Ref: SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11")
     refused = c.d8_chip(OperatorAccess(False, "not_loopback", "why")).detail
     assert refused.startswith(f"{c.D8_READONLY_LEAD}\n{c.D8_SCOPE}\n\nFor this request: why")
     assert c.gpu_chip_from(None, lock_broken, operator=True).detail.startswith(
-        "The GPU lock cannot be used, so every managed job is refused until it is corrected.\n"
+        "The GPU lock cannot be used: managed jobs are refused until it is fixed.\n"
         "the folder is read-only")
 
 
@@ -570,6 +569,8 @@ justify-content: flex-end; padding: 12px; }} {h.HELP_CSS}</style>{h.HELP_HEAD}</
             which, classes)
     assert seen["gpu"][0]["text"] == "GPU jobs are refused until a workspaces folder is set."
     assert seen["gpu"][-1]["text"].startswith("Ref: SHEPHERD_WORKSPACES_ROOT")
-    assert "train_model.py" in seen["gpu"][-1]["text"]
-    assert not any("train_model.py" in part["text"] for part in seen["gpu"][:-1])
+    # The state's own references alone (the sweep's L7 check, C9: with the scope's scripts the
+    # line took three lines of the bubble); a script's name is never in the body.
+    assert seen["gpu"][-1]["text"] == f"Ref: {c.GPU_NOT_CONFIGURED_REF}"
+    assert not any("train_model.py" in part["text"] for part in seen["gpu"])
     assert not any("M1" in part["text"] for part in seen["d8"][:-1])

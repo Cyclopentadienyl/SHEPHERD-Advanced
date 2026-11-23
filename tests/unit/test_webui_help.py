@@ -1588,13 +1588,21 @@ const { chromium } = require('playwright');
   await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
   const keys = await page.evaluate(() => [...document.querySelectorAll('[id^="shep-help-text-"]')]
     .map((e) => e.id.slice('shep-help-text-'.length)));
+  // The texts a page composes per request (the header chips' ⓘ, `chips.chip_html`: a hidden
+  // element its ⓘ names), each state's given by the test: drawn here the same way.
+  const composed = process.argv[3] ? JSON.parse(require('fs').readFileSync(process.argv[3], 'utf8')) : {};
+  await page.evaluate((composed) => { Object.entries(composed).forEach(([name, text], i) => {
+    const el = document.createElement('span'); el.id = 'shep-probe-text-' + i; el.hidden = true;
+    el.textContent = text; el.setAttribute('data-name', name); document.body.appendChild(el); }); }, composed);
+  const targets = [...keys.map((key) => [key, 'shep-help-text-' + key]),
+                   ...Object.keys(composed).map((name, i) => ['chip ' + name, 'shep-probe-text-' + i])];
   const out = {};
-  for (const key of keys) {
-    out[key] = await page.evaluate(async (key) => {
+  for (const [key, target] of targets) {
+    out[key] = await page.evaluate(async ([key, target]) => {
       const btn = document.createElement('button');
       btn.type = 'button'; btn.className = 'shep-i'; btn.textContent = 'i';
       btn.setAttribute('data-help', key); btn.setAttribute('data-help-title', key);
-      btn.setAttribute('aria-describedby', 'shep-help-text-' + key);
+      btn.setAttribute('aria-describedby', target);
       btn.style.cssText = 'position: fixed; left: 40px; top: 40px; z-index: 1';
       document.body.appendChild(btn);
       btn.click();
@@ -1615,7 +1623,7 @@ const { chromium } = require('playwright');
           .map((el) => [kind(el), el.textContent, lines(el)]) : null;
       btn.remove();
       return parts;
-    }, key);
+    }, [key, target]);
     await page.keyboard.press('Escape');
   }
   console.log(JSON.stringify(out));
@@ -1638,6 +1646,16 @@ def _bubble_part_exemption(key: str, kind: str, words: str):
     from src.evaluation import caveats
     from src.webui.components import training_console
 
+    if key.startswith("chip read-only "):
+        # D8's refusal for the request (`operator_access`), also the API's: its reason after
+        # "For this request: " and its reference in the Ref line.
+        from src.utils.operator_access import reason_parts
+        from tests.unit.test_operator_access import every_refusal
+
+        said = [part for decision in every_refusal().values()
+                for part in reason_parts(decision.reason) if part]
+        held = [part for part in said if part in words]
+        return "D8's refusal (the API's words)", held[0] if held else None
     if key.startswith("test-mode-"):
         note = caveats.MODE_RESULT_NOTES.get(key[len("test-mode-"):]) or ""
         return "a governed measurement note", note if words in note else None
@@ -1678,16 +1696,26 @@ def test_every_registered_help_texts_parts_are_two_lines_at_most_in_the_bubble(t
     in the served dashboard's one bubble, as drawn: its lead, each paragraph,
     its Ref line and each item are two lines at most, but the parts kept
     verbatim from their source (`_bubble_part_exemption`, each with its
-    reason, its words held to that source)."""
+    reason, its words held to that source). The sweep's L7 check (C9): the header chips'
+    bubbles, composed per request and named by a hidden element of their own, were never
+    opened (the operator controls' Ref took 5 lines, the GPU chip's 3); every chip state
+    (`test_webui_chips._every_chip`) is drawn in the same bubble and held to the same lines,
+    but D8's refusal, the API's own words."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import run_node
     from tests.fixtures.served_page import served
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
+    from tests.unit.test_webui_chips import _every_chip
+
+    chips = tmp_path / "chips.json"
+    chips.write_text(json.dumps({name: chip.detail for name, chip in _every_chip()}))
     with served(create_gradio_app(), **mount_options()) as base:
-        seen = run_node(_ITEM_LINES_JS, tmp_path, base[:-len("gradio_api")], timeout=600)
+        seen = run_node(_ITEM_LINES_JS, tmp_path, base[:-len("gradio_api")], str(chips), timeout=600)
     assert len(seen) >= 140 and all(parts is not None for parts in seen.values()), seen
+    assert {key[len("chip "):] for key in seen if key.startswith("chip ")} == {
+        name for name, _chip in _every_chip()}
     assert all(parts and parts[0][0] == "lead" for parts in seen.values()), seen
     over = {}
     for key, parts in seen.items():

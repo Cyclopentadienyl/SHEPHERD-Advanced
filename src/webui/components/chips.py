@@ -109,8 +109,7 @@ D8_HOW = (
     "They need a service started here and a request that:\n"
     "- Arrives on this machine's loopback, directly or through an SSH forward\n"
     "- Has no forwarding header (no reverse proxy), from this dashboard\n"
-    "Ref: desktop entry or launch_shepherd.sh, deployment mode M1 (SHEPHERD_DEPLOYMENT_MODE), "
-    "ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui"
+    "Ref: SHEPHERD_DEPLOYMENT_MODE=M1, ssh -L 8264:localhost:8264"
 )
 #: Each D8 chip's lead (the bubble's first line, `help.help_lines`), which
 #: the list of controls (`D8_SCOPE`) follows.
@@ -125,7 +124,7 @@ GPU_SCOPE = (
     "A second holder is refused, not queued. Inference on the CPU takes no lock."
 )
 #: The scripts `GPU_SCOPE` names in words, said in its trailing Ref line.
-GPU_SCOPE_REF = "the formal scripts train_model.py, measure_scorer.py"
+GPU_SCOPE_REF = "train_model.py, measure_scorer.py"
 #: The GPU chip's lead when nothing holds the lock (its words: "none", never "free").
 GPU_FREE_LEAD = "No managed job holds the GPU lock now."
 
@@ -203,11 +202,13 @@ def d8_chip(access: OperatorAccess) -> Chip:
 def gpu_detail(text: str, *refs: str) -> str:
     """**A GPU chip's ⓘ text, the one way every state composes it**: the
     state's own words, then what the lock covers (`GPU_SCOPE`), then one
-    trailing Ref line, the state's references before the scope's
-    (`GPU_SCOPE_REF`). The bubble shows a "Ref:" line as the muted reference
-    line, the last (`help.help_lines`, the WebUI skill's §7); a state's own
-    Ref line placed before the scope stood mid-bubble (T06 review)."""
-    return f"{text}\n\n{GPU_SCOPE}\nRef: {', '.join((*refs, GPU_SCOPE_REF))}"
+    trailing Ref line: the state's own references where it has them, else the
+    scope's (`GPU_SCOPE_REF`), so the line is two lines at most in the bubble (the
+    sweep's L7 check, C9: with both it took three).
+    The bubble shows a "Ref:" line as the muted reference line, the last
+    (`help.help_lines`, the WebUI skill's §7); a state's own Ref line placed before
+    the scope stood mid-bubble (T06 review)."""
+    return f"{text}\n\n{GPU_SCOPE}\nRef: {', '.join(refs or (GPU_SCOPE_REF,))}"
 
 
 def _since(started_at: Any) -> Optional[str]:
@@ -255,8 +256,7 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         return Chip("unread", GPU_NOT_CONFIGURED,
                     gpu_detail(GPU_NOT_CONFIGURED_DETAIL, GPU_NOT_CONFIGURED_REF))
     if lock.get("problem"):
-        detail = ("The GPU lock cannot be used, so every managed job is refused until it is "
-                  "corrected.")
+        detail = "The GPU lock cannot be used: managed jobs are refused until it is fixed."
         # An operator reads the problem itself (it says where to correct it);
         # anyone else, where an operator sees why, never the value's words.
         detail += f"\n{lock['problem']}" if operator else f"\n{GPU_LOCK_WHY_HIDDEN}"
