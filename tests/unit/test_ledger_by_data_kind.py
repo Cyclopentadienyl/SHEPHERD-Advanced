@@ -691,7 +691,7 @@ def test_models_shows_each_kind_by_the_one_display_with_its_exposure():
     assert "ROC-AUC 0.6250" in kg and "lp_roc_auc 0.625" in kg
     assert ("Exposure held out relative to the recorded training and validation graph use"
             in kg)
-    assert "Definition kg-lp-exposure/v1; the version's split" in kg
+    assert "Definition kg-lp-exposure/v1 · the version's split" in kg
     assert "6 of 6 stored pairs scored" in kg and "8 positive edges" in kg
     assert "positive_edges 8: directed graph-view edges of the role's part" in kg
     assert "R10" not in kg and "cohort version" not in kg.lower().replace("data version", "")
@@ -779,7 +779,7 @@ def test_the_test_page_says_a_kg_edge_set_and_a_generated_split_in_their_words()
     assert "a KG edge set (test)" in kg and "6 of 6 stored pairs scored" in kg
     assert ("Exposure held out relative to the recorded training and validation graph use"
             in kg)
-    assert "Exposure source Definition kg-lp-exposure/v1; the version's split" in kg
+    assert "Exposure source Definition kg-lp-exposure/v1 · the version's split" in kg
     assert "a generated split (val)" in generated and "Generation" in generated
     assert "allocation uniform-without-replacement v1 with seed 42" in generated
     # One rendering: each line the Test page shows is the line Models shows

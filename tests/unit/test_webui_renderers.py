@@ -233,7 +233,7 @@ def test_records_that_cannot_be_read_are_named_apart_from_the_results():
     assert text(r.RecordedTests("records", 0, None, unreadable=2)) == (
         "Recorded results: 0 · 2 not readable")
     assert text(r.RecordedTests("records", 3, 1, unchecked=1, unreadable=2)) == (
-        "Recorded results: 3 · 2 not readable; runs differ for 1; comparison incomplete for 1")
+        "Recorded results: 3 · 2 not readable, runs differ for 1, comparison incomplete for 1")
     assert text(r.RecordedTests("records", 3, 1, unreadable=2)).count(" · ") == 1
     facts = r.facts_from_checkpoint(checkpoint(), [workspace()],
                                     recorded=r.RecordedTests("records", 0, 0, unreadable=1))
@@ -1426,8 +1426,10 @@ def test_a_branch_change_reads_in_the_one_value_words_rule():
     assert r.change_value("scheduler_type", {"parent": "<b>x", "new": "none"}) == (
         "<code>&lt;b&gt;x</code> → <code>none</code>")
     assert r.change_value("seed", None) == "<code>not set</code> → <code>not set</code>"
+    # One changed setting a line (the owner's decision of 2026-11-23: never "; ").
     assert mp.changes_html({"learning_rate": {"parent": 0.0001, "new": 0.0005}}) == (
-        "Learning rate " + r.change_value("learning_rate", {"parent": 0.0001, "new": 0.0005}))
+        "<div>Learning rate " + r.change_value("learning_rate", {"parent": 0.0001, "new": 0.0005})
+        + "</div>")
 
 
 def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box():
