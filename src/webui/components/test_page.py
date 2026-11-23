@@ -1046,6 +1046,21 @@ TESTING_WAITS = {1: "Testing waits for it.", 2: "Testing waits for both."}
 IMPORT = "Import"
 START = "Start"
 REGISTER = "Register"
+#: The Run select (`listing_why_html`) while no workspace is listed: choose
+#: one in Data, or there is none yet (the Workspace select says so).
+RUN = "Run"
+#: Why the import drawer's Commit is off (L7: a disabled primary action says
+#: why beside it in the shared form, the skill's §9): no preview yet, or one
+#: that maps no case.
+COMMIT = "Commit"
+COMMIT_NO_PREVIEW = r.disabled_words(COMMIT, "prepare a preview first.")
+COMMIT_NO_CASES = r.disabled_words(COMMIT, "the preview maps no case.")
+RUN_CHOOSE_WORKSPACE = "choose a workspace in Data first."
+RUN_NO_WORKSPACE = "no workspace yet (see Data)."
+#: Register's cause while no report is chosen (`register_state`): a report to
+#: choose in the list, or none listed yet.
+REGISTER_CHOOSE = "choose a kept report in the list first."
+REGISTER_NONE = "no report is listed yet."
 #: Where Start's relation points: the panel that shows the notice.
 NOTICE_PANEL = "Data"
 #: Under the Workspace select when the workspaces folder can be used and
@@ -1600,18 +1615,28 @@ def chosen_model(models: Mapping[str, Any], key: Any) -> Optional[str]:
 
 
 def listing_why_html(page: Mapping[str, Any], models: Mapping[str, Any]) -> str:
-    """**Why the Run and Checkpoint lists are empty** for a request D8
-    refuses (listing the checkpoints opens them: an operator control), said
-    once above the fields it turns off, the Run row with its locked ↻ and
-    then Checkpoint: the gated-button rule's visible reason beside the ↻
-    (`chips.gated`), placed as Settings places its panel's above the fields
-    it turns off (T06-D). It was the Checkpoint field's note, 123 px under
-    the ↻ and off screen with it at 390 × 844 (UI ledger V-15). Empty for
-    an operator."""
-    if not models.get("refused"):
+    """**Why the Run and Checkpoint lists are empty**, said once above the
+    fields it turns off, as the Run row's note (``shep-bar-note``, the bar's
+    first line: the Run select with its ↻, then Checkpoint, under it), the
+    gated-button rule's visible reason for the ↻ (`chips.gated`). It was the
+    Checkpoint field's note, 123 px under the ↻ and off screen with it at
+    390 × 844 (UI ledger V-15). For a request D8
+    refuses: listing the checkpoints opens them, an operator control. With no
+    workspace listed (L7 SW-LK10: the two selects were empty grey boxes, the
+    ↻ off with nothing said; the skill's §9): Run's relation to the Data
+    panel's workspaces notice (`see_above`), else to its Workspace select.
+    Empty once a workspace is listed (its checkpoints, or `NO_CHECKPOINT`
+    under Checkpoint)."""
+    if models.get("refused"):
+        return _reason_html("Not listed: listing the checkpoints opens them. "
+                            + operator_only(page.get("access") or {}), kind="lock")
+    if models.get("workspace"):
         return ""
-    return _reason_html("Not listed: listing the checkpoints opens them. "
-                        + operator_only(page.get("access") or {}), kind="lock")
+    folder = _notice(page, "workspaces_notice")
+    if folder is not None:
+        return relation_html(RUN, folder, where=NOTICE_PANEL)
+    return _reason_html(r.disabled_words(RUN, RUN_CHOOSE_WORKSPACE if page.get("workspaces")
+                                         else RUN_NO_WORKSPACE), kind="off")
 
 
 def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional[str]) -> str:
@@ -2461,7 +2486,14 @@ def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
         listing = reports.get("problem") if reports.get("version_sha256") else None
         if listing and not reports.get("runs"):
             return False, _store_not_listed(listing, roots, "a run")
-        return False, None
+        # No report chosen: said in the shared form, never a silent disabled
+        # button (L7 SW-LK6; the skill's §9): the registry the Data panel's
+        # notice names, else what to choose.
+        registry = _notice(page, "registry_notice")
+        if registry is not None:
+            return False, r.relation_words(REGISTER, registry, where=NOTICE_PANEL)
+        return False, r.disabled_words(REGISTER, REGISTER_CHOOSE if reports.get("runs")
+                                       else REGISTER_NONE)
     state = run.get("state") or {}
     if state.get("kept") != "kept":
         return False, r.disabled_words(REGISTER, "no report was kept in this run.")
@@ -3111,13 +3143,14 @@ def create_test_page(ctx: Any) -> None:
                 # The model as Run → Checkpoint, the shared cascading pair
                 # (`model_list.parents_update`), one under the other so each
                 # 40-character option shows whole in the column; ↻ lists the
-                # workspace's checkpoints again. Above them, for a request D8
-                # refuses, why both lists are empty and ↻ is locked
-                # (`listing_why_html`), once.
-                model_why = plain_html("", elem_id="shep-test-model-why")
-                # A bar of one group (the select and its ↻ never part), its
-                # button on the box's line (`shep-field-row`).
+                # workspace's checkpoints again. A bar of one group (the select
+                # and its ↻ never part), its button on the box's line
+                # (`shep-field-row`); its note, first, on the line above them:
+                # why both lists are empty and ↻ is off (`listing_why_html`),
+                # once (V-15), the bar's own reason for the ↻.
                 with gr.Row(elem_classes=["shep-test-model-row", "shep-bar"]):
+                    model_why = plain_html("", elem_id="shep-test-model-why",
+                                           elem_classes=["shep-bar-note"])
                     with gr.Row(elem_classes=["shep-grp", "shep-grp-grow", "shep-field-row"]):
                         run_select = gr.Dropdown(label="Run", choices=[], value=None,
                                                  elem_id="shep-test-model-run", interactive=False,
@@ -3791,7 +3824,8 @@ def create_test_page(ctx: Any) -> None:
         return (gr.update(visible=True), _dd(intake_choices(listing), None),
                 intake_note_html(listing, roots), IMPORT_TITLE_HTML,
                 gr.update(choices=role_choices(page or {})), None,
-                gr.update(interactive=False, value="Commit"), "", "", "")
+                gr.update(interactive=False, value="Commit"), "", "",
+                _reason_html(COMMIT_NO_PREVIEW, kind="off"))
 
     import_open.click(_on_open_import, inputs=[page_state, workspace],
                       outputs=[drawer, intake, intake_note, drawer_title, new_role, preview_state,
@@ -3813,10 +3847,12 @@ def create_test_page(ctx: Any) -> None:
         roots = (page or {}).get("roots") or []
         if preview is None:
             return None, _outcome_box("amber", refusal or "Nothing was written.", roots), \
-                gr.update(interactive=False, value="Commit"), ""
+                gr.update(interactive=False, value="Commit"), \
+                _reason_html(COMMIT_NO_PREVIEW, kind="off")
         can = bool(preview.get("samples_n"))
         return preview, preview_html(preview), gr.update(
-            interactive=can, value=f"Commit as version {preview.get('label')}"), ""
+            interactive=can, value=f"Commit as version {preview.get('label')}"), \
+            "" if can else _reason_html(COMMIT_NO_CASES, kind="off")
 
     preview_btn.click(_on_preview, inputs=[page_state, workspace, intake, new_label, new_role,
                                            new_policy],

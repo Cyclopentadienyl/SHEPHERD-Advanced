@@ -688,7 +688,8 @@ def test_a_store_whose_runs_cannot_be_listed_says_why_register_is_off():
         "confirmed here: the report store of 'v' could not be listed (PermissionError).")
     assert "scripts/record_evaluation.py --report" in why
     assert tp.register_state({"access": {"allowed": True}},
-                             {**reports, "version_sha256": None}, None) == (False, None)
+                             {**reports, "version_sha256": None}, None) == (
+        False, "Register disabled: no report is listed yet.")
 
 
 def test_a_run_whose_bytes_a_merged_record_holds_shows_the_possible_overlap(site):
@@ -3393,8 +3394,10 @@ def test_the_run_panels_foot_keeps_start_the_jobs_state_and_cancel_out_of_its_on
     assert names(run) == ["shep-test-run-hd", "shep-test-bd", "shep-test-runft"]
     body, foot = run.children[1], run.children[2]
     assert names(body)[-2:] == ["shep-test-fixed", "shep-test-job"]
-    # A refused listing's reason first (empty for an operator, V-15), then the choices.
-    assert names(body)[:2] == ["shep-test-model-why", "shep-test-model-row"]
+    # A refused or empty listing's reason first (V-15), the Run row's note
+    # (L7 SW-LK10), then the choices.
+    assert names(body)[0] == "shep-test-model-row"
+    assert names(body.children[0])[0] == "shep-test-model-why"
     # The card's heading names the run once, in the card (none while no run
     # was started, R-81); its state is the foot's alone.
     running = {"status": "running", "inputs": {}, "log": []}
@@ -3617,7 +3620,40 @@ def test_every_gated_button_is_locked_only_when_refused_and_then_says_why(site, 
     refused = {"access": {"allowed": False, "condition": "not_loopback"}}
     assert tp.register_state(refused, {"runs": []}, None) == (
         False, "Operator controls only: request not local.")
-    assert tp.register_state({"access": {"allowed": True}}, {"runs": []}, None) == (False, None)
+    # L7 SW-LK6: and an operator's says why, in the shared form (never a
+    # silent disabled button): the registry the Data panel names, else what
+    # to choose.
+    operator = {"access": {"allowed": True}}
+    assert tp.register_state(operator, {"runs": []}, None) == (
+        False, "Register disabled: no report is listed yet.")
+    assert tp.register_state(operator, {"runs": [{"run_id": "r"}]}, None) == (
+        False, "Register disabled: choose a kept report in the list first.")
+    first_use = {**operator, "registry_notice": {
+        "key": "registry", "kind": "neutral", "summary": "No results registry is set.",
+        "short": "no results registry is set"}}
+    assert tp.register_state(first_use, {"runs": []}, None) == (
+        False, "Register disabled: no results registry is set (see Data).")
+
+
+def test_the_empty_run_and_checkpoint_selects_say_why_they_are_empty():
+    """L7 SW-LK10: at first use and in an empty folder the Run and Checkpoint
+    selects were empty grey boxes, and the ↻ beside Run off, with no words
+    (the skill's §9: an empty region says what will appear). Their note
+    under the Run row (`listing_why_html`) is Run's relation to the Data
+    panel's workspaces notice, never the notice again; with the folder set,
+    what to choose there; nothing once a workspace is listed."""
+    operator = {"access": {"allowed": True}}
+    none = {"items": [], "workspace": None}
+    first_use = {**operator, "workspaces_notice": {
+        "key": "workspaces_root", "kind": "neutral", "summary": "No workspaces folder is set.",
+        "short": "no workspaces folder is set"}}
+    said = tp.listing_why_html(first_use, none)
+    assert 'data-notice-rel="workspaces_root"' in said and "data-notice=" not in said
+    assert "Run disabled: no workspaces folder is set (see Data)." in said
+    assert "Run disabled: no workspace yet (see Data)." in tp.listing_why_html(operator, none)
+    assert "Run disabled: choose a workspace in Data first." in tp.listing_why_html(
+        {**operator, "workspaces": [{"name": "demo"}]}, none)
+    assert tp.listing_why_html(operator, {"items": [], "workspace": "demo"}) == ""
 
 
 
@@ -5359,7 +5395,11 @@ def test_the_run_panels_rows_are_bars_of_whole_groups():
     row = row_of(by_id["shep-test-model-run"])
     assert {"shep-grp", "shep-grp-grow", "shep-field-row"} <= set(row.elem_classes)
     assert row_of(by_id["shep-test-model-reload"]) is row
-    assert "shep-bar" in row.parent.elem_classes and row.parent.children == [row]
+    # Its note first, why the lists are empty, on the line above the group
+    # (V-15; L7 SW-LK10: a reason of the bar's, the ↻'s for the shared rule).
+    assert "shep-bar" in row.parent.elem_classes
+    assert row.parent.children == [by_id["shep-test-model-why"], row]
+    assert "shep-bar-note" in by_id["shep-test-model-why"].elem_classes
     top = row_of(by_id["shep-test-job-head"])
     assert {"shep-test-job-top", "shep-bar"} <= set(top.elem_classes)
     assert "shep-grp-grow" in by_id["shep-test-job-head"].elem_classes
