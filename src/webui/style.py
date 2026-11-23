@@ -1152,13 +1152,27 @@ button.shep-row {
 html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
   scroll-padding-bottom: var(--shep-caret-room);
 }
-/* **A scroll cue** (R-73): a region with ``shep-scroll-cue`` that has more below fades its last
-   lines out, and draws them whole again at its end (the shell's head script keeps
-   ``data-shep-more`` on it as it scrolls and as its content changes), whatever the system's
+/* **A scroll cue** (R-73): every region that scrolls (any element whose own overflow scrolls;
+   no page opts in, the sweep's L7) and has more below fades its last lines out, and draws them
+   whole again at its end; one with more past its right edge fades its right edge the same way
+   (a table wider than its frame). The shell's head script keeps ``data-shep-more`` and
+   ``data-shep-more-x`` on it as it scrolls and as its content changes, whatever the system's
    scrollbars (overlay ones draw nothing at rest). */
-.shep-scroll-cue[data-shep-more] {
+[data-shep-more] {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+}
+[data-shep-more-x] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+[data-shep-more][data-shep-more-x] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent),
+    linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent),
+    linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
 }
 /* **A box folded** (`FOLD`, OPS-FIX-N1): its column has not the room for it whole beside the region
    at its floor (`FOLD_FLOOR`), so its long parts are not drawn; the box's own details hold them. */

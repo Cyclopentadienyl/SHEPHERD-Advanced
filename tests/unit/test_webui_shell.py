@@ -3132,7 +3132,9 @@ const { chromium } = require('playwright');
   const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
   const rows = Array.from({ length: 300 }, (_, i) => `<tr><th scope="row">Field ${i}</th><td>${i}</td><td>${i}</td></tr>`).join('');
   await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body>
-    <div class="shep-scroll-cue" id="cue" style="height: 200px; overflow: auto;"><div style="height: 900px"></div></div>
+    <div id="cue" style="height: 200px; overflow: auto;"><div style="height: 900px"></div></div>
+    <div id="cuex" style="width: 200px; overflow-x: auto; overflow-y: hidden;"><div style="width: 900px; height: 20px"></div></div>
+    <div id="fits" style="height: 200px; overflow: auto;"><div style="height: 100px"></div></div>
     <div id="shep-page-models"><div id="shep-mp-detail" style="height: 600px; display: flex; flex-direction: column;">
       <div id="shep-mp-detail-bd" style="flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 16px;">
         <div class="shep-tbl-wrap shep-rs-wrap"><table class="shep-tbl shep-rs-cmp" style="min-width: 1600px"><thead><tr><th>Field</th><th>A</th><th>B</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -3144,6 +3146,11 @@ const { chromium } = require('playwright');
   const cue = () => page.evaluate(() => { const e = document.getElementById('cue');
     return { more: e.hasAttribute('data-shep-more'), mask: getComputedStyle(e).maskImage !== 'none' }; });
   const out = { top: await cue() };
+  out.sideways = await page.evaluate(() => { const e = document.getElementById('cuex');
+    return { more: e.hasAttribute('data-shep-more-x'), mask: getComputedStyle(e).maskImage !== 'none' }; });
+  out.fits = await page.evaluate(() => { const e = document.getElementById('fits');
+    return { more: e.hasAttribute('data-shep-more') || e.hasAttribute('data-shep-more-x'),
+             mask: getComputedStyle(e).maskImage !== 'none' }; });
   await page.evaluate(() => { const e = document.getElementById('cue'); e.scrollTop = e.scrollHeight; });
   await page.waitForFunction(() => !document.getElementById('cue').hasAttribute('data-shep-more'), null, { timeout: 5000 }).catch(() => {});
   out.end = await cue();
@@ -3170,9 +3177,12 @@ const { chromium } = require('playwright');
 
 def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp_path):
     """R-73: Test's Result body scrolled with no cue (overlay scrollbars draw
-    nothing at rest). A region with the shared ``shep-scroll-cue`` fades its
-    last lines while more is below and draws them whole at its end (the head
-    script keeps ``data-shep-more``); Test's Result body has the class.
+    nothing at rest). Every region that scrolls fades its last lines while
+    more is below and draws them whole at its end, and fades its right edge
+    while more lies past it (the head script keeps ``data-shep-more`` and
+    ``data-shep-more-x``); a region that holds its content draws no cue. No
+    page opts in (the sweep's L7: Settings, Fine-tune's form, Training's charts
+    and the Diagnosis fields scrolled with no cue because their pages had not).
     B72-C3: Compare, 12,342 px tall, had its sideways scrollbar at its foot,
     out of reach mid-table; it is now a box no taller than the region it is
     read in, so its scrollbar is in view whenever the box is. Both measured
@@ -3183,7 +3193,7 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
-    assert '"shep-test-bd", "shep-test-bd-flush", "shep-scroll-cue"' in Path(test_page.__file__).read_text()
+    assert "shep-scroll-cue" not in Path(test_page.__file__).read_text()
     css_path, js_path = tmp_path / "page.css", tmp_path / "head.js"
     css_path.write_text(SHELL_CSS + models_page.PAGE_CSS, encoding="utf-8")
     js_path.write_text(shell._SHELL_JS.replace("__TITLES__", "{}").replace("__RESEARCH_LABEL__", '""')
@@ -3193,6 +3203,8 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     seen = run_node(_CUE_JS, tmp_path, str(css_path), str(js_path))
     assert seen["top"] == {"more": True, "mask": True}, seen
     assert seen["end"] == {"more": False, "mask": False}, seen
+    assert seen["sideways"] == {"more": True, "mask": True}, seen
+    assert seen["fits"] == {"more": False, "mask": False}, seen
     for layout in ("side", "stack"):
         box = seen[layout]
         assert box["sideways"] and box["barInView"], (layout, box)

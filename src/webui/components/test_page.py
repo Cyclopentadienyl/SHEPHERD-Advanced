@@ -3038,7 +3038,7 @@ def create_test_page(ctx: Any) -> None:
                        elem_id="shep-test-cohort"):
             cohort_hd = plain_html(cohort_header_html({}), elem_id="shep-test-cohort-hd")
             # Its one scroll region says when there is more below (R-73).
-            with gr.Column(elem_classes=["shep-test-bd", "shep-scroll-cue"]):
+            with gr.Column(elem_classes=["shep-test-bd"]):
                 workspace = gr.Dropdown(label="Workspace", choices=[], value=None,
                                         elem_id="shep-test-workspace", interactive=True,
                                         elem_classes=["shep-test-select"])
@@ -3097,7 +3097,7 @@ def create_test_page(ctx: Any) -> None:
         with gr.Column(elem_classes=["shep-panel", "shep-sized", "shep-test-col"],
                        elem_id="shep-test-run"):
             plain_html(run_header_html(), elem_id="shep-test-run-hd")
-            with gr.Column(elem_classes=["shep-test-bd", "shep-scroll-cue"]):
+            with gr.Column(elem_classes=["shep-test-bd"]):
                 # The model as Run → Checkpoint, the shared cascading pair
                 # (`model_list.parents_update`), one under the other so each
                 # 40-character option shows whole in the column; ↻ lists the
@@ -3165,7 +3165,7 @@ def create_test_page(ctx: Any) -> None:
                        elem_id="shep-test-result"):
             reports_hd = plain_html(reports_header_html({}), elem_id="shep-test-reports-hd")
             # Its one scroll region says when there is more below (R-73).
-            with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush", "shep-scroll-cue"]):
+            with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush"]):
                 reports_list = plain_html("", elem_id="shep-test-reports", js_on_load=_REPORTS_JS)
                 # Drawn again when the poll sees a job start or end: its
                 # disclosures stay as the reader left them for the same report

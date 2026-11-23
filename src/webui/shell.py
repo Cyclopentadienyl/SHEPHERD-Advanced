@@ -1040,22 +1040,51 @@ _SHELL_JS = r"""
       if (box.hasAttribute(FOLDED) !== fold) { box.toggleAttribute(FOLDED, fold); }
     }
   }
-  // The scroll cue (`style.py`'s .shep-scroll-cue): a region with more below says so.
+  // **The scroll cue on every region that scrolls** (R-73; the sweep's L7, SW-LK1..8): an element
+  // whose own overflow scrolls (auto or scroll) and whose content runs past its foot keeps
+  // MORE while more lies below, and MORE_X while more lies past its right edge, which
+  // `style.py` draws as a fade at that edge; at its end the words are drawn whole again. No page
+  // names its regions (a region a page forgot scrolled with no cue: Settings, Fine-tune's form,
+  // Training's charts, the Diagnosis fields). Not a region: a field's own box, a select's open
+  // list, the help bubble, and a box that draws its own sideways cue (Compare's, CUED).
+  var MORE = 'data-shep-more', MORE_X = 'data-shep-more-x';
+  var NOT_REGION = 'textarea, select, input, ul.option-list, #shep-help-bubble, #shep-help-bubble *, '
+    + '.shep-rs-top, .shep-rs-wrap';
+  function scrolls(v) { return v === 'auto' || v === 'scroll'; }
   function cue(el) {
-    var more = el.scrollHeight - el.scrollTop - el.clientHeight > 1;
-    if (el.hasAttribute('data-shep-more') !== more) { el.toggleAttribute('data-shep-more', more); }
+    var s = getComputedStyle(el);
+    var more = scrolls(s.overflowY) && el.scrollHeight - el.scrollTop - el.clientHeight > 1;
+    var side = scrolls(s.overflowX) && el.scrollWidth - el.scrollLeft - el.clientWidth > 1;
+    if (el.hasAttribute(MORE) !== more) { el.toggleAttribute(MORE, more); }
+    if (el.hasAttribute(MORE_X) !== side) { el.toggleAttribute(MORE_X, side); }
+    // Its content may change size with no change this pass listens to (a chart drawn again at
+    // its new width): a region marked once is watched for that too.
+    if ((more || side) && ro && !watched.has(el)) {
+      watched.add(el);
+      for (var k = el.firstElementChild; k; k = k.nextElementSibling) { ro.observe(k); }
+    }
+  }
+  var watched = typeof WeakSet !== 'undefined' ? new WeakSet() : { has: function () { return true; } };
+  // Every element that holds more than its box (a cheap read first; most hold none), and every
+  // element still marked (its content shrank), is looked at again on each pass.
+  function cues() {
+    var all = document.body ? document.body.getElementsByTagName('*') : [];
+    for (var i = 0; i < all.length; i++) {
+      var e = all[i];
+      if ((e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1
+           || e.hasAttribute(MORE) || e.hasAttribute(MORE_X)) && !e.matches(NOT_REGION)) { cue(e); }
+    }
   }
   document.addEventListener('scroll', function (e) {
     var t = e.target;
-    if (t && t.classList && t.classList.contains('shep-scroll-cue')) { cue(t); }
+    if (t && t.nodeType === 1 && !t.matches(NOT_REGION)) { cue(t); }
   }, true);
   function layout() {
     orientation();
     fits();
     folds();
     tabLines();
-    var cues = document.querySelectorAll('.shep-scroll-cue');
-    for (var c = 0; c < cues.length; c++) { cue(cues[c]); }
+    cues();
     var shell = document.getElementById('shep-shell');
     var row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
     var chips = document.querySelector('#shep-chips .shep-chips');
