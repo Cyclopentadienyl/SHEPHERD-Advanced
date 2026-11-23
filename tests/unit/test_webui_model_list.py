@@ -1971,6 +1971,28 @@ def _visible(html):
     return html_.unescape(re.sub(r"<[^>]+>", "", html)).replace("\u00a0", " ")
 
 
+def test_a_files_dropped_facts_stand_under_its_name_on_its_edge(root, serving, monkeypatch):
+    """The sweep's L7 check (C10, SW-LK4): while the Epochs and Fingerprint columns are dropped
+    (the narrow tree, 1366 and 1280), a saved file's line under its name said how far it
+    trained, started 26 px left of its name (the cell's edge, not the name's indent) and named
+    no fingerprint, though the list is searched by name or fingerprint. The line now follows
+    the name's own box (the one rule that indents a file's name indents it) and holds both
+    dropped facts, each a unit of one chain: the epochs and the fingerprint the column draws."""
+    from src.webui.style import COL_TWIN, SHELL_CSS
+
+    listing = _listing(root, monkeypatch)
+    table = ml.list_html(listing, None, ml.PRESETS["research"], show_older=True)
+    twins = re.findall(r'<div class="shep-tree-name shep-tree-leaf">.*?</div>'
+                       rf'(<div class="{COL_TWIN}[^"]*">(.*?)</div>)', table)
+    assert twins, table
+    for _whole, inner in twins:
+        facts = re.findall(r'<span class="shep-fact">(.*?)</span>(?=<span class="shep-sep"|$)', inner)
+        assert len(facts) == 2 and "epoch" in _visible(facts[0]), inner
+        assert re.fullmatch(r"[0-9a-f]{12}", _visible(facts[1]).strip()), inner
+    rule = next(line for line in SHELL_CSS.splitlines() if ".shep-mtree .shep-tree-leaf," in line)
+    assert rule.startswith(f".shep-mtree .shep-tree-leaf, .shep-mtree .shep-tree-leaf + .{COL_TWIN} {{")
+
+
 def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypatch):
     """README §5 (map B7): what a file is is said once where a person reads
     its row: in its run's Task column (a run's files share their record,

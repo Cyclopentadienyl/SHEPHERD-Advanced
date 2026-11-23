@@ -1026,7 +1026,10 @@ button.shep-row {
    on that line's baseline, as it stands beside a name of one line. */
 .shep-mtree .shep-tree-name { display: flex; align-items: baseline; min-height: 24px; }
 .shep-mtree .shep-tree-label { min-width: 0; overflow-wrap: break-word; }
-.shep-mtree .shep-tree-leaf { margin-left: 26px; }
+/* A saved file's name stands in from its run's (past the fold toggle's column), and the line of
+   its dropped columns' facts under it (``__COL_TWIN__``) on the same edge (the sweep's L7 check,
+   C10: it started 26 px left of its row's name at 1366 and 1280). */
+.shep-mtree .shep-tree-leaf, .shep-mtree .shep-tree-leaf + .__COL_TWIN__ { margin-left: 26px; }
 .shep-mtree tr.shep-tree-run { cursor: pointer; }
 .shep-mtree tr.shep-tree-run:hover td { background: var(--shep-panel-2); }
 .shep-mtree td.shep-num { white-space: nowrap; }

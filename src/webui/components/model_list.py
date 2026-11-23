@@ -1420,9 +1420,15 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                                 f'{_unreadable_words(items[key])}</td></tr>')
                     continue
                 epochs, fingerprint = cells
-                # How far it trained, under its name while the Epochs column is dropped.
+                # How far it trained and its fingerprint, under its name while the Epochs and
+                # Fingerprint columns are dropped: each a unit of one chain (the sweep's L7
+                # check, SW-LK4: at 1366 and 1280 no fingerprint was in the list, which is
+                # searched by name or fingerprint).
+                print_ = r.fingerprint_value(items[key].get("sha256"), what="model fingerprint",
+                                             digits=files.digits, copy=False)
                 twin = (f'<div class="{COL_TWIN} shep-sub">'
-                        f'{r.e(r.epoch_words(items[key]))}</div>')
+                        f'<span class="shep-fact">{r.e(r.epoch_words(items[key]))}</span>'
+                        f'{r.SEP}<span class="shep-fact">{print_}</span></div>')
                 rows.append(f'<tr {attrs}><td>{name}{twin}</td><td></td><td></td>'
                             f'<td{num_opt}>{epochs}</td><td{opt}></td>'
                             f'<td{opt}>{fingerprint}</td></tr>')
