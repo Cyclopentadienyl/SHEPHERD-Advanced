@@ -161,7 +161,7 @@ def _title(path: Path, shown: bool) -> str:
 def _value_html(value: Any) -> str:
     """A path, or a list of them, in code style, each on its own line."""
     values = value if isinstance(value, (tuple, list)) else (value,)
-    return "<br>".join(f'<code class="shep-dl-path">{r.e(v)}</code>' for v in values)
+    return "<br>".join(r.token_html(v, classes="shep-dl-path") for v in values)
 
 
 def _source_html(item: FieldView) -> str:
@@ -334,8 +334,9 @@ def _row_updates(item: FieldView, view: DeploymentView, access: Any,
         gr.update(**gated(SAVE_LABEL, allowed, interactive=readable)),
         gr.update(value="" if allowed else reason_line(ROW_LOCKED)),
         gr.update(visible=creatable, **gated(CREATE_LABEL, allowed)),
-        gr.update(value=(f'<code class="shep-dl-path"{_title(suggestion, shown)}>'
-                         f"{r.e(_tilde(suggestion))}</code>") if creatable else ""),
+        gr.update(value=(f'<span{_title(suggestion, shown)}>'
+                         f'{r.token_html(_tilde(suggestion), classes="shep-dl-path")}</span>')
+                  if creatable else ""),
         gr.update(value=result),
         gr.update(value=advanced_html(item)),
     ]
@@ -725,7 +726,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-kv > dt {{ width: 8em; }}
 {_PAGE} .shep-dl-v {{ margin-right: 8px; }}
 {_PAGE} .shep-dl-src {{ font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }}
-{_PAGE} .shep-dl-path {{ overflow-wrap: anywhere; }}
 {_PAGE} .shep-dl-problem {{ color: var(--shep-text-2); font-size: 14px; }}
 {_PAGE} .shep-dl-adv {{ font-size: 14px; margin-top: 2px; }}
 {_PAGE} [id^="dl_result_"]:has(.shep-html:empty), {_PAGE} #dl_status:has(.shep-html:empty),

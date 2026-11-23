@@ -1617,8 +1617,8 @@ def test_a_notice_with_steps_numbers_them_with_its_action_first():
     assert "data-shep-go" in first
     assert second == ('Build a dataset in it: <code class="shep-tok"><span>scripts</span><wbr>'
                       '<span>/build</span><wbr><span>_knowledge</span><wbr><span>_graph</span>'
-                      '<wbr><span>.py</span></code> <code class="shep-tok"><span>--generate</span>'
-                      '<wbr><span>-samples</span></code>')
+                      '<wbr><span>.py</span></code> <code class="shep-tok"><span>--generate-samples</span>'
+                      '</code>')
 
 
 def test_several_notices_are_one_block_with_one_action_when_their_steps_agree():
@@ -1761,6 +1761,13 @@ def test_a_token_breaks_only_at_its_own_separators():
         '<span>_ROOT</span></code>')
     assert r.token_html("--registry") == '<code class="shep-tok"><span>--registry</span></code>'
     assert re.sub(r"<[^>]+>", "", r.token_html("a/b-c.d_e")) == "a/b-c.d_e"
+    # A command's option is one piece: the command breaks at the space before it, never
+    # inside it (the sweep's L7, SW-LK7: "--generate" / "-samples" read as two options).
+    command = r.token_html("scripts/build_knowledge_graph.py --generate-samples")
+    assert "<span>--generate-samples</span>" in command
+    assert re.sub(r"<[^>]+>", "", command) == "scripts/build_knowledge_graph.py --generate-samples"
+    assert r.token_html("a/b-c", classes="shep-x") == (
+        '<code class="shep-tok shep-x"><span>a</span><wbr><span>/b</span><wbr><span>-c</span></code>')
     assert "​" not in r.literal_html("a/b/c.json and SHEPHERD_X")
     assert r.literal_html("Settings › Data locations, deployment guide §4.11") == \
         "Settings › Data locations, deployment guide §4.11"

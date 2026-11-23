@@ -830,20 +830,32 @@ _ROW = re.compile(r"^([A-Z][^:.!?]{0,31}):\s+(\S.*)$")
 DETAILS_WORD = "Details ›"
 
 
-def token_html(token: Any) -> str:
+def token_html(token: Any, classes: str = "") -> str:
     """**One literal token** (a path, a file name, a variable) escaped and in
     code style, breakable only before its own separators: its pieces each
     kept on one line (a span, ``white-space: nowrap``: the browser's own
     break after a hyphen is not taken) with a ``<wbr>`` between them, so no
-    hyphen is drawn and a copy keeps the token whole (never U+200B)."""
+    hyphen is drawn and a copy keeps the token whole (never U+200B). A
+    command-line option (a word that starts with "-") is one piece: a
+    command breaks at the space before it, never inside it (the sweep's L7,
+    SW-LK7: "--generate-samples" broke as "--generate" / "-samples" and read
+    as two options). `classes` are added to the token's own."""
     text = "" if token is None else str(token)
-    pieces, start = [], 0
+    pieces, start, option = [], 0, False
     for i, ch in enumerate(text):
-        if i and ch in _TOKEN_BREAKS and text[i - 1] not in _TOKEN_BREAKS:
+        if ch == " ":
+            option = False
+            continue
+        first = i == 0 or text[i - 1] == " "
+        if first:
+            option = ch == "-"
+        if (i and ch in _TOKEN_BREAKS and text[i - 1] not in _TOKEN_BREAKS
+                and (first or not option)):
             pieces.append(text[start:i])
             start = i
     pieces.append(text[start:])
-    return ('<code class="shep-tok">'
+    names = " ".join(("shep-tok", *classes.split()))
+    return (f'<code class="{names}">'
             + "<wbr>".join(f"<span>{e(piece)}</span>" for piece in pieces if piece) + "</code>")
 
 

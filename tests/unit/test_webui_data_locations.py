@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 
 import pytest
@@ -150,7 +151,7 @@ def test_a_first_start_says_nothing_is_set_and_offers_the_suggested_folders(dl, 
         assert "Not set" in row["state"]["value"], key
         assert row["create"]["visible"] is True and row["create"]["interactive"] is True
         assert row["create"]["value"] == dl.CREATE_LABEL
-        assert f"~/SHEPHERD-data/{SUGGESTED[key]}" in row["suggest"]["value"]
+        assert f"~/SHEPHERD-data/{SUGGESTED[key]}" in re.sub(r"<[^>]+>", "", row["suggest"]["value"])
         assert row["box"]["interactive"] is True and row["save"]["interactive"] is True
         assert ">Set to<" in row["key"]["value"]
         assert row["lock"]["value"] == ""          # an operator: no lock, no reason
@@ -266,7 +267,7 @@ def test_an_environment_override_keeps_the_box_and_never_claims_the_saved_value(
     request = operator_request(monkeypatch)
     rows, panel = _parts(dl, dl._on_save("registry", str(chosen), request))
     assert "start-up setting stays in effect" in rows["registry"]["result"]["value"]
-    state = rows["registry"]["state"]["value"]
+    state = re.sub(r"<(?!/?dt)[^>]+>", "", rows["registry"]["state"]["value"])
     effect, saved = state.split(">Saved<")
     assert str(started) in effect and "Set when the service started" in effect
     assert str(chosen) in saved and dl.OVERRIDDEN in saved
