@@ -539,7 +539,7 @@ def versions_html(data: Mapping[str, Any], row: Mapping[str, Any]) -> str:
                 f"version is mapped against this workspace’s graph yet. {IMPORT_LINE}</span>"
                 f"</div>{tail}</div>")
     body = "".join(
-        f'<tr><td class="shep-w600">{r.e(version.get("label"))}</td>'
+        f'<tr><td class="shep-w600">{r.whole_words(version.get("label"))}</td>'
         f'<td>{_kind_text(version.get("kind"))}</td>'
         f'<td>{r.ident_html(version.get("role"))}</td>'
         f"<td>{_measurements_cell(version)}</td></tr>" for version in bound)

@@ -538,6 +538,8 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
     view = mp.shape(listing, data, ctl)
     assert view == {"task": "all", "note": mp.LOAD_NOTE, "shaped_for": "newest|all"}
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
+    from src.webui.style import CELL_WHOLE
+
     # The rows say what they were drawn for (the "Applying …" line compares it).
     assert html.endswith('<span class="shep-view-for" hidden data-for="newest|all"></span>')
     # Each run's summary row says what its files are (D04: a run's files share
@@ -548,7 +550,7 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
                       (_key(world, "broken.pt"), "Record not readable"),
                       (bundle_key("base"), "Base"), (bundle_key("gene"), "Gene")):
         run = key.rsplit("/", 1)[0]
-        assert f"<td>{kind}</td>" in _run_row(html, run), key
+        assert f'<td class="{CELL_WHOLE}">{kind}</td>' in _run_row(html, run), key
         assert ' hidden><td><div class="shep-tree-name shep-tree-leaf' in _file_row(html, key)
     assert "Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded" in (
         _file_row(html, _key(world, "broken.pt")))

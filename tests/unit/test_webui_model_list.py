@@ -2012,6 +2012,13 @@ def test_a_frozen_backbone_row_says_so_in_both_presets(root, serving, monkeypatc
     # word's own hyphen (D8).
     assert ('<span class="shep-op"><span class="shep-nowrap">Fine-tune,</span> '
             'partly frozen</span>') in table
+    # A task and an operation are values of a closed set: their cells keep their
+    # line (`style.CELL_WHOLE`), so the Model column wraps instead (the L6 check:
+    # "Fine-tune, / full" while the Model column had room).
+    from src.webui.style import CELL_WHOLE
+
+    run_row = _run_row(table, "gatv2/20261017-091500_disease_3fa9c1")
+    assert run_row.count(f'<td class="{CELL_WHOLE}">') == 2, run_row
 
 
 def test_the_research_listing_carries_the_family_view_from_its_one_listing(

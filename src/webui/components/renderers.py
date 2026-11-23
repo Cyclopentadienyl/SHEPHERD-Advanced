@@ -284,6 +284,23 @@ def warn_chip(text: str) -> str:
     return status_mark("warn", text, as_chip=True)
 
 
+#: **The separator between the facts of one line** (" · ", hidden from a
+#: screen reader): joined to the fact before it by a no-break space, so a
+#: line that wraps breaks after it and a line never starts with "·" (the L6
+#: check: Test's identity line drew "· synthetic …" at 1550 px).
+SEP = '<span class="shep-sep" aria-hidden="true">\u00a0· </span>'
+
+
+def whole_words(words: Any) -> str:
+    """`words` escaped, every word kept whole: a line breaks only at a space,
+    never at a word's own hyphen ("Fine-tune", "demo-test-1", "2026-11-16",
+    "model-12.pt"), so a narrow frame never cuts a word (D8) and a name never
+    reads as hyphenated across two lines (the L6 check: Datasets' versions
+    table broke "demo-test-1" as "demo-" / "test-1")."""
+    return " ".join(f'<span class="shep-nowrap">{e(word)}</span>' if "-" in word else e(word)
+                    for word in str(words).split(" "))
+
+
 def resources_html(resources: Mapping[str, Any]) -> str:
     """The resources reading (`TrainingManager.get_system_resources`, what
     ``GET /api/v1/system/resources`` answers) as one line of 14 px text: each
@@ -319,8 +336,7 @@ def resources_html(resources: Mapping[str, Any]) -> str:
             "available_gb") is not None else ram.get("used_gb", 0)
         parts.append(f"{label} {used:.1f} / {total:.1f} GB"
                      + (" (shared CPU + GPU pool)" if unified else ""))
-    items = '<span class="shep-sep" aria-hidden="true"> · </span>'.join(
-        f'<span>{e(p)}</span>' for p in parts)
+    items = SEP.join(f'<span>{e(p)}</span>' for p in parts)
     return f'<div class="shep-rv-res"><b>Resources</b> {items}</div>'
 
 
@@ -774,7 +790,7 @@ def dataset_identity_html(item: Any, *, digits: int = SHORT_HEX, name: bool = Tr
         marks += not_trainable_chip(item)
     if marks:
         parts.append(f'<span class="shep-ds-marks">{marks}</span>')
-    sep = " " if compact else '<span class="shep-sep" aria-hidden="true"> · </span>'
+    sep = " " if compact else SEP
     return f'<span class="shep-ds">{sep.join(parts)}</span>'
 
 
@@ -3283,6 +3299,8 @@ __all__ = [
     "DETAILS_WORD",
     "DISABLED",
     "DISABLED_MARK",
+    "SEP",
+    "whole_words",
     "disabled_words",
     "literal_html",
     "marked_line",

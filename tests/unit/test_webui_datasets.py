@@ -759,9 +759,13 @@ def test_the_details_list_the_versions_test_reads_by_the_same_comparison(
     html = dsp.details_html(data, "demo")
     assert "Data versions <span class=\"shep-muted\">(2)</span>" in html
     assert "aria-selected" not in html + dsp.table_html(data, None, "demo")
-    supplied = re.search(r"<tr><td[^>]*>ref-demo</td>.*?</tr>", html, re.S).group(0)
+    # The version's label is kept whole (`renderers.whole_words`): its line breaks
+    # only at a space, never at its own hyphen (the L6 check: "demo-" / "test-1").
+    supplied = re.search(r'<tr><td[^>]*><span class="shep-nowrap">ref-demo</span></td>.*?</tr>',
+                         html, re.S).group(0)
     assert "Supplied cohort version" in supplied and ">demo</code>" in supplied
-    generated = re.search(r"<tr><td[^>]*>gen-val</td>.*?</tr>", html, re.S).group(0)
+    generated = re.search(r'<tr><td[^>]*><span class="shep-nowrap">gen-val</span></td>.*?</tr>',
+                          html, re.S).group(0)
     assert "Generated split" in generated and ">val</code>" in generated
     # Not mapped against its graph's record: "scratch_ws" has no manifest.
     assert "Not checked against the registry" in dsp.details_html(data, "scratch_ws")
@@ -854,7 +858,8 @@ def test_each_version_says_the_measurements_its_data_admits_by_tests_rule(
             and kind in protocols.PROTOCOLS[n].data_kinds]
         assert "KG link prediction" not in admitted + [name for name, _ in refused]
     html = dsp.details_html(data, "demo")
-    supplied = re.search(r"<tr><td[^>]*>ref-demo</td>.*?</tr>", html, re.S).group(0)
+    supplied = re.search(r'<tr><td[^>]*><span class="shep-nowrap">ref-demo</span></td>.*?</tr>',
+                         html, re.S).group(0)
     assert "<td>Disease<details" in supplied
     assert "<summary>Not admitted: Gene, Patients-like-me ›</summary>" in supplied
     assert "lists no causal genes" in supplied

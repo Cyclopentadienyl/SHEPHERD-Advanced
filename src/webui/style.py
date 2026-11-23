@@ -89,6 +89,12 @@ SEG_WHOLE = "shep-seg-whole"
 #: column whose facts the row's details also show carries it, so a `FIT_WIDE` table drops that
 #: column before its box scrolls sideways.
 COL_OPT = "shep-col-opt"
+#: **A table cell whose value reads as one** (``white-space: nowrap``): a value of a closed set (a
+#: model's task, its operation), so its column takes the value's width and a column of names or
+#: prose wraps instead (the L6 check: the Models table broke "Fine-tune, full" and "Record not
+#: readable" over two lines while its Model column had room). A table that cannot then fit drops
+#: its optional columns, then scrolls in its frame (`FIT`).
+CELL_WHOLE = "shep-cell-whole"
 NARROW_ATTR = "data-shep-narrow"
 #: **A box drawn whole while its column has the room** (OPS-FIX-N1; the layout
 #: pass's fold, `src/webui/shell.py`): side by side, a box of class `FOLD`
@@ -882,6 +888,7 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
    wider than its column. */
 [__NARROW__] :is(th, td, col).__COL_OPT__ { display: none !important; }
 .shep-tbl td { overflow-wrap: break-word; }
+.shep-tbl td.__CELL_WHOLE__ { white-space: nowrap; }
 
 /* HTML the dashboard renders itself (`shell.plain_html`): no Gradio padding. */
 .shep-html > .html-container { padding: 0 !important; }
@@ -1225,9 +1232,10 @@ __STACK__ {
 }
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK) \
     .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART) \
-    .replace("__NARROW__", NARROW_ATTR).replace("__COL_OPT__", COL_OPT).replace("__SEG_WHOLE__", SEG_WHOLE)
+    .replace("__NARROW__", NARROW_ATTR).replace("__COL_OPT__", COL_OPT).replace("__SEG_WHOLE__", SEG_WHOLE) \
+    .replace("__CELL_WHOLE__", CELL_WHOLE)
 
 
-__all__ = ["BRAND_WIDTH", "COL_OPT", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
+__all__ = ["BRAND_WIDTH", "CELL_WHOLE", "COL_OPT", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
            "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT", "SHORT_ATTR",
            "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK"]

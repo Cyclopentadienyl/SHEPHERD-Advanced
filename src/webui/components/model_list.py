@@ -245,7 +245,7 @@ from src.webui.components.served_status import (
 )
 from src.webui.operator_access import operator_access
 from src.webui.shell import picked, plain_html
-from src.webui.style import COL_OPT, FIT, FIT_WIDE
+from src.webui.style import CELL_WHOLE, COL_OPT, FIT, FIT_WIDE
 
 logger = logging.getLogger(__name__)
 
@@ -1251,14 +1251,6 @@ def _fold_button(node: str, opened: bool, label: str) -> str:
             f'{"▾" if opened else "▸"}</span></button>')
 
 
-def _whole_words(words: Any) -> str:
-    """`words` escaped, every word kept whole: a line breaks only at a space,
-    never at a word's own hyphen ("Fine-tune", "demo-disease-frozen",
-    "2026-11-16", "model-12.pt"), so a narrow frame never cuts a word (D8)."""
-    return " ".join(f'<span class="shep-nowrap">{r.e(word)}</span>' if "-" in word else r.e(word)
-                    for word in str(words).split(" "))
-
-
 class _Files(NamedTuple):
     """What the list draws its saved files' rows from (`_file_cells`), read
     once per drawing: the listing's items by key, its runs' files, the hex
@@ -1303,7 +1295,7 @@ def _file_cells(files: _Files, key: str, words: str, selected: Optional[str], pr
     attrs = (f'class="{" ".join(classes)}" data-key="{r.e(key)}"'
              + (f' data-in="{r.e(within)}"' if within else "") + ' tabindex="0"'
              + (' aria-current="true"' if key == selected else "") + (" hidden" if hidden else ""))
-    name = f'<div class="shep-tree-name shep-tree-leaf">{_whole_words(words)}{tag}</div>'
+    name = f'<div class="shep-tree-name shep-tree-leaf">{r.whole_words(words)}{tag}</div>'
     if unreadable:
         return attrs, name, None
     exception = r.dataset_exception(item)
@@ -1379,7 +1371,7 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                 why = first.get("problem") or "not read"
                 rows.append(
                     f'<tr class="shep-tree-entry shep-row-dis">'
-                    f'<td><span class="shep-w600">{_whole_words(first.get("run"))}</span>'
+                    f'<td><span class="shep-w600">{r.whole_words(first.get("run"))}</span>'
                     f'<div class="shep-sub">{r.e(place)}</div></td>'
                     # Why, in words on the page (B69 L3: said once, never only
                     # on hover), naming no server path (the listing's redacted).
@@ -1389,8 +1381,9 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
             # The run by its words, told apart from the other runs' (as every
             # Run select names them): its name first, then its layout and start.
             what, _sep, rest = names[run.key].partition(" · ")
-            label = (f'<span class="shep-w600">{_whole_words(what)}</span>'
-                     + (f'<span class="shep-muted"> · {_whole_words(rest)}</span>' if rest else ""))
+            label = (f'<span class="shep-w600">{r.whole_words(what)}</span>'
+                     + (f'<span class="shep-muted"> · {r.whole_words(rest)}</span>'
+                        if rest else ""))
             count = (f"{len(run.files)} of {run.total}" if len(run.files) < run.total
                      else str(run.total))
             rows.append(
@@ -1398,8 +1391,9 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                 f'<td><div class="shep-tree-name">'
                 f'{_fold_button(node, run_open, "Show the saved files of " + what)}'
                 f'<span class="shep-tree-label">{label}</span></div></td>'
-                f'<td>{_whole_words(r.record_kind_text(summary))}</td>'
-                f'<td><span class="shep-op">{_whole_words(r.operation_words(summary))}</span></td>'
+                f'<td class="{CELL_WHOLE}">{r.whole_words(r.record_kind_text(summary))}</td>'
+                f'<td class="{CELL_WHOLE}"><span class="shep-op">'
+                f'{r.whole_words(r.operation_words(summary))}</span></td>'
                 f'<td{num_opt}>{_epochs_cell([items[k] for k in run.files])}</td>'
                 f'<td{num_opt}>{r.e(count)}</td><td{opt}></td></tr>')
             words = _file_names(items, files.run_files[run.key])
@@ -1728,16 +1722,16 @@ def _graph_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pre
                  if len(run.files) < run.total else _counted(run.total, "saved file"))
         lines = [
             f'<span class="shep-fam-name"><span class="shep-w600">{r.e(what)}</span>'
-            + (f'<span class="shep-muted"> · {_whole_words(rest)}</span>' if rest else "")
+            + (f'<span class="shep-muted"> · {r.whole_words(rest)}</span>' if rest else "")
             + "</span>",
-            f'<span class="shep-fam-ln">{_whole_words(r.record_kind_text(summary))} · '
-            f'{_whole_words(r.operation_words(summary))}</span>',
+            f'<span class="shep-fam-ln">{r.whole_words(r.record_kind_text(summary))} · '
+            f'{r.whole_words(r.operation_words(summary))}</span>',
             f'<span class="shep-fam-ln">{r.e(count)}, '
-            f'{_whole_words(_epochs_words([items[f] for f in run.files]))}</span>']
+            f'{r.whole_words(_epochs_words([items[f] for f in run.files]))}</span>']
         parent = shape.parent_key.get(key)
         if parent is not None and len(files.run_files.get(item_run_key(items[parent]), ())) > 1:
             lines.append(f'<span class="shep-fam-ln">from '
-                         f'{_whole_words(_parent_file_words(files, parent))}</span>')
+                         f'{r.whole_words(_parent_file_words(files, parent))}</span>')
         if run.context:
             lines.append(f'<span class="shep-fam-ln">'
                          f'{r.status_mark("neutral", "Parent of a shown run")}</span>')

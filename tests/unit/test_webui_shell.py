@@ -3577,9 +3577,20 @@ def _pieces_page():
     from src.config import server_settings as ss
     from src.webui.components import renderers as r
     from src.webui.components import workspaces as w
-    from src.webui.style import FIT, FIT_WIDE
+    from src.webui.style import CELL_WHOLE, FIT, FIT_WIDE
 
     notice = w.setting_notice(ss.workspaces_root({}))
+    # One identity line (Test's and Models', `renderers.dataset_identity_html`) in boxes of
+    # every width from 160 to 552 px, so some line ends at each of its separators.
+    ident = r.dataset_identity_html(
+        {"name": "demo", "dataset_fingerprint": "3f563f74bb04" + "0" * 52, "trainable": True,
+         "dataset_record": {"binding": "verified", "origin": "synthetic", "sha256": None,
+                            "problem": None},
+         "build": {"state": "recorded", "built_at": "2026-11-22T12:10:00Z"},
+         "declared_releases": (), "train_samples": 20, "val_samples": 5}, name=False)
+    seps = "".join(f'<div class="pc-sepbox" style="width: {w}px">{ident}</div>'
+                   for w in range(160, 560, 8))
+    prose = "Words of a column that wraps, as a model's name and start do in its own column. " * 2
     cells = "".join(f'<td class="shep-nowrap">a cell that never breaks {i:02d}</td>' for i in range(12))
     tree = ('<table class="shep-tbl shep-mtree" id="pc-tree"><tbody><tr><td><div class="shep-tree-name">'
             '<button type="button" class="shep-fold" aria-expanded="true">▾</button>'
@@ -3617,6 +3628,9 @@ def _pieces_page():
                 gr.Radio(["Trained", "Frozen"], label="Graph backbone", elem_id="pc-frow-choice")
             ctx.help.field("pc-frow-choice", "Graph backbone", "What the base's graph layers do here.")
             shell.plain_html(tree, elem_id="pc-tree-box")
+            shell.plain_html(f'<div id="pc-c12">{seps}<div style="width: 320px"><table class="shep-tbl" '
+                             f'id="pc-whole"><tbody><tr><td class="{CELL_WHOLE}">Record not readable</td>'
+                             f'<td>{prose}</td></tr></tbody></table></div></div>', elem_id="pc-c12-box")
             shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-fit"><table class="shep-tbl {FIT_WIDE}">'
                              f'<tbody><tr>{cells}</tr></tbody></table></div>'
                              '<div style="height: 2400px"></div>', elem_id="pc-fit-box")
@@ -3684,6 +3698,24 @@ const QUEUE_JS = __QUEUE_JS__;
       grid: { floor: 12 * rem, boxes: [...document.querySelectorAll('#pc-grid .block:has(input, textarea)')]
         .map((e) => ({ width: box(e).width, left: Math.round(box(e).left) })), row: box(q('#pc-grid')).width },
       choice: { title: box(title), info: box(info) },
+      c12: (() => {
+        // Each separator's "·" as drawn: where its line starts (its box's left) and whether the
+        // fact after it starts the next line; the whole cell's and the prose cell's lines.
+        const tops = (e) => new Set(ink(e).map((x) => Math.round(x.top))).size;
+        const seps = [];
+        for (const b of document.querySelectorAll('#pc-c12 .pc-sepbox')) {
+          for (const sep of b.querySelectorAll('.shep-sep')) {
+            const t = sep.firstChild, at = t.data.indexOf('·'), rg = document.createRange();
+            rg.setStart(t, at); rg.setEnd(t, at + 1);
+            const dot = rg.getBoundingClientRect(), next = sep.nextElementSibling;
+            const after = next ? ink(next)[0] : null;
+            seps.push({ width: box(b).width, fromStart: dot.left - box(b).left,
+                        endsLine: !!after && after.top > dot.bottom - 1 });
+          }
+        }
+        const cells = [...document.querySelectorAll('#pc-whole td')];
+        return { seps, whole: tops(cells[0]), prose: tops(cells[1]) };
+      })(),
       tree: { lines: lines.length, first: { top: lines[0].top, bottom: lines[0].bottom },
               fold: { top: fold.top, bottom: fold.bottom } },
     };
@@ -3716,6 +3748,22 @@ def pieces_seen(tmp_path_factory):
     with served(_pieces_page(), **mount_options()) as base:
         return run_node(_PIECES_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)),
                         tmp_path_factory.mktemp("pieces"), base[:-len("gradio_api")])
+
+
+def test_a_separator_never_starts_a_line_and_a_whole_cell_keeps_its_line(pieces_seen):
+    """C12 (the L6 check): Test's identity line wrapped with its separator at
+    the next line's start ("· synthetic …", 1550 px), and the Models table
+    broke "Fine-tune, full" and "Record not readable" while its Model column
+    had room. A separator is joined to the fact before it (`renderers.SEP`:
+    a no-break space, then "· "), so in a box of any width a line ends at it
+    and never starts with it; a cell whose value reads as one
+    (`style.CELL_WHOLE`) keeps its line while a column of prose beside it
+    wraps."""
+    facts = pieces_seen["c12"]
+    assert any(x["endsLine"] for x in facts["seps"]), facts["seps"]   # some line ends at one
+    starts = [x for x in facts["seps"] if x["fromStart"] < 1]
+    assert not starts, starts
+    assert facts["whole"] == 1 and facts["prose"] > 1, facts
 
 
 def test_a_relations_words_start_beside_its_mark_and_its_page_still_places_it(pieces_seen):
