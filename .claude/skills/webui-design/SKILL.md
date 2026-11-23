@@ -24,7 +24,9 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
    `FLOOR_HEIGHT`): at or above it in both axes the interface is whole and tidy, the frame never scrolls (the area's one
    region scrolls inside, with its cue), nothing scrolls sideways and nothing is compressed to fit. Below it in either
    axis the layout is drawn as at the floor and shrinks no further: the frame keeps the floor's size and the browser
-   scrolls the page as a whole. Nothing is built for a window under the floor.
+   scrolls the page as a whole. Nothing is built for a window under the floor. A portrait window (no wider than tall)
+   takes the stacked arrangement, whose floor is `style.STACK_FLOOR_WIDTH` (864 px, a 1080p screen turned upright at
+   125 %): at or above it every page holds every rule as side by side does, nothing overlapping, covering or cut.
 2. **Each fact once on a screen.** A fingerprint, a name, a state or a number appears in one place, where it reads
    naturally and stands out. Elsewhere it is referred to by a short relation ("same dataset as the run bar"). Repeat
    it only where the two places can differ (a result's own identity against what is selected).
@@ -240,7 +242,7 @@ checks that already passed for the same code.
 | A colour or theme token | the contrast test of the tokens it touches |
 | A widget or renderer (HTML, JS) | a unit or Node test of what it renders, escaping included; one look in the real app |
 | Layout or scrolling | geometry measured in the browser at the owner's window (about 1850 × 960) and the display floor (1280 × 720): no horizontal page scroll, one scroll region, nothing sticky over a chart axis or a focused control (`document.elementsFromPoint`), the same after floor → wide; a screenshot of each. Pass conditions are relative to what is drawn (inside its row, off its neighbours, the same control under the pointer), never a named window or a fixed pixel figure |
-| A broad layout change across pages | the above at the check sizes (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440 and one window below the floor, drawn as at the floor), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
+| A broad layout change across pages | the above at the check sizes (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, one window below the floor, drawn as at the floor, and the portrait windows 1080 × 1920 and 1440 × 2560, stacked), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
 | A repeated fact (rule 1.2) | count the fingerprint, run id or name in one screen's visible text; more than one needs a reason |
 
 The layout, scrolling, type, border and focus rows are measured on every page at the representative sizes by one
@@ -252,8 +254,8 @@ help-on-page, notice-repeat, tab-groups, in-view and sideways-scroll at every ch
 scroll-cue, wrap-end, disabled-reason, token-break, sep-end, chain-break, row-top, row-height, and floor: below it
 the marks are the floor's and the page scrolls; `layout_problems`) are measured in the same walk and, with the
 **first-use and empty-folder walks** (`walk_state("first_use" | "empty", …)`, `layout_stops`), held at zero on
-every page at `LAYOUT_SIZES` (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, 1024 × 640 and
-1850 × 960 again) in all three states, first use, empty and configured, and configured as a read-only
+every page at `LAYOUT_SIZES` (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, 1024 × 640,
+1080 × 1920, 1440 × 2560 and 1850 × 960 again) in all three states, first use, empty and configured, and configured as a read-only
 viewer (`test_every_page_of_every_state_has_no_layout_finding`); a page's change runs them on its own pages at first
 use and configured. The same
 walk counts each fingerprint drawn in a screen's visible text (`repeat_problems`), and walks PLAN_TEST_RESULTS §6's
