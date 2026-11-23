@@ -2739,8 +2739,10 @@ def _answered_problems(answered, *, refused=False):
         if facts["layout"] == "side" and facts["table"][0] > facts["table"][1] + 1:
             problems.append((s["size"], "table wider than its box", facts))
         change = facts["change"] or {}
+        # The reason is the shared reason line: its lock in a column of its own, so the words
+        # read as a line after it (the sweep's L7 check, C5); compared as words.
         locked = (change.get("off") is True and change.get("text", "").startswith(LOCK)
-                  and change.get("why", "").startswith(f"{LOCK} {OPERATOR_ONLY}"))
+                  and " ".join(change.get("why", "").split()).startswith(f"{LOCK} {OPERATOR_ONLY}"))
         unlocked = (change.get("off") is False and not change.get("text", LOCK).startswith(LOCK)
                     and change.get("why") == "")
         if not (locked if refused else unlocked):
@@ -2957,7 +2959,9 @@ def test_the_walks_reader_never_reads_gradios_status_tracker_as_a_blocks_words(t
     assert operator["block"]["own"] == "", operator
     assert operator["facts"]["change"] == {"text": "Change model…", "off": False, "why": ""}, operator
     change = read_only["facts"]["change"]
-    assert read_only["block"]["own"].startswith(f"{LOCK} {OPERATOR_ONLY}"), read_only
+    # The shared reason line (the sweep's L7 check, C5): the lock in a column of its own, its
+    # words a line after it; compared as words.
+    assert " ".join(read_only["block"]["own"].split()).startswith(f"{LOCK} {OPERATOR_ONLY}"), read_only
     assert change["off"] is True and change["text"] == f"{LOCK} Change model…", read_only
     assert change["why"] == read_only["block"]["own"], read_only
     # A tracker Gradio draws is read like any other words (the review of
@@ -3605,7 +3609,7 @@ _HEADER_FACTS_JS = r"""() => {
   // Training's run bar: the middle of the job state's words and of Start, and Start's relation's.
   const words = (s) => { const e = document.querySelector(s); if (!e || !e.getClientRects().length) { return null; }
     const r = document.createRange(); r.selectNodeContents(e);
-    const q = [...r.getClientRects()].filter((x) => x.width > 1);
+    const q = [...r.getClientRects()].filter((x) => x.width > 1 && x.height > 1);
     return q.length ? { top: q[0].top, mid: (q[0].top + q[0].bottom) / 2 } : null; };
   const start = box('#shep-train-start');
   return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
@@ -3613,7 +3617,7 @@ _HEADER_FACTS_JS = r"""() => {
            runview: res && foot !== null && view.scrollHeight <= view.clientHeight + 1
              ? { resBottom: res.bottom, foot } : null,
            runbar: start ? { start: { top: start.top, bottom: start.bottom, mid: (start.top + start.bottom) / 2 },
-                             state: words('#shep-train-pill .shep-st'), why: words('#shep-train-why .shep-rb-why') } : null };
+                             state: words('#shep-train-pill .shep-st'), why: words('#shep-train-why') } : null };
 }"""
 @pytest.fixture(scope="module")
 def ui_walk_first_use(tmp_path_factory):
@@ -4492,7 +4496,7 @@ def test_the_walks_coverage_names_a_row_chosen_stop_that_did_not_run():
     # A read-only viewer opens no drawer (Load is an operator control) and sees every page.
     assert _walk_coverage(pages, "read_only") == []
     assert _walk_coverage(pages + drawers[:1], "read_only")
-    assert _walk_coverage(pages[1:], "read_only")
+    assert _walk_coverage([p for p in pages if p["page"] != "settings"], "read_only")
 
 
 def test_prose_in_a_region_on_a_panels_edge_keeps_the_measure_and_a_reason_draws_no_box(built):
