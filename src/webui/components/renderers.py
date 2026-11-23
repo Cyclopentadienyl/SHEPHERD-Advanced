@@ -207,7 +207,7 @@ def status_mark(kind: str, words: Any, *, words_html: bool = False,
     shape, token = STATUS_MARKS[kind]
     mark = ('<span class="shep-spinner" aria-hidden="true"></span>' if shape is None else
             f'<span class="shep-st-shape" aria-hidden="true">{shape}</span>')
-    text = str(words) if words_html else bound_html(words)
+    text = str(words) if words_html else e(words)
     # The spinner has no text of its own, so nothing to space from.
     said = f'{mark}{"" if shape is None else MARK_SPACE}<span class="shep-st-w">{text}</span>'
     if as_chip:
@@ -308,15 +308,16 @@ _BOUND = re.compile(
 
 def bound_html(words: Any) -> str:
     """`words` escaped, what a line never parts (`_BOUND`) drawn as one piece
-    (``shep-nowrap``), so a line breaks at any other space: a narrow cell reads
+    (``shep-unit``: moved to the next line whole, wrapped inside only when it
+    is wider than its box), so a line breaks at any other space: a narrow cell reads
     "GATv2 2026-10-02 00:00," / "1 epoch completed", never "1" / "epoch
-    completed". Every fact of a chain (`chain_html`), a status mark's words,
-    a relation's (`see_above`) and a notice's sentences (`literal_html`) are
-    drawn so."""
+    completed". Every fact of a chain (`chain_html`), a relation's words
+    (`see_above`) and a notice's sentences (`literal_html`) are drawn so; a
+    status mark's words are a state or a sentence, which wrap as prose."""
     text, out, at = "" if words is None else str(words), [], 0
     for found in _BOUND.finditer(text):
         out.append(e(text[at:found.start()]))
-        out.append(f'<span class="shep-nowrap">{e(found.group(0))}</span>')
+        out.append(f'<span class="shep-unit">{e(found.group(0))}</span>')
         at = found.end()
     out.append(e(text[at:]))
     return "".join(out)

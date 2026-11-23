@@ -48,6 +48,12 @@ from src.webui.components import finetune_page as fp  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import renderers as r  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
+
+
+def _words_of(markup: str) -> str:
+    """A line's words as escaped HTML, its units' markup aside (`renderers.bound_html`
+    keeps a count and its unit, or a short parenthesis, one piece)."""
+    return re.sub(r'<span class="shep-unit">([^<]*)</span>', r"\1", markup)
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 
 TAG = "<img src=x onerror=alert(1)>"
@@ -168,7 +174,7 @@ def test_an_empty_list_says_why(root, operator):
     notice = notice_view(NOTICES[ENV_WORKSPACES_ROOT])
     why = fp._on_finetune_bases(operator, {**listed, "notice": notice}, None)[3]
     assert why == r.see_above("Run", notice, where="above")
-    assert "Run disabled: no workspaces folder is set (see above)." in why
+    assert "Run disabled: no workspaces folder is set (see above)." in _words_of(why)
     assert 'data-notice-rel="workspaces_root"' in why and "data-notice=" not in why
     assert "train one on Research › Training" in fp.bases_note_html({}, None)
     assert "&lt;img" in fp.bases_note_html({}, TAG) and "<img" not in fp.bases_note_html({}, TAG)
@@ -231,7 +237,7 @@ def test_the_bases_split_seed_and_model_are_facts_of_its_summary_never_fields(ro
     *before, last = r.configuration_facts(item)
     assert before and (f"<dt class=\"shep-k\">Configuration</dt><dd class=\"shep-v\">"
                        f"{r.chain_html(*before)}{r.SEP}"
-                       f'<span class="shep-fact">{r.e(last)} {details}</span></dd>') in seeded
+                       f'<span class="shep-fact">{r.bound_html(last)} {details}</span></dd>') in seeded
     assert ('<dt class="shep-k" title="encoder.layers">Encoder › Layers</dt>'
             '<dd class="shep-v">1 (reference 3)</dd>') in details
     for tasks in ([], ["disease"], ["gene"], ["disease", "gene", "patients_like_me"]):

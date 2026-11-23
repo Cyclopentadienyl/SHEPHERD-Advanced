@@ -533,6 +533,9 @@ span.shep-note { display: inline-block; }
 /* A fact of a " · " chain (`renderers.chain_html`): one unit, moved to the next line whole where
    its line cannot hold it, wrapped inside only when it is wider than a line (L7 SW-LK7). */
 .shep-fact { display: inline-block; max-width: 100%; }
+/* What a line never parts (`renderers.bound_html`: a count and its unit, a date and its time, a
+   short parenthesis): one unit the same way, so a narrow box never cuts or overflows it. */
+.shep-unit { display: inline-block; max-width: 100%; }
 /* A separator the line breaks after is not drawn (the shell's layout pass marks it; its box stays,
    so nothing moves): a line neither starts nor ends with " · " (the sweep's L7, SW-LK2, SW-LK7). */
 .shep-sep[data-shep-end] { visibility: hidden; }

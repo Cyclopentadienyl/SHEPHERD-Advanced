@@ -82,6 +82,12 @@ from tests.fixtures.r10_table import cell_text, r10_cells, without_r10  # noqa: 
 from tests.fixtures.served_page import ServedSession, served  # noqa: E402
 from tests.fixtures.trained_children import CHILD_RUNS  # noqa: E402
 
+
+def _words_of(markup: str) -> str:
+    """A line's words as escaped HTML, its units' markup aside (`renderers.bound_html`
+    keeps a count and its unit, or a short parenthesis, one piece)."""
+    return re.sub(r'<span class="shep-unit">([^<]*)</span>', r"\1", markup)
+
 RUN = "20261017-091500_run_3fa9c1"
 LABEL = "demo-test-1"
 
@@ -1581,7 +1587,7 @@ def test_a_registration_the_listed_checkpoints_ledger_cannot_tell_gives_its_reas
     html = tp._registration_reason_html(state, roots)
 
     assert ("Registration cannot be checked: &lt;workspaces&gt;/demo/runs/gatv2/r1/checkpoints/"
-            "evaluations.json: the ledger&#x27;s record 0 has no registration sequence") in html
+            "evaluations.json: the ledger&#x27;s record 0 has no registration sequence") in _words_of(html)
     assert "/srv/ws" not in html
     assert tp._registration_reason_html({**state, "checked_beside": None}, roots) == ""
     assert tp._registration_reason_html({**state, "registered": "not_registered"}, roots) == ""
@@ -2341,7 +2347,7 @@ def test_the_gpu_line_changing_hands_start_over_to_the_selections_group(site, mo
     out = after.fn(page, models, binding, "demo", child, "disease", site.run_id, reports,
                    handoff, request)
     assert out[start_at] == gr.update(value="▶ Start test", interactive=False)   # no lock
-    assert "Start disabled: GPU job: training (job runner)." in out[reason_at]
+    assert "Start disabled: GPU job: training (job runner)." in _words_of(out[reason_at])
 
 
 def test_the_header_chips_follow_the_gpu_line_on_the_tick_that_sees_it_change(site, monkeypatch):
@@ -3651,8 +3657,9 @@ def test_the_empty_run_and_checkpoint_selects_say_why_they_are_empty():
         "short": "no workspaces folder is set"}}
     said = tp.listing_why_html(first_use, none)
     assert 'data-notice-rel="workspaces_root"' in said and "data-notice=" not in said
-    assert "Run disabled: no workspaces folder is set (see Data)." in said
-    assert "Run disabled: no workspace yet (see Data)." in tp.listing_why_html(operator, none)
+    assert "Run disabled: no workspaces folder is set (see Data)." in _words_of(said)
+    assert "Run disabled: no workspace yet (see Data)." in _words_of(
+        tp.listing_why_html(operator, none))
     assert "Run disabled: choose a workspace in Data first." in tp.listing_why_html(
         {**operator, "workspaces": [{"name": "demo"}]}, none)
     assert tp.listing_why_html(operator, {"items": [], "workspace": "demo"}) == ""
@@ -4294,7 +4301,7 @@ def test_a_refusal_naming_a_record_problem_is_shown_escaped():
                                   ("none", ""))
     assert allowed is False and HOSTILE in why            # plain text, as the select's
     shown = tp._reason_html(why)
-    assert HOSTILE not in shown and "&lt;img src=x onerror=alert(1)&gt;" in shown
+    assert HOSTILE not in shown and "&lt;img src=x onerror=alert(1)&gt;" in _words_of(shown)
 
 
 def test_every_checkpoint_is_listed_led_by_what_it_is(site, monkeypatch):

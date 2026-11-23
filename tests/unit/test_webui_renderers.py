@@ -1722,7 +1722,7 @@ def test_a_relation_says_the_notice_short_and_is_not_the_notice_again():
     assert ">Start disabled: no workspaces folder is set.</span>" in rel
     assert "data-notice=" not in rel and "<details" not in rel
     assert (">Import disabled: GPU jobs need a workspaces folder "
-            '<span class="shep-nowrap">(see Data).</span></span>') in r.see_above(
+            '<span class="shep-unit">(see Data).</span></span>') in r.see_above(
         "Import", gpu, where="Data")
     assert r.relation_words("Import", gpu, where="Data") == (
         "Import disabled: GPU jobs need a workspaces folder (see Data).")
@@ -1824,12 +1824,12 @@ def test_a_line_never_parts_a_count_from_its_unit_or_a_date_from_its_time():
     cell), "GATv2 2026-10-02" / "00:00" and "(see" / "Data)." (Test's relations). A count and
     the word after it, a word and the number that ends its text, a date and its time, and a
     parenthesis of three words at most with its stop are each one piece a line never parts
-    (`bound_html`), drawn by every chain fact, status mark, relation and notice sentence; the line
+    (`bound_html`), drawn by every chain fact, relation and notice sentence; the line
     breaks at any other space, and the text reads as it was given."""
     import html as html_lib
 
     def pieces(html):
-        return re.findall(r'<span class="shep-nowrap">([^<]*)</span>', html)
+        return re.findall(r'<span class="shep-unit">([^<]*)</span>', html)
 
     def text(html):
         return html_lib.unescape(re.sub(r"<[^>]+>", "", html))
@@ -1846,17 +1846,16 @@ def test_a_line_never_parts_a_count_from_its_unit_or_a_date_from_its_time():
     assert pieces(r.bound_html("3fa9c1e2b7d0 Copy")) == []
     assert pieces(r.bound_html("(a clause of more than three words)")) == []
     assert text(r.bound_html("<b>2 runs</b>")) == "<b>2 runs</b>" and "<b>" not in r.bound_html("<b>")
-    # Every chain fact, status mark and relation draws its words so.
-    assert '<span class="shep-nowrap">1 epoch</span>' in r.chain_html(name)
-    assert '<span class="shep-nowrap">epoch 9</span>' in r.status_mark("neutral", "recorded epoch 9")
+    # Every chain fact and relation draws its words so.
+    assert '<span class="shep-unit">1 epoch</span>' in r.chain_html(name)
     relation = r.see_above("Start", {"key": "k", "kind": "neutral", "short": "no folder is set"},
                            where="Data")
-    assert '<span class="shep-nowrap">(see Data).</span>' in relation
+    assert '<span class="shep-unit">(see Data).</span>' in relation
     # A notice's sentence too (its Details rows, its steps), its tokens still code.
     said = r.literal_html("Choose one in Settings › Data locations (Create suggested folder)")
     assert pieces(said) == ["(Create suggested folder)"]
     from src.webui.style import SHELL_CSS
-    assert ".shep-nowrap { white-space: nowrap; }" in SHELL_CSS
+    assert ".shep-unit { display: inline-block; max-width: 100%; }" in SHELL_CSS
 
 
 
