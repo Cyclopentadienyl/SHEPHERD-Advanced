@@ -1779,14 +1779,21 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
 
 
 def note_html(view: Mapping[str, Any]) -> str:
-    """**The run bar's note** (`run_bar_view`'s ``reason`` and ``notice``), a
-    row of its own under the controls (the shared bar's ``shep-bar-note``):
-    the reason line, then the setup notice said once for the screen
-    (`renderers.notice_block`, with the notices that follow from it merged
-    into its Details); "" when it says nothing, so the row takes no room."""
-    notice = r.notice_block(view.get("notice"), also=view.get("also") or ())
-    said = (view.get("reason") or "") + notice
+    """**The run bar's note** (`run_bar_view`'s ``reason``), a row of its own
+    under the controls (the shared bar's ``shep-bar-note``); "" when it says
+    nothing, so the row takes no room."""
+    said = view.get("reason") or ""
     return f'<div class="shep-rb-note">{said}</div>' if said else ""
+
+
+def setup_html(view: Mapping[str, Any]) -> str:
+    """**The setup notice, said once for the screen** (`run_bar_view`'s
+    ``notice``; `renderers.notice_block`, with the notices that follow from it
+    merged into its Details), drawn above the run bar's row, before the
+    Dataset select it empties (L7 SW-LK5; the text brief's §10: where the
+    first action is). It was the bar's note, after the actions once the bar
+    wrapped, and at 390 px after Start, Continue… and both status lines."""
+    return r.notice_block(view.get("notice"), also=view.get("also") or ())
 
 
 def _other_workspace(item: Mapping[str, Any], ws: Mapping[str, Any]) -> Optional[str]:
@@ -2857,7 +2864,8 @@ def _poll_resources(location: Any = TRAINING) -> Any:
 # The view: one render for the tick and after every action
 # =============================================================================
 #: The view's pieces, in output order (`create_training_tab` lists the same).
-VIEW_KEYS = ("ws", "dataset", "chip", "pill", "reason", "why", "start", "cont", "stop", "resume",
+VIEW_KEYS = ("ws", "dataset", "chip", "pill", "reason", "setup", "why", "start", "cont", "stop",
+             "resume",
              "runbar", "page", "run_name", "banner", "head", "view", "charts", "drawer_reason",
              "training_workspace")
 #: The pieces that are the session's selection (the run bar's workspace):
@@ -2983,6 +2991,7 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         # proportion is a bar with its number, the pill's epoch).
         "pill": pill_html(status) + bar,
         "reason": note_html(view),
+        "setup": setup_html(view),
         "why": view["why"],
         # The gated actions by the one rule (`chips.gated`): no lock while D8
         # allows this request; disabled with the lock while it refuses it,
@@ -4728,7 +4737,9 @@ def create_training_tab(ctx: Any) -> None:
             # the one-line relation beside Start and the job's state; what is
             # longer than a line, the setup notice included, is the note, a
             # row of its own the bar's width (the UI sweep's B-01: two long
-            # reasons were columns among the controls).
+            # reasons were columns among the controls). The setup notice comes
+            # first, before the Dataset select it empties (`setup_html`).
+            setup = plain_html("", elem_id="shep-train-setup")
             with gr.Row(elem_classes=["shep-bar", "shep-rb-bar"]):
                 with gr.Row(elem_classes=["shep-grp", "shep-rb-grp", "shep-rb-data"]):
                     dataset = gr.Dropdown(label="Dataset", choices=[], value=None,
@@ -4752,6 +4763,10 @@ def create_training_tab(ctx: Any) -> None:
                                          interactive=False, scale=0, elem_id="shep-train-stop",
                                          elem_classes=["shep-stop"])
                     why = plain_html("", elem_id="shep-train-why")
+                # The job's state, a group of its own after the actions: the gap
+                # between groups parts it from Start's relation (L7 SW-LK5: the
+                # two "○" statements 9 px apart read as one).
+                with gr.Row(elem_classes=["shep-grp", "shep-rb-grp", "shep-rb-state"]):
                     pill = plain_html(pill_html({"status": "idle"}), elem_id="shep-train-pill")
                 reason = plain_html("", elem_id="shep-train-reason", elem_classes=["shep-bar-note"],
                                     js_on_load=r.TRIGGER_JS)
@@ -4990,7 +5005,8 @@ def create_training_tab(ctx: Any) -> None:
     gr.on(triggers=[fields[name].change for name in guards], fn=_on_base_guards,
           inputs=[fields[name] for name in guards],
           outputs=[fields[name] for name in dependent], queue=False, show_progress="hidden")
-    view_outputs = [ws, dataset, chip, pill, reason, why, start_btn, cont_btn, stop_btn, resume_btn,
+    view_outputs = [ws, dataset, chip, pill, reason, setup, why, start_btn, cont_btn, stop_btn,
+                    resume_btn,
                     runbar, page, run_name, banner, run_head, view_run, figure, drawer_reason,
                     ctx.training_workspace, cache]
     view_inputs = [ws, mode, cache, dismissed, viewing]
@@ -5265,9 +5281,12 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #run_name {{ flex: 1 1 auto !important; min-width: min-content !important; }}
 {_PAGE} #shep-train-view-run {{ flex: 0 1 auto !important; min-width: 0 !important; max-width: 100%; }}
 {_PAGE} #shep-train-dataset > div:not(.wrap), {_PAGE} #run_name > label, {_PAGE} #shep-train-view-run > div:not(.wrap) {{ display: flex !important; align-items: center; gap: 8px; }}
-/* The bar's two labels share a width, so their boxes start on one edge when their groups stand one
-   under the other. */
-{_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"] {{ min-width: 5em; }}
+/* The run bar's groups take the scale's upper gap between them (the skill's §2: 16-24 px between
+   groups, 8 px or less inside one): its identity group's chips and Details › stand up to 15 px
+   apart, so at 16 px the one-line bar read as one crowded strip (L7 SW-LK5). A label keeps its
+   own width (a shared 5em left 19 px blank between "Dataset" and its ⓘ, a gap wider than the
+   gaps between groups). */
+{_PAGE} .shep-rb-bar {{ column-gap: var(--shep-space-5) !important; }}
 {_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"], {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: auto !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color) !important; }}
 /* A select's box is its width's basis and shrinks only with its field: a group (and the run view's
    header) moves to the next line whole, so a field is narrower than its content only alone on a
@@ -5322,6 +5341,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-act {{ gap: 4px 8px !important; }}
 {_PAGE} :is(#shep-train-why, #shep-train-pill) {{ flex: 0 1 auto !important; min-width: min(12rem, 100%) !important; }}
 {_PAGE} #shep-train-why:not(:has(.shep-reason)) {{ display: none !important; }}
+{_PAGE} #shep-train-setup:not(:has(.shep-nb)) {{ display: none !important; }}
 {_PAGE} #shep-train-pill .html-container > div {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }}
 {_PAGE} #shep-train-pill .shep-pill {{ white-space: normal; height: auto; min-height: 30px; padding: 4px 12px; line-height: 1.25; }}
 {_PAGE} .shep-pill {{ display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; font-size: 14px; font-weight: 600; white-space: nowrap; border: 1px solid var(--shep-border-2); background: var(--shep-panel-2); color: var(--shep-text-2); }}

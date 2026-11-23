@@ -670,7 +670,9 @@ def test_first_use_is_one_notice_under_the_bar_and_one_relation_beside_start(mon
     assert ">Start disabled: GPU jobs need a workspaces folder.<" in view["why"]
     assert "(see above)." in view["drawer_reason"] and "Continue Training disabled" in view[
         "drawer_reason"]
-    note = tc.note_html(view)
+    # The notice is said before the bar (`setup_html`, L7 SW-LK5), the bar's note nothing.
+    assert tc.note_html(view) == ""
+    note = tc.setup_html(view)
     assert note.count('data-notice="workspaces_root"') == 1 and 'data-notice-also="gpu_lock"' in note
     assert note.count("No workspaces folder is set.") == 1
     assert 'data-shep-go="settings"' in note and "Details ›" in note
@@ -689,19 +691,20 @@ def test_first_use_is_one_notice_under_the_bar_and_one_relation_beside_start(mon
     refused = _view(ws=ws, gpu=tc._gpu_line(None, unset, None, operator=False),
                     access=_Access(False, "not_loopback"))
     assert "Operator controls only" in refused["reason"] and refused["why"] == ""
-    assert 'data-notice="workspaces_root"' in tc.note_html(refused)
+    assert 'data-notice="workspaces_root"' in tc.setup_html(refused)
+    assert "data-notice" not in tc.note_html(refused)
     # A lock that cannot be used for another reason, the folder set: its own notice, its
     # problem a Details row for an operator only, never in the words of the line.
     problem = {"configured": True, "problem": "/srv/workspaces/.shepherd-gpu.lock is a directory"}
     for operator in (True, False):
         line = tc._gpu_line(None, problem, None, operator=operator)
         seen = _view(gpu=line)
-        drawn = tc.note_html(seen)
+        drawn = tc.setup_html(seen)
         assert "The GPU lock cannot be used." in drawn and seen["why"].count("disabled") == 1
         assert ("/srv/workspaces" in drawn) is operator
         assert "/srv" not in seen["why"]
     # Nothing to say: no note, so its row takes no room.
-    assert tc.note_html(_view()) == ""
+    assert tc.note_html(_view()) == "" and tc.setup_html(_view()) == ""
     assert lock_notice({"configured": True, "problem": None}) is None
 
 
@@ -3988,8 +3991,10 @@ const QUEUE_JS = __QUEUE_JS__;
         return { el: el.id || el.className.toString().slice(0, 30), hit: el === at || el.contains(at) };
       });
       window.scrollTo(0, 0);
+      const setup = document.querySelector('#shep-train-setup');
       return { bar: inner, groups, actions, act: box(act.getBoundingClientRect()),
         note: note && shown(note) ? box(note.getBoundingClientRect()) : null, lines, beside,
+        setup: setup && shown(setup) ? box(setup.getBoundingClientRect()) : null,
         why: whyText ? { box: box(whyText.getBoundingClientRect()), text: whyText.querySelector('.shep-nb-text').textContent.trim(),
                          lh: parseFloat(getComputedStyle(whyText).lineHeight) } : null,
         start: start && shown(start) ? box(start.getBoundingClientRect()) : null,
@@ -4012,7 +4017,7 @@ LONG_NAME = "hospital_a_rare_disease_cohort_2026_11_16_reimport_v3"
 #: What each case waits for (`_RUNBAR_JS`'s second argument): the setup notice
 #: under the bar at first use, the dataset's identity with a dataset chosen,
 #: the reason line for a workspace that cannot be trained.
-_RUNBAR_SHOWN = {"first_use": '#shep-train-reason [data-notice="workspaces_root"]',
+_RUNBAR_SHOWN = {"first_use": '#shep-train-setup [data-notice="workspaces_root"]',
                  "configured": "#shep-train-chip .shep-fpv",
                  "long_name": "#shep-train-reason .shep-rb-why"}
 
@@ -4038,7 +4043,8 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
     the actions (Start and Continue…) on one line, their group at the end
     of a line it shares, and starting a line it has alone, on the bar's
     edge (the sweep's L7, SW-LK5; with a dataset chosen, at 1850 x 960, on
-    the one line of every group: R-38); every control inside the bar's padding; the note, when it says
+    the one line of every group: R-38); every control inside the bar's padding; at first use the
+    setup notice before every control, from the bar's edge (L7 SW-LK5); the note, when it says
     something, under every control, from the bar's edge, each line inside
     the bar; no text of the run bar beside a
     control but the dataset's identity, the job's state and the relation
@@ -4079,13 +4085,18 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
         # The actions' group at the end of a line it shares with another group; alone on its
         # line, it starts the line on the bar's edge (the sweep's L7, SW-LK5: pushed to the end
         # alone, it left 459 to 810 px of the line's start empty at 1366 x 768).
+        # The job's state is a group of its own after them (L7 SW-LK5), so the actions and it
+        # end the line they share with another group.
         act = drawn["act"]
-        shared = [g for g in drawn["groups"] if g["box"] != act
-                  and g["box"][1] < act[3] and g["box"][3] > act[1]]
+        on_line = [g for g in drawn["groups"] if g["box"][1] < act[3] and g["box"][3] > act[1]]
+        after = [g for g in on_line if g["box"][0] >= act[2] - 1]
+        shared = [g for g in on_line if g["box"][2] <= act[0] + 1]
         if shared:
-            assert abs(act[2] - right) <= 2, where
+            assert abs(max([act[2]] + [g["box"][2] for g in after]) - right) <= 2, where
         else:
             assert abs(act[0] - left) <= 2, where
+        state = [g for g in drawn["groups"] if g["cls"] == "shep-rb-state"]
+        assert len(state) == 1, where
         if case == "configured" and size == "1850x960":
             # R-38: at the owner's window, a dataset chosen, the bar is one row.
             assert len({group["box"][1] for group in drawn["groups"]}) == 1, where
@@ -4093,7 +4104,14 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
         # Every control inside the bar's padding (a select's floor against its whole field,
         # label and ⓘ beside it, pushed the Dataset box 14 px past it at 390 x 844).
         assert all(c[0] >= left - 1 and c[2] <= right + 1 for c in controls), where
-        if case in ("first_use", "long_name"):
+        if case == "first_use":
+            # The setup notice before every control of the bar, from its edge (L7 SW-LK5:
+            # it was the bar's note, after the actions once the bar wrapped); the note says
+            # nothing then.
+            setup = drawn["setup"]
+            assert setup is not None and setup[3] <= min(c[1] for c in controls) + 1, where
+            assert abs(setup[0] - left) <= 2 and drawn["note"] is None, where
+        elif case == "long_name":
             note = drawn["note"]
             assert note is not None and note[1] >= max(c[3] for c in controls) - 1, where
             assert abs(note[0] - left) <= 2, where
