@@ -629,7 +629,10 @@ span.shep-note { display: inline-block; }
 .shep-notice-red { border: 1px solid var(--shep-red-200); border-left: 4px solid var(--shep-red-700); background: var(--shep-red-50); color: var(--shep-red-700); }
 .shep-touch-lost { margin-top: 4px; }
 .shep-warn { color: var(--shep-amber-800); margin: 0 0 6px; }
-.shep-mark { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 14px; line-height: 1.4; margin: 1px 4px 1px 0; }
+/* A mark is one unit in its border: never drawn over two lines inside it (the sweep's L7 check, D5:
+   Datasets' "serving reads this workspace" took two lines in one border at 1366 x 768); its cell
+   wraps round it. */
+.shep-mark { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 14px; line-height: 1.4; margin: 1px 4px 1px 0; white-space: nowrap; }
 .shep-mark-serve { background: var(--shep-accent-50); border: 1px solid var(--shep-accent-100); color: var(--shep-accent-text); font-weight: 400; }
 .shep-btn { height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--shep-border-2); background: #fff; font-size: 14px; cursor: pointer; }
 /* An identifier (a role code, a run, a checkpoint file) is never broken inside

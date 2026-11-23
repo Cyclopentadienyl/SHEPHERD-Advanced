@@ -1026,6 +1026,19 @@ LOOK_JS = r"""
         }
       }
     });
+    // chain (a chip): a mark or a tag, a few words in one border, is one unit; drawn over two
+    // lines inside its border it reads as two facts in one box (the sweep's L7 check, D5:
+    // Datasets' "serving reads this workspace" at 1366 x 768).
+    for (const chip of document.querySelectorAll('.shep-mark, .shep-tag')) {
+      if (!drawn(chip) || !visible(chip) || layered(chip) || unseen(chip)) { continue; }
+      const rg = document.createRange(); rg.selectNodeContents(chip);
+      const rs = [...rg.getClientRects()].filter((q) => q.width > 0.5 && q.height > 0.5).sort((a, b) => a.top - b.top);
+      let lines = 0, low = -Infinity;
+      for (const q of rs) { if (q.top >= low - q.height / 2) { lines += 1; low = q.bottom; } else { low = Math.max(low, q.bottom); } }
+      if (lines > 1) {
+        out.chain.push(`${named(chip)} draws the chip "${clip(chip.textContent.trim(), 40)}" over ${lines} lines inside its border`);
+      }
+    }
     // chain: each fact of a " · " chain (its block's words between two separators) drawn over
     // two lines though it fits the block on a line of its own
     const chains = new Set(texts.filter((x) => x.node.data.includes('·')).map((x) => blockOf(x.el)));

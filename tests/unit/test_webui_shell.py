@@ -4258,6 +4258,7 @@ const LOOK_JS = __LOOK_JS__;
         <p class="mono" id="sep-good" style="width: 40ch; font-size: 15px">alpha&nbsp;· beta&nbsp;· gamma delta</p>
         <p class="mono" id="chain-bad" style="width: 26ch; font-size: 15px">trained on demo&nbsp;· dataset fingerprint</p>
         <p class="mono" id="chain-long" style="width: 12ch; font-size: 15px">a&nbsp;· a fact much longer than its box</p>
+        <p style="width: 9ch; font-size: 14px"><span class="shep-mark" id="chip-two" style="white-space: normal">serving reads this workspace</span> <span class="shep-mark" id="chip-one">in use</span></p>
       </div>
       <div class="shep-panel" id="p4" style="left: 0; top: 500px; height: 260px">
         <button type="button" class="primary" id="dis-bad" disabled>Register this report</button>
@@ -4390,7 +4391,8 @@ def test_the_token_separator_and_chain_rules_find_what_reads_broken(l7_rules_see
     path longer than its box that breaks before its separators and a fingerprint on one line;
     ``sep-end`` finds a line ending at " · " and passes the chain on one line; ``chain-break``
     finds a fact of a chain broken though it fits a line of its own and passes a fact longer than
-    its box."""
+    its box, and a chip (a mark or a tag: one unit in its border) drawn over two lines inside its
+    border (the sweep's L7 check, D5), passing one on a line."""
     found = l7_rules_seen
     assert _hits(found, "token", "#tok-flag"), found["token"]
     assert [t for t in _hits(found, "token", "#tok-hyphen") if "hyphen" in t], found["token"]
@@ -4399,6 +4401,8 @@ def test_the_token_separator_and_chain_rules_find_what_reads_broken(l7_rules_see
     assert not _hits(found, "sepEnd", "#sep-good"), found["sepEnd"]
     assert [c for c in _hits(found, "chain", "#chain-bad") if "dataset fingerprint" in c], found["chain"]
     assert not _hits(found, "chain", "#chain-long"), found["chain"]
+    assert [c for c in _hits(found, "chain", "#chip-two") if "inside its border" in c], found["chain"]
+    assert not _hits(found, "chain", "#chip-one"), found["chain"]
 
 
 def test_the_row_rules_find_labels_off_one_line_and_a_row_a_hidden_cell_sets(l7_rules_seen):
