@@ -2334,7 +2334,9 @@ PAGE_CSS = f"""
   /* By family's graph left to right, a subtree unfolded past the column: panned to in its
      rows, never the page sideways (side by side the rows' region scrolls both ways). */
   {_PAGE} #shep-models-research-rows:has(.shep-fam) {{ overflow-x: auto !important; }}
-  {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; }}
+  /* Back to the list stays on the title's first line when the title wraps (centred on a title of
+     three lines it stood between them, apart from the words it follows). */
+  {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; align-self: flex-start; }}
 }}
 """
 
