@@ -3602,10 +3602,18 @@ _HEADER_FACTS_JS = r"""() => {
   const view = document.getElementById('shep-train-runview'), res = box('#shep-train-runview > #resource_display');
   const foot = view && res ? view.getBoundingClientRect().bottom - (parseFloat(getComputedStyle(view).borderBottomWidth) || 0)
                               - (parseFloat(getComputedStyle(view).paddingBottom) || 0) : null;
+  // Training's run bar: the middle of the job state's words and of Start, and Start's relation's.
+  const words = (s) => { const e = document.querySelector(s); if (!e || !e.getClientRects().length) { return null; }
+    const r = document.createRange(); r.selectNodeContents(e);
+    const q = [...r.getClientRects()].filter((x) => x.width > 1);
+    return q.length ? { top: q[0].top, mid: (q[0].top + q[0].bottom) / 2 } : null; };
+  const start = box('#shep-train-start');
   return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
            gpu: ((document.querySelector('#shep-chips .shep-chip-gpu .shep-chip-text') || {}).textContent || '').trim(),
            runview: res && foot !== null && view.scrollHeight <= view.clientHeight + 1
-             ? { resBottom: res.bottom, foot } : null };
+             ? { resBottom: res.bottom, foot } : null,
+           runbar: start ? { start: { top: start.top, bottom: start.bottom, mid: (start.top + start.bottom) / 2 },
+                             state: words('#shep-train-pill .shep-st'), why: words('#shep-train-why .shep-rb-why') } : null };
 }"""
 @pytest.fixture(scope="module")
 def ui_walk_first_use(tmp_path_factory):
@@ -3666,6 +3674,25 @@ def test_at_first_use_trainings_resources_line_ends_its_run_view(ui_walk_first_u
     for stop in stops:
         facts = stop["extra"]["runview"]
         assert abs(facts["resBottom"] - facts["foot"]) <= 1, (stop["size"], facts)
+
+
+def test_at_first_use_the_job_state_stands_on_the_run_bars_line(ui_walk_first_use):
+    """LOOK2 (SW-LK5, partly): at 1850 x 960 at first use the job state ("○ Idle · …") shared
+    the line of Start and its relation but stood about 5 px higher, top-aligned with the
+    40 px buttons. Wherever the state shares Start's line, its words' middle is the line's
+    middle, as Start's relation's is (the walk's layout sizes)."""
+    stops = [s for s in ui_walk_first_use if s["page"] == "training" and not s.get("open")]
+    shared = 0
+    for stop in stops:
+        bar = stop["extra"]["runbar"]
+        assert bar and bar["state"] and bar["why"], (stop["size"], bar)
+        start = bar["start"]
+        if not (start["top"] <= bar["state"]["mid"] <= start["bottom"]):
+            continue                                  # the state on a line of its own
+        shared += 1
+        assert abs(bar["state"]["mid"] - start["mid"]) <= 1, (stop["size"], bar)
+        assert abs(bar["why"]["mid"] - start["mid"]) <= 1, (stop["size"], bar)
+    assert shared, [s["size"] for s in stops]
 
 
 def test_at_first_use_the_header_and_tab_groups_hold_on_every_page_and_size(ui_walk_first_use):

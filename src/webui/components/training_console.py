@@ -5265,6 +5265,10 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-runbar {{ background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px; padding: 8px 16px !important; flex: none; gap: 8px !important; }}
 {_PAGE} .shep-rb-bar {{ align-items: flex-start !important; }}
 {_PAGE} .shep-rb-grp {{ align-items: center !important; }}
+/* The job's state, a group of words beside 40 px buttons, stands on the line's centre, as the
+   relation beside Start does (the sweep's L7, SW-LK5: top-aligned with the actions, its words
+   stood 5 px above theirs at 1850 x 960). */
+{_PAGE} .shep-rb-bar > .shep-rb-state {{ align-self: center !important; }}
 {_PAGE} .shep-rb-grp > .block {{ width: auto !important; }}
 {_PAGE} #shep-train-notice:not(:has(.shep-notice-t)) {{ display: none !important; }}
 {_PAGE} .shep-rb-chip .shep-ds-built, {_PAGE} .shep-rb-chip .shep-ds-built + .shep-sep {{ display: none; }}
