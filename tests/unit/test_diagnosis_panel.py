@@ -883,7 +883,11 @@ def test_in_a_browser_the_input_column_follows_the_row_and_top_k_holds_its_value
     and the fields region holds the rest (the one scroll region); the Load
     drawer starts where the column's row gap ends; stacked, the fields take
     two columns in a wide column and one in a narrow one. Fails on 8e4c7b6
-    (Top-K 6.2 "0", cut by its block; the column 300 px at 1280 to 1550)."""
+    (Top-K 6.2 "0", cut by its block; the column 300 px at 1280 to 1550).
+    The sweep's L7 check (D2, D7): at the owner's windows the fields, the
+    page's task before a result, are whole (Explanations was under the
+    region's edge at 1550 x 830 while the two panels beside held one sentence
+    each): the column takes about a third of the row."""
     from src.utils.version_checker import NOTICE
     from src.webui import app, shell
     from src.webui.app import mount_options
@@ -924,6 +928,8 @@ def test_in_a_browser_the_input_column_follows_the_row_and_top_k_holds_its_value
         assert got["run"], (size, got)
         assert got["fields"]["h"] > 0, (size, got)
         assert abs(got["results"] - (got["input"][1] + got["gap"])) <= 1, (size, got)
+    for size in ("1850x960", "1550x830"):
+        assert side[size]["fields"]["content"] <= side[size]["fields"]["h"] + 1, (size, side[size])
     widths = [side[size]["input"][2] for size in ("1280x720", "1366x768", "1550x830")]
     assert widths == sorted(widths) and widths[0] < widths[-1], widths
     opened = next(s["extra"] for s in seen if s.get("open"))

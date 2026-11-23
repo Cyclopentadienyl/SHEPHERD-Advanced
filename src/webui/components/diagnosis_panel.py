@@ -4297,14 +4297,25 @@ DRAWER_TREE_ROOM = f"calc(100cqw - {DRAWER_FACTS_MIN + DRAWER_GAP}px)"
 #: region's cue (206 px: Patient ID's label starts 182 px down): at 166 the
 #: edge fell in the gap under the HPO box, so the cue faded nothing drawn and
 #: Patient ID read as absent (configured, 1280 x 720, the card unfolded).
-FIELDS_FLOOR = 206
-#: **The input column's width** (``--dx-in-w``; B-14): a quarter of the page's
-#: row, never under the HPO field's floor (300 px: its label, info line and
-#: box, and the card's lines) nor over 26rem (wider adds only blank beside
+#: Since the sweep's L7 check (D7), the floor holds the Patient ID field whole
+#: (its label, info line and box: 280 px in the column `DX_IN_W` gives at
+#: 1280 x 720), so a loaded model's card folds before it hides that box
+#: (configured, 1280 x 720: the card unfolded in the wider column left the
+#: fields 248 px and Patient ID's box half under the edge; folded, 380).
+FIELDS_FLOOR = 280
+#: **The input column's width** (``--dx-in-w``; B-14): about a third of the
+#: page's row, never under the HPO field's floor (300 px: its label, info line
+#: and box, and the card's lines) nor over 31rem (wider adds only blank beside
 #: short fields). It was 300, 320 or 370 px by the window's width (three
 #: media queries), so at 1366 and 1280 the column was 300 px whatever the
-#: row held beside it.
-DX_IN_W = "clamp(300px, 24%, 26rem)"
+#: row held beside it. It was a quarter of the row (24 %, 26rem at most)
+#: until the sweep's L7 check (D2, D7): the inputs, the page's task before a
+#: result, scrolled at the owner's 1550 x 830 (Explanations under the edge,
+#: d3040ca drew it) and hid Patient ID's box at 1366 and 1280, while the two
+#: panels beside held one empty-state sentence each in the rest of the row.
+#: At 32 % the column is 486 px at 1550 and its fields are whole in both
+#: states; at 1366 and 1280 Patient ID's box is in view.
+DX_IN_W = "clamp(300px, 32%, 31rem)"
 
 PAGE_CSS = f"""
 /* **The input column's width, from the row's** (`DX_IN_W`; no window media query): a share of the
