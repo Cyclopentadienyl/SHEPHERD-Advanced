@@ -544,7 +544,10 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
   display: grid; grid-template-columns: max-content minmax(0, max-content); column-gap: 6px; align-items: baseline;
 }
 .shep-reason:has(> :first-child[aria-hidden="true"]) > :not(:first-child) { grid-column: 2; }
-.shep-reason-grey { border: 1px solid var(--shep-grey-200); background: var(--shep-grey-50); border-radius: 8px; padding: 10px 12px; color: var(--shep-grey-800); }
+/* A neutral reason (a refusal, a state not read) is a reason line like every other, in the
+   neutral text colour: no filled box of its own (one container per region; it was the one boxed
+   reason, beside Models' and Diagnosis' Load). */
+.shep-reason-grey { color: var(--shep-grey-800); }
 .shep-notice { border-radius: 6px; padding: 8px 10px; font-size: 14px; max-width: var(--shep-measure); }
 .shep-notice-amber { border: 1px solid var(--shep-amber-300); border-left: 4px solid var(--shep-amber-600); background: var(--shep-amber-50); color: var(--shep-amber-800); }
 .shep-notice-red { border: 1px solid var(--shep-red-200); border-left: 4px solid var(--shep-red-700); background: var(--shep-red-50); color: var(--shep-red-700); }
@@ -761,8 +764,8 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
    a region spaces its paragraphs by its own gap (``--shep-space-para``), never by a margin of a
    page's own or a <br><br>. Prose in a panel keeps the measure; at no specificity, so a page's
    own class (a table's, a summary list's) keeps its width. */
-:where(.shep-panel p) { max-width: var(--shep-measure); text-wrap: pretty; }
-:where(.shep-panel h2, .shep-panel h3) { text-wrap: balance; }
+:where(.shep-panel p, .shep-edge p) { max-width: var(--shep-measure); text-wrap: pretty; }
+:where(.shep-panel h2, .shep-panel h3, .shep-edge h2, .shep-edge h3) { text-wrap: balance; }
 
 /* ---------------------------------------------------------------- bars and groups (M2) */
 /* **A bar is a wrapping row of groups** (Training's run bar, a list's tools, a run's header): a

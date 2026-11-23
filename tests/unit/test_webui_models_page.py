@@ -1953,23 +1953,27 @@ def test_read_only_shows_the_model_in_use_from_the_ledger_and_opens_no_checkpoin
 
 
 def _says_the_refusal_as_every_page_does(header, condition):
-    """The read-only list's reason in the words every page gives a control D8
-    refuses (`chips.operator_only`, after the lock), then why in plain words,
-    its codes in the one trailing Ref line (the WebUI skill's §5). At the T08
-    bare start it read "Listing opens checkpoint files, which SPEC_4 classes
-    as checkpoint inspection (C3), so the list is served only where the
-    operator controls are (D8)", "🔒 Checkpoint list: operator controls only
-    (D8 · SPEC_4 C3)" and "Operator controls need this deployment set to M1,
-    …" (`scratchpad/t08pre/shots/s7-xff-07-models.png`)."""
+    """The read-only list's reason: after the lock, one lead in plain words
+    (why there is no list, who may list it), then D8's conditions and the
+    codes under "Details ›" (the message shape; the WebUI skill's §5). This
+    request's own condition ("Operator controls only: forwarded by a proxy.")
+    is not said here: the gated Load says it, and the header chip (the
+    independent check of the UI sweep, C3: it was said three times on one
+    screen). At the T08 bare start it read "Listing opens checkpoint files,
+    which SPEC_4 classes as checkpoint inspection (C3), …"
+    (`scratchpad/t08pre/shots/s7-xff-07-models.png`); at the sweep, a 4-line
+    paragraph and a Ref line of four codes in the flow."""
     from src.webui.components.chips import LOCK, operator_only
 
     words = _visible_words(header)
-    lead = f"{LOCK} {operator_only(condition)}."
+    lead = f"{LOCK} {mp.LIST_NOT_SHOWN}"
     assert words.startswith("Checkpoints ") and lead in words, words
-    plain, ref = words.split(lead, 1)[1].split("Ref:", 1)
-    assert not re.search(r"\bD8\b|SPEC_4|\bC3\b|\bM1\b|SHEPHERD_", plain), plain
-    assert plain.count(" · ") == 0 and ref.strip().startswith("D8") and "SPEC_4 C3" in ref
-    assert header.rstrip().endswith(f'{e(mp.LIST_REFUSED_REF)}</p></div>'), header
+    assert operator_only(condition) not in words, words
+    plain, more = header.split('<details class="shep-more">', 1)
+    assert not re.search(r"\bD8\b|SPEC_4|\bC3\b|\bM1\b|SHEPHERD_", _visible_words(plain))
+    assert e(mp.D8_CONDITIONS) in more and ">Ref<" in more
+    ref = _visible_words(more).split("Ref", 1)[1]
+    assert ref.strip().startswith("D8") and "SPEC_4 C3" in ref and ";" not in ref
 
 
 def test_the_list_panel_is_titled_by_its_content_and_count(world, monkeypatch):

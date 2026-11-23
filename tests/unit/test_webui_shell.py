@@ -3868,3 +3868,25 @@ def test_every_page_of_every_state_has_no_layout_finding(state, request):
                                      if state == "configured" else set())
     assert {s["open"] for s in seen if s.get("open")} == drawers
     assert layout_problems(seen) == []
+
+
+def test_prose_in_a_region_on_a_panels_edge_keeps_the_measure_and_a_reason_draws_no_box(built):
+    """The independent check of the UI sweep (C3): Models' details column is
+    a region on a panel's edge (`shep-edge`), not a `.shep-panel`, so the
+    shared prose rule never reached its paragraphs: "No result is registered
+    beside this checkpoint…" ran 138 characters a line at 1850 x 960 (169 for
+    a read-only viewer), against the text brief's 56ch. The shared rule now
+    covers a region on a panel's edge as it covers a panel, so Models'
+    details and the shared list's columns keep the measure. The neutral
+    reason (`shep-reason-grey`, beside Load on Models and in the Diagnosis
+    drawer) was the one reason drawn in a filled box; it is a reason line
+    like every other."""
+    from src.webui.style import SHELL_CSS
+
+    prose = _rule(SHELL_CSS, ":where(.shep-panel p, .shep-edge p)")
+    assert "max-width: var(--shep-measure)" in prose
+    demo, _ctx = built
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    assert "shep-edge" in (by_id["shep-mp-detail"].elem_classes or [])
+    grey = _rule(SHELL_CSS, ".shep-reason-grey")
+    assert not re.search(r"\b(border|background|padding)\b", grey), grey

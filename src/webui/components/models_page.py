@@ -150,8 +150,8 @@ from src.evaluation.caveats import (
 )
 from src.webui.components import model_list as ml
 from src.webui.components import renderers as r
-from src.webui.components.chips import LOCK, operator_only
-from src.webui.components.help import REF_PREFIX, copy_button, help_button
+from src.webui.components.chips import LOCK
+from src.webui.components.help import copy_button, help_button
 from src.webui.components.served_status import read_status, served_checkpoint_sha
 from src.webui.operator_access import operator_access
 from src.webui.shell import page_elem_id, picked, plain_html
@@ -207,22 +207,22 @@ LOAD_NOTE = ("Serves this model for diagnosis once you confirm the change. Resul
              "recorded keep the model they were made with.")
 
 READONLY_TITLE = "Recorded results of the model in use"
-READONLY_WHERE = "registered beside the checkpoint in use; no checkpoint is opened"
-#: **A read-only request's list, refused in the words every page uses**
-#: (`chips.operator_only`, "Operator controls only: forwarded by a proxy.",
-#: after the lock), then why in plain words, its codes in one trailing Ref
-#: line (the WebUI skill's §5): why there is no list, and D8's conditions
-#: named together, as the D8 chip's ⓘ says them (`chips.D8_HOW`).
+READONLY_WHERE = "registered beside the checkpoint in use · no checkpoint is opened"
+#: **A read-only request's list, refused** (the message shape, the text
+#: brief's §1): after the lock, one lead, why there is no list and who may
+#: list it; this request's own condition is said once, beside Load
+#: (`chips.operator_only`), and by the header chip; D8's conditions, as the
+#: D8 chip's ⓘ says them (`chips.D8_HOW`), and the codes one click away
+#: under "Details ›" (`renderers.details_list`).
 LIST_NOT_SHOWN = ("The checkpoint list is not shown: listing it opens the checkpoint files, "
                   "which is an operator control.")
 D8_CONDITIONS = ("Operator controls need a service started on this machine and a request "
                  "that arrives on its loopback, directly or through an SSH forward, with no "
                  "forwarding header.")
-LIST_REFUSED_REF = (f"{REF_PREFIX} D8; SPEC_4 C3 (checkpoint inspection); deployment mode M1 "
-                    "(SHEPHERD_DEPLOYMENT_MODE)")
-NO_LOAD_HERE = ("No validation figures here: they need the checkpoint files; Load is an "
+LIST_REFUSED_REF = "D8, SPEC_4 C3 (checkpoint inspection), deployment mode M1 (SHEPHERD_DEPLOYMENT_MODE)"
+NO_LOAD_HERE = ("No validation figures here: they need the checkpoint files. Load is an "
                 "operator control.")
-RECORDS_MODEL_CHANGED = ("The model in use changed while its recorded results were read; open "
+RECORDS_MODEL_CHANGED = ("The model in use changed while its recorded results were read. Open "
                          "the page again.")
 
 #: The Details panel's empty state, per cause (`detail_parts`): a list to
@@ -1146,21 +1146,23 @@ def list_title(listing: Mapping[str, Any]) -> str:
 def left_header_html(listing: Mapping[str, Any], data: Mapping[str, Any],
                      condition: Optional[str] = None) -> str:
     """The list panel's header, titled by its content (`list_title`); for a
-    read-only request, why there is no list instead: "Operator controls only:
-    <D8's short reason>." after the lock, as every page says a control D8
-    refuses (`chips.operator_only`), then why and D8's conditions in plain
-    words, the codes in a trailing Ref line (`LIST_REFUSED_REF`). An
-    operator's header is its title alone (R-75: "operator controls only" is
-    said only where D8 refuses)."""
+    read-only request, why there is no list instead: after the lock, one lead
+    (`LIST_NOT_SHOWN`), then D8's conditions and the codes under "Details ›"
+    (`D8_CONDITIONS`, `LIST_REFUSED_REF`). The request's own condition
+    (`condition`, "Operator controls only: forwarded by a proxy.") is not
+    said again here: the gated Load beside the details says it, as every
+    page says a control D8 refuses (`chips.operator_only`), and the header
+    chip names it. An operator's header is its title alone (R-75: "operator
+    controls only" is said only where D8 refuses)."""
     title = f"<h2>{r.e(list_title(listing))}</h2>"
     if listing.get("refused"):
-        reason = operator_only(condition or listing.get("condition"))
         return (f'<div class="shep-panel-hd">{title}</div>'
                 f'<div class="shep-mp-ro" role="status">'
                 f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
-                f'<span>{r.e(reason)}.</span></div>'
-                f'<p class="shep-mp-p">{r.e(LIST_NOT_SHOWN)} {r.e(D8_CONDITIONS)}</p>'
-                f'<p class="shep-mp-p shep-mp-ref">{r.e(LIST_REFUSED_REF)}</p></div>')
+                f'<span>{r.e(LIST_NOT_SHOWN)}</span></div>'
+                + r.details_list([("Who can act", r.e(D8_CONDITIONS)),
+                                  ("Ref", r.literal_html(LIST_REFUSED_REF))])
+                + "</div>")
     # An operator's list says nothing of operator controls: the header chip
     # says who may act, and a lock is drawn only where D8 refuses (R-75).
     return f'<div class="shep-panel-hd">{title}</div>'
@@ -2233,11 +2235,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-fold > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
 {_PAGE} .shep-mp-fold[open] > summary {{ margin-bottom: 2px; }}
 {_PAGE} .shep-mp-delta {{ font-size: 14px; margin-top: 4px; }}
-/* A read-only request's reason (`left_header_html`): the lock and D8's words, why, then the Ref
-   line, muted. */
+/* A read-only request's reason (`left_header_html`): the lock and its one lead, then Details ›. */
 {_PAGE} .shep-mp-ro {{ padding: 0 16px 8px; }}
-{_PAGE} #shep-mp-hd .shep-mp-ro {{ display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }}
-{_PAGE} #shep-mp-hd .shep-mp-ref {{ font-size: 14px; color: var(--shep-muted); }}
+{_PAGE} #shep-mp-hd .shep-mp-ro {{ display: flex; flex-direction: column; gap: var(--shep-space-para); padding-top: 12px; }}
 {_PAGE} .shep-mtbl td.shep-num .shep-sub {{ text-align: right; }}
 {_PAGE} .shep-mp-ident {{ font-size: 15px; }}
 /* By family's "Saved files" (`saved_files_html`): one file a line, the shown one in words,
