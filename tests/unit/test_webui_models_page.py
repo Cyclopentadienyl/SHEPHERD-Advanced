@@ -3057,13 +3057,18 @@ def test_one_screen_says_each_fingerprint_and_the_dataset_once(world, monkeypatc
     with its Copy); its whole value is one "Details ›" away. Its run is its
     row's and its title's words (a list and the detail it opens), never its
     directory, which is in the detail's provenance."""
+    from src.webui.style import COL_TWIN
+
     listing, data = _read(world, monkeypatch)
     key = _key(world, "model-05.pt")
     item = ml.find_item(listing, key)
     view = mp.shape(listing, data, NEWEST_CTL)
     table = ml.list_html(listing, key, ml.PRESETS["research"], view=view)
     detail = mp.detail_parts(listing, data, key, NEWEST_CTL)
-    screen = _visible_words(mp.ml.workspace_line_html(listing) + table + detail["header"]
+    # The line of a file's dropped columns (`style.COL_TWIN`) is drawn only while its columns
+    # are not (the narrow tree), so one screen shows the column or the line, never both.
+    shown = re.sub(rf'<div class="{COL_TWIN}[^"]*">.*?</div>', "", table)
+    screen = _visible_words(mp.ml.workspace_line_html(listing) + shown + detail["header"]
                             + detail["top"])
     sha = item["sha256"]
     dataset = next(w["dataset_fingerprint"] for w in listing["workspaces"]
