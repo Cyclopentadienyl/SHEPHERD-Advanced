@@ -4437,9 +4437,11 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-tbl tbody tr[data-key] {{ cursor: pointer; }}
 {_TAB} .shep-dx-tbl tbody tr.shep-on td.shep-dx-dis {{ color: var(--shep-accent-text); font-weight: 600; }}
 {_TAB} .shep-dx-clamp {{ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
-/* An empty region's words, a box centred in the region, its lines start-aligned (the text brief's
-   §4: centre a box, never lines that wrap): the box as wide as its longest line, at the measure. */
-{_TAB} .shep-dx-empty {{ margin: auto; width: fit-content; max-width: min(100%, var(--shep-measure)); text-align: start; color: var(--shep-text-2); padding: 24px 8px; }}
+/* An empty region's words start on the panel's one content edge, under its heading, at the
+   measure (the skill's §2; the text brief's §4: empty text starts at the column's one x and
+   lines that wrap are never centred): a box centred in the region stood 28-35 px off the
+   heading at 1280-1366 and its padding 8 px off at 390, a near miss of the edge. */
+{_TAB} .shep-dx-empty {{ max-width: var(--shep-measure); text-align: start; color: var(--shep-text-2); padding: 24px 0; }}
 {_TAB} .shep-dx-empty p {{ margin: 4px 0; }}
 {_TAB} .shep-dx-empty-h {{ font-size: 15px; font-weight: 600; color: var(--shep-text); }}
 {_TAB} .shep-dx-notice p {{ margin: 0 0 6px; }}

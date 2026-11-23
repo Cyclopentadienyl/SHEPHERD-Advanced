@@ -827,16 +827,20 @@ def test_the_empty_results_say_what_to_do_without_a_place_the_layout_moves():
     assert not re.search(r"\b(left|right|above|below)\b", text)
 
 
-def test_an_empty_regions_words_are_a_centred_box_of_start_aligned_lines():
+def test_an_empty_regions_words_start_on_the_panels_edge_at_the_measure():
     """The independent check of the UI sweep (C5): the results' and the
     candidate details' empty states were centred line by line, so at every
     size their wrapped lines ("…check the model in use, then / Run
-    Diagnosis.") stood at ragged centres. The text brief's §4 centres a box,
-    never lines that wrap: the box is as wide as its longest line (at the
-    measure) and centred in the region; its lines start on one edge."""
+    Diagnosis.") stood at ragged centres. Their lines start on one edge, the
+    panel's content edge under its heading (the skill's §2, the text brief's
+    §4: empty text starts at the column's one x), at the measure: neither
+    centred lines nor a centred box (a box centred in the region, its first
+    fix, stood 28-35 px off the heading at 1280-1366 and 8 px off at 390, the
+    layout walks' edge findings, which hold it at zero)."""
     rule = re.search(r"\.shep-dx-empty \{\{?([^}]*)\}", dp.PAGE_CSS).group(1)
     assert "text-align: start" in rule and "center" not in rule
-    assert "margin: auto" in rule and "width: fit-content" in rule
+    assert "margin" not in rule and "fit-content" not in rule
+    assert re.search(r"padding: \S+ 0;", rule), rule
     assert "var(--shep-measure)" in rule
     for html in (dp.empty_results_html(), dp.details_empty_html()):
         assert html.startswith('<div class="shep-dx-empty">')
