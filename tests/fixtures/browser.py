@@ -1511,8 +1511,10 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
     - ``help-on-page``: a help text drawn outside the bubble;
     - ``notice-repeat``: a notice key drawn more than once on one screen;
     - ``tab-groups``: a separator drawn at a line's start or while the research tabs wrap,
-      anything but a tab in the tablist, a focus stop that is not a tab, the tabs out of
-      `RESEARCH_PAGES`' order, or a tab group (`shell.TAB_GROUPS`) split over two lines;
+      anything but a tab in the tablist, a focus stop that is not a tab, or the tabs out of
+      `RESEARCH_PAGES`' order (a group whose tabs the row's width wraps apart is the decided
+      design: the tabs wrap by width alone, no group is broken to a line of its own, the
+      sweep's decision 3);
     - ``in-view`` (at the owner's windows, `OWNER_SIZES`, only): a control or a text line of the
       page drawn past the window's bottom or right edge that no scroll region in view holds;
     - ``scroll-cue``: a scroll region whose drawn content runs past its edge with no cue: below
@@ -1534,7 +1536,7 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       line (a quarter of the label's height apart or more);
     - ``row-height``: a table row in a sideways scroll box whose height a cell out of the box's
       view sets (an empty band across the cells in view)."""
-    from src.webui.shell import RESEARCH_PAGES, TAB_GROUPS
+    from src.webui.shell import RESEARCH_PAGES
 
     problems: list[str] = []
     for stop in (s for s in seen if "check" in s and "layout" in s["check"]):
@@ -1561,12 +1563,6 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
                                     f"drawn while the tabs take {len(tabs['lines'])} lines")
             for other in (*tabs["others"], *tabs["focusable"]):
                 problems.append(f"{where}: tab-groups: {other} in the tablist")
-            line_of = {page: k for k, line in enumerate(tabs["lines"]) for page in line}
-            for group in TAB_GROUPS:
-                drawn = sorted({line_of[page] for page in group if page in line_of})
-                if len(drawn) > 1:
-                    problems.append(f"{where}: tab-groups: the group {' '.join(group)} split over "
-                                    f"lines {[k + 1 for k in drawn]} of {len(tabs['lines'])}")
         if "in-view" in rules and tuple(int(n) for n in stop["size"].split("x")) in OWNER_SIZES:
             for what in found.get("inview", ()):
                 problems.append(f"{where}: in-view: {what}")

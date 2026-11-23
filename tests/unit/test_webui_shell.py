@@ -4157,8 +4157,10 @@ def test_the_row_rules_find_labels_off_one_line_and_a_row_a_hidden_cell_sets(l7_
 
 def test_the_layout_problems_hold_in_view_at_the_owners_windows_and_tab_groups_whole():
     """``in-view`` is held at the owner's windows only (`browser.OWNER_SIZES`: a page scrolls
-    on a phone), and ``tab-groups`` finds a tab group split over two lines (SW-LK9: Models alone
-    on the second line at 390 px, the Test │ Models group split), passing groups wrapped whole."""
+    on a phone). ``tab-groups`` does not count a tab group the row's width wraps apart (SW-LK9:
+    Models alone on the second line at 390 px): the tabs wrap by width alone and no group is
+    broken to a line of its own, the sweep's decision 3 (the integrator's, 2026-11-22; the
+    owner may reopen it). It still finds a separator drawn while the tabs wrap."""
     from tests.fixtures.browser import OWNER_SIZES, layout_problems
 
     def stop(size, inview=(), lines=None):
@@ -4173,10 +4175,15 @@ def test_the_layout_problems_hold_in_view_at_the_owners_windows_and_tab_groups_w
     assert found == [f"{owner} settings: in-view: #x \"Apply\" drawn 40 px under the window"], found
     split = layout_problems([stop("390x844", lines=[["datasets", "training", "finetune", "test"], ["models"]])],
                             rules=("tab-groups",))
-    assert split and all("the group test models split" in p for p in split), split
+    assert split == [], split
     whole = layout_problems([stop("390x844", lines=[["datasets", "training", "finetune"], ["test", "models"]])],
                             rules=("tab-groups",))
     assert whole == [], whole
+    seps = {"lines": [["datasets", "training", "finetune", "test"], ["models"]],
+            "seps": [{"tab": "test", "lineStart": False}], "others": [], "focusable": []}
+    drawn = layout_problems([{"size": "390x844", "page": "settings", "check": {"layout": {"tabs": seps}}}],
+                            rules=("tab-groups",))
+    assert drawn and all("a separator before test" in p for p in drawn), drawn
 
 
 @pytest.mark.parametrize("state", ["first_use", "empty", "configured"])
