@@ -154,14 +154,21 @@ def test_listing_the_bases_is_an_operator_control(root, monkeypatch):
 
 
 def test_an_empty_list_says_why(root, operator):
-    # A listed dataset not chosen: the line asks for one. None listed, or no
-    # workspaces folder: the identity line or the setup notice says why, and
-    # this line says nothing (each cause once on a screen).
+    # A listed dataset not chosen: the line asks for one. None listed: the identity line says
+    # why, and this line says nothing (each cause once on a screen). No workspaces folder: the
+    # setup notice says it once, above, and the empty Run and Checkpoint say their relation to it
+    # (the sweep's L7 check, C7: two empty boxes that said nothing, as Test's did before SW-LK10),
+    # never the notice again.
     listed = {"choices": [["demo", "demo"]]}
     assert "Select a dataset first." in fp._on_finetune_bases(operator, listed, None)[3]
     assert fp._on_finetune_bases(operator, {}, None)[3] == ""
-    notice = {"key": "workspaces_root", "summary": "No workspaces folder is set."}
-    assert fp._on_finetune_bases(operator, {**listed, "notice": notice}, None)[3] == ""
+    from src.config.server_settings import ENV_WORKSPACES_ROOT
+    from src.webui.components.workspaces import NOTICES, notice_view
+
+    notice = notice_view(NOTICES[ENV_WORKSPACES_ROOT])
+    why = fp._on_finetune_bases(operator, {**listed, "notice": notice}, None)[3]
+    assert why == r.see_above("Run", notice, where="see above")
+    assert 'data-notice-rel="workspaces_root"' in why and "data-notice=" not in why
     assert "train one on Research › Training" in fp.bases_note_html({}, None)
     assert "&lt;img" in fp.bases_note_html({}, TAG) and "<img" not in fp.bases_note_html({}, TAG)
 

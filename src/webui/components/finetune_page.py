@@ -1075,9 +1075,15 @@ def _on_finetune_bases(request: gr.Request, ws, current):
         return {}, empty, empty, f'<div class="shep-ft-reasons">{why}</div>', refresh
     name = (ws or {}).get("name")
     if not name:
-        # With no dataset listed the setup notice or the identity line says
-        # why (`setup_html`, `identity_html`); this line only asks for a choice.
-        listed = (ws or {}).get("choices") and not (ws or {}).get("notice")
+        # With no dataset listed the setup notice says why, once, above
+        # (`setup_html`); the empty Run and Checkpoint say their relation to it
+        # (`renderers.see_above`, as Test's do: the sweep's L7 check, C7: they
+        # were two empty boxes that said nothing; the skill's §9), else ask
+        # for a choice.
+        notice = (ws or {}).get("notice")
+        if notice:
+            return {}, empty, empty, r.see_above("Run", notice, where="see above"), refresh
+        listed = (ws or {}).get("choices")
         note = bases_note_html({}, "Select a dataset first.") if listed else ""
         return {}, empty, empty, note, refresh
     from src.api.services.server_lists import list_checkpoints
