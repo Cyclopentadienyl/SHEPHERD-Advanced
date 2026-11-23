@@ -3753,7 +3753,7 @@ def _pieces_page():
     from src.config import server_settings as ss
     from src.webui.components import renderers as r
     from src.webui.components import workspaces as w
-    from src.webui.style import CELL_WHOLE, FIT, FIT_WIDE
+    from src.webui.style import CELL_ROOMY, CELL_WHOLE, FIT, FIT_WIDE
 
     notice = w.setting_notice(ss.workspaces_root({}))
     # One identity line (Test's and Models', `renderers.dataset_identity_html`) in boxes of
@@ -3823,6 +3823,15 @@ def _pieces_page():
             shell.plain_html(f'<div id="pc-c12">{seps}<div style="width: 320px"><table class="shep-tbl" '
                              f'id="pc-whole"><tbody><tr><td class="{CELL_WHOLE}">Record not readable</td>'
                              f'<td>{prose}</td></tr></tbody></table></div></div>', elem_id="pc-c12-box")
+            # Two fit boxes with a cell whose words read as one while the room allows
+            # (`style.CELL_ROOMY`): one with the room, one (sized by `_PIECES_JS`) that holds
+            # the table only with those words wrapped.
+            roomy = (f'<table class="shep-tbl {FIT_WIDE}"><tbody><tr><td class="shep-nowrap">a cell '
+                     f'that never breaks</td><td class="shep-num"><span class="shep-muted {CELL_ROOMY}">'
+                     f'recorded epoch 9</span></td></tr></tbody></table>')
+            shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-roomy-a" style="width: 640px">'
+                             f'{roomy}</div><div class="shep-tbl-wrap {FIT}" id="pc-roomy-b">{roomy}</div>',
+                             elem_id="pc-roomy-box")
             shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-fit"><table class="shep-tbl {FIT_WIDE}">'
                              f'<tbody><tr>{cells}</tr></tbody></table></div>'
                              '<div style="height: 2400px"></div>', elem_id="pc-fit-box")
@@ -3928,6 +3937,26 @@ const QUEUE_JS = __QUEUE_JS__;
               fold: { top: fold.top, bottom: fold.bottom } },
     };
   });
+  // The roomy boxes: the second one as wide as its table at its narrowest with the roomy words
+  // wrapped (measured apart, beside the box, outside any fit box), then a resize so the layout
+  // pass measures it.
+  await page.evaluate(() => {
+    const b = document.getElementById('pc-roomy-b'), t = b.querySelector('table').cloneNode(true);
+    t.style.cssText = 'position: absolute; visibility: hidden; width: min-content';
+    b.parentElement.appendChild(t);
+    const wrapped = t.getBoundingClientRect().width, s = getComputedStyle(b);
+    t.remove();
+    b.style.width = (wrapped + parseFloat(s.borderLeftWidth) + parseFloat(s.borderRightWidth) + 2) + 'px';
+  });
+  await page.setViewportSize({ width: 1279, height: 1280 }); await frames(2);
+  await page.setViewportSize({ width: 1280, height: 1280 }); await frames(4);
+  out.roomy = await page.evaluate(() => Object.fromEntries(['pc-roomy-a', 'pc-roomy-b'].map((id) => {
+    const b = document.getElementById(id), span = b.querySelector('.__CELL_ROOMY__');
+    const r = document.createRange(); r.selectNodeContents(span);
+    return [id, { roomy: b.hasAttribute('__ROOMY__'), narrow: b.hasAttribute('__NARROW__'),
+                  lines: new Set([...r.getClientRects()].filter((q) => q.width > 0).map((q) => Math.round(q.top))).size,
+                  sideways: b.scrollWidth - b.clientWidth }];
+  })));
   // The fit box scrolled sideways and the page scrolled to its end, then anything drawn: the
   // layout pass runs and measures the box, and neither scroll moves.
   await page.evaluate(() => { const fit = document.getElementById('pc-fit'); fit.scrollLeft = 120;
@@ -3953,9 +3982,27 @@ def pieces_seen(tmp_path_factory):
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
+    from src.webui.style import CELL_ROOMY, NARROW_ATTR, ROOMY_ATTR
+
     with served(_pieces_page(), **mount_options()) as base:
-        return run_node(_PIECES_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)),
+        return run_node(_PIECES_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+                        .replace("__CELL_ROOMY__", CELL_ROOMY).replace("__ROOMY__", ROOMY_ATTR)
+                        .replace("__NARROW__", NARROW_ATTR),
                         tmp_path_factory.mktemp("pieces"), base[:-len("gradio_api")])
+
+
+def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_seen):
+    """The sweep's L7 check (D13): the Models tree's "recorded epoch 9" stood on two lines in
+    every older run's row at 1850 x 960 while the Model column had room; bound always, the tree
+    dropped its Epochs, Files and Fingerprint at 1550 x 830 and 1080 x 1920. A cell of class
+    `style.CELL_ROOMY` reads as one line while its fit box holds the wide form with it whole
+    (the layout pass's second measure, `style.ROOMY_ATTR`); in a box that holds the wide form
+    only with those words wrapped, they wrap and the wide form stays, nothing sideways."""
+    roomy = pieces_seen["roomy"]
+    wide, tight = roomy["pc-roomy-a"], roomy["pc-roomy-b"]
+    assert wide["roomy"] and not wide["narrow"] and wide["lines"] == 1, roomy
+    assert not tight["roomy"] and not tight["narrow"] and tight["lines"] > 1, roomy
+    assert wide["sideways"] <= 0 and tight["sideways"] <= 0, roomy
 
 
 def test_a_separator_never_starts_a_line_and_a_whole_cell_keeps_its_line(pieces_seen):

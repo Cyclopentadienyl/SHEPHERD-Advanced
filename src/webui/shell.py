@@ -87,7 +87,12 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   not fit, the box gets ``style.NARROW_ATTR`` and its page draws the narrow
   form (each child's summary list). The measure never reads the state it
   sets, and it is taken again when the page changes, the window resizes or
-  a font arrives: no width fitted to one host's text decides it.
+  a font arrives: no width fitted to one host's text decides it. A wide
+  form that fits is measured once more with its cells of class
+  ``style.CELL_ROOMY`` whole, and while it still fits the box gets
+  ``style.ROOMY_ATTR``: those cells keep their words on one line (a count's
+  words, "recorded epoch 9"), else they wrap, so they never cost the table
+  its optional columns.
 - **A box whole only while its column has the room** (OPS-FIX-N1): the same
   pass measures, side by side, each box of class ``style.FOLD`` (the
   Diagnosis card) drawn whole, with what else its column holds and the
@@ -259,8 +264,8 @@ from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
 from src.webui.components.help import HelpRegistry, as_json_for_script
 from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
 from src.webui.style import (FADE_VAR, FIT, FIT_WIDE, FLOOR_HEIGHT, FLOOR_VAR, FLOOR_WIDTH, FOLD, FOLD_FLOOR,
-                              FOLD_ROOM, FOLDED_ATTR, LAYOUT_ATTR, NARROW_ATTR, SEG_WHOLE, SHORT_ATTR, SHORT_BELOW,
-                              STACK_FLOOR_WIDTH)
+                              FOLD_ROOM, FOLDED_ATTR, LAYOUT_ATTR, NARROW_ATTR, ROOMY_ATTR, SEG_WHOLE, SHORT_ATTR,
+                              SHORT_BELOW, STACK_FLOOR_WIDTH)
 
 BRAND = "SHEPHERD-Advanced"
 
@@ -935,7 +940,7 @@ _SHELL_JS = r"""
   // narrowest for the measure alone (its own inline style, put back before
   // anything is painted; a style change is no mutation this pass listens
   // to), so the measure never depends on the state it sets.
-  var FIT = '__FIT__', FIT_WIDE = '__FIT_WIDE__', NARROW = '__NARROW__';
+  var FIT = '__FIT__', FIT_WIDE = '__FIT_WIDE__', NARROW = '__NARROW__', ROOMY = '__ROOMY__';
   var AT_NARROWEST = 'position:absolute !important;visibility:hidden !important;'
     + 'width:min-content !important;min-width:0 !important;max-width:none !important;';
   // A choice group's options laid out on one line, for the measure alone.
@@ -979,14 +984,25 @@ _SHELL_JS = r"""
     for (var i = 0; i < boxes.length; i++) {
       var box = boxes[i], wide = box.querySelector('.' + FIT_WIDE);
       if (!wide || !drawn(box)) { continue; }
-      var was = box.hasAttribute(NARROW);
+      var was = box.hasAttribute(NARROW), roomy = box.hasAttribute(ROOMY);
       if (was) { box.removeAttribute(NARROW); }
-      var need = measured(wide, AT_NARROWEST + 'display:' + (wide.tagName === 'TABLE' ? 'table' : 'block')
-        + ' !important;', width);
+      if (roomy) { box.removeAttribute(ROOMY); }
+      var at = AT_NARROWEST + 'display:' + (wide.tagName === 'TABLE' ? 'table' : 'block') + ' !important;';
+      var need = measured(wide, at, width);
       var room = roomOf(box);
-      if (was) { box.setAttribute(NARROW, ''); }
       var narrow = need > room + 0.5;
+      // Its cells whose words read as one while the room allows (CELL_ROOMY), measured whole
+      // once more: the box is ROOMY while the wide form fits with them whole too.
+      var whole = false;
+      if (!narrow) {
+        box.setAttribute(ROOMY, '');
+        whole = measured(wide, at, width) <= room + 0.5;
+        box.removeAttribute(ROOMY);
+      }
+      if (was) { box.setAttribute(NARROW, ''); }
+      if (roomy) { box.setAttribute(ROOMY, ''); }
       if (box.hasAttribute(NARROW) !== narrow) { box.toggleAttribute(NARROW, narrow); }
+      if (box.hasAttribute(ROOMY) !== whole) { box.toggleAttribute(ROOMY, whole); }
     }
     var groups = document.querySelectorAll(CHOICE);
     for (var g = 0; g < groups.length; g++) {
@@ -1351,6 +1367,7 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR)
               .replace("__FIT__", FIT).replace("__FIT_WIDE__", FIT_WIDE)
               .replace("__NARROW__", NARROW_ATTR).replace("__SEG_WHOLE__", SEG_WHOLE)
+              .replace("__ROOMY__", ROOMY_ATTR)
               .replace("__FOLD__", FOLD).replace("__FOLD_ROOM__", FOLD_ROOM)
               .replace("__FOLD_FLOOR__", FOLD_FLOOR).replace("__FOLDED__", FOLDED_ATTR)
               .replace("__FADE_VAR__", FADE_VAR)

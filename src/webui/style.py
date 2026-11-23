@@ -129,6 +129,15 @@ COL_TWIN = "shep-col-twin"
 #: its optional columns, then scrolls in its frame (`FIT`).
 CELL_WHOLE = "shep-cell-whole"
 NARROW_ATTR = "data-shep-narrow"
+#: **A table cell whose words read as one while their table has the room** (a count's words in
+#: its place: "recorded epoch 9", `renderers.epoch_words`): the layout pass measures a `FIT` box's
+#: wide form once more with these cells whole and, when that still fits, marks the box
+#: `ROOMY_ATTR`, and the cells keep their words on one line; otherwise they wrap as words do, so
+#: binding them never makes a table drop its optional columns or scroll where it fitted (the
+#: sweep's L7 check, D13: "recorded" / "epoch 9" doubled every older run's row at 1850 x 960
+#: while the Model column had room; bound always, the tree dropped its Epochs at 1550 x 830).
+CELL_ROOMY = "shep-cell-roomy"
+ROOMY_ATTR = "data-shep-roomy"
 #: **A box drawn whole while its column has the room** (OPS-FIX-N1; the layout
 #: pass's fold, `src/webui/shell.py`): side by side, a box of class `FOLD`
 #: shares a column with a region of class `FOLD_ROOM` (the column: the box's
@@ -1071,8 +1080,10 @@ button.shep-row {
 .shep-mtree tr.shep-tree-run { cursor: pointer; }
 .shep-mtree tr.shep-tree-run:hover td { background: var(--shep-panel-2); }
 .shep-mtree td.shep-num { white-space: nowrap; }
-/* A count is one figure; words in its place ("epochs not recorded") wrap as words do. */
+/* A count is one figure; words in its place ("epochs not recorded") wrap as words do, and read
+   as one line while their table has the room (``__CELL_ROOMY__``). */
 .shep-mtree td.shep-num .shep-muted { white-space: normal; }
+.__FIT_BOX__[__ROOMY__] .shep-tbl td .__CELL_ROOMY__ { white-space: nowrap; }
 /* A saved file's name, then its In-use chip, under it when the column is narrow. */
 .shep-mtree .shep-tree-leaf { flex-wrap: wrap; column-gap: 6px; }
 /* **The family graph** (Models' By family, `model_list._graph_html`; G1-G9, I1-I10): each
@@ -1374,11 +1385,11 @@ __STACK__ {
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK) \
     .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART) \
     .replace("__NARROW__", NARROW_ATTR).replace("__COL_OPT__", COL_OPT).replace("__COL_TWIN__", COL_TWIN).replace("__FIT_BOX__", FIT).replace("__SEG_WHOLE__", SEG_WHOLE) \
-    .replace("__CELL_WHOLE__", CELL_WHOLE) \
+    .replace("__CELL_WHOLE__", CELL_WHOLE).replace("__CELL_ROOMY__", CELL_ROOMY).replace("__ROOMY__", ROOMY_ATTR) \
     .replace("__FLOOR_W__", str(FLOOR_WIDTH)).replace("__FLOOR_H__", str(FLOOR_HEIGHT)) \
     .replace("__FLOOR_VAR__", FLOOR_VAR)
 
 
-__all__ = ["BRAND_WIDTH", "CELL_WHOLE", "COL_OPT", "COL_TWIN", "FADE_VAR", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
+__all__ = ["BRAND_WIDTH", "CELL_ROOMY", "CELL_WHOLE", "COL_OPT", "COL_TWIN", "FADE_VAR", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
            "FLOOR_HEIGHT", "FLOOR_VAR", "FLOOR_WIDTH", "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT",
-           "SHORT_ATTR", "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK", "STACK_FLOOR_WIDTH"]
+           "SHORT_ATTR", "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK", "STACK_FLOOR_WIDTH", "ROOMY_ATTR"]

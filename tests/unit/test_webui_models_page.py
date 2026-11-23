@@ -3850,7 +3850,11 @@ const QUEUE_JS = __QUEUE_JS__;
                list: list.getBoundingClientRect().width, detail: detail.getBoundingClientRect().width,
                sideways: Math.max(wrap.scrollWidth - wrap.clientWidth, rows.scrollWidth - rows.clientWidth),
                optional: opt.map((th) => th.textContent), drawn: opt.filter((th) => th.getClientRects().length).length,
-               heads: [...table.querySelectorAll('thead th')].filter((th) => th.getClientRects().length).map((th) => th.textContent) };
+               heads: [...table.querySelectorAll('thead th')].filter((th) => th.getClientRects().length).map((th) => th.textContent),
+               // The lines of each drawn count's words in its place ("recorded epoch 4").
+               epochs: [...table.querySelectorAll('tbody td.shep-num .shep-muted')].filter((e) => e.getClientRects().length)
+                 .map((e) => { const r = document.createRange(); r.selectNodeContents(e);
+                   return new Set([...r.getClientRects()].filter((q) => q.width > 0).map((q) => Math.round(q.top))).size; }) };
     });
   }
   // A row chosen: its details are what the page shows (the sweep's L7 check, D1).
@@ -3902,7 +3906,10 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     windows their recorded results fell under the region's edge. Chosen, the
     details are wider than empty, whole at the owner's largest window with the
     list's whole tree beside them, and their records segment in view at the
-    smaller."""
+    smaller. The sweep's L7 check (D13): at 1850 x 960 every older run's
+    "recorded epoch" words stood on two lines, doubling its row, while the
+    Model column had room; they read as one line where the whole tree still
+    fits with them so (`style.CELL_ROOMY`), and wrap where it would not."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -3920,6 +3927,10 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     for size in ("1850x960", "1550x830"):
         owner = seen[size]
         assert owner["layout"] == "side" and owner["drawn"] == 3 and owner["sideways"] <= 0, (size, owner)
+    # The sweep's L7 check (D13): at the owner's largest window a count's words in its place
+    # read as one line ("recorded" / "epoch 4" doubled the row while Model had room); where
+    # they would cost the table its columns (1550 x 830) they wrap and every column stays.
+    assert seen["1850x960"]["epochs"] and set(seen["1850x960"]["epochs"]) == {1}, seen["1850x960"]
     for size in ("1850x960", "1550x830", "1366x768"):
         assert seen[size]["list"] >= seen[size]["detail"], (size, seen[size])
     assert laptop["optional"] == ["Epochs", "Files", "Fingerprint"] == column["optional"], seen
