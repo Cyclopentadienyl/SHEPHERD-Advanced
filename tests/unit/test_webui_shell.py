@@ -3869,6 +3869,8 @@ const LOOK_JS = __LOOK_JS__;
     #drawer { position: absolute; z-index: 5; top: 60px; left: 480px; width: 400px; height: 340px; background: #fff; }
     #in-drawer { position: absolute; left: 60px; top: 136px; width: 160px; }
     #o2 { position: absolute; left: 40px; top: 4px; }
+    .c-row { display: flex; height: 105px; margin-top: 16px; }
+    .c-row button { height: 40px; }
   </style></head><body>
     <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
     <div id="shep-tab-x"><div class="shep-page">
@@ -3883,6 +3885,8 @@ const LOOK_JS = __LOOK_JS__;
       <div class="shep-bar" id="bar"><button type="button" id="bar-btn">Start</button><p id="bar-text">${words}</p></div>
       <div class="shep-bar" id="bar2"><button type="button" id="bar2-btn">Start</button><p id="bar2-text" style="width: 12em">Start disabled: GPU jobs need a workspaces folder.</p></div>
       <div class="shep-bar" id="bar3"><button type="button" id="bar3-btn">Start</button><p id="bar3-text">Start disabled: no folder.</p></div>
+      <div class="c-row" style="align-items: center"><button type="button" id="c-mid">Start</button></div>
+      <div class="c-row" style="align-items: flex-start"><button type="button" id="c-top">Start</button></div>
     </div></div></body></html>`);
   await page.addScriptTag({ content: LOOK_JS });
   const layout = await page.evaluate(() => window.__shepLook.check().layout);
@@ -3907,7 +3911,10 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
       over another;
     - ``beside`` reads words drawn on two lines beside a button however few they are (the
       independent check, C4: it counted 100 characters, so a 51-character reason on two lines
-      beside Start passed), and passes a one-line relation."""
+      beside Start passed), and passes a one-line relation;
+    - ``centred`` finds a button centred in a row about two and a half times its height (Fine-tune's
+      Start, 40 px, in its 105 px row at 1280, which the rule's earlier form found: three times
+      the button's height let it pass) and passes the same button on the row's top."""
     from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
 
     if node_with_playwright() is None:
@@ -3921,6 +3928,8 @@ def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(t
     assert [o for o in found["overlap"] if "#o1" in o and "#o2" in o], found["overlap"]
     assert [b for b in found["beside"] if "#bar2-text" in b and "#bar2-btn" in b], found["beside"]
     assert not [b for b in found["beside"] if "#bar3-text" in b], found["beside"]
+    assert [c for c in found["centred"] if "#c-mid" in c], found["centred"]
+    assert not [c for c in found["centred"] if "#c-top" in c], found["centred"]
 
 
 @pytest.mark.parametrize("state", ["first_use", "empty", "configured"])

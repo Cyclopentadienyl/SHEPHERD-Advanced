@@ -351,8 +351,10 @@ LOOK_JS = r"""
        element where they meet);
      - orphan: a choice group on two or more lines whose last line holds one option and whose
        first holds more;
-     - centred: a field or a button centred in a row more than three times its own height, at
-       least half its height below the row's top (relations to what is drawn, no px figure);
+     - centred: a field or a button centred in a row more than two and a half times its own
+       height, at least half its height below the row's top (relations to what is drawn, no px
+       figure; for the pages' 39-40 px buttons no looser than the twice-plus-24-px it replaced:
+       Fine-tune's Start in its 105 px row and Check in its 115 px one are found);
      - split: the controls of one group (`.shep-grp`) not on one line (a ⓘ, a Copy and a
        "Details ›" link aside);
      - edge: in a panel's left part, a heading, paragraph, reason, notice, empty state, field
@@ -552,7 +554,7 @@ LOOK_JS = r"""
       for (let a = c.parentElement; a && a !== scope; a = a.parentElement) {
         const s = getComputedStyle(a), ar = a.getBoundingClientRect();
         if ((s.display.includes('flex') && s.flexDirection.startsWith('row')) || s.display.includes('grid')) {
-          if (ar.height > 3 * q.height && q.top - ar.top >= q.height / 2
+          if (ar.height > 2.5 * q.height && q.top - ar.top >= q.height / 2
               && Math.abs((q.top + q.bottom) / 2 - (ar.top + ar.bottom) / 2) < 0.2 * ar.height && !rows.has(a)) {
             rows.add(a);
             out.centred.push(`${named(c)} in ${named(a)} (${Math.round(ar.height)} px tall)`);
@@ -1086,7 +1088,7 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
     - ``overlap``: two controls overlapping by more than 2 x 2 px (one an open drawer lies over
       aside);
     - ``orphan``: a choice group whose last line holds one option, its first more;
-    - ``centred``: a control centred in a row over three times its own height;
+    - ``centred``: a control centred in a row over two and a half times its own height;
     - ``split-group``: the controls of one ``.shep-grp`` on more than one line (a ⓘ, a Copy and a
       "Details ›" link aside);
     - ``edge``: a heading, paragraph, notice, label or field 1 px to 2em off its panel
