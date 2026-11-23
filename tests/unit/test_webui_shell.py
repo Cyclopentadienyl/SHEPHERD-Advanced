@@ -3967,6 +3967,7 @@ const LOOK_JS = __LOOK_JS__;
         <div class="rg" id="cue-bad">${lines}</div>
         <div class="rg shep-scroll-cue" data-shep-more id="cue-good">${lines}</div>
         <div class="rg" id="cue-pad" style="padding-bottom: 80px"><p>One short line, then room.</p></div>
+        <div class="rg" id="cue-nobox"><div style="display: contents; overflow: hidden">${lines}</div></div>
         <div class="sw" id="side-bad">${wide}</div>
         <div class="shep-rs-cue">Wider than the panel: scroll sideways.</div>
         <div class="sw" id="side-good">${wide}</div>
@@ -4027,6 +4028,7 @@ const LOOK_JS = __LOOK_JS__;
           <tr id="rh-good-row"><td>demo</td><td>3f56</td><td>in use</td></tr></table></div>
         <div class="rg shep-scroll-cue" data-shep-more id="iv-region"><div style="height: 1200px"></div><button type="button" id="iv-in">Apply</button></div>
         <button type="button" id="iv-out" style="position: absolute; left: 16px; top: 1000px">Apply Settings</button>
+        <div style="display: contents; overflow: auto"><button type="button" id="iv-nobox" style="position: absolute; left: 200px; top: 1000px">Restart</button></div>
       </div>
     </div></div></body></html>`);
   await page.addScriptTag({ content: LOOK_JS });
@@ -4059,11 +4061,13 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     that no scroll region in view holds (and passes one a region in view holds); ``scroll-cue``
     finds a region whose words run past its foot with no cue (and passes the R-73 cue's mask and a
     region whose overflow is only its padding), and a box whose table runs past its right edge with
-    no sideways cue (and passes one with Compare's drawn cue before it)."""
+    no sideways cue (and passes one with Compare's drawn cue before it). A box drawn as no box
+    (``display: contents``, Gradio's blocks around Diagnosis' Top-K) hides and scrolls nothing:
+    words in one are judged, not taken as hidden for a screen reader or held by a region."""
     found = l7_rules_seen
-    assert _hits(found, "inview", "#iv-out"), found["inview"]
+    assert _hits(found, "inview", "#iv-out") and _hits(found, "inview", "#iv-nobox"), found["inview"]
     assert not _hits(found, "inview", "#iv-in"), found["inview"]
-    assert _hits(found, "cue", "#cue-bad holds"), found["cue"]
+    assert _hits(found, "cue", "#cue-bad holds") and _hits(found, "cue", "#cue-nobox holds"), found["cue"]
     assert not _hits(found, "cue", "#cue-good") and not _hits(found, "cue", "#cue-pad"), found["cue"]
     assert _hits(found, "cue", "#side-bad holds"), found["cue"]
     assert not _hits(found, "cue", "#side-good"), found["cue"]

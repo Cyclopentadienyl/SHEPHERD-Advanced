@@ -703,14 +703,18 @@ LOOK_JS = r"""
       return !!m && m !== 'none'; };
     const say = (e) => clip((e.innerText || e.getAttribute('aria-label') || e.value || e.getAttribute('placeholder')
       || e.id || '').trim(), 30);
+    // A box drawn as no box (``display: contents``: Gradio's blocks and forms around a field)
+    // clips nothing and scrolls nothing.
+    const boxed = (e) => getComputedStyle(e).display !== 'contents';
     // Words hidden on purpose and kept for a screen reader (a 1 px box that clips them, or a
     // ``clip`` rectangle: the icon Copy's label): never drawn, so never cut.
     const quiet = new Map();
     const unseen = (e) => {
       if (quiet.has(e)) { return quiet.get(e); }
       const s = getComputedStyle(e), r = e.getBoundingClientRect();
-      const found = (s.clip !== 'auto' && s.clip !== '' && s.position === 'absolute')
-        || (/(hidden|clip)/.test(s.overflowX + s.overflowY) && (r.width <= 1 || r.height <= 1))
+      const found = (s.display !== 'contents'
+          && ((s.clip !== 'auto' && s.clip !== '' && s.position === 'absolute')
+              || (/(hidden|clip)/.test(s.overflowX + s.overflowY) && (r.width <= 1 || r.height <= 1))))
         || (!!e.parentElement && e.parentElement !== document.body && unseen(e.parentElement));
       quiet.set(e, found);
       return found;
@@ -719,6 +723,10 @@ LOOK_JS = r"""
     const items = [...texts.flatMap((x) => x.rects.map((r) => ({ el: x.el, r, t: x.t }))),
                    ...ctl.map((c) => ({ el: c, r: c.getBoundingClientRect(), t: say(c) }))]
       .filter((it) => it.r.width > 0.5 && it.r.height > 0.5 && !unseen(it.el));
+    // How far past an edge, downwards, a line or a control runs before something of it is cut:
+    // a quarter of its own height (a line's box holds its half-leading, a ⓘ's box its target's
+    // room round the drawn mark); sideways a glyph run ends at its last glyph, so 1 px.
+    const past = (r) => Math.max(1, 0.25 * r.height);
     // The scroll region of an axis an element is in (itself, when it is one), below the document.
     const nearest = new Map();
     const scroller = (e, axis) => {
@@ -726,7 +734,7 @@ LOOK_JS = r"""
       if (axis in cache) { return cache[axis]; }
       let found = null;
       for (let a = e; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
-        if (scrolls(a, axis)) { found = a; break; }
+        if (scrolls(a, axis) && boxed(a)) { found = a; break; }
       }
       cache[axis] = found; nearest.set(e, cache);
       return found;
@@ -748,11 +756,11 @@ LOOK_JS = r"""
     // inview
     const outs = new Set();
     for (const it of items) {
-      const outY = it.r.bottom > innerHeight + 1, outX = it.r.right > innerWidth + 1;
+      const outY = it.r.bottom > innerHeight + past(it.r), outX = it.r.right > innerWidth + 1;
       if ((!outY && !outX) || outs.has(it.el)) { continue; }
       let reach = false;
       for (let a = it.el; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
-        if ((outY && scrolls(a, 'y')) || (outX && scrolls(a, 'x'))) {
+        if (((outY && scrolls(a, 'y')) || (outX && scrolls(a, 'x'))) && boxed(a)) {
           const q = a.getBoundingClientRect();
           if (q.bottom <= innerHeight + 1 && q.right <= innerWidth + 1) { reach = true; break; }
         }
@@ -773,7 +781,7 @@ LOOK_JS = r"""
       if (!sy && !sx) { continue; }
       const box = pad(g), mine = items.filter((it) => g.contains(it.el));
       if (sy && !masked(g)) {
-        const below = mine.filter((it) => scroller(it.el, 'y') === g && it.r.bottom > box.bottom + 1)
+        const below = mine.filter((it) => scroller(it.el, 'y') === g && it.r.bottom > box.bottom + past(it.r))
           .sort((a, b) => a.r.top - b.r.top);
         if (below.length) {
           out.cue.push(`${named(g)} holds ${Math.round(Math.max(...below.map((it) => it.r.bottom)) - box.bottom)} px `
@@ -801,7 +809,7 @@ LOOK_JS = r"""
           if (s.display === 'contents') { continue; }
           const q = pad(a);
           if (!doneX && hides(a, 'x') && (r.left < q.left - 1 || r.right > q.right + 1)) { cut = [a, 'x', Math.max(q.left - r.left, r.right - q.right)]; break; }
-          if (!doneY && hides(a, 'y') && (r.top < q.top - 1 || r.bottom > q.bottom + 1)) { cut = [a, 'y', Math.max(q.top - r.top, r.bottom - q.bottom)]; break; }
+          if (!doneY && hides(a, 'y') && (r.top < q.top - past(r) || r.bottom > q.bottom + past(r))) { cut = [a, 'y', Math.max(q.top - r.top, r.bottom - q.bottom)]; break; }
           doneX = doneX || scrolls(a, 'x'); doneY = doneY || scrolls(a, 'y');
           if ((doneX && doneY) || s.position === 'fixed') { break; }
         }
