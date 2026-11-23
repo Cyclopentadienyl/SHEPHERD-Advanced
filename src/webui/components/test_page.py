@@ -3114,7 +3114,8 @@ def create_test_page(ctx: Any) -> None:
                 model_info = plain_html("", elem_id="shep-test-model-info")
                 # The protocols the chosen model's listed capabilities admit (`measurement_choices`).
                 measurement = gr.Radio(label="Measurement", choices=[], value=None,
-                                       elem_id="shep-test-measurement", interactive=False)
+                                       elem_id="shep-test-measurement", interactive=False,
+                                       visible=False)
                 evidence = plain_html("", elem_id="shep-test-evidence")
                 with gr.Row(elem_classes=["shep-test-checks"]):
                     record = gr.Checkbox(label=RECORD_LABEL, value=True,
@@ -3236,12 +3237,14 @@ def create_test_page(ctx: Any) -> None:
         (`measurement_choices`: what its capabilities meet that measures the
         version's kind), and the value it shows (`chosen_measurement`), which
         Start's state is then drawn from. Like the Model select, it is
-        interactive for an operator only."""
+        interactive for an operator only. With nothing to offer (no model
+        chosen) it is not drawn: a label over an empty choice group says
+        nothing (the skill's §9; Start's reason says what to choose)."""
         allowed = bool((page.get("access") or {}).get("allowed"))
         choices = measurement_choices(find_model(models, key),
                                       find(page.get("versions") or [], "label", label))
         protocol = chosen_measurement(choices, protocol)
-        return gr.update(choices=choices, value=protocol,
+        return gr.update(choices=choices, value=protocol, visible=bool(choices),
                          interactive=allowed and bool(choices)), protocol
 
     def _job_outputs(page, job, gpu):

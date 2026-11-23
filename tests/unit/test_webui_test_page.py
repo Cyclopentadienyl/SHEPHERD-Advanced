@@ -4895,17 +4895,23 @@ def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
     start_at = on_model.outputs.index(by_id["shep-test-start"])
     reason_at = on_model.outputs.index(by_id["shep-test-start-reason"])
     out = on_model.fn(page, models, binding, "demo", LABEL, child, None, {}, None)
-    assert out[radio_at] == gr.update(choices=offered, value=None, interactive=True)
+    assert out[radio_at] == gr.update(choices=offered, value=None, visible=True, interactive=True)
     assert out[start_at] == gr.update(value="▶ Start test", interactive=False)
     assert "Disabled: choose a measurement." in out[reason_at]
     picked = on_pick.fn(page, models, binding, "demo", LABEL, child, "p2")
-    assert picked == [gr.update(choices=offered, value="p2", interactive=True),
+    assert picked == [gr.update(choices=offered, value="p2", visible=True, interactive=True),
                       gr.update(value="▶ Start test", interactive=True), "", "p2"]
     # Like the Model select, the radio is an operator's control only.
     readonly = dict(page, access={"allowed": False, "condition": "not_local"})
     assert on_model.fn(readonly, models, binding, "demo", LABEL, child, "p2", {},
                        None)[radio_at] == (
-        gr.update(choices=offered, value="p2", interactive=False))
+        gr.update(choices=offered, value="p2", visible=True, interactive=False))
+    # With no model chosen there is nothing to offer: the group is not drawn
+    # (the independent check of the UI sweep, C6: its label stood over an
+    # empty group and a 30 px gap at every size and in every state).
+    assert by_id["shep-test-measurement"].visible is False
+    assert on_model.fn(page, models, binding, "demo", LABEL, None, None, {}, None)[radio_at] == (
+        gr.update(choices=[], value=None, visible=False, interactive=False))
 
     manager = FakeManager()
     result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
