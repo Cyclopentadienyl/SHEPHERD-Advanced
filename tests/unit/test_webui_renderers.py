@@ -1698,9 +1698,11 @@ def test_several_notices_share_one_step_in_the_sources_words_and_group_their_det
 
     ws, _gpu, registry = _notices()
     html = r.notices_block([registry, ws], consequence="Testing waits for both.")
-    links = re.findall(r'<button[^>]*data-shep-go="settings"[^>]*>([^<]*)</button>', html)
+    # A link's words as read (its place is one unit inside it, `server_settings.PLACE_NAMES`).
+    words = lambda found: [re.sub(r"<[^>]+>", "", x) for x in found]  # noqa: E731
+    links = words(re.findall(r'<button[^>]*data-shep-go="settings"[^>]*>(.*?)</button>', html))
     assert links == [r.e(ss.CHOOSE_THEM_IN_DATA_LOCATIONS)], links
-    assert ss.CHOOSE_IN_DATA_LOCATIONS not in html
+    assert ss.CHOOSE_IN_DATA_LOCATIONS not in re.sub(r"<[^>]+>", "", html)
     details = html.split("<details", 1)[1]
     subs = re.findall(r'<p class="shep-nb-sub">([^<]*)</p>', details)
     assert subs == [ss.RESULTS_REGISTRY, ss.WORKSPACES_FOLDER], subs
@@ -1711,11 +1713,11 @@ def test_several_notices_share_one_step_in_the_sources_words_and_group_their_det
     assert details.count("Ref:") == 1
     refused = w.setting_notice(ss.cohort_registry({"SHEPHERD_REGISTRY": "relative"}))
     mixed = r.notices_block([refused, ws])
-    assert re.findall(r"data-shep-go[^>]*>([^<]*)</button>", mixed) == [r.e(ss.OPEN_DATA_LOCATIONS)]
+    assert words(re.findall(r"data-shep-go[^>]*>(.*?)</button>", mixed)) == [r.e(ss.OPEN_DATA_LOCATIONS)]
     both = r.notices_block([refused, w.setting_notice(ss.workspaces_root({"SHEPHERD_WORKSPACES_ROOT": "x"}))])
-    assert re.findall(r"data-shep-go[^>]*>([^<]*)</button>", both) == [r.e(w.SEE_WHY)]
+    assert words(re.findall(r"data-shep-go[^>]*>(.*?)</button>", both)) == [r.e(w.SEE_WHY)]
     # One notice keeps its own words.
-    assert r.e(ss.CHOOSE_IN_DATA_LOCATIONS) in r.notices_block([ws])
+    assert r.e(ss.CHOOSE_IN_DATA_LOCATIONS) in re.sub(r"<[^>]+>", "", r.notices_block([ws]))
 
 
 def test_a_relation_says_the_notice_short_and_is_not_the_notice_again():
@@ -1954,8 +1956,8 @@ def test_text_that_wraps_leaves_no_word_alone_and_keeps_a_place_whole(tmp_path):
     value = r.summary_list([("In effect", r.status_mark("neutral", dl.EVIDENCE_NONE))])
     notice = r.notice_block(_notices()[0])
     path = "/srv/shepherd/a-results-registry-folder/kept-on-the-server/registry"
-    state = (f'<span class="shep-dl-v">{dl._value_html(path)}</span> '
-             f'<span class="shep-dl-src">{dl.SOURCE_WORDS[server_settings.SOURCE_ENVIRONMENT]}</span>')
+    state = dl.effect_html(dl._value_html(path), f'<span class="shep-dl-src">'
+                           f'{dl.SOURCE_WORDS[server_settings.SOURCE_ENVIRONMENT]}</span>', path=True)
     css = SHELL_CSS + dl.PAGE_CSS.replace(dl._PAGE + " ", "")
     page = tmp_path / "wrap.html"
     page.write_text(f'<!doctype html><html><head><meta charset="utf-8"><style>{css}</style></head>'

@@ -159,13 +159,21 @@ def _title(path: Path, shown: bool) -> str:
 
 
 def _value_html(value: Any) -> str:
-    """A path, or a list of them, in code style, each on its own line; the
-    paths a block of their own, so the fact after them (their source) starts
-    a line and never runs on after a path's last line (the sweep's L7, D13:
-    "…/registry Set when the service started" at 1080 x 1920)."""
+    """A path, or a list of them, in code style, each on its own line."""
     values = value if isinstance(value, (tuple, list)) else (value,)
-    return ('<span class="shep-dl-line">'
-            + "<br>".join(r.token_html(v, classes="shep-dl-path") for v in values) + "</span>")
+    return "<br>".join(r.token_html(v, classes="shep-dl-path") for v in values)
+
+
+def effect_html(effect: str, source: str, *, path: bool) -> str:
+    """**In effect's value and its source, two facts**: after a path (`path`) the
+    source starts a line of its own, so it never runs on after the path's
+    last line (the sweep's L7, D13: "…/registry Set when the service
+    started" at 1080 x 1920); after words ("Set (path hidden)") it follows
+    on their line. Both HTML strings, already escaped."""
+    value = f'<span class="shep-dl-v">{effect}</span>'
+    if not source:
+        return value
+    return f"{value}{'<br>' if path else ' '}{source}"
 
 
 def _source_html(item: FieldView) -> str:
@@ -188,9 +196,11 @@ def state_html(item: FieldView, view: DeploymentView, *, shown: bool) -> str:
     # The saved file cannot be read and nothing else sets this: the notice
     # says why, once; the row says only that its value is unknown.
     unknown = view.file.problem is not None and item.configured is None
+    path = False
     if item.value is not None:
-        effect = _value_html(item.value) if shown else r.e(PATH_HIDDEN)
+        effect, path = (_value_html(item.value), True) if shown else (r.e(PATH_HIDDEN), False)
     elif item.configured is not None and item.problem:
+        path = shown
         effect = (r.status_mark("error", "Not usable") + " "
                   + (_value_html(item.configured) if shown else r.e(PATH_HIDDEN)))
     elif item.optional and item.problem is None:
@@ -202,8 +212,7 @@ def state_html(item: FieldView, view: DeploymentView, *, shown: bool) -> str:
     # The value and its source are two facts in the text too, not only on
     # screen (T08 flow: "…/ws-rootSaved in Settings" to a copy, find-in-page
     # and a screen reader, the gap being the value's margin alone).
-    rows.append(("In effect", " ".join(part for part in (
-        f'<span class="shep-dl-v">{effect}</span>', _source_html(item)) if part)))
+    rows.append(("In effect", effect_html(effect, _source_html(item), path=path)))
     differs = item.saved is not None and (item.pending or item.overridden
                                           or item.saved != item.configured)
     if differs:
@@ -214,7 +223,7 @@ def state_html(item: FieldView, view: DeploymentView, *, shown: bool) -> str:
             mark = r.status_mark("warn", "Saved, not in effect yet")
         else:
             mark = ""
-        rows.append(("Saved", f'{saved}<span class="shep-dl-line">{mark}</span>' if mark else saved))
+        rows.append(("Saved", f"{saved}<br>{mark}" if mark else saved))
     if item.problem and not unknown and (item.configured is not None or not item.unset):
         # A refused value in fixed words for a viewer whose paths are hidden:
         # its refusal quotes the value as given (`deployment_view.problem_words`).
@@ -782,8 +791,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-kv {{ gap: 4px 12px; }}
 {_PAGE} .shep-dl-kv > dt {{ width: 8em; }}
 {_PAGE} .shep-dl-v {{ margin-right: 8px; }}
-{_PAGE} .shep-dl-line {{ display: block; }}
-{_PAGE} .shep-dl-v:has(> .shep-dl-line) {{ display: block; margin: 0; }}
 {_PAGE} .shep-dl-src {{ font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }}
 {_PAGE} .shep-dl-problem {{ color: var(--shep-text-2); font-size: 14px; }}
 {_PAGE} .shep-dl-adv {{ font-size: 14px; margin-top: 2px; }}
@@ -800,4 +807,5 @@ __all__ = ["APPLY_LABEL", "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET",
            "ROW_LOCKED", "ROW_PARTS", "SAVE_LABEL", "SET_BOX", "SET_WIDE", "SOURCE_WORDS",
            "UNKNOWN", "UNREADABLE",
            "box_value", "check_words", "create_data_locations_panel", "create_folder",
-           "holds_words", "name_html", "notice_html", "reason_line", "state_html", "where_html"]
+           "effect_html", "holds_words", "name_html", "notice_html", "reason_line", "state_html",
+           "where_html"]

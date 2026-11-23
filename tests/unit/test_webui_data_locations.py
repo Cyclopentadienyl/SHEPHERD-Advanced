@@ -511,12 +511,14 @@ def test_the_value_in_effect_and_its_source_read_as_two_facts(dl, monkeypatch, t
     rows, _ = _parts(dl, dl._on_locations_open(request))
     cells = {key: _cells_text(rows[key]["state"]["value"]) for key in KEYS}
     saved, started = "Saved in Settings", "Set when the service started"
-    assert cells["workspaces_root"]["In effect"] == f"{root.resolve()} {saved}"
-    assert cells["registry"]["In effect"] == f"{registry.resolve()} {started}"
+    # After a path its source starts a line of its own (the sweep's L7, D13: it ran on after the
+    # path's last line at 1080 x 1920); after words it follows on their line.
+    assert cells["workspaces_root"]["In effect"] == f"{root.resolve()}\n{saved}"
+    assert cells["registry"]["In effect"] == f"{registry.resolve()}\n{started}"
     assert cells["registry"]["Saved"] == f"{chosen}\n{dl.OVERRIDDEN}"
-    assert cells["intake_dir"]["In effect"].endswith(f"Not usable {tmp_path / 'gone'} {started}")
+    assert cells["intake_dir"]["In effect"].endswith(f"Not usable {tmp_path / 'gone'}\n{started}")
     assert cells["training_evidence_dirs"]["In effect"] == (
-        f"{evidence[0].resolve()}\n{evidence[1].resolve()} {started}")
+        f"{evidence[0].resolve()}\n{evidence[1].resolve()}\n{started}")
     hidden = _parts(dl, dl._on_locations_open(gradio_request(server=("192.0.2.10", 8264))))[0]
     assert _cells_text(hidden["workspaces_root"]["state"]["value"])["In effect"] == (
         f"{dl.PATH_HIDDEN} {saved}")
