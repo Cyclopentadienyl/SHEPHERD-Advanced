@@ -1088,6 +1088,14 @@ LOOK_JS = r"""
      classes, every box marked narrow, folded or alone), the app's frame as drawn and how far the
      document scrolls each way. Below the floor they are compared with the floor's own. */
   const MARKS = ['data-shep-narrow', 'data-shep-folded', 'data-shep-alone'];
+  // A marked box by what stays across a page's redraws: its nearest id a page gave (Gradio's own
+  // ``component-N`` and an HTML block's ``html-…`` are new at each draw), its tag and classes.
+  const stable = (e) => {
+    let holder = e;
+    while (holder && (!holder.id || /^(component-\d+|html-[a-z0-9]+)$/.test(holder.id))) { holder = holder.parentElement; }
+    const cls = typeof e.className === 'string' ? e.className.trim().split(/\s+/).filter((c) => c && !c.startsWith('svelte-')) : [];
+    return `${holder ? '#' + holder.id : 'body'}${holder === e ? '' : ' ' + e.tagName.toLowerCase() + (cls.length ? '.' + cls.join('.') : '')}`;
+  };
   const floorFacts = () => {
     const root = document.documentElement, se = document.scrollingElement;
     const app = document.querySelector('gradio-app'), shell = document.getElementById('shep-shell');
@@ -1095,7 +1103,7 @@ LOOK_JS = r"""
     return { layout: root.getAttribute('data-shep-layout'), short: root.hasAttribute('data-shep-short'),
              header: shell ? [...shell.classList].filter((c) => c.startsWith('shep-')).sort() : [],
              marked: [...document.querySelectorAll(MARKS.map((m) => `[${m}]`).join(', '))].filter(drawn)
-               .map((e) => `${named(e)} ${MARKS.filter((m) => e.hasAttribute(m)).join(' ')}`).sort(),
+               .map((e) => `${stable(e)} ${MARKS.filter((m) => e.hasAttribute(m)).join(' ')}`).sort(),
              frame: [Math.round(r.width), Math.round(r.height)],
              scroll: [se.scrollWidth - se.clientWidth, se.scrollHeight - se.clientHeight] };
   };
