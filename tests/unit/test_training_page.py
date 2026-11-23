@@ -3442,7 +3442,7 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     assert "#shep-train-page { container: shep-train-page / size; }" in wide
     short = css.split(f"@container shep-train-page (max-height: {tc.RUN_VIEW_ONE_ROW}px) {{", 1)[1].split("\n}", 1)[0]
     assert "#shep-train-runview { overflow-y: auto !important; }" in short
-    assert "#shep-train-runview > #shep-train-charts { flex: none !important; }" in short
+    assert "#shep-train-runview > #shep-train-charts { flex: 1 0 auto !important; }" in short
     assert "#shep-train-charts .shep-charts-body { flex: none; overflow-y: visible; }" in short
     assert "sticky" not in short and tc.RUN_VIEW_ONE_ROW >= tc.PLOT_MIN_HEIGHT + tc.PLOT_AXIS_ROOM
     assert "#shep-train-charts .shep-charts-bar { flex: none; min-height: 34px; padding-bottom: 4px; }" in wide
