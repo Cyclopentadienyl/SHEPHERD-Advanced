@@ -2289,13 +2289,15 @@ PAGE_CSS = f"""
    world's fit), as far as the list's minimum leaves; the list keeps the rest, its whole tree
    where that still fits (the sweep's L7 check, D1: at 1850 x 960 and 1550 x 830 the chosen
    model's details kept the empty panel's share, about 500 to 600 px, and their recorded results
-   and next step fell under the region's edge, where d3040ca drew them whole). */
+   and next step fell under the region's edge, where d3040ca drew them whole). By family keeps
+   its shares: a body pick never re-orients the graph (the skill's §13), and a narrower region
+   would. */
 {_PAGE} {_LIST} {{ --shep-mp-list-min: 46.5rem; --shep-mp-detail-min: 30rem; --shep-mp-detail-read: 47rem; }}
 {_PAGE} {_LIST} > .shep-model-main {{ --shep-panel-min: var(--shep-mp-list-min); }}
 {_PAGE} {_LIST} > .shep-model-foot {{ --shep-panel-min: var(--shep-mp-detail-min); }}
 {SIDE} {{
   {_PAGE} {_LIST} {{ grid-template-columns: minmax(var(--shep-mp-list-min), 2fr) minmax(var(--shep-mp-detail-min), 1fr); }}
-  {_PAGE} {_LIST}:has(#shep-mp-detail-hd h2[data-key]):not(:has(.shep-mp-ro)) {{
+  {_PAGE} {_LIST}:has(#shep-mp-detail-hd h2[data-key]):not(:has(.shep-mp-ro)):not(:has(.shep-fam)) {{
     grid-template-columns: minmax(var(--shep-mp-list-min), 2fr)
       minmax(max(var(--shep-mp-detail-min), min(var(--shep-mp-detail-read), 100% - var(--shep-mp-list-min) - 16px)), 1fr);
   }}
