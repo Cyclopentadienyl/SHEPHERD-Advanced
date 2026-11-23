@@ -1497,3 +1497,69 @@ def test_the_webuis_own_sentences_hold_no_semicolon():
                 continue                    # a style sheet, a script, markup or a help text
             found.append((info.name, name, value[:60]))
     assert found == [], found
+
+
+#: Every registered help text opened in the one bubble of the served dashboard
+#: (an ⓘ made for its key, clicked, the bubble read, Esc), at the owner's
+#: window: for each item, how many lines it is drawn on.
+_ITEM_LINES_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 } });
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  const keys = await page.evaluate(() => [...document.querySelectorAll('[id^="shep-help-text-"]')]
+    .map((e) => e.id.slice('shep-help-text-'.length)));
+  const out = {};
+  for (const key of keys) {
+    out[key] = await page.evaluate(async (key) => {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'shep-i'; btn.textContent = 'i';
+      btn.setAttribute('data-help', key); btn.setAttribute('data-help-title', key);
+      btn.setAttribute('aria-describedby', 'shep-help-text-' + key);
+      btn.style.cssText = 'position: fixed; left: 40px; top: 40px; z-index: 1';
+      document.body.appendChild(btn);
+      btn.click();
+      await new Promise((r) => setTimeout(r, 50));
+      const lines = (el) => {
+        const range = document.createRange(); range.selectNodeContents(el);
+        const rects = [...range.getClientRects()].filter((q) => q.width > 0.5 && q.height > 0.5)
+          .sort((a, c) => a.top - c.top);
+        let n = 0, bottom = -Infinity;
+        for (const q of rects) { if (q.top > bottom - q.height / 2) { n += 1; bottom = q.bottom; } else { bottom = Math.max(bottom, q.bottom); } }
+        return n;
+      };
+      const bubble = document.getElementById('shep-help-bubble');
+      const items = bubble && !bubble.hidden ? [...bubble.querySelectorAll('li')].map((li) => [li.textContent, lines(li)]) : null;
+      btn.remove();
+      return items;
+    }, key);
+    await page.keyboard.press('Escape');
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_every_registered_help_items_lines_are_two_at_most_in_the_bubble(tmp_path):
+    """The independent check of the UI sweep (C9): the budget's 76 characters
+    an item let an item wrap to three lines of the 320 px bubble ("Same
+    dataset as served: another workspace with the same full fingerprint.",
+    "Names and stray punctuation are ignored. Only HP:####### ids are
+    used.", Gene's "SP similarity: …", Candidate details' "Evidence, …"),
+    against the text brief's §14 #9 (each item two lines at most). Every
+    registered text is opened in the served dashboard's one bubble, as
+    drawn, and each item is two lines at most."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_ITEM_LINES_JS, tmp_path, base[:-len("gradio_api")], timeout=600)
+    assert len(seen) >= 140 and all(items is not None for items in seen.values()), seen
+    over = {key: [(text, n) for text, n in items if n > 2] for key, items in seen.items()}
+    assert {key: found for key, found in over.items() if found} == {}

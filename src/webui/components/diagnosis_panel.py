@@ -1540,7 +1540,7 @@ FIELD_HELP = {
     "dx_hpo_terms": (
         "HPO terms",
         "Paste HPO ids in any format: one per line, or separated by commas or spaces.\n\n"
-        "- Names and stray punctuation are ignored. Only HP:####### ids are used.\n"
+        "- Only HP:####### ids are read. Names and punctuation are ignored.\n"
         "- Repeats are sent as typed. The service removes them and says how many.",
     ),
     "dx_candidate_genes": (
@@ -1562,8 +1562,8 @@ FIELD_HELP = {
     "dx_patient_id": (
         "Patient ID (optional)",
         "An identifier for this diagnosis, carried by the result and its exports.\n\n"
-        "Left blank, the server gives the result its own id, so results from different "
-        "browsers never share one.",
+        "- Left blank: the server gives the result its own id\n"
+        "- So: results from different browsers never share one",
     ),
     "dx_top_k": (
         "Top-K",
@@ -1599,7 +1599,7 @@ TOPIC_HELP = {
         GENE_SCORE_RANKS + "\n\n"
         "- Probability: it is not a calibrated one\n"
         "- Model similarity: the gene head's similarity to the patient, −1 to 1\n"
-        "- SP similarity: mean hops to the phenotypes, scaled to set bounds, unclipped\n"
+        "- SP similarity: mean phenotype hops, scaled to set bounds, unclipped\n"
         "- Eta (η): the model's own, under This result › Mixing weight eta",
     ),
     "dx-similarity": (
@@ -1630,7 +1630,7 @@ TOPIC_HELP = {
         "Candidate details",
         "Select a row of Diagnosis results to show that candidate here.\n\n"
         "- Click it, or focus it and press Enter.\n"
-        "- Evidence, explanation, matching phenotypes and paths are this result's own.",
+        "- Evidence, explanation, matching phenotypes, paths: this result's own.",
     ),
     "dx-run-no-model": (
         "Run Diagnosis is disabled",

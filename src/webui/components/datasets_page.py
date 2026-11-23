@@ -128,7 +128,7 @@ PAGE_HELP = {
         "In use",
         "What uses each workspace now, or a dash when nothing does.\n"
         "- Serving reads this workspace: the served model reads its files.\n"
-        "- Same dataset as served: another workspace with the same full fingerprint.\n"
+        "- Same dataset as served: another workspace, same full fingerprint.\n"
         "- In your Training run bar: chosen with Use for training ›.\n"
         "- Not trainable: listed, but training refuses it, for the reason given.",
     ),
