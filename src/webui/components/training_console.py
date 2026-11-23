@@ -5520,7 +5520,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
    run view, whose four plots keep about 25rem each. The bases stand as the shares do (1 : 2.2), so
    the two panels keep the proportion they had at every width (10 : 22 of the room). */
 {_PAGE} #shep-train-params {{ --shep-panel-basis: 22.5rem; --shep-panel-grow: 1; --shep-panel-min: 22.5rem; }}
-{_PAGE} #shep-train-drawer {{ --shep-panel-basis: 22.5rem; --shep-panel-grow: 1; --shep-panel-min: 25rem; }}
+{_PAGE} #shep-train-drawer {{ --shep-panel-basis: 22.5rem; --shep-panel-grow: 1; --shep-panel-min: 23rem; }}
 {_PAGE} #shep-train-runview {{ --shep-panel-basis: 49.5rem; --shep-panel-grow: 2.2; --shep-panel-min: 53.75rem; }}
 {SIDE} {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
