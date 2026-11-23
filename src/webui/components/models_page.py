@@ -2281,7 +2281,9 @@ PAGE_CSS = f"""
   {_PAGE} > .column {{ height: 100%; }}
   {_PAGE} .shep-models {{ height: 100%; min-height: 0; }}
   {_PAGE} {_LIST} {{ height: 100%; min-height: 0; }}
-  /* The panel scrolls as a whole only when its header alone does not fit (below about 480 px of window). */
+  /* The panel is held to the grid's height (an overflow other than visible makes its minimum 0), so
+     its rows' region is the one that scrolls; at and above the display floor its header always fits,
+     so the panel itself never scrolls. */
   {_PAGE} {_LIST} > .shep-model-main {{ height: 100%; overflow-y: auto; }}
   {_PAGE} #shep-mp-detail {{ overflow: hidden; display: flex !important; flex-direction: column; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-mp-detail-bd {{ flex: 1 1 auto !important; overflow: auto !important; container-type: size; }}
