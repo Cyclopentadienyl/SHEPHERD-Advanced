@@ -1421,8 +1421,8 @@ def test_an_evidence_directory_that_cannot_be_checked_never_disables_start(site,
     assert tp.start_state(page, models, "demo", LABEL, child, binding, ("none", ""),
                           protocol="disease") == (True, None)
     row = tp.evidence_html(page, "demo")
-    assert ("<code>locked-evidence</code>, <code>evidence</code> (the server's setting)"
-            '<div><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp">\u00a0</span><span class="shep-st-w">Cannot be checked: '
+    assert ("<div><code>locked-evidence</code>, <code>evidence</code> (the server's setting)"
+            '</div><div><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp">\u00a0</span><span class="shep-st-w">Cannot be checked: '
             "&lt;evidence 1&gt; (PermissionError: Permission &lt;denied&gt;). R10 cannot look "
             "in it: inputs found nowhere else read unverifiable, naming it.</span></span></div>"
             "</dd>") in row
@@ -5466,8 +5466,10 @@ def test_a_kg_or_generated_start_needs_no_evidence_setting_and_is_given_none(
         inputs.reports_dir()  # the runner's own judgment takes them
         row = tp.evidence_html(page, "demo", tp.find(page["versions"], "label", label))
         assert tp.r.status_mark("neutral", "Not applicable") in row
-        assert _visible(row) == (f"R10 evidence ○ Not applicable · "
+        # Each fact a line of its own (L7 SW-LK7), no " · " chain.
+        assert _visible(row) == (f"R10 evidence ○ Not applicable "
                                  f"{protocols.training_evidence_refusal(kind)}"), row
+        assert " · " not in row
         assert "Refused" not in row and "relative/evidence" not in row
         card = tp.job_body_html({"status": "running", "inputs": inputs.summary(), "log": []},
                                 [], ("busy", ""))

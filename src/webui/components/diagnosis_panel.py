@@ -126,6 +126,7 @@ from src.webui.components.help import (HIT_TARGET, KEY_FIRST_CLASS, REGION_CLASS
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import OPTION_CHARS
+from src.webui.components.renderers import chain_html as _chain_html
 from src.webui.components.renderers import cut_at as _cut_at
 from src.webui.components.renderers import disabled_words as _disabled_words
 from src.webui.components.renderers import e as _e
@@ -3834,7 +3835,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 # Load for inference: the one drawer for a first load and a
                 # change alike (the card's "Load a model…" / "Change model…").
                 plain_html('<h2>Load for inference</h2><span class="shep-dx-drawer-note">'
-                           'operator controls · one model is served to every session</span>',
+                           + _chain_html("operator controls",
+                                         "one model is served to every session") + '</span>',
                            elem_id="shep-dx-change-title")
                 change_close = plain_html(_close_html("change-model drawer"),
                                           elem_id="shep-dx-change-close", js_on_load=MODEL_LIST_JS)
@@ -4357,7 +4359,6 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-name {{ font-weight: 600; }}
 {_TAB} .shep-dx-sub {{ font-weight: 400; color: var(--shep-text-2); }}
 {_TAB} .shep-dx-line {{ overflow-wrap: anywhere; }}
-{_TAB} .shep-dx-line .shep-fp {{ white-space: normal; }}
 {_TAB} .shep-dx-tail {{ display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }}
 {_TAB} .shep-dx-chips {{ display: inline-flex; flex-wrap: wrap; gap: 4px 6px; }}
 {_TAB} .shep-dx-tests {{ white-space: normal; }}
@@ -4580,6 +4581,7 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx-card[{FOLDED_ATTR}] .shep-dx-card-bd > .shep-dx-name {{ flex: 0 1 auto; }}
   {_TAB} #shep-dx-card[{FOLDED_ATTR}] .shep-dx-card-bd > .shep-dx-sub {{ flex: 1 1 8em; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; }}
+  {_TAB} #shep-dx-card[{FOLDED_ATTR}] .shep-dx-sub .shep-fact {{ display: inline; }}
   {_TAB} #shep-dx-card[{FOLDED_ATTR}] > .shep-dx-card-actions {{ row-gap: 4px !important; margin-top: 0; }}
   {_TAB} #shep-dx-card[{FOLDED_ATTR}] > #shep-dx-change-why:not(:has(.shep-dx-why)),
   {_TAB} #shep-dx-card[{FOLDED_ATTR}] > #shep-dx-stop-row:not(:has(.shep-dx-stop-q, .shep-dx-why, button:not(.{VIEW_OFF}))),

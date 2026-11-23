@@ -518,6 +518,9 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
 span.shep-note { display: inline-block; }
 .shep-note p { font-size: 14px; }
 .shep-sep { color: var(--shep-border-2); }
+/* A fact of a " · " chain (`renderers.chain_html`): one unit, moved to the next line whole where
+   its line cannot hold it, wrapped inside only when it is wider than a line (L7 SW-LK7). */
+.shep-fact { display: inline-block; max-width: 100%; }
 /* A separator the line breaks after is not drawn (the shell's layout pass marks it; its box stays,
    so nothing moves): a line neither starts nor ends with " · " (the sweep's L7, SW-LK2, SW-LK7). */
 .shep-sep[data-shep-end] { visibility: hidden; }

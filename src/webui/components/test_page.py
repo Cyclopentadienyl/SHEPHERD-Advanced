@@ -1119,10 +1119,10 @@ def workspace_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
         return _reason_html(why)
     digits = r.distinguishing_digits(w.get("dataset_fingerprint")
                                      for w in page.get("workspaces") or [])
-    note = (' <span class="shep-mark shep-mark-serve">serving reads this workspace</span>'
+    note = ('<span class="shep-mark shep-mark-serve">serving reads this workspace</span>'
             if page.get("serving") == workspace else "")
-    return (f'<div class="shep-test-ident">{r.dataset_identity_html(row, digits=digits, name=False)}'
-            f'{note}</div>')
+    return (f'<div class="shep-test-ident">'
+            f'{r.dataset_identity_html(row, digits=digits, name=False, marks=note)}</div>')
 
 
 #: The import command a page names when the registry holds no KG edge set:
@@ -1691,30 +1691,40 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
     directory the server cannot check stays in the list and does not block
     Start: the setting's note says which and why on a line of its own, in
     amber with ▲ (needs attention, does not block), redacted as the problem
-    is."""
+    is. Each fact is a line of its own, in sentence case (L7 SW-LK7: one
+    lowercase " · " chain, its second fact broken over two lines)."""
     choice = run_evidence(page, version)
     helps = {"R10 evidence": ("test-evidence", "R10 evidence")}
+
+    def lines(*facts: str) -> str:
+        return "".join(f"<div>{fact}</div>" for fact in facts if fact)
+
     if choice.not_applicable:
-        return r.summary_list([("R10 evidence", f'{r.status_mark("neutral", r.NOT_APPLICABLE)} · '
-                                                f'{e(choice.not_applicable)}')], helps=helps,
-                              classes=r.FIELD_ROWS)
+        return r.summary_list([("R10 evidence", lines(r.status_mark("neutral", r.NOT_APPLICABLE),
+                                                      e(_sentence(choice.not_applicable))))],
+                              helps=helps, classes=r.FIELD_ROWS)
     evidence = page.get("evidence") or {}
     names = evidence.get("names") or []
     roots = page.get("roots") or []
     # The workspace by its relation: its name is its select's, said once.
-    measured = (f"{e(SELECTED_WORKSPACE)} (measured, always)" if workspace
-                else "the measured workspace (always)")
+    measured = (f"{e(_sentence(SELECTED_WORKSPACE))} (measured, always)" if workspace
+                else "The measured workspace (always)")
     note = ""
     if choice.problem:
-        extra = " · " + r.status_mark("error", "Refused: " + redact(choice.problem, roots))
+        extra = r.status_mark("error", "Refused: " + redact(choice.problem, roots))
     elif names:
-        extra = " · " + ", ".join(f"<code>{e(n)}</code>" for n in names) + " (the server's setting)"
+        extra = ", ".join(f"<code>{e(n)}</code>" for n in names) + " (the server's setting)"
         if choice.note:
-            note = f'<div>{r.status_mark("warn", redact(choice.note, roots))}</div>'
+            note = r.status_mark("warn", redact(choice.note, roots))
     else:
-        extra = " · no other evidence directory is set on the server"
-    return r.summary_list([("R10 evidence", f"{measured}{extra}{note}")], helps=helps,
+        extra = "No other evidence directory is set on the server"
+    return r.summary_list([("R10 evidence", lines(measured, extra, note))], helps=helps,
                           classes=r.FIELD_ROWS)
+
+
+def _sentence(words: str) -> str:
+    """`words` as a line of its own starts: its first letter a capital."""
+    return words[:1].upper() + words[1:]
 
 
 def fixed_html(page: Mapping[str, Any]) -> str:

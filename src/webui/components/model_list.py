@@ -2037,7 +2037,8 @@ def facts_html(listing: Mapping[str, Any], key: Any) -> str:
     facts = r.facts_from_checkpoint(item, workspaces, recorded=_recorded(listing, key),
                                     serving_workspace=serving, listed=True)
     title = (f'<div class="shep-facts-title" data-facts-key="{r.e(key)}" tabindex="-1">'
-             f'<b>{r.e(facts.name_line)}</b> {r.chip("selected", "neutral")}{BACK_TO_LIST}</div>')
+             f'<b>{r.chain_html(*facts.name_facts) if facts.name_facts else r.e(facts.name_line)}'
+             f'</b> {r.chip("selected", "neutral")}{BACK_TO_LIST}</div>')
     return title + r.model_facts_html(facts)
 
 

@@ -932,18 +932,20 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None, *,
         task = served_task(status)
         why = ""
         if item:
-            run = r.model_name_line(item)
+            run_facts = r.model_name_facts(item)
         else:
             meta = status.get("checkpoint_meta") or {}
-            run = f"Checkpoint · {r.epoch_words(meta if isinstance(meta, Mapping) else {})}"
+            run_facts = ("Checkpoint", r.epoch_words(meta if isinstance(meta, Mapping) else {}))
             why = str(facts.get("item_problem") or "")
-        run = f"{run} · {why}" if why else run
+        run_facts = (*run_facts, why) if why else run_facts
+        run = " · ".join(run_facts)
         # The task, named once on the card (K6 decision 4), a frozen-backbone
         # child as such (decision F1); the run under it, its whole words in its
         # title (folded, it is one line: OPS-FIX-N1). Every served model is a
         # finetuned task's (its scoring mode names one).
         name = (f'<p class="shep-dx-name">{r.e(task_model_name(task, served_transfer(status)))}'
-                f'</p><p class="shep-dx-line shep-dx-sub" title="{r.e(run)}">{r.e(run)}</p>')
+                f'</p><p class="shep-dx-line shep-dx-sub" title="{r.e(run)}">'
+                f'{r.chain_html(*run_facts)}</p>')
         mark = "" if grey else " " + r.status_mark("ok", "verified")
         # The served data's chips beside the serving state (a line of its own
         # said nothing more). The long identity (the fingerprint, the trained-on
@@ -1097,10 +1099,11 @@ def served_facts_html(state: Mapping[str, Any], *, focus: Optional[str] = None) 
                      and (shown or w[0] != r.DATASET_NOT_RECORDED)]
     meta = status.get("checkpoint_meta") if isinstance(status.get("checkpoint_meta"), dict) else {}
     params = meta.get("params")
-    name_line = model_facts.name_line if facts.get("item") else \
-        f"Checkpoint · {r.epoch_words(item)}"
+    name_facts = model_facts.name_facts if facts.get("item") else (
+        "Checkpoint", r.epoch_words(item))
     if isinstance(params, int) and not isinstance(params, bool):
-        name_line += f" · {params:,} params"
+        name_facts = (*name_facts, f"{params:,} params")
+    name_line = " · ".join(name_facts)
     # The trained-on dataset of a checkpoint not read here (D8, or not yet)
     # is said so, in Identity and in Data, never "not recorded": Model
     # Facts' own slot for it (`ModelFacts.trained_on_unread`).
@@ -1114,7 +1117,7 @@ def served_facts_html(state: Mapping[str, Any], *, focus: Optional[str] = None) 
     # frozen-backbone child named as such, decision F1), from the status: the
     # card reads no model record, so no Configuration row claims one.
     model_facts = model_facts._replace(
-        name_line=name_line, task=served_kind_words(status),
+        name_line=name_line, name_facts=tuple(name_facts), task=served_kind_words(status),
         warnings=(*warnings, *item_warnings), served_rows=tuple(served_rows),
         serving_rows=_serving_rows(status, facts,
                                    trained.get("fingerprint") if shown else None),

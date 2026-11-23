@@ -67,6 +67,16 @@ NOW = datetime(2026, 10, 20, 10, 14, 5)
 pytestmark = pytest.mark.usefixtures("utc_clock")
 
 
+def _sub(line: str, *, title: str = "") -> str:
+    """The card's run line as drawn: its whole words in its title, each fact
+    of its " · " chain one unit (`renderers.chain_html`, L7 SW-LK7)."""
+    import html as html_lib
+
+    facts = html_lib.unescape(line).split(" · ")
+    return (f'<p class="shep-dx-line shep-dx-sub" title="{title or line}">'
+            f'{r.chain_html(*facts)}</p>')
+
+
 @pytest.fixture(scope="module")
 def demo_workspace(tmp_path_factory):
     from tests.fixtures.registered_cohort import write_demo_workspace
@@ -507,8 +517,7 @@ def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
     body = card.body_html(_state(root))
     # The run under its task, its whole words in its title (one line when the card folds).
     run = "2026-10-17 09:15 · GATv2, recorded epoch 5"
-    assert ('<p class="shep-dx-name">Disease task model</p><p class="shep-dx-line shep-dx-sub" '
-            f'title="{run}">{run}</p>') in body
+    assert f'<p class="shep-dx-name">Disease task model</p>{_sub(run)}' in body
     assert f'>{root["shas"]["model-05.pt"][:12]}</code>' in body and "verified</span>" in body
     # A disease model uses no SP table, so it is not missing one.
     assert "synthetic data" in body and "no SP table" not in body
@@ -752,15 +761,13 @@ def test_a_task_model_is_named_by_its_task_once(root, mode, name):
     assert card.served_task({"initialized": False}) is None
     body = card.body_html(_state(root, status=status))
     run = "run_bundle · GATv2 2026-10-21 09:00, recorded epoch 5"
-    assert (f'<p class="shep-dx-name">{name}</p><p class="shep-dx-line shep-dx-sub" '
-            f'title="{run}">{run}</p>') in body
+    assert f'<p class="shep-dx-name">{name}</p>{_sub(run)}' in body
     assert body.count("task model") == 1 and "Task:" not in body and "GATV2" not in body
     # Not in the served runs: the task still names it, the reason under it.
     lost = card.body_html(_state(root, status=_bundle_status(root, mode, served=False)))
     why = ("Checkpoint · recorded epoch 5 · the checkpoint in use is not in the serving "
            "workspace&#x27;s runs")
-    assert (f"<p class=\"shep-dx-name\">{name}</p><p class=\"shep-dx-line shep-dx-sub\" "
-            f"title=\"{why}\">{why}</p>") in lost
+    assert f'<p class="shep-dx-name">{name}</p>{_sub(why)}' in lost
 
 
 def test_one_file_reads_the_same_completed_epochs_on_every_page(root):
@@ -780,10 +787,10 @@ def test_one_file_reads_the_same_completed_epochs_on_every_page(root):
         status["checkpoint_meta"] = {**status["checkpoint_meta"], **meta}
         body = card.body_html(_state(root, status=status))
         line = f"run_bundle · GATv2 2026-10-21 09:00, {words}"
-        assert f'<p class="shep-dx-line shep-dx-sub" title="{line}">{line}</p>' in body
+        assert _sub(line) in body
         lost = _bundle_status(root, "disease_task", served=False)
         lost["checkpoint_meta"] = {**lost["checkpoint_meta"], **meta}
-        assert f"Checkpoint · {words} · " in card.body_html(_state(root, status=lost))
+        assert f'title="Checkpoint · {words} · ' in card.body_html(_state(root, status=lost))
         # The same file as the lists give it to the other pages.
         item = {"workspace": "demo", "architecture": "gatv2", "run": BUNDLE_RUN,
                 "filename": "last.pt", "sha256": "c" * 64, "checkpoint_kind": "training_state",

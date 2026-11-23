@@ -294,6 +294,16 @@ def warn_chip(text: str) -> str:
 SEP = '<span class="shep-sep" aria-hidden="true">\u00a0· </span>'
 
 
+def chain_html(*facts: Any) -> str:
+    """**Facts of one line joined by the shared separator** (`SEP`), each
+    escaped and drawn as one unit (``shep-fact``): it moves to the next line
+    whole where the line cannot hold it, and wraps inside only when it is
+    wider than a line (L7 SW-LK7: "GATv2 2026-10-02 00:00, 1 epoch complete"
+    and "recipe changed in 5 fields" broke inside though a line held them).
+    Empty facts are left out."""
+    return SEP.join(f'<span class="shep-fact">{e(fact)}</span>' for fact in facts if fact)
+
+
 def whole_words(words: Any) -> str:
     """`words` escaped, every word kept whole: a line breaks only at a space,
     never at a word's own hyphen ("Fine-tune", "demo-test-1", "2026-11-16",
@@ -770,12 +780,14 @@ def dataset_details_html(row: Mapping[str, Any], facts: Optional[Mapping[str, An
 
 
 def dataset_identity_html(item: Any, *, digits: int = SHORT_HEX, name: bool = True,
-                          compact: bool = False) -> str:
+                          compact: bool = False, marks: str = "") -> str:
     """One workspace's identity: name; "built … UTC" or "build time not recorded ·
     sources …"; the dataset fingerprint; its origin and record
     (`dataset_marks_html`: amber "synthetic", "record verified" or the
     record's own missing or contradicted state); "not trainable: <why>" when
-    it is not (`not_trainable_chip`)."""
+    it is not (`not_trainable_chip`); then a page's own `marks` (HTML: Test's
+    "serving reads this workspace"), in the one marks group, which moves to a
+    line as a whole (L7 SW-LK7: a mark after the group parted from it)."""
     parts = []
     if name:
         parts.append(f'<span class="shep-ds-name">{e(_get(item, "name"))}</span>')
@@ -788,11 +800,12 @@ def dataset_identity_html(item: Any, *, digits: int = SHORT_HEX, name: bool = Tr
         parts.append(f'<span class="shep-ds-built shep-muted">{e(text)}</span>')
     parts.append(fingerprint_html("dataset fingerprint", _get(item, "dataset_fingerprint"),
                                   digits=digits, help_key="dataset-fingerprint"))
-    marks = dataset_marks_html(item)
+    group = dataset_marks_html(item)
     if not _get(item, "trainable", False):
-        marks += not_trainable_chip(item)
-    if marks:
-        parts.append(f'<span class="shep-ds-marks">{marks}</span>')
+        group += not_trainable_chip(item)
+    group += marks
+    if group:
+        parts.append(f'<span class="shep-ds-marks">{group}</span>')
     sep = " " if compact else SEP
     return f'<span class="shep-ds">{sep.join(parts)}</span>'
 
@@ -1504,17 +1517,22 @@ def configuration_text(item: Any) -> str:
     "GATv2 · recipe changed in 3 fields" (`differences`: which fields is axis
     2's, shown where the full list fits). A record refused or never read says
     which."""
+    return " · ".join(configuration_facts(item))
+
+
+def configuration_facts(item: Any) -> Tuple[str, ...]:
+    """`configuration_text`'s facts, each a fact of its line (`chain_html`)."""
     record = _get(item, "record")
     if record is None:
-        return "Not read"
+        return ("Not read",)
     differences = _get(item, "differences")
     if record != "model" or differences is None:
-        return "Not readable"
+        return ("Not readable",)
     if not differences:
-        return f"{architecture_label(_get(item, 'encoder'))} · reference recipe"
+        return (architecture_label(_get(item, 'encoder')), "reference recipe")
     count = len(differences)
-    return (f"{architecture_label(_get(item, 'encoder'))} · recipe changed in {count} "
-            f"field{'s' if count != 1 else ''}")
+    return (architecture_label(_get(item, 'encoder')),
+            f"recipe changed in {count} field{'s' if count != 1 else ''}")
 
 
 def _whole(value: Any) -> bool:
@@ -1549,8 +1567,18 @@ def model_name_line(item: Any, *, fit: bool = True) -> str:
     progress (`epoch_words`) after a comma, so the line keeps the run words'
     one " · ": "ui-live-stop-02 · GATv2 2026-10-24 17:39, 6 epochs
     completed"."""
-    run = run_words(_get(item, "architecture"), _get(item, "run"), fit=fit)
-    return f"{run}, {epoch_words(item)}"
+    return " · ".join(model_name_facts(item, fit=fit))
+
+
+def model_name_facts(item: Any, *, fit: bool = True) -> Tuple[str, ...]:
+    """`model_name_line`'s facts, each a fact of its line (`chain_html`): the
+    run's distinguishing words, then its architecture and start time with its
+    progress; one fact when the run has no second part."""
+    what, rest = run_parts(_get(item, "architecture"), _get(item, "run"), fit=fit)
+    if fit:
+        what, rest = _fitted(what, rest, "", 0)
+    progress = epoch_words(item)
+    return (what, f"{rest}, {progress}") if rest else (f"{what}, {progress}",)
 
 
 # ---------------------------------------------------------------------------
@@ -1792,6 +1820,11 @@ class ModelFacts(NamedTuple):
     serving_rows: Tuple[Tuple[str, str], ...] = ()
     task: Optional[str] = None
     configuration: Optional[str] = None
+    #: `name_line` and `configuration` as their facts (`model_name_facts`,
+    #: `configuration_facts`), each drawn as one unit of its line
+    #: (`chain_html`); empty: the line is drawn as its text.
+    name_facts: Tuple[str, ...] = ()
+    configuration_facts: Tuple[str, ...] = ()
     #: Whether the file's record was read: False for a record this build
     #: refuses or a file not read, whose missing figure is "not read", never
     #: "not recorded" (`validation_text`).
@@ -1855,6 +1888,7 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
                                       + ("the same dataset" if same else "another dataset"))),)
     return ModelFacts(
         name_line=model_name_line(item),
+        name_facts=model_name_facts(item),
         run=f"{architecture}/{run}" if architecture and run else None,
         checkpoint_file=(f"runs/{architecture}/{run}/checkpoints/{filename}"
                          if architecture and run and filename else None),
@@ -1876,6 +1910,8 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
         task=model_kind_text(item) if _get(item, "record") is not None else None,
         configuration=(configuration_text(item) if _get(item, "record") is not None
                        else None),
+        configuration_facts=(configuration_facts(item) if _get(item, "record") is not None
+                             else ()),
         validation_read=record_read(item),
         current_dataset=listed and _get(item, "trained_on_this_dataset") is True,
     )
@@ -3287,9 +3323,10 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
     # dataset itself is said under the list's workspace select.
     trained_rows = ([] if facts.current_dataset else [(trained_label, data_fp)])
     identity = summary_list([
-        ("Model", e(facts.name_line)),
+        ("Model", chain_html(*facts.name_facts) if facts.name_facts else e(facts.name_line)),
         *([("Task", e(facts.task))] if facts.task else []),
-        *([("Configuration", e(facts.configuration))] if facts.configuration else []),
+        *([("Configuration", chain_html(*facts.configuration_facts) if facts.configuration_facts
+                            else e(facts.configuration))] if facts.configuration else []),
         # A run and a file are tokens: broken only before their own separators (the sweep's
         # L7, SW-LK7: "gatv2/20261002-000000_…" ended a line of the Load drawer at a hyphen).
         ("Run", token_html(facts.run) if facts.run else "—"),
@@ -3447,6 +3484,9 @@ __all__ = [
     "RUN_OPERATION_WORDS",
     "model_spec_html",
     "model_name_line",
+    "model_name_facts",
+    "chain_html",
+    "configuration_facts",
     "named_words",
     "not_trainable_chip",
     "not_trainable_short",
