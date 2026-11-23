@@ -1079,12 +1079,52 @@ _SHELL_JS = r"""
     var t = e.target;
     if (t && t.nodeType === 1 && !t.matches(NOT_REGION)) { cue(t); }
   }, true);
+  // **A separator never ends a line either** (`renderers.SEP`; the sweep's L7, SW-LK2 and
+  // SW-LK7): SEP joins its "·" to the fact before it, so no line starts with one; where the line
+  // breaks after it (the fact after it starts the next line), the pass marks it SEP_END and the
+  // style sheet does not draw it. Only its visibility changes, never its box, so the mark never
+  // changes what it measured.
+  var SEP_END = 'data-shep-end';
+  function blockOf(el) {
+    var b = el.parentElement;
+    while (b && /^(inline|contents)/.test(getComputedStyle(b).display)) { b = b.parentElement; }
+    return b;
+  }
+  // The box of the first character drawn after `sep` in its block.
+  function nextGlyph(sep) {
+    var block = blockOf(sep);
+    if (!block) { return null; }
+    var walk = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    walk.currentNode = sep;
+    for (var n = walk.nextNode(); n; n = walk.nextNode()) {
+      if (sep.contains(n)) { continue; }
+      var at = n.data.search(/\S/);
+      if (at < 0) { continue; }
+      var range = document.createRange();
+      range.setStart(n, at); range.setEnd(n, at + 1);
+      var boxes = range.getClientRects();
+      for (var k = 0; k < boxes.length; k++) { if (boxes[k].width > 0.1) { return boxes[k]; } }
+    }
+    return null;
+  }
+  function seps() {
+    var all = document.querySelectorAll('.shep-sep');
+    for (var i = 0; i < all.length; i++) {
+      var sep = all[i], end = false;
+      if (drawn(sep)) {
+        var own = sep.getClientRects(), last = own[own.length - 1], next = nextGlyph(sep);
+        end = !!next && next.top >= last.bottom - last.height / 2;
+      }
+      if (sep.hasAttribute(SEP_END) !== end) { sep.toggleAttribute(SEP_END, end); }
+    }
+  }
   function layout() {
     orientation();
     fits();
     folds();
     tabLines();
     cues();
+    seps();
     var shell = document.getElementById('shep-shell');
     var row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
     var chips = document.querySelector('#shep-chips .shep-chips');

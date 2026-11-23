@@ -3722,7 +3722,8 @@ const QUEUE_JS = __QUEUE_JS__;
             const dot = rg.getBoundingClientRect(), next = sep.nextElementSibling;
             const after = next ? ink(next)[0] : null;
             seps.push({ width: box(b).width, fromStart: dot.left - box(b).left,
-                        endsLine: !!after && after.top > dot.bottom - 1 });
+                        endsLine: !!after && after.top > dot.bottom - 1,
+                        drawn: getComputedStyle(sep).visibility !== 'hidden' });
           }
         }
         const cells = [...document.querySelectorAll('#pc-whole td')];
@@ -3770,9 +3771,15 @@ def test_a_separator_never_starts_a_line_and_a_whole_cell_keeps_its_line(pieces_
     a no-break space, then "· "), so in a box of any width a line ends at it
     and never starts with it; a cell whose value reads as one
     (`style.CELL_WHOLE`) keeps its line while a column of prose beside it
-    wraps."""
+    wraps. The sweep's L7 (SW-LK2, SW-LK7: Fine-tune's facts line ended in
+    a dangling " · "): a separator the line breaks after is not drawn (the
+    shell's layout pass marks it, its box kept), so no drawn separator ends
+    a line either."""
     facts = pieces_seen["c12"]
-    assert any(x["endsLine"] for x in facts["seps"]), facts["seps"]   # some line ends at one
+    ends = [x for x in facts["seps"] if x["endsLine"]]
+    assert ends, facts["seps"]                                 # some line breaks after one
+    assert not [x for x in ends if x["drawn"]], ends           # and draws no separator there
+    assert [x for x in facts["seps"] if not x["endsLine"] and x["drawn"]], facts["seps"]
     starts = [x for x in facts["seps"] if x["fromStart"] < 1]
     assert not starts, starts
     assert facts["whole"] == 1 and facts["prose"] > 1, facts

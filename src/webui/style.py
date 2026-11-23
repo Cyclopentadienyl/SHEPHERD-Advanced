@@ -500,6 +500,13 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
 span.shep-note { display: inline-block; }
 .shep-note p { font-size: 14px; }
 .shep-sep { color: var(--shep-border-2); }
+/* A separator the line breaks after is not drawn (the shell's layout pass marks it; its box stays,
+   so nothing moves): a line neither starts nor ends with " · " (the sweep's L7, SW-LK2, SW-LK7). */
+.shep-sep[data-shep-end] { visibility: hidden; }
+/* A workspace's marks ("synthetic", the record's state; `renderers.dataset_marks_html`) move as one
+   group, wrapping inside only where a line cannot hold them, on every page (Test's chips parted on
+   two lines, Fine-tune's did not, Training kept its own copy of this rule). */
+.shep-ds-marks { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; vertical-align: middle; }
 .shep-nowrap { white-space: nowrap; }
 /* A name drawn in pieces (`renderers.name_pieces_html`): each piece on one line, a line breaking
    only before the name's own separators, a piece longer than its box broken as the last resort. */

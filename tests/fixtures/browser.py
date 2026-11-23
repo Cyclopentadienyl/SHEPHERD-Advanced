@@ -964,9 +964,16 @@ LOOK_JS = r"""
     for (const blk of chains) {
       if (!blk || linesOf(blk) < 2 || layered(blk)) { continue; }
       const bs = getComputedStyle(blk), room = blk.clientWidth - parseFloat(bs.paddingLeft) - parseFloat(bs.paddingRight);
-      const chars = [];
-      for (const x of texts) {
-        if (!blk.contains(x.node) || unseen(x.el)) { continue; }
+      // A separator not drawn (the shell hides one its line breaks after) still parts two facts.
+      const chars = [], byNode = new Map(texts.map((x) => [x.node, x]));
+      const wk = document.createTreeWalker(blk, NodeFilter.SHOW_TEXT);
+      for (let n = wk.nextNode(); n; n = wk.nextNode()) {
+        const x = byNode.get(n);
+        if (!x) {
+          if (n.data.includes('·') && n.parentElement && n.parentElement.closest('.shep-sep')) { chars.push({ c: '·', r: null }); }
+          continue;
+        }
+        if (unseen(x.el)) { continue; }
         for (let i = 0; i < x.node.data.length; i++) {
           const rg = document.createRange(); rg.setStart(x.node, i); rg.setEnd(x.node, i + 1);
           chars.push({ c: x.node.data[i], r: [...rg.getClientRects()].find((q) => q.width > 0.1) || null });

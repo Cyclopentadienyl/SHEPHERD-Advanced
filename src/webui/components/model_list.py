@@ -1380,9 +1380,11 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
             summary = _run_summary(listing, run)
             # The run by its words, told apart from the other runs' (as every
             # Run select names them): its name first, then its layout and start.
+            # Its layout and start one fact, kept on one line (a time never parts from its date),
+            # after the shared separator (never drawn at a line's end).
             what, _sep, rest = names[run.key].partition(" · ")
             label = (f'<span class="shep-w600">{r.whole_words(what)}</span>'
-                     + (f'<span class="shep-muted"> · {r.whole_words(rest)}</span>'
+                     + (f'{r.SEP}<span class="shep-muted shep-nowrap">{r.e(rest)}</span>'
                         if rest else ""))
             count = (f"{len(run.files)} of {run.total}" if len(run.files) < run.total
                      else str(run.total))

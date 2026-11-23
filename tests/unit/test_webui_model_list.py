@@ -397,7 +397,8 @@ const ROWS = '#shep-models-clinical-rows', FACTS = '#shep-models-clinical-facts'
   await frames();
   const fit = () => page.evaluate(([R, F]) => { const rows = document.querySelector(R), facts = document.querySelector(F);
     return { rows: [rows.clientWidth, rows.scrollWidth], facts: [facts.clientWidth, facts.scrollWidth],
-             body: [rows.parentElement.clientWidth, rows.parentElement.scrollWidth] }; }, [ROWS, FACTS]);
+             body: [rows.parentElement.clientWidth, rows.parentElement.scrollWidth],
+             narrow: !!rows.querySelector('[data-shep-narrow]') }; }, [ROWS, FACTS]);
   out.fit = await fit();
   // Another host's text metrics, standing in: the tree's words a little wider (WIDER_TREE).
   await page.addStyleTag({ content: process.argv[3] });
@@ -487,11 +488,13 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
     assert after["list"][0] == after["facts"][0], seen            # side by side
     assert seen["font"] and all(state == "loaded" for state in seen["font"]), seen["font"]
     fit = seen["fit"]                         # at 1280 x 900, nothing cut or scrolled sideways
-    assert all(scroll <= client for client, scroll in fit.values()), fit
-    # The same with the tree's words wider, the details at least their minimum.
+    assert all(scroll <= client for client, scroll in (fit["rows"], fit["facts"], fit["body"])), fit
+    # The same with the tree's words wider, the details at least their minimum: the region took
+    # the tree's own narrowest (it grew), or, where the details' minimum leaves less, the tree
+    # dropped its optional columns (the shell's fit) and is whole in what is left.
     wider = seen["wider"]
-    assert all(scroll <= client for client, scroll in wider.values()), wider
-    assert wider["rows"][0] > fit["rows"][0], (fit, wider)        # the region took the tree's
+    assert all(scroll <= client for client, scroll in (wider["rows"], wider["facts"], wider["body"])), wider
+    assert wider["rows"][0] > fit["rows"][0] or (wider["narrow"] and not fit["narrow"]), (fit, wider)
     assert seen["widerFacts"] >= 222, seen["widerFacts"]
     stacked = seen["stacked"]
     assert stacked["layout"] == "stack"
@@ -1950,10 +1953,11 @@ def _cells(row):
 
 
 def _visible(html):
-    """HTML as the words it shows (tags dropped, entities read)."""
+    """HTML as the words it shows (tags dropped, entities read, a no-break space
+    read as the space it shows)."""
     import html as html_
 
-    return html_.unescape(re.sub(r"<[^>]+>", "", html))
+    return html_.unescape(re.sub(r"<[^>]+>", "", html)).replace("\u00a0", " ")
 
 
 def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypatch):
