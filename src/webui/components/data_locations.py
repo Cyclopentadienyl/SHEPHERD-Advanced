@@ -691,10 +691,10 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: moves to the next line together, at the box's end, never Save alone (at 390
 #: x 844 Save wrapped alone and Check stood centred in a row three lines
 #: tall); Create and its suggestion are one more group after them, on their
-#: line while it holds them, else a line of their own. Where the panel cannot
-#: hold the key beside a box of that room (a container query on the panel,
-#: `DL_NARROW`) the key stands above its box, which takes the line. The
-#: evidence folders' box, a path per line, takes its whole line there: its
+#: line while it holds them, else a line of their own. The panel is at least
+#: about 700 px wide at the display floor, so the key always stands beside its
+#: box (the query that put it above its box served windows under the floor and
+#: is retired with it). The evidence folders' box, a path per line, takes its whole line there: its
 #: hint ("One folder path on the server per line", 250.5 px in the dashboard's
 #: type) is longer than 16em. A read-only row's short reason (`ROW_LOCKED`) is
 #: a line of the bar's own under Check and Save, at their end, above Create.
@@ -708,10 +708,7 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: 768). A path is a token (`renderers.token_html`): it breaks only before its
 #: own separators, never after a hyphen (SW-LK7: an in-effect path read
 #: hyphenated at every size).
-DL_NARROW = "27em"
-
 PAGE_CSS = f"""
-{_PAGE} #shep-dl {{ container: shep-dl / inline-size; }}
 {_PAGE} #shep-dl-bd {{ padding: 4px 16px 12px !important; gap: 0 !important; }}
 {_PAGE} #shep-dl-top {{ gap: 8px !important; align-items: center; flex-wrap: wrap; }}
 {_PAGE} #shep-dl-top > .shep-html {{ flex: 1 1 320px !important; min-width: 0 !important; }}
@@ -753,16 +750,11 @@ PAGE_CSS = f"""
 {_PAGE} [id^="dl_result_"]:has(.shep-html:empty), {_PAGE} #dl_status:has(.shep-html:empty),
 {_PAGE} [id^="dl_suggest_"]:has(.shep-html:empty),
 {_PAGE} [id^="dl_lock_"]:has(.shep-html:empty) {{ display: none !important; }}
-@container shep-dl (max-width: {DL_NARROW}) {{
-  {_PAGE} .shep-dl-set > .block.shep-dl-keycell {{ flex-basis: 100% !important; }}
-  {_PAGE} .shep-dl-set > .shep-dl-field {{ flex-basis: 100% !important; }}
-  {_PAGE} .shep-dl-field > .block {{ flex-basis: 100% !important; }}
-}}
 {_PAGE} #dl_box_{KEY_TRAINING_EVIDENCE_DIRS} {{ min-width: min(100%, 22em) !important; }}
 """
 
 
-__all__ = ["APPLY_LABEL", "CHECK_LABEL", "CREATE_LABEL", "DL_NARROW", "INTRO", "NOTHING_SET",
+__all__ = ["APPLY_LABEL", "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET",
            "OVERRIDDEN",
            "PAGE_CSS", "PANEL_PARTS", "PATH_HIDDEN", "PRIVATE_KEYS", "REPAIR_LABEL",
            "ROW_LOCKED", "ROW_PARTS", "SAVE_LABEL", "SOURCE_WORDS", "UNKNOWN", "UNREADABLE",

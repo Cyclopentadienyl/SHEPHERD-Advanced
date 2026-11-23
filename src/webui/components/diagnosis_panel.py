@@ -4294,9 +4294,6 @@ FIELDS_FLOOR = 166
 #: media queries), so at 1366 and 1280 the column was 300 px whatever the
 #: row held beside it.
 DX_IN_W = "clamp(300px, 24%, 26rem)"
-#: Below this width of its own (stacked), the input column draws its fields
-#: in one column (it was a window of 760 px, the column about 728 px).
-DX_FIELDS_ONE_COLUMN = "45rem"
 
 PAGE_CSS = f"""
 /* **The input column's width, from the row's** (`DX_IN_W`; no window media query): a share of the
@@ -4628,19 +4625,12 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx-change .shep-model-body {{ flex-direction: column !important; }}
   {_TAB} #shep-dx-change .shep-model-body > * {{ width: 100% !important; flex: none !important; }}
 }}
-/* The input column is its fields' container (a query on its own width, not the window's): stacked
-   and narrow, the fields take one column. */
-{_TAB} #shep-dx-input {{ container: shep-dx-in / inline-size; }}
-@container shep-dx-in (max-width: {DX_FIELDS_ONE_COLUMN}) {{
-  {_TAB} .shep-dx-fields {{ grid-template-columns: minmax(0, 1fr) !important; }}
-}}
 """
 
 
 __all__ = [
     "ANSWER_GATE_CSS",
     "CLOSE_WHILE_LOADING",
-    "DX_FIELDS_ONE_COLUMN",
     "DX_IN_W",
     "EXPORTS_HIDDEN",
     "FIELD_HELP",

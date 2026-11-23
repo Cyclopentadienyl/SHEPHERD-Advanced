@@ -771,8 +771,8 @@ def test_the_input_column_follows_the_row_and_no_window_media_query_decides_it()
     identity drawers were placed from that width. Now the column's width is
     a share of the page's row between a floor and a cap (`DX_IN_W`, on the
     row: the column's flex container and the drawers' containing block, so
-    one width places all three), and the fields' columns follow the input
-    column's own width (a container query). No window media query is left
+    one width places all three); stacked (no wider than tall) the fields take
+    the page's two columns. No window media query is left
     on the page. Top-K's box holds ten widths of "0" in its own type (`ch`),
     as every text box does, and its block (drawn as no box) clips nothing."""
     css = " ".join(dp.PAGE_CSS.split())
@@ -781,9 +781,9 @@ def test_the_input_column_follows_the_row_and_no_window_media_query_decides_it()
     assert f"{dp._TAB} #shep-dx {{ --dx-in-w: {dp.DX_IN_W}; position: relative; gap: 16px;" in css
     assert f"{dp._TAB} #shep-dx-input {{ flex: 0 0 var(--dx-in-w) !important;" in css
     assert "calc(var(--dx-in-w) + 16px)" in css and "100% - var(--dx-in-w)" in css
-    assert f"{dp._TAB} #shep-dx-input {{ container: shep-dx-in / inline-size; }}" in css
-    assert (f"@container shep-dx-in (max-width: {dp.DX_FIELDS_ONE_COLUMN}) {{ {dp._TAB} "
-            ".shep-dx-fields { grid-template-columns: minmax(0, 1fr) !important; } }") in css
+    # The fields' one-column query on the column's own width served stacked windows under the
+    # display floor only (stacked at or above it the column is 1248 px or wider): retired.
+    assert "@container" not in css and not hasattr(dp, "DX_FIELDS_ONE_COLUMN")
     width = re.search(re.escape(f"{dp._TAB} #dx_top_k input[type=number] {{ width: calc(")
                       + r"(\d+)ch \+ (\d+)px\); }", css)
     pad = re.search(re.escape(f"{dp._TAB} #dx_top_k input[type=number] {{ height: 34px; padding: ")
@@ -907,7 +907,7 @@ def test_in_a_browser_the_input_column_follows_the_row_and_top_k_holds_its_value
         shell.plain_html(app._runtime_footer(), elem_id="runtime_footer")
     load = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
             "close": "#shep-dx-change-close button"}
-    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720], [800, 900], [390, 844])
+    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720], [1280, 1280])
     stops = [{"size": size, "page": "clinical", "focus": False} for size in sizes]
     stops += [{"size": [1366, 768], "page": "clinical", "focus": False, "open": load}]
     with served(demo, **mount_options()) as base:
@@ -928,8 +928,7 @@ def test_in_a_browser_the_input_column_follows_the_row_and_top_k_holds_its_value
     assert widths == sorted(widths) and widths[0] < widths[-1], widths
     opened = next(s["extra"] for s in seen if s.get("open"))
     assert abs(opened["change"] - (opened["input"][1] + opened["gap"])) <= 1, opened
-    assert at["800x900"]["layout"] == "stack" and at["800x900"]["columns"] == 2, at["800x900"]
-    assert at["390x844"]["columns"] == 1, at["390x844"]
+    assert at["1280x1280"]["layout"] == "stack" and at["1280x1280"]["columns"] == 2, at["1280x1280"]
 
 
 def test_the_page_css_hides_a_view_by_its_class_and_keeps_the_confirmation_in_view():
@@ -1157,7 +1156,7 @@ _SHORT_JS = r"""async () => {
 
 #: The windows of the walk: the owner's, then shrunk to the short laptops and
 #: enlarged again through 1536 x 760 back to the owner's.
-_SHORT_SIZES = ((1850, 960), (1280, 600), (1366, 620), (1536, 760), (1850, 960))
+_SHORT_SIZES = ((1850, 960), (1280, 720), (1366, 768), (1536, 760), (1850, 960))
 
 #: Two environment warnings in the footer, the recheck's CPU run's (CUDA and
 #: cuVS), each in the probe's consequence-first words (`version_checker`).
@@ -1178,8 +1177,9 @@ def test_a_short_window_folds_the_cards_identity_and_keeps_every_input_usable(mo
     Playwright, skipped without), the page served whole with a model of each
     task loaded (a stand-in status with the card's every line: its run, the
     trained-on dataset, the recorded results, the synthetic chip) and the
-    footer's two warning lines, through 1850 x 960, 1280 x 600, 1366 x 620,
-    1536 x 760 and back to 1850 x 960:
+    footer's two warning lines, through 1850 x 960, the display floor's
+    1280 x 720, 1366 x 768, 1536 x 760 and back to 1850 x 960 (it was found at
+    1280 x 600, below the floor, which is drawn as at it):
 
     - the fields region keeps at least the HPO field whole (its label, info
       line and box), or all its fields when they need less, and its floor
@@ -1242,7 +1242,7 @@ def test_a_short_window_folds_the_cards_identity_and_keeps_every_input_usable(mo
             shown["task"] = task
             stops = [{"size": list(size), "page": "clinical"} for size in sizes]
             if task == "disease":
-                stops.append({"size": [1280, 600], "page": "clinical", "open": details})
+                stops.append({"size": [1280, 720], "page": "clinical", "open": details})
             (tmp_path / task / "shots").mkdir(parents=True)
             walks[task] = walk_ui(base[:-len("gradio_api")], tmp_path / task, stops,
                                   extra_js=_SHORT_JS, shots=tmp_path / task / "shots")
@@ -1256,7 +1256,7 @@ def test_a_short_window_folds_the_cards_identity_and_keeps_every_input_usable(mo
             where, got = (task, stop["size"]), stop["extra"]
             # The warnings on screen: two lines at the short laptops' widths, as on the reviewer's.
             assert got["layout"] == "side", (where, got)
-            assert got["footer"] >= (2 if stop["size"] in ("1280x600", "1366x620") else 1), (where, got)
+            assert got["footer"] >= (2 if stop["size"] in ("1280x720", "1366x768") else 1), (where, got)
             fields = got["fields"]
             # A usable height: the HPO field whole, or every field when they need less.
             assert fields["h"] + 0.5 >= min(got["hpo"], fields["content"]), (where, got)
@@ -1298,7 +1298,9 @@ def test_a_card_with_nothing_more_to_fold_leaves_one_scroll_region_and_run_in_vi
     (more) to fold, so with the footer's two warning lines the input column
     overflowed: a second scroll region around the fields, and Run Diagnosis
     and its reason line out of view. With no model loaded (an operator, and
-    a read-only viewer) at 1280 x 600 and 1366 x 620, and for a read-only
+    a read-only viewer) at the display floor's 1280 x 720 and at 1366 x 768
+    (the short windows it was found at, 1280 x 600 and 1366 x 620, are below
+    the floor and drawn as at it), and for a read-only
     viewer with a patients-like-me child on a frozen backbone loaded (its
     reason line and its run line keep even the folded card tall), the floor
     is the fold's measure only (`style.FOLD_FLOOR`): in a real browser (Node
@@ -1347,7 +1349,7 @@ def test_a_card_with_nothing_more_to_fold_leaves_one_scroll_region_and_run_in_vi
                                     for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
                                  shell.CLINICAL: dp.create_diagnosis_tab})
         shell.plain_html(app._runtime_footer(), elem_id="runtime_footer")
-    stops = [{"size": [1280, 600], "page": "clinical"}, {"size": [1366, 620], "page": "clinical"}]
+    stops = [{"size": [1280, 720], "page": "clinical"}, {"size": [1366, 768], "page": "clinical"}]
     walks = {}
     with served(demo, **mount_options()) as base:
         for name, loaded, operator in (("no model", False, True), ("no model, read-only", False, False),
@@ -1583,8 +1585,9 @@ def test_the_stop_question_takes_the_card_actions_place_and_leaves_the_inputs_us
     (a second scroll region) and the focused HPO box showed 8 of its 83 px
     under the card's head; at 1366 x 620 the fields were 21 px. In a real
     browser (Node and Playwright, skipped without), the page served whole
-    with a disease and then a gene task model loaded, at 1850 x 960,
-    1280 x 600 and 1366 x 620, the question open:
+    with a disease and then a gene task model loaded, at 1850 x 960, the
+    display floor's 1280 x 720 and 1366 x 768 (it was found at 1280 x 600 and
+    1366 x 620, below the floor), the question open:
 
     - it takes the place of the card's actions (their row is not drawn) and
       says every fact it said: the model it stops by its fingerprint, that
@@ -1639,7 +1642,7 @@ def test_the_stop_question_takes_the_card_actions_place_and_leaves_the_inputs_us
                                     for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
                                  shell.CLINICAL: dp.create_diagnosis_tab})
         shell.plain_html(app._runtime_footer(), elem_id="runtime_footer")
-    sizes = ([1850, 960], [1280, 600], [1366, 620])
+    sizes = ([1850, 960], [1280, 720], [1366, 768])
     question = {"click": "#shep-dx-stop-btn", "shown": "#shep-dx-stop-now",
                 "close": "#shep-dx-stop-keep"}
     script = _STOP_TYPED_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
@@ -4443,7 +4446,8 @@ def test_a_focus_the_stop_question_hides_goes_to_the_next_card_control(monkeypat
       text while the body already had focus (D8 refused and a model changed
       elsewhere in one read closed the question and drew the other controls
       locked) by the read that unlocks ■ Stop inference;
-    - at a phone's window (390x844, stacked), Enter on ■ Stop inference, the
+    - stacked (1280 x 1280: the display floor's width, no wider than tall),
+      Enter on ■ Stop inference, the
       page swiped to the top (a touch press, which moves no focus, then the
       scroll), the card's read closing the question: focus on ■ Stop
       inference and the page's scroll where the reader left it;
@@ -4528,7 +4532,7 @@ def test_a_focus_the_stop_question_hides_goes_to_the_next_card_control(monkeypat
     seen = {}
     with served(demo, **mount_options()) as base:
         for viewer, headers, window in (("operator", None, {}),
-                                        ("stacked", None, {"w": 390, "h": 844}),
+                                        ("stacked", None, {"w": 1280, "h": 1280}),
                                         ("readonly", READ_ONLY_HEADERS, {})):
             page["operator"] = headers is None
             plan = tmp_path / f"{viewer}.json"

@@ -118,8 +118,8 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
     buttons); at 390 x 844 Save wrapped alone and Check stood centred in a
     row three lines tall; a window media query (899 px) chose the narrow
     form. Now the name and its words are above the row's facts, Check and
-    Save are one group that wraps whole, the narrow form is a query on the
-    panel's own width (no window media query), and the panel's heading is
+    Save are one group that wraps whole (no window media query), and the
+    panel's heading is
     the go link's focus target (``#shep-dl`` and its ``h2``, a heading that
     takes focus, no control).
     The sweep's L7 (SW-LK1): the name took a line of its own above the facts
@@ -134,10 +134,11 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
 
     css = " ".join(dl.PAGE_CSS.split())
     assert "@media" not in css
-    assert f"{dl._PAGE} #shep-dl {{ container: shep-dl / inline-size; }}" in css
     assert (f"{dl._PAGE} .shep-dl-row > :is(.shep-dl-head, .shep-dl-main) "
             "{ flex: 1 1 100% !important;") in css
-    assert f"@container shep-dl (max-width: {dl.DL_NARROW}) {{" in css
+    # The key above its box in a panel under 27em served windows under the display floor only
+    # (the panel is about 700 px wide at the floor): retired.
+    assert "@container" not in css and not hasattr(dl, "DL_NARROW")
     app = create_gradio_app()
     blocks = {getattr(b, "elem_id", None): b for b in app.blocks.values()}
     for key in KEYS:
