@@ -1673,18 +1673,21 @@ PAGE_CSS = f"""
    basis and the larger share of the room left, the job panel's basis; each never under its
    minimum (the layout rule's measure, `src/webui/shell.py`): the form's base summary list keeps
    its key column whole from 30rem; from 27.5rem the job's card holds the ended children's table
-   whole in the dashboard's type (else the card shows their lists: the shell's fit). */
+   whole in the dashboard's type (else the card shows their lists: the shell's fit). The job panel
+   takes no share of the room left: the form does (L7 SW-LK2: a quarter of it to a job panel of
+   one sentence left the tasks one a line and Run name under the fold at 1550 x 830). */
 {_PAGE} #shep-ft-form {{ --shep-panel-basis: 32rem; --shep-panel-grow: 3; --shep-panel-min: 30rem; }}
-{_PAGE} #shep-ft-job {{ --shep-panel-basis: 24rem; --shep-panel-grow: 1; --shep-panel-min: 27.5rem; }}
+{_PAGE} #shep-ft-job {{ --shep-panel-basis: 24rem; --shep-panel-grow: 0; --shep-panel-min: 27.5rem; }}
 /* The setup notice over both columns (`setup_html`), hidden while it says nothing. */
 {_PAGE} #ft_setup:not(:has(.shep-nb)) {{ display: none !important; }}
 /* The form's two columns (B27-1): side by side while the form holds both at their basis, else
    one under the other (they wrap: no window size decides it), each its fields with the body's
    gap. Each basis is what its column holds on a line: the base's selects and summary list, and
-   the children's widest row, the three tasks or Epochs, Seed and Graph backbone, each whole. */
+   the children's widest row, the three tasks or Epochs, Seed and Graph backbone, each whole
+   (37.5rem: the tasks need 37.1rem on one line; at 30rem they stood one a line, L7 SW-LK2). */
 {_PAGE} .shep-ft-cols {{ flex-wrap: wrap !important; align-items: flex-start !important; gap: var(--shep-space-2) var(--shep-space-5) !important; }}
 {_PAGE} .shep-ft-cols > .shep-ft-col {{ flex: 1 1 24rem !important; min-width: 0 !important; gap: var(--shep-space-2) !important; }}
-{_PAGE} .shep-ft-cols > #ft_children_col {{ flex-basis: 30rem !important; }}
+{_PAGE} .shep-ft-cols > #ft_children_col {{ flex-basis: 37.5rem !important; }}
 /* Run and Checkpoint side by side where the column holds both, else one under the other; their
    group keeps a select's floor beside Refresh, so Refresh stays on the last box's line. */
 {_PAGE} .shep-ft-parent-row > .form {{ flex: 1 1 14rem !important; min-width: min(14rem, 100%) !important; }}
