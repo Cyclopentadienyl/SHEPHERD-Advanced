@@ -4140,6 +4140,9 @@ const LOOK_JS = __LOOK_JS__;
         <div class="rg shep-scroll-cue" data-shep-more id="cue-good">${lines}</div>
         <div class="rg" id="cue-pad" style="padding-bottom: 80px"><p>One short line, then room.</p></div>
         <div class="rg" id="cue-nobox"><div style="display: contents; overflow: hidden">${lines}</div></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-gap" style="height: 60px"><p>A first line, then a gap.</p>
+          <div style="height: 70px"></div><p>The next field, under the edge past the gap.</p></div>
+        <div class="rg" id="cue-inner"><div style="overflow: auto">${lines}</div></div>
         <div class="sw" id="side-bad">${wide}</div>
         <div class="shep-rs-cue">Wider than the panel: scroll sideways.</div>
         <div class="sw" id="side-good">${wide}</div>
@@ -4200,7 +4203,7 @@ const LOOK_JS = __LOOK_JS__;
           <tr id="rh-bad-row"><td>demo</td><td>3f56</td><td>${long}</td></tr></table></div>
         <div class="sw" id="rh-good"><table style="width: 520px; table-layout: fixed"><colgroup><col style="width: 150px"><col style="width: 150px"><col style="width: 220px"></colgroup>
           <tr id="rh-good-row"><td>demo</td><td>3f56</td><td>in use</td></tr></table></div>
-        <div class="rg shep-scroll-cue" data-shep-more id="iv-region"><div style="height: 1200px"></div><button type="button" id="iv-in">Apply</button></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="iv-region">${lines}<div style="height: 1200px"></div><button type="button" id="iv-in">Apply</button></div>
         <button type="button" id="iv-out" style="position: absolute; left: 16px; top: 1000px">Apply Settings</button>
         <div style="display: contents; overflow: auto"><button type="button" id="iv-nobox" style="position: absolute; left: 200px; top: 1000px">Restart</button></div>
       </div>
@@ -4246,6 +4249,13 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     assert _hits(found, "cue", "#side-bad holds"), found["cue"]
     assert not _hits(found, "cue", "#side-good"), found["cue"]
     assert not _hits(found, "cue", "#iv-region"), found["cue"]
+    # The sweep's L7 check, C1: a cue is seen only where its fade lies over something drawn
+    # (Diagnosis' fields at 1550 x 830 faded the gap under Patient ID; Options and Top-K hid under
+    # it); C4: a box whose overflow style scrolls but whose content fits it cuts nothing, so the
+    # lines its region cuts are that region's (Fine-tune's Device radios were judged by their
+    # own block's, which never scrolls).
+    assert _hits(found, "cue", "#cue-gap fades its last 28 px over nothing drawn"), found["cue"]
+    assert _hits(found, "cue", "#cue-inner holds"), found["cue"]
 
 
 def test_the_clipped_rule_finds_words_a_box_cuts(l7_rules_seen):

@@ -755,8 +755,13 @@ LOOK_JS = r"""
       const cache = nearest.get(e) || {};
       if (axis in cache) { return cache[axis]; }
       let found = null;
+      // One that scrolls in that axis now: a box whose overflow style scrolls but whose content
+      // fits it (a Gradio block of radios, overflow auto) cuts nothing, and naming it hid the
+      // cut its real region made (the sweep's L7 check, C4: Fine-tune's Device radios under the
+      // form's edge were judged by their own block's).
+      const over = (a) => (axis === 'y' ? a.scrollHeight > a.clientHeight + 1 : a.scrollWidth > a.clientWidth + 1);
       for (let a = e; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
-        if (scrolls(a, axis) && boxed(a)) { found = a; break; }
+        if (scrolls(a, axis) && boxed(a) && over(a)) { found = a; break; }
       }
       cache[axis] = found; nearest.set(e, cache);
       return found;
@@ -802,12 +807,27 @@ LOOK_JS = r"""
       const sx = scrolls(g, 'x') && g.scrollWidth > g.clientWidth + 1;
       if (!sy && !sx) { continue; }
       const box = pad(g), mine = items.filter((it) => g.contains(it.el));
+      const below = sy ? mine.filter((it) => scroller(it.el, 'y') === g && it.r.bottom > box.bottom + past(it.r))
+        .sort((a, b) => a.r.top - b.r.top) : [];
       if (sy && !masked(g)) {
-        const below = mine.filter((it) => scroller(it.el, 'y') === g && it.r.bottom > box.bottom + past(it.r))
-          .sort((a, b) => a.r.top - b.r.top);
         if (below.length) {
           out.cue.push(`${named(g)} holds ${Math.round(Math.max(...below.map((it) => it.r.bottom)) - box.bottom)} px `
             + `of content under its edge with no scroll cue (first: "${clip(below[0].t, 30)}")`);
+        }
+      } else if (below.length) {
+        // A cue is seen only where it fades something drawn: the fade (its length read from the
+        // region's own mask) over a gap between fields reads as nothing, the next field under the
+        // edge unseen (the sweep's L7 check, C1: Diagnosis' fields at 1550 x 830 faded the 22 px
+        // gap under Patient ID, Options and Top-K hidden under it). A line or control of the
+        // region drawn in the fade by a quarter of its own height or more shows it.
+        const m = /calc\(100% - ([\d.]+)px\)/.exec(String(getComputedStyle(g).maskImage || getComputedStyle(g).webkitMaskImage));
+        const fade = m ? parseFloat(m[1]) : 0, top = box.bottom - fade;
+        const seen = mine.some((it) => scroller(it.el, 'y') === g
+          && Math.min(it.r.bottom, box.bottom) - Math.max(it.r.top, top) >= past(it.r));
+        if (fade > 0 && !seen) {
+          out.cue.push(`${named(g)} fades its last ${Math.round(fade)} px over nothing drawn: what lies under `
+            + `its edge starts ${Math.round(below[0].r.top - box.bottom)} px below it, no cue seen (first: `
+            + `"${clip(below[0].t, 30)}")`);
         }
       }
       const before = g.previousElementSibling;
