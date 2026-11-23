@@ -4035,9 +4035,10 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
     no run yet, and with a workspace of a long name that cannot be trained,
     at 1850 x 960, 1366 x 768, 960 x 1080 and 390 x 844, measured relative to
     what is drawn: every group of the bar holds its controls on one line;
-    the actions (Start and Continue…) on one line, their group at the bar's
-    end (with a dataset chosen, at 1850 x 960, on the one line of every
-    group: R-38); every control inside the bar's padding; the note, when it says
+    the actions (Start and Continue…) on one line, their group at the end
+    of a line it shares, and starting a line it has alone, on the bar's
+    edge (the sweep's L7, SW-LK5; with a dataset chosen, at 1850 x 960, on
+    the one line of every group: R-38); every control inside the bar's padding; the note, when it says
     something, under every control, from the bar's edge, each line inside
     the bar; no text of the run bar beside a
     control but the dataset's identity, the job's state and the relation
@@ -4075,7 +4076,16 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
         actions = drawn["actions"]
         assert len(actions) >= 2, where
         assert max(a[1] for a in actions) < min(a[3] for a in actions), where
-        assert abs(drawn["act"][2] - right) <= 2, where
+        # The actions' group at the end of a line it shares with another group; alone on its
+        # line, it starts the line on the bar's edge (the sweep's L7, SW-LK5: pushed to the end
+        # alone, it left 459 to 810 px of the line's start empty at 1366 x 768).
+        act = drawn["act"]
+        shared = [g for g in drawn["groups"] if g["box"] != act
+                  and g["box"][1] < act[3] and g["box"][3] > act[1]]
+        if shared:
+            assert abs(act[2] - right) <= 2, where
+        else:
+            assert abs(act[0] - left) <= 2, where
         if case == "configured" and size == "1850x960":
             # R-38: at the owner's window, a dataset chosen, the bar is one row.
             assert len({group["box"][1] for group in drawn["groups"]}) == 1, where

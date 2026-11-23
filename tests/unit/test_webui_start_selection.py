@@ -396,14 +396,15 @@ def test_start_uses_the_selection_shown_or_refuses_one_not_read_yet(root, monkey
         assert last["notice"] == "", (scenario, last)
         if "first" in steps:
             # Pressed before the read landed: a stated refusal, nothing started.
-            assert steps["first"]["notice"].startswith("✕ Not started:"), (scenario, steps)
+            # The mark's shape, its no-break space (`renderers.MARK_SPACE`), its words.
+            assert steps["first"]["notice"].startswith("✕\u00a0Not started:"), (scenario, steps)
     assert seen["a_b_a"]["last"]["dataset"] == "alpha"
     # The words: the choice not read yet, by the select's label (the base list
     # late is the list's own refusal: the list shown is the other dataset's).
     unread = {"a_to_b": "Dataset", "read_fails": "Dataset", "run_late": "Run",
               "training": "Dataset"}
     for scenario, what in unread.items():
-        assert seen[scenario]["first"]["notice"] == "✕ Not started: " + shell.UNREAD_CHOICE.format(
+        assert seen[scenario]["first"]["notice"] == "✕\u00a0Not started: " + shell.UNREAD_CHOICE.format(
             what=what), scenario
     assert "the list shows alpha’s bases, not beta’s" in seen["list_late"]["first"]["notice"]
 
