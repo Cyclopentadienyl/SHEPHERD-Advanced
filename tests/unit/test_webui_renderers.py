@@ -14,7 +14,7 @@ items to escaped HTML. What these pin:
   fingerprint"; "trained on" every listed workspace with the full manifest
   digest the checkpoint records, or "matches no listed workspace"; the
   synthetic chip; the recorded tests as a state, never a result's number; an
-  unreadable checkpoint greyed "Metadata not readable: <why>; cannot be loaded";
+  unreadable checkpoint greyed "Metadata not readable: <why>. It cannot be loaded.";
 - **Model Facts**: Identity, Uses (the code's fixed statement and the synthetic
   line), Data, Evidence ("selection metric on val, not an independent test";
   recorded tests as states) and Warnings, always open;
@@ -252,7 +252,7 @@ def test_an_unreadable_checkpoint_is_greyed_and_cannot_be_loaded():
 
     html = _models_tree(checkpoint(sha=None, problem="UnpicklingError: no"))
     assert "shep-row-dis" in html and 'aria-disabled="true"' not in html
-    assert "Metadata not readable: UnpicklingError: no; cannot be loaded" in html
+    assert "Metadata not readable: UnpicklingError: no. It cannot be loaded." in html
     # A refused read's plain words on the row, the loader's reference left to
     # its details (`renderers.reason_lead`).
     refused = "the file cannot be read as a checkpoint; Ref: UnpicklingError: Weights only"
@@ -629,7 +629,7 @@ def test_an_entry_never_read_does_not_claim_a_failed_read():
     never = {**checkpoint(sha=None, problem="'bad\\xff' is not text"), "size_bytes": None,
              "run": "bad\\xff", "filename": "RUNS"}
     html = _models_tree(never)
-    assert "Not read: " in html and "; cannot be loaded" in html
+    assert "Not read: " in html and ". It cannot be loaded." in html
     assert "metadata not readable" not in html.lower()
     assert r.unreadable_words(never) == "not read"
     failed = checkpoint(sha=None, problem="UnpicklingError: …")

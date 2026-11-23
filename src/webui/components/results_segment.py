@@ -609,7 +609,7 @@ def _units_html(protocol: Any, rows: Sequence[Mapping[str, Any]],
             m["unit"] for row in rows for m in row.get("metrics") or []
             if m.get("name") == name and isinstance(m.get("unit"), str) and m["unit"]))
         if said:
-            units.append((_metric_words(protocol, name), r.e("; ".join(said))))
+            units.append((_metric_words(protocol, name), r.e(", ".join(said))))
     if not units:
         return ""
     return ('<p class="shep-mp-p shep-rs-units-h">Units</p>'
@@ -649,7 +649,7 @@ def protocol_table_html(protocol: Any, rows: Sequence[Mapping[str, Any]],
 def _where_text(where: Any) -> str:
     if not isinstance(where, Mapping):
         return ""
-    return "; ".join(f"{key.replace('_', ' ')} {value}" for key, value in where.items()
+    return ", ".join(f"{key.replace('_', ' ')} {value}" for key, value in where.items()
                      if value is not None and key != "source")
 
 
@@ -1608,13 +1608,13 @@ def compare_html(rows: Sequence[Mapping[str, Any]], differences_only: bool, *,
                     for row, name in zip(columns, heads_said))
     notes = []
     if asked > COMPARE_CAP:
-        notes.append(f"{asked} were chosen; Compare shows {COMPARE_CAP} at a time, the first "
+        notes.append(f"{asked} were chosen. Compare shows {COMPARE_CAP} at a time, the first "
                      f"{COMPARE_CAP} chosen (Export takes them all).")
     if differences_only and many:
         notes.append(_hidden_note(hidden, unknown_hidden, single_hidden, none_hidden))
     elif differences_only:
-        notes.append("One result: every row is shown; choose another to see differences.")
-    notes.append("Values as recorded, side by side; no difference is computed, and each "
+        notes.append("One result: every row is shown. Choose another to see differences.")
+    notes.append("Values as recorded, side by side. No difference is computed, and each "
                  "metric row is one protocol's.")
     note_html = "".join(f'<p class="shep-mp-p shep-sub">{r.e(n)}</p>' for n in notes)
     # Its words stay in view when the table scrolls sideways (`shep-rs-pin`).

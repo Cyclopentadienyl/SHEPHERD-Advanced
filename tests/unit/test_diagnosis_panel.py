@@ -2712,7 +2712,7 @@ def test_a_refused_reload_leaves_the_card_on_this_page_saying_the_refusal(monkey
                       "not_serving": {"state": "load_refused", "lead": lead,
                                       "at": "2026-07-07T16:00:00+00:00",
                                       "model_sha12": "1e20694dcae4"}})
-        return ml.LoadStep(None, ml._outcome("grey", "Not reloaded; the model in use is "
+        return ml.LoadStep(None, ml._outcome("grey", "Not reloaded. The model in use is "
                                              "unchanged.", lead), "", None, False)
 
     monkeypatch.setattr(ml, "finish_load", refused_reload)
@@ -2727,7 +2727,7 @@ def test_a_refused_reload_leaves_the_card_on_this_page_saying_the_refusal(monkey
     run(loading)
     (confirm,) = _named(demo, "_confirm")
     answered = run(confirm)
-    assert "Not reloaded; the model in use is unchanged." in answered[confirm.outputs[2]._id]
+    assert "Not reloaded. The model in use is unchanged." in answered[confirm.outputs[2]._id]
     assert answered[ctx.served_model_changed._id] == gr.update(), "nothing served changed"
     drawn = {}
     for fn in [fn for fn in demo.fns.values() if fn.trigger_after == confirm._id and fn.fn]:
@@ -4618,7 +4618,7 @@ def test_the_results_banners_and_warnings_draw_the_shared_marks_not_their_own():
     result = _result_with(_served_identity())
     body = dp.results_body_html(result, 1) + dp.banners_html(result)
     assert "⚠" not in body
-    assert status_mark("warn", "Warnings: low phenotype count") in body
+    assert status_mark("warn", "low phenotype count") in body
     assert 'class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲' in (
         dp.banners_html(result))
     assert not _RAW_HEX.search(dp.banners_html(result))
@@ -4861,7 +4861,7 @@ def test_the_card_time_reads_the_same_on_every_poll():
     later = _card(_status_serving(_served_identity()), at="2026-07-07T16:00:05", state=first)
     a, b = dp.card.time_html(first), dp.card.time_html(later)
     assert a != b and _visible(a) == _visible(b) == "current"
-    assert 'title="Status read at 16:00:05 UTC; read again every 5 s"' in b
+    assert 'title="Status read at 16:00:05 UTC. Read again every 5 s."' in b
 
 
 def test_the_card_drops_its_synthetic_chip_while_the_results_banner_says_it():

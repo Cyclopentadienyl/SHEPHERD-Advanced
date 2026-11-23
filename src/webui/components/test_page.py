@@ -462,10 +462,10 @@ def import_refusal(exc: BaseException) -> str:
         problems.append(text)
     count = len(problems)
     more = count - PROBLEMS_SHOWN
-    listed = "; ".join(problems[:PROBLEMS_SHOWN]) + (f"; … {more} more" if more > 0 else "")
+    listed = r.sentences([*problems[:PROBLEMS_SHOWN], *([f"… {more} more"] if more > 0 else [])])
     return "Refused: " + said(
-        f"The file is not a {SOURCE_FORMAT} source ({count} problem{'s' if count != 1 else ''}); "
-        f"the import is refused as a whole: {listed}. The problems are listed by case index: "
+        f"The file is not a {SOURCE_FORMAT} source ({count} problem{'s' if count != 1 else ''}). "
+        f"The import is refused as a whole: {listed} The problems are listed by case index: "
         "case ids are not sent to the browser, and the command-line preview on the machine "
         "(scripts/import_cohort.py) lists each one with its case id",
         "Nothing was written.")
@@ -668,7 +668,7 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
     # **The store's own listing problem** (Decision 10): with it, no run's
     # report can be confirmed here, and a run is registered from the command
     # line by naming its report. Another run's problem is never this.
-    store_problem = store.problem or ("; ".join(
+    store_problem = store.problem or (r.sentences(
         problem for run, problem in store.scan.unplaced if run is None) or None)
     runs = []
     for report in item.reports:
@@ -1176,14 +1176,14 @@ def _version_counts(version: Mapping[str, Any]) -> str:
     if version.get("kind") == protocols.KG_EDGES:
         said: Tuple[str, ...] = ("pairs", "positive_edges", "message_passing_edges")
         lead = (f"{_count(counts.get('pairs'))} pairs from {_count(counts.get('positive_edges'))} "
-                f"positive edges; message passing over "
+                f"positive edges, message passing over "
                 f"{_count(counts.get('message_passing_edges'))} edges")
     elif version.get("kind") == protocols.GENERATED:
         said = ("samples", "diseases", protocols.GENERATED_FIXTURE_COUNT)
         diseases = counts.get("diseases")
         fixture = counts.get(protocols.GENERATED_FIXTURE_COUNT)
         lead = (f"{_count(counts.get('samples'))} generated patients of {_count(diseases)} "
-                f"disease{'' if diseases == 1 else 's'}; "
+                f"disease{'' if diseases == 1 else 's'}, "
                 + (f"{_count(fixture)} gene fixture rows" if protocols.GENERATED_FIXTURE_COUNT
                    in counts else "no gene fixture kept"))
     else:
@@ -1237,7 +1237,7 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
         mark += (' <span class="shep-sub">' + r.word_groups(
             "files checked", checked.replace("T", " ").replace("Z", " UTC")) + '</span>')
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
-    reasons = "; ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
+    reasons = ", ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
     if _kind_words(version):
         rows = [("Holds", _version_counts(version))]
@@ -1448,7 +1448,8 @@ def _job_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
                 else "whether a report was kept cannot be checked (see Run)")
         when = utc_time(job.get("end_time")) or utc_time(job.get("start_time"))
         what = "ended " + when if when else "ended"
-        state = f"{how}; {kept}; the last test run on this server, not in the report store"
+        # One fact a line (the owner's decision of 2026-11-23).
+        state = (how, kept, "the last test run on this server, not in the report store")
         css = "shep-test-rep-ended"
     else:
         return ""
@@ -1457,7 +1458,9 @@ def _job_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
                         words)
     return (f'<tr class="{css}" aria-disabled="true"><td>{e(what)}</td><td>{model}</td>'
             f'<td>{measured}</td><td>{_pill(str(status))}'
-            f'<div class="shep-sub">{e(state)}</div></td></tr>')
+            + "".join(f'<div class="shep-sub">{e(line)}</div>' for line in
+                      (state if isinstance(state, tuple) else (state,)))
+            + '</td></tr>')
 
 
 #: The reports table's columns (the skill's §8: one or two words each).
@@ -2169,8 +2172,8 @@ def result_dataset_html(record: Mapping[str, Any], view: Mapping[str, Any],
         said = e(SELECTED_DATASET)
         if others:
             said += ('<div class="shep-sub">' + e(
-                f"{', '.join(others)} hold{'s' if len(others) == 1 else ''} the same record; "
-                "the report does not record which workspace was read") + "</div>")
+                f"{', '.join(others)} hold{'s' if len(others) == 1 else ''} the same record. "
+                "The report does not record which workspace was read.") + "</div>")
         return said
     who = (e(f"{names[0]}'s dataset record") if len(names) == 1
            else e(f"the dataset record of {', '.join(names[:-1])} and {names[-1]}") if names
@@ -2273,7 +2276,7 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
             parts.append(_reason_html(
                 "No report was kept in this run directory: "
                 + redact(_why_not_kept(state), roots) + ". report.json is the run's commit "
-                "point, which an interrupted, cancelled or refused run never writes; nothing "
+                "point, which an interrupted, cancelled or refused run never writes. Nothing "
                 "here can be registered."))
     else:
         parts.append(_record_html(record, run, state, selection=selection, models=models or {},
@@ -2314,10 +2317,11 @@ def _registration_html(state: Mapping[str, Any]) -> str:
     beside = state.get("checked_beside")
     where = f" (the ledger beside {e(beside)} was read)" if beside else ""
     merged = [n for n in state.get("historical_overlap") or [] if isinstance(n, int)]
-    overlap = (f"; possible overlap with record{'s' if len(merged) != 1 else ''} "
-               f"{', '.join(str(n) for n in merged)}, merged before each run had its own record "
-               "(not recorded whether this run is one of them); registering adds this run's "
-               "own record" if merged and registered != "registered" else "")
+    # Its own line, in sentences (the owner's decision of 2026-11-23).
+    overlap = (f"Possible overlap with record{'s' if len(merged) != 1 else ''} "
+               f"{', '.join(str(n) for n in merged)}, merged before each run had its own record. "
+               "Whether this run is one of them is not recorded. Registering adds this run's "
+               "own record." if merged and registered != "registered" else "")
     return ((f"registered as record {seq}{where}" if registered == "registered"
              and isinstance(seq, int)
              else f"registered{where}" if registered == "registered"
@@ -2325,7 +2329,8 @@ def _registration_html(state: Mapping[str, Any]) -> str:
              else f"cannot be checked{where}" if beside
              else "none found beside the checkpoint the run read, or its ledger cannot be "
                   "read (a registration beside another copy of the weights is looked for only "
-                  "with the checkpoint list, an operator control)") + e(overlap))
+                  "with the checkpoint list, an operator control)")
+            + (f'<div class="shep-sub">{e(overlap)}</div>' if overlap else ""))
 
 
 def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
@@ -2416,7 +2421,7 @@ def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
                 + '</b> They differ '
                 f'on: {differing} (runs {e(others)}). Deterministic algorithms were on, so these '
                 "runs were expected to agree. Every run is kept as recorded and each can be "
-                "registered; compare their environment facts first. An investigation note "
+                "registered. Compare their environment facts first. An investigation note "
                 "records what was found.</div>")
         else:
             # "Without deterministic algorithms" only when the record says so:
@@ -2424,19 +2429,19 @@ def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
             parts.append(
                 '<div class="shep-reason shep-reason-grey shep-test-block"><span><b>Runs under '
                 f'these conditions differ</b> on: {differing} (runs {e(others)}). '
-                + ("Without deterministic algorithms, runs can differ; every"
+                + ("Without deterministic algorithms, runs can differ. Every"
                    if deterministic is False else "Every")
                 + " run is kept as recorded and each can be registered. An investigation note "
                 "records what was looked at.</span></div>")
     elif contest.get("state") == "cannot_be_checked":
-        problems = "; ".join(redact(p, roots) for p in contest.get("problems") or ())
+        problems = r.sentences(redact(p, roots) for p in contest.get("problems") or ())
         if key:
-            parts.append(_reason_html(f"Comparison incomplete: {problems}. This describes the "
-                                      "group only; it does not stop a registration."))
+            parts.append(_reason_html(f"Comparison incomplete: {problems} This describes the "
+                                      "group only. It does not stop a registration."))
         else:
             # This run's own report could not be placed in a group: its own
             # reason, which marks no other run (K8-6r.2).
-            parts.append(_reason_html(f"This run's report cannot be compared: {problems}. It "
+            parts.append(_reason_html(f"This run's report cannot be compared: {problems} It "
                                       "marks no other run."))
     if key:
         from src.evaluation.sidecar import KEY_FIELDS
@@ -2508,7 +2513,7 @@ def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
             return False, _store_not_listed(reports["store_problem"], roots, "this run")
         return False, r.disabled_words(REGISTER, "the report store's listing did not read this "
                                                  "report (it may have been written or replaced "
-                                                 "since); press ↻ to read it again.")
+                                                 "since). Press ↻ to read it again.")
     return True, None
 
 
@@ -2653,9 +2658,10 @@ def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
         ("Ranked-eligible", f"<b>{e(_count(counts.get('ranked_eligible')))}</b> of {e(_count(n))}"),
         ("Excluded", f"<b>{e(_count(counts.get('n_excluded')))}</b> of {e(_count(n))}"
                      f"{': ' + e(reasons) if reasons else ''} "
-                     '<span class="shep-muted">(by category; case ids are not sent to the browser: '
-                     "the command-line preview on the machine lists them, and the committed "
-                     "version records them)</span>"),
+                     '<span class="shep-muted">(by category)</span>'
+                     '<div class="shep-sub">Case ids are not sent to the browser. The '
+                     "command-line preview on the machine lists them, and the committed "
+                     "version records them.</div>"),
         ("Terms unmappable", f"<b>{e(_count(counts.get('terms_unmappable')))}</b> distinct"
                              + (f'<div class="shep-test-terms">{term_list}</div>' if term_list else "")),
         ("Cases with lost terms", f"{e(_count(counts.get('cases_with_lost_terms')))} of "
@@ -2844,7 +2850,7 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
     # Not named `said`: that would make the module's `said` local to this
     # function, and the refusals above would fail before it is assigned.
     message = {"registered": f"Registered as record {sequence}.",
-               "already_registered": f"Already registered as record {sequence}; nothing was "
+               "already_registered": f"Already registered as record {sequence}. Nothing was "
                                      "written."}.get(result.outcome, result.outcome)
     for note in (group_note(result), historical_note(result)):
         if note:
@@ -2878,7 +2884,7 @@ def add_note(reports: Mapping[str, Any], run_id: Any, who: Any, what: Any, reque
         # Another writer held the notes file (K8-6r.1): busy, not refused for
         # good. The note stays in its box, so the operator can add it again.
         return False, (f"The note was not kept: another writer held the notes file for the "
-                       f"{exc.grace:g} s this one waited. Nothing was written this time; add it "
+                       f"{exc.grace:g} s this one waited. Nothing was written this time. Add it "
                        "again.")
     except (OSError, ValueError) as exc:
         return False, str(exc)
@@ -2981,7 +2987,7 @@ def commit_import_ui(preview: Optional[Mapping[str, Any]], workspace: Any, file:
         version = commit_import(plan, registry.value, preview["preview_id"])
     except OSError as exc:
         return False, (f"Failed while writing: {exc}. The version was not committed (cohort.json "
-                       "is written last); a version directory left without it is an interrupted "
+                       "is written last). A version directory left without it is an interrupted "
                        "import, refused by every reader. Remove it before reusing the label."), None
     except ValueError as exc:
         # As the importer says it: a refusal after the source copy was kept
@@ -2990,7 +2996,7 @@ def commit_import_ui(preview: Optional[Mapping[str, Any]], workspace: Any, file:
     manifest = version.manifest
     return True, (f"Committed cohort version {manifest['label']} (role {manifest['role']}): "
                   f"{manifest['samples']['n']} ranked of {manifest['counts']['source_cases']} "
-                  f"source cases; version {version.identity.sha256[:12]}."), manifest["label"]
+                  f"source cases, version {version.identity.sha256[:12]}."), manifest["label"]
 
 
 # ---------------------------------------------------------------------------

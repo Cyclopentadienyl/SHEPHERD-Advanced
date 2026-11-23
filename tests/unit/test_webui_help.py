@@ -1575,6 +1575,159 @@ def test_the_semicolon_reader_reads_texts_at_any_nesting():
     assert [where for _, _, where, _ in _semicolon_texts(kept, "other")] == ["_IDENTITY_PARTS[0]"]
 
 
+#: **Texts written inside a function of a WebUI module that keep "; "**, by
+#: (module, function, text), each with its reason (the owner's decision of
+#: 2026-11-23): words another file depends on, or a separator no one reads;
+#: never a sentence the WebUI writes for its reader. `text` is as
+#: `_function_semicolon_texts` reads it: an f-string's placeholders as "…", a
+#: join's separator as ``"; ".join``.
+_EXPORT_CELL = ("export words: a list's separator inside one cell of the exported "
+                "Diagnosis CSV (`_csv_text`)")
+_EXPORT_REPORT = "export words: the exported Diagnosis report (Markdown) says it so"
+_EXPORT_IDENTITY = ("export words: a value of the exported report's identity table "
+                    "(`_identity_table_lines`), which the drawer shows as the report has it")
+_REF_SPLIT = ("not shown: where a page splits a loader's reason from its Ref "
+              "(`checkpoint_paths.refusal_line` writes it)")
+_KEPT_FUNCTION_SEMICOLONS = {
+    ("components/diagnosis_panel.py", "_query_csv_values", '"; ".join'): _EXPORT_CELL,
+    ("components/diagnosis_panel.py", "_build_results_csv", '"; ".join'): _EXPORT_CELL,
+    ("components/diagnosis_panel.py", "_md_list", '"; ".join'): _EXPORT_REPORT,
+    ("components/diagnosis_panel.py", "_build_results_report_md", '"; ".join'): _EXPORT_REPORT,
+    ("components/diagnosis_panel.py", "_shortest_path_cells",
+     "computed — exact hop distances from the model's graph view; no table is read"):
+        _EXPORT_IDENTITY,
+    ("components/diagnosis_panel.py", "_shortest_path_cells", "absent — no table is served; …"):
+        _EXPORT_IDENTITY,
+    ("components/diagnosis_panel.py", "_device_cells", " in effect; requested: "):
+        _EXPORT_IDENTITY,
+    ("components/models_page.py", "detail_parts", "; Ref: "): _REF_SPLIT,
+    ("components/renderers.py", "reason_lead", "; Ref: "): _REF_SPLIT,
+}
+
+_LOG_CALLS = {"debug", "info", "warning", "warn", "error", "exception", "critical", "log",
+              "print"}
+_CSS_DECLARATIONS = re.compile(r"(^|[\s\"'])[a-z-]+:\s*[^;]+;\s*[a-z-]+:")
+
+
+def _function_semicolon_texts(source: str, module: str, kept=None):
+    """**Every text written inside a function of a WebUI module that carries "; "**
+    (the owner's decision of 2026-11-23; FX-1 read only module constants): each
+    string literal and f-string (its placeholders read as "…") inside a function or
+    a method, and each ``"; ".join`` separator, as (module, function, line, text).
+    Not read: a docstring; a log line or a print; code (with its tags removed, a text
+    holding "{", "=>" or a CSS declaration: a style sheet or a script); a text named
+    in `kept` (`_KEPT_FUNCTION_SEMICOLONS` unless given)."""
+    import ast
+
+    kept = _KEPT_FUNCTION_SEMICOLONS if kept is None else kept
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    docstrings = {node.body[0].value for node in ast.walk(tree)
+                  if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                                       ast.ClassDef))
+                  and node.body and isinstance(node.body[0], ast.Expr)
+                  and isinstance(node.body[0].value, ast.Constant)
+                  and isinstance(node.body[0].value.value, str)}
+
+    def above(node):
+        node = parents.get(node)
+        while node is not None:
+            yield node
+            node = parents.get(node)
+
+    def function(node):
+        if not any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+                   for n in above(node)):
+            return None
+        return ".".join(reversed([n.name for n in above(node) if isinstance(
+            n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]))
+
+    def logged(node):
+        for n in above(node):
+            if isinstance(n, ast.stmt):
+                return False
+            if isinstance(n, ast.Call):
+                called = (n.func.attr if isinstance(n.func, ast.Attribute)
+                          else getattr(n.func, "id", ""))
+                if called in _LOG_CALLS:
+                    return True
+        return False
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            text = "".join(v.value if isinstance(v, ast.Constant) else "…" for v in node.values)
+        elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
+              and not isinstance(parents.get(node), ast.JoinedStr)):
+            text = node.value
+        else:
+            continue
+        where = function(node)
+        if "; " not in text or where is None or node in docstrings or logged(node):
+            continue
+        parent = parents.get(node)
+        if isinstance(parent, ast.Attribute) and parent.attr == "join":
+            text = f'"{text}".join'
+        bare = re.sub(r"<[^>]*>", "", text)
+        if "{" in bare or "=>" in text or _CSS_DECLARATIONS.search(bare):
+            continue                        # a style sheet or a script
+        if (module, where, text) in kept:
+            continue
+        yield module, where, node.lineno, text
+
+
+def _webui_function_texts(kept=None):
+    """`_function_semicolon_texts` of every module under src/webui."""
+    root = Path(__file__).resolve().parents[2] / "src" / "webui"
+    found = []
+    for path in sorted(root.rglob("*.py")):
+        found += _function_semicolon_texts(path.read_text(encoding="utf-8"),
+                                           path.relative_to(root).as_posix(), kept)
+    return found
+
+
+def test_the_webuis_function_texts_hold_no_semicolon():
+    """The owner's decision of 2026-11-23: no WebUI text joins two facts or two
+    sentences with a semicolon. FX-1 read only module constants, and about 90
+    texts written inside functions still did (Diagnosis' Stop inference question,
+    Models' unreadable rows, the Compare notes, the Test page's refusals and
+    registration words, the Continue drawer's check, the reload outcome, the GPU
+    pointer beside Start, ...). Every text a function of a WebUI module writes,
+    and every ``"; ".join`` separator, holds none (`_function_semicolon_texts`),
+    but those named with their reason (`_KEPT_FUNCTION_SEMICOLONS`); and each of
+    those names a text that is still there."""
+    assert _webui_function_texts() == []
+    every = {(module, where, text) for module, where, _, text in _webui_function_texts({})}
+    assert set(_KEPT_FUNCTION_SEMICOLONS) <= every, set(_KEPT_FUNCTION_SEMICOLONS) - every
+
+
+def test_the_function_semicolon_reader_reads_every_text_a_function_writes():
+    """`_function_semicolon_texts` cannot silently narrow: in a stand-in module, a
+    literal, an f-string and a ``"; ".join`` inside a function, and a method's
+    literal, are found; a docstring, a log line, a style sheet, a script, a
+    module constant and a kept text are not."""
+    stand_in = '''
+STYLE = "a; b"
+
+def f(x):
+    """Doc; string."""
+    logger.warning("logged; not shown")
+    css = ".x { a: b; c: d; }"
+    js = "() => { a(); b(); }"
+    return f"One {x}; two." + "; ".join(x) + "three; four"
+
+class C:
+    def m(self):
+        return "five; six"
+
+def kept():
+    return "kept; text"
+'''
+    found = [(where, text) for _, where, _, text in _function_semicolon_texts(
+        stand_in, "stand_in.py", {("stand_in.py", "kept", "kept; text"): "a stand-in"})]
+    assert sorted(found) == sorted([("f", "One …; two."), ("f", '"; ".join'),
+                                    ("f", "three; four"), ("C.m", "five; six")]), found
+
+
 #: Every registered help text opened in the one bubble of the served dashboard
 #: (an ⓘ made for its key, clicked, the bubble read, Esc), at the owner's
 #: window: for each part (its lead, each paragraph, its Ref line, each list

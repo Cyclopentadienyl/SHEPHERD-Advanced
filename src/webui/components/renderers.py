@@ -824,6 +824,15 @@ def short_reason(text: Any, limit: int = 80) -> str:
     return flat[:max(end for end in grapheme_ends(flat) if end <= limit - 1)] + "…"
 
 
+def sentences(parts: Any) -> str:
+    """**Several messages said one after another, each its own sentence**
+    (the owner's decision of 2026-11-23: never two glued with a semicolon):
+    each part's words as given, stripped, ended by one full stop; empty
+    parts left out. The words are never re-worded or re-cased."""
+    said = [" ".join(str(part).split()).rstrip(".") for part in parts or ()]
+    return " ".join(f"{part}." for part in said if part)
+
+
 def reason_lead(text: Any) -> str:
     """**A reason's plain words, without its trailing reference**: a refused
     read says "the file cannot be read as a checkpoint; Ref: <the loader's
@@ -1270,7 +1279,7 @@ def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
     if unchecked:
         notes.append("comparison incomplete" if unchecked >= recorded.count
                      else f"comparison incomplete for {unchecked}")
-    return f"Recorded results: {recorded.count}" + (f" · {'; '.join(notes)}" if notes else "")
+    return f"Recorded results: {recorded.count}" + (f" · {', '.join(notes)}" if notes else "")
 
 
 #: Run layout keys whose name is not their upper case (a model bundle's
@@ -2657,7 +2666,7 @@ def r10_state_parts(label: str, part: Any, evidence: Any
     count = (f"{recorded_count_text(_get(part, 'k'))} of "
              f"{recorded_count_text(_get(part, 'n'))} {unit}")
     if label == "disease_overlap":
-        count += f"; {recorded_count_text(_get(part, 'cases'))} test cases with one of them"
+        count += f", {recorded_count_text(_get(part, 'cases'))} test cases with one of them"
     return state, words, count
 
 
@@ -2797,7 +2806,7 @@ def data_kind_lines(view: Mapping[str, Any], *, version_counts: bool = True) -> 
         return [("Generation", e(identity)),
                 ("Split manifest", fingerprint_value(_get(manifest, "sha256"),
                                                      what="split manifest fingerprint",
-                                                     copy=False) + f"; {kept}"),
+                                                     copy=False) + SEP + kept),
                 ("Training relation", e(GENERATED_EXPOSURE_NOTE))]
     if kind != "kg_edges":
         return []
@@ -2806,7 +2815,7 @@ def data_kind_lines(view: Mapping[str, Any], *, version_counts: bool = True) -> 
     split = exposure.get("split") if exposure is not None else None
     # An exposure block the one reader could not read is null with its
     # problem (fields named, never values): the result stands beside it.
-    source = ("Definition " + str(exposure.get("definition_version")) + "; "
+    source = ("Definition " + str(exposure.get("definition_version")) + " · "
               + (split if isinstance(split, str) else "the model record was not read")
               if exposure is not None else
               f"Its block does not read: {_get(view, 'exposure_problem') or 'no reason given'}")
@@ -2814,10 +2823,10 @@ def data_kind_lines(view: Mapping[str, Any], *, version_counts: bool = True) -> 
                                                           Mapping) else {}
     pairs = cohort.get("pairs") if isinstance(cohort.get("pairs"), Mapping) else {}
     graph = (f"Message passing over the split's {passing.get('part')} part, "
-             f"{recorded_count_text(passing.get('edges'))} edges; pairs {pairs.get('rule')} "
+             f"{recorded_count_text(passing.get('edges'))} edges · pairs {pairs.get('rule')} "
              f"with seed {pairs.get('seed')}, {recorded_count_text(pairs.get('rows'))} rows"
              if version_counts else
-             f"Message passing over the split's {passing.get('part')} part; pairs "
+             f"Message passing over the split's {passing.get('part')} part · pairs "
              f"{pairs.get('rule')} with seed {pairs.get('seed')}")
     measured = _get(view, "measured")
     statuses = measured.get("metrics") if isinstance(measured, Mapping) else None
@@ -2926,13 +2935,13 @@ def record_coverage_html(view: Mapping[str, Any], *, version_counts: bool = True
         run = run if isinstance(run, Mapping) else {}
         main = (f"<b>{e(count(run.get('pairs_scored')))} of {e(count(counts.get('pairs')))}"
                 "</b> stored pairs scored")
-        sub = (f"{count(counts.get('positive_edges'))} positive edges; "
+        sub = (f"{count(counts.get('positive_edges'))} positive edges, "
                f"{count(counts.get('edges_without_negative'))} without a negative to pair")
     elif kind == "generated":
         diseases = counts.get("diseases")
         main = (f"<b>{e(count(_get(view, 'n_ranked')))}</b> "
                 + ("cases ranked by the model" if task else
-                   "counted by the record; what they are is not described for this mode"))
+                   "counted by the record. What they are is not described for this mode."))
         sub = (f"{count(counts.get('samples'))} generated patients of {count(diseases)} "
                f"disease{'' if diseases == 1 else 's'}")
     else:
@@ -2944,13 +2953,13 @@ def record_coverage_html(view: Mapping[str, Any], *, version_counts: bool = True
             main = (f"<b>{e(count(_get(view, 'n_ranked')))} of "
                     f"{e(count(counts.get('ranked_eligible')))}</b> import-eligible cases "
                     "ranked by the model")
-            sub = (f"{count(counts.get('source_cases'))} source cases; "
+            sub = (f"{count(counts.get('source_cases'))} source cases, "
                    f"{count(counts.get('n_excluded'))} excluded at import: {reasons}")
         else:
-            main = e(f"{count(counts.get('source_cases'))} source cases; "
+            main = e(f"{count(counts.get('source_cases'))} source cases, "
                      f"{count(counts.get('n_excluded'))} excluded: {reasons}")
-            sub = (f"{count(_get(view, 'n_ranked'))} cases counted by the record; what they "
-                   "are is not described for this mode")
+            sub = (f"{count(_get(view, 'n_ranked'))} cases counted by the record. What they "
+                   "are is not described for this mode.")
             # Its first line is the version's counts: the record's own count stays.
             return f'<div>{main}</div><div class="shep-sub">{e(sub)}</div>'
     if not version_counts:
@@ -3073,7 +3082,7 @@ def _lp_rows(view: Mapping[str, Any], metrics: Mapping[str, Any]) -> List[Tuple[
             unit = status.get("unit")
             over = _dig(status, "denominator", "count")
             over_unit = _dig(status, "denominator", "unit")
-            said = "; ".join(str(part) for part in (
+            said = ", ".join(str(part) for part in (
                 unit if isinstance(unit, str) and unit else None,
                 f"over {recorded_count_text(over)} {over_unit}"
                 if isinstance(over_unit, str) and over_unit else None) if part)
@@ -3293,11 +3302,15 @@ def investigation_notes_html(notes: Sequence[Mapping[str, Any]], *, problems: Se
         parts.append(f'<div class="shep-rec-notes"><div class="shep-w600">Investigation notes '
                      f'({len(notes)})</div><ul>{items}</ul></div>')
     if problems:
-        parts.append('<div class="shep-sub">' + status_mark(
-            "neutral", "The investigation notes cannot all be read, so a note kept for this "
-                       "group may be missing here" + (": " + "; ".join(problems)
-                                                      if any(problems) else "."))
-            + "</div>")
+        # Several problems one a line (the owner's decision of 2026-11-23:
+        # never two glued with a semicolon); one stays on the mark's line.
+        said = [str(p) for p in problems if p]
+        lead = ("The investigation notes cannot all be read, so a note kept for this group "
+                "may be missing here")
+        parts.append('<div class="shep-sub">' + (
+            status_mark("neutral", f"{lead}: {said[0]}") if len(said) == 1 else
+            status_mark("neutral", f"{lead}:") + "".join(f"<div>{e(p)}</div>" for p in said)
+            if said else status_mark("neutral", f"{lead}.")) + "</div>")
     elif expected and not notes:
         parts.append(f'<div class="shep-sub">{e("No investigation note is kept for this group.")}'
                      "</div>")
@@ -3528,6 +3541,7 @@ __all__ = [
     "r10_state_text",
     "r10_table_html",
     "reason_lead",
+    "sentences",
     "record_chip",
     "record_kind_text",
     "record_read",

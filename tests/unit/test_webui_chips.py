@@ -125,10 +125,10 @@ def test_this_services_inference_is_named_as_such_with_where_to_stop_it():
     start lines repeat the words with the pointer (`busy_words`)."""
     chip = c.gpu_chip_from(None, _inference_holder(os.getpid()), operator=False)
     assert (chip.kind, chip.text) == ("busy", "GPU: inference (this service)")
-    assert chip.remedy == c.STOP_INFERENCE_HERE
+    assert chip.remedy == c.STOP_INFERENCE_STEP
     assert "Stop inference on Diagnosis" in chip.detail and "POST /api/v1/pipeline/stop" in chip.detail
     assert "server-host-name" not in chip.detail and c.GPU_SCOPE in chip.detail
-    assert c.busy_words(chip) == ("GPU: inference (this service); stop it with Stop inference "
+    assert c.busy_words(chip) == ("GPU: inference (this service). Stop it with Stop inference "
                                   "on Diagnosis")
     html = c.chip_html(chip, which="gpu")
     assert "GPU: inference (this service)" in html and "server-host-name" not in html
@@ -167,10 +167,10 @@ def test_the_chip_and_the_research_starts_read_this_services_real_holding(monkey
     try:
         assert c.read_gpu_chip(Idle(), operator=False).text == c.GPU_INFERENCE
         line = tc._gpu_line(None, lock_state(), None, operator=True)
-        assert line == {"text": f"{c.GPU_INFERENCE}; {c.STOP_INFERENCE_HERE}", "test": False,
+        assert line == {"text": f"{c.GPU_INFERENCE}. {c.STOP_INFERENCE_STEP}", "test": False,
                         "unset": False, "notice": None}
         kind, words = tp.gpu_line(manager=Idle(), operator=True)
-        assert (kind, words) == ("busy", f"{c.GPU_INFERENCE}; {c.STOP_INFERENCE_HERE}")
+        assert (kind, words) == ("busy", f"{c.GPU_INFERENCE}. {c.STOP_INFERENCE_STEP}")
     finally:
         held.release()
     assert c.read_gpu_chip(Idle(), operator=True).text == "GPU jobs: none"

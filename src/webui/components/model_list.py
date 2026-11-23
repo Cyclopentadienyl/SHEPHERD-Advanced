@@ -1326,8 +1326,8 @@ def _unreadable_words(item: Mapping[str, Any]) -> str:
     Models' detail, the drawer's facts), one click away."""
     state = r.unreadable_words(item)
     why = r.reason_lead(item.get("problem")) or "its digest was not read"
-    return (f'<span class="shep-sub">{r.e(state[:1].upper() + state[1:])}: {r.e(why)}; '
-            'cannot be loaded</span>')
+    return (f'<span class="shep-sub">{r.e(state[:1].upper() + state[1:])}: {r.e(why)}. '
+            'It cannot be loaded.</span>')
 
 
 def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Preset,
@@ -1855,7 +1855,7 @@ def outside_html(listing: Mapping[str, Any], tree: TreeView, view: Any = None) -
     lead = ("Selected model not shown among the latest runs" if not why and tree.cut
             else f"Selected model not shown by this filter ({', '.join(why) or 'the order'})")
     words = (f"{lead}: {r.model_kind_text(item)}, "
-             f"{r.run_words(item.get('architecture'), item.get('run'))}; its details are kept")
+             f"{r.run_words(item.get('architecture'), item.get('run'))}. Its details are kept.")
     action = ('<button type="button" class="shep-btn shep-linkish" data-key="__clear_search__">'
               'Clear search</button>' if tree.query and search_hit(item, tree.query) is None
               else "")
@@ -2350,7 +2350,7 @@ def confirmation_html(plan: Mapping[str, Any], *, notice: Optional[str] = None) 
         f'<span class="shep-spinner" aria-hidden="true"></span> <b>{r.e(PAGE_WAIT_WORDS)} '
         '<span class="shep-elapsed">00:00:00</span></b> Closing this does not stop it.</div>'
         '<div class="shep-load-timeout" hidden><b>The page stopped waiting after '
-        f'{PAGE_WAIT_SECONDS} s; the server may still finish the reload.</b> '
+        f'{PAGE_WAIT_SECONDS} s. The server may still finish the reload.</b> '
         f'<button type="button" class="shep-btn shep-read-again" data-key="__read_again__">'
         'Read again</button></div>'
         f'<span class="shep-vh" data-old="{r.e(old)}"></span></div>'
@@ -2439,7 +2439,7 @@ def request_load(listing: Mapping[str, Any], key: Any, request: Any, *,
     if target.get("sha256") != item.get("sha256"):
         notice = (f"The file changed since the list was read: it holds model "
                   f"{r.short_hex(target.get('sha256'))} now, not {r.short_hex(item.get('sha256'))}"
-                  " as listed. The To column is what it holds now; read the list again to see "
+                  " as listed. The To column is what it holds now. Read the list again to see "
                   "the rest.")
     return plan, confirmation_html(plan, notice=notice)
 
@@ -2562,7 +2562,7 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
         # The route answers its operator with the build's own words, which
         # can name the checkpoint's path; the page says them without it.
         why = _said(answer.get("message") or "the reload was refused", environ)
-        return LoadStep(None, _outcome("grey", "Not reloaded; the model in use is unchanged.",
+        return LoadStep(None, _outcome("grey", "Not reloaded. The model in use is unchanged.",
                                        why),
                         "", served if isinstance(after, Mapping) else now_sha, changed)
     text = f"The model in use for every session is now {r.short_hex(served)}."

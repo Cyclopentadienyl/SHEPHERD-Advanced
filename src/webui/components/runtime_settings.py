@@ -360,7 +360,7 @@ def _on_apply(alloc, compile_on, request: gr.Request):
     data["allocator_preset"] = alloc
     data["torch_compile"] = bool(compile_on)
     save_runtime_settings(data)
-    said = f"Saved: {allocator_words(str(alloc))}; torch.compile {'on' if compile_on else 'off'}."
+    said = f"Saved: {allocator_words(str(alloc))}, torch.compile {'on' if compile_on else 'off'}."
     return f'<span class="shep-muted">{r.e(said)}</span>', facts_html(settings=data)
 
 

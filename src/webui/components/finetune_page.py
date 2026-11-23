@@ -938,7 +938,7 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
         view["reason"] = _why(tc.LOCK_ICON, operator_only(access.condition))
         view["stop_reason"] = view["reason"] if shown else ""
     elif s == "stopping":
-        view["reason"] = _why(r.DISABLED_MARK, "Stopping: the job is ending; Start waits for it.")
+        view["reason"] = _why(r.DISABLED_MARK, "Stopping: the job is ending. Start waits for it.")
         if shown:
             view["stop_reason"] = _why(r.DISABLED_MARK, "Stopping: the job is ending.")
     elif child_running:

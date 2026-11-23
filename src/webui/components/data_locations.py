@@ -254,7 +254,7 @@ def where_html(view: DeploymentView, *, shown: bool) -> str:
         place = r.e(PATH_HIDDEN)
     rows = r.summary_list([
         ("Settings file", place),
-        ("Order", r.e("A start-up setting first, then the value saved here; nothing else")),
+        ("Order", r.e("A start-up setting first, then the value saved here. Nothing else is read.")),
     ], classes="shep-dl-kv")
     return (f'<details class="shep-more shep-dl-adv"><summary>Where these are kept ›</summary>'
             f"{rows}</details>")
@@ -281,7 +281,7 @@ def notice_html(view: DeploymentView, access: Any) -> str:
         return reason_line(f"{operator_only(access.condition)}. {PATHS_OPERATOR_ONLY}")
     if view.file.problem:
         then = (REPAIR_THEN if view.file.repairable else
-                "It cannot be opened: correct its permissions or the disk where it is; it is "
+                "It cannot be opened: correct its permissions or the disk where it is. It is "
                 "never renamed.")
         return (f'<div class="shep-dl-notice shep-dl-error">'
                 f'{r.status_mark("error", UNREADABLE)}<p class="shep-sub">'
@@ -400,7 +400,7 @@ def holds_words(key: str, resolved: Any) -> str:
     if key == KEY_WORKSPACES_ROOT:
         listing = server_lists.list_workspaces(environ=environ)
         what = (_count(len(listing.items), "workspace", "workspaces") if listing.items else
-                "no workspace yet; Datasets lists each one built in it")
+                "no workspace yet: Datasets lists each one built in it")
     elif key == KEY_REGISTRY:
         listing = server_lists.list_cohort_versions(environ=environ)
         what = (_count(len(listing.items), "cohort version", "cohort versions")
@@ -466,8 +466,8 @@ def _outcome_words(done: Any, key: Optional[str] = None) -> str:
         if item.source == server_settings.SOURCE_ENVIRONMENT:
             # Not applied either while it differs (`settings_store.held_back`),
             # so no other process reads it before the setting is removed.
-            return r.status_mark("neutral", "Saved. The start-up setting stays in effect; the "
-                                            "saved value applies at a start without it")
+            return r.status_mark("neutral", "Saved. The start-up setting stays in effect. The "
+                                            "saved value applies at a start without it.")
     if apply is not None and apply.applied:
         return r.status_mark("ok", "Saved and in effect")
     if apply is not None and apply.pending:

@@ -771,7 +771,7 @@ def time_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
     if card_mode(state, produced_at) != "current":
         return ""
     return (f'<span class="shep-dx-checked" title="Status read at '
-            f'{r.e(hhmmss(state.get("good_at")))}; read again every 5 s">current</span>')
+            f'{r.e(hhmmss(state.get("good_at")))}. Read again every 5 s.">current</span>')
 
 
 def _trained_html(facts: Mapping[str, Any]) -> str:

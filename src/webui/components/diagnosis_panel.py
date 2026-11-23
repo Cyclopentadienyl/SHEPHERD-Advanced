@@ -492,7 +492,7 @@ def _too_many_phenotypes(entry: Dict[str, Any]) -> Optional[str]:
     if not all(isinstance(n, int) and not isinstance(n, bool) for n in (received, limit)):
         return None
     return (
-        f"Recognised {received} HPO phenotype entries (repeats included); one "
+        f"Recognised {received} HPO phenotype entries (repeats included). One "
         f"submission accepts at most {limit}. No diagnosis was run, and the list "
         "was not shortened. Remove repeats or shorten the list, then submit again."
     )
@@ -1782,7 +1782,7 @@ def compare_with_served(result: Mapping[str, Any], state: Mapping[str, Any]) -> 
     nothing here relabels it."""
     kind, identity = _identity_of(result)
     total = len(_IDENTITY_PARTS)
-    keep = "This result keeps its own identity; its exports use it."
+    keep = "This result keeps its own identity. Its exports use it."
     mode = card.card_mode(state, _produced_at(result))
     if kind == IDENTITY_NOT_REPORTED:
         return {"state": "unknown", "total": total, "differ": [],
@@ -2059,7 +2059,7 @@ def _task_table_html(candidates: List[Mapping[str, Any]], selected: Any, kind: s
             cells = (f'<td class="shep-num">{_e(rank)}</td><td>{_e(c.get("case_id"))}</td>'
                      f'<td class="shep-num">{_num(c.get("similarity"))}</td>'
                      f'<td class="shep-dx-dis">{_diagnosis_html(c)}</td>'
-                     f'<td class="shep-dx-wrap">{_e("; ".join(genes)) if genes else _not_recorded()}'
+                     f'<td class="shep-dx-wrap">{_e(", ".join(genes)) if genes else _not_recorded()}'
                      '</td>')
         current = ' class="shep-on" aria-current="true"' if on else ""
         rows.append(f'<tr data-key="{_e(rank)}" tabindex="0"{current}>{cells}</tr>')
@@ -2108,9 +2108,10 @@ def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
     visible text), a patients-like-me result's reference cohort version, and
     the table."""
     warnings = result.get("warnings") or []
-    note = (f'<p class="shep-dx-warnings">'
-            f'{_status_mark("warn", "Warnings: " + "; ".join(str(w) for w in warnings))}</p>'
-            if warnings else "")
+    # One warning a line, each with its own mark (the owner's decision of
+    # 2026-11-23: never two of them glued with a semicolon).
+    note = "".join(f'<p class="shep-dx-warnings">{_status_mark("warn", str(w))}</p>'
+                   for w in warnings)
     kind = _result_kind(result)
     label = (f'<p class="shep-dx-kind">{_e(kind_label(result))}</p>'
              if kind is not None else "")
@@ -2488,7 +2489,7 @@ def result_identity_html(result: Optional[Mapping[str, Any]], state: Mapping[str
         parts.append(f'<p class="shep-dx-lead"><b>This result came from an earlier model or '
                      f'pipeline:</b> {n} of {compared["total"]} parts '
                      f'{"differs" if n == 1 else "differ"} from what is in use now (status '
-                     f'read {_e(when)}); each says what is in use now under its own value. The '
+                     f'read {_e(when)}). Each says what is in use now under its own value. The '
                      'result and its CSV and report keep their own identity.</p>')
     elif compared["state"] == "equal":
         parts.append(f'<p class="shep-dx-lead"><b>Produced by the model in use:</b> all '
@@ -3033,7 +3034,7 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
     if not hpo_ids:
         return _no_result_outputs(
             '<p class="shep-dx-warn"><b>No valid HPO terms found.</b> Enter HPO ids like '
-            '<code>HP:0001250</code> — one per line, or comma/space-separated; names are '
+            '<code>HP:0001250</code> — one per line, or comma/space-separated. Names are '
             'optional.</p>')
     task = card.served_task(state.get("status"))
     genes = _parse_gene_list(genes_text) if task == "gene" else None
@@ -3074,7 +3075,7 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
             logger.warning("Export file generation failed: %s", exc)
             csv_update, md_update = download_update(), download_update()
             export_note = ('<p class="shep-dx-warn">Export files could not be written '
-                           '(disk/permissions?). Results are shown; Run Diagnosis again to retry '
+                           '(disk/permissions?). Results are shown. Run Diagnosis again to retry '
                            'the export.</p>')
     else:
         csv_update, md_update = download_update(), download_update()
@@ -3384,7 +3385,7 @@ def stop_question_html(sha256: str) -> str:
     return ('<div class="shep-dx-stop-q">'
             '<b>Stop inference of model '
             + _fingerprint_value(sha256, what="model fingerprint", copy=False) + '?</b> '
-            'Diagnoses already accepted finish; new ones are refused until a model is loaded. '
+            'Diagnoses already accepted finish. New ones are refused until a model is loaded. '
             'Nothing reloads one by itself.</div>')
 
 

@@ -552,7 +552,7 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
         run = key.rsplit("/", 1)[0]
         assert f'<td class="{CELL_WHOLE}">{kind}</td>' in _run_row(html, run), key
         assert ' hidden><td><div class="shep-tree-name shep-tree-leaf' in _file_row(html, key)
-    assert "Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded" in (
+    assert "Metadata not readable: the file cannot be read as a checkpoint. It cannot be loaded." in (
         _file_row(html, _key(world, "broken.pt")))
     ctl = mp.controls(data, mp.NEWEST, "disease")
     assert mp.shape(listing, data, ctl) == {"task": "disease", "note": mp.LOAD_NOTE,
@@ -864,7 +864,7 @@ def test_a_usage_row_lists_its_metrics_as_recorded_or_says_there_are_none():
     disease = mp.usage_entry_html({**base, "mode": "disease",
                                    "metrics": {"pooled_mrr": 0.45, "pooled_top10": 0.75}})
     assert "Disease pooled MRR 0.4500 over 8 ranked cases" in _text(disease)
-    assert "CUDA · deterministic; registration asked" in _text(disease)
+    assert "CUDA · deterministic, registration asked" in _text(disease)
     assert "Recorded metrics (2)" in disease and "pooled_top10 0.75" in _words(disease)
     for cell in re.findall(r"<div[^>]*>([^<]*)</div>", disease):
         assert cell.count(" · ") <= 1, cell
@@ -1093,7 +1093,7 @@ def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, mon
         "Recorded results · 2 (1 not readable; 1 where runs differ)", mp.RECORDS)
     assert detail["seg"][0][0].count(" · ") == 1
     said = _words(detail["records"])
-    assert ("▲ 1 record for these weights cannot be read as a result; it is kept as "
+    assert ("▲ 1 record for these weights cannot be read as a result. It is kept as "
             "written.") in said
     assert (f"Index Registration Report Reason {index} #2 "
             f"{bad['source_artifact_digest'][:12]} n_ranked: missing") in said
@@ -1160,7 +1160,7 @@ def test_a_records_r10_is_a_table_with_a_mark_on_each_overlap_and_no_stutter():
     assert set(cells["Training"]) == {"evidence", "Disease overlap", "Phenotype-set overlap"}
     disease = cells["Training"]["Disease overlap"]
     assert disease.startswith(r.status_mark("warn", "Overlap"))
-    assert cell_text(disease) == ("▲ Overlap 3 of 50 distinct test diseases; 5 test cases "
+    assert cell_text(disease) == ("▲ Overlap 3 of 50 distinct test diseases, 5 test cases "
                                   "with one of them")
     none = cells["Training"]["Phenotype-set overlap"]
     assert "shep-st" not in none and cell_text(none) == (

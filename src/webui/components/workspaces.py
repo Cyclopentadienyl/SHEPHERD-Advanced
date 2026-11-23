@@ -420,9 +420,9 @@ def binding_state(version: Mapping[str, Any], binding: Optional[Mapping[str, Any
     if contents.get("state") == "verified":
         return "bound", "bound to this graph"
     if contents.get("state") == "unreadable":
-        return "unknown", ("mapped against this graph; its files cannot be checked now: "
+        return "unknown", ("mapped against this graph, but its files cannot be checked now: "
                            f"{contents_reason(version)}")
-    return "unknown", "mapped against this graph; its files are not checked"
+    return "unknown", "mapped against this graph, but its files are not checked"
 
 
 __all__ = [

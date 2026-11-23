@@ -428,7 +428,7 @@ def test_unverifiable_is_a_word_never_a_count():
         assert validation.startswith(renderers.status_mark("neutral", "Unverifiable"))
         assert " of " not in cell_text(validation) and not re.search(r"\d", cell_text(validation))
     assert cell_text(cells["Training"]["Disease overlap"]) == (
-        "▲ Overlap 3 of 5 distinct test diseases; 7 test cases with one of them")
+        "▲ Overlap 3 of 5 distinct test diseases, 7 test cases with one of them")
     assert cell_text(cells["Training"]["Phenotype-set overlap"]).endswith("0 of 10 test cases")
     assert "/srv/secret" not in html
 
@@ -703,9 +703,11 @@ def test_a_run_whose_bytes_a_merged_record_holds_shows_the_possible_overlap(site
     import html as html_lib
 
     text = html_lib.unescape(re.sub(r"<[^>]+>", "", tp._record_html(run["record"], run, state)))
-    assert ("not registered (the ledger beside x/y/last.pt was read); possible overlap with "
-            "record 1, merged before each run had its own record (not recorded whether this "
-            "run is one of them); registering adds this run's own record") in text
+    assert "not registered (the ledger beside x/y/last.pt was read)" in text
+    # The overlap on a line of its own, in sentences (the owner's decision of 2026-11-23).
+    assert ("Possible overlap with record 1, merged before each run had its own record. "
+            "Whether this run is one of them is not recorded. Registering adds this run's "
+            "own record.") in text
     registered = {**state, "registered": "registered", "sequence": 2}
     assert "possible overlap" not in tp._record_html(run["record"], run, registered)
 
@@ -763,7 +765,7 @@ def test_deterministic_runs_that_differ_are_flagged_for_investigation(site):
             assert block.startswith('<div class="shep-reason shep-reason-grey shep-test-block">')
             assert "<b>Runs under these conditions differ</b> on: pooled_mrr" in block
             if flag is False:
-                assert ("Without deterministic algorithms, runs can differ; every run is kept "
+                assert ("Without deterministic algorithms, runs can differ. Every run is kept "
                         "as recorded and each can be registered." in block)
             else:   # not recorded: nothing is said about it either way
                 assert "deterministic" not in block.lower()
@@ -999,7 +1001,7 @@ def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):
     # The coverage in its one wording (R-82): what it counted, then how the
     # data stands under it, on lines of their own, never a chain of " · ".
     assert (f"<div><b>{ranked} of 10</b> import-eligible cases ranked by the model</div>"
-            '<div class="shep-sub">13 source cases; 3 excluded at import: ground truth absent '
+            '<div class="shep-sub">13 source cases, 3 excluded at import: ground truth absent '
             "2, phenotype unmappable 1</div>") in html
     assert "Validation MRR" not in html, "Trainer validation and a test result never share a place"
     assert "case-" not in html and str(site.root) not in html
@@ -1669,7 +1671,7 @@ def test_a_busy_notes_file_keeps_nothing_and_says_add_it_again(site, monkeypatch
         done, said = tp.add_note(reports, site.run_id, "ops", "found", request)
     assert done is False
     assert said == ("The note was not kept: another writer held the notes file for the 0.2 s "
-                    "this one waited. Nothing was written this time; add it again.")
+                    "this one waited. Nothing was written this time. Add it again.")
     assert not (site.reports / "notes.jsonl").exists()
 
     done, _said = tp.add_note(reports, site.run_id, "ops", "found", request)
@@ -1799,7 +1801,7 @@ def test_a_kept_mode_d_report_is_shown_as_recorded_and_its_register_is_enabled(
     assert again["state"]["kept"] == "kept" and again["record"] == record
     assert again["contest"]["state"] == runs[d_run]["contest"]["state"] == "uncontested"
     repeat, said = tp.register_selected(page, shown_again, models, "demo", d_run, request)
-    assert repeat is True and "Already registered as record 1; nothing was written" in said
+    assert repeat is True and "Already registered as record 1. Nothing was written" in said
 
 
 def _swap(path, replacement: bytes, how: str):
@@ -4378,7 +4380,7 @@ def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
         assert f'shep-rec-tile-l">{html_lib.escape(words[:1].upper() + words[1:])}<' in raw
         assert f'shep-rec-tile-l">{html_lib.escape(metric_text(mode, name))}<' not in raw
     assert mode_label(mode) in text
-    assert "8 of 10 import-eligible cases ranked by the model 13 source cases; 3 excluded " \
+    assert "8 of 10 import-eligible cases ranked by the model 13 source cases, 3 excluded " \
         "at import: ground truth absent 3" in text
     # The counts are the Coverage row's alone (rule 1.2): a tile's footer says
     # what its figure is over, never "n of M" or the n ranked again.
@@ -4456,8 +4458,8 @@ def test_a_kept_mode_c_record_is_shown_as_recorded_by_the_one_display():
             "mean_rank": "3.0"} == dict(re.findall(r"<code>([^<]*)</code> ([^<]*)<", recorded))
     assert (f"Score semantics {record['scoring']['score_semantics']}" in text
             and record["scoring"]["score_semantics"] == MODE_C_SEMANTICS_TEXT)
-    assert ("100 source cases; 20 excluded: ground truth absent 12, phenotype unmappable 8 "
-            "80 cases counted by the record; what they are is not described for this mode"
+    assert ("100 source cases, 20 excluded: ground truth absent 12, phenotype unmappable 8 "
+            "80 cases counted by the record. What they are is not described for this mode."
             ) in text
     label = raw[raw.index('class="shep-rec-label"'):]
     assert "data-help" not in label[:label.index("</div>")]
@@ -5679,7 +5681,7 @@ def test_a_result_is_the_selected_workspaces_only_by_the_relation_its_record_hol
                             workspaces=workspaces)
     dataset = _identity_rows(result)["Dataset"]
     assert dataset.startswith(tp.SELECTED_DATASET)
-    assert ("demo holds the same record; the report does not record which workspace was read"
+    assert ("demo holds the same record. The report does not record which workspace was read."
             in dataset)
     assert _plain(result).count("the selected workspace") == 1     # only "…'s dataset record"
     assert "the selected workspace " not in _plain(result).replace(tp.SELECTED_DATASET, "")

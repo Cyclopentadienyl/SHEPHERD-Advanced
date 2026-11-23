@@ -712,7 +712,7 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
                 values.append(f"{metric_label(name, mode)} " + " vs ".join(per_run))
         # The runs' values when they are given, else the fields' names alone
         # (an API answer that could not show them), else nothing more.
-        shown, fields = "; ".join(values), ", ".join(str(n) for n in names)
+        shown, fields = ", ".join(values), ", ".join(str(n) for n in names)
         if deterministic is True:
             what = shown or fields
             said = f": {what}" if what else ""
@@ -723,9 +723,13 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
         detail = f": {shown}" if shown else f" on: {fields}" if fields else ""
         return (f'<div class="shep-mp-delta shep-muted">runs under these conditions differ'
                 f'{r.e(detail)}</div>')
-    problems = "; ".join(str(p) for p in state.get("problems") or [])
-    return ('<div class="shep-mp-delta shep-muted">comparison incomplete'
-            + (f": {r.e(r.short_reason(problems, 160))}" if problems else "") + "</div>")
+    # Several problems one a line (the owner's decision of 2026-11-23: never
+    # glued with a semicolon); one stays on the line it explains.
+    problems = [r.e(r.short_reason(p, 160)) for p in state.get("problems") or []
+                if str(p).strip()]
+    said = (f": {problems[0]}" if len(problems) == 1 else
+            ":" + "".join(f"<div>{p}</div>" for p in problems) if problems else "")
+    return f'<div class="shep-mp-delta shep-muted">comparison incomplete{said}</div>'
 
 
 def merged_text(view: Mapping[str, Any]) -> Optional[str]:
@@ -919,8 +923,8 @@ def unreadable_html(items: Sequence[Mapping[str, Any]]) -> str:
                     f'<td>{r.e(item.get("reason"))}</td></tr>')
     return ('<p class="shep-mp-p shep-mp-unread-p">' + r.status_mark(
                 "warn", f'{len(items)} record{"s" if many else ""} for these weights cannot be read '
-                        f'as {"results" if many else "a result"}; '
-                        f'{"they are" if many else "it is"} kept as written.') + '</p>'
+                        f'as {"results" if many else "a result"}. '
+                        f'{"They are" if many else "It is"} kept as written.') + '</p>'
             '<div class="shep-tbl-wrap shep-mp-recwrap shep-mp-unreadwrap"><table '
             'class="shep-tbl shep-mp-unread" '
             'aria-label="Records that cannot be read"><thead><tr>'
@@ -972,15 +976,15 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]],
                  '</div>')
     state = (row or {}).get("parent_state")
     if state == "listed":
-        where = "; listed here"
+        where = r.SEP + "listed here"
     elif state == "elsewhere":
-        where = f'; in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
+        where = f'{r.SEP}in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
     elif state == "unavailable":
         reason = r.short_reason(row.get("parent_problem") or "not found", PARENT_REASON_CHARS)
         where = "<div>" + r.status_mark("warn", "parent unavailable: " + reason) + "</div>"
     else:
         where = ""
-    if where.startswith(";"):
+    if where.startswith(r.SEP):
         return f'{named}<div>{fingerprint}{where}</div>'
     return f'{named}<div>{fingerprint}</div>{where}'
 
@@ -997,8 +1001,9 @@ def changes_html(changes: Any) -> str:
     if not changes:
         return r.e(SAME_SETTINGS)
     names = sorted(str(name) for name in changes)
-    return "; ".join(f"{r.e(r.field_words(name))} {r.change_value(name, changes[name])}"
-                     for name in names)
+    # One setting a line (the owner's decision of 2026-11-23).
+    return "".join(f"<div>{r.e(r.field_words(name))} {r.change_value(name, changes[name])}</div>"
+                   for name in names)
 
 
 def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any]]:
@@ -1507,7 +1512,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     if contested:
         notes.append(f"{contested} where runs differ")
     seg_records = "Recorded results" + (f" · {count}" if count else "") + (
-        f" ({'; '.join(notes)})" if notes else "")
+        f" ({', '.join(notes)})" if notes else "")
     return {"header": header, "top": top, "records": records, "usage": usage,
             "seg": [(seg_records, RECORDS),
                     ("Usage history" + (f" · {n_usage}" if n_usage else ""), USAGE),
@@ -1566,7 +1571,7 @@ def _records_for_item(ledger: Optional[Mapping[str, Any]], data: Mapping[str, An
     said by (`records_block_html`)."""
     if ledger is None:
         return ('<p class="shep-mp-p shep-muted">The recorded results beside this checkpoint '
-                'were not read with this list; they are read again when the page is shown.</p>',
+                'were not read with this list. They are read again when the page is shown.</p>',
                 0, 0, 0)
     if ledger["state"] == "not_read":
         return ('<p class="shep-mp-p">' + r.status_mark(
@@ -1620,7 +1625,7 @@ def usage_entry_html(entry: Mapping[str, Any]) -> str:
         # One " · " per line (the skill's §5): the figure, then how it ran,
         # then every metric the entry records, as recorded, one click away.
         how = (regime_text(entry.get("device"), entry.get("deterministic"))
-               + ("; registration asked" if entry.get("record_requested") else ""))
+               + (", registration asked" if entry.get("record_requested") else ""))
         listed = (r.recorded_metrics_fold(metrics)
                   if recorded is None or isinstance(recorded, Mapping) else
                   '<span class="shep-mp-ln shep-muted">metrics not readable as recorded'

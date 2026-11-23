@@ -3262,7 +3262,7 @@ def test_the_continue_drawer_fits_and_says_the_plan_once():
                          "new target 180)", "sha256": "c" * 64, "inherited": {}}
     check = tc._check_html(preview, tc.CONTINUE_FROM_LIST)
     assert check.count("Extend training by 30 epochs") == 1
-    assert r.status_mark("ok", "Checkpoint read; it can continue on this workspace.") in check
+    assert r.status_mark("ok", "Checkpoint read: it can continue on this workspace.") in check
 
 
 def test_the_drawers_refusals_lead_with_the_shared_status_mark():
@@ -3283,7 +3283,7 @@ def test_the_drawers_refusals_lead_with_the_shared_status_mark():
                "action": "Resume the original training (1/2 done, 1 left)", "sha256": "c" * 64,
                "inherited": {}}
     differs = tc._check_html(preview, tc.CONTINUE_FROM_LIST, differs=True)
-    assert r.status_mark("error", "Checkpoint read; cannot continue on the current dataset.") \
+    assert r.status_mark("error", "Checkpoint read: it cannot continue on the current dataset.") \
         in differs
     ws = {"name": "demo", "row": {"name": "demo", "dataset_fingerprint": "a" * 64}, "listed": []}
     compare = tc.compare_html({"chosen": True, "fingerprint": "e" * 64}, ws)

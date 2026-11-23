@@ -2047,7 +2047,7 @@ def _snapshot_sentence(snapshot: Optional[Dict[str, Any]]) -> str:
     if end == "finished":
         return f"Finished ({where}): {shown}. To train further, use Continue…"
     if end == "stopped_early":
-        return f"Stopped early at {where} ({snapshot.get('stop_reason')}); it cannot be continued."
+        return f"Stopped early at {where} ({snapshot.get('stop_reason')}). It cannot be continued."
     label = "Paused at" if end == "paused" else "Latest resumable checkpoint:"
     return f"{label} {where}, {shown}."
 
@@ -3330,7 +3330,7 @@ def _start(ws, run_name, device, values, touched) -> str:
     try:
         directory = _workspace_path(row["name"])
     except ServerListRefused:
-        return (f"Not started: {row['name']} is no longer listed by the server; select a dataset "
+        return (f"Not started: {row['name']} is no longer listed by the server. Select a dataset "
                 "again.")
     config = {"data_dir": str(directory), "learning_stage": "base",
               "device": device or "auto", "run_name": (run_name or "").strip(),
@@ -3445,7 +3445,7 @@ def confirm_stop(access: Any, mode: Optional[Mapping[str, Any]], *,
     job = reaches(status)
     if isinstance(asked, str) and asked != job:
         return notice_html(f"Not stopped: the {what} you asked to stop is no longer the one "
-                           "running; click Stop again if this one should stop.",
+                           "running. Click Stop again if this one should stop.",
                            mark="error"), mode
     if job is None and running_job(status) is not None:
         return notice_html(f"Not stopped: no {what} is running.", mark="error"), mode
@@ -3717,7 +3717,7 @@ def _list_parents(ws: Mapping[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]
     parents = {key: item for key, item in listed.items() if item.get("record") == "model"}
     if listed and not parents:
         return {}, (f"None of the {len(listed)} entries listed for this dataset's runs holds a "
-                    "model record; a file without a model spec is never continued here "
+                    "model record. A file without a model spec is never continued here "
                     "(Research › Models lists it).")
     return parents, None
 
@@ -3909,7 +3909,7 @@ def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
     if not r.is_digest(recorded):
         why = ("The parent’s recorded dataset is read when you check it."
                if parent.get("source") == CONTINUE_FROM_PATH and not parent.get("checked")
-               else "The parent records no dataset fingerprint; the start checks it against "
+               else "The parent records no dataset fingerprint. The start checks it against "
                     "this workspace’s data.")
         return f'<p class="shep-cmp-line">{r.status_mark("neutral", why)}</p>'
     now = (f'this workspace now: <b>{r.e(ws.get("name"))}</b> · '
@@ -3978,8 +3978,8 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
     # The plan is said once, in the line under the headline (M5-3: the
     # headline repeated it, two lines more in a drawer that must fit).
     able = "it can continue" if operation == CONTINUE else "it can be branched"
-    head = (r.status_mark("error", f"Checkpoint read; cannot {verb} on the current dataset.")
-            if differs else r.status_mark("ok", f"Checkpoint read; {able} on this workspace."))
+    head = (r.status_mark("error", f"Checkpoint read: it cannot {verb} on the current dataset.")
+            if differs else r.status_mark("ok", f"Checkpoint read: {able} on this workspace."))
     head = f'<div class="shep-check-h">{head}</div>'
     inherited = dict(preview.get("inherited") or {})
     # A setting the checkpoint's record does not hold, which the settings
@@ -4026,14 +4026,14 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
                  r.e(r.setting_words(name, inherited[name], stage=stage, task=task)))
                 for name in shown]
         if operation == BRANCH:
-            summary, note = ("Settings this branch keeps", "They stay the parent’s in a branch; "
-                             "the ones it may change are the fields below.")
+            summary, note = ("Settings this branch keeps", "They stay the parent’s in a branch. "
+                             "The ones it may change are the fields below.")
             fixed = ""
         else:
             summary, note = ("Settings taken from this checkpoint",
-                             "They cannot be changed when continuing; to train with other "
+                             "They cannot be changed when continuing. To train with other "
                              "settings, choose Branch above.")
-            fixed = "; fixed when continuing"
+            fixed = ", fixed when continuing"
         lines.append(
             f'<details class="shep-inherit"><summary>{summary} '
             f'<span class="shep-muted">({len(rows)}{fixed})</span></summary>'
@@ -4245,7 +4245,7 @@ def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
             # branched (K6 decision 1), so a file without a model spec is
             # refused unopened.
             return None, ("the typed path is not a model record the run list offers (a file "
-                          "without a model spec is never continued here); refresh the list if "
+                          "without a model spec is never continued here). Refresh the list if "
                           "its run is new"), None
     else:
         item = (parents or {}).get(listed) if listed else None
@@ -4259,7 +4259,7 @@ def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
         path = resolve_checkpoint(ws.get("name"), item["architecture"], item["run"],
                                   item["filename"])
     except ServerListRefused as exc:
-        return None, f"it is no longer listed ({redact(exc, workspaces_root()[0])}); refresh the list", None
+        return None, f"it is no longer listed ({redact(exc, workspaces_root()[0])}). Refresh the list", None
     return str(path), None, item
 
 
@@ -4936,8 +4936,8 @@ def create_training_tab(ctx: Any) -> None:
                     # check at the parent's value (`_branch_updates`).
                     with gr.Column(visible=False, elem_id="shep-train-branch") as branch_box:
                         plain_html('<h3 class="shep-train-sub">Settings to change</h3>'
-                                   '<p class="shep-note">Each starts at the parent’s value; '
-                                   'only a field you edit is sent. Edit none for the same '
+                                   '<p class="shep-note">Each starts at the parent’s value. '
+                                   'Only a field you edit is sent. Edit none for the same '
                                    'settings.</p>', elem_id="shep-train-branch-hd")
                         with gr.Group(elem_classes=["shep-train-grid"]):
                             branch_fields = [setting_field(name, _branch_field_value(name),

@@ -285,7 +285,7 @@ def test_the_drawer_shows_the_run_in_use_beyond_its_latest_runs(root, serving, m
     html = ml.list_html(listing, picked, one)
     assert f'data-key="{picked}"' not in html
     assert ("Selected model not shown among the latest runs: Gene, gene · GATv2 "
-            "2026-10-15 08:00; its details are kept") in _visible(html)
+            "2026-10-15 08:00. Its details are kept.") in _visible(html)
     assert f'data-facts-key="{picked}"' in ml.facts_html(listing, picked)
     assert f'data-key="{picked}"' in ml.list_html(listing, picked, one, show_older=True)
 
@@ -1051,7 +1051,7 @@ def test_a_refused_reload_is_shown_without_a_server_path(root, serving, monkeypa
     step = ml.finish_load(plan, operator_request(monkeypatch), reload=lambda request: (
         PipelineReloadResponse(success=False, message=message, status=PipelineStatusResponse(
             **_status(root)))))
-    assert "Not reloaded; the model in use is unchanged." in step.confirm_html
+    assert "Not reloaded. The model in use is unchanged." in step.confirm_html
     assert str(root["root"]) not in step.confirm_html and elsewhere not in step.confirm_html
     inside = checkpoint.relative_to(root["root"])
     assert f"Checkpoint {inside} does not match" in step.confirm_html
@@ -1303,7 +1303,7 @@ def test_bytes_replaced_before_the_reloads_own_read_are_refused_never_served(
     assert published == [first]
     assert api.app_state.pipeline is serving
     assert serving.served_identity().checkpoint.sha256 == first
-    assert "Not reloaded; the model in use is unchanged." in step.confirm_html
+    assert "Not reloaded. The model in use is unchanged." in step.confirm_html
     assert "is not the model that was shown" in step.confirm_html
     assert f"it holds {held[:12]} now, not {shown[:12]}" in step.confirm_html
     assert "Reloaded" not in step.confirm_html.replace("Not reloaded", "")
@@ -1348,7 +1348,7 @@ def test_any_other_bytes_at_the_shown_file_are_refused_as_not_the_model_shown(
     assert fired, "the build never read the graph"
     held = (f"it is gone; {shown[:12]} was shown" if data is None
             else f"it holds {file_sha256(last)[:12]} now, not {shown[:12]}")
-    assert "Not reloaded; the model in use is unchanged." in step.confirm_html
+    assert "Not reloaded. The model in use is unchanged." in step.confirm_html
     assert f"is not the model that was shown: {held}. Nothing was published" in \
         step.confirm_html, step.confirm_html
     assert api.app_state.pipeline is serving
@@ -1362,7 +1362,7 @@ def test_a_refused_reload_leaves_the_model_in_use_and_says_so(root, serving, mon
     step = ml.finish_load(plan, operator_request(monkeypatch), reload=lambda request: (
         PipelineReloadResponse(success=False, message="No checkpoint found.",
                                status=PipelineStatusResponse(**_status(root)))))
-    assert "Not reloaded; the model in use is unchanged." in step.confirm_html
+    assert "Not reloaded. The model in use is unchanged." in step.confirm_html
     assert "No checkpoint found." in step.confirm_html and step.changed is False
     raising = ml.finish_load(plan, operator_request(monkeypatch),
                              reload=lambda request: (_ for _ in ()).throw(RuntimeError("x")))
@@ -1397,7 +1397,7 @@ def test_the_research_preset_is_a_tree_with_in_use_on_its_own_row(root, serving,
     assert "In use (Diagnosis)" in served_row and " hidden" not in served_row
     assert research.count("In use (Diagnosis)") == 1
     assert f'data-locate="{_key("model-05.pt")}"' in research
-    assert "Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded" in (
+    assert "Metadata not readable: the file cannot be read as a checkpoint. It cannot be loaded." in (
         research)
     # Every file a row (nothing dropped by folding), the others' runs folded.
     assert research.count(" data-key=") == 9
@@ -2622,7 +2622,7 @@ def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, mon
     broken = _row_of_key(html, _key("broken.pt"))
     words = _visible(broken)
     assert words.count("broken.pt") == 1, words
-    assert ("Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded"
+    assert ("Metadata not readable: the file cannot be read as a checkpoint. It cannot be loaded."
             in words), words
     assert words.count(" · ") <= 1 and "title=" not in broken, broken
 
