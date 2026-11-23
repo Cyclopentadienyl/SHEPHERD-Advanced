@@ -268,7 +268,7 @@ def test_settings_say_the_running_allocator_apart_from_the_saved_one():
     same = rs.facts_html(started, {"allocator_preset": "cuda_async"})
     assert "Not running yet" not in same
     unset = rs.facts_html({}, {})
-    assert "PyTorch’s default (native)" in unset and "(the default; none saved)" in unset
+    assert "PyTorch’s default (native)" in unset and "(the default, none saved)" in unset
     assert "Not implemented yet" in unset and "<input" not in unset
     explicit = rs.facts_html({"PYTORCH_ALLOC_CONF": "backend:native", ALLOC_SOURCE_ENV: "env"}, {})
     assert "set in the launch environment" in explicit
@@ -280,9 +280,9 @@ def test_settings_say_the_running_allocator_apart_from_the_saved_one():
     assert "<code>PYTORCH_ALLOC_CONF=</code>" in empty and "no allocator was set" not in empty
     assert "overrides it until the backend starts without it" in empty
     assert "Not running yet" not in empty
-    # The acceleration row: its state, then why, in brackets as the other rows
-    # say theirs (B5 review: the two ran together as one sentence).
-    assert ('<span class="shep-st-w">Not implemented yet</span></span> <span class="shep-muted">'
+    # The acceleration row: its state, then its sentences on a line of their own (B5
+    # review and the sweep's L7: the state's word ran into the next sentence).
+    assert ('<span class="shep-st-w">Not implemented yet</span></span><br><span class="shep-muted">'
             f"{rs.ACCELERATION}</span>") in unset
 
 

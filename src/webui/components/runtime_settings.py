@@ -131,8 +131,8 @@ STOP_QUESTION = (
 STOP_DONE = ("Stopping the service. This page stops answering in a moment. Start it again from "
              "its desktop entry or launch_shepherd.sh.")
 
-#: The acceleration area: a fact, never a toggle that does nothing; said after
-#: its "Not implemented yet" mark, a sentence a fact.
+#: The acceleration area: a fact, never a toggle that does nothing; said on a
+#: line of its own under its "Not implemented yet" mark, a sentence a fact.
 ACCELERATION = ("New acceleration work is deferred. Each run’s record keeps the kernels and "
                 "precision it ran with.")
 
@@ -231,7 +231,7 @@ def saved_html(env: Mapping[str, str], settings: Mapping[str, Any]) -> str:
     preset, _compile = _saved(settings)
     said = r.e(allocator_words(preset))
     if requested is None:
-        said += ' <span class="shep-muted">(the default; none saved)</span>'
+        said += ' <span class="shep-muted">(the default, none saved)</span>'
     elif requested != preset:
         said += (f' <span class="shep-muted">(the saved name {r.ident_html(requested)} is no '
                  "preset)</span>")
@@ -256,8 +256,10 @@ def facts_html(env: Optional[Mapping[str, str]] = None,
         ("Allocator now", running_html(env)),
         ("Allocator saved", saved_html(env, settings)),
         ("torch.compile saved", r.OFF if not compile_on else "On"),
+        # The state, then its sentences on a line of their own (a state's word ran into the
+        # next sentence: "Not implemented yet New acceleration work is deferred.", the sweep's L7).
         ("Acceleration", r.status_mark("neutral", "Not implemented yet")
-         + f' <span class="shep-muted">{r.e(ACCELERATION)}</span>'),
+         + f'<br><span class="shep-muted">{r.e(ACCELERATION)}</span>'),
     ])
 
 
