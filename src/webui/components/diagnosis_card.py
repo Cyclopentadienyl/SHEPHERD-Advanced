@@ -148,7 +148,11 @@ logger = logging.getLogger(__name__)
 STATUS_TIMEOUT_SECONDS = 5.0
 
 #: Said where the trained-on dataset would be, to a request D8 refuses.
-TRAINED_NOT_SHOWN = "not shown · reading the checkpoint is an operator control"
+#: The two facts of a fact not read for this request, drawn as one chain (`renderers.chain_html`:
+#: each moves whole to the next line; the sweep's L7 check, C5: "reading the checkpoint is an /
+#: operator control" broke inside its fact for a read-only viewer).
+TRAINED_NOT_SHOWN_PARTS = ("not shown", "reading the checkpoint is an operator control")
+TRAINED_NOT_SHOWN = " · ".join(TRAINED_NOT_SHOWN_PARTS)
 #: Said where it would be before a queued refresh has read it.
 TRAINED_NOT_READ_YET = "not read yet"
 #: The short words the card's Details use for the dataset fingerprint it has
@@ -780,7 +784,7 @@ def _trained_html(facts: Mapping[str, Any]) -> str:
         # it (the card's buttons and `change_reason_html`); this is a fact not
         # read for this request, and says why in its own words.
         return (f'<span class="shep-trained">trained on: <span class="shep-muted">'
-                f'{r.e(TRAINED_NOT_SHOWN)}</span></span>')
+                f'{r.chain_html(*TRAINED_NOT_SHOWN_PARTS)}</span></span>')
     if state == "pending":
         return (f'<span class="shep-trained">trained on: <span class="shep-muted">'
                 f'{r.e(TRAINED_NOT_READ_YET)} · </span><button type="button" '
@@ -1008,9 +1012,12 @@ def change_reason_html(state: Mapping[str, Any]) -> str:
     if state.get("operator") or state.get("ok") is None:
         return ""
     short = state.get("d8_short") or D8_SHORT["unreadable_request"]
-    # Two word groups, so a line breaks between them and never leaves "to M1"
-    # alone on the second line (M5-3).
-    return f'<p class="shep-dx-why">{r.word_groups(f"{LOCK} {OPERATOR_ONLY}", short)}</p>'
+    # The shared reason line (`shep-reason`: the lock in a column of its own; the sweep's L7
+    # check, C5: a page's own line, so the walk read Change model… and Stop inference as off
+    # with no reason), its words in two groups, so a line breaks between them and never leaves
+    # "to M1" alone on the second line (M5-3).
+    return (f'<p class="shep-reason shep-dx-why"><span aria-hidden="true">{LOCK}</span>'
+            f'<span>{r.word_groups(OPERATOR_ONLY, short)}</span></p>')
 
 
 def details_visible(state: Mapping[str, Any]) -> bool:
@@ -1157,7 +1164,7 @@ __all__ = [
     "SERVER_PATH",
     "STATUS_TIMEOUT_SECONDS",
     "TRAINED_NOT_READ_YET",
-    "TRAINED_NOT_SHOWN",
+    "TRAINED_NOT_SHOWN", "TRAINED_NOT_SHOWN_PARTS",
     "advance",
     "body_html",
     "card_mode",

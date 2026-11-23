@@ -270,7 +270,10 @@ def test_a_read_only_request_opens_no_checkpoint_and_is_told_why(root, no_checkp
     state = _state(root, operator=False)
     assert state["facts"]["trained"]["state"] == "not_shown"
     body = card.body_html(state)
-    assert card.TRAINED_NOT_SHOWN in body
+    # Its two facts, each one unit of a chain (the sweep's L7 check, C5: the second broke
+    # inside itself, "reading the checkpoint is an / operator control").
+    assert r.chain_html(*card.TRAINED_NOT_SHOWN_PARTS) in body
+    assert card.TRAINED_NOT_SHOWN == " · ".join(card.TRAINED_NOT_SHOWN_PARTS)
     assert "not recorded" not in body
     # B4 (the skill's §3): a lock marks a refused control with its reason
     # beside it, the card's buttons; the fact not read here says why in its
@@ -280,9 +283,11 @@ def test_a_read_only_request_opens_no_checkpoint_and_is_told_why(root, no_checkp
     assert card.change_button(state)["value"].startswith("🔒 ")
     # The reason is visible text in two word groups: a line breaks between
     # them, never inside "request not local" (M5-3: "to M1" alone on a line).
+    # The shared reason line (the sweep's L7 check, C5): the lock in a column of its own.
     assert card.change_reason_html(state) == (
-        '<p class="shep-dx-why"><span class="shep-wg">🔒 Operator controls only:</span> '
-        '<span class="shep-wg">request not local</span></p>')
+        '<p class="shep-reason shep-dx-why"><span aria-hidden="true">🔒</span><span>'
+        '<span class="shep-wg">Operator controls only:</span> '
+        '<span class="shep-wg">request not local</span></span></p>')
 
 
 def test_the_timer_never_opens_a_checkpoint(root, no_checkpoint_opened):

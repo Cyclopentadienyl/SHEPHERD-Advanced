@@ -415,7 +415,7 @@ RESTART_LABEL = "Restart Backend"
 #: to the reason, which is said once, beside the actions it turns off
 #: (`_refresh_restart_lock`). The reason was this line, 734 px above Apply,
 #: Restart Backend and Stop service at 1850 x 960 with the accordions open.
-FIELDS_LOCKED = "Read-only for this request: the reason is beside the actions below."
+FIELDS_LOCKED = "Read-only for this request: the reason is with the actions below."
 
 
 def _refresh_restart_lock(request: gr.Request):
@@ -586,11 +586,14 @@ def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
                 interactive=False, elem_id="torch_compile", info=FIELD_INFO["torch_compile"])
             with gr.Accordion("About torch.compile", open=False):
                 gr.Markdown(COMPILE_DETAILS)
-        with gr.Row(elem_classes=["shep-panel-ft"], elem_id="shep-settings-ft"):
+        with gr.Row(elem_classes=["shep-panel-ft", "shep-bar"], elem_id="shep-settings-ft"):
             # Why the buttons (and the fields) are off for this request (D8),
-            # beside them, the row's first line, just above them: the one
-            # gated-button rule (`chips.gated`).
-            access_note = plain_html("", visible=False, elem_id="runtime_access_reason")
+            # the bar's note (`shep-bar-note`), its first line, just above them:
+            # the one gated-button rule (`chips.gated`; the sweep's L7 check, C5:
+            # drawn as no shared reason form, the walk found the three actions
+            # with nothing said beside or under them).
+            access_note = plain_html("", visible=False, elem_id="runtime_access_reason",
+                                     elem_classes=["shep-bar-note"])
             apply_btn = gr.Button(APPLY_LABEL, variant="primary", interactive=False, scale=0,
                                   elem_id="runtime_apply")
             restart_btn = gr.Button(RESTART_LABEL, variant="secondary", interactive=False,

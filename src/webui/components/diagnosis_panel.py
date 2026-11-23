@@ -3791,15 +3791,21 @@ def create_diagnosis_tab(ctx: Any) -> None:
                             details_btn = gr.Button("Details ›", size="sm", visible=False,
                                                     elem_id="shep-dx-details-btn", scale=0,
                                                     min_width=0)
-                            # Labelled by the card's read (`card.change_button`).
-                            change_btn = gr.Button("Change model…", size="sm",
-                                                   interactive=False, scale=0, min_width=0,
-                                                   elem_id="shep-dx-change-btn")
-                            # Shown while a model serves (`card.stop_button`).
-                            stop_btn = gr.Button("■ Stop inference", size="sm",
-                                                 interactive=False, scale=0, min_width=0,
-                                                 elem_id="shep-dx-stop-btn",
-                                                 elem_classes=[*_STOP_BTN, VIEW_OFF])
+                            # Change model… and Stop inference, one group (`shep-grp`): where
+                            # the card cannot hold its actions on one line they move under
+                            # "Details ›" together, so a refused pair has its reason line
+                            # (`change_reason`) right under both (the sweep's L7 check, C5:
+                            # Stop wrapped alone and Change's reason was two lines under it).
+                            with gr.Row(elem_classes=["shep-dx-card-acts", "shep-grp"]):
+                                # Labelled by the card's read (`card.change_button`).
+                                change_btn = gr.Button("Change model…", size="sm",
+                                                       interactive=False, scale=0, min_width=0,
+                                                       elem_id="shep-dx-change-btn")
+                                # Shown while a model serves (`card.stop_button`).
+                                stop_btn = gr.Button("■ Stop inference", size="sm",
+                                                     interactive=False, scale=0, min_width=0,
+                                                     elem_id="shep-dx-stop-btn",
+                                                     elem_classes=[*_STOP_BTN, VIEW_OFF])
                         change_reason = plain_html("", elem_id="shep-dx-change-why")
                         # Stop inference asks first, bound to the model shown.
                         with gr.Row(elem_id="shep-dx-stop-row", elem_classes=["shep-dx-stop-row"]):
@@ -4391,7 +4397,7 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-card-actions {{ justify-content: space-between !important; align-items: center !important; flex-wrap: wrap !important; gap: 8px !important; margin-top: 2px; }}
 {_TAB} .shep-dx-card-actions > * {{ flex: 0 0 auto !important; width: auto !important; }}
 {_TAB} #shep-dx-details-btn {{ border: 0 !important; background: none !important; box-shadow: none !important; color: var(--shep-accent-text) !important; padding: 0 2px !important; font-weight: 400; }}
-{_TAB} #shep-dx-change-btn {{ margin-left: auto; }}
+{_TAB} .shep-dx-card-acts {{ margin-left: auto; flex-wrap: nowrap !important; gap: 8px !important; }}
 {_TAB} .shep-dx-stop-row {{ flex-wrap: wrap !important; gap: 8px !important; justify-content: flex-end !important; }}
 /* The question's buttons keep their words' width (Gradio gives a scale-0
    button a 0% basis: measured 12 px wide, "Keep serving" over "Stop
@@ -4411,6 +4417,7 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-card:has(> #shep-dx-stop-row .shep-dx-stop-q) > .shep-dx-card-actions {{ display: none !important; }}
 {_TAB} .shep-dx-stop-said, {_TAB} .shep-dx-stop-mem {{ margin: 2px 0 0; font-size: 14px; }}
 {_TAB} .shep-dx-why {{ margin: 2px 0 0; font-size: 14px; color: var(--shep-text-2); text-align: right; }}
+{_TAB} .shep-reason.shep-dx-why {{ justify-content: end; }}
 {_TAB} #shep-dx-run-why .shep-reason {{ margin: 0 16px 8px; }}
 {_TAB} .shep-dx-run {{ padding: 6px 16px !important; gap: 10px !important; flex-wrap: nowrap !important; align-items: stretch !important; }}
 {_TAB} #shep-dx-run-wrap {{ position: relative; gap: 0 !important; flex: 1 1 auto !important; }}

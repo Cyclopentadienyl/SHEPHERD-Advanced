@@ -878,7 +878,10 @@ def refused_html(tasks: Any, values: Mapping[str, Any], touched: Any, *,
 
 
 def _why(icon: str, text: str) -> str:
-    return f'<span class="shep-ft-reason">{icon}<span>{r.e(text)}</span></span>'
+    """A reason in the shared form (`shep-reason`: its mark, hidden from a screen reader, in a
+    column of its own; the sweep's L7 check, C5: a page's own form, so the walk read Start and
+    Refresh as off with no reason for a read-only viewer)."""
+    return f'<span class="shep-reason shep-ft-reason">{icon}<span>{r.e(text)}</span></span>'
 
 
 def running_child(status: Mapping[str, Any]) -> Optional[str]:
@@ -1698,6 +1701,10 @@ PAGE_CSS = f"""
 /* Run and Checkpoint side by side where the column holds both, else one under the other; their
    group keeps a select's floor beside Refresh, so Refresh stays on the last box's line. */
 {_PAGE} .shep-ft-parent-row > .form {{ flex: 1 1 14rem !important; min-width: min(14rem, 100%) !important; }}
+/* A read-only viewer's line on the list (it is not listed, Refresh is locked) ends under Refresh,
+   the row's last control, as a refusal's reason stands under what it turns off (the sweep's L7
+   check, C5: from the row's start it ended 330 px left of Refresh at 1366 x 768). */
+{_PAGE} #ft_bases_note .shep-ft-reasons {{ display: flex; justify-content: flex-end; }}
 {_PAGE} #ft_run, {_PAGE} #ft_checkpoint {{ flex: 1 1 18rem !important; min-width: 0 !important; }}
 {_PAGE} .shep-ft-ds {{ font-size: 15px; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }}
 {_PAGE} .shep-ft-ds-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: var(--shep-space-2) var(--shep-space-3) !important; }}
@@ -1735,7 +1742,6 @@ PAGE_CSS = f"""
 /* The configuration's "Details ›" beside its fact, in that fact's unit (`base_summary_html`,
    `chain_html`'s tail); opened, the spec's list takes the lines under it. */
 {_PAGE} .shep-ft-base .shep-v .shep-fact > .shep-more {{ display: inline-block; vertical-align: top; }}
-{_PAGE} .shep-ft-reason {{ display: inline-flex; align-items: flex-start; gap: 6px; font-size: 14px; line-height: var(--shep-lh-prose); color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-reason > svg {{ flex: none; margin-top: 3px; }}
 {_PAGE} .shep-ft-reason > .shep-nb-mark {{ flex: none; }}
 /* Start's and Stop's notices, each a note under its button: a refusal carries the shared mark of
