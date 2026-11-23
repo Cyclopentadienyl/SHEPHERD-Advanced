@@ -1721,8 +1721,9 @@ def test_a_relation_says_the_notice_short_and_is_not_the_notice_again():
     assert rel.startswith('<p class="shep-reason shep-nb-rel" data-notice-rel="workspaces_root">')
     assert ">Start disabled: no workspaces folder is set.</span>" in rel
     assert "data-notice=" not in rel and "<details" not in rel
-    assert ">Import disabled: GPU jobs need a workspaces folder (see Data).</span>" in \
-        r.see_above("Import", gpu, where="Data")
+    assert (">Import disabled: GPU jobs need a workspaces folder "
+            '<span class="shep-nowrap">(see Data).</span></span>') in r.see_above(
+        "Import", gpu, where="Data")
     assert r.relation_words("Import", gpu, where="Data") == (
         "Import disabled: GPU jobs need a workspaces folder (see Data).")
     assert "<details" in r.see_above("Start", gpu, details=True)
@@ -1815,3 +1816,44 @@ def test_a_token_breaks_only_at_its_own_separators():
     assert r.literal_html("Settings › Data locations, deployment guide §4.11") == \
         "Settings › Data locations, deployment guide §4.11"
     assert r.literal_html("the lock .shepherd-gpu.lock here").count("<code") == 1
+
+
+def test_a_line_never_parts_a_count_from_its_unit_or_a_date_from_its_time():
+    """The sweep's L7 check, C11, and LOOK2's SW-LK7: narrow cells read "1" / "epoch
+    completed" (the Diagnosis card and Model Facts), "recorded epoch" / "9" (Models' Epochs
+    cell), "GATv2 2026-10-02" / "00:00" and "(see" / "Data)." (Test's relations). A count and
+    the word after it, a word and the number that ends its text, a date and its time, and a
+    parenthesis of three words at most with its stop are each one piece a line never parts
+    (`bound_html`), drawn by every chain fact, status mark, relation and notice sentence; the line
+    breaks at any other space, and the text reads as it was given."""
+    import html as html_lib
+
+    def pieces(html):
+        return re.findall(r'<span class="shep-nowrap">([^<]*)</span>', html)
+
+    def text(html):
+        return html_lib.unescape(re.sub(r"<[^>]+>", "", html))
+
+    name = "GATv2 2026-10-02 00:00, 1 epoch completed"
+    assert pieces(r.bound_html(name)) == ["2026-10-02 00:00", "1 epoch"]
+    assert text(r.bound_html(name)) == name
+    assert pieces(r.bound_html("recorded epoch 9")) == ["epoch 9"]
+    assert pieces(r.bound_html("Start disabled: no results registry is set (see Data).")) == [
+        "(see Data)."]
+    assert pieces(r.bound_html("The selected workspace (measured, always)")) == [
+        "(measured, always)"]
+    # A digest, a version and a longer parenthesis keep their own breaks; words are escaped.
+    assert pieces(r.bound_html("3fa9c1e2b7d0 Copy")) == []
+    assert pieces(r.bound_html("(a clause of more than three words)")) == []
+    assert text(r.bound_html("<b>2 runs</b>")) == "<b>2 runs</b>" and "<b>" not in r.bound_html("<b>")
+    # Every chain fact, status mark and relation draws its words so.
+    assert '<span class="shep-nowrap">1 epoch</span>' in r.chain_html(name)
+    assert '<span class="shep-nowrap">epoch 9</span>' in r.status_mark("neutral", "recorded epoch 9")
+    relation = r.see_above("Start", {"key": "k", "kind": "neutral", "short": "no folder is set"},
+                           where="Data")
+    assert '<span class="shep-nowrap">(see Data).</span>' in relation
+    # A notice's sentence too (its Details rows, its steps), its tokens still code.
+    said = r.literal_html("Choose one in Settings › Data locations (Create suggested folder)")
+    assert pieces(said) == ["(Create suggested folder)"]
+    from src.webui.style import SHELL_CSS
+    assert ".shep-nowrap { white-space: nowrap; }" in SHELL_CSS

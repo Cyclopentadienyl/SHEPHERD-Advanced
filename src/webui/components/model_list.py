@@ -1243,7 +1243,7 @@ def _epochs_cell(items: Sequence[Mapping[str, Any]]) -> str:
               and not isinstance(i.get("completed_epochs"), bool)]
     if counts:
         return str(max(counts))
-    return f'<span class="shep-muted">{r.e(r.epoch_words(items[0] if items else {}))}</span>'
+    return f'<span class="shep-muted">{r.bound_html(r.epoch_words(items[0] if items else {}))}</span>'
 
 
 def _file_names(items: Mapping[str, Any], keys: Sequence[str]) -> Dict[str, str]:
@@ -1427,7 +1427,7 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                 print_ = r.fingerprint_value(items[key].get("sha256"), what="model fingerprint",
                                              digits=files.digits, copy=False)
                 twin = (f'<div class="{COL_TWIN} shep-sub">'
-                        f'<span class="shep-fact">{r.e(r.epoch_words(items[key]))}</span>'
+                        f'<span class="shep-fact">{r.bound_html(r.epoch_words(items[key]))}</span>'
                         f'{r.SEP}<span class="shep-fact">{print_}</span></div>')
                 rows.append(f'<tr {attrs}><td>{name}{twin}</td><td></td><td></td>'
                             f'<td{num_opt}>{epochs}</td><td{opt}></td>'

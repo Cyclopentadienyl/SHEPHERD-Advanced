@@ -207,7 +207,7 @@ def status_mark(kind: str, words: Any, *, words_html: bool = False,
     shape, token = STATUS_MARKS[kind]
     mark = ('<span class="shep-spinner" aria-hidden="true"></span>' if shape is None else
             f'<span class="shep-st-shape" aria-hidden="true">{shape}</span>')
-    text = str(words) if words_html else e(words)
+    text = str(words) if words_html else bound_html(words)
     # The spinner has no text of its own, so nothing to space from.
     said = f'{mark}{"" if shape is None else MARK_SPACE}<span class="shep-st-w">{text}</span>'
     if as_chip:
@@ -294,6 +294,34 @@ def warn_chip(text: str) -> str:
 SEP = '<span class="shep-sep" aria-hidden="true">\u00a0· </span>'
 
 
+#: **What a line never parts** (the sweep's L7, SW-LK7 and C11: "1" / "epoch completed",
+#: "recorded epoch" / "9", "GATv2 2026-10-02" / "00:00", "(see" / "Data)."): a short
+#: parenthesis (three words at most) with the stop or comma after it, a date and its time,
+#: a count and the word after it, and a word and the number that ends its text. Typography
+#: only, as a typesetter's no-break space: the words are never read for what they say.
+_BOUND = re.compile(
+    r"\([^()\s]+(?: [^()\s]+){0,2}\)[.,:]?"
+    r"|(?<![\w.:-])\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?(?: UTC)?"
+    r"|(?<![\w.:-])\d[\d.,:]* [^\s\d(][^\s]*"
+    r"|[^\s\d(][^\s]* \d[\d.,:]*(?=[.,:)]?$)")
+
+
+def bound_html(words: Any) -> str:
+    """`words` escaped, what a line never parts (`_BOUND`) drawn as one piece
+    (``shep-nowrap``), so a line breaks at any other space: a narrow cell reads
+    "GATv2 2026-10-02 00:00," / "1 epoch completed", never "1" / "epoch
+    completed". Every fact of a chain (`chain_html`), a status mark's words,
+    a relation's (`see_above`) and a notice's sentences (`literal_html`) are
+    drawn so."""
+    text, out, at = "" if words is None else str(words), [], 0
+    for found in _BOUND.finditer(text):
+        out.append(e(text[at:found.start()]))
+        out.append(f'<span class="shep-nowrap">{e(found.group(0))}</span>')
+        at = found.end()
+    out.append(e(text[at:]))
+    return "".join(out)
+
+
 def chain_html(*facts: Any, tail: str = "") -> str:
     """**Facts of one line joined by the shared separator** (`SEP`), each
     escaped and drawn as one unit (``shep-fact``): it moves to the next line
@@ -302,8 +330,9 @@ def chain_html(*facts: Any, tail: str = "") -> str:
     and "recipe changed in 5 fields" broke inside though a line held them).
     `tail`, HTML, ends the last fact's unit: the "Details ›" that opens that
     fact moves with it (L7 SW-LK7: Fine-tune's "Details ›" under "recipe
-    changed in 5 fields"). Empty facts are left out."""
-    shown = [e(fact) for fact in facts if fact]
+    changed in 5 fields"). Empty facts are left out. A fact wider than its line
+    breaks inside only where `bound_html` lets it."""
+    shown = [bound_html(fact) for fact in facts if fact]
     if tail and shown:
         shown[-1] += " " + tail
     return SEP.join(f'<span class="shep-fact">{fact}</span>' for fact in shown)
@@ -912,13 +941,14 @@ def token_html(token: Any, classes: str = "") -> str:
 def literal_html(text: Any) -> str:
     """`text` escaped, with each literal token in it (`_LITERAL`) drawn by
     `token_html`: the one way a sentence of a notice, a step or a Ref line
-    shows a path or a variable."""
+    shows a path or a variable; its words between tokens as `bound_html`
+    draws them ("(Create suggested folder)" whole)."""
     words, out, at = "" if text is None else str(text), [], 0
     for found in _LITERAL.finditer(words):
-        out.append(e(words[at:found.start()]))
+        out.append(bound_html(words[at:found.start()]))
         out.append(token_html(found.group(0)))
         at = found.end()
-    out.append(e(words[at:]))
+    out.append(bound_html(words[at:]))
     return "".join(out)
 
 
@@ -1157,7 +1187,8 @@ def see_above(control: str, notice: Any, *, where: Optional[str] = None,
         return ""
     words = relation_words(control, found, where=where)
     rel = f' data-notice-rel="{e(found["key"])}"' if found.get("key") else ""
-    inner = f'<span class="shep-st-w shep-st-{STATUS_MARKS[found["kind"]][1]}">{e(words)}</span>'
+    inner = (f'<span class="shep-st-w shep-st-{STATUS_MARKS[found["kind"]][1]}">'
+             f'{bound_html(words)}</span>')
     line = _marked(found["kind"], inner, "shep-reason shep-nb-rel", rel)
     return line + (_details([found]) if details else "")
 

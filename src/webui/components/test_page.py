@@ -508,7 +508,8 @@ def _reason_html(text: Optional[str], *, kind: str = "") -> str:
         return ""
     mark = (f'<span aria-hidden="true">{LOCK}</span>' if kind == "lock" else
             r.DISABLED_MARK if kind == "off" else "")
-    return f'<div class="shep-reason shep-test-reason">{mark}<span>{e(text)}</span></div>'
+    return (f'<div class="shep-reason shep-test-reason">{mark}<span>{r.bound_html(text)}</span>'
+            '</div>')
 
 
 def run_sha12(run_id: Any) -> Optional[str]:
@@ -1736,7 +1737,7 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
     names = evidence.get("names") or []
     roots = page.get("roots") or []
     # The workspace by its relation: its name is its select's, said once.
-    measured = (f"{e(_sentence(SELECTED_WORKSPACE))} (measured, always)" if workspace
+    measured = (f"{e(_sentence(SELECTED_WORKSPACE))} {r.bound_html('(measured, always)')}" if workspace
                 else "The measured workspace (always)")
     note = ""
     if choice.problem:
