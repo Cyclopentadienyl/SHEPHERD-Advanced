@@ -2318,9 +2318,10 @@ _LOAD_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
                 "close": "#shep-dx-change-close button"}
 _IMPORT_DRAWER = {"click": "#shep-test-import-open", "shown": "#shep-test-import",
                   "close": "#shep-test-import-close"}
-#: The windows a drawer is opened at in a layout walk: the owner's, a laptop, the display floor
-#: and one window below it (drawn as at the floor: its marks compared with the floor's).
-_DRAWER_SIZES = ((1850, 960), (1366, 768), (1280, 720), (1024, 640))
+#: The windows a drawer is opened at in a layout walk: the owner's, a laptop, the display floor,
+#: one window below it (drawn as at the floor: its marks compared with the floor's) and the two
+#: portrait windows (stacked: the owner's decision of 2026-11-23 on portrait windows).
+_DRAWER_SIZES = ((1850, 960), (1366, 768), (1280, 720), (1024, 640), (1080, 1920), (1440, 2560))
 
 
 #: The windows the configured walk opens the Load drawer at with a row chosen (its Model Facts
@@ -3664,13 +3665,17 @@ def ui_walk_empty(tmp_path_factory):
 
 
 def _state_walk_holds_the_shells_rules(seen, gpu_words):
-    from tests.fixtures.browser import UI_PAGES, layout_problems
+    from tests.fixtures.browser import UI_PAGES, effective_size, floor_size, layout_problems
 
     assert {s["page"] for s in seen} == set(UI_PAGES)
     for s in seen:
         assert s["extra"]["gpu"] == gpu_words, s["extra"]
-        # One header line at the display floor and above, and below it (drawn as at the floor).
-        assert not s["extra"]["wrapped"], (s["page"], s["size"])
+        # One header line wherever it is drawn at least as wide as the display floor, below the
+        # floor included (drawn as at the floor). A portrait window narrower than that (the
+        # stacked arrangement's floor, the owner's decision of 2026-11-23) has its chips and
+        # Settings on the header's second line, the header's own wrap.
+        if effective_size(s["size"])[0] >= floor_size()[0]:
+            assert not s["extra"]["wrapped"], (s["page"], s["size"])
         assert "layout" in s["check"] and s["check"]["layout"]["tabs"] is not None \
             or s["page"] in ("clinical", "settings"), (s["page"], s["size"])
     assert layout_problems(seen, rules=("tab-groups", "help-on-page", "notice-repeat")) == []
@@ -3714,8 +3719,10 @@ def test_at_first_use_the_header_and_tab_groups_hold_on_every_page_and_size(ui_w
     """B-11 and the owner's tab groups, at first use (no workspaces folder, no
     registry; the state of the owner's six screenshots): the GPU chip says
     "GPU jobs: not set up" and the header is one line at every layout size
-    (it wrapped at 1280 on "GPU jobs: refused, no workspaces folder"; below
-    the display floor it is drawn as at the floor); the research tabs sit on
+    drawn at least as wide as the display floor (it wrapped at 1280 on "GPU
+    jobs: refused, no workspaces folder"; below the display floor it is drawn
+    as at the floor; a portrait window narrower than the display floor puts its
+    chips and Settings on a second line); the research tabs sit on
     one line in their order, a separator is never drawn at a line's start,
     nothing but a tab is in the tablist; no help
     text is drawn on the page and no notice twice on a screen. The page
@@ -4183,7 +4190,7 @@ const LOOK_JS = __LOOK_JS__;
   const wide = '<table style="width: 420px; table-layout: fixed"><tr><td>Name</td><td>Fingerprint</td>'
     + '<td>Not admitted: Gene, Patients-like-me ›</td></tr></table>';
   const long = 'serving reads this workspace · in your Training run bar, said in more words than one line holds';
-  await page.setContent(`<!doctype html><html><head><style>
+  await page.setContent(`<!doctype html><html data-shep-layout="side"><head><style>
     body { margin: 0; font: 15px sans-serif; background: #fff; }
     p { margin: 0; }
     button, input { font: inherit; height: 32px; }
@@ -4272,10 +4279,17 @@ const LOOK_JS = __LOOK_JS__;
         <div class="rg shep-scroll-cue" data-shep-more id="iv-region">${lines}<div style="height: 1200px"></div><button type="button" id="iv-in">Apply</button></div>
         <button type="button" id="iv-out" style="position: absolute; left: 16px; top: 1000px">Apply Settings</button>
         <div style="display: contents; overflow: auto"><button type="button" id="iv-nobox" style="position: absolute; left: 200px; top: 1000px">Restart</button></div>
+        <button type="button" id="iv-right" style="position: absolute; left: 560px; top: 1000px">Stop</button>
       </div>
     </div></div></body></html>`);
   await page.addScriptTag({ content: LOOK_JS });
   const layout = await page.evaluate(() => window.__shepLook.check().layout);
+  // The same page stacked (the shell's layout rule): it flows and the document scrolls down to
+  // what lies under the window, never sideways.
+  layout.stackedInview = await page.evaluate(() => {
+    document.documentElement.setAttribute('data-shep-layout', 'stack');
+    return window.__shepLook.check().layout.inview;
+  });
   console.log(JSON.stringify(layout));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -4310,6 +4324,12 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     found = l7_rules_seen
     assert _hits(found, "inview", "#iv-out") and _hits(found, "inview", "#iv-nobox"), found["inview"]
     assert not _hits(found, "inview", "#iv-in"), found["inview"]
+    # Stacked (the owner's decision of 2026-11-23 on portrait windows) the page flows and the
+    # document scrolls down to what lies under the window, so that is in view; what lies past
+    # its right edge never is.
+    stacked = found["stackedInview"]
+    assert not _hits({"s": stacked}, "s", "#iv-out") and not _hits({"s": stacked}, "s", "#iv-nobox"), stacked
+    assert [h for h in _hits({"s": stacked}, "s", "#iv-right") if "right of the window" in h], stacked
     assert _hits(found, "cue", "#cue-bad holds") and _hits(found, "cue", "#cue-nobox holds"), found["cue"]
     assert not _hits(found, "cue", "#cue-good") and not _hits(found, "cue", "#cue-pad"), found["cue"]
     assert _hits(found, "cue", "#side-bad holds"), found["cue"]
@@ -4408,10 +4428,15 @@ def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_
                   {"lines": lines, "seps": [], "others": [], "focusable": []}}
         return {"size": size, "page": "settings", "check": {"layout": layout}}
 
+    from src.webui.style import STACK_FLOOR_WIDTH as sw
+
     fw, fh = floor_size()
     cut = ["#x \"Apply\" drawn 40 px under the window"]
-    held = [f"{w}x{h}" for w, h in ((1850, 960), (1550, 830), (1366, 768), (fw, fh), (2560, 1440))]
-    below = [f"{fw - 1}x{fh}", f"{fw}x{fh - 1}", "1024x640"]
+    # A window no wider than tall is held at or above the stacked arrangement's floor (the
+    # owner's decision of 2026-11-23 on portrait windows), not the side-by-side floor's width.
+    held = [f"{w}x{h}" for w, h in ((1850, 960), (1550, 830), (1366, 768), (fw, fh), (2560, 1440),
+                                    (1080, 1920), (1440, 2560), (sw, sw))]
+    below = [f"{fw - 1}x{fh}", f"{fw}x{fh - 1}", "1024x640", f"{sw - 1}x{2 * sw}"]
     found = layout_problems([stop(size, cut) for size in held + below], rules=("in-view",))
     assert found == [f"{size} settings: in-view: {cut[0]}" for size in held], found
     one = layout_problems([stop(f"{fw}x{fh}", lines=[["datasets", "training", "finetune", "test", "models"]])],
@@ -4425,6 +4450,96 @@ def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_
     drawn = layout_problems([{"size": f"{fw}x{fh}", "page": "settings", "check": {"layout": {"tabs": seps}}}],
                             rules=("tab-groups",))
     assert drawn == [f"{fw}x{fh} settings: tab-groups: a separator before test drawn at a line's start"], drawn
+
+
+def test_the_floor_rule_compares_a_window_below_its_floor_with_the_area_it_is_drawn_at():
+    """``floor`` (the owner's decisions of 2026-11-23; `browser.layout_problems`): a stop below
+    the floor of the arrangement its window takes is compared with the stop of the same page and
+    drawer at the area it is drawn at (`browser.effective_size`: the window raised to that
+    floor), not always with the side-by-side floor's (the sweep's L7 check, C6: a portrait window
+    1080 px wide takes the stacked arrangement, and was found for not drawing the 1280 x 720
+    stop's side by side, short and frame). It finds marks that differ from that stop's (the
+    side-by-side decision, the short flag, a box marked narrow), a frame drawn smaller, a
+    document that does not scroll in an axis the window is under its floor (the layout shrank to
+    the window), and a stop below its floor with no stop at its area to compare. At or above its
+    floor it finds a document that scrolls sideways, and side by side one that scrolls at all
+    (the frame scrolls); a stacked page scrolls down. Stops drawn as at their floor pass."""
+    from src.webui.style import STACK_FLOOR_WIDTH as sw
+    from tests.fixtures.browser import effective_size, floor_size, layout_problems
+
+    fw, fh = floor_size()
+    assert effective_size("1024x640") == (fw, fh) and effective_size(f"{fw}x{fh}") == (fw, fh)
+    assert effective_size(f"{sw - 64}x{2 * sw}") == (sw, 2 * sw) and effective_size("1080x1920")[1] == 1920
+    assert effective_size(f"{sw}x{sw}") == (sw, sw) and effective_size(f"{sw - 1}x{sw - 1}") == (sw, sw)
+
+    def stop(size, *, layout="side", short=True, marked=(), frame=(fw, fh), scroll=(0, 0), page="models",
+             open_=None):
+        facts = {"layout": layout, "short": short, "header": ["shep-x"], "marked": list(marked),
+                 "frame": list(frame), "scroll": list(scroll)}
+        return {"size": size, "page": page, **({"open": open_} if open_ else {}),
+                "check": {"layout": {}, "floor": facts}}
+
+    floor, tall, under = f"{fw}x{fh}", f"{sw}x{2 * sw}", f"{sw - 64}x{2 * sw}"
+    stacked = {"layout": "stack", "short": False, "marked": ["#t data-shep-narrow"], "frame": (sw, 3 * sw)}
+    good = [stop(floor, marked=["#t data-shep-narrow"]),
+            stop("1024x640", marked=["#t data-shep-narrow"], scroll=(256, 80)),
+            stop(f"{fw}x600", marked=["#t data-shep-narrow"], scroll=(0, 120)),
+            stop("1440x1600", layout="stack", short=False, frame=(1440, 3000), scroll=(0, 1400)),
+            # C6: a portrait window takes the stacked arrangement at or above its own floor.
+            stop("1080x1920", layout="stack", short=False, frame=(1080, 3000), scroll=(0, 1080)),
+            stop(tall, **stacked, scroll=(0, sw)),
+            stop(under, **stacked, scroll=(64, sw))]
+    assert layout_problems(good, rules=("floor",)) == []
+    shrunk = layout_problems([good[0], stop("1024x640", layout="stack", marked=[], frame=(1024, 640),
+                                            scroll=(0, 0))], rules=("floor",))
+    assert any(f"layout stack where {floor}'s is side" in p for p in shrunk), shrunk
+    assert any(f"marked [] where {floor}'s is ['#t data-shep-narrow']" in p for p in shrunk), shrunk
+    assert any("the frame drawn [1024, 640]" in p for p in shrunk), shrunk
+    assert any("narrower than its floor and the document does not scroll" in p for p in shrunk), shrunk
+    assert any("shorter than its floor and the document does not scroll" in p for p in shrunk), shrunk
+    # Below the stacked floor a portrait window is the stacked floor's, never the side-by-side one's.
+    narrow = layout_problems([good[0], good[5], stop(under, layout="stack", short=False, marked=[],
+                                                     frame=(sw - 64, 3 * sw), scroll=(0, sw))],
+                             rules=("floor",))
+    assert any(f"marked [] where {tall}'s is" in p for p in narrow), narrow
+    assert any(f"the frame drawn [{sw - 64}, {3 * sw}] where {tall}'s" in p for p in narrow), narrow
+    assert any("narrower than its floor" in p for p in narrow), narrow
+    assert not any(floor in p.split(": ", 1)[1] for p in narrow), narrow
+    alone = layout_problems([stop("1024x640", scroll=(256, 80), open_="#drawer"), good[0],
+                             stop(under, **stacked, scroll=(64, sw))], rules=("floor",))
+    assert len(alone) == 2 and all("no stop at the area it is drawn at" in p for p in alone), alone
+    assert any(f"({fw}x{fh})" in p for p in alone) and any(f"({tall})" in p for p in alone), alone
+    scrolled = layout_problems([stop(floor, scroll=(12, 30)), stop("1850x960", frame=(1850, 960), short=False,
+                                                                   scroll=(0, 4)),
+                                stop("1080x1920", layout="stack", short=False, frame=(1080, 3000),
+                                     scroll=(16, 1080))], rules=("floor",))
+    assert f"{floor} models: floor: the document scrolls sideways by 12 px" in scrolled, scrolled
+    assert any(p.startswith("1850x960 models: floor: side by side, the document scrolls by 4 px") for p in scrolled), \
+        scrolled
+    assert "1080x1920 models: floor: the document scrolls sideways by 16 px" in scrolled, scrolled
+    assert len(scrolled) == 4, scrolled
+
+
+def test_the_sideways_rule_finds_a_region_wider_than_its_frame_a_mask_or_not(l7_rules_seen):
+    """``sideways-scroll`` (the owner's decision of 2026-11-23; fixer A's item 6 of the sweep's
+    L7): the shell's automatic sideways mask satisfied ``scroll-cue``, so a table wider than its
+    frame went unseen. At or above the floor of the window's arrangement a region whose content
+    runs past its right edge is found, masked (``#side-masked``) or not (``#side-bad``); one that
+    says so in words just before it (Compare's drawn ``shep-rs-cue``, ``#side-good``) and one
+    whose content fits (``#side-fits``) pass. Below its floor it is not held (`browser.at_floor`):
+    a portrait window 1080 px wide is at or above the stacked arrangement's floor."""
+    from src.webui.style import STACK_FLOOR_WIDTH as sw
+    from tests.fixtures.browser import layout_problems
+
+    found = l7_rules_seen
+    assert _hits(found, "sideways", "#side-bad scrolls") and _hits(found, "sideways", "#side-masked scrolls"), \
+        found["sideways"]
+    assert not _hits(found, "sideways", "#side-good") and not _hits(found, "sideways", "#side-fits"), \
+        found["sideways"]
+    stops = [{"size": size, "page": "x", "check": {"layout": {"sideways": ["#t scrolls sideways"]}}}
+             for size in ("1280x720", "1024x640", "1080x1920", f"{sw - 1}x{2 * sw}")]
+    assert layout_problems(stops, rules=("sideways-scroll",)) == [
+        "1280x720 x: sideways-scroll: #t scrolls sideways", "1080x1920 x: sideways-scroll: #t scrolls sideways"]
 
 
 @pytest.mark.parametrize("state", ["first_use", "empty", "configured", "read_only"])

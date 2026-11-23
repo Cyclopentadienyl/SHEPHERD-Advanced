@@ -78,8 +78,10 @@ empty workspaces folder (`walk_state`, `WALK_STATES`) and measure each page at
 the layout windows (`layout_stops`, `LAYOUT_SIZES`); a stop measures once the
 page's requests have been answered for ten frames in a row (a page's opening
 chain is idle for an instant between two of its events). **The display
-floor** (`floor_size`, `at_floor`; the owner's decision of 2026-11-23): the
-walk's windows are at or above it but one, which is drawn as at the floor
+floor** (`floor_size`, `effective_size`, `at_floor`; the owner's decisions of
+2026-11-23): the floor of the arrangement a window takes, the display floor
+side by side and `style.STACK_FLOOR_WIDTH` no wider than tall; the walk's
+windows are at or above it but one, which is drawn as at the floor
 (``check``'s ``floor``: the layout pass's marks, the frame, the document's
 scroll), and ``in-view`` and ``sideways-scroll`` hold at or above it.
 
@@ -679,8 +681,9 @@ LOOK_JS = r"""
      row-height), each a relation to what is drawn, never a pixel figure of one screen:
      - inview: a control or a text line drawn past the window's bottom or right edge that no
        scroll region in view holds (`layout_problems` holds it at every window at or above the
-       display floor, `at_floor`, where a page's task fits or one region scrolls inside, never
-       the page; below the floor the document scrolls to it);
+       floor of its arrangement, `at_floor`, where a page's task fits or one region scrolls inside,
+       never the page; below the floor the document scrolls to it); stacked, the page flows and
+       the document scrolls down to what is under the window, never sideways;
      - cue: a scroll region (the page's own tab item included, never the document) whose drawn
        content runs past its edge, below it with no scroll cue (the shared R-73 cue,
        ``shep-scroll-cue``: a mask drawn while more is below), sideways with no sideways cue (a
@@ -780,10 +783,14 @@ LOOK_JS = r"""
       }
       return false;
     };
-    // inview
-    const outs = new Set();
+    // inview: stacked (the shell's layout rule), everything flows and the page scrolls as a whole,
+    // so what lies under the window's bottom is the document's to reach; nothing ever lies past
+    // its right edge.
+    const outs = new Set(), se = document.scrollingElement;
+    const pageScrolls = document.documentElement.getAttribute('data-shep-layout') !== 'side'
+      && se.scrollHeight > se.clientHeight + 1;
     for (const it of items) {
-      const outY = it.r.bottom > innerHeight + past(it.r), outX = it.r.right > innerWidth + 1;
+      const outY = it.r.bottom > innerHeight + past(it.r) && !pageScrolls, outX = it.r.right > innerWidth + 1;
       if ((!outY && !outX) || outs.has(it.el)) { continue; }
       let reach = false;
       for (let a = it.el; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
@@ -1272,7 +1279,9 @@ UI_SIZES = ((1850, 960), (1280, 900), (1920, 720), (1366, 768), (1440, 1600), (1
 #: 2560 x 1440 screen at 150 %), 1920 x 1080, 2560 x 1600 and 3840 x 2160
 #: (zoom changes the CSS viewport; a high-DPI screen only the device pixels
 #: per CSS pixel: `walk_ui`'s ``device_scale``). A 1080 x 1920 portrait
-#: screen and a 1920 x 1080 window at 200 % (960 x 540) are below the floor.
+#: screen takes the stacked arrangement, at or above its floor
+#: (`style.STACK_FLOOR_WIDTH`; `LAYOUT_SIZES` walks it); a 1920 x 1080 window
+#: at 200 % (960 x 540) is below the display floor.
 PTR_SIZES = ((1440, 900), (1707, 870), (1920, 1080), (2560, 1600), (3840, 2160))
 
 #: A request D8 refuses as forwarded by a proxy (`walk_ui`'s ``headers``): the
@@ -1587,17 +1596,29 @@ _AT_FLOOR_KEYS = {"in-view": "inview", "sideways-scroll": "sideways"}
 
 def floor_size() -> tuple[int, int]:
     """**The display floor** (`style.FLOOR_WIDTH` x `FLOOR_HEIGHT`, the owner's decision of
-    2026-11-23), as a window size."""
+    2026-11-23), as a window size: the side-by-side arrangement's."""
     from src.webui.style import FLOOR_HEIGHT, FLOOR_WIDTH
 
     return FLOOR_WIDTH, FLOOR_HEIGHT
 
 
-def at_floor(size: str) -> bool:
-    """Whether a stop's window (``"<w>x<h>"``) is at or above the display floor in both axes."""
+def effective_size(size: str) -> tuple[int, int]:
+    """**The area a stop's window is drawn at** (``"<w>x<h>"``; the shell's layout pass,
+    ``area()``): the window raised to the floor of the arrangement it takes. No wider than
+    tall, the stacked arrangement's (`style.STACK_FLOOR_WIDTH` in both axes, the owner's
+    decision of 2026-11-23 on portrait windows); wider, the display floor (`floor_size`)."""
+    from src.webui.style import STACK_FLOOR_WIDTH
+
     w, h = (int(n) for n in size.split("x"))
-    fw, fh = floor_size()
-    return w >= fw and h >= fh
+    fw, fh = (STACK_FLOOR_WIDTH, STACK_FLOOR_WIDTH) if w <= h else floor_size()
+    return max(w, fw), max(h, fh)
+
+
+def at_floor(size: str) -> bool:
+    """Whether a stop's window (``"<w>x<h>"``) is at or above the floor of the arrangement it
+    takes in both axes (`effective_size`: the window is its own area)."""
+    w, h = (int(n) for n in size.split("x"))
+    return effective_size(size) == (w, h)
 
 
 def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_RULES,
@@ -1655,22 +1676,26 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       edge, so it scrolls sideways, a mask or not (the shell's automatic sideways cue hid a
       table wider than its frame), unless it says so in words just before it (a drawn
       ``shep-rs-cue``: Compare, a column per result);
-    - ``floor`` (the display floor, `floor_size`): at or above it, the document never scrolls
-      sideways and, side by side, never at all (the frame never scrolls); below it in either
-      axis, the layout pass's marks (side or stack, short, the header's classes, each box marked
-      narrow, folded or alone) and the frame are those of the stop at the floor of the same page
-      and drawer in the walk, and the document scrolls in each axis the window is under the
+    - ``floor`` (the floor of the arrangement the window takes, `effective_size`: the display
+      floor, `floor_size`, side by side; `style.STACK_FLOOR_WIDTH` no wider than tall): at or
+      above it, the document never scrolls sideways and, side by side, never at all (the frame
+      never scrolls); below it in either axis, the layout pass's marks (side or stack, short, the
+      header's classes, each box marked narrow, folded or alone) and the frame are those of the
+      stop of the same page and drawer at the area the window is drawn at (raised to its
+      arrangement's floor), and the document scrolls in each axis the window is under that
       floor (drawn as at the floor, never shrunk)."""
     from src.webui.shell import RESEARCH_PAGES
 
     problems: list[str] = []
     measured = [s for s in seen if "check" in s and "layout" in s["check"]]
-    fw, fh = floor_size()
 
-    def same(stop: dict[str, Any]) -> tuple:
-        return stop["page"], stop.get("tag"), stop.get("open"), bool(stop.get("picked"))
+    def same(stop: dict[str, Any], size: str) -> tuple:
+        return size, stop["page"], stop.get("tag"), stop.get("open"), bool(stop.get("picked"))
 
-    at_the_floor = {same(s): s["check"].get("floor") for s in measured if s["size"] == f"{fw}x{fh}"}
+    # Each stop drawn at its own window, by where it was drawn: a stop below its arrangement's
+    # floor is compared with the stop at the area it is drawn at (the sweep's L7 check, C6: a
+    # portrait window takes the stacked arrangement, never the side-by-side floor's marks).
+    at_area = {same(s, s["size"]): s["check"].get("floor") for s in measured if at_floor(s["size"])}
     for stop in measured:
         if pages is not None and stop["page"] not in pages:
             continue
@@ -1693,20 +1718,21 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
                     problems.append(f"{where}: floor: side by side, the document scrolls by "
                                     f"{facts['scroll'][1]} px (the frame scrolls)")
             else:
-                ref = at_the_floor.get(same(stop))
+                ew, eh = effective_size(stop["size"])
+                ref = at_area.get(same(stop, f"{ew}x{eh}"))
                 if ref is None:
-                    problems.append(f"{where}: floor: below the floor, and no stop at the floor "
-                                    f"({fw}x{fh}) of the same page and drawer to compare")
+                    problems.append(f"{where}: floor: below its arrangement's floor, and no stop at the "
+                                    f"area it is drawn at ({ew}x{eh}) of the same page and drawer to compare")
                 else:
                     for key in ("layout", "short", "header", "marked"):
                         if facts[key] != ref[key]:
-                            problems.append(f"{where}: floor: {key} {facts[key]} where the floor's is {ref[key]}")
+                            problems.append(f"{where}: floor: {key} {facts[key]} where {ew}x{eh}'s is {ref[key]}")
                     if any(abs(a - b) > 1 for a, b in zip(facts["frame"], ref["frame"])):
-                        problems.append(f"{where}: floor: the frame drawn {facts['frame']} where the floor's "
+                        problems.append(f"{where}: floor: the frame drawn {facts['frame']} where {ew}x{eh}'s "
                                         f"is {ref['frame']}")
-                for axis, short, room in ((0, w < fw, "narrower"), (1, h < fh, "shorter")):
+                for axis, short, room in ((0, w < ew, "narrower"), (1, h < eh, "shorter")):
                     if short and facts["scroll"][axis] <= 0:
-                        problems.append(f"{where}: floor: {room} than the floor and the document does not "
+                        problems.append(f"{where}: floor: {room} than its floor and the document does not "
                                         "scroll that way (the layout shrank to the window)")
         if "notice-repeat" in rules:
             for key, times in found.get("notices", {}).items():
@@ -1755,13 +1781,15 @@ def state_settings(state: str, root: Path) -> dict[str, str]:
     raise ValueError(f"no walk state {state!r}")
 
 
-#: The layout measure's windows (the owner's decision of 2026-11-23): the owner's two windows
+#: The layout measure's windows (the owner's decisions of 2026-11-23): the owner's two windows
 #: (1850 x 960, 1550 x 830), a laptop (1366 x 768), the display floor (1280 x 720), a large
 #: screen (2560 x 1440: nothing stretched past readability), one window below the floor
-#: (1024 x 640: drawn as at the floor, the document scrolls), then the owner's again (back from
-#: below the floor).
+#: (1024 x 640: drawn as at the floor, the document scrolls), two portrait windows (a 1080p and a
+#: 1440p screen turned upright, 1080 x 1920 and 1440 x 2560: the stacked arrangement, at or above
+#: its floor, `style.STACK_FLOOR_WIDTH`), then the owner's again (back from below the floor and
+#: from stacked).
 LAYOUT_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720), (2560, 1440), (1024, 640),
-                (1850, 960))
+                (1080, 1920), (1440, 2560), (1850, 960))
 
 
 def layout_stops(pages: tuple[str, ...] = UI_PAGES, sizes: tuple[tuple[int, int], ...] = LAYOUT_SIZES,
@@ -1873,5 +1901,5 @@ def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any
 
 __all__ = ["LAYOUT_RULES", "LAYOUT_SIZES", "LOOK_JS", "PTR_SIZES", "QUEUE_JS", "READ_ONLY_HEADERS",
            "STAGE_HINTS", "TREE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES", "UI_WALK_JS",
-           "WALK_STATES", "at_floor", "floor_size", "layout_problems", "layout_stops", "node_with_playwright", "repeat_problems",
+           "WALK_STATES", "at_floor", "effective_size", "floor_size", "layout_problems", "layout_stops", "node_with_playwright", "repeat_problems",
            "run_node", "state_settings", "ui_problems", "walk_state", "walk_ui"]
