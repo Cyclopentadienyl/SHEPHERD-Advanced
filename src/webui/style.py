@@ -132,6 +132,11 @@ NARROW_ATTR = "data-shep-narrow"
 #: is measured drawn whole, so the measure never depends on the state it sets,
 #: and no window size decides it: the box's own height, the column's and the
 #: region's floor do.
+#: **The bottom scroll cue's fade length** (a custom property, px): the shell's layout pass sets
+#: it on a region with more below so the fade reaches back over the nearest thing the region
+#: draws at its edge (28 px at least; the sweep's L7 check, C1: a fade over the gap between two
+#: fields reads as nothing).
+FADE_VAR = "--shep-more-fade"
 FOLD = "shep-fold"
 FOLD_ROOM = "shep-fold-room"
 FOLD_FLOOR = "--shep-fold-floor"
@@ -1234,17 +1239,17 @@ html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
    ``data-shep-more-x`` on it as it scrolls and as its content changes, whatever the system's
    scrollbars (overlay ones draw nothing at rest). */
 [data-shep-more] {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--shep-more-fade, 28px)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--shep-more-fade, 28px)), transparent);
 }
 [data-shep-more-x] {
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
 }
 [data-shep-more][data-shep-more-x] {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent),
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--shep-more-fade, 28px)), transparent),
     linear-gradient(to right, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent),
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--shep-more-fade, 28px)), transparent),
     linear-gradient(to right, #000 calc(100% - 28px), transparent);
   -webkit-mask-composite: source-in;
   mask-composite: intersect;
@@ -1332,6 +1337,6 @@ __STACK__ {
     .replace("__FLOOR_W__", str(FLOOR_WIDTH)).replace("__FLOOR_H__", str(FLOOR_HEIGHT))
 
 
-__all__ = ["BRAND_WIDTH", "CELL_WHOLE", "COL_OPT", "COL_TWIN", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
+__all__ = ["BRAND_WIDTH", "CELL_WHOLE", "COL_OPT", "COL_TWIN", "FADE_VAR", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
            "FLOOR_HEIGHT", "FLOOR_WIDTH", "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT", "SHORT_ATTR",
            "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK"]

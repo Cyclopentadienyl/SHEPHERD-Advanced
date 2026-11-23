@@ -819,11 +819,15 @@ LOOK_JS = r"""
         // region's own mask) over a gap between fields reads as nothing, the next field under the
         // edge unseen (the sweep's L7 check, C1: Diagnosis' fields at 1550 x 830 faded the 22 px
         // gap under Patient ID, Options and Top-K hidden under it). A line or control of the
-        // region drawn in the fade by a quarter of its own height or more shows it.
+        // region drawn in the fade by a quarter of its own height or more shows it, and so does a
+        // drawn graphic (a chart's plot: an svg, a canvas or an image) by a quarter of the fade.
         const m = /calc\(100% - ([\d.]+)px\)/.exec(String(getComputedStyle(g).maskImage || getComputedStyle(g).webkitMaskImage));
         const fade = m ? parseFloat(m[1]) : 0, top = box.bottom - fade;
-        const seen = mine.some((it) => scroller(it.el, 'y') === g
-          && Math.min(it.r.bottom, box.bottom) - Math.max(it.r.top, top) >= past(it.r));
+        const into = (r) => Math.min(r.bottom, box.bottom) - Math.max(r.top, top);
+        const seen = mine.some((it) => scroller(it.el, 'y') === g && into(it.r) >= past(it.r))
+          || [...g.querySelectorAll('svg, canvas, img')].some((x) => drawn(x) && visible(x)
+            && x.getBoundingClientRect().width > 1 && scroller(x, 'y') === g
+            && into(x.getBoundingClientRect()) >= fade / 4);
         if (fade > 0 && !seen) {
           out.cue.push(`${named(g)} fades its last ${Math.round(fade)} px over nothing drawn: what lies under `
             + `its edge starts ${Math.round(below[0].r.top - box.bottom)} px below it, no cue seen (first: `
@@ -1291,7 +1295,8 @@ UI_PAGES = ("clinical", "datasets", "training", "finetune", "test", "models", "s
 #: "shown": drawer, "close": its close}``, and ``"pick"``/``"picked"``: a
 #: row to choose in it and what shows it was chosen) opens that drawer
 #: before it measures, chooses that row, walks focus inside the drawer only
-#: (the panels it covers are not its measure) and closes it again after. A
+#: (the panels it covers are not its measure) and closes it again after (an
+#: ``open`` with no ``close``, a row chosen on the page itself, stays). A
 #: stop with ``diagnose`` (``{"hpo": terms, "top_k": n, "rows": n}``) runs a
 #: diagnosis on Diagnosis first and waits for its rows to be drawn; the
 #: result stays for the stops after it. A checked stop also records
@@ -1444,7 +1449,8 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
       await page.evaluate(() => window.scrollTo(0, 0));
     }
     if (stop.options) { seen.options = await options(); }
-    if (stop.open) { await drawer(stop.open, false); }
+    // A choice with no closer (a row chosen on a page, its details shown: Models) stays.
+    if (stop.open && stop.open.close) { await drawer(stop.open, false); }
     out.push(seen);
   }
   console.log(JSON.stringify(out));

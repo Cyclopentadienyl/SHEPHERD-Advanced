@@ -256,7 +256,7 @@ import gradio as gr
 from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
 from src.webui.components.help import HelpRegistry, as_json_for_script
 from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
-from src.webui.style import (FIT, FIT_WIDE, FLOOR_HEIGHT, FLOOR_WIDTH, FOLD, FOLD_FLOOR, FOLD_ROOM,
+from src.webui.style import (FADE_VAR, FIT, FIT_WIDE, FLOOR_HEIGHT, FLOOR_WIDTH, FOLD, FOLD_FLOOR, FOLD_ROOM,
                               FOLDED_ATTR, LAYOUT_ATTR, NARROW_ATTR, SEG_WHOLE, SHORT_ATTR, SHORT_BELOW)
 
 BRAND = "SHEPHERD-Advanced"
@@ -1043,10 +1043,42 @@ _SHELL_JS = r"""
   var NOT_REGION = 'textarea, select, input, ul.option-list, #shep-help-bubble, #shep-help-bubble *, '
     + '.shep-rs-top, .shep-rs-wrap';
   function scrolls(v) { return v === 'auto' || v === 'scroll'; }
+  // **The fade reaches what is drawn** (the sweep's L7 check, C1): a fade over the gap between
+  // two fields reads as nothing (Diagnosis' fields at 1550 x 830 faded the gap under Patient ID,
+  // Options and Top-K unseen under it), so the bottom fade starts above the nearest thing the
+  // region draws over its edge (a line of words, a control, a graphic): FADE_VAR, its length,
+  // read by the style sheet's mask. Read along the region's start and middle, up from its edge.
+  var FADE_VAR = '__FADE_VAR__', FADE = 28, DRAWN = 'input, textarea, select, button, svg, canvas, img';
+  function shows(hit) {
+    if (hit.matches(DRAWN) || hit.closest('svg')) { return true; }
+    for (var n = hit.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 3 && n.data.trim()) { return true; }
+    }
+    return false;
+  }
+  function fadeOf(el) {
+    var r = el.getBoundingClientRect(), edge = r.top + el.clientTop + el.clientHeight;
+    var xs = [r.left + el.clientLeft + 20, r.left + el.clientLeft + el.clientWidth / 2];
+    for (var d = 2; d < el.clientHeight / 2; d += 4) {
+      for (var i = 0; i < xs.length; i++) {
+        var hit = document.elementFromPoint(xs[i], edge - d), q = hit && hit.getBoundingClientRect();
+        // Drawn over the edge by a quarter of its own height or more (a row only touching it is
+        // not seen under a fade either).
+        if (hit && hit !== el && el.contains(hit) && shows(hit) && edge - q.top >= q.height / 4 + 1) {
+          return Math.max(FADE, d + 20);
+        }
+      }
+    }
+    return FADE;
+  }
   function cue(el) {
     var s = getComputedStyle(el);
     var more = scrolls(s.overflowY) && el.scrollHeight - el.scrollTop - el.clientHeight > 1;
     var side = scrolls(s.overflowX) && el.scrollWidth - el.scrollLeft - el.clientWidth > 1;
+    var fade = more ? fadeOf(el) + 'px' : '';
+    if (el.style.getPropertyValue(FADE_VAR) !== fade) {
+      if (fade) { el.style.setProperty(FADE_VAR, fade); } else { el.style.removeProperty(FADE_VAR); }
+    }
     if (el.hasAttribute(MORE) !== more) { el.toggleAttribute(MORE, more); }
     if (el.hasAttribute(MORE_X) !== side) { el.toggleAttribute(MORE_X, side); }
     // Its content may change size with no change this pass listens to (a chart drawn again at
@@ -1311,6 +1343,7 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__NARROW__", NARROW_ATTR).replace("__SEG_WHOLE__", SEG_WHOLE)
               .replace("__FOLD__", FOLD).replace("__FOLD_ROOM__", FOLD_ROOM)
               .replace("__FOLD_FLOOR__", FOLD_FLOOR).replace("__FOLDED__", FOLDED_ATTR)
+              .replace("__FADE_VAR__", FADE_VAR)
               .replace("__GO__", as_json_for_script({k: list(v) for k, v in GO_TARGETS.items()}))
               + "</script>")
 
