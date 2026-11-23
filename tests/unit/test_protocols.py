@@ -391,7 +391,7 @@ def test_a_base_asked_as_p1_gets_one_reason_everywhere_and_nothing_starts(
     assert reason == ("the p1 measurement takes a finetune model with the disease head; this "
                       "checkpoint is a base model with no task head.")
 
-    assert listed.start_state(site.base_key, LABEL, "p1") == (False, f"Disabled: {reason}")
+    assert listed.start_state(site.base_key, LABEL, "p1") == (False, tp.r.disabled_words(tp.START, reason))
     # The page's start says the reason as a sentence, capitalised.
     assert tp.start_test_run(listed.page, listed.models, "demo", LABEL, site.base_key, False,
                              False, listed.request, protocol="p1", manager=runner.manager) == {
@@ -431,7 +431,8 @@ def test_a_version_without_the_genes_asked_for_is_refused_before_the_checkpoint(
         "this cohort version lists no candidate genes, which the gene measurement needs. "
         "Import a source that lists candidate_genes.")
 
-    assert listed.start_state(site.gene_key, CAUSAL_ONLY, "gene") == (False, f"Disabled: {reason}")
+    assert listed.start_state(site.gene_key, CAUSAL_ONLY, "gene") == (
+        False, tp.r.disabled_words(tp.START, reason))
     result = runner.manager.start_test(listed.inputs(runner, site.gene_key, CAUSAL_ONLY, "gene"))
     assert (result["success"], result["error"]) == (False, f"{reason} Nothing was started.")
     assert _nothing_started(runner)
@@ -502,8 +503,10 @@ def test_the_three_rows_say_the_golden_sentences_through_every_consumer(listed, 
         model_says = by_model[(protocol, *record)]
         says = model_says or inputs_says
 
+        # Start's reason in the one form every page says it (L6 C11).
         assert listed.start_state(key, LABEL, protocol) == (
-            (True, None) if says is None else (False, f"Disabled: {says}")), key
+            (True, None) if says is None
+            else (False, listed.tp.r.disabled_words(listed.tp.START, says))), key
         asked = listed.inputs(runner, key, LABEL, protocol)
         if says is None:
             asked.reports_dir()
