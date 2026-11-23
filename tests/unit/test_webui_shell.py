@@ -4080,19 +4080,87 @@ def test_the_clipped_rule_finds_words_a_box_cuts(l7_rules_seen):
     assert not [c for c in found["clipped"] if "cut by #clip-ell " in c or "#clip-sr" in c], found["clipped"]
 
 
-def test_the_layout_problems_hold_in_view_at_the_owners_windows():
+def test_the_wrap_end_rule_finds_a_group_pushed_to_the_end_of_its_line(l7_rules_seen):
+    """SW-LK5: Training's run bar wrapped its action group to a second line at the line's end,
+    the start of that line empty. ``wrap-end`` finds a bar's later line that does not start on
+    the bar's start edge, and passes a bar whose wrapped group starts it."""
+    found = l7_rules_seen
+    assert _hits(found, "wrapEnd", "#bar-end line 2"), found["wrapEnd"]
+    assert not _hits(found, "wrapEnd", "#bar-start"), found["wrapEnd"]
+
+
+def test_the_disabled_reason_rule_finds_a_disabled_button_with_nothing_said(l7_rules_seen):
+    """SW-LK6: Test's Register this report and Models' Load this model were disabled with no
+    visible reason. ``disabled-reason`` finds a disabled button with nothing said in its group or
+    under it, one whose words beside it are a page's own form rather than the shared reason line
+    (C11), and a region's primary action whose region has only the notice; it passes a button with
+    its reason line under it, one whose bar's note says why, a secondary button in a region that
+    draws the notice, and a button an open layer (a drawer) covers."""
+    found = l7_rules_seen
+    assert [d for d in _hits(found, "disabled", "#dis-bad") if "nothing said" in d], found["disabled"]
+    assert _hits(found, "disabled", "#dis-prim"), found["disabled"]
+    assert [d for d in _hits(found, "disabled", "#dis-own") if "own form" in d], found["disabled"]
+    for quiet in ("#dis-reason", "#dis-sec", "#dis-under", "#dis-bar"):
+        assert not _hits(found, "disabled", quiet), (quiet, found["disabled"])
+
+
+def test_the_token_separator_and_chain_rules_find_what_reads_broken(l7_rules_seen):
+    """SW-LK7 and SW-LK2: Datasets' build command broke inside its flag ("--generate" /
+    "-samples"), Settings' path broke after its hyphens, Fine-tune's facts line ended at a
+    separator, and Diagnosis split "dataset / fingerprint". ``token-break`` finds a word of a
+    token broken though it fits its box and a line ending at a hyphen inside a word, and passes a
+    path longer than its box that breaks before its separators and a fingerprint on one line;
+    ``sep-end`` finds a line ending at " · " and passes the chain on one line; ``chain-break``
+    finds a fact of a chain broken though it fits a line of its own and passes a fact longer than
+    its box."""
+    found = l7_rules_seen
+    assert _hits(found, "token", "#tok-flag"), found["token"]
+    assert [t for t in _hits(found, "token", "#tok-hyphen") if "hyphen" in t], found["token"]
+    assert not _hits(found, "token", "#tok-path") and not _hits(found, "token", "#tok-fp"), found["token"]
+    assert _hits(found, "sepEnd", "#sep-bad"), found["sepEnd"]
+    assert not _hits(found, "sepEnd", "#sep-good"), found["sepEnd"]
+    assert [c for c in _hits(found, "chain", "#chain-bad") if "dataset fingerprint" in c], found["chain"]
+    assert not _hits(found, "chain", "#chain-long"), found["chain"]
+
+
+def test_the_row_rules_find_labels_off_one_line_and_a_row_a_hidden_cell_sets(l7_rules_seen):
+    """SW-LK2 and SW-LK3: Fine-tune's Run name label stood 23 px under Device's in one row of
+    fields, and the Datasets table's selected row at 390 px was 2.5 times the other's height, set
+    by a cell scrolled out of view. ``row-top`` finds two labelled fields side by side whose labels
+    do not share a top line and passes the same row on its top line; ``row-height`` finds the row
+    a cell out of view sets and passes one whose cells in view set it. ``beside`` passes the words
+    of one area a page marks (``shep-area``) beside the button of another (a list and its chosen
+    item's details)."""
+    found = l7_rules_seen
+    assert _hits(found, "rowTop", "#rt-bad-a"), found["rowTop"]
+    assert not _hits(found, "rowTop", "#rt-good-a"), found["rowTop"]
+    assert _hits(found, "rowHeight", "#rh-bad-row"), found["rowHeight"]
+    assert not _hits(found, "rowHeight", "#rh-good-row"), found["rowHeight"]
+    assert not [b for b in found["beside"] if "#area-words" in b], found["beside"]
+
+
+def test_the_layout_problems_hold_in_view_at_the_owners_windows_and_tab_groups_whole():
     """``in-view`` is held at the owner's windows only (`browser.OWNER_SIZES`: a page scrolls
-    on a phone)."""
+    on a phone), and ``tab-groups`` finds a tab group split over two lines (SW-LK9: Models alone
+    on the second line at 390 px, the Test │ Models group split), passing groups wrapped whole."""
     from tests.fixtures.browser import OWNER_SIZES, layout_problems
 
-    def stop(size, inview=()):
-        return {"size": size, "page": "settings", "check": {"layout": {"inview": list(inview), "tabs": None}}}
+    def stop(size, inview=(), lines=None):
+        layout = {"inview": list(inview), "tabs": None if lines is None else
+                  {"lines": lines, "seps": [], "others": [], "focusable": []}}
+        return {"size": size, "page": "settings", "check": {"layout": layout}}
 
     owner = "x".join(map(str, OWNER_SIZES[0]))
     found = layout_problems([stop(owner, ["#x \"Apply\" drawn 40 px under the window"]),
                              stop("390x844", ["#x \"Apply\" drawn 900 px under the window"])],
                             rules=("in-view",))
     assert found == [f"{owner} settings: in-view: #x \"Apply\" drawn 40 px under the window"], found
+    split = layout_problems([stop("390x844", lines=[["datasets", "training", "finetune", "test"], ["models"]])],
+                            rules=("tab-groups",))
+    assert split and all("the group test models split" in p for p in split), split
+    whole = layout_problems([stop("390x844", lines=[["datasets", "training", "finetune"], ["test", "models"]])],
+                            rules=("tab-groups",))
+    assert whole == [], whole
 
 
 @pytest.mark.parametrize("state", ["first_use", "empty", "configured"])
@@ -4106,8 +4174,9 @@ def test_every_page_of_every_state_has_no_layout_finding(state, request):
     Load drawer in every state; Training's Continue drawer and the Test page's import drawer
     configured), has none of the layout rules' findings (`browser.layout_problems`: beside,
     narrow-box, overlap, orphan, centred, split-group, edge, clipped, empty-region,
-    help-on-page, notice-repeat, tab-groups, and since L7 in-view at the owner's windows and
-    scroll-cue). One service a state, one browser a walk."""
+    help-on-page, notice-repeat, tab-groups, and since L7 in-view at the owner's windows,
+    scroll-cue, wrap-end, disabled-reason, token-break, sep-end, chain-break, row-top,
+    row-height). One service a state, one browser a walk."""
     from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES, layout_problems
 
     seen = request.getfixturevalue({"first_use": "ui_walk_first_use", "empty": "ui_walk_empty",

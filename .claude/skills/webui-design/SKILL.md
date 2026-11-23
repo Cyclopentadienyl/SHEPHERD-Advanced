@@ -243,8 +243,9 @@ shared check, which a layout, token or navigation change runs rather than a scri
 `tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check` (`walk_ui` and
 `ui_problems` in `tests/fixtures/browser.py`; its screenshots in the test's temporary `ui-walk*/shots`). **The
 layout rules** (beside, narrow-box, overlap, orphan, centred, split-group, edge, clipped, empty-region,
-help-on-page, notice-repeat, tab-groups, in-view at the owner's windows, scroll-cue; `layout_problems`)
-are measured in the same walk and, with the
+help-on-page, notice-repeat, tab-groups, in-view at the owner's windows, scroll-cue, wrap-end,
+disabled-reason, token-break, sep-end, chain-break, row-top, row-height; `layout_problems`) are
+measured in the same walk and, with the
 **first-use and empty-folder walks** (`walk_state("first_use" | "empty", …)`, `layout_stops`), held at zero on
 every page at `LAYOUT_SIZES` in all three states, first use, empty and configured
 (`test_every_page_of_every_state_has_no_layout_finding`); a page's change runs them on its own pages at first
