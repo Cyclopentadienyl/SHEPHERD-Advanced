@@ -729,6 +729,12 @@ def test_model_facts_digest_rows_take_a_line_over_their_full_value():
     assert f'<dt class="shep-k shep-kv-wide">{r.e(r.FACTS_TRAINED_FP)} · demo</dt>' in html_
     assert html_.count("shep-copy shep-copy-icon") == 2
     assert '<dt class="shep-k">Model</dt>' in html_       # short labels keep the grid
+    # The sweep's L7 (SW-LK7): the run and the file are tokens, broken only before their own
+    # separators ("gatv2/20261002-000000_…" ended a line of the Load drawer at a hyphen).
+    run = "gatv2/20261002-000000_disease_bbbbbb"
+    tokens = r.model_facts_html(facts._replace(run=run, checkpoint_file=f"runs/{run}/last.pt"))
+    assert r.token_html(run) in tokens and r.token_html(f"runs/{run}/last.pt") in tokens
+    assert f"<code>{run}" not in tokens and f"<code>runs/{run}" not in tokens
     from src.webui.style import SHELL_CSS
 
     assert ".shep-kv > .shep-kv-wide { grid-column: 1 / -1;" in SHELL_CSS

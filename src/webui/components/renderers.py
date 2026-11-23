@@ -3270,7 +3270,7 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
 
     location = ""
     if facts.checkpoint_file:
-        location = (f'<code>{e(facts.checkpoint_file)}</code>'
+        location = (token_html(facts.checkpoint_file)
                     + (f' <span class="shep-muted">(workspace {e(facts.workspace)})</span>'
                        if facts.workspace else ""))
     unread = facts.trained_on_unread
@@ -3290,7 +3290,9 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
         ("Model", e(facts.name_line)),
         *([("Task", e(facts.task))] if facts.task else []),
         *([("Configuration", e(facts.configuration))] if facts.configuration else []),
-        ("Run", f"<code>{e(facts.run)}</code>" if facts.run else "—"),
+        # A run and a file are tokens: broken only before their own separators (the sweep's
+        # L7, SW-LK7: "gatv2/20261002-000000_…" ended a line of the Load drawer at a hyphen).
+        ("Run", token_html(facts.run) if facts.run else "—"),
         ("Checkpoint file", location or "—"),
         (FACTS_MODEL_FP, model_fp),
         *trained_rows,
