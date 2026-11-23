@@ -1052,7 +1052,7 @@ def test_no_model_loaded_is_said_once_on_the_card_with_its_one_action(root):
     assert len(re.findall(r"(?i)no model (is )?loaded", visible)) == 0
     assert visible.count("Not loaded") == 1
     assert out["change_btn"]["value"] == "Load a model…"
-    assert dp.RUN_DISABLED_NO_MODEL == "Disabled until a model is loaded."
+    assert dp.RUN_DISABLED_NO_MODEL == "Run Diagnosis disabled: a model must be loaded first (see above)."
     assert dp.RUN_DISABLED_NO_MODEL in out["run_reason"]
     assert out["results_body"].count("No result yet") == 1
     assert "No result yet" not in dp.results_header_html(None)

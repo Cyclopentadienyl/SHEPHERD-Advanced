@@ -48,7 +48,7 @@ inside its own panel; stacked, the panels stack and only the page scrolls.
   (`stop_views_closed`), so nothing the page holds outlives the state it
   describes (a "stopped" notice after a model is loaded again, say).
 - **Run Diagnosis** is greyed out and not clickable when nothing is served
-  or inference is stopping ("Disabled until a model is loaded" under it, a
+  or inference is stopping ("Run Diagnosis disabled: …" under it, a
   bubble on hover and on keyboard focus for each cause; the card above says
   which, once) and while a model change is open; while this page's Load
   reloads, Run Diagnosis waits for its answer (set in the list's step before
@@ -127,11 +127,13 @@ from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import OPTION_CHARS
 from src.webui.components.renderers import cut_at as _cut_at
+from src.webui.components.renderers import disabled_words as _disabled_words
 from src.webui.components.renderers import e as _e
 from src.webui.components.renderers import fingerprint_value as _fingerprint_value
 from src.webui.components.renderers import grapheme_ends as _grapheme_ends
 from src.webui.components.renderers import is_digest as _is_digest
 from src.webui.components.renderers import keep_as as _keep_as
+from src.webui.components.renderers import marked_line as _marked_line
 from src.webui.components.renderers import resources_html as _resources_html
 from src.webui.exports import download_update, export_dir, file_slug
 from src.webui.components.renderers import summary_list as _summary_list
@@ -1670,17 +1672,22 @@ TOPIC_HELP = {
     **{f"dx-banner-{key}": (headline, detail) for key, (headline, detail) in IDENTITY_BANNERS.items()},
 }
 
-#: Why Run Diagnosis is off, as visible text under it. Nothing served (no
-#: model, or a stop letting the accepted diagnoses finish) is said once, by
-#: the card's state and the backend's lead above it; this refers to it.
-RUN_DISABLED_NO_MODEL = "Disabled until a model is loaded."
-RUN_DISABLED_CHANGE = "Disabled: finish or cancel the model change first."
-RUN_DISABLED_LOADING = "Disabled until the model load started here answers."
+#: Why Run Diagnosis is off, as visible text under it, in the one form every
+#: page says a disabled control in (`renderers.disabled_words`: "<control>
+#: disabled: <cause>", drawn by `renderers.marked_line` with the neutral mark;
+#: L7 SW-LK8: it was a ⊖ and "Disabled until …" of this page's own). Nothing
+#: served (no model, or a stop letting the accepted diagnoses finish) is said
+#: once, by the card's state and the backend's lead above it; this refers to it.
+RUN_LABEL = "Run Diagnosis"
+RUN_DISABLED_NO_MODEL = _disabled_words(RUN_LABEL, "a model must be loaded first (see above).")
+RUN_DISABLED_CHANGE = _disabled_words(RUN_LABEL, "finish or cancel the model change first.")
+RUN_DISABLED_LOADING = _disabled_words(RUN_LABEL,
+                                        "the model load started here has not answered yet.")
 #: A patients-like-me model with no reference cohort version to rank: the
 #: lead, then the cause in its own words with who can act (skill §9). The
 #: registry setting's own words (its name, a command's flag) are an
 #: operator's and never reach this reason (Research › Test shows them).
-RUN_DISABLED_NO_COHORT = "Disabled: no reference cohort version can be read."
+RUN_DISABLED_NO_COHORT = _disabled_words(RUN_LABEL, "no reference cohort version can be read.")
 NO_COHORT_REGISTRY = ("The server's results registry is not set or cannot be used. An operator "
                       "sets it in Settings\u00a0› Data locations.")
 NO_COHORT_VERSION = ("The registry holds no cohort version yet. An operator imports one in "
@@ -2792,7 +2799,7 @@ def run_controls(state: Mapping[str, Any], phase: Any) -> Dict[str, Any]:
              f'data-help-title="{_e(title)}" aria-label="Run Diagnosis is disabled: why?" '
              f'aria-expanded="false" aria-describedby="{text_id(key)}"></button>')
     return {"run_btn": gr.update(interactive=False), "run_cover": cover,
-            "run_reason": f'<p class="shep-dx-why"><span aria-hidden="true">⊖</span> {_e(why)}</p>'}
+            "run_reason": _marked_line("neutral", why)}
 
 
 def _run_tuple(state: Mapping[str, Any], phase: Any) -> Tuple[Any, Any, Any]:
@@ -4392,7 +4399,7 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-card:has(> #shep-dx-stop-row .shep-dx-stop-q) > .shep-dx-card-actions {{ display: none !important; }}
 {_TAB} .shep-dx-stop-said, {_TAB} .shep-dx-stop-mem {{ margin: 2px 0 0; font-size: 14px; }}
 {_TAB} .shep-dx-why {{ margin: 2px 0 0; font-size: 14px; color: var(--shep-text-2); text-align: right; }}
-{_TAB} #shep-dx-run-why .shep-dx-why {{ text-align: left; margin: 0 16px 8px; }}
+{_TAB} #shep-dx-run-why .shep-reason {{ margin: 0 16px 8px; }}
 {_TAB} .shep-dx-run {{ padding: 6px 16px !important; gap: 10px !important; flex-wrap: nowrap !important; align-items: stretch !important; }}
 {_TAB} #shep-dx-run-wrap {{ position: relative; gap: 0 !important; flex: 1 1 auto !important; }}
 {_TAB} #shep-dx-clear {{ flex: 0 0 auto !important; min-width: 84px !important; padding: 0 18px !important; }}

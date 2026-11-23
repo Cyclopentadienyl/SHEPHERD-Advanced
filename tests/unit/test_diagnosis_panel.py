@@ -2497,9 +2497,13 @@ def test_run_is_greyed_with_a_bubble_and_a_reason_when_no_model_is_loaded():
     assert f'aria-describedby="{text_id("dx-run-no-model")}"' in run["run_cover"]
     assert 'class="shep-i shep-i-cover"' in run["run_cover"]
     assert dp.RUN_DISABLED_NO_MODEL in run["run_reason"]
-    # B4: one reason, "Disabled until a model is loaded", whoever reads it:
-    # the card says why, and who can load one (its gated action).
-    assert dp.RUN_DISABLED_NO_MODEL == "Disabled until a model is loaded."
+    # B4: one reason, whoever reads it: the card says why, and who can load
+    # one (its gated action). L7 SW-LK8: in the shared form every page says a
+    # disabled control in (`renderers.disabled_words`, the neutral mark in a
+    # column of its own), never a ⊖ and words of this page's own.
+    assert dp.RUN_DISABLED_NO_MODEL == "Run Diagnosis disabled: a model must be loaded first (see above)."
+    assert run["run_reason"] == r.marked_line("neutral", dp.RUN_DISABLED_NO_MODEL)
+    assert "⊖" not in run["run_reason"] and 'class="shep-reason"' in run["run_reason"]
     read_only = dp.run_controls(_card(_no_model_status(), operator=False), "idle")
     assert dp.RUN_DISABLED_NO_MODEL in read_only["run_reason"]
     assert "dx-run-no-model" in dp.TOPIC_HELP
@@ -3220,8 +3224,8 @@ def test_run_waits_for_a_readable_reference_cohort_version():
             run = dp.run_controls(_task_card("patients_like_me", cohorts, operator=operator),
                                   "idle")
             assert run["run_btn"]["interactive"] is False
-            assert run["run_reason"].endswith(
-                f"{dp._e(f'{dp.RUN_DISABLED_NO_COHORT} {words}')}</p>")
+            assert run["run_reason"] == r.marked_line(
+                "neutral", f"{dp.RUN_DISABLED_NO_COHORT} {words}")
             assert "operator" in words and "SHEPHERD_" not in run["run_reason"]
             assert "--registry" not in run["run_reason"] and "<registry>" not in run["run_reason"]
             assert f'aria-describedby="{text_id("dx-run-no-cohort")}"' in run["run_cover"]
@@ -4173,8 +4177,8 @@ def test_run_diagnosis_never_writes_the_stop_views():
 
 
 def test_after_a_stop_run_is_off_with_the_backends_reason_and_the_result_keeps_its_model():
-    """B4: after a stop, Run Diagnosis is off ("Disabled until a model is
-    loaded"), the card says the backend's state and lead (Stopped, who and
+    """B4: after a stop, Run Diagnosis is off ("Run Diagnosis disabled: a
+    model must be loaded first"), the card says the backend's state and lead (Stopped, who and
     when, the whole reason one click away), and the result produced before
     it keeps the model and data it used: its table is not redrawn, the badge
     names its own model and compares it with nothing (never "10 parts
