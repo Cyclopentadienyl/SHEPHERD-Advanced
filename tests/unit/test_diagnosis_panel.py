@@ -2501,7 +2501,7 @@ def test_run_is_greyed_with_a_bubble_and_a_reason_when_no_model_is_loaded():
     # one (its gated action). L7 SW-LK8: in the shared form every page says a
     # disabled control in (`renderers.disabled_words`, the neutral mark in a
     # column of its own), never a ⊖ and words of this page's own.
-    assert dp.RUN_DISABLED_NO_MODEL == "Run Diagnosis disabled: a model must be loaded first (see above)."
+    assert dp.RUN_DISABLED_NO_MODEL == "Run Diagnosis disabled: load a model first."
     assert run["run_reason"] == r.marked_line("neutral", dp.RUN_DISABLED_NO_MODEL)
     assert "⊖" not in run["run_reason"] and 'class="shep-reason"' in run["run_reason"]
     read_only = dp.run_controls(_card(_no_model_status(), operator=False), "idle")
@@ -4178,8 +4178,8 @@ def test_run_diagnosis_never_writes_the_stop_views():
 
 
 def test_after_a_stop_run_is_off_with_the_backends_reason_and_the_result_keeps_its_model():
-    """B4: after a stop, Run Diagnosis is off ("Run Diagnosis disabled: a
-    model must be loaded first"), the card says the backend's state and lead (Stopped, who and
+    """B4: after a stop, Run Diagnosis is off ("Run Diagnosis disabled: load
+    a model first."), the card says the backend's state and lead (Stopped, who and
     when, the whole reason one click away), and the result produced before
     it keeps the model and data it used: its table is not redrawn, the badge
     names its own model and compares it with nothing (never "10 parts

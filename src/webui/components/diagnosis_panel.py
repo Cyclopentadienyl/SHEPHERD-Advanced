@@ -1680,7 +1680,7 @@ TOPIC_HELP = {
 #: served (no model, or a stop letting the accepted diagnoses finish) is said
 #: once, by the card's state and the backend's lead above it; this refers to it.
 RUN_LABEL = "Run Diagnosis"
-RUN_DISABLED_NO_MODEL = _disabled_words(RUN_LABEL, "a model must be loaded first (see above).")
+RUN_DISABLED_NO_MODEL = _disabled_words(RUN_LABEL, "load a model first.")
 RUN_DISABLED_CHANGE = _disabled_words(RUN_LABEL, "finish or cancel the model change first.")
 RUN_DISABLED_LOADING = _disabled_words(RUN_LABEL,
                                         "the model load started here has not answered yet.")
@@ -2940,9 +2940,19 @@ def read_card(state: Any, request: Any, *, open_checkpoints: bool, reread: bool 
     """One status read (5 s limit) for this session's card, and its new state."""
     status, problem = card.read_status_within()
     allowed, short = _operator(request)
-    return card.advance(state if isinstance(state, Mapping) else card.new_state(), status,
-                        problem, now=now or datetime.now(), operator=allowed, d8_short=short,
-                        open_checkpoints=open_checkpoints, reread=reread)
+    new = card.advance(state if isinstance(state, Mapping) else card.new_state(), status,
+                       problem, now=now or datetime.now(), operator=allowed, d8_short=short,
+                       open_checkpoints=open_checkpoints, reread=reread)
+    return {**new, "workspaces_notice": _workspaces_notice()}
+
+
+def _workspaces_notice() -> Optional[Dict[str, Any]]:
+    """The workspaces folder's notice as read now (`workspaces.setting_notice`,
+    None while it is usable): the card says it (`diagnosis_card.body_html`)."""
+    from src.config import server_settings
+    from src.webui.components.workspaces import setting_notice
+
+    return setting_notice(server_settings.workspaces_root())
 
 
 def refresh_card(state: Any, result: Any, phase: Any, view: Any, request: Any, *,

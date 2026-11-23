@@ -309,10 +309,16 @@ class Preset:
     rows: str = "all"
     #: Whether its listing carries the family view (`family_views`).
     family: bool = False
+    #: Where its page says the workspaces folder's notice itself (None: the
+    #: list's empty state says it): Diagnosis' card, "Model in use", where the
+    #: screen's first action is (L7 SW-LK8); the drawer's empty list then says
+    #: a relation to it, never the notice again.
+    notice_where: Optional[str] = None
 
 
 PRESETS: Dict[str, Preset] = {
-    "clinical": Preset("clinical", 4, "In use", layout="drawer", rows="task_models"),
+    "clinical": Preset("clinical", 4, "In use", layout="drawer", rows="task_models",
+                       notice_where="Model in use"),
     "research": Preset("research", None, "In use (Diagnosis)", layout="page", family=True),
 }
 
@@ -910,7 +916,14 @@ def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Prese
         why = (f"No {what} is listed in the latest runs. Show older runs reads the rest."
                if unread else f"No {what} is listed in this workspace.")
     elif listing.get("notice") and not listing.get("items"):
-        return r.notice_block(listing["notice"])
+        notice = listing["notice"]
+        if preset is not None and preset.notice_where and notice.get("short"):
+            # Said once on the screen, where the preset's page says it: here
+            # its relation, in the notice's own short words.
+            words = f"No model to list: {notice['short']} (see {preset.notice_where})."
+            return (f'<p class="shep-empty" data-notice-rel="{r.e(notice.get("key") or "")}">'
+                    f'{r.e(words)}</p>')
+        return r.notice_block(notice)
     elif listing.get("problem"):
         why = listing["problem"]
     elif listing.get("status_read") and listing.get("workspace") is None \

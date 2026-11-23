@@ -574,7 +574,36 @@ def test_no_model_loaded_turns_run_off_and_offers_a_load(root):
     assert "Not loaded" in card.body_html(state)
     button = card.change_button(state)
     assert button["value"] == "Load a model…" and button["variant"] == "primary"   # no lock
+    # L7 SW-LK8: the next step is the column's large action (it was small in
+    # the grey card under a large disabled Run Diagnosis); Change model… is not.
+    assert button["size"] == "lg"
+    assert card.change_button(_state(root))["size"] == "sm"
     assert not card.details_visible(state)
+
+
+def test_first_use_says_the_workspaces_notice_once_on_the_card_and_a_relation_in_the_drawer(root):
+    """L7 SW-LK8: at first use no line on Diagnosis pointed to Settings › Data
+    locations, though the Load drawer, the card's first action, lists nothing
+    without the workspaces folder (its notice was one click away, in the
+    drawer's empty list). The card says the folder's one notice with its go
+    link; the drawer's empty list says a relation to it
+    (``data-notice-rel``), never the notice again; Models' list, whose page
+    shows no card, still says the notice itself."""
+    from src.config.server_settings import ENV_WORKSPACES_ROOT
+    from src.webui.components import model_list as ml
+    from src.webui.components.workspaces import NOTICES, notice_view
+
+    notice = notice_view(NOTICES[ENV_WORKSPACES_ROOT])
+    state = {**_state(root, status={"initialized": False}), "workspaces_notice": notice}
+    body = card.body_html(state)
+    assert body.count('data-notice="workspaces_root"') == 1 and "data-shep-go" in body
+    assert "data-notice" not in card.body_html(_state(root, status={"initialized": False}))
+    listing = {"notice": notice, "items": []}
+    drawer = ml._no_items_html(listing, None, ml.PRESETS["clinical"])
+    assert 'data-notice-rel="workspaces_root"' in drawer and "data-notice=" not in drawer
+    assert f"{notice['short']} (see Model in use)." in drawer
+    assert 'data-notice="workspaces_root"' in ml._no_items_html(listing, None,
+                                                               ml.PRESETS["research"])
 
 
 def test_a_status_naming_no_trained_model_is_not_shown_as_one(root):
@@ -1059,7 +1088,7 @@ def test_no_model_loaded_is_said_once_on_the_card_with_its_one_action(root):
     assert len(re.findall(r"(?i)no model (is )?loaded", visible)) == 0
     assert visible.count("Not loaded") == 1
     assert out["change_btn"]["value"] == "Load a model…"
-    assert dp.RUN_DISABLED_NO_MODEL == "Run Diagnosis disabled: a model must be loaded first (see above)."
+    assert dp.RUN_DISABLED_NO_MODEL == "Run Diagnosis disabled: load a model first."
     assert dp.RUN_DISABLED_NO_MODEL in out["run_reason"]
     assert out["results_body"].count("No result yet") == 1
     assert "No result yet" not in dp.results_header_html(None)

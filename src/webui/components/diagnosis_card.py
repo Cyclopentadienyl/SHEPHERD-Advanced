@@ -965,6 +965,11 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None, *,
         tail.append(_recorded_html(facts, grey=grey))
     if tail:
         lines.append('<p class="shep-dx-line shep-dx-tail">' + " ".join(tail) + "</p>")
+    # The workspaces folder's notice, said once on the screen where its first
+    # action is (L7 SW-LK8; the text brief's §10): the Load drawer lists
+    # nothing without it, and its empty list says a relation to this. Its two
+    # lines under "Not loaded" and over "Load a model…" say what it means here.
+    lines.append(r.notice_block(state.get("workspaces_notice")))
     classes = "shep-dx-card-bd shep-dx-card-grey" if grey else "shep-dx-card-bd"
     return f'<div class="{classes}">' + "".join(parts + lines) + "</div>"
 
@@ -975,9 +980,12 @@ def change_button(state: Mapping[str, Any]) -> Dict[str, Any]:
     lock while the operator may use it; disabled with the lock for a request
     D8 refuses, its reason beside it (`change_reason_html`)."""
     no_model = served_kind(state.get("status")) == "no_model" and bool(state.get("ok"))
+    # The next step is the column's largest action while it is the next step
+    # (L7 SW-LK8: it was small in a grey card under a large disabled Run).
     return {**gated("Load a model…" if no_model else "Change model…",
                     bool(state.get("operator"))),
-            "variant": "primary" if no_model else "secondary"}
+            "variant": "primary" if no_model else "secondary",
+            "size": "lg" if no_model else "sm"}
 
 
 def change_reason_html(state: Mapping[str, Any]) -> str:
