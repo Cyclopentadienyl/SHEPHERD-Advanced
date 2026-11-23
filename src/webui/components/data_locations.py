@@ -616,9 +616,10 @@ def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
                         with gr.Row(elem_classes=["shep-dl-set"]):
                             row["key"] = plain_html('<span class="shep-dl-key">Set to</span>',
                                                     elem_classes=["shep-dl-keycell"])
-                            # The box and its buttons: their own bar, so a group that
-                            # wraps starts on the box's edge, never under the key.
-                            with gr.Row(elem_classes=["shep-dl-field"]):
+                            # The box and its buttons: their own bar (`shep-bar`), so a group
+                            # that wraps starts on the box's edge, never under the key, and the
+                            # bar's note (a read-only row's lock) says why its buttons are off.
+                            with gr.Row(elem_classes=["shep-dl-field", "shep-bar"]):
                                 evidence = key == KEY_TRAINING_EVIDENCE_DIRS
                                 row["box"] = gr.Textbox(
                                     label=f"{deployment_view.FIELD_WORDS[key][0]}: folder path",
@@ -635,7 +636,8 @@ def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
                                                             scale=0, elem_id=f"dl_save_{key}")
                                 # Read-only: why the box and the buttons are locked (`ROW_LOCKED`),
                                 # a line of the bar's own under Check and Save, above Create.
-                                row["lock"] = plain_html("", elem_id=f"dl_lock_{key}")
+                                row["lock"] = plain_html("", elem_id=f"dl_lock_{key}",
+                                                         elem_classes=["shep-bar-note"])
                                 # Create and its suggestion, one more whole group of the bar:
                                 # after Check and Save on their line, or a line of its own.
                                 with gr.Row(elem_classes=["shep-dl-create", "shep-grp"]):
@@ -690,14 +692,31 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: line when that is narrower); Check and Save are one group (`shep-grp`) that
 #: moves to the next line together, at the box's end, never Save alone (at 390
 #: x 844 Save wrapped alone and Check stood centred in a row three lines
-#: tall); Create and its suggestion are one more group after them, on their
-#: line while it holds them, else a line of their own. The panel is at least
+#: tall). **The rows share their columns** (the sweep's L7, C3: each box took
+#: what Create and its suggestion left on its line, so the boxes and their
+#: Check and Save stood at a different x in every row): where the Set-to bar
+#: holds a box of `SET_BOX` and its buttons (`SET_WIDE`, the bar's own width,
+#: a container query) every box is `SET_BOX` wide and Create, with its
+#: suggestion under it where the line is short, follows Save on the line while
+#: its button fits, else takes a line of its own; in a narrower bar every box
+#: takes the line its buttons leave and Create a line of its own under it.
+#: Either way the box, Check, Save and Create start at one x in every row, and
+#: "In effect"'s value and the box share their left edge (the keys one 8em
+#: column at 14 px, 12 px before the value). **The head's facts hold a path
+#: at a readable width** (LOOK2-2: at 1550 x 830 the path in effect was 159 px
+#: wide, 8 lines a row): while a row shows a path in effect, every row's facts
+#: take at least 28em beside the name or go under it, so the rows keep one
+#: form; the name column is 50ch, so at the owner's window the facts beside it
+#: hold a path in 3 lines and the four rows stay in view. The panel is at least
 #: about 700 px wide at the display floor, so the key always stands beside its
 #: box (the query that put it above its box served windows under the floor and
 #: is retired with it). The evidence folders' box, a path per line, takes its whole line there: its
 #: hint ("One folder path on the server per line", 250.5 px in the dashboard's
 #: type) is longer than 16em. A read-only row's short reason (`ROW_LOCKED`) is
-#: a line of the bar's own under Check and Save, at their end, above Create.
+#: the bar's note under Check and Save (from Check's edge where every box is
+#: `SET_BOX` wide, else at their end), above Create: the bar's buttons, Create
+#: included, are off for the reason in their bar (C5: Create's lock had no
+#: reason beside or under it).
 #: Create and its suggestion share their first baseline (a suggestion that
 #: wrapped pushed a centred Create down; the recheck of d4209c4); the
 #: suggestion asks for its whole path's width (a basis of its content's width,
@@ -708,6 +727,11 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: 768). A path is a token (`renderers.token_html`): it breaks only before its
 #: own separators, never after a hyphen (SW-LK7: an in-effect path read
 #: hyphenated at every size).
+#: A Set-to box's width where its bar holds it and its buttons (`SET_WIDE`): one for every row.
+SET_BOX = "30em"
+#: The Set-to bar's width (its container's) from which every box is `SET_BOX` wide: the box and
+#: Check and Save (about 11em) on one line; under it each box takes what its buttons leave.
+SET_WIDE = "42em"
 PAGE_CSS = f"""
 {_PAGE} #shep-dl-bd {{ padding: 4px 16px 12px !important; gap: 0 !important; }}
 {_PAGE} #shep-dl-top {{ gap: 8px !important; align-items: center; flex-wrap: wrap; }}
@@ -721,22 +745,29 @@ PAGE_CSS = f"""
 {_PAGE} #shep-dl-top + .shep-dl-row, {_PAGE} .shep-dl-row:first-of-type {{ border-top: 0; }}
 {_PAGE} .shep-dl-row > :is(.shep-dl-head, .shep-dl-main) {{ flex: 1 1 100% !important; min-width: 0 !important; }}
 {_PAGE} .shep-dl-head {{ gap: 6px 24px !important; flex-wrap: wrap; align-items: flex-start; }}
-{_PAGE} .shep-dl-head > .shep-dl-left {{ flex: 0 1 var(--shep-measure) !important; min-width: min(16em, 100%) !important; }}
+{_PAGE} .shep-dl-head > .shep-dl-left {{ flex: 0 1 50ch !important; min-width: min(16em, 100%) !important; }}
 {_PAGE} .shep-dl-head > .shep-dl-facts {{ flex: 1 1 18em !important; min-width: 0 !important; gap: 4px !important; }}
+{_PAGE} #shep-dl-bd:has(.shep-dl-facts .shep-dl-path) .shep-dl-head > .shep-dl-facts {{ min-width: min(28em, 100%) !important; }}
 {_PAGE} .shep-dl-name h3 {{ margin: 0 0 var(--shep-space-head-below); font-size: 15px; font-weight: 600; }}
 {_PAGE} .shep-dl-name p {{ margin: 0; }}
 {_PAGE} .shep-dl-main {{ gap: 6px !important; }}
-{_PAGE} .shep-dl-set {{ gap: 8px !important; align-items: baseline; flex-wrap: wrap; }}
+{_PAGE} .shep-dl-set {{ gap: 8px 12px !important; align-items: baseline; flex-wrap: wrap; }}
 {_PAGE} .shep-dl-key {{ font-size: 14px; color: var(--shep-text-2); }}
-{_PAGE} .shep-dl-set > .block.shep-dl-keycell {{ flex: 0 0 8em !important; min-width: 8em !important; }}
-{_PAGE} .shep-dl-set > .shep-dl-field {{ flex: 1 1 16em !important; min-width: min(16em, 100%) !important; gap: 8px !important; align-items: center; flex-wrap: wrap; }}
-{_PAGE} .shep-dl-field > .block {{ flex: 1 1 16em !important; min-width: min(16em, 100%) !important; }}
-{_PAGE} .shep-dl-field > .shep-dl-acts {{ flex: none !important; width: auto !important; gap: 8px !important; flex-wrap: nowrap !important; margin-inline-start: auto; }}
+{_PAGE} .shep-dl-set > .block.shep-dl-keycell {{ flex: 0 0 8em !important; min-width: 8em !important; font-size: 14px; }}
+{_PAGE} .shep-dl-set > .shep-dl-field {{ flex: 1 1 16em !important; min-width: min(16em, 100%) !important; gap: 8px !important; align-items: flex-start !important; flex-wrap: wrap; container-type: inline-size; }}
+{_PAGE} .shep-dl-field > .block {{ flex: 1 1 16em !important; min-width: min(16em, 100%) !important; margin-inline: 0 !important; }}
+{_PAGE} .shep-dl-field > .shep-dl-acts {{ flex: none !important; width: auto !important; gap: 8px !important; flex-wrap: nowrap !important; }}
 {_PAGE} .shep-dl-set input, {_PAGE} .shep-dl-set textarea {{ border: 1px solid var(--shep-control-border) !important; border-radius: 6px !important; padding: 8px 12px !important; font-size: 15px; }}
 {_PAGE} .shep-dl-set input:focus-visible, {_PAGE} .shep-dl-set textarea:focus-visible {{ outline: 2px solid var(--shep-accent-600) !important; outline-offset: 1px; }}
 {_PAGE} .shep-dl-set input:disabled, {_PAGE} .shep-dl-set textarea:disabled {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
 {_PAGE} .shep-dl-acts > button, {_PAGE} .shep-dl-create > button {{ flex: none !important; min-width: max-content !important; }}
-{_PAGE} .shep-dl-field > .shep-dl-create {{ flex: 0 1 auto !important; width: auto !important; max-width: 100%; gap: 8px !important; align-items: baseline; flex-wrap: wrap !important; }}
+{_PAGE} .shep-dl-field > .shep-dl-create {{ flex: 1 1 100% !important; width: auto !important; min-width: auto !important; max-width: 100%; gap: 8px !important; align-items: baseline !important; flex-wrap: wrap !important; }}
+@container (min-width: {SET_WIDE}) {{
+  {_PAGE} .shep-dl-field > .block:not([id^="dl_lock_"]) {{ flex: 0 1 {SET_BOX} !important; }}
+  {_PAGE} .shep-dl-field > .shep-dl-create {{ flex: 1 1 0% !important; }}
+  {_PAGE} .shep-dl-field > .block[id^="dl_lock_"] {{ padding-inline-start: calc({SET_BOX} + 8px) !important; }}
+  {_PAGE} .shep-dl-field > [id^="dl_lock_"] .shep-reason {{ margin-inline-start: 0; }}
+}}
 {_PAGE} .shep-dl-create > [id^="dl_suggest_"] {{ flex: 1 1 max-content !important; min-width: 0 !important; }}
 {_PAGE} .shep-dl-create:not(:has(button:not([hidden]))) {{ display: none !important; }}
 {_PAGE} .shep-dl-field > .block[id^="dl_lock_"] {{ flex: 1 1 100% !important; }}
@@ -757,6 +788,7 @@ PAGE_CSS = f"""
 __all__ = ["APPLY_LABEL", "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET",
            "OVERRIDDEN",
            "PAGE_CSS", "PANEL_PARTS", "PATH_HIDDEN", "PRIVATE_KEYS", "REPAIR_LABEL",
-           "ROW_LOCKED", "ROW_PARTS", "SAVE_LABEL", "SOURCE_WORDS", "UNKNOWN", "UNREADABLE",
+           "ROW_LOCKED", "ROW_PARTS", "SAVE_LABEL", "SET_BOX", "SET_WIDE", "SOURCE_WORDS",
+           "UNKNOWN", "UNREADABLE",
            "box_value", "check_words", "create_data_locations_panel", "create_folder",
            "holds_words", "name_html", "notice_html", "reason_line", "state_html", "where_html"]

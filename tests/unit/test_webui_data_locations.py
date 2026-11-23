@@ -129,7 +129,9 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
     holds its name and, beside it, what is in effect and its "Advanced:
     source ›" (words and a disclosure, no field or button); Create and its
     suggestion are one more whole group of the Set-to bar, after Check and
-    Save."""
+    Save. The sweep's L7 check (C3): the rows share their columns, Create after Save where the
+    bar holds a box of `SET_BOX` and its buttons, else under the box
+    (`test_in_a_browser_the_rows_share_their_columns_and_a_path_reads`)."""
     from src.webui.app import create_gradio_app
 
     css = " ".join(dl.PAGE_CSS.split())
@@ -137,8 +139,12 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
     assert (f"{dl._PAGE} .shep-dl-row > :is(.shep-dl-head, .shep-dl-main) "
             "{ flex: 1 1 100% !important;") in css
     # The key above its box in a panel under 27em served windows under the display floor only
-    # (the panel is about 700 px wide at the floor): retired.
-    assert "@container" not in css and not hasattr(dl, "DL_NARROW")
+    # (the panel is about 700 px wide at the floor): retired. The one container query is the
+    # Set-to bar's own width, where every row's box is one width (the sweep's L7, C3).
+    assert not hasattr(dl, "DL_NARROW")
+    assert re.findall(r"@container \(([^)]*)\)", css) == [f"min-width: {dl.SET_WIDE}"]
+    assert (f'.shep-dl-field > .block:not([id^="dl_lock_"]) {{ flex: 0 1 {dl.SET_BOX} '
+            "!important; }") in css
     app = create_gradio_app()
     blocks = {getattr(b, "elem_id", None): b for b in app.blocks.values()}
     for key in KEYS:
@@ -1091,6 +1097,102 @@ def test_in_a_browser_no_row_of_settings_puts_words_beside_its_fields(dl, tmp_pa
         assert len(stop["extra"]) == len(KEYS), stop
         for row in stop["extra"]:
             assert row["above"] and row["oneLine"] and row["empties"] == [], (stop["size"], row)
+
+
+#: Each Data locations row as drawn: its Set-to box, Check, Save and Create (when offered), the
+#: path in effect (its lines and left edge), the name column and the facts; and the panel's body
+#: and "Where these are kept ›".
+_COLUMNS_JS = """() => {
+  const rect = (e) => e && e.getClientRects().length ? e.getBoundingClientRect() : null;
+  const lines = (e) => { const r = document.createRange(); r.selectNodeContents(e);
+    return new Set([...r.getClientRects()].filter((q) => q.width > 1).map((q) => Math.round(q.bottom))).size; };
+  const at = (q) => q && { left: q.left, right: q.right, top: q.top, bottom: q.bottom };
+  const rows = [...document.querySelectorAll('.shep-dl-row')].map((row) => {
+    const path = row.querySelector('.shep-dl-facts .shep-dl-path');
+    return { id: row.id, box: at(rect(row.querySelector('[id^="dl_box_"] :is(input, textarea)'))),
+             check: at(rect(row.querySelector('[id^="dl_check_"]'))),
+             save: at(rect(row.querySelector('[id^="dl_save_"]'))),
+             create: at(rect(row.querySelector('[id^="dl_create_"]'))),
+             name: at(rect(row.querySelector('.shep-dl-left'))),
+             facts: at(rect(row.querySelector('.shep-dl-facts'))),
+             path: path && { lines: lines(path), left: rect(path).left } };
+  });
+  return { rows, body: at(rect(document.querySelector('#shep-dl-bd'))),
+           where: at(rect(document.querySelector('#dl_where summary'))) };
+}"""
+
+
+def _columns_problems(stop) -> list:
+    """**The rows share their columns** (the sweep's L7, C3): every row's box starts and ends
+    where the other rows' do, and its Check and Save start where theirs do; each Create starts
+    at its box's left edge (a line of its own under it) or where every other Create beside Save
+    starts. Facts that hold a path in effect are never narrower than the name beside them
+    (LOOK2-2: 288 px beside a name of 504 at 1550 x 830, the path 8 lines a row): beside it
+    or under it, where the path starts on the box's edge."""
+    problems, where = [], stop["size"]
+    rows = stop["extra"]["rows"]
+    for part in ("box", "check", "save"):
+        for edge in (("left", "right") if part == "box" else ("left",)):
+            xs = {row["id"]: round(row[part][edge]) for row in rows}
+            if max(xs.values()) - min(xs.values()) > 1:
+                problems.append(f"{where}: the rows' {part} {edge} edges differ: {xs}")
+    beside = {row["id"]: round(row["create"]["left"]) for row in rows
+              if row["create"] and row["create"]["top"] < row["box"]["bottom"]}
+    if beside and max(beside.values()) - min(beside.values()) > 1:
+        problems.append(f"{where}: Create beside Save starts at {beside}")
+    for row in rows:
+        if row["create"] and row["id"] not in beside and abs(row["create"]["left"] - row["box"]["left"]) > 1:
+            problems.append(f"{where} {row['id']}: Create under its box starts off its edge")
+        path, facts, name = row["path"], row["facts"], row["name"]
+        side = bool(path) and facts["left"] >= name["right"] and facts["top"] < name["bottom"]
+        if side and facts["right"] - facts["left"] < name["right"] - name["left"] - 0.5:
+            problems.append(f"{where} {row['id']}: the path's facts are narrower than the name beside "
+                            f"them ({path['lines']} lines)")
+        if path and not side and abs(path["left"] - row["box"]["left"]) > 1:
+            problems.append(f"{where} {row['id']}: the path under the name starts off the box's edge")
+    return problems
+
+
+def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path, monkeypatch):
+    """The sweep's L7 check (C3, a regression of a4dc77d): each row's Set-to box took what
+    Create and its suggestion left on its line, so at 1850 x 960 the four boxes ended at 425,
+    441, 457 and 845 px (nothing set) and the Import row's at 458 against 846 (configured), and
+    Check and Save stood at a different x in every row (d3040ca: one column). LOOK2-2: with a
+    path in effect, the facts beside the name got what the name's 56ch left: 159 px at 1550 x
+    830, the path 8 lines a row and two rows in view. For an operator, the results registry
+    set at start (a long path) and the other folders not set (Create offered), at the owner's
+    windows, a laptop and the display floor: the rows share their columns
+    (`_columns_problems`), and at the owner's window all four rows and "Where these are kept
+    ›" stay in the panel's body (SW-LK1)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, walk_ui
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
+    registry = tmp_path / "a-results-registry-folder-kept-on-the-server" / "for-the-cohort-versions" / "registry"
+    registry.mkdir(parents=True, mode=0o700)
+    monkeypatch.setenv(ENV["registry"], str(registry))
+    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720])
+    stops = [{"size": size, "page": "settings", "focus": False} for size in sizes]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = walk_ui(base[:-len("gradio_api")], tmp_path, stops, extra_js=_COLUMNS_JS)
+    problems = []
+    for stop in seen:
+        rows = stop["extra"]["rows"]
+        assert len(rows) == len(KEYS) and all(row["box"] and row["check"] for row in rows), stop
+        assert [row["id"] for row in rows if row["path"]] == ["dl_row_registry"], stop
+        assert [row["id"] for row in rows if row["create"]] == ["dl_row_workspaces_root", "dl_row_intake_dir"], stop
+        problems += _columns_problems(stop)
+        if stop["size"] == "1850x960":
+            body, last = stop["extra"]["body"], stop["extra"]["where"]
+            if last["bottom"] > body["bottom"] + 0.5:
+                problems.append(f"1850x960: Where these are kept › ends at {last['bottom']}, the body at "
+                                f"{body['bottom']}")
+    assert not problems, "\n".join(problems)
 
 
 def test_the_settings_help_texts_meet_the_text_budget():
