@@ -4417,7 +4417,10 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-stop-row:has(.shep-dx-stop-q) {{ row-gap: 4px !important; }}
 {_TAB} #shep-dx-card:has(> #shep-dx-stop-row .shep-dx-stop-q) > .shep-dx-card-actions {{ display: none !important; }}
 {_TAB} .shep-dx-stop-said, {_TAB} .shep-dx-stop-mem {{ margin: 2px 0 0; font-size: 14px; }}
-{_TAB} .shep-dx-why {{ margin: 2px 0 0; font-size: 14px; color: var(--shep-text-2); text-align: right; }}
+/* The card's reasons stand under its actions, at its end edge: on a card wider than the measure (stacked)
+   the reason's box, capped at the measure, keeps that edge too (it stood at the card's start, its words
+   mid-card under no button; the read-only walk at 1080 x 1920 found Change model… with nothing said). */
+{_TAB} .shep-dx-why {{ margin: 2px 0 0 auto; font-size: 14px; color: var(--shep-text-2); text-align: right; }}
 {_TAB} .shep-reason.shep-dx-why {{ justify-content: end; }}
 {_TAB} #shep-dx-run-why .shep-reason {{ margin: 0 16px 8px; }}
 {_TAB} .shep-dx-run {{ padding: 6px 16px !important; gap: 10px !important; flex-wrap: nowrap !important; align-items: stretch !important; }}
