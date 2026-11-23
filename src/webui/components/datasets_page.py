@@ -94,7 +94,7 @@ from src.webui.components.workspaces import (
     workspace_binding,
 )
 from src.webui.shell import page_elem_id, plain_html
-from src.webui.style import COL_OPT, FIT, FIT_WIDE, NARROW_ATTR, SIDE
+from src.webui.style import CELL_ROOMY, COL_OPT, FIT, FIT_WIDE, NARROW_ATTR, SIDE
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +246,7 @@ def _marks(row: Mapping[str, Any], data: Mapping[str, Any], run_bar: Optional[st
           and row.get("dataset_fingerprint") == serving_row.get("dataset_fingerprint")):
         marks.append('<span class="shep-sub">same dataset as served</span>')
     if run_bar and row["name"] == run_bar:
-        marks.append(r.status_mark("ok", "in your Training run bar"))
+        marks.append(f'<span class="{CELL_ROOMY}">{r.status_mark("ok", "in your Training run bar")}</span>')
     if not row.get("trainable"):
         marks.append(r.not_trainable_chip(row))
     return " ".join(marks) or f'<span class="shep-muted">{r.NO_VALUE}</span>'
@@ -334,10 +334,12 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
         f'<div class="shep-tbl-wrap {FIT}"><table class="shep-tbl shep-dstbl {FIT_WIDE}" '
         'aria-label="Workspaces">'
         f'<thead><tr><th scope="col">Name</th><th scope="col"{_OPT}>Built (UTC)</th>'
-        '<th scope="col">Dataset fingerprint'
-        f'{help_button("dataset-fingerprint", "Dataset fingerprint")}</th>'
-        f'<th scope="col"{_OPT}>Sources</th><th scope="col" class="shep-num">Train / val</th>'
-        f'<th scope="col">In use{help_button("datasets-in-use", "In use")}</th>'
+        f'<th scope="col"><span class="{CELL_ROOMY}">Dataset fingerprint'
+        f'{help_button("dataset-fingerprint", "Dataset fingerprint")}</span></th>'
+        f'<th scope="col"{_OPT}>Sources</th>'
+        f'<th scope="col" class="shep-num"><span class="{CELL_ROOMY}">Train / val</span></th>'
+        f'<th scope="col"><span class="{CELL_ROOMY}">In use'
+        f'{help_button("datasets-in-use", "In use")}</span></th>'
         f'</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
 
 

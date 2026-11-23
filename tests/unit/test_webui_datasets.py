@@ -1224,6 +1224,17 @@ def test_the_panels_are_sized_by_what_they_hold_and_the_table_drops_optional_col
     assert optional == ["Built (UTC)", "Sources"]
     for row in re.findall(r"<tr[^>]*data-key=.*?</tr>", html, re.S):
         assert row.count("shep-col-opt") == 2
+    # The sweep's L7 check (D5): at 1550 x 830 "● in your" / "Training run bar", "Dataset
+    # fingerprint" / "ⓘ" and "Train /" / "val" broke while Built (UTC) had room. The headers
+    # and the run bar's fact read as one while the table has the room (`style.CELL_ROOMY`,
+    # the layout pass's second measure), and wrap only where it would cost the table a column.
+    from src.webui.style import CELL_ROOMY
+
+    roomy = [re.sub(r"<[^>]+>", "", text).strip() for attrs, text in heads if CELL_ROOMY in text]
+    assert [x[:len(name)] for x, name in zip(roomy, ("Dataset fingerprint", "Train / val", "In use"))] == [
+        "Dataset fingerprint", "Train / val", "In use"] and len(roomy) == 3, roomy
+    marked = dsp.table_html(dsp.read_datasets(), "demo", "demo")
+    assert f'<span class="{CELL_ROOMY}"><span class="shep-st shep-st-ok">' in marked
 
 
 #: At first use, as drawn: the notice's and the title's left edges, how many

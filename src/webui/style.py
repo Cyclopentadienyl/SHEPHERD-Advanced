@@ -1083,7 +1083,7 @@ button.shep-row {
 /* A count is one figure; words in its place ("epochs not recorded") wrap as words do, and read
    as one line while their table has the room (``__CELL_ROOMY__``). */
 .shep-mtree td.shep-num .shep-muted { white-space: normal; }
-.__FIT_BOX__[__ROOMY__] .shep-tbl td .__CELL_ROOMY__ { white-space: nowrap; }
+.__FIT_BOX__[__ROOMY__] .shep-tbl :is(td, th) .__CELL_ROOMY__ { white-space: nowrap; }
 /* A saved file's name, then its In-use chip, under it when the column is narrow. */
 .shep-mtree .shep-tree-leaf { flex-wrap: wrap; column-gap: 6px; }
 /* **The family graph** (Models' By family, `model_list._graph_html`; G1-G9, I1-I10): each
