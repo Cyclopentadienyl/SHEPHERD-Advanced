@@ -228,7 +228,9 @@ body { color: var(--shep-text); }
   padding: 0 !important; width: auto !important; min-width: 0 !important; border: 0 !important;
   background: none !important; max-width: calc(100% - var(--shep-settings-w, 120px) - 48px);
 }
-.shep-chips { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px 10px; }
+/* The chips' box hugs its right edge (``#shep-chips``); chips that wrap start on the box's one left
+   edge (the sweep's L7, SW-LK3: the GPU chip floated mid-box on a line of its own at 390 px). */
+.shep-chips { display: flex; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 6px 10px; }
 /* The header's chips (R-21; the WebUI skill's §6, normal states are quiet): a
    normal state ("Operator controls: on", "GPU jobs: none") is plain text with
    its mark, no box; only a state to watch is a lozenge: read-only amber with
@@ -305,6 +307,18 @@ body { color: var(--shep-text); }
 }
 #shep-shell.shep-nav-wrapped #shep-chips {
   top: var(--shep-chips-top, var(--shep-row1-h)); height: max(44px, calc(var(--shep-chips-h, 28px) + 12px));
+}
+/* **A chip's words whole wherever a header line holds them** (the sweep's L7, SW-LK9: at 390 px
+   "Operator controls: on (this machine)" ended in an ellipsis beside Settings although a line of
+   its own holds it). When the widest chip cannot stand whole beside the Settings tab, the shell's
+   layout pass marks the header (`shep-chips-line`): the chips take the row's width on a line of
+   their own and Settings goes under them, at the right. The ellipsis stays the last resort, for
+   a chip wider than a whole line. */
+#shep-shell.shep-nav-wrapped.shep-chips-line #shep-chips {
+  right: 16px; max-width: calc(100% - 32px); height: auto; padding-top: 8px !important; align-items: flex-start;
+}
+#shep-shell.shep-nav-wrapped.shep-chips-line #shep-nav > .tab-wrapper .right-tab-group {
+  padding-top: calc(var(--shep-chips-h, 28px) + 16px); min-height: 0;
 }
 
 /* ---------------------------------------------------------------- row 2: the research pages, the stage hint */

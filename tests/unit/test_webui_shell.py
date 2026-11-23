@@ -800,7 +800,7 @@ const { chromium } = require('playwright');
   await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#shep-chips .shep-chips', { timeout: 60000 });
   const out = {};
-  for (const width of [480, 360, 420, 760, 1100, 1850]) {
+  for (const width of [480, 360, 390, 420, 760, 1100, 1850]) {
     await page.setViewportSize({ width, height: 800 });
     await page.waitForTimeout(800);
     out[width] = await page.evaluate(() => {
@@ -824,6 +824,13 @@ const { chromium } = require('playwright');
                chips: document.querySelector('#shep-chips .shep-chips').childElementCount, tabs,
                edges: [...document.querySelectorAll('#shep-chips .shep-chip')].map((c) => {
                  const r = c.getBoundingClientRect(); return [r.left, r.right]; }),
+               // Each chip: where it starts and its line, its words whole or not, and its whole
+               // width (its words' own width, as an ellipsis does not draw them).
+               chipWords: [...document.querySelectorAll('#shep-chips .shep-chip')].map((c) => {
+                 const r = c.getBoundingClientRect(), t = c.querySelector('.shep-chip-text');
+                 return { left: r.left, top: r.top, whole: !t || t.scrollWidth <= t.clientWidth + 1,
+                          natural: r.width + (t ? t.scrollWidth - t.clientWidth : 0) }; }),
+               row: document.getElementById('shep-shell').clientWidth - 32,
                width: document.documentElement.clientWidth };
     });
   }
@@ -841,7 +848,13 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
     ``document.elementsFromPoint`` finds first at its centre and corners, the
     chips never over it; at 480 the header has wrapped onto its second line;
     every chip is inside the window (UI-02: at 360 px the D8 chip's left edge
-    was at -41 px; its words now end in a titled ellipsis inside the room)."""
+    was at -41 px; its words now end in a titled ellipsis inside the room).
+    The sweep's L7 (SW-LK9, SW-LK3): at 390 px "Operator controls: on (this
+    machine)" ended in an ellipsis beside Settings though a line of the header
+    holds it, and the GPU chip, wrapped, floated mid-box. A chip's words are
+    whole wherever a header line holds the chip whole (the ellipsis only for a
+    chip wider than a line), and chips on more than one line start on one
+    left edge."""
     import subprocess
 
     from src.webui.app import create_gradio_app, mount_options
@@ -867,6 +880,12 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
             assert covered == [], (width, tab, covered)
         for left, right in facts["edges"]:
             assert 0 <= left and right <= facts["width"], (width, facts["edges"])
+        for chip in facts["chipWords"]:
+            assert chip["whole"] or chip["natural"] > facts["row"], (width, chip, facts["row"])
+        tops = {round(chip["top"]) for chip in facts["chipWords"]}
+        if len(tops) > 1:
+            lefts = [chip["left"] for chip in facts["chipWords"]]
+            assert max(lefts) - min(lefts) <= 1, (width, facts["chipWords"])
 
 
 

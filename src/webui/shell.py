@@ -1139,7 +1139,17 @@ _SHELL_JS = r"""
     var settings = settingsTab ? settingsTab.offsetWidth : right.offsetWidth;
     var need = 16 + (brand ? brand.offsetWidth : 180) + 24 + left + 24 + chips.scrollWidth + 16 + settings + 16;
     shell.style.setProperty('--shep-settings-w', settings + 'px');
-    shell.classList.toggle('shep-nav-wrapped', need > shell.clientWidth);
+    var wrapped = need > shell.clientWidth;
+    shell.classList.toggle('shep-nav-wrapped', wrapped);
+    // Wrapped, the chips stand beside the Settings tab while the widest of them is whole there;
+    // else they take a line of their own (style.py's shep-chips-line). Each chip's whole width
+    // is read from its words' own width, so the mark never changes what it measured.
+    var widest = 0, all = chips.querySelectorAll('.shep-chip');
+    for (var c = 0; c < all.length; c++) {
+      var text = all[c].querySelector('.shep-chip-text');
+      widest = Math.max(widest, all[c].offsetWidth + (text ? text.scrollWidth - text.clientWidth : 0));
+    }
+    shell.classList.toggle('shep-chips-line', wrapped && widest > shell.clientWidth - settings - 48);
     shell.style.setProperty('--shep-chips-h', chips.offsetHeight + 'px');
     var line = Math.round(right.getBoundingClientRect().top - shell.getBoundingClientRect().top);
     shell.style.setProperty('--shep-chips-top', line + 'px');
