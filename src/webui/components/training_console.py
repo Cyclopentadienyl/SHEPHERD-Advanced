@@ -780,7 +780,7 @@ TOUCH_HEAD = "<script>" + r"""
     words.textContent = LOST.replace('{field}', function () { return name; });
     var space = document.createElement('span');
     space.className = 'shep-st-sp';
-    space.textContent = ' ';
+    space.textContent = '\u00a0';
     said.appendChild(shape);
     said.appendChild(space);
     said.appendChild(words);

@@ -557,7 +557,10 @@ span.shep-note { display: inline-block; }
 .shep-st-warn { color: var(--shep-status-warn); }
 .shep-st-error { color: var(--shep-status-error); }
 .shep-st-info { color: var(--shep-status-info); }
-.shep-st-shape { display: inline-block; margin-right: 4px; font-size: 15px; line-height: 1; }
+/* The shape is inline, never an atomic box: a line may break after an atomic inline whatever
+   follows it, so a line parted "●" from "verified" (the sweep's L7, SW-LK7); inline, with the no-break
+   space after it (`renderers.MARK_SPACE`), its word starts on its line. */
+.shep-st-shape { display: inline; margin-right: 4px; font-size: 15px; line-height: 1; }
 .shep-st > .shep-spinner { margin-right: 6px; }
 /* The space between the shape and the word (`renderers.MARK_SPACE`): in the text, so a copy reads
    "○ Saved", of no width, so the shape's margin draws the gap as before. In a chip the shape, space

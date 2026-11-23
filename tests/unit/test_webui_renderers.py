@@ -65,7 +65,10 @@ def checkpoint(fingerprint=FP_A, sha=SHA, problem=None, epoch=5, run="20261017-0
 
 
 def text_of(html: str) -> str:
-    return re.sub(r"<[^>]+>", "", html)
+    """The words as read: tags dropped, a no-break space (a separator's,
+    `renderers.SEP`, or a mark's, `renderers.MARK_SPACE`) read as the space
+    it shows."""
+    return re.sub(r"<[^>]+>", "", html).replace("\u00a0", " ")
 
 
 # --------------------------------------------------------------------------- digests
@@ -196,6 +199,11 @@ def test_trained_on_every_listed_workspace_with_the_full_digest():
     twin = [workspace("twin", FP_A[:12] + "f" * 52)]
     assert "matches no listed workspace" in text_of(r.trained_on_html(FP_A, twin))
     assert not r.is_synthetic_training(FP_A, twin)
+    # The sweep's L7 (SW-LK7): its facts are joined by the shared separator (a no-break space
+    # before the dot), so no line of the Diagnosis card starts with "·" ("trained on demo, other
+    # ·" then "dataset fingerprint …" read as two facts parted mid-way).
+    for html in (r.trained_on_html(FP_A, listed), r.trained_on_html(FP_A, twin)):
+        assert html.count(r.SEP) == 1 and " ·" not in re.sub(r"<[^>]+>", "", html), html
 
 
 def test_the_facts_show_recorded_tests_as_a_state_never_a_number():
@@ -997,6 +1005,14 @@ const { chromium } = require('playwright');
                gap: +(word.left - shape.right).toFixed(2), width: +m.getBoundingClientRect().width.toFixed(2),
                hidden: [...m.querySelectorAll('[aria-hidden="true"]')].map((x) => x.textContent) };
     }));
+    // Each shaped mark alone in a box narrower than its shape: the word's first line stands on
+    // the shape's line (a line never parts them).
+    out[`narrow-${w}x${h}`] = await page.evaluate(() => [...document.querySelectorAll('[data-narrow]')].map((p) => {
+      const shape = p.querySelector('.shep-st-shape').getBoundingClientRect();
+      const first = p.querySelector('.shep-st-w').getClientRects()[0];
+      return { mark: p.dataset.narrow, sameLine: first.top < shape.bottom && first.bottom > shape.top,
+               shapeTop: shape.top, wordTop: first.top };
+    }));
     if (process.argv[3]) { await page.screenshot({ path: `${process.argv[3]}_${w}x${h}.png`, fullPage: true }); }
   }
   console.log(JSON.stringify(out));
@@ -1017,6 +1033,9 @@ def status_marks_page(path):
             for size in (14, 15):
                 rows.append(f'<p data-mark="{kind}-{int(chip)}-{size}" style="font-size: {size}px">'
                             f'{r.status_mark(kind, word, as_chip=chip)} after</p>')
+            if r.STATUS_MARKS[kind][0] is not None:
+                rows.append(f'<p data-narrow="{kind}-{int(chip)}" style="width: 1px">'
+                            f'{r.status_mark(kind, word, as_chip=chip)}</p>')
     path.write_text(f'<!doctype html><html><head><meta charset="utf-8"><style>{SHELL_CSS}'
                     f'</style></head><body style="padding: 16px">{"".join(rows)}</body></html>',
                     encoding="utf-8")
@@ -1032,7 +1051,11 @@ def test_a_status_marks_text_reads_shape_space_word_and_its_look_is_kept(tmp_pat
     its own does), at 1850 x 960 and 390 x 844; the shape stays
     hidden from a screen reader, so it reads the word; and the look is kept:
     4 px from the shape to the word (6 px after the spinner), as on fcc3dea,
-    the space having no width."""
+    the space having no width. The sweep's L7 (SW-LK7): the space was a
+    breakable one, so "model fingerprint 60adc7154078 ●" ended a line of the
+    Diagnosis card and "verified" began the next; it is a no-break space, so
+    in a box narrower than the shape the word's first line still stands on
+    the shape's line."""
     from tests.fixtures.browser import node_with_playwright, run_node
 
     if node_with_playwright() is None:
@@ -1041,11 +1064,15 @@ def test_a_status_marks_text_reads_shape_space_word_and_its_look_is_kept(tmp_pat
     shapes = {kind: shape or "" for kind, (shape, _token) in r.STATUS_MARKS.items()}
     words = {"ok": "Saved", "neutral": "Not loaded", "warn": "Needs attention",
              "error": "Not usable", "running": "Running", "stopping": "Stopping"}
+    narrow = {size: seen.pop(size) for size in list(seen) if size.startswith("narrow-")}
+    for size, marks in narrow.items():
+        assert len(marks) == 10 and all(m["sameLine"] for m in marks), (size, marks)
     for size, marks in seen.items():
         assert len(marks) == 24, size
         for mark in marks:
             kind, chip, _px = mark["mark"].split("-")
-            said = f"{shapes[kind]} {words[kind]}".strip()
+            # Shape, the no-break space (`MARK_SPACE`), word; the spinner has no space.
+            said = f"{shapes[kind]}\u00a0{words[kind]}" if shapes[kind] else words[kind]
             # A chip is a box of its own: a copy of it alone ends its line.
             copied = mark["copied"][:-1] if chip == "1" and mark["copied"].endswith("\n") else (
                 mark["copied"])

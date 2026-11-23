@@ -1122,7 +1122,7 @@ def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_
     assert gap in css and ".shep-mp-recwrap + .shep-note" not in css
     html = mp.unreadable_html([{"index": 0, "sequence": None, "source_artifact_digest": None,
                                 "reason": "n_ranked: missing"}])
-    assert '<p class="shep-mp-p shep-mp-unread-p"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">1 record' in html
+    assert '<p class="shep-mp-p shep-mp-unread-p"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp">\u00a0</span><span class="shep-st-w">1 record' in html
     assert '<div class="shep-tbl-wrap shep-mp-recwrap shep-mp-unreadwrap">' in html
 
 
@@ -1767,7 +1767,7 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert "matches the reference recipe" in html and mp.REFERENCE_ANCHOR in _text(html)
     assert EVIL not in html and "in workspace <b>&lt;img" in html
     html = mp.identity_html(item, {"parent_state": "unavailable", "parent_problem": EVIL})
-    assert '▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">parent unavailable: &lt;img' in html
+    assert '▲</span><span class="shep-st-sp">\u00a0</span><span class="shep-st-w">parent unavailable: &lt;img' in html
     assert EVIL not in html and "Parent unavailable" not in html     # short: whole in its row
     # A reason the Parent row shortens is whole one "Details ›" away (the second
     # round's review: the first round's run panel was its only whole copy).
@@ -2905,7 +2905,7 @@ def test_runs_that_differ_are_flagged_only_in_a_deterministic_group(world, monke
     listing, data = _read(world, monkeypatch)
     flagged = mp.detail_parts(listing, data, _key(world, "model-40.pt"), NEWEST_CTL)["records"]
     assert mp.r.warn_chip("runs differ #1") in flagged
-    assert ('<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">runs '
+    assert ('<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp">\u00a0</span><span class="shep-st-w">runs '
             "under these conditions differ — investigate: ") in flagged
     assert "Deterministic algorithms were on, so they were expected to agree." in flagged
 
@@ -2926,7 +2926,7 @@ def test_runs_that_differ_are_flagged_only_in_a_deterministic_group(world, monke
                                mode="disease", deterministic=deterministic) == (
             '<div class="shep-mp-delta shep-muted">runs under these conditions differ</div>')
     assert mp.contest_html(state, mode="disease", deterministic=True) == (
-        '<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">runs under '
+        '<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp">\u00a0</span><span class="shep-st-w">runs under '
         "these conditions differ — investigate: pooled_mrr. Deterministic algorithms were on, "
         "so they were expected to agree.</span></span></div>")
 

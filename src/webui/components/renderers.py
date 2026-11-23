@@ -182,8 +182,11 @@ STATUS_MARKS = {
 _STATUS_TAG = {"ok": "ok", "neutral": "grey", "warn": "amber", "error": "red", "info": "accent"}
 #: **The space between a mark's shape and its word** (`status_mark`): in its
 #: text, so a copy and ``innerText`` read "○ Saved", never "○Saved"; of no
-#: width (``shep-st-sp``), so the shape's own margin still draws the gap.
-MARK_SPACE = '<span class="shep-st-sp"> </span>'
+#: width (``shep-st-sp``), so the shape's own margin still draws the gap; a
+#: no-break space, so a line never parts the shape from its word (the skill's
+#: §6; the sweep's L7, SW-LK7: "model fingerprint 60adc7154078 ●" ended a
+#: line of the Diagnosis card, "verified" began the next).
+MARK_SPACE = '<span class="shep-st-sp">\u00a0</span>'
 
 
 def status_mark(kind: str, words: Any, *, words_html: bool = False,
@@ -1649,15 +1652,17 @@ def trained_on(fingerprint: Any, workspaces: Sequence[Any]) -> Tuple[str, ...]:
 def trained_on_html(fingerprint: Any, workspaces: Sequence[Any], *, digits: int = SHORT_HEX,
                     copy: bool = False) -> str:
     """"trained on <name> · dataset fingerprint …", or "trained on dataset
-    fingerprint … · matches no listed workspace" (one wording, both presets)."""
+    fingerprint … · matches no listed workspace" (one wording, both presets),
+    joined by the shared separator (`SEP`), so a line ends at it, never
+    starts with it, and the layout pass hides it where a line breaks."""
     names = trained_on(fingerprint, workspaces)
     fp = fingerprint_html("dataset fingerprint", fingerprint, digits=digits, copy=copy)
     if not is_digest(fingerprint):
         return f'<span class="shep-trained">trained on: {fp}</span>'
     if names:
         listed = ", ".join(f"<b>{e(n)}</b>" for n in names)
-        return f'<span class="shep-trained">trained on {listed} · {fp}</span>'
-    return (f'<span class="shep-trained">trained on {fp} · '
+        return f'<span class="shep-trained">trained on {listed}{SEP}{fp}</span>'
+    return (f'<span class="shep-trained">trained on {fp}{SEP}'
             f'<span class="shep-amber-t">matches no listed workspace</span></span>')
 
 
