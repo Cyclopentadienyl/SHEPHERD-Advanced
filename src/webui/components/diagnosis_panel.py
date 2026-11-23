@@ -753,7 +753,7 @@ _IDENTITY_PARTS = (
 #: Why nothing can be said, for the two kinds that have no identity to read.
 _NO_IDENTITY_REASON = {
     IDENTITY_NOT_REPORTED: "the API's response did not carry a served identity",
-    IDENTITY_NO_MODEL: "no model is loaded on this server now; nothing is served",
+    IDENTITY_NO_MODEL: "no model is loaded on this server now, so nothing is served",
 }
 _SCORING_MODE_WORDS = {
     "disease_task": "a model finetuned for the disease task, over its graph view",
@@ -1529,7 +1529,7 @@ EXPORTS_HIDDEN = "hidden"
 #: **What must stay visible under a field** (``info=``; the WebUI skill §7: a
 #: format is never only in a bubble or a placeholder; UI-15, R-6).
 FIELD_INFO = {
-    "dx_hpo_terms": "Only HP:####### ids are read; names and punctuation are ignored.",
+    "dx_hpo_terms": "Only HP:####### ids are read. Names and punctuation are ignored.",
     "dx_patient_id": "Optional. Left blank, the server gives the result its own id.",
 }
 

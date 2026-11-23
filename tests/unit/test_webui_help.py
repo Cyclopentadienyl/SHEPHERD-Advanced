@@ -1461,14 +1461,58 @@ def test_focus_on_a_pinned_i_follows_it_when_a_drawing_replaces_it(tmp_path):
     assert seen["unfocused"]["focus"] == "page" and seen["unfocused"]["open"] is True, seen
 
 
-#: The WebUI's own texts that keep a semicolon: words kept verbatim from a
-#: source the WebUI may not change (the device statement, a governed note) or
-#: script and CSV joiners, never a sentence the WebUI writes.
+#: The WebUI's own texts that keep a semicolon, by (module, name), each with its
+#: reason: words kept verbatim from a source the WebUI may not change, or a word
+#: another reader depends on; never a sentence the WebUI writes.
 _KEPT_SEMICOLONS = {
-    ("diagnosis_panel", "NOT_A_MEDICAL_DEVICE"), ("diagnosis_panel", "_NOT_A_MEDICAL_DEVICE"),
-    ("renderers", "NOT_A_MEDICAL_DEVICE"), ("renderers", "GENERATED_EXPOSURE_NOTE"),
-    ("diagnosis_panel", "MATCHING_NOTE"),
+    ("diagnosis_panel", "NOT_A_MEDICAL_DEVICE"): "the device statement, verbatim",
+    ("diagnosis_panel", "_NOT_A_MEDICAL_DEVICE"): "the device statement, verbatim",
+    ("renderers", "NOT_A_MEDICAL_DEVICE"): "the device statement, verbatim",
+    ("renderers", "GENERATED_EXPOSURE_NOTE"): "a governed note (skill §13)",
+    ("diagnosis_panel", "MATCHING_NOTE"): "a governed note (skill §13)",
+    ("diagnosis_panel", "_IDENTITY_PARTS"): "export words: the exported Diagnosis report's "
+                                            "identity rows name these parts (_identity_rows)",
+    ("training_console", "REFERENCE_SOURCES"): "verbatim source citations",
+    ("finetune_page", "FINETUNE_SOURCES"): "verbatim source citations",
 }
+
+
+def _semicolon_texts(module, module_name: str):
+    """**Every text a page module holds that carries a semicolon**: each module-level
+    constant (an upper-case name), read at any nesting (a dict's values, a tuple's,
+    list's or set's items, a NamedTuple's fields; a dict's keys are lookup words, not
+    shown), as (module, name, where, text). Not read: a style sheet, a script or markup;
+    a constant named in `_KEPT_SEMICOLONS`; a registered help dict (a ``*HELP`` name: the
+    help budget test holds its texts, and allows a semicolon only in a FieldSpec lead, a
+    governed note or the Ref line); a governed text of `src.evaluation.caveats` (skill §13),
+    which a page imports as it is."""
+    from src.evaluation import caveats
+
+    governed = {id(v) for v in vars(caveats).values() if not isinstance(v, (str, int, float))}
+
+    def walk(value, where):
+        if isinstance(value, str):
+            yield where, value
+        elif id(value) in governed:
+            return
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield from walk(item, f"{where}[{key!r}]")
+        elif isinstance(value, (tuple, list, set, frozenset)):
+            for i, item in enumerate(value):
+                yield from walk(item, f"{where}[{i}]")
+
+    for name, value in vars(module).items():
+        if not name.lstrip("_").isupper() or (module_name, name) in _KEPT_SEMICOLONS:
+            continue
+        if name.rstrip("_").endswith("HELP"):
+            continue
+        for where, text in walk(value, name):
+            if "; " not in text:
+                continue
+            if "{" in text or "=>" in text or text.lstrip().startswith("<"):
+                continue                    # a style sheet, a script or markup
+            yield module_name, name, where, text[:60]
 
 
 def test_the_webuis_own_sentences_hold_no_semicolon():
@@ -1477,9 +1521,13 @@ def test_the_webuis_own_sentences_hold_no_semicolon():
     acceleration work is deferred; each run's record keeps …"), Models' next
     step, the model list's wait and reload words, Settings' repair and stop
     words, the GPU chip's Ref line and others still joined two facts with a
-    semicolon (the text brief's §2 and §14 #11). Every module-level text of
-    the WebUI's pages (not a script, not a joiner) holds none, but the few
-    kept verbatim from a source the WebUI may not change."""
+    semicolon (the text brief's §2 and §14 #11). L7 FX-1: it read only
+    module-level strings, and texts held in dicts and tuples still did
+    (Diagnosis' HPO note under its field, Training's format lines under
+    Neighbours, Warmup steps and Minimum LR ratio, the no-model identity
+    reason, a Results registration word). Every text a page module holds, at
+    any nesting (`_semicolon_texts`), holds none, but those named with their
+    reason (`_KEPT_SEMICOLONS`)."""
     import importlib
     import pkgutil
 
@@ -1488,15 +1536,43 @@ def test_the_webuis_own_sentences_hold_no_semicolon():
     found = []
     for info in pkgutil.iter_modules(components.__path__):
         module = importlib.import_module(f"src.webui.components.{info.name}")
-        for name, value in vars(module).items():
-            if not (name.lstrip("_").isupper() and isinstance(value, str) and "; " in value):
-                continue
-            if getattr(module, name) is not value or (info.name, name) in _KEPT_SEMICOLONS:
-                continue
-            if "{" in value or "=>" in value or "\n" in value or value.lstrip().startswith("<"):
-                continue                    # a style sheet, a script, markup or a help text
-            found.append((info.name, name, value[:60]))
+        found += _semicolon_texts(module, info.name)
     assert found == [], found
+    assert set(_KEPT_SEMICOLONS) <= {
+        (info.name, name) for info in pkgutil.iter_modules(components.__path__)
+        for name in vars(importlib.import_module(f"src.webui.components.{info.name}"))}
+
+
+def test_the_semicolon_reader_reads_texts_at_any_nesting():
+    """The reader of the semicolon test (`_semicolon_texts`) cannot silently narrow
+    again: in a stand-in module, a text in a dict's value, a tuple, a NamedTuple and a
+    list in a dict is found; a dict's key, a help dict, a style sheet, a kept constant
+    and a governed caveats text are not."""
+    import types
+    from typing import NamedTuple
+
+    from src.evaluation import caveats
+
+    class Pair(NamedTuple):
+        lead: str
+        note: str
+
+    governed = caveats.R10_UNVERIFIABLE_REASON
+    assert any("; " in text for text in governed.values())
+    stand_in = types.ModuleType("stand_in")
+    stand_in.FIELD_INFO = {"a": "One; two.", "b; c": "plain"}
+    stand_in._PARTS = ("x", "Device (one; two)")
+    stand_in.PAIR = Pair("Lead.", "Three; four.")
+    stand_in.NESTED = {"k": ["ok", ("deep; down",)]}
+    stand_in.PAGE_HELP = {"k": ("Title", "Lead.\nA; b.")}
+    stand_in.STYLE = ".x { a: b; c: d; }"
+    stand_in.GOVERNED = governed
+    found = {where for _, _, where, _ in _semicolon_texts(stand_in, "stand_in")}
+    assert found == {"FIELD_INFO['a']", "_PARTS[1]", "PAIR[1]", "NESTED['k'][1][0]"}, found
+    kept = types.ModuleType("kept")
+    kept._IDENTITY_PARTS = ("Device (in effect; requested)",)
+    assert list(_semicolon_texts(kept, "diagnosis_panel")) == []
+    assert [where for _, _, where, _ in _semicolon_texts(kept, "other")] == ["_IDENTITY_PARTS[0]"]
 
 
 #: Every registered help text opened in the one bubble of the served dashboard

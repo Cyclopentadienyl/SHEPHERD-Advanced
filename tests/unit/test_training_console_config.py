@@ -633,8 +633,8 @@ def test_a_fields_format_unit_or_off_is_visible_under_it():
     # settings that adds one (onecycle's ratio above 0). The warmup words are
     # held to a real Trainer (test_settings_projection).
     assert tc.FIELD_FORMATS["min_lr_ratio"] == (
-        f"A fraction of the peak rate, {tf.bound_words(tf.by_name('min_lr_ratio').valid)}; "
-        "more than 0 with onecycle.")
+        f"A fraction of the peak rate, {tf.bound_words(tf.by_name('min_lr_ratio').valid)}. "
+        "More than 0 with onecycle.")
     assert tf.bound_words(tf.by_name("min_lr_ratio").valid) == "between 0 and 1"
 
 

@@ -526,7 +526,7 @@ _REGISTERED_WORDS = {
     service.REGISTERED: ("Registered", None),
     service.NOT_REGISTERED: ("Not registered", "neutral"),
     service.MERGED: ("Merged record: registered before each run had its own record", None),
-    service.POSSIBLY_MERGED: ("Not registered as its own run; possible overlap with a merged "
+    service.POSSIBLY_MERGED: ("Not registered as its own run. Possible overlap with a merged "
                               "record", "neutral"),
 }
 

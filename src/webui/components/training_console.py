@@ -335,8 +335,8 @@ def _rule_bound_words(name: str) -> str:
     """The bound a rule across settings adds to the setting `name`'s own,
     in words, read from the rules themselves (`CROSS_FIELD_RULES`'
     ``min_exclusive``, its guard's values by their words): "more than 0 with
-    onecycle"; empty for none."""
-    return "; ".join(
+    onecycle"; empty for none. Several rules are one sentence each."""
+    return ". ".join(
         f"more than {rule.threshold:g} with " + " or ".join(
             r.setting_words(guard, value) for guard, allowed in (rule.when or {}).items()
             for value in allowed)
@@ -351,11 +351,11 @@ def _rule_bound_words(name: str) -> str:
 #: are the Trainer's (`Trainer._create_scheduler`: a number capped at half the
 #: steps, 0 the warmup ratio of a tenth), which a test holds to a real Trainer.
 FIELD_FORMATS: Dict[str, str] = {
-    "num_neighbors": "Whole numbers separated by commas, one per encoder layer; -1 takes all.",
-    "warmup_steps": "Optimizer steps, at most half the run's; 0 takes a tenth of them.",
-    "min_lr_ratio": "; ".join(filter(None, (
+    "num_neighbors": "Whole numbers separated by commas, one per encoder layer. -1 takes all.",
+    "warmup_steps": "Optimizer steps, at most half the run's. 0 takes a tenth of them.",
+    "min_lr_ratio": " ".join(f"{part[:1].upper()}{part[1:]}." for part in filter(None, (
         f"A fraction of the peak rate, {bound_words(by_name('min_lr_ratio').valid)}",
-        _rule_bound_words("min_lr_ratio")))) + ".",
+        _rule_bound_words("min_lr_ratio")))),
     "gradient_accumulation_steps": "Batches per optimizer step.",
     "eval_every_n_epochs": "Epochs between the Trainer's validations.",
     "early_stopping_patience": 'Epochs, or "off": no early stopping.',

@@ -513,7 +513,7 @@ FIELD_HELP = {
 #: What each allocator preset does (static text, behind its accordion).
 ALLOCATOR_DETAILS = (
     "- **Driver memory pool** (`cuda_async`, the default): NVIDIA's stream-ordered pool, "
-    "driver-managed with no tuning; it may change with driver upgrades, and PyTorch's memory "
+    "driver-managed with no tuning. It may change with driver upgrades, and PyTorch's memory "
     "snapshot statistics are reduced under it.\n"
     "- **Expandable segments** (`expandable`): PyTorch's growable segments. They bound "
     "fragmentation for variable-size subgraphs and keep PyTorch's memory statistics.\n"
@@ -521,8 +521,8 @@ ALLOCATOR_DETAILS = (
     "rounding, to cut fragmentation at low cost.\n"
     "- **Native, no tuning** (`native`): can fragment badly on variable tensor sizes.\n\n"
     "Measured earlier on this project with an architecture no longer built (HGT, batch 256): "
-    "the driver pool and expandable segments both used about 26 GB at a comparable speed; "
-    "native fragmented (about 60 → 120 GB). Not yet measured with GATv2."
+    "the driver pool and expandable segments both used about 26 GB at a comparable speed. "
+    "Native fragmented (about 60 → 120 GB). Not yet measured with GATv2."
 )
 #: torch.compile's caveat (static text, behind its accordion; its lead,
 #: `COMPILE_EXPERIMENTAL`, is the field's visible line).

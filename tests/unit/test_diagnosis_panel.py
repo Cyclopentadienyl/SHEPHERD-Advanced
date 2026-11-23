@@ -440,7 +440,7 @@ def test_the_fields_must_know_rules_are_visible_lines(monkeypatch):
     demo, _ctx = _build_tab(monkeypatch)
     blocks = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     hpo, patient = blocks["dx_hpo_terms"], blocks["dx_patient_id"]
-    assert hpo.info == "Only HP:####### ids are read; names and punctuation are ignored."
+    assert hpo.info == "Only HP:####### ids are read. Names and punctuation are ignored."
     assert hpo.placeholder == "HP:0001250, HP:0001263"
     assert patient.info == dp.FIELD_INFO["dx_patient_id"] and not patient.placeholder
     # The box's change listener on the server (the page also counts the edit
