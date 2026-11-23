@@ -2276,17 +2276,14 @@ _LAYOUT_FACTS_JS = r"""() => {
            drawer, finetune };
 }"""
 
-#: The walk's windows, narrow to wide and back on each page: the shared
-#: check's representative sizes (`UI_SIZES`), checked, and the layout's other
-#: shapes (a narrow column, a square, a portrait screen), laid out only;
-#: 1536 x 760, short and the owner's laptop, and 1280 x 600, a short laptop's
-#: window, checked too (side by side below about 660 px of height, Models
-#: scrolled its list around the rows' own region and Training's plots' body was
-#: shorter than one plot: the T04 review).
-_WALK_SIZES = ((760, 1000, False), (1850, 960, True), (1280, 900, True), (1920, 700, True),
-               (1440, 1600, True), (1000, 1000, False), (1536, 760, True), (1366, 620, True),
-               (1280, 600, True), (1080, 1920, False), (960, 1080, True), (390, 844, True),
-               (1850, 960, False))
+#: The walk's windows on each page, at or above the display floor (`style.FLOOR_WIDTH` x
+#: `FLOOR_HEIGHT`, the owner's decision of 2026-11-23): the shared check's representative sizes
+#: (`UI_SIZES`), checked, a large screen laid out only, 1536 x 760 (short, the owner's laptop),
+#: checked too, one window below the floor (laid out only: drawn as at the floor, the document
+#: scrolling), and the owner's again.
+_WALK_SIZES = ((1850, 960, True), (1280, 900, True), (1920, 720, True), (1440, 1600, True),
+               (2560, 1440, False), (1536, 760, True), (1366, 768, True), (1280, 720, True),
+               (1024, 640, False), (1850, 960, False))
 
 #: The Diagnosis load drawer, opened at a stop of the walk (`browser.UI_WALK_JS`), a
 #: row of its list chosen (the served model's, unfolded and located), so its
@@ -2306,14 +2303,14 @@ _LOAD_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
                 "close": "#shep-dx-change-close button"}
 _IMPORT_DRAWER = {"click": "#shep-test-import-open", "shown": "#shep-test-import",
                   "close": "#shep-test-import-close"}
-#: The windows a drawer is opened at in a layout walk: the owner's, a laptop, a portrait column
-#: and a phone (where the drawers' foot, header and fields change their layout).
-_DRAWER_SIZES = ((1850, 960), (1366, 768), (960, 1080), (390, 844))
+#: The windows a drawer is opened at in a layout walk: the owner's, a laptop, the display floor
+#: and one window below it (drawn as at the floor: its marks compared with the floor's).
+_DRAWER_SIZES = ((1850, 960), (1366, 768), (1280, 720), (1024, 640))
 
 
 #: The windows the configured walk opens the Load drawer at with a row chosen (its Model Facts
-#: beside the list, or under it on a phone), last, so the drawer's other stops see no choice.
-_PICKED_SIZES = ((1850, 960), (390, 844))
+#: beside the list), last, so the drawer's other stops see no choice: the owner's and the floor.
+_PICKED_SIZES = ((1850, 960), (1280, 720))
 
 
 def _layout_walk_stops(configured: bool):
@@ -2390,14 +2387,14 @@ def _walk_stops():
         stop["options"] = True                   # each page's selects, once, at its last stop
     # The Diagnosis load drawer open, its head a field row (D03): side by side
     # from 1280 px its workspace select was squeezed to 26 px, its label cut
-    # to "W" (the T04 review), and to 71 px on a phone; and in a short window;
-    # and at the owner's window, its list and details side by side (UI-07).
+    # to "W" (the T04 review); and in a short window and at the floor; and at
+    # the owner's window, its list and details side by side (UI-07).
     stops += [{"size": [w, h], "page": "clinical", "open": _CHANGE_DRAWER}
-              for w, h in ((1850, 960), (1280, 900), (1366, 620), (390, 844))]
+              for w, h in ((1850, 960), (1280, 900), (1366, 768), (1280, 720))]
     # Training's Continue drawer open, at the owner's window (step 3 in view
-    # without scrolling: NEW-training-finetune-2) and stacked.
+    # without scrolling: NEW-training-finetune-2) and stacked (no wider than tall).
     stops += [{"size": [w, h], "page": "training", "open": _CONTINUE_DRAWER}
-              for w, h in ((1850, 960), (960, 1080))]
+              for w, h in ((1850, 960), (1440, 1600))]
     # A page opened at a size, not only resized to it: at 1280 x 900 Datasets
     # (its own minimum is wider) between two pages that fit.
     stops += [{"size": [1280, 900], "page": page, "check": False}
@@ -2464,44 +2461,47 @@ def ui_walk_configured(ui_world):
 def test_one_layout_decision_at_every_size_and_back(ui_walk):
     """D02 (FL-UI-02, PTR-LAYOUT in part) in a real browser (Node and
     Playwright, skipped without), the service on the demo workspace, for an
-    operator, every page through narrow, wide, short, portrait, square and
-    phone windows and back (the shared walk, `ui_walk`):
+    operator, every page through the walk's windows and back (the shared
+    walk, `ui_walk`), all at or above the display floor (`style.FLOOR_WIDTH`
+    x `FLOOR_HEIGHT`, the owner's decision of 2026-11-23) but one:
 
-    - no wider than tall (1440 x 1600, 1000 x 1000, 1080 x 1920, 760 x 1000,
-      960 x 1080, 390 x 844): every page stacked, its panels one under the
-      other;
+    - no wider than tall (1440 x 1600): every page stacked, its panels one
+      under the other;
     - wider: side by side exactly when the page's panels fit by their own
-      minimum widths (1280 x 900: every page but Datasets, whose table and
-      digest grid need about 1400 px, whether resized to it or opened at it
-      between two pages that fit; 1920 x 700, 1366 x 620 and 1280 x 600: every
-      page but Datasets below its width, a short window only denser,
-      ``data-shep-short``); side by side, the panels on one line and
+      minimum widths; a short window (under ``style.SHORT_BELOW``) only
+      denser, ``data-shep-short``; side by side, the panels on one line and
       none narrower than its minimum, and the page itself never scrolls;
-    - never a horizontal page scroll;
+    - at or above the floor, never a horizontal page scroll;
+    - below the floor (1024 x 640): the decision and the short flag are the
+      floor's (1280 x 720) and the document scrolls both ways, the layout
+      drawn as at the floor, never shrunk to the window;
     - back at 1850 x 960, the same as the first time; there the Training run
       bar is one row (R-38).
     Nothing covering a focused control, at every size, is the shared check's
     (`test_every_page_at_every_size_passes_the_ui_measurement_check`)."""
-    portrait = {"1440x1600", "1000x1000", "1080x1920", "760x1000", "960x1080", "390x844"}
-    # Side by side exactly when the shown panels' own minimums and gaps fit the row (relative:
-    # a page's panels sized by what they hold, the UI sweep's M4, move no pin here). Datasets at
-    # 1280 x 900, 1366 x 620 and 1280 x 600 stacked by that measure when this was written.
-    datasets_stacked = {"1280x900", "1366x620", "1280x600"}
+    from tests.fixtures.browser import at_floor, floor_size
+
+    fw, fh = floor_size()
+    portrait = {"1440x1600"}
+    floors = {s["page"]: s["extra"] for s in ui_walk if s["size"] == f"{fw}x{fh}" and not s.get("open")}
     for s in ui_walk:
         where, facts = (s["size"], s["page"]), s["extra"]
-        assert facts["overX"] == 0, (where, facts)
-        assert facts["short"] == (int(s["size"].split("x")[1]) < 900), (where, facts)
-        narrow_datasets = s["page"] == "datasets" and s["size"] in datasets_stacked
+        w, h = (int(n) for n in s["size"].split("x"))
+        assert facts["short"] == (max(h, fh) < 900), (where, facts)
         want = "stack" if s["size"] in portrait or facts["need"] > facts["width"] + 0.5 else "side"
         assert facts["layout"] == want, (where, facts)
+        if not at_floor(s["size"]):
+            floor = floors[s["page"]]
+            assert (facts["layout"], facts["short"]) == (floor["layout"], floor["short"]), (where, facts, floor)
+            assert facts["overX"] > 0 and (facts["overY"] > 0 or facts["layout"] == "stack"), (where, facts)
+            continue
+        assert facts["overX"] == 0, (where, facts)
         if want == "side":
             assert facts["need"] <= facts["width"] + 0.5, (where, facts)
             assert len(set(facts["tops"])) <= 1 and facts["narrowest"] >= -0.5, (where, facts)
             assert facts["overY"] <= 0, (where, facts)
         elif len(facts["tops"]) > 1:
             assert facts["tops"] == sorted(facts["tops"]) and len(set(facts["tops"])) == len(facts["tops"]), (where, facts)
-        if narrow_datasets and want == "stack":
-            assert facts["need"] > facts["width"], s                  # its own measure, no global gate
     wide = [s for s in ui_walk if s["size"] == "1850x960" and not s.get("open")]
     # The layout's facts, not a page's own (`drawer`, `finetune`: their test's).
     layout = lambda facts: {k: v for k, v in facts.items() if k not in ("drawer", "finetune")}  # noqa: E731
@@ -2522,10 +2522,11 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
 def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     """D08 (INT-AUDIT): the shared UI measurement check (`browser.check`,
     `browser.focusWalk`, `browser.ui_problems`) on every page at every
-    representative window (`browser.UI_SIZES`: 1850 x 960, 1280 x 900,
-    1920 x 700, a 1366 x 620 short laptop, 1440 x 1600, 960 x 1080, a
-    390 x 844 phone; and 1536 x 760 and 1280 x 600), and with the Diagnosis
-    load drawer open at 1850 x 960, 1280 x 900, 1366 x 620 and 390 x 844, a
+    representative window (`browser.UI_SIZES`, at or above the display
+    floor: 1850 x 960, 1280 x 900, 1920 x 720, a 1366 x 768 laptop,
+    1440 x 1600, the floor's 1280 x 720; and 1536 x 760), and with the
+    Diagnosis load drawer open at 1850 x 960, 1280 x 900, 1366 x 768 and
+    1280 x 720, a
     row of it chosen (its focus walk inside the drawer), the service on the
     demo workspace for an operator (`ui_walk`):
 
@@ -2566,7 +2567,7 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     options = {s["page"]: s["options"] for s in ui_walk if "options" in s}
     assert all(options[page] for page in ("training", "finetune", "test", "models", "settings")), options
     drawer = [s for s in checked if s.get("open") == "#shep-dx-change"]
-    assert {s["size"] for s in drawer} == {"1850x960", "1280x900", "1366x620", "390x844"}
+    assert {s["size"] for s in drawer} == {"1850x960", "1280x900", "1366x768", "1280x720"}
     for s in drawer:                                  # its head's select measured
         assert "Workspace" in {label["text"] for label in s["check"]["labels"]}, s
     labels = {s["page"]: {label["text"] for label in s["check"]["labels"]}
@@ -2577,7 +2578,7 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
 
 def test_the_continue_drawer_and_the_fine_tune_form_fit_the_owners_window(ui_walk):
     """The shared walk's facts (`_LAYOUT_FACTS_JS`) for Training's Continue
-    drawer, opened at 1850 x 960 and stacked at 960 x 1080, and Fine-tune's
+    drawer, opened at 1850 x 960 and stacked at 1440 x 1600, and Fine-tune's
     form with nothing expanded at 1850 x 960:
 
     - R-49: with the drawer open the run bar draws none of its actions
@@ -2596,7 +2597,7 @@ def test_the_continue_drawer_and_the_fine_tune_form_fit_the_owners_window(ui_wal
       (a disabled Stop with no reason)."""
     opened = {s["size"]: s["extra"]["drawer"] for s in ui_walk
               if s.get("open") == "#shep-train-drawer"}
-    assert set(opened) == {"1850x960", "960x1080"}
+    assert set(opened) == {"1850x960", "1440x1600"}
     for size, drawer in opened.items():
         assert drawer["actions"] == [] and drawer["reason"] == "", (size, drawer)
         assert drawer["closers"] == 1, (size, drawer)
@@ -2659,23 +2660,23 @@ _ACCEPTANCE_FACTS_JS = r"""() => {
 def _acceptance_stops():
     """Every page at PLAN_TEST_RESULTS §6's sizes the representative windows
     leave out (`browser.PTR_SIZES`), then Diagnosis answered with its largest
-    Top-K at the owner's window, the acceptance sizes, a short laptop, a
-    narrow column and a phone (the diagnosis asked at the first of them)."""
+    Top-K at the owner's window, the acceptance sizes, a laptop, the display
+    floor and a tall window, stacked (the diagnosis asked at the first of
+    them)."""
     from tests.fixtures.browser import PTR_SIZES, UI_PAGES
 
     stops = [{"size": [w, h], "page": page} for page in UI_PAGES for w, h in PTR_SIZES]
     answered = [{"size": [w, h], "page": "clinical", "tag": "results"}
-                for w, h in ((1850, 960), *PTR_SIZES, (1366, 620), (960, 1080), (390, 844))]
+                for w, h in ((1850, 960), *PTR_SIZES, (1366, 768), (1280, 720), (1440, 1600))]
     answered[0]["diagnose"] = _LONG_DIAGNOSIS
     return stops + answered
 
 
 #: The read-only viewer's windows: on a high-DPI screen (2 device pixels per
-#: CSS pixel) the owner's window, the acceptance sizes a high-DPI screen gives
-#: (a 3840 x 2160 one at 200 % is 1920 x 1080) and a phone; at 1 the two
-#: largest, whose screens are their CSS size.
-_READ_ONLY_HIGH_DPI = ((1850, 960), (1920, 1080), (1280, 720), (1440, 900), (1707, 870), (1080, 1920),
-                       (960, 540), (390, 844))
+#: CSS pixel) the owner's window and the acceptance sizes a high-DPI screen
+#: gives at or above the display floor (a 3840 x 2160 one at 200 % is
+#: 1920 x 1080); at 1 the two largest, whose screens are their CSS size.
+_READ_ONLY_HIGH_DPI = ((1850, 960), (1920, 1080), (1280, 720), (1440, 900), (1707, 870))
 _READ_ONLY_LARGE = ((2560, 1600), (3840, 2160))
 
 
@@ -2773,11 +2774,12 @@ def acceptance_walk(tmp_path_factory, _suite_gpu_lock):
 
 def test_the_acceptance_sizes_and_twenty_long_named_results_pass_the_ui_measurement_check(
         acceptance_walk):
-    """PTR-LAYOUT: every page at 1440 x 900, 1280 x 720, 1707 x 870,
-    1920 x 1080, 2560 x 1600, 3840 x 2160, 1080 x 1920 and 960 x 540 (200 %
-    zoom), and Diagnosis with its largest Top-K answered (20 candidates, 16
-    of them with a long name) at those, at 1850 x 960, 1366 x 620,
-    960 x 1080 and 390 x 844, pass the shared check (`browser.ui_problems`: no sideways page scroll, one
+    """PTR-LAYOUT: every page at 1440 x 900, 1707 x 870, 1920 x 1080,
+    2560 x 1600 and 3840 x 2160 (the acceptance sizes at or above the
+    display floor; 1080 x 1920 and 960 x 540 are below it, drawn as at the
+    floor), and Diagnosis with its largest Top-K answered (20 candidates, 16
+    of them with a long name) at those, at 1850 x 960, 1366 x 768, the
+    floor's 1280 x 720 and 1440 x 1600 (stacked), pass the shared check (`browser.ui_problems`: no sideways page scroll, one
     scroll region per area, every control focused in view with nothing over
     it, the type scale, borders and focus cues). Side by side the results
     table is no wider than its box: a long name's 46-character token widened
@@ -2801,8 +2803,8 @@ def test_the_acceptance_sizes_and_twenty_long_named_results_pass_the_ui_measurem
 def test_a_read_only_viewers_walk_passes_the_ui_measurement_check(acceptance_walk):
     """INT-AUDIT and PTR-LAYOUT: the shared walk as a viewer D8 refuses
     (every request forwarded by a proxy, on a service in mode M1): every page
-    at the owner's window, every acceptance size and a phone, the smaller on
-    a high-DPI screen, passes the shared check, the D8 chip says
+    at the owner's window and every acceptance size at or above the display
+    floor, the smaller on a high-DPI screen, passes the shared check, the D8 chip says
     read-only and why, and the walk focused the controls such a viewer can
     use (the disabled ones are not focusable). Diagnosis answered with 20
     long-named results passes it too at each of those sizes, its results
@@ -3259,7 +3261,8 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     js_path.write_text(shell._SHELL_JS.replace("__TITLES__", "{}").replace("__RESEARCH_LABEL__", '""')
                        .replace("__STAGES__", "{}").replace("__STAGE_WORD__", '""')
                        .replace("__LAYOUT__", "data-shep-layout").replace("__SHORT__", "data-shep-short")
-                       .replace("__SHORT_BELOW__", "900").replace("__GO__", "{}"), encoding="utf-8")
+                       .replace("__SHORT_BELOW__", "900").replace("__GO__", "{}")
+                       .replace("__FLOOR_W__", "1280").replace("__FLOOR_H__", "720"), encoding="utf-8")
     seen = run_node(_CUE_JS, tmp_path, str(css_path), str(js_path))
     assert seen["top"] == {"more": True, "mask": True}, seen
     assert seen["end"] == {"more": False, "mask": False}, seen
@@ -3732,15 +3735,15 @@ def _pieces_page():
     return demo
 
 
-#: The stand-in page's facts as drawn (`_pieces_page`), at 800 x 900 (stacked: the page itself
-#: scrolls) with the panel held to 640 px, the squeezed column to 240 px with its body a scroll region, and the field row's and
+#: The stand-in page's facts as drawn (`_pieces_page`), at 1280 x 1280 (at the display floor's
+#: width and no wider than tall, so stacked: the page itself scrolls) with the panel held to 640 px, the squeezed column to 240 px with its body a scroll region, and the field row's and
 #: grid's floors set (16rem, 12rem).
 _PIECES_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 800, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1280 } });
   await page.addInitScript(QUEUE_JS);
   await page.goto(process.argv[2], { waitUntil: 'load' });
   await page.waitForFunction(() => window.ShepShell !== undefined, null, { timeout: 30000 });
@@ -4116,6 +4119,8 @@ const LOOK_JS = __LOOK_JS__;
         <div class="sw" id="side-bad">${wide}</div>
         <div class="shep-rs-cue">Wider than the panel: scroll sideways.</div>
         <div class="sw" id="side-good">${wide}</div>
+        <div class="sw" id="side-masked" style="-webkit-mask-image: linear-gradient(to right, #000 80%, transparent); mask-image: linear-gradient(to right, #000 80%, transparent)">${wide}</div>
+        <div class="sw" id="side-fits"><table style="width: 150px"><tr><td>Name</td></tr></table></div>
         <div id="clip-bad" style="width: 120px; overflow: hidden; white-space: nowrap">A long sentence that runs past its box</div>
         <span id="clip-ell" title="A long value cut to an ellipsis, whole here"
           style="display: inline-block; width: 120px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis">A long value cut to an ellipsis, whole here</span>
@@ -4288,24 +4293,27 @@ def test_the_row_rules_find_labels_off_one_line_and_a_row_a_hidden_cell_sets(l7_
     assert not [b for b in found["beside"] if "#area-words" in b], found["beside"]
 
 
-def test_the_layout_problems_hold_in_view_at_the_owners_windows_and_tab_groups_whole():
-    """``in-view`` is held at the owner's windows only (`browser.OWNER_SIZES`: a page scrolls
-    on a phone). ``tab-groups`` does not count a tab group the row's width wraps apart (SW-LK9:
-    Models alone on the second line at 390 px): the tabs wrap by width alone and no group is
-    broken to a line of its own, the sweep's decision 3 (the integrator's, 2026-11-22; the
-    owner may reopen it). It still finds a separator drawn while the tabs wrap."""
-    from tests.fixtures.browser import OWNER_SIZES, layout_problems
+def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_whole():
+    """``in-view`` is held at every window at or above the display floor (`browser.at_floor`;
+    the owner's decision of 2026-11-23), not only at the owner's two: a laptop's 1366 x 768 and
+    the floor's 1280 x 720 are found as the owner's are; below the floor the document scrolls to
+    what lies past the window, so it is not. ``tab-groups`` does not count a tab group the row's
+    width wraps apart (SW-LK9: Models alone on the second line at 390 px): the tabs wrap by width
+    alone and no group is broken to a line of its own, the sweep's decision 3 (the integrator's,
+    2026-11-22; the owner may reopen it). It still finds a separator drawn while the tabs wrap."""
+    from tests.fixtures.browser import floor_size, layout_problems
 
     def stop(size, inview=(), lines=None):
         layout = {"inview": list(inview), "tabs": None if lines is None else
                   {"lines": lines, "seps": [], "others": [], "focusable": []}}
         return {"size": size, "page": "settings", "check": {"layout": layout}}
 
-    owner = "x".join(map(str, OWNER_SIZES[0]))
-    found = layout_problems([stop(owner, ["#x \"Apply\" drawn 40 px under the window"]),
-                             stop("390x844", ["#x \"Apply\" drawn 900 px under the window"])],
-                            rules=("in-view",))
-    assert found == [f"{owner} settings: in-view: #x \"Apply\" drawn 40 px under the window"], found
+    fw, fh = floor_size()
+    cut = ["#x \"Apply\" drawn 40 px under the window"]
+    held = [f"{w}x{h}" for w, h in ((1850, 960), (1550, 830), (1366, 768), (fw, fh), (2560, 1440))]
+    below = [f"{fw - 1}x{fh}", f"{fw}x{fh - 1}", "1024x640"]
+    found = layout_problems([stop(size, cut) for size in held + below], rules=("in-view",))
+    assert found == [f"{size} settings: in-view: {cut[0]}" for size in held], found
     split = layout_problems([stop("390x844", lines=[["datasets", "training", "finetune", "test"], ["models"]])],
                             rules=("tab-groups",))
     assert split == [], split
@@ -4319,20 +4327,84 @@ def test_the_layout_problems_hold_in_view_at_the_owners_windows_and_tab_groups_w
     assert drawn and all("a separator before test" in p for p in drawn), drawn
 
 
+def test_the_floor_rule_finds_a_layout_shrunk_below_the_floor_and_a_frame_that_scrolls_at_it():
+    """``floor`` (the owner's decision of 2026-11-23; `browser.layout_problems`): below the
+    floor a stop is compared with the stop at the floor of the same page and drawer in the walk.
+    It finds marks that differ from the floor's (the side-by-side decision, the short flag, a
+    box marked narrow), a frame drawn smaller than the floor's, a document that does not scroll
+    in an axis the window is under the floor (the layout shrank to the window), and a below-floor
+    stop with no floor stop to compare. At or above the floor it finds a document that scrolls
+    sideways, and side by side one that scrolls at all (the frame scrolls); a stacked page
+    scrolls. A stop drawn as at the floor, its document scrolling, passes."""
+    from tests.fixtures.browser import floor_size, layout_problems
+
+    fw, fh = floor_size()
+
+    def stop(size, *, layout="side", short=True, marked=(), frame=(fw, fh), scroll=(0, 0), page="models",
+             open_=None):
+        facts = {"layout": layout, "short": short, "header": ["shep-x"], "marked": list(marked),
+                 "frame": list(frame), "scroll": list(scroll)}
+        return {"size": size, "page": page, **({"open": open_} if open_ else {}),
+                "check": {"layout": {}, "floor": facts}}
+
+    floor = f"{fw}x{fh}"
+    good = [stop(floor, marked=["#t data-shep-narrow"]),
+            stop("1024x640", marked=["#t data-shep-narrow"], scroll=(256, 80)),
+            stop(f"{fw}x600", marked=["#t data-shep-narrow"], scroll=(0, 120)),
+            stop("1440x1600", layout="stack", short=False, frame=(1440, 3000), scroll=(0, 1400))]
+    assert layout_problems(good, rules=("floor",)) == []
+    shrunk = layout_problems([good[0], stop("1024x640", layout="stack", marked=[], frame=(1024, 640),
+                                            scroll=(0, 0))], rules=("floor",))
+    assert any("layout stack where the floor's is side" in p for p in shrunk), shrunk
+    assert any("marked [] where the floor's is ['#t data-shep-narrow']" in p for p in shrunk), shrunk
+    assert any("the frame drawn [1024, 640]" in p for p in shrunk), shrunk
+    assert any("narrower than the floor and the document does not scroll" in p for p in shrunk), shrunk
+    assert any("shorter than the floor and the document does not scroll" in p for p in shrunk), shrunk
+    alone = layout_problems([stop("1024x640", scroll=(256, 80), open_="#drawer")], rules=("floor",))
+    assert alone and "no stop at the floor" in alone[0], alone
+    scrolled = layout_problems([stop(floor, scroll=(12, 30)), stop("1850x960", frame=(1850, 960), short=False,
+                                                                   scroll=(0, 4))], rules=("floor",))
+    assert f"{floor} models: floor: the document scrolls sideways by 12 px" in scrolled, scrolled
+    assert any(p.startswith("1850x960 models: floor: side by side, the document scrolls by 4 px") for p in scrolled), \
+        scrolled
+    assert len(scrolled) == 3, scrolled
+
+
+def test_the_sideways_rule_finds_a_region_wider_than_its_frame_a_mask_or_not(l7_rules_seen):
+    """``sideways-scroll`` (the owner's decision of 2026-11-23; fixer A's item 6 of the sweep's
+    L7): the shell's automatic sideways mask satisfied ``scroll-cue``, so a table wider than its
+    frame went unseen. At or above the floor a region whose content runs past its right edge is
+    found, masked (``#side-masked``) or not (``#side-bad``); one that says so in words just
+    before it (Compare's drawn ``shep-rs-cue``, ``#side-good``) and one whose content fits
+    (``#side-fits``) pass. Below the floor it is not held (`browser.at_floor`)."""
+    from tests.fixtures.browser import layout_problems
+
+    found = l7_rules_seen
+    assert _hits(found, "sideways", "#side-bad scrolls") and _hits(found, "sideways", "#side-masked scrolls"), \
+        found["sideways"]
+    assert not _hits(found, "sideways", "#side-good") and not _hits(found, "sideways", "#side-fits"), \
+        found["sideways"]
+    stops = [{"size": size, "page": "x", "check": {"layout": {"sideways": ["#t scrolls sideways"]}}}
+             for size in ("1280x720", "1024x640")]
+    assert layout_problems(stops, rules=("sideways-scroll",)) == ["1280x720 x: sideways-scroll: #t scrolls sideways"]
+
+
 @pytest.mark.parametrize("state", ["first_use", "empty", "configured"])
 def test_every_page_of_every_state_has_no_layout_finding(state, request):
     """**The layout rules held at zero** (the sweep's integration, its decision 4; no allow-list):
     every page as an operator sees it, at every layout size (`browser.LAYOUT_SIZES`: the owner's
-    window, the owner's Firefox width, two laptops, a portrait column and a phone, then the
-    owner's again), at first use (no workspaces folder, no results registry: the owner's six
+    window, the owner's Firefox width, a laptop, the display floor, a large screen and one window
+    below the floor, then the owner's again), at first use (no workspaces folder, no results registry: the owner's six
     screenshots), with an empty workspaces folder and registry, and configured (the demo
     workspace, a child served), and its drawers open as a reader first sees them (the Diagnosis
     Load drawer in every state; Training's Continue drawer and the Test page's import drawer
     configured), has none of the layout rules' findings (`browser.layout_problems`: beside,
     narrow-box, overlap, orphan, centred, split-group, edge, clipped, empty-region,
-    help-on-page, notice-repeat, tab-groups, and since L7 in-view at the owner's windows,
-    scroll-cue, wrap-end, disabled-reason, token-break, sep-end, chain-break, row-top,
-    row-height). One service a state, one browser a walk."""
+    help-on-page, notice-repeat, tab-groups, and since L7 scroll-cue, wrap-end,
+    disabled-reason, token-break, sep-end, chain-break, row-top, row-height, and with the display
+    floor in-view and sideways-scroll at every window at or above it and ``floor``: below it the
+    layout pass's marks and the frame are the floor's and the document scrolls). One service a
+    state, one browser a walk."""
     from tests.fixtures.browser import layout_problems
 
     seen = request.getfixturevalue({"first_use": "ui_walk_first_use", "empty": "ui_walk_empty",
@@ -4386,7 +4458,7 @@ def test_the_walks_coverage_names_a_row_chosen_stop_that_did_not_run():
               for w, h in _PICKED_SIZES]
     assert _walk_coverage(pages + drawers + picked, "configured") == []
     gone = _walk_coverage(pages + drawers + picked[:-1], "configured")
-    assert len(gone) == 1 and "row chosen" in gone[0] and "390x844" in gone[0], gone
+    assert len(gone) == 1 and "row chosen" in gone[0] and "1280x720" in gone[0], gone
     blank = [{**stop, "picked": ""} for stop in picked]           # facts never drawn
     assert _walk_coverage(pages + drawers + blank, "configured"), blank
     assert _walk_coverage(pages + drawers[:1], "first_use") == []
