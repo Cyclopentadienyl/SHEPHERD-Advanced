@@ -460,7 +460,7 @@ def test_the_page_refreshes_when_opened_and_rows_select_their_details(root, monk
     why = next(x for x in data["rows"] if x["name"] == "scratch_ws")["not_trainable"]
     assert "The manifest was not read" in details and details.count(why) == 1
     # Disabled, with the reason beside it as visible text (M5-3).
-    assert "Not available: scratch_ws is not trainable — no split manifest." in note
+    assert "Use for training disabled: scratch_ws is not trainable: no split manifest." in note
     assert dsp.USE_NOTE not in note
 
     class Forged:
@@ -570,7 +570,7 @@ def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch
               + dsp.use_note_html(data, None))
     assert screen.count("data-notice=") == 1 and screen.count("No workspaces folder is set.") == 1
     note = dsp.use_note_html(data, None)
-    assert note == r.see_above(dsp.USE_UNAVAILABLE, data["notice"])
+    assert note == r.see_above(dsp.USE_FOR_TRAINING, data["notice"])
     assert 'data-notice-rel="workspaces_root"' in note
     assert dsp.DETAILS_NONE in dsp.details_html(data, None)
     assert dsp.DETAILS_SELECT not in dsp.details_html(data, None)

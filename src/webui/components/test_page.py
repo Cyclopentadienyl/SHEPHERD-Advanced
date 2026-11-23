@@ -179,6 +179,7 @@ import re
 import time
 from dataclasses import asdict
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
@@ -500,10 +501,14 @@ def gated_update(name: str, page: Mapping[str, Any], *, interactive: bool = True
 
 
 def _reason_html(text: Optional[str], *, kind: str = "") -> str:
+    """A reason line: with `kind` "lock", led by the lock (a request D8
+    refuses); "off", by the mark of a disabled control's reason
+    (`renderers.DISABLED_MARK`, as every page leads it)."""
     if not text:
         return ""
-    lock = f'<span aria-hidden="true">{LOCK}</span>' if kind == "lock" else ""
-    return f'<div class="shep-reason shep-test-reason">{lock}<span>{e(text)}</span></div>'
+    mark = (f'<span aria-hidden="true">{LOCK}</span>' if kind == "lock" else
+            r.DISABLED_MARK if kind == "off" else "")
+    return f'<div class="shep-reason shep-test-reason">{mark}<span>{e(text)}</span></div>'
 
 
 def run_sha12(run_id: Any) -> Optional[str]:
@@ -1034,11 +1039,13 @@ def default_version(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]
 #: once with them (`data_notice_html`; the text brief's §1: the state, its
 #: consequence, then the next step): by how many it names.
 TESTING_WAITS = {1: "Testing waits for it.", 2: "Testing waits for both."}
-#: A control's relation to the notice (`renderers.see_above`): its state,
-#: then the notice's short words ("Import disabled: no results registry is
-#: set."), never the notice again (the skill's §9).
-IMPORT_DISABLED = "Import disabled"
-START_DISABLED = "Start disabled"
+#: The controls a disabled reason names (`renderers.disabled_words`): a
+#: relation to the notice (`renderers.see_above`: "Import disabled: no results
+#: registry is set."), never the notice again (the skill's §9), or the page's
+#: own reason ("Start disabled: choose a data version.").
+IMPORT = "Import"
+START = "Start"
+REGISTER = "Register"
 #: Where Start's relation points: the panel that shows the notice.
 NOTICE_PANEL = "Data"
 #: Under the Workspace select when the workspaces folder can be used and
@@ -1075,15 +1082,10 @@ def data_notice_html(page: Mapping[str, Any]) -> str:
     return r.notices_block(notices, consequence=TESTING_WAITS[min(len(notices), 2)])
 
 
-def relation_html(lead: str, notice: Mapping[str, Any], *, where: Optional[str] = None) -> str:
+def relation_html(control: str, notice: Mapping[str, Any], *,
+                  where: Optional[str] = None) -> str:
     """A control's one line on the notice it waits for (`renderers.see_above`)."""
-    return r.see_above(lead, notice, where=where)
-
-
-def relation_words(lead: str, notice: Mapping[str, Any], *, where: Optional[str] = None) -> str:
-    """`relation_html`'s words as plain text, for a reason a function gives as
-    text (`start_state`): the same lead, the notice's short words and where."""
-    return f"{lead}: {notice['short']}" + (f" (see {where})" if where else "") + "."
+    return r.see_above(control, notice, where=where)
 
 
 def cohort_header_html(page: Mapping[str, Any]) -> str:
@@ -1573,7 +1575,7 @@ NO_CHECKPOINT = "This workspace has no checkpoint to test."
 #: the one place the page asks for the choice, naming its two selects
 #: (NEW-test-1: it said "choose a model", a control the page no longer has,
 #: under the selects' own "Choose the run, then the checkpoint to test.").
-CHOOSE_A_CHECKPOINT = "Disabled: choose the run, then the checkpoint to test."
+CHOOSE_A_CHECKPOINT = r.disabled_words(START, "choose the run, then the checkpoint to test.")
 
 
 def testable(item: Mapping[str, Any]) -> bool:
@@ -1825,15 +1827,17 @@ def import_reason_html(page: Mapping[str, Any], workspace: Optional[str]) -> str
         return _reason_html(operator_only(access), kind="lock")
     registry, folder = _notice(page, "registry_notice"), _notice(page, "workspaces_notice")
     if registry is not None:
-        return relation_html(IMPORT_DISABLED, registry)
+        return relation_html(IMPORT, registry)
     if page.get("registry_problem"):
-        return _reason_html("Disabled: no cohort registry is available.")
+        return _reason_html(r.disabled_words(IMPORT, "no cohort registry is available."),
+                            kind="off")
     if workspace:
         return ""
     if folder is not None:
-        return relation_html(IMPORT_DISABLED, folder)
-    return _reason_html("Disabled: choose a workspace to import against." if page.get("workspaces")
-                        else "Disabled: no workspace to import against.")
+        return relation_html(IMPORT, folder)
+    return _reason_html(r.disabled_words(IMPORT, "choose a workspace to import against."
+                                         if page.get("workspaces")
+                                         else "no workspace to import against."), kind="off")
 
 
 def start_notice(page: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
@@ -1854,8 +1858,8 @@ def start_reason_html(page: Mapping[str, Any], allowed: bool, can_start: bool,
     `start_state`'s reason."""
     notice = start_notice(page) if allowed and not can_start else None
     if notice is not None:
-        return relation_html(START_DISABLED, notice, where=NOTICE_PANEL)
-    return _reason_html(why, kind="lock" if not allowed else "")
+        return relation_html(START, notice, where=NOTICE_PANEL)
+    return _reason_html(why, kind="lock" if not allowed else "off")
 
 
 def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Optional[str],
@@ -1876,54 +1880,54 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, operator_only(access)
     notice = start_notice(page)
     if notice is not None:
-        return False, relation_words(START_DISABLED, notice, where=NOTICE_PANEL)
+        return False, r.relation_words(START, notice, where=NOTICE_PANEL)
+    off = partial(r.disabled_words, START)
     if page.get("registry_problem"):
-        return False, "Disabled: no registry is available (see Data)."
+        return False, off("no registry is available (see Data).")
     kind, words = gpu
     if kind == "busy":
         # The holder in the GPU chip's words, with where to stop this
         # service's inference when that holds it (`gpu_line`), as Training's
         # and Fine-tune's starts say it: whatever holds the lock, a job or
         # inference, Start waits for it.
-        return False, f"Disabled: {words}."
+        return False, off(f"{words}.")
     if kind == "unread":
-        return False, "Disabled: the GPU lock cannot be read or used just now (see the GPU chip)."
+        return False, off("the GPU lock cannot be read or used just now (see the GPU chip).")
     workspace_row = find(page.get("workspaces") or [], "name", workspace)
     if workspace_row is None:
         # An empty folder says so under the Workspace select (`NO_WORKSPACE_YET`).
-        return False, ("Disabled: choose a workspace." if page.get("workspaces")
-                       else "Disabled: no workspace is listed (see Data).")
+        return False, off("choose a workspace." if page.get("workspaces")
+                          else "no workspace is listed (see Data).")
     version = find(page.get("versions") or [], "label", label)
     if version is None:
-        return False, "Disabled: choose a data version."
+        return False, off("choose a data version.")
     if version.get("problem"):
-        return False, "Disabled: this data version cannot be read."
+        return False, off("this data version cannot be read.")
     bound = binding_state(version, binding)[0]
     if bound == "changed":
         # Its refusal, naming the file, is said beside the version (`CHANGED_FILES`).
-        return False, ("Disabled: the data version's files changed after its import "
-                       "(see Data).")
+        return False, off("the data version's files changed after its import (see Data).")
     if bound == "another":
         # Its refusal is said beside the version (`ANOTHER_GRAPH`), once.
-        return False, "Disabled: the data version is mapped against another graph (see Data)."
+        return False, off("the data version is mapped against another graph (see Data).")
     item = find_model(models, key)
     if item is None:
         # Its empty state or its problem is said under the selects (`model_html`).
         return False, (CHOOSE_A_CHECKPOINT if models.get("items")
-                       else "Disabled: no checkpoint to test (see Run).")
+                       else off("no checkpoint to test (see Run)."))
     if item.get("problem") or not r.is_digest(item.get("sha256")):
-        return False, "Disabled: this checkpoint's metadata is not readable."
+        return False, off("this checkpoint's metadata is not readable.")
     refusal = measure_refusal(item, version, protocol)
     if refusal:
-        return False, "Disabled: " + said(redact(refusal, roots), "")
+        return False, off(said(redact(refusal, roots), ""))
     # The runner's one evidence choice by the version's kind: the setting is
     # required only where it is given (a supplied cohort version).
     evidence = run_evidence(page, version)
     if evidence.problem:
-        return False, ("Disabled: the evidence directories setting is refused: "
-                       + redact(evidence.problem, roots))
+        return False, off("the evidence directories setting is refused: "
+                          + redact(evidence.problem, roots))
     if (page.get("device") or {}).get("problem"):
-        return False, f"Disabled: {page['device']['problem']}"
+        return False, off(str(page["device"]["problem"]))
     return True, None
 
 
@@ -2415,9 +2419,11 @@ def _store_not_listed(problem: str, roots: Sequence[Tuple[str, str]], what: str)
     """Why Register is off when the store could not be listed (Decision 10):
     no report can be confirmed here, and the command line registers a named
     report it verifies. Who acts: the operator, on the server."""
-    return (f"Disabled: the report store could not be listed, so {what}'s report cannot be "
-            f"confirmed here: {redact(problem, roots).rstrip('.')}. Register it from the "
-            "command line by naming its report (scripts/record_evaluation.py --report …).")
+    return r.disabled_words(REGISTER, f"the report store could not be listed, so {what}'s "
+                            f"report cannot be confirmed here: "
+                            f"{redact(problem, roots).rstrip('.')}. Register it from the "
+                            "command line by naming its report (scripts/record_evaluation.py "
+                            "--report …).")
 
 
 def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
@@ -2448,17 +2454,18 @@ def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
         return False, None
     state = run.get("state") or {}
     if state.get("kept") != "kept":
-        return False, "Disabled: no report was kept in this run."
+        return False, r.disabled_words(REGISTER, "no report was kept in this run.")
     if state.get("registered") == "registered":
         return False, "Already registered."
     if run.get("record") is None:
         if run.get("unbuilt"):
-            return False, ("Disabled: this report cannot be registered: "
-                           f"{redact(run['unbuilt'], roots)}")
+            return False, r.disabled_words(REGISTER, "this report cannot be registered: "
+                                                     f"{redact(run['unbuilt'], roots)}")
         if reports.get("store_problem"):
             return False, _store_not_listed(reports["store_problem"], roots, "this run")
-        return False, ("Disabled: the report store's listing did not read this report (it may "
-                       "have been written or replaced since); press ↻ to read it again.")
+        return False, r.disabled_words(REGISTER, "the report store's listing did not read this "
+                                                 "report (it may have been written or replaced "
+                                                 "since); press ↻ to read it again.")
     return True, None
 
 
@@ -3317,7 +3324,7 @@ def create_test_page(ctx: Any) -> None:
                         notes_problems=reports.get("notes_problems") or (), selection=chosen,
                         models=models, workspaces=page.get("workspaces") or []),
             gated_update("register", page, interactive=can),
-            _reason_html(why, kind="lock" if not allowed else ""),
+            _reason_html(why, kind="lock" if not allowed else "off"),
             gr.update(visible=show_notes),
             gated_update("note", page),
             gr.update(interactive=allowed),

@@ -1019,20 +1019,50 @@ def notices_block(notices: Iterable[Any], *, consequence: Optional[str] = None,
             f'{"".join(lines)}{next_line}{_details(found, grouped=True)}</div>')
 
 
-def see_above(lead: str, notice: Any, *, where: Optional[str] = None,
-              details: bool = False) -> str:
-    """**A control's relation to the notice its screen shows** (said once,
-    `notice_block`): one line beside the control it explains, its status
-    mark, the control's state and the notice's short words ("Start
-    unavailable: no workspaces folder is set."), with where the notice is
-    when it is not in view of the control (`where`: "see above", "see Data").
-    With `details`, the notice's "Details ›" under it (where the screen shows
-    the notice's line elsewhere but not its details). ``data-notice-rel``
-    names the notice: a relation is not the notice said again."""
+#: **A disabled control's state, said one way on every page**: the control's
+#: name, this word, then why ("Start disabled: no workspaces folder is set.",
+#: `disabled_words`), never "unavailable" on one page and "disabled" on the
+#: next; a reason line a page draws itself leads with `DISABLED_MARK`, the mark
+#: a relation to a setting not yet set leads with (`see_above`).
+DISABLED = "disabled"
+#: The mark a disabled control's reason leads with where its page sets the
+#: mark in a column of its own: the neutral mark (grey, the skill's §6), its
+#: shape and colour as `_marked` draws them, never a page's own glyph.
+DISABLED_MARK = (f'<span class="shep-nb-mark shep-st-{STATUS_MARKS["neutral"][1]}" '
+                 f'aria-hidden="true">{STATUS_MARKS["neutral"][0]}</span>')
+
+
+def disabled_words(control: str, cause: str) -> str:
+    """"<control> disabled: <cause>": a disabled control's state and why,
+    the one form every page says it in (`DISABLED`)."""
+    return f"{control} {DISABLED}: {cause}"
+
+
+def relation_words(control: str, notice: Any, *, where: Optional[str] = None) -> str:
+    """`see_above`'s words as plain text, for a reason a page gives as text:
+    the control disabled, the notice's short words, and where the notice is
+    ("Start disabled: no results registry is set (see Data).")."""
     found = _as_notice(notice)
     if found is None:
         return ""
-    words = f"{lead}: {found['short']}" + (f" (see {where})" if where else "") + "."
+    return disabled_words(control, found["short"]) + (f" (see {where})" if where else "") + "."
+
+
+def see_above(control: str, notice: Any, *, where: Optional[str] = None,
+              details: bool = False) -> str:
+    """**A control's relation to the notice its screen shows** (said once,
+    `notice_block`): one line beside the control it explains, its status
+    mark, the control disabled and the notice's short words ("Start
+    disabled: no workspaces folder is set.", `relation_words`), with where
+    the notice is when it is not in view of the control (`where`: "see
+    above", "see Data"). With `details`, the notice's "Details ›" under it
+    (where the screen shows the notice's line elsewhere but not its
+    details). ``data-notice-rel`` names the notice: a relation is not the
+    notice said again."""
+    found = _as_notice(notice)
+    if found is None:
+        return ""
+    words = relation_words(control, found, where=where)
     rel = f' data-notice-rel="{e(found["key"])}"' if found.get("key") else ""
     inner = f'<span class="shep-st-w shep-st-{STATUS_MARKS[found["kind"]][1]}">{e(words)}</span>'
     line = _marked(found["kind"], inner, "shep-reason shep-nb-rel", rel)
@@ -3251,10 +3281,14 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
 __all__ = [
     "CURRENT_DATASET",
     "DETAILS_WORD",
+    "DISABLED",
+    "DISABLED_MARK",
+    "disabled_words",
     "literal_html",
     "marked_line",
     "notice_block",
     "notices_block",
+    "relation_words",
     "see_above",
     "token_html",
     "LP_MODE",

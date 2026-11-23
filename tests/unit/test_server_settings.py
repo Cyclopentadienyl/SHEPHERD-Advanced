@@ -1555,7 +1555,7 @@ def test_each_whole_sentence_is_unchanged_and_its_notice_says_every_fact(name):
 def test_the_notices_parts_are_short_front_loaded_and_name_no_server_path():
     """The text brief's message shape: a summary of one front-loaded sentence
     (its first two words carry the state) of 60 characters or fewer; a short
-    form a relation reads ("Start unavailable: no workspaces folder is
+    form a relation reads ("Start disabled: no workspaces folder is
     set."); the next step by its place in the GUI; the details as term rows,
     each term said once across the three notices (one screen may merge them);
     the codes only in the Ref items; and no server path anywhere."""

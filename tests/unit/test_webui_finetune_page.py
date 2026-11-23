@@ -1085,15 +1085,17 @@ def test_at_first_use_the_form_says_the_missing_folder_once(monkeypatch, operato
     assert _words(screen).count(WORKSPACES_ROOT_NOTICE.summary) == 1
     assert GPU_LOCK_NOTICE.summary not in _words(screen)
     assert identity == tasks_note == bases_note == ""
-    # The notice: the state, the consequence, the link, the why one click away.
-    assert fp.SETUP_CONSEQUENCE in setup and 'data-shep-go="settings"' in setup
+    # The notice: the state, the link, the why one click away. What it means
+    # for Start is said once, by Start's relation (it said "Start is disabled
+    # until one is chosen." too, the relation beside Start a line under it).
+    assert 'data-shep-go="settings"' in setup and "disabled" not in _words(setup).lower()
     assert "Details ›" in setup
     # No long server sentence anywhere on the form.
     assert WORKSPACES_ROOT_NOT_SET not in screen and GPU_LOCK_NOT_CONFIGURED not in screen
     # Start's reason: a relation to the notice, on one line beside Start.
     assert 'data-notice-rel="gpu_lock"' in reason and "Details" not in reason
     assert "Start disabled: GPU jobs need a workspaces folder (see above)." in _words(reason)
-    assert len(_words(reason)) < 100
+    assert len(_words(reason)) < 100 and _words(screen).lower().count("disabled") == 1
     # A usable folder holding no workspace: no notice; the identity line says
     # what to do in its own words.
     assert fp.setup_html(None, None) == "" and fp.identity_html({"choices": []}) == (
@@ -1133,7 +1135,6 @@ def test_starts_gpu_reason_is_one_line_relation_never_the_notice_again():
               "short": "no folder", "action": "", "target": "", "details": (), "ref": ()}
     assert 'data-notice-also="gpu_lock"' in fp.setup_html(folder, unset)
     assert "data-notice-also" not in fp.setup_html(folder, broken)
-    assert fp.SETUP_CONSEQUENCE not in fp.setup_html(folder, None)
     assert fp.setup_html(None, unset) == ""
 
 

@@ -3589,8 +3589,8 @@ def _pieces_page():
     def datasets(ctx):
         with gr.Column(elem_id="pc-panel", elem_classes=["shep-panel"]):
             shell.plain_html('<div class="shep-panel-hd"><h2>Shared pieces</h2></div>')
-            shell.plain_html(r.see_above("Start unavailable", notice), elem_id="pc-rel")
-            shell.plain_html(r.see_above("Import unavailable", notice).replace(
+            shell.plain_html(r.see_above("Start", notice), elem_id="pc-rel")
+            shell.plain_html(r.see_above("Import", notice).replace(
                 'class="shep-reason', 'style="justify-content: end; max-width: none" class="shep-reason', 1),
                 elem_id="pc-rel-end")
             with gr.Row(elem_id="pc-bar", elem_classes=["shep-bar"]):
@@ -3834,7 +3834,7 @@ const LOOK_JS = __LOOK_JS__;
       </div>
       <div class="shep-bar" id="bar"><button type="button" id="bar-btn">Start</button><p id="bar-text">${words}</p></div>
       <div class="shep-bar" id="bar2"><button type="button" id="bar2-btn">Start</button><p id="bar2-text" style="width: 12em">Start disabled: GPU jobs need a workspaces folder.</p></div>
-      <div class="shep-bar" id="bar3"><button type="button" id="bar3-btn">Start</button><p id="bar3-text">Start unavailable: no folder.</p></div>
+      <div class="shep-bar" id="bar3"><button type="button" id="bar3-btn">Start</button><p id="bar3-text">Start disabled: no folder.</p></div>
     </div></div></body></html>`);
   await page.addScriptTag({ content: LOOK_JS });
   const layout = await page.evaluate(() => window.__shepLook.check().layout);

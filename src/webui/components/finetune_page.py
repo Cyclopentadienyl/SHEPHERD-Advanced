@@ -534,13 +534,10 @@ def identity_html(ws: Mapping[str, Any]) -> str:
             "</div>")
 
 
-#: **What the form's setup notice says** (`setup_html`) while the workspaces
-#: folder cannot be used: what it means for Start (the GPU lock is in that
-#: folder, so every managed GPU job is refused until one is chosen).
-SETUP_CONSEQUENCE = "Start is disabled until one is chosen."
-#: Start's relation to the notice that says why it is disabled
-#: (`renderers.see_above`, `actions_view`).
-START_DISABLED = "Start disabled"
+#: The control Start's relation to the notice names (`renderers.see_above`,
+#: `actions_view`): "Start disabled: …", the one place the screen says what
+#: the notice means for Start (the notice says no consequence of its own).
+START = "Start"
 
 
 def _said_above(ws_notice: Any, gpu: Optional[Mapping[str, Any]]) -> bool:
@@ -558,15 +555,14 @@ def setup_html(ws_notice: Any, gpu: Optional[Mapping[str, Any]] = None) -> str:
     step as a link to Settings › Data locations, the rest under "Details ›"
     (`renderers.notice_block`). With it the GPU lock's notice when the lock
     cannot be used because of it (`_said_above`; it follows from the
-    folder's, ``also``), and what that means for Start (`SETUP_CONSEQUENCE`).
-    Start's reason is then a relation to it (`actions_view`), the identity,
+    folder's, ``also``). What that means for Start is said once, by Start's
+    relation to it beside Start (`actions_view`); the identity,
     base and task lines say nothing of it. Empty while the folder can be
     used."""
     if not ws_notice:
         return ""
     merged = _said_above(ws_notice, gpu)
-    return r.notice_block(ws_notice, consequence=SETUP_CONSEQUENCE if merged else None,
-                          also=(gpu["notice"],) if merged else ())
+    return r.notice_block(ws_notice, also=(gpu["notice"],) if merged else ())
 
 
 def bases_note_html(parents: Mapping[str, Any], problem: Optional[str]) -> str:
@@ -936,21 +932,22 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
         view["reason"] = _why(tc.LOCK_ICON, operator_only(access.condition))
         view["stop_reason"] = view["reason"] if shown else ""
     elif s == "stopping":
-        view["reason"] = _why(tc.NO_ICON, "Stopping: the job is ending; Start waits for it.")
+        view["reason"] = _why(r.DISABLED_MARK, "Stopping: the job is ending; Start waits for it.")
         if shown:
-            view["stop_reason"] = _why(tc.NO_ICON, "Stopping: the job is ending.")
+            view["stop_reason"] = _why(r.DISABLED_MARK, "Stopping: the job is ending.")
     elif child_running:
         view["stop"] = not confirming
-        view["reason"] = _why(tc.NO_ICON, "Start disabled: this Fine-tune job is running.")
+        view["reason"] = _why(r.DISABLED_MARK, r.disabled_words(START, "this Fine-tune job is "
+                                                                       "running."))
     elif s == "running":
-        view["reason"] = _why(tc.NO_ICON, "Start disabled: a training job is running "
-                                          "(Research › Training).")
+        view["reason"] = _why(r.DISABLED_MARK, r.disabled_words(START, "a training job is running "
+                                                                       "(Research › Training)."))
     elif gpu and gpu.get("notice"):
-        view["reason"] = r.see_above(START_DISABLED, gpu["notice"],
+        view["reason"] = r.see_above(START, gpu["notice"],
                                      where="above" if said_above else None,
                                      details=not said_above)
     elif gpu:
-        view["reason"] = _why(tc.NO_ICON, f"Start disabled — {gpu['text']}.")
+        view["reason"] = _why(r.DISABLED_MARK, f"Start {r.DISABLED} — {gpu['text']}.")
     else:
         view["start"] = True
         view["reason"] = ""
@@ -1728,6 +1725,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-base .shep-v > .shep-more {{ display: inline-block; margin-left: 8px; vertical-align: top; }}
 {_PAGE} .shep-ft-reason {{ display: inline-flex; align-items: flex-start; gap: 6px; font-size: 14px; line-height: var(--shep-lh-prose); color: var(--shep-text-2); }}
 {_PAGE} .shep-ft-reason > svg {{ flex: none; margin-top: 3px; }}
+{_PAGE} .shep-ft-reason > .shep-nb-mark {{ flex: none; }}
 /* Start's and Stop's notices, each a note under its button: a refusal carries the shared mark of
    a refusal (`training_console.notice_html`); an empty one takes no room. */
 {_PAGE} #ft_notice, {_PAGE} #ft_stop_notice {{ font-size: 15px; overflow-wrap: anywhere; }}

@@ -1364,9 +1364,6 @@ LOCK_ICON = ('<svg class="shep-lock" width="12" height="12" viewBox="0 0 16 16" 
          'focusable="false"><rect x="3" y="7" width="10" height="7.5" rx="1.6" '
          'fill="currentColor"/><path d="M5.2 7V5.2a2.8 2.8 0 0 1 5.6 0V7" fill="none" '
          'stroke="currentColor" stroke-width="1.6"/></svg>')
-NO_ICON = ('<svg class="shep-no" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" '
-       'focusable="false"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" '
-       'stroke-width="1.5"/><path d="M4.6 8h6.8" stroke="currentColor" stroke-width="1.5"/></svg>')
 
 
 def details_html(ws: Mapping[str, Any]) -> str:
@@ -1679,7 +1676,7 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
     and Stop has nothing to stop, R-39), ``reason`` (the run bar's note,
     escaped HTML, a row of its own under the controls: empty when nothing is
     disabled that is drawn), ``why`` (the one-line relation beside Start to
-    the setup notice, `renderers.see_above`: "Start unavailable: GPU jobs
+    the setup notice, `renderers.see_above`: "Start disabled: GPU jobs
     need a workspaces folder."), ``notice`` and ``also`` (the setup notice the
     note draws once, `renderers.notice_block`, and the notices that follow
     from it: the workspaces folder's whenever the server says one, the GPU
@@ -1720,8 +1717,8 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
 
     def disabled(cause: str) -> None:
         """One cause, said for the run bar's actions and the drawer's start."""
-        view["reason"] = line(NO_ICON, f"Start and Continue… disabled: {cause}")
-        view["drawer_reason"] = line(NO_ICON, f"{action} disabled: {cause}")
+        view["reason"] = line(r.DISABLED_MARK, r.disabled_words("Start and Continue…", cause))
+        view["drawer_reason"] = line(r.DISABLED_MARK, r.disabled_words(action, cause))
 
     if not access.allowed:
         view["reason"] = line(LOCK_ICON, operator_only(access.condition))
@@ -1732,10 +1729,10 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
         if s == "running":
             disabled("a training job is running.")
         else:
-            view["reason"] = line(NO_ICON, "Stopping: Start and Continue… wait for the job to "
-                                           "end.")
-            view["drawer_reason"] = line(NO_ICON, f"Stopping: {action} waits for the job to "
-                                                  "end.")
+            view["reason"] = line(r.DISABLED_MARK, "Stopping: Start and Continue… wait for the "
+                                                     "job to end.")
+            view["drawer_reason"] = line(r.DISABLED_MARK, f"Stopping: {action} waits for the "
+                                                            "job to end.")
         return view
     if gpu and gpu.get("notice"):
         # The lock cannot be used (no workspaces folder, or a problem of its
@@ -1746,8 +1743,8 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
             view["also"] = [gpu["notice"]]
         else:
             view["notice"] = gpu["notice"]
-        view["why"] = r.see_above("Start unavailable", gpu["notice"])
-        view["drawer_reason"] = r.see_above(f"{action} unavailable", gpu["notice"],
+        view["why"] = r.see_above("Start", gpu["notice"])
+        view["drawer_reason"] = r.see_above(action, gpu["notice"],
                                             where="above")
         return view
     if gpu:
@@ -1777,7 +1774,7 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
     why = continue_refusal(mode.get("parent") or {}, ws, operation=operation_of(mode))
     view["resume"] = why is None
     if why:
-        view["drawer_reason"] = line(NO_ICON, f"{action} disabled: {why}")
+        view["drawer_reason"] = line(r.DISABLED_MARK, r.disabled_words(action, why))
     return view
 
 

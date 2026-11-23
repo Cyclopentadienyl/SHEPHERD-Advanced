@@ -666,9 +666,9 @@ def test_first_use_is_one_notice_under_the_bar_and_one_relation_beside_start(mon
     view = _view(ws=ws, gpu=gpu)
     assert (view["start"], view["cont"]) == (False, False)
     assert view["reason"] == ""                                   # no reason line of its own
-    assert view["why"] == r.see_above("Start unavailable", gpu["notice"])
-    assert ">Start unavailable: GPU jobs need a workspaces folder.<" in view["why"]
-    assert "(see above)." in view["drawer_reason"] and "Continue Training unavailable" in view[
+    assert view["why"] == r.see_above("Start", gpu["notice"])
+    assert ">Start disabled: GPU jobs need a workspaces folder.<" in view["why"]
+    assert "(see above)." in view["drawer_reason"] and "Continue Training disabled" in view[
         "drawer_reason"]
     note = tc.note_html(view)
     assert note.count('data-notice="workspaces_root"') == 1 and 'data-notice-also="gpu_lock"' in note
@@ -697,7 +697,7 @@ def test_first_use_is_one_notice_under_the_bar_and_one_relation_beside_start(mon
         line = tc._gpu_line(None, problem, None, operator=operator)
         seen = _view(gpu=line)
         drawn = tc.note_html(seen)
-        assert "The GPU lock cannot be used." in drawn and seen["why"].count("unavailable") == 1
+        assert "The GPU lock cannot be used." in drawn and seen["why"].count("disabled") == 1
         assert ("/srv/workspaces" in drawn) is operator
         assert "/srv" not in seen["why"]
     # Nothing to say: no note, so its row takes no room.
@@ -4094,7 +4094,7 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
         assert drawn["beside"] == [], where
         why = drawn["why"]
         if case == "first_use":
-            assert why["text"] == "Start unavailable: GPU jobs need a workspaces folder.", where
+            assert why["text"] == "Start disabled: GPU jobs need a workspaces folder.", where
             start = drawn["start"]
             level = min(start[3], why["box"][3]) - max(start[1], why["box"][1])
             if level > 0.5 * (start[3] - start[1]):

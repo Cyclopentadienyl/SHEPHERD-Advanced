@@ -659,7 +659,7 @@ class Notice(NamedTuple):
     - `summary`: the state, one front-loaded sentence ("No workspaces folder
       is set.");
     - `short`: the state as a relation says it, lower case and without a
-      full stop ("no workspaces folder is set": "Start unavailable: …");
+      full stop ("no workspaces folder is set": "Start disabled: …");
     - `action`: the next step, by its place in the GUI ("Choose one in
       Settings › Data locations");
     - `target`: where that step is, ``"<page>#<element id>"`` (the WebUI's

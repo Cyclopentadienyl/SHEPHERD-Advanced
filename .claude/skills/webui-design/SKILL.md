@@ -39,7 +39,7 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
   the only thing that scrolls. Nothing sticky or fixed may cover a chart's plot or axes, a table row or a focused
   control; a status line is a row of its own (the run view: header, charts, resources).
 - **A message never shares a row with fields or buttons.** Only a one-line relation (`renderers.see_above`:
-  "Start unavailable: no workspaces folder is set.") sits beside the control it explains; anything longer is
+  "Start disabled: no workspaces folder is set.") sits beside the control it explains; anything longer is
   the full-width note under its group (`.shep-bar-note`), from the group's left edge, at the measure.
 - **Bars wrap groups whole.** A bar (`.shep-bar`) is a wrapping row of groups (`.shep-grp`, `-grow`, `-end`); a
   group moves to the next line whole, and a text box keeps its floor (`--shep-input-floor`): its group wraps

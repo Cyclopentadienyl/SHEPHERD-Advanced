@@ -135,10 +135,11 @@ PAGE_HELP = {
 }
 
 
-#: Use for training with no workspace listed: the control's relation to the
-#: workspaces folder's notice (`renderers.see_above`; the notice is the
-#: table's, in view of the button: one line beside it).
-USE_UNAVAILABLE = "Use for training unavailable"
+#: The control the line beside "Use for training ›" names while it is
+#: disabled (`renderers.disabled_words`): with no workspace listed, its
+#: relation to the workspaces folder's notice (`renderers.see_above`; the
+#: notice is the table's, in view of the button: one line beside it).
+USE_FOR_TRAINING = "Use for training"
 
 
 def use_note_html(data: Mapping[str, Any], name: Optional[str]) -> str:
@@ -150,15 +151,17 @@ def use_note_html(data: Mapping[str, Any], name: Optional[str]) -> str:
     rows = data.get("rows") or []
     row = next((x for x in rows if x["name"] == name), None)
     if not rows and data.get("notice"):
-        return r.see_above(USE_UNAVAILABLE, data["notice"])
+        return r.see_above(USE_FOR_TRAINING, data["notice"])
     if not rows:
         return '<span class="shep-note">No workspace is listed to use yet.</span>'
     if row is None:
         return '<span class="shep-note">Select a dataset to use it for training.</span>'
     if not row.get("trainable"):
         why = row.get("not_trainable") or "not trainable"
-        return (f'<span class="shep-note" title="{r.e(why)}">Not available: {r.e(row["name"])} is '
-                f'not trainable — {r.e(r.not_trainable_short(row, 120))}.</span>')
+        words = r.disabled_words(USE_FOR_TRAINING, f"{row['name']} is not trainable: "
+                                                   f"{r.not_trainable_short(row, 120)}.")
+        return (f'<p class="shep-reason" title="{r.e(why)}">{r.DISABLED_MARK}'
+                f'<span>{r.e(words)}</span></p>')
     return f'<span class="shep-note">{USE_NOTE}</span>'
 
 def read_datasets() -> Dict[str, Any]:
@@ -718,7 +721,7 @@ __all__ = [
     "PAGE_HELP",
     "ROOT_REFUSED",
     "USE_NOTE",
-    "USE_UNAVAILABLE",
+    "USE_FOR_TRAINING",
     "admitted_measurements",
     "build_line_html",
     "commands_html",
