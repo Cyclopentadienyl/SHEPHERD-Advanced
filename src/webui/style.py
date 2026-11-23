@@ -14,7 +14,8 @@ shell's head script (`src/webui/shell.py`, its layout pass) writes
 style sheet keys its side-by-side and stacked rules off it, through `SIDE`
 and `STACK` (``SIDE + " { … }"``, the rules nested inside), never a media
 query on the window's size. The browser's usable area (the window's inner
-size, raised to the display floor in each axis: `FLOOR_WIDTH` x `FLOOR_HEIGHT`)
+size, raised to the floor of the arrangement the window takes: no wider than
+tall, `STACK_FLOOR_WIDTH`; wider, the display floor, `FLOOR_WIDTH` x `FLOOR_HEIGHT`)
 decides it: no wider than it is tall, stacked; wider, side by side when
 the page shown fits by its panels' own minimum widths (each panel's
 ``--shep-panel-min``, set in its page's style sheet; side by side, a panel is
@@ -85,6 +86,21 @@ SHORT_BELOW = 900
 #: ``area()``), so below the floor each mark is the floor's. One pair, read by those two only:
 #: no media query on the window's size, no page's own copy.
 FLOOR_WIDTH, FLOOR_HEIGHT = 1280, 720
+#: **The stacked arrangement's floor** (the owner's decision of 2026-11-23 on portrait windows): a
+#: window no wider than tall takes the stacked arrangement, and this is its floor, a 1080p screen
+#: turned upright at 125 % (1080 at 100 %). Measured stacked, every page in both states with every
+#: drawer holds every shared rule with nothing compressed at 1080, 1024, 960 and 864 px wide; at
+#: 720 (the same screen at 150 %) Models' tree in its narrow form runs past its panel, and at 800
+#: it has a few px to spare. The display floor above is the side-by-side arrangement's; the layout
+#: pass raises the window to the floor of the arrangement the window takes (`shell.py`'s
+#: ``area()``: no wider than tall, this width in both axes, the narrowest window no wider than
+#: tall; wider, `FLOOR_WIDTH` x `FLOOR_HEIGHT`) and writes that floor's width (`FLOOR_VAR`) for the
+#: frame's ``min-width`` (`SHELL_CSS`), so a portrait window at or above it never scrolls sideways,
+#: and one below it is drawn as at it, the document scrolling.
+STACK_FLOOR_WIDTH = 864
+#: The width of the floor the window's arrangement takes, in px (a custom property on the root
+#: element the layout pass writes): the frame's ``min-width``.
+FLOOR_VAR = "--shep-floor-w"
 #: **A box drawn in its wide form while that form fits** (OPS-FIX-R2; the
 #: layout pass's fit, `src/webui/shell.py`): a box of class `FIT` shows its
 #: wide form (class `FIT_WIDE`, a table) while the form's own narrowest, its
@@ -230,12 +246,14 @@ body { color: var(--shep-text); }
    strong weight, never the browser's 700. */
 .gradio-container b, .gradio-container strong, .gradio-container th { font-weight: var(--shep-weight-strong); }
 #shep-shell { position: relative; gap: 0 !important; background: var(--shep-bg); }
-/* **The display floor** (`FLOOR_WIDTH`, `FLOOR_HEIGHT`): the app's frame is never narrower than
-   the floor, less the room the window's own scrollbar takes (``100vw - 100%``: a stacked page's),
-   so a window at the floor never scrolls sideways and one below it scrolls as a whole, its layout
-   drawn as at the floor. Side by side its height is the window's and never under the floor's
-   (`SIDE`, below). */
-gradio-app { min-width: calc(__FLOOR_W__px - (100vw - 100%)); }
+/* **The display floor** (`FLOOR_WIDTH`, `FLOOR_HEIGHT`; a window no wider than tall, the stacked
+   arrangement's, `STACK_FLOOR_WIDTH`): the app's frame is never narrower than the floor of the
+   arrangement the window takes (`FLOOR_VAR`, the layout pass's; the display floor's before its first
+   pass), less the room the window's own scrollbar takes (``100vw - 100%``: a stacked page's), so a
+   window at the floor never scrolls sideways and one below it scrolls as a whole, its layout drawn
+   as at the floor. Side by side its height is the window's and never under the floor's (`SIDE`,
+   below). */
+gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%)); }
 
 /* ---------------------------------------------------------------- row 1: brand, area switch, chips, Settings */
 #shep-brand {
@@ -1346,9 +1364,10 @@ __STACK__ {
     .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART) \
     .replace("__NARROW__", NARROW_ATTR).replace("__COL_OPT__", COL_OPT).replace("__COL_TWIN__", COL_TWIN).replace("__FIT_BOX__", FIT).replace("__SEG_WHOLE__", SEG_WHOLE) \
     .replace("__CELL_WHOLE__", CELL_WHOLE) \
-    .replace("__FLOOR_W__", str(FLOOR_WIDTH)).replace("__FLOOR_H__", str(FLOOR_HEIGHT))
+    .replace("__FLOOR_W__", str(FLOOR_WIDTH)).replace("__FLOOR_H__", str(FLOOR_HEIGHT)) \
+    .replace("__FLOOR_VAR__", FLOOR_VAR)
 
 
 __all__ = ["BRAND_WIDTH", "CELL_WHOLE", "COL_OPT", "COL_TWIN", "FADE_VAR", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
-           "FLOOR_HEIGHT", "FLOOR_WIDTH", "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT", "SHORT_ATTR",
-           "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK"]
+           "FLOOR_HEIGHT", "FLOOR_VAR", "FLOOR_WIDTH", "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT",
+           "SHORT_ATTR", "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK", "STACK_FLOOR_WIDTH"]
