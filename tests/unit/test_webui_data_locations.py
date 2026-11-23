@@ -802,6 +802,8 @@ const QUEUE_JS = __QUEUE_JS__;
       const gaps = (a, b) => { const p = box(a), q = words(b);
         const dy = Math.max(0, p.top - q.bottom, q.top - p.bottom);
         return { column: q.left < p.right && q.right > p.left, nextLine: dy <= p.height,
+                 line: q.top < p.bottom && q.bottom > p.top, after: q.left >= p.right - 1,
+                 group: !!a.closest('.shep-grp') && a.closest('.shep-grp') === b.closest('.shep-grp'),
                  dy: Math.round(dy) }; };
       const rowOf = (e) => e.closest('.shep-dl-row');
       const panel = document.getElementById('shep-dl');
@@ -853,9 +855,12 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
     laid each row out top to bottom, so the panel scrolls at 1850 x 960 and
     a button brought only as far as the view's edge left its phrase under
     it out of view); the panel's long reason is said once on the
-    page; in Check's and Save's column too (its words overlap each one's
-    span across: the UI sweep's shared reason grid filled the row, so the
-    phrase sat under the label column, 500 px from them). An operator sees
+    page; beside Check and Save, in their group and on their line after
+    Save (the sweep's L7 check, D6: as a line of its own under them it made
+    each read-only row a line taller than an operator's, and the panel's
+    last line fell under its body's edge at 1850 x 960; the UI sweep's
+    shared reason grid had once put it under the label column, 500 px from
+    them). An operator sees
     no lock and no phrase. Fails on d7ebfc3. The
     recheck of d4209c4 read Create 30 px from its row's phrase at 390 x 844
     on its host: Create was centred against a suggestion that wrapped to
@@ -892,7 +897,13 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
                 assert button["reason"] == f"🔒 {phrase}", (size, key, part, button)
                 assert button["sameRow"] and button["nextLine"], (size, key, part, button)
                 if part in ("check", "save"):
-                    assert button["column"], (size, key, part, button)
+                    # Beside Check and Save (the owner's word, 2026-11-19): in their group, so
+                    # it moves with them, on their line after them (the sweep's L7 check, D6:
+                    # a line of its own under them made each read-only row a line taller, and
+                    # "Where these are kept ›" fell under the body's edge at 1850 x 960).
+                    assert button["group"] and button["line"], (size, key, part, button)
+                    if part == "save":
+                        assert button["after"], (size, key, part, button)
                 assert button["whole"] and button["reasonWhole"], (size, key, part, button)
 
 
@@ -1153,7 +1164,9 @@ def _columns_problems(stop) -> list:
     return problems
 
 
-def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path, monkeypatch):
+@pytest.mark.parametrize("operator", [True, False], ids=["operator", "read-only"])
+def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path, monkeypatch,
+                                                                    operator):
     """The sweep's L7 check (C3, a regression of a4dc77d): each row's Set-to box took what
     Create and its suggestion left on its line, so at 1850 x 960 the four boxes ended at 425,
     441, 457 and 845 px (nothing set) and the Import row's at 458 against 846 (configured), and
@@ -1163,15 +1176,20 @@ def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path
     set at start (a long path) and the other folders not set (Create offered), at the owner's
     windows, a laptop and the display floor: the rows share their columns
     (`_columns_problems`), and at the owner's window all four rows and "Where these are kept
-    ›" stay in the panel's body (SW-LK1)."""
+    ›" stay in the panel's body (SW-LK1). The same for a read-only viewer, whose paths are
+    hidden and whose rows say why they are locked (the sweep's L7 check, D6: each row's lock
+    line under its buttons made the body 28 px taller than its room at 1850 x 960)."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import node_with_playwright, walk_ui
-    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.operator_access import DEPLOYMENT_MODE, operator_mode
     from tests.fixtures.served_page import served
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
-    operator_mode(monkeypatch)
+    if operator:
+        operator_mode(monkeypatch)
+    else:
+        monkeypatch.delenv(DEPLOYMENT_MODE, raising=False)
     monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
     registry = tmp_path / "a-results-registry-folder-kept-on-the-server" / "for-the-cohort-versions" / "registry"
     registry.mkdir(parents=True, mode=0o700)
@@ -1184,7 +1202,8 @@ def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path
     for stop in seen:
         rows = stop["extra"]["rows"]
         assert len(rows) == len(KEYS) and all(row["box"] and row["check"] for row in rows), stop
-        assert [row["id"] for row in rows if row["path"]] == ["dl_row_registry"], stop
+        assert [row["id"] for row in rows if row["path"]] == (["dl_row_registry"] if operator
+                                                              else []), stop
         assert [row["id"] for row in rows if row["create"]] == ["dl_row_workspaces_root", "dl_row_intake_dir"], stop
         problems += _columns_problems(stop)
         if stop["size"] == "1850x960":

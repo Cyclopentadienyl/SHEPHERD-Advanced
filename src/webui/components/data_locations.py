@@ -48,8 +48,8 @@ it shows escaped:
   every other text is redacted by the one redaction, every box and button is
   disabled with the lock, one reason line in D8's words says why, once, above
   the rows (`chips.operator_only`), and each row says the short `ROW_LOCKED`
-  ("🔒 Operator controls only") on the line under its box, Check and Save,
-  just above its Create (the owner's decision of 2026-11-19).
+  ("🔒 Operator controls only") beside its Check and Save, in their group
+  (the owner's decision of 2026-11-19), its Create on a line of its own.
 
 These are folders on the server machine; the page says so. Nothing here
 blocks another page: a page that needs a folder that is not set says so in
@@ -266,7 +266,7 @@ def where_html(view: DeploymentView, *, shown: bool) -> str:
 def reason_line(text: str) -> str:
     """**A refusal's line beside what it turns off** on Settings (D8's
     reason, the lock before it): in this panel the whole reason once, above
-    its rows, and each row's short `ROW_LOCKED` under its box and buttons;
+    its rows, and each row's short `ROW_LOCKED` beside Check and Save;
     in Runtime settings beside its actions, where the line above its two
     fields says where it is."""
     return (f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
@@ -629,15 +629,16 @@ def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
                                     elem_id=f"dl_box_{key}")
                                 # Check and Save, one group (`shep-grp`): they move to
                                 # the next line together, never Save alone.
+                                # Read-only: why the box and the buttons are locked (`ROW_LOCKED`),
+                                # beside Check and Save in their group (the owner's decision of
+                                # 2026-11-19), so it moves with them and adds no line of its own.
                                 with gr.Row(elem_classes=["shep-dl-acts", "shep-grp"]):
                                     row["check"] = gr.Button(CHECK_LABEL, interactive=False,
                                                              scale=0, elem_id=f"dl_check_{key}")
                                     row["save"] = gr.Button(SAVE_LABEL, interactive=False,
                                                             scale=0, elem_id=f"dl_save_{key}")
-                                # Read-only: why the box and the buttons are locked (`ROW_LOCKED`),
-                                # a line of the bar's own under Check and Save, above Create.
-                                row["lock"] = plain_html("", elem_id=f"dl_lock_{key}",
-                                                         elem_classes=["shep-bar-note"])
+                                    row["lock"] = plain_html("", elem_id=f"dl_lock_{key}",
+                                                             elem_classes=["shep-dl-lock"])
                                 # Create and its suggestion, one more whole group of the bar:
                                 # after Check and Save on their line, or a line of its own.
                                 with gr.Row(elem_classes=["shep-dl-create", "shep-grp"]):
@@ -712,9 +713,12 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: box (the query that put it above its box served windows under the floor and
 #: is retired with it). The evidence folders' box, a path per line, takes its whole line there: its
 #: hint ("One folder path on the server per line", 250.5 px in the dashboard's
-#: type) is longer than 16em. A read-only row's short reason (`ROW_LOCKED`) is
-#: the bar's note under Check and Save (from Check's edge where every box is
-#: `SET_BOX` wide, else at their end), above Create: the bar's buttons, Create
+#: type) is longer than 16em. A read-only row's short reason (`ROW_LOCKED`)
+#: stands beside Check and Save, in their group (the owner's decision of
+#: 2026-11-19), so it adds no line of its own (the sweep's L7 check, D6: as the
+#: bar's note under them it made each read-only row a line taller and the
+#: panel's last line fell under its body's edge at 1850 x 960); Create then
+#: takes a line of its own on the box's edge: the bar's buttons, Create
 #: included, are off for the reason in their bar (C5: Create's lock had no
 #: reason beside or under it).
 #: Create and its suggestion share their first baseline (a suggestion that
@@ -763,15 +767,14 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-acts > button, {_PAGE} .shep-dl-create > button {{ flex: none !important; min-width: max-content !important; }}
 {_PAGE} .shep-dl-field > .shep-dl-create {{ flex: 1 1 100% !important; width: auto !important; min-width: auto !important; max-width: 100%; gap: 8px !important; align-items: baseline !important; flex-wrap: wrap !important; }}
 @container (min-width: {SET_WIDE}) {{
-  {_PAGE} .shep-dl-field > .block:not([id^="dl_lock_"]) {{ flex: 0 1 {SET_BOX} !important; }}
+  {_PAGE} .shep-dl-field > .block {{ flex: 0 1 {SET_BOX} !important; }}
   {_PAGE} .shep-dl-field > .shep-dl-create {{ flex: 1 1 0% !important; }}
-  {_PAGE} .shep-dl-field > .block[id^="dl_lock_"] {{ padding-inline-start: calc({SET_BOX} + 8px) !important; }}
-  {_PAGE} .shep-dl-field > [id^="dl_lock_"] .shep-reason {{ margin-inline-start: 0; }}
 }}
 {_PAGE} .shep-dl-create > [id^="dl_suggest_"] {{ flex: 1 1 max-content !important; min-width: 0 !important; }}
 {_PAGE} .shep-dl-create:not(:has(button:not([hidden]))) {{ display: none !important; }}
-{_PAGE} .shep-dl-field > .block[id^="dl_lock_"] {{ flex: 1 1 100% !important; }}
-{_PAGE} [id^="dl_lock_"] .shep-reason {{ width: fit-content; margin-inline-start: auto; }}
+{_PAGE} .shep-dl-acts > .block[id^="dl_lock_"] {{ flex: none !important; width: auto !important; min-width: max-content !important; align-self: center; }}
+{_PAGE} .shep-dl-field:has([id^="dl_lock_"] .shep-reason) > .shep-dl-create {{ flex: 1 1 100% !important; }}
+{_PAGE} [id^="dl_lock_"] .shep-reason {{ white-space: nowrap; }}
 {_PAGE} .shep-dl-kv {{ gap: 4px 12px; }}
 {_PAGE} .shep-dl-kv > dt {{ width: 8em; }}
 {_PAGE} .shep-dl-v {{ margin-right: 8px; }}
