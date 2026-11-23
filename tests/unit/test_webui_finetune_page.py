@@ -1100,7 +1100,11 @@ def test_at_first_use_the_form_says_the_missing_folder_once(monkeypatch, operato
     assert 'data-notice-also="gpu_lock"' in setup
     assert _words(screen).count(WORKSPACES_ROOT_NOTICE.summary) == 1
     assert GPU_LOCK_NOTICE.summary not in _words(screen)
-    assert identity == tasks_note == bases_note == ""
+    assert identity == tasks_note == ""
+    # The empty Run and Checkpoint say their relation to it (the sweep's L7 check, C7: two
+    # empty boxes that said nothing), never the notice again.
+    assert 'data-notice-rel="workspaces_root"' in bases_note and "data-notice=" not in bases_note
+    assert "Run disabled: no workspaces folder is set (see above)." in _words(bases_note)
     # The notice: the state, the link, the why one click away. What it means
     # for Start is said once, by Start's relation (it said "Start is disabled
     # until one is chosen." too, the relation beside Start a line under it).
@@ -1111,7 +1115,7 @@ def test_at_first_use_the_form_says_the_missing_folder_once(monkeypatch, operato
     # Start's reason: a relation to the notice, on one line beside Start.
     assert 'data-notice-rel="gpu_lock"' in reason and "Details" not in reason
     assert "Start disabled: GPU jobs need a workspaces folder (see above)." in _words(reason)
-    assert len(_words(reason)) < 100 and _words(screen).lower().count("disabled") == 1
+    assert len(_words(reason)) < 100 and _words(screen).lower().count("disabled") == 2
     # A usable folder holding no workspace: no notice; the identity line says
     # what to do in its own words.
     assert fp.setup_html(None, None) == "" and fp.identity_html({"choices": []}) == (
