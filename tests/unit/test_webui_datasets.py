@@ -388,12 +388,25 @@ def test_what_the_run_bar_marker_means_is_said_once(root, monkeypatch):
     assert "browser tab" not in bubble and "Use for training ›" in bubble
 
 
-def test_long_names_wrap_at_every_size_so_in_use_stays_in_view():
+def test_long_names_wrap_at_every_size_so_in_use_stays_in_view(root, monkeypatch):
+    """A long name or source list wraps in its cell at every size, so In use
+    stays in view. The sweep's L7 (SW-LK3): an 11.5em floor on a Name that
+    could break anywhere held 173 px for "demo" and wrapped In use ("bar"
+    alone) and the headers at 1850 x 960. A name now breaks only before its
+    own separators (its narrowest is its longest piece, it never reads
+    hyphenated), with no floor; a source list still wraps anywhere."""
+    from src.webui.components import renderers as r
+
     css = dsp.PAGE_CSS
-    rule = next(line for line in css.splitlines() if "td.shep-ds-name" in line)
-    assert "overflow-wrap: anywhere" in rule and "td.shep-ds-src" in rule
-    before_media = css.split("@media")[0]
-    assert "td.shep-ds-name" in before_media                # not only when narrow
+    rule = next(line for line in css.splitlines() if "td.shep-ds-src" in line)
+    assert "overflow-wrap: anywhere" in rule
+    assert not [line for line in css.splitlines() if "td.shep-ds-name" in line and "{" in line]
+    _serving(monkeypatch, None)
+    table = dsp.table_html(dsp.read_datasets(), None, None)
+    assert '<td class="shep-ds-name shep-w600"><span class="shep-brk"><span>demo</span></span></td>' in table
+    assert r.name_pieces_html("rare-cohort_2026") == (
+        '<span class="shep-brk"><span>rare</span><wbr><span>-cohort</span><wbr>'
+        '<span>_2026</span></span>')
     assert all(line.strip().startswith(("#shep-page-datasets", "@media", "}", ""))
                for line in css.splitlines())
 
@@ -861,7 +874,10 @@ def test_each_version_says_the_measurements_its_data_admits_by_tests_rule(
     supplied = re.search(r'<tr><td[^>]*><span class="shep-nowrap">ref-demo</span></td>.*?</tr>',
                          html, re.S).group(0)
     assert "<td>Disease<details" in supplied
-    assert "<summary>Not admitted: Gene, Patients-like-me ›</summary>" in supplied
+    label = re.search(r"<summary>(.*?)</summary>", supplied).group(1)
+    assert re.sub(r"<[^>]+>", "", label) == "Not admitted: Gene, Patients-like-me\u00a0›"
+    # A name never breaks at its own hyphen; the chevron never stands alone (SW-LK3).
+    assert '<span class="shep-nowrap">Patients-like-me</span>\u00a0›' in label
     assert "lists no causal genes" in supplied
 
 
@@ -1102,6 +1118,72 @@ def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
     assert picked["head"].startswith(dsp.DETAILS_TITLE) and picked["fingerprint"], picked
     assert picked["layout"] == "side" and picked["over"] == 0, picked
     assert picked["optkv"] == picked["narrow"], picked
+
+
+_VERSIONS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
+    && window.__shepQueue.joins.every((j) => j.event_id !== null), null, { timeout: 60000 });
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+  await idle();
+  await page.click('#shep-tab-research-button');
+  await page.click('#shep-page-datasets-button');
+  await page.waitForSelector('#shep-ds-table tr[data-key="demo"]', { timeout: 60000 });
+  await idle();
+  await page.click('#shep-ds-table tr[data-key="demo"] td:first-child');
+  await page.waitForSelector('#shep-ds-details .shep-dsvtbl summary', { timeout: 60000 });
+  await idle();
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const out = [];
+  for (const [w, h] of [[1850, 960], [1550, 830], [1366, 768], [1280, 720]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await frames(); await frames();
+    out.push(await page.evaluate((size) => {
+      const table = document.querySelector('#shep-ds-details .shep-dsvtbl');
+      const wrap = table.closest('.shep-tbl-wrap'), frame = wrap.getBoundingClientRect();
+      const label = table.querySelector('summary');
+      const lines = [...label.getClientRects()];
+      return { size, layout: document.documentElement.getAttribute('data-shep-layout'),
+               over: Math.round(table.getBoundingClientRect().right - frame.right),
+               labelOver: Math.round(Math.max(...lines.map((q) => q.right)) - frame.right),
+               lastLineEnds: label.textContent.trim().endsWith('\u203a') };
+    }, `${w}x${h}`));
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})();
+"""
+
+
+def test_in_a_browser_the_versions_table_and_its_disclosure_fit_the_details(
+        root, registry, tmp_path, monkeypatch):
+    """The sweep's L7 (SW-LK3): side by side at 1366 x 768 the Data versions
+    table was 12 px wider than its frame and scrolled sideways, its "Not
+    admitted: Gene, Patients-like-me ›" cut at the chevron: a disclosure's
+    label was never allowed to wrap (``width: max-content``), so a label built
+    from data set its column's width. Side by side at the owner's windows and
+    two laptops, the table and the label's every line end inside the table's
+    frame, and the chevron ends the label."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    _serving(monkeypatch, None)
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_VERSIONS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    side = [s for s in seen if s["layout"] == "side"]
+    assert {s["size"] for s in side} >= {"1850x960", "1366x768"}, seen
+    for s in side:
+        assert s["over"] <= 1 and s["labelOver"] <= 1 and s["lastLineEnds"], s
 
 
 def test_the_panels_are_sized_by_what_they_hold_and_the_table_drops_optional_columns(

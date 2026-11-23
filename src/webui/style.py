@@ -501,6 +501,10 @@ span.shep-note { display: inline-block; }
 .shep-note p { font-size: 14px; }
 .shep-sep { color: var(--shep-border-2); }
 .shep-nowrap { white-space: nowrap; }
+/* A name drawn in pieces (`renderers.name_pieces_html`): each piece on one line, a line breaking
+   only before the name's own separators, a piece longer than its box broken as the last resort. */
+.shep-brk { overflow-wrap: break-word; }
+.shep-brk > span { white-space: nowrap; }
 .shep-w600 { font-weight: 600; }
 .shep-sub { font-size: 14px; color: var(--shep-text-2); }
 .shep-num { text-align: right !important; font-variant-numeric: tabular-nums; }
@@ -660,8 +664,12 @@ span.shep-note { display: inline-block; }
 .shep-card .shep-kv { padding: 10px 12px; }
 .shep-kv-2 { grid-template-columns: max-content max-content max-content max-content; }
 /* A summary list's "Details ›" (`renderers.model_spec_html`): one level, its
-   body under it, never a disclosure inside another nor a bordered box. */
-.shep-more > summary { cursor: pointer; color: var(--shep-accent-text); width: max-content; min-height: 24px; line-height: 24px; list-style: none; }
+   body under it, never a disclosure inside another nor a bordered box. Its label is as wide
+   as its words and wraps only where its box is narrower: a label built from data never sets
+   its column's width (the sweep's L7, SW-LK3: Datasets' "Not admitted: Gene,
+   Patients-like-me ›" made the Measurements column 280 px, the versions table scrolled
+   sideways and the chevron was cut). */
+.shep-more > summary { cursor: pointer; color: var(--shep-accent-text); width: fit-content; max-width: 100%; min-height: 24px; line-height: 24px; list-style: none; }
 .shep-more > summary::-webkit-details-marker { display: none; }
 .shep-more > summary:hover { text-decoration: underline; }
 /* Keyboard focus on every button, link and disclosure (Gradio's buttons, an

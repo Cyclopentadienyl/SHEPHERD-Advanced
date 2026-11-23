@@ -830,17 +830,10 @@ _ROW = re.compile(r"^([A-Z][^:.!?]{0,31}):\s+(\S.*)$")
 DETAILS_WORD = "Details ›"
 
 
-def token_html(token: Any, classes: str = "") -> str:
-    """**One literal token** (a path, a file name, a variable) escaped and in
-    code style, breakable only before its own separators: its pieces each
-    kept on one line (a span, ``white-space: nowrap``: the browser's own
-    break after a hyphen is not taken) with a ``<wbr>`` between them, so no
-    hyphen is drawn and a copy keeps the token whole (never U+200B). A
-    command-line option (a word that starts with "-") is one piece: a
-    command breaks at the space before it, never inside it (the sweep's L7,
-    SW-LK7: "--generate-samples" broke as "--generate" / "-samples" and read
-    as two options). `classes` are added to the token's own."""
-    text = "" if token is None else str(token)
+def _pieces(text: str) -> List[str]:
+    """`text` cut before each of its own separators (`_TOKEN_BREAKS`, the
+    first of a run), a command-line option (a word that starts with "-")
+    kept as one piece: where `token_html` and `name_pieces_html` may break."""
     pieces, start, option = [], 0, False
     for i, ch in enumerate(text):
         if ch == " ":
@@ -854,9 +847,36 @@ def token_html(token: Any, classes: str = "") -> str:
             pieces.append(text[start:i])
             start = i
     pieces.append(text[start:])
+    return [piece for piece in pieces if piece]
+
+
+def name_pieces_html(name: Any) -> str:
+    """**A name in the body's type that breaks like a token** (the text
+    brief's §8): escaped, each piece between its own separators kept on one
+    line and a ``<wbr>`` between pieces, so its narrowest is its longest
+    piece, never an em floor (the sweep's L7, SW-LK3: Datasets' Name column
+    held 11.5em for "demo" and wrapped In use and the headers at 1850 x 960),
+    and it never reads hyphenated; a piece longer than its box breaks only as
+    the last resort (``.shep-brk``)."""
+    return ('<span class="shep-brk">'
+            + "<wbr>".join(f"<span>{e(piece)}</span>" for piece in _pieces(str(name or "")))
+            + "</span>")
+
+
+def token_html(token: Any, classes: str = "") -> str:
+    """**One literal token** (a path, a file name, a variable) escaped and in
+    code style, breakable only before its own separators: its pieces each
+    kept on one line (a span, ``white-space: nowrap``: the browser's own
+    break after a hyphen is not taken) with a ``<wbr>`` between them, so no
+    hyphen is drawn and a copy keeps the token whole (never U+200B). A
+    command-line option (a word that starts with "-") is one piece: a
+    command breaks at the space before it, never inside it (the sweep's L7,
+    SW-LK7: "--generate-samples" broke as "--generate" / "-samples" and read
+    as two options). `classes` are added to the token's own."""
+    text = "" if token is None else str(token)
     names = " ".join(("shep-tok", *classes.split()))
     return (f'<code class="{names}">'
-            + "<wbr>".join(f"<span>{e(piece)}</span>" for piece in pieces if piece) + "</code>")
+            + "<wbr>".join(f"<span>{e(piece)}</span>" for piece in _pieces(text)) + "</code>")
 
 
 def literal_html(text: Any) -> str:
@@ -3316,6 +3336,7 @@ __all__ = [
     "disabled_words",
     "literal_html",
     "marked_line",
+    "name_pieces_html",
     "notice_block",
     "notices_block",
     "relation_words",

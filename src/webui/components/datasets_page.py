@@ -320,7 +320,7 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
             # A plain table's selected row is `aria-current` (the skill's §8).
             f'<tr class="{"shep-on" if on else ""}" data-key="{r.e(name)}" tabindex="0"'
             f'{CURRENT if on else ""}>'
-            f'<td class="shep-ds-name shep-w600">{r.e(name)}</td>'
+            f'<td class="shep-ds-name shep-w600">{r.name_pieces_html(name)}</td>'
             f'<td class="shep-nowrap shep-ds-date {COL_OPT}">'
             f'{r.e(built) if built else r.NOT_RECORDED.lower()}</td>'
             f'<td class="shep-nowrap">{fp_cell}</td>'
@@ -492,8 +492,10 @@ def _measurements_cell(version: Mapping[str, Any]) -> str:
     if refused:
         names = ", ".join(name for name, _why in refused)
         reasons = "".join(f"<p><b>{r.e(name)}</b>: {r.e(why)}</p>" for name, why in refused)
-        cell += (f'<details class="shep-more"><summary>Not admitted: {r.e(names)} ›</summary>'
-                 f"{reasons}</details>")
+        # Each name whole and the chevron joined to the last one: the label wraps only
+        # between names, never at a name's own hyphen, never "›" alone on a line.
+        cell += (f'<details class="shep-more"><summary>Not admitted: {r.whole_words(names)}'
+                 f"\u00a0›</summary>{reasons}</details>")
     return cell
 
 
@@ -653,9 +655,10 @@ PAGE_CSS = f"""
 /* The build line belongs to a listed table: an empty list says how in its own place. */
 {_PAGE} .shep-ds-main:not(:has(table.shep-dstbl)) #shep-ds-notes {{ display: none !important; }}
 {_PAGE} #shep-ds-table .shep-tbl-wrap {{ margin: 10px var(--shep-inset); }}
-{_PAGE} .shep-dstbl td.shep-ds-name, {_PAGE} .shep-dstbl td.shep-ds-src {{ overflow-wrap: anywhere; }}
-{_PAGE} .shep-dstbl td.shep-ds-name {{ min-width: 11.5em; }}
-{_PAGE} .shep-dstbl td.shep-ds-src {{ min-width: 7em; }}
+/* A name breaks only before its own separators (`renderers.name_pieces_html`): its column is as
+   narrow as its longest piece, never an em floor (11.5em held 173 px for "demo" and wrapped In use
+   and the headers at 1850 x 960; the sweep's L7, SW-LK3). A source list wraps anywhere. */
+{_PAGE} .shep-dstbl td.shep-ds-src {{ overflow-wrap: anywhere; min-width: 7em; }}
 {_PAGE} .shep-dstbl td.shep-ds-use {{ min-width: 11em; }}
 /* The build date in tabular figures: every date is one width, so the table's narrowest width
    (and the panel minimum below) does not move with the minute a workspace was built. */
@@ -689,8 +692,10 @@ PAGE_CSS = f"""
    basis, the list three times as fast; the details keep their digest grid's four columns (31rem); the
    list keeps the table with its optional columns dropped (Name, the fingerprint, Train / val and
    In use at their narrowest, in the dashboard's type: 548 px with the demo's two rows, 589 px
-   with a workspace whose counts are not recorded, plus the wrap's margins and edges; 40rem leaves
-   room for wider counts and more digits; wider still, the table scrolls in its own box), and with
+   with a workspace whose counts are not recorded, plus the wrap's margins and edges, when Name
+   held an 11.5em floor; 435 px since a name is as narrow as its longest piece, the sweep's L7;
+   40rem leaves room for longer names, wider counts and more digits; wider still, the table
+   scrolls in its own box), and with
    no table only the measure of its words (32rem). The shell's layout rule reads these minimums
    (`src/webui/shell.py`): side by side from about 1190 px of window with a table, 1060 without. */
 {_PAGE} .shep-panel.shep-ds-main {{ --shep-panel-basis: 40rem; --shep-panel-grow: 3; --shep-panel-min: 32rem; }}
