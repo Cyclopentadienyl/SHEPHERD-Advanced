@@ -4633,7 +4633,14 @@ PAGE_CSS = f"""
 }}
 {STACK} {{
   {_TAB} #shep-dx-input, {_TAB} #shep-dx-results, {_TAB} #shep-dx-details {{ flex: 1 1 auto !important; width: 100% !important; max-width: none !important; }}
-  {_TAB} .shep-dx-fields {{ display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 18px !important; }}
+  /* Stacked, the fields take two columns: the HPO terms (and the count under them) in the first,
+     Patient ID and the options beside them in the second (the owner's decision of 2026-11-23 on
+     portrait windows: the count's empty block took the second column's first cell, so Patient ID
+     and the options fell under the terms and half the panel stood empty). */
+  {_TAB} .shep-dx-fields {{ display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 18px !important;
+    grid-auto-flow: row dense; align-content: start; }}
+  {_TAB} .shep-dx-fields > :not(#shep-dx-side) {{ grid-column: 1; }}
+  {_TAB} .shep-dx-fields > #shep-dx-side {{ grid-column: 2; grid-row: 1 / span 2; align-self: start; }}
   {_TAB} #shep-dx-change .shep-model-body {{ flex-direction: column !important; }}
   {_TAB} #shep-dx-change .shep-model-body > * {{ width: 100% !important; flex: none !important; }}
 }}
