@@ -62,7 +62,10 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   every style sheet keys its side-by-side and stacked rules off it
   (`src/webui/style.py`'s ``SIDE`` and ``STACK``; no media query on the
   window's size anywhere). The browser's usable area, the window's inner
-  size, decides: no wider than tall, ``stack``; wider, ``side`` when the page
+  size raised to the display floor in each axis (``style.FLOOR_WIDTH`` x
+  ``style.FLOOR_HEIGHT``; below it the frame keeps the floor's size and the
+  document scrolls, so every mark is the floor's), decides: no wider than
+  tall, ``stack``; wider, ``side`` when the page
   shown fits by its panels' own minimum widths (each panel's
   ``--shep-panel-min`` in its page's style sheet, read from the panels as
   drawn: the shown ``.shep-page`` row's shown children, under any wrapper
@@ -253,8 +256,8 @@ import gradio as gr
 from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
 from src.webui.components.help import HelpRegistry, as_json_for_script
 from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
-from src.webui.style import (FIT, FIT_WIDE, FOLD, FOLD_FLOOR, FOLD_ROOM, FOLDED_ATTR, LAYOUT_ATTR,
-                              NARROW_ATTR, SEG_WHOLE, SHORT_ATTR, SHORT_BELOW)
+from src.webui.style import (FIT, FIT_WIDE, FLOOR_HEIGHT, FLOOR_WIDTH, FOLD, FOLD_FLOOR, FOLD_ROOM,
+                              FOLDED_ATTR, LAYOUT_ATTR, NARROW_ATTR, SEG_WHOLE, SHORT_ATTR, SHORT_BELOW)
 
 BRAND = "SHEPHERD-Advanced"
 
@@ -871,6 +874,13 @@ _SHELL_JS = r"""
   // from the state it sets, so a pass never undoes the one before it; a
   // scrollbar the stacked page shows is counted back (side by side has none).
   var LAYOUT = '__LAYOUT__', SHORT = '__SHORT__', SHORT_BELOW = __SHORT_BELOW__;
+  // **The display floor** (style.FLOOR_WIDTH x FLOOR_HEIGHT): the usable area every mark is
+  // decided on is the window's inner size raised to the floor in each axis. Below the floor the
+  // frame keeps the floor's size (style.py) and the document scrolls, so each mark is the floor's.
+  var FLOOR_W = __FLOOR_W__, FLOOR_H = __FLOOR_H__;
+  function area() {
+    return {w: Math.max(window.innerWidth, FLOOR_W), h: Math.max(window.innerHeight, FLOOR_H)};
+  }
   function shownTab() {
     var outer = selected('shep-nav') || 'clinical';
     if (outer === RESEARCH) {
@@ -903,14 +913,15 @@ _SHELL_JS = r"""
       if (min > 0) { need += min; n += 1; }
     }
     if (n > 1) { need += (n - 1) * (parseFloat(s.columnGap) || 0); }
+    // The frame's width (the floor's at least) and the room the window's own scrollbar takes.
     var bar = window.innerWidth - document.documentElement.clientWidth;
     return need <= box.getBoundingClientRect().width + bar + 0.5;
   }
   function orientation() {
-    var root = document.documentElement, w = window.innerWidth, h = window.innerHeight;
-    var want = w > h && sideFits(shownTab()) ? 'side' : 'stack';
+    var root = document.documentElement, a = area();
+    var want = a.w > a.h && sideFits(shownTab()) ? 'side' : 'stack';
     if (root.getAttribute(LAYOUT) !== want) { root.setAttribute(LAYOUT, want); }
-    if (root.hasAttribute(SHORT) !== (h < SHORT_BELOW)) { root.toggleAttribute(SHORT, h < SHORT_BELOW); }
+    if (root.hasAttribute(SHORT) !== (a.h < SHORT_BELOW)) { root.toggleAttribute(SHORT, a.h < SHORT_BELOW); }
   }
   // **A wide form only while it fits** (the layout rule's fit, module
   // docstring): each box of class FIT drawn shows its wide form (FIT_WIDE)
@@ -1281,6 +1292,7 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__STAGE_WORD__", as_json_for_script(STAGE_WORD))
               .replace("__LAYOUT__", LAYOUT_ATTR).replace("__SHORT__", SHORT_ATTR)
               .replace("__SHORT_BELOW__", str(SHORT_BELOW))
+              .replace("__FLOOR_W__", str(FLOOR_WIDTH)).replace("__FLOOR_H__", str(FLOOR_HEIGHT))
               .replace("__FIT__", FIT).replace("__FIT_WIDE__", FIT_WIDE)
               .replace("__NARROW__", NARROW_ATTR).replace("__SEG_WHOLE__", SEG_WHOLE)
               .replace("__FOLD__", FOLD).replace("__FOLD_ROOM__", FOLD_ROOM)

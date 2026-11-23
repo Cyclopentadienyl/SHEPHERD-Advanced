@@ -2151,7 +2151,8 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
     assert "document.documentElement.getAttribute('data-shep-layout') === 'side'" in training_console._BANNER_JS
     js = shell.SHELL_HEAD
     assert f"var LAYOUT = '{LAYOUT_ATTR}'" in js and f"SHORT_BELOW = {SHORT_BELOW}" in js
-    assert "var want = w > h && sideFits(shownTab()) ? 'side' : 'stack';" in js
+    assert "var want = a.w > a.h && sideFits(shownTab()) ? 'side' : 'stack';" in js
+    assert "root.toggleAttribute(SHORT, a.h < SHORT_BELOW)" in js
     # Each panel's minimum read in px whatever unit its page writes (M4, the UI sweep of
     # 2026-11-22): the property is registered as a length, and where a browser has no @property
     # a rem or em value is converted by the font size (`lengthPx`), never by a probe.
@@ -2170,6 +2171,42 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
     stale = re.compile(r"1400 [×x] 760|wide at 1400|below 820 px|sticky at its bottom")
     for path in sorted(Path(shell.__file__).parent.rglob("*.py")):
         assert not stale.search(path.read_text(encoding="utf-8")), path
+
+
+def test_one_display_floor_is_read_by_the_layout_pass_and_the_frame_alone():
+    """**The display floor** (the owner's decision of 2026-11-23): one pair of constants,
+    `style.FLOOR_WIDTH` and `style.FLOOR_HEIGHT`, read by the shell's layout pass and the frame's
+    style only. The pass decides every mark on the window's inner size raised to the floor in
+    each axis (``area()``: the only place it reads the window's size, beside the scrollbar's
+    room `sideFits` counts back), and the frame keeps the floor's size below it (its
+    ``min-width``; side by side its height, never under the floor's) while the document
+    scrolls (side by side the root scrolls, so a frame larger than the window can be reached).
+    No page names the floor, and no media query on the window's size decides anything. What
+    the browser draws below the floor is the layout walk's (`test_every_page_of_every_state_has_
+    no_layout_finding`: below the floor every mark is the floor's and the document scrolls)."""
+    from src.webui.app import dashboard_head
+    from src.webui.style import FLOOR_HEIGHT, FLOOR_WIDTH, SHELL_CSS
+
+    js = shell.SHELL_HEAD
+    assert f"var FLOOR_W = {FLOOR_WIDTH}, FLOOR_H = {FLOOR_HEIGHT};" in js
+    assert ("return {w: Math.max(window.innerWidth, FLOOR_W), h: Math.max(window.innerHeight, FLOOR_H)};"
+            in js)
+    # The window's size is read in area() and, for the scrollbar's room, in sideFits only.
+    assert js.count("window.innerWidth") == 2 and js.count("window.innerHeight") == 1, js.count("window.inner")
+    assert "var root = document.documentElement, a = area();" in js
+    assert f"gradio-app {{ min-width: calc({FLOOR_WIDTH}px - (100vw - 100%)); }}" in SHELL_CSS
+    frame = side(SHELL_CSS)
+    assert "& { height: 100%; overflow: auto; }" in frame and "& body { height: 100%; overflow: visible; }" in frame
+    assert f"& gradio-app {{ height: max(100vh, {FLOOR_HEIGHT}px);" in frame
+    assert f".gradio-container {{ height: max(100vh, {FLOOR_HEIGHT}px);" in frame
+    assert "100vh;" not in frame                  # never the window's height alone
+    head = dashboard_head()
+    assert not re.search(r"@media[^{]*(width|height)", head), re.findall(r"@media[^{]*", head)
+    # No page names the floor's numbers as a window: the pair is the one place they are written.
+    for path in sorted(Path(shell.__file__).parent.rglob("*.py")):
+        if path.name in ("style.py",):
+            continue
+        assert not re.search(r"\b(FLOOR_W|FLOOR_H)\b\s*=\s*\d", path.read_text(encoding="utf-8")), path
 
 
 #: What the layout pass decided at a stop of the shared walk (`ui_walk`), on

@@ -14,13 +14,15 @@ shell's head script (`src/webui/shell.py`, its layout pass) writes
 style sheet keys its side-by-side and stacked rules off it, through `SIDE`
 and `STACK` (``SIDE + " { … }"``, the rules nested inside), never a media
 query on the window's size. The browser's usable area (the window's inner
-size) decides it: no wider than it is tall, stacked; wider, side by side when
+size, raised to the display floor in each axis: `FLOOR_WIDTH` x `FLOOR_HEIGHT`)
+decides it: no wider than it is tall, stacked; wider, side by side when
 the page shown fits by its panels' own minimum widths (each panel's
 ``--shep-panel-min``, set in its page's style sheet; side by side, a panel is
 never narrower), else stacked. A short window (`SHORT`, under
 `SHORT_BELOW` px tall) is density only: it never stacks, shrinks text or
 squeezes a chart. Before the first pass nothing is written, which reads as
-stacked.
+stacked. Below the floor the frame keeps the floor's size and the document
+scrolls, so every mark is the floor's.
 
 This style sheet goes into the page's head as a ``<style>`` element, with the
 shared ⓘ's and each page's own ``PAGE_CSS`` (`src/webui/app.py`,
@@ -72,6 +74,17 @@ SHORT = ':where(html[data-shep-short])'
 #: confirmation's room).
 SIDE_SHORT = ':where(html[data-shep-layout="side"][data-shep-short])'
 SHORT_BELOW = 900
+#: **The display floor** (the owner's decision of 2026-11-23): the smallest usable browser area
+#: the dashboard is drawn for, in CSS px (a 1080p screen at 150 % gives about 1280 wide). At or
+#: above it in both axes the interface is whole: side by side the frame never scrolls (the
+#: area's one region scrolls inside, with its cue), nothing scrolls sideways and nothing is
+#: compressed to fit. Below it in either axis the layout is drawn as at the floor and shrinks no
+#: further: the app's frame keeps the floor's size in that axis (`SHELL_CSS`: its ``min-width``,
+#: and side by side its height) and the document scrolls as a whole. The shell's layout pass
+#: decides every mark on the window's size raised to the floor in each axis (`shell.py`'s
+#: ``area()``), so below the floor each mark is the floor's. One pair, read by those two only:
+#: no media query on the window's size, no page's own copy.
+FLOOR_WIDTH, FLOOR_HEIGHT = 1280, 720
 #: **A box drawn in its wide form while that form fits** (OPS-FIX-R2; the
 #: layout pass's fit, `src/webui/shell.py`): a box of class `FIT` shows its
 #: wide form (class `FIT_WIDE`, a table) while the form's own narrowest, its
@@ -212,6 +225,12 @@ body { color: var(--shep-text); }
    strong weight, never the browser's 700. */
 .gradio-container b, .gradio-container strong, .gradio-container th { font-weight: var(--shep-weight-strong); }
 #shep-shell { position: relative; gap: 0 !important; background: var(--shep-bg); }
+/* **The display floor** (`FLOOR_WIDTH`, `FLOOR_HEIGHT`): the app's frame is never narrower than
+   the floor, less the room the window's own scrollbar takes (``100vw - 100%``: a stacked page's),
+   so a window at the floor never scrolls sideways and one below it scrolls as a whole, its layout
+   drawn as at the floor. Side by side its height is the window's and never under the floor's
+   (`SIDE`, below). */
+gradio-app { min-width: calc(__FLOOR_W__px - (100vw - 100%)); }
 
 /* ---------------------------------------------------------------- row 1: brand, area switch, chips, Settings */
 #shep-brand {
@@ -1246,12 +1265,15 @@ html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
 /* Side by side (`SIDE`, the shell's one decision): one screen. The selected
    page fills the space under the header; a page taller than that scrolls
    inside its own panel; a panel is never narrower than its page's
-   ``--shep-panel-min`` (the decision's own measure). */
+   ``--shep-panel-min`` (the decision's own measure). The frame is the window's height, never
+   under the floor's (`FLOOR_HEIGHT`): at or above the floor nothing scrolls but the regions
+   inside; below it the document scrolls as a whole, the frame drawn as at the floor. */
 .shep-page { --shep-panel-min: 0px; }
 __SIDE__ {
-  &, & body { height: 100%; overflow: hidden; }
-  & gradio-app { height: 100vh; display: flex; flex-direction: column; }
-  .gradio-container { height: 100vh; min-height: 0 !important; display: flex !important; flex-direction: column; }
+  & { height: 100%; overflow: auto; }
+  & body { height: 100%; overflow: visible; }
+  & gradio-app { height: max(100vh, __FLOOR_H__px); display: flex; flex-direction: column; }
+  .gradio-container { height: max(100vh, __FLOOR_H__px); min-height: 0 !important; display: flex !important; flex-direction: column; }
   .gradio-container > .main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .gradio-container > .main > .wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .gradio-container .contain { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -1314,9 +1336,10 @@ __STACK__ {
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK) \
     .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART) \
     .replace("__NARROW__", NARROW_ATTR).replace("__COL_OPT__", COL_OPT).replace("__COL_TWIN__", COL_TWIN).replace("__FIT_BOX__", FIT).replace("__SEG_WHOLE__", SEG_WHOLE) \
-    .replace("__CELL_WHOLE__", CELL_WHOLE)
+    .replace("__CELL_WHOLE__", CELL_WHOLE) \
+    .replace("__FLOOR_W__", str(FLOOR_WIDTH)).replace("__FLOOR_H__", str(FLOOR_HEIGHT))
 
 
 __all__ = ["BRAND_WIDTH", "CELL_WHOLE", "COL_OPT", "COL_TWIN", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
-           "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT", "SHORT_ATTR",
+           "FLOOR_HEIGHT", "FLOOR_WIDTH", "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT", "SHORT_ATTR",
            "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK"]
