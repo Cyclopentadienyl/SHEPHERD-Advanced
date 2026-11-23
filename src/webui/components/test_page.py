@@ -1381,10 +1381,11 @@ def _other_model_html(item: Mapping[str, Any], words: Mapping[str, Tuple[str, st
     its Run → Checkpoint pair (`model_list.pair_words`: no two listed files
     share both, so two files of one run never read alike), the run whole
     in details (`whole`; `renderers.run_words`)."""
-    run, file = words.get(ml.item_key(item)) or (r.model_name_line(item), "")
+    run, file = words.get(ml.item_key(item)) or (None, "")
     if whole:
         run = r.run_words(item.get("architecture"), item.get("run"), fit=False)
-    return (f'<div class="shep-sub">{e(r.model_kind_text(item))}</div><div>{e(run)}</div>'
+    run_html = e(run) if run is not None else r.model_name_html(item)
+    return (f'<div class="shep-sub">{e(r.model_kind_text(item))}</div><div>{run_html}</div>'
             + (f'<div class="shep-sub">{e(file)}</div>' if file else ""))
 
 

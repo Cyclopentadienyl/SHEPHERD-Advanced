@@ -855,7 +855,10 @@ def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
     assert "wait" not in ml.REPLACES_NOTE and "Until then nothing changes" in ml.REPLACES_NOTE
     assert "Diagnoses wait" not in html
     assert _changed_rows(html) == ["Model", "Model fingerprint"]
-    assert "disease · GATv2 2026-10-17 09:15, recorded epoch 5" in html and old in html
+    from src.webui.components import renderers as r
+
+    # Each side's model is named by its facts, each one unit (`renderers.model_name_html`).
+    assert r.chain_html("disease", "GATv2 2026-10-17 09:15, recorded epoch 5") in html and old in html
     assert "same dataset" in html and ">same<" in html
     # The task and its scoring mode from the one table, on both sides; the
     # disease task uses no shortest-path table, said as such on both sides.

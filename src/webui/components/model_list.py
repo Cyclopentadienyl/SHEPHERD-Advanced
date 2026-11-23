@@ -2173,6 +2173,7 @@ def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) 
     meta = (status or {}).get("checkpoint_meta") or {}
     if item is not None:
         model = r.model_name_line(item, fit=False)
+        model_html = r.model_name_html(item, fit=False)
     elif sha:
         model = f"{r.epoch_words(meta)} (not in this workspace's list)"
     else:
@@ -2182,6 +2183,7 @@ def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) 
     return {
         "served": bool((status or {}).get("initialized")),
         "model": model,
+        "model_html": model_html if item is not None else r.e(model),
         "sha256": sha,
         "trained_on": item.get("dataset_fingerprint") if item else None,
         "trained_on_known": item is not None,
@@ -2206,6 +2208,7 @@ def _to_side(item: Mapping[str, Any], workspace: str, workspace_dir: Path,
     mode = TASK_SCORING_MODES.get(item.get("task"))
     return {
         "model": r.model_name_line(item, fit=False),
+        "model_html": r.model_name_html(item, fit=False),
         "sha256": item.get("sha256"),
         "trained_on": item.get("dataset_fingerprint"),
         "trained_on_known": True,
@@ -2275,7 +2278,7 @@ def _cell(side: Mapping[str, Any], row: str, workspaces: Sequence[Any], *, to: b
     if side.get("served") is False and row in _SERVED_ROWS:
         return '<span class="shep-muted">not applicable</span>'
     if row == "model":
-        return r.e(side["model"])
+        return side.get("model_html") or r.e(side["model"])
     if row == "sha":
         return r.fingerprint_value(side["sha256"], what="model fingerprint", copy=False)
     if row == "trained":

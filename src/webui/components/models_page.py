@@ -1446,7 +1446,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
               else f'<span class="shep-panel-right">{_served_line(listing)}</span>')
     # The title names the row (`SCROLL_JS` waits for it) and takes the focus.
     header = (f'<div class="shep-panel-hd"><h2 tabindex="-1" data-key="{r.e(ml.item_key(item))}">'
-              f'{r.e(r.model_name_line(item))}</h2>{tag}{served}{BACK_BUTTON}</div>')
+              f'{r.model_name_html(item)}</h2>{tag}{served}{BACK_BUTTON}</div>')
     workspaces = listing.get("workspaces") or []
     if not ml.loadable(item):
         # Its state and why in visible words (never a hover title alone,
