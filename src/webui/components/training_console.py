@@ -367,8 +367,8 @@ FIELD_FORMATS: Dict[str, str] = {
 #: says that; a setting whose values are a study's arms, not a tuned value,
 #: says what each arm is instead.
 _SETTING_CLOSINGS = {
-    "frozen_parts": "not a tuned value. Trained is the source's full fine-tune, and Frozen is "
-                    "the frozen-backbone control.",
+    "frozen_parts": "not a tuned value.\n- Trained: the source's full fine-tune\n"
+                    "- Frozen: the frozen-backbone control",
 }
 _PROVISIONAL = "a provisional default from the source, not tuned on this data."
 
@@ -4600,7 +4600,7 @@ FIELD_HELP = {
         "- Blank: the name \"run\"\n"
         "- Also names: a continued or branched run\n"
         "- Shown: in the run view once training starts\n"
-        "Ref: <workspace>/runs/<architecture>/<date-time>_<name>_<id>/",
+        "Ref: runs/<arch>/<time>_<name>_<id>/ in the workspace",
     ),
     # The base form: each setting's label, what it is, and the value a run
     # takes without it, with its source (`setting_help`).
@@ -4646,7 +4646,7 @@ FIELD_HELP = {
     ),
     "continue_device": (
         "Device",
-        "Where the new run trains, from Parameters' Device each time Continue… opens.\n\n"
+        "Where the new run trains: Parameters' Device, each time Continue… opens.\n\n"
         "- auto: the GPU (CUDA). With no CUDA device visible, the start is refused.\n"
         "- cpu: for development, recorded as asked.\n"
         "- Check checkpoint, Continue Training and Start branch all use it.\n"
@@ -4659,8 +4659,8 @@ FIELD_HELP = {
     "extend_lr": (
         EXTEND_WORDS["extend_lr"],
         "The Extra epochs' rate in the parameter groups whose rate ended at 0.\n\n"
-        "Shown only for such a checkpoint: extending at 0 would not train those groups, and "
-        "no rate is guessed. The other groups keep the rate they ended at.",
+        "Shown only for such a checkpoint: at 0, those groups would not train.\n"
+        "No rate is guessed. The other groups keep the rate they ended at.",
     ),
     # The Branch fields: each setting's label, what it is, where it starts.
     **{f"branch_{name}": branch_setting_help(name) for name in BRANCH_FIELDS},

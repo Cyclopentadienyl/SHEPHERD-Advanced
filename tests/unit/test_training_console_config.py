@@ -669,8 +669,9 @@ def test_the_freeze_field_shows_plain_words_and_sends_the_field_specs_values():
     # each is, never "a provisional default ... not tuned" (review of A2).
     # Its source is the text's trailing Ref line (the bubble's grammar, R-42);
     # one colon a sentence (the UI sweep's text brief).
-    assert text.endswith("\n\nReference: Trained, not a tuned value. Trained is the source's "
-                         "full fine-tune, and Frozen is the frozen-backbone control.\n"
+    assert text.endswith("\n\nReference: Trained, not a tuned value.\n"
+                         "- Trained: the source's full fine-tune\n"
+                         "- Frozen: the frozen-backbone control\n"
                          f"Ref: {FINETUNE_SOURCES['frozen_parts']}")
     assert "provisional" not in text
     epochs = tc.setting_help("num_epochs", FINETUNE, FINETUNE_SOURCES)[1]

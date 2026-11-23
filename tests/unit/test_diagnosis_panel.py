@@ -2858,10 +2858,11 @@ def test_a_kind_the_page_does_not_know_shows_no_candidates(kind):
 
 
 def test_the_score_help_stays_within_its_budget():
-    """The skill's §7 budget (about 60-80 words) and §5's sentence limit."""
+    """The skill's §7 budget (about 60-80 words) and §5's sentence limit, a
+    list item (a line of the bubble's grammar, L7 FX-3) one sentence."""
     text = dp.TOPIC_HELP["dx-score"][1]
     assert len(text.split()) <= 80
-    assert max(len(s.split()) for s in re.split(r"(?<=[.!?])\s+", text)) <= 25
+    assert max(len(s.split()) for s in re.split(r"(?<=[.!?])\s+|\n", text)) <= 25
 
 
 def test_a_missing_count_or_time_is_never_written_as_zero():

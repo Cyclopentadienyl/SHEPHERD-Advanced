@@ -302,8 +302,7 @@ GENE_SCORE_RANKS = ("Score ranks your candidate genes: η × model similarity + 
                     "similarity.")
 GENE_SCORE_NOTE = f"{GENE_SCORE_RANKS} It is not a calibrated probability."
 #: The same for a patients-like-me model's reference patients.
-SIMILARITY_RANKS = ("Similarity ranks the reference cohort's patients: 0 is the closest, lower "
-                    "is less alike.")
+SIMILARITY_RANKS = "Similarity ranks the cohort's patients: 0 is closest, lower is less alike."
 SIMILARITY_CAVEAT = "It is not a calibrated probability, and a shared causal gene is not implied."
 SIMILARITY_NOTE = f"{SIMILARITY_RANKS} {SIMILARITY_CAVEAT}"
 #: What a reference patient's recorded diagnosis, causal genes and HPO terms
@@ -1593,8 +1592,9 @@ TOPIC_HELP = {
     "dx-score": (
         "Score",
         SCORE_NOTE + "\n\n"
-        "The kind above the table names the model. A disease task model's Score is its "
-        "head's score, 0 or below: the closest to 0 ranks first.",
+        "- Model: the kind above the table names it\n"
+        "- Score: a disease task model's head score, 0 or below\n"
+        "- Order: the closest to 0 ranks first",
     ),
     "dx-gene-score": (
         "Score",
@@ -1622,8 +1622,8 @@ TOPIC_HELP = {
     ),
     "dx-phenotypes": (
         "Phenotypes",
-        "How many of the query's phenotypes, as used, the graph annotates directly to this "
-        "disease.\n\n"
+        "How many query phenotypes the graph annotates directly to this disease.\n\n"
+        "- It counts the query's phenotypes as used, not as typed.\n"
         "- Only the exact term counts, never ancestors, descendants or gene links.\n"
         "- A 0 does not mean no clinical overlap.\n"
         "- Matching phenotypes, in the candidate's details, names each.",
@@ -1663,7 +1663,7 @@ TOPIC_HELP = {
     ),
     "dx-run-no-cohort": (
         "Run Diagnosis is disabled",
-        "This model ranks reference cohort patients, and no such version can be read.\n\n"
+        "This model ranks cohort patients, and no cohort version can be read.\n\n"
         "- The registry may be not set or refused, or hold no version yet.\n"
         "- It may hold only KG edge sets and versions marked \"cannot be read\".\n"
         "- An operator imports a cohort in Research › Test.\n"

@@ -1577,7 +1577,8 @@ def test_the_semicolon_reader_reads_texts_at_any_nesting():
 
 #: Every registered help text opened in the one bubble of the served dashboard
 #: (an ⓘ made for its key, clicked, the bubble read, Esc), at the owner's
-#: window: for each item, how many lines it is drawn on.
+#: window: for each part (its lead, each paragraph, its Ref line, each list
+#: item), its kind, its words and how many lines it is drawn on.
 _ITEM_LINES_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
@@ -1607,9 +1608,13 @@ const { chromium } = require('playwright');
         return n;
       };
       const bubble = document.getElementById('shep-help-bubble');
-      const items = bubble && !bubble.hidden ? [...bubble.querySelectorAll('li')].map((li) => [li.textContent, lines(li)]) : null;
+      const kind = (el) => (el.matches('li') ? 'li' : el.classList.contains('shep-bubble-lead') ? 'lead'
+        : el.classList.contains('shep-bubble-ref') ? 'ref' : 'p');
+      const parts = bubble && !bubble.hidden
+        ? [...bubble.querySelectorAll('.shep-bubble-bd > p, .shep-bubble-bd li')]
+          .map((el) => [kind(el), el.textContent, lines(el)]) : null;
       btn.remove();
-      return items;
+      return parts;
     }, key);
     await page.keyboard.press('Escape');
   }
@@ -1619,15 +1624,61 @@ const { chromium } = require('playwright');
 """
 
 
-def test_every_registered_help_items_lines_are_two_at_most_in_the_bubble(tmp_path):
+def _bubble_part_exemption(key: str, kind: str, words: str):
+    """**Why a bubble part may take more than two lines**: its words are kept from a
+    source the WebUI may not change, as (the reason, the source's words it equals or
+    holds); None for the page's own words. A lead that is its field's
+    `FieldSpec.description` (API wording, `_exempt_source`); a governed note (a Test
+    measurement note, `caveats.MODE_RESULT_NOTES`, and the exposure caveat's parts,
+    `caveats.EXPOSURE_*`); R10's two definitions (governed, skill §13: their meaning
+    is `caveats.R10_LABEL_TEXT`'s, presented in `renderers.R10_HELP`); a Ref line that
+    cites a source verbatim (`training_console.REFERENCE_SOURCES`, and the recipe's
+    `BASE_SOURCES`, `FINETUNE_SOURCES` and `FINETUNE_TASK_SOURCES`)."""
+    from src.config import recipe
+    from src.evaluation import caveats
+    from src.webui.components import training_console
+
+    if key.startswith("test-mode-"):
+        note = caveats.MODE_RESULT_NOTES.get(key[len("test-mode-"):]) or ""
+        return "a governed measurement note", note if words in note else None
+    if kind == "lead":
+        source = _exempt_source(key, words)
+        if source is not None:
+            return "FieldSpec.description (API wording)", source[1]
+    if key == "kg-exposure":
+        parts = (caveats.EXPOSURE_SCOPE, caveats.EXPOSURE_EVIDENCE,
+                 caveats.EXPOSURE_NOT_EXHAUSTIVE, caveats.EXPOSURE_NEGATIVES,
+                 caveats.EXPOSURE_NOT_PROVEN)
+        held = [part for part in parts if part[1:] in words]
+        return "the governed exposure caveat's part", held[0] if held else None
+    if key == "record-r10" and kind == "p" and words.split(":", 1)[0] in (
+            "Disease overlap", "Phenotype-set overlap"):
+        return "a governed R10 definition", words
+    if kind == "ref":
+        sources = (*training_console.REFERENCE_SOURCES.values(), *recipe.BASE_SOURCES.values(),
+                   *recipe.FINETUNE_SOURCES.values(),
+                   *(s for task in recipe.FINETUNE_TASK_SOURCES.values() for s in task.values()))
+        held = [source for source in sources if source in words]
+        if held:
+            return "a verbatim source citation", held[0]
+    return None
+
+
+def test_every_registered_help_texts_parts_are_two_lines_at_most_in_the_bubble(tmp_path):
     """The independent check of the UI sweep (C9): the budget's 76 characters
     an item let an item wrap to three lines of the 320 px bubble ("Same
     dataset as served: another workspace with the same full fingerprint.",
     "Names and stray punctuation are ignored. Only HP:####### ids are
     used.", Gene's "SP similarity: …", Candidate details' "Evidence, …"),
-    against the text brief's §14 #9 (each item two lines at most). Every
-    registered text is opened in the served dashboard's one bubble, as
-    drawn, and each item is two lines at most."""
+    against the text brief's §14 #9 (each item two lines at most). L7 FX-3:
+    it held only the items, and leads (Continue's Device, Diagnosis'
+    phenotypes, similarity and no-cohort run), paragraphs (Diagnosis' score,
+    Extend's learning rate, Fine-tune's "Offered with one task …") and Run
+    name's Ref line took three or four lines. Every registered text is opened
+    in the served dashboard's one bubble, as drawn: its lead, each paragraph,
+    its Ref line and each item are two lines at most, but the parts kept
+    verbatim from their source (`_bubble_part_exemption`, each with its
+    reason, its words held to that source)."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import run_node
     from tests.fixtures.served_page import served
@@ -1636,6 +1687,14 @@ def test_every_registered_help_items_lines_are_two_at_most_in_the_bubble(tmp_pat
         pytest.skip("Node with Playwright is not installed")
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_ITEM_LINES_JS, tmp_path, base[:-len("gradio_api")], timeout=600)
-    assert len(seen) >= 140 and all(items is not None for items in seen.values()), seen
-    over = {key: [(text, n) for text, n in items if n > 2] for key, items in seen.items()}
-    assert {key: found for key, found in over.items() if found} == {}
+    assert len(seen) >= 140 and all(parts is not None for parts in seen.values()), seen
+    assert all(parts and parts[0][0] == "lead" for parts in seen.values()), seen
+    over = {}
+    for key, parts in seen.items():
+        for kind, words, n in parts:
+            why = _bubble_part_exemption(key, kind, words) if n > 2 else ("", "two lines")
+            if why is None:
+                over.setdefault(key, []).append((kind, words, n))
+            else:
+                assert why[1], (key, kind, words, why[0])  # its words are its source's
+    assert over == {}, over

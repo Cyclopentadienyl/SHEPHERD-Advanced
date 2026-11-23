@@ -351,7 +351,7 @@ FIELD_HELP = {
     ),
     "shep-test-partial": (
         "Lost terms",
-        "What a case becomes when mapping loses some, not all, of its phenotype terms.\n\n"
+        "What a case becomes when some, not all, of its terms fail to map.\n\n"
         "- Ranked on the terms that map, or excluded.\n"
         "- Recorded in the version.",
     ),
@@ -364,8 +364,8 @@ FIELD_HELP = {
     "shep-test-note-what": (
         "What was found",
         "What the investigation found.\n\n"
-        "The note is kept in the report store with this condition group's reports. It deletes "
-        "no report and changes nothing.",
+        "The note is kept in the report store with this condition group's reports.\n"
+        "It deletes no report and changes nothing.",
     ),
 }
 #: Help a rendered ⓘ names. A described measurement's result note is the

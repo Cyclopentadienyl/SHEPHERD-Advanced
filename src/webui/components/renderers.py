@@ -82,7 +82,7 @@ IDENTITY_BANNERS = {
     "synthetic": (
         "Synthetic workspace: not a clinical result.",
         "The served workspace's dataset record gives its origin as synthetic.\n"
-        "A generated stand-in, not a clinical knowledge graph: results are for testing only.",
+        "A generated stand-in, not a clinical knowledge graph.\nResults are for testing only.",
     ),
 }
 #: Model Facts' other warning headlines (`facts_from_checkpoint`), in the
@@ -126,8 +126,8 @@ RENDERER_HELP = {
         "The Trainer's own figure on the val samples, recorded in the checkpoint.\n"
         "- Base: LP accuracy.\n"
         "- Task model: pooled MRR.\n"
-        "Training selects a checkpoint by it, so it is not an independent test. Recorded "
-        "test results are kept apart from it.",
+        "Training selects a checkpoint by it, so it is not an independent test.\n"
+        "Recorded test results are kept apart from it.",
     ),
 }
 
@@ -2642,7 +2642,7 @@ R10_TITLE = "Train/test overlap (R10)"
 #: both rows); the governed meaning is unchanged (the skill's §13).
 R10_HELP = (
     R10_TITLE,
-    "How much of the test set the checkpoint's recorded training or validation inputs hold.\n\n"
+    "How much of the test set the recorded training or validation inputs hold.\n\n"
     "Disease overlap: distinct test diseases an input case also has, of all distinct test "
     "diseases, and their test cases.\n"
     "Phenotype-set overlap: test cases matching an input case's disease and phenotype set, of "

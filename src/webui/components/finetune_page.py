@@ -1307,13 +1307,13 @@ def task_setting_help(name: str) -> Tuple[str, str]:
                   for task in TASKS
                   for values in [new_run_values("finetune", task, {})] if name in values]
     if name in ANY_TASKS:
-        where = ("With one task it starts at that task's reference. Untouched with several, "
-                 "each child takes its own.\n"
+        where = ("With one task it starts at that task's reference.\n"
+                 "Untouched with several tasks, each child takes its own.\n"
                  "A value you set is every child's until Reset to reference. Only a value you "
                  "edit is sent.")
     else:
-        where = ("Offered with one task, starting at its reference. With several, each child "
-                 "takes its own.\nOnly a value you edit is sent.")
+        where = ("Offered with one task, starting at its reference.\n"
+                 "With several tasks, each child takes its own. Only a value you edit is sent.")
     if len(references) > 1:
         listed = "Each task's reference, a provisional default from the source:\n" + "\n".join(
             f"- {task}: {words}" for task, words in references)
