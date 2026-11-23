@@ -1459,3 +1459,41 @@ def test_focus_on_a_pinned_i_follows_it_when_a_drawing_replaces_it(tmp_path):
                              "expanded": "true"}, seen
     assert seen["escaped"]["open"] is False and seen["escaped"]["focus"] == "its i", seen
     assert seen["unfocused"]["focus"] == "page" and seen["unfocused"]["open"] is True, seen
+
+
+#: The WebUI's own texts that keep a semicolon: words kept verbatim from a
+#: source the WebUI may not change (the device statement, a governed note) or
+#: script and CSV joiners, never a sentence the WebUI writes.
+_KEPT_SEMICOLONS = {
+    ("diagnosis_panel", "NOT_A_MEDICAL_DEVICE"), ("diagnosis_panel", "_NOT_A_MEDICAL_DEVICE"),
+    ("renderers", "NOT_A_MEDICAL_DEVICE"), ("renderers", "GENERATED_EXPOSURE_NOTE"),
+    ("diagnosis_panel", "MATCHING_NOTE"),
+}
+
+
+def test_the_webuis_own_sentences_hold_no_semicolon():
+    """The independent check of the UI sweep (C8): the semicolon recount
+    read only some strings, and Settings' Acceleration line ("new
+    acceleration work is deferred; each run's record keeps …"), Models' next
+    step, the model list's wait and reload words, Settings' repair and stop
+    words, the GPU chip's Ref line and others still joined two facts with a
+    semicolon (the text brief's §2 and §14 #11). Every module-level text of
+    the WebUI's pages (not a script, not a joiner) holds none, but the few
+    kept verbatim from a source the WebUI may not change."""
+    import importlib
+    import pkgutil
+
+    import src.webui.components as components
+
+    found = []
+    for info in pkgutil.iter_modules(components.__path__):
+        module = importlib.import_module(f"src.webui.components.{info.name}")
+        for name, value in vars(module).items():
+            if not (name.lstrip("_").isupper() and isinstance(value, str) and "; " in value):
+                continue
+            if getattr(module, name) is not value or (info.name, name) in _KEPT_SEMICOLONS:
+                continue
+            if "{" in value or "=>" in value or "\n" in value or value.lstrip().startswith("<"):
+                continue                    # a style sheet, a script, markup or a help text
+            found.append((info.name, name, value[:60]))
+    assert found == [], found

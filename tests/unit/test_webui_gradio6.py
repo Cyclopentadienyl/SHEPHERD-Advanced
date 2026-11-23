@@ -283,7 +283,7 @@ def test_settings_say_the_running_allocator_apart_from_the_saved_one():
     # The acceleration row: its state, then why, in brackets as the other rows
     # say theirs (B5 review: the two ran together as one sentence).
     assert ('<span class="shep-st-w">Not implemented yet</span></span> <span class="shep-muted">'
-            f"({rs.ACCELERATION})</span>") in unset
+            f"{rs.ACCELERATION}</span>") in unset
 
 
 def test_no_settings_text_claims_an_architecture_that_is_not_built():

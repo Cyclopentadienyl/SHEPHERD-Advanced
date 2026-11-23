@@ -109,7 +109,7 @@ D8_HOW = (
     "They need a service started here and a request that:\n"
     "- Arrives on this machine's loopback, directly or through an SSH forward\n"
     "- Has no forwarding header (no reverse proxy), from this dashboard\n"
-    "Ref: desktop entry or launch_shepherd.sh; deployment mode M1 (SHEPHERD_DEPLOYMENT_MODE); "
+    "Ref: desktop entry or launch_shepherd.sh, deployment mode M1 (SHEPHERD_DEPLOYMENT_MODE), "
     "ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui"
 )
 #: Each D8 chip's lead (the bubble's first line, `help.help_lines`), which
@@ -148,7 +148,7 @@ GPU_NOT_CONFIGURED = "GPU jobs: not set up"
 #: line. It names no server path, so every request may see it.
 GPU_NOT_CONFIGURED_DETAIL = "\n".join((GPU_LOCK_NOTICE.summary, f"{GPU_LOCK_NOTICE.action}.",
                                        *GPU_LOCK_NOTICE.details[:-1]))
-GPU_NOT_CONFIGURED_REF = "; ".join(GPU_LOCK_NOTICE.ref)
+GPU_NOT_CONFIGURED_REF = ", ".join(GPU_LOCK_NOTICE.ref)
 #: The chip's ⓘ before its first read (`CHIPS_PLACEHOLDER`).
 NOT_READ_YET = "Not read yet. The page reads it once it has loaded."
 #: Where a request that may not see the lock's problem is told to look.
@@ -207,7 +207,7 @@ def gpu_detail(text: str, *refs: str) -> str:
     (`GPU_SCOPE_REF`). The bubble shows a "Ref:" line as the muted reference
     line, the last (`help.help_lines`, the WebUI skill's §7); a state's own
     Ref line placed before the scope stood mid-bubble (T06 review)."""
-    return f"{text}\n\n{GPU_SCOPE}\nRef: {'; '.join((*refs, GPU_SCOPE_REF))}"
+    return f"{text}\n\n{GPU_SCOPE}\nRef: {', '.join((*refs, GPU_SCOPE_REF))}"
 
 
 def _since(started_at: Any) -> Optional[str]:

@@ -228,7 +228,7 @@ def test_a_lock_not_configured_says_so_and_that_jobs_are_refused(monkeypatch):
         assert "GPU jobs are refused until a workspaces folder is set." in chip.detail
         assert "Choose one in Settings › Data locations." in chip.detail
         assert "GPU lock: .shepherd-gpu.lock in the workspaces folder" in chip.detail
-        assert "Ref: SHEPHERD_WORKSPACES_ROOT; deployment guide §4.11" in chip.detail
+        assert "Ref: SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11" in chip.detail
         assert read_gpu_chip_now(operator) == chip
 
 
@@ -507,7 +507,7 @@ def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
     assert "M1" in on[-1].text and "SHEPHERD_DEPLOYMENT_MODE" in on[-1].text
     unset = c.gpu_chip_from(None, {**LOCK_FREE, "unset": True}, operator=True).detail
     assert unset.splitlines()[-1] == (
-        "Ref: SHEPHERD_WORKSPACES_ROOT; deployment guide §4.11; the formal scripts "
+        "Ref: SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11, the formal scripts "
         "train_model.py, measure_scorer.py")
     refused = c.d8_chip(OperatorAccess(False, "not_loopback", "why")).detail
     assert refused.startswith(f"{c.D8_READONLY_LEAD}\n{c.D8_SCOPE}\n\nFor this request: why")

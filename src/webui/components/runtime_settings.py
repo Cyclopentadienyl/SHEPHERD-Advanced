@@ -128,20 +128,20 @@ STOP_CONFIRM_LABEL = "Stop service now"
 STOP_QUESTION = (
     "Stop the service? The dashboard and the API stop on this computer, and every open page "
     "loses its connection. Start it again from its desktop entry or launch_shepherd.sh.")
-STOP_DONE = ("Stopping the service. This page stops answering in a moment; start it again from "
+STOP_DONE = ("Stopping the service. This page stops answering in a moment. Start it again from "
              "its desktop entry or launch_shepherd.sh.")
 
-#: The acceleration area: a fact, never a toggle that does nothing; said in
-#: brackets after its "Not implemented yet" mark.
-ACCELERATION = ("new acceleration work is deferred; each run’s record keeps the kernels and "
-                "precision it ran with")
+#: The acceleration area: a fact, never a toggle that does nothing; said after
+#: its "Not implemented yet" mark, a sentence a fact.
+ACCELERATION = ("New acceleration work is deferred. Each run’s record keeps the kernels and "
+                "precision it ran with.")
 
 #: Where torch.compile's saved value is read: the Training page's base Start
 #: and its Continue or Branch (`training_console`), the only readers; the
 #: Fine-tune page does not read it. Said once on the screen, in the field's
 #: visible line (`FIELD_INFO`), in these words.
-COMPILE_READ = ("read when the Training page starts, continues or branches a run; Fine-tune "
-                "does not read it")
+COMPILE_READ = ("read when the Training page starts, continues or branches a run, never by "
+                "Fine-tune")
 #: torch.compile's warning, the lead of the field's visible line (R-13).
 COMPILE_EXPERIMENTAL = "Experimental: keep it off unless you are benchmarking it."
 
@@ -257,7 +257,7 @@ def facts_html(env: Optional[Mapping[str, str]] = None,
         ("Allocator saved", saved_html(env, settings)),
         ("torch.compile saved", r.OFF if not compile_on else "On"),
         ("Acceleration", r.status_mark("neutral", "Not implemented yet")
-         + f' <span class="shep-muted">({r.e(ACCELERATION)})</span>'),
+         + f' <span class="shep-muted">{r.e(ACCELERATION)}</span>'),
     ])
 
 

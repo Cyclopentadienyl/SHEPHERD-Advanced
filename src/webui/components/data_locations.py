@@ -133,7 +133,7 @@ CREATE_LABEL = "Create suggested folder"
 APPLY_LABEL = "Apply"
 REPAIR_LABEL = "Replace the unreadable file (a copy is kept)"
 #: What Replace does, said beside it.
-REPAIR_THEN = ("Replace renames it beside itself and keeps it; then choose the folders here "
+REPAIR_THEN = ("Replace renames it beside itself and keeps it. Then choose the folders here "
                "again.")
 
 #: The order of the per-row outputs (`_panel`).

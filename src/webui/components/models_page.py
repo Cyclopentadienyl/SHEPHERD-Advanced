@@ -1521,7 +1521,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
 #: operator's next step is one action, "Test this model ›": the Test page with
 #: this checkpoint chosen (`ctx.test_model`, `ctx.go`; wired in
 #: `create_models_page`).
-RECORDS_NEXT = ("Next: start a test of it with Register when the run ends checked; its result "
+RECORDS_NEXT = ("Next: start a test of it with Register when the run ends checked. Its result "
                 "then appears here.")
 #: The action's label and its act (`renderers.TRIGGER_JS`).
 TEST_THIS = "Test this model ›"

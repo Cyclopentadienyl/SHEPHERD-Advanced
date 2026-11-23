@@ -331,11 +331,12 @@ FIELD_HELP = {
     ),
     "shep-test-intake": (
         INTAKE_LABEL,
-        "The shepherd-cases/1 files (*.json) placed in the server's import folder.\n\n"
+        "The case files placed in the server's import folder, one chosen to import.\n\n"
         "- Folder: outside the repository, set in Settings › Data locations\n"
         "- Checked: the server finds the chosen name there again\n"
         "- Refused: any other name, a link leaving the folder included\n"
-        "- Upload: none, the operator places each file on the server",
+        "- Upload: none, the operator places each file on the server\n"
+        "Ref: shepherd-cases/1 files (*.json)",
     ),
     "shep-test-label": (
         "Version label",

@@ -254,12 +254,12 @@ PAGE_WAIT_SECONDS = 180
 #: What the confirmation says while this page waits for its reload's answer:
 #: the page's own wait, never the load's state, which the server's status
 #: says (the Diagnosis card's "Loading"), whichever page or client started it.
-PAGE_WAIT_WORDS = "Reload sent; waiting for the server's answer…"
+PAGE_WAIT_WORDS = "Reload sent. Waiting for the server's answer…"
 
 #: What a confirmation says it replaces (the mockup's words).
 REPLACES_NOTE = (
-    "Replaces what every session is served once the new model is checked and published; "
-    "until then nothing changes, and results already produced keep their own identity."
+    "Replaces what every session is served once the new model is checked and published. "
+    "Until then nothing changes, and results already produced keep their own identity."
 )
 #: Said when what is served changed between the confirmation and its confirm.
 FROM_CHANGED = ("What every session is served changed since this was shown (another session "
@@ -268,7 +268,7 @@ FROM_CHANGED = ("What every session is served changed since this was shown (anot
 TO_CHANGED = ("What would be loaded changed since this was shown: the To column is what the "
               "file and its workspace hold now.")
 #: Ends either notice.
-NOTHING_RELOADED = "Nothing was reloaded; check the rows again, then reload or keep."
+NOTHING_RELOADED = "Nothing was reloaded. Check the rows again, then reload or keep."
 
 #: **The list's one filter vocabulary** (``view["task"]``, `matches`): every
 #: row; the bases; one task's finetuned models; every model finetuned for a

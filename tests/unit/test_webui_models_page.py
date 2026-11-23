@@ -1449,8 +1449,8 @@ def test_the_ledgers_states_are_said_and_name_no_directory(world, monkeypatch):
     # no file named, never "ledger", and "· 0" nowhere.
     said = _text(none["records"])
     assert said.startswith("No recorded result yet") and "never evaluated" in said
-    assert said.endswith("Next: start a test of it with Register when the run ends checked; "
-                         "its result then appears here. Test this model ›")
+    assert said.endswith("Next: start a test of it with Register when the run ends checked. "
+                         "Its result then appears here. Test this model ›")
     assert "ledger" not in said.lower() and "evaluations.json" not in said
     assert [label for label, _value in none["seg"]] == ["Recorded results", "Usage history",
                                                        "Results"]

@@ -68,7 +68,7 @@ from src.webui.components import renderers as r
 OUTSIDE_PATH = "a path outside the workspaces root"
 #: What a refused root setting reads as (its path is not shown).
 ROOT_REFUSED = ("The workspaces folder set for this service is refused, so the server lists "
-                "no workspace until it is corrected; Settings › Data locations says why. Ref: "
+                "no workspace until it is corrected. Settings › Data locations says why. Ref: "
                 "SHEPHERD_WORKSPACES_ROOT")
 
 #: The whitespace `redact` joins: plain spaces, tabs and line breaks (a line

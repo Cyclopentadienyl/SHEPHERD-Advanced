@@ -942,7 +942,7 @@ ARCHITECTURE = "encoder.kind"
 #: The form's one name of the architecture (`spec_key_words`).
 ARCHITECTURE_LABEL = "Architecture"
 #: The Model accordion's first line: what Start sends of it.
-MODEL_NOTE = ("A new base builds the reference spec; Start sends it whole, with the fields you "
+MODEL_NOTE = ("A new base builds the reference spec. Start sends it whole, with the fields you "
               "change, and checks it first.")
 #: Each declared type a spec field may hold, as the field kinds name it
 #: (`value_field`); a text, or any other type, is a fact the form shows.

@@ -1408,7 +1408,7 @@ def _same_as(values: Sequence[Any], ref: Optional[str],
 #: browser makes a scrolling box with nothing focusable in it a Tab stop of
 #: its own): the table itself scrolls by keyboard and pointer.
 SCROLL_CUE = ('<div class="shep-rs-cue" hidden aria-hidden="true"><span class="shep-sub">'
-              'Wider than the panel: scroll sideways; the Field column stays.</span>'
+              'Wider than the panel: scroll sideways. The Field column stays.</span>'
               '<div class="shep-rs-top" tabindex="-1"><div class="shep-rs-top-w"></div></div>'
               '</div>')
 #: Keeps the cue's bar scrolling as far as the table and both scrolled
