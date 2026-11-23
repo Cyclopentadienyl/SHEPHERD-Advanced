@@ -2283,12 +2283,22 @@ PAGE_CSS = f"""
    right where it fits, else top to bottom, `model_list.FAMILY_JS`).
    **The list is the page's main region** (the skill's §2): side by side it grows twice as fast
    as the details (a 46 / 54 share gave the empty details 973 px and the list 829 at 1850 x 960,
-   so the tree dropped its Epochs, Files and Fingerprint there); each keeps its minimum. */
-{_PAGE} {_LIST} {{ --shep-mp-list-min: 46.5rem; --shep-mp-detail-min: 30rem; }}
+   so the tree dropped its Epochs, Files and Fingerprint there); each keeps its minimum.
+   **Once a row is chosen its details are what the page shows** and take their reading width
+   (``--shep-mp-detail-read``: the title on one line and each summary value on one line where the
+   world's fit), as far as the list's minimum leaves; the list keeps the rest, its whole tree
+   where that still fits (the sweep's L7 check, D1: at 1850 x 960 and 1550 x 830 the chosen
+   model's details kept the empty panel's share, about 500 to 600 px, and their recorded results
+   and next step fell under the region's edge, where d3040ca drew them whole). */
+{_PAGE} {_LIST} {{ --shep-mp-list-min: 46.5rem; --shep-mp-detail-min: 30rem; --shep-mp-detail-read: 47rem; }}
 {_PAGE} {_LIST} > .shep-model-main {{ --shep-panel-min: var(--shep-mp-list-min); }}
 {_PAGE} {_LIST} > .shep-model-foot {{ --shep-panel-min: var(--shep-mp-detail-min); }}
 {SIDE} {{
   {_PAGE} {_LIST} {{ grid-template-columns: minmax(var(--shep-mp-list-min), 2fr) minmax(var(--shep-mp-detail-min), 1fr); }}
+  {_PAGE} {_LIST}:has(#shep-mp-detail-hd h2[data-key]):not(:has(.shep-mp-ro)) {{
+    grid-template-columns: minmax(var(--shep-mp-list-min), 2fr)
+      minmax(max(var(--shep-mp-detail-min), min(var(--shep-mp-detail-read), 100% - var(--shep-mp-list-min) - 16px)), 1fr);
+  }}
   {_PAGE} > .column {{ height: 100%; }}
   {_PAGE} .shep-models {{ height: 100%; min-height: 0; }}
   {_PAGE} {_LIST} {{ height: 100%; min-height: 0; }}

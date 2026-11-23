@@ -3844,6 +3844,28 @@ const QUEUE_JS = __QUEUE_JS__;
                heads: [...table.querySelectorAll('thead th')].filter((th) => th.getClientRects().length).map((th) => th.textContent) };
     });
   }
+  // A row chosen: its details are what the page shows (the sweep's L7 check, D1).
+  await page.setViewportSize({ width: 1850, height: 960 });
+  await page.click('#shep-models-research-rows tr[data-key]:not([hidden])');
+  await page.waitForSelector('#shep-mp-detail-hd h2[data-key]');
+  await idle();
+  for (const [w, h] of [[1850, 960], [1550, 830]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out[`chosen ${w}x${h}`] = await page.evaluate(() => {
+      const table = document.querySelector('#shep-models-research-rows table.shep-mtree'), wrap = table.parentElement;
+      const rows = document.querySelector('#shep-models-research-rows');
+      const opt = [...table.querySelectorAll('thead th')].filter((th) => th.classList.contains('shep-col-opt'));
+      const body = document.querySelector('#shep-mp-detail-bd'), b = body.getBoundingClientRect();
+      const seg = [...body.querySelectorAll('.shep-seg')].filter((e) => e.getClientRects().length).pop();
+      const list = document.querySelector('#shep-page-models .shep-model-main'), detail = document.querySelector('#shep-mp-detail');
+      return { list: list.getBoundingClientRect().width, detail: detail.getBoundingClientRect().width,
+               fits: body.scrollHeight <= body.clientHeight + 1,
+               seg: seg ? seg.getBoundingClientRect().bottom <= b.top + body.clientHeight + 1 : null,
+               sideways: Math.max(wrap.scrollWidth - wrap.clientWidth, rows.scrollWidth - rows.clientWidth),
+               drawn: opt.filter((th) => th.getClientRects().length).length };
+    });
+  }
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -3865,7 +3887,13 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     tree dropped its Epochs, Files and Fingerprint (file rows a name and empty
     cells, no fingerprint for "Name or fingerprint"). Side by side, the list,
     the page's main region, is now at least as wide as the details, and at the
-    owner's windows the whole tree is drawn, nothing sideways."""
+    owner's windows the whole tree is drawn, nothing sideways.
+    The sweep's L7 check (D1): once a row is chosen its details are what the
+    page shows, yet they kept the empty panel's third, so at the owner's
+    windows their recorded results fell under the region's edge. Chosen, the
+    details are wider than empty, whole at the owner's largest window with the
+    list's whole tree beside them, and their records segment in view at the
+    smaller."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -3889,6 +3917,11 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     assert laptop["layout"] == "side" and laptop["sideways"] <= 0, laptop
     assert laptop["drawn"] == 0 and laptop["heads"] == ["Model", "Task", "Operation"], laptop
     assert column["layout"] == "stack" and column["drawn"] == 3 and column["sideways"] <= 0, column
+    wide, mid = seen["chosen 1850x960"], seen["chosen 1550x830"]
+    assert wide["fits"] and wide["drawn"] == 3 and wide["sideways"] <= 0, wide
+    for size, chosen in (("1850x960", wide), ("1550x830", mid)):
+        assert chosen["detail"] > seen[size]["detail"] and chosen["sideways"] <= 0, (size, chosen, seen[size])
+    assert mid["seg"] in (True, None), mid
 
 
 # --------------------------------------------------------------------------- the family graph (G/I)
