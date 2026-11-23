@@ -159,9 +159,13 @@ def _title(path: Path, shown: bool) -> str:
 
 
 def _value_html(value: Any) -> str:
-    """A path, or a list of them, in code style, each on its own line."""
+    """A path, or a list of them, in code style, each on its own line; the
+    paths a block of their own, so the fact after them (their source) starts
+    a line and never runs on after a path's last line (the sweep's L7, D13:
+    "…/registry Set when the service started" at 1080 x 1920)."""
     values = value if isinstance(value, (tuple, list)) else (value,)
-    return "<br>".join(r.token_html(v, classes="shep-dl-path") for v in values)
+    return ('<span class="shep-dl-line">'
+            + "<br>".join(r.token_html(v, classes="shep-dl-path") for v in values) + "</span>")
 
 
 def _source_html(item: FieldView) -> str:
@@ -210,7 +214,7 @@ def state_html(item: FieldView, view: DeploymentView, *, shown: bool) -> str:
             mark = r.status_mark("warn", "Saved, not in effect yet")
         else:
             mark = ""
-        rows.append(("Saved", f"{saved}<br>{mark}" if mark else saved))
+        rows.append(("Saved", f'{saved}<span class="shep-dl-line">{mark}</span>' if mark else saved))
     if item.problem and not unknown and (item.configured is not None or not item.unset):
         # A refused value in fixed words for a viewer whose paths are hidden:
         # its refusal quotes the value as given (`deployment_view.problem_words`).
@@ -778,6 +782,8 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-kv {{ gap: 4px 12px; }}
 {_PAGE} .shep-dl-kv > dt {{ width: 8em; }}
 {_PAGE} .shep-dl-v {{ margin-right: 8px; }}
+{_PAGE} .shep-dl-line {{ display: block; }}
+{_PAGE} .shep-dl-v:has(> .shep-dl-line) {{ display: block; margin: 0; }}
 {_PAGE} .shep-dl-src {{ font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }}
 {_PAGE} .shep-dl-problem {{ color: var(--shep-text-2); font-size: 14px; }}
 {_PAGE} .shep-dl-adv {{ font-size: 14px; margin-top: 2px; }}

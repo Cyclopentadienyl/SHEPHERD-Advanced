@@ -36,7 +36,7 @@ from typing import (Any, Callable, Dict, Hashable, Iterable, List, Mapping, Name
                     Optional, Sequence, Tuple)
 
 from src.config.recipe import FROZEN_PARTS, unread_settings
-from src.config.server_settings import PLACE_ACTIONS, SEVERAL_ACTIONS
+from src.config.server_settings import PLACE_ACTIONS, PLACE_NAMES, SEVERAL_ACTIONS
 from src.evaluation.caveats import (
     EXPOSURE_EVIDENCE,
     EXPOSURE_NEGATIVES,
@@ -1000,12 +1000,25 @@ def _go(notice: Mapping[str, Any], go: bool) -> str:
     action = str(notice.get("action") or "")
     if not action:
         return ""
-    page, _, focus = str(notice.get("target") or "").partition("#")
+    target = str(notice.get("target") or "")
+    page, _, focus = target.partition("#")
+    words = _place_bound(action, PLACE_NAMES.get(target))
     if not go or not page:
-        return f'<span class="shep-nb-act">{e(action)}.</span>'
+        return f'<span class="shep-nb-act">{words}.</span>'
     focus_attr = f' data-shep-focus="{e(focus)}"' if focus else ""
     return (f'<button type="button" class="shep-link shep-nb-go" data-shep-go="{e(page)}"'
-            f'{focus_attr}>{e(action)}</button>')
+            f'{focus_attr}>{words}</button>')
+
+
+def _place_bound(action: str, place: Optional[str]) -> str:
+    """`action` escaped, the GUI place it names (`server_settings.PLACE_NAMES`, the part the
+    action is built from) drawn as one unit (``shep-unit``): a line breaks the step before the
+    place, never inside it (the sweep's L7: "Choose one in Settings ›" / "Data locations" in
+    Diagnosis' card at 1280 x 720)."""
+    if not place or place not in action:
+        return e(action)
+    before, _, after = action.partition(place)
+    return f'{e(before)}<span class="shep-unit">{e(place)}</span>{e(after)}'
 
 
 def _detail_rows(notices: Sequence[Mapping[str, Any]]) -> Tuple[str, str]:

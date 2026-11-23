@@ -230,6 +230,14 @@ SHELL_CSS = """
 body, gradio-app, .gradio-container { background: var(--shep-bg) !important; }
 body { color: var(--shep-text); }
 .gradio-container { font-size: 15px; color: var(--shep-text); }
+/* **Every text that wraps breaks prettily** (the text brief's §4; the sweep's L7 check, D13): the
+   wrap style is inherited, so one rule at the dashboard's root reaches every paragraph, reason,
+   table cell, summary value and link, and a line never ends a text with one short word alone
+   ("only", "server", "better" stood alone on a last line in cells and values the page rules did
+   not reach). Chromium honours it; Firefox ignores ``pretty`` and keeps its greedy breaks, so
+   nothing there may depend on it. A ``white-space: nowrap`` text keeps its one line; a heading
+   or a lead keeps its own ``balance``. */
+.gradio-container { text-wrap-style: pretty; }
 /* The header runs edge to edge; each page pads itself. */
 .gradio-container > .main { padding: 0 !important; }
 .gradio-container > .main > .wrap, .gradio-container .contain { padding: 0 !important; max-width: none !important; }
