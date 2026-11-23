@@ -72,7 +72,9 @@ leaving one option alone, two left edges, a notice said twice, the tab
 groups' separators); `layout_problems` turns it into lines. A walk can serve
 the dashboard at first use or with an empty workspaces folder
 (`walk_state`, `WALK_STATES`) and measure each page at the layout windows
-(`layout_stops`, `LAYOUT_SIZES`).
+(`layout_stops`, `LAYOUT_SIZES`); a stop measures once the page's requests
+have been answered for ten frames in a row (a page's opening chain is idle
+for an instant between two of its events).
 
 Module: tests/fixtures/browser.py
 """
@@ -830,8 +832,18 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
                                                  ...(HEADERS ? { extraHTTPHeaders: HEADERS } : {}) })).newPage();
   await page.addInitScript(QUEUE_JS);
   await page.addInitScript(LOOK_JS);
-  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(),
-                                          null, { timeout: 60000 });
+  // Nothing asked is unanswered over ten frames in a row: a page's opening chain (`.then` after
+  // `.then`, each joined a moment after the one before is answered) is idle for an instant
+  // between two of its events, and a stop measured there missed what its last event drew (the
+  // L7 rules: Fine-tune's reason beside its disabled Start, drawn late in the chain).
+  const idle = async () => {
+    await page.evaluate(() => { window.__shepQuiet = 0; });
+    await page.waitForFunction(() => {
+      if (!(window.__shepQueue && window.__shepQueue.idle())) { window.__shepQuiet = 0; return false; }
+      window.__shepQuiet += 1;
+      return window.__shepQuiet >= 10;
+    }, null, { timeout: 60000, polling: 'raf' });
+  };
   const settle = () => page.evaluate(async () => {
     const sign = () => { const { panels } = window.__shepLook.shownPage(), se = document.scrollingElement;
       return [document.documentElement.getAttribute('data-shep-layout'), se.scrollWidth, se.scrollHeight,
