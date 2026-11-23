@@ -3543,7 +3543,12 @@ const { chromium } = require('playwright');
       const words = document.querySelector('#shep-models-research-reason .shep-reason, #shep-models-research-reason');
       const range = document.createRange(); range.selectNodeContents(words);
       const lines = new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
-      return { load: box('#shep-models-research-load'), reason: box('#shep-models-research-reason'), lines };
+      // The foot's last line against its bottom border, and the panel's own padding there.
+      const foot = document.querySelector('#shep-models-research-load').closest('.shep-model-foot');
+      const end = foot.getBoundingClientRect().bottom - parseFloat(getComputedStyle(foot).borderBottomWidth);
+      const pad = parseFloat(getComputedStyle(document.getElementById('shep-mp-detail-bd')).paddingBottom);
+      return { load: box('#shep-models-research-load'), reason: box('#shep-models-research-reason'), lines,
+               under: end - range.getBoundingClientRect().bottom, pad };
     });
     await page.close();
   }
@@ -3562,7 +3567,10 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
     its own. Fails on fcc3dea. The sweep's L7: beside the button a reason is
     one line or none (the layout rules' "beside"); the read-only reason
     took two lines beside it, so it stands under the button wherever it
-    cannot be one line beside it."""
+    cannot be one line beside it. The sweep's L7 (LOOK3): the reason, the
+    foot's last line, stood 3-6 px from the panel's bottom border, where
+    every other panel's last line keeps the panel's padding: it keeps the
+    detail body's padding under it."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -3581,6 +3589,7 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
     for size, at in seen.items():
         beside = at["reason"]["top"] < at["load"]["bottom"]
         assert not beside or at["lines"] == 1, (size, at)
+        assert at["under"] >= at["pad"] - 0.5, (size, at)
 
 
 # --------------------------------------------------------------------------- the UI sweep of 2026-11-22

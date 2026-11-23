@@ -2107,14 +2107,18 @@ PAGE_CSS = f"""
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto auto auto;
   grid-template-areas: "detail" "load" "reason" "note";
-  align-items: center; gap: 0 !important; padding: 0 !important;
+  align-items: center; gap: 0 !important; padding: 0 0 12px !important;
   background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px;
 }}
+/* The foot's last line, whichever it is (Load, its reason or the note), keeps the panel's padding
+   from the bottom border: the foot pads its end, its lines only their tops (the sweep's L7 LOOK3:
+   the reason line sat 3-6 px from the border, the note alone padded under itself). */
 {_PAGE} {_LIST} > .shep-model-foot > #shep-mp-detail {{ grid-area: detail; align-self: stretch; min-height: 0; gap: 0 !important; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ grid-area: load; justify-self: start; margin: 12px 0 12px 16px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ grid-area: load; justify-self: start; margin: 12px 0 0 16px; }}
 {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ grid-area: reason; padding: 0 16px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason:has(.shep-reason) {{ padding-top: 8px; }}
 {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note {{ grid-area: note; padding: 0 16px; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note:has(.shep-note) {{ padding: 4px 16px 12px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note:has(.shep-note) {{ padding-top: 4px; }}
 {_PAGE} #shep-models-research-note .shep-note {{ display: block; max-width: var(--shep-measure); font-size: 14px; }}
 {_PAGE} {_LIST} > .shep-model-foot::after {{
   content: ""; grid-row: 2; grid-column: 1 / -1; border-top: 1px solid var(--shep-border);
