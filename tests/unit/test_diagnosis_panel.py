@@ -827,6 +827,21 @@ def test_the_empty_results_say_what_to_do_without_a_place_the_layout_moves():
     assert not re.search(r"\b(left|right|above|below)\b", text)
 
 
+def test_an_empty_regions_words_are_a_centred_box_of_start_aligned_lines():
+    """The independent check of the UI sweep (C5): the results' and the
+    candidate details' empty states were centred line by line, so at every
+    size their wrapped lines ("…check the model in use, then / Run
+    Diagnosis.") stood at ragged centres. The text brief's §4 centres a box,
+    never lines that wrap: the box is as wide as its longest line (at the
+    measure) and centred in the region; its lines start on one edge."""
+    rule = re.search(r"\.shep-dx-empty \{\{?([^}]*)\}", dp.PAGE_CSS).group(1)
+    assert "text-align: start" in rule and "center" not in rule
+    assert "margin: auto" in rule and "width: fit-content" in rule
+    assert "var(--shep-measure)" in rule
+    for html in (dp.empty_results_html(), dp.details_empty_html()):
+        assert html.startswith('<div class="shep-dx-empty">')
+
+
 #: B-14 at each stop of the walk: the input column, the panel beside it and
 #: its minimum, Top-K's box in widths of its own "0", the fields region and
 #: Run, the fields' grid columns, and the Load drawer when it is open.
