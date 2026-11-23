@@ -493,7 +493,7 @@ def test_continue_sends_the_parent_shown_and_the_preview_refuses_another(console
     shown = _sha(console["parents"]["a"])
 
     text, _extend, mode, _compare = _check(console, src, typed)
-    assert "Checkpoint read; it can continue" in text and mode["parent"]["sha256"] == shown
+    assert "Checkpoint read: it can continue" in text and mode["parent"]["sha256"] == shown
 
     # The positive control: nothing changed, the start carries the digest shown.
     said, *_rest = _continue(console, src, typed, mode)
@@ -526,7 +526,7 @@ def test_a_typed_paths_check_shows_the_file_again(console):
     _swap(console, "same")()
     text, _e, mode, _c = _check(console, tc.CONTINUE_FROM_PATH, typed, mode)
     now = _sha(console["parents"]["a"])
-    assert "Checkpoint read; it can continue" in text and mode["parent"]["sha256"] == now
+    assert "Checkpoint read: it can continue" in text and mode["parent"]["sha256"] == now
     _continue(console, tc.CONTINUE_FROM_PATH, typed, mode)
     assert console["started"][-1]["__kwargs__"]["expected_parent_sha256"] == now
 
@@ -569,7 +569,7 @@ def test_a_listed_parent_refused_as_changed_is_shown_again_by_refresh(console):
     assert now[:12] in details and tuple(cleared) == tc._cleared_check()
     text, _e, mode, _c = _check({**console, "listed": refreshed}, tc.CONTINUE_FROM_LIST,
                                 mode=mode)
-    assert "Checkpoint read; it can continue" in text and mode["parent"]["sha256"] == now
+    assert "Checkpoint read: it can continue" in text and mode["parent"]["sha256"] == now
 
 
 @pytest.mark.parametrize("operation", ["continue", "branch"])
@@ -670,7 +670,7 @@ def test_start_branch_sends_the_parent_shown_and_the_preview_refuses_another(con
     shown = _sha(console["parents"]["a"])
 
     text, _extend, mode, _compare = _check(console, src, typed, operation=tc.BRANCH)
-    assert "Checkpoint read; it can be branched" in text and mode["parent"]["sha256"] == shown
+    assert "Checkpoint read: it can be branched" in text and mode["parent"]["sha256"] == shown
 
     said, *_rest = _continue(console, src, typed, mode, operation=tc.BRANCH)
     assert said == ""

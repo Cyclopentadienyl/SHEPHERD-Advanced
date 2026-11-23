@@ -268,7 +268,7 @@ def test_settings_say_the_running_allocator_apart_from_the_saved_one():
     same = rs.facts_html(started, {"allocator_preset": "cuda_async"})
     assert "Not running yet" not in same
     unset = rs.facts_html({}, {})
-    assert "PyTorch’s default (native)" in unset and "(the default; none saved)" in unset
+    assert "PyTorch’s default (native)" in unset and "(the default, none saved)" in unset
     assert "Not implemented yet" in unset and "<input" not in unset
     explicit = rs.facts_html({"PYTORCH_ALLOC_CONF": "backend:native", ALLOC_SOURCE_ENV: "env"}, {})
     assert "set in the launch environment" in explicit
@@ -280,10 +280,10 @@ def test_settings_say_the_running_allocator_apart_from_the_saved_one():
     assert "<code>PYTORCH_ALLOC_CONF=</code>" in empty and "no allocator was set" not in empty
     assert "overrides it until the backend starts without it" in empty
     assert "Not running yet" not in empty
-    # The acceleration row: its state, then why, in brackets as the other rows
-    # say theirs (B5 review: the two ran together as one sentence).
-    assert ('<span class="shep-st-w">Not implemented yet</span></span> <span class="shep-muted">'
-            f"({rs.ACCELERATION})</span>") in unset
+    # The acceleration row: its state, then its sentences on a line of their own (B5
+    # review and the sweep's L7: the state's word ran into the next sentence).
+    assert ('<span class="shep-st-w">Not implemented yet</span></span><br><span class="shep-muted">'
+            f"{rs.ACCELERATION}</span>") in unset
 
 
 def test_no_settings_text_claims_an_architecture_that_is_not_built():
@@ -408,11 +408,17 @@ const fs = require('fs');
     return !!el && el.getClientRects().length > 0;
   }, sel);
   const text = (sel) => page.evaluate((s) => document.querySelector(s).innerText, sel);
+  // The restart status's message, not its block: the block also holds Gradio's status tracker,
+  // whose timer ("0.1s") is no message, and is not drawn while the message is empty.
+  const STATUS = '#runtime_restart_status .html-container';
   const panel = await text('#shep-settings');
   out.compileReadTimes = (panel.match(/read when the training page starts/gi) || []).length;
   out.compileLine = await text('#torch_compile');
   out.variableNamed = /SHEPHERD_[A-Z_]+/.test(panel);
   out.note = await shown('#runtime_restart_note');
+  // A status line that says nothing takes no room (its hide rule tested the container, which
+  // Gradio always draws, so it hid nothing).
+  out.emptyStatusDrawn = [await shown('#runtime_status'), await shown('#runtime_restart_status')];
   // Restart asks first; Cancel closes the question and asks nothing.
   await page.click('#runtime_restart');
   await page.waitForSelector('#runtime_confirm', { state: 'visible' });
@@ -425,8 +431,8 @@ const fs = require('fs');
   await page.waitForSelector('#runtime_restart_now', { state: 'visible' });
   await page.click('#runtime_restart_now');
   await page.waitForFunction(() => /Restarting the backend/.test(
-    document.querySelector('#runtime_restart_status').innerText));
-  out.afterConfirm = { status: await text('#runtime_restart_status'),
+    document.querySelector('#runtime_restart_status .html-container').innerText));
+  out.afterConfirm = { status: await text(STATUS), drawn: await shown('#runtime_restart_status'),
                        questionShown: await shown('#runtime_confirm') };
   // Asked once more (the status line clears), and with the question open the
   // running allocator saved again by another hand: on the slow timer's read
@@ -435,12 +441,12 @@ const fs = require('fs');
   const asked = async () => {
     await page.click('#runtime_restart');
     await page.waitForSelector('#runtime_restart_now', { state: 'visible' });
-    await page.waitForFunction(() => document.querySelector('#runtime_restart_status').innerText.trim() === '');
+    await page.waitForFunction(() => document.querySelector('#runtime_restart_status .html-container').innerText.trim() === '');
   };
   await asked();
   save('cuda_async');
   await page.waitForSelector('#runtime_confirm', { state: 'hidden', timeout: 30000 });
-  out.timer = { status: await text('#runtime_restart_status'), reason: await text('#runtime_restart_lock'),
+  out.timer = { status: await text(STATUS), reason: await text('#runtime_restart_lock'),
                 restartDisabled: await page.evaluate(() => document.querySelector('#runtime_restart').disabled) };
   // Saved as before: Restart is on again; asked, and with the question open
   // the running allocator saved again with Apply Settings: Restart is off and
@@ -455,7 +461,7 @@ const fs = require('fs');
   await page.waitForSelector('#runtime_confirm', { state: 'hidden', timeout: 30000 });
   out.idle = { reason: await text('#runtime_restart_lock'),
                stopEnabled: await page.evaluate(() => !document.querySelector('#runtime_stop').disabled) };
-  out.stale = { status: await text('#runtime_restart_status'), reason: await text('#runtime_restart_lock'),
+  out.stale = { status: await text(STATUS), reason: await text('#runtime_restart_lock'),
                 questionShown: await shown('#runtime_confirm') };
   await browser.close();
   console.log(JSON.stringify(out));
@@ -476,7 +482,10 @@ def test_settings_asks_before_a_restart_and_says_each_fact_once_in_a_browser(
     NEW-settings-datasets-footer-1: torch.compile's visible line leads with
     the warning and where it is read is said once on the screen.
     NEW-settings-datasets-footer-2: no standing restart note, no internal
-    variable in the panel's text."""
+    variable in the panel's text. A status line that says nothing takes no
+    room (the UI sweep's integration, S11: its hide rule read Gradio's
+    container, which is never empty), and its message is read without the
+    status tracker's timer."""
     import src.config.runtime_presets as presets
     import src.webui.components.runtime_settings as rs
     from src.config.runtime_presets import allocator_env
@@ -506,10 +515,11 @@ def test_settings_asks_before_a_restart_and_says_each_fact_once_in_a_browser(
     assert seen["compileReadTimes"] == 1, seen
     assert seen["compileLine"].splitlines()[-1].startswith(rs.COMPILE_EXPERIMENTAL), seen
     assert seen["variableNamed"] is False and seen["note"] is False, seen
+    assert seen["emptyStatusDrawn"] == [False, False], seen
     assert seen["question"].startswith("Restart the backend? Every open page reconnects"), seen
     assert seen["confirmButtons"] == [True, False], seen
     assert seen["afterConfirm"]["questionShown"] is False, seen
-    assert "Restarting the backend" in seen["afterConfirm"]["status"]
+    assert "Restarting the backend" in seen["afterConfirm"]["status"] and seen["afterConfirm"]["drawn"]
     assert rs.RESTART_IDLE in seen["idle"]["reason"] and seen["idle"]["stopEnabled"], seen
     # R-12's residual: the question left open while Restart turned off
     # closes on the slow timer's read and after Apply, the reason said once,

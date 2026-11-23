@@ -52,9 +52,11 @@ renderer (`renderers.dataset_identity_html` and its pieces).
   the table's place shows the folder's notice (`workspaces.setting_notice`,
   drawn once by `renderers.notice_block`) as numbered steps: choose the
   folder (the notice's link to Settings › Data locations), then build a
-  dataset in it (`BUILD_STEP`); with a folder that lists no workspace, its
-  own empty words and the same step. Under a listed table, one quiet line
-  (`BUILD_LINE`); nothing else on the page repeats it.
+  dataset in it (`BUILD_STEP`), the commands a row each under the steps
+  (`commands_html`: the token and its Copy, never inside a sentence); with
+  a folder that lists no workspace, its own empty words, the same step and
+  rows. Under a listed table, one quiet line (`BUILD_LINE`) and the rows;
+  nothing else on the page repeats it.
 - **Laid out by what it holds** (the UI sweep of 2026-11-22): the two panels
   grow from their own bases (`--shep-panel-basis`, `--shep-panel-grow`), the
   table's panel no narrower than the table with its optional columns
@@ -78,7 +80,7 @@ import gradio as gr
 from src.evaluation import protocols
 from src.evaluation.caveats import DATA_KIND_WORDS, MEASUREMENT_NAMES, label_words
 from src.webui.components import renderers as r
-from src.webui.components.help import help_button
+from src.webui.components.help import copy_button, help_button
 from src.webui.components.served_status import read_status, serving_workspace
 from src.webui.components.workspaces import (
     OUTSIDE_PATH,
@@ -92,21 +94,26 @@ from src.webui.components.workspaces import (
     workspace_binding,
 )
 from src.webui.shell import page_elem_id, plain_html
-from src.webui.style import FIT, FIT_WIDE, NARROW_ATTR, SIDE
+from src.webui.style import COL_OPT, FIT, FIT_WIDE, NARROW_ATTR, SIDE
 
 logger = logging.getLogger(__name__)
 
 #: How a dataset is built (no building in the WebUI, BACKLOG 29): the command
 #: that writes a trainable workspace (graph, samples, manifest and dataset
-#: record), and the demo's. Plain text: each command is drawn as a literal
-#: token where it is said (`renderers.literal_html`).
+#: record), and the demo's. Each is a key-value row of its own, the command a
+#: literal token with its Copy (`commands_html`), never inside a sentence (the
+#: text brief's §8: a token of over 30 characters, or a second one, is a row).
 BUILD_COMMAND = "scripts/build_knowledge_graph.py --generate-samples"
 DEMO_COMMAND = "scripts/setup_demo.py"
+#: The commands' rows: each key names what its command does.
+COMMANDS = (("Build", BUILD_COMMAND, "the build command"),
+            ("Demo", DEMO_COMMAND, "the demo's command"))
 #: The step after choosing the workspaces folder (the first-use notice's step
-#: 2), and the next step of a folder that lists no workspace yet.
-BUILD_STEP = f"Build a dataset in it on the server: {BUILD_COMMAND} (the demo: {DEMO_COMMAND})."
+#: 2), and the next step of a folder that lists no workspace yet: the act in
+#: words, its commands the rows under it.
+BUILD_STEP = "Build a dataset in it on the server, with a command below."
 #: The one quiet line under a listed table: how another dataset is added.
-BUILD_LINE = f"Add a dataset on the server: {BUILD_COMMAND} (the demo: {DEMO_COMMAND})."
+BUILD_LINE = "Add a dataset on the server, with a command below."
 #: A workspaces folder that is set and lists no workspace (its own words; the
 #: folder's notice is for a folder not set or not usable).
 NO_WORKSPACE_YET = "No workspace in this folder yet."
@@ -121,17 +128,18 @@ PAGE_HELP = {
         "In use",
         "What uses each workspace now, or a dash when nothing does.\n"
         "- Serving reads this workspace: the served model reads its files.\n"
-        "- Same dataset as served: another workspace with the same full fingerprint.\n"
+        "- Same dataset as served: another workspace, same full fingerprint.\n"
         "- In your Training run bar: chosen with Use for training ›.\n"
         "- Not trainable: listed, but training refuses it, for the reason given.",
     ),
 }
 
 
-#: Use for training with no workspace listed: the control's relation to the
-#: workspaces folder's notice (`renderers.see_above`; the notice is the
-#: table's, in view of the button: one line beside it).
-USE_UNAVAILABLE = "Use for training unavailable"
+#: The control the line beside "Use for training ›" names while it is
+#: disabled (`renderers.disabled_words`): with no workspace listed, its
+#: relation to the workspaces folder's notice (`renderers.see_above`; the
+#: notice is the table's, in view of the button: one line beside it).
+USE_FOR_TRAINING = "Use for training"
 
 
 def use_note_html(data: Mapping[str, Any], name: Optional[str]) -> str:
@@ -143,15 +151,19 @@ def use_note_html(data: Mapping[str, Any], name: Optional[str]) -> str:
     rows = data.get("rows") or []
     row = next((x for x in rows if x["name"] == name), None)
     if not rows and data.get("notice"):
-        return r.see_above(USE_UNAVAILABLE, data["notice"])
+        return r.see_above(USE_FOR_TRAINING, data["notice"])
     if not rows:
-        return '<span class="shep-note">No workspace is listed to use yet.</span>'
+        return r.marked_line("neutral", r.disabled_words(USE_FOR_TRAINING,
+                                                         "no workspace is listed yet."))
     if row is None:
-        return '<span class="shep-note">Select a dataset to use it for training.</span>'
+        return r.marked_line("neutral", r.disabled_words(USE_FOR_TRAINING,
+                                                         "select a workspace in the list first."))
     if not row.get("trainable"):
         why = row.get("not_trainable") or "not trainable"
-        return (f'<span class="shep-note" title="{r.e(why)}">Not available: {r.e(row["name"])} is '
-                f'not trainable — {r.e(r.not_trainable_short(row, 120))}.</span>')
+        words = r.disabled_words(USE_FOR_TRAINING, f"{row['name']} is not trainable: "
+                                                   f"{r.not_trainable_short(row, 120)}.")
+        return (f'<p class="shep-reason" title="{r.e(why)}">{r.DISABLED_MARK}'
+                f'<span>{r.e(words)}</span></p>')
     return f'<span class="shep-note">{USE_NOTE}</span>'
 
 def read_datasets() -> Dict[str, Any]:
@@ -265,19 +277,28 @@ def empty_html(data: Mapping[str, Any]) -> str:
     build; a list that could not be read, its reason."""
     notice = data.get("notice")
     if notice:
-        steps = (BUILD_STEP,) if notice.get("kind", "neutral") == "neutral" else ()
-        inner = r.notice_block(notice, steps=steps)
+        build = notice.get("kind", "neutral") == "neutral"
+        inner = (r.notice_block(notice, steps=(BUILD_STEP,) if build else ())
+                 + (commands_html() if build else ""))
     elif data.get("problem"):
         inner = f'<p class="shep-empty">{r.status_mark("error", data["problem"])}</p>'
     else:
         inner = (f'<div class="shep-empty"><p>{r.e(NO_WORKSPACE_YET)}</p>'
-                 f"<p>{r.literal_html(BUILD_STEP)}</p></div>")
+                 f"<p>{r.e(BUILD_STEP)}</p></div>{commands_html()}")
     return f'<div class="shep-ds-empty">{inner}</div>'
+
+
+def commands_html() -> str:
+    """**The build commands**, a key-value row each (`COMMANDS`): its key,
+    the command a literal token broken only before its own separators, and
+    its Copy (the full command on the clipboard)."""
+    return r.summary_list([(key, f"{r.token_html(command)} {copy_button(command, what)}")
+                           for key, command, what in COMMANDS], classes="shep-ds-cmds")
 
 
 #: The columns a narrow table drops (the shell's fit, `style.FIT`), their
 #: facts then said by the selected row's details (`optional_html`).
-_OPT = ' class="shep-col-opt"'
+_OPT = f' class="{COL_OPT}"'
 
 
 def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Optional[str]) -> str:
@@ -301,11 +322,11 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
             # A plain table's selected row is `aria-current` (the skill's §8).
             f'<tr class="{"shep-on" if on else ""}" data-key="{r.e(name)}" tabindex="0"'
             f'{CURRENT if on else ""}>'
-            f'<td class="shep-ds-name shep-w600">{r.e(name)}</td>'
-            f'<td class="shep-nowrap shep-ds-date shep-col-opt">'
+            f'<td class="shep-ds-name shep-w600">{r.name_pieces_html(name)}</td>'
+            f'<td class="shep-nowrap shep-ds-date {COL_OPT}">'
             f'{r.e(built) if built else r.NOT_RECORDED.lower()}</td>'
             f'<td class="shep-nowrap">{fp_cell}</td>'
-            f'<td class="shep-ds-src shep-col-opt">{r.sources_html(row)}</td>'
+            f'<td class="shep-ds-src {COL_OPT}">{r.sources_html(row)}</td>'
             f'<td class="shep-num shep-nowrap">'
             f'{r.e(r.pair_text(row.get("train_samples"), row.get("val_samples")))}</td>'
             f'<td class="shep-ds-use">{_marks(row, data, run_bar)}</td></tr>')
@@ -321,9 +342,9 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
 
 
 def build_line_html() -> str:
-    """The quiet line under a listed table (`BUILD_LINE`, each command a
-    literal token)."""
-    return f'<p class="shep-ds-build">{r.literal_html(BUILD_LINE)}</p>'
+    """The quiet line under a listed table (`BUILD_LINE`), its commands the
+    rows under it (`commands_html`)."""
+    return f'<p class="shep-ds-build">{r.e(BUILD_LINE)}</p>{commands_html()}'
 
 
 #: The first panel's one-line description, under its title.
@@ -473,8 +494,10 @@ def _measurements_cell(version: Mapping[str, Any]) -> str:
     if refused:
         names = ", ".join(name for name, _why in refused)
         reasons = "".join(f"<p><b>{r.e(name)}</b>: {r.e(why)}</p>" for name, why in refused)
-        cell += (f'<details class="shep-more"><summary>Not admitted: {r.e(names)} ›</summary>'
-                 f"{reasons}</details>")
+        # Each name whole and the chevron joined to the last one: the label wraps only
+        # between names, never at a name's own hyphen, never "›" alone on a line.
+        cell += (f'<details class="shep-more"><summary>Not admitted: {r.whole_words(names)}'
+                 f"\u00a0›</summary>{reasons}</details>")
     return cell
 
 
@@ -520,7 +543,7 @@ def versions_html(data: Mapping[str, Any], row: Mapping[str, Any]) -> str:
                 f"version is mapped against this workspace’s graph yet. {IMPORT_LINE}</span>"
                 f"</div>{tail}</div>")
     body = "".join(
-        f'<tr><td class="shep-w600">{r.e(version.get("label"))}</td>'
+        f'<tr><td class="shep-w600">{r.whole_words(version.get("label"))}</td>'
         f'<td>{_kind_text(version.get("kind"))}</td>'
         f'<td>{r.ident_html(version.get("role"))}</td>'
         f"<td>{_measurements_cell(version)}</td></tr>" for version in bound)
@@ -629,12 +652,15 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ds-empty .shep-empty > p + p {{ margin-top: var(--shep-space-para); }}
 {_PAGE} #shep-ds-notes {{ padding: 0 var(--shep-inset) var(--shep-space-3); }}
 {_PAGE} .shep-ds-build {{ margin: 0; font-size: 14px; line-height: var(--shep-lh-prose); color: var(--shep-text-2); }}
+/* The build commands, a row each under the step or the line that names them. */
+{_PAGE} .shep-ds-cmds {{ margin-top: var(--shep-space-item); }}
 /* The build line belongs to a listed table: an empty list says how in its own place. */
 {_PAGE} .shep-ds-main:not(:has(table.shep-dstbl)) #shep-ds-notes {{ display: none !important; }}
 {_PAGE} #shep-ds-table .shep-tbl-wrap {{ margin: 10px var(--shep-inset); }}
-{_PAGE} .shep-dstbl td.shep-ds-name, {_PAGE} .shep-dstbl td.shep-ds-src {{ overflow-wrap: anywhere; }}
-{_PAGE} .shep-dstbl td.shep-ds-name {{ min-width: 11.5em; }}
-{_PAGE} .shep-dstbl td.shep-ds-src {{ min-width: 7em; }}
+/* A name breaks only before its own separators (`renderers.name_pieces_html`): its column is as
+   narrow as its longest piece, never an em floor (11.5em held 173 px for "demo" and wrapped In use
+   and the headers at 1850 x 960; the sweep's L7, SW-LK3). A source list wraps anywhere. */
+{_PAGE} .shep-dstbl td.shep-ds-src {{ overflow-wrap: anywhere; min-width: 7em; }}
 {_PAGE} .shep-dstbl td.shep-ds-use {{ min-width: 11em; }}
 /* The build date in tabular figures: every date is one width, so the table's narrowest width
    (and the panel minimum below) does not move with the minute a workspace was built. */
@@ -661,14 +687,17 @@ PAGE_CSS = f"""
 {_PAGE} #shep-ds-details .shep-panel-bd > .shep-kv,
 {_PAGE} #shep-ds-details .shep-ds-optkv > .shep-kv {{ grid-template-columns: 10em minmax(0, 1fr); }}
 /* What "Use for training ›" does: beside it while its one line fits there, else a line of its own
-   under it (never a column of words beside a button). */
-{_PAGE} #shep-ds-use-note {{ flex: 0 1 max-content !important; min-width: 0 !important; }}
+   under it (never a column of words beside a button): its one line's width, never shrunk, at most
+   the footer's (it shrank to a column of three lines beside the button at 1850 x 960). */
+{_PAGE} #shep-ds-use-note {{ flex: 0 0 max-content !important; max-width: 100%; min-width: 0 !important; }}
 /* **The two panels, sized by what they hold** (M4, the shared `shep-sized`): each grows from its
    basis, the list three times as fast; the details keep their digest grid's four columns (31rem); the
    list keeps the table with its optional columns dropped (Name, the fingerprint, Train / val and
    In use at their narrowest, in the dashboard's type: 548 px with the demo's two rows, 589 px
-   with a workspace whose counts are not recorded, plus the wrap's margins and edges; 40rem leaves
-   room for wider counts and more digits; wider still, the table scrolls in its own box), and with
+   with a workspace whose counts are not recorded, plus the wrap's margins and edges, when Name
+   held an 11.5em floor; 435 px since a name is as narrow as its longest piece, the sweep's L7;
+   40rem leaves room for longer names, wider counts and more digits; wider still, the table
+   scrolls in its own box), and with
    no table only the measure of its words (32rem). The shell's layout rule reads these minimums
    (`src/webui/shell.py`): side by side from about 1190 px of window with a table, 1060 without. */
 {_PAGE} .shep-panel.shep-ds-main {{ --shep-panel-basis: 40rem; --shep-panel-grow: 3; --shep-panel-min: 32rem; }}
@@ -686,6 +715,7 @@ __all__ = [
     "BUILD_COMMAND",
     "BUILD_LINE",
     "BUILD_STEP",
+    "COMMANDS",
     "DEMO_COMMAND",
     "DETAILS_NONE",
     "DETAILS_SELECT",
@@ -698,9 +728,10 @@ __all__ = [
     "PAGE_HELP",
     "ROOT_REFUSED",
     "USE_NOTE",
-    "USE_UNAVAILABLE",
+    "USE_FOR_TRAINING",
     "admitted_measurements",
     "build_line_html",
+    "commands_html",
     "comparison_html",
     "create_datasets_page",
     "details_html",

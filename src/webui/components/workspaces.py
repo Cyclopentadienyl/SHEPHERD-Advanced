@@ -25,8 +25,8 @@ dashboard shows besides:
 
 **The notices** (the WebUI's first-use messages, said once per screen): a
 setting's state in parts (`server_settings.Notice`), chosen by the reader's
-``unset`` flag, never by its words: `setting_notice` (the workspaces folder or
-the results registry: unset, a normal setup step; set but refused, its own
+``unset`` flag, never by its words: `setting_notice` (the workspaces folder, the
+results registry or the import folder: unset, a normal setup step; set but refused, its own
 short words and where to see why), `lock_notice` (the GPU lock: unset, which
 follows from the workspaces folder; another problem, said to an operator) and
 `read_workspaces`' ``notice``, from the read it already makes. Each is plain
@@ -52,9 +52,11 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from src.config.server_settings import (
     DATA_LOCATIONS,
+    ENV_INTAKE_DIR,
     ENV_REGISTRY,
     ENV_WORKSPACES_ROOT,
     GPU_LOCK_NOTICE,
+    INTAKE_DIR_NOTICE,
     REGISTRY_NOTICE,
     WORKSPACES_ROOT_NOTICE,
     Notice,
@@ -66,7 +68,7 @@ from src.webui.components import renderers as r
 OUTSIDE_PATH = "a path outside the workspaces root"
 #: What a refused root setting reads as (its path is not shown).
 ROOT_REFUSED = ("The workspaces folder set for this service is refused, so the server lists "
-                "no workspace until it is corrected; Settings › Data locations says why. Ref: "
+                "no workspace until it is corrected. Settings › Data locations says why. Ref: "
                 "SHEPHERD_WORKSPACES_ROOT")
 
 #: The whitespace `redact` joins: plain spaces, tabs and line breaks (a line
@@ -172,13 +174,15 @@ def workspaces_root(environ: Optional[Mapping[str, str]] = None
 # The notices (module docstring)
 # ---------------------------------------------------------------------------
 #: The notice of each setting a page says a notice for, by its variable.
-NOTICES = {ENV_WORKSPACES_ROOT: WORKSPACES_ROOT_NOTICE, ENV_REGISTRY: REGISTRY_NOTICE}
+NOTICES = {ENV_WORKSPACES_ROOT: WORKSPACES_ROOT_NOTICE, ENV_REGISTRY: REGISTRY_NOTICE,
+           ENV_INTAKE_DIR: INTAKE_DIR_NOTICE}
 #: **A setting that is set and cannot be used** (refused by its check, or its
 #: saved file not readable): its state in short words, by its variable. Why is
 #: said in Settings › Data locations, to an operator, with its path; a page
 #: says where to see it (`SEE_WHY`), never the setting's own words.
 NOT_USABLE = {ENV_WORKSPACES_ROOT: "The workspaces folder cannot be used.",
-              ENV_REGISTRY: "The results registry cannot be used."}
+              ENV_REGISTRY: "The results registry cannot be used.",
+              ENV_INTAKE_DIR: "The import folder cannot be used."}
 #: The GPU lock set and not usable (a problem that is not "unset").
 LOCK_NOT_USABLE = "The GPU lock cannot be used."
 #: Where an operator sees why a setting that is set cannot be used.
@@ -416,9 +420,9 @@ def binding_state(version: Mapping[str, Any], binding: Optional[Mapping[str, Any
     if contents.get("state") == "verified":
         return "bound", "bound to this graph"
     if contents.get("state") == "unreadable":
-        return "unknown", ("mapped against this graph; its files cannot be checked now: "
+        return "unknown", ("mapped against this graph, but its files cannot be checked now: "
                            f"{contents_reason(version)}")
-    return "unknown", "mapped against this graph; its files are not checked"
+    return "unknown", "mapped against this graph, but its files are not checked"
 
 
 __all__ = [

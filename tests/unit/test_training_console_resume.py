@@ -241,7 +241,7 @@ def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
         assert '<dt class="shep-k" title="learning_rate">Learning rate</dt>' in text
         # The settings cannot change when continuing: the note points to
         # Branch (ops-wiring round B1c).
-        assert "to train with other settings, choose Branch above" in text
+        assert "To train with other settings, choose Branch above" in text
     # The listed parent was resolved by the server from its list: the file
     # read is the one listed (its run and name; its fingerprint is in the
     # chosen checkpoint's details, not repeated here).
@@ -948,7 +948,7 @@ def test_a_same_settings_branch_checks_and_starts_from_the_page(checkpoints, mon
     outputs = _check_all(c, tc.CONTINUE_FROM_LIST, c["paused_key"], "", operation=tc.BRANCH)
     text, extend, rate, mode, _compare = outputs[:5]
     words = _plain(text)
-    assert "Checkpoint read; it can be branched on this workspace." in words
+    assert "Checkpoint read: it can be branched on this workspace." in words
     assert ("Plan read from the checkpoint: no setting changed: a new run from these weights "
             "with a new optimizer.") in words
     for repr_mark in ("'", "None", "True", "False", "{", "->"):

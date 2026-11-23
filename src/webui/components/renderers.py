@@ -36,6 +36,7 @@ from typing import (Any, Callable, Dict, Hashable, Iterable, List, Mapping, Name
                     Optional, Sequence, Tuple)
 
 from src.config.recipe import FROZEN_PARTS, unread_settings
+from src.config.server_settings import PLACE_ACTIONS, SEVERAL_ACTIONS
 from src.evaluation.caveats import (
     EXPOSURE_EVIDENCE,
     EXPOSURE_NEGATIVES,
@@ -81,7 +82,7 @@ IDENTITY_BANNERS = {
     "synthetic": (
         "Synthetic workspace: not a clinical result.",
         "The served workspace's dataset record gives its origin as synthetic.\n"
-        "A generated stand-in, not a clinical knowledge graph: results are for testing only.",
+        "A generated stand-in, not a clinical knowledge graph.\nResults are for testing only.",
     ),
 }
 #: Model Facts' other warning headlines (`facts_from_checkpoint`), in the
@@ -125,8 +126,8 @@ RENDERER_HELP = {
         "The Trainer's own figure on the val samples, recorded in the checkpoint.\n"
         "- Base: LP accuracy.\n"
         "- Task model: pooled MRR.\n"
-        "Training selects a checkpoint by it, so it is not an independent test. Recorded "
-        "test results are kept apart from it.",
+        "Training selects a checkpoint by it, so it is not an independent test.\n"
+        "Recorded test results are kept apart from it.",
     ),
 }
 
@@ -181,8 +182,11 @@ STATUS_MARKS = {
 _STATUS_TAG = {"ok": "ok", "neutral": "grey", "warn": "amber", "error": "red", "info": "accent"}
 #: **The space between a mark's shape and its word** (`status_mark`): in its
 #: text, so a copy and ``innerText`` read "○ Saved", never "○Saved"; of no
-#: width (``shep-st-sp``), so the shape's own margin still draws the gap.
-MARK_SPACE = '<span class="shep-st-sp"> </span>'
+#: width (``shep-st-sp``), so the shape's own margin still draws the gap; a
+#: no-break space, so a line never parts the shape from its word (the skill's
+#: §6; the sweep's L7, SW-LK7: "model fingerprint 60adc7154078 ●" ended a
+#: line of the Diagnosis card, "verified" began the next).
+MARK_SPACE = '<span class="shep-st-sp">\u00a0</span>'
 
 
 def status_mark(kind: str, words: Any, *, words_html: bool = False,
@@ -283,6 +287,68 @@ def warn_chip(text: str) -> str:
     return status_mark("warn", text, as_chip=True)
 
 
+#: **The separator between the facts of one line** (" · ", hidden from a
+#: screen reader): joined to the fact before it by a no-break space, so a
+#: line that wraps breaks after it and a line never starts with "·" (the L6
+#: check: Test's identity line drew "· synthetic …" at 1550 px).
+SEP = '<span class="shep-sep" aria-hidden="true">\u00a0· </span>'
+
+
+#: **What a line never parts** (the sweep's L7, SW-LK7 and C11: "1" / "epoch completed",
+#: "recorded epoch" / "9", "GATv2 2026-10-02" / "00:00", "(see" / "Data)."): a short
+#: parenthesis (three words at most) with the stop or comma after it, a date and its time,
+#: a count and the word after it, and a word and the number that ends its text. Typography
+#: only, as a typesetter's no-break space: the words are never read for what they say.
+_BOUND = re.compile(
+    r"\([^()\s]+(?: [^()\s]+){0,2}\)[.,:]?"
+    r"|(?<![\w.:-])\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?(?: UTC)?"
+    r"|(?<![\w.:-])\d[\d.,:]* [^\s\d(][^\s]*"
+    r"|[^\s\d(][^\s]* \d[\d.,:]*(?=[.,:)]?$)")
+
+
+def bound_html(words: Any) -> str:
+    """`words` escaped, what a line never parts (`_BOUND`) drawn as one piece
+    (``shep-unit``: moved to the next line whole, wrapped inside only when it
+    is wider than its box), so a line breaks at any other space: a narrow cell reads
+    "GATv2 2026-10-02 00:00," / "1 epoch completed", never "1" / "epoch
+    completed". Every fact of a chain (`chain_html`), a relation's words
+    (`see_above`) and a notice's sentences (`literal_html`) are drawn so; a
+    status mark's words are a state or a sentence, which wrap as prose."""
+    text, out, at = "" if words is None else str(words), [], 0
+    for found in _BOUND.finditer(text):
+        out.append(e(text[at:found.start()]))
+        out.append(f'<span class="shep-unit">{e(found.group(0))}</span>')
+        at = found.end()
+    out.append(e(text[at:]))
+    return "".join(out)
+
+
+def chain_html(*facts: Any, tail: str = "") -> str:
+    """**Facts of one line joined by the shared separator** (`SEP`), each
+    escaped and drawn as one unit (``shep-fact``): it moves to the next line
+    whole where the line cannot hold it, and wraps inside only when it is
+    wider than a line (L7 SW-LK7: "GATv2 2026-10-02 00:00, 1 epoch complete"
+    and "recipe changed in 5 fields" broke inside though a line held them).
+    `tail`, HTML, ends the last fact's unit: the "Details ›" that opens that
+    fact moves with it (L7 SW-LK7: Fine-tune's "Details ›" under "recipe
+    changed in 5 fields"). Empty facts are left out. A fact wider than its line
+    breaks inside only where `bound_html` lets it."""
+    shown = [bound_html(fact) for fact in facts if fact]
+    if tail and shown:
+        shown[-1] += " " + tail
+    return SEP.join(f'<span class="shep-fact">{fact}</span>' for fact in shown)
+
+
+def whole_words(words: Any) -> str:
+    """`words` escaped, every word kept whole: a line breaks only at a space,
+    never at a word's own hyphen ("Fine-tune", "demo-test-1", "2026-11-16",
+    "model-12.pt"), so a narrow frame never cuts a word (D8) and a name never
+    reads as hyphenated across two lines (the L6 check: Datasets' versions
+    table broke "demo-test-1" as "demo-" / "test-1")."""
+    return " ".join(f'<span class="shep-nowrap">{e(word)}</span>' if "-" in word else e(word)
+                    for word in str(words).split(" "))
+
+
 def resources_html(resources: Mapping[str, Any]) -> str:
     """The resources reading (`TrainingManager.get_system_resources`, what
     ``GET /api/v1/system/resources`` answers) as one line of 14 px text: each
@@ -318,8 +384,7 @@ def resources_html(resources: Mapping[str, Any]) -> str:
             "available_gb") is not None else ram.get("used_gb", 0)
         parts.append(f"{label} {used:.1f} / {total:.1f} GB"
                      + (" (shared CPU + GPU pool)" if unified else ""))
-    items = '<span class="shep-sep" aria-hidden="true"> · </span>'.join(
-        f'<span>{e(p)}</span>' for p in parts)
+    items = SEP.join(f'<span>{e(p)}</span>' for p in parts)
     return f'<div class="shep-rv-res"><b>Resources</b> {items}</div>'
 
 
@@ -750,12 +815,14 @@ def dataset_details_html(row: Mapping[str, Any], facts: Optional[Mapping[str, An
 
 
 def dataset_identity_html(item: Any, *, digits: int = SHORT_HEX, name: bool = True,
-                          compact: bool = False) -> str:
+                          compact: bool = False, marks: str = "") -> str:
     """One workspace's identity: name; "built … UTC" or "build time not recorded ·
     sources …"; the dataset fingerprint; its origin and record
     (`dataset_marks_html`: amber "synthetic", "record verified" or the
     record's own missing or contradicted state); "not trainable: <why>" when
-    it is not (`not_trainable_chip`)."""
+    it is not (`not_trainable_chip`); then a page's own `marks` (HTML: Test's
+    "serving reads this workspace"), in the one marks group, which moves to a
+    line as a whole (L7 SW-LK7: a mark after the group parted from it)."""
     parts = []
     if name:
         parts.append(f'<span class="shep-ds-name">{e(_get(item, "name"))}</span>')
@@ -768,12 +835,13 @@ def dataset_identity_html(item: Any, *, digits: int = SHORT_HEX, name: bool = Tr
         parts.append(f'<span class="shep-ds-built shep-muted">{e(text)}</span>')
     parts.append(fingerprint_html("dataset fingerprint", _get(item, "dataset_fingerprint"),
                                   digits=digits, help_key="dataset-fingerprint"))
-    marks = dataset_marks_html(item)
+    group = dataset_marks_html(item)
     if not _get(item, "trainable", False):
-        marks += not_trainable_chip(item)
-    if marks:
-        parts.append(f'<span class="shep-ds-marks">{marks}</span>')
-    sep = " " if compact else '<span class="shep-sep" aria-hidden="true"> · </span>'
+        group += not_trainable_chip(item)
+    group += marks
+    if group:
+        parts.append(f'<span class="shep-ds-marks">{group}</span>')
+    sep = " " if compact else SEP
     return f'<span class="shep-ds">{sep.join(parts)}</span>'
 
 
@@ -784,6 +852,15 @@ def short_reason(text: Any, limit: int = 80) -> str:
     if len(flat) <= limit:
         return flat
     return flat[:max(end for end in grapheme_ends(flat) if end <= limit - 1)] + "…"
+
+
+def sentences(parts: Any) -> str:
+    """**Several messages said one after another, each its own sentence**
+    (the owner's decision of 2026-11-23: never two glued with a semicolon):
+    each part's words as given, stripped, ended by one full stop; empty
+    parts left out. The words are never re-worded or re-cased."""
+    said = [" ".join(str(part).split()).rstrip(".") for part in parts or ()]
+    return " ".join(f"{part}." for part in said if part)
 
 
 def reason_lead(text: Any) -> str:
@@ -813,33 +890,66 @@ _ROW = re.compile(r"^([A-Z][^:.!?]{0,31}):\s+(\S.*)$")
 DETAILS_WORD = "Details ›"
 
 
-def token_html(token: Any) -> str:
+def _pieces(text: str) -> List[str]:
+    """`text` cut before each of its own separators (`_TOKEN_BREAKS`, the
+    first of a run), a command-line option (a word that starts with "-")
+    kept as one piece: where `token_html` and `name_pieces_html` may break."""
+    pieces, start, option = [], 0, False
+    for i, ch in enumerate(text):
+        if ch == " ":
+            option = False
+            continue
+        first = i == 0 or text[i - 1] == " "
+        if first:
+            option = ch == "-"
+        if (i and ch in _TOKEN_BREAKS and text[i - 1] not in _TOKEN_BREAKS
+                and (first or not option)):
+            pieces.append(text[start:i])
+            start = i
+    pieces.append(text[start:])
+    return [piece for piece in pieces if piece]
+
+
+def name_pieces_html(name: Any) -> str:
+    """**A name in the body's type that breaks like a token** (the text
+    brief's §8): escaped, each piece between its own separators kept on one
+    line and a ``<wbr>`` between pieces, so its narrowest is its longest
+    piece, never an em floor (the sweep's L7, SW-LK3: Datasets' Name column
+    held 11.5em for "demo" and wrapped In use and the headers at 1850 x 960),
+    and it never reads hyphenated; a piece longer than its box breaks only as
+    the last resort (``.shep-brk``)."""
+    return ('<span class="shep-brk">'
+            + "<wbr>".join(f"<span>{e(piece)}</span>" for piece in _pieces(str(name or "")))
+            + "</span>")
+
+
+def token_html(token: Any, classes: str = "") -> str:
     """**One literal token** (a path, a file name, a variable) escaped and in
     code style, breakable only before its own separators: its pieces each
     kept on one line (a span, ``white-space: nowrap``: the browser's own
     break after a hyphen is not taken) with a ``<wbr>`` between them, so no
-    hyphen is drawn and a copy keeps the token whole (never U+200B)."""
+    hyphen is drawn and a copy keeps the token whole (never U+200B). A
+    command-line option (a word that starts with "-") is one piece: a
+    command breaks at the space before it, never inside it (the sweep's L7,
+    SW-LK7: "--generate-samples" broke as "--generate" / "-samples" and read
+    as two options). `classes` are added to the token's own."""
     text = "" if token is None else str(token)
-    pieces, start = [], 0
-    for i, ch in enumerate(text):
-        if i and ch in _TOKEN_BREAKS and text[i - 1] not in _TOKEN_BREAKS:
-            pieces.append(text[start:i])
-            start = i
-    pieces.append(text[start:])
-    return ('<code class="shep-tok">'
-            + "<wbr>".join(f"<span>{e(piece)}</span>" for piece in pieces if piece) + "</code>")
+    names = " ".join(("shep-tok", *classes.split()))
+    return (f'<code class="{names}">'
+            + "<wbr>".join(f"<span>{e(piece)}</span>" for piece in _pieces(text)) + "</code>")
 
 
 def literal_html(text: Any) -> str:
     """`text` escaped, with each literal token in it (`_LITERAL`) drawn by
     `token_html`: the one way a sentence of a notice, a step or a Ref line
-    shows a path or a variable."""
+    shows a path or a variable; its words between tokens as `bound_html`
+    draws them ("(Create suggested folder)" whole)."""
     words, out, at = "" if text is None else str(text), [], 0
     for found in _LITERAL.finditer(words):
-        out.append(e(words[at:found.start()]))
+        out.append(bound_html(words[at:found.start()]))
         out.append(token_html(found.group(0)))
         at = found.end()
-    out.append(e(words[at:]))
+    out.append(bound_html(words[at:]))
     return "".join(out)
 
 
@@ -870,6 +980,15 @@ def _marked(kind: str, inner: str, classes: str, attrs: str = "") -> str:
     mark = (f'<span class="shep-nb-mark shep-st-{token}" aria-hidden="true">'
             f'{shape or ""}{MARK_SPACE}</span>')
     return f'<p class="{classes}"{attrs}>{mark}<span class="shep-nb-text">{inner}</span></p>'
+
+
+def marked_line(kind: str, words: Any) -> str:
+    """**A state said as a sentence** (more than a state's word: "Nothing is
+    set yet. …"): a reason line (``shep-reason``, at the measure) led by the
+    state's mark in a column of its own (`_marked`), so a long sentence wraps
+    at the measure, its lines on its words' edge; `status_mark` is for a
+    state's word in a line of other words. `words` escaped."""
+    return _marked(kind, e(words), "shep-reason")
 
 
 def _go(notice: Mapping[str, Any], go: bool) -> str:
@@ -906,15 +1025,37 @@ def _detail_rows(notices: Sequence[Mapping[str, Any]]) -> Tuple[str, str]:
     return kv, ref
 
 
-def _details(notices: Sequence[Mapping[str, Any]]) -> str:
+def _details(notices: Sequence[Mapping[str, Any]], *, grouped: bool = False) -> str:
     """The notices' "Details ›": their rows and one Ref line; none when they
     hold no row (a Ref line alone is not worth a disclosure: the notice's link
-    leads to where its why is said)."""
+    leads to where its why is said). `grouped` (several notices said as one
+    block): each notice's rows under its setting's name (the notice's
+    `name`; its state is said once, on its line above), so a row is read as
+    the fact of the setting it explains; one Ref line under them all."""
     kv, ref = _detail_rows(notices)
     if not kv:
         return ""
+    if grouped and len(notices) > 1:
+        kv = "".join((f'<p class="shep-nb-sub">{e(n["name"])}</p>' if n.get("name") else "") + rows
+                     for n in notices for rows in [_detail_rows([n])[0]] if rows)
     return (f'<details class="shep-more shep-nb-more"><summary>{e(DETAILS_WORD)}</summary>'
             f'{kv}{ref}</details>')
+
+
+def _shared_step(notices: Sequence[Mapping[str, Any]]) -> Optional[Dict[str, str]]:
+    """**The one next step of several notices** (`notices_block`): when every
+    notice's step leads to one place, that place once, in the words the
+    settings' source gives several notices (`server_settings.SEVERAL_ACTIONS`
+    for their one action, else `PLACE_ACTIONS` for the place), never words
+    built here; None when their places differ or a step has no words."""
+    targets = {str(n.get("target") or "") for n in notices}
+    actions = list(dict.fromkeys(str(n.get("action") or "") for n in notices))
+    if len(targets) != 1 or not all(actions):
+        return None
+    target = next(iter(targets))
+    words = (SEVERAL_ACTIONS.get(actions[0], actions[0]) if len(actions) == 1
+             else PLACE_ACTIONS.get(target))
+    return {"action": words, "target": target} if words else None
 
 
 def _keys(notices: Iterable[Mapping[str, Any]]) -> str:
@@ -922,7 +1063,7 @@ def _keys(notices: Iterable[Mapping[str, Any]]) -> str:
 
 
 def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterable[Any] = (),
-                 steps: Iterable[str] = (), go: bool = True) -> str:
+                 steps: Iterable[str] = (), go: bool = True, details: bool = True) -> str:
     """**The one notice** (a setting's state, said once per screen where it
     empties a region; the text brief's §1 and §10): one line, its status mark
     in a column of its own, the state (`summary`), what it means here
@@ -934,7 +1075,10 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     (``data-notice-also``). `steps`: further steps, the action then step 1
     of a numbered list (each step's tokens in code style). Every value is
     escaped. ``data-notice`` names the key, so a screen can count each
-    notice once."""
+    notice once. `details` off: its "Details ›" is said by the region that
+    draws it, in that region's one disclosure (`notice_rows_html`: a card
+    whose own reason has a Details › of its own, two "Details ›" a line
+    apart; the sweep's L7, C1)."""
     found = _as_notice(notice)
     if found is None:
         return ""
@@ -955,53 +1099,97 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     ol = (f'<ol class="shep-nb-steps">{f"<li>{act}</li>" if act else ""}{listed}</ol>'
           if steps else "")
     return (f'<div class="shep-nb shep-nb-{kind}"{keys}>'
-            f'{_marked(kind, inner, "shep-nb-line")}{ol}{_details([found, *extra])}</div>')
+            f'{_marked(kind, inner, "shep-nb-line")}{ol}'
+            f'{_details([found, *extra]) if details else ""}</div>')
+
+
+def notice_rows_html(notice: Any) -> str:
+    """**A notice's Details, for a region's own disclosure** (`notice_block`
+    with ``details=False``): its term rows as one summary list and its Ref
+    line, as its own "Details ›" holds them; "" for no notice or no row."""
+    found = _as_notice(notice)
+    if found is None:
+        return ""
+    kv, ref = _detail_rows([found])
+    return f"{kv}{ref}" if kv else ""
 
 
 def notices_block(notices: Iterable[Any], *, consequence: Optional[str] = None,
                   go: bool = True) -> str:
     """**Several notices said once, as one block** (the Test page's data
     panel: the registry and the workspaces folder): each state on a line of
-    its own with its mark, then what they mean here and one next step when
-    every notice's step is the same (each its own after its state, else);
-    one "Details ›" with every notice's rows and one Ref line. One notice is
-    `notice_block`'s; none, ""."""
+    its own with its mark, then what they mean here and one next step for
+    the block when every notice's step leads to one place (`_shared_step`:
+    "Choose them in Settings › Data locations"; each its own after its state,
+    else); one "Details ›" with each notice's rows under its setting's
+    name and one Ref line. One notice is `notice_block`'s; none, ""."""
     found = [n for n in map(_as_notice, notices) if n]
     if len(found) <= 1:
         return notice_block(found[0], consequence=consequence, go=go) if found else ""
-    one = len({(n.get("action"), n.get("target")) for n in found}) == 1
+    shared = _shared_step(found)
     lines = []
     for n in found:
         inner = (f'<span class="shep-st-w shep-st-{STATUS_MARKS[n["kind"]][1]}">'
                  f'{e(n["summary"])}</span>')
-        if not one and _go(n, go):
+        if shared is None and _go(n, go):
             inner += f" {_go(n, go)}"
         lines.append(_marked(n["kind"], inner, "shep-nb-line"))
     after = " ".join(part for part in (
         f'<span class="shep-nb-then">{e(consequence)}</span>' if consequence else "",
-        _go(found[0], go) if one else "") if part)
+        _go(shared, go) if shared else "") if part)
     next_line = f'<p class="shep-nb-next">{after}</p>' if after else ""
     kind = "error" if any(n["kind"] == "error" for n in found) else "neutral"
     return (f'<div class="shep-nb shep-nb-{kind}" data-notice="{e(_keys(found))}">'
-            f'{"".join(lines)}{next_line}{_details(found)}</div>')
+            f'{"".join(lines)}{next_line}{_details(found, grouped=True)}</div>')
 
 
-def see_above(lead: str, notice: Any, *, where: Optional[str] = None,
-              details: bool = False) -> str:
-    """**A control's relation to the notice its screen shows** (said once,
-    `notice_block`): one line beside the control it explains, its status
-    mark, the control's state and the notice's short words ("Start
-    unavailable: no workspaces folder is set."), with where the notice is
-    when it is not in view of the control (`where`: "see above", "see Data").
-    With `details`, the notice's "Details ›" under it (where the screen shows
-    the notice's line elsewhere but not its details). ``data-notice-rel``
-    names the notice: a relation is not the notice said again."""
+#: **A disabled control's state, said one way on every page**: the control's
+#: name, this word, then why ("Start disabled: no workspaces folder is set.",
+#: `disabled_words`), never "unavailable" on one page and "disabled" on the
+#: next; a reason line a page draws itself leads with `DISABLED_MARK`, the mark
+#: a relation to a setting not yet set leads with (`see_above`).
+DISABLED = "disabled"
+#: The mark a disabled control's reason leads with where its page sets the
+#: mark in a column of its own: the neutral mark (grey, the skill's §6), its
+#: shape and colour as `_marked` draws them, never a page's own glyph.
+DISABLED_MARK = (f'<span class="shep-nb-mark shep-st-{STATUS_MARKS["neutral"][1]}" '
+                 f'aria-hidden="true">{STATUS_MARKS["neutral"][0]}</span>')
+
+
+def disabled_words(control: str, cause: str) -> str:
+    """"<control> disabled: <cause>": a disabled control's state and why,
+    the one form every page says it in (`DISABLED`)."""
+    return f"{control} {DISABLED}: {cause}"
+
+
+def relation_words(control: str, notice: Any, *, where: Optional[str] = None) -> str:
+    """`see_above`'s words as plain text, for a reason a page gives as text:
+    the control disabled, the notice's short words, and where the notice is
+    ("Start disabled: no results registry is set (see Data).")."""
     found = _as_notice(notice)
     if found is None:
         return ""
-    words = f"{lead}: {found['short']}" + (f" (see {where})" if where else "") + "."
+    return disabled_words(control, found["short"]) + (f" (see {where})" if where else "") + "."
+
+
+def see_above(control: str, notice: Any, *, where: Optional[str] = None,
+              details: bool = False) -> str:
+    """**A control's relation to the notice its screen shows** (said once,
+    `notice_block`): one line beside the control it explains, its status
+    mark, the control disabled and the notice's short words ("Start
+    disabled: no workspaces folder is set.", `relation_words`), with where
+    the notice is when it is not in view of the control (`where`: "see
+    above", "see Data"). With `details`, the notice's "Details ›" under it
+    (where the screen shows the notice's line elsewhere but not its
+    details). ``data-notice-rel`` names the notice: a relation is not the
+    notice said again."""
+    found = _as_notice(notice)
+    if found is None:
+        return ""
+    words = relation_words(control, found, where=where)
     rel = f' data-notice-rel="{e(found["key"])}"' if found.get("key") else ""
-    inner = f'<span class="shep-st-w shep-st-{STATUS_MARKS[found["kind"]][1]}">{e(words)}</span>'
+    inner = (f'<span class="shep-st-w shep-st-{STATUS_MARKS[found["kind"]][1]}">'
+             f'{bound_html(words)}</span>')
     line = _marked(found["kind"], inner, "shep-reason shep-nb-rel", rel)
     return line + (_details([found]) if details else "")
 
@@ -1123,7 +1311,7 @@ def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
     if unchecked:
         notes.append("comparison incomplete" if unchecked >= recorded.count
                      else f"comparison incomplete for {unchecked}")
-    return f"Recorded results: {recorded.count}" + (f" · {'; '.join(notes)}" if notes else "")
+    return f"Recorded results: {recorded.count}" + (f" · {', '.join(notes)}" if notes else "")
 
 
 #: Run layout keys whose name is not their upper case (a model bundle's
@@ -1390,17 +1578,22 @@ def configuration_text(item: Any) -> str:
     "GATv2 · recipe changed in 3 fields" (`differences`: which fields is axis
     2's, shown where the full list fits). A record refused or never read says
     which."""
+    return " · ".join(configuration_facts(item))
+
+
+def configuration_facts(item: Any) -> Tuple[str, ...]:
+    """`configuration_text`'s facts, each a fact of its line (`chain_html`)."""
     record = _get(item, "record")
     if record is None:
-        return "Not read"
+        return ("Not read",)
     differences = _get(item, "differences")
     if record != "model" or differences is None:
-        return "Not readable"
+        return ("Not readable",)
     if not differences:
-        return f"{architecture_label(_get(item, 'encoder'))} · reference recipe"
+        return (architecture_label(_get(item, 'encoder')), "reference recipe")
     count = len(differences)
-    return (f"{architecture_label(_get(item, 'encoder'))} · recipe changed in {count} "
-            f"field{'s' if count != 1 else ''}")
+    return (architecture_label(_get(item, 'encoder')),
+            f"recipe changed in {count} field{'s' if count != 1 else ''}")
 
 
 def _whole(value: Any) -> bool:
@@ -1435,8 +1628,28 @@ def model_name_line(item: Any, *, fit: bool = True) -> str:
     progress (`epoch_words`) after a comma, so the line keeps the run words'
     one " · ": "ui-live-stop-02 · GATv2 2026-10-24 17:39, 6 epochs
     completed"."""
-    run = run_words(_get(item, "architecture"), _get(item, "run"), fit=fit)
-    return f"{run}, {epoch_words(item)}"
+    return " · ".join(model_name_facts(item, fit=fit))
+
+
+def model_name_html(item: Any, *, fit: bool = True) -> str:
+    """`model_name_line` drawn as HTML: each of its facts one unit
+    (`chain_html`), so a line breaks between them, never inside "GATv2
+    2026-10-02 00:00, 1 epoch completed" where a line holds it (the sweep's
+    L7 check, C2: Models' details title broke inside the date at 1550,
+    1366 and 1280). Every page that draws the name in HTML uses this; plain
+    text (a title attribute, an export) keeps `model_name_line`."""
+    return chain_html(*model_name_facts(item, fit=fit))
+
+
+def model_name_facts(item: Any, *, fit: bool = True) -> Tuple[str, ...]:
+    """`model_name_line`'s facts, each a fact of its line (`chain_html`): the
+    run's distinguishing words, then its architecture and start time with its
+    progress; one fact when the run has no second part."""
+    what, rest = run_parts(_get(item, "architecture"), _get(item, "run"), fit=fit)
+    if fit:
+        what, rest = _fitted(what, rest, "", 0)
+    progress = epoch_words(item)
+    return (what, f"{rest}, {progress}") if rest else (f"{what}, {progress}",)
 
 
 # ---------------------------------------------------------------------------
@@ -1538,15 +1751,17 @@ def trained_on(fingerprint: Any, workspaces: Sequence[Any]) -> Tuple[str, ...]:
 def trained_on_html(fingerprint: Any, workspaces: Sequence[Any], *, digits: int = SHORT_HEX,
                     copy: bool = False) -> str:
     """"trained on <name> · dataset fingerprint …", or "trained on dataset
-    fingerprint … · matches no listed workspace" (one wording, both presets)."""
+    fingerprint … · matches no listed workspace" (one wording, both presets),
+    joined by the shared separator (`SEP`), so a line ends at it, never
+    starts with it, and the layout pass hides it where a line breaks."""
     names = trained_on(fingerprint, workspaces)
     fp = fingerprint_html("dataset fingerprint", fingerprint, digits=digits, copy=copy)
     if not is_digest(fingerprint):
         return f'<span class="shep-trained">trained on: {fp}</span>'
     if names:
         listed = ", ".join(f"<b>{e(n)}</b>" for n in names)
-        return f'<span class="shep-trained">trained on {listed} · {fp}</span>'
-    return (f'<span class="shep-trained">trained on {fp} · '
+        return f'<span class="shep-trained">trained on {listed}{SEP}{fp}</span>'
+    return (f'<span class="shep-trained">trained on {fp}{SEP}'
             f'<span class="shep-amber-t">matches no listed workspace</span></span>')
 
 
@@ -1676,6 +1891,11 @@ class ModelFacts(NamedTuple):
     serving_rows: Tuple[Tuple[str, str], ...] = ()
     task: Optional[str] = None
     configuration: Optional[str] = None
+    #: `name_line` and `configuration` as their facts (`model_name_facts`,
+    #: `configuration_facts`), each drawn as one unit of its line
+    #: (`chain_html`); empty: the line is drawn as its text.
+    name_facts: Tuple[str, ...] = ()
+    configuration_facts: Tuple[str, ...] = ()
     #: Whether the file's record was read: False for a record this build
     #: refuses or a file not read, whose missing figure is "not read", never
     #: "not recorded" (`validation_text`).
@@ -1739,6 +1959,7 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
                                       + ("the same dataset" if same else "another dataset"))),)
     return ModelFacts(
         name_line=model_name_line(item),
+        name_facts=model_name_facts(item),
         run=f"{architecture}/{run}" if architecture and run else None,
         checkpoint_file=(f"runs/{architecture}/{run}/checkpoints/{filename}"
                          if architecture and run and filename else None),
@@ -1760,6 +1981,8 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
         task=model_kind_text(item) if _get(item, "record") is not None else None,
         configuration=(configuration_text(item) if _get(item, "record") is not None
                        else None),
+        configuration_facts=(configuration_facts(item) if _get(item, "record") is not None
+                             else ()),
         validation_read=record_read(item),
         current_dataset=listed and _get(item, "trained_on_this_dataset") is True,
     )
@@ -2475,7 +2698,7 @@ def r10_state_parts(label: str, part: Any, evidence: Any
     count = (f"{recorded_count_text(_get(part, 'k'))} of "
              f"{recorded_count_text(_get(part, 'n'))} {unit}")
     if label == "disease_overlap":
-        count += f"; {recorded_count_text(_get(part, 'cases'))} test cases with one of them"
+        count += f", {recorded_count_text(_get(part, 'cases'))} test cases with one of them"
     return state, words, count
 
 
@@ -2526,7 +2749,7 @@ R10_TITLE = "Train/test overlap (R10)"
 #: both rows); the governed meaning is unchanged (the skill's §13).
 R10_HELP = (
     R10_TITLE,
-    "How much of the test set the checkpoint's recorded training or validation inputs hold.\n\n"
+    "How much of the test set the recorded training or validation inputs hold.\n\n"
     "Disease overlap: distinct test diseases an input case also has, of all distinct test "
     "diseases, and their test cases.\n"
     "Phenotype-set overlap: test cases matching an input case's disease and phenotype set, of "
@@ -2615,7 +2838,7 @@ def data_kind_lines(view: Mapping[str, Any], *, version_counts: bool = True) -> 
         return [("Generation", e(identity)),
                 ("Split manifest", fingerprint_value(_get(manifest, "sha256"),
                                                      what="split manifest fingerprint",
-                                                     copy=False) + f"; {kept}"),
+                                                     copy=False) + SEP + kept),
                 ("Training relation", e(GENERATED_EXPOSURE_NOTE))]
     if kind != "kg_edges":
         return []
@@ -2624,7 +2847,7 @@ def data_kind_lines(view: Mapping[str, Any], *, version_counts: bool = True) -> 
     split = exposure.get("split") if exposure is not None else None
     # An exposure block the one reader could not read is null with its
     # problem (fields named, never values): the result stands beside it.
-    source = ("Definition " + str(exposure.get("definition_version")) + "; "
+    source = ("Definition " + str(exposure.get("definition_version")) + " · "
               + (split if isinstance(split, str) else "the model record was not read")
               if exposure is not None else
               f"Its block does not read: {_get(view, 'exposure_problem') or 'no reason given'}")
@@ -2632,10 +2855,10 @@ def data_kind_lines(view: Mapping[str, Any], *, version_counts: bool = True) -> 
                                                           Mapping) else {}
     pairs = cohort.get("pairs") if isinstance(cohort.get("pairs"), Mapping) else {}
     graph = (f"Message passing over the split's {passing.get('part')} part, "
-             f"{recorded_count_text(passing.get('edges'))} edges; pairs {pairs.get('rule')} "
+             f"{recorded_count_text(passing.get('edges'))} edges · pairs {pairs.get('rule')} "
              f"with seed {pairs.get('seed')}, {recorded_count_text(pairs.get('rows'))} rows"
              if version_counts else
-             f"Message passing over the split's {passing.get('part')} part; pairs "
+             f"Message passing over the split's {passing.get('part')} part · pairs "
              f"{pairs.get('rule')} with seed {pairs.get('seed')}")
     measured = _get(view, "measured")
     statuses = measured.get("metrics") if isinstance(measured, Mapping) else None
@@ -2744,13 +2967,13 @@ def record_coverage_html(view: Mapping[str, Any], *, version_counts: bool = True
         run = run if isinstance(run, Mapping) else {}
         main = (f"<b>{e(count(run.get('pairs_scored')))} of {e(count(counts.get('pairs')))}"
                 "</b> stored pairs scored")
-        sub = (f"{count(counts.get('positive_edges'))} positive edges; "
+        sub = (f"{count(counts.get('positive_edges'))} positive edges, "
                f"{count(counts.get('edges_without_negative'))} without a negative to pair")
     elif kind == "generated":
         diseases = counts.get("diseases")
         main = (f"<b>{e(count(_get(view, 'n_ranked')))}</b> "
                 + ("cases ranked by the model" if task else
-                   "counted by the record; what they are is not described for this mode"))
+                   "counted by the record. What they are is not described for this mode."))
         sub = (f"{count(counts.get('samples'))} generated patients of {count(diseases)} "
                f"disease{'' if diseases == 1 else 's'}")
     else:
@@ -2762,13 +2985,13 @@ def record_coverage_html(view: Mapping[str, Any], *, version_counts: bool = True
             main = (f"<b>{e(count(_get(view, 'n_ranked')))} of "
                     f"{e(count(counts.get('ranked_eligible')))}</b> import-eligible cases "
                     "ranked by the model")
-            sub = (f"{count(counts.get('source_cases'))} source cases; "
+            sub = (f"{count(counts.get('source_cases'))} source cases, "
                    f"{count(counts.get('n_excluded'))} excluded at import: {reasons}")
         else:
-            main = e(f"{count(counts.get('source_cases'))} source cases; "
+            main = e(f"{count(counts.get('source_cases'))} source cases, "
                      f"{count(counts.get('n_excluded'))} excluded: {reasons}")
-            sub = (f"{count(_get(view, 'n_ranked'))} cases counted by the record; what they "
-                   "are is not described for this mode")
+            sub = (f"{count(_get(view, 'n_ranked'))} cases counted by the record. What they "
+                   "are is not described for this mode.")
             # Its first line is the version's counts: the record's own count stays.
             return f'<div>{main}</div><div class="shep-sub">{e(sub)}</div>'
     if not version_counts:
@@ -2891,7 +3114,7 @@ def _lp_rows(view: Mapping[str, Any], metrics: Mapping[str, Any]) -> List[Tuple[
             unit = status.get("unit")
             over = _dig(status, "denominator", "count")
             over_unit = _dig(status, "denominator", "unit")
-            said = "; ".join(str(part) for part in (
+            said = ", ".join(str(part) for part in (
                 unit if isinstance(unit, str) and unit else None,
                 f"over {recorded_count_text(over)} {over_unit}"
                 if isinstance(over_unit, str) and over_unit else None) if part)
@@ -3111,11 +3334,15 @@ def investigation_notes_html(notes: Sequence[Mapping[str, Any]], *, problems: Se
         parts.append(f'<div class="shep-rec-notes"><div class="shep-w600">Investigation notes '
                      f'({len(notes)})</div><ul>{items}</ul></div>')
     if problems:
-        parts.append('<div class="shep-sub">' + status_mark(
-            "neutral", "The investigation notes cannot all be read, so a note kept for this "
-                       "group may be missing here" + (": " + "; ".join(problems)
-                                                      if any(problems) else "."))
-            + "</div>")
+        # Several problems one a line (the owner's decision of 2026-11-23:
+        # never two glued with a semicolon); one stays on the mark's line.
+        said = [str(p) for p in problems if p]
+        lead = ("The investigation notes cannot all be read, so a note kept for this group "
+                "may be missing here")
+        parts.append('<div class="shep-sub">' + (
+            status_mark("neutral", f"{lead}: {said[0]}") if len(said) == 1 else
+            status_mark("neutral", f"{lead}:") + "".join(f"<div>{e(p)}</div>" for p in said)
+            if said else status_mark("neutral", f"{lead}.")) + "</div>")
     elif expected and not notes:
         parts.append(f'<div class="shep-sub">{e("No investigation note is kept for this group.")}'
                      "</div>")
@@ -3154,7 +3381,7 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
 
     location = ""
     if facts.checkpoint_file:
-        location = (f'<code>{e(facts.checkpoint_file)}</code>'
+        location = (token_html(facts.checkpoint_file)
                     + (f' <span class="shep-muted">(workspace {e(facts.workspace)})</span>'
                        if facts.workspace else ""))
     unread = facts.trained_on_unread
@@ -3171,10 +3398,13 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
     # dataset itself is said under the list's workspace select.
     trained_rows = ([] if facts.current_dataset else [(trained_label, data_fp)])
     identity = summary_list([
-        ("Model", e(facts.name_line)),
+        ("Model", chain_html(*facts.name_facts) if facts.name_facts else e(facts.name_line)),
         *([("Task", e(facts.task))] if facts.task else []),
-        *([("Configuration", e(facts.configuration))] if facts.configuration else []),
-        ("Run", f"<code>{e(facts.run)}</code>" if facts.run else "—"),
+        *([("Configuration", chain_html(*facts.configuration_facts) if facts.configuration_facts
+                            else e(facts.configuration))] if facts.configuration else []),
+        # A run and a file are tokens: broken only before their own separators (the sweep's
+        # L7, SW-LK7: "gatv2/20261002-000000_…" ended a line of the Load drawer at a hyphen).
+        ("Run", token_html(facts.run) if facts.run else "—"),
         ("Checkpoint file", location or "—"),
         (FACTS_MODEL_FP, model_fp),
         *trained_rows,
@@ -3218,9 +3448,18 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
 __all__ = [
     "CURRENT_DATASET",
     "DETAILS_WORD",
+    "DISABLED",
+    "DISABLED_MARK",
+    "SEP",
+    "whole_words",
+    "disabled_words",
     "literal_html",
+    "marked_line",
+    "name_pieces_html",
     "notice_block",
+    "notice_rows_html",
     "notices_block",
+    "relation_words",
     "see_above",
     "token_html",
     "LP_MODE",
@@ -3320,7 +3559,11 @@ __all__ = [
     "entry_place",
     "RUN_OPERATION_WORDS",
     "model_spec_html",
+    "model_name_html",
     "model_name_line",
+    "model_name_facts",
+    "chain_html",
+    "configuration_facts",
     "named_words",
     "not_trainable_chip",
     "not_trainable_short",
@@ -3330,6 +3573,7 @@ __all__ = [
     "r10_state_text",
     "r10_table_html",
     "reason_lead",
+    "sentences",
     "record_chip",
     "record_kind_text",
     "record_read",

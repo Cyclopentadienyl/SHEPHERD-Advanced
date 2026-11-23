@@ -696,7 +696,7 @@ def test_the_test_page_lists_a_kg_edge_set_and_its_start_says_why_it_is_not_meas
     shown = tp.version_html(page, "kg-test", None)
     assert "KG edge set" not in shown
     counts = edges.manifest["counts"]
-    assert (f"{counts['pairs']} pairs from {counts['positive_edges']} positive edges; message "
+    assert (f"{counts['pairs']} pairs from {counts['positive_edges']} positive edges, message "
             f"passing over {counts['message_passing_edges']} edges") in shown
     assert f"Counts and units ({len(counts)})" in shown
     # Each count's unit under Counts and units, with the value of the one the

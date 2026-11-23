@@ -3166,8 +3166,9 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
   頁面會回到目前顯示的頁面，連同它的階段說明：由這個瀏覽器分頁記住顯示的是哪一頁（網址不保留
   位置）。
 - 視窗至少 1400 × 760 CSS 像素時，頁面本身不捲動；某個區域的內容超出空間時，在它自己的面板
-  內捲動。視窗較窄或直向時，各區域上下堆疊，由頁面捲動。佈景主題
-  最小的文字為 14 px。
+  內捲動。視窗較窄或直向時，各區域上下堆疊，由頁面捲動。自 2026-11-23 起，版面最多縮到
+  1280 × 720 CSS 像素的顯示下限（寬不大於高的視窗，兩個方向皆為 864 像素）為止：視窗更小時，
+  版面照下限的尺寸繪製，由瀏覽器捲動整個頁面。佈景主題最小的文字為 14 px。
 - 無論系統或瀏覽器要求深色模式，儀表板一律以它的淺色配色顯示（它的配色沒有深色版本，而
   Gradio 的深色模式會讓頁面上的文字無法閱讀）；網址會加上 `?__theme=light`。Gradio 自己的頁尾
   （它的 API 頁面、「Built with Gradio」與它自己的「Settings」）不再顯示。
@@ -4127,7 +4128,7 @@ in Settings.」）。再從桌面項目或 `launch_shepherd.sh` 啟動它。對�
 每個按鈕都會顯示鎖，"Operator controls only: <原因>" 寫在旁邊。
 
 **執行環境那一行**在每個頁面的底部，先寫問題的後果，再寫原因：「▲ No CUDA device visible: GPU
-training is unavailable. torch is built for CUDA 13.0; check the driver and CUDA libraries.」（失去某項
+training is unavailable. torch is built for CUDA 13.0. Check the driver and CUDA libraries.」（失去某項
 能力時為紅色 ✕，例如「GNN scoring cannot run: torch is not importable (…)」）；沒有問題時寫
 「Runtime: every checked module imports.」。版本（torch、CUDA、PyG、原生擴充、Voyager）在
 **Versions ›** 下，點一下即可看到。`GET /api/v1/system/runtime` 以相同的文字回傳相同的問題。

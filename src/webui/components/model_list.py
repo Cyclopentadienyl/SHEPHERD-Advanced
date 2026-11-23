@@ -245,7 +245,7 @@ from src.webui.components.served_status import (
 )
 from src.webui.operator_access import operator_access
 from src.webui.shell import picked, plain_html
-from src.webui.style import FIT, FIT_WIDE
+from src.webui.style import CELL_WHOLE, COL_OPT, COL_TWIN, FIT, FIT_WIDE
 
 logger = logging.getLogger(__name__)
 
@@ -254,12 +254,12 @@ PAGE_WAIT_SECONDS = 180
 #: What the confirmation says while this page waits for its reload's answer:
 #: the page's own wait, never the load's state, which the server's status
 #: says (the Diagnosis card's "Loading"), whichever page or client started it.
-PAGE_WAIT_WORDS = "Reload sent; waiting for the server's answer…"
+PAGE_WAIT_WORDS = "Reload sent. Waiting for the server's answer…"
 
 #: What a confirmation says it replaces (the mockup's words).
 REPLACES_NOTE = (
-    "Replaces what every session is served once the new model is checked and published; "
-    "until then nothing changes, and results already produced keep their own identity."
+    "Replaces what every session is served once the new model is checked and published. "
+    "Until then nothing changes, and results already produced keep their own identity."
 )
 #: Said when what is served changed between the confirmation and its confirm.
 FROM_CHANGED = ("What every session is served changed since this was shown (another session "
@@ -268,7 +268,7 @@ FROM_CHANGED = ("What every session is served changed since this was shown (anot
 TO_CHANGED = ("What would be loaded changed since this was shown: the To column is what the "
               "file and its workspace hold now.")
 #: Ends either notice.
-NOTHING_RELOADED = "Nothing was reloaded; check the rows again, then reload or keep."
+NOTHING_RELOADED = "Nothing was reloaded. Check the rows again, then reload or keep."
 
 #: **The list's one filter vocabulary** (``view["task"]``, `matches`): every
 #: row; the bases; one task's finetuned models; every model finetuned for a
@@ -309,10 +309,16 @@ class Preset:
     rows: str = "all"
     #: Whether its listing carries the family view (`family_views`).
     family: bool = False
+    #: Where its page says the workspaces folder's notice itself (None: the
+    #: list's empty state says it): Diagnosis' card, "Model in use", where the
+    #: screen's first action is (L7 SW-LK8); the drawer's empty list then says
+    #: a relation to it, never the notice again.
+    notice_where: Optional[str] = None
 
 
 PRESETS: Dict[str, Preset] = {
-    "clinical": Preset("clinical", 4, "In use", layout="drawer", rows="task_models"),
+    "clinical": Preset("clinical", 4, "In use", layout="drawer", rows="task_models",
+                       notice_where="Model in use"),
     "research": Preset("research", None, "In use (Diagnosis)", layout="page", family=True),
 }
 
@@ -910,7 +916,14 @@ def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Prese
         why = (f"No {what} is listed in the latest runs. Show older runs reads the rest."
                if unread else f"No {what} is listed in this workspace.")
     elif listing.get("notice") and not listing.get("items"):
-        return r.notice_block(listing["notice"])
+        notice = listing["notice"]
+        if preset is not None and preset.notice_where and notice.get("short"):
+            # Said once on the screen, where the preset's page says it: here
+            # its relation, in the notice's own short words.
+            words = f"No model to list: {notice['short']} (see {preset.notice_where})."
+            return (f'<p class="shep-empty" data-notice-rel="{r.e(notice.get("key") or "")}">'
+                    f'{r.e(words)}</p>')
+        return r.notice_block(notice)
     elif listing.get("problem"):
         why = listing["problem"]
     elif listing.get("status_read") and listing.get("workspace") is None \
@@ -988,7 +1001,6 @@ TREE_COLUMNS = ("Model", "Task", "Operation", "Epochs", "Files", "Fingerprint")
 #: the shared style sheet draws no optional cell; when even that does not fit,
 #: the frame scrolls sideways, its own region.
 OPTIONAL_COLUMNS = ("Epochs", "Files", "Fingerprint")
-COL_OPT = "shep-col-opt"
 #: A hex query this long or longer is also read as a fingerprint's start.
 FINGERPRINT_PREFIX = 4
 _HEX = re.compile(r"[0-9a-f]+")
@@ -1231,7 +1243,7 @@ def _epochs_cell(items: Sequence[Mapping[str, Any]]) -> str:
               and not isinstance(i.get("completed_epochs"), bool)]
     if counts:
         return str(max(counts))
-    return f'<span class="shep-muted">{r.e(r.epoch_words(items[0] if items else {}))}</span>'
+    return f'<span class="shep-muted">{r.bound_html(r.epoch_words(items[0] if items else {}))}</span>'
 
 
 def _file_names(items: Mapping[str, Any], keys: Sequence[str]) -> Dict[str, str]:
@@ -1250,14 +1262,6 @@ def _fold_button(node: str, opened: bool, label: str) -> str:
             f'aria-expanded="{"true" if opened else "false"}" '
             f'aria-label="{r.e(label)}"><span aria-hidden="true">'
             f'{"▾" if opened else "▸"}</span></button>')
-
-
-def _whole_words(words: Any) -> str:
-    """`words` escaped, every word kept whole: a line breaks only at a space,
-    never at a word's own hyphen ("Fine-tune", "demo-disease-frozen",
-    "2026-11-16", "model-12.pt"), so a narrow frame never cuts a word (D8)."""
-    return " ".join(f'<span class="shep-nowrap">{r.e(word)}</span>' if "-" in word else r.e(word)
-                    for word in str(words).split(" "))
 
 
 class _Files(NamedTuple):
@@ -1304,7 +1308,7 @@ def _file_cells(files: _Files, key: str, words: str, selected: Optional[str], pr
     attrs = (f'class="{" ".join(classes)}" data-key="{r.e(key)}"'
              + (f' data-in="{r.e(within)}"' if within else "") + ' tabindex="0"'
              + (' aria-current="true"' if key == selected else "") + (" hidden" if hidden else ""))
-    name = f'<div class="shep-tree-name shep-tree-leaf">{_whole_words(words)}{tag}</div>'
+    name = f'<div class="shep-tree-name shep-tree-leaf">{r.whole_words(words)}{tag}</div>'
     if unreadable:
         return attrs, name, None
     exception = r.dataset_exception(item)
@@ -1322,8 +1326,8 @@ def _unreadable_words(item: Mapping[str, Any]) -> str:
     Models' detail, the drawer's facts), one click away."""
     state = r.unreadable_words(item)
     why = r.reason_lead(item.get("problem")) or "its digest was not read"
-    return (f'<span class="shep-sub">{r.e(state[:1].upper() + state[1:])}: {r.e(why)}; '
-            'cannot be loaded</span>')
+    return (f'<span class="shep-sub">{r.e(state[:1].upper() + state[1:])}: {r.e(why)}. '
+            'It cannot be loaded.</span>')
 
 
 def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Preset,
@@ -1380,7 +1384,7 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                 why = first.get("problem") or "not read"
                 rows.append(
                     f'<tr class="shep-tree-entry shep-row-dis">'
-                    f'<td><span class="shep-w600">{_whole_words(first.get("run"))}</span>'
+                    f'<td><span class="shep-w600">{r.whole_words(first.get("run"))}</span>'
                     f'<div class="shep-sub">{r.e(place)}</div></td>'
                     # Why, in words on the page (B69 L3: said once, never only
                     # on hover), naming no server path (the listing's redacted).
@@ -1389,9 +1393,12 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
             summary = _run_summary(listing, run)
             # The run by its words, told apart from the other runs' (as every
             # Run select names them): its name first, then its layout and start.
+            # Its layout and start one fact, kept on one line (a time never parts from its date),
+            # after the shared separator (never drawn at a line's end).
             what, _sep, rest = names[run.key].partition(" · ")
-            label = (f'<span class="shep-w600">{_whole_words(what)}</span>'
-                     + (f'<span class="shep-muted"> · {_whole_words(rest)}</span>' if rest else ""))
+            label = (f'<span class="shep-w600">{r.whole_words(what)}</span>'
+                     + (f'{r.SEP}<span class="shep-muted shep-nowrap">{r.e(rest)}</span>'
+                        if rest else ""))
             count = (f"{len(run.files)} of {run.total}" if len(run.files) < run.total
                      else str(run.total))
             rows.append(
@@ -1399,8 +1406,9 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                 f'<td><div class="shep-tree-name">'
                 f'{_fold_button(node, run_open, "Show the saved files of " + what)}'
                 f'<span class="shep-tree-label">{label}</span></div></td>'
-                f'<td>{_whole_words(r.record_kind_text(summary))}</td>'
-                f'<td><span class="shep-op">{_whole_words(r.operation_words(summary))}</span></td>'
+                f'<td class="{CELL_WHOLE}">{r.whole_words(r.record_kind_text(summary))}</td>'
+                f'<td class="{CELL_WHOLE}"><span class="shep-op">'
+                f'{r.whole_words(r.operation_words(summary))}</span></td>'
                 f'<td{num_opt}>{_epochs_cell([items[k] for k in run.files])}</td>'
                 f'<td{num_opt}>{r.e(count)}</td><td{opt}></td></tr>')
             words = _file_names(items, files.run_files[run.key])
@@ -1412,7 +1420,16 @@ def _tree_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pres
                                 f'{_unreadable_words(items[key])}</td></tr>')
                     continue
                 epochs, fingerprint = cells
-                rows.append(f'<tr {attrs}><td>{name}</td><td></td><td></td>'
+                # How far it trained and its fingerprint, under its name while the Epochs and
+                # Fingerprint columns are dropped: each a unit of one chain (the sweep's L7
+                # check, SW-LK4: at 1366 and 1280 no fingerprint was in the list, which is
+                # searched by name or fingerprint).
+                print_ = r.fingerprint_value(items[key].get("sha256"), what="model fingerprint",
+                                             digits=files.digits, copy=False)
+                twin = (f'<div class="{COL_TWIN} shep-sub">'
+                        f'<span class="shep-fact">{r.bound_html(r.epoch_words(items[key]))}</span>'
+                        f'{r.SEP}<span class="shep-fact">{print_}</span></div>')
+                rows.append(f'<tr {attrs}><td>{name}{twin}</td><td></td><td></td>'
                             f'<td{num_opt}>{epochs}</td><td{opt}></td>'
                             f'<td{opt}>{fingerprint}</td></tr>')
         bodies.append(f'<tbody data-node="{r.e(group.node)}">{"".join(rows)}</tbody>')
@@ -1729,16 +1746,16 @@ def _graph_html(listing: Mapping[str, Any], selected: Optional[str], preset: Pre
                  if len(run.files) < run.total else _counted(run.total, "saved file"))
         lines = [
             f'<span class="shep-fam-name"><span class="shep-w600">{r.e(what)}</span>'
-            + (f'<span class="shep-muted"> · {_whole_words(rest)}</span>' if rest else "")
+            + (f'<span class="shep-muted"> · {r.whole_words(rest)}</span>' if rest else "")
             + "</span>",
-            f'<span class="shep-fam-ln">{_whole_words(r.record_kind_text(summary))} · '
-            f'{_whole_words(r.operation_words(summary))}</span>',
+            f'<span class="shep-fam-ln">{r.whole_words(r.record_kind_text(summary))} · '
+            f'{r.whole_words(r.operation_words(summary))}</span>',
             f'<span class="shep-fam-ln">{r.e(count)}, '
-            f'{_whole_words(_epochs_words([items[f] for f in run.files]))}</span>']
+            f'{r.whole_words(_epochs_words([items[f] for f in run.files]))}</span>']
         parent = shape.parent_key.get(key)
         if parent is not None and len(files.run_files.get(item_run_key(items[parent]), ())) > 1:
             lines.append(f'<span class="shep-fam-ln">from '
-                         f'{_whole_words(_parent_file_words(files, parent))}</span>')
+                         f'{r.whole_words(_parent_file_words(files, parent))}</span>')
         if run.context:
             lines.append(f'<span class="shep-fam-ln">'
                          f'{r.status_mark("neutral", "Parent of a shown run")}</span>')
@@ -1838,7 +1855,7 @@ def outside_html(listing: Mapping[str, Any], tree: TreeView, view: Any = None) -
     lead = ("Selected model not shown among the latest runs" if not why and tree.cut
             else f"Selected model not shown by this filter ({', '.join(why) or 'the order'})")
     words = (f"{lead}: {r.model_kind_text(item)}, "
-             f"{r.run_words(item.get('architecture'), item.get('run'))}; its details are kept")
+             f"{r.run_words(item.get('architecture'), item.get('run'))}. Its details are kept.")
     action = ('<button type="button" class="shep-btn shep-linkish" data-key="__clear_search__">'
               'Clear search</button>' if tree.query and search_hit(item, tree.query) is None
               else "")
@@ -1984,20 +2001,31 @@ def load_button(listing: Mapping[str, Any], item: Optional[Mapping[str, Any]]) -
     return gated(LOAD_LABEL, not listing.get("refused"), interactive=can_load(item))
 
 
+#: Load's cause while no model is chosen (the sweep's L7, SW-LK6: Load stood
+#: disabled with nothing said; the skill's §9).
+CHOOSE_A_MODEL = "choose a model in the list first."
+
+
 def load_reason_html(item: Optional[Mapping[str, Any]],
                      listing: Optional[Mapping[str, Any]] = None) -> str:
     """Beside the Load button, why it is off: for a listing D8 refused, its
-    reason with the lock (`chips.operator_only`, the skill's §3); for the
+    reason with the lock (`chips.operator_only`, the skill's §3); with no
+    model chosen, its relation to the listing's notice when the list is empty
+    for want of a setting (`renderers.see_above`: the notice is the list's,
+    said once), else that a model is to be chosen (`CHOOSE_A_MODEL`); for the
     selected row, when its record is never loaded (`load_refusal`) or its
     file was not read (its state, `renderers.unreadable_words`); nothing
-    otherwise."""
+    otherwise. Every disabled Load says why, in the shared form."""
     if (listing or {}).get("refused"):
         from src.webui.components.chips import LOCK
 
         return (f'<div class="shep-reason shep-reason-grey">{LOCK} '
                 f'{r.e(refused_line(listing or {}))}</div>')
     if item is None:
-        return ""
+        notice = (listing or {}).get("notice")
+        if notice and not (listing or {}).get("items"):
+            return r.see_above(LOAD_LABEL, notice)
+        return r.marked_line("neutral", r.disabled_words(LOAD_LABEL, CHOOSE_A_MODEL))
     if not loadable(item):
         # A file not read, or whose read failed: its state, as its row says
         # it; why is in its details (`facts_html`, Models' detail).
@@ -2028,7 +2056,8 @@ def facts_html(listing: Mapping[str, Any], key: Any) -> str:
     facts = r.facts_from_checkpoint(item, workspaces, recorded=_recorded(listing, key),
                                     serving_workspace=serving, listed=True)
     title = (f'<div class="shep-facts-title" data-facts-key="{r.e(key)}" tabindex="-1">'
-             f'<b>{r.e(facts.name_line)}</b> {r.chip("selected", "neutral")}{BACK_TO_LIST}</div>')
+             f'<b>{r.chain_html(*facts.name_facts) if facts.name_facts else r.e(facts.name_line)}'
+             f'</b> {r.chip("selected", "neutral")}{BACK_TO_LIST}</div>')
     return title + r.model_facts_html(facts)
 
 
@@ -2150,6 +2179,7 @@ def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) 
     meta = (status or {}).get("checkpoint_meta") or {}
     if item is not None:
         model = r.model_name_line(item, fit=False)
+        model_html = r.model_name_html(item, fit=False)
     elif sha:
         model = f"{r.epoch_words(meta)} (not in this workspace's list)"
     else:
@@ -2159,6 +2189,7 @@ def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) 
     return {
         "served": bool((status or {}).get("initialized")),
         "model": model,
+        "model_html": model_html if item is not None else r.e(model),
         "sha256": sha,
         "trained_on": item.get("dataset_fingerprint") if item else None,
         "trained_on_known": item is not None,
@@ -2183,6 +2214,7 @@ def _to_side(item: Mapping[str, Any], workspace: str, workspace_dir: Path,
     mode = TASK_SCORING_MODES.get(item.get("task"))
     return {
         "model": r.model_name_line(item, fit=False),
+        "model_html": r.model_name_html(item, fit=False),
         "sha256": item.get("sha256"),
         "trained_on": item.get("dataset_fingerprint"),
         "trained_on_known": True,
@@ -2252,7 +2284,7 @@ def _cell(side: Mapping[str, Any], row: str, workspaces: Sequence[Any], *, to: b
     if side.get("served") is False and row in _SERVED_ROWS:
         return '<span class="shep-muted">not applicable</span>'
     if row == "model":
-        return r.e(side["model"])
+        return side.get("model_html") or r.e(side["model"])
     if row == "sha":
         return r.fingerprint_value(side["sha256"], what="model fingerprint", copy=False)
     if row == "trained":
@@ -2318,7 +2350,7 @@ def confirmation_html(plan: Mapping[str, Any], *, notice: Optional[str] = None) 
         f'<span class="shep-spinner" aria-hidden="true"></span> <b>{r.e(PAGE_WAIT_WORDS)} '
         '<span class="shep-elapsed">00:00:00</span></b> Closing this does not stop it.</div>'
         '<div class="shep-load-timeout" hidden><b>The page stopped waiting after '
-        f'{PAGE_WAIT_SECONDS} s; the server may still finish the reload.</b> '
+        f'{PAGE_WAIT_SECONDS} s. The server may still finish the reload.</b> '
         f'<button type="button" class="shep-btn shep-read-again" data-key="__read_again__">'
         'Read again</button></div>'
         f'<span class="shep-vh" data-old="{r.e(old)}"></span></div>'
@@ -2407,7 +2439,7 @@ def request_load(listing: Mapping[str, Any], key: Any, request: Any, *,
     if target.get("sha256") != item.get("sha256"):
         notice = (f"The file changed since the list was read: it holds model "
                   f"{r.short_hex(target.get('sha256'))} now, not {r.short_hex(item.get('sha256'))}"
-                  " as listed. The To column is what it holds now; read the list again to see "
+                  " as listed. The To column is what it holds now. Read the list again to see "
                   "the rest.")
     return plan, confirmation_html(plan, notice=notice)
 
@@ -2530,7 +2562,7 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
         # The route answers its operator with the build's own words, which
         # can name the checkpoint's path; the page says them without it.
         why = _said(answer.get("message") or "the reload was refused", environ)
-        return LoadStep(None, _outcome("grey", "Not reloaded; the model in use is unchanged.",
+        return LoadStep(None, _outcome("grey", "Not reloaded. The model in use is unchanged.",
                                        why),
                         "", served if isinstance(after, Mapping) else now_sha, changed)
     text = f"The model in use for every session is now {r.short_hex(served)}."
@@ -4030,6 +4062,7 @@ __all__ = [
     "load_closed_js",
     "load_guard",
     "load_reason_html",
+    "CHOOSE_A_MODEL",
     "load_refusal",
     "loadable",
     "loading_buttons",

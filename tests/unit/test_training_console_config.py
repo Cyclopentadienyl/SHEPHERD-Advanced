@@ -297,7 +297,7 @@ def test_the_line_says_what_the_operator_set_with_the_value_the_run_takes_withou
     Start sends, with the reference's value, or this build's default where
     the recipe sets none; a value equal to the reference is still listed."""
     assert tc.set_by_you_html(_values(), []) == (
-        '<div class="shep-setby"><p>Set by you: nothing; the run takes the reference '
+        '<div class="shep-setby"><p>Set by you: nothing. The run takes the reference '
         "values and this build&#x27;s defaults.</p></div>")
     line = tc.set_by_you_html(
         _values(num_epochs=5, split_seed=0, num_neighbors="20, 10, 5"),
@@ -633,8 +633,8 @@ def test_a_fields_format_unit_or_off_is_visible_under_it():
     # settings that adds one (onecycle's ratio above 0). The warmup words are
     # held to a real Trainer (test_settings_projection).
     assert tc.FIELD_FORMATS["min_lr_ratio"] == (
-        f"A fraction of the peak rate, {tf.bound_words(tf.by_name('min_lr_ratio').valid)}; "
-        "more than 0 with onecycle.")
+        f"A fraction of the peak rate, {tf.bound_words(tf.by_name('min_lr_ratio').valid)}. "
+        "More than 0 with onecycle.")
     assert tf.bound_words(tf.by_name("min_lr_ratio").valid) == "between 0 and 1"
 
 
@@ -669,8 +669,9 @@ def test_the_freeze_field_shows_plain_words_and_sends_the_field_specs_values():
     # each is, never "a provisional default ... not tuned" (review of A2).
     # Its source is the text's trailing Ref line (the bubble's grammar, R-42);
     # one colon a sentence (the UI sweep's text brief).
-    assert text.endswith("\n\nReference: Trained, not a tuned value. Trained is the source's "
-                         "full fine-tune, and Frozen is the frozen-backbone control.\n"
+    assert text.endswith("\n\nReference: Trained, not a tuned value.\n"
+                         "- Trained: the source's full fine-tune\n"
+                         "- Frozen: the frozen-backbone control\n"
                          f"Ref: {FINETUNE_SOURCES['frozen_parts']}")
     assert "provisional" not in text
     epochs = tc.setting_help("num_epochs", FINETUNE, FINETUNE_SOURCES)[1]

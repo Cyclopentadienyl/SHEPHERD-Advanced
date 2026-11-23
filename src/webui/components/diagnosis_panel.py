@@ -48,7 +48,7 @@ inside its own panel; stacked, the panels stack and only the page scrolls.
   (`stop_views_closed`), so nothing the page holds outlives the state it
   describes (a "stopped" notice after a model is loaded again, say).
 - **Run Diagnosis** is greyed out and not clickable when nothing is served
-  or inference is stopping ("Disabled until a model is loaded" under it, a
+  or inference is stopping ("Run Diagnosis disabled: …" under it, a
   bubble on hover and on keyboard focus for each cause; the card above says
   which, once) and while a model change is open; while this page's Load
   reloads, Run Diagnosis waits for its answer (set in the list's step before
@@ -126,12 +126,15 @@ from src.webui.components.help import (HIT_TARGET, KEY_FIRST_CLASS, REGION_CLASS
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import OPTION_CHARS
+from src.webui.components.renderers import chain_html as _chain_html
 from src.webui.components.renderers import cut_at as _cut_at
+from src.webui.components.renderers import disabled_words as _disabled_words
 from src.webui.components.renderers import e as _e
 from src.webui.components.renderers import fingerprint_value as _fingerprint_value
 from src.webui.components.renderers import grapheme_ends as _grapheme_ends
 from src.webui.components.renderers import is_digest as _is_digest
 from src.webui.components.renderers import keep_as as _keep_as
+from src.webui.components.renderers import marked_line as _marked_line
 from src.webui.components.renderers import resources_html as _resources_html
 from src.webui.exports import download_update, export_dir, file_slug
 from src.webui.components.renderers import summary_list as _summary_list
@@ -139,7 +142,7 @@ from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.components.renderers import STATUS_MARKS as _STATUS_MARKS
 from src.webui.components.renderers import status_mark as _status_mark
 from src.webui.operator_access import operator_access
-from src.webui.style import FOLD, FOLD_FLOOR, FOLD_ROOM, FOLDED_ATTR, SIDE, SIDE_SHORT, STACK
+from src.webui.style import FOLD, FOLD_FLOOR, FOLD_ROOM, FOLDED_ATTR, SEG_WHOLE, SIDE, SIDE_SHORT, STACK
 
 logger = logging.getLogger(__name__)
 
@@ -300,8 +303,7 @@ GENE_SCORE_RANKS = ("Score ranks your candidate genes: η × model similarity + 
                     "similarity.")
 GENE_SCORE_NOTE = f"{GENE_SCORE_RANKS} It is not a calibrated probability."
 #: The same for a patients-like-me model's reference patients.
-SIMILARITY_RANKS = ("Similarity ranks the reference cohort's patients: 0 is the closest, lower "
-                    "is less alike.")
+SIMILARITY_RANKS = "Similarity ranks the cohort's patients: 0 is closest, lower is less alike."
 SIMILARITY_CAVEAT = "It is not a calibrated probability, and a shared causal gene is not implied."
 SIMILARITY_NOTE = f"{SIMILARITY_RANKS} {SIMILARITY_CAVEAT}"
 #: What a reference patient's recorded diagnosis, causal genes and HPO terms
@@ -490,7 +492,7 @@ def _too_many_phenotypes(entry: Dict[str, Any]) -> Optional[str]:
     if not all(isinstance(n, int) and not isinstance(n, bool) for n in (received, limit)):
         return None
     return (
-        f"Recognised {received} HPO phenotype entries (repeats included); one "
+        f"Recognised {received} HPO phenotype entries (repeats included). One "
         f"submission accepts at most {limit}. No diagnosis was run, and the list "
         "was not shortened. Remove repeats or shorten the list, then submit again."
     )
@@ -753,7 +755,7 @@ _IDENTITY_PARTS = (
 #: Why nothing can be said, for the two kinds that have no identity to read.
 _NO_IDENTITY_REASON = {
     IDENTITY_NOT_REPORTED: "the API's response did not carry a served identity",
-    IDENTITY_NO_MODEL: "no model is loaded on this server now; nothing is served",
+    IDENTITY_NO_MODEL: "no model is loaded on this server now, so nothing is served",
 }
 _SCORING_MODE_WORDS = {
     "disease_task": "a model finetuned for the disease task, over its graph view",
@@ -1529,7 +1531,7 @@ EXPORTS_HIDDEN = "hidden"
 #: **What must stay visible under a field** (``info=``; the WebUI skill §7: a
 #: format is never only in a bubble or a placeholder; UI-15, R-6).
 FIELD_INFO = {
-    "dx_hpo_terms": "Only HP:####### ids are read; names and punctuation are ignored.",
+    "dx_hpo_terms": "Only HP:####### ids are read. Names and punctuation are ignored.",
     "dx_patient_id": "Optional. Left blank, the server gives the result its own id.",
 }
 
@@ -1540,7 +1542,7 @@ FIELD_HELP = {
     "dx_hpo_terms": (
         "HPO terms",
         "Paste HPO ids in any format: one per line, or separated by commas or spaces.\n\n"
-        "- Names and stray punctuation are ignored. Only HP:####### ids are used.\n"
+        "- Only HP:####### ids are read. Names and punctuation are ignored.\n"
         "- Repeats are sent as typed. The service removes them and says how many.",
     ),
     "dx_candidate_genes": (
@@ -1562,8 +1564,8 @@ FIELD_HELP = {
     "dx_patient_id": (
         "Patient ID (optional)",
         "An identifier for this diagnosis, carried by the result and its exports.\n\n"
-        "Left blank, the server gives the result its own id, so results from different "
-        "browsers never share one.",
+        "- Left blank: the server gives the result its own id\n"
+        "- So: results from different browsers never share one",
     ),
     "dx_top_k": (
         "Top-K",
@@ -1591,15 +1593,16 @@ TOPIC_HELP = {
     "dx-score": (
         "Score",
         SCORE_NOTE + "\n\n"
-        "The kind above the table names the model. A disease task model's Score is its "
-        "head's score, 0 or below: the closest to 0 ranks first.",
+        "- Model: the kind above the table names it\n"
+        "- Score: a disease task model's head score, 0 or below\n"
+        "- Order: the closest to 0 ranks first",
     ),
     "dx-gene-score": (
         "Score",
         GENE_SCORE_RANKS + "\n\n"
         "- Probability: it is not a calibrated one\n"
         "- Model similarity: the gene head's similarity to the patient, −1 to 1\n"
-        "- SP similarity: mean hops to the phenotypes, scaled to set bounds, unclipped\n"
+        "- SP similarity: mean phenotype hops, scaled to set bounds, unclipped\n"
         "- Eta (η): the model's own, under This result › Mixing weight eta",
     ),
     "dx-similarity": (
@@ -1620,8 +1623,8 @@ TOPIC_HELP = {
     ),
     "dx-phenotypes": (
         "Phenotypes",
-        "How many of the query's phenotypes, as used, the graph annotates directly to this "
-        "disease.\n\n"
+        "How many query phenotypes the graph annotates directly to this disease.\n\n"
+        "- It counts the query's phenotypes as used, not as typed.\n"
         "- Only the exact term counts, never ancestors, descendants or gene links.\n"
         "- A 0 does not mean no clinical overlap.\n"
         "- Matching phenotypes, in the candidate's details, names each.",
@@ -1630,7 +1633,7 @@ TOPIC_HELP = {
         "Candidate details",
         "Select a row of Diagnosis results to show that candidate here.\n\n"
         "- Click it, or focus it and press Enter.\n"
-        "- Evidence, explanation, matching phenotypes and paths are this result's own.",
+        "- Evidence, explanation, matching phenotypes, paths: this result's own.",
     ),
     "dx-run-no-model": (
         "Run Diagnosis is disabled",
@@ -1661,7 +1664,7 @@ TOPIC_HELP = {
     ),
     "dx-run-no-cohort": (
         "Run Diagnosis is disabled",
-        "This model ranks reference cohort patients, and no such version can be read.\n\n"
+        "This model ranks cohort patients, and no cohort version can be read.\n\n"
         "- The registry may be not set or refused, or hold no version yet.\n"
         "- It may hold only KG edge sets and versions marked \"cannot be read\".\n"
         "- An operator imports a cohort in Research › Test.\n"
@@ -1670,17 +1673,22 @@ TOPIC_HELP = {
     **{f"dx-banner-{key}": (headline, detail) for key, (headline, detail) in IDENTITY_BANNERS.items()},
 }
 
-#: Why Run Diagnosis is off, as visible text under it. Nothing served (no
-#: model, or a stop letting the accepted diagnoses finish) is said once, by
-#: the card's state and the backend's lead above it; this refers to it.
-RUN_DISABLED_NO_MODEL = "Disabled until a model is loaded."
-RUN_DISABLED_CHANGE = "Disabled: finish or cancel the model change first."
-RUN_DISABLED_LOADING = "Disabled until the model load started here answers."
+#: Why Run Diagnosis is off, as visible text under it, in the one form every
+#: page says a disabled control in (`renderers.disabled_words`: "<control>
+#: disabled: <cause>", drawn by `renderers.marked_line` with the neutral mark;
+#: L7 SW-LK8: it was a ⊖ and "Disabled until …" of this page's own). Nothing
+#: served (no model, or a stop letting the accepted diagnoses finish) is said
+#: once, by the card's state and the backend's lead above it; this refers to it.
+RUN_LABEL = "Run Diagnosis"
+RUN_DISABLED_NO_MODEL = _disabled_words(RUN_LABEL, "load a model first.")
+RUN_DISABLED_CHANGE = _disabled_words(RUN_LABEL, "finish or cancel the model change first.")
+RUN_DISABLED_LOADING = _disabled_words(RUN_LABEL,
+                                        "the model load started here has not answered yet.")
 #: A patients-like-me model with no reference cohort version to rank: the
 #: lead, then the cause in its own words with who can act (skill §9). The
 #: registry setting's own words (its name, a command's flag) are an
 #: operator's and never reach this reason (Research › Test shows them).
-RUN_DISABLED_NO_COHORT = "Disabled: no reference cohort version can be read."
+RUN_DISABLED_NO_COHORT = _disabled_words(RUN_LABEL, "no reference cohort version can be read.")
 NO_COHORT_REGISTRY = ("The server's results registry is not set or cannot be used. An operator "
                       "sets it in Settings\u00a0› Data locations.")
 NO_COHORT_VERSION = ("The registry holds no cohort version yet. An operator imports one in "
@@ -1774,7 +1782,7 @@ def compare_with_served(result: Mapping[str, Any], state: Mapping[str, Any]) -> 
     nothing here relabels it."""
     kind, identity = _identity_of(result)
     total = len(_IDENTITY_PARTS)
-    keep = "This result keeps its own identity; its exports use it."
+    keep = "This result keeps its own identity. Its exports use it."
     mode = card.card_mode(state, _produced_at(result))
     if kind == IDENTITY_NOT_REPORTED:
         return {"state": "unknown", "total": total, "differ": [],
@@ -2051,7 +2059,7 @@ def _task_table_html(candidates: List[Mapping[str, Any]], selected: Any, kind: s
             cells = (f'<td class="shep-num">{_e(rank)}</td><td>{_e(c.get("case_id"))}</td>'
                      f'<td class="shep-num">{_num(c.get("similarity"))}</td>'
                      f'<td class="shep-dx-dis">{_diagnosis_html(c)}</td>'
-                     f'<td class="shep-dx-wrap">{_e("; ".join(genes)) if genes else _not_recorded()}'
+                     f'<td class="shep-dx-wrap">{_e(", ".join(genes)) if genes else _not_recorded()}'
                      '</td>')
         current = ' class="shep-on" aria-current="true"' if on else ""
         rows.append(f'<tr data-key="{_e(rank)}" tabindex="0"{current}>{cells}</tr>')
@@ -2100,9 +2108,10 @@ def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
     visible text), a patients-like-me result's reference cohort version, and
     the table."""
     warnings = result.get("warnings") or []
-    note = (f'<p class="shep-dx-warnings">'
-            f'{_status_mark("warn", "Warnings: " + "; ".join(str(w) for w in warnings))}</p>'
-            if warnings else "")
+    # One warning a line, each with its own mark (the owner's decision of
+    # 2026-11-23: never two of them glued with a semicolon).
+    note = "".join(f'<p class="shep-dx-warnings">{_status_mark("warn", str(w))}</p>'
+                   for w in warnings)
     kind = _result_kind(result)
     label = (f'<p class="shep-dx-kind">{_e(kind_label(result))}</p>'
              if kind is not None else "")
@@ -2480,7 +2489,7 @@ def result_identity_html(result: Optional[Mapping[str, Any]], state: Mapping[str
         parts.append(f'<p class="shep-dx-lead"><b>This result came from an earlier model or '
                      f'pipeline:</b> {n} of {compared["total"]} parts '
                      f'{"differs" if n == 1 else "differ"} from what is in use now (status '
-                     f'read {_e(when)}); each says what is in use now under its own value. The '
+                     f'read {_e(when)}). Each says what is in use now under its own value. The '
                      'result and its CSV and report keep their own identity.</p>')
     elif compared["state"] == "equal":
         parts.append(f'<p class="shep-dx-lead"><b>Produced by the model in use:</b> all '
@@ -2792,7 +2801,7 @@ def run_controls(state: Mapping[str, Any], phase: Any) -> Dict[str, Any]:
              f'data-help-title="{_e(title)}" aria-label="Run Diagnosis is disabled: why?" '
              f'aria-expanded="false" aria-describedby="{text_id(key)}"></button>')
     return {"run_btn": gr.update(interactive=False), "run_cover": cover,
-            "run_reason": f'<p class="shep-dx-why"><span aria-hidden="true">⊖</span> {_e(why)}</p>'}
+            "run_reason": _marked_line("neutral", why)}
 
 
 def _run_tuple(state: Mapping[str, Any], phase: Any) -> Tuple[Any, Any, Any]:
@@ -2932,9 +2941,19 @@ def read_card(state: Any, request: Any, *, open_checkpoints: bool, reread: bool 
     """One status read (5 s limit) for this session's card, and its new state."""
     status, problem = card.read_status_within()
     allowed, short = _operator(request)
-    return card.advance(state if isinstance(state, Mapping) else card.new_state(), status,
-                        problem, now=now or datetime.now(), operator=allowed, d8_short=short,
-                        open_checkpoints=open_checkpoints, reread=reread)
+    new = card.advance(state if isinstance(state, Mapping) else card.new_state(), status,
+                       problem, now=now or datetime.now(), operator=allowed, d8_short=short,
+                       open_checkpoints=open_checkpoints, reread=reread)
+    return {**new, "workspaces_notice": _workspaces_notice()}
+
+
+def _workspaces_notice() -> Optional[Dict[str, Any]]:
+    """The workspaces folder's notice as read now (`workspaces.setting_notice`,
+    None while it is usable): the card says it (`diagnosis_card.body_html`)."""
+    from src.config import server_settings
+    from src.webui.components.workspaces import setting_notice
+
+    return setting_notice(server_settings.workspaces_root())
 
 
 def refresh_card(state: Any, result: Any, phase: Any, view: Any, request: Any, *,
@@ -3015,7 +3034,7 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
     if not hpo_ids:
         return _no_result_outputs(
             '<p class="shep-dx-warn"><b>No valid HPO terms found.</b> Enter HPO ids like '
-            '<code>HP:0001250</code> — one per line, or comma/space-separated; names are '
+            '<code>HP:0001250</code> — one per line, or comma/space-separated. Names are '
             'optional.</p>')
     task = card.served_task(state.get("status"))
     genes = _parse_gene_list(genes_text) if task == "gene" else None
@@ -3056,7 +3075,7 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
             logger.warning("Export file generation failed: %s", exc)
             csv_update, md_update = download_update(), download_update()
             export_note = ('<p class="shep-dx-warn">Export files could not be written '
-                           '(disk/permissions?). Results are shown; Run Diagnosis again to retry '
+                           '(disk/permissions?). Results are shown. Run Diagnosis again to retry '
                            'the export.</p>')
     else:
         csv_update, md_update = download_update(), download_update()
@@ -3366,7 +3385,7 @@ def stop_question_html(sha256: str) -> str:
     return ('<div class="shep-dx-stop-q">'
             '<b>Stop inference of model '
             + _fingerprint_value(sha256, what="model fingerprint", copy=False) + '?</b> '
-            'Diagnoses already accepted finish; new ones are refused until a model is loaded. '
+            'Diagnoses already accepted finish. New ones are refused until a model is loaded. '
             'Nothing reloads one by itself.</div>')
 
 
@@ -3657,8 +3676,9 @@ def _event_key(evt: Any) -> Optional[str]:
     return key if isinstance(key, str) else None
 
 
-#: Under the drawer's list, beside Load (R-27): what Load does next, in plain
-#: words; the confirmation then shows what changes.
+#: Under the drawer's list, a row of its own under Load (R-27; a message never shares a row
+#: with a button): what Load does next, in plain words; the confirmation then shows what
+#: changes.
 CHANGE_NOTE = ("Choose a model, then Load: you see what changes and confirm it before every "
                "session is served it. Results already produced keep their own identity.")
 
@@ -3772,15 +3792,21 @@ def create_diagnosis_tab(ctx: Any) -> None:
                             details_btn = gr.Button("Details ›", size="sm", visible=False,
                                                     elem_id="shep-dx-details-btn", scale=0,
                                                     min_width=0)
-                            # Labelled by the card's read (`card.change_button`).
-                            change_btn = gr.Button("Change model…", size="sm",
-                                                   interactive=False, scale=0, min_width=0,
-                                                   elem_id="shep-dx-change-btn")
-                            # Shown while a model serves (`card.stop_button`).
-                            stop_btn = gr.Button("■ Stop inference", size="sm",
-                                                 interactive=False, scale=0, min_width=0,
-                                                 elem_id="shep-dx-stop-btn",
-                                                 elem_classes=[*_STOP_BTN, VIEW_OFF])
+                            # Change model… and Stop inference, one group (`shep-grp`): where
+                            # the card cannot hold its actions on one line they move under
+                            # "Details ›" together, so a refused pair has its reason line
+                            # (`change_reason`) right under both (the sweep's L7 check, C5:
+                            # Stop wrapped alone and Change's reason was two lines under it).
+                            with gr.Row(elem_classes=["shep-dx-card-acts", "shep-grp"]):
+                                # Labelled by the card's read (`card.change_button`).
+                                change_btn = gr.Button("Change model…", size="sm",
+                                                       interactive=False, scale=0, min_width=0,
+                                                       elem_id="shep-dx-change-btn")
+                                # Shown while a model serves (`card.stop_button`).
+                                stop_btn = gr.Button("■ Stop inference", size="sm",
+                                                     interactive=False, scale=0, min_width=0,
+                                                     elem_id="shep-dx-stop-btn",
+                                                     elem_classes=[*_STOP_BTN, VIEW_OFF])
                         change_reason = plain_html("", elem_id="shep-dx-change-why")
                         # Stop inference asks first, bound to the model shown.
                         with gr.Row(elem_id="shep-dx-stop-row", elem_classes=["shep-dx-stop-row"]):
@@ -3826,7 +3852,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 # Load for inference: the one drawer for a first load and a
                 # change alike (the card's "Load a model…" / "Change model…").
                 plain_html('<h2>Load for inference</h2><span class="shep-dx-drawer-note">'
-                           'operator controls · one model is served to every session</span>',
+                           + _chain_html("operator controls",
+                                         "one model is served to every session") + '</span>',
                            elem_id="shep-dx-change-title")
                 change_close = plain_html(_close_html("change-model drawer"),
                                           elem_id="shep-dx-change-close", js_on_load=MODEL_LIST_JS)
@@ -3837,7 +3864,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                     # The Task control: its `.input` sets the shared list's view.
                     links["task"] = gr.Radio(choices=list(TASK_VIEWS), value="all",
                                              label="Task", show_label=False, container=False,
-                                             elem_classes=["shep-seg", "shep-field-aside"],
+                                             elem_classes=["shep-seg", SEG_WHOLE, "shep-field-aside"],
                                              elem_id="shep-dx-change-task")
                     # Each "›" keeps to the word before it (a no-break space):
                     # at 1440 x 900 the last one was left alone on a line.
@@ -4265,18 +4292,35 @@ DRAWER_TREE_ROOM = f"calc(100cqw - {DRAWER_FACTS_MIN + DRAWER_GAP}px)"
 #: nothing to fold (no model loaded; a read-only viewer's reason line), still
 #: leaves less, the region takes what is left and stays the one scroll region,
 #: Run Diagnosis in view (a minimum height there put a second scroll region
-#: around the fields and Run out of view; the review of 90c375e).
-FIELDS_FLOOR = 166
-#: **The input column's width** (``--dx-in-w``; B-14): a quarter of the page's
-#: row, never under the HPO field's floor (300 px: its label, info line and
-#: box, and the card's lines) nor over 26rem (wider adds only blank beside
+#: around the fields and Run out of view; the review of 90c375e). Since the
+#: sweep's L7 check (C1), the floor also holds the next field's label under the
+#: region's cue (206 px: Patient ID's label starts 182 px down): at 166 the
+#: edge fell in the gap under the HPO box, so the cue faded nothing drawn and
+#: Patient ID read as absent (configured, 1280 x 720, the card unfolded).
+#: Since the sweep's L7 check (D7), the floor holds the Patient ID field whole
+#: (its label, info line and box: it ends 302 px down in the 390 px column
+#: `DX_IN_W` gives at 1366 x 768), so a loaded model's card folds before it
+#: hides that box (configured, 1366 x 768: the card unfolded left the fields
+#: 296 px, the box's foot under the edge).
+FIELDS_FLOOR = 304
+#: **The input column's width** (``--dx-in-w``; B-14): about a third of the
+#: page's row, never under the HPO field's floor (300 px: its label, info line
+#: and box, and the card's lines) nor over 31rem (wider adds only blank beside
 #: short fields). It was 300, 320 or 370 px by the window's width (three
 #: media queries), so at 1366 and 1280 the column was 300 px whatever the
-#: row held beside it.
-DX_IN_W = "clamp(300px, 24%, 26rem)"
-#: Below this width of its own (stacked), the input column draws its fields
-#: in one column (it was a window of 760 px, the column about 728 px).
-DX_FIELDS_ONE_COLUMN = "45rem"
+#: row held beside it. It was a quarter of the row (24 %, 26rem at most)
+#: until the sweep's L7 check (D2, D7): the inputs, the page's task before a
+#: result, scrolled at the owner's 1550 x 830 (Explanations under the edge,
+#: d3040ca drew it) and hid Patient ID's box at 1366 and 1280, while the two
+#: panels beside held one empty-state sentence each in the rest of the row.
+#: At 32 % the column is 486 px at 1550 and its fields are whole in both
+#: states; at 1366 and 1280 Patient ID's box is in view. It takes that third
+#: only as far as the results' and the details' minimums leave (`RESULTS_MIN`,
+#: `DETAILS_MIN` and the two 16 px gaps): at 1280 x 720 a third ran the row
+#: 45 px past the page's right edge.
+RESULTS_MIN = 532
+DETAILS_MIN = 380
+DX_IN_W = f"clamp(300px, min(32%, 100% - {RESULTS_MIN + DETAILS_MIN + 32}px), 31rem)"
 
 PAGE_CSS = f"""
 /* **The input column's width, from the row's** (`DX_IN_W`; no window media query): a share of the
@@ -4294,8 +4338,8 @@ PAGE_CSS = f"""
    columns' min-content, 495 px measured with the Phenotypes k/N column and the evidence label
    wrapping, plus the region's padding and border); the details. */
 {_TAB} #shep-dx-input {{ --shep-panel-min: 300px; }}
-{_TAB} #shep-dx-results {{ --shep-panel-min: 532px; }}
-{_TAB} #shep-dx-details {{ --shep-panel-min: 380px; }}
+{_TAB} #shep-dx-results {{ --shep-panel-min: {RESULTS_MIN}px; }}
+{_TAB} #shep-dx-details {{ --shep-panel-min: {DETAILS_MIN}px; }}
 {_TAB} .shep-dx-scroll {{ gap: 12px !important; padding: 14px 16px !important; }}
 {_TAB} .shep-dx-scroll > * {{ flex-shrink: 0 !important; }}
 {_TAB} #shep-dx-input-bd {{ padding-top: 12px !important; padding-bottom: 0 !important; gap: 0 !important; }}
@@ -4306,9 +4350,6 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-fields [data-testid="block-info"] {{ margin-bottom: 4px !important; }}
 {_TAB} #shep-dx-options .form {{ display: contents !important; }}
 {_TAB} #shep-dx-options .block.padded {{ padding: 0 !important; }}
-/* Top-K's block draws no box of its own (display: contents, below), so it clips nothing: Gradio's
-   hidden overflow on it is not a box's. */
-{_TAB} .shep-dx-options #dx_top_k {{ overflow: visible !important; }}
 {_TAB} #dx_top_k input[type=number] {{ height: 34px; padding: 4px 8px; }}
 /* Options (R-24): its label over its controls, no box of its own; each control a row of one grid,
    its key, its ⓘ and its control in three columns (the keys as wide as the longest), the
@@ -4352,7 +4393,6 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-name {{ font-weight: 600; }}
 {_TAB} .shep-dx-sub {{ font-weight: 400; color: var(--shep-text-2); }}
 {_TAB} .shep-dx-line {{ overflow-wrap: anywhere; }}
-{_TAB} .shep-dx-line .shep-fp {{ white-space: normal; }}
 {_TAB} .shep-dx-tail {{ display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }}
 {_TAB} .shep-dx-chips {{ display: inline-flex; flex-wrap: wrap; gap: 4px 6px; }}
 {_TAB} .shep-dx-tests {{ white-space: normal; }}
@@ -4374,7 +4414,7 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-card-actions {{ justify-content: space-between !important; align-items: center !important; flex-wrap: wrap !important; gap: 8px !important; margin-top: 2px; }}
 {_TAB} .shep-dx-card-actions > * {{ flex: 0 0 auto !important; width: auto !important; }}
 {_TAB} #shep-dx-details-btn {{ border: 0 !important; background: none !important; box-shadow: none !important; color: var(--shep-accent-text) !important; padding: 0 2px !important; font-weight: 400; }}
-{_TAB} #shep-dx-change-btn {{ margin-left: auto; }}
+{_TAB} .shep-dx-card-acts {{ margin-left: auto; flex-wrap: nowrap !important; gap: 8px !important; }}
 {_TAB} .shep-dx-stop-row {{ flex-wrap: wrap !important; gap: 8px !important; justify-content: flex-end !important; }}
 /* The question's buttons keep their words' width (Gradio gives a scale-0
    button a 0% basis: measured 12 px wide, "Keep serving" over "Stop
@@ -4393,8 +4433,12 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-stop-row:has(.shep-dx-stop-q) {{ row-gap: 4px !important; }}
 {_TAB} #shep-dx-card:has(> #shep-dx-stop-row .shep-dx-stop-q) > .shep-dx-card-actions {{ display: none !important; }}
 {_TAB} .shep-dx-stop-said, {_TAB} .shep-dx-stop-mem {{ margin: 2px 0 0; font-size: 14px; }}
-{_TAB} .shep-dx-why {{ margin: 2px 0 0; font-size: 14px; color: var(--shep-text-2); text-align: right; }}
-{_TAB} #shep-dx-run-why .shep-dx-why {{ text-align: left; margin: 0 16px 8px; }}
+/* The card's reasons stand under its actions, at its end edge: on a card wider than the measure (stacked)
+   the reason's box, capped at the measure, keeps that edge too (it stood at the card's start, its words
+   mid-card under no button; the read-only walk at 1080 x 1920 found Change model… with nothing said). */
+{_TAB} .shep-dx-why {{ margin: 2px 0 0 auto; font-size: 14px; color: var(--shep-text-2); text-align: right; }}
+{_TAB} .shep-reason.shep-dx-why {{ justify-content: end; }}
+{_TAB} #shep-dx-run-why .shep-reason {{ margin: 0 16px 8px; }}
 {_TAB} .shep-dx-run {{ padding: 6px 16px !important; gap: 10px !important; flex-wrap: nowrap !important; align-items: stretch !important; }}
 {_TAB} #shep-dx-run-wrap {{ position: relative; gap: 0 !important; flex: 1 1 auto !important; }}
 {_TAB} #shep-dx-clear {{ flex: 0 0 auto !important; min-width: 84px !important; padding: 0 18px !important; }}
@@ -4439,7 +4483,11 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-tbl tbody tr[data-key] {{ cursor: pointer; }}
 {_TAB} .shep-dx-tbl tbody tr.shep-on td.shep-dx-dis {{ color: var(--shep-accent-text); font-weight: 600; }}
 {_TAB} .shep-dx-clamp {{ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
-{_TAB} .shep-dx-empty {{ margin: auto; max-width: 440px; text-align: center; color: var(--shep-text-2); padding: 24px 8px; }}
+/* An empty region's words start on the panel's one content edge, under its heading, at the
+   measure (the skill's §2; the text brief's §4: empty text starts at the column's one x and
+   lines that wrap are never centred): a box centred in the region stood 28-35 px off the
+   heading at 1280-1366 and its padding 8 px off at 390, a near miss of the edge. */
+{_TAB} .shep-dx-empty {{ max-width: var(--shep-measure); text-align: start; color: var(--shep-text-2); padding: 24px 0; }}
 {_TAB} .shep-dx-empty p {{ margin: 4px 0; }}
 {_TAB} .shep-dx-empty-h {{ font-size: 15px; font-weight: 600; color: var(--shep-text); }}
 {_TAB} .shep-dx-notice p {{ margin: 0 0 6px; }}
@@ -4483,11 +4531,10 @@ PAGE_CSS = f"""
 /* A drawer's head and the Load drawer's task segment take their words' width and give way to
    the drawer, never past it (V-19: held at their one line's width, the Load drawer's title note
    ran 217 px and its task segment 49 px past the drawer's edge at 390 x 844, cut): a title
-   wraps its words; the task segment keeps every label whole and wraps them onto another line
-   (the shared segment's one row, `.shep-seg`, would end three of its four labels in an
-   ellipsis in a phone's 324 px). */
+   wraps its words; the task segment keeps every label whole (`style.SEG_WHOLE`: one row while
+   it fits, else one label a line; the shared segment's one row would end three of its four
+   labels in an ellipsis in a phone's 324 px, and wrapping left one alone on a line). */
 {_TAB} .shep-dx-drawer-hd > *, {_TAB} #shep-dx-change-task {{ flex: 0 1 auto !important; width: auto !important; min-width: 0 !important; }}
-{_TAB} #shep-dx-change-task .wrap {{ display: inline-flex !important; flex-wrap: wrap; }}
 {_TAB} .shep-dx-drawer-hd h2 {{ font-size: var(--shep-title-size); font-weight: 600; margin: 0; display: inline; }}
 {_TAB} .shep-dx-drawer-note {{ margin-left: 10px; font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} #shep-dx-identity-close, {_TAB} #shep-dx-change-close {{ margin-left: auto; }}
@@ -4541,16 +4588,21 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change .shep-model-body > .shep-model-facts {{ --shep-panel-min: {DRAWER_FACTS_MIN}px; flex: 2 1 0 !important; min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-foot {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important;
   border-top: 1px solid var(--shep-border); padding-top: 10px !important; }}
-/* Load and Cancel keep their words' width; the note beside them takes the rest and wraps (it
-   took its one line's width, 926 px, and was cut past the drawer's edge from 1280 x 900 down). */
+/* Load and Cancel keep their words' width, side by side; what Load does,
+   two sentences, is a row of its own under them, from the foot's edge and at the measure, as
+   Models says it (a message never shares a row with a button: it stood beside Load). */
 {_TAB} #shep-dx-change .shep-model-foot > :not(#shep-dx-change-note) {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
-{_TAB} #shep-dx-change .shep-model-foot > #shep-dx-change-note {{ flex: 1 1 280px !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-change .shep-model-foot > #shep-dx-change-note {{ flex: 1 1 100% !important; min-width: 0 !important; order: 1; }}
+/* Load's reason (`model_list.load_reason_html`: every disabled Load says why) is a line of its
+   own under Load and Cancel, before the note: beside Load it took two lines (a reason beside its
+   button is one line or none), and wrapped between them it parted Cancel from Load (390 x 844). */
+{_TAB} #shep-dx-change .shep-model-foot > #shep-models-clinical-reason {{ flex: 1 1 100% !important; min-width: 0 !important; order: 1; }}
+{_TAB} #shep-dx-change-note .shep-note {{ display: block; max-width: var(--shep-measure); font-size: 14px; }}
 {_TAB} #shep-dx-change .shep-model-confirm-box > .row > button {{ flex: 0 0 auto !important; white-space: nowrap; }}
 {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-foot {{ display: none !important; }}
 {_TAB} #shep-dx-change .shep-confirm .shep-ftbl th, {_TAB} #shep-dx-change .shep-confirm .shep-ftbl td {{ padding-top: 5px; padding-bottom: 5px; }}
 {_TAB} #shep-dx-change .shep-confirm .shep-ftbl tbody th {{ white-space: nowrap; }}
 {SIDE} {{
-  {_TAB} > .column {{ height: 100%; box-sizing: border-box; }}
   {_TAB} #shep-dx {{ height: 100%; }}
   {_TAB} #shep-dx > .shep-panel {{ max-height: 100%; }}
   {_TAB} .shep-dx-scroll {{ flex: 1 1 auto !important; min-height: 0; overflow: auto; }}
@@ -4567,6 +4619,7 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx-card[{FOLDED_ATTR}] .shep-dx-card-bd > .shep-dx-name {{ flex: 0 1 auto; }}
   {_TAB} #shep-dx-card[{FOLDED_ATTR}] .shep-dx-card-bd > .shep-dx-sub {{ flex: 1 1 8em; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; }}
+  {_TAB} #shep-dx-card[{FOLDED_ATTR}] .shep-dx-sub .shep-fact {{ display: inline; }}
   {_TAB} #shep-dx-card[{FOLDED_ATTR}] > .shep-dx-card-actions {{ row-gap: 4px !important; margin-top: 0; }}
   {_TAB} #shep-dx-card[{FOLDED_ATTR}] > #shep-dx-change-why:not(:has(.shep-dx-why)),
   {_TAB} #shep-dx-card[{FOLDED_ATTR}] > #shep-dx-stop-row:not(:has(.shep-dx-stop-q, .shep-dx-why, button:not(.{VIEW_OFF}))),
@@ -4599,15 +4652,16 @@ PAGE_CSS = f"""
 }}
 {STACK} {{
   {_TAB} #shep-dx-input, {_TAB} #shep-dx-results, {_TAB} #shep-dx-details {{ flex: 1 1 auto !important; width: 100% !important; max-width: none !important; }}
-  {_TAB} .shep-dx-fields {{ display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 18px !important; }}
+  /* Stacked, the fields take two columns: the HPO terms (and the count under them) in the first,
+     Patient ID and the options beside them in the second (the owner's decision of 2026-11-23 on
+     portrait windows: the count's empty block took the second column's first cell, so Patient ID
+     and the options fell under the terms and half the panel stood empty). */
+  {_TAB} .shep-dx-fields {{ display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 18px !important;
+    grid-auto-flow: row dense; align-content: start; }}
+  {_TAB} .shep-dx-fields > :not(#shep-dx-side) {{ grid-column: 1; }}
+  {_TAB} .shep-dx-fields > #shep-dx-side {{ grid-column: 2; grid-row: 1 / span 2; align-self: start; }}
   {_TAB} #shep-dx-change .shep-model-body {{ flex-direction: column !important; }}
   {_TAB} #shep-dx-change .shep-model-body > * {{ width: 100% !important; flex: none !important; }}
-}}
-/* The input column is its fields' container (a query on its own width, not the window's): stacked
-   and narrow, the fields take one column. */
-{_TAB} #shep-dx-input {{ container: shep-dx-in / inline-size; }}
-@container shep-dx-in (max-width: {DX_FIELDS_ONE_COLUMN}) {{
-  {_TAB} .shep-dx-fields {{ grid-template-columns: minmax(0, 1fr) !important; }}
 }}
 """
 
@@ -4615,7 +4669,6 @@ PAGE_CSS = f"""
 __all__ = [
     "ANSWER_GATE_CSS",
     "CLOSE_WHILE_LOADING",
-    "DX_FIELDS_ONE_COLUMN",
     "DX_IN_W",
     "EXPORTS_HIDDEN",
     "FIELD_HELP",

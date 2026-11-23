@@ -183,7 +183,7 @@ def _build_report(force: bool = False) -> Dict[str, Any]:
             status = NOTICE
             issues.append(
                 "No CUDA device visible: GPU training is unavailable. torch is built for "
-                f"CUDA {torch_info['cuda_build']}; check the driver and CUDA libraries."
+                f"CUDA {torch_info['cuda_build']}. Check the driver and CUDA libraries."
             )
 
     # Retrieval backends do not depend on torch, and the subsystem is detached

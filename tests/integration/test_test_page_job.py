@@ -209,7 +209,7 @@ def test_a_base_and_a_file_without_a_model_spec_are_listed_and_never_started(sit
         assert tp.measurement_choices(tp.find_model(models, key)) == offered
         allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""),
                                       protocol=protocol)
-        assert allowed is False and why.startswith(f"Disabled: {says}"), why
+        assert allowed is False and why.startswith(f"Start disabled: {says}"), why
         result = tp.start_test_run(page, models, "demo", LABEL, key, False, False, request,
                                    protocol=protocol, manager=Unasked())
         assert result["success"] is False and result["error"].endswith("Nothing was started.")

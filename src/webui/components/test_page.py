@@ -179,6 +179,7 @@ import re
 import time
 from dataclasses import asdict
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
@@ -205,6 +206,7 @@ from src.webui.components.workspaces import (
     contents_reason,
     path_roots,
     redact_server as redact,
+    setting_notice,
     version_row,
     workspace_binding,
 )
@@ -330,11 +332,12 @@ FIELD_HELP = {
     ),
     "shep-test-intake": (
         INTAKE_LABEL,
-        "The shepherd-cases/1 files (*.json) placed in the server's import folder.\n\n"
+        "The case files placed in the server's import folder, one chosen to import.\n\n"
         "- Folder: outside the repository, set in Settings › Data locations\n"
         "- Checked: the server finds the chosen name there again\n"
         "- Refused: any other name, a link leaving the folder included\n"
-        "- Upload: none, the operator places each file on the server",
+        "- Upload: none, the operator places each file on the server\n"
+        "Ref: shepherd-cases/1 files (*.json)",
     ),
     "shep-test-label": (
         "Version label",
@@ -348,7 +351,7 @@ FIELD_HELP = {
     ),
     "shep-test-partial": (
         "Lost terms",
-        "What a case becomes when mapping loses some, not all, of its phenotype terms.\n\n"
+        "What a case becomes when some, not all, of its terms fail to map.\n\n"
         "- Ranked on the terms that map, or excluded.\n"
         "- Recorded in the version.",
     ),
@@ -361,8 +364,8 @@ FIELD_HELP = {
     "shep-test-note-what": (
         "What was found",
         "What the investigation found.\n\n"
-        "The note is kept in the report store with this condition group's reports. It deletes "
-        "no report and changes nothing.",
+        "The note is kept in the report store with this condition group's reports.\n"
+        "It deletes no report and changes nothing.",
     ),
 }
 #: Help a rendered ⓘ names. A described measurement's result note is the
@@ -459,10 +462,10 @@ def import_refusal(exc: BaseException) -> str:
         problems.append(text)
     count = len(problems)
     more = count - PROBLEMS_SHOWN
-    listed = "; ".join(problems[:PROBLEMS_SHOWN]) + (f"; … {more} more" if more > 0 else "")
+    listed = r.sentences([*problems[:PROBLEMS_SHOWN], *([f"… {more} more"] if more > 0 else [])])
     return "Refused: " + said(
-        f"The file is not a {SOURCE_FORMAT} source ({count} problem{'s' if count != 1 else ''}); "
-        f"the import is refused as a whole: {listed}. The problems are listed by case index: "
+        f"The file is not a {SOURCE_FORMAT} source ({count} problem{'s' if count != 1 else ''}). "
+        f"The import is refused as a whole: {listed} The problems are listed by case index: "
         "case ids are not sent to the browser, and the command-line preview on the machine "
         "(scripts/import_cohort.py) lists each one with its case id",
         "Nothing was written.")
@@ -498,10 +501,15 @@ def gated_update(name: str, page: Mapping[str, Any], *, interactive: bool = True
 
 
 def _reason_html(text: Optional[str], *, kind: str = "") -> str:
+    """A reason line: with `kind` "lock", led by the lock (a request D8
+    refuses); "off", by the mark of a disabled control's reason
+    (`renderers.DISABLED_MARK`, as every page leads it)."""
     if not text:
         return ""
-    lock = f'<span aria-hidden="true">{LOCK}</span>' if kind == "lock" else ""
-    return f'<div class="shep-reason shep-test-reason">{lock}<span>{e(text)}</span></div>'
+    mark = (f'<span aria-hidden="true">{LOCK}</span>' if kind == "lock" else
+            r.DISABLED_MARK if kind == "off" else "")
+    return (f'<div class="shep-reason shep-test-reason">{mark}<span>{r.bound_html(text)}</span>'
+            '</div>')
 
 
 def run_sha12(run_id: Any) -> Optional[str]:
@@ -661,7 +669,7 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
     # **The store's own listing problem** (Decision 10): with it, no run's
     # report can be confirmed here, and a run is registered from the command
     # line by naming its report. Another run's problem is never this.
-    store_problem = store.problem or ("; ".join(
+    store_problem = store.problem or (r.sentences(
         problem for run, problem in store.scan.unplaced if run is None) or None)
     runs = []
     for report in item.reports:
@@ -1032,11 +1040,28 @@ def default_version(page: Mapping[str, Any], binding: Optional[Mapping[str, Any]
 #: once with them (`data_notice_html`; the text brief's §1: the state, its
 #: consequence, then the next step): by how many it names.
 TESTING_WAITS = {1: "Testing waits for it.", 2: "Testing waits for both."}
-#: A control's relation to the notice (`renderers.see_above`): its state,
-#: then the notice's short words ("Import disabled: no results registry is
-#: set."), never the notice again (the skill's §9).
-IMPORT_DISABLED = "Import disabled"
-START_DISABLED = "Start disabled"
+#: The controls a disabled reason names (`renderers.disabled_words`): a
+#: relation to the notice (`renderers.see_above`: "Import disabled: no results
+#: registry is set."), never the notice again (the skill's §9), or the page's
+#: own reason ("Start disabled: choose a data version.").
+IMPORT = "Import"
+START = "Start"
+REGISTER = "Register"
+#: The Run select (`listing_why_html`) while no workspace is listed: choose
+#: one in Data, or there is none yet (the Workspace select says so).
+RUN = "Run"
+#: Why the import drawer's Commit is off (L7: a disabled primary action says
+#: why beside it in the shared form, the skill's §9): no preview yet, or one
+#: that maps no case.
+COMMIT = "Commit"
+COMMIT_NO_PREVIEW = r.disabled_words(COMMIT, "prepare a preview first.")
+COMMIT_NO_CASES = r.disabled_words(COMMIT, "the preview maps no case.")
+RUN_CHOOSE_WORKSPACE = "choose a workspace in Data first."
+RUN_NO_WORKSPACE = "no workspace yet (see Data)."
+#: Register's cause while no report is chosen (`register_state`): a report to
+#: choose in the list, or none listed yet.
+REGISTER_CHOOSE = "choose a kept report in the list first."
+REGISTER_NONE = "no report is listed yet."
 #: Where Start's relation points: the panel that shows the notice.
 NOTICE_PANEL = "Data"
 #: Under the Workspace select when the workspaces folder can be used and
@@ -1073,15 +1098,10 @@ def data_notice_html(page: Mapping[str, Any]) -> str:
     return r.notices_block(notices, consequence=TESTING_WAITS[min(len(notices), 2)])
 
 
-def relation_html(lead: str, notice: Mapping[str, Any], *, where: Optional[str] = None) -> str:
+def relation_html(control: str, notice: Mapping[str, Any], *,
+                  where: Optional[str] = None) -> str:
     """A control's one line on the notice it waits for (`renderers.see_above`)."""
-    return r.see_above(lead, notice, where=where)
-
-
-def relation_words(lead: str, notice: Mapping[str, Any], *, where: Optional[str] = None) -> str:
-    """`relation_html`'s words as plain text, for a reason a function gives as
-    text (`start_state`): the same lead, the notice's short words and where."""
-    return f"{lead}: {notice['short']}" + (f" (see {where})" if where else "") + "."
+    return r.see_above(control, notice, where=where)
 
 
 def cohort_header_html(page: Mapping[str, Any]) -> str:
@@ -1115,10 +1135,10 @@ def workspace_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
         return _reason_html(why)
     digits = r.distinguishing_digits(w.get("dataset_fingerprint")
                                      for w in page.get("workspaces") or [])
-    note = (' <span class="shep-mark shep-mark-serve">serving reads this workspace</span>'
+    note = ('<span class="shep-mark shep-mark-serve">serving reads this workspace</span>'
             if page.get("serving") == workspace else "")
-    return (f'<div class="shep-test-ident">{r.dataset_identity_html(row, digits=digits, name=False)}'
-            f'{note}</div>')
+    return (f'<div class="shep-test-ident">'
+            f'{r.dataset_identity_html(row, digits=digits, name=False, marks=note)}</div>')
 
 
 #: The import command a page names when the registry holds no KG edge set:
@@ -1157,14 +1177,14 @@ def _version_counts(version: Mapping[str, Any]) -> str:
     if version.get("kind") == protocols.KG_EDGES:
         said: Tuple[str, ...] = ("pairs", "positive_edges", "message_passing_edges")
         lead = (f"{_count(counts.get('pairs'))} pairs from {_count(counts.get('positive_edges'))} "
-                f"positive edges; message passing over "
+                f"positive edges, message passing over "
                 f"{_count(counts.get('message_passing_edges'))} edges")
     elif version.get("kind") == protocols.GENERATED:
         said = ("samples", "diseases", protocols.GENERATED_FIXTURE_COUNT)
         diseases = counts.get("diseases")
         fixture = counts.get(protocols.GENERATED_FIXTURE_COUNT)
         lead = (f"{_count(counts.get('samples'))} generated patients of {_count(diseases)} "
-                f"disease{'' if diseases == 1 else 's'}; "
+                f"disease{'' if diseases == 1 else 's'}, "
                 + (f"{_count(fixture)} gene fixture rows" if protocols.GENERATED_FIXTURE_COUNT
                    in counts else "no gene fixture kept"))
     else:
@@ -1218,7 +1238,7 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
         mark += (' <span class="shep-sub">' + r.word_groups(
             "files checked", checked.replace("T", " ").replace("Z", " UTC")) + '</span>')
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
-    reasons = "; ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
+    reasons = ", ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
     if _kind_words(version):
         rows = [("Holds", _version_counts(version))]
@@ -1362,10 +1382,11 @@ def _other_model_html(item: Mapping[str, Any], words: Mapping[str, Tuple[str, st
     its Run → Checkpoint pair (`model_list.pair_words`: no two listed files
     share both, so two files of one run never read alike), the run whole
     in details (`whole`; `renderers.run_words`)."""
-    run, file = words.get(ml.item_key(item)) or (r.model_name_line(item), "")
+    run, file = words.get(ml.item_key(item)) or (None, "")
     if whole:
         run = r.run_words(item.get("architecture"), item.get("run"), fit=False)
-    return (f'<div class="shep-sub">{e(r.model_kind_text(item))}</div><div>{e(run)}</div>'
+    run_html = e(run) if run is not None else r.model_name_html(item)
+    return (f'<div class="shep-sub">{e(r.model_kind_text(item))}</div><div>{run_html}</div>'
             + (f'<div class="shep-sub">{e(file)}</div>' if file else ""))
 
 
@@ -1428,7 +1449,8 @@ def _job_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
                 else "whether a report was kept cannot be checked (see Run)")
         when = utc_time(job.get("end_time")) or utc_time(job.get("start_time"))
         what = "ended " + when if when else "ended"
-        state = f"{how}; {kept}; the last test run on this server, not in the report store"
+        # One fact a line (the owner's decision of 2026-11-23).
+        state = (how, kept, "the last test run on this server, not in the report store")
         css = "shep-test-rep-ended"
     else:
         return ""
@@ -1437,7 +1459,9 @@ def _job_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
                         words)
     return (f'<tr class="{css}" aria-disabled="true"><td>{e(what)}</td><td>{model}</td>'
             f'<td>{measured}</td><td>{_pill(str(status))}'
-            f'<div class="shep-sub">{e(state)}</div></td></tr>')
+            + "".join(f'<div class="shep-sub">{e(line)}</div>' for line in
+                      (state if isinstance(state, tuple) else (state,)))
+            + '</td></tr>')
 
 
 #: The reports table's columns (the skill's §8: one or two words each).
@@ -1571,7 +1595,7 @@ NO_CHECKPOINT = "This workspace has no checkpoint to test."
 #: the one place the page asks for the choice, naming its two selects
 #: (NEW-test-1: it said "choose a model", a control the page no longer has,
 #: under the selects' own "Choose the run, then the checkpoint to test.").
-CHOOSE_A_CHECKPOINT = "Disabled: choose the run, then the checkpoint to test."
+CHOOSE_A_CHECKPOINT = r.disabled_words(START, "choose the run, then the checkpoint to test.")
 
 
 def testable(item: Mapping[str, Any]) -> bool:
@@ -1596,18 +1620,28 @@ def chosen_model(models: Mapping[str, Any], key: Any) -> Optional[str]:
 
 
 def listing_why_html(page: Mapping[str, Any], models: Mapping[str, Any]) -> str:
-    """**Why the Run and Checkpoint lists are empty** for a request D8
-    refuses (listing the checkpoints opens them: an operator control), said
-    once above the fields it turns off, the Run row with its locked ↻ and
-    then Checkpoint: the gated-button rule's visible reason beside the ↻
-    (`chips.gated`), placed as Settings places its panel's above the fields
-    it turns off (T06-D). It was the Checkpoint field's note, 123 px under
-    the ↻ and off screen with it at 390 × 844 (UI ledger V-15). Empty for
-    an operator."""
-    if not models.get("refused"):
+    """**Why the Run and Checkpoint lists are empty**, said once above the
+    fields it turns off, as the Run row's note (``shep-bar-note``, the bar's
+    first line: the Run select with its ↻, then Checkpoint, under it), the
+    gated-button rule's visible reason for the ↻ (`chips.gated`). It was the
+    Checkpoint field's note, 123 px under the ↻ and off screen with it at
+    390 × 844 (UI ledger V-15). For a request D8
+    refuses: listing the checkpoints opens them, an operator control. With no
+    workspace listed (L7 SW-LK10: the two selects were empty grey boxes, the
+    ↻ off with nothing said; the skill's §9): Run's relation to the Data
+    panel's workspaces notice (`see_above`), else to its Workspace select.
+    Empty once a workspace is listed (its checkpoints, or `NO_CHECKPOINT`
+    under Checkpoint)."""
+    if models.get("refused"):
+        return _reason_html("Not listed: listing the checkpoints opens them. "
+                            + operator_only(page.get("access") or {}), kind="lock")
+    if models.get("workspace"):
         return ""
-    return _reason_html("Not listed: listing the checkpoints opens them. "
-                        + operator_only(page.get("access") or {}), kind="lock")
+    folder = _notice(page, "workspaces_notice")
+    if folder is not None:
+        return relation_html(RUN, folder, where=NOTICE_PANEL)
+    return _reason_html(r.disabled_words(RUN, RUN_CHOOSE_WORKSPACE if page.get("workspaces")
+                                         else RUN_NO_WORKSPACE), kind="off")
 
 
 def model_html(page: Mapping[str, Any], models: Mapping[str, Any], key: Optional[str]) -> str:
@@ -1687,30 +1721,40 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str],
     directory the server cannot check stays in the list and does not block
     Start: the setting's note says which and why on a line of its own, in
     amber with ▲ (needs attention, does not block), redacted as the problem
-    is."""
+    is. Each fact is a line of its own, in sentence case (L7 SW-LK7: one
+    lowercase " · " chain, its second fact broken over two lines)."""
     choice = run_evidence(page, version)
     helps = {"R10 evidence": ("test-evidence", "R10 evidence")}
+
+    def lines(*facts: str) -> str:
+        return "".join(f"<div>{fact}</div>" for fact in facts if fact)
+
     if choice.not_applicable:
-        return r.summary_list([("R10 evidence", f'{r.status_mark("neutral", r.NOT_APPLICABLE)} · '
-                                                f'{e(choice.not_applicable)}')], helps=helps,
-                              classes=r.FIELD_ROWS)
+        return r.summary_list([("R10 evidence", lines(r.status_mark("neutral", r.NOT_APPLICABLE),
+                                                      e(_sentence(choice.not_applicable))))],
+                              helps=helps, classes=r.FIELD_ROWS)
     evidence = page.get("evidence") or {}
     names = evidence.get("names") or []
     roots = page.get("roots") or []
     # The workspace by its relation: its name is its select's, said once.
-    measured = (f"{e(SELECTED_WORKSPACE)} (measured, always)" if workspace
-                else "the measured workspace (always)")
+    measured = (f"{e(_sentence(SELECTED_WORKSPACE))} {r.bound_html('(measured, always)')}" if workspace
+                else "The measured workspace (always)")
     note = ""
     if choice.problem:
-        extra = " · " + r.status_mark("error", "Refused: " + redact(choice.problem, roots))
+        extra = r.status_mark("error", "Refused: " + redact(choice.problem, roots))
     elif names:
-        extra = " · " + ", ".join(f"<code>{e(n)}</code>" for n in names) + " (the server's setting)"
+        extra = ", ".join(f"<code>{e(n)}</code>" for n in names) + " (the server's setting)"
         if choice.note:
-            note = f'<div>{r.status_mark("warn", redact(choice.note, roots))}</div>'
+            note = r.status_mark("warn", redact(choice.note, roots))
     else:
-        extra = " · no other evidence directory is set on the server"
-    return r.summary_list([("R10 evidence", f"{measured}{extra}{note}")], helps=helps,
+        extra = "No other evidence directory is set on the server"
+    return r.summary_list([("R10 evidence", lines(measured, extra, note))], helps=helps,
                           classes=r.FIELD_ROWS)
+
+
+def _sentence(words: str) -> str:
+    """`words` as a line of its own starts: its first letter a capital."""
+    return words[:1].upper() + words[1:]
 
 
 def fixed_html(page: Mapping[str, Any]) -> str:
@@ -1823,15 +1867,17 @@ def import_reason_html(page: Mapping[str, Any], workspace: Optional[str]) -> str
         return _reason_html(operator_only(access), kind="lock")
     registry, folder = _notice(page, "registry_notice"), _notice(page, "workspaces_notice")
     if registry is not None:
-        return relation_html(IMPORT_DISABLED, registry)
+        return relation_html(IMPORT, registry)
     if page.get("registry_problem"):
-        return _reason_html("Disabled: no cohort registry is available.")
+        return _reason_html(r.disabled_words(IMPORT, "no cohort registry is available."),
+                            kind="off")
     if workspace:
         return ""
     if folder is not None:
-        return relation_html(IMPORT_DISABLED, folder)
-    return _reason_html("Disabled: choose a workspace to import against." if page.get("workspaces")
-                        else "Disabled: no workspace to import against.")
+        return relation_html(IMPORT, folder)
+    return _reason_html(r.disabled_words(IMPORT, "choose a workspace to import against."
+                                         if page.get("workspaces")
+                                         else "no workspace to import against."), kind="off")
 
 
 def start_notice(page: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
@@ -1852,8 +1898,8 @@ def start_reason_html(page: Mapping[str, Any], allowed: bool, can_start: bool,
     `start_state`'s reason."""
     notice = start_notice(page) if allowed and not can_start else None
     if notice is not None:
-        return relation_html(START_DISABLED, notice, where=NOTICE_PANEL)
-    return _reason_html(why, kind="lock" if not allowed else "")
+        return relation_html(START, notice, where=NOTICE_PANEL)
+    return _reason_html(why, kind="lock" if not allowed else "off")
 
 
 def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Optional[str],
@@ -1874,54 +1920,54 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, operator_only(access)
     notice = start_notice(page)
     if notice is not None:
-        return False, relation_words(START_DISABLED, notice, where=NOTICE_PANEL)
+        return False, r.relation_words(START, notice, where=NOTICE_PANEL)
+    off = partial(r.disabled_words, START)
     if page.get("registry_problem"):
-        return False, "Disabled: no registry is available (see Data)."
+        return False, off("no registry is available (see Data).")
     kind, words = gpu
     if kind == "busy":
         # The holder in the GPU chip's words, with where to stop this
         # service's inference when that holds it (`gpu_line`), as Training's
         # and Fine-tune's starts say it: whatever holds the lock, a job or
         # inference, Start waits for it.
-        return False, f"Disabled: {words}."
+        return False, off(f"{words}.")
     if kind == "unread":
-        return False, "Disabled: the GPU lock cannot be read or used just now (see the GPU chip)."
+        return False, off("the GPU lock cannot be read or used just now (see the GPU chip).")
     workspace_row = find(page.get("workspaces") or [], "name", workspace)
     if workspace_row is None:
         # An empty folder says so under the Workspace select (`NO_WORKSPACE_YET`).
-        return False, ("Disabled: choose a workspace." if page.get("workspaces")
-                       else "Disabled: no workspace is listed (see Data).")
+        return False, off("choose a workspace." if page.get("workspaces")
+                          else "no workspace is listed (see Data).")
     version = find(page.get("versions") or [], "label", label)
     if version is None:
-        return False, "Disabled: choose a data version."
+        return False, off("choose a data version.")
     if version.get("problem"):
-        return False, "Disabled: this data version cannot be read."
+        return False, off("this data version cannot be read.")
     bound = binding_state(version, binding)[0]
     if bound == "changed":
         # Its refusal, naming the file, is said beside the version (`CHANGED_FILES`).
-        return False, ("Disabled: the data version's files changed after its import "
-                       "(see Data).")
+        return False, off("the data version's files changed after its import (see Data).")
     if bound == "another":
         # Its refusal is said beside the version (`ANOTHER_GRAPH`), once.
-        return False, "Disabled: the data version is mapped against another graph (see Data)."
+        return False, off("the data version is mapped against another graph (see Data).")
     item = find_model(models, key)
     if item is None:
         # Its empty state or its problem is said under the selects (`model_html`).
         return False, (CHOOSE_A_CHECKPOINT if models.get("items")
-                       else "Disabled: no checkpoint to test (see Run).")
+                       else off("no checkpoint to test (see Run)."))
     if item.get("problem") or not r.is_digest(item.get("sha256")):
-        return False, "Disabled: this checkpoint's metadata is not readable."
+        return False, off("this checkpoint's metadata is not readable.")
     refusal = measure_refusal(item, version, protocol)
     if refusal:
-        return False, "Disabled: " + said(redact(refusal, roots), "")
+        return False, off(said(redact(refusal, roots), ""))
     # The runner's one evidence choice by the version's kind: the setting is
     # required only where it is given (a supplied cohort version).
     evidence = run_evidence(page, version)
     if evidence.problem:
-        return False, ("Disabled: the evidence directories setting is refused: "
-                       + redact(evidence.problem, roots))
+        return False, off("the evidence directories setting is refused: "
+                          + redact(evidence.problem, roots))
     if (page.get("device") or {}).get("problem"):
-        return False, f"Disabled: {page['device']['problem']}"
+        return False, off(str(page["device"]["problem"]))
     return True, None
 
 
@@ -2127,8 +2173,8 @@ def result_dataset_html(record: Mapping[str, Any], view: Mapping[str, Any],
         said = e(SELECTED_DATASET)
         if others:
             said += ('<div class="shep-sub">' + e(
-                f"{', '.join(others)} hold{'s' if len(others) == 1 else ''} the same record; "
-                "the report does not record which workspace was read") + "</div>")
+                f"{', '.join(others)} hold{'s' if len(others) == 1 else ''} the same record. "
+                "The report does not record which workspace was read.") + "</div>")
         return said
     who = (e(f"{names[0]}'s dataset record") if len(names) == 1
            else e(f"the dataset record of {', '.join(names[:-1])} and {names[-1]}") if names
@@ -2231,7 +2277,7 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
             parts.append(_reason_html(
                 "No report was kept in this run directory: "
                 + redact(_why_not_kept(state), roots) + ". report.json is the run's commit "
-                "point, which an interrupted, cancelled or refused run never writes; nothing "
+                "point, which an interrupted, cancelled or refused run never writes. Nothing "
                 "here can be registered."))
     else:
         parts.append(_record_html(record, run, state, selection=selection, models=models or {},
@@ -2272,10 +2318,11 @@ def _registration_html(state: Mapping[str, Any]) -> str:
     beside = state.get("checked_beside")
     where = f" (the ledger beside {e(beside)} was read)" if beside else ""
     merged = [n for n in state.get("historical_overlap") or [] if isinstance(n, int)]
-    overlap = (f"; possible overlap with record{'s' if len(merged) != 1 else ''} "
-               f"{', '.join(str(n) for n in merged)}, merged before each run had its own record "
-               "(not recorded whether this run is one of them); registering adds this run's "
-               "own record" if merged and registered != "registered" else "")
+    # Its own line, in sentences (the owner's decision of 2026-11-23).
+    overlap = (f"Possible overlap with record{'s' if len(merged) != 1 else ''} "
+               f"{', '.join(str(n) for n in merged)}, merged before each run had its own record. "
+               "Whether this run is one of them is not recorded. Registering adds this run's "
+               "own record." if merged and registered != "registered" else "")
     return ((f"registered as record {seq}{where}" if registered == "registered"
              and isinstance(seq, int)
              else f"registered{where}" if registered == "registered"
@@ -2283,7 +2330,8 @@ def _registration_html(state: Mapping[str, Any]) -> str:
              else f"cannot be checked{where}" if beside
              else "none found beside the checkpoint the run read, or its ledger cannot be "
                   "read (a registration beside another copy of the weights is looked for only "
-                  "with the checkpoint list, an operator control)") + e(overlap))
+                  "with the checkpoint list, an operator control)")
+            + (f'<div class="shep-sub">{e(overlap)}</div>' if overlap else ""))
 
 
 def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
@@ -2374,7 +2422,7 @@ def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
                 + '</b> They differ '
                 f'on: {differing} (runs {e(others)}). Deterministic algorithms were on, so these '
                 "runs were expected to agree. Every run is kept as recorded and each can be "
-                "registered; compare their environment facts first. An investigation note "
+                "registered. Compare their environment facts first. An investigation note "
                 "records what was found.</div>")
         else:
             # "Without deterministic algorithms" only when the record says so:
@@ -2382,19 +2430,19 @@ def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
             parts.append(
                 '<div class="shep-reason shep-reason-grey shep-test-block"><span><b>Runs under '
                 f'these conditions differ</b> on: {differing} (runs {e(others)}). '
-                + ("Without deterministic algorithms, runs can differ; every"
+                + ("Without deterministic algorithms, runs can differ. Every"
                    if deterministic is False else "Every")
                 + " run is kept as recorded and each can be registered. An investigation note "
                 "records what was looked at.</span></div>")
     elif contest.get("state") == "cannot_be_checked":
-        problems = "; ".join(redact(p, roots) for p in contest.get("problems") or ())
+        problems = r.sentences(redact(p, roots) for p in contest.get("problems") or ())
         if key:
-            parts.append(_reason_html(f"Comparison incomplete: {problems}. This describes the "
-                                      "group only; it does not stop a registration."))
+            parts.append(_reason_html(f"Comparison incomplete: {problems} This describes the "
+                                      "group only. It does not stop a registration."))
         else:
             # This run's own report could not be placed in a group: its own
             # reason, which marks no other run (K8-6r.2).
-            parts.append(_reason_html(f"This run's report cannot be compared: {problems}. It "
+            parts.append(_reason_html(f"This run's report cannot be compared: {problems} It "
                                       "marks no other run."))
     if key:
         from src.evaluation.sidecar import KEY_FIELDS
@@ -2413,9 +2461,11 @@ def _store_not_listed(problem: str, roots: Sequence[Tuple[str, str]], what: str)
     """Why Register is off when the store could not be listed (Decision 10):
     no report can be confirmed here, and the command line registers a named
     report it verifies. Who acts: the operator, on the server."""
-    return (f"Disabled: the report store could not be listed, so {what}'s report cannot be "
-            f"confirmed here: {redact(problem, roots).rstrip('.')}. Register it from the "
-            "command line by naming its report (scripts/record_evaluation.py --report …).")
+    return r.disabled_words(REGISTER, f"the report store could not be listed, so {what}'s "
+                            f"report cannot be confirmed here: "
+                            f"{redact(problem, roots).rstrip('.')}. Register it from the "
+                            "command line by naming its report (scripts/record_evaluation.py "
+                            "--report …).")
 
 
 def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
@@ -2443,20 +2493,28 @@ def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
         listing = reports.get("problem") if reports.get("version_sha256") else None
         if listing and not reports.get("runs"):
             return False, _store_not_listed(listing, roots, "a run")
-        return False, None
+        # No report chosen: said in the shared form, never a silent disabled
+        # button (L7 SW-LK6; the skill's §9): the registry the Data panel's
+        # notice names, else what to choose.
+        registry = _notice(page, "registry_notice")
+        if registry is not None:
+            return False, r.relation_words(REGISTER, registry, where=NOTICE_PANEL)
+        return False, r.disabled_words(REGISTER, REGISTER_CHOOSE if reports.get("runs")
+                                       else REGISTER_NONE)
     state = run.get("state") or {}
     if state.get("kept") != "kept":
-        return False, "Disabled: no report was kept in this run."
+        return False, r.disabled_words(REGISTER, "no report was kept in this run.")
     if state.get("registered") == "registered":
         return False, "Already registered."
     if run.get("record") is None:
         if run.get("unbuilt"):
-            return False, ("Disabled: this report cannot be registered: "
-                           f"{redact(run['unbuilt'], roots)}")
+            return False, r.disabled_words(REGISTER, "this report cannot be registered: "
+                                                     f"{redact(run['unbuilt'], roots)}")
         if reports.get("store_problem"):
             return False, _store_not_listed(reports["store_problem"], roots, "this run")
-        return False, ("Disabled: the report store's listing did not read this report (it may "
-                       "have been written or replaced since); press ↻ to read it again.")
+        return False, r.disabled_words(REGISTER, "the report store's listing did not read this "
+                                                 "report (it may have been written or replaced "
+                                                 "since). Press ↻ to read it again.")
     return True, None
 
 
@@ -2483,6 +2541,12 @@ def intake_choices(listing: Mapping[str, Any]) -> List[Tuple[str, str]]:
 
 
 def intake_note_html(listing: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
+    """What the import drawer says under its select: the import folder's
+    notice when it is unset or refused (one line, its link to Settings › Data
+    locations, the rest under "Details ›"), else the listing's own problem,
+    else what the folder offers and why any file in it is not offered."""
+    if listing.get("notice"):
+        return r.notice_block(listing["notice"])
     if listing.get("problem"):
         return _reason_html(redact(listing["problem"], roots))
     items = listing.get("items") or []
@@ -2595,9 +2659,10 @@ def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
         ("Ranked-eligible", f"<b>{e(_count(counts.get('ranked_eligible')))}</b> of {e(_count(n))}"),
         ("Excluded", f"<b>{e(_count(counts.get('n_excluded')))}</b> of {e(_count(n))}"
                      f"{': ' + e(reasons) if reasons else ''} "
-                     '<span class="shep-muted">(by category; case ids are not sent to the browser: '
-                     "the command-line preview on the machine lists them, and the committed "
-                     "version records them)</span>"),
+                     '<span class="shep-muted">(by category)</span>'
+                     '<div class="shep-sub">Case ids are not sent to the browser. The '
+                     "command-line preview on the machine lists them, and the committed "
+                     "version records them.</div>"),
         ("Terms unmappable", f"<b>{e(_count(counts.get('terms_unmappable')))}</b> distinct"
                              + (f'<div class="shep-test-terms">{term_list}</div>' if term_list else "")),
         ("Cases with lost terms", f"{e(_count(counts.get('cases_with_lost_terms')))} of "
@@ -2786,7 +2851,7 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
     # Not named `said`: that would make the module's `said` local to this
     # function, and the refusals above would fail before it is assigned.
     message = {"registered": f"Registered as record {sequence}.",
-               "already_registered": f"Already registered as record {sequence}; nothing was "
+               "already_registered": f"Already registered as record {sequence}. Nothing was "
                                      "written."}.get(result.outcome, result.outcome)
     for note in (group_note(result), historical_note(result)):
         if note:
@@ -2820,7 +2885,7 @@ def add_note(reports: Mapping[str, Any], run_id: Any, who: Any, what: Any, reque
         # Another writer held the notes file (K8-6r.1): busy, not refused for
         # good. The note stays in its box, so the operator can add it again.
         return False, (f"The note was not kept: another writer held the notes file for the "
-                       f"{exc.grace:g} s this one waited. Nothing was written this time; add it "
+                       f"{exc.grace:g} s this one waited. Nothing was written this time. Add it "
                        "again.")
     except (OSError, ValueError) as exc:
         return False, str(exc)
@@ -2837,14 +2902,21 @@ IMPORT_TITLE_HTML = ('<h2>Import a new cohort version</h2><p class="shep-sub">Ma
 
 def open_import(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """"Import a new version…": D8 on this request (the intake directory holds
-    patient-level data), then the server's intake listing."""
+    patient-level data), then the server's intake listing; when nothing is
+    listed because the import folder is unset or refused, its notice
+    (`workspaces.setting_notice`, chosen by the setting's flags, never by the
+    listing's words), which the drawer says in place of the sentence."""
     from src.api.services.server_lists import list_intake_files
+    from src.config import server_settings
 
     access = operator_access(request)
     if not access.allowed:
-        return {"refused": access.refusal, "items": [], "problem": None}
+        return {"refused": access.refusal, "items": [], "problem": None, "notice": None}
     listing = list_intake_files(environ=environ)
-    return {"refused": None, "items": [asdict(i) for i in listing.items], "problem": listing.problem}
+    notice = (setting_notice(server_settings.intake_directory(environ)) if listing.problem
+              else None)
+    return {"refused": None, "items": [asdict(i) for i in listing.items], "problem": listing.problem,
+            "notice": notice}
 
 
 def _import_inputs(workspace: Any, file: Any, label: Any, role: Any, policy: Any) -> Dict[str, Any]:
@@ -2916,7 +2988,7 @@ def commit_import_ui(preview: Optional[Mapping[str, Any]], workspace: Any, file:
         version = commit_import(plan, registry.value, preview["preview_id"])
     except OSError as exc:
         return False, (f"Failed while writing: {exc}. The version was not committed (cohort.json "
-                       "is written last); a version directory left without it is an interrupted "
+                       "is written last). A version directory left without it is an interrupted "
                        "import, refused by every reader. Remove it before reusing the label."), None
     except ValueError as exc:
         # As the importer says it: a refusal after the source copy was kept
@@ -2925,7 +2997,7 @@ def commit_import_ui(preview: Optional[Mapping[str, Any]], workspace: Any, file:
     manifest = version.manifest
     return True, (f"Committed cohort version {manifest['label']} (role {manifest['role']}): "
                   f"{manifest['samples']['n']} ranked of {manifest['counts']['source_cases']} "
-                  f"source cases; version {version.identity.sha256[:12]}."), manifest["label"]
+                  f"source cases, version {version.identity.sha256[:12]}."), manifest["label"]
 
 
 # ---------------------------------------------------------------------------
@@ -3016,7 +3088,7 @@ def create_test_page(ctx: Any) -> None:
                        elem_id="shep-test-cohort"):
             cohort_hd = plain_html(cohort_header_html({}), elem_id="shep-test-cohort-hd")
             # Its one scroll region says when there is more below (R-73).
-            with gr.Column(elem_classes=["shep-test-bd", "shep-scroll-cue"]):
+            with gr.Column(elem_classes=["shep-test-bd"]):
                 workspace = gr.Dropdown(label="Workspace", choices=[], value=None,
                                         elem_id="shep-test-workspace", interactive=True,
                                         elem_classes=["shep-test-select"])
@@ -3057,13 +3129,19 @@ def create_test_page(ctx: Any) -> None:
                     preview_btn = gr.Button("Preview", variant="secondary",
                                             elem_id="shep-test-preview", scale=0)
                 preview_out = plain_html("", elem_id="shep-test-preview-card")
-            with gr.Row(elem_classes=["shep-panel-ft"]):
-                commit_btn = gr.Button("Commit", variant="primary", interactive=False,
-                                       elem_id="shep-test-commit", scale=0)
+            # A bar: Commit, then its notes each a line of its own under it (the
+            # skill's §2: a message never shares a row with a button; L7: the
+            # reason Commit is off wrapped to two lines beside it).
+            with gr.Row(elem_classes=["shep-panel-ft", "shep-bar"]):
+                with gr.Row(elem_classes=["shep-grp"]):
+                    commit_btn = gr.Button("Commit", variant="primary", interactive=False,
+                                           elem_id="shep-test-commit", scale=0)
+                commit_out = plain_html("", elem_id="shep-test-commit-out",
+                                        elem_classes=["shep-bar-note"])
                 plain_html(
                     '<span class="shep-note">Commit prepares again and refuses if the preview id '
-                    "changed.</span>", elem_id="shep-test-commit-note")
-                commit_out = plain_html("", elem_id="shep-test-commit-out")
+                    "changed.</span>", elem_id="shep-test-commit-note",
+                    elem_classes=["shep-bar-note"])
         # ------------------------------------------------------------ Run
         # Three rows at wide sizes: the title; the body, the panel's one
         # scroll region, with the choices and then the job's details; and the
@@ -3075,17 +3153,18 @@ def create_test_page(ctx: Any) -> None:
         with gr.Column(elem_classes=["shep-panel", "shep-sized", "shep-test-col"],
                        elem_id="shep-test-run"):
             plain_html(run_header_html(), elem_id="shep-test-run-hd")
-            with gr.Column(elem_classes=["shep-test-bd", "shep-scroll-cue"]):
+            with gr.Column(elem_classes=["shep-test-bd"]):
                 # The model as Run → Checkpoint, the shared cascading pair
                 # (`model_list.parents_update`), one under the other so each
                 # 40-character option shows whole in the column; ↻ lists the
-                # workspace's checkpoints again. Above them, for a request D8
-                # refuses, why both lists are empty and ↻ is locked
-                # (`listing_why_html`), once.
-                model_why = plain_html("", elem_id="shep-test-model-why")
-                # A bar of one group (the select and its ↻ never part), its
-                # button on the box's line (`shep-field-row`).
+                # workspace's checkpoints again. A bar of one group (the select
+                # and its ↻ never part), its button on the box's line
+                # (`shep-field-row`); its note, first, on the line above them:
+                # why both lists are empty and ↻ is off (`listing_why_html`),
+                # once (V-15), the bar's own reason for the ↻.
                 with gr.Row(elem_classes=["shep-test-model-row", "shep-bar"]):
+                    model_why = plain_html("", elem_id="shep-test-model-why",
+                                           elem_classes=["shep-bar-note"])
                     with gr.Row(elem_classes=["shep-grp", "shep-grp-grow", "shep-field-row"]):
                         run_select = gr.Dropdown(label="Run", choices=[], value=None,
                                                  elem_id="shep-test-model-run", interactive=False,
@@ -3100,7 +3179,8 @@ def create_test_page(ctx: Any) -> None:
                 model_info = plain_html("", elem_id="shep-test-model-info")
                 # The protocols the chosen model's listed capabilities admit (`measurement_choices`).
                 measurement = gr.Radio(label="Measurement", choices=[], value=None,
-                                       elem_id="shep-test-measurement", interactive=False)
+                                       elem_id="shep-test-measurement", interactive=False,
+                                       visible=False)
                 evidence = plain_html("", elem_id="shep-test-evidence")
                 with gr.Row(elem_classes=["shep-test-checks"]):
                     record = gr.Checkbox(label=RECORD_LABEL, value=True,
@@ -3142,7 +3222,7 @@ def create_test_page(ctx: Any) -> None:
                        elem_id="shep-test-result"):
             reports_hd = plain_html(reports_header_html({}), elem_id="shep-test-reports-hd")
             # Its one scroll region says when there is more below (R-73).
-            with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush", "shep-scroll-cue"]):
+            with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush"]):
                 reports_list = plain_html("", elem_id="shep-test-reports", js_on_load=_REPORTS_JS)
                 # Drawn again when the poll sees a job start or end: its
                 # disclosures stay as the reader left them for the same report
@@ -3176,7 +3256,8 @@ def create_test_page(ctx: Any) -> None:
             with gr.Row(elem_classes=["shep-panel-ft"]):
                 register = gr.Button(GATED_LABELS["register"], variant="primary",
                                      interactive=False, elem_id="shep-test-register", scale=0)
-                register_reason = plain_html("", elem_id="shep-test-register-reason")
+                register_reason = plain_html("", elem_id="shep-test-register-reason",
+                                             elem_classes=["shep-beside"])
                 register_out = plain_html("", elem_id="shep-test-register-out")
     # The poll's hand-off to the selection's group (`_poll`): a hidden
     # component, not a State, because the answer to a queue=False request
@@ -3221,12 +3302,14 @@ def create_test_page(ctx: Any) -> None:
         (`measurement_choices`: what its capabilities meet that measures the
         version's kind), and the value it shows (`chosen_measurement`), which
         Start's state is then drawn from. Like the Model select, it is
-        interactive for an operator only."""
+        interactive for an operator only. With nothing to offer (no model
+        chosen) it is not drawn: a label over an empty choice group says
+        nothing (the skill's §9; Start's reason says what to choose)."""
         allowed = bool((page.get("access") or {}).get("allowed"))
         choices = measurement_choices(find_model(models, key),
                                       find(page.get("versions") or [], "label", label))
         protocol = chosen_measurement(choices, protocol)
-        return gr.update(choices=choices, value=protocol,
+        return gr.update(choices=choices, value=protocol, visible=bool(choices),
                          interactive=allowed and bool(choices)), protocol
 
     def _job_outputs(page, job, gpu):
@@ -3298,7 +3381,7 @@ def create_test_page(ctx: Any) -> None:
                         notes_problems=reports.get("notes_problems") or (), selection=chosen,
                         models=models, workspaces=page.get("workspaces") or []),
             gated_update("register", page, interactive=can),
-            _reason_html(why, kind="lock" if not allowed else ""),
+            _reason_html(why, kind="lock" if not allowed else "off"),
             gr.update(visible=show_notes),
             gated_update("note", page),
             gr.update(interactive=allowed),
@@ -3755,7 +3838,8 @@ def create_test_page(ctx: Any) -> None:
         return (gr.update(visible=True), _dd(intake_choices(listing), None),
                 intake_note_html(listing, roots), IMPORT_TITLE_HTML,
                 gr.update(choices=role_choices(page or {})), None,
-                gr.update(interactive=False, value="Commit"), "", "", "")
+                gr.update(interactive=False, value="Commit"), "", "",
+                _reason_html(COMMIT_NO_PREVIEW, kind="off"))
 
     import_open.click(_on_open_import, inputs=[page_state, workspace],
                       outputs=[drawer, intake, intake_note, drawer_title, new_role, preview_state,
@@ -3777,10 +3861,12 @@ def create_test_page(ctx: Any) -> None:
         roots = (page or {}).get("roots") or []
         if preview is None:
             return None, _outcome_box("amber", refusal or "Nothing was written.", roots), \
-                gr.update(interactive=False, value="Commit"), ""
+                gr.update(interactive=False, value="Commit"), \
+                _reason_html(COMMIT_NO_PREVIEW, kind="off")
         can = bool(preview.get("samples_n"))
         return preview, preview_html(preview), gr.update(
-            interactive=can, value=f"Commit as version {preview.get('label')}"), ""
+            interactive=can, value=f"Commit as version {preview.get('label')}"), \
+            "" if can else _reason_html(COMMIT_NO_CASES, kind="off")
 
     preview_btn.click(_on_preview, inputs=[page_state, workspace, intake, new_label, new_role,
                                            new_policy],
@@ -3907,7 +3993,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-more {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0 0; }}
 {_PAGE} .shep-test-more button {{ font: inherit; font-size: 15px; color: var(--shep-accent-text); background: none; border: 0; padding: 2px 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }}
 {_PAGE} .shep-panel-ft > button, {_PAGE} .shep-test-actions > button {{ white-space: nowrap; flex: none !important; }}
-{_PAGE} .shep-panel-ft > .block {{ flex: 1 1 200px !important; min-width: 0 !important; }}
+{_PAGE} .shep-panel-ft > .block:not(.shep-beside):not(.shep-bar-note) {{ flex: 1 1 200px !important; min-width: 0 !important; }}
 {_PAGE} #shep-test-cohort {{ --shep-panel-basis: 22rem; --shep-panel-grow: 1; --shep-panel-min: 19.7rem; }}
 {_PAGE} #shep-test-run {{ --shep-panel-basis: 24rem; --shep-panel-grow: 1; --shep-panel-min: 22.5rem; }}
 {_PAGE} #shep-test-result {{ --shep-panel-basis: 32.2rem; --shep-panel-grow: 1.5; --shep-panel-min: 32.2rem; }}

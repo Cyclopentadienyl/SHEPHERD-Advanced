@@ -14,7 +14,7 @@ items to escaped HTML. What these pin:
   fingerprint"; "trained on" every listed workspace with the full manifest
   digest the checkpoint records, or "matches no listed workspace"; the
   synthetic chip; the recorded tests as a state, never a result's number; an
-  unreadable checkpoint greyed "Metadata not readable: <why>; cannot be loaded";
+  unreadable checkpoint greyed "Metadata not readable: <why>. It cannot be loaded.";
 - **Model Facts**: Identity, Uses (the code's fixed statement and the synthetic
   line), Data, Evidence ("selection metric on val, not an independent test";
   recorded tests as states) and Warnings, always open;
@@ -65,7 +65,10 @@ def checkpoint(fingerprint=FP_A, sha=SHA, problem=None, epoch=5, run="20261017-0
 
 
 def text_of(html: str) -> str:
-    return re.sub(r"<[^>]+>", "", html)
+    """The words as read: tags dropped, a no-break space (a separator's,
+    `renderers.SEP`, or a mark's, `renderers.MARK_SPACE`) read as the space
+    it shows."""
+    return re.sub(r"<[^>]+>", "", html).replace("\u00a0", " ")
 
 
 # --------------------------------------------------------------------------- digests
@@ -196,6 +199,11 @@ def test_trained_on_every_listed_workspace_with_the_full_digest():
     twin = [workspace("twin", FP_A[:12] + "f" * 52)]
     assert "matches no listed workspace" in text_of(r.trained_on_html(FP_A, twin))
     assert not r.is_synthetic_training(FP_A, twin)
+    # The sweep's L7 (SW-LK7): its facts are joined by the shared separator (a no-break space
+    # before the dot), so no line of the Diagnosis card starts with "·" ("trained on demo, other
+    # ·" then "dataset fingerprint …" read as two facts parted mid-way).
+    for html in (r.trained_on_html(FP_A, listed), r.trained_on_html(FP_A, twin)):
+        assert html.count(r.SEP) == 1 and " ·" not in re.sub(r"<[^>]+>", "", html), html
 
 
 def test_the_facts_show_recorded_tests_as_a_state_never_a_number():
@@ -225,7 +233,7 @@ def test_records_that_cannot_be_read_are_named_apart_from_the_results():
     assert text(r.RecordedTests("records", 0, None, unreadable=2)) == (
         "Recorded results: 0 · 2 not readable")
     assert text(r.RecordedTests("records", 3, 1, unchecked=1, unreadable=2)) == (
-        "Recorded results: 3 · 2 not readable; runs differ for 1; comparison incomplete for 1")
+        "Recorded results: 3 · 2 not readable, runs differ for 1, comparison incomplete for 1")
     assert text(r.RecordedTests("records", 3, 1, unreadable=2)).count(" · ") == 1
     facts = r.facts_from_checkpoint(checkpoint(), [workspace()],
                                     recorded=r.RecordedTests("records", 0, 0, unreadable=1))
@@ -244,7 +252,7 @@ def test_an_unreadable_checkpoint_is_greyed_and_cannot_be_loaded():
 
     html = _models_tree(checkpoint(sha=None, problem="UnpicklingError: no"))
     assert "shep-row-dis" in html and 'aria-disabled="true"' not in html
-    assert "Metadata not readable: UnpicklingError: no; cannot be loaded" in html
+    assert "Metadata not readable: UnpicklingError: no. It cannot be loaded." in html
     # A refused read's plain words on the row, the loader's reference left to
     # its details (`renderers.reason_lead`).
     refused = "the file cannot be read as a checkpoint; Ref: UnpicklingError: Weights only"
@@ -621,7 +629,7 @@ def test_an_entry_never_read_does_not_claim_a_failed_read():
     never = {**checkpoint(sha=None, problem="'bad\\xff' is not text"), "size_bytes": None,
              "run": "bad\\xff", "filename": "RUNS"}
     html = _models_tree(never)
-    assert "Not read: " in html and "; cannot be loaded" in html
+    assert "Not read: " in html and ". It cannot be loaded." in html
     assert "metadata not readable" not in html.lower()
     assert r.unreadable_words(never) == "not read"
     failed = checkpoint(sha=None, problem="UnpicklingError: …")
@@ -721,6 +729,12 @@ def test_model_facts_digest_rows_take_a_line_over_their_full_value():
     assert f'<dt class="shep-k shep-kv-wide">{r.e(r.FACTS_TRAINED_FP)} · demo</dt>' in html_
     assert html_.count("shep-copy shep-copy-icon") == 2
     assert '<dt class="shep-k">Model</dt>' in html_       # short labels keep the grid
+    # The sweep's L7 (SW-LK7): the run and the file are tokens, broken only before their own
+    # separators ("gatv2/20261002-000000_…" ended a line of the Load drawer at a hyphen).
+    run = "gatv2/20261002-000000_disease_bbbbbb"
+    tokens = r.model_facts_html(facts._replace(run=run, checkpoint_file=f"runs/{run}/last.pt"))
+    assert r.token_html(run) in tokens and r.token_html(f"runs/{run}/last.pt") in tokens
+    assert f"<code>{run}" not in tokens and f"<code>runs/{run}" not in tokens
     from src.webui.style import SHELL_CSS
 
     assert ".shep-kv > .shep-kv-wide { grid-column: 1 / -1;" in SHELL_CSS
@@ -921,7 +935,15 @@ def test_model_facts_show_the_task_and_the_configuration_escaped():
     assert 'class="shep-k">Task<' not in unread_html
     assert 'class="shep-k">Configuration<' not in unread_html
     odd = r.model_facts_html(r.facts_from_checkpoint(_record(encoder="<b>odd"), [workspace()]))
-    assert "<b>odd" not in odd and "&lt;B&gt;ODD · reference recipe" in odd
+    assert "<b>odd" not in odd and r.chain_html("<B>ODD", "reference recipe") in odd
+    # Each fact of a " · " line one unit (L7 SW-LK7: "recipe changed in 5
+    # fields" and the name line's "GATv2 …, 1 epoch complete" broke inside).
+    assert '<span class="shep-fact">&lt;B&gt;ODD</span>' in odd
+    # A tail (the Details › that opens the last fact) ends that fact's unit,
+    # escaped facts and empty ones left out as before.
+    assert r.chain_html("a<", "", "b", tail="<i>t</i>") == (
+        f'<span class="shep-fact">a&lt;</span>{r.SEP}<span class="shep-fact">b <i>t</i></span>')
+    assert r.chain_html("", tail="<i>t</i>") == ""
     bare = r.model_facts_html(r.ModelFacts(
         name_line="n", run=None, checkpoint_file=None, workspace=None, model_fingerprint=None,
         trained_on_fingerprint=None, trained_on_names=(), synthetic=False, sources="",
@@ -980,7 +1002,7 @@ const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [390, 844]]) {
+  for (const [w, h] of [[1850, 960], [1280, 720]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1,
                                                    reducedMotion: 'reduce' })).newPage();
     await page.goto('file://' + process.argv[2]);
@@ -996,6 +1018,14 @@ const { chromium } = require('playwright');
       return { mark: p.dataset.mark, inner: m.innerText, copied: sel.toString(),
                gap: +(word.left - shape.right).toFixed(2), width: +m.getBoundingClientRect().width.toFixed(2),
                hidden: [...m.querySelectorAll('[aria-hidden="true"]')].map((x) => x.textContent) };
+    }));
+    // Each shaped mark alone in a box narrower than its shape: the word's first line stands on
+    // the shape's line (a line never parts them).
+    out[`narrow-${w}x${h}`] = await page.evaluate(() => [...document.querySelectorAll('[data-narrow]')].map((p) => {
+      const shape = p.querySelector('.shep-st-shape').getBoundingClientRect();
+      const first = p.querySelector('.shep-st-w').getClientRects()[0];
+      return { mark: p.dataset.narrow, sameLine: first.top < shape.bottom && first.bottom > shape.top,
+               shapeTop: shape.top, wordTop: first.top };
     }));
     if (process.argv[3]) { await page.screenshot({ path: `${process.argv[3]}_${w}x${h}.png`, fullPage: true }); }
   }
@@ -1017,6 +1047,9 @@ def status_marks_page(path):
             for size in (14, 15):
                 rows.append(f'<p data-mark="{kind}-{int(chip)}-{size}" style="font-size: {size}px">'
                             f'{r.status_mark(kind, word, as_chip=chip)} after</p>')
+            if r.STATUS_MARKS[kind][0] is not None:
+                rows.append(f'<p data-narrow="{kind}-{int(chip)}" style="width: 1px">'
+                            f'{r.status_mark(kind, word, as_chip=chip)}</p>')
     path.write_text(f'<!doctype html><html><head><meta charset="utf-8"><style>{SHELL_CSS}'
                     f'</style></head><body style="padding: 16px">{"".join(rows)}</body></html>',
                     encoding="utf-8")
@@ -1029,10 +1062,14 @@ def test_a_status_marks_text_reads_shape_space_word_and_its_look_is_kept(tmp_pat
     ``innerText``), and a chip's read the shape and the word as two lines.
     Now every mark, as text and as a chip, reads shape, space, word, copied
     and as ``innerText`` (a chip copied alone ends its line, as any box of
-    its own does), at 1850 x 960 and 390 x 844; the shape stays
+    its own does), at 1850 x 960 and the display floor's 1280 x 720; the shape stays
     hidden from a screen reader, so it reads the word; and the look is kept:
     4 px from the shape to the word (6 px after the spinner), as on fcc3dea,
-    the space having no width."""
+    the space having no width. The sweep's L7 (SW-LK7): the space was a
+    breakable one, so "model fingerprint 60adc7154078 ●" ended a line of the
+    Diagnosis card and "verified" began the next; it is a no-break space, so
+    in a box narrower than the shape the word's first line still stands on
+    the shape's line."""
     from tests.fixtures.browser import node_with_playwright, run_node
 
     if node_with_playwright() is None:
@@ -1041,11 +1078,15 @@ def test_a_status_marks_text_reads_shape_space_word_and_its_look_is_kept(tmp_pat
     shapes = {kind: shape or "" for kind, (shape, _token) in r.STATUS_MARKS.items()}
     words = {"ok": "Saved", "neutral": "Not loaded", "warn": "Needs attention",
              "error": "Not usable", "running": "Running", "stopping": "Stopping"}
+    narrow = {size: seen.pop(size) for size in list(seen) if size.startswith("narrow-")}
+    for size, marks in narrow.items():
+        assert len(marks) == 10 and all(m["sameLine"] for m in marks), (size, marks)
     for size, marks in seen.items():
         assert len(marks) == 24, size
         for mark in marks:
             kind, chip, _px = mark["mark"].split("-")
-            said = f"{shapes[kind]} {words[kind]}".strip()
+            # Shape, the no-break space (`MARK_SPACE`), word; the spinner has no space.
+            said = f"{shapes[kind]}\u00a0{words[kind]}" if shapes[kind] else words[kind]
             # A chip is a box of its own: a copy of it alone ends its line.
             copied = mark["copied"][:-1] if chip == "1" and mark["copied"].endswith("\n") else (
                 mark["copied"])
@@ -1385,8 +1426,10 @@ def test_a_branch_change_reads_in_the_one_value_words_rule():
     assert r.change_value("scheduler_type", {"parent": "<b>x", "new": "none"}) == (
         "<code>&lt;b&gt;x</code> → <code>none</code>")
     assert r.change_value("seed", None) == "<code>not set</code> → <code>not set</code>"
+    # One changed setting a line (the owner's decision of 2026-11-23: never "; ").
     assert mp.changes_html({"learning_rate": {"parent": 0.0001, "new": 0.0005}}) == (
-        "Learning rate " + r.change_value("learning_rate", {"parent": 0.0001, "new": 0.0005}))
+        "<div>Learning rate " + r.change_value("learning_rate", {"parent": 0.0001, "new": 0.0005})
+        + "</div>")
 
 
 def test_every_details_list_escapes_keeps_words_says_no_repr_and_draws_one_box():
@@ -1617,8 +1660,8 @@ def test_a_notice_with_steps_numbers_them_with_its_action_first():
     assert "data-shep-go" in first
     assert second == ('Build a dataset in it: <code class="shep-tok"><span>scripts</span><wbr>'
                       '<span>/build</span><wbr><span>_knowledge</span><wbr><span>_graph</span>'
-                      '<wbr><span>.py</span></code> <code class="shep-tok"><span>--generate</span>'
-                      '<wbr><span>-samples</span></code>')
+                      '<wbr><span>.py</span></code> <code class="shep-tok"><span>--generate-samples</span>'
+                      '</code>')
 
 
 def test_several_notices_are_one_block_with_one_action_when_their_steps_agree():
@@ -1639,16 +1682,96 @@ def test_several_notices_are_one_block_with_one_action_when_their_steps_agree():
     assert r.notices_block([refused, ws]).startswith('<div class="shep-nb shep-nb-error"')
 
 
+def test_several_notices_share_one_step_in_the_sources_words_and_group_their_details():
+    """S12 of the sweep's integration (the lanes' L3 R2): several notices whose steps lead to one
+    place draw one link for the block, in the words the settings' source gives several notices
+    (`server_settings.SEVERAL_ACTIONS`: "Choose them in …", where one notice's "Choose one in …"
+    was drawn for two; where their actions differ, the place itself, `PLACE_ACTIONS`), never
+    words built from a sentence; and the block's "Details ›" holds each notice's rows under its
+    setting's name (`Notice.name`), so a row reads as the fact of the setting it explains, and
+    each state is said once in the block."""
+    from src.config import server_settings as ss
+    from src.webui.components import workspaces as w
+
+    ws, _gpu, registry = _notices()
+    html = r.notices_block([registry, ws], consequence="Testing waits for both.")
+    links = re.findall(r'<button[^>]*data-shep-go="settings"[^>]*>([^<]*)</button>', html)
+    assert links == [r.e(ss.CHOOSE_THEM_IN_DATA_LOCATIONS)], links
+    assert ss.CHOOSE_IN_DATA_LOCATIONS not in html
+    details = html.split("<details", 1)[1]
+    subs = re.findall(r'<p class="shep-nb-sub">([^<]*)</p>', details)
+    assert subs == [ss.RESULTS_REGISTRY, ss.WORKSPACES_FOLDER], subs
+    for state in (registry["summary"], ws["summary"]):
+        assert html.count(r.e(state)) == 1, state
+    first, second = details.split('<p class="shep-nb-sub">')[1:3]
+    assert "Holds" in first and "Holds" not in second and "Workspaces" in second, details
+    assert details.count("Ref:") == 1
+    refused = w.setting_notice(ss.cohort_registry({"SHEPHERD_REGISTRY": "relative"}))
+    mixed = r.notices_block([refused, ws])
+    assert re.findall(r"data-shep-go[^>]*>([^<]*)</button>", mixed) == [r.e(ss.OPEN_DATA_LOCATIONS)]
+    both = r.notices_block([refused, w.setting_notice(ss.workspaces_root({"SHEPHERD_WORKSPACES_ROOT": "x"}))])
+    assert re.findall(r"data-shep-go[^>]*>([^<]*)</button>", both) == [r.e(w.SEE_WHY)]
+    # One notice keeps its own words.
+    assert r.e(ss.CHOOSE_IN_DATA_LOCATIONS) in r.notices_block([ws])
+
+
 def test_a_relation_says_the_notice_short_and_is_not_the_notice_again():
     ws, gpu, _registry = _notices()
-    rel = r.see_above("Start unavailable", ws)
+    rel = r.see_above("Start", ws)
     assert rel.startswith('<p class="shep-reason shep-nb-rel" data-notice-rel="workspaces_root">')
-    assert ">Start unavailable: no workspaces folder is set.</span>" in rel
+    assert ">Start disabled: no workspaces folder is set.</span>" in rel
     assert "data-notice=" not in rel and "<details" not in rel
-    assert ">Import disabled: GPU jobs need a workspaces folder (see Data).</span>" in \
-        r.see_above("Import disabled", gpu, where="Data")
-    assert "<details" in r.see_above("Start unavailable", gpu, details=True)
-    assert r.see_above("Start unavailable", None) == ""
+    assert (">Import disabled: GPU jobs need a workspaces folder "
+            '<span class="shep-unit">(see Data).</span></span>') in r.see_above(
+        "Import", gpu, where="Data")
+    assert r.relation_words("Import", gpu, where="Data") == (
+        "Import disabled: GPU jobs need a workspaces folder (see Data).")
+    assert "<details" in r.see_above("Start", gpu, details=True)
+    assert r.see_above("Start", None) == "" and r.relation_words("Start", None) == ""
+
+
+def test_a_disabled_control_is_said_one_way_and_marked_one_way_on_every_page(monkeypatch):
+    """C11 (the L6 check): one disabled state read "Start unavailable: …" on
+    Training and Datasets, "Start disabled: …" on Fine-tune and Test, and
+    "Disabled: …" or "Not available: …" for a page's own reasons; the
+    relations led with ○, Training's and Fine-tune's own reasons with a glyph
+    of their own (⊖), Test's with none. Now every page's reason beside or
+    under a disabled control names it, says "disabled" (`disabled_words`,
+    `relation_words`) and leads with one mark: the relation's ○ for a setting
+    not yet set, `DISABLED_MARK` (the same ○, grey) for a page's own reason."""
+    import re
+
+    from src.webui.components import datasets_page as dsp
+    from src.webui.components import finetune_page as fp
+    from src.webui.components import test_page as tp
+    from src.webui.components import training_console as tc
+
+    ws, _gpu, _registry = _notices()
+    relation_mark = re.search(r'<span class="shep-nb-mark[^"]*"[^>]*>[^<]*',
+                              r.see_above("Start", ws))
+    assert relation_mark and r.DISABLED_MARK.startswith(relation_mark.group(0))
+    assert r.disabled_words("Start", "x.") == "Start disabled: x."
+    # Every page's lines, the relations and the pages' own reasons alike.
+    access = type("A", (), {"allowed": True, "condition": None})()
+    training = tc._run_bar_actions({"status": "idle"}, {"choices": []}, {}, access=access,
+                                   active=None, gpu=None)
+    finetune = fp.actions_view({"status": "running"}, access=access, gpu=None, confirming=False)
+    page = {"access": {"allowed": True}, "workspaces": []}
+    test_start = tp.start_reason_html(page, True, False, tp.start_state(
+        page, {}, None, None, None, None, ("", ""))[1])
+    test_import = tp.import_reason_html({"access": {"allowed": True}, "workspaces": []}, None)
+    datasets = dsp.use_note_html({"rows": [{"name": "w", "trainable": False,
+                                            "manifest": "absent"}]}, "w")
+    lines = {"Training": training["reason"], "Training drawer": training["drawer_reason"],
+             "Fine-tune": finetune["reason"],
+             "Test start": test_start, "Test import": test_import, "Datasets": datasets,
+             "relation": r.see_above("Use for training", ws)}
+    for where, html in lines.items():
+        words = re.sub(r"<[^>]+>", "", html).replace(r.STATUS_MARKS["neutral"][0], "").strip()
+        assert re.match(r"[A-Z][\w …]* disabled: \S", words), (where, words)
+        assert "unavailable" not in words and "Not available" not in words, (where, words)
+        assert html.count(r.STATUS_MARKS["neutral"][0]) == 1, (where, html)
+        assert "<svg" not in html, (where, html)
 
 
 PAYLOAD = "<img src=x onerror=alert(1)>"
@@ -1664,6 +1787,7 @@ def test_every_part_of_a_notice_is_escaped():
            "ref": (PAYLOAD,), "cause": None}
     html = (r.notice_block(bad, consequence=PAYLOAD, also=(dict(bad, key="b"),), steps=(PAYLOAD,))
             + r.notices_block([bad, dict(bad, key="c", target="x")], consequence=PAYLOAD)
+            + r.notices_block([bad, dict(bad, key="d")], consequence=PAYLOAD)
             + r.see_above(PAYLOAD, bad, where=PAYLOAD, details=True)
             + r.notice_block(PAYLOAD) + r.literal_html(PAYLOAD) + r.token_html(PAYLOAD))
     assert "<img" not in html and "onerror=alert(1)>" not in html
@@ -1681,7 +1805,69 @@ def test_a_token_breaks_only_at_its_own_separators():
         '<span>_ROOT</span></code>')
     assert r.token_html("--registry") == '<code class="shep-tok"><span>--registry</span></code>'
     assert re.sub(r"<[^>]+>", "", r.token_html("a/b-c.d_e")) == "a/b-c.d_e"
+    # A command's option is one piece: the command breaks at the space before it, never
+    # inside it (the sweep's L7, SW-LK7: "--generate" / "-samples" read as two options).
+    command = r.token_html("scripts/build_knowledge_graph.py --generate-samples")
+    assert "<span>--generate-samples</span>" in command
+    assert re.sub(r"<[^>]+>", "", command) == "scripts/build_knowledge_graph.py --generate-samples"
+    assert r.token_html("a/b-c", classes="shep-x") == (
+        '<code class="shep-tok shep-x"><span>a</span><wbr><span>/b</span><wbr><span>-c</span></code>')
     assert "​" not in r.literal_html("a/b/c.json and SHEPHERD_X")
     assert r.literal_html("Settings › Data locations, deployment guide §4.11") == \
         "Settings › Data locations, deployment guide §4.11"
     assert r.literal_html("the lock .shepherd-gpu.lock here").count("<code") == 1
+
+
+def test_a_line_never_parts_a_count_from_its_unit_or_a_date_from_its_time():
+    """The sweep's L7 check, C11, and LOOK2's SW-LK7: narrow cells read "1" / "epoch
+    completed" (the Diagnosis card and Model Facts), "recorded epoch" / "9" (Models' Epochs
+    cell), "GATv2 2026-10-02" / "00:00" and "(see" / "Data)." (Test's relations). A count and
+    the word after it, a word and the number that ends its text, a date and its time, and a
+    parenthesis of three words at most with its stop are each one piece a line never parts
+    (`bound_html`), drawn by every chain fact, relation and notice sentence; the line
+    breaks at any other space, and the text reads as it was given."""
+    import html as html_lib
+
+    def pieces(html):
+        return re.findall(r'<span class="shep-unit">([^<]*)</span>', html)
+
+    def text(html):
+        return html_lib.unescape(re.sub(r"<[^>]+>", "", html))
+
+    name = "GATv2 2026-10-02 00:00, 1 epoch completed"
+    assert pieces(r.bound_html(name)) == ["2026-10-02 00:00", "1 epoch"]
+    assert text(r.bound_html(name)) == name
+    assert pieces(r.bound_html("recorded epoch 9")) == ["epoch 9"]
+    assert pieces(r.bound_html("Start disabled: no results registry is set (see Data).")) == [
+        "(see Data)."]
+    assert pieces(r.bound_html("The selected workspace (measured, always)")) == [
+        "(measured, always)"]
+    # A digest, a version and a longer parenthesis keep their own breaks; words are escaped.
+    assert pieces(r.bound_html("3fa9c1e2b7d0 Copy")) == []
+    assert pieces(r.bound_html("(a clause of more than three words)")) == []
+    assert text(r.bound_html("<b>2 runs</b>")) == "<b>2 runs</b>" and "<b>" not in r.bound_html("<b>")
+    # Every chain fact and relation draws its words so.
+    assert '<span class="shep-unit">1 epoch</span>' in r.chain_html(name)
+    relation = r.see_above("Start", {"key": "k", "kind": "neutral", "short": "no folder is set"},
+                           where="Data")
+    assert '<span class="shep-unit">(see Data).</span>' in relation
+    # A notice's sentence too (its Details rows, its steps), its tokens still code.
+    said = r.literal_html("Choose one in Settings › Data locations (Create suggested folder)")
+    assert pieces(said) == ["(Create suggested folder)"]
+    from src.webui.style import SHELL_CSS
+    assert ".shep-unit { display: inline-block; max-width: 100%; }" in SHELL_CSS
+
+
+
+def test_a_fields_line_and_a_muted_line_of_its_own_keep_the_prose_measure():
+    """The sweep's L7 check, C12: Settings' torch.compile line (Gradio's field info) ran to
+    about 88 characters at 1850 and 106 at 2560, and its Acceleration sentence (a muted line
+    after a break) to 67, while the panel's paragraphs held the text brief's measure. The one
+    measure (``--shep-measure``) covers both, as it covers a panel's paragraphs."""
+    from src.webui.style import SHELL_CSS
+
+    measure = "max-width: var(--shep-measure)"
+    for selector in (":where(.shep-panel p, .shep-edge p)", ":where(.gradio-container .info-text)",
+                     ":where(br + .shep-muted)"):
+        rule = SHELL_CSS[SHELL_CSS.index(selector + " {"):].split("}", 1)[0]
+        assert measure in rule, selector

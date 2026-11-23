@@ -440,7 +440,7 @@ def test_the_fields_must_know_rules_are_visible_lines(monkeypatch):
     demo, _ctx = _build_tab(monkeypatch)
     blocks = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     hpo, patient = blocks["dx_hpo_terms"], blocks["dx_patient_id"]
-    assert hpo.info == "Only HP:####### ids are read; names and punctuation are ignored."
+    assert hpo.info == "Only HP:####### ids are read. Names and punctuation are ignored."
     assert hpo.placeholder == "HP:0001250, HP:0001263"
     assert patient.info == dp.FIELD_INFO["dx_patient_id"] and not patient.placeholder
     # The box's change listener on the server (the page also counts the edit
@@ -771,8 +771,8 @@ def test_the_input_column_follows_the_row_and_no_window_media_query_decides_it()
     identity drawers were placed from that width. Now the column's width is
     a share of the page's row between a floor and a cap (`DX_IN_W`, on the
     row: the column's flex container and the drawers' containing block, so
-    one width places all three), and the fields' columns follow the input
-    column's own width (a container query). No window media query is left
+    one width places all three); stacked (no wider than tall) the fields take
+    the page's two columns. No window media query is left
     on the page. Top-K's box holds ten widths of "0" in its own type (`ch`),
     as every text box does, and its block (drawn as no box) clips nothing."""
     css = " ".join(dp.PAGE_CSS.split())
@@ -781,15 +781,40 @@ def test_the_input_column_follows_the_row_and_no_window_media_query_decides_it()
     assert f"{dp._TAB} #shep-dx {{ --dx-in-w: {dp.DX_IN_W}; position: relative; gap: 16px;" in css
     assert f"{dp._TAB} #shep-dx-input {{ flex: 0 0 var(--dx-in-w) !important;" in css
     assert "calc(var(--dx-in-w) + 16px)" in css and "100% - var(--dx-in-w)" in css
-    assert f"{dp._TAB} #shep-dx-input {{ container: shep-dx-in / inline-size; }}" in css
-    assert (f"@container shep-dx-in (max-width: {dp.DX_FIELDS_ONE_COLUMN}) {{ {dp._TAB} "
-            ".shep-dx-fields { grid-template-columns: minmax(0, 1fr) !important; } }") in css
+    # The fields' one-column query on the column's own width served stacked windows under the
+    # display floor only (stacked at or above it the column is 1248 px or wider): retired.
+    assert "@container" not in css and not hasattr(dp, "DX_FIELDS_ONE_COLUMN")
     width = re.search(re.escape(f"{dp._TAB} #dx_top_k input[type=number] {{ width: calc(")
                       + r"(\d+)ch \+ (\d+)px\); }", css)
     pad = re.search(re.escape(f"{dp._TAB} #dx_top_k input[type=number] {{ height: 34px; padding: ")
                     + r"\d+px (\d+)px; }", css)
     assert width and pad and int(width.group(1)) >= 10 and int(width.group(2)) >= 2 * int(pad.group(1))
-    assert f"{dp._TAB} .shep-dx-options #dx_top_k {{ overflow: visible !important; }}" in css
+    # Its block draws no box, so it clips nothing (the shared walk's clipped rule reads it so:
+    # the page set no overflow of its own for the checker's sake).
+    assert re.search(re.escape(f"{dp._TAB} .shep-dx-options #dx_top_k,") + r"[^{]*\{ display: contents !important; \}", css)
+    assert "#dx_top_k { overflow" not in css
+
+
+def test_the_load_drawers_note_is_a_row_under_load_and_its_task_segment_stays_whole(monkeypatch):
+    """P2 and the walk's drawer stops (the sweep's integration; the lanes' L4 d): in the Load
+    drawer's foot, what Load does (`CHANGE_NOTE`, two sentences) stood beside Load (the layout
+    rules' "beside" at 1850 x 960, 1366 x 768 and 960 x 1080); it is a row of its own under Load
+    and Cancel, at the measure, as Models says it. The drawer's Task segment kept its labels
+    whole by wrapping them, and at 390 x 844 left one alone on a line (3 + 1, "orphan"): it is
+    a segment whose labels stay whole (`style.SEG_WHOLE`), one row or one label a line, by the
+    layout pass's mark. The drawer is walked open at zero findings in every state
+    (`test_webui_shell.py::test_every_page_of_every_state_has_no_layout_finding`)."""
+    from src.webui.style import SEG_WHOLE, SHELL_CSS
+
+    css = " ".join(dp.PAGE_CSS.split())
+    assert (f"{dp._TAB} #shep-dx-change .shep-model-foot > #shep-dx-change-note "
+            "{ flex: 1 1 100% !important; min-width: 0 !important; order: 1; }") in css
+    assert f"{dp._TAB} #shep-dx-change-note .shep-note {{ display: block; max-width: var(--shep-measure);" in css
+    assert "#shep-dx-change-task .wrap { display: inline-flex !important; flex-wrap: wrap; }" not in css
+    demo, _ctx = _build_tab(monkeypatch)
+    (task,) = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-dx-change-task"]
+    assert {"shep-seg", SEG_WHOLE} <= set(task.elem_classes), task.elem_classes
+    assert f".shep-seg.{SEG_WHOLE}[data-shep-narrow] .wrap {{ flex-direction: column !important;" in SHELL_CSS
 
 
 def test_the_empty_results_say_what_to_do_without_a_place_the_layout_moves():
@@ -800,6 +825,25 @@ def test_the_empty_results_say_what_to_do_without_a_place_the_layout_moves():
     text = re.sub(r"<[^>]+>", " ", dp.empty_results_html())
     assert "check the model in use, then Run Diagnosis" in text
     assert not re.search(r"\b(left|right|above|below)\b", text)
+
+
+def test_an_empty_regions_words_start_on_the_panels_edge_at_the_measure():
+    """The independent check of the UI sweep (C5): the results' and the
+    candidate details' empty states were centred line by line, so at every
+    size their wrapped lines ("…check the model in use, then / Run
+    Diagnosis.") stood at ragged centres. Their lines start on one edge, the
+    panel's content edge under its heading (the skill's §2, the text brief's
+    §4: empty text starts at the column's one x), at the measure: neither
+    centred lines nor a centred box (a box centred in the region, its first
+    fix, stood 28-35 px off the heading at 1280-1366 and 8 px off at 390, the
+    layout walks' edge findings, which hold it at zero)."""
+    rule = re.search(r"\.shep-dx-empty \{\{?([^}]*)\}", dp.PAGE_CSS).group(1)
+    assert "text-align: start" in rule and "center" not in rule
+    assert "margin" not in rule and "fit-content" not in rule
+    assert re.search(r"padding: \S+ 0;", rule), rule
+    assert "var(--shep-measure)" in rule
+    for html in (dp.empty_results_html(), dp.details_empty_html()):
+        assert html.startswith('<div class="shep-dx-empty">')
 
 
 #: B-14 at each stop of the walk: the input column, the panel beside it and
@@ -839,7 +883,11 @@ def test_in_a_browser_the_input_column_follows_the_row_and_top_k_holds_its_value
     and the fields region holds the rest (the one scroll region); the Load
     drawer starts where the column's row gap ends; stacked, the fields take
     two columns in a wide column and one in a narrow one. Fails on 8e4c7b6
-    (Top-K 6.2 "0", cut by its block; the column 300 px at 1280 to 1550)."""
+    (Top-K 6.2 "0", cut by its block; the column 300 px at 1280 to 1550).
+    The sweep's L7 check (D2, D7): at the owner's windows the fields, the
+    page's task before a result, are whole (Explanations was under the
+    region's edge at 1550 x 830 while the two panels beside held one sentence
+    each): the column takes about a third of the row."""
     from src.utils.version_checker import NOTICE
     from src.webui import app, shell
     from src.webui.app import mount_options
@@ -863,7 +911,7 @@ def test_in_a_browser_the_input_column_follows_the_row_and_top_k_holds_its_value
         shell.plain_html(app._runtime_footer(), elem_id="runtime_footer")
     load = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
             "close": "#shep-dx-change-close button"}
-    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720], [800, 900], [390, 844])
+    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720], [1280, 1280])
     stops = [{"size": size, "page": "clinical", "focus": False} for size in sizes]
     stops += [{"size": [1366, 768], "page": "clinical", "focus": False, "open": load}]
     with served(demo, **mount_options()) as base:
@@ -880,12 +928,13 @@ def test_in_a_browser_the_input_column_follows_the_row_and_top_k_holds_its_value
         assert got["run"], (size, got)
         assert got["fields"]["h"] > 0, (size, got)
         assert abs(got["results"] - (got["input"][1] + got["gap"])) <= 1, (size, got)
+    for size in ("1850x960", "1550x830"):
+        assert side[size]["fields"]["content"] <= side[size]["fields"]["h"] + 1, (size, side[size])
     widths = [side[size]["input"][2] for size in ("1280x720", "1366x768", "1550x830")]
     assert widths == sorted(widths) and widths[0] < widths[-1], widths
     opened = next(s["extra"] for s in seen if s.get("open"))
     assert abs(opened["change"] - (opened["input"][1] + opened["gap"])) <= 1, opened
-    assert at["800x900"]["layout"] == "stack" and at["800x900"]["columns"] == 2, at["800x900"]
-    assert at["390x844"]["columns"] == 1, at["390x844"]
+    assert at["1280x1280"]["layout"] == "stack" and at["1280x1280"]["columns"] == 2, at["1280x1280"]
 
 
 def test_the_page_css_hides_a_view_by_its_class_and_keeps_the_confirmation_in_view():
@@ -1113,7 +1162,7 @@ _SHORT_JS = r"""async () => {
 
 #: The windows of the walk: the owner's, then shrunk to the short laptops and
 #: enlarged again through 1536 x 760 back to the owner's.
-_SHORT_SIZES = ((1850, 960), (1280, 600), (1366, 620), (1536, 760), (1850, 960))
+_SHORT_SIZES = ((1850, 960), (1280, 720), (1366, 768), (1536, 760), (1850, 960))
 
 #: Two environment warnings in the footer, the recheck's CPU run's (CUDA and
 #: cuVS), each in the probe's consequence-first words (`version_checker`).
@@ -1134,8 +1183,9 @@ def test_a_short_window_folds_the_cards_identity_and_keeps_every_input_usable(mo
     Playwright, skipped without), the page served whole with a model of each
     task loaded (a stand-in status with the card's every line: its run, the
     trained-on dataset, the recorded results, the synthetic chip) and the
-    footer's two warning lines, through 1850 x 960, 1280 x 600, 1366 x 620,
-    1536 x 760 and back to 1850 x 960:
+    footer's two warning lines, through 1850 x 960, the display floor's
+    1280 x 720, 1366 x 768, 1536 x 760 and back to 1850 x 960 (it was found at
+    1280 x 600, below the floor, which is drawn as at it):
 
     - the fields region keeps at least the HPO field whole (its label, info
       line and box), or all its fields when they need less, and its floor
@@ -1198,7 +1248,7 @@ def test_a_short_window_folds_the_cards_identity_and_keeps_every_input_usable(mo
             shown["task"] = task
             stops = [{"size": list(size), "page": "clinical"} for size in sizes]
             if task == "disease":
-                stops.append({"size": [1280, 600], "page": "clinical", "open": details})
+                stops.append({"size": [1280, 720], "page": "clinical", "open": details})
             (tmp_path / task / "shots").mkdir(parents=True)
             walks[task] = walk_ui(base[:-len("gradio_api")], tmp_path / task, stops,
                                   extra_js=_SHORT_JS, shots=tmp_path / task / "shots")
@@ -1212,7 +1262,7 @@ def test_a_short_window_folds_the_cards_identity_and_keeps_every_input_usable(mo
             where, got = (task, stop["size"]), stop["extra"]
             # The warnings on screen: two lines at the short laptops' widths, as on the reviewer's.
             assert got["layout"] == "side", (where, got)
-            assert got["footer"] >= (2 if stop["size"] in ("1280x600", "1366x620") else 1), (where, got)
+            assert got["footer"] >= (2 if stop["size"] in ("1280x720", "1366x768") else 1), (where, got)
             fields = got["fields"]
             # A usable height: the HPO field whole, or every field when they need less.
             assert fields["h"] + 0.5 >= min(got["hpo"], fields["content"]), (where, got)
@@ -1254,7 +1304,9 @@ def test_a_card_with_nothing_more_to_fold_leaves_one_scroll_region_and_run_in_vi
     (more) to fold, so with the footer's two warning lines the input column
     overflowed: a second scroll region around the fields, and Run Diagnosis
     and its reason line out of view. With no model loaded (an operator, and
-    a read-only viewer) at 1280 x 600 and 1366 x 620, and for a read-only
+    a read-only viewer) at the display floor's 1280 x 720 and at 1366 x 768
+    (the short windows it was found at, 1280 x 600 and 1366 x 620, are below
+    the floor and drawn as at it), and for a read-only
     viewer with a patients-like-me child on a frozen backbone loaded (its
     reason line and its run line keep even the folded card tall), the floor
     is the fold's measure only (`style.FOLD_FLOOR`): in a real browser (Node
@@ -1303,7 +1355,7 @@ def test_a_card_with_nothing_more_to_fold_leaves_one_scroll_region_and_run_in_vi
                                     for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
                                  shell.CLINICAL: dp.create_diagnosis_tab})
         shell.plain_html(app._runtime_footer(), elem_id="runtime_footer")
-    stops = [{"size": [1280, 600], "page": "clinical"}, {"size": [1366, 620], "page": "clinical"}]
+    stops = [{"size": [1280, 720], "page": "clinical"}, {"size": [1366, 768], "page": "clinical"}]
     walks = {}
     with served(demo, **mount_options()) as base:
         for name, loaded, operator in (("no model", False, True), ("no model, read-only", False, False),
@@ -1539,8 +1591,9 @@ def test_the_stop_question_takes_the_card_actions_place_and_leaves_the_inputs_us
     (a second scroll region) and the focused HPO box showed 8 of its 83 px
     under the card's head; at 1366 x 620 the fields were 21 px. In a real
     browser (Node and Playwright, skipped without), the page served whole
-    with a disease and then a gene task model loaded, at 1850 x 960,
-    1280 x 600 and 1366 x 620, the question open:
+    with a disease and then a gene task model loaded, at 1850 x 960, the
+    display floor's 1280 x 720 and 1366 x 768 (it was found at 1280 x 600 and
+    1366 x 620, below the floor), the question open:
 
     - it takes the place of the card's actions (their row is not drawn) and
       says every fact it said: the model it stops by its fingerprint, that
@@ -1595,7 +1648,7 @@ def test_the_stop_question_takes_the_card_actions_place_and_leaves_the_inputs_us
                                     for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
                                  shell.CLINICAL: dp.create_diagnosis_tab})
         shell.plain_html(app._runtime_footer(), elem_id="runtime_footer")
-    sizes = ([1850, 960], [1280, 600], [1366, 620])
+    sizes = ([1850, 960], [1280, 720], [1366, 768])
     question = {"click": "#shep-dx-stop-btn", "shown": "#shep-dx-stop-now",
                 "close": "#shep-dx-stop-keep"}
     script = _STOP_TYPED_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
@@ -1626,8 +1679,8 @@ def test_the_stop_question_takes_the_card_actions_place_and_leaves_the_inputs_us
             assert not got["actions"], (where, got)
             words = " ".join(got["words"].split())
             assert f"Stop inference of model {CHECKPOINT_SHA[:12]}?" in words, (where, words)
-            for fact in ("Diagnoses already accepted finish;",
-                         "new ones are refused until a model is loaded.",
+            for fact in ("Diagnoses already accepted finish.",
+                         "New ones are refused until a model is loaded.",
                          "Nothing reloads one by itself."):
                 assert fact in words, (where, fact, words)
             assert got["column"]["content"] <= got["column"]["h"] + 0.5, (where, got["column"])
@@ -2453,9 +2506,13 @@ def test_run_is_greyed_with_a_bubble_and_a_reason_when_no_model_is_loaded():
     assert f'aria-describedby="{text_id("dx-run-no-model")}"' in run["run_cover"]
     assert 'class="shep-i shep-i-cover"' in run["run_cover"]
     assert dp.RUN_DISABLED_NO_MODEL in run["run_reason"]
-    # B4: one reason, "Disabled until a model is loaded", whoever reads it:
-    # the card says why, and who can load one (its gated action).
-    assert dp.RUN_DISABLED_NO_MODEL == "Disabled until a model is loaded."
+    # B4: one reason, whoever reads it: the card says why, and who can load
+    # one (its gated action). L7 SW-LK8: in the shared form every page says a
+    # disabled control in (`renderers.disabled_words`, the neutral mark in a
+    # column of its own), never a ⊖ and words of this page's own.
+    assert dp.RUN_DISABLED_NO_MODEL == "Run Diagnosis disabled: load a model first."
+    assert run["run_reason"] == r.marked_line("neutral", dp.RUN_DISABLED_NO_MODEL)
+    assert "⊖" not in run["run_reason"] and 'class="shep-reason"' in run["run_reason"]
     read_only = dp.run_controls(_card(_no_model_status(), operator=False), "idle")
     assert dp.RUN_DISABLED_NO_MODEL in read_only["run_reason"]
     assert "dx-run-no-model" in dp.TOPIC_HELP
@@ -2661,7 +2718,7 @@ def test_a_refused_reload_leaves_the_card_on_this_page_saying_the_refusal(monkey
                       "not_serving": {"state": "load_refused", "lead": lead,
                                       "at": "2026-07-07T16:00:00+00:00",
                                       "model_sha12": "1e20694dcae4"}})
-        return ml.LoadStep(None, ml._outcome("grey", "Not reloaded; the model in use is "
+        return ml.LoadStep(None, ml._outcome("grey", "Not reloaded. The model in use is "
                                              "unchanged.", lead), "", None, False)
 
     monkeypatch.setattr(ml, "finish_load", refused_reload)
@@ -2676,7 +2733,7 @@ def test_a_refused_reload_leaves_the_card_on_this_page_saying_the_refusal(monkey
     run(loading)
     (confirm,) = _named(demo, "_confirm")
     answered = run(confirm)
-    assert "Not reloaded; the model in use is unchanged." in answered[confirm.outputs[2]._id]
+    assert "Not reloaded. The model in use is unchanged." in answered[confirm.outputs[2]._id]
     assert answered[ctx.served_model_changed._id] == gr.update(), "nothing served changed"
     drawn = {}
     for fn in [fn for fn in demo.fns.values() if fn.trigger_after == confirm._id and fn.fn]:
@@ -2810,10 +2867,11 @@ def test_a_kind_the_page_does_not_know_shows_no_candidates(kind):
 
 
 def test_the_score_help_stays_within_its_budget():
-    """The skill's §7 budget (about 60-80 words) and §5's sentence limit."""
+    """The skill's §7 budget (about 60-80 words) and §5's sentence limit, a
+    list item (a line of the bubble's grammar, L7 FX-3) one sentence."""
     text = dp.TOPIC_HELP["dx-score"][1]
     assert len(text.split()) <= 80
-    assert max(len(s.split()) for s in re.split(r"(?<=[.!?])\s+", text)) <= 25
+    assert max(len(s.split()) for s in re.split(r"(?<=[.!?])\s+|\n", text)) <= 25
 
 
 def test_a_missing_count_or_time_is_never_written_as_zero():
@@ -3176,8 +3234,8 @@ def test_run_waits_for_a_readable_reference_cohort_version():
             run = dp.run_controls(_task_card("patients_like_me", cohorts, operator=operator),
                                   "idle")
             assert run["run_btn"]["interactive"] is False
-            assert run["run_reason"].endswith(
-                f"{dp._e(f'{dp.RUN_DISABLED_NO_COHORT} {words}')}</p>")
+            assert run["run_reason"] == r.marked_line(
+                "neutral", f"{dp.RUN_DISABLED_NO_COHORT} {words}")
             assert "operator" in words and "SHEPHERD_" not in run["run_reason"]
             assert "--registry" not in run["run_reason"] and "<registry>" not in run["run_reason"]
             assert f'aria-describedby="{text_id("dx-run-no-cohort")}"' in run["run_cover"]
@@ -3931,7 +3989,7 @@ def test_stop_inference_asks_first_naming_and_binding_the_model_shown():
     assert (f'<code class="shep-fpv" title="{_SERVED_SHA}">{_SERVED_SHA[:12]}</code>'
             in asked["stop_text"])
     # What the stop does, each fact said (OPS-RECHECK-N1S tightened the words, not the facts).
-    for fact in ("Diagnoses already accepted finish;", "new ones are refused until a model is loaded.",
+    for fact in ("Diagnoses already accepted finish.", "New ones are refused until a model is loaded.",
                  "Nothing reloads one by itself."):
         assert fact in asked["stop_text"], fact
     assert asked["stop_asked"]["sha256"] == _SERVED_SHA
@@ -4129,8 +4187,8 @@ def test_run_diagnosis_never_writes_the_stop_views():
 
 
 def test_after_a_stop_run_is_off_with_the_backends_reason_and_the_result_keeps_its_model():
-    """B4: after a stop, Run Diagnosis is off ("Disabled until a model is
-    loaded"), the card says the backend's state and lead (Stopped, who and
+    """B4: after a stop, Run Diagnosis is off ("Run Diagnosis disabled: load
+    a model first."), the card says the backend's state and lead (Stopped, who and
     when, the whole reason one click away), and the result produced before
     it keeps the model and data it used: its table is not redrawn, the badge
     names its own model and compares it with nothing (never "10 parts
@@ -4394,7 +4452,8 @@ def test_a_focus_the_stop_question_hides_goes_to_the_next_card_control(monkeypat
       text while the body already had focus (D8 refused and a model changed
       elsewhere in one read closed the question and drew the other controls
       locked) by the read that unlocks ■ Stop inference;
-    - at a phone's window (390x844, stacked), Enter on ■ Stop inference, the
+    - stacked (1280 x 1280: the display floor's width, no wider than tall),
+      Enter on ■ Stop inference, the
       page swiped to the top (a touch press, which moves no focus, then the
       scroll), the card's read closing the question: focus on ■ Stop
       inference and the page's scroll where the reader left it;
@@ -4479,7 +4538,7 @@ def test_a_focus_the_stop_question_hides_goes_to_the_next_card_control(monkeypat
     seen = {}
     with served(demo, **mount_options()) as base:
         for viewer, headers, window in (("operator", None, {}),
-                                        ("stacked", None, {"w": 390, "h": 844}),
+                                        ("stacked", None, {"w": 1280, "h": 1280}),
                                         ("readonly", READ_ONLY_HEADERS, {})):
             page["operator"] = headers is None
             plan = tmp_path / f"{viewer}.json"
@@ -4565,7 +4624,7 @@ def test_the_results_banners_and_warnings_draw_the_shared_marks_not_their_own():
     result = _result_with(_served_identity())
     body = dp.results_body_html(result, 1) + dp.banners_html(result)
     assert "⚠" not in body
-    assert status_mark("warn", "Warnings: low phenotype count") in body
+    assert status_mark("warn", "low phenotype count") in body
     assert 'class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲' in (
         dp.banners_html(result))
     assert not _RAW_HEX.search(dp.banners_html(result))
@@ -4808,7 +4867,7 @@ def test_the_card_time_reads_the_same_on_every_poll():
     later = _card(_status_serving(_served_identity()), at="2026-07-07T16:00:05", state=first)
     a, b = dp.card.time_html(first), dp.card.time_html(later)
     assert a != b and _visible(a) == _visible(b) == "current"
-    assert 'title="Status read at 16:00:05 UTC; read again every 5 s"' in b
+    assert 'title="Status read at 16:00:05 UTC. Read again every 5 s."' in b
 
 
 def test_the_card_drops_its_synthetic_chip_while_the_results_banner_says_it():

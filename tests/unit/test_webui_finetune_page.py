@@ -48,6 +48,12 @@ from src.webui.components import finetune_page as fp  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import renderers as r  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
+
+
+def _words_of(markup: str) -> str:
+    """A line's words as escaped HTML, its units' markup aside (`renderers.bound_html`
+    keeps a count and its unit, or a short parenthesis, one piece)."""
+    return re.sub(r'<span class="shep-unit">([^<]*)</span>', r"\1", markup)
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 
 TAG = "<img src=x onerror=alert(1)>"
@@ -154,14 +160,22 @@ def test_listing_the_bases_is_an_operator_control(root, monkeypatch):
 
 
 def test_an_empty_list_says_why(root, operator):
-    # A listed dataset not chosen: the line asks for one. None listed, or no
-    # workspaces folder: the identity line or the setup notice says why, and
-    # this line says nothing (each cause once on a screen).
+    # A listed dataset not chosen: the line asks for one. None listed: the identity line says
+    # why, and this line says nothing (each cause once on a screen). No workspaces folder: the
+    # setup notice says it once, above, and the empty Run and Checkpoint say their relation to it
+    # (the sweep's L7 check, C7: two empty boxes that said nothing, as Test's did before SW-LK10),
+    # never the notice again.
     listed = {"choices": [["demo", "demo"]]}
     assert "Select a dataset first." in fp._on_finetune_bases(operator, listed, None)[3]
     assert fp._on_finetune_bases(operator, {}, None)[3] == ""
-    notice = {"key": "workspaces_root", "summary": "No workspaces folder is set."}
-    assert fp._on_finetune_bases(operator, {**listed, "notice": notice}, None)[3] == ""
+    from src.config.server_settings import ENV_WORKSPACES_ROOT
+    from src.webui.components.workspaces import NOTICES, notice_view
+
+    notice = notice_view(NOTICES[ENV_WORKSPACES_ROOT])
+    why = fp._on_finetune_bases(operator, {**listed, "notice": notice}, None)[3]
+    assert why == r.see_above("Run", notice, where="above")
+    assert "Run disabled: no workspaces folder is set (see above)." in _words_of(why)
+    assert 'data-notice-rel="workspaces_root"' in why and "data-notice=" not in why
     assert "train one on Research › Training" in fp.bases_note_html({}, None)
     assert "&lt;img" in fp.bases_note_html({}, TAG) and "<img" not in fp.bases_note_html({}, TAG)
 
@@ -170,8 +184,11 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     parents = fp._on_finetune_bases(operator, {"name": "demo"}, None)[0]
     item = parents[f"gatv2/{BASE_RUN}/model-03-0.8300.pt"]
     html = fp._on_base_chosen(f"gatv2/{BASE_RUN}/model-03-0.8300.pt", parents)
-    for words in ("Run", f"<code>gatv2/{BASE_RUN}</code>", "model-03-0.8300.pt", "Configuration",
-                  "GATv2 · recipe changed in", '<summary>Details ›</summary>',
+    for words in ("Run", r.token_html(f"gatv2/{BASE_RUN}"), r.token_html("model-03-0.8300.pt"),
+                  "Configuration",
+                  r.chain_html(*r.configuration_facts(item),
+                               tail=r.model_spec_html(item["spec"])[1]),
+                  '<summary>Details ›</summary>',
                   "Holds", "Validation", "LP accuracy (Trainer)",
                   "0.8300", "Selection", "Trained on", "not recorded", "Split seed",
                   "Model fingerprint", item["sha256"][:12], f'data-copy="{item["sha256"]}"'):
@@ -212,10 +229,15 @@ def test_the_bases_split_seed_and_model_are_facts_of_its_summary_never_fields(ro
     # list's spec (`record.listed_spec`, without the recipe's notes), each
     # field that differs with the reference's value, the encoder's layers the
     # hop list must fit among them (review of B2).
+    # Its "Details ›" ends the unit of the fact it opens, so the two move to
+    # a line together (L7 SW-LK7: drawn under "recipe changed in 5 fields"
+    # though one line held both).
     words, details = r.model_spec_html(item["spec"])
     assert "Unknown" not in words and details
-    assert (f"<dt class=\"shep-k\">Configuration</dt><dd class=\"shep-v\">"
-            f"{r.e(r.configuration_text(item))}{details}</dd>") in seeded
+    *before, last = r.configuration_facts(item)
+    assert before and (f"<dt class=\"shep-k\">Configuration</dt><dd class=\"shep-v\">"
+                       f"{r.chain_html(*before)}{r.SEP}"
+                       f'<span class="shep-fact">{r.bound_html(last)} {details}</span></dd>') in seeded
     assert ('<dt class="shep-k" title="encoder.layers">Encoder › Layers</dt>'
             '<dd class="shep-v">1 (reference 3)</dd>') in details
     for tasks in ([], ["disease"], ["gene"], ["disease", "gene", "patients_like_me"]):
@@ -723,7 +745,7 @@ def test_the_line_says_what_start_sends_and_reset_brings_back_each_tasks_referen
     assert record == [] and refused == "" and [u["value"] for u in updates] == fp.start_values(tasks)
     assert dict(zip(fp.FINETUNE_FIELDS, (u["value"] for u in updates)))["num_neighbors"] == ""
     assert reset_line == tc.set_by_line_html(
-        [], [], "each child takes its task’s reference values and this build’s defaults.")
+        [], [], "Each child takes its task’s reference values and this build’s defaults.")
     assert "Untouched, each child takes its task’s reference" in fp.hops_note_html(
         tasks, None, record, "")
     said, _stop, _beside = fp._on_finetune_start(operator, *_shown(ws, parents, key), ws,
@@ -1084,16 +1106,22 @@ def test_at_first_use_the_form_says_the_missing_folder_once(monkeypatch, operato
     assert 'data-notice-also="gpu_lock"' in setup
     assert _words(screen).count(WORKSPACES_ROOT_NOTICE.summary) == 1
     assert GPU_LOCK_NOTICE.summary not in _words(screen)
-    assert identity == tasks_note == bases_note == ""
-    # The notice: the state, the consequence, the link, the why one click away.
-    assert fp.SETUP_CONSEQUENCE in setup and 'data-shep-go="settings"' in setup
+    assert identity == tasks_note == ""
+    # The empty Run and Checkpoint say their relation to it (the sweep's L7 check, C7: two
+    # empty boxes that said nothing), never the notice again.
+    assert 'data-notice-rel="workspaces_root"' in bases_note and "data-notice=" not in bases_note
+    assert "Run disabled: no workspaces folder is set (see above)." in _words(bases_note)
+    # The notice: the state, the link, the why one click away. What it means
+    # for Start is said once, by Start's relation (it said "Start is disabled
+    # until one is chosen." too, the relation beside Start a line under it).
+    assert 'data-shep-go="settings"' in setup and "disabled" not in _words(setup).lower()
     assert "Details ›" in setup
     # No long server sentence anywhere on the form.
     assert WORKSPACES_ROOT_NOT_SET not in screen and GPU_LOCK_NOT_CONFIGURED not in screen
     # Start's reason: a relation to the notice, on one line beside Start.
     assert 'data-notice-rel="gpu_lock"' in reason and "Details" not in reason
     assert "Start disabled: GPU jobs need a workspaces folder (see above)." in _words(reason)
-    assert len(_words(reason)) < 100
+    assert len(_words(reason)) < 100 and _words(screen).lower().count("disabled") == 2
     # A usable folder holding no workspace: no notice; the identity line says
     # what to do in its own words.
     assert fp.setup_html(None, None) == "" and fp.identity_html({"choices": []}) == (
@@ -1133,7 +1161,6 @@ def test_starts_gpu_reason_is_one_line_relation_never_the_notice_again():
               "short": "no folder", "action": "", "target": "", "details": (), "ref": ()}
     assert 'data-notice-also="gpu_lock"' in fp.setup_html(folder, unset)
     assert "data-notice-also" not in fp.setup_html(folder, broken)
-    assert fp.SETUP_CONSEQUENCE not in fp.setup_html(folder, None)
     assert fp.setup_html(None, unset) == ""
 
 
@@ -1494,7 +1521,7 @@ def test_the_page_follows_the_contract():
 #: The first-use walk's windows for this page (B-10; the L0 report's §7): the
 #: owner's, a short laptop where Start stood centred against its refusal, and
 #: a phone, where the reason goes under Start.
-FIRST_USE_SIZES = ((1850, 960), (1280, 720), (390, 844))
+FIRST_USE_SIZES = ((1850, 960), (1280, 720), (1440, 1600))
 
 #: What the first-use walk reads of Start's bar at each stop: Start, its bar,
 #: the first line of its reason's words (a range over them, as drawn) and the
@@ -1564,7 +1591,7 @@ def test_at_first_use_start_stands_on_its_bar_and_the_notice_is_said_once(tmp_pa
 #: whichever is drawn; and how many lines each figure takes.
 _CARD_FIT_JS = r"""
 const { chromium } = require('playwright');
-const SIZES = [[1850, 960], [1536, 760], [960, 1080], [1280, 900], [390, 844]];
+const SIZES = [[1850, 960], [1536, 760], [1440, 1600], [1280, 900], [1280, 720]];
 (async () => {
   const [url, word] = [process.argv[2], process.argv[3]];
   const browser = await chromium.launch();
@@ -1675,7 +1702,7 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     Playwright), the page served whole and its card drawn by its own poll
     from the runner's status, while the child runs and once it is done (its
     best saves, their selection and the Trainer's figure), at 1850 x 960,
-    1536 x 760 and 960 x 1080: the table sits inside its card, every cell
+    1536 x 760 and 1440 x 1600: the table sits inside its card, every cell
     inside the panel, nothing in a cell cut (no ellipsis), no sideways page
     or panel scroll. Fails on e0e4237. A run name with no hyphen to wrap at
     (one word of 40 characters, the longest a name may be; its child ended,
@@ -1803,7 +1830,7 @@ def test_the_job_cards_table_fits_its_card_with_every_cell_whole(root, monkeypat
     # somewhere, so the checks above have met both.
     assert {got["form"] for sizes in seen.values() for got in sizes.values()} == {"table", "list"}, \
         {state: {size: got["form"] for size, got in sizes.items()} for state, sizes in seen.items()}
-    for size in ("1850x960", "390x844"):
+    for size in ("1850x960", "1280x720"):
         texts = " ".join(cell["text"] for cell in seen["done"][size]["cells"])
         assert "Validation (Trainer)" in texts and "0.8400" in texts, size
         assert "b-ft-full-disease" in texts.replace("- ", "-").replace(" -", "-"), size

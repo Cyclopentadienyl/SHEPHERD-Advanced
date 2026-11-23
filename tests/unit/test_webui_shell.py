@@ -770,13 +770,13 @@ def test_a_panels_header_sticks_to_the_top_of_the_region_that_scrolls():
 
 
 def test_the_wrapped_chips_sit_on_their_own_line_under_the_area_switch():
-    """B5 (leftover b): at 480 px the area switch's two tabs take two lines,
-    and the chips, placed one header row down, covered the Research tab
-    (measured with ``document.elementsFromPoint``). The header script now
-    measures where the chips' and Settings' own line starts (the right tab
-    group's top) and the wrapped chips sit there, however many lines the
-    switch takes. This pins that wiring; what the browser draws is
-    `test_no_header_element_covers_a_tab_at_any_width`'s."""
+    """B5 (leftover b): wrapped, the chips, placed one header row down,
+    covered the Research tab (measured with ``document.elementsFromPoint``).
+    The header script measures where the chips' and Settings' own line
+    starts (the right tab group's top) and the wrapped chips sit there. This
+    pins that wiring; what the browser draws is
+    `test_no_header_element_covers_a_tab_at_any_width`'s (at the display
+    floor, with a GPU chip at its cap)."""
     from src.webui.style import SHELL_CSS
 
     head = shell.SHELL_HEAD
@@ -787,20 +787,22 @@ def test_the_wrapped_chips_sit_on_their_own_line_under_the_area_switch():
     assert "top: var(--shep-chips-top, var(--shep-row1-h));" in wrapped
 
 
-#: Opens the dashboard at 480 px, then 360, 420, 760, 1100 and 1850 (a resize
-#: runs the header's layout, as a load does), and reports for each area tab
-#: what ``document.elementsFromPoint`` finds on top at its centre and four
-#: inset corners: the tab itself or something inside it, or what covers it;
-#: and each header chip's left and right edges.
+#: Opens the dashboard with its GPU chip as wide as its cap (a long holder record: the lock's
+#: command, pid and start end in the chip's titled ellipsis), at 1850, 1366, the display floor's
+#: 1280 and 1024 below it (a resize runs the header's layout, as a load does), and reports for
+#: each area tab what ``document.elementsFromPoint`` finds on top at its centre and four inset
+#: corners: the tab itself or something inside it, or what covers it; each header chip's edges
+#: and words; and the frame's width.
 _HEADER_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
-  const page = await (await browser.newContext({ viewport: { width: 480, height: 800 } })).newPage();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
   await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#shep-chips .shep-chips', { timeout: 60000 });
+  await page.addStyleTag({ content: '#shep-chips .shep-chip-gpu .shep-chip-text { width: 100vw; }' });
   const out = {};
-  for (const width of [480, 360, 420, 760, 1100, 1850]) {
+  for (const width of [1850, 1366, 1280, 1024]) {
     await page.setViewportSize({ width, height: 800 });
     await page.waitForTimeout(800);
     out[width] = await page.evaluate(() => {
@@ -824,7 +826,12 @@ const { chromium } = require('playwright');
                chips: document.querySelector('#shep-chips .shep-chips').childElementCount, tabs,
                edges: [...document.querySelectorAll('#shep-chips .shep-chip')].map((c) => {
                  const r = c.getBoundingClientRect(); return [r.left, r.right]; }),
-               width: document.documentElement.clientWidth };
+               // Each chip: its line, and its words whole or ended at the chip's own cap.
+               chipWords: [...document.querySelectorAll('#shep-chips .shep-chip')].map((c) => {
+                 const r = c.getBoundingClientRect(), t = c.querySelector('.shep-chip-text');
+                 return { top: Math.round(r.top), whole: !t || t.scrollWidth <= t.clientWidth + 1,
+                          capped: !!t && t.clientWidth >= parseFloat(getComputedStyle(t).maxWidth) - 1 }; }),
+               frame: document.querySelector('gradio-app').getBoundingClientRect().width };
     });
   }
   console.log(JSON.stringify(out));
@@ -836,12 +843,16 @@ const { chromium } = require('playwright');
 def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
     """B5 review: the chips' line was pinned only as source text. In a real
     browser (Node and Playwright, skipped without), the dashboard mounted as
-    the service mounts it (`app.mount_options`: its CSS and head script): at
-    360, 420, 480, 760, 1100 and 1850 px each area tab is what
+    the service mounts it (`app.mount_options`: its CSS and head script), its
+    GPU chip as wide as its cap (a long holder record): at 1850 px the
+    header is one line; at the display floor's 1280 (and 1366) the chips and
+    Settings go onto a second line; below the floor (1024) the header is
+    drawn as at the floor. At each, each area tab is what
     ``document.elementsFromPoint`` finds first at its centre and corners, the
-    chips never over it; at 480 the header has wrapped onto its second line;
-    every chip is inside the window (UI-02: at 360 px the D8 chip's left edge
-    was at -41 px; its words now end in a titled ellipsis inside the room)."""
+    chips never over it; every chip is inside the frame and on one line, its
+    words whole or ended at its own cap (the titled ellipsis). The chips'
+    line of their own and their wrapping among themselves served windows
+    under 480 px only and are retired with the floor."""
     import subprocess
 
     from src.webui.app import create_gradio_app, mount_options
@@ -860,14 +871,17 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
                                 text=True, timeout=180)
     assert result.returncode == 0, result.stderr
     seen = json.loads(result.stdout)
-    assert seen["480"]["wrapped"] is True and seen["1850"]["wrapped"] is False
+    assert seen["1280"]["wrapped"] is True and seen["1850"]["wrapped"] is False
+    assert seen["1024"] == seen["1280"], (seen["1024"], seen["1280"])
     for width, facts in seen.items():
         assert facts["chips"] > 0, width
         for tab, covered in facts["tabs"].items():
             assert covered == [], (width, tab, covered)
         for left, right in facts["edges"]:
-            assert 0 <= left and right <= facts["width"], (width, facts["edges"])
-
+            assert 0 <= left and right <= facts["frame"], (width, facts["edges"])
+        assert len({chip["top"] for chip in facts["chipWords"]}) == 1, (width, facts["chipWords"])
+        for chip in facts["chipWords"]:
+            assert chip["whole"] or chip["capped"], (width, chip)
 
 
 # --------------------------------------------------------------------------- a reload
@@ -1162,8 +1176,8 @@ const QUEUE_JS = __QUEUE_JS__;
   out.windows = {};
   const LARGER = '#shep-research-nav > .tab-wrapper button[role="tab"], #shep-research-nav > .tab-wrapper > .shep-stage,'
     + ' #shep-research-nav > .tab-wrapper > .shep-stage > * { font-size: 24px !important; letter-spacing: 0.12em !important; }';
-  for (const [name, w, h, dpr, css] of [['owner', 1850, 960, 1, ''], ['narrow', 420, 900, 1, ''],
-                                        ['zoom200', 925, 480, 2, ''], ['larger', 640, 900, 1, LARGER]]) {
+  for (const [name, w, h, dpr, css] of [['owner', 1850, 960, 1, ''], ['floor', 1280, 720, 1, ''],
+                                        ['zoom200', 1280, 720, 2, ''], ['larger', 1280, 900, 1, LARGER]]) {
     const p = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: dpr })).newPage();
     await ready(p);
     if (css) { await p.addStyleTag({ content: css }); }
@@ -1176,22 +1190,25 @@ const QUEUE_JS = __QUEUE_JS__;
     }
     await p.close();
   }
-  // The edge of the row's room, on each page: the window resized until the
-  // row's content ends 6 px short of what the tabs and the hint need side by
-  // side ('under'), then 6 px past it ('over').
+  // The edge of the row's room, on each page, at the display floor (no window under it narrows
+  // the row): the row's own right padding grown until its content ends 6 px short of what the
+  // tabs and the hint need side by side ('under'), then 6 px past it ('over').
   out.edges = {};
-  const e = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  const e = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
   await ready(e);
   await e.click(tab('shep-nav', 'research'));
+  const pad = (px) => e.evaluate((px) => document.querySelector('#shep-research-nav > .tab-wrapper')
+    .style.setProperty('padding-right', px + 'px', 'important'), px);
   for (const id of ['training', 'models']) {
-    await e.setViewportSize({ width: 1850, height: 960 });
+    await pad(0);
     await e.click(tab('shep-research-nav', id));
     await seen(e);
     out.edges[id] = {};
     for (const [side, by] of [['under', -6], ['over', 6]]) {
-      let f = await e.evaluate(rowFacts);
+      let f = await e.evaluate(rowFacts), room = 0;
       for (let i = 0; f && i < 5 && Math.abs(f.end - f.needed - by) > 1; i += 1) {
-        await e.setViewportSize({ width: Math.round(f.width - (f.end - f.needed - by)), height: 960 });
+        room = Math.max(0, Math.round(room + (f.end - f.needed - by)));
+        await pad(room);
         await seen(e);
         f = await e.evaluate(rowFacts);
       }
@@ -1344,14 +1361,17 @@ def _hint_placed_by_the_rows_room(facts):
     return own_line
 
 
-@pytest.mark.parametrize("window", ["owner", "narrow", "zoom200", "larger"])
+@pytest.mark.parametrize("window", ["owner", "floor", "zoom200", "larger"])
 def test_the_stage_hint_stays_inside_the_row_and_off_the_tabs_in_every_window(stage_hint_seen, window):
     """N6 (package row N05, its layout half; package §六: relative geometry,
     no window size decides), on Training and on Models: at the owner's
-    window, in a narrow one, at a browser zoom of 200 % of the owner's window
-    and in a narrow one with larger, wider text (the text alone, every box its
-    own size). In each the hint says its page's stage, is the first thing
-    drawn at its centre, is not cut, and the page does not scroll sideways;
+    window, at the display floor (1280 x 720), on a 2560 x 1440 screen at
+    200 % (1280 x 720 CSS px, 2 device pixels a px) and at the floor's width
+    with larger, wider text (the text alone, every box its own size). The
+    narrow windows it was walked at (420 and 640 px, 200 % of the owner's)
+    are below the floor, drawn as at it. In each the hint says its page's
+    stage, is the first thing drawn at its centre, is not cut, and the page
+    does not scroll sideways;
     it lies inside the research pages' row, over no tab, at the row's right,
     on the tabs' line after them where the row has room for both as drawn and
     on a line of its own where it has not (`_hint_placed_by_the_rows_room`).
@@ -1375,7 +1395,8 @@ def test_the_stage_hint_takes_a_line_of_its_own_exactly_when_the_row_has_no_room
     hint side by side, the hint is on a line of its own; 6 px past it, on the
     tabs' line after them. Both at the row's right, inside it, over no tab,
     uncut, with no sideways page scroll. The edge is found from the row as
-    drawn at the owner's window, never from a window size."""
+    drawn at the display floor, its room narrowed by its own padding (no
+    window under the floor narrows the row), never from a window size."""
     for page, words in (("training", "Stage: Prepare"), ("models", "Stage: Evaluate")):
         edge = stage_hint_seen["edges"][page]
         for side, own in (("under", True), ("over", False)):
@@ -1797,7 +1818,7 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
     await Promise.all(icon.getAnimations().map((a) => a.finished));   // its turn, finished
     return { open: true, transform: getComputedStyle(icon).transform }; });
   const frame = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-  await page.setViewportSize({ width: 420, height: 900 });
+  await page.setViewportSize({ width: 1280, height: 720 });
   await frame();
   out.narrow = await row();
   await page.setViewportSize({ width: 1850, height: 960 });
@@ -1809,7 +1830,7 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
 """
 
 #: What a read-only viewer's Settings and header draw (no deployment mode):
-#: the look at 1850 x 960; then at 1850 x 960 and 390 x 844, Runtime
+#: the look at 1850 x 960; then at 1850 x 960 and the display floor's 1280 x 720, Runtime
 #: settings' accordions open (the external review of 6a2d52e measured the
 #: reason 734 px from the buttons so), where D8's reason and the fields'
 #: line are, and each locked action brought into view as a reader brings it
@@ -1821,7 +1842,7 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = { sizes: {} };
-  for (const [w, h] of [[1850, 960], [390, 844]]) {
+  for (const [w, h] of [[1850, 960], [1280, 720]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
     await page.addInitScript(QUEUE_JS);
     await page.addInitScript(LOOK_JS);
@@ -1984,7 +2005,8 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     actions it turns off, by the one gated-button rule: the actions' row's
     line just above Apply Settings, Restart Backend and Stop service, each
     within 120 px under it and both wholly on screen when the action is
-    brought into view, at 1850 x 960 and 390 x 844 with the accordions open;
+    brought into view, at 1850 x 960 and the display floor's 1280 x 720 with
+    the accordions open;
     next to the fields, between the facts and the allocator select, a short
     relation to it (`FIELDS_LOCKED`). Fails on 6a2d52e: the reason was that
     body line, 734 px above the buttons at 1850 x 960."""
@@ -2036,7 +2058,7 @@ const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
-  const page = await (await browser.newContext({ viewport: { width: 1366, height: 620 } })).newPage();
+  const page = await (await browser.newContext({ viewport: { width: 1366, height: 768 } })).newPage();
   await page.addInitScript(QUEUE_JS);
   await page.goto(process.argv[2], { waitUntil: 'load' });
   await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
@@ -2063,6 +2085,7 @@ const QUEUE_JS = __QUEUE_JS__;
       const r = ta.getBoundingClientRect();
       const top = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2)[0];
       return { overlap, placed, region: region.id || region.className, foot, top: r.top, bottom: r.bottom,
+               page: !!region.closest('#shep-tab-settings') && region !== document.scrollingElement,
                focused: document.activeElement === ta,
                over: top === ta || ta.contains(top) ? 'itself' : (top.closest('[id]') || {}).id };
     }, [box, overlap]));
@@ -2074,7 +2097,8 @@ const QUEUE_JS = __QUEUE_JS__;
 
 
 def test_a_box_partly_under_a_pages_region_foot_is_focused_whole_into_view(tmp_path, monkeypatch):
-    """The shared walk's open problem on Settings at 1366 x 620 (T06-D): side by
+    """The shared walk's open problem on Settings at 1366 x 620 (T06-D; walked at 1366 x 768
+    since the display floor, 620 being under it): side by
     side, Settings scrolls in its level-1 tab item, and a text box partly under
     that region's foot was focused by bringing its first line just into view,
     its centre left under the runtime line below ("focused
@@ -2084,7 +2108,10 @@ def test_a_box_partly_under_a_pages_region_foot_is_focused_whole_into_view(tmp_p
     browser, for an operator, the evidence folders box placed 6 to 30 px
     into the region's foot and focused is wholly inside the region, nothing
     over its centre. On the code before (5137694) it stays at 561-619 px,
-    under the runtime line at 588."""
+    under the runtime line at 588. Since the sweep's L7 (SW-LK1) each
+    Settings panel scrolls inside its own body, so the box's nearest scroll
+    region is its panel's body, a region of the page, not the page's tab
+    item."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.operator_access import DEPLOYMENT_MODE
@@ -2097,7 +2124,7 @@ def test_a_box_partly_under_a_pages_region_foot_is_focused_whole_into_view(tmp_p
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(script, tmp_path, base[:-len("gradio_api")])
     for s in seen:
-        assert s["region"] == "shep-tab-settings" and abs(s["placed"] - s["overlap"]) < 1, s
+        assert s["page"] and abs(s["placed"] - s["overlap"]) < 1, s
         assert s["focused"] and s["over"] == "itself", s
         assert s["bottom"] <= s["foot"] + 0.5, s
 
@@ -2128,7 +2155,8 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
     assert "document.documentElement.getAttribute('data-shep-layout') === 'side'" in training_console._BANNER_JS
     js = shell.SHELL_HEAD
     assert f"var LAYOUT = '{LAYOUT_ATTR}'" in js and f"SHORT_BELOW = {SHORT_BELOW}" in js
-    assert "var want = w > h && sideFits(shownTab()) ? 'side' : 'stack';" in js
+    assert "var want = a.w > a.h && sideFits(shownTab()) ? 'side' : 'stack';" in js
+    assert "root.toggleAttribute(SHORT, a.h < SHORT_BELOW)" in js
     # Each panel's minimum read in px whatever unit its page writes (M4, the UI sweep of
     # 2026-11-22): the property is registered as a length, and where a browser has no @property
     # a rem or em value is converted by the font size (`lengthPx`), never by a probe.
@@ -2147,6 +2175,53 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
     stale = re.compile(r"1400 [×x] 760|wide at 1400|below 820 px|sticky at its bottom")
     for path in sorted(Path(shell.__file__).parent.rglob("*.py")):
         assert not stale.search(path.read_text(encoding="utf-8")), path
+
+
+def test_one_display_floor_is_read_by_the_layout_pass_and_the_frame_alone():
+    """**The display floor** (the owner's decision of 2026-11-23): one pair of constants,
+    `style.FLOOR_WIDTH` and `style.FLOOR_HEIGHT`, and since the owner's decision on portrait
+    windows the stacked arrangement's, `style.STACK_FLOOR_WIDTH`, read by the shell's layout pass
+    and the frame's style only. The pass decides every mark on the window's inner size raised to
+    the floor of the arrangement the window takes (``area()``: the only place it reads the
+    window's size, beside the scrollbar's room `sideFits` counts back; no wider than tall, the
+    stacked floor in both axes, so a 1080p screen turned upright is no longer raised to 1280 and
+    scrolled sideways), and the frame keeps that floor's width below it (its ``min-width``, from
+    the width the pass writes; side by side its height, never under the floor's) while the document
+    scrolls (side by side the root scrolls, so a frame larger than the window can be reached).
+    No page names the floor, and no media query on the window's size decides anything. What
+    the browser draws below the floor is the layout walk's (`test_every_page_of_every_state_has_
+    no_layout_finding`: below the floor every mark is the floor's and the document scrolls)."""
+    from src.webui.app import dashboard_head
+    from src.webui.style import FLOOR_HEIGHT, FLOOR_VAR, FLOOR_WIDTH, SHELL_CSS, STACK_FLOOR_WIDTH
+
+    js = shell.SHELL_HEAD
+    assert (f"var FLOOR_W = {FLOOR_WIDTH}, FLOOR_H = {FLOOR_HEIGHT}, STACK_FLOOR_W = {STACK_FLOOR_WIDTH}, "
+            f"FLOOR_VAR = '{FLOOR_VAR}';") in js
+    # The floor of the arrangement the window takes (the owner's decision of 2026-11-23 on
+    # portrait windows): no wider than tall, the stacked one's in both axes; wider, the display
+    # floor. The layout pass writes its width for the frame.
+    assert "var w = window.innerWidth, h = window.innerHeight, tall = w <= h;" in js
+    assert "var fw = tall ? STACK_FLOOR_W : FLOOR_W, fh = tall ? STACK_FLOOR_W : FLOOR_H;" in js
+    assert "return {w: Math.max(w, fw), h: Math.max(h, fh), floor: fw};" in js
+    assert "root.style.setProperty(FLOOR_VAR, a.floor + 'px')" in js
+    # The window's size is read in area() and, for the scrollbar's room, in sideFits only.
+    assert js.count("window.innerWidth") == 2 and js.count("window.innerHeight") == 1, js.count("window.inner")
+    assert "var root = document.documentElement, a = area();" in js
+    assert f"gradio-app {{ min-width: calc(var({FLOOR_VAR}, {FLOOR_WIDTH}px) - (100vw - 100%)); }}" in SHELL_CSS
+    assert STACK_FLOOR_WIDTH <= 1080 < FLOOR_WIDTH        # a 1080p screen turned upright needs no sideways scroll
+    frame = side(SHELL_CSS)
+    assert "& { height: 100%; overflow: auto; }" in frame and "& body { height: 100%; overflow: visible; }" in frame
+    assert f"& gradio-app {{ height: max(100vh, {FLOOR_HEIGHT}px);" in frame
+    assert f".gradio-container {{ height: max(100vh, {FLOOR_HEIGHT}px);" in frame
+    assert "100vh;" not in frame                  # never the window's height alone
+    head = dashboard_head()
+    assert not re.search(r"@media[^{]*(width|height)", head), re.findall(r"@media[^{]*", head)
+    assert not re.search(r"@media[^{]*orientation", head), re.findall(r"@media[^{]*", head)
+    # No page names the floors' numbers as a window: the constants are the one place they are written.
+    for path in sorted(Path(shell.__file__).parent.rglob("*.py")):
+        if path.name in ("style.py",):
+            continue
+        assert not re.search(r"\b(FLOOR_W|FLOOR_H|STACK_FLOOR_W)\b\s*=\s*\d", path.read_text(encoding="utf-8")), path
 
 
 #: What the layout pass decided at a stop of the shared walk (`ui_walk`), on
@@ -2170,8 +2245,10 @@ _LAYOUT_FACTS_JS = r"""() => {
                    'shep-train-continue', 'shep-train-stop', 'shep-train-pill']
       .map((i) => document.getElementById(i).getBoundingClientRect())
       .filter((r) => r.width > 0 && r.height > 0);
-    runbar = { h: Math.round(bar.getBoundingClientRect().height),
-               lines: new Set(items.map((r) => Math.round((r.top + r.bottom) / 2 / 24))).size };
+    // On one line: one horizontal band crosses every item (the lowest top above the highest
+    // bottom), whatever each item's own height.
+    runbar = { h: Math.round(bar.getBoundingClientRect().height), items: items.length,
+               oneLine: items.length > 0 && Math.max(...items.map((r) => r.top)) < Math.min(...items.map((r) => r.bottom)) };
   }
   // A box's top and bottom as drawn, or null when it is not drawn.
   const at = (e) => { if (!e) { return null; } const r = e.getBoundingClientRect();
@@ -2214,17 +2291,14 @@ _LAYOUT_FACTS_JS = r"""() => {
            drawer, finetune };
 }"""
 
-#: The walk's windows, narrow to wide and back on each page: the shared
-#: check's representative sizes (`UI_SIZES`), checked, and the layout's other
-#: shapes (a narrow column, a square, a portrait screen), laid out only;
-#: 1536 x 760, short and the owner's laptop, and 1280 x 600, a short laptop's
-#: window, checked too (side by side below about 660 px of height, Models
-#: scrolled its list around the rows' own region and Training's plots' body was
-#: shorter than one plot: the T04 review).
-_WALK_SIZES = ((760, 1000, False), (1850, 960, True), (1280, 900, True), (1920, 700, True),
-               (1440, 1600, True), (1000, 1000, False), (1536, 760, True), (1366, 620, True),
-               (1280, 600, True), (1080, 1920, False), (960, 1080, True), (390, 844, True),
-               (1850, 960, False))
+#: The walk's windows on each page, at or above the display floor (`style.FLOOR_WIDTH` x
+#: `FLOOR_HEIGHT`, the owner's decision of 2026-11-23): the shared check's representative sizes
+#: (`UI_SIZES`), checked, a large screen laid out only, 1536 x 760 (short, the owner's laptop),
+#: checked too, one window below the floor (laid out only: drawn as at the floor, the document
+#: scrolling), and the owner's again.
+_WALK_SIZES = ((1850, 960, True), (1280, 900, True), (1920, 720, True), (1440, 1600, True),
+               (2560, 1440, False), (1536, 760, True), (1366, 768, True), (1280, 720, True),
+               (1024, 640, False), (1850, 960, False))
 
 #: The Diagnosis load drawer, opened at a stop of the walk (`browser.UI_WALK_JS`), a
 #: row of its list chosen (the served model's, unfolded and located), so its
@@ -2237,6 +2311,48 @@ _CHANGE_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
 #: the × in its header (R-49).
 _CONTINUE_DRAWER = {"click": "#shep-train-continue", "shown": "#shep-train-drawer",
                     "close": "#shep-train-drawer-close"}
+#: The drawers the layout walks open (`_layout_walk_stops`), as a reader first sees each: the
+#: Diagnosis Load drawer (no row chosen), and where a run and a registry let them open
+#: (configured), Training's Continue drawer and the Test page's import drawer.
+_LOAD_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
+                "close": "#shep-dx-change-close button"}
+_IMPORT_DRAWER = {"click": "#shep-test-import-open", "shown": "#shep-test-import",
+                  "close": "#shep-test-import-close"}
+#: The windows a drawer is opened at in a layout walk: the owner's, a laptop, the display floor,
+#: one window below it (drawn as at the floor: its marks compared with the floor's) and the two
+#: portrait windows (stacked: the owner's decision of 2026-11-23 on portrait windows).
+_DRAWER_SIZES = ((1850, 960), (1366, 768), (1280, 720), (1024, 640), (1080, 1920), (1440, 2560))
+
+
+#: The windows the configured walk opens the Load drawer at with a row chosen (its Model Facts
+#: beside the list), last, so the drawer's other stops see no choice: the owner's and the floor.
+_PICKED_SIZES = ((1850, 960), (1280, 720))
+#: Models with a row chosen (its details beside the list; the sweep's L7 check, C2: no rule had
+#: measured it, and its title broke inside the date at 1550, 1366 and 1280): the row stays chosen
+#: (no closer), so these stops come last, at the owner's windows, a laptop and the floor.
+_MODELS_PICK = {"click": "#shep-models-research-rows tr[data-key]:not([hidden])",
+                "shown": "#shep-mp-detail h2[data-key]"}
+_MODELS_PICK_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720))
+
+
+def _layout_walk_stops(configured: bool):
+    """**A state's layout walk**: every page at `browser.LAYOUT_SIZES` (`layout_stops`), then
+    its drawers open at `_DRAWER_SIZES` (the Load drawer in every state; Continue and import
+    where `configured`), each stop's layout rules recorded, no focus walk. Configured, the
+    Load drawer is opened last with a row chosen (`_CHANGE_DRAWER`, at `_PICKED_SIZES`): its
+    chosen model's facts start on the drawer's edge (they sat 13 px in, in boxes of their own,
+    at 390 x 844)."""
+    from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES, layout_stops
+
+    drawers = [("clinical", _LOAD_DRAWER)] + ([("training", _CONTINUE_DRAWER), ("test", _IMPORT_DRAWER)]
+                                             if configured else [])
+    picked = ([{"size": [w, h], "page": "clinical", "open": _CHANGE_DRAWER, "focus": False}
+               for w, h in _PICKED_SIZES] + [{"size": [w, h], "page": "models", "open": _MODELS_PICK,
+                                              "focus": False} for w, h in _MODELS_PICK_SIZES]
+              if configured else [])
+    return layout_stops(UI_PAGES, LAYOUT_SIZES) + [
+        {"size": [w, h], "page": page, "open": drawer, "focus": False}
+        for w, h in _DRAWER_SIZES for page, drawer in drawers] + picked
 
 #: A static page for the shared focus walk itself (`browser.LOOK_JS`'s
 #: `focusWalk`): two buttons that draw a 3 px ring on keyboard focus, with no
@@ -2247,7 +2363,7 @@ const { chromium } = require('playwright');
 const LOOK_JS = __LOOK_JS__;
 (async () => {
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 800, height: 400 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   await page.setContent(`<!doctype html><html><head><style>
     body { background: #fff; }
     button { outline: none; border: 1px solid #767676; background: #fff; width: 120px; height: 32px; }
@@ -2295,14 +2411,14 @@ def _walk_stops():
         stop["options"] = True                   # each page's selects, once, at its last stop
     # The Diagnosis load drawer open, its head a field row (D03): side by side
     # from 1280 px its workspace select was squeezed to 26 px, its label cut
-    # to "W" (the T04 review), and to 71 px on a phone; and in a short window;
-    # and at the owner's window, its list and details side by side (UI-07).
+    # to "W" (the T04 review); and in a short window and at the floor; and at
+    # the owner's window, its list and details side by side (UI-07).
     stops += [{"size": [w, h], "page": "clinical", "open": _CHANGE_DRAWER}
-              for w, h in ((1850, 960), (1280, 900), (1366, 620), (390, 844))]
+              for w, h in ((1850, 960), (1280, 900), (1366, 768), (1280, 720))]
     # Training's Continue drawer open, at the owner's window (step 3 in view
-    # without scrolling: NEW-training-finetune-2) and stacked.
+    # without scrolling: NEW-training-finetune-2) and stacked (no wider than tall).
     stops += [{"size": [w, h], "page": "training", "open": _CONTINUE_DRAWER}
-              for w, h in ((1850, 960), (960, 1080))]
+              for w, h in ((1850, 960), (1440, 1600))]
     # A page opened at a size, not only resized to it: at 1280 x 900 Datasets
     # (its own minimum is wider) between two pages that fit.
     stops += [{"size": [1280, 900], "page": page, "check": False}
@@ -2311,16 +2427,15 @@ def _walk_stops():
 
 
 @pytest.fixture(scope="module")
-def ui_walk(tmp_path_factory, _suite_gpu_lock):
-    """The shared UI measurement walk, once for this module: the service in a
-    process of its own (`served_page.served_service`, mode M1, an operator) on
-    the demo workspace with a base and a disease child trained on it where the
-    server lists them (`trained_children.train_children`, 1 epoch each on the
-    CPU), the disease child served (the Diagnosis card as an operator sees
-    it); one browser through `_walk_stops` (`browser.walk_ui`), the layout
-    facts at every stop, the shared check and a screenshot at the checked ones
-    (under the module's ``ui-walk*/shots``)."""
-    from tests.fixtures.browser import node_with_playwright, walk_ui
+def ui_world(tmp_path_factory, _suite_gpu_lock):
+    """The configured service, once for this module: in a process of its own
+    (`served_page.served_service`, mode M1, an operator) on the demo
+    workspace with a base and a disease child trained on it where the server
+    lists them (`trained_children.train_children`, 1 epoch each on the CPU),
+    the disease child served (the Diagnosis card as an operator sees it).
+    Yields its page and its folder; the walks of this state (`ui_walk`,
+    `ui_walk_configured`) share it."""
+    from tests.fixtures.browser import node_with_playwright
     from tests.fixtures.registered_cohort import write_demo_workspace
     from tests.fixtures.served_page import served_service
     from tests.fixtures.trained_children import train_children
@@ -2331,56 +2446,102 @@ def ui_walk(tmp_path_factory, _suite_gpu_lock):
     demo = write_demo_workspace(root / "workspaces" / "demo")
     served = train_children(demo, ("disease",))["disease"]
     (root / "registry").mkdir()
-    (root / "shots").mkdir()
     settings = {"SHEPHERD_WORKSPACES_ROOT": str(root / "workspaces"),
                 "SHEPHERD_REGISTRY": str(root / "registry"), "SHEPHERD_DEPLOYMENT_MODE": "M1",
                 "SHEPHERD_DEVICE": "cpu", "SHEPHERD_KG_PATH": str(demo / "kg.json"),
                 "SHEPHERD_CHECKPOINT_PATH": str(served), "SHEPHERD_DATA_DIR": str(demo)}
     with served_service(root / "service", settings) as page:
-        return walk_ui(page, root, _walk_stops(), extra_js=_LAYOUT_FACTS_JS, shots=root / "shots")
+        yield {"page": page, "root": root}
+
+
+@pytest.fixture(scope="module")
+def ui_walk(ui_world):
+    """The shared UI measurement walk on the configured service (`ui_world`):
+    one browser through `_walk_stops` (`browser.walk_ui`), the layout facts at
+    every stop, the shared check and a screenshot at the checked ones (under
+    the module's ``ui-walk*/shots``)."""
+    from tests.fixtures.browser import walk_ui
+
+    root = ui_world["root"]
+    (root / "shots").mkdir()
+    return walk_ui(ui_world["page"], root, _walk_stops(), extra_js=_LAYOUT_FACTS_JS,
+                   shots=root / "shots")
+
+
+@pytest.fixture(scope="module")
+def ui_walk_configured(ui_world):
+    """**The configured walk at the layout sizes** (the sweep's integration, its
+    decision 4): every page of the configured service (`ui_world`) at
+    `browser.LAYOUT_SIZES` and its drawers open (`_layout_walk_stops`), the
+    layout rules recorded at each stop (no focus walk), screenshots under the
+    module's ``ui-walk*/layout/shots``."""
+    from tests.fixtures.browser import walk_ui
+
+    root = ui_world["root"] / "layout"
+    (root / "shots").mkdir(parents=True)
+    return walk_ui(ui_world["page"], root, _layout_walk_stops(True), shots=root / "shots")
+
+
+@pytest.fixture(scope="module")
+def ui_walk_read_only(ui_world):
+    """**The read-only walk at the layout sizes** (the sweep's L7 check, C5: the read-only
+    viewer was in no layout walk, and the walk's own rules found 13 findings there): every
+    page of the configured service (`ui_world`) at `browser.LAYOUT_SIZES` as a request D8
+    refuses sees it (`browser.READ_ONLY_HEADERS`: a forwarded request), the layout rules
+    recorded at each stop, no drawer (Load is an operator control), screenshots under the
+    module's ``ui-walk*/read-only/shots``."""
+    from tests.fixtures.browser import LAYOUT_SIZES, READ_ONLY_HEADERS, UI_PAGES, layout_stops, walk_ui
+
+    root = ui_world["root"] / "read-only"
+    (root / "shots").mkdir(parents=True)
+    return walk_ui(ui_world["page"], root, layout_stops(UI_PAGES, LAYOUT_SIZES), shots=root / "shots",
+                   headers=READ_ONLY_HEADERS)
 
 
 def test_one_layout_decision_at_every_size_and_back(ui_walk):
     """D02 (FL-UI-02, PTR-LAYOUT in part) in a real browser (Node and
     Playwright, skipped without), the service on the demo workspace, for an
-    operator, every page through narrow, wide, short, portrait, square and
-    phone windows and back (the shared walk, `ui_walk`):
+    operator, every page through the walk's windows and back (the shared
+    walk, `ui_walk`), all at or above the display floor (`style.FLOOR_WIDTH`
+    x `FLOOR_HEIGHT`, the owner's decision of 2026-11-23) but one:
 
-    - no wider than tall (1440 x 1600, 1000 x 1000, 1080 x 1920, 760 x 1000,
-      960 x 1080, 390 x 844): every page stacked, its panels one under the
-      other;
+    - no wider than tall (1440 x 1600): every page stacked, its panels one
+      under the other;
     - wider: side by side exactly when the page's panels fit by their own
-      minimum widths (1280 x 900: every page but Datasets, whose table and
-      digest grid need about 1400 px, whether resized to it or opened at it
-      between two pages that fit; 1920 x 700, 1366 x 620 and 1280 x 600: every
-      page but Datasets below its width, a short window only denser,
-      ``data-shep-short``); side by side, the panels on one line and
+      minimum widths; a short window (under ``style.SHORT_BELOW``) only
+      denser, ``data-shep-short``; side by side, the panels on one line and
       none narrower than its minimum, and the page itself never scrolls;
-    - never a horizontal page scroll;
+    - at or above the floor, never a horizontal page scroll;
+    - below the floor (1024 x 640): the decision and the short flag are the
+      floor's (1280 x 720) and the document scrolls both ways, the layout
+      drawn as at the floor, never shrunk to the window;
     - back at 1850 x 960, the same as the first time; there the Training run
       bar is one row (R-38).
     Nothing covering a focused control, at every size, is the shared check's
     (`test_every_page_at_every_size_passes_the_ui_measurement_check`)."""
-    portrait = {"1440x1600", "1000x1000", "1080x1920", "760x1000", "960x1080", "390x844"}
-    # Side by side exactly when the shown panels' own minimums and gaps fit the row (relative:
-    # a page's panels sized by what they hold, the UI sweep's M4, move no pin here). Datasets at
-    # 1280 x 900, 1366 x 620 and 1280 x 600 stacked by that measure when this was written.
-    datasets_stacked = {"1280x900", "1366x620", "1280x600"}
+    from tests.fixtures.browser import at_floor, floor_size
+
+    fw, fh = floor_size()
+    portrait = {"1440x1600"}
+    floors = {s["page"]: s["extra"] for s in ui_walk if s["size"] == f"{fw}x{fh}" and not s.get("open")}
     for s in ui_walk:
         where, facts = (s["size"], s["page"]), s["extra"]
-        assert facts["overX"] == 0, (where, facts)
-        assert facts["short"] == (int(s["size"].split("x")[1]) < 900), (where, facts)
-        narrow_datasets = s["page"] == "datasets" and s["size"] in datasets_stacked
+        w, h = (int(n) for n in s["size"].split("x"))
+        assert facts["short"] == (max(h, fh) < 900), (where, facts)
         want = "stack" if s["size"] in portrait or facts["need"] > facts["width"] + 0.5 else "side"
         assert facts["layout"] == want, (where, facts)
+        if not at_floor(s["size"]):
+            floor = floors[s["page"]]
+            assert (facts["layout"], facts["short"]) == (floor["layout"], floor["short"]), (where, facts, floor)
+            assert facts["overX"] > 0 and (facts["overY"] > 0 or facts["layout"] == "stack"), (where, facts)
+            continue
+        assert facts["overX"] == 0, (where, facts)
         if want == "side":
             assert facts["need"] <= facts["width"] + 0.5, (where, facts)
             assert len(set(facts["tops"])) <= 1 and facts["narrowest"] >= -0.5, (where, facts)
             assert facts["overY"] <= 0, (where, facts)
         elif len(facts["tops"]) > 1:
             assert facts["tops"] == sorted(facts["tops"]) and len(set(facts["tops"])) == len(facts["tops"]), (where, facts)
-        if narrow_datasets and want == "stack":
-            assert facts["need"] > facts["width"], s                  # its own measure, no global gate
     wide = [s for s in ui_walk if s["size"] == "1850x960" and not s.get("open")]
     # The layout's facts, not a page's own (`drawer`, `finetune`: their test's).
     layout = lambda facts: {k: v for k, v in facts.items() if k not in ("drawer", "finetune")}  # noqa: E731
@@ -2392,18 +2553,20 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
     for s in ui_walk[-3:]:
         facts = s["extra"]
         assert facts["layout"] == ("stack" if facts["need"] > facts["width"] + 0.5 else "side"), s
-    # R-38: at the owner's window the Training run bar is one row (it was two, 119 px).
+    # R-38: at the owner's window the Training run bar is one row (it was two, 119 px): every
+    # item drawn (Dataset, its chip, Run name, Start, Continue…, the pill) on one line.
     (training, *_) = [s for s in wide if s["page"] == "training"]
-    assert training["extra"]["runbar"]["lines"] == 1 and training["extra"]["runbar"]["h"] < 90, training
+    assert training["extra"]["runbar"]["items"] >= 5 and training["extra"]["runbar"]["oneLine"], training
 
 
 def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     """D08 (INT-AUDIT): the shared UI measurement check (`browser.check`,
     `browser.focusWalk`, `browser.ui_problems`) on every page at every
-    representative window (`browser.UI_SIZES`: 1850 x 960, 1280 x 900,
-    1920 x 700, a 1366 x 620 short laptop, 1440 x 1600, 960 x 1080, a
-    390 x 844 phone; and 1536 x 760 and 1280 x 600), and with the Diagnosis
-    load drawer open at 1850 x 960, 1280 x 900, 1366 x 620 and 390 x 844, a
+    representative window (`browser.UI_SIZES`, at or above the display
+    floor: 1850 x 960, 1280 x 900, 1920 x 720, a 1366 x 768 laptop,
+    1440 x 1600, the floor's 1280 x 720; and 1536 x 760), and with the
+    Diagnosis load drawer open at 1850 x 960, 1280 x 900, 1366 x 768 and
+    1280 x 720, a
     row of it chosen (its focus walk inside the drawer), the service on the
     demo workspace for an operator (`ui_walk`):
 
@@ -2444,7 +2607,7 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
     options = {s["page"]: s["options"] for s in ui_walk if "options" in s}
     assert all(options[page] for page in ("training", "finetune", "test", "models", "settings")), options
     drawer = [s for s in checked if s.get("open") == "#shep-dx-change"]
-    assert {s["size"] for s in drawer} == {"1850x960", "1280x900", "1366x620", "390x844"}
+    assert {s["size"] for s in drawer} == {"1850x960", "1280x900", "1366x768", "1280x720"}
     for s in drawer:                                  # its head's select measured
         assert "Workspace" in {label["text"] for label in s["check"]["labels"]}, s
     labels = {s["page"]: {label["text"] for label in s["check"]["labels"]}
@@ -2455,7 +2618,7 @@ def test_every_page_at_every_size_passes_the_ui_measurement_check(ui_walk):
 
 def test_the_continue_drawer_and_the_fine_tune_form_fit_the_owners_window(ui_walk):
     """The shared walk's facts (`_LAYOUT_FACTS_JS`) for Training's Continue
-    drawer, opened at 1850 x 960 and stacked at 960 x 1080, and Fine-tune's
+    drawer, opened at 1850 x 960 and stacked at 1440 x 1600, and Fine-tune's
     form with nothing expanded at 1850 x 960:
 
     - R-49: with the drawer open the run bar draws none of its actions
@@ -2474,7 +2637,7 @@ def test_the_continue_drawer_and_the_fine_tune_form_fit_the_owners_window(ui_wal
       (a disabled Stop with no reason)."""
     opened = {s["size"]: s["extra"]["drawer"] for s in ui_walk
               if s.get("open") == "#shep-train-drawer"}
-    assert set(opened) == {"1850x960", "960x1080"}
+    assert set(opened) == {"1850x960", "1440x1600"}
     for size, drawer in opened.items():
         assert drawer["actions"] == [] and drawer["reason"] == "", (size, drawer)
         assert drawer["closers"] == 1, (size, drawer)
@@ -2537,23 +2700,23 @@ _ACCEPTANCE_FACTS_JS = r"""() => {
 def _acceptance_stops():
     """Every page at PLAN_TEST_RESULTS §6's sizes the representative windows
     leave out (`browser.PTR_SIZES`), then Diagnosis answered with its largest
-    Top-K at the owner's window, the acceptance sizes, a short laptop, a
-    narrow column and a phone (the diagnosis asked at the first of them)."""
+    Top-K at the owner's window, the acceptance sizes, a laptop, the display
+    floor and a tall window, stacked (the diagnosis asked at the first of
+    them)."""
     from tests.fixtures.browser import PTR_SIZES, UI_PAGES
 
     stops = [{"size": [w, h], "page": page} for page in UI_PAGES for w, h in PTR_SIZES]
     answered = [{"size": [w, h], "page": "clinical", "tag": "results"}
-                for w, h in ((1850, 960), *PTR_SIZES, (1366, 620), (960, 1080), (390, 844))]
+                for w, h in ((1850, 960), *PTR_SIZES, (1366, 768), (1280, 720), (1440, 1600))]
     answered[0]["diagnose"] = _LONG_DIAGNOSIS
     return stops + answered
 
 
 #: The read-only viewer's windows: on a high-DPI screen (2 device pixels per
-#: CSS pixel) the owner's window, the acceptance sizes a high-DPI screen gives
-#: (a 3840 x 2160 one at 200 % is 1920 x 1080) and a phone; at 1 the two
-#: largest, whose screens are their CSS size.
-_READ_ONLY_HIGH_DPI = ((1850, 960), (1920, 1080), (1280, 720), (1440, 900), (1707, 870), (1080, 1920),
-                       (960, 540), (390, 844))
+#: CSS pixel) the owner's window and the acceptance sizes a high-DPI screen
+#: gives at or above the display floor (a 3840 x 2160 one at 200 % is
+#: 1920 x 1080); at 1 the two largest, whose screens are their CSS size.
+_READ_ONLY_HIGH_DPI = ((1850, 960), (1920, 1080), (1280, 720), (1440, 900), (1707, 870))
 _READ_ONLY_LARGE = ((2560, 1600), (3840, 2160))
 
 
@@ -2588,8 +2751,10 @@ def _answered_problems(answered, *, refused=False):
         if facts["layout"] == "side" and facts["table"][0] > facts["table"][1] + 1:
             problems.append((s["size"], "table wider than its box", facts))
         change = facts["change"] or {}
+        # The reason is the shared reason line: its lock in a column of its own, so the words
+        # read as a line after it (the sweep's L7 check, C5); compared as words.
         locked = (change.get("off") is True and change.get("text", "").startswith(LOCK)
-                  and change.get("why", "").startswith(f"{LOCK} {OPERATOR_ONLY}"))
+                  and " ".join(change.get("why", "").split()).startswith(f"{LOCK} {OPERATOR_ONLY}"))
         unlocked = (change.get("off") is False and not change.get("text", LOCK).startswith(LOCK)
                     and change.get("why") == "")
         if not (locked if refused else unlocked):
@@ -2651,11 +2816,12 @@ def acceptance_walk(tmp_path_factory, _suite_gpu_lock):
 
 def test_the_acceptance_sizes_and_twenty_long_named_results_pass_the_ui_measurement_check(
         acceptance_walk):
-    """PTR-LAYOUT: every page at 1440 x 900, 1280 x 720, 1707 x 870,
-    1920 x 1080, 2560 x 1600, 3840 x 2160, 1080 x 1920 and 960 x 540 (200 %
-    zoom), and Diagnosis with its largest Top-K answered (20 candidates, 16
-    of them with a long name) at those, at 1850 x 960, 1366 x 620,
-    960 x 1080 and 390 x 844, pass the shared check (`browser.ui_problems`: no sideways page scroll, one
+    """PTR-LAYOUT: every page at 1440 x 900, 1707 x 870, 1920 x 1080,
+    2560 x 1600 and 3840 x 2160 (the acceptance sizes at or above the
+    display floor; 1080 x 1920 and 960 x 540 are below it, drawn as at the
+    floor), and Diagnosis with its largest Top-K answered (20 candidates, 16
+    of them with a long name) at those, at 1850 x 960, 1366 x 768, the
+    floor's 1280 x 720 and 1440 x 1600 (stacked), pass the shared check (`browser.ui_problems`: no sideways page scroll, one
     scroll region per area, every control focused in view with nothing over
     it, the type scale, borders and focus cues). Side by side the results
     table is no wider than its box: a long name's 46-character token widened
@@ -2679,8 +2845,8 @@ def test_the_acceptance_sizes_and_twenty_long_named_results_pass_the_ui_measurem
 def test_a_read_only_viewers_walk_passes_the_ui_measurement_check(acceptance_walk):
     """INT-AUDIT and PTR-LAYOUT: the shared walk as a viewer D8 refuses
     (every request forwarded by a proxy, on a service in mode M1): every page
-    at the owner's window, every acceptance size and a phone, the smaller on
-    a high-DPI screen, passes the shared check, the D8 chip says
+    at the owner's window and every acceptance size at or above the display
+    floor, the smaller on a high-DPI screen, passes the shared check, the D8 chip says
     read-only and why, and the walk focused the controls such a viewer can
     use (the disabled ones are not focusable). Diagnosis answered with 20
     long-named results passes it too at each of those sizes, its results
@@ -2805,7 +2971,9 @@ def test_the_walks_reader_never_reads_gradios_status_tracker_as_a_blocks_words(t
     assert operator["block"]["own"] == "", operator
     assert operator["facts"]["change"] == {"text": "Change model…", "off": False, "why": ""}, operator
     change = read_only["facts"]["change"]
-    assert read_only["block"]["own"].startswith(f"{LOCK} {OPERATOR_ONLY}"), read_only
+    # The shared reason line (the sweep's L7 check, C5): the lock in a column of its own, its
+    # words a line after it; compared as words.
+    assert " ".join(read_only["block"]["own"].split()).startswith(f"{LOCK} {OPERATOR_ONLY}"), read_only
     assert change["off"] is True and change["text"] == f"{LOCK} Change model…", read_only
     assert change["why"] == read_only["block"]["own"], read_only
     # A tracker Gradio draws is read like any other words (the review of
@@ -2990,20 +3158,18 @@ def test_a_field_rows_action_is_its_boxes_height_and_stands_on_their_line(tmp_pa
     assert abs((test[1] - test[0]) - (seen["test@1850"]["boxes"][0][1] - seen["test@1850"]["boxes"][0][0])) <= 1
 
 
-def test_the_field_rows_share_one_class_and_two_tokens():
+def test_the_field_rows_share_one_class_and_two_tokens(built):
     """D03: the four rows of a select and an action (Fine-tune's base picker,
     Training's Continue drawer, Test's Run, the Diagnosis load drawer's head)
     carry the one field-row class; their own alignment patches are gone; a
     dense form's blocks (the shared `shep-form-dense`: Training's parameters
     and its drawer, Fine-tune's form) set the row's padding token with their
-    padding (one value, never two that drift)."""
-    from src.webui.components import (
-        diagnosis_panel,
-        finetune_page,
-        model_list,
-        test_page,
-        training_console,
-    )
+    padding (one value, never two that drift). Test's Run row is a bar of
+    whole groups since the sweep (L3): its select and ↻ are that bar's one
+    group, and that group is the field row; Diagnosis' Task segment keeps
+    the aside class beside a whole-label one (P2). Both are read from the
+    built page, not from their source's words."""
+    from src.webui.components import finetune_page, model_list, test_page, training_console
     from src.webui.style import SHELL_CSS
 
     assert "--shep-field-box-h: 41px; --shep-field-pad-b: 10px;" in SHELL_CSS
@@ -3011,10 +3177,26 @@ def test_the_field_rows_share_one_class_and_two_tokens():
     assert "height: var(--shep-field-box-h) !important" in button
     assert "margin: 0 0 var(--shep-field-pad-b) !important" in button
     assert '"shep-ft-parent-row", "shep-field-row"' in Path(finetune_page.__file__).read_text()
-    assert '"shep-test-model-row", "shep-field-row"' in Path(test_page.__file__).read_text()
+    demo, _ctx = built
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+
+    def row_of(block):          # the nearest gr.Row (Gradio puts a field in a Form of its own)
+        block = block.parent
+        while not isinstance(block, gr.Row):
+            block = block.parent
+        return block
+
+    run_row = row_of(by_id["shep-test-model-run"])
+    assert row_of(by_id["shep-test-model-reload"]) is run_row
+    assert {"shep-field-row", "shep-grp"} <= set(run_row.elem_classes or [])
+    assert "shep-bar" in (run_row.parent.elem_classes or [])
     assert '"shep-train-parent-row", "shep-field-row"' in Path(training_console.__file__).read_text()
     assert '["shep-field-row"] if chosen.layout == "drawer"' in Path(model_list.__file__).read_text()
-    assert '"shep-seg", "shep-field-aside"' in Path(diagnosis_panel.__file__).read_text()
+    # The Diagnosis Load drawer's head: its Task segment stands in the shared
+    # list's field row as an aside (its classes read from the built page).
+    task = by_id["shep-dx-change-task"]
+    assert {"shep-seg", "shep-field-aside"} <= set(task.elem_classes or [])
+    assert "shep-field-row" in (row_of(task).elem_classes or [])
     assert "margin-bottom: 4px" not in test_page.PAGE_CSS
     assert "#ft_refresh {" not in finetune_page.PAGE_CSS
     assert "#shep-train-refresh {" not in training_console.PAGE_CSS
@@ -3056,7 +3238,9 @@ const { chromium } = require('playwright');
   const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
   const rows = Array.from({ length: 300 }, (_, i) => `<tr><th scope="row">Field ${i}</th><td>${i}</td><td>${i}</td></tr>`).join('');
   await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body>
-    <div class="shep-scroll-cue" id="cue" style="height: 200px; overflow: auto;"><div style="height: 900px"></div></div>
+    <div id="cue" style="height: 200px; overflow: auto;"><div style="height: 900px"></div></div>
+    <div id="cuex" style="width: 200px; overflow-x: auto; overflow-y: hidden;"><div style="width: 900px; height: 20px"></div></div>
+    <div id="fits" style="height: 200px; overflow: auto;"><div style="height: 100px"></div></div>
     <div id="shep-page-models"><div id="shep-mp-detail" style="height: 600px; display: flex; flex-direction: column;">
       <div id="shep-mp-detail-bd" style="flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 16px;">
         <div class="shep-tbl-wrap shep-rs-wrap"><table class="shep-tbl shep-rs-cmp" style="min-width: 1600px"><thead><tr><th>Field</th><th>A</th><th>B</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -3068,6 +3252,11 @@ const { chromium } = require('playwright');
   const cue = () => page.evaluate(() => { const e = document.getElementById('cue');
     return { more: e.hasAttribute('data-shep-more'), mask: getComputedStyle(e).maskImage !== 'none' }; });
   const out = { top: await cue() };
+  out.sideways = await page.evaluate(() => { const e = document.getElementById('cuex');
+    return { more: e.hasAttribute('data-shep-more-x'), mask: getComputedStyle(e).maskImage !== 'none' }; });
+  out.fits = await page.evaluate(() => { const e = document.getElementById('fits');
+    return { more: e.hasAttribute('data-shep-more') || e.hasAttribute('data-shep-more-x'),
+             mask: getComputedStyle(e).maskImage !== 'none' }; });
   await page.evaluate(() => { const e = document.getElementById('cue'); e.scrollTop = e.scrollHeight; });
   await page.waitForFunction(() => !document.getElementById('cue').hasAttribute('data-shep-more'), null, { timeout: 5000 }).catch(() => {});
   out.end = await cue();
@@ -3094,29 +3283,37 @@ const { chromium } = require('playwright');
 
 def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp_path):
     """R-73: Test's Result body scrolled with no cue (overlay scrollbars draw
-    nothing at rest). A region with the shared ``shep-scroll-cue`` fades its
-    last lines while more is below and draws them whole at its end (the head
-    script keeps ``data-shep-more``); Test's Result body has the class.
+    nothing at rest). Every region that scrolls fades its last lines while
+    more is below and draws them whole at its end, and fades its right edge
+    while more lies past it (the head script keeps ``data-shep-more`` and
+    ``data-shep-more-x``); a region that holds its content draws no cue. No
+    page opts in (the sweep's L7: Settings, Fine-tune's form, Training's charts
+    and the Diagnosis fields scrolled with no cue because their pages had not).
     B72-C3: Compare, 12,342 px tall, had its sideways scrollbar at its foot,
     out of reach mid-table; it is now a box no taller than the region it is
     read in, so its scrollbar is in view whenever the box is. Both measured
     in a browser on a page of their own (Node and Playwright, skipped without)."""
     from src.webui.components import models_page, test_page
-    from src.webui.style import SHELL_CSS
+    from src.webui.style import FLOOR_VAR, SHELL_CSS, STACK_FLOOR_WIDTH
     from tests.fixtures.browser import node_with_playwright, run_node
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
-    assert '"shep-test-bd", "shep-test-bd-flush", "shep-scroll-cue"' in Path(test_page.__file__).read_text()
+    assert "shep-scroll-cue" not in Path(test_page.__file__).read_text()
     css_path, js_path = tmp_path / "page.css", tmp_path / "head.js"
     css_path.write_text(SHELL_CSS + models_page.PAGE_CSS, encoding="utf-8")
     js_path.write_text(shell._SHELL_JS.replace("__TITLES__", "{}").replace("__RESEARCH_LABEL__", '""')
                        .replace("__STAGES__", "{}").replace("__STAGE_WORD__", '""')
                        .replace("__LAYOUT__", "data-shep-layout").replace("__SHORT__", "data-shep-short")
-                       .replace("__SHORT_BELOW__", "900").replace("__GO__", "{}"), encoding="utf-8")
+                       .replace("__SHORT_BELOW__", "900").replace("__GO__", "{}")
+                       .replace("__FLOOR_W__", "1280").replace("__FLOOR_H__", "720")
+                       .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR),
+                       encoding="utf-8")
     seen = run_node(_CUE_JS, tmp_path, str(css_path), str(js_path))
     assert seen["top"] == {"more": True, "mask": True}, seen
     assert seen["end"] == {"more": False, "mask": False}, seen
+    assert seen["sideways"] == {"more": True, "mask": True}, seen
+    assert seen["fits"] == {"more": False, "mask": False}, seen
     for layout in ("side", "stack"):
         box = seen[layout]
         assert box["sideways"] and box["barInView"], (layout, box)
@@ -3147,9 +3344,10 @@ def test_the_tab_groups_flatten_to_the_research_pages_and_their_style_is_generat
     the tablist's name are unchanged) and never a node of the tablist: each
     later group's first tab keeps a gap (`TAB_GROUP_GAP`) in whose middle an
     empty ``::before`` draws the separator, through the documented
-    ``<elem_id>-button`` ids only; no role, tab stop or text is added. Not
-    drawn while the tabs wrap (`TABS_WRAPPED_ATTR`, the head script's mark);
-    the gap stays, so the mark changes nothing the pass measures."""
+    ``<elem_id>-button`` ids only; no role, tab stop or text is added. At or
+    above the display floor the tabs sit on one line, so the separators are
+    always drawn: the mark that hid them while the tabs wrapped (below the
+    floor only) is retired with its pass."""
     from src.webui.app import dashboard_head
 
     assert tuple(page for group in shell.TAB_GROUPS for page in group) == shell.RESEARCH_PAGES
@@ -3161,16 +3359,31 @@ def test_the_tab_groups_flatten_to_the_research_pages_and_their_style_is_generat
         assert f"{tab} {{ position: relative; margin-inline-start: var(--shep-tabgroup-gap) !important; }}" in css
         sep = _rule(css, f"{tab}::before")
         assert 'content: ""' in sep and "pointer-events: none" in sep and "width: 1px" in sep
-        assert (f"#shep-research-nav[{shell.TABS_WRAPPED_ATTR}] > .tab-wrapper > .tab-container > "
-                f"#shep-page-{first}-button::before {{ display: none; }}") in css
     assert "#shep-page-datasets-button" not in css and "#shep-page-finetune-button" not in css
     assert not re.search(r"role|tabindex|content: \"[^\"]", css)
+    assert "display: none" not in css and "tabs-wrapped" not in shell.SHELL_HEAD + css
+
+
+def test_words_beside_a_control_take_their_own_line_when_they_would_take_two_lines():
+    """The display floor's walk at 2560 x 1440 (the owner's decision of 2026-11-23): Training's
+    "Set by you: nothing. The run takes the reference values…" stood beside Reset to reference
+    on two lines (the ``beside`` rule): its box's basis was its words' one line, but a panel's
+    prose is capped at the measure, so in the wide row the measure and the button fitted side
+    by side and the sentence wrapped there. The shell's layout pass now marks words of a
+    ``shep-beside-row`` that stand beside a control on two lines or more
+    (``data-shep-own-line``), measured with the mark off (put back before anything is painted),
+    and they take the row's next line. What the browser draws is the layout walk's
+    (`test_every_page_of_every_state_has_no_layout_finding` at 2560 x 1440)."""
+    from src.webui.style import SHELL_CSS
+
     head = shell.SHELL_HEAD
-    lines = head[head.index("function tabLines()"):head.index("var FOLD = ")]
-    # The pass reads the tabs' own tops and writes only the mark, which no rule of a tab's box reads.
-    assert "offsetTop" in lines and "toggleAttribute(TABS_WRAPPED, wrapped)" in lines
-    assert "style" not in lines and "margin" not in lines
-    assert "    tabLines();" in head[head.index("function layout()"):]
+    besides = head[head.index("function besides()"):head.index("function layout()")]
+    off, measure, back = (besides.index("box.removeAttribute(OWN_LINE)"), besides.index("lines(box) > 1"),
+                          besides.index("box.setAttribute(OWN_LINE, '')"))
+    assert off < measure < back
+    assert "'.shep-beside-row > .shep-beside'" in besides
+    assert "    besides();" in head[head.index("function layout()"):]
+    assert ".shep-beside-row > .shep-beside[data-shep-own-line] { flex-basis: 100% !important; }" in SHELL_CSS
 
 
 def test_the_fit_pass_measures_each_box_with_its_own_mark_off():
@@ -3181,13 +3394,13 @@ def test_the_fit_pass_measures_each_box_with_its_own_mark_off():
     is a fieldset block that is not a segmented control, its options on one
     line for the measure alone."""
     head = shell.SHELL_HEAD
-    fits = head[head.index("function fits()"):head.index("var TABS_WRAPPED")]
+    fits = head[head.index("function fits()"):head.index("var FOLD = ")]
     assert fits.count("removeAttribute(NARROW)") == 2 and fits.count("setAttribute(NARROW, '')") == 2
     for block in fits.split("var groups")[0], fits.split("var groups")[1]:
         off, measure, back = (block.index("removeAttribute(NARROW)"), block.index("measured("),
                               block.index("setAttribute(NARROW, '')"))
         assert off < measure < back
-    assert "var CHOICE = 'fieldset.block:not(.shep-seg)';" in head
+    assert "var CHOICE = 'fieldset.block:not(.shep-seg), fieldset.block.shep-seg-whole';" in head
     assert "':scope > .wrap:has(> label)'" in fits
     from src.webui.style import SHELL_CSS
 
@@ -3266,17 +3479,16 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.waitForSelector('#groups-notice .shep-nb');
   const row = () => page.evaluate(() => {
     const list = document.querySelector('#shep-research-nav > .tab-wrapper > .tab-container');
-    const tabs = [...list.children];
+    const tabs = [...list.children], x0 = list.getBoundingClientRect().left, y0 = list.getBoundingClientRect().top;
     return { kids: tabs.map((t) => [t.tagName, t.getAttribute('role'), t.getAttribute('data-tab-id')]),
-             wrapped: document.getElementById('shep-research-nav').hasAttribute('data-shep-tabs-wrapped'),
              tabs: tabs.map((t) => { const r = t.getBoundingClientRect(), s = getComputedStyle(t, '::before');
                const drawn = s.content !== 'none' && s.content !== 'normal' && s.display !== 'none';
-               return { id: t.getAttribute('data-tab-id'), left: r.left, right: r.right, top: Math.round(r.top),
-                        sep: drawn ? { x: r.left + parseFloat(s.left), content: s.content, top: parseFloat(s.top),
+               return { id: t.getAttribute('data-tab-id'), left: r.left - x0, right: r.right - x0, top: Math.round(r.top - y0),
+                        sep: drawn ? { x: r.left - x0 + parseFloat(s.left), content: s.content, top: parseFloat(s.top),
                                        bottom: parseFloat(s.bottom), width: parseFloat(s.width) } : null }; }) };
   });
   const out = {};
-  for (const [name, w, h] of [['wide', 1850, 960], ['narrow', 390, 844], ['back', 1850, 960]]) {
+  for (const [name, w, h] of [['wide', 1850, 960], ['floor', 1280, 720], ['below', 1024, 640], ['back', 1850, 960]]) {
     await page.setViewportSize({ width: w, height: h });
     await frame(); await frame();
     out[name] = await row();
@@ -3338,9 +3550,13 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
     - at the owner's window the tabs are on one line, a separator drawn in
       the gap before Training and before Test (between the tabs, never over
       one, empty, 1 px), none before Datasets or the second tab of a group;
-    - at a phone's width the tabs wrap: the row is marked and no separator
-      is drawn (a line never starts with one); back at the owner's window,
-      as before;
+    - at the display floor (1280 x 720) the same, one line, both
+      separators drawn; below it (1024 x 640) the row is drawn as at the
+      floor, every tab and separator where the floor draws it in the row
+      (positions read from the tablist's own edge: this stand-in page is no
+      full-width mount, so Gradio centres its column) (the tabs
+      wrapped and their separators were hidden at a phone's width before the
+      owner's floor of 2026-11-23); back at the owner's window, as before;
     - the tablist holds the five tabs only, in `RESEARCH_PAGES`' order; the
       keyboard's Tab moves from tab to tab, meeting no separator;
     - the notice's link opens Settings and moves the focus to the Data
@@ -3365,7 +3581,7 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
                         base[:-len("gradio_api")])
     wide = seen["wide"]
     assert wide["kids"] == [["BUTTON", "tab", page] for page in shell.RESEARCH_PAGES], wide
-    assert not wide["wrapped"] and len({t["top"] for t in wide["tabs"]}) == 1, wide
+    assert len({t["top"] for t in wide["tabs"]}) == 1, wide
     drawn = {t["id"]: t["sep"] for t in wide["tabs"] if t["sep"]}
     assert set(drawn) == {"training", "test"}, wide
     by = {t["id"]: t for t in wide["tabs"]}
@@ -3373,9 +3589,10 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
         sep = drawn[first]
         assert sep["content"] == '""' and sep["width"] == 1, sep
         assert by[before]["right"] < sep["x"] < by[first]["left"], (sep, by[before], by[first])
-    narrow = seen["narrow"]
-    assert narrow["wrapped"] and len({t["top"] for t in narrow["tabs"]}) > 1, narrow
-    assert not any(t["sep"] for t in narrow["tabs"]), narrow
+    floor = seen["floor"]
+    assert len({t["top"] for t in floor["tabs"]}) == 1, floor
+    assert {t["id"] for t in floor["tabs"] if t["sep"]} == {"training", "test"}, floor
+    assert seen["below"] == floor
     assert seen["back"] == wide
     assert seen["keys"] == ["training", "finetune", "test", "models"], seen["keys"]
     assert seen["evil"] == "research"
@@ -3396,72 +3613,125 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
 # --------------------------------------------------------------------------- the first-use and empty walks
 #: The header's facts at a stop of a state walk: whether the chips and Settings went onto a
 #: second line, and the GPU chip's words.
-_HEADER_FACTS_JS = r"""() => ({
-  wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
-  gpu: ((document.querySelector('#shep-chips .shep-chip-gpu .shep-chip-text') || {}).textContent || '').trim() })"""
-#: The first-use walk's windows (the layout measure's, `browser.LAYOUT_SIZES`, less the laptop
-#: sizes the shared walk covers): the owner's, the owner's Firefox width, 1280 x 720, a portrait
-#: column and a phone.
-_STATE_SIZES = ((1850, 960), (1550, 830), (1280, 720), (800, 900), (390, 844))
-
-
+_HEADER_FACTS_JS = r"""() => {
+  const box = (s) => { const e = document.querySelector(s);
+    return e && e.getClientRects().length ? e.getBoundingClientRect() : null; };
+  // Training's run view: its resources line and the panel's content bottom (its padding box).
+  const view = document.getElementById('shep-train-runview'), res = box('#shep-train-runview > #resource_display');
+  const foot = view && res ? view.getBoundingClientRect().bottom - (parseFloat(getComputedStyle(view).borderBottomWidth) || 0)
+                              - (parseFloat(getComputedStyle(view).paddingBottom) || 0) : null;
+  // Training's run bar: the middle of the job state's words and of Start, and Start's relation's.
+  const words = (s) => { const e = document.querySelector(s); if (!e || !e.getClientRects().length) { return null; }
+    const r = document.createRange(); r.selectNodeContents(e);
+    const q = [...r.getClientRects()].filter((x) => x.width > 1 && x.height > 1);
+    return q.length ? { top: q[0].top, mid: (q[0].top + q[0].bottom) / 2 } : null; };
+  const start = box('#shep-train-start');
+  return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
+           gpu: ((document.querySelector('#shep-chips .shep-chip-gpu .shep-chip-text') || {}).textContent || '').trim(),
+           runview: res && foot !== null && view.scrollHeight <= view.clientHeight + 1
+             ? { resBottom: res.bottom, foot } : null,
+           runbar: start ? { start: { top: start.top, bottom: start.bottom, mid: (start.top + start.bottom) / 2 },
+                             state: words('#shep-train-pill .shep-st-w'), why: words('#shep-train-why') } : null };
+}"""
 @pytest.fixture(scope="module")
 def ui_walk_first_use(tmp_path_factory):
     """**The first-use walk** (the UI sweep of 2026-11-22): the service as a
     first start serves it (no workspaces folder, no results registry, the
     launcher's local start: `browser.state_settings("first_use")`), every
-    page at `_STATE_SIZES`, the layout rules recorded at each stop (no focus
-    walk), screenshots under the module's ``ui-walk-first-use*/shots``."""
-    from tests.fixtures.browser import UI_PAGES, layout_stops, node_with_playwright, walk_state
+    page at `browser.LAYOUT_SIZES` and the Load drawer open (`_layout_walk_stops`), the
+    layout rules recorded at each stop (no focus walk), screenshots under the module's
+    ``ui-walk-first-use*/shots``."""
+    from tests.fixtures.browser import node_with_playwright, walk_state
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     root = tmp_path_factory.mktemp("ui-walk-first-use")
     (root / "shots").mkdir()
-    return walk_state("first_use", root, layout_stops(UI_PAGES, _STATE_SIZES), shots=root / "shots",
+    return walk_state("first_use", root, _layout_walk_stops(False), shots=root / "shots",
                       extra_js=_HEADER_FACTS_JS)
 
 
 @pytest.fixture(scope="module")
 def ui_walk_empty(tmp_path_factory):
     """**The empty-folder walk**: an empty workspaces folder and an empty
-    registry (`browser.state_settings("empty")`), every page at the owner's
-    window and a phone's."""
-    from tests.fixtures.browser import UI_PAGES, layout_stops, node_with_playwright, walk_state
+    registry (`browser.state_settings("empty")`), every page at
+    `browser.LAYOUT_SIZES` and the Load drawer open (`_layout_walk_stops`)."""
+    from tests.fixtures.browser import node_with_playwright, walk_state
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
     root = tmp_path_factory.mktemp("ui-walk-empty")
     (root / "shots").mkdir()
-    return walk_state("empty", root, layout_stops(UI_PAGES, ((1850, 960), (390, 844))),
+    return walk_state("empty", root, _layout_walk_stops(False),
                       shots=root / "shots", extra_js=_HEADER_FACTS_JS)
 
 
 def _state_walk_holds_the_shells_rules(seen, gpu_words):
-    from tests.fixtures.browser import UI_PAGES, layout_problems
+    from tests.fixtures.browser import UI_PAGES, effective_size, floor_size, layout_problems
 
     assert {s["page"] for s in seen} == set(UI_PAGES)
     for s in seen:
-        width = int(s["size"].split("x")[0])
         assert s["extra"]["gpu"] == gpu_words, s["extra"]
-        if width >= 1280:                                 # one header line from a laptop's width
+        # One header line wherever it is drawn at least as wide as the display floor, below the
+        # floor included (drawn as at the floor). A portrait window narrower than that (the
+        # stacked arrangement's floor, the owner's decision of 2026-11-23) has its chips and
+        # Settings on the header's second line, the header's own wrap.
+        if effective_size(s["size"])[0] >= floor_size()[0]:
             assert not s["extra"]["wrapped"], (s["page"], s["size"])
         assert "layout" in s["check"] and s["check"]["layout"]["tabs"] is not None \
             or s["page"] in ("clinical", "settings"), (s["page"], s["size"])
     assert layout_problems(seen, rules=("tab-groups", "help-on-page", "notice-repeat")) == []
 
 
+def test_at_first_use_trainings_resources_line_ends_its_run_view(ui_walk_first_use):
+    """The independent check of the UI sweep (C10): at 1280 x 720 at first use
+    (no run to draw) the run view's charts row shrank to its empty message in
+    a run view too short for one row of plots, so the resources line stood
+    mid-panel over 190 px of blank; at 1366 x 768 it was at the panel's foot.
+    Wherever the run view does not scroll, its resources line is its last row,
+    on the panel's content bottom, at every layout size."""
+    stops = [s for s in ui_walk_first_use
+             if s["page"] == "training" and not s.get("open") and s["extra"].get("runview")]
+    assert {s["size"] for s in stops} >= {"1850x960", "1366x768", "1280x720"}, stops
+    for stop in stops:
+        facts = stop["extra"]["runview"]
+        assert abs(facts["resBottom"] - facts["foot"]) <= 1, (stop["size"], facts)
+
+
+def test_at_first_use_the_job_state_stands_on_the_run_bars_line(ui_walk_first_use):
+    """LOOK2 (SW-LK5, partly): at 1850 x 960 at first use the job state ("○ Idle · …") shared
+    the line of Start and its relation but stood about 5 px higher, top-aligned with the
+    40 px buttons. Wherever the state shares Start's line, its words' middle is the line's
+    middle, as Start's relation's is (the walk's layout sizes). The words are the mark's words
+    (``.shep-st-w``), not its shape, whose glyph box is the font's own (the portrait stop at
+    1080 x 1920 read the ring's box, 1.25 px over the line's middle, the words 0.75)."""
+    stops = [s for s in ui_walk_first_use if s["page"] == "training" and not s.get("open")]
+    shared = 0
+    for stop in stops:
+        bar = stop["extra"]["runbar"]
+        assert bar and bar["state"] and bar["why"], (stop["size"], bar)
+        start = bar["start"]
+        if not (start["top"] <= bar["state"]["mid"] <= start["bottom"]):
+            continue                                  # the state on a line of its own
+        shared += 1
+        assert abs(bar["state"]["mid"] - start["mid"]) <= 1, (stop["size"], bar)
+        assert abs(bar["why"]["mid"] - start["mid"]) <= 1, (stop["size"], bar)
+    assert shared, [s["size"] for s in stops]
+
+
 def test_at_first_use_the_header_and_tab_groups_hold_on_every_page_and_size(ui_walk_first_use):
     """B-11 and the owner's tab groups, at first use (no workspaces folder, no
     registry; the state of the owner's six screenshots): the GPU chip says
-    "GPU jobs: not set up" and the header is one line from 1280 px wide up
-    (it wrapped at 1280 on "GPU jobs: refused, no workspaces folder"); the
-    research tabs keep their order, a separator is never drawn at a line's
-    start or while they wrap, nothing but a tab is in the tablist; no help
+    "GPU jobs: not set up" and the header is one line at every layout size
+    drawn at least as wide as the display floor (it wrapped at 1280 on "GPU
+    jobs: refused, no workspaces folder"; below the display floor it is drawn
+    as at the floor; a portrait window narrower than the display floor puts its
+    chips and Settings on a second line); the research tabs sit on
+    one line in their order, a separator is never drawn at a line's start,
+    nothing but a tab is in the tablist; no help
     text is drawn on the page and no notice twice on a screen. The page
     rules (`browser.layout_problems`: beside, narrow-box, orphan, edge, …)
-    are each page's to bring to zero; they are held at zero for every page
-    once the sweep's lanes land (its integration), not here."""
+    are held at zero by `test_every_page_of_every_state_has_no_layout_finding`."""
     _state_walk_holds_the_shells_rules(ui_walk_first_use, "GPU jobs: not set up")
 
 
@@ -3469,3 +3739,939 @@ def test_with_an_empty_workspaces_folder_the_header_and_tab_groups_hold(ui_walk_
     """The same shell rules with an empty workspaces folder and an empty
     registry: the GPU lock is set up, so the chip says "GPU jobs: none"."""
     _state_walk_holds_the_shells_rules(ui_walk_empty, "GPU jobs: none")
+
+
+# --------------------------------------------------------------------------- the shared pieces as drawn
+def _pieces_page():
+    """The shell with one stand-in research page (Datasets) drawing the shared pieces the sweep's
+    lanes reported on (each in its own element, measured by `_PIECES_JS`): a relation led by a
+    mark in a box wider than its words, and one its page places at the line's end; a bar with an
+    empty note and a note that says something, and a search row in a bar; a panel's header in a
+    column too short for it; a row of fields and a grid of fields (their fields in Gradio's one
+    form), a choice group with an ⓘ in a field row; a wrapped name in the shared tree; and a wide
+    table in a fit box above a tall page."""
+    from src.config import server_settings as ss
+    from src.webui.components import renderers as r
+    from src.webui.components import workspaces as w
+    from src.webui.style import CELL_WHOLE, FIT, FIT_WIDE
+
+    notice = w.setting_notice(ss.workspaces_root({}))
+    # One identity line (Test's and Models', `renderers.dataset_identity_html`) in boxes of
+    # every width from 160 to 552 px, so some line ends at each of its separators.
+    ident = r.dataset_identity_html(
+        {"name": "demo", "dataset_fingerprint": "3f563f74bb04" + "0" * 52, "trainable": True,
+         "dataset_record": {"binding": "verified", "origin": "synthetic", "sha256": None,
+                            "problem": None},
+         "build": {"state": "recorded", "built_at": "2026-11-22T12:10:00Z"},
+         "declared_releases": (), "train_samples": 20, "val_samples": 5}, name=False)
+    seps = "".join(f'<div class="pc-sepbox" style="width: {w}px">{ident}</div>'
+                   for w in range(160, 560, 8))
+    prose = "Words of a column that wraps, as a model's name and start do in its own column. " * 2
+    cells = "".join(f'<td class="shep-nowrap">a cell that never breaks {i:02d}</td>' for i in range(12))
+    tree = ('<table class="shep-tbl shep-mtree" id="pc-tree"><tbody><tr><td><div class="shep-tree-name">'
+            '<button type="button" class="shep-fold" aria-expanded="true">▾</button>'
+            '<span class="shep-tree-label">a run named at length so that it wraps over three lines</span>'
+            '</div></td></tr></tbody></table>')
+
+    def datasets(ctx):
+        with gr.Column(elem_id="pc-panel", elem_classes=["shep-panel"]):
+            shell.plain_html('<div class="shep-panel-hd"><h2>Shared pieces</h2></div>')
+            shell.plain_html(r.see_above("Start", notice), elem_id="pc-rel")
+            shell.plain_html(r.see_above("Import", notice).replace(
+                'class="shep-reason', 'style="justify-content: end; max-width: none" class="shep-reason', 1),
+                elem_id="pc-rel-end")
+            with gr.Row(elem_id="pc-bar", elem_classes=["shep-bar"]):
+                with gr.Row(elem_id="pc-search", elem_classes=["shep-search-row", "shep-grp", "shep-grp-grow"]):
+                    shell.plain_html('<span class="shep-search-lbl">Search</span>', elem_id="pc-search-lbl")
+                    gr.Textbox(show_label=False, container=False, elem_id="pc-search-box", lines=1, max_lines=1)
+                    gr.Button("Clear", size="sm", scale=0, min_width=0, elem_id="pc-search-clear")
+                shell.plain_html("", elem_id="pc-note-empty", elem_classes=["shep-bar-note"])
+                shell.plain_html("<p>A note that says something.</p>", elem_id="pc-note-said",
+                                 elem_classes=["shep-bar-note"])
+            with gr.Column(elem_id="pc-squeeze"):
+                with gr.Row(elem_id="pc-squeeze-hd", elem_classes=["shep-panel-hd"]):
+                    shell.plain_html("<h2>A header whose title runs over two or three lines in a narrow "
+                                     "column</h2>", elem_id="pc-squeeze-title")
+                shell.plain_html('<div style="height: 600px">A tall body.</div>', elem_id="pc-squeeze-bd")
+            with gr.Row(elem_id="pc-fields", elem_classes=["shep-fields"]):
+                for name in ("Epochs", "Seed", "Learning rate"):
+                    gr.Textbox(label=name, elem_id=f"pc-fields-{name[:2].lower()}")
+            with gr.Row(elem_id="pc-grid", elem_classes=["shep-field-grid"]):
+                for name in ("Warmup", "Decay", "Patience", "Clip"):
+                    gr.Textbox(label=name, elem_id=f"pc-grid-{name.lower()}")
+            with gr.Row(elem_id="pc-frow", elem_classes=["shep-field-row"]):
+                gr.Textbox(label="Name", elem_id="pc-frow-name")
+                gr.Radio(["Trained", "Frozen"], label="Graph backbone", elem_id="pc-frow-choice")
+            ctx.help.field("pc-frow-choice", "Graph backbone", "What the base's graph layers do here.")
+            # A row of fields whose choice group has a line under its label (Gradio's ``info=``),
+            # a line wider than its options and than the row's room beside its neighbour.
+            with gr.Row(elem_id="pc-irow", elem_classes=["shep-fields"]):
+                gr.Textbox(label="Run name", elem_id="pc-irow-name")
+                gr.Radio(["Auto", "CPU"], label="Device", elem_id="pc-irow-choice",
+                         info="Where the run computes: the one graphics card this machine has, or "
+                              "its processor when no card is free")
+            # Two bars whose end group the bar wraps onto a line of its own, and holds on one line.
+            for bar, wide in (("pc-endbar", 560), ("pc-endbar-one", 120)):
+                with gr.Row(elem_id=bar, elem_classes=["shep-bar"]):
+                    with gr.Row(elem_classes=["shep-grp"]):
+                        shell.plain_html(f'<div style="width: {wide}px">Facts of the run</div>',
+                                         elem_id=f"{bar}-facts")
+                    with gr.Row(elem_id=f"{bar}-end", elem_classes=["shep-grp", "shep-grp-end"]):
+                        gr.Button("Start", scale=0, min_width=0)
+                        gr.Button("Stop", scale=0, min_width=0)
+            shell.plain_html(tree, elem_id="pc-tree-box")
+            shell.plain_html(f'<div id="pc-c12">{seps}<div style="width: 320px"><table class="shep-tbl" '
+                             f'id="pc-whole"><tbody><tr><td class="{CELL_WHOLE}">Record not readable</td>'
+                             f'<td>{prose}</td></tr></tbody></table></div></div>', elem_id="pc-c12-box")
+            shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-fit"><table class="shep-tbl {FIT_WIDE}">'
+                             f'<tbody><tr>{cells}</tr></tbody></table></div>'
+                             '<div style="height: 2400px"></div>', elem_id="pc-fit-box")
+
+    pages = {**{page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS,
+                                                       shell.CLINICAL)},
+             shell.DATASETS: datasets}
+    with gr.Blocks() as demo:
+        ctx = shell.build_shell(demo, pages)
+        shell.help_texts(ctx.help)
+    return demo
+
+
+#: The stand-in page's facts as drawn (`_pieces_page`), at 1280 x 1280 (at the display floor's
+#: width and no wider than tall, so stacked: the page itself scrolls) with the panel held to 640 px, the squeezed column to 240 px with its body a scroll region, and the field row's and
+#: grid's floors set (16rem, 12rem).
+_PIECES_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1280 } });
+  await page.addInitScript(QUEUE_JS);
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForFunction(() => window.ShepShell !== undefined, null, { timeout: 30000 });
+  await page.click('#shep-tab-research-button');
+  await page.click('#shep-page-datasets-button');
+  await page.waitForSelector('#pc-panel');
+  await page.addStyleTag({ content: `
+    #pc-panel { max-width: 640px !important; }
+    #pc-squeeze { height: 240px !important; max-height: 240px !important; flex: none !important; width: 260px !important; }
+    #pc-squeeze-bd { flex: 1 1 auto !important; min-height: 0 !important; overflow: auto !important; }
+    #pc-fields { --shep-field-min: 16rem; }
+    #pc-grid { --shep-field-min: 12rem; }
+    #pc-tree-box { width: 180px; }` });
+  const frames = (n) => page.evaluate((n) => new Promise((r) => { const f = (k) => k ? requestAnimationFrame(() => f(k - 1)) : r(); f(n); }), n);
+  await page.waitForSelector('#pc-frow-choice .shep-i');
+  await page.waitForSelector('#pc-fit[data-shep-narrow]');
+  await frames(4);
+  const out = await page.evaluate(() => {
+    const q = (s) => document.querySelector(s);
+    const box = (e) => e.getBoundingClientRect();
+    const ink = (e) => { const r = document.createRange(); r.selectNodeContents(e);
+      return [...r.getClientRects()].filter((x) => x.width > 0); };
+    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const rel = (id) => { const p = q(`#${id} .shep-reason`), mark = ink(p.querySelector('.shep-nb-mark'))[0],
+      words = ink(p.querySelector('.shep-nb-text'));
+      return { gap: words[0].left - mark.right, colGap: parseFloat(getComputedStyle(p).columnGap),
+               wordsRight: Math.max(...words.map((x) => x.right)), boxRight: box(p).right,
+               boxLeft: box(p).left, markLeft: mark.left }; };
+    const mid = (e) => { const r = box(e); return (r.top + r.bottom) / 2; };
+    const title = q('#pc-frow-choice [data-testid="block-info"]'), info = q('#pc-frow-choice .shep-i');
+    const lines = ink(q('#pc-tree .shep-tree-label')), fold = box(q('#pc-tree .shep-fold'));
+    const hd = q('#pc-squeeze-hd');
+    return {
+      rel: rel('pc-rel'), relEnd: rel('pc-rel-end'),
+      notes: { empty: getComputedStyle(q('#pc-note-empty')).display, said: getComputedStyle(q('#pc-note-said')).display },
+      search: { box: mid(q('#pc-search-box input, #pc-search-box textarea')), label: mid(q('#pc-search-lbl .shep-search-lbl')),
+                clear: mid(q('#pc-search-clear')) },
+      header: { client: hd.clientHeight, scroll: hd.scrollHeight, title: box(q('#pc-squeeze-title')).height,
+                height: box(hd).height },
+      fields: { floor: 16 * rem, boxes: [...document.querySelectorAll('#pc-fields .block:has(input, textarea)')]
+        .map((e) => ({ width: box(e).width, top: Math.round(box(e).top), left: Math.round(box(e).left) })),
+        row: box(q('#pc-fields')).width },
+      grid: { floor: 12 * rem, boxes: [...document.querySelectorAll('#pc-grid .block:has(input, textarea)')]
+        .map((e) => ({ width: box(e).width, left: Math.round(box(e).left) })), row: box(q('#pc-grid')).width },
+      choice: { title: box(title), info: box(info) },
+      // The row of fields with a choice group's info line: each label's top, each field's top,
+      // the info line's lines and box, and its group's and options' boxes.
+      irow: (() => {
+        const name = q('#pc-irow-name'), group = q('#pc-irow-choice'), note = q('#pc-irow-choice .info-text');
+        const label = (e) => box(e.querySelector('[data-testid="block-info"], label > span, legend')).top;
+        return { labels: [label(name), label(group)], tops: [box(name).top, box(group).top],
+                 noteLines: new Set(ink(note).map((x) => Math.round(x.top))).size,
+                 note: box(note), group: box(group), options: box(q('#pc-irow-choice .wrap')) };
+      })(),
+      // Each bar: its first group's and its end group's boxes and the bar's content edges.
+      ends: Object.fromEntries(['pc-endbar', 'pc-endbar-one'].map((id) => {
+        const bar = q(`#${id}`), first = bar.firstElementChild, end = q(`#${id}-end`), cs = getComputedStyle(bar);
+        return [id, { first: box(first), end: box(end), right: box(bar).right - parseFloat(cs.paddingRight)
+                                                                  - parseFloat(cs.borderRightWidth) }];
+      })),
+      c12: (() => {
+        // Each separator's "·" as drawn: where its line starts (its box's left) and whether the
+        // fact after it starts the next line; the whole cell's and the prose cell's lines.
+        const tops = (e) => new Set(ink(e).map((x) => Math.round(x.top))).size;
+        const seps = [];
+        for (const b of document.querySelectorAll('#pc-c12 .pc-sepbox')) {
+          for (const sep of b.querySelectorAll('.shep-sep')) {
+            const t = sep.firstChild, at = t.data.indexOf('·'), rg = document.createRange();
+            rg.setStart(t, at); rg.setEnd(t, at + 1);
+            const dot = rg.getBoundingClientRect(), next = sep.nextElementSibling;
+            const after = next ? ink(next)[0] : null;
+            seps.push({ width: box(b).width, fromStart: dot.left - box(b).left,
+                        endsLine: !!after && after.top > dot.bottom - 1,
+                        drawn: getComputedStyle(sep).visibility !== 'hidden' });
+          }
+        }
+        const cells = [...document.querySelectorAll('#pc-whole td')];
+        return { seps, whole: tops(cells[0]), prose: tops(cells[1]) };
+      })(),
+      tree: { lines: lines.length, first: { top: lines[0].top, bottom: lines[0].bottom },
+              fold: { top: fold.top, bottom: fold.bottom } },
+    };
+  });
+  // The fit box scrolled sideways and the page scrolled to its end, then anything drawn: the
+  // layout pass runs and measures the box, and neither scroll moves.
+  await page.evaluate(() => { const fit = document.getElementById('pc-fit'); fit.scrollLeft = 120;
+    window.scrollTo(0, document.scrollingElement.scrollHeight); });
+  await frames(2);
+  out.scroll = { before: await page.evaluate(() => ({ fit: document.getElementById('pc-fit').scrollLeft, page: window.scrollY,
+                                                      wide: document.getElementById('pc-fit').scrollWidth > document.getElementById('pc-fit').clientWidth })) };
+  await page.evaluate(() => document.body.appendChild(document.createElement('div')));
+  await frames(4);
+  out.scroll.after = await page.evaluate(() => ({ fit: document.getElementById('pc-fit').scrollLeft, page: window.scrollY }));
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.fixture(scope="module")
+def pieces_seen(tmp_path_factory):
+    """`_PIECES_JS` on `_pieces_page`, served as the service mounts it, once for the module."""
+    from src.webui.app import mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    with served(_pieces_page(), **mount_options()) as base:
+        return run_node(_PIECES_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)),
+                        tmp_path_factory.mktemp("pieces"), base[:-len("gradio_api")])
+
+
+def test_a_separator_never_starts_a_line_and_a_whole_cell_keeps_its_line(pieces_seen):
+    """C12 (the L6 check): Test's identity line wrapped with its separator at
+    the next line's start ("· synthetic …", 1550 px), and the Models table
+    broke "Fine-tune, full" and "Record not readable" while its Model column
+    had room. A separator is joined to the fact before it (`renderers.SEP`:
+    a no-break space, then "· "), so in a box of any width a line ends at it
+    and never starts with it; a cell whose value reads as one
+    (`style.CELL_WHOLE`) keeps its line while a column of prose beside it
+    wraps. The sweep's L7 (SW-LK2, SW-LK7: Fine-tune's facts line ended in
+    a dangling " · "): a separator the line breaks after is not drawn (the
+    shell's layout pass marks it, its box kept), so no drawn separator ends
+    a line either."""
+    facts = pieces_seen["c12"]
+    ends = [x for x in facts["seps"] if x["endsLine"]]
+    assert ends, facts["seps"]                                 # some line breaks after one
+    assert not [x for x in ends if x["drawn"]], ends           # and draws no separator there
+    assert [x for x in facts["seps"] if not x["endsLine"] and x["drawn"]], facts["seps"]
+    starts = [x for x in facts["seps"] if x["fromStart"] < 1]
+    assert not starts, starts
+    assert facts["whole"] == 1 and facts["prose"] > 1, facts
+
+
+def test_a_relations_words_start_beside_its_mark_and_its_page_still_places_it(pieces_seen):
+    """S1 of the sweep's integration (the lanes' L2 R-a, L3 R1, L5 R2): a relation led by a mark
+    (`renderers.see_above`) in a box wider than its words starts its words one column gap after
+    its mark (the mark's ``auto`` column took the room the words left: 74 px on Fine-tune, 209 px
+    on Test), and a page that places it at its line's end (``justify-content``) still does."""
+    rel, end = pieces_seen["rel"], pieces_seen["relEnd"]
+    assert rel["gap"] <= rel["colGap"] + 1, rel
+    assert abs(rel["markLeft"] - rel["boxLeft"]) <= 1, rel
+    assert end["gap"] <= end["colGap"] + 1 and abs(end["wordsRight"] - end["boxRight"]) <= 1, end
+
+
+def test_an_empty_bar_note_takes_no_room_and_a_note_that_says_something_is_drawn(pieces_seen):
+    """S2 (L1 R1): a bar's note (``shep-bar-note``, a ``gr.HTML``, which always draws its
+    container and the element in it) is hidden while it says nothing and drawn once it does;
+    the shared rule tested the container, so no empty note was ever hidden."""
+    assert pieces_seen["notes"] == {"empty": "none", "said": "block"}, pieces_seen["notes"]
+
+
+def test_a_panels_header_keeps_its_words_in_a_column_too_short_for_it(pieces_seen):
+    """S3 (L1 R3): a panel's header (``shep-panel-hd``, a row in a column) never shrinks under
+    its words when the column is too short for its body (a drawer's header was squeezed to its
+    48 px floor at 1366 x 768, its two lines of title under the body)."""
+    hd = pieces_seen["header"]
+    assert hd["scroll"] <= hd["client"] + 1 and hd["height"] >= hd["title"], hd
+
+
+def test_a_search_rows_label_and_clear_stand_on_the_boxs_middle_line_in_a_bar(pieces_seen):
+    """S5 (L4 b): in a bar, whose groups stand on one bottom line, a search row's "Search" and
+    Clear stay on its box's middle line (they sank to its bottom; Models set it by its id)."""
+    s = pieces_seen["search"]
+    assert abs(s["label"] - s["box"]) <= 1.5 and abs(s["clear"] - s["box"]) <= 1.5, s
+
+
+def test_a_row_of_fields_and_a_grid_of_fields_reach_the_fields_in_gradios_form(pieces_seen):
+    """S7 (L2 R-b): Gradio draws a row's adjacent fields in one ``.form``; the shared row of
+    fields (``shep-fields``) and grid of fields (``shep-field-grid``) reach them there: each
+    field at least its floor (``--shep-field-min``), a row wrapping whole fields where one line
+    cannot hold them at their floors (they stood on one line in equal shares under it), a grid's
+    fields in columns of one width (the form stood in the grid's first column, one field a
+    line)."""
+    f, g = pieces_seen["fields"], pieces_seen["grid"]
+    assert len(f["boxes"]) == 3 and all(b["width"] >= f["floor"] - 0.5 for b in f["boxes"]), f
+    assert len({b["top"] for b in f["boxes"]}) > 1, f                      # wrapped, whole fields
+    assert len(g["boxes"]) == 4 and all(b["width"] >= g["floor"] - 0.5 for b in g["boxes"]), g
+    assert len({b["left"] for b in g["boxes"]}) > 1, g
+    assert max(b["width"] for b in g["boxes"]) - min(b["width"] for b in g["boxes"]) <= 1, g
+
+
+def test_a_choice_groups_title_and_its_help_stay_on_one_line_in_a_field_row(pieces_seen):
+    """S8 (L2 R-c): in a field row (``shep-field-row``), a choice group's title and the ⓘ after it
+    (its own children) stand on one line (the row drew each field as a column, so the ⓘ took a
+    line of its own under the title)."""
+    c = pieces_seen["choice"]
+    assert c["info"]["top"] < c["title"]["bottom"] and c["info"]["bottom"] > c["title"]["top"], c
+    assert c["info"]["left"] >= c["title"]["right"] - 1, c
+
+
+def test_a_choice_groups_info_line_wraps_in_its_row_and_the_rows_labels_share_a_top(pieces_seen):
+    """The sweep's L7 (SW-LK2): Fine-tune's Device group was as wide as its info line (Gradio's
+    ``info=``) on one line, wider than its options, and pushed Run name off its row; in a row
+    of fields (``shep-fields``), aligned by their bottoms, a field with such a line lifted its
+    label above its neighbour's. A choice group's info line wraps inside the group and never
+    sets its width, so a neighbour that fits beside its options stays on its line, and the
+    row's labels share one top line."""
+    i = pieces_seen["irow"]
+    assert abs(i["tops"][0] - i["tops"][1]) <= 1, i                      # one line of fields
+    assert abs(i["labels"][0] - i["labels"][1]) <= 1, i                  # labels on one top line
+    assert i["noteLines"] > 1 and i["note"]["right"] <= i["group"]["right"] + 1, i
+
+
+def test_an_end_group_the_bar_wraps_alone_starts_its_line_and_one_that_fits_ends_it(pieces_seen):
+    """The sweep's L7 (SW-LK5): Training's actions, the bar's end group (``shep-grp-end``), wrapped
+    onto a line of their own stood at its end, 643 px in from the bar's edge at 1550 x 830, the
+    line's start empty. An end group alone on its line starts it, on the bar's edge (as its first
+    group does); one the line holds beside the other groups still ends the line."""
+    alone, one = pieces_seen["ends"]["pc-endbar"], pieces_seen["ends"]["pc-endbar-one"]
+    assert alone["end"]["top"] >= alone["first"]["bottom"] - 1, alone               # wrapped
+    assert abs(alone["end"]["left"] - alone["first"]["left"]) <= 1, alone           # starts it
+    assert one["end"]["top"] < one["first"]["bottom"], one                          # one line
+    assert abs(one["end"]["right"] - one["right"]) <= 1, one                        # ends it
+
+
+def test_a_wrapped_names_fold_toggle_stands_on_its_first_line(pieces_seen):
+    """S4 (L4 a): in the shared tree (``shep-mtree``) the fold toggle of a name that wraps stands
+    on its first line (it was centred on the middle of three or four lines), and the first line
+    lies within the toggle's height."""
+    t = pieces_seen["tree"]
+    assert t["lines"] >= 2, t
+    assert t["fold"]["top"] <= t["first"]["top"] + 1 and t["first"]["bottom"] <= t["fold"]["bottom"] + 1, t
+
+
+def test_the_layout_pass_keeps_a_fit_boxs_sideways_scroll_and_the_pages_scroll(pieces_seen):
+    """S9 (L5 R1): the layout pass measures a fit box's table out of flow at its narrowest; it
+    holds the scroll of the box's ancestors across the measure and puts it back, so a table
+    scrolled sideways stays where it was and a page scrolled to its end does not move when
+    anything is drawn (the box went back to 0 on every pass, the page jumped, and the shared
+    focus check found Datasets' focused "In use" ⓘ out of view at 390 x 844)."""
+    before, after = pieces_seen["scroll"]["before"], pieces_seen["scroll"]["after"]
+    assert before["wide"] and before["fit"] > 0 and before["page"] > 0, before
+    assert after == {"fit": before["fit"], "page": before["page"]}, (before, after)
+
+
+#: A static page for the layout rules themselves (`browser.LOOK_JS`'s ``layout``): one page shown
+#: as the shell shows one (its tab selected, its panels), with a panel and, outside it, a bar
+#: (Training's run bar is no panel) whose long words stand beside its button; in the panel a
+#: group whose "Details ›" link wraps under its box, a button in a box drawn as no box (``display:
+#: contents``) that hides its overflow, a drawer (absolute, over the panel) whose button lies over
+#: a control of the panel, and one button drawn over another.
+_LAYOUT_RULES_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  const words = 'Words that explain the button beside them at length, more than a hundred characters, '
+    + 'as a long refusal once stood beside Start in the run bar.';
+  await page.setContent(`<!doctype html><html><head><style>
+    body { margin: 0; font: 15px sans-serif; background: #fff; }
+    button, input { font: inherit; height: 32px; }
+    .shep-panel { position: relative; width: 900px; height: 420px; border: 1px solid #ccc; }
+    .shep-bar { display: flex; align-items: flex-start; gap: 16px; width: 900px; margin-top: 16px; }
+    #g1 { display: flex; flex-wrap: wrap; width: 260px; gap: 4px; }
+    #g1 input { width: 220px; }
+    #dc { display: contents; overflow: hidden; }
+    #under { position: absolute; left: 520px; top: 200px; width: 160px; }
+    #drawer { position: absolute; z-index: 5; top: 60px; left: 480px; width: 400px; height: 340px; background: #fff; }
+    #in-drawer { position: absolute; left: 60px; top: 136px; width: 160px; }
+    #o2 { position: absolute; left: 40px; top: 4px; }
+    .c-row { display: flex; height: 105px; margin-top: 16px; }
+    .c-row button { height: 40px; }
+    .c-grid { display: grid; grid-template-rows: 60px 40px 60px; margin-top: 16px; }
+    .c-grid1 { display: grid; height: 105px; align-items: center; margin-top: 16px; }
+    .c-grid button, .c-grid1 button { height: 40px; }
+  </style></head><body>
+    <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
+    <div id="shep-tab-x"><div class="shep-page">
+      <div class="shep-panel" id="p1">
+        <div class="shep-panel-hd"><h2>A panel</h2></div>
+        <div class="shep-grp" id="g1"><input type="text" id="g1-in"><button type="button" class="shep-link" id="g1-link">Details ›</button></div>
+        <div id="dc"><button type="button" id="dc-btn">In a box drawn as no box</button></div>
+        <button type="button" id="under">Under the drawer</button>
+        <div id="drawer"><button type="button" id="in-drawer">The drawer's</button></div>
+        <div style="position: relative; margin-top: 16px"><button type="button" id="o1">The first button</button><button type="button" id="o2">Over it</button></div>
+      </div>
+      <div class="shep-bar" id="bar"><button type="button" id="bar-btn">Start</button><p id="bar-text">${words}</p></div>
+      <div class="shep-bar" id="bar2"><button type="button" id="bar2-btn">Start</button><p id="bar2-text" style="width: 12em">Start disabled: GPU jobs need a workspaces folder.</p></div>
+      <div class="shep-bar" id="bar3"><button type="button" id="bar3-btn">Start</button><p id="bar3-text">Start disabled: no folder.</p></div>
+      <div class="c-row" style="align-items: center"><button type="button" id="c-mid">Start</button></div>
+      <div class="c-row" style="align-items: flex-start"><button type="button" id="c-top">Start</button></div>
+      <div class="c-grid"><div>Above</div><button type="button" id="c-grid-mid">Start</button><div>Under</div></div>
+      <div class="c-grid1"><button type="button" id="c-grid-one">Start</button></div>
+    </div></div></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  const layout = await page.evaluate(() => window.__shepLook.check().layout);
+  console.log(JSON.stringify(layout));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_layout_rules_read_a_bar_a_link_a_box_of_no_box_and_an_open_drawer(tmp_path):
+    """S10 of the sweep's integration (the lanes' L1 4 and 5, L5 3, L3 R5): the layout rules
+    (`browser.LOOK_JS`'s ``layout``), on a static page shown as the shell shows one:
+
+    - ``beside`` reads a bar outside every panel as a region of its own (Training's run bar: its
+      long words beside Start were never measured);
+    - ``split-group`` does not count a group's "Details ›" link (``shep-link``) as one of its
+      controls, as it does not count a ⓘ or a Copy;
+    - ``clipped`` passes over a box drawn as no box (``display: contents``), which clips nothing
+      (Gradio's hidden overflow on Diagnosis' Top-K block was read as a cut);
+    - ``overlap`` does not count a control an open drawer lies over (the Test page's import
+      drawer: 13 pairs, each a panel control under the drawer), and still counts a button drawn
+      over another;
+    - ``beside`` reads words drawn on two lines beside a button however few they are (the
+      independent check, C4: it counted 100 characters, so a 51-character reason on two lines
+      beside Start passed), and passes a one-line relation;
+    - ``centred`` finds a button centred in a row about two and a half times its height (Fine-tune's
+      Start, 40 px, in its 105 px row at 1280, which the rule's earlier form found: three times
+      the button's height let it pass) and passes the same button on the row's top; of a grid,
+      a row is its row track (the sweep's L7: Models' foot stacks Load and its reason in tracks of
+      their own at 390 px, Load near the foot's middle): a button in the middle track of three
+      passes, one centred in a grid of one tall track is found."""
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    found = run_node(_LAYOUT_RULES_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS)), tmp_path,
+                     timeout=120)
+    assert [b for b in found["beside"] if "#bar-text" in b and "#bar-btn" in b], found["beside"]
+    assert not [s for s in found["split"] if "#g1" in s], found["split"]
+    assert not [c for c in found["clipped"] if "#dc-btn" in c], found["clipped"]
+    assert not [o for o in found["overlap"] if "#under" in o], found["overlap"]
+    assert [o for o in found["overlap"] if "#o1" in o and "#o2" in o], found["overlap"]
+    assert [b for b in found["beside"] if "#bar2-text" in b and "#bar2-btn" in b], found["beside"]
+    assert not [b for b in found["beside"] if "#bar3-text" in b], found["beside"]
+    assert [c for c in found["centred"] if "#c-mid" in c], found["centred"]
+    assert not [c for c in found["centred"] if "#c-top" in c], found["centred"]
+    assert not [c for c in found["centred"] if "#c-grid-mid" in c], found["centred"]
+    assert [c for c in found["centred"] if "#c-grid-one" in c], found["centred"]
+
+
+#: A static page for the rules the after screenshots asked for (the sweep's L7; `browser.LOOK_JS`'s
+#: ``layout``, `seeAll`): one page shown as the shell shows one, in panels placed side by side, each
+#: rule's bad case beside its good one (each named in the test).
+_LAYOUT_L7_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const lines = [1, 2, 3, 4, 5, 6].map((i) => `<p>Line ${i} of a region taller than its box.</p>`).join('');
+  const wide = '<table style="width: 420px; table-layout: fixed"><tr><td>Name</td><td>Fingerprint</td>'
+    + '<td>Not admitted: Gene, Patients-like-me ›</td></tr></table>';
+  const long = 'serving reads this workspace · in your Training run bar, said in more words than one line holds';
+  await page.setContent(`<!doctype html><html data-shep-layout="side"><head><style>
+    body { margin: 0; font: 15px sans-serif; background: #fff; }
+    p { margin: 0; }
+    button, input { font: inherit; height: 32px; }
+    .shep-panel { position: absolute; width: 440px; border: 1px solid #ccc; }
+    .shep-scroll-cue[data-shep-more] { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+      mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+    .rg { overflow: auto; height: 44px; margin-bottom: 6px; }
+    .sw { overflow-x: auto; overflow-y: hidden; width: 200px; }
+    .shep-bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; width: 400px; margin-bottom: 8px; }
+    .shep-grp { display: flex; gap: 4px; }
+    .rt { display: flex; gap: 16px; margin-bottom: 8px; }
+    .rt .block { width: 180px; }
+    .mono { font: 14px monospace; margin-bottom: 6px; }
+    .mono code { font: inherit; }
+  </style></head><body>
+    <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
+    <div id="shep-tab-x"><div class="shep-page">
+      <div class="shep-panel" id="p1" style="left: 0; top: 40px; height: 440px">
+        <div class="rg" id="cue-bad">${lines}</div>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-good">${lines}</div>
+        <div class="rg" id="cue-pad" style="padding-bottom: 80px"><p>One short line, then room.</p></div>
+        <div class="rg" id="cue-nobox"><div style="display: contents; overflow: hidden">${lines}</div></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-gap" style="height: 60px"><p>A first line, then a gap.</p>
+          <div style="height: 70px"></div><p>The next field, under the edge past the gap.</p></div>
+        <div class="rg" id="cue-inner"><div style="overflow: auto">${lines}</div></div>
+        <div class="sw" id="side-bad">${wide}</div>
+        <div class="shep-rs-cue">Wider than the panel: scroll sideways.</div>
+        <div class="sw" id="side-good">${wide}</div>
+        <div class="sw" id="side-masked" style="-webkit-mask-image: linear-gradient(to right, #000 80%, transparent); mask-image: linear-gradient(to right, #000 80%, transparent)">${wide}</div>
+        <div class="sw" id="side-fits"><table style="width: 150px"><tr><td>Name</td></tr></table></div>
+        <div id="clip-bad" style="width: 120px; overflow: hidden; white-space: nowrap">A long sentence that runs past its box</div>
+        <span id="clip-ell" title="A long value cut to an ellipsis, whole here"
+          style="display: inline-block; width: 120px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis">A long value cut to an ellipsis, whole here</span>
+        <span id="clip-ell-bad"
+          style="display: inline-block; width: 120px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis">Another value cut, with no title</span>
+        <span id="clip-sr" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">Copy the value</span>
+      </div>
+      <div class="shep-panel" id="p2" style="left: 460px; top: 40px; height: 440px">
+        <div class="shep-bar" id="bar-end"><div class="shep-grp" style="width: 300px"><input type="text" style="width: 290px"></div>
+          <div class="shep-grp" style="width: 200px; margin-left: auto"><button type="button">Start</button></div></div>
+        <div class="shep-bar" id="bar-start"><div class="shep-grp" style="width: 300px"><input type="text" style="width: 290px"></div>
+          <div class="shep-grp" style="width: 200px"><button type="button">Start</button></div></div>
+        <div class="rt" id="rt-bad" style="align-items: flex-end">
+          <div class="block" id="rt-bad-a"><span data-testid="block-info">Device</span><div>No CUDA device here.</div><input type="text"></div>
+          <div class="block" id="rt-bad-b"><span data-testid="block-info">Run name</span><input type="text"></div></div>
+        <div class="rt" id="rt-good" style="align-items: flex-start">
+          <div class="block" id="rt-good-a"><span data-testid="block-info">Device</span><div>No CUDA device here.</div><input type="text"></div>
+          <div class="block" id="rt-good-b"><span data-testid="block-info">Run name</span><input type="text"></div></div>
+        <div class="shep-bar" id="bar-note"><div class="shep-grp"><button type="button" class="primary" id="dis-bar" disabled>Start</button></div>
+          <div class="shep-bar-note" style="flex-basis: 100%"><p>Start disabled: no dataset is listed yet.</p></div></div>
+        <div style="display: flex; gap: 16px">
+          <div class="shep-area"><button type="button" id="area-btn">Show older runs</button></div>
+          <div class="shep-area"><p id="area-words" style="width: 160px">Not a certified medical device; decision support for a clinician.</p></div></div>
+      </div>
+      <div class="shep-panel" id="p3" style="left: 920px; top: 40px; height: 440px">
+        <p class="mono" style="width: 20ch"><code id="tok-flag"><span style="white-space: nowrap">run.py --generate</span><wbr><span style="white-space: nowrap">-samples</span></code></p>
+        <p class="mono" style="width: 14ch; overflow-wrap: anywhere"><code id="tok-hyphen">/tmp/abc-0/-home-user-aaaa-bbbb-cccc</code></p>
+        <p class="mono" style="width: 12ch"><code id="tok-path"><span style="white-space: nowrap">/very_long</span><wbr><span style="white-space: nowrap">/path_to</span><wbr><span style="white-space: nowrap">/a_file.py</span></code></p>
+        <p class="mono" style="width: 30ch"><code id="tok-fp">3f563f74bb04</code></p>
+        <p class="mono" id="sep-bad" style="width: 14ch; font-size: 15px">alpha&nbsp;· beta&nbsp;· gamma delta</p>
+        <p class="mono" id="sep-good" style="width: 40ch; font-size: 15px">alpha&nbsp;· beta&nbsp;· gamma delta</p>
+        <p class="mono" id="chain-bad" style="width: 26ch; font-size: 15px">trained on demo&nbsp;· dataset fingerprint</p>
+        <p class="mono" id="chain-long" style="width: 12ch; font-size: 15px">a&nbsp;· a fact much longer than its box</p>
+        <p style="width: 9ch; font-size: 14px"><span class="shep-mark" id="chip-two" style="white-space: normal">serving reads this workspace</span> <span class="shep-mark" id="chip-one">in use</span></p>
+      </div>
+      <div class="shep-panel" id="p4" style="left: 0; top: 500px; height: 260px">
+        <button type="button" class="primary" id="dis-bad" disabled>Register this report</button>
+        <div style="height: 24px"></div>
+        <button type="button" id="dis-reason" disabled>Import a new version</button>
+        <p class="shep-reason" style="margin-top: 4px">Import disabled: no results registry is set.</p>
+        <button type="button" class="primary" id="dis-under" disabled style="position: absolute; left: 260px; top: 120px">Commit</button>
+        <div id="layer" style="position: absolute; left: 240px; top: 100px; width: 180px; height: 70px; background: #fff; z-index: 3"></div>
+        <div style="position: absolute; left: 16px; top: 200px"><button type="button" class="primary" id="dis-own" disabled>Use for training</button>
+          <span class="shep-note" style="margin-left: 12px">No workspace is listed to use yet.</span></div>
+      </div>
+      <div class="shep-panel" id="p5" style="left: 460px; top: 500px; height: 180px">
+        <div data-notice="workspaces_root">No workspaces folder is set.</div>
+        <div style="height: 60px"></div>
+        <button type="button" id="dis-sec" disabled>Refresh</button>
+        <button type="button" class="primary" id="dis-prim" disabled style="margin-left: 120px">Load this model</button>
+      </div>
+      <div class="shep-panel" id="p6" style="left: 920px; top: 500px; height: 180px">
+        <div class="sw" id="rh-bad"><table style="width: 520px; table-layout: fixed"><colgroup><col style="width: 150px"><col style="width: 150px"><col style="width: 220px"></colgroup>
+          <tr id="rh-bad-row"><td>demo</td><td>3f56</td><td>${long}</td></tr></table></div>
+        <div class="sw" id="rh-good"><table style="width: 520px; table-layout: fixed"><colgroup><col style="width: 150px"><col style="width: 150px"><col style="width: 220px"></colgroup>
+          <tr id="rh-good-row"><td>demo</td><td>3f56</td><td>in use</td></tr></table></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="iv-region">${lines}<div style="height: 1200px"></div><button type="button" id="iv-in">Apply</button></div>
+        <button type="button" id="iv-out" style="position: absolute; left: 16px; top: 1000px">Apply Settings</button>
+        <div style="display: contents; overflow: auto"><button type="button" id="iv-nobox" style="position: absolute; left: 200px; top: 1000px">Restart</button></div>
+        <button type="button" id="iv-right" style="position: absolute; left: 560px; top: 1000px">Stop</button>
+      </div>
+    </div></div></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  const layout = await page.evaluate(() => window.__shepLook.check().layout);
+  // The same page stacked (the shell's layout rule): it flows and the document scrolls down to
+  // what lies under the window, never sideways.
+  layout.stackedInview = await page.evaluate(() => {
+    document.documentElement.setAttribute('data-shep-layout', 'stack');
+    return window.__shepLook.check().layout.inview;
+  });
+  console.log(JSON.stringify(layout));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.fixture(scope="module")
+def l7_rules_seen(tmp_path_factory):
+    """The layout rules' findings on `_LAYOUT_L7_PAGE_JS`, once for the module."""
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    return run_node(_LAYOUT_L7_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS)),
+                    tmp_path_factory.mktemp("l7-rules"), timeout=120)
+
+
+def _hits(found, key, element):
+    return [line for line in found[key] if element in line]
+
+
+def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_seen):
+    """SW-LK1, SW-LK2, SW-LK5 and SW-LK8 (the L6 after screenshots): Settings' Data locations,
+    Fine-tune's form, Training's charts and Diagnosis' inputs ran past their scroll region's foot
+    with no cue, and the walk found nothing. ``in-view`` finds a control drawn past the window
+    that no scroll region in view holds (and passes one a region in view holds); ``scroll-cue``
+    finds a region whose words run past its foot with no cue (and passes the R-73 cue's mask and a
+    region whose overflow is only its padding), and a box whose table runs past its right edge with
+    no sideways cue (and passes one with Compare's drawn cue before it). A box drawn as no box
+    (``display: contents``, Gradio's blocks around Diagnosis' Top-K) hides and scrolls nothing:
+    words in one are judged, not taken as hidden for a screen reader or held by a region."""
+    found = l7_rules_seen
+    assert _hits(found, "inview", "#iv-out") and _hits(found, "inview", "#iv-nobox"), found["inview"]
+    assert not _hits(found, "inview", "#iv-in"), found["inview"]
+    # Stacked (the owner's decision of 2026-11-23 on portrait windows) the page flows and the
+    # document scrolls down to what lies under the window, so that is in view; what lies past
+    # its right edge never is.
+    stacked = found["stackedInview"]
+    assert not _hits({"s": stacked}, "s", "#iv-out") and not _hits({"s": stacked}, "s", "#iv-nobox"), stacked
+    assert [h for h in _hits({"s": stacked}, "s", "#iv-right") if "right of the window" in h], stacked
+    assert _hits(found, "cue", "#cue-bad holds") and _hits(found, "cue", "#cue-nobox holds"), found["cue"]
+    assert not _hits(found, "cue", "#cue-good") and not _hits(found, "cue", "#cue-pad"), found["cue"]
+    assert _hits(found, "cue", "#side-bad holds"), found["cue"]
+    assert not _hits(found, "cue", "#side-good"), found["cue"]
+    assert not _hits(found, "cue", "#iv-region"), found["cue"]
+    # The sweep's L7 check, C1: a cue is seen only where its fade lies over something drawn
+    # (Diagnosis' fields at 1550 x 830 faded the gap under Patient ID; Options and Top-K hid under
+    # it); C4: a box whose overflow style scrolls but whose content fits it cuts nothing, so the
+    # lines its region cuts are that region's (Fine-tune's Device radios were judged by their
+    # own block's, which never scrolls).
+    assert _hits(found, "cue", "#cue-gap fades its last 28 px over nothing drawn"), found["cue"]
+    assert _hits(found, "cue", "#cue-inner holds"), found["cue"]
+
+
+def test_the_clipped_rule_finds_words_a_box_cuts(l7_rules_seen):
+    """SW-LK3 and SW-LK4: words cut by a box that hides its overflow were never measured (only
+    controls were). ``clipped`` finds a text cut by its box and an ellipsis with no title, and
+    passes an ellipsis whose whole words are its title and a screen reader's hidden words."""
+    found = l7_rules_seen
+    assert [c for c in found["clipped"] if "cut by #clip-bad" in c], found["clipped"]
+    assert [c for c in found["clipped"] if "cut by #clip-ell-bad" in c], found["clipped"]
+    assert not [c for c in found["clipped"] if "cut by #clip-ell " in c or "#clip-sr" in c], found["clipped"]
+
+
+def test_the_wrap_end_rule_finds_a_group_pushed_to_the_end_of_its_line(l7_rules_seen):
+    """SW-LK5: Training's run bar wrapped its action group to a second line at the line's end,
+    the start of that line empty. ``wrap-end`` finds a bar's later line that does not start on
+    the bar's start edge, and passes a bar whose wrapped group starts it."""
+    found = l7_rules_seen
+    assert _hits(found, "wrapEnd", "#bar-end line 2"), found["wrapEnd"]
+    assert not _hits(found, "wrapEnd", "#bar-start"), found["wrapEnd"]
+
+
+def test_the_disabled_reason_rule_finds_a_disabled_button_with_nothing_said(l7_rules_seen):
+    """SW-LK6: Test's Register this report and Models' Load this model were disabled with no
+    visible reason. ``disabled-reason`` finds a disabled button with nothing said in its group or
+    under it, one whose words beside it are a page's own form rather than the shared reason line
+    (C11), and a region's primary action whose region has only the notice; it passes a button with
+    its reason line under it, one whose bar's note says why, a secondary button in a region that
+    draws the notice, and a button an open layer (a drawer) covers."""
+    found = l7_rules_seen
+    assert [d for d in _hits(found, "disabled", "#dis-bad") if "nothing said" in d], found["disabled"]
+    assert _hits(found, "disabled", "#dis-prim"), found["disabled"]
+    assert [d for d in _hits(found, "disabled", "#dis-own") if "own form" in d], found["disabled"]
+    for quiet in ("#dis-reason", "#dis-sec", "#dis-under", "#dis-bar"):
+        assert not _hits(found, "disabled", quiet), (quiet, found["disabled"])
+
+
+def test_the_token_separator_and_chain_rules_find_what_reads_broken(l7_rules_seen):
+    """SW-LK7 and SW-LK2: Datasets' build command broke inside its flag ("--generate" /
+    "-samples"), Settings' path broke after its hyphens, Fine-tune's facts line ended at a
+    separator, and Diagnosis split "dataset / fingerprint". ``token-break`` finds a word of a
+    token broken though it fits its box and a line ending at a hyphen inside a word, and passes a
+    path longer than its box that breaks before its separators and a fingerprint on one line;
+    ``sep-end`` finds a line ending at " · " and passes the chain on one line; ``chain-break``
+    finds a fact of a chain broken though it fits a line of its own and passes a fact longer than
+    its box, and a chip (a mark or a tag: one unit in its border) drawn over two lines inside its
+    border (the sweep's L7 check, D5), passing one on a line."""
+    found = l7_rules_seen
+    assert _hits(found, "token", "#tok-flag"), found["token"]
+    assert [t for t in _hits(found, "token", "#tok-hyphen") if "hyphen" in t], found["token"]
+    assert not _hits(found, "token", "#tok-path") and not _hits(found, "token", "#tok-fp"), found["token"]
+    assert _hits(found, "sepEnd", "#sep-bad"), found["sepEnd"]
+    assert not _hits(found, "sepEnd", "#sep-good"), found["sepEnd"]
+    assert [c for c in _hits(found, "chain", "#chain-bad") if "dataset fingerprint" in c], found["chain"]
+    assert not _hits(found, "chain", "#chain-long"), found["chain"]
+    assert [c for c in _hits(found, "chain", "#chip-two") if "inside its border" in c], found["chain"]
+    assert not _hits(found, "chain", "#chip-one"), found["chain"]
+
+
+def test_the_row_rules_find_labels_off_one_line_and_a_row_a_hidden_cell_sets(l7_rules_seen):
+    """SW-LK2 and SW-LK3: Fine-tune's Run name label stood 23 px under Device's in one row of
+    fields, and the Datasets table's selected row at 390 px was 2.5 times the other's height, set
+    by a cell scrolled out of view. ``row-top`` finds two labelled fields side by side whose labels
+    do not share a top line and passes the same row on its top line; ``row-height`` finds the row
+    a cell out of view sets and passes one whose cells in view set it. ``beside`` passes the words
+    of one area a page marks (``shep-area``) beside the button of another (a list and its chosen
+    item's details)."""
+    found = l7_rules_seen
+    assert _hits(found, "rowTop", "#rt-bad-a"), found["rowTop"]
+    assert not _hits(found, "rowTop", "#rt-good-a"), found["rowTop"]
+    assert _hits(found, "rowHeight", "#rh-bad-row"), found["rowHeight"]
+    assert not _hits(found, "rowHeight", "#rh-good-row"), found["rowHeight"]
+    assert not [b for b in found["beside"] if "#area-words" in b], found["beside"]
+
+
+def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_whole():
+    """``in-view`` is held at every window at or above the display floor (`browser.at_floor`;
+    the owner's decision of 2026-11-23), not only at the owner's two: a laptop's 1366 x 768 and
+    the floor's 1280 x 720 are found as the owner's are; below the floor the document scrolls to
+    what lies past the window, so it is not. ``tab-groups`` finds the research tabs on more than
+    one line: the sweep's decision 3 (the tabs wrapped by width at 390 px, a group split apart,
+    5111be8) is not applicable since the floor, which no window under it narrows; and a
+    separator drawn at a line's start."""
+    from tests.fixtures.browser import floor_size, layout_problems
+
+    def stop(size, inview=(), lines=None):
+        layout = {"inview": list(inview), "tabs": None if lines is None else
+                  {"lines": lines, "seps": [], "others": [], "focusable": []}}
+        return {"size": size, "page": "settings", "check": {"layout": layout}}
+
+    from src.webui.style import STACK_FLOOR_WIDTH as sw
+
+    fw, fh = floor_size()
+    cut = ["#x \"Apply\" drawn 40 px under the window"]
+    # A window no wider than tall is held at or above the stacked arrangement's floor (the
+    # owner's decision of 2026-11-23 on portrait windows), not the side-by-side floor's width.
+    held = [f"{w}x{h}" for w, h in ((1850, 960), (1550, 830), (1366, 768), (fw, fh), (2560, 1440),
+                                    (1080, 1920), (1440, 2560), (sw, sw))]
+    below = [f"{fw - 1}x{fh}", f"{fw}x{fh - 1}", "1024x640", f"{sw - 1}x{2 * sw}"]
+    found = layout_problems([stop(size, cut) for size in held + below], rules=("in-view",))
+    assert found == [f"{size} settings: in-view: {cut[0]}" for size in held], found
+    one = layout_problems([stop(f"{fw}x{fh}", lines=[["datasets", "training", "finetune", "test", "models"]])],
+                          rules=("tab-groups",))
+    assert one == [], one
+    split = layout_problems([stop(f"{fw}x{fh}", lines=[["datasets", "training", "finetune", "test"], ["models"]])],
+                            rules=("tab-groups",))
+    assert len(split) == 1 and "the research tabs take 2 lines" in split[0], split
+    seps = {"lines": [["datasets", "training", "finetune", "test", "models"]],
+            "seps": [{"tab": "test", "lineStart": True}], "others": [], "focusable": []}
+    drawn = layout_problems([{"size": f"{fw}x{fh}", "page": "settings", "check": {"layout": {"tabs": seps}}}],
+                            rules=("tab-groups",))
+    assert drawn == [f"{fw}x{fh} settings: tab-groups: a separator before test drawn at a line's start"], drawn
+
+
+def test_the_floor_rule_compares_a_window_below_its_floor_with_the_area_it_is_drawn_at():
+    """``floor`` (the owner's decisions of 2026-11-23; `browser.layout_problems`): a stop below
+    the floor of the arrangement its window takes is compared with the stop of the same page and
+    drawer at the area it is drawn at (`browser.effective_size`: the window raised to that
+    floor), not always with the side-by-side floor's (the sweep's L7 check, C6: a portrait window
+    1080 px wide takes the stacked arrangement, and was found for not drawing the 1280 x 720
+    stop's side by side, short and frame). It finds marks that differ from that stop's (the
+    side-by-side decision, the short flag, a box marked narrow), a frame drawn smaller, a
+    document that does not scroll in an axis the window is under its floor (the layout shrank to
+    the window), and a stop below its floor with no stop at its area to compare. At or above its
+    floor it finds a document that scrolls sideways, and side by side one that scrolls at all
+    (the frame scrolls); a stacked page scrolls down. Stops drawn as at their floor pass."""
+    from src.webui.style import STACK_FLOOR_WIDTH as sw
+    from tests.fixtures.browser import effective_size, floor_size, layout_problems
+
+    fw, fh = floor_size()
+    assert effective_size("1024x640") == (fw, fh) and effective_size(f"{fw}x{fh}") == (fw, fh)
+    assert effective_size(f"{sw - 64}x{2 * sw}") == (sw, 2 * sw) and effective_size("1080x1920")[1] == 1920
+    assert effective_size(f"{sw}x{sw}") == (sw, sw) and effective_size(f"{sw - 1}x{sw - 1}") == (sw, sw)
+
+    def stop(size, *, layout="side", short=True, marked=(), frame=(fw, fh), scroll=(0, 0), page="models",
+             open_=None):
+        facts = {"layout": layout, "short": short, "header": ["shep-x"], "marked": list(marked),
+                 "frame": list(frame), "scroll": list(scroll)}
+        return {"size": size, "page": page, **({"open": open_} if open_ else {}),
+                "check": {"layout": {}, "floor": facts}}
+
+    floor, tall, under = f"{fw}x{fh}", f"{sw}x{2 * sw}", f"{sw - 64}x{2 * sw}"
+    stacked = {"layout": "stack", "short": False, "marked": ["#t data-shep-narrow"], "frame": (sw, 3 * sw)}
+    good = [stop(floor, marked=["#t data-shep-narrow"]),
+            stop("1024x640", marked=["#t data-shep-narrow"], scroll=(256, 80)),
+            stop(f"{fw}x600", marked=["#t data-shep-narrow"], scroll=(0, 120)),
+            stop("1440x1600", layout="stack", short=False, frame=(1440, 3000), scroll=(0, 1400)),
+            # C6: a portrait window takes the stacked arrangement at or above its own floor.
+            stop("1080x1920", layout="stack", short=False, frame=(1080, 3000), scroll=(0, 1080)),
+            stop(tall, **stacked, scroll=(0, sw)),
+            stop(under, **stacked, scroll=(64, sw))]
+    assert layout_problems(good, rules=("floor",)) == []
+    shrunk = layout_problems([good[0], stop("1024x640", layout="stack", marked=[], frame=(1024, 640),
+                                            scroll=(0, 0))], rules=("floor",))
+    assert any(f"layout stack where {floor}'s is side" in p for p in shrunk), shrunk
+    assert any(f"marked [] where {floor}'s is ['#t data-shep-narrow']" in p for p in shrunk), shrunk
+    assert any("the frame drawn [1024, 640]" in p for p in shrunk), shrunk
+    assert any("narrower than its floor and the document does not scroll" in p for p in shrunk), shrunk
+    assert any("shorter than its floor and the document does not scroll" in p for p in shrunk), shrunk
+    # Below the stacked floor a portrait window is the stacked floor's, never the side-by-side one's.
+    narrow = layout_problems([good[0], good[5], stop(under, layout="stack", short=False, marked=[],
+                                                     frame=(sw - 64, 3 * sw), scroll=(0, sw))],
+                             rules=("floor",))
+    assert any(f"marked [] where {tall}'s is" in p for p in narrow), narrow
+    assert any(f"the frame drawn [{sw - 64}, {3 * sw}] where {tall}'s" in p for p in narrow), narrow
+    assert any("narrower than its floor" in p for p in narrow), narrow
+    assert not any(floor in p.split(": ", 1)[1] for p in narrow), narrow
+    alone = layout_problems([stop("1024x640", scroll=(256, 80), open_="#drawer"), good[0],
+                             stop(under, **stacked, scroll=(64, sw))], rules=("floor",))
+    assert len(alone) == 2 and all("no stop at the area it is drawn at" in p for p in alone), alone
+    assert any(f"({fw}x{fh})" in p for p in alone) and any(f"({tall})" in p for p in alone), alone
+    scrolled = layout_problems([stop(floor, scroll=(12, 30)), stop("1850x960", frame=(1850, 960), short=False,
+                                                                   scroll=(0, 4)),
+                                stop("1080x1920", layout="stack", short=False, frame=(1080, 3000),
+                                     scroll=(16, 1080))], rules=("floor",))
+    assert f"{floor} models: floor: the document scrolls sideways by 12 px" in scrolled, scrolled
+    assert any(p.startswith("1850x960 models: floor: side by side, the document scrolls by 4 px") for p in scrolled), \
+        scrolled
+    assert "1080x1920 models: floor: the document scrolls sideways by 16 px" in scrolled, scrolled
+    assert len(scrolled) == 4, scrolled
+
+
+def test_the_sideways_rule_finds_a_region_wider_than_its_frame_a_mask_or_not(l7_rules_seen):
+    """``sideways-scroll`` (the owner's decision of 2026-11-23; fixer A's item 6 of the sweep's
+    L7): the shell's automatic sideways mask satisfied ``scroll-cue``, so a table wider than its
+    frame went unseen. At or above the floor of the window's arrangement a region whose content
+    runs past its right edge is found, masked (``#side-masked``) or not (``#side-bad``); one that
+    says so in words just before it (Compare's drawn ``shep-rs-cue``, ``#side-good``) and one
+    whose content fits (``#side-fits``) pass. Below its floor it is not held (`browser.at_floor`):
+    a portrait window 1080 px wide is at or above the stacked arrangement's floor."""
+    from src.webui.style import STACK_FLOOR_WIDTH as sw
+    from tests.fixtures.browser import layout_problems
+
+    found = l7_rules_seen
+    assert _hits(found, "sideways", "#side-bad scrolls") and _hits(found, "sideways", "#side-masked scrolls"), \
+        found["sideways"]
+    assert not _hits(found, "sideways", "#side-good") and not _hits(found, "sideways", "#side-fits"), \
+        found["sideways"]
+    stops = [{"size": size, "page": "x", "check": {"layout": {"sideways": ["#t scrolls sideways"]}}}
+             for size in ("1280x720", "1024x640", "1080x1920", f"{sw - 1}x{2 * sw}")]
+    assert layout_problems(stops, rules=("sideways-scroll",)) == [
+        "1280x720 x: sideways-scroll: #t scrolls sideways", "1080x1920 x: sideways-scroll: #t scrolls sideways"]
+
+
+@pytest.mark.parametrize("state", ["first_use", "empty", "configured", "read_only"])
+def test_every_page_of_every_state_has_no_layout_finding(state, request):
+    """**The layout rules held at zero** (the sweep's integration, its decision 4; no allow-list):
+    every page as an operator sees it, at every layout size (`browser.LAYOUT_SIZES`: the owner's
+    window, the owner's Firefox width, a laptop, the display floor, a large screen and one window
+    below the floor, then the owner's again), at first use (no workspaces folder, no results registry: the owner's six
+    screenshots), with an empty workspaces folder and registry, and configured (the demo
+    workspace, a child served), and its drawers open as a reader first sees them (the Diagnosis
+    Load drawer in every state; Training's Continue drawer and the Test page's import drawer
+    configured), has none of the layout rules' findings (`browser.layout_problems`: beside,
+    narrow-box, overlap, orphan, centred, split-group, edge, clipped, empty-region,
+    help-on-page, notice-repeat, tab-groups, and since L7 scroll-cue, wrap-end,
+    disabled-reason, token-break, sep-end, chain-break, row-top, row-height, and with the display
+    floor in-view and sideways-scroll at every window at or above it and ``floor``: below it the
+    layout pass's marks and the frame are the floor's and the document scrolls). Since the
+    sweep's L7 check (C5), the configured service as a read-only viewer sees it too, every
+    page at every layout size (`ui_walk_read_only`). One service a state, one browser a walk."""
+    from tests.fixtures.browser import layout_problems
+
+    seen = request.getfixturevalue({"first_use": "ui_walk_first_use", "empty": "ui_walk_empty",
+                                    "configured": "ui_walk_configured",
+                                    "read_only": "ui_walk_read_only"}[state])
+    # What was measured, so that none means something: every page at every size, every drawer,
+    # and (configured) the Load drawer with a row chosen at each of its sizes.
+    assert _walk_coverage(seen, state) == []
+    assert layout_problems(seen) == []
+
+
+def _walk_coverage(seen: list, state: str) -> list:
+    """**What a layout walk of `state` must have measured** (E1's coverage), as the
+    problems found: every page at every layout size; every drawer the state opens (none for a
+    read-only viewer); and,
+    configured, the Load drawer with a row chosen at each of `_PICKED_SIZES`, its chosen
+    model's facts drawn (B-L6-4; the sweep's L7, FX-2: the walk recorded only which drawers
+    opened, so removing the row-chosen stops passed unseen); no other state chooses a row."""
+    from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES
+
+    problems = []
+    pages = [s for s in seen if not s.get("open") and "check" in s and "layout" in s["check"]]
+    missing = {(page, f"{w}x{h}") for page in UI_PAGES for w, h in LAYOUT_SIZES} - {
+        (s["page"], s["size"]) for s in pages}
+    if missing:
+        problems.append(f"pages not measured: {sorted(missing)}")
+    drawers = set() if state == "read_only" else {"#shep-dx-change"} | (
+        {"#shep-train-drawer", "#shep-test-import", _MODELS_PICK["shown"]} if state == "configured" else set())
+    opened = {s["open"] for s in seen if s.get("open")}
+    if opened != drawers:
+        problems.append(f"drawers opened {sorted(opened)}, wanted {sorted(drawers)}")
+    picked = {s["size"] for s in seen if s.get("open") == "#shep-dx-change" and s.get("picked")}
+    wanted = {f"{w}x{h}" for w, h in _PICKED_SIZES} if state == "configured" else set()
+    if picked != wanted:
+        problems.append(f"Load drawer stops with a row chosen at {sorted(picked)}, wanted "
+                        f"{sorted(wanted)}")
+    return problems
+
+
+def test_the_walks_coverage_names_a_row_chosen_stop_that_did_not_run():
+    """FX-2 (the sweep's L7): E1 checked which drawers opened, not that the configured
+    walk's row-chosen Load drawer stops ran; with them removed it still passed. The coverage
+    now names each `_PICKED_SIZES` stop that did not choose a row and draw its facts, and a
+    state that chose one where none is asked."""
+    from tests.fixtures.browser import LAYOUT_SIZES, UI_PAGES
+
+    pages = [{"page": page, "size": f"{w}x{h}", "check": {"layout": {}}}
+             for page in UI_PAGES for w, h in LAYOUT_SIZES]
+    drawers = [{"page": page, "size": "1850x960", "open": shown}
+               for page, shown in (("clinical", "#shep-dx-change"), ("training", "#shep-train-drawer"),
+                                   ("test", "#shep-test-import"), ("models", _MODELS_PICK["shown"]))]
+    picked = [{"page": "clinical", "size": f"{w}x{h}", "open": "#shep-dx-change", "picked": "a/b.pt"}
+              for w, h in _PICKED_SIZES]
+    assert _walk_coverage(pages + drawers + picked, "configured") == []
+    gone = _walk_coverage(pages + drawers + picked[:-1], "configured")
+    assert len(gone) == 1 and "row chosen" in gone[0] and "1280x720" in gone[0], gone
+    blank = [{**stop, "picked": ""} for stop in picked]           # facts never drawn
+    assert _walk_coverage(pages + drawers + blank, "configured"), blank
+    assert _walk_coverage(pages + drawers[:1], "first_use") == []
+    assert _walk_coverage(pages + drawers[:1] + picked, "first_use")
+    # A read-only viewer opens no drawer (Load is an operator control) and sees every page.
+    assert _walk_coverage(pages, "read_only") == []
+    assert _walk_coverage(pages + drawers[:1], "read_only")
+    assert _walk_coverage([p for p in pages if p["page"] != "settings"], "read_only")
+
+
+def test_prose_in_a_region_on_a_panels_edge_keeps_the_measure_and_a_reason_draws_no_box(built):
+    """The independent check of the UI sweep (C3): Models' details column is
+    a region on a panel's edge (`shep-edge`), not a `.shep-panel`, so the
+    shared prose rule never reached its paragraphs: "No result is registered
+    beside this checkpoint…" ran 138 characters a line at 1850 x 960 (169 for
+    a read-only viewer), against the text brief's 56ch. The shared rule now
+    covers a region on a panel's edge as it covers a panel, so Models'
+    details and the shared list's columns keep the measure. The neutral
+    reason (`shep-reason-grey`, beside Load on Models and in the Diagnosis
+    drawer) was the one reason drawn in a filled box; it is a reason line
+    like every other."""
+    from src.webui.style import SHELL_CSS
+
+    prose = _rule(SHELL_CSS, ":where(.shep-panel p, .shep-edge p)")
+    assert "max-width: var(--shep-measure)" in prose
+    demo, _ctx = built
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    assert "shep-edge" in (by_id["shep-mp-detail"].elem_classes or [])
+    grey = _rule(SHELL_CSS, ".shep-reason-grey")
+    assert not re.search(r"\b(border|background|padding)\b", grey), grey
+
+
+def test_a_state_said_as_a_sentence_and_a_note_in_a_span_keep_the_measure():
+    """The independent check of the UI sweep (C7): Settings' first-use line
+    ("Nothing is set yet. Each folder is needed only by what its row names,
+    …", 118 characters) was a status mark, an inline span the measure never
+    reached: one line 816 px wide at 1550 x 830, where every go link lands.
+    Datasets' note beside Use for training was an inline span too, its
+    max-width ignored (493 px). A state said as a sentence is a reason line
+    led by its mark (`renderers.marked_line`: a block at the measure, the mark
+    in a column of its own); a note in a span is an inline box that keeps the
+    measure (both 470 px, measured)."""
+    from src.webui.components import data_locations as dl
+    from src.webui.components import renderers as r
+    from src.webui.style import SHELL_CSS
+
+    line = r.marked_line("neutral", dl.NOTHING_SET)
+    assert line.startswith('<p class="shep-reason">') and 'aria-hidden="true">○' in line
+    assert r.e(dl.NOTHING_SET) in line
+    assert "display: inline-block" in _rule(SHELL_CSS, "span.shep-note")
+    assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-note")
+    assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-reason")

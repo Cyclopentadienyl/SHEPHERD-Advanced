@@ -50,7 +50,7 @@ the table draws them. Every record is shown in the detail with its own metrics, 
 recorded (`RECORD_COLUMNS` names the two a Results table shows for a measurement this
 build describes).
 Load is refused for a base or a record not readable before
-anything is read (`model_list.load_refusal`), its reason beside the button.
+anything is read (`model_list.load_refusal`), its reason under the button.
 
 **The detail** of the selected checkpoint, one summary list (`identity_html`):
 its model fingerprint (12 hex, Copy), its dataset by its relation to the
@@ -150,8 +150,8 @@ from src.evaluation.caveats import (
 )
 from src.webui.components import model_list as ml
 from src.webui.components import renderers as r
-from src.webui.components.chips import LOCK, operator_only
-from src.webui.components.help import REF_PREFIX, copy_button, help_button
+from src.webui.components.chips import LOCK
+from src.webui.components.help import copy_button, help_button
 from src.webui.components.served_status import read_status, served_checkpoint_sha
 from src.webui.operator_access import operator_access
 from src.webui.shell import page_elem_id, picked, plain_html
@@ -207,22 +207,22 @@ LOAD_NOTE = ("Serves this model for diagnosis once you confirm the change. Resul
              "recorded keep the model they were made with.")
 
 READONLY_TITLE = "Recorded results of the model in use"
-READONLY_WHERE = "registered beside the checkpoint in use; no checkpoint is opened"
-#: **A read-only request's list, refused in the words every page uses**
-#: (`chips.operator_only`, "Operator controls only: forwarded by a proxy.",
-#: after the lock), then why in plain words, its codes in one trailing Ref
-#: line (the WebUI skill's §5): why there is no list, and D8's conditions
-#: named together, as the D8 chip's ⓘ says them (`chips.D8_HOW`).
+READONLY_WHERE = "registered beside the checkpoint in use · no checkpoint is opened"
+#: **A read-only request's list, refused** (the message shape, the text
+#: brief's §1): after the lock, one lead, why there is no list and who may
+#: list it; this request's own condition is said once, beside Load
+#: (`chips.operator_only`), and by the header chip; D8's conditions, as the
+#: D8 chip's ⓘ says them (`chips.D8_HOW`), and the codes one click away
+#: under "Details ›" (`renderers.details_list`).
 LIST_NOT_SHOWN = ("The checkpoint list is not shown: listing it opens the checkpoint files, "
                   "which is an operator control.")
 D8_CONDITIONS = ("Operator controls need a service started on this machine and a request "
                  "that arrives on its loopback, directly or through an SSH forward, with no "
                  "forwarding header.")
-LIST_REFUSED_REF = (f"{REF_PREFIX} D8; SPEC_4 C3 (checkpoint inspection); deployment mode M1 "
-                    "(SHEPHERD_DEPLOYMENT_MODE)")
-NO_LOAD_HERE = ("No validation figures here: they need the checkpoint files; Load is an "
+LIST_REFUSED_REF = "D8, SPEC_4 C3 (checkpoint inspection), deployment mode M1 (SHEPHERD_DEPLOYMENT_MODE)"
+NO_LOAD_HERE = ("No validation figures here: they need the checkpoint files. Load is an "
                 "operator control.")
-RECORDS_MODEL_CHANGED = ("The model in use changed while its recorded results were read; open "
+RECORDS_MODEL_CHANGED = ("The model in use changed while its recorded results were read. Open "
                          "the page again.")
 
 #: The Details panel's empty state, per cause (`detail_parts`): a list to
@@ -235,7 +235,7 @@ DETAIL_NOTHING = "Nothing to select yet: no checkpoint is listed."
 PAGE_HELP = {
     "models-ordering": (
         "Order",
-        "How the list is ordered. The Task select chooses which rows it shows.\n"
+        "How the list is ordered, of the rows the Task select chooses.\n"
         "- Newest first: the latest run first\n"
         "- By family: a graph of families, each run under the checkpoint it came from\n"
         "- A run in the graph: a click selects it\n"
@@ -712,7 +712,7 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
                 values.append(f"{metric_label(name, mode)} " + " vs ".join(per_run))
         # The runs' values when they are given, else the fields' names alone
         # (an API answer that could not show them), else nothing more.
-        shown, fields = "; ".join(values), ", ".join(str(n) for n in names)
+        shown, fields = ", ".join(values), ", ".join(str(n) for n in names)
         if deterministic is True:
             what = shown or fields
             said = f": {what}" if what else ""
@@ -723,9 +723,13 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
         detail = f": {shown}" if shown else f" on: {fields}" if fields else ""
         return (f'<div class="shep-mp-delta shep-muted">runs under these conditions differ'
                 f'{r.e(detail)}</div>')
-    problems = "; ".join(str(p) for p in state.get("problems") or [])
-    return ('<div class="shep-mp-delta shep-muted">comparison incomplete'
-            + (f": {r.e(r.short_reason(problems, 160))}" if problems else "") + "</div>")
+    # Several problems one a line (the owner's decision of 2026-11-23: never
+    # glued with a semicolon); one stays on the line it explains.
+    problems = [r.e(r.short_reason(p, 160)) for p in state.get("problems") or []
+                if str(p).strip()]
+    said = (f": {problems[0]}" if len(problems) == 1 else
+            ":" + "".join(f"<div>{p}</div>" for p in problems) if problems else "")
+    return f'<div class="shep-mp-delta shep-muted">comparison incomplete{said}</div>'
 
 
 def merged_text(view: Mapping[str, Any]) -> Optional[str]:
@@ -919,8 +923,8 @@ def unreadable_html(items: Sequence[Mapping[str, Any]]) -> str:
                     f'<td>{r.e(item.get("reason"))}</td></tr>')
     return ('<p class="shep-mp-p shep-mp-unread-p">' + r.status_mark(
                 "warn", f'{len(items)} record{"s" if many else ""} for these weights cannot be read '
-                        f'as {"results" if many else "a result"}; '
-                        f'{"they are" if many else "it is"} kept as written.') + '</p>'
+                        f'as {"results" if many else "a result"}. '
+                        f'{"They are" if many else "It is"} kept as written.') + '</p>'
             '<div class="shep-tbl-wrap shep-mp-recwrap shep-mp-unreadwrap"><table '
             'class="shep-tbl shep-mp-unread" '
             'aria-label="Records that cannot be read"><thead><tr>'
@@ -972,15 +976,15 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]],
                  '</div>')
     state = (row or {}).get("parent_state")
     if state == "listed":
-        where = "; listed here"
+        where = r.SEP + "listed here"
     elif state == "elsewhere":
-        where = f'; in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
+        where = f'{r.SEP}in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
     elif state == "unavailable":
         reason = r.short_reason(row.get("parent_problem") or "not found", PARENT_REASON_CHARS)
         where = "<div>" + r.status_mark("warn", "parent unavailable: " + reason) + "</div>"
     else:
         where = ""
-    if where.startswith(";"):
+    if where.startswith(r.SEP):
         return f'{named}<div>{fingerprint}{where}</div>'
     return f'{named}<div>{fingerprint}</div>{where}'
 
@@ -997,8 +1001,9 @@ def changes_html(changes: Any) -> str:
     if not changes:
         return r.e(SAME_SETTINGS)
     names = sorted(str(name) for name in changes)
-    return "; ".join(f"{r.e(r.field_words(name))} {r.change_value(name, changes[name])}"
-                     for name in names)
+    # One setting a line (the owner's decision of 2026-11-23).
+    return "".join(f"<div>{r.e(r.field_words(name))} {r.change_value(name, changes[name])}</div>"
+                   for name in names)
 
 
 def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any]]:
@@ -1146,21 +1151,23 @@ def list_title(listing: Mapping[str, Any]) -> str:
 def left_header_html(listing: Mapping[str, Any], data: Mapping[str, Any],
                      condition: Optional[str] = None) -> str:
     """The list panel's header, titled by its content (`list_title`); for a
-    read-only request, why there is no list instead: "Operator controls only:
-    <D8's short reason>." after the lock, as every page says a control D8
-    refuses (`chips.operator_only`), then why and D8's conditions in plain
-    words, the codes in a trailing Ref line (`LIST_REFUSED_REF`). An
-    operator's header is its title alone (R-75: "operator controls only" is
-    said only where D8 refuses)."""
+    read-only request, why there is no list instead: after the lock, one lead
+    (`LIST_NOT_SHOWN`), then D8's conditions and the codes under "Details ›"
+    (`D8_CONDITIONS`, `LIST_REFUSED_REF`). The request's own condition
+    (`condition`, "Operator controls only: forwarded by a proxy.") is not
+    said again here: the gated Load beside the details says it, as every
+    page says a control D8 refuses (`chips.operator_only`), and the header
+    chip names it. An operator's header is its title alone (R-75: "operator
+    controls only" is said only where D8 refuses)."""
     title = f"<h2>{r.e(list_title(listing))}</h2>"
     if listing.get("refused"):
-        reason = operator_only(condition or listing.get("condition"))
         return (f'<div class="shep-panel-hd">{title}</div>'
                 f'<div class="shep-mp-ro" role="status">'
                 f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
-                f'<span>{r.e(reason)}.</span></div>'
-                f'<p class="shep-mp-p">{r.e(LIST_NOT_SHOWN)} {r.e(D8_CONDITIONS)}</p>'
-                f'<p class="shep-mp-p shep-mp-ref">{r.e(LIST_REFUSED_REF)}</p></div>')
+                f'<span>{r.e(LIST_NOT_SHOWN)}</span></div>'
+                + r.details_list([("Who can act", r.e(D8_CONDITIONS)),
+                                  ("Ref", r.literal_html(LIST_REFUSED_REF))])
+                + "</div>")
     # An operator's list says nothing of operator controls: the header chip
     # says who may act, and a lock is drawn only where D8 refuses (R-75).
     return f'<div class="shep-panel-hd">{title}</div>'
@@ -1443,8 +1450,11 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
                                and not listing.get("status_problem"))
               else f'<span class="shep-panel-right">{_served_line(listing)}</span>')
     # The title names the row (`SCROLL_JS` waits for it) and takes the focus.
+    # The model in use and Back to the list (drawn stacked) are one end group: they stay together
+    # at the header's end, on the title's line or wrapped under it as one.
+    end = f'<span class="shep-mp-hd-end">{served}{BACK_BUTTON}</span>' if served else BACK_BUTTON
     header = (f'<div class="shep-panel-hd"><h2 tabindex="-1" data-key="{r.e(ml.item_key(item))}">'
-              f'{r.e(r.model_name_line(item))}</h2>{tag}{served}{BACK_BUTTON}</div>')
+              f'{r.model_name_html(item)}</h2>{tag}{end}</div>')
     workspaces = listing.get("workspaces") or []
     if not ml.loadable(item):
         # Its state and why in visible words (never a hover title alone,
@@ -1505,7 +1515,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     if contested:
         notes.append(f"{contested} where runs differ")
     seg_records = "Recorded results" + (f" · {count}" if count else "") + (
-        f" ({'; '.join(notes)})" if notes else "")
+        f" ({', '.join(notes)})" if notes else "")
     return {"header": header, "top": top, "records": records, "usage": usage,
             "seg": [(seg_records, RECORDS),
                     ("Usage history" + (f" · {n_usage}" if n_usage else ""), USAGE),
@@ -1519,7 +1529,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
 #: operator's next step is one action, "Test this model ›": the Test page with
 #: this checkpoint chosen (`ctx.test_model`, `ctx.go`; wired in
 #: `create_models_page`).
-RECORDS_NEXT = ("Next: start a test of it with Register when the run ends checked; its result "
+RECORDS_NEXT = ("Next: start a test of it with Register when the run ends checked. Its result "
                 "then appears here.")
 #: The action's label and its act (`renderers.TRIGGER_JS`).
 TEST_THIS = "Test this model ›"
@@ -1564,7 +1574,7 @@ def _records_for_item(ledger: Optional[Mapping[str, Any]], data: Mapping[str, An
     said by (`records_block_html`)."""
     if ledger is None:
         return ('<p class="shep-mp-p shep-muted">The recorded results beside this checkpoint '
-                'were not read with this list; they are read again when the page is shown.</p>',
+                'were not read with this list. They are read again when the page is shown.</p>',
                 0, 0, 0)
     if ledger["state"] == "not_read":
         return ('<p class="shep-mp-p">' + r.status_mark(
@@ -1618,7 +1628,7 @@ def usage_entry_html(entry: Mapping[str, Any]) -> str:
         # One " · " per line (the skill's §5): the figure, then how it ran,
         # then every metric the entry records, as recorded, one click away.
         how = (regime_text(entry.get("device"), entry.get("deterministic"))
-               + ("; registration asked" if entry.get("record_requested") else ""))
+               + (", registration asked" if entry.get("record_requested") else ""))
         listed = (r.recorded_metrics_fold(metrics)
                   if recorded is None or isinstance(recorded, Mapping) else
                   '<span class="shep-mp-ln shep-muted">metrics not readable as recorded'
@@ -2073,9 +2083,6 @@ PAGE_CSS = f"""
   flex: none; background: none; border: 0; padding: 0 16px 8px !important; margin: 0 !important;
 }}
 {_PAGE} #shep-models-research-searchrow {{ --shep-grp-basis: 16rem; --shep-grp-min: 16rem; }}
-/* "Search" and Clear on the box's middle line, as Order's label and ⓘ are on the switch's:
-   a label beside its box is no label above it (the bar stands its groups on one bottom line). */
-{_PAGE} #shep-models-research-searchrow.shep-grp {{ align-items: center !important; }}
 /* The "Applying …" line takes no room while nothing is pending (`PENDING_JS`). */
 {_PAGE} #shep-mp-pending:not(:has(.shep-mp-pending.shep-on)) {{ display: none !important; }}
 {_PAGE} .shep-mp-pending {{ font-size: 14px; }}
@@ -2089,22 +2096,25 @@ PAGE_CSS = f"""
    the browser's scroll anchoring would scroll the rows by what a pick takes away above it. */
 {_PAGE} #shep-models-research-rows:has(.shep-fam) {{ overflow-anchor: none; }}
 {_PAGE} #shep-models-research-facts {{ display: none !important; }}
-/* The detail's foot: Load, then why it is off beside it (one line, `model_list.load_reason_html`),
-   then what Load does (the view's note, two sentences) on a row of its own under them, from the
-   panel's edge: a message never shares a row with a button (the layout rules' "beside"). */
+/* The detail's foot: Load, then why it is off (`model_list.load_reason_html`) on a row of its
+   own under it, then what Load does (the view's note, two sentences), each from the panel's
+   edge, at every width: a reason beside its button is one line or none (the layout rules'
+   "beside"), and Load's reasons ("disabled: choose a model in the list first.", a read-only
+   viewer's) need more than the line a detail column leaves beside Load (the sweep's L7: two
+   lines beside it at 1550, 1366 and 1280; V-RB2-4: never a squeezed column). */
 {_PAGE} {_LIST} > .shep-model-foot {{
   grid-area: foot; min-height: 0; display: grid !important; margin: 0 !important;
-  grid-template-columns: auto minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto auto;
-  grid-template-areas: "detail detail" "load reason" "note note";
-  align-items: center; gap: 0 12px !important; padding: 0 !important;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto auto;
+  grid-template-areas: "detail" "load" "reason" "note";
+  align-items: center; gap: 0 !important; padding: 0 !important;
   background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px;
 }}
 {_PAGE} {_LIST} > .shep-model-foot > #shep-mp-detail {{ grid-area: detail; align-self: stretch; min-height: 0; gap: 0 !important; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ grid-area: load; margin: 12px 0 12px 16px; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ grid-area: reason; padding-right: 16px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ grid-area: load; justify-self: start; margin: 12px 0 12px 16px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ grid-area: reason; padding: 0 16px; }}
 {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note {{ grid-area: note; padding: 0 16px; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note:has(.shep-note) {{ padding-bottom: 12px; margin-top: -4px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note:has(.shep-note) {{ padding: 4px 16px 12px; }}
 {_PAGE} #shep-models-research-note .shep-note {{ display: block; max-width: var(--shep-measure); font-size: 14px; }}
 {_PAGE} {_LIST} > .shep-model-foot::after {{
   content: ""; grid-row: 2; grid-column: 1 / -1; border-top: 1px solid var(--shep-border);
@@ -2123,6 +2133,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-order-row > * {{ flex: 0 0 auto !important; min-width: 0 !important; width: auto !important; }}
 {_PAGE} .shep-mp-lbl {{ font-size: 15px; color: var(--shep-text-2); white-space: nowrap; }}
 {_PAGE} .shep-mp-back {{ display: none; }}
+{_PAGE} .shep-mp-hd-end {{ margin-left: auto; display: inline-flex; flex-wrap: wrap; justify-content: flex-end;
+  align-items: center; gap: 10px; }}
+{_PAGE} .shep-mp-hd-end > .shep-panel-right {{ margin-left: 0; }}
 {_PAGE} .shep-mp-p {{ margin: 0; font-size: 15px; color: var(--shep-text-2); line-height: 1.45; }}
 {_PAGE} .shep-mp-p.shep-amber-t {{ color: var(--shep-amber-800); }}
 {_PAGE} .shep-mp-recwrap {{ margin: 0 !important; }}
@@ -2236,11 +2249,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-fold > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
 {_PAGE} .shep-mp-fold[open] > summary {{ margin-bottom: 2px; }}
 {_PAGE} .shep-mp-delta {{ font-size: 14px; margin-top: 4px; }}
-/* A read-only request's reason (`left_header_html`): the lock and D8's words, why, then the Ref
-   line, muted. */
+/* A read-only request's reason (`left_header_html`): the lock and its one lead, then Details ›. */
 {_PAGE} .shep-mp-ro {{ padding: 0 16px 8px; }}
-{_PAGE} #shep-mp-hd .shep-mp-ro {{ display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }}
-{_PAGE} #shep-mp-hd .shep-mp-ref {{ font-size: 14px; color: var(--shep-muted); }}
+{_PAGE} #shep-mp-hd .shep-mp-ro {{ display: flex; flex-direction: column; gap: var(--shep-space-para); padding-top: 12px; }}
 {_PAGE} .shep-mtbl td.shep-num .shep-sub {{ text-align: right; }}
 {_PAGE} .shep-mp-ident {{ font-size: 15px; }}
 /* By family's "Saved files" (`saved_files_html`): one file a line, the shown one in words,
@@ -2264,18 +2275,38 @@ PAGE_CSS = f"""
    (Epochs, Files, Fingerprint: the selected model's details say them) while it does not fit,
    before it scrolls sideways in its own region (`model_list.OPTIONAL_COLUMNS`; the UI sweep's M6),
    so Model, Task and Operation stay whole beside a run name of about 52 characters, which never
-   breaks at its own hyphens (D8). It was 617 px, the whole table of one world: a longer name
-   scrolled the rows sideways at every laptop size. By family's graph takes the width it is given
-   (left to right where it fits, else top to bottom, `model_list.FAMILY_JS`). */
-{_PAGE} {_LIST} {{ --shep-mp-list-min: 39rem; --shep-mp-detail-min: 30rem; }}
+   breaks at its own hyphens (D8), with Task and Operation each one unit (`style.CELL_WHOLE`:
+   "Record not readable", "Fine-tune, full"): that narrow form is 704 px at its narrowest, plus
+   the frame's insets (46.5rem; 39rem left the rows scrolling sideways at 1550 and 1366, the
+   sweep's L7, SW-LK4). It was 617 px, the whole table of one world: a longer name scrolled the
+   rows sideways at every laptop size. By family's graph takes the width it is given (left to
+   right where it fits, else top to bottom, `model_list.FAMILY_JS`).
+   **The list is the page's main region** (the skill's §2): side by side it grows twice as fast
+   as the details (a 46 / 54 share gave the empty details 973 px and the list 829 at 1850 x 960,
+   so the tree dropped its Epochs, Files and Fingerprint there); each keeps its minimum.
+   **Once a row is chosen its details are what the page shows** and take their reading width
+   (``--shep-mp-detail-read``: the title on one line and each summary value on one line where the
+   world's fit), as far as the list's minimum leaves; the list keeps the rest, its whole tree
+   where that still fits (the sweep's L7 check, D1: at 1850 x 960 and 1550 x 830 the chosen
+   model's details kept the empty panel's share, about 500 to 600 px, and their recorded results
+   and next step fell under the region's edge, where d3040ca drew them whole). By family keeps
+   its shares: a body pick never re-orients the graph (the skill's §13), and a narrower region
+   would. */
+{_PAGE} {_LIST} {{ --shep-mp-list-min: 46.5rem; --shep-mp-detail-min: 30rem; --shep-mp-detail-read: 47rem; }}
 {_PAGE} {_LIST} > .shep-model-main {{ --shep-panel-min: var(--shep-mp-list-min); }}
 {_PAGE} {_LIST} > .shep-model-foot {{ --shep-panel-min: var(--shep-mp-detail-min); }}
 {SIDE} {{
-  {_PAGE} {_LIST} {{ grid-template-columns: minmax(var(--shep-mp-list-min), 46fr) minmax(var(--shep-mp-detail-min), 54fr); }}
+  {_PAGE} {_LIST} {{ grid-template-columns: minmax(var(--shep-mp-list-min), 2fr) minmax(var(--shep-mp-detail-min), 1fr); }}
+  {_PAGE} {_LIST}:has(#shep-mp-detail-hd h2[data-key]):not(:has(.shep-mp-ro)):not(:has(.shep-fam)) {{
+    grid-template-columns: minmax(var(--shep-mp-list-min), 2fr)
+      minmax(max(var(--shep-mp-detail-min), min(var(--shep-mp-detail-read), 100% - var(--shep-mp-list-min) - 16px)), 1fr);
+  }}
   {_PAGE} > .column {{ height: 100%; }}
   {_PAGE} .shep-models {{ height: 100%; min-height: 0; }}
   {_PAGE} {_LIST} {{ height: 100%; min-height: 0; }}
-  /* The panel scrolls as a whole only when its header alone does not fit (below about 480 px of window). */
+  /* The panel is held to the grid's height (an overflow other than visible makes its minimum 0), so
+     its rows' region is the one that scrolls; at and above the display floor its header always fits,
+     so the panel itself never scrolls. */
   {_PAGE} {_LIST} > .shep-model-main {{ height: 100%; overflow-y: auto; }}
   {_PAGE} #shep-mp-detail {{ overflow: hidden; display: flex !important; flex-direction: column; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-mp-detail-bd {{ flex: 1 1 auto !important; overflow: auto !important; container-type: size; }}
@@ -2321,21 +2352,14 @@ PAGE_CSS = f"""
   /* By family's graph left to right, a subtree unfolded past the column: panned to in its
      rows, never the page sideways (side by side the rows' region scrolls both ways). */
   {_PAGE} #shep-models-research-rows:has(.shep-fam) {{ overflow-x: auto !important; }}
-  {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; }}
-}}
-/* A phone's column: Load, its reason and the note each a row of their own
-   (one row squeezed the reason into an 84 px column; verification of
-   fcc3dea, V-RB2-4). Measured on the list's own width (a container query:
-   side by side the list is never this narrow), never the window's. */
-{_PAGE} {_LIST} {{ container: shep-mp-list / inline-size; }}
-@container shep-mp-list (max-width: 36rem) {{
-  {_PAGE} {_LIST} > .shep-model-foot {{
-    grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto auto;
-    grid-template-areas: "detail" "load" "reason" "note";
-  }}
-  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ justify-self: start; }}
-  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ padding: 0 16px; }}
-  {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note {{ padding: 4px 16px 12px; }}
+  /* Back to the list stays on the title's first line when the title wraps (centred on a title of
+     three lines it stood between them, apart from the words it follows). */
+  {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; align-self: flex-start; }}
+  /* With the model in use beside it, Back is the end of one group (`shep-mp-hd-end`), which keeps the
+     title's first line or wraps under it whole, at the end: two pushed ends split the line's room, and
+     on a wrapped header's second line the model in use stood mid-line, on no edge. */
+  {_PAGE} .shep-mp-hd-end {{ align-self: flex-start; }}
+  {_PAGE} .shep-mp-hd-end > .shep-mp-back {{ margin-left: 0; align-self: auto; }}
 }}
 """
 

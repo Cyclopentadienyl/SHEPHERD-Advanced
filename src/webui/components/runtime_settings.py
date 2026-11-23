@@ -77,7 +77,7 @@ from src.webui.components.chips import gated, operator_only
 from src.webui.operator_access import operator_access
 from src.webui.shell import SETTINGS as SETTINGS_PAGE
 from src.webui.shell import plain_html, tab_elem_id
-from src.webui.style import STACK
+from src.webui.style import SIDE
 
 #: Each allocator preset in plain words, its name beside them (the WebUI
 #: skill's §5: an internal name only beside a plain label). One entry per
@@ -128,20 +128,20 @@ STOP_CONFIRM_LABEL = "Stop service now"
 STOP_QUESTION = (
     "Stop the service? The dashboard and the API stop on this computer, and every open page "
     "loses its connection. Start it again from its desktop entry or launch_shepherd.sh.")
-STOP_DONE = ("Stopping the service. This page stops answering in a moment; start it again from "
+STOP_DONE = ("Stopping the service. This page stops answering in a moment. Start it again from "
              "its desktop entry or launch_shepherd.sh.")
 
-#: The acceleration area: a fact, never a toggle that does nothing; said in
-#: brackets after its "Not implemented yet" mark.
-ACCELERATION = ("new acceleration work is deferred; each run’s record keeps the kernels and "
-                "precision it ran with")
+#: The acceleration area: a fact, never a toggle that does nothing; said on a
+#: line of its own under its "Not implemented yet" mark, a sentence a fact.
+ACCELERATION = ("New acceleration work is deferred. Each run’s record keeps the kernels and "
+                "precision it ran with.")
 
 #: Where torch.compile's saved value is read: the Training page's base Start
 #: and its Continue or Branch (`training_console`), the only readers; the
 #: Fine-tune page does not read it. Said once on the screen, in the field's
 #: visible line (`FIELD_INFO`), in these words.
-COMPILE_READ = ("read when the Training page starts, continues or branches a run; Fine-tune "
-                "does not read it")
+COMPILE_READ = ("read when the Training page starts, continues or branches a run, never by "
+                "Fine-tune")
 #: torch.compile's warning, the lead of the field's visible line (R-13).
 COMPILE_EXPERIMENTAL = "Experimental: keep it off unless you are benchmarking it."
 
@@ -231,7 +231,7 @@ def saved_html(env: Mapping[str, str], settings: Mapping[str, Any]) -> str:
     preset, _compile = _saved(settings)
     said = r.e(allocator_words(preset))
     if requested is None:
-        said += ' <span class="shep-muted">(the default; none saved)</span>'
+        said += ' <span class="shep-muted">(the default, none saved)</span>'
     elif requested != preset:
         said += (f' <span class="shep-muted">(the saved name {r.ident_html(requested)} is no '
                  "preset)</span>")
@@ -256,8 +256,10 @@ def facts_html(env: Optional[Mapping[str, str]] = None,
         ("Allocator now", running_html(env)),
         ("Allocator saved", saved_html(env, settings)),
         ("torch.compile saved", r.OFF if not compile_on else "On"),
+        # The state, then its sentences on a line of their own (a state's word ran into the
+        # next sentence: "Not implemented yet New acceleration work is deferred.", the sweep's L7).
         ("Acceleration", r.status_mark("neutral", "Not implemented yet")
-         + f' <span class="shep-muted">({r.e(ACCELERATION)})</span>'),
+         + f'<br><span class="shep-muted">{r.e(ACCELERATION)}</span>'),
     ])
 
 
@@ -358,7 +360,7 @@ def _on_apply(alloc, compile_on, request: gr.Request):
     data["allocator_preset"] = alloc
     data["torch_compile"] = bool(compile_on)
     save_runtime_settings(data)
-    said = f"Saved: {allocator_words(str(alloc))}; torch.compile {'on' if compile_on else 'off'}."
+    said = f"Saved: {allocator_words(str(alloc))}, torch.compile {'on' if compile_on else 'off'}."
     return f'<span class="shep-muted">{r.e(said)}</span>', facts_html(settings=data)
 
 
@@ -413,7 +415,7 @@ RESTART_LABEL = "Restart Backend"
 #: to the reason, which is said once, beside the actions it turns off
 #: (`_refresh_restart_lock`). The reason was this line, 734 px above Apply,
 #: Restart Backend and Stop service at 1850 x 960 with the accordions open.
-FIELDS_LOCKED = "Read-only for this request: the reason is beside the actions below."
+FIELDS_LOCKED = "Read-only for this request: the reason is with the actions below."
 
 
 def _refresh_restart_lock(request: gr.Request):
@@ -511,7 +513,7 @@ FIELD_HELP = {
 #: What each allocator preset does (static text, behind its accordion).
 ALLOCATOR_DETAILS = (
     "- **Driver memory pool** (`cuda_async`, the default): NVIDIA's stream-ordered pool, "
-    "driver-managed with no tuning; it may change with driver upgrades, and PyTorch's memory "
+    "driver-managed with no tuning. It may change with driver upgrades, and PyTorch's memory "
     "snapshot statistics are reduced under it.\n"
     "- **Expandable segments** (`expandable`): PyTorch's growable segments. They bound "
     "fragmentation for variable-size subgraphs and keep PyTorch's memory statistics.\n"
@@ -519,8 +521,8 @@ ALLOCATOR_DETAILS = (
     "rounding, to cut fragmentation at low cost.\n"
     "- **Native, no tuning** (`native`): can fragment badly on variable tensor sizes.\n\n"
     "Measured earlier on this project with an architecture no longer built (HGT, batch 256): "
-    "the driver pool and expandable segments both used about 26 GB at a comparable speed; "
-    "native fragmented (about 60 → 120 GB). Not yet measured with GATv2."
+    "the driver pool and expandable segments both used about 26 GB at a comparable speed. "
+    "Native fragmented (about 60 → 120 GB). Not yet measured with GATv2."
 )
 #: torch.compile's caveat (static text, behind its accordion; its lead,
 #: `COMPILE_EXPERIMENTAL`, is the field's visible line).
@@ -551,7 +553,7 @@ def create_runtime_settings_tab(ctx: Any) -> None:
     settings = load_runtime_settings()
     saved_alloc, saved_compile = _saved(settings)
 
-    with gr.Row(elem_id="shep-settings-cols"):
+    with gr.Row(elem_id="shep-settings-cols", elem_classes=["shep-page"], equal_height=False):
         # Data locations (UI-06) on the left, Runtime settings on the right;
         # narrow, one above the other.
         data_locations.create_data_locations_panel(ctx)
@@ -562,7 +564,7 @@ def create_runtime_settings_tab(ctx: Any) -> None:
 def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
                    saved_compile: bool) -> tuple:
     """The Runtime settings panel's components (`create_runtime_settings_tab`)."""
-    with gr.Column(elem_classes=["shep-panel", "shep-settings"], elem_id="shep-settings"):
+    with gr.Column(elem_classes=["shep-panel", "shep-settings", "shep-sized"], elem_id="shep-settings"):
         plain_html('<div class="shep-panel-hd"><h2>Runtime settings</h2>'
                    '<span class="shep-panel-right">this server’s hardware</span></div>'
                    '<p class="shep-intro">How computation runs on this server: memory and '
@@ -584,11 +586,14 @@ def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
                 interactive=False, elem_id="torch_compile", info=FIELD_INFO["torch_compile"])
             with gr.Accordion("About torch.compile", open=False):
                 gr.Markdown(COMPILE_DETAILS)
-        with gr.Row(elem_classes=["shep-panel-ft"], elem_id="shep-settings-ft"):
+        with gr.Row(elem_classes=["shep-panel-ft", "shep-bar"], elem_id="shep-settings-ft"):
             # Why the buttons (and the fields) are off for this request (D8),
-            # beside them, the row's first line, just above them: the one
-            # gated-button rule (`chips.gated`).
-            access_note = plain_html("", visible=False, elem_id="runtime_access_reason")
+            # the bar's note (`shep-bar-note`), its first line, just above them:
+            # the one gated-button rule (`chips.gated`; the sweep's L7 check, C5:
+            # drawn as no shared reason form, the walk found the three actions
+            # with nothing said beside or under them).
+            access_note = plain_html("", visible=False, elem_id="runtime_access_reason",
+                                     elem_classes=["shep-bar-note"])
             apply_btn = gr.Button(APPLY_LABEL, variant="primary", interactive=False, scale=0,
                                   elem_id="runtime_apply")
             restart_btn = gr.Button(RESTART_LABEL, variant="secondary", interactive=False,
@@ -659,19 +664,35 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: actions one row with their reasons beside them (D8's on a line of its own
 #: just above them).
 PAGE_CSS = f"""
-{_PAGE} #shep-settings-cols {{ gap: 16px !important; align-items: flex-start; flex-wrap: wrap; }}
-{_PAGE} #shep-settings-cols > #shep-dl {{ flex: 55 1 640px !important; min-width: 0 !important; }}
-{_PAGE} #shep-settings-cols > .shep-settings {{ flex: 45 1 480px !important; min-width: 0 !important; }}
-{_PAGE} .shep-settings {{ max-width: 1040px; }}
-/* No wider than tall (the layout rule, `src/webui/shell.py`): one panel above the other. */
-{STACK} {{ {_PAGE} #shep-settings-cols > .shep-panel {{ flex-basis: 100% !important; }} }}
+{_PAGE} #shep-settings-cols {{ gap: 16px !important; }}
+/* **The two panels, sized by what they hold** (M4, the shared `shep-sized`): Data locations
+   grows a little faster; it keeps "Set to", a box of a path's room and Check and Save on one line
+   (30rem), Runtime settings its facts' keys beside their values (24rem). The shell's layout rule
+   reads these minimums (`src/webui/shell.py`): side by side from about 910 px of window, else
+   one panel above the other. Side by side each panel is as tall as what it holds, at most the
+   page's height; then its body scrolls inside it, its foot (Apply Settings) in view, never the
+   page (the skill's §1.1; the sweep's L7, SW-LK1: at 1366 x 768 the page itself scrolled and
+   Apply Settings was out of view). */
+{_PAGE} .shep-panel.shep-dl {{ --shep-panel-basis: 40rem; --shep-panel-grow: 11; --shep-panel-min: 30rem; }}
+{_PAGE} .shep-panel.shep-settings {{ --shep-panel-basis: 30rem; --shep-panel-grow: 9; --shep-panel-min: 24rem; }}
+/* Side by side Runtime settings grows to a readable width at most; stacked, it is as wide as Data
+   locations above it, the two panels on one edge each side (a portrait window 1080 px wide drew it
+   8 px short of Data locations' right edge). */
+{SIDE} {{
+  {_PAGE} .shep-panel.shep-settings {{ max-width: 1040px; }}
+  {_PAGE} #shep-settings-cols {{ align-items: flex-start !important; }}
+  {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) {{ flex: 0 1 auto !important; min-height: 0 !important; overflow: auto !important; }}
+  {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) > * {{ flex-shrink: 0 !important; }}
+}}
 {_PAGE} #shep-settings-bd {{ padding: 14px 16px !important; gap: 12px !important; }}
 {_PAGE} #shep-settings-ft > button {{ flex: none !important; min-width: max-content !important; white-space: nowrap; }}
 {_PAGE} #shep-settings-ft > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}
 {_PAGE} #shep-settings-ft > #runtime_access_reason {{ flex-basis: 100% !important; }}
 {_PAGE} #shep-settings-out {{ padding: 0 16px 12px !important; gap: 6px !important; }}
-{_PAGE} #runtime_status:has(.html-container:empty),
-{_PAGE} #runtime_restart_status:has(.html-container:empty) {{ display: none !important; }}
+/* A status line takes no room while it says nothing (`gr.HTML` always draws its container: what
+   is empty is the element inside it). */
+{_PAGE} #runtime_status:has(.shep-html:empty),
+{_PAGE} #runtime_restart_status:has(.shep-html:empty) {{ display: none !important; }}
 {_PAGE} #runtime_confirm > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}
 {_PAGE} #runtime_confirm > button {{ flex: none !important; min-width: max-content !important; }}
 {_PAGE} #runtime_confirm p {{ margin: 0; }}

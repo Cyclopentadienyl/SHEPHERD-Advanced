@@ -23,8 +23,8 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   Playwright, skipped without): a hover previews after a delay as a tooltip
   without "Esc to close", a click pins a dialog named by its title with it,
   the pinned bubble never covers the field it explains (beside, then above,
-  then below), a card heading's ⓘ never covers its card, at a wide and a
-  narrow window, its width stays within the budget, the ⓘ's hit target is at
+  then below), a card heading's ⓘ never covers its card, at a wide window
+  and the display floor, its width stays within the budget, the ⓘ's hit target is at
   least 24 × 24 px, the lead is bold, "- " lines are one list and a "Term:"
   is bold, and a hostile text shows as literal text in each part; a bubble
   whose ⓘ is scrolled out of view (the window or a region) is not drawn and
@@ -212,6 +212,72 @@ def test_the_shared_renderers_texts_meet_the_text_layout_budget():
         assert h.budget_problems(text, h.TEXT_BUDGET) == (), key
 
 
+def _dashboard_help(monkeypatch):
+    """Every help text the built dashboard registers, by key (`shell.help_texts` is handed the
+    one registry after every page has registered its own)."""
+    from src.webui import app, shell
+
+    seen, real = [], shell.help_texts
+    monkeypatch.setattr(shell, "help_texts", lambda registry: seen.append(registry) or real(registry))
+    app.create_gradio_app()
+    (registry,) = seen
+    return {entry.key: entry.text for entry in registry.entries()}
+
+
+#: A help text keyed by a field's name carries that field's spec description as its lead (the
+#: Training form's, the Continue drawer's branch fields, Fine-tune's).
+_FIELD_KEY = re.compile(r"(?:branch_|ft_)?(?P<name>[a-z_]+)")
+
+
+def _exempt_source(key: str, text: str):
+    """**The one exemption from the text budget**: the words a text keeps verbatim from its
+    source, which the WebUI may not change. A lead that is its field's API wording
+    (`training_fields.FieldSpec.description`, which the schema and the refusals share), or a
+    text that is a governed note (`caveats.MODE_RESULT_NOTES`, the Test page's measurement
+    notes), as (the exempt words, their source); None for every other text."""
+    from src.config import training_fields as tf
+    from src.evaluation import caveats
+
+    if key.startswith("test-mode-"):
+        mode = key[len("test-mode-"):]
+        return " ".join(text.split("\n")), caveats.MODE_RESULT_NOTES.get(mode)
+    found = _FIELD_KEY.fullmatch(key)
+    spec = {f.name: f for f in tf.FIELDS}.get(found.group("name")) if found else None
+    lead = h.help_lines(text)[0].text
+    if spec is not None and spec.description and lead == spec.description:
+        return lead, spec.description
+    return None
+
+
+def test_every_registered_help_text_meets_the_text_budget_but_its_verbatim_source(monkeypatch):
+    """E2 of the sweep's integration (its decision 6): every help text the dashboard registers,
+    on every page, meets the text layout's budget (`help.TEXT_BUDGET`: a lead of 90 characters
+    at most, none or 2-4 items of one form each 76 at most, 80 words, plain words, Ref last).
+    The one exemption is words the WebUI may not change: a lead that is its field's API wording
+    (`FieldSpec.description`, equal to it exactly; the rest of its text, its source line and
+    term rows, meets the budget) and a governed measurement note (`caveats.MODE_RESULT_NOTES`,
+    the whole text equal to it, a sentence a line). A lead over 78 characters (three bubble
+    lines) stays a note (`help.budget_notes`), not a failure."""
+    texts = _dashboard_help(monkeypatch)
+    assert len(texts) >= 140, len(texts)
+    exempt, over = {}, {}
+    for key, text in texts.items():
+        problems = h.budget_problems(text, h.TEXT_BUDGET)
+        source = _exempt_source(key, text) if problems else None
+        if source is not None:
+            words, original = source
+            assert original is not None and words == original, (key, words, original)
+            exempt[key] = words
+            # The governed note is the whole text; a field's text past its API-worded lead (its
+            # source line, its term rows) still meets the budget.
+            rest = "" if key.startswith("test-mode-") else text.split("\n", 1)[-1]
+            problems = h.budget_problems("Lead.\n" + rest, h.TEXT_BUDGET) if rest.strip() else ()
+        if problems:
+            over[key] = problems
+    assert over == {}, over
+    assert all(k.startswith("test-mode-") or _FIELD_KEY.fullmatch(k) for k in exempt), sorted(exempt)
+
+
 def test_the_budget_names_what_a_text_runs_over():
     assert h.budget_problems("A short lead.\n- one\n- two\nRef: D5; SHEPHERD_DEVICE") == ()
     long_lead = h.budget_problems("x" * 101)
@@ -281,8 +347,8 @@ that fill the card's width so a bubble beside its title would cover them.</p>
 
 
 def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_path):
-    """In a real browser, at the deployment window (1850 × 960) and a narrow
-    one (420 × 800), for a field's ⓘ, a grid-row field's (its block
+    """In a real browser, at the deployment window (1850 × 960) and the
+    display floor (1280 × 720), for a field's ⓘ, a grid-row field's (its block
     ``display: contents``, so it has no box of its own: the bubble covered
     the ⓘ and the field, D08), a key-value row's and a table row's: a
     hover opens nothing before the delay and a tooltip after it; a click pins
@@ -306,7 +372,7 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
                             capture_output=True, text=True, timeout=240)
     assert result.returncode == 0, result.stderr
     sizes = json.loads(result.stdout)
-    assert set(sizes) == {"1850x960", "420x800"}
+    assert set(sizes) == {"1850x960", "1280x720"}
     for size, targets in sizes.items():
         assert set(targets) == {"field", "grid", "kv", "row", "region"}
         for which, seen in targets.items():
@@ -431,7 +497,7 @@ const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [420, 800]]) {
+  for (const [w, h] of [[1850, 960], [1280, 720]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.clock.install();
     await page.goto('file://' + process.argv[2]);
@@ -516,7 +582,7 @@ def test_a_focus_preview_closes_though_it_slid_under_a_resting_pointer(tmp_path)
     stays only for the reader's own pointer moving in it: here it closes and
     the page under the pointer is reached again, while a pointer moved from
     the ⓘ into its hover preview still keeps the bubble until it leaves (at
-    1850 x 960 and 420 x 800)."""
+    1850 x 960 and the display floor's 1280 x 720)."""
     found = node_with_playwright()
     if found is None:
         pytest.skip("Node with Playwright is not installed")
@@ -539,7 +605,7 @@ def test_a_focus_preview_closes_though_it_slid_under_a_resting_pointer(tmp_path)
                             text=True, timeout=240)
     assert result.returncode == 0, result.stderr
     seen = json.loads(result.stdout)
-    assert set(seen) == {"1850x960", "420x800"}
+    assert set(seen) == {"1850x960", "1280x720"}
     for size, s in seen.items():
         # The scene as the walk met it: a focus preview, the pointer resting
         # outside it, then the bubble under that pointer with no pointer move.
@@ -576,7 +642,7 @@ const { chromium } = require('playwright');
   const browser = await chromium.launch();
   const out = {};
   const I = '#fld button.shep-i';
-  for (const [w, h] of [[1850, 960], [960, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600]]) {
     for (const where of ['window', 'region']) {
       const away = where === 'window' ? 2000 : 300;
       const file = 'file://' + process.argv[where === 'window' ? 2 : 3];
@@ -688,7 +754,7 @@ def test_a_bubble_whose_i_left_view_is_not_drawn_over_other_controls(tmp_path):
     the reader sees is not eaten by a bubble they cannot see). Closed by its
     ×, it stays closed: focus given back to its ⓘ opened a preview with no
     ⓘ to follow, which a scroll left drawn over the page. At 1850 x 960 and
-    960 x 1080, the window scrolled by 2000 px and an inner region by
+    1440 x 1600, the window scrolled by 2000 px and an inner region by
     300 px."""
     found = node_with_playwright()
     if found is None:
@@ -768,7 +834,7 @@ const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [420, 800]]) {
+  for (const [w, h] of [[1850, 960], [1280, 720]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.clock.install();
     await page.goto('file://' + process.argv[2]);
@@ -837,7 +903,7 @@ def test_a_focus_preview_lets_the_click_through_to_the_control_under_it(tmp_path
     and out does not close it (WCAG 1.4.13, persistent). A preview the pointer
     opened stays the pointer's (the resting pointer's test: the pointer moved
     into it keeps it) and a pinned bubble is a dialog. At 1850 x 960 and
-    420 x 800."""
+    the display floor's 1280 x 720."""
     found = node_with_playwright()
     if found is None:
         pytest.skip("Node with Playwright is not installed")
@@ -869,7 +935,7 @@ def test_a_focus_preview_lets_the_click_through_to_the_control_under_it(tmp_path
                             text=True, timeout=240)
     assert result.returncode == 0, result.stderr
     seen = json.loads(result.stdout)
-    assert set(seen) == {"1850x960", "420x800"}
+    assert set(seen) == {"1850x960", "1280x720"}
     for size, s in seen.items():
         # The scene T08 met: focus on Seed's ⓘ, its preview a tooltip over a radio.
         assert s["tabbed"]["focus"] == "seed-i" and s["tabbed"]["shown"], (size, s)
@@ -1008,7 +1074,7 @@ const QUEUE_JS = __QUEUE_JS__;
   const base = process.argv[2], ids = JSON.parse(process.argv[3]), expected = JSON.parse(process.argv[4]);
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [960, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.addInitScript(QUEUE_JS);
     const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle());
@@ -1083,7 +1149,7 @@ def test_tab_reaches_each_checkboxs_i_and_box_in_the_order_they_are_drawn(tmp_pa
     (R-24: the words in the key column, the box in the control column with
     Top-K's box), but Gradio puts a checkbox's box before its words and the
     shared help puts the ⓘ after the words, so Tab reached the box before the
-    ⓘ. In the served dashboard, at 1850 x 960 and 960 x 1080, every checkbox
+    ⓘ. In the served dashboard, at 1850 x 960 and 1440 x 1600, every checkbox
     with field help drawn on Diagnosis, Training (its Parameters unfolded and
     its accordions open), Fine-tune, Test and Settings: Tab from the control
     before it reaches its ⓘ and its box in the order they are drawn
@@ -1123,7 +1189,7 @@ def test_tab_reaches_each_checkboxs_i_and_box_in_the_order_they_are_drawn(tmp_pa
         seen = run_node(_CHECKBOX_ORDER_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")], json.dumps(sorted(helped)), json.dumps(expected),
                         timeout=600)
-    assert set(seen) == {"1850x960", "960x1080"}
+    assert set(seen) == {"1850x960", "1440x1600"}
     for size, rows in seen.items():
         assert set(rows) == helped - {"branch_use_amp"}, (size, sorted(helped - set(rows)))
         for k, row in rows.items():
@@ -1251,23 +1317,34 @@ def test_every_registered_help_text_is_within_the_budget(built):
     assert len(over) >= 146
 
 
+#: Where one sentence ends and the next begins (the budget's own split).
+_SENTENCES = re.compile(r"(?<=[.!?])\s+(?=\S)")
+
+
 def _words(text: str) -> int:
     return sum(len(f"{line.term or ''} {line.text}".split()) for line in h.help_lines(text)
                if line.kind != "ref")
 
 
-def test_the_test_and_models_texts_are_an_answer_and_three_items_at_most(built):
+def test_the_test_and_models_texts_are_an_answer_and_the_budgets_items_at_most(built):
     """R-74: the Test and Models (Results included) texts are one answer
-    sentence and at most three items, about 60 words, their codes in the Ref
-    line (the budget above)."""
+    sentence and a few items, about 60 words (70 at most), their codes in the
+    Ref line. How many items is one rule, in one place: the text budget every
+    registered text meets (`help.TEXT_BUDGET`, the skill's §7: none or 2-4).
+    R-74 said three before that budget existed; the sweep wrote these texts
+    to the budget (lanes L3 and L4), and a page's own count beside it would be
+    a second rule for the same thing."""
     _demo, registry, _texts = built
     keys = [e.key for e in registry.entries()
             if e.key.startswith(("shep-test-", "test-", "models-"))]
     assert len(keys) >= 24
+    budget = h.TEXT_BUDGET
     for entry in registry.entries():
         if entry.key in keys:
             lines = h.help_lines(entry.text)
-            assert sum(line.kind == "item" for line in lines) <= 3, entry.key
+            assert len(_SENTENCES.split(lines[0].text)) == 1, (entry.key, lines[0].text)
+            items = sum(line.kind == "item" for line in lines)
+            assert items == 0 or budget.items_min <= items <= budget.items, (entry.key, items)
             assert _words(entry.text) <= 70, (entry.key, _words(entry.text))
 
 
@@ -1382,3 +1459,423 @@ def test_focus_on_a_pinned_i_follows_it_when_a_drawing_replaces_it(tmp_path):
                              "expanded": "true"}, seen
     assert seen["escaped"]["open"] is False and seen["escaped"]["focus"] == "its i", seen
     assert seen["unfocused"]["focus"] == "page" and seen["unfocused"]["open"] is True, seen
+
+
+#: The WebUI's own texts that keep a semicolon, by (module, name), each with its
+#: reason: words kept verbatim from a source the WebUI may not change, or a word
+#: another reader depends on; never a sentence the WebUI writes.
+_KEPT_SEMICOLONS = {
+    ("diagnosis_panel", "NOT_A_MEDICAL_DEVICE"): "the device statement, verbatim",
+    ("diagnosis_panel", "_NOT_A_MEDICAL_DEVICE"): "the device statement, verbatim",
+    ("renderers", "NOT_A_MEDICAL_DEVICE"): "the device statement, verbatim",
+    ("renderers", "GENERATED_EXPOSURE_NOTE"): "a governed note (skill §13)",
+    ("diagnosis_panel", "MATCHING_NOTE"): "a governed note (skill §13)",
+    ("diagnosis_panel", "_IDENTITY_PARTS"): "export words: the exported Diagnosis report's "
+                                            "identity rows name these parts (_identity_rows)",
+    ("training_console", "REFERENCE_SOURCES"): "verbatim source citations",
+    ("finetune_page", "FINETUNE_SOURCES"): "verbatim source citations",
+}
+
+
+def _semicolon_texts(module, module_name: str):
+    """**Every text a page module holds that carries a semicolon**: each module-level
+    constant (an upper-case name), read at any nesting (a dict's values, a tuple's,
+    list's or set's items, a NamedTuple's fields; a dict's keys are lookup words, not
+    shown), as (module, name, where, text). Not read: a style sheet, a script or markup;
+    a constant named in `_KEPT_SEMICOLONS`; a registered help dict (a ``*HELP`` name: the
+    help budget test holds its texts, and allows a semicolon only in a FieldSpec lead, a
+    governed note or the Ref line); a governed text of `src.evaluation.caveats` (skill §13),
+    which a page imports as it is."""
+    from src.evaluation import caveats
+
+    governed = {id(v) for v in vars(caveats).values() if not isinstance(v, (str, int, float))}
+
+    def walk(value, where):
+        if isinstance(value, str):
+            yield where, value
+        elif id(value) in governed:
+            return
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield from walk(item, f"{where}[{key!r}]")
+        elif isinstance(value, (tuple, list, set, frozenset)):
+            for i, item in enumerate(value):
+                yield from walk(item, f"{where}[{i}]")
+
+    for name, value in vars(module).items():
+        if not name.lstrip("_").isupper() or (module_name, name) in _KEPT_SEMICOLONS:
+            continue
+        if name.rstrip("_").endswith("HELP"):
+            continue
+        for where, text in walk(value, name):
+            if "; " not in text:
+                continue
+            if "{" in text or "=>" in text or text.lstrip().startswith("<"):
+                continue                    # a style sheet, a script or markup
+            yield module_name, name, where, text[:60]
+
+
+def test_the_webuis_own_sentences_hold_no_semicolon():
+    """The independent check of the UI sweep (C8): the semicolon recount
+    read only some strings, and Settings' Acceleration line ("new
+    acceleration work is deferred; each run's record keeps …"), Models' next
+    step, the model list's wait and reload words, Settings' repair and stop
+    words, the GPU chip's Ref line and others still joined two facts with a
+    semicolon (the text brief's §2 and §14 #11). L7 FX-1: it read only
+    module-level strings, and texts held in dicts and tuples still did
+    (Diagnosis' HPO note under its field, Training's format lines under
+    Neighbours, Warmup steps and Minimum LR ratio, the no-model identity
+    reason, a Results registration word). Every text a page module holds, at
+    any nesting (`_semicolon_texts`), holds none, but those named with their
+    reason (`_KEPT_SEMICOLONS`)."""
+    import importlib
+    import pkgutil
+
+    import src.webui.components as components
+
+    found = []
+    for info in pkgutil.iter_modules(components.__path__):
+        module = importlib.import_module(f"src.webui.components.{info.name}")
+        found += _semicolon_texts(module, info.name)
+    assert found == [], found
+    assert set(_KEPT_SEMICOLONS) <= {
+        (info.name, name) for info in pkgutil.iter_modules(components.__path__)
+        for name in vars(importlib.import_module(f"src.webui.components.{info.name}"))}
+
+
+def test_the_semicolon_reader_reads_texts_at_any_nesting():
+    """The reader of the semicolon test (`_semicolon_texts`) cannot silently narrow
+    again: in a stand-in module, a text in a dict's value, a tuple, a NamedTuple and a
+    list in a dict is found; a dict's key, a help dict, a style sheet, a kept constant
+    and a governed caveats text are not."""
+    import types
+    from typing import NamedTuple
+
+    from src.evaluation import caveats
+
+    class Pair(NamedTuple):
+        lead: str
+        note: str
+
+    governed = caveats.R10_UNVERIFIABLE_REASON
+    assert any("; " in text for text in governed.values())
+    stand_in = types.ModuleType("stand_in")
+    stand_in.FIELD_INFO = {"a": "One; two.", "b; c": "plain"}
+    stand_in._PARTS = ("x", "Device (one; two)")
+    stand_in.PAIR = Pair("Lead.", "Three; four.")
+    stand_in.NESTED = {"k": ["ok", ("deep; down",)]}
+    stand_in.PAGE_HELP = {"k": ("Title", "Lead.\nA; b.")}
+    stand_in.STYLE = ".x { a: b; c: d; }"
+    stand_in.GOVERNED = governed
+    found = {where for _, _, where, _ in _semicolon_texts(stand_in, "stand_in")}
+    assert found == {"FIELD_INFO['a']", "_PARTS[1]", "PAIR[1]", "NESTED['k'][1][0]"}, found
+    kept = types.ModuleType("kept")
+    kept._IDENTITY_PARTS = ("Device (in effect; requested)",)
+    assert list(_semicolon_texts(kept, "diagnosis_panel")) == []
+    assert [where for _, _, where, _ in _semicolon_texts(kept, "other")] == ["_IDENTITY_PARTS[0]"]
+
+
+#: **Texts written inside a function of a WebUI module that keep "; "**, by
+#: (module, function, text), each with its reason (the owner's decision of
+#: 2026-11-23): words another file depends on, or a separator no one reads;
+#: never a sentence the WebUI writes for its reader. `text` is as
+#: `_function_semicolon_texts` reads it: an f-string's placeholders as "…", a
+#: join's separator as ``"; ".join``.
+_EXPORT_CELL = ("export words: a list's separator inside one cell of the exported "
+                "Diagnosis CSV (`_csv_text`)")
+_EXPORT_REPORT = "export words: the exported Diagnosis report (Markdown) says it so"
+_EXPORT_IDENTITY = ("export words: a value of the exported report's identity table "
+                    "(`_identity_table_lines`), which the drawer shows as the report has it")
+_REF_SPLIT = ("not shown: where a page splits a loader's reason from its Ref "
+              "(`checkpoint_paths.refusal_line` writes it)")
+_KEPT_FUNCTION_SEMICOLONS = {
+    ("components/diagnosis_panel.py", "_query_csv_values", '"; ".join'): _EXPORT_CELL,
+    ("components/diagnosis_panel.py", "_build_results_csv", '"; ".join'): _EXPORT_CELL,
+    ("components/diagnosis_panel.py", "_md_list", '"; ".join'): _EXPORT_REPORT,
+    ("components/diagnosis_panel.py", "_build_results_report_md", '"; ".join'): _EXPORT_REPORT,
+    ("components/diagnosis_panel.py", "_shortest_path_cells",
+     "computed — exact hop distances from the model's graph view; no table is read"):
+        _EXPORT_IDENTITY,
+    ("components/diagnosis_panel.py", "_shortest_path_cells", "absent — no table is served; …"):
+        _EXPORT_IDENTITY,
+    ("components/diagnosis_panel.py", "_device_cells", " in effect; requested: "):
+        _EXPORT_IDENTITY,
+    ("components/models_page.py", "detail_parts", "; Ref: "): _REF_SPLIT,
+    ("components/renderers.py", "reason_lead", "; Ref: "): _REF_SPLIT,
+}
+
+_LOG_CALLS = {"debug", "info", "warning", "warn", "error", "exception", "critical", "log",
+              "print"}
+_CSS_DECLARATIONS = re.compile(r"(^|[\s\"'])[a-z-]+:\s*[^;]+;\s*[a-z-]+:")
+
+
+def _function_semicolon_texts(source: str, module: str, kept=None):
+    """**Every text written inside a function of a WebUI module that carries "; "**
+    (the owner's decision of 2026-11-23; FX-1 read only module constants): each
+    string literal and f-string (its placeholders read as "…") inside a function or
+    a method, and each ``"; ".join`` separator, as (module, function, line, text).
+    Not read: a docstring; a log line or a print; code (with its tags removed, a text
+    holding "{", "=>" or a CSS declaration: a style sheet or a script); a text named
+    in `kept` (`_KEPT_FUNCTION_SEMICOLONS` unless given)."""
+    import ast
+
+    kept = _KEPT_FUNCTION_SEMICOLONS if kept is None else kept
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    docstrings = {node.body[0].value for node in ast.walk(tree)
+                  if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                                       ast.ClassDef))
+                  and node.body and isinstance(node.body[0], ast.Expr)
+                  and isinstance(node.body[0].value, ast.Constant)
+                  and isinstance(node.body[0].value.value, str)}
+
+    def above(node):
+        node = parents.get(node)
+        while node is not None:
+            yield node
+            node = parents.get(node)
+
+    def function(node):
+        if not any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+                   for n in above(node)):
+            return None
+        return ".".join(reversed([n.name for n in above(node) if isinstance(
+            n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]))
+
+    def logged(node):
+        for n in above(node):
+            if isinstance(n, ast.stmt):
+                return False
+            if isinstance(n, ast.Call):
+                called = (n.func.attr if isinstance(n.func, ast.Attribute)
+                          else getattr(n.func, "id", ""))
+                if called in _LOG_CALLS:
+                    return True
+        return False
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            text = "".join(v.value if isinstance(v, ast.Constant) else "…" for v in node.values)
+        elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
+              and not isinstance(parents.get(node), ast.JoinedStr)):
+            text = node.value
+        else:
+            continue
+        where = function(node)
+        if "; " not in text or where is None or node in docstrings or logged(node):
+            continue
+        parent = parents.get(node)
+        if isinstance(parent, ast.Attribute) and parent.attr == "join":
+            text = f'"{text}".join'
+        bare = re.sub(r"<[^>]*>", "", text)
+        if "{" in bare or "=>" in text or _CSS_DECLARATIONS.search(bare):
+            continue                        # a style sheet or a script
+        if (module, where, text) in kept:
+            continue
+        yield module, where, node.lineno, text
+
+
+def _webui_function_texts(kept=None):
+    """`_function_semicolon_texts` of every module under src/webui."""
+    root = Path(__file__).resolve().parents[2] / "src" / "webui"
+    found = []
+    for path in sorted(root.rglob("*.py")):
+        found += _function_semicolon_texts(path.read_text(encoding="utf-8"),
+                                           path.relative_to(root).as_posix(), kept)
+    return found
+
+
+def test_the_webuis_function_texts_hold_no_semicolon():
+    """The owner's decision of 2026-11-23: no WebUI text joins two facts or two
+    sentences with a semicolon. FX-1 read only module constants, and about 90
+    texts written inside functions still did (Diagnosis' Stop inference question,
+    Models' unreadable rows, the Compare notes, the Test page's refusals and
+    registration words, the Continue drawer's check, the reload outcome, the GPU
+    pointer beside Start, ...). Every text a function of a WebUI module writes,
+    and every ``"; ".join`` separator, holds none (`_function_semicolon_texts`),
+    but those named with their reason (`_KEPT_FUNCTION_SEMICOLONS`); and each of
+    those names a text that is still there."""
+    assert _webui_function_texts() == []
+    every = {(module, where, text) for module, where, _, text in _webui_function_texts({})}
+    assert set(_KEPT_FUNCTION_SEMICOLONS) <= every, set(_KEPT_FUNCTION_SEMICOLONS) - every
+
+
+def test_the_function_semicolon_reader_reads_every_text_a_function_writes():
+    """`_function_semicolon_texts` cannot silently narrow: in a stand-in module, a
+    literal, an f-string and a ``"; ".join`` inside a function, and a method's
+    literal, are found; a docstring, a log line, a style sheet, a script, a
+    module constant and a kept text are not."""
+    stand_in = '''
+STYLE = "a; b"
+
+def f(x):
+    """Doc; string."""
+    logger.warning("logged; not shown")
+    css = ".x { a: b; c: d; }"
+    js = "() => { a(); b(); }"
+    return f"One {x}; two." + "; ".join(x) + "three; four"
+
+class C:
+    def m(self):
+        return "five; six"
+
+def kept():
+    return "kept; text"
+'''
+    found = [(where, text) for _, where, _, text in _function_semicolon_texts(
+        stand_in, "stand_in.py", {("stand_in.py", "kept", "kept; text"): "a stand-in"})]
+    assert sorted(found) == sorted([("f", "One …; two."), ("f", '"; ".join'),
+                                    ("f", "three; four"), ("C.m", "five; six")]), found
+
+
+#: Every registered help text opened in the one bubble of the served dashboard
+#: (an ⓘ made for its key, clicked, the bubble read, Esc), at the owner's
+#: window: for each part (its lead, each paragraph, its Ref line, each list
+#: item), its kind, its words and how many lines it is drawn on.
+_ITEM_LINES_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1850, height: 960 } });
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
+  const keys = await page.evaluate(() => [...document.querySelectorAll('[id^="shep-help-text-"]')]
+    .map((e) => e.id.slice('shep-help-text-'.length)));
+  // The texts a page composes per request (the header chips' ⓘ, `chips.chip_html`: a hidden
+  // element its ⓘ names), each state's given by the test: drawn here the same way.
+  const composed = process.argv[3] ? JSON.parse(require('fs').readFileSync(process.argv[3], 'utf8')) : {};
+  await page.evaluate((composed) => { Object.entries(composed).forEach(([name, text], i) => {
+    const el = document.createElement('span'); el.id = 'shep-probe-text-' + i; el.hidden = true;
+    el.textContent = text; el.setAttribute('data-name', name); document.body.appendChild(el); }); }, composed);
+  const targets = [...keys.map((key) => [key, 'shep-help-text-' + key]),
+                   ...Object.keys(composed).map((name, i) => ['chip ' + name, 'shep-probe-text-' + i])];
+  const out = {};
+  for (const [key, target] of targets) {
+    out[key] = await page.evaluate(async ([key, target]) => {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'shep-i'; btn.textContent = 'i';
+      btn.setAttribute('data-help', key); btn.setAttribute('data-help-title', key);
+      btn.setAttribute('aria-describedby', target);
+      btn.style.cssText = 'position: fixed; left: 40px; top: 40px; z-index: 1';
+      document.body.appendChild(btn);
+      btn.click();
+      await new Promise((r) => setTimeout(r, 50));
+      const lines = (el) => {
+        const range = document.createRange(); range.selectNodeContents(el);
+        const rects = [...range.getClientRects()].filter((q) => q.width > 0.5 && q.height > 0.5)
+          .sort((a, c) => a.top - c.top);
+        let n = 0, bottom = -Infinity;
+        for (const q of rects) { if (q.top > bottom - q.height / 2) { n += 1; bottom = q.bottom; } else { bottom = Math.max(bottom, q.bottom); } }
+        return n;
+      };
+      const bubble = document.getElementById('shep-help-bubble');
+      const kind = (el) => (el.matches('li') ? 'li' : el.classList.contains('shep-bubble-lead') ? 'lead'
+        : el.classList.contains('shep-bubble-ref') ? 'ref' : 'p');
+      const parts = bubble && !bubble.hidden
+        ? [...bubble.querySelectorAll('.shep-bubble-bd > p, .shep-bubble-bd li')]
+          .map((el) => [kind(el), el.textContent, lines(el)]) : null;
+      btn.remove();
+      return parts;
+    }, [key, target]);
+    await page.keyboard.press('Escape');
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def _bubble_part_exemption(key: str, kind: str, words: str):
+    """**Why a bubble part may take more than two lines**: its words are kept from a
+    source the WebUI may not change, as (the reason, the source's words it equals or
+    holds); None for the page's own words. A lead that is its field's
+    `FieldSpec.description` (API wording, `_exempt_source`); a governed note (a Test
+    measurement note, `caveats.MODE_RESULT_NOTES`, and the exposure caveat's parts,
+    `caveats.EXPOSURE_*`); R10's two definitions (governed, skill §13: their meaning
+    is `caveats.R10_LABEL_TEXT`'s, presented in `renderers.R10_HELP`); a Ref line that
+    cites a source verbatim (`training_console.REFERENCE_SOURCES`, and the recipe's
+    `BASE_SOURCES`, `FINETUNE_SOURCES` and `FINETUNE_TASK_SOURCES`)."""
+    from src.config import recipe
+    from src.evaluation import caveats
+    from src.webui.components import training_console
+
+    if key.startswith("chip read-only "):
+        # D8's refusal for the request (`operator_access`), also the API's: its reason after
+        # "For this request: " and its reference in the Ref line.
+        from src.utils.operator_access import reason_parts
+        from tests.unit.test_operator_access import every_refusal
+
+        said = [part for decision in every_refusal().values()
+                for part in reason_parts(decision.reason) if part]
+        held = [part for part in said if part in words]
+        return "D8's refusal (the API's words)", held[0] if held else None
+    if key.startswith("test-mode-"):
+        note = caveats.MODE_RESULT_NOTES.get(key[len("test-mode-"):]) or ""
+        return "a governed measurement note", note if words in note else None
+    if kind == "lead":
+        source = _exempt_source(key, words)
+        if source is not None:
+            return "FieldSpec.description (API wording)", source[1]
+    if key == "kg-exposure":
+        parts = (caveats.EXPOSURE_SCOPE, caveats.EXPOSURE_EVIDENCE,
+                 caveats.EXPOSURE_NOT_EXHAUSTIVE, caveats.EXPOSURE_NEGATIVES,
+                 caveats.EXPOSURE_NOT_PROVEN)
+        held = [part for part in parts if part[1:] in words]
+        return "the governed exposure caveat's part", held[0] if held else None
+    if key == "record-r10" and kind == "p" and words.split(":", 1)[0] in (
+            "Disease overlap", "Phenotype-set overlap"):
+        return "a governed R10 definition", words
+    if kind == "ref":
+        sources = (*training_console.REFERENCE_SOURCES.values(), *recipe.BASE_SOURCES.values(),
+                   *recipe.FINETUNE_SOURCES.values(),
+                   *(s for task in recipe.FINETUNE_TASK_SOURCES.values() for s in task.values()))
+        held = [source for source in sources if source in words]
+        if held:
+            return "a verbatim source citation", held[0]
+    return None
+
+
+def test_every_registered_help_texts_parts_are_two_lines_at_most_in_the_bubble(tmp_path):
+    """The independent check of the UI sweep (C9): the budget's 76 characters
+    an item let an item wrap to three lines of the 320 px bubble ("Same
+    dataset as served: another workspace with the same full fingerprint.",
+    "Names and stray punctuation are ignored. Only HP:####### ids are
+    used.", Gene's "SP similarity: …", Candidate details' "Evidence, …"),
+    against the text brief's §14 #9 (each item two lines at most). L7 FX-3:
+    it held only the items, and leads (Continue's Device, Diagnosis'
+    phenotypes, similarity and no-cohort run), paragraphs (Diagnosis' score,
+    Extend's learning rate, Fine-tune's "Offered with one task …") and Run
+    name's Ref line took three or four lines. Every registered text is opened
+    in the served dashboard's one bubble, as drawn: its lead, each paragraph,
+    its Ref line and each item are two lines at most, but the parts kept
+    verbatim from their source (`_bubble_part_exemption`, each with its
+    reason, its words held to that source). The sweep's L7 check (C9): the header chips'
+    bubbles, composed per request and named by a hidden element of their own, were never
+    opened (the operator controls' Ref took 5 lines, the GPU chip's 3); every chip state
+    (`test_webui_chips._every_chip`) is drawn in the same bubble and held to the same lines,
+    but D8's refusal, the API's own words."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    from tests.unit.test_webui_chips import _every_chip
+
+    chips = tmp_path / "chips.json"
+    chips.write_text(json.dumps({name: chip.detail for name, chip in _every_chip()}))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_ITEM_LINES_JS, tmp_path, base[:-len("gradio_api")], str(chips), timeout=600)
+    assert len(seen) >= 140 and all(parts is not None for parts in seen.values()), seen
+    assert {key[len("chip "):] for key in seen if key.startswith("chip ")} == {
+        name for name, _chip in _every_chip()}
+    assert all(parts and parts[0][0] == "lead" for parts in seen.values()), seen
+    over = {}
+    for key, parts in seen.items():
+        for kind, words, n in parts:
+            why = _bubble_part_exemption(key, kind, words) if n > 2 else ("", "two lines")
+            if why is None:
+                over.setdefault(key, []).append((kind, words, n))
+            else:
+                assert why[1], (key, kind, words, why[0])  # its words are its source's
+    assert over == {}, over

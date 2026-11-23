@@ -388,12 +388,25 @@ def test_what_the_run_bar_marker_means_is_said_once(root, monkeypatch):
     assert "browser tab" not in bubble and "Use for training ›" in bubble
 
 
-def test_long_names_wrap_at_every_size_so_in_use_stays_in_view():
+def test_long_names_wrap_at_every_size_so_in_use_stays_in_view(root, monkeypatch):
+    """A long name or source list wraps in its cell at every size, so In use
+    stays in view. The sweep's L7 (SW-LK3): an 11.5em floor on a Name that
+    could break anywhere held 173 px for "demo" and wrapped In use ("bar"
+    alone) and the headers at 1850 x 960. A name now breaks only before its
+    own separators (its narrowest is its longest piece, it never reads
+    hyphenated), with no floor; a source list still wraps anywhere."""
+    from src.webui.components import renderers as r
+
     css = dsp.PAGE_CSS
-    rule = next(line for line in css.splitlines() if "td.shep-ds-name" in line)
-    assert "overflow-wrap: anywhere" in rule and "td.shep-ds-src" in rule
-    before_media = css.split("@media")[0]
-    assert "td.shep-ds-name" in before_media                # not only when narrow
+    rule = next(line for line in css.splitlines() if "td.shep-ds-src" in line)
+    assert "overflow-wrap: anywhere" in rule
+    assert not [line for line in css.splitlines() if "td.shep-ds-name" in line and "{" in line]
+    _serving(monkeypatch, None)
+    table = dsp.table_html(dsp.read_datasets(), None, None)
+    assert '<td class="shep-ds-name shep-w600"><span class="shep-brk"><span>demo</span></span></td>' in table
+    assert r.name_pieces_html("rare-cohort_2026") == (
+        '<span class="shep-brk"><span>rare</span><wbr><span>-cohort</span><wbr>'
+        '<span>_2026</span></span>')
     assert all(line.strip().startswith(("#shep-page-datasets", "@media", "}", ""))
                for line in css.splitlines())
 
@@ -460,7 +473,7 @@ def test_the_page_refreshes_when_opened_and_rows_select_their_details(root, monk
     why = next(x for x in data["rows"] if x["name"] == "scratch_ws")["not_trainable"]
     assert "The manifest was not read" in details and details.count(why) == 1
     # Disabled, with the reason beside it as visible text (M5-3).
-    assert "Not available: scratch_ws is not trainable — no split manifest." in note
+    assert "Use for training disabled: scratch_ws is not trainable: no split manifest." in note
     assert dsp.USE_NOTE not in note
 
     class Forged:
@@ -476,7 +489,8 @@ def test_the_reason_beside_use_for_training_is_escaped_and_names_no_path(root, m
                       "manifest": "read", "dataset_fingerprint": "a" * 64}]}
     note = dsp.use_note_html(data, "<b>x")
     assert "<b>" not in note and "<i>" not in note and "&lt;b&gt;x" in note
-    assert "Select a dataset" in dsp.use_note_html(data, None)
+    # Disabled with no row chosen: said in the shared form (the sweep's L7, SW-LK6).
+    assert "Use for training disabled: select a workspace in the list first." in dsp.use_note_html(data, None)
 
 
 def test_the_build_line_is_one_quiet_paragraph_drawn_only_under_a_listed_table():
@@ -492,13 +506,38 @@ def test_the_build_line_is_one_quiet_paragraph_drawn_only_under_a_listed_table()
     from src.webui.components import renderers as r
 
     line = dsp.build_line_html()
-    assert line == f'<p class="shep-ds-build">{r.literal_html(dsp.BUILD_LINE)}</p>'
-    assert "shep-reason" not in line and line.count('<code class="shep-tok">') == 3
+    assert line == f'<p class="shep-ds-build">{r.e(dsp.BUILD_LINE)}</p>{dsp.commands_html()}'
+    assert "shep-reason" not in line and line.count('<code class="shep-tok">') == 2
     assert "build_line_html()" in inspect.getsource(dsp.create_datasets_page)
     css = " ".join(dsp.PAGE_CSS.split())
     assert (f"{dsp._PAGE} .shep-ds-main:not(:has(table.shep-dstbl)) #shep-ds-notes "
             "{ display: none !important; }") in css
     assert f"{dsp._PAGE} #shep-ds-notes {{ padding: 0 var(--shep-inset) " in css
+
+
+def test_the_build_commands_are_rows_with_copy_never_inside_a_sentence():
+    """The independent check of the UI sweep (C2, the reviewer's GB10-UI-02:
+    the build command between ordinary words): the first-use step and the
+    line under a listed table said both commands in one sentence (51 and 21
+    characters, and a parenthesis), and at 1550 x 830 the step, at the
+    measure, broke "scripts/build_knowledge_graph" from ".py --generate-
+    samples". Each sentence now says the act in words, with no token; each
+    command is a key-value row of its own (the text brief's §8), its token
+    whole and its Copy holding the full command."""
+    import html as html_lib
+
+    from src.webui.components import renderers as r
+
+    for sentence in (dsp.BUILD_STEP, dsp.BUILD_LINE):
+        assert "shep-tok" not in r.literal_html(sentence), sentence
+        assert ";" not in sentence and "(" not in sentence
+    rows = dsp.commands_html()
+    assert rows.startswith('<dl class="shep-kv') and "shep-ds-cmds" in rows
+    keys = re.findall(r'<dt class="shep-k">(.*?)</dt>', rows)
+    assert keys == [key for key, _command, _what in dsp.COMMANDS]
+    for _key, command, _what in dsp.COMMANDS:
+        assert f'data-copy="{html_lib.escape(command, quote=True)}"' in rows
+        assert r.token_html(command) in rows
 
 
 def test_nothing_listed_says_why(monkeypatch):
@@ -531,12 +570,13 @@ def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch
     assert data["notice"] == notice_view(WORKSPACES_ROOT_NOTICE)
     table = dsp.table_html(data, None, None)
     assert table == (f'<div class="shep-ds-empty">'
-                     f'{r.notice_block(data["notice"], steps=(dsp.BUILD_STEP,))}</div>')
+                     f'{r.notice_block(data["notice"], steps=(dsp.BUILD_STEP,))}'
+                     f'{dsp.commands_html()}</div>')
     assert table.count('data-notice="workspaces_root"') == 1
     steps = re.search(r'<ol class="shep-nb-steps">(.*?)</ol>', table).group(1)
     first, second = re.findall(r"<li>(.*?)</li>", steps)
     assert 'data-shep-go="settings" data-shep-focus="shep-dl"' in first
-    assert second == r.literal_html(dsp.BUILD_STEP) and second.count("shep-tok") == 3
+    assert second == r.e(dsp.BUILD_STEP) and "shep-tok" not in second
     lead = table.split('<ol class="shep-nb-steps">')[0]
     assert "SHEPHERD_" not in re.sub(r"<[^>]+>", "", lead)                 # only under Details
     # Said once: the details and the button relate to it.
@@ -544,16 +584,18 @@ def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch
               + dsp.use_note_html(data, None))
     assert screen.count("data-notice=") == 1 and screen.count("No workspaces folder is set.") == 1
     note = dsp.use_note_html(data, None)
-    assert note == r.see_above(dsp.USE_UNAVAILABLE, data["notice"])
+    assert note == r.see_above(dsp.USE_FOR_TRAINING, data["notice"])
     assert 'data-notice-rel="workspaces_root"' in note
     assert dsp.DETAILS_NONE in dsp.details_html(data, None)
     assert dsp.DETAILS_SELECT not in dsp.details_html(data, None)
     # A folder set that lists no workspace: its own words and the build step, no notice.
     empty = {"rows": [], "notice": None, "problem": None}
     said = dsp.table_html(empty, None, None)
-    assert dsp.NO_WORKSPACE_YET in said and r.literal_html(dsp.BUILD_STEP) in said
+    assert dsp.NO_WORKSPACE_YET in said and r.e(dsp.BUILD_STEP) in said
+    assert dsp.commands_html() in said
     assert "data-notice" not in said and said.startswith('<div class="shep-ds-empty">')
-    assert "No workspace is listed" in dsp.use_note_html(empty, None)
+    assert "Use for training disabled: no workspace is listed yet." in dsp.use_note_html(empty, None)
+    assert 'class="shep-reason"' in dsp.use_note_html(empty, None)
     # A folder set and not usable: its notice alone (the folder comes first, no build step).
     refused = {**data["notice"], "kind": "error", "summary": "The workspaces folder cannot be used."}
     assert "shep-nb-steps" not in dsp.table_html({"rows": [], "notice": refused}, None, None)
@@ -590,9 +632,10 @@ def test_the_build_line_names_only_a_command_that_builds_a_dataset():
     Every script the line names exists and has a command-line entry; the
     command that writes a trainable workspace is the one named."""
     repo = Path(__file__).resolve().parents[2]
-    named = re.findall(r"scripts/[\w./-]+\.py", dsp.BUILD_LINE)
+    commands = " ".join(command for _key, command, _what in dsp.COMMANDS)
+    named = re.findall(r"scripts/[\w./-]+\.py", commands)
     assert "scripts/build_knowledge_graph.py" in named
-    assert "--generate-samples" in dsp.BUILD_LINE
+    assert "--generate-samples" in dsp.BUILD_COMMAND
     for script in named:
         text = (repo / script).read_text(encoding="utf-8")
         assert _PLANNED_STUB not in text, script
@@ -731,9 +774,13 @@ def test_the_details_list_the_versions_test_reads_by_the_same_comparison(
     html = dsp.details_html(data, "demo")
     assert "Data versions <span class=\"shep-muted\">(2)</span>" in html
     assert "aria-selected" not in html + dsp.table_html(data, None, "demo")
-    supplied = re.search(r"<tr><td[^>]*>ref-demo</td>.*?</tr>", html, re.S).group(0)
+    # The version's label is kept whole (`renderers.whole_words`): its line breaks
+    # only at a space, never at its own hyphen (the L6 check: "demo-" / "test-1").
+    supplied = re.search(r'<tr><td[^>]*><span class="shep-nowrap">ref-demo</span></td>.*?</tr>',
+                         html, re.S).group(0)
     assert "Supplied cohort version" in supplied and ">demo</code>" in supplied
-    generated = re.search(r"<tr><td[^>]*>gen-val</td>.*?</tr>", html, re.S).group(0)
+    generated = re.search(r'<tr><td[^>]*><span class="shep-nowrap">gen-val</span></td>.*?</tr>',
+                          html, re.S).group(0)
     assert "Generated split" in generated and ">val</code>" in generated
     # Not mapped against its graph's record: "scratch_ws" has no manifest.
     assert "Not checked against the registry" in dsp.details_html(data, "scratch_ws")
@@ -826,9 +873,13 @@ def test_each_version_says_the_measurements_its_data_admits_by_tests_rule(
             and kind in protocols.PROTOCOLS[n].data_kinds]
         assert "KG link prediction" not in admitted + [name for name, _ in refused]
     html = dsp.details_html(data, "demo")
-    supplied = re.search(r"<tr><td[^>]*>ref-demo</td>.*?</tr>", html, re.S).group(0)
+    supplied = re.search(r'<tr><td[^>]*><span class="shep-nowrap">ref-demo</span></td>.*?</tr>',
+                         html, re.S).group(0)
     assert "<td>Disease<details" in supplied
-    assert "<summary>Not admitted: Gene, Patients-like-me ›</summary>" in supplied
+    label = re.search(r"<summary>(.*?)</summary>", supplied).group(1)
+    assert re.sub(r"<[^>]+>", "", label) == "Not admitted: Gene, Patients-like-me\u00a0›"
+    # A name never breaks at its own hyphen; the chevron never stands alone (SW-LK3).
+    assert '<span class="shep-nowrap">Patients-like-me</span>\u00a0›' in label
     assert "lists no causal genes" in supplied
 
 
@@ -875,7 +926,7 @@ def test_a_workspace_no_version_was_mapped_against_says_where_versions_come_from
 
 # --------------------------------------------------------------------------- in a browser
 #: Research › Datasets in a browser at the owner's window (1850 x 960), then
-#: narrow (960 x 1080): a row chosen and put in the Training run bar ("Use for
+#: narrow (1440 x 1600): a row chosen and put in the Training run bar ("Use for
 #: training ›", then back), each step waited for by what it draws (the row's
 #: `aria-current`, the Training tab selected, the marker drawn) and the page's
 #: queue idle (`QUEUE_JS`), never by a fixed time.
@@ -885,7 +936,7 @@ const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [960, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
     await page.addInitScript(QUEUE_JS);
     const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
@@ -1003,7 +1054,7 @@ const QUEUE_JS = __QUEUE_JS__;
              beside: Math.abs(main.top - det.top) < 1 && det.left >= main.right };
   }, w);
   const out = { sweep: [] };
-  for (let w = 1000; w <= 1700; w += 20) {
+  for (let w = __FLOOR_W__; w <= 1700; w += 20) {
     await page.setViewportSize({ width: w, height: 960 });
     // The shell lays the page out in the frame after a resize (`update`): two frames on, it has.
     await frames();
@@ -1038,14 +1089,16 @@ def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
     scrolled sideways only because the minimum reserved all of it. Now the
     list's panel keeps the table with its optional columns dropped (Built,
     Sources; the shell's fit drops them while the whole table does not fit,
-    and the selected row's details say them then). Swept across the switch:
-    stacked below it and side by side above it, the two panels beside each
-    other; side by side the table never scrolls sideways; while it drops its
+    and the selected row's details say them then). Swept from the display
+    floor's width up (below it the page is drawn as at it; the switch lies
+    there now): side by side at every width, the two panels beside each
+    other; the table never scrolls sideways; while it drops its
     optional columns the details say them and while it draws them they do
     not; the page is side by side at windows where the whole table does not
     fit (so from the narrow table's minimum); and there a row still opens
     its details."""
     from src.webui.app import create_gradio_app, mount_options
+    from src.webui.style import FLOOR_WIDTH
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
 
@@ -1053,12 +1106,13 @@ def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
         pytest.skip("Node with Playwright is not installed")
     _serving(monkeypatch, None)
     with served(create_gradio_app(), **mount_options()) as base:
-        seen = run_node(_SWITCH_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+        seen = run_node(_SWITCH_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+                        .replace("__FLOOR_W__", str(FLOOR_WIDTH)), tmp_path,
                         base[:-len("gradio_api")])
     sweep = seen["sweep"]
     layouts = [s["layout"] for s in sweep]
-    assert layouts[0] == "stack" and layouts[-1] == "side", sweep
-    side = [s for s in sweep if s["layout"] == "side"]
+    assert set(layouts) == {"side"}, sweep
+    side = sweep
     assert all(s["beside"] for s in side), side
     assert [s for s in side if s["over"] > 0] == [], side
     for s in sweep:
@@ -1069,6 +1123,72 @@ def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
     assert picked["head"].startswith(dsp.DETAILS_TITLE) and picked["fingerprint"], picked
     assert picked["layout"] == "side" and picked["over"] == 0, picked
     assert picked["optkv"] == picked["narrow"], picked
+
+
+_VERSIONS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.inflight === 0
+    && window.__shepQueue.joins.every((j) => j.event_id !== null), null, { timeout: 60000 });
+  await page.goto(process.argv[2], { waitUntil: 'load' });
+  await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+  await idle();
+  await page.click('#shep-tab-research-button');
+  await page.click('#shep-page-datasets-button');
+  await page.waitForSelector('#shep-ds-table tr[data-key="demo"]', { timeout: 60000 });
+  await idle();
+  await page.click('#shep-ds-table tr[data-key="demo"] td:first-child');
+  await page.waitForSelector('#shep-ds-details .shep-dsvtbl summary', { timeout: 60000 });
+  await idle();
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const out = [];
+  for (const [w, h] of [[1850, 960], [1550, 830], [1366, 768], [1280, 720]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await frames(); await frames();
+    out.push(await page.evaluate((size) => {
+      const table = document.querySelector('#shep-ds-details .shep-dsvtbl');
+      const wrap = table.closest('.shep-tbl-wrap'), frame = wrap.getBoundingClientRect();
+      const label = table.querySelector('summary');
+      const lines = [...label.getClientRects()];
+      return { size, layout: document.documentElement.getAttribute('data-shep-layout'),
+               over: Math.round(table.getBoundingClientRect().right - frame.right),
+               labelOver: Math.round(Math.max(...lines.map((q) => q.right)) - frame.right),
+               lastLineEnds: label.textContent.trim().endsWith('\u203a') };
+    }, `${w}x${h}`));
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})();
+"""
+
+
+def test_in_a_browser_the_versions_table_and_its_disclosure_fit_the_details(
+        root, registry, tmp_path, monkeypatch):
+    """The sweep's L7 (SW-LK3): side by side at 1366 x 768 the Data versions
+    table was 12 px wider than its frame and scrolled sideways, its "Not
+    admitted: Gene, Patients-like-me ›" cut at the chevron: a disclosure's
+    label was never allowed to wrap (``width: max-content``), so a label built
+    from data set its column's width. Side by side at the owner's windows and
+    two laptops, the table and the label's every line end inside the table's
+    frame, and the chevron ends the label."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    _serving(monkeypatch, None)
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_VERSIONS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")])
+    side = [s for s in seen if s["layout"] == "side"]
+    assert {s["size"] for s in side} >= {"1850x960", "1366x768"}, seen
+    for s in side:
+        assert s["over"] <= 1 and s["labelOver"] <= 1 and s["lastLineEnds"], s
 
 
 def test_the_panels_are_sized_by_what_they_hold_and_the_table_drops_optional_columns(
@@ -1138,7 +1258,7 @@ def test_in_a_browser_at_first_use_the_cause_is_said_once_on_the_panels_edge(tmp
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
-    sizes = ([1850, 960], [1366, 768], [800, 900], [390, 844])
+    sizes = ([1850, 960], [1366, 768], [1280, 720], [1440, 1600])
     stops = [{"size": size, "page": "datasets", "focus": False} for size in sizes]
     seen = walk_state("first_use", tmp_path, stops, extra_js=_FIRST_USE_JS)
     assert layout_problems(seen, pages=("datasets",)) == []

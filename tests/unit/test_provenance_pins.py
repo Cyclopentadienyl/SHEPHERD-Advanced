@@ -269,6 +269,12 @@ ALLOWED = {
     ("src/webui/components/charts.py", "_versioned", "hashlib.sha256"):
         (1, _NOT_INPUT.format(what="the dashboard's own chart script, its digest in the "
                                    "script's URL so a browser never runs an old copy (M5-2)")),
+    # Models › By family (ed837c0): the page's script tells a new drawing of the
+    # family graph, and a new shape to size it by, from these two tokens.
+    ("src/webui/components/model_list.py", "_graph_html", "hashlib.sha1"):
+        (2, _IN_MEMORY.format(what="the family graph's drawn HTML and of the parts its "
+                                   "size is drawn from (data-draw, data-shape), a token "
+                                   "for the page's script; owner: the shared model list")),
     # The PyG install identity (BACKLOG 70, 71; research-comparison Stage 2):
     # the environment's description, never a run's input. Deploy time only;
     # deliberately not file_sha256, which carries the path-form poison.

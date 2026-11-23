@@ -335,8 +335,8 @@ def _rule_bound_words(name: str) -> str:
     """The bound a rule across settings adds to the setting `name`'s own,
     in words, read from the rules themselves (`CROSS_FIELD_RULES`'
     ``min_exclusive``, its guard's values by their words): "more than 0 with
-    onecycle"; empty for none."""
-    return "; ".join(
+    onecycle"; empty for none. Several rules are one sentence each."""
+    return ". ".join(
         f"more than {rule.threshold:g} with " + " or ".join(
             r.setting_words(guard, value) for guard, allowed in (rule.when or {}).items()
             for value in allowed)
@@ -351,11 +351,11 @@ def _rule_bound_words(name: str) -> str:
 #: are the Trainer's (`Trainer._create_scheduler`: a number capped at half the
 #: steps, 0 the warmup ratio of a tenth), which a test holds to a real Trainer.
 FIELD_FORMATS: Dict[str, str] = {
-    "num_neighbors": "Whole numbers separated by commas, one per encoder layer; -1 takes all.",
-    "warmup_steps": "Optimizer steps, at most half the run's; 0 takes a tenth of them.",
-    "min_lr_ratio": "; ".join(filter(None, (
+    "num_neighbors": "Whole numbers separated by commas, one per encoder layer. -1 takes all.",
+    "warmup_steps": "Optimizer steps, at most half the run's. 0 takes a tenth of them.",
+    "min_lr_ratio": " ".join(f"{part[:1].upper()}{part[1:]}." for part in filter(None, (
         f"A fraction of the peak rate, {bound_words(by_name('min_lr_ratio').valid)}",
-        _rule_bound_words("min_lr_ratio")))) + ".",
+        _rule_bound_words("min_lr_ratio")))),
     "gradient_accumulation_steps": "Batches per optimizer step.",
     "eval_every_n_epochs": "Epochs between the Trainer's validations.",
     "early_stopping_patience": 'Epochs, or "off": no early stopping.',
@@ -367,8 +367,8 @@ FIELD_FORMATS: Dict[str, str] = {
 #: says that; a setting whose values are a study's arms, not a tuned value,
 #: says what each arm is instead.
 _SETTING_CLOSINGS = {
-    "frozen_parts": "not a tuned value. Trained is the source's full fine-tune, and Frozen is "
-                    "the frozen-backbone control.",
+    "frozen_parts": "not a tuned value.\n- Trained: the source's full fine-tune\n"
+                    "- Frozen: the frozen-backbone control",
 }
 _PROVISIONAL = "a provisional default from the source, not tuned on this data."
 
@@ -780,7 +780,7 @@ TOUCH_HEAD = "<script>" + r"""
     words.textContent = LOST.replace('{field}', function () { return name; });
     var space = document.createElement('span');
     space.className = 'shep-st-sp';
-    space.textContent = ' ';
+    space.textContent = '\u00a0';
     said.appendChild(shape);
     said.appendChild(space);
     said.appendChild(words);
@@ -942,7 +942,7 @@ ARCHITECTURE = "encoder.kind"
 #: The form's one name of the architecture (`spec_key_words`).
 ARCHITECTURE_LABEL = "Architecture"
 #: The Model accordion's first line: what Start sends of it.
-MODEL_NOTE = ("A new base builds the reference spec; Start sends it whole, with the fields you "
+MODEL_NOTE = ("A new base builds the reference spec. Start sends it whole, with the fields you "
               "change, and checks it first.")
 #: Each declared type a spec field may hold, as the field kinds name it
 #: (`value_field`); a text, or any other type, is a fact the form shows.
@@ -1141,8 +1141,8 @@ def set_by_line_html(rows: Sequence[Tuple[str, str, str]], problems: Sequence[st
     takes without it, `without_words`), in the form's order. The first
     `SET_BY_SHOWN` are named and the rest counted ("and 4 more";
     `renderers.named_words`), every one a row of its "Details ›"
-    (`renderers.details_list`). With none: "Set by you: nothing; " and
-    `nothing`, what the run then takes; but "Set by you: nothing valid."
+    (`renderers.details_list`). With none: "Set by you: nothing." and
+    `nothing`, what the run then takes, a sentence of its own; but "Set by you: nothing valid."
     while Start would refuse, since no run then takes anything (OPS-R2: the
     line never says a reference is taken for a value refused). Then "Not
     valid: …", `problems`, what Start would refuse, each by its label.
@@ -1154,7 +1154,7 @@ def set_by_line_html(rows: Sequence[Tuple[str, str, str]], problems: Sequence[st
     elif problems:
         text = "Set by you: nothing valid."
     else:
-        text = f"Set by you: nothing; {nothing}"
+        text = f"Set by you: nothing. {nothing}"
     details = (r.details_list([(key, r.e(f"{value} ({without})")) for key, value, without in rows],
                               classes="shep-setby-kv")
                if len(rows) > SET_BY_SHOWN else "")
@@ -1179,7 +1179,7 @@ def set_by_you_html(values: Mapping[str, Any], touched: Collection[str]) -> str:
     each setting and spec field Start sends (`_base_reading`), in the form's
     order, by the form's name of it, with the value the run takes without it
     (the reference's; "default" where the recipe sets none and the run takes
-    this build's). With none: "the run takes the reference values", and this
+    this build's). With none: "The run takes the reference values", and this
     build's defaults where the recipe sets some. Its "Not valid: …" is what
     Start would refuse (`_base_reading`)."""
     references, sources = base_references()
@@ -1195,7 +1195,7 @@ def set_by_you_html(values: Mapping[str, Any], touched: Collection[str]) -> str:
                              _spec_words(key, getattr(getattr(spec, section), name)),
                              f"reference {_spec_words(key, _spec_reference(key))}"))
     defaults = any(name not in sources for name in BASE_FIELDS)
-    nothing = ("the run takes the reference values"
+    nothing = ("The run takes the reference values"
                + (" and this build's defaults." if defaults else "."))
     return set_by_line_html(rows, problems, nothing)
 
@@ -1364,9 +1364,6 @@ LOCK_ICON = ('<svg class="shep-lock" width="12" height="12" viewBox="0 0 16 16" 
          'focusable="false"><rect x="3" y="7" width="10" height="7.5" rx="1.6" '
          'fill="currentColor"/><path d="M5.2 7V5.2a2.8 2.8 0 0 1 5.6 0V7" fill="none" '
          'stroke="currentColor" stroke-width="1.6"/></svg>')
-NO_ICON = ('<svg class="shep-no" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" '
-       'focusable="false"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" '
-       'stroke-width="1.5"/><path d="M4.6 8h6.8" stroke="currentColor" stroke-width="1.5"/></svg>')
 
 
 def details_html(ws: Mapping[str, Any]) -> str:
@@ -1679,7 +1676,7 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
     and Stop has nothing to stop, R-39), ``reason`` (the run bar's note,
     escaped HTML, a row of its own under the controls: empty when nothing is
     disabled that is drawn), ``why`` (the one-line relation beside Start to
-    the setup notice, `renderers.see_above`: "Start unavailable: GPU jobs
+    the setup notice, `renderers.see_above`: "Start disabled: GPU jobs
     need a workspaces folder."), ``notice`` and ``also`` (the setup notice the
     note draws once, `renderers.notice_block`, and the notices that follow
     from it: the workspaces folder's whenever the server says one, the GPU
@@ -1720,8 +1717,8 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
 
     def disabled(cause: str) -> None:
         """One cause, said for the run bar's actions and the drawer's start."""
-        view["reason"] = line(NO_ICON, f"Start and Continue… disabled: {cause}")
-        view["drawer_reason"] = line(NO_ICON, f"{action} disabled: {cause}")
+        view["reason"] = line(r.DISABLED_MARK, r.disabled_words("Start and Continue…", cause))
+        view["drawer_reason"] = line(r.DISABLED_MARK, r.disabled_words(action, cause))
 
     if not access.allowed:
         view["reason"] = line(LOCK_ICON, operator_only(access.condition))
@@ -1732,10 +1729,10 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
         if s == "running":
             disabled("a training job is running.")
         else:
-            view["reason"] = line(NO_ICON, "Stopping: Start and Continue… wait for the job to "
-                                           "end.")
-            view["drawer_reason"] = line(NO_ICON, f"Stopping: {action} waits for the job to "
-                                                  "end.")
+            view["reason"] = line(r.DISABLED_MARK, "Stopping: Start and Continue… wait for the "
+                                                     "job to end.")
+            view["drawer_reason"] = line(r.DISABLED_MARK, f"Stopping: {action} waits for the "
+                                                            "job to end.")
         return view
     if gpu and gpu.get("notice"):
         # The lock cannot be used (no workspaces folder, or a problem of its
@@ -1746,8 +1743,8 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
             view["also"] = [gpu["notice"]]
         else:
             view["notice"] = gpu["notice"]
-        view["why"] = r.see_above("Start unavailable", gpu["notice"])
-        view["drawer_reason"] = r.see_above(f"{action} unavailable", gpu["notice"],
+        view["why"] = r.see_above("Start", gpu["notice"])
+        view["drawer_reason"] = r.see_above(action, gpu["notice"],
                                             where="above")
         return view
     if gpu:
@@ -1777,19 +1774,26 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
     why = continue_refusal(mode.get("parent") or {}, ws, operation=operation_of(mode))
     view["resume"] = why is None
     if why:
-        view["drawer_reason"] = line(NO_ICON, f"{action} disabled: {why}")
+        view["drawer_reason"] = line(r.DISABLED_MARK, r.disabled_words(action, why))
     return view
 
 
 def note_html(view: Mapping[str, Any]) -> str:
-    """**The run bar's note** (`run_bar_view`'s ``reason`` and ``notice``), a
-    row of its own under the controls (the shared bar's ``shep-bar-note``):
-    the reason line, then the setup notice said once for the screen
-    (`renderers.notice_block`, with the notices that follow from it merged
-    into its Details); "" when it says nothing, so the row takes no room."""
-    notice = r.notice_block(view.get("notice"), also=view.get("also") or ())
-    said = (view.get("reason") or "") + notice
+    """**The run bar's note** (`run_bar_view`'s ``reason``), a row of its own
+    under the controls (the shared bar's ``shep-bar-note``); "" when it says
+    nothing, so the row takes no room."""
+    said = view.get("reason") or ""
     return f'<div class="shep-rb-note">{said}</div>' if said else ""
+
+
+def setup_html(view: Mapping[str, Any]) -> str:
+    """**The setup notice, said once for the screen** (`run_bar_view`'s
+    ``notice``; `renderers.notice_block`, with the notices that follow from it
+    merged into its Details), drawn above the run bar's row, before the
+    Dataset select it empties (L7 SW-LK5; the text brief's §10: where the
+    first action is). It was the bar's note, after the actions once the bar
+    wrapped, and at 390 px after Start, Continue… and both status lines."""
+    return r.notice_block(view.get("notice"), also=view.get("also") or ())
 
 
 def _other_workspace(item: Mapping[str, Any], ws: Mapping[str, Any]) -> Optional[str]:
@@ -2043,7 +2047,7 @@ def _snapshot_sentence(snapshot: Optional[Dict[str, Any]]) -> str:
     if end == "finished":
         return f"Finished ({where}): {shown}. To train further, use Continue…"
     if end == "stopped_early":
-        return f"Stopped early at {where} ({snapshot.get('stop_reason')}); it cannot be continued."
+        return f"Stopped early at {where} ({snapshot.get('stop_reason')}). It cannot be continued."
     label = "Paused at" if end == "paused" else "Latest resumable checkpoint:"
     return f"{label} {where}, {shown}."
 
@@ -2860,7 +2864,8 @@ def _poll_resources(location: Any = TRAINING) -> Any:
 # The view: one render for the tick and after every action
 # =============================================================================
 #: The view's pieces, in output order (`create_training_tab` lists the same).
-VIEW_KEYS = ("ws", "dataset", "chip", "pill", "reason", "why", "start", "cont", "stop", "resume",
+VIEW_KEYS = ("ws", "dataset", "chip", "pill", "reason", "setup", "why", "start", "cont", "stop",
+             "resume",
              "runbar", "page", "run_name", "banner", "head", "view", "charts", "drawer_reason",
              "training_workspace")
 #: The pieces that are the session's selection (the run bar's workspace):
@@ -2986,6 +2991,7 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         # proportion is a bar with its number, the pill's epoch).
         "pill": pill_html(status) + bar,
         "reason": note_html(view),
+        "setup": setup_html(view),
         "why": view["why"],
         # The gated actions by the one rule (`chips.gated`): no lock while D8
         # allows this request; disabled with the lock while it refuses it,
@@ -3324,7 +3330,7 @@ def _start(ws, run_name, device, values, touched) -> str:
     try:
         directory = _workspace_path(row["name"])
     except ServerListRefused:
-        return (f"Not started: {row['name']} is no longer listed by the server; select a dataset "
+        return (f"Not started: {row['name']} is no longer listed by the server. Select a dataset "
                 "again.")
     config = {"data_dir": str(directory), "learning_stage": "base",
               "device": device or "auto", "run_name": (run_name or "").strip(),
@@ -3439,7 +3445,7 @@ def confirm_stop(access: Any, mode: Optional[Mapping[str, Any]], *,
     job = reaches(status)
     if isinstance(asked, str) and asked != job:
         return notice_html(f"Not stopped: the {what} you asked to stop is no longer the one "
-                           "running; click Stop again if this one should stop.",
+                           "running. Click Stop again if this one should stop.",
                            mark="error"), mode
     if job is None and running_job(status) is not None:
         return notice_html(f"Not stopped: no {what} is running.", mark="error"), mode
@@ -3490,7 +3496,7 @@ DEVICE_CHOICES = ("auto", "cuda", "cpu")
 #: Continue drawer's, Fine-tune's) says before any start what the start
 #: would refuse, and what to choose, as its info line; the refusal itself is
 #: the job runner's, in the same words (`training_device.unavailable_words`).
-DEVICE_NOTE = "No CUDA device here: auto and cuda are refused; choose cpu."
+DEVICE_NOTE = "No CUDA device here: auto and cuda are refused. Choose cpu."
 
 
 def device_note() -> Optional[str]:
@@ -3711,7 +3717,7 @@ def _list_parents(ws: Mapping[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]
     parents = {key: item for key, item in listed.items() if item.get("record") == "model"}
     if listed and not parents:
         return {}, (f"None of the {len(listed)} entries listed for this dataset's runs holds a "
-                    "model record; a file without a model spec is never continued here "
+                    "model record. A file without a model spec is never continued here "
                     "(Research › Models lists it).")
     return parents, None
 
@@ -3759,7 +3765,8 @@ def parent_details_html(item: Optional[Mapping[str, Any]], operation: str = CONT
     rows.append(("Selection", r.e(r.selection_value(item))))
     rows.append(("Model fingerprint", r.fingerprint_value(item["sha256"],
                                                           what="model fingerprint")))
-    rows.append(("Run", f"<code>{r.e(_run_label(item))}</code>"))
+    # A token, broken only before its own separators (L7 SW-LK7).
+    rows.append(("Run", r.token_html(_run_label(item))))
     return f'<div class="shep-ckpt">{r.summary_list(rows)}</div>'
 
 
@@ -3902,7 +3909,7 @@ def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
     if not r.is_digest(recorded):
         why = ("The parent’s recorded dataset is read when you check it."
                if parent.get("source") == CONTINUE_FROM_PATH and not parent.get("checked")
-               else "The parent records no dataset fingerprint; the start checks it against "
+               else "The parent records no dataset fingerprint. The start checks it against "
                     "this workspace’s data.")
         return f'<p class="shep-cmp-line">{r.status_mark("neutral", why)}</p>'
     now = (f'this workspace now: <b>{r.e(ws.get("name"))}</b> · '
@@ -3971,8 +3978,8 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
     # The plan is said once, in the line under the headline (M5-3: the
     # headline repeated it, two lines more in a drawer that must fit).
     able = "it can continue" if operation == CONTINUE else "it can be branched"
-    head = (r.status_mark("error", f"Checkpoint read; cannot {verb} on the current dataset.")
-            if differs else r.status_mark("ok", f"Checkpoint read; {able} on this workspace."))
+    head = (r.status_mark("error", f"Checkpoint read: it cannot {verb} on the current dataset.")
+            if differs else r.status_mark("ok", f"Checkpoint read: {able} on this workspace."))
     head = f'<div class="shep-check-h">{head}</div>'
     inherited = dict(preview.get("inherited") or {})
     # A setting the checkpoint's record does not hold, which the settings
@@ -4019,14 +4026,14 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
                  r.e(r.setting_words(name, inherited[name], stage=stage, task=task)))
                 for name in shown]
         if operation == BRANCH:
-            summary, note = ("Settings this branch keeps", "They stay the parent’s in a branch; "
-                             "the ones it may change are the fields below.")
+            summary, note = ("Settings this branch keeps", "They stay the parent’s in a branch. "
+                             "The ones it may change are the fields below.")
             fixed = ""
         else:
             summary, note = ("Settings taken from this checkpoint",
-                             "They cannot be changed when continuing; to train with other "
+                             "They cannot be changed when continuing. To train with other "
                              "settings, choose Branch above.")
-            fixed = "; fixed when continuing"
+            fixed = ", fixed when continuing"
         lines.append(
             f'<details class="shep-inherit"><summary>{summary} '
             f'<span class="shep-muted">({len(rows)}{fixed})</span></summary>'
@@ -4238,7 +4245,7 @@ def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
             # branched (K6 decision 1), so a file without a model spec is
             # refused unopened.
             return None, ("the typed path is not a model record the run list offers (a file "
-                          "without a model spec is never continued here); refresh the list if "
+                          "without a model spec is never continued here). Refresh the list if "
                           "its run is new"), None
     else:
         item = (parents or {}).get(listed) if listed else None
@@ -4252,7 +4259,7 @@ def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
         path = resolve_checkpoint(ws.get("name"), item["architecture"], item["run"],
                                   item["filename"])
     except ServerListRefused as exc:
-        return None, f"it is no longer listed ({redact(exc, workspaces_root()[0])}); refresh the list", None
+        return None, f"it is no longer listed ({redact(exc, workspaces_root()[0])}). Refresh the list", None
     return str(path), None, item
 
 
@@ -4603,7 +4610,7 @@ FIELD_HELP = {
         "- Blank: the name \"run\"\n"
         "- Also names: a continued or branched run\n"
         "- Shown: in the run view once training starts\n"
-        "Ref: <workspace>/runs/<architecture>/<date-time>_<name>_<id>/",
+        "Ref: runs/<arch>/<time>_<name>_<id>/ in the workspace",
     ),
     # The base form: each setting's label, what it is, and the value a run
     # takes without it, with its source (`setting_help`).
@@ -4649,7 +4656,7 @@ FIELD_HELP = {
     ),
     "continue_device": (
         "Device",
-        "Where the new run trains, from Parameters' Device each time Continue… opens.\n\n"
+        "Where the new run trains: Parameters' Device, each time Continue… opens.\n\n"
         "- auto: the GPU (CUDA). With no CUDA device visible, the start is refused.\n"
         "- cpu: for development, recorded as asked.\n"
         "- Check checkpoint, Continue Training and Start branch all use it.\n"
@@ -4662,8 +4669,8 @@ FIELD_HELP = {
     "extend_lr": (
         EXTEND_WORDS["extend_lr"],
         "The Extra epochs' rate in the parameter groups whose rate ended at 0.\n\n"
-        "Shown only for such a checkpoint: extending at 0 would not train those groups, and "
-        "no rate is guessed. The other groups keep the rate they ended at.",
+        "Shown only for such a checkpoint: at 0, those groups would not train.\n"
+        "No rate is guessed. The other groups keep the rate they ended at.",
     ),
     # The Branch fields: each setting's label, what it is, where it starts.
     **{f"branch_{name}": branch_setting_help(name) for name in BRANCH_FIELDS},
@@ -4730,7 +4737,9 @@ def create_training_tab(ctx: Any) -> None:
             # the one-line relation beside Start and the job's state; what is
             # longer than a line, the setup notice included, is the note, a
             # row of its own the bar's width (the UI sweep's B-01: two long
-            # reasons were columns among the controls).
+            # reasons were columns among the controls). The setup notice comes
+            # first, before the Dataset select it empties (`setup_html`).
+            setup = plain_html("", elem_id="shep-train-setup")
             with gr.Row(elem_classes=["shep-bar", "shep-rb-bar"]):
                 with gr.Row(elem_classes=["shep-grp", "shep-rb-grp", "shep-rb-data"]):
                     dataset = gr.Dropdown(label="Dataset", choices=[], value=None,
@@ -4754,6 +4763,10 @@ def create_training_tab(ctx: Any) -> None:
                                          interactive=False, scale=0, elem_id="shep-train-stop",
                                          elem_classes=["shep-stop"])
                     why = plain_html("", elem_id="shep-train-why")
+                # The job's state, a group of its own after the actions: the gap
+                # between groups parts it from Start's relation (L7 SW-LK5: the
+                # two "○" statements 9 px apart read as one).
+                with gr.Row(elem_classes=["shep-grp", "shep-rb-grp", "shep-rb-state"]):
                     pill = plain_html(pill_html({"status": "idle"}), elem_id="shep-train-pill")
                 reason = plain_html("", elem_id="shep-train-reason", elem_classes=["shep-bar-note"],
                                     js_on_load=r.TRIGGER_JS)
@@ -4833,10 +4846,11 @@ def create_training_tab(ctx: Any) -> None:
                                             spec_field.reference, elem_id=spec_field.elem_id,
                                             info=FIELD_FORMATS.get(spec_field.path))
                     # What the operator set (decision S2), and Reset to reference.
-                    with gr.Row(elem_classes=["shep-train-setby-row"]):
+                    # The line beside Reset only while it is one line (`shep-beside`).
+                    with gr.Row(elem_classes=["shep-train-setby-row", "shep-beside-row"]):
                         set_by = plain_html(set_by_you_html(dict(zip(
                             base_form_keys(), base_form_defaults(), strict=True)), []),
-                            elem_id="shep-train-setby")
+                            elem_id="shep-train-setby", elem_classes=["shep-beside"])
                         reset_btn = gr.Button("Reset to reference", size="sm", scale=0,
                                               elem_id="shep-train-reset")
                     # torch.compile is configured in the Runtime Settings tab (it is an
@@ -4922,8 +4936,8 @@ def create_training_tab(ctx: Any) -> None:
                     # check at the parent's value (`_branch_updates`).
                     with gr.Column(visible=False, elem_id="shep-train-branch") as branch_box:
                         plain_html('<h3 class="shep-train-sub">Settings to change</h3>'
-                                   '<p class="shep-note">Each starts at the parent’s value; '
-                                   'only a field you edit is sent. Edit none for the same '
+                                   '<p class="shep-note">Each starts at the parent’s value. '
+                                   'Only a field you edit is sent. Edit none for the same '
                                    'settings.</p>', elem_id="shep-train-branch-hd")
                         with gr.Group(elem_classes=["shep-train-grid"]):
                             branch_fields = [setting_field(name, _branch_field_value(name),
@@ -4991,7 +5005,8 @@ def create_training_tab(ctx: Any) -> None:
     gr.on(triggers=[fields[name].change for name in guards], fn=_on_base_guards,
           inputs=[fields[name] for name in guards],
           outputs=[fields[name] for name in dependent], queue=False, show_progress="hidden")
-    view_outputs = [ws, dataset, chip, pill, reason, why, start_btn, cont_btn, stop_btn, resume_btn,
+    view_outputs = [ws, dataset, chip, pill, reason, setup, why, start_btn, cont_btn, stop_btn,
+                    resume_btn,
                     runbar, page, run_name, banner, run_head, view_run, figure, drawer_reason,
                     ctx.training_workspace, cache]
     view_inputs = [ws, mode, cache, dismissed, viewing]
@@ -5250,6 +5265,10 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-runbar {{ background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px; padding: 8px 16px !important; flex: none; gap: 8px !important; }}
 {_PAGE} .shep-rb-bar {{ align-items: flex-start !important; }}
 {_PAGE} .shep-rb-grp {{ align-items: center !important; }}
+/* The job's state, a group of words beside 40 px buttons, stands on the line's centre, as the
+   relation beside Start does (the sweep's L7, SW-LK5: top-aligned with the actions, its words
+   stood 5 px above theirs at 1850 x 960). */
+{_PAGE} .shep-rb-bar > .shep-rb-state {{ align-self: center !important; }}
 {_PAGE} .shep-rb-grp > .block {{ width: auto !important; }}
 {_PAGE} #shep-train-notice:not(:has(.shep-notice-t)) {{ display: none !important; }}
 {_PAGE} .shep-rb-chip .shep-ds-built, {_PAGE} .shep-rb-chip .shep-ds-built + .shep-sep {{ display: none; }}
@@ -5266,9 +5285,12 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #run_name {{ flex: 1 1 auto !important; min-width: min-content !important; }}
 {_PAGE} #shep-train-view-run {{ flex: 0 1 auto !important; min-width: 0 !important; max-width: 100%; }}
 {_PAGE} #shep-train-dataset > div:not(.wrap), {_PAGE} #run_name > label, {_PAGE} #shep-train-view-run > div:not(.wrap) {{ display: flex !important; align-items: center; gap: 8px; }}
-/* The bar's two labels share a width, so their boxes start on one edge when their groups stand one
-   under the other. */
-{_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"] {{ min-width: 5em; }}
+/* The run bar's groups take the scale's upper gap between them (the skill's §2: 16-24 px between
+   groups, 8 px or less inside one): its identity group's chips and Details › stand up to 15 px
+   apart, so at 16 px the one-line bar read as one crowded strip (L7 SW-LK5). A label keeps its
+   own width (a shared 5em left 19 px blank between "Dataset" and its ⓘ, a gap wider than the
+   gaps between groups). */
+{_PAGE} .shep-rb-bar {{ column-gap: var(--shep-space-5) !important; }}
 {_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"], {_PAGE} #shep-train-view-run span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: auto !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color) !important; }}
 /* A select's box is its width's basis and shrinks only with its field: a group (and the run view's
    header) moves to the next line whole, so a field is narrower than its content only alone on a
@@ -5304,7 +5326,6 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-chip {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 15px; position: relative; }}
 /* The identity's parts wrap one by one (never hidden): "built …", the fingerprint, then the marks with "Details ›". */
 {_PAGE} .shep-rb-chip > .shep-ds {{ display: contents; }}
-{_PAGE} .shep-rb-chip .shep-ds-marks {{ display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }}
 {_PAGE} .shep-rb-chip > .shep-ds > .shep-sep {{ margin: 0 -2px; }}
 {_PAGE} .shep-rb-chip > .shep-ds > .shep-sep:has(+ .shep-ds-marks) {{ display: none; }}
 {_PAGE} .shep-rb-inuse {{ color: var(--shep-text-2); font-size: 14px; }}
@@ -5324,6 +5345,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-act {{ gap: 4px 8px !important; }}
 {_PAGE} :is(#shep-train-why, #shep-train-pill) {{ flex: 0 1 auto !important; min-width: min(12rem, 100%) !important; }}
 {_PAGE} #shep-train-why:not(:has(.shep-reason)) {{ display: none !important; }}
+{_PAGE} #shep-train-setup:not(:has(.shep-nb)) {{ display: none !important; }}
 {_PAGE} #shep-train-pill .html-container > div {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }}
 {_PAGE} #shep-train-pill .shep-pill {{ white-space: normal; height: auto; min-height: 30px; padding: 4px 12px; line-height: 1.25; }}
 {_PAGE} .shep-pill {{ display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; font-size: 14px; font-weight: 600; white-space: nowrap; border: 1px solid var(--shep-border-2); background: var(--shep-panel-2); color: var(--shep-text-2); }}
@@ -5342,7 +5364,6 @@ PAGE_CSS = charts.CHART_CSS + f"""
    footer's) is its mark or tag in a column of its own and its words after it, start-aligned at the
    measure; a word wider than its line (a long workspace or run name) breaks inside it (the review of
    5033d29: such a word widened its slot past the run bar at 390 x 844). */
-{_PAGE} #shep-train-reason:not(:has(.shep-rb-note)) {{ display: none !important; }}
 {_PAGE} .shep-rb-note {{ display: flex; flex-direction: column; align-items: flex-start; gap: var(--shep-space-para); }}
 {_PAGE} .shep-rb-why {{ display: grid; grid-template-columns: auto minmax(0, max-content); column-gap: 6px; align-items: start; max-width: min(100%, var(--shep-measure)); font-size: 15px; line-height: var(--shep-lh-prose); color: var(--shep-text-2); text-align: start; }}
 {_PAGE} .shep-rb-why > svg {{ margin-top: 4px; }}
@@ -5369,8 +5390,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-confirming .shep-rb-confirm {{ display: flex !important; align-items: flex-start !important; }}
 {_PAGE} .shep-rb-confirming :is(.shep-rb-name, #shep-train-start, #shep-train-continue, #shep-train-stop, #shep-train-why, #shep-train-reason) {{ display: none !important; }}
 {_PAGE} .shep-rb-confirm-q {{ max-width: var(--shep-measure); background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-radius: 8px; padding: 8px 12px; font-size: 15px; line-height: var(--shep-lh-prose); }}
-{_PAGE} #shep-train-notice:empty, {_PAGE} #shep-train-notice .html-container:empty {{ display: none; }}
-{_PAGE} #shep-train-notice:has(.html-container:empty), {_PAGE} #shep-train-banner:not(:has(.shep-banner)) {{ display: none !important; }}
+{_PAGE} #shep-train-notice:has(.shep-html:empty), {_PAGE} #shep-train-banner:not(:has(.shep-banner)) {{ display: none !important; }}
 {_PAGE} #shep-train-notice {{ font-size: 15px; overflow-wrap: anywhere; }}
 {_PAGE} .shep-banner {{ border-radius: 8px; border: 1px solid; padding: 10px 14px; margin-bottom: 6px; font-size: 15px; }}
 {_PAGE} .shep-banner-red {{ background: var(--shep-red-50); border-color: var(--shep-red-200); border-left: 4px solid var(--shep-red-700); color: var(--shep-red-700); }}
@@ -5390,9 +5410,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-drawer {{ display: none !important; }}
 {_PAGE} .shep-train-drawer-open #shep-train-drawer {{ display: flex !important; }}
 {_PAGE} .shep-train-drawer-open #shep-train-params {{ display: none !important; }}
-/* The drawer's header is a row of its own height: a long body never squeezes it (its title and
-   its note wrapped to two lines ran under the body at 1366 x 768, the header held to 48 px). */
-{_PAGE} .shep-drawer-hd {{ flex-wrap: nowrap !important; flex: none !important; }}
+/* The drawer's header keeps its title and Close on one line (its height is the shared panel
+   header's own: a long body never squeezes it). */
+{_PAGE} .shep-drawer-hd {{ flex-wrap: nowrap !important; }}
 {_PAGE} #shep-train-drawer-title {{ flex: 1 1 auto !important; }}
 {_PAGE} #shep-train-drawer-title .html-container > div {{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }}
 {_PAGE} #shep-train-drawer-title h2 {{ font-size: var(--shep-title-size); font-weight: 600; margin: 0; }}
@@ -5495,18 +5515,16 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-spec-facts .shep-note {{ margin: 0 0 6px; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-train-spec-facts {{ font-size: 14px; gap: 2px 14px; }}
 {_PAGE} .shep-train-sub {{ margin: 6px 0 0; font-size: 15px; font-weight: 600; }}
-/* The base form's line on what the operator set (decision S2) beside Reset to reference (the
-   line's text is the shared `.shep-setby`, `src/webui/style.py`). */
-{_PAGE} .shep-train-setby-row {{ align-items: flex-start !important; flex-wrap: nowrap !important; gap: 8px 12px !important; }}
-{_PAGE} #shep-train-setby {{ flex: 1 1 auto !important; min-width: 0 !important; }}
-{_PAGE} #shep-train-reset {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
+/* The base form's line on what the operator set (decision S2) and Reset to reference: the
+   shared row of words beside a control only while they are one line (`shep-beside-row`, the
+   line's text the shared `.shep-setby`, `src/webui/style.py`). */
 /* **The panels sized by what they hold** (``shep-sized``, M4 of the UI sweep; `style.py`): each a
    basis and a share of the room left, in rem, never under its minimum (the layout rule's measure,
    `src/webui/shell.py`): the form, or the Continue drawer in its place, a column of fields; the
    run view, whose four plots keep about 25rem each. The bases stand as the shares do (1 : 2.2), so
    the two panels keep the proportion they had at every width (10 : 22 of the room). */
 {_PAGE} #shep-train-params {{ --shep-panel-basis: 22.5rem; --shep-panel-grow: 1; --shep-panel-min: 22.5rem; }}
-{_PAGE} #shep-train-drawer {{ --shep-panel-basis: 22.5rem; --shep-panel-grow: 1; --shep-panel-min: 25rem; }}
+{_PAGE} #shep-train-drawer {{ --shep-panel-basis: 22.5rem; --shep-panel-grow: 1; --shep-panel-min: 23rem; }}
 {_PAGE} #shep-train-runview {{ --shep-panel-basis: 49.5rem; --shep-panel-grow: 2.2; --shep-panel-min: 53.75rem; }}
 {SIDE} {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
@@ -5572,10 +5590,12 @@ PAGE_CSS = charts.CHART_CSS + f"""
 }}
 /* A run view too short for one row of plots scrolls as a whole, its plots in flow (the plots'
    body no longer a region of its own): each plot can be brought wholly into view, nothing drawn
-   over it (the header is not sticky, the resources line ends the scroll). */
+   over it (the header is not sticky, the resources line ends the scroll). The charts' row keeps
+   what it holds (never shrunk) and takes the room left: with no plot to draw (an empty state)
+   the resources line stays at the panel's foot, never mid-panel over a blank. */
 @container shep-train-page (max-height: {RUN_VIEW_ONE_ROW}px) {{
   {_PAGE} #shep-train-runview {{ overflow-y: auto !important; }}
-  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: none !important; }}
+  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: 1 0 auto !important; }}
   {_PAGE} #shep-train-charts .shep-charts-body {{ flex: none; overflow-y: visible; }}
 }}
 {SIDE_SHORT} {{

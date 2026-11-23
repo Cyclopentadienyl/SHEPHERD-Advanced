@@ -346,7 +346,7 @@ def test_the_warmup_help_says_what_the_trainer_does():
     (7, 7),         # a number under the cap: as asked
 ])
 def test_the_warmup_words_are_what_a_real_trainer_does(tmp_path, requested, effective):
-    """The words under Warmup steps ("at most half the run's; 0 takes a
+    """The words under Warmup steps ("at most half the run's. 0 takes a
     tenth of them") held to a real cosine Trainer's schedule: 10 epochs of 4
     batches, 40 steps, as its record states them (`schedule_record`)."""
     torch = pytest.importorskip("torch")

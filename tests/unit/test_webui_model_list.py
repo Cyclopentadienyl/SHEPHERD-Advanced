@@ -285,7 +285,7 @@ def test_the_drawer_shows_the_run_in_use_beyond_its_latest_runs(root, serving, m
     html = ml.list_html(listing, picked, one)
     assert f'data-key="{picked}"' not in html
     assert ("Selected model not shown among the latest runs: Gene, gene · GATv2 "
-            "2026-10-15 08:00; its details are kept") in _visible(html)
+            "2026-10-15 08:00. Its details are kept.") in _visible(html)
     assert f'data-facts-key="{picked}"' in ml.facts_html(listing, picked)
     assert f'data-key="{picked}"' in ml.list_html(listing, picked, one, show_older=True)
 
@@ -397,7 +397,8 @@ const ROWS = '#shep-models-clinical-rows', FACTS = '#shep-models-clinical-facts'
   await frames();
   const fit = () => page.evaluate(([R, F]) => { const rows = document.querySelector(R), facts = document.querySelector(F);
     return { rows: [rows.clientWidth, rows.scrollWidth], facts: [facts.clientWidth, facts.scrollWidth],
-             body: [rows.parentElement.clientWidth, rows.parentElement.scrollWidth] }; }, [ROWS, FACTS]);
+             body: [rows.parentElement.clientWidth, rows.parentElement.scrollWidth],
+             narrow: !!rows.querySelector('[data-shep-narrow]') }; }, [ROWS, FACTS]);
   out.fit = await fit();
   // Another host's text metrics, standing in: the tree's words a little wider (WIDER_TREE).
   await page.addStyleTag({ content: process.argv[3] });
@@ -411,7 +412,7 @@ const ROWS = '#shep-models-clinical-rows', FACTS = '#shep-models-clinical-facts'
     .filter((f) => f.family.replace(/["']/g, '') === 'IBM Plex Sans').map((f) => f.status));
   // Stacked: the list, the details, Load, in that order; a file chosen brings its
   // details into view, "Back to the list" the row.
-  await page.setViewportSize({ width: 760, height: 1000 });
+  await page.setViewportSize({ width: 1280, height: 1280 });
   await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') === 'stack');
   await frames();
   out.stacked = await geometry();
@@ -487,11 +488,13 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
     assert after["list"][0] == after["facts"][0], seen            # side by side
     assert seen["font"] and all(state == "loaded" for state in seen["font"]), seen["font"]
     fit = seen["fit"]                         # at 1280 x 900, nothing cut or scrolled sideways
-    assert all(scroll <= client for client, scroll in fit.values()), fit
-    # The same with the tree's words wider, the details at least their minimum.
+    assert all(scroll <= client for client, scroll in (fit["rows"], fit["facts"], fit["body"])), fit
+    # The same with the tree's words wider, the details at least their minimum: the region took
+    # the tree's own narrowest (it grew), or, where the details' minimum leaves less, the tree
+    # dropped its optional columns (the shell's fit) and is whole in what is left.
     wider = seen["wider"]
-    assert all(scroll <= client for client, scroll in wider.values()), wider
-    assert wider["rows"][0] > fit["rows"][0], (fit, wider)        # the region took the tree's
+    assert all(scroll <= client for client, scroll in (wider["rows"], wider["facts"], wider["body"])), wider
+    assert wider["rows"][0] > fit["rows"][0] or (wider["narrow"] and not fit["narrow"]), (fit, wider)
     assert seen["widerFacts"] >= 222, seen["widerFacts"]
     stacked = seen["stacked"]
     assert stacked["layout"] == "stack"
@@ -502,7 +505,7 @@ def test_the_drawers_list_and_details_each_scroll_on_their_own_in_a_browser(
 _DRAWER_HEAD_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
-const SIZES = [[1850, 960], [1280, 900], [960, 1080], [390, 844]];
+const SIZES = [[1850, 960], [1280, 900], [1440, 1600], [1280, 720]];
 (async () => {
   const browser = await chromium.launch();
   const out = {};
@@ -557,7 +560,8 @@ def test_the_drawers_title_and_task_segment_stay_inside_it_at_every_window(
     segment 49 px past the drawer's right edge, cut ("operator controls · one
     mo", "Patients-like-"): both took their one line's width and never gave
     way. In a real browser (skipped without Node and Playwright), the drawer
-    open for an operator at 1850 x 960, 1280 x 900, 960 x 1080 and 390 x 844:
+    open for an operator at 1850 x 960, 1280 x 900, 1440 x 1600 (stacked) and the display floor's
+    1280 x 720 (390 x 844, where it was found, is below the floor, drawn as at it):
     every word of its title and of its task segment is drawn inside the
     drawer, each segment label whole (no ellipsis), and nothing scrolls
     sideways, the drawer or the page. Fails on 78444a6 at 390 x 844."""
@@ -570,7 +574,7 @@ def test_the_drawers_title_and_task_segment_stay_inside_it_at_every_window(
     with served(_diagnosis_page(root, monkeypatch), **mount_options()) as base:
         seen = run_node(_DRAWER_HEAD_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
-    assert set(seen) == {"1850x960", "1280x900", "960x1080", "390x844"}
+    assert set(seen) == {"1850x960", "1280x900", "1440x1600", "1280x720"}
     for size, got in seen.items():
         assert got["past"] == [], (size, got)
         assert [label["text"] for label in got["labels"]] == [
@@ -585,7 +589,7 @@ _FACTS_TITLE_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
 const ROWS = '#shep-models-clinical-rows', FACTS = '#shep-models-clinical-facts';
-const SIZES = [[1850, 960], [760, 1000], [390, 844]];
+const SIZES = [[1850, 960], [1280, 1280], [1440, 1600]];
 (async () => {
   const browser = await chromium.launch();
   const out = {};
@@ -649,9 +653,10 @@ def test_back_to_the_list_keeps_its_words_on_one_line_in_a_stacked_drawer(
     drawer's chosen model's title kept "↑ Back to the list" beside the name
     and the "selected" chip, and the button got what they left: 57 px at 390
     x 844, its words on three lines inside its 32 px box; 117 px and two
-    lines at 760 x 1000. In a real browser (skipped without Node and
+    lines at 1280 x 1280. In a real browser (skipped without Node and
     Playwright), the drawer open for an operator and a file chosen: stacked
-    (760 x 1000, 390 x 844) the button keeps its words on one line, whole,
+    (1280 x 1280, the display floor's width, and 1440 x 1600; 760 x 1000 and
+    390 x 844, where it was found, are below the floor) the button keeps its words on one line, whole,
     inside its box and the title, taking a line of its own when the name and
     chip leave it no room; every word of the title inside it; nothing scrolls
     sideways. Side by side at 1850 x 960, unchanged: no button, the chip
@@ -668,7 +673,7 @@ def test_back_to_the_list_keeps_its_words_on_one_line_in_a_stacked_drawer(
     side = seen.pop("1850x960")
     assert side["layout"] == "side" and not side["shown"], side
     assert side["chipBesideName"] and side["past"] == [], side
-    assert set(seen) == {"760x1000", "390x844"}
+    assert set(seen) == {"1280x1280", "1440x1600"}
     for size, got in seen.items():
         assert got["layout"] == "stack" and got["shown"], (size, got)
         assert got["backLines"] == 1 and got["backWhole"] and got["backIn"], (size, got)
@@ -765,7 +770,7 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
     assert (result.state, result.count, result.contested, result.unchecked) == (
         "records", 4, 2, 1)
     assert r.recorded_tests_text(result) == (
-        "Recorded results: 4 · runs differ for 2; comparison incomplete for 1")
+        "Recorded results: 4 · runs differ for 2, comparison incomplete for 1")
     states["2" * 64] = "cannot_be_checked"
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
     assert (result.count, result.contested, result.unchecked) == (4, 2, 2)
@@ -781,7 +786,7 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
     assert (result.count, result.contested, result.unchecked, result.unreadable) == (3, 1, 1, 1)
     assert r.recorded_tests_text(result) == (
-        "Recorded results: 3 · 1 not readable; runs differ for 1; comparison incomplete for 1")
+        "Recorded results: 3 · 1 not readable, runs differ for 1, comparison incomplete for 1")
 
 
 # --------------------------------------------------------------------------- the Load
@@ -846,11 +851,14 @@ def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
     # session until the new one is published (I5).
     wait = html[html.index('<div class="shep-load-wait"'):]
     wait = wait[:wait.index("</div>")]
-    assert "Reload sent; waiting for the server&#x27;s answer…" in wait and "Loading" not in wait
-    assert "wait" not in ml.REPLACES_NOTE and "until then nothing changes" in ml.REPLACES_NOTE
+    assert "Reload sent. Waiting for the server&#x27;s answer…" in wait and "Loading" not in wait
+    assert "wait" not in ml.REPLACES_NOTE and "Until then nothing changes" in ml.REPLACES_NOTE
     assert "Diagnoses wait" not in html
     assert _changed_rows(html) == ["Model", "Model fingerprint"]
-    assert "disease · GATv2 2026-10-17 09:15, recorded epoch 5" in html and old in html
+    from src.webui.components import renderers as r
+
+    # Each side's model is named by its facts, each one unit (`renderers.model_name_html`).
+    assert r.chain_html("disease", "GATv2 2026-10-17 09:15, recorded epoch 5") in html and old in html
     assert "same dataset" in html and ">same<" in html
     # The task and its scoring mode from the one table, on both sides; the
     # disease task uses no shortest-path table, said as such on both sides.
@@ -1043,7 +1051,7 @@ def test_a_refused_reload_is_shown_without_a_server_path(root, serving, monkeypa
     step = ml.finish_load(plan, operator_request(monkeypatch), reload=lambda request: (
         PipelineReloadResponse(success=False, message=message, status=PipelineStatusResponse(
             **_status(root)))))
-    assert "Not reloaded; the model in use is unchanged." in step.confirm_html
+    assert "Not reloaded. The model in use is unchanged." in step.confirm_html
     assert str(root["root"]) not in step.confirm_html and elsewhere not in step.confirm_html
     inside = checkpoint.relative_to(root["root"])
     assert f"Checkpoint {inside} does not match" in step.confirm_html
@@ -1295,7 +1303,7 @@ def test_bytes_replaced_before_the_reloads_own_read_are_refused_never_served(
     assert published == [first]
     assert api.app_state.pipeline is serving
     assert serving.served_identity().checkpoint.sha256 == first
-    assert "Not reloaded; the model in use is unchanged." in step.confirm_html
+    assert "Not reloaded. The model in use is unchanged." in step.confirm_html
     assert "is not the model that was shown" in step.confirm_html
     assert f"it holds {held[:12]} now, not {shown[:12]}" in step.confirm_html
     assert "Reloaded" not in step.confirm_html.replace("Not reloaded", "")
@@ -1340,7 +1348,7 @@ def test_any_other_bytes_at_the_shown_file_are_refused_as_not_the_model_shown(
     assert fired, "the build never read the graph"
     held = (f"it is gone; {shown[:12]} was shown" if data is None
             else f"it holds {file_sha256(last)[:12]} now, not {shown[:12]}")
-    assert "Not reloaded; the model in use is unchanged." in step.confirm_html
+    assert "Not reloaded. The model in use is unchanged." in step.confirm_html
     assert f"is not the model that was shown: {held}. Nothing was published" in \
         step.confirm_html, step.confirm_html
     assert api.app_state.pipeline is serving
@@ -1354,7 +1362,7 @@ def test_a_refused_reload_leaves_the_model_in_use_and_says_so(root, serving, mon
     step = ml.finish_load(plan, operator_request(monkeypatch), reload=lambda request: (
         PipelineReloadResponse(success=False, message="No checkpoint found.",
                                status=PipelineStatusResponse(**_status(root)))))
-    assert "Not reloaded; the model in use is unchanged." in step.confirm_html
+    assert "Not reloaded. The model in use is unchanged." in step.confirm_html
     assert "No checkpoint found." in step.confirm_html and step.changed is False
     raising = ml.finish_load(plan, operator_request(monkeypatch),
                              reload=lambda request: (_ for _ in ()).throw(RuntimeError("x")))
@@ -1389,7 +1397,7 @@ def test_the_research_preset_is_a_tree_with_in_use_on_its_own_row(root, serving,
     assert "In use (Diagnosis)" in served_row and " hidden" not in served_row
     assert research.count("In use (Diagnosis)") == 1
     assert f'data-locate="{_key("model-05.pt")}"' in research
-    assert "Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded" in (
+    assert "Metadata not readable: the file cannot be read as a checkpoint. It cannot be loaded." in (
         research)
     # Every file a row (nothing dropped by folding), the others' runs folded.
     assert research.count(" data-key=") == 9
@@ -1944,16 +1952,45 @@ def _run_row(html, run):
     return html[start:html.index("</tr>", at)]
 
 
+#: An optional column's fact said in its row while the column is dropped (`style.COL_TWIN`):
+#: drawn only in the narrow form, so a cell as the wide form shows it leaves it out.
+_TWIN = re.compile(r'<div class="shep-col-twin[^"]*">.*?</div>')
+
+
 def _cells(row):
-    """A table row's cells as the words they show (tags dropped)."""
-    return [re.sub(r"<[^>]+>", "", cell) for cell in re.findall(r"<td[^>]*>(.*?)</td>", row)]
+    """A table row's cells as the words the wide form shows (tags dropped)."""
+    return [re.sub(r"<[^>]+>", "", _TWIN.sub("", cell))
+            for cell in re.findall(r"<td[^>]*>(.*?)</td>", row)]
 
 
 def _visible(html):
-    """HTML as the words it shows (tags dropped, entities read)."""
+    """HTML as the words it shows (tags dropped, entities read, a no-break space
+    read as the space it shows)."""
     import html as html_
 
-    return html_.unescape(re.sub(r"<[^>]+>", "", html))
+    return html_.unescape(re.sub(r"<[^>]+>", "", html)).replace("\u00a0", " ")
+
+
+def test_a_files_dropped_facts_stand_under_its_name_on_its_edge(root, serving, monkeypatch):
+    """The sweep's L7 check (C10, SW-LK4): while the Epochs and Fingerprint columns are dropped
+    (the narrow tree, 1366 and 1280), a saved file's line under its name said how far it
+    trained, started 26 px left of its name (the cell's edge, not the name's indent) and named
+    no fingerprint, though the list is searched by name or fingerprint. The line now follows
+    the name's own box (the one rule that indents a file's name indents it) and holds both
+    dropped facts, each a unit of one chain: the epochs and the fingerprint the column draws."""
+    from src.webui.style import COL_TWIN, SHELL_CSS
+
+    listing = _listing(root, monkeypatch)
+    table = ml.list_html(listing, None, ml.PRESETS["research"], show_older=True)
+    twins = re.findall(r'<div class="shep-tree-name shep-tree-leaf">.*?</div>'
+                       rf'(<div class="{COL_TWIN}[^"]*">(.*?)</div>)', table)
+    assert twins, table
+    for _whole, inner in twins:
+        facts = re.findall(r'<span class="shep-fact">(.*?)</span>(?=<span class="shep-sep"|$)', inner)
+        assert len(facts) == 2 and "epoch" in _visible(facts[0]), inner
+        assert re.fullmatch(r"[0-9a-f]{12}", _visible(facts[1]).strip()), inner
+    rule = next(line for line in SHELL_CSS.splitlines() if ".shep-mtree .shep-tree-leaf," in line)
+    assert rule.startswith(f".shep-mtree .shep-tree-leaf, .shep-mtree .shep-tree-leaf + .{COL_TWIN} {{")
 
 
 def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypatch):
@@ -2012,6 +2049,13 @@ def test_a_frozen_backbone_row_says_so_in_both_presets(root, serving, monkeypatc
     # word's own hyphen (D8).
     assert ('<span class="shep-op"><span class="shep-nowrap">Fine-tune,</span> '
             'partly frozen</span>') in table
+    # A task and an operation are values of a closed set: their cells keep their
+    # line (`style.CELL_WHOLE`), so the Model column wraps instead (the L6 check:
+    # "Fine-tune, / full" while the Model column had room).
+    from src.webui.style import CELL_WHOLE
+
+    run_row = _run_row(table, "gatv2/20261017-091500_disease_3fa9c1")
+    assert run_row.count(f'<td class="{CELL_WHOLE}">') == 2, run_row
 
 
 def test_the_research_listing_carries_the_family_view_from_its_one_listing(
@@ -2578,7 +2622,7 @@ def test_the_tree_escapes_and_names_entries_it_could_not_list(root, serving, mon
     broken = _row_of_key(html, _key("broken.pt"))
     words = _visible(broken)
     assert words.count("broken.pt") == 1, words
-    assert ("Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded"
+    assert ("Metadata not readable: the file cannot be read as a checkpoint. It cannot be loaded."
             in words), words
     assert words.count(" · ") <= 1 and "title=" not in broken, broken
 
@@ -2855,9 +2899,13 @@ def test_the_tree_names_tied_best_and_top_k_saves_as_its_selects_do():
     for preset in ("research", "clinical"):
         html = ml.list_html(listing, None, ml.PRESETS[preset], show_older=True)
         for (run, name), (what, epochs) in expected.items():
-            cells = [_visible(cell).strip()
-                     for cell in _cells(_row_of_key(html, f"gatv2/{run}/{name}"))]
+            row = _row_of_key(html, f"gatv2/{run}/{name}")
+            cells = [_visible(cell).strip() for cell in _cells(row)]
             assert [cells[0], cells[3]] == [what, epochs], (preset, run, name, cells)
+            # The narrow form, its Epochs column dropped, says how far it trained under its
+            # name (the sweep's L7, SW-LK4: a file row showed its name and empty cells).
+            twin = _visible(_TWIN.search(row).group(0)).strip()
+            assert twin.startswith(epochs + " epoch") or twin == f"recorded epoch {epochs}", (row, twin)
         # The selects' options lead with the same words (one rule).
         for run in (full, frozen, twins):
             parents = {item["key"]: item for item in items if item["run"] == run}
@@ -3316,3 +3364,24 @@ def test_the_lists_empty_state_says_each_cause_once_in_the_flow(monkeypatch, tmp
     none_listed = {**empty, "workspace": "demo", "workspaces": [{"name": "demo"}]}
     assert ml.list_html(none_listed, None, research).startswith(
         f'<p class="shep-empty">{ml.NO_CHECKPOINT}</p>')
+
+
+def test_load_says_why_it_is_off_with_no_model_chosen():
+    """The sweep's L7 (SW-LK6; the skill's §9: a refusal stays visible next
+    to what it disables): "Load this model" stood disabled with nothing said
+    at first use, its list empty for want of a workspaces folder, and with
+    nothing chosen. With the list's notice and no item, Load says its
+    relation to that notice (the notice is the list's, said once; a relation
+    is no repeat); with no model chosen, that a model is to be chosen; both in
+    the shared reason form, led by the neutral mark."""
+    from src.webui.components import workspaces as w
+    from src.webui.components import renderers as r
+
+    notice = w.notice_view(w.NOTICES[w.ENV_WORKSPACES_ROOT])
+    first_use = ml.load_reason_html(None, {"notice": notice, "items": []})
+    assert f'data-notice-rel="{notice["key"]}"' in first_use and 'class="shep-reason' in first_use
+    assert r.relation_words(ml.LOAD_LABEL, notice) in first_use
+    assert notice["summary"] not in first_use                       # the notice is not said again
+    nothing = ml.load_reason_html(None, {"items": [{"key": "x"}]})
+    assert r.disabled_words(ml.LOAD_LABEL, ml.CHOOSE_A_MODEL) in nothing
+    assert 'class="shep-reason' in nothing and "data-notice-rel" not in nothing

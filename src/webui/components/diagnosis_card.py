@@ -148,7 +148,11 @@ logger = logging.getLogger(__name__)
 STATUS_TIMEOUT_SECONDS = 5.0
 
 #: Said where the trained-on dataset would be, to a request D8 refuses.
-TRAINED_NOT_SHOWN = "not shown · reading the checkpoint is an operator control"
+#: The two facts of a fact not read for this request, drawn as one chain (`renderers.chain_html`:
+#: each moves whole to the next line; the sweep's L7 check, C5: "reading the checkpoint is an /
+#: operator control" broke inside its fact for a read-only viewer).
+TRAINED_NOT_SHOWN_PARTS = ("not shown", "reading the checkpoint is an operator control")
+TRAINED_NOT_SHOWN = " · ".join(TRAINED_NOT_SHOWN_PARTS)
 #: Said where it would be before a queued refresh has read it.
 TRAINED_NOT_READ_YET = "not read yet"
 #: The short words the card's Details use for the dataset fingerprint it has
@@ -767,7 +771,7 @@ def time_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
     if card_mode(state, produced_at) != "current":
         return ""
     return (f'<span class="shep-dx-checked" title="Status read at '
-            f'{r.e(hhmmss(state.get("good_at")))}; read again every 5 s">current</span>')
+            f'{r.e(hhmmss(state.get("good_at")))}. Read again every 5 s.">current</span>')
 
 
 def _trained_html(facts: Mapping[str, Any]) -> str:
@@ -780,7 +784,7 @@ def _trained_html(facts: Mapping[str, Any]) -> str:
         # it (the card's buttons and `change_reason_html`); this is a fact not
         # read for this request, and says why in its own words.
         return (f'<span class="shep-trained">trained on: <span class="shep-muted">'
-                f'{r.e(TRAINED_NOT_SHOWN)}</span></span>')
+                f'{r.chain_html(*TRAINED_NOT_SHOWN_PARTS)}</span></span>')
     if state == "pending":
         return (f'<span class="shep-trained">trained on: <span class="shep-muted">'
                 f'{r.e(TRAINED_NOT_READ_YET)} · </span><button type="button" '
@@ -810,7 +814,8 @@ _STATE_MARK = {SERVING: ("ok", False), LOADING: ("running", False),
 BACK_TO_RESEARCH = "Back to research ›"
 
 
-def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "") -> str:
+def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "",
+                  notice: Any = None) -> str:
     """The serving state in the backend's words (`serving_state`; a load
     while a model serves beside it, `loading_too`; when a stop or a refusal
     was recorded beside it, `not_serving_when`; `beside`, the served data's
@@ -820,7 +825,12 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "") ->
     one click away ("Details ›", ``not_serving_reason``: the load hint, the
     start-up settings), and after a stop the way back to research. Grey
     while the card is not current: the last known state. Nothing here names
-    a path: the backend's words name none."""
+    a path: the backend's words name none. `notice` (the workspaces folder's
+    at first use, where nothing is served): said under the state as the
+    card's cause, its go link the next step, and the backend's lead and
+    whole reason join its rows under the card's one "Details ›" (the sweep's
+    L7, C1: the lead, its own Details ›, the notice and its Details › took
+    the room of the inputs above them at the owner's 1550 x 830 window)."""
     state, words = serving_state(status)
     if state == "unknown":
         return ""
@@ -841,17 +851,24 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "") ->
         return line
     lead = not_serving_lead(status)
     reason = status.get("not_serving_reason")
-    if lead:
-        line += f'<p class="shep-dx-line shep-dx-reason">{r.e(lead)}</p>'
+    lead_html = f'<p class="shep-dx-line shep-dx-reason">{r.e(lead)}</p>' if lead else ""
     # The whole reason only where nothing is served (a stop's model still has
     # the card's own Details ›), one level, never inside another disclosure.
-    if state != STOPPING and isinstance(reason, str) and reason:
+    reason_html = (f'<p class="shep-dx-line">{r.e(reason)}</p>'
+                   if state != STOPPING and isinstance(reason, str) and reason else "")
+    notice_html = r.notice_block(notice, details=False) if notice else ""
+    if notice_html:
+        line += notice_html
+        more = lead_html + reason_html + r.notice_rows_html(notice)
+    else:
+        line += lead_html
+        more = reason_html
+    if more:
         # Named by the state and when it began: the poll's next drawing keeps
         # it as the reader left it while it is the same (`r.KEEP_OPEN_JS`).
         line += (f'<details class="shep-more shep-dx-why-more"'
                  f'{r.keep_as(f"{state} at {when}" if when else state)}>'
-                 '<summary>Details ›</summary>'
-                 f'<p class="shep-dx-line">{r.e(reason)}</p></details>')
+                 f'<summary>Details ›</summary>{more}</details>')
     if state == STOPPED and not grey:
         line += ('<p class="shep-dx-line"><button type="button" class="shep-dx-link '
                  'shep-dx-back" data-key="research" aria-label="Back to research: open '
@@ -925,25 +942,27 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None, *,
         # The state in its own words, the backend's lead and its reason one
         # click away (stopped, a load or the start-up refused, nothing loaded,
         # a load running): said once, here, with the card's one action.
-        lines.append(_serving_html(status, grey=grey))
+        lines.append(_serving_html(status, grey=grey, notice=state.get("workspaces_notice")))
     elif kind == "model":
         item = facts.get("item")
         sha = served_checkpoint_sha(status)
         task = served_task(status)
         why = ""
         if item:
-            run = r.model_name_line(item)
+            run_facts = r.model_name_facts(item)
         else:
             meta = status.get("checkpoint_meta") or {}
-            run = f"Checkpoint · {r.epoch_words(meta if isinstance(meta, Mapping) else {})}"
+            run_facts = ("Checkpoint", r.epoch_words(meta if isinstance(meta, Mapping) else {}))
             why = str(facts.get("item_problem") or "")
-        run = f"{run} · {why}" if why else run
+        run_facts = (*run_facts, why) if why else run_facts
+        run = " · ".join(run_facts)
         # The task, named once on the card (K6 decision 4), a frozen-backbone
         # child as such (decision F1); the run under it, its whole words in its
         # title (folded, it is one line: OPS-FIX-N1). Every served model is a
         # finetuned task's (its scoring mode names one).
         name = (f'<p class="shep-dx-name">{r.e(task_model_name(task, served_transfer(status)))}'
-                f'</p><p class="shep-dx-line shep-dx-sub" title="{r.e(run)}">{r.e(run)}</p>')
+                f'</p><p class="shep-dx-line shep-dx-sub" title="{r.e(run)}">'
+                f'{r.chain_html(*run_facts)}</p>')
         mark = "" if grey else " " + r.status_mark("ok", "verified")
         # The served data's chips beside the serving state (a line of its own
         # said nothing more). The long identity (the fingerprint, the trained-on
@@ -963,6 +982,13 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None, *,
         tail.append(_recorded_html(facts, grey=grey))
     if tail:
         lines.append('<p class="shep-dx-line shep-dx-tail">' + " ".join(tail) + "</p>")
+    # The workspaces folder's notice, said once on the screen where its first
+    # action is (L7 SW-LK8; the text brief's §10): the Load drawer lists
+    # nothing without it, and its empty list says a relation to this. Where
+    # nothing is served it is the state's cause, under it (`_serving_html`);
+    # beside a served model (a start-up pipeline needs no folder), after it.
+    if kind != "no_model" or not _serving_html(status, grey=grey):
+        lines.append(r.notice_block(state.get("workspaces_notice")))
     classes = "shep-dx-card-bd shep-dx-card-grey" if grey else "shep-dx-card-bd"
     return f'<div class="{classes}">' + "".join(parts + lines) + "</div>"
 
@@ -973,9 +999,12 @@ def change_button(state: Mapping[str, Any]) -> Dict[str, Any]:
     lock while the operator may use it; disabled with the lock for a request
     D8 refuses, its reason beside it (`change_reason_html`)."""
     no_model = served_kind(state.get("status")) == "no_model" and bool(state.get("ok"))
+    # The next step is the column's largest action while it is the next step
+    # (L7 SW-LK8: it was small in a grey card under a large disabled Run).
     return {**gated("Load a model…" if no_model else "Change model…",
                     bool(state.get("operator"))),
-            "variant": "primary" if no_model else "secondary"}
+            "variant": "primary" if no_model else "secondary",
+            "size": "lg" if no_model else "sm"}
 
 
 def change_reason_html(state: Mapping[str, Any]) -> str:
@@ -983,9 +1012,12 @@ def change_reason_html(state: Mapping[str, Any]) -> str:
     if state.get("operator") or state.get("ok") is None:
         return ""
     short = state.get("d8_short") or D8_SHORT["unreadable_request"]
-    # Two word groups, so a line breaks between them and never leaves "to M1"
-    # alone on the second line (M5-3).
-    return f'<p class="shep-dx-why">{r.word_groups(f"{LOCK} {OPERATOR_ONLY}", short)}</p>'
+    # The shared reason line (`shep-reason`: the lock in a column of its own; the sweep's L7
+    # check, C5: a page's own line, so the walk read Change model… and Stop inference as off
+    # with no reason), its words in two groups, so a line breaks between them and never leaves
+    # "to M1" alone on the second line (M5-3).
+    return (f'<p class="shep-reason shep-dx-why"><span aria-hidden="true">{LOCK}</span>'
+            f'<span>{r.word_groups(OPERATOR_ONLY, short)}</span></p>')
 
 
 def details_visible(state: Mapping[str, Any]) -> bool:
@@ -1097,10 +1129,11 @@ def served_facts_html(state: Mapping[str, Any], *, focus: Optional[str] = None) 
                      and (shown or w[0] != r.DATASET_NOT_RECORDED)]
     meta = status.get("checkpoint_meta") if isinstance(status.get("checkpoint_meta"), dict) else {}
     params = meta.get("params")
-    name_line = model_facts.name_line if facts.get("item") else \
-        f"Checkpoint · {r.epoch_words(item)}"
+    name_facts = model_facts.name_facts if facts.get("item") else (
+        "Checkpoint", r.epoch_words(item))
     if isinstance(params, int) and not isinstance(params, bool):
-        name_line += f" · {params:,} params"
+        name_facts = (*name_facts, f"{params:,} params")
+    name_line = " · ".join(name_facts)
     # The trained-on dataset of a checkpoint not read here (D8, or not yet)
     # is said so, in Identity and in Data, never "not recorded": Model
     # Facts' own slot for it (`ModelFacts.trained_on_unread`).
@@ -1114,7 +1147,7 @@ def served_facts_html(state: Mapping[str, Any], *, focus: Optional[str] = None) 
     # frozen-backbone child named as such, decision F1), from the status: the
     # card reads no model record, so no Configuration row claims one.
     model_facts = model_facts._replace(
-        name_line=name_line, task=served_kind_words(status),
+        name_line=name_line, name_facts=tuple(name_facts), task=served_kind_words(status),
         warnings=(*warnings, *item_warnings), served_rows=tuple(served_rows),
         serving_rows=_serving_rows(status, facts,
                                    trained.get("fingerprint") if shown else None),
@@ -1131,7 +1164,7 @@ __all__ = [
     "SERVER_PATH",
     "STATUS_TIMEOUT_SECONDS",
     "TRAINED_NOT_READ_YET",
-    "TRAINED_NOT_SHOWN",
+    "TRAINED_NOT_SHOWN", "TRAINED_NOT_SHOWN_PARTS",
     "advance",
     "body_html",
     "card_mode",

@@ -10,6 +10,7 @@ requirements (BACKLOG 27), the GB10 WebUI acceptance and recheck (2026-10-24/25)
 systems, Gradio, ML tools, clinical decision-support guidance and agent review workflows
 (`docs/working/WEBUI_UX_REVIEW_2026-10-25.md`; sources in `references/sources.md`). When a screen cannot meet a rule,
 say why in the delivery.
+The design brief and the text brief are `references/design-brief.md` and `references/text-brief.md`; this skill wins.
 
 **How this skill applies.** `AGENTS.md`'s rules on the scale of a fix and when verification stops come first. The
 skill says how to do the UI work a task asks for; it never widens a task's scope or adds a gate to it, and a finding
@@ -19,7 +20,14 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
 ## 1. The owner's principles
 
 1. **One screen, nothing expanded.** At the deployment window (about 1850 × 960 CSS px; landscape 1080p to 4K) a page's
-   main task fits without scrolling the page. When it cannot, one region scrolls inside, never the frame.
+   main task fits without scrolling the page. When it cannot, one region scrolls inside, never the frame. **The display
+   floor** (the owner, 2026-11-23) is a usable browser area of 1280 × 720 CSS px (`style.FLOOR_WIDTH`,
+   `FLOOR_HEIGHT`): at or above it in both axes the interface is whole and tidy, the frame never scrolls (the area's one
+   region scrolls inside, with its cue), nothing scrolls sideways and nothing is compressed to fit. Below it in either
+   axis the layout is drawn as at the floor and shrinks no further: the frame keeps the floor's size and the browser
+   scrolls the page as a whole. Nothing is built for a window under the floor. A portrait window (no wider than tall)
+   takes the stacked arrangement, whose floor is `style.STACK_FLOOR_WIDTH` (864 px, a 1080p screen turned upright at
+   125 %): at or above it every page holds every rule as side by side does, nothing overlapping, covering or cut.
 2. **Each fact once on a screen.** A fingerprint, a name, a state or a number appears in one place, where it reads
    naturally and stands out. Elsewhere it is referred to by a short relation ("same dataset as the run bar"). Repeat
    it only where the two places can differ (a result's own identity against what is selected).
@@ -39,13 +47,14 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
   the only thing that scrolls. Nothing sticky or fixed may cover a chart's plot or axes, a table row or a focused
   control; a status line is a row of its own (the run view: header, charts, resources).
 - **A message never shares a row with fields or buttons.** Only a one-line relation (`renderers.see_above`:
-  "Start unavailable: no workspaces folder is set.") sits beside the control it explains; anything longer is
+  "Start disabled: no workspaces folder is set.") sits beside the control it explains; anything longer is
   the full-width note under its group (`.shep-bar-note`), from the group's left edge, at the measure.
 - **Bars wrap groups whole.** A bar (`.shep-bar`) is a wrapping row of groups (`.shep-grp`, `-grow`, `-end`); a
   group moves to the next line whole, and a text box keeps its floor (`--shep-input-floor`): its group wraps
   first, never a squeezed box. Choice groups are whole too: one line, or one option per line when a whole line
   cannot hold them (the layout pass's mark), never one option alone. In a row of fields a choice group takes
-  its one-line width; in a column it keeps the column's width, on its edge.
+  its one-line width; in a column it keeps the column's width, on its edge. A segmented control whose
+  labels must stay whole (`style.SEG_WHOLE`) is a choice group too: one row, or one label a line.
 - **One content edge per panel.** Every heading, text, label and field of a panel column starts on one edge
   (`--shep-inset`; Gradio blocks in a panel pad vertically only, so a form's row keeps
   `--shep-gap-between` between its fields and draws no ground of its own). Indent only for subordination:
@@ -150,7 +159,9 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry the same colours.
   focus preview it (hover after a short delay). Pinned, it is a dialog; a hover preview is a tooltip.
 - **Budget (guidance):** a lead of about 90 characters that answers the question (aim at 78: two lines of a
   320 px bubble); then none or 2–4 items or term rows of one form, each 76 characters at most; about 60–80
-  words in all; Ref last. `help.budget_problems(text, help.TEXT_BUDGET)` names what a text runs over.
+  words in all; Ref last. `help.budget_problems(text, help.TEXT_BUDGET)` names what a text runs over. Every
+  registered text is held to it (`test_webui_help.py`); the one exemption is words kept verbatim from their
+  source: a lead that is its field's `FieldSpec.description` (API wording) and a governed note.
 - **Never the only place for must-know facts.** Formats, units, refusals and states that change what happens are
   visible text (`info=` under the field, or the reason line). A bubble explains; it does not warn.
 - **Placement never covers the field it explains**: try beside, then above, then below (Floating UI's flip order).
@@ -213,7 +224,8 @@ Copy buttons included); correct roles (tablist/tab, listbox/option, dialog for a
 - Target only `elem_id`, `elem_classes`, the documented `<elem_id>-button` tab ids and ARIA attributes; keep a tested
   inventory of any Gradio-internal class used (since the 2026-11-22 sweep: `fieldset.block` with its options'
   `.wrap`, `.wrap:has(> .wrap-inner)`, `.block.padded` and `--block-padding`, a panel's `.form` ground and
-  gap, `.row` as a row of fields).
+  gap, `.row` as a row of fields, a `gr.HTML`'s `.html-container` and the element inside it, empty while it
+  says nothing).
 - Gradio's reset (`.gradio-container-<version> p, ol, ul { margin: 0; padding: 0 }`) is one class and an
   element: a rule that spaces a paragraph or a list needs two classes. If such overrides keep growing across milestones, record the decision
   between `gr.HTML` islands and a custom frontend on `gr.Server`.
@@ -226,12 +238,12 @@ checks that already passed for the same code.
 | Change | Checks |
 |---|---|
 | A new screen or a changed layout (before it is built) | a static mockup first, its small sources committed with a README that says who checked it (self-checked or owner-approved; e.g. `docs/working/ops-wiring-and-ui-ux/mockups/`); without the owner's approval it is never called accepted (B27-P) |
-| Any visible change (when it is delivered) | before and after screenshots of what changed, at the owner's window (about 1850 × 960) and a narrow size, named in the delivery and in the ledger row it closes (B27-P) |
+| Any visible change (when it is delivered) | before and after screenshots of what changed, at the owner's window (about 1850 × 960) and the display floor (1280 × 720), named in the delivery and in the ledger row it closes (B27-P) |
 | Wording, a label, an option or help text | the unit test that pins it (options: unique, short, one separator; help: the lead answers the question) |
 | A colour or theme token | the contrast test of the tokens it touches |
 | A widget or renderer (HTML, JS) | a unit or Node test of what it renders, escaping included; one look in the real app |
-| Layout or scrolling | geometry measured in the browser at the owner's window (about 1850 × 960) and the narrow layout: no horizontal page scroll, one scroll region, nothing sticky over a chart axis or a focused control (`document.elementsFromPoint`), the same after narrow → wide; a screenshot of each. Pass conditions are relative to what is drawn (inside its row, off its neighbours, the same control under the pointer), never a named window or a fixed pixel figure |
-| A broad layout change across pages | the above at more sizes (1920 × 1080, 1536 × 760, 960 × 1080, 1080 × 1920), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
+| Layout or scrolling | geometry measured in the browser at the owner's window (about 1850 × 960) and the display floor (1280 × 720): no horizontal page scroll, one scroll region, nothing sticky over a chart axis or a focused control (`document.elementsFromPoint`), the same after floor → wide; a screenshot of each. Pass conditions are relative to what is drawn (inside its row, off its neighbours, the same control under the pointer), never a named window or a fixed pixel figure |
+| A broad layout change across pages | the above at the check sizes (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, one window below the floor, drawn as at the floor, and the portrait windows 1080 × 1920 and 1440 × 2560, stacked), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
 | A repeated fact (rule 1.2) | count the fingerprint, run id or name in one screen's visible text; more than one needs a reason |
 
 The layout, scrolling, type, border and focus rows are measured on every page at the representative sizes by one
@@ -239,9 +251,14 @@ shared check, which a layout, token or navigation change runs rather than a scri
 `tests/unit/test_webui_shell.py::test_every_page_at_every_size_passes_the_ui_measurement_check` (`walk_ui` and
 `ui_problems` in `tests/fixtures/browser.py`; its screenshots in the test's temporary `ui-walk*/shots`). **The
 layout rules** (beside, narrow-box, overlap, orphan, centred, split-group, edge, clipped, empty-region,
-help-on-page, notice-repeat, tab-groups; `layout_problems`) are measured in the same walk and, with the
-**first-use and empty-folder walks** (`walk_state("first_use" | "empty", …)`, `layout_stops`), held at zero once
-every page is laid out again; a page's change runs them on its own pages at first use and configured. The same
+help-on-page, notice-repeat, tab-groups, in-view and sideways-scroll at every check size at or above the floor,
+scroll-cue, wrap-end, disabled-reason, token-break, sep-end, chain-break, row-top, row-height, and floor: below it
+the marks are the floor's and the page scrolls; `layout_problems`) are measured in the same walk and, with the
+**first-use and empty-folder walks** (`walk_state("first_use" | "empty", …)`, `layout_stops`), held at zero on
+every page at `LAYOUT_SIZES` (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, 1024 × 640,
+1080 × 1920, 1440 × 2560 and 1850 × 960 again) in all three states, first use, empty and configured, and configured as a read-only
+viewer (`test_every_page_of_every_state_has_no_layout_finding`); a page's change runs them on its own pages at first
+use and configured. The same
 walk counts each fingerprint drawn in a screen's visible text (`repeat_problems`), and walks PLAN_TEST_RESULTS §6's
 other sizes with Diagnosis' largest Top-K answered on long disease names, and every page as a read-only viewer
 (`acceptance_walk`). axe-core is not installed here: those rows' accessibility checks are the walk's own

@@ -555,7 +555,7 @@ def test_the_continue_drawer_says_the_plan_and_lists_the_decoded_freeze_once(run
         assert text.count('title="frozen_parts"') == 1 and text.count("Graph backbone") == 1
         # The model spec has its own row; the disclosure counts the others.
         count = len(previews[rules]["inherited"]) + len(previews[rules]["decoded"]) - 1
-        assert f"({count}; fixed when continuing)" in text
+        assert f"({count}, fixed when continuing)" in text
     row = '<dt class="shep-k" title="frozen_parts">Graph backbone</dt><dd class="shep-v">'
     assert f"{row}{html.escape(DECODED_FINETUNE, quote=True)}</dd>" in shown[1]
     # A recorded value in the field's words, never Python's repr ('none').

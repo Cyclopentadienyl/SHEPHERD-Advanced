@@ -69,10 +69,21 @@ ones leave out (T06-D: INT-AUDIT, PTR-LAYOUT).
 (recorded in every checked stop's ``check``) measures what the sweep's
 findings were (a message beside fields, a squeezed box, a choice group
 leaving one option alone, two left edges, a notice said twice, the tab
-groups' separators); `layout_problems` turns it into lines. A walk can serve
-the dashboard at first use or with an empty workspaces folder
-(`walk_state`, `WALK_STATES`) and measure each page at the layout windows
-(`layout_stops`, `LAYOUT_SIZES`).
+groups' separators) and what the L6 after screenshots saw that those missed (a
+page cut at its foot with no scroll cue, words cut by a box, a wrapped group
+pushed to the line's end, a disabled button with nothing said, a token or a
+fact broken where it fits, labels of one row off one line); `layout_problems`
+turns it into lines. A walk can serve the dashboard at first use or with an
+empty workspaces folder (`walk_state`, `WALK_STATES`) and measure each page at
+the layout windows (`layout_stops`, `LAYOUT_SIZES`); a stop measures once the
+page's requests have been answered for ten frames in a row (a page's opening
+chain is idle for an instant between two of its events). **The display
+floor** (`floor_size`, `effective_size`, `at_floor`; the owner's decisions of
+2026-11-23): the floor of the arrangement a window takes, the display floor
+side by side and `style.STACK_FLOOR_WIDTH` no wider than tall; the walk's
+windows are at or above it but one, which is drawn as at the floor
+(``check``'s ``floor``: the layout pass's marks, the frame, the document's
+scroll), and ``in-view`` and ``sideways-scroll`` hold at or above it.
 
 Module: tests/fixtures/browser.py
 """
@@ -340,25 +351,34 @@ LOOK_JS = r"""
   /* **The layout rules** (the UI sweep of 2026-11-22; `layout_problems`): what the page shown
      draws, each measured relative to what is drawn, never against a window size or a pixel
      figure of one screen:
-     - beside: a text block of 100 or more characters (no field in it) that stands beside a field
-       or a button of its panel, overlapping its line by half the control's height;
+     - beside: a text block (no field in it) drawn on more than one line that stands beside a
+       field or a button of its region (its panel; outside every panel, its bar: Training's run
+       bar), overlapping its line by half the control's height: only a one-line relation sits
+       beside the control it explains (the skill's §2); the words of one area a page marks
+       (`.shep-area`: a list and its chosen item's details) beside another area's button aside;
      - narrow: a text box or a select whose inner width holds fewer than 10 of its own "0";
      - overlap: two controls that overlap by more than 2 x 2 px (a ⓘ's cover over its disabled
-       button aside);
+       button aside, and a control of an open drawer where the drawer is drawn over the other: a
+       layer, absolute or fixed and no control, that holds one and not the other and is the top
+       element where they meet);
      - orphan: a choice group on two or more lines whose last line holds one option and whose
        first holds more;
-     - centred: a field or a button centred in a row more than twice its height plus 24 px, 20 px
-       or more below the row's top;
-     - split: the controls of one group (`.shep-grp`) not on one line;
+     - centred: a field or a button centred in a row more than two and a half times its own
+       height, at least half its height below the row's top (relations to what is drawn, no px
+       figure; for the pages' 39-40 px buttons no looser than the twice-plus-24-px it replaced:
+       Fine-tune's Start in its 105 px row and Check in its 115 px one are found);
+     - split: the controls of one group (`.shep-grp`) not on one line (a ⓘ, a Copy and a
+       "Details ›" link aside);
      - edge: in a panel's left part, a heading, paragraph, reason, notice, empty state, field
        label or field box whose left edge is 1 px to 2em off the panel heading's (lists, tables,
        term rows and the words after a status mark aside);
-     - clipped: a control cut by an ancestor that hides its overflow and is no scroll region;
+     - clipped: a control cut by an ancestor that hides its overflow and is no scroll region (a
+       box of ``display: contents`` draws no box, so it clips nothing);
      - empty: a panel with no visible words or control under its header;
      - help: a registered help text drawn on the page outside the bubble;
      - notices: each notice key (`data-notice`, `data-notice-also`) and how often it is drawn;
-     - tabs: the research tabs' lines, their order, and each separator drawn while the tabs wrap
-       or at a line's start, and anything in the tablist that is not a tab. */
+     - tabs: the research tabs' lines, their order, and each separator drawn at a line's start,
+       and anything in the tablist that is not a tab. */
   const INTERACTIVE = 'button, input:not([type=hidden]), textarea, select, a[href], [role=button], '
     + '[role=tab], [role=radio], [role=checkbox], [role=switch], summary';
   const SKIP = 'script, style, noscript, .sr-only, .shep-vh, [hidden], #shep-help-texts, '
@@ -396,6 +416,20 @@ LOOK_JS = r"""
     return out;
   };
   const clip = (s, n = 60) => s.replace(/\s+/g, ' ').trim().slice(0, n);
+  /* How many lines an element's words are drawn on: its text's boxes in order, a box that
+     overlaps the line before it by half its own height on that line (a status mark and the
+     words after it share one). */
+  const linesOf = (el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const rects = [...range.getClientRects()].filter((q) => q.width > 0.5 && q.height > 0.5)
+      .sort((a, b) => a.top - b.top);
+    let n = 0, bottom = -Infinity;
+    for (const q of rects) {
+      if (q.top > bottom - q.height / 2) { n += 1; bottom = q.bottom; } else { bottom = Math.max(bottom, q.bottom); }
+    }
+    return n;
+  };
   /* A ⓘ's cover over the disabled button it explains (the gated-button rule) is meant to lie
      over it. */
   const coverOf = (a, b) => a.matches('.shep-i-cover') || b.matches('.shep-i-cover');
@@ -405,6 +439,7 @@ LOOK_JS = r"""
     let L = r.left, T = r.top, R = r.right, B = r.bottom;
     for (let a = e.parentElement; a && a !== document.documentElement; a = a.parentElement) {
       const s = getComputedStyle(a);
+      if (s.display === 'contents') { continue; }
       if (s.overflowX !== 'visible' || s.overflowY !== 'visible') {
         const q = a.getBoundingClientRect();
         if (s.overflowX !== 'visible') { L = Math.max(L, q.left); R = Math.min(R, q.right); }
@@ -414,6 +449,18 @@ LOOK_JS = r"""
     }
     return { left: L, top: T, right: R, bottom: B, width: Math.max(0, R - L), height: Math.max(0, B - T),
              whole: r.width * r.height };
+  };
+  /* **A control drawn in an open drawer, over another** (`overlap`): `a` lies in a layer that
+     does not hold `b` (a box drawn absolute or fixed that is no control, below the first box
+     they share), and at the point (x, y) that layer, not `b`, is drawn. A control drawn over
+     another in their own box (a Clear over a switch) is an overlap. */
+  const drawnOver = (a, b, x, y) => {
+    let layer = null;
+    for (let p = a.parentElement; p && p !== document.body && !p.contains(b); p = p.parentElement) {
+      if (/^(absolute|fixed)$/.test(getComputedStyle(p).position) && !p.matches(INTERACTIVE)) { layer = p; break; }
+    }
+    const top = layer && document.elementFromPoint(x, y);
+    return !!top && layer.contains(top);
   };
   /* Where an element's own words or box start: a box (a field, a select's wrap) at its border,
      text at its content edge (after its padding and border). */
@@ -432,23 +479,48 @@ LOOK_JS = r"""
     const panels = outer.length ? outer
       : shownNow.panels.filter((p) => !p.matches('[data-testid="status-tracker"]'));
     const scope = tab || document.body, out = { beside: [], narrow: [], overlap: [], orphan: [], centred: [],
-      split: [], edge: [], clipped: [], empty: [], help: [], notices: {}, tabs: null };
+      split: [], edge: [], clipped: [], empty: [], help: [], notices: {}, tabs: null, inview: [], cue: [],
+      wrapEnd: [], disabled: [], token: [], sepEnd: [], chain: [], rowTop: [], rowHeight: [], sideways: [] };
     const panelOf = (e) => panels.findIndex((p) => p.contains(e));
+    /* A text's region for `beside`: its panel, else the outermost bar it is in (Training's run
+       bar is no panel), else none (-1 on a page with no panels). */
+    const regionOf = (e) => {
+      const k = panelOf(e);
+      if (k >= 0) { return k; }
+      let bar = null;
+      for (let b = e.closest('.shep-bar'); b; b = b.parentElement && b.parentElement.closest('.shep-bar')) { bar = b; }
+      return bar || (panels.length ? null : -1);
+    };
     const ctl = [...scope.querySelectorAll(INTERACTIVE)].filter((e) => !e.closest(SKIP) && visible(e));
     const fieldsAndButtons = ctl.filter((c) => c.matches('input, textarea, button, [role=combobox]')
       && !c.matches('.shep-i, .shep-copy, .shep-nb-go, .shep-link'));
     const texts = textNodes(scope);
     // beside
-    const blocks = new Set(texts.filter((x) => x.t.length > 30).map((x) => blockOf(x.el)));
+    const blocks = new Set(texts.map((x) => blockOf(x.el)));
     for (const b of blocks) {
       if (!b || b === scope || b.querySelector('input, textarea, select')) { continue; }
+      // A table's cells, a summary list's rows and a control's own words are their own forms,
+      // not a message beside a control.
+      if (b.closest('table, dl, label, [role=tablist]') || b.closest(INTERACTIVE)) { continue; }
+      // A closed disclosure's body is laid out but not drawn.
+      if (b.closest('details:not([open])') && !b.closest('summary')) { continue; }
       const words = (b.innerText || '').trim();
-      if (words.length < 100) { continue; }
-      const r = b.getBoundingClientRect(), k = panelOf(b);
+      if (linesOf(b) < 2) { continue; }
+      const r = b.getBoundingClientRect(), k = regionOf(b);
+      if (k === null) { continue; }
       const near = fieldsAndButtons.filter((c) => {
-        if (panelOf(c) !== k || (k < 0 && panels.length) || b.contains(c)) { return false; }
+        if (regionOf(c) !== k || b.contains(c)) { return false; }
         const q = c.getBoundingClientRect(), over = Math.min(q.bottom, r.bottom) - Math.max(q.top, r.top);
-        return over > 0.5 * q.height && (q.right <= r.left + 2 || q.left >= r.right - 2);
+        if (!(over > 0.5 * q.height && (q.right <= r.left + 2 || q.left >= r.right - 2))) { return false; }
+        // Beside it in one row, not a column of a form beside another: the branch that holds the
+        // words, under the box that holds both, has no field of its own.
+        let branch = b;
+        while (branch.parentElement && !branch.parentElement.contains(c)) { branch = branch.parentElement; }
+        // Two areas a page marks side by side (`.shep-area`: a list and its chosen item's
+        // details) are two regions: the details' words are not a message beside the list.
+        const area = b.closest('.shep-area');
+        if (area && !area.contains(c)) { return false; }
+        return !branch.querySelector('input:not([type=hidden]), textarea, select');
       });
       if (near.length) { out.beside.push(`${named(b)} "${clip(words, 50)}" beside ${named(near[0])}`); }
     }
@@ -469,7 +541,11 @@ LOOK_JS = r"""
         if (la && la === b.closest('label')) { continue; }
         const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
         const h = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
-        if (w > 2 && h > 2) { out.overlap.push(`${named(a)} and ${named(b)} by ${Math.round(w)} x ${Math.round(h)} px`); }
+        if (w <= 2 || h <= 2) { continue; }
+        // Where they meet, an open drawer holding one is drawn over the other: no overlap.
+        const x = Math.max(ra.left, rb.left) + w / 2, y = Math.max(ra.top, rb.top) + h / 2;
+        if (drawnOver(a, b, x, y) || drawnOver(b, a, x, y)) { continue; }
+        out.overlap.push(`${named(a)} and ${named(b)} by ${Math.round(w)} x ${Math.round(h)} px`);
       }
     }
     // clipped: cut by an ancestor that hides overflow, before any scroll region (what a scroll
@@ -479,6 +555,7 @@ LOOK_JS = r"""
       if (r.width <= 2 || r.height <= 2) { continue; }
       for (let a = e.parentElement; a && a !== document.documentElement; a = a.parentElement) {
         const s = getComputedStyle(a);
+        if (s.display === 'contents') { continue; }
         if (s.position === 'fixed' || /(auto|scroll)/.test(s.overflowX + ' ' + s.overflowY)) { break; }
         if (!/(hidden|clip)/.test(s.overflowX + ' ' + s.overflowY)) { continue; }
         const q = a.getBoundingClientRect();
@@ -494,14 +571,29 @@ LOOK_JS = r"""
       for (let a = c.parentElement; a && a !== scope; a = a.parentElement) {
         const s = getComputedStyle(a), ar = a.getBoundingClientRect();
         if ((s.display.includes('flex') && s.flexDirection.startsWith('row')) || s.display.includes('grid')) {
-          if (ar.height > 2 * q.height + 24 && q.top - ar.top >= 20
-              && Math.abs((q.top + q.bottom) / 2 - (ar.top + ar.bottom) / 2) < 0.2 * ar.height && !rows.has(a)) {
+          // A grid's row is its row track: of a grid of several rows, the tracks the control's box
+          // spans (Models' foot stacks its details, Load, Load's reason and its note in four
+          // tracks at 390 px: Load stood near the foot's middle in a track of its own height).
+          let top = ar.top, bottom = ar.bottom;
+          const tracks = s.display.includes('grid')
+            ? s.gridTemplateRows.split(' ').map(parseFloat).filter((n) => !isNaN(n)) : [];
+          if (tracks.length > 1) {
+            let y = ar.top + parseFloat(s.borderTopWidth) + parseFloat(s.paddingTop), first = null, last = null;
+            for (const t of tracks) {
+              if (y + t > q.top + 0.5 && y < q.bottom - 0.5) { first = first === null ? y : first; last = y + t; }
+              y += t + (parseFloat(s.rowGap) || 0);
+            }
+            if (first !== null) { top = first; bottom = last; }
+          }
+          const h = bottom - top;
+          if (h > 2.5 * q.height && q.top - top >= q.height / 2
+              && Math.abs((q.top + q.bottom) / 2 - (top + bottom) / 2) < 0.2 * h && !rows.has(a)) {
             rows.add(a);
-            out.centred.push(`${named(c)} in ${named(a)} (${Math.round(ar.height)} px tall)`);
+            out.centred.push(`${named(c)} in ${named(a)} (${Math.round(h)} px tall)`);
           }
           break;
         }
-        if (ar.height > q.height + 8) { break; }
+        if (ar.height > 1.2 * q.height) { break; }
       }
     }
     // orphan
@@ -520,7 +612,7 @@ LOOK_JS = r"""
     // split
     for (const g of scope.querySelectorAll('.shep-grp')) {
       const parts = [...g.querySelectorAll('input:not([type=radio]):not([type=checkbox]), textarea, button, .wrap:has(> .wrap-inner)')]
-        .filter((c) => visible(c) && !c.matches('.shep-i, .shep-copy') && !c.closest('.wrap:has(> .wrap-inner) input') )
+        .filter((c) => visible(c) && !c.matches('.shep-i, .shep-copy, .shep-link') && !c.closest('.wrap:has(> .wrap-inner) input') )
         .map((c) => c.getBoundingClientRect());
       if (parts.length > 1 && Math.max(...parts.map((r) => r.top)) >= Math.min(...parts.map((r) => r.bottom))) {
         out.split.push(`${named(g)} on ${new Set(parts.map((r) => Math.round(r.top / 8))).size} lines`);
@@ -581,15 +673,488 @@ LOOK_JS = r"""
       out.tabs = { lines, seps, others: kids.filter((k) => k.getAttribute('role') !== 'tab').map(named),
                    focusable: [...list.querySelectorAll('[tabindex]:not([role=tab])')].map(named) };
     }
+    seeAll(scope, panels, texts, ctl, regionOf, panelOf, out);
     return out;
+  };
+  /* **What the after screenshots saw** (the sweep's L7: SW-LK1..10; `layout_problems`' in-view,
+     scroll-cue, clipped text, wrap-end, disabled-reason, token-break, sep-end, row-top and
+     row-height), each a relation to what is drawn, never a pixel figure of one screen:
+     - inview: a control or a text line drawn past the window's bottom or right edge that no
+       scroll region in view holds (`layout_problems` holds it at every window at or above the
+       floor of its arrangement, `at_floor`, where a page's task fits or one region scrolls inside,
+       never the page; below the floor the document scrolls to it); stacked, the page flows and
+       the document scrolls down to what is under the window, never sideways;
+     - cue: a scroll region (the page's own tab item included, never the document) whose drawn
+       content runs past its edge, below it with no scroll cue (the shared R-73 cue,
+       ``shep-scroll-cue``: a mask drawn while more is below), sideways with no sideways cue (a
+       mask, or the drawn cue just before it, Compare's ``shep-rs-cue``); what runs past a
+       nested region is that region's own;
+     - clipped (text): a text line cut by an ancestor that hides its overflow in that axis (no
+       scroll region of that axis between them), a cut to an ellipsis included unless the whole
+       words are its ``title``;
+     - wrapEnd: in a bar (`.shep-bar`), a later line of groups that does not start on the bar's
+       start edge (a group pushed to the end leaves the start empty);
+     - disabled: a disabled button drawn with no shared reason (a reason line ``shep-reason``, a
+       relation ``data-notice-rel``, its bar's note ``shep-bar-note``) in its group or bar, on its
+       line or just under it (within its own height), unless it is no primary action and its
+       region draws the notice or a relation; words a page drew there in a form of its own are
+       named as such (C11: a disabled control is said one way on every page);
+     - token: a literal token (``code``, ``shep-mono``, a fingerprint, ``shep-full``) whose line
+       ends at a hyphen inside a word (it reads hyphenated), or that breaks a word that fits its
+       box on a line of its own (a flag cut in two);
+     - sepEnd: a separator (" · ") that ends a line, its next fact on the next line;
+     - chain: a fact of a " · " chain (the words between two separators) drawn over two lines
+       though it fits its block on a line of its own;
+     - rowTop: two labelled fields side by side in one row of fields (their nearest shared box
+       a row; each the one labelled field of its branch) whose labels do not share a top line
+       (a quarter of the label's height apart or more);
+     - rowHeight: a table row inside a sideways scroll box whose height is set by a cell out of
+       the box's view (its words over one and a half times as tall as every cell in view, the
+       row at least that tall);
+     - sideways: a region whose drawn content runs past its right edge (it scrolls sideways),
+       masked or not, unless a drawn ``shep-rs-cue`` just before it says so in words. */
+  const seeAll = (scope, panels, allTexts, allCtl, regionOf, panelOf, out) => {
+    // A closed disclosure's body is laid out (a geometry query lays it out) but not drawn.
+    const folded = (e) => { const d = e.closest('details:not([open])'), s = e.closest('summary');
+      return !!d && !(s && s.parentElement === d); };
+    const texts = allTexts.filter((x) => !folded(x.el)), ctl = allCtl.filter((c) => !folded(c));
+    const flow = (e, axis) => getComputedStyle(e)[axis === 'y' ? 'overflowY' : 'overflowX'];
+    const scrolls = (e, axis) => /(auto|scroll)/.test(flow(e, axis));
+    const hides = (e, axis) => /(hidden|clip)/.test(flow(e, axis));
+    // An element's padding box: where its overflow is cut or scrolled.
+    const pad = (e) => { const r = e.getBoundingClientRect(), left = r.left + e.clientLeft, top = r.top + e.clientTop;
+      return { left, top, right: left + e.clientWidth, bottom: top + e.clientHeight }; };
+    const masked = (e) => { const s = getComputedStyle(e), m = s.maskImage || s.webkitMaskImage;
+      return !!m && m !== 'none'; };
+    const say = (e) => clip((e.innerText || e.getAttribute('aria-label') || e.value || e.getAttribute('placeholder')
+      || e.id || '').trim(), 30);
+    // A box drawn as no box (``display: contents``: Gradio's blocks and forms around a field)
+    // clips nothing and scrolls nothing.
+    const boxed = (e) => getComputedStyle(e).display !== 'contents';
+    // Words hidden on purpose and kept for a screen reader (a 1 px box that clips them, or a
+    // ``clip`` rectangle: the icon Copy's label): never drawn, so never cut.
+    const quiet = new Map();
+    const unseen = (e) => {
+      if (quiet.has(e)) { return quiet.get(e); }
+      const s = getComputedStyle(e), r = e.getBoundingClientRect();
+      const found = (s.display !== 'contents'
+          && ((s.clip !== 'auto' && s.clip !== '' && s.position === 'absolute')
+              || (/(hidden|clip)/.test(s.overflowX + s.overflowY) && (r.width <= 1 || r.height <= 1))))
+        || (!!e.parentElement && e.parentElement !== document.body && unseen(e.parentElement));
+      quiet.set(e, found);
+      return found;
+    };
+    // What a page draws, each line of text and each control, with the element it belongs to.
+    const items = [...texts.flatMap((x) => x.rects.map((r) => ({ el: x.el, r, t: x.t }))),
+                   ...ctl.map((c) => ({ el: c, r: c.getBoundingClientRect(), t: say(c) }))]
+      .filter((it) => it.r.width > 0.5 && it.r.height > 0.5 && !unseen(it.el));
+    // How far past an edge, downwards, a line or a control runs before something of it is cut:
+    // a quarter of its own height (a line's box holds its half-leading, a ⓘ's box its target's
+    // room round the drawn mark); sideways a glyph run ends at its last glyph, so 1 px.
+    const past = (r) => Math.max(1, 0.25 * r.height);
+    // The scroll region of an axis an element is in (itself, when it is one), below the document.
+    const nearest = new Map();
+    const scroller = (e, axis) => {
+      const cache = nearest.get(e) || {};
+      if (axis in cache) { return cache[axis]; }
+      let found = null;
+      // One that scrolls in that axis now: a box whose overflow style scrolls but whose content
+      // fits it (a Gradio block of radios, overflow auto) cuts nothing, and naming it hid the
+      // cut its real region made (the sweep's L7 check, C4: Fine-tune's Device radios under the
+      // form's edge were judged by their own block's).
+      const over = (a) => (axis === 'y' ? a.scrollHeight > a.clientHeight + 1 : a.scrollWidth > a.clientWidth + 1);
+      for (let a = e; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+        if (scrolls(a, axis) && boxed(a) && over(a)) { found = a; break; }
+      }
+      cache[axis] = found; nearest.set(e, cache);
+      return found;
+    };
+    // Under an open layer (a drawer: a box drawn absolute or fixed, no control, that does not
+    // hold it) where its middle is drawn: not seen at this stop, so no word or control of its is
+    // judged there (a ⓘ's cover over its disabled button is no layer).
+    const layered = (e) => {
+      const r = e.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+      if (r.width < 1 || r.height < 1 || x < 0 || y < 0 || x > innerWidth || y > innerHeight) { return false; }
+      const t = document.elementFromPoint(x, y);
+      if (!t || e.contains(t) || t.contains(e) || t.closest('.shep-i-cover')) { return false; }
+      for (let p = t; p && p !== document.body; p = p.parentElement) {
+        if (p.contains(e)) { return false; }
+        if (/^(absolute|fixed)$/.test(getComputedStyle(p).position) && !p.matches(INTERACTIVE)) { return true; }
+      }
+      return false;
+    };
+    // inview: stacked (the shell's layout rule), everything flows and the page scrolls as a whole,
+    // so what lies under the window's bottom is the document's to reach; nothing ever lies past
+    // its right edge.
+    const outs = new Set(), se = document.scrollingElement;
+    const pageScrolls = document.documentElement.getAttribute('data-shep-layout') !== 'side'
+      && se.scrollHeight > se.clientHeight + 1;
+    for (const it of items) {
+      const outY = it.r.bottom > innerHeight + past(it.r) && !pageScrolls, outX = it.r.right > innerWidth + 1;
+      if ((!outY && !outX) || outs.has(it.el)) { continue; }
+      let reach = false;
+      for (let a = it.el; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+        if (((outY && scrolls(a, 'y')) || (outX && scrolls(a, 'x'))) && boxed(a)) {
+          const q = a.getBoundingClientRect();
+          if (q.bottom <= innerHeight + 1 && q.right <= innerWidth + 1) { reach = true; break; }
+        }
+      }
+      if (reach) { continue; }
+      outs.add(it.el);
+      if (outs.size <= 8) {
+        out.inview.push(`${named(it.el)} "${clip(it.t, 30)}" drawn ${outY ? Math.round(it.r.bottom - innerHeight) + ' px under the window' : Math.round(it.r.right - innerWidth) + ' px right of the window'}, in no scroll region in view`);
+      }
+    }
+    if (outs.size > 8) { out.inview.push(`and ${outs.size - 8} more out of view`); }
+    // cue
+    const boxes = [scope, ...scope.querySelectorAll('*')].filter((e) => drawn(e) && visible(e)
+      && !e.matches('textarea, select, input') && !e.closest('#shep-help-bubble, ul.option-list, #shep-help-texts'));
+    for (const g of boxes) {
+      const sy = scrolls(g, 'y') && g.scrollHeight > g.clientHeight + 1;
+      const sx = scrolls(g, 'x') && g.scrollWidth > g.clientWidth + 1;
+      if (!sy && !sx) { continue; }
+      const box = pad(g), mine = items.filter((it) => g.contains(it.el));
+      const below = sy ? mine.filter((it) => scroller(it.el, 'y') === g && it.r.bottom > box.bottom + past(it.r))
+        .sort((a, b) => a.r.top - b.r.top) : [];
+      if (sy && !masked(g)) {
+        if (below.length) {
+          out.cue.push(`${named(g)} holds ${Math.round(Math.max(...below.map((it) => it.r.bottom)) - box.bottom)} px `
+            + `of content under its edge with no scroll cue (first: "${clip(below[0].t, 30)}")`);
+        }
+      } else if (below.length) {
+        // A cue is seen only where it fades something drawn: the fade (its length read from the
+        // region's own mask) over a gap between fields reads as nothing, the next field under the
+        // edge unseen (the sweep's L7 check, C1: Diagnosis' fields at 1550 x 830 faded the 22 px
+        // gap under Patient ID, Options and Top-K hidden under it). A line or control of the
+        // region drawn in the fade by a quarter of its own height or more shows it, and so does a
+        // drawn graphic (a chart's plot: an svg, a canvas or an image) by a quarter of the fade.
+        const m = /calc\(100% - ([\d.]+)px\)/.exec(String(getComputedStyle(g).maskImage || getComputedStyle(g).webkitMaskImage));
+        const fade = m ? parseFloat(m[1]) : 0, top = box.bottom - fade;
+        const into = (r) => Math.min(r.bottom, box.bottom) - Math.max(r.top, top);
+        const seen = mine.some((it) => scroller(it.el, 'y') === g && into(it.r) >= past(it.r))
+          || [...g.querySelectorAll('svg, canvas, img')].some((x) => drawn(x) && visible(x)
+            && x.getBoundingClientRect().width > 1 && scroller(x, 'y') === g
+            && into(x.getBoundingClientRect()) >= fade / 4);
+        if (fade > 0 && !seen) {
+          out.cue.push(`${named(g)} fades its last ${Math.round(fade)} px over nothing drawn: what lies under `
+            + `its edge starts ${Math.round(below[0].r.top - box.bottom)} px below it, no cue seen (first: `
+            + `"${clip(below[0].t, 30)}")`);
+        }
+      }
+      const before = g.previousElementSibling;
+      if (sx && !masked(g) && !(before && before.matches('.shep-rs-cue') && visible(before) && drawn(before))) {
+        const right = mine.filter((it) => scroller(it.el, 'x') === g && it.r.right > box.right + 1)
+          .sort((a, b) => a.r.left - b.r.left);
+        if (right.length) {
+          out.cue.push(`${named(g)} holds ${Math.round(Math.max(...right.map((it) => it.r.right)) - box.right)} px `
+            + `of content past its right edge with no sideways cue (cut: "${clip(right[0].t, 30)}")`);
+        }
+      }
+    }
+    // sideways: a region whose drawn content runs past its right edge (it scrolls sideways), a
+    // mask or not (the shell's automatic sideways mask hid a table wider than its frame: the
+    // sweep's L7, fixer A's item 6); a region that says in words that it scrolls sideways (a
+    // drawn ``shep-rs-cue`` just before it: Compare's columns, one per result) is meant to.
+    for (const g of boxes) {
+      if (!(scrolls(g, 'x') && g.scrollWidth > g.clientWidth + 1)) { continue; }
+      const before = g.previousElementSibling;
+      if (before && before.matches('.shep-rs-cue') && visible(before) && drawn(before)) { continue; }
+      const box = pad(g), right = items.filter((it) => g.contains(it.el) && scroller(it.el, 'x') === g
+        && it.r.right > box.right + 1).sort((a, b) => a.r.left - b.r.left);
+      if (right.length) {
+        out.sideways.push(`${named(g)} scrolls sideways: ${Math.round(Math.max(...right.map((it) => it.r.right)) - box.right)} px `
+          + `of its content past its right edge (first: "${clip(right[0].t, 30)}")`);
+      }
+    }
+    // clipped text
+    const cutAt = new Set();
+    for (const x of texts) {
+      if (unseen(x.el)) { continue; }
+      for (const r of x.rects) {
+        let doneX = false, doneY = false, cut = null;
+        for (let a = x.el; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+          const s = getComputedStyle(a);
+          if (s.display === 'contents') { continue; }
+          const q = pad(a);
+          if (!doneX && hides(a, 'x') && (r.left < q.left - 1 || r.right > q.right + 1)) { cut = [a, 'x', Math.max(q.left - r.left, r.right - q.right)]; break; }
+          if (!doneY && hides(a, 'y') && (r.top < q.top - past(r) || r.bottom > q.bottom + past(r))) { cut = [a, 'y', Math.max(q.top - r.top, r.bottom - q.bottom)]; break; }
+          doneX = doneX || scrolls(a, 'x'); doneY = doneY || scrolls(a, 'y');
+          if ((doneX && doneY) || s.position === 'fixed') { break; }
+        }
+        if (!cut || cutAt.has(x.node)) { continue; }
+        const [a, axis, by] = cut;
+        // An ellipsis says the words go on; its whole words are then the element's title.
+        if (axis === 'x' && getComputedStyle(a).textOverflow === 'ellipsis') {
+          const titled = x.el.closest('[title]');
+          if (titled && clip(titled.getAttribute('title') || '', 400).includes(clip(x.t, 200))) { continue; }
+        }
+        cutAt.add(x.node);
+        out.clipped.push(`text "${clip(x.t, 30)}" (${named(x.el)}) cut by ${named(a)} by ${Math.round(by)} px `
+          + `${axis === 'x' ? 'sideways' : 'at its foot'}`);
+      }
+    }
+    // wrapEnd
+    const flexItems = (box) => {
+      const found = [];
+      for (const k of box.children) {
+        const s = getComputedStyle(k);
+        if (s.display === 'contents') { found.push(...flexItems(k)); continue; }
+        if (s.display === 'none' || /^(absolute|fixed)$/.test(s.position) || !drawn(k)) { continue; }
+        const q = k.getBoundingClientRect();
+        if (q.width >= 1 && q.height >= 1) { found.push([k, q]); }
+      }
+      return found;
+    };
+    for (const bar of scope.querySelectorAll('.shep-bar')) {
+      if (!visible(bar) || bar.closest(SKIP) || layered(bar)) { continue; }
+      const lines = [];
+      for (const [k, q] of flexItems(bar)) {
+        const line = lines[lines.length - 1];
+        if (line && q.top < line.bottom - 1 && q.bottom > line.top + 1) {
+          line.items.push([k, q]); line.top = Math.min(line.top, q.top); line.bottom = Math.max(line.bottom, q.bottom);
+        } else { lines.push({ items: [[k, q]], top: q.top, bottom: q.bottom }); }
+      }
+      const s = getComputedStyle(bar), start = bar.getBoundingClientRect().left + bar.clientLeft + parseFloat(s.paddingLeft);
+      lines.slice(1).forEach((line, i) => {
+        const first = line.items.reduce((a, b) => (b[1].left < a[1].left ? b : a));
+        if (first[1].left - start > 1) {
+          out.wrapEnd.push(`${named(bar)} line ${i + 2} starts ${Math.round(first[1].left - start)} px in from the bar's `
+            + `start edge (${named(first[0])}), the start of its line left empty`);
+        }
+      });
+    }
+    // disabled
+    // The shared reason forms: a reason line, a relation to the notice, a bar's note under its
+    // group (the skill's §2), each drawn with words.
+    const reasons = [...scope.querySelectorAll('.shep-reason, [data-notice-rel], .shep-bar-note')]
+      .filter((e) => visible(e) && drawn(e) && !e.closest(SKIP) && /[A-Za-z0-9]/.test(e.innerText || ''));
+    const outermost = (e, sel) => { let found = null;
+      for (let b = e.closest(sel); b; b = b.parentElement && b.parentElement.closest(sel)) { found = b; } return found; };
+    // On the button's line, or under it within its own height and across its width.
+    const besideOrUnder = (p, r) => (p.top < r.bottom && p.bottom > r.top)
+      || (p.top >= r.bottom - 1 && p.top <= r.bottom + r.height && p.left < r.right && p.right > r.left);
+    for (const b of scope.querySelectorAll('button, [role=button]')) {
+      if (!(b.disabled || b.getAttribute('aria-disabled') === 'true') || b.closest(SKIP) || !visible(b)
+          || b.matches('.shep-i, .shep-copy, .shep-link, [role=tab]') || layered(b)) { continue; }
+      const r = b.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) { continue; }
+      const k = regionOf(b), grp = b.closest('.shep-grp'), bar = outermost(b, '.shep-bar');
+      const near = reasons.some((q) => ((grp && grp.contains(q)) || (bar && bar.contains(q)))
+        || (regionOf(q) === k && besideOrUnder(q.getBoundingClientRect(), r)));
+      if (near) { continue; }
+      const region = typeof k === 'number' ? (k >= 0 ? panels[k] : null) : k;
+      const said = !!region && [...region.querySelectorAll('[data-notice], [data-notice-rel]')].some((n) => visible(n) && drawn(n));
+      if (said && !b.matches('.primary')) { continue; }
+      // Words a page drew beside it in a form of its own (not the shared reason line, C11).
+      const own = texts.find((x) => regionOf(x.el) === k && !b.contains(x.el) && !x.el.closest(INTERACTIVE)
+        && /[A-Za-z0-9]/.test(x.t) && x.rects.some((q) => besideOrUnder(q, r)));
+      out.disabled.push(`${named(b)} "${say(b)}" disabled with `
+        + (own ? `its reason in a page's own form, no shared reason line ("${clip(own.t, 30)}", ${named(own.el)})`
+               : 'nothing said in its group, beside or under it')
+        + (said ? '; its region\'s notice does not cover a primary action' : ''));
+    }
+    // token
+    const TOKEN = 'code, kbd, samp, .shep-mono, .shep-fpv, .shep-full';
+    const tokens = new Set(texts.map((x) => x.el.closest(TOKEN)).filter((t) => t && scope.contains(t)
+      && !(t.parentElement && t.parentElement.closest(TOKEN))));
+    for (const t of tokens) {
+      if (linesOf(t) < 2 || unseen(t) || layered(t)) { continue; }
+      const chars = [];
+      const w = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);
+      for (let n = w.nextNode(); n; n = w.nextNode()) {
+        if (!visible(n.parentElement)) { continue; }
+        for (let i = 0; i < n.data.length; i++) {
+          const rg = document.createRange(); rg.setStart(n, i); rg.setEnd(n, i + 1);
+          chars.push({ c: n.data[i], r: [...rg.getClientRects()].find((q) => q.width > 0.1) || null });
+        }
+      }
+      let line = -1, bottom = -Infinity;
+      for (const ch of chars) {
+        if (!ch.r || /\s/.test(ch.c)) { ch.line = null; continue; }
+        if (ch.r.top > bottom - ch.r.height / 2) { line += 1; bottom = ch.r.bottom; } else { bottom = Math.max(bottom, ch.r.bottom); }
+        ch.line = line;
+      }
+      const box = blockOf(t), bs = getComputedStyle(box);
+      const room = box.clientWidth - parseFloat(bs.paddingLeft) - parseFloat(bs.paddingRight);
+      let word = [];
+      const judge = () => {
+        const drawnChars = word.filter((ch) => ch.line !== null);
+        for (let i = 0; i + 1 < drawnChars.length; i++) {
+          if (drawnChars[i].line === drawnChars[i + 1].line) { continue; }
+          const text = word.map((ch) => ch.c).join(''), width = drawnChars.reduce((a, ch) => a + ch.r.width, 0);
+          if (drawnChars[i].c === '-') {
+            out.token.push(`${named(t)} "${clip(text, 40)}" ends a line at a hyphen inside a word (reads hyphenated)`);
+          } else if (width <= room - 1) {
+            out.token.push(`${named(t)} "${clip(text, 40)}" broken over two lines though it fits its box on a line of `
+              + `its own (${Math.round(width)} of ${Math.round(room)} px)`);
+          } else { continue; }
+          break;
+        }
+        word = [];
+      };
+      for (const ch of chars) { if (/\s/.test(ch.c)) { judge(); } else { word.push(ch); } }
+      judge();
+    }
+    // sepEnd
+    // The first character drawn after `from` in a text node, and the words from it.
+    const firstChar = (node, from) => {
+      for (let j = from; j < node.data.length; j++) {
+        if (/\s/.test(node.data[j])) { continue; }
+        const q = document.createRange(); q.setStart(node, j); q.setEnd(node, j + 1);
+        const r = [...q.getClientRects()].find((x) => x.width > 0.1);
+        if (r) { return [r, node.data.slice(j)]; }
+      }
+      return null;
+    };
+    // ... and after the text `k`'s character `at`, in its own node or the next ones of its block.
+    const firstAfter = (k, at, block) => {
+      const here = firstChar(texts[k].node, at + 1);
+      if (here) { return here; }
+      for (let i = k + 1; i < texts.length && block.contains(texts[i].node); i++) {
+        const found = firstChar(texts[i].node, 0);
+        if (found) { return found; }
+      }
+      return null;
+    };
+    texts.forEach((x, k) => {
+      for (let at = x.node.data.indexOf('·'); at >= 0; at = x.node.data.indexOf('·', at + 1)) {
+        const rg = document.createRange(); rg.setStart(x.node, at); rg.setEnd(x.node, at + 1);
+        const dot = [...rg.getClientRects()].find((q) => q.width > 0.1);
+        const next = dot && !unseen(x.el) && !layered(x.el) && firstAfter(k, at, blockOf(x.el));
+        if (next && next[0].top >= dot.bottom - dot.height / 2) {
+          out.sepEnd.push(`${named(blockOf(x.el))} ends a line with " · " before "${clip(next[1], 24)}"`);
+        }
+      }
+    });
+    // chain (a chip): a mark or a tag, a few words in one border, is one unit; drawn over two
+    // lines inside its border it reads as two facts in one box (the sweep's L7 check, D5:
+    // Datasets' "serving reads this workspace" at 1366 x 768).
+    for (const chip of document.querySelectorAll('.shep-mark, .shep-tag')) {
+      if (!drawn(chip) || !visible(chip) || layered(chip) || unseen(chip)) { continue; }
+      const rg = document.createRange(); rg.selectNodeContents(chip);
+      const rs = [...rg.getClientRects()].filter((q) => q.width > 0.5 && q.height > 0.5).sort((a, b) => a.top - b.top);
+      let lines = 0, low = -Infinity;
+      for (const q of rs) { if (q.top >= low - q.height / 2) { lines += 1; low = q.bottom; } else { low = Math.max(low, q.bottom); } }
+      if (lines > 1) {
+        out.chain.push(`${named(chip)} draws the chip "${clip(chip.textContent.trim(), 40)}" over ${lines} lines inside its border`);
+      }
+    }
+    // chain: each fact of a " · " chain (its block's words between two separators) drawn over
+    // two lines though it fits the block on a line of its own
+    const chains = new Set(texts.filter((x) => x.node.data.includes('·')).map((x) => blockOf(x.el)));
+    for (const blk of chains) {
+      if (!blk || linesOf(blk) < 2 || layered(blk)) { continue; }
+      const bs = getComputedStyle(blk), room = blk.clientWidth - parseFloat(bs.paddingLeft) - parseFloat(bs.paddingRight);
+      // A separator not drawn (the shell hides one its line breaks after) still parts two facts.
+      const chars = [], byNode = new Map(texts.map((x) => [x.node, x]));
+      const wk = document.createTreeWalker(blk, NodeFilter.SHOW_TEXT);
+      for (let n = wk.nextNode(); n; n = wk.nextNode()) {
+        const x = byNode.get(n);
+        if (!x) {
+          if (n.data.includes('·') && n.parentElement && n.parentElement.closest('.shep-sep')) { chars.push({ c: '·', r: null }); }
+          continue;
+        }
+        if (unseen(x.el)) { continue; }
+        for (let i = 0; i < x.node.data.length; i++) {
+          const rg = document.createRange(); rg.setStart(x.node, i); rg.setEnd(x.node, i + 1);
+          chars.push({ c: x.node.data[i], r: [...rg.getClientRects()].find((q) => q.width > 0.1) || null });
+        }
+      }
+      let line = -1, bottom = -Infinity, fact = [];
+      for (const ch of chars) {
+        if (!ch.r || /\s/.test(ch.c)) { continue; }
+        if (ch.r.top > bottom - ch.r.height / 2) { line += 1; bottom = ch.r.bottom; } else { bottom = Math.max(bottom, ch.r.bottom); }
+        ch.line = line;
+      }
+      const judge = () => {
+        const inked = fact.filter((ch) => ch.r && !/\s/.test(ch.c));
+        const width = fact.reduce((a, ch) => a + (ch.r ? ch.r.width : 0), 0);
+        if (new Set(inked.map((ch) => ch.line)).size > 1 && width <= room - 1) {
+          out.chain.push(`${named(blk)} draws the fact "${clip(fact.map((ch) => ch.c).join(''), 40)}" over two lines `
+            + `though it fits on a line of its own (${Math.round(width)} of ${Math.round(room)} px)`);
+        }
+        fact = [];
+      };
+      for (const ch of chars) { if (ch.c === '·') { judge(); } else { fact.push(ch); } }
+      judge();
+    }
+    // rowTop
+    const fieldsDrawn = [...scope.querySelectorAll('.block')].filter((f) => visible(f) && drawn(f) && !f.closest(SKIP))
+      .map((f) => [f, [...f.querySelectorAll('span[data-testid="block-info"]')]
+        .find((l) => l.closest('.block') === f && visible(l) && l.getBoundingClientRect().height > 4)])
+      .filter(([, l]) => l);
+    const layer = (c) => { let e = c; while (e && getComputedStyle(e).display === 'contents') { e = e.parentElement; } return e; };
+    for (let i = 0; i < fieldsDrawn.length; i++) {
+      for (let j = i + 1; j < fieldsDrawn.length; j++) {
+        const [a, la] = fieldsDrawn[i], [b, lb] = fieldsDrawn[j];
+        if (panelOf(a) !== panelOf(b) || layered(la) || layered(lb)) { continue; }
+        const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+        if (Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top) < 0.5 * Math.min(ra.height, rb.height)
+            || !(ra.right <= rb.left + 1 || rb.right <= ra.left + 1)) { continue; }
+        let c = a.parentElement;
+        while (c && !c.contains(b)) { c = c.parentElement; }
+        const cs = c && getComputedStyle(layer(c));
+        if (!cs || !((cs.display.includes('flex') && cs.flexDirection.startsWith('row')) || cs.display.includes('grid'))) { continue; }
+        const branch = (e) => { let x = e; while (x.parentElement !== c) { x = x.parentElement; } return x; };
+        const one = (x) => fieldsDrawn.filter(([f]) => x.contains(f)).length === 1;
+        if (!one(branch(a)) || !one(branch(b))) { continue; }
+        const pa = la.getBoundingClientRect(), pb = lb.getBoundingClientRect(), dy = Math.abs(pa.top - pb.top);
+        if (dy >= 0.25 * Math.min(pa.height, pb.height)) {
+          out.rowTop.push(`${named(a)} "${clip(la.textContent, 20)}" and ${named(b)} "${clip(lb.textContent, 20)}": `
+            + `labels ${Math.round(dy)} px apart in one row (${named(c)})`);
+        }
+      }
+    }
+    // rowHeight
+    const inks = (cell) => { const r = document.createRange(); r.selectNodeContents(cell);
+      const q = [...r.getClientRects()].filter((x) => x.width > 0.5 && x.height > 0.5);
+      return q.length ? Math.max(...q.map((x) => x.bottom)) - Math.min(...q.map((x) => x.top)) : 0; };
+    for (const tr of scope.querySelectorAll('tr')) {
+      if (!visible(tr) || tr.closest(SKIP) || layered(tr)) { continue; }
+      const sc = scroller(tr, 'x');
+      if (!sc || !(sc.scrollWidth > sc.clientWidth + 1)) { continue; }
+      const box = pad(sc), cells = [...tr.children].filter((c) => visible(c) && drawn(c));
+      const seen = cells.filter((c) => { const q = c.getBoundingClientRect(); return q.left < box.right - 1 && q.right > box.left + 1; });
+      const away = cells.filter((c) => !seen.includes(c));
+      if (!seen.length || !away.length) { continue; }
+      const inView = Math.max(...seen.map(inks)), tall = Math.max(...away.map(inks)), h = tr.getBoundingClientRect().height;
+      if (inView > 0 && tall > 1.5 * inView && h >= 1.5 * inView) {
+        out.rowHeight.push(`${named(tr)} ${Math.round(h)} px tall, set by a cell out of ${named(sc)}'s view `
+          + `(${Math.round(tall)} px of words against ${Math.round(inView)} px in view)`);
+      }
+    }
   };
   /* What one window of the page shows: no sideways page scroll, its scroll
      regions, its text, its fields, its labels, its stage hint, its choices, and
      the layout rules' findings (`layout`). */
+  /* **What the display floor decides** (`style.FLOOR_WIDTH` x `FLOOR_HEIGHT`; `layout_problems`'
+     ``floor``): the layout pass's marks (the root's side or stack and short, the header's
+     classes, every box marked narrow, folded or alone), the app's frame as drawn and how far the
+     document scrolls each way. Below the floor they are compared with the floor's own. */
+  const MARKS = ['data-shep-narrow', 'data-shep-folded', 'data-shep-alone'];
+  // A marked box by what stays across a page's redraws: its nearest id a page gave (Gradio's own
+  // ``component-N`` and an HTML block's ``html-…`` are new at each draw), its tag and classes.
+  const stable = (e) => {
+    let holder = e;
+    while (holder && (!holder.id || /^(component-\d+|html-[a-z0-9]+)$/.test(holder.id))) { holder = holder.parentElement; }
+    const cls = typeof e.className === 'string' ? e.className.trim().split(/\s+/).filter((c) => c && !c.startsWith('svelte-')) : [];
+    return `${holder ? '#' + holder.id : 'body'}${holder === e ? '' : ' ' + e.tagName.toLowerCase() + (cls.length ? '.' + cls.join('.') : '')}`;
+  };
+  const floorFacts = () => {
+    const root = document.documentElement, se = document.scrollingElement;
+    const app = document.querySelector('gradio-app'), shell = document.getElementById('shep-shell');
+    const r = app ? app.getBoundingClientRect() : { width: 0, height: 0 };
+    return { layout: root.getAttribute('data-shep-layout'), short: root.hasAttribute('data-shep-short'),
+             header: shell ? [...shell.classList].filter((c) => c.startsWith('shep-')).sort() : [],
+             marked: [...document.querySelectorAll(MARKS.map((m) => `[${m}]`).join(', '))].filter(drawn)
+               .map((e) => `${stable(e)} ${MARKS.filter((m) => e.hasAttribute(m)).join(' ')}`).sort(),
+             frame: [Math.round(r.width), Math.round(r.height)],
+             scroll: [se.scrollWidth - se.clientWidth, se.scrollHeight - se.clientHeight] };
+  };
   const check = () => {
     const se = document.scrollingElement;
     return { overX: se.scrollWidth - se.clientWidth, regions: regions(), type: typeScale(), fields: fields(),
-             labels: labels(), stage: stageHint(), choices: choices(), layout: layout() };
+             labels: labels(), stage: stageHint(), choices: choices(), layout: layout(), floor: floorFacts() };
   };
   /* Each control drawn, focused as a keyboard focuses it (the caller pressed
      a key first, so a script's focus is :focus-visible): is anything but an
@@ -710,24 +1275,27 @@ LOOK_JS = r"""
   };
   window.__shepLook = { parse, ratio, behind, shown, typeScale, fields, labels, pseudo, topAt,
                         shownPage, regions, stageHint, choices, check, focusWalk, repeats, tops, textBox,
-                        words, layout };
+                        words, layout, floorFacts };
 })();
 """
 
 
-#: The representative windows (D08): the owner's, 1280 wide, short and wide,
-#: a short laptop's (1366 x 768 less the browser's own bars), portrait, a
-#: narrow column and a phone.
-UI_SIZES = ((1850, 960), (1280, 900), (1920, 700), (1366, 620), (1440, 1600), (960, 1080), (390, 844))
+#: The representative windows (D08), all at or above the display floor
+#: (`style.FLOOR_WIDTH` x `FLOOR_HEIGHT`, the owner's decision of 2026-11-23;
+#: a window below it is drawn as at the floor, the layout walk's ``floor``):
+#: the owner's, 1280 wide, short and wide, a laptop's (1366 x 768), a tall
+#: one (stacked: no wider than tall), and the floor itself.
+UI_SIZES = ((1850, 960), (1280, 900), (1920, 720), (1366, 768), (1440, 1600), (1280, 720))
 
 #: PLAN_TEST_RESULTS §6's layout acceptance windows the representative ones
-#: leave out (PTR-LAYOUT): 1440 x 900, a 1280 x 720 laptop, 1707 x 870 (a
-#: 2560 x 1440 screen at 150 %), 1920 x 1080, 2560 x 1600, 3840 x 2160, a
-#: 1080 x 1920 portrait screen, and 960 x 540, a 1920 x 1080 window at 200 %
-#: zoom (zoom changes the CSS viewport; a high-DPI screen only the device
-#: pixels per CSS pixel: `walk_ui`'s ``device_scale``).
-PTR_SIZES = ((1440, 900), (1280, 720), (1707, 870), (1920, 1080), (2560, 1600), (3840, 2160),
-             (1080, 1920), (960, 540))
+#: leave out (PTR-LAYOUT), at or above the floor: 1440 x 900, 1707 x 870 (a
+#: 2560 x 1440 screen at 150 %), 1920 x 1080, 2560 x 1600 and 3840 x 2160
+#: (zoom changes the CSS viewport; a high-DPI screen only the device pixels
+#: per CSS pixel: `walk_ui`'s ``device_scale``). A 1080 x 1920 portrait
+#: screen takes the stacked arrangement, at or above its floor
+#: (`style.STACK_FLOOR_WIDTH`; `LAYOUT_SIZES` walks it); a 1920 x 1080 window
+#: at 200 % (960 x 540) is below the display floor.
+PTR_SIZES = ((1440, 900), (1707, 870), (1920, 1080), (2560, 1600), (3840, 2160))
 
 #: A request D8 refuses as forwarded by a proxy (`walk_ui`'s ``headers``): the
 #: walk of a read-only viewer on a service in mode M1, on this machine.
@@ -749,7 +1317,8 @@ UI_PAGES = ("clinical", "datasets", "training", "finetune", "test", "models", "s
 #: "shown": drawer, "close": its close}``, and ``"pick"``/``"picked"``: a
 #: row to choose in it and what shows it was chosen) opens that drawer
 #: before it measures, chooses that row, walks focus inside the drawer only
-#: (the panels it covers are not its measure) and closes it again after. A
+#: (the panels it covers are not its measure) and closes it again after (an
+#: ``open`` with no ``close``, a row chosen on the page itself, stays). A
 #: stop with ``diagnose`` (``{"hpo": terms, "top_k": n, "rows": n}``) runs a
 #: diagnosis on Diagnosis first and waits for its rows to be drawn; the
 #: result stays for the stops after it. A checked stop also records
@@ -770,8 +1339,18 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
                                                  ...(HEADERS ? { extraHTTPHeaders: HEADERS } : {}) })).newPage();
   await page.addInitScript(QUEUE_JS);
   await page.addInitScript(LOOK_JS);
-  const idle = () => page.waitForFunction(() => window.__shepQueue && window.__shepQueue.idle(),
-                                          null, { timeout: 60000 });
+  // Nothing asked is unanswered over ten frames in a row: a page's opening chain (`.then` after
+  // `.then`, each joined a moment after the one before is answered) is idle for an instant
+  // between two of its events, and a stop measured there missed what its last event drew (the
+  // L7 rules: Fine-tune's reason beside its disabled Start, drawn late in the chain).
+  const idle = async () => {
+    await page.evaluate(() => { window.__shepQuiet = 0; });
+    await page.waitForFunction(() => {
+      if (!(window.__shepQueue && window.__shepQueue.idle())) { window.__shepQuiet = 0; return false; }
+      window.__shepQuiet += 1;
+      return window.__shepQuiet >= 10;
+    }, null, { timeout: 60000, polling: 'raf' });
+  };
   const settle = () => page.evaluate(async () => {
     const sign = () => { const { panels } = window.__shepLook.shownPage(), se = document.scrollingElement;
       return [document.documentElement.getAttribute('data-shep-layout'), se.scrollWidth, se.scrollHeight,
@@ -789,6 +1368,11 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
   // A stop's drawer (`stop.open`: its opener, the drawer and its close): opened
   // once the page is shown, its requests answered; closed again after the stop.
   const drawer = async (spec, open) => {
+    // The opener is clicked where it is drawn once the page has settled at the
+    // stop's size: a forced click right after a resize lands where the layout
+    // pass is about to move it from (Diagnosis' card folds at 1280 x 600 and
+    // its Details › moves), and that click missed its button.
+    if (open) { await idle(); await settle(); }
     await page.click(open ? spec.click : spec.close, { force: true });
     await page.waitForSelector(spec.shown, { state: open ? 'visible' : 'hidden' });
     await idle();
@@ -865,6 +1449,12 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
     if (stop.open) { await drawer(stop.open, true); }
     const seen = { size: `${w}x${h}`, page: stop.page, frames: await settle() };
     if (stop.open) { seen.open = stop.open.shown; }
+    // A drawer opened with a row chosen (`stop.open.pick`): the chosen model whose facts it drew,
+    // so a walk can show that its row-chosen stops ran with their choice (the sweep's L7, FX-2).
+    if (stop.open && stop.open.pick) {
+      seen.picked = await page.$eval(stop.open.picked, (el) => el.getAttribute('data-facts-key')
+        || el.textContent.trim()).catch(() => '');
+    }
     if (EXTRA) { seen.extra = await page.evaluate(EXTRA); }
     if (stop.check !== false) {
       seen.check = await page.evaluate(() => window.__shepLook.check());
@@ -881,7 +1471,8 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
       await page.evaluate(() => window.scrollTo(0, 0));
     }
     if (stop.options) { seen.options = await options(); }
-    if (stop.open) { await drawer(stop.open, false); }
+    // A choice with no closer (a row chosen on a page, its details shown: Models) stays.
+    if (stop.open && stop.open.close) { await drawer(stop.open, false); }
     out.push(seen);
   }
   console.log(JSON.stringify(out));
@@ -1002,10 +1593,45 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
 #: **The layout rules** (the UI sweep of 2026-11-22; `LOOK_JS`'s ``layout``, each
 #: relative to what is drawn): the key of each, as `layout_problems` names it.
 LAYOUT_RULES = ("beside", "narrow-box", "overlap", "orphan", "centred", "split-group", "edge",
-                "clipped", "empty-region", "help-on-page", "notice-repeat", "tab-groups")
+                "clipped", "empty-region", "help-on-page", "notice-repeat", "tab-groups", "in-view",
+                "scroll-cue", "wrap-end", "disabled-reason", "token-break", "sep-end", "chain-break",
+                "row-top", "row-height", "sideways-scroll", "floor")
 _LAYOUT_KEYS = {"beside": "beside", "narrow-box": "narrow", "overlap": "overlap", "orphan": "orphan",
                 "centred": "centred", "split-group": "split", "edge": "edge", "clipped": "clipped",
-                "empty-region": "empty", "help-on-page": "help"}
+                "empty-region": "empty", "help-on-page": "help", "scroll-cue": "cue",
+                "wrap-end": "wrapEnd", "disabled-reason": "disabled", "token-break": "token",
+                "sep-end": "sepEnd", "chain-break": "chain", "row-top": "rowTop",
+                "row-height": "rowHeight"}
+#: The rules held only at or above the display floor (`at_floor`): below it the layout is the
+#: floor's and the document scrolls, so what lies past the window is reached by that scroll.
+_AT_FLOOR_KEYS = {"in-view": "inview", "sideways-scroll": "sideways"}
+
+
+def floor_size() -> tuple[int, int]:
+    """**The display floor** (`style.FLOOR_WIDTH` x `FLOOR_HEIGHT`, the owner's decision of
+    2026-11-23), as a window size: the side-by-side arrangement's."""
+    from src.webui.style import FLOOR_HEIGHT, FLOOR_WIDTH
+
+    return FLOOR_WIDTH, FLOOR_HEIGHT
+
+
+def effective_size(size: str) -> tuple[int, int]:
+    """**The area a stop's window is drawn at** (``"<w>x<h>"``; the shell's layout pass,
+    ``area()``): the window raised to the floor of the arrangement it takes. No wider than
+    tall, the stacked arrangement's (`style.STACK_FLOOR_WIDTH` in both axes, the owner's
+    decision of 2026-11-23 on portrait windows); wider, the display floor (`floor_size`)."""
+    from src.webui.style import STACK_FLOOR_WIDTH
+
+    w, h = (int(n) for n in size.split("x"))
+    fw, fh = (STACK_FLOOR_WIDTH, STACK_FLOOR_WIDTH) if w <= h else floor_size()
+    return max(w, fw), max(h, fh)
+
+
+def at_floor(size: str) -> bool:
+    """Whether a stop's window (``"<w>x<h>"``) is at or above the floor of the arrangement it
+    takes in both axes (`effective_size`: the window is its own area)."""
+    w, h = (int(n) for n in size.split("x"))
+    return effective_size(size) == (w, h)
 
 
 def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_RULES,
@@ -1017,25 +1643,73 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
     shared walk holds these at zero once every page is laid out again (the
     sweep's integration); a page's lane runs them on its own pages:
 
-    - ``beside``: a text block of 100+ characters beside a field or button of its panel;
+    - ``beside``: a text block drawn on two or more lines beside a field or button of its panel
+      (or of its bar, outside every panel);
     - ``narrow-box``: a text box or select holding fewer than 10 of its own "0";
-    - ``overlap``: two controls overlapping by more than 2 x 2 px;
+    - ``overlap``: two controls overlapping by more than 2 x 2 px (one an open drawer lies over
+      aside);
     - ``orphan``: a choice group whose last line holds one option, its first more;
-    - ``centred``: a control centred in a row over twice its height plus 24 px;
-    - ``split-group``: the controls of one ``.shep-grp`` on more than one line;
+    - ``centred``: a control centred in a row over two and a half times its own height;
+    - ``split-group``: the controls of one ``.shep-grp`` on more than one line (a ⓘ, a Copy and a
+      "Details ›" link aside);
     - ``edge``: a heading, paragraph, notice, label or field 1 px to 2em off its panel
       heading's left edge;
-    - ``clipped``: a control cut by an ancestor that hides overflow and does not scroll;
+    - ``clipped``: a control cut by an ancestor that hides overflow and does not scroll (a box of
+      ``display: contents`` clips nothing);
     - ``empty-region``: a panel with nothing under its header;
     - ``help-on-page``: a help text drawn outside the bubble;
     - ``notice-repeat``: a notice key drawn more than once on one screen;
-    - ``tab-groups``: a separator drawn at a line's start or while the research tabs wrap,
-      anything but a tab in the tablist, a focus stop that is not a tab, or the tabs out of
-      `RESEARCH_PAGES`' order."""
+    - ``tab-groups``: the research tabs on more than one line (at or above the display floor
+      they sit on one; below it the row is drawn as at the floor), a separator drawn at a
+      line's start, anything but a tab in the tablist, a focus stop that is not a tab, or the
+      tabs out of `RESEARCH_PAGES`' order;
+    - ``in-view`` (at every window at or above the display floor, `at_floor`): a control or a
+      text line of the page drawn past the window's bottom or right edge that no scroll region in
+      view holds;
+    - ``scroll-cue``: a scroll region whose drawn content runs past its edge with no cue: below
+      it, no R-73 scroll cue (``shep-scroll-cue``'s mask); sideways, no mask and no drawn cue
+      just before it (Compare's ``shep-rs-cue``): a table wider than its panel, its cells cut;
+    - ``clipped`` also holds a text line cut by an ancestor that hides its overflow in that axis,
+      a cut to an ellipsis included unless its whole words are its ``title``;
+    - ``wrap-end``: a later line of a bar's groups that does not start on the bar's start edge;
+    - ``disabled-reason``: a disabled button with no shared reason (``shep-reason``, a relation,
+      its bar's ``shep-bar-note``) in its group or bar, on its line or within its own height under
+      it, unless it is no primary action and its region draws the notice or a relation (words a
+      page drew there in a form of its own are named: C11 says it one way on every page);
+    - ``token-break``: a literal token whose line ends at a hyphen inside a word, or that breaks a
+      word fitting its box on a line of its own;
+    - ``sep-end``: a separator (" · ") ending a line, its next fact on the next line;
+    - ``chain-break``: a fact of a " · " chain drawn over two lines though it fits its block on a
+      line of its own (a key split from its value, two chips of one fact apart);
+    - ``row-top``: two labelled fields side by side in one row whose labels do not share a top
+      line (a quarter of the label's height apart or more);
+    - ``row-height``: a table row in a sideways scroll box whose height a cell out of the box's
+      view sets (an empty band across the cells in view);
+    - ``sideways-scroll`` (at or above the floor): a region whose content runs past its right
+      edge, so it scrolls sideways, a mask or not (the shell's automatic sideways cue hid a
+      table wider than its frame), unless it says so in words just before it (a drawn
+      ``shep-rs-cue``: Compare, a column per result);
+    - ``floor`` (the floor of the arrangement the window takes, `effective_size`: the display
+      floor, `floor_size`, side by side; `style.STACK_FLOOR_WIDTH` no wider than tall): at or
+      above it, the document never scrolls sideways and, side by side, never at all (the frame
+      never scrolls); below it in either axis, the layout pass's marks (side or stack, short, the
+      header's classes, each box marked narrow, folded or alone) and the frame are those of the
+      stop of the same page and drawer at the area the window is drawn at (raised to its
+      arrangement's floor), and the document scrolls in each axis the window is under that
+      floor (drawn as at the floor, never shrunk)."""
     from src.webui.shell import RESEARCH_PAGES
 
     problems: list[str] = []
-    for stop in (s for s in seen if "check" in s and "layout" in s["check"]):
+    measured = [s for s in seen if "check" in s and "layout" in s["check"]]
+
+    def same(stop: dict[str, Any], size: str) -> tuple:
+        return size, stop["page"], stop.get("tag"), stop.get("open"), bool(stop.get("picked"))
+
+    # Each stop drawn at its own window, by where it was drawn: a stop below its arrangement's
+    # floor is compared with the stop at the area it is drawn at (the sweep's L7 check, C6: a
+    # portrait window takes the stacked arrangement, never the side-by-side floor's marks).
+    at_area = {same(s, s["size"]): s["check"].get("floor") for s in measured if at_floor(s["size"])}
+    for stop in measured:
         if pages is not None and stop["page"] not in pages:
             continue
         where = " ".join(p for p in (stop["size"], stop["page"], stop.get("tag"), stop.get("open")) if p)
@@ -1044,6 +1718,35 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
             if rule in _LAYOUT_KEYS:
                 for what in found.get(_LAYOUT_KEYS[rule], ()):
                     problems.append(f"{where}: {rule}: {what}")
+            if rule in _AT_FLOOR_KEYS and at_floor(stop["size"]):
+                for what in found.get(_AT_FLOOR_KEYS[rule], ()):
+                    problems.append(f"{where}: {rule}: {what}")
+        facts = stop["check"].get("floor")
+        if "floor" in rules and facts is not None:
+            w, h = (int(n) for n in stop["size"].split("x"))
+            if at_floor(stop["size"]):
+                if facts["scroll"][0] > 0:
+                    problems.append(f"{where}: floor: the document scrolls sideways by {facts['scroll'][0]} px")
+                if facts["layout"] == "side" and facts["scroll"][1] > 0:
+                    problems.append(f"{where}: floor: side by side, the document scrolls by "
+                                    f"{facts['scroll'][1]} px (the frame scrolls)")
+            else:
+                ew, eh = effective_size(stop["size"])
+                ref = at_area.get(same(stop, f"{ew}x{eh}"))
+                if ref is None:
+                    problems.append(f"{where}: floor: below its arrangement's floor, and no stop at the "
+                                    f"area it is drawn at ({ew}x{eh}) of the same page and drawer to compare")
+                else:
+                    for key in ("layout", "short", "header", "marked"):
+                        if facts[key] != ref[key]:
+                            problems.append(f"{where}: floor: {key} {facts[key]} where {ew}x{eh}'s is {ref[key]}")
+                    if any(abs(a - b) > 1 for a, b in zip(facts["frame"], ref["frame"])):
+                        problems.append(f"{where}: floor: the frame drawn {facts['frame']} where {ew}x{eh}'s "
+                                        f"is {ref['frame']}")
+                for axis, short, room in ((0, w < ew, "narrower"), (1, h < eh, "shorter")):
+                    if short and facts["scroll"][axis] <= 0:
+                        problems.append(f"{where}: floor: {room} than its floor and the document does not "
+                                        "scroll that way (the layout shrank to the window)")
         if "notice-repeat" in rules:
             for key, times in found.get("notices", {}).items():
                 if times > 1:
@@ -1053,10 +1756,13 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
             order = [page for line in tabs["lines"] for page in line]
             if order != list(RESEARCH_PAGES):
                 problems.append(f"{where}: tab-groups: tabs in the order {order}")
+            if len(tabs["lines"]) > 1:
+                problems.append(f"{where}: tab-groups: the research tabs take {len(tabs['lines'])} lines "
+                                f"{tabs['lines']}")
             for sep in tabs["seps"]:
-                if len(tabs["lines"]) > 1 or sep["lineStart"]:
-                    problems.append(f"{where}: tab-groups: a separator before {sep['tab']} "
-                                    f"drawn while the tabs take {len(tabs['lines'])} lines")
+                if sep["lineStart"]:
+                    problems.append(f"{where}: tab-groups: a separator before {sep['tab']} drawn at a "
+                                    "line's start")
             for other in (*tabs["others"], *tabs["focusable"]):
                 problems.append(f"{where}: tab-groups: {other} in the tablist")
     return problems
@@ -1088,11 +1794,15 @@ def state_settings(state: str, root: Path) -> dict[str, str]:
     raise ValueError(f"no walk state {state!r}")
 
 
-#: The layout measure's windows (the sweep's plan §6.2): the owner's, the
-#: owner's Firefox width, a laptop, a short laptop, a portrait column and a
-#: phone, then the owner's again.
-LAYOUT_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720), (800, 900), (390, 844),
-                (1850, 960))
+#: The layout measure's windows (the owner's decisions of 2026-11-23): the owner's two windows
+#: (1850 x 960, 1550 x 830), a laptop (1366 x 768), the display floor (1280 x 720), a large
+#: screen (2560 x 1440: nothing stretched past readability), one window below the floor
+#: (1024 x 640: drawn as at the floor, the document scrolls), two portrait windows (a 1080p and a
+#: 1440p screen turned upright, 1080 x 1920 and 1440 x 2560: the stacked arrangement, at or above
+#: its floor, `style.STACK_FLOOR_WIDTH`), then the owner's again (back from below the floor and
+#: from stacked).
+LAYOUT_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720), (2560, 1440), (1024, 640),
+                (1080, 1920), (1440, 2560), (1850, 960))
 
 
 def layout_stops(pages: tuple[str, ...] = UI_PAGES, sizes: tuple[tuple[int, int], ...] = LAYOUT_SIZES,
@@ -1204,5 +1914,5 @@ def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any
 
 __all__ = ["LAYOUT_RULES", "LAYOUT_SIZES", "LOOK_JS", "PTR_SIZES", "QUEUE_JS", "READ_ONLY_HEADERS",
            "STAGE_HINTS", "TREE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES", "UI_WALK_JS",
-           "WALK_STATES", "layout_problems", "layout_stops", "node_with_playwright", "repeat_problems",
+           "WALK_STATES", "at_floor", "effective_size", "floor_size", "layout_problems", "layout_stops", "node_with_playwright", "repeat_problems",
            "run_node", "state_settings", "ui_problems", "walk_state", "walk_ui"]

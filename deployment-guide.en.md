@@ -3119,7 +3119,10 @@ help control for every field. Nothing an operator sets changed; what moved is wh
   browser tab keeps which page it showed (the address does not keep the location).
 - In a window at least 1400 × 760 CSS pixels the page itself does not scroll; a region too long
   for its space scrolls inside its own panel. Narrower, or in portrait, the regions stack and
-  the page scrolls. The theme's smallest text is 14 px.
+  the page scrolls. Since 2026-11-23 the layout shrinks no further than a display floor of
+  1280 × 720 CSS pixels (864 pixels in both directions for a window no wider than tall): in a
+  smaller window it is drawn as at the floor and the browser scrolls the whole page. The theme's
+  smallest text is 14 px.
 - The dashboard is always drawn in its light colours, whatever dark mode the system or the
   browser asks for (its colours have no dark version, and Gradio's dark mode left its text
   unreadable on the page); the address gains `?__theme=light`. Gradio's own footer (its API
@@ -4343,7 +4346,7 @@ browser the fields cannot be changed and every button shows the lock, with "Oper
 only: <reason>" beside them.
 
 **The runtime line** at the foot of every page leads with what a problem costs, then its cause:
-"▲ No CUDA device visible: GPU training is unavailable. torch is built for CUDA 13.0; check the
+"▲ No CUDA device visible: GPU training is unavailable. torch is built for CUDA 13.0. Check the
 driver and CUDA libraries." (a ✕ in red when a capability is gone, such as "GNN scoring cannot
 run: torch is not importable (…)"); with no problem it reads "Runtime: every checked module
 imports.". The versions (torch, CUDA, PyG, the native extensions, Voyager) are one click away

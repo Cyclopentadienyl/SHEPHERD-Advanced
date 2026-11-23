@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 
 import pytest
@@ -117,25 +118,49 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
     buttons); at 390 x 844 Save wrapped alone and Check stood centred in a
     row three lines tall; a window media query (899 px) chose the narrow
     form. Now the name and its words are above the row's facts, Check and
-    Save are one group that wraps whole, the narrow form is a query on the
-    panel's own width (no window media query), and the panel's heading is
+    Save are one group that wraps whole (no window media query), and the
+    panel's heading is
     the go link's focus target (``#shep-dl`` and its ``h2``, a heading that
-    takes focus, no control)."""
+    takes focus, no control).
+    The sweep's L7 (SW-LK1): the name took a line of its own above the facts
+    at every width, the right half of it empty, and Create a line of its own
+    under the buttons: the four rows no longer fit the owner's window (1850 x
+    960, 223 px under the panel's foot at first use). Each row's head now
+    holds its name and, beside it, what is in effect and its "Advanced:
+    source ›" (words and a disclosure, no field or button); Create and its
+    suggestion are one more whole group of the Set-to bar, after Check and
+    Save. The sweep's L7 check (C3): the rows share their columns, Create after Save where the
+    bar holds a box of `SET_BOX` and its buttons, else under the box
+    (`test_in_a_browser_the_rows_share_their_columns_and_a_path_reads`)."""
     from src.webui.app import create_gradio_app
 
     css = " ".join(dl.PAGE_CSS.split())
     assert "@media" not in css
-    assert f"{dl._PAGE} #shep-dl {{ container: shep-dl / inline-size; }}" in css
-    assert (f"{dl._PAGE} .shep-dl-row > :is(.shep-dl-left, .shep-dl-main) "
+    assert (f"{dl._PAGE} .shep-dl-row > :is(.shep-dl-head, .shep-dl-main) "
             "{ flex: 1 1 100% !important;") in css
-    assert f"@container shep-dl (max-width: {dl.DL_NARROW}) {{" in css
+    # The key above its box in a panel under 27em served windows under the display floor only
+    # (the panel is about 700 px wide at the floor): retired. The one container query is the
+    # Set-to bar's own width, where every row's box is one width (the sweep's L7, C3).
+    assert not hasattr(dl, "DL_NARROW")
+    assert re.findall(r"@container \(([^)]*)\)", css) == [f"min-width: {dl.SET_WIDE}"]
+    assert (f'.shep-dl-field > .block:not([id^="dl_lock_"]) {{ flex: 0 1 {dl.SET_BOX} '
+            "!important; }") in css
     app = create_gradio_app()
     blocks = {getattr(b, "elem_id", None): b for b in app.blocks.values()}
     for key in KEYS:
         check, save = blocks[f"dl_check_{key}"], blocks[f"dl_save_{key}"]
         group = check.parent
         assert group is save.parent and {"shep-dl-acts", "shep-grp"} <= set(group.elem_classes)
-        assert blocks[f"dl_box_{key}"].parent is group.parent      # the box beside the group
+        bar = group.parent
+        assert blocks[f"dl_box_{key}"].parent is bar      # the box beside the group
+        create = blocks[f"dl_create_{key}"].parent
+        assert create.parent is bar and {"shep-dl-create", "shep-grp"} <= set(create.elem_classes)
+        assert blocks[f"dl_suggest_{key}"].parent is create
+        facts = blocks[f"dl_state_{key}"].parent
+        assert blocks[f"dl_adv_{key}"].parent is facts and "shep-dl-facts" in facts.elem_classes
+        head = facts.parent
+        assert "shep-dl-head" in head.elem_classes and head.parent is blocks[f"dl_row_{key}"]
+        assert ["shep-dl-left" in (c.elem_classes or []) for c in head.children] == [True, False]
     head = blocks["shep-dl-hd"].value
     assert '<h2 tabindex="-1">Data locations</h2>' in head
     assert blocks["shep-dl-hd"].parent is blocks["shep-dl"]
@@ -150,7 +175,7 @@ def test_a_first_start_says_nothing_is_set_and_offers_the_suggested_folders(dl, 
         assert "Not set" in row["state"]["value"], key
         assert row["create"]["visible"] is True and row["create"]["interactive"] is True
         assert row["create"]["value"] == dl.CREATE_LABEL
-        assert f"~/SHEPHERD-data/{SUGGESTED[key]}" in row["suggest"]["value"]
+        assert f"~/SHEPHERD-data/{SUGGESTED[key]}" in re.sub(r"<[^>]+>", "", row["suggest"]["value"])
         assert row["box"]["interactive"] is True and row["save"]["interactive"] is True
         assert ">Set to<" in row["key"]["value"]
         assert row["lock"]["value"] == ""          # an operator: no lock, no reason
@@ -266,7 +291,7 @@ def test_an_environment_override_keeps_the_box_and_never_claims_the_saved_value(
     request = operator_request(monkeypatch)
     rows, panel = _parts(dl, dl._on_save("registry", str(chosen), request))
     assert "start-up setting stays in effect" in rows["registry"]["result"]["value"]
-    state = rows["registry"]["state"]["value"]
+    state = re.sub(r"<(?!/?dt)[^>]+>", "", rows["registry"]["state"]["value"])
     effect, saved = state.split(">Saved<")
     assert str(started) in effect and "Set when the service started" in effect
     assert str(chosen) in saved and dl.OVERRIDDEN in saved
@@ -557,7 +582,7 @@ const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[390, 844], [960, 1080], [1850, 960]]) {
+  for (const [w, h] of [[1280, 720], [1440, 1600], [1850, 960]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.addInitScript(QUEUE_JS);
     await page.goto(process.argv[2]);
@@ -739,7 +764,7 @@ const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h, wider] of [[1850, 960, false], [390, 844, false], [390, 844, true]]) {
+  for (const [w, h, wider] of [[1850, 960, false], [1280, 720, false], [1280, 720, true]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
     await page.addInitScript(QUEUE_JS);
     await page.goto(process.argv[2], { waitUntil: 'load' });
@@ -752,7 +777,8 @@ const QUEUE_JS = __QUEUE_JS__;
     await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
     if (wider) {
       // Another host's wider text (the recheck of d4209c4 read Create 30 px
-      // from its row's phrase at 390 x 844): the panel's words 0.04em apart.
+      // from its row's phrase at 390 x 844, below the display floor; walked at the floor since):
+      // the panel's words 0.04em apart.
       await page.addStyleTag({ content: '#shep-dl { letter-spacing: 0.04em !important; }' });
       await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
     }
@@ -771,9 +797,12 @@ const QUEUE_JS = __QUEUE_JS__;
       // A line's drawn words, not its block's width.
       const words = (e) => { const r = document.createRange(); r.selectNodeContents(e);
         return r.getBoundingClientRect(); };
+      // Where a button's phrase lies from it: in its column (their spans across overlap),
+      // and on the line next to it (no more than the button's own height between them).
       const gaps = (a, b) => { const p = box(a), q = words(b);
-        return { dx: Math.round(Math.max(0, p.left - q.right, q.left - p.right)),
-                 dy: Math.round(Math.max(0, p.top - q.bottom, q.top - p.bottom)) }; };
+        const dy = Math.max(0, p.top - q.bottom, q.top - p.bottom);
+        return { column: q.left < p.right && q.right > p.left, nextLine: dy <= p.height,
+                 dy: Math.round(dy) }; };
       const rowOf = (e) => e.closest('.shep-dl-row');
       const panel = document.getElementById('shep-dl');
       // The lines that say why: the lock mark, then words, in no button.
@@ -818,14 +847,14 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
     Create offered here, 38-556 and 190-1,371). In a real browser, nothing
     set (Create offered), a request D8 refuses: each row's visible locked
     button has the short phrase (`ROW_LOCKED`, the lock and "Operator
-    controls only") in its own row, on the line next to it (its words at
-    most 24 px above or below the button), both wholly on screen when the
+    controls only") in its own row, on the line next to it (no more than
+    the button's own height above or below it), both wholly on screen when the
     button is brought to the middle of the view (the UI sweep of 2026-11-22
     laid each row out top to bottom, so the panel scrolls at 1850 x 960 and
     a button brought only as far as the view's edge left its phrase under
     it out of view); the panel's long reason is said once on the
-    page; beside Check and Save across too (its words at most 24 px to their
-    left or right: the UI sweep's shared reason grid filled the row, so the
+    page; in Check's and Save's column too (its words overlap each one's
+    span across: the UI sweep's shared reason grid filled the row, so the
     phrase sat under the label column, 500 px from them). An operator sees
     no lock and no phrase. Fails on d7ebfc3. The
     recheck of d4209c4 read Create 30 px from its row's phrase at 390 x 844
@@ -861,9 +890,9 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
             for part, button in buttons.items():
                 assert button["text"].startswith("🔒 ") and button["disabled"], (size, key, part)
                 assert button["reason"] == f"🔒 {phrase}", (size, key, part, button)
-                assert button["sameRow"] and button["dy"] <= 24, (size, key, part, button)
+                assert button["sameRow"] and button["nextLine"], (size, key, part, button)
                 if part in ("check", "save"):
-                    assert button["dx"] <= 24, (size, key, part, button)
+                    assert button["column"], (size, key, part, button)
                 assert button["whole"] and button["reasonWhole"], (size, key, part, button)
 
 
@@ -883,7 +912,7 @@ const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [1366, 768], [390, 844], [320, 640]]) for (const spacing of [0, 0.04]) {
+  for (const [w, h] of [[1850, 960], [1366, 768], [1280, 720]]) for (const spacing of [0, 0.04]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
     await page.addInitScript(QUEUE_JS);
     await page.goto(process.argv[2], { waitUntil: 'load' });
@@ -966,7 +995,8 @@ def test_the_suggested_folder_is_whole_beside_or_under_create(dl, tmp_path, monk
     left (83 px at 1366 x 768, 96 at 390 x 844, 26 at 320 x 640), so
     "~/SHEPHERD-data/workspaces" broke inside its words over 4 lines (9 to
     14 at 320 x 640): the create row never let it go under Create. In a real
-    browser, nothing set, at 1850 x 960, 1366 x 768, 390 x 844 and 320 x 640,
+    browser, nothing set, at 1850 x 960, 1366 x 768 and the display floor's 1280 x 720 (390 x 844
+    and 320 x 640, where it was found, are below the floor, drawn as at it),
     the panel's words as drawn and 0.04em apart, for a read-only viewer and
     an operator: each Create offered has its suggestion whole (every
     character drawn, nothing cut) with no line break inside a word, given at
@@ -992,7 +1022,7 @@ def test_the_suggested_folder_is_whole_beside_or_under_create(dl, tmp_path, monk
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_SUGGEST_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
-    assert len(seen) == 8, seen
+    assert len(seen) == 6, seen
     problems = []
     for size, at in seen.items():
         if at["sideways"]:
@@ -1057,7 +1087,7 @@ def test_in_a_browser_no_row_of_settings_puts_words_beside_its_fields(dl, tmp_pa
       return { id: row.id, above: !!name && !!field && name.bottom <= field.top + 0.5,
                oneLine: !!check && !!save && Math.abs(check.top - save.top) < 1, empties };
     })"""
-    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720], [800, 900], [390, 844])
+    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720], [1440, 1600])
     stops = [{"size": size, "page": "settings", "focus": False} for size in sizes]
     with served(create_gradio_app(), **mount_options()) as base:
         seen = walk_ui(base[:-len("gradio_api")], tmp_path, stops, extra_js=rows_js)
@@ -1067,6 +1097,102 @@ def test_in_a_browser_no_row_of_settings_puts_words_beside_its_fields(dl, tmp_pa
         assert len(stop["extra"]) == len(KEYS), stop
         for row in stop["extra"]:
             assert row["above"] and row["oneLine"] and row["empties"] == [], (stop["size"], row)
+
+
+#: Each Data locations row as drawn: its Set-to box, Check, Save and Create (when offered), the
+#: path in effect (its lines and left edge), the name column and the facts; and the panel's body
+#: and "Where these are kept ›".
+_COLUMNS_JS = """() => {
+  const rect = (e) => e && e.getClientRects().length ? e.getBoundingClientRect() : null;
+  const lines = (e) => { const r = document.createRange(); r.selectNodeContents(e);
+    return new Set([...r.getClientRects()].filter((q) => q.width > 1).map((q) => Math.round(q.bottom))).size; };
+  const at = (q) => q && { left: q.left, right: q.right, top: q.top, bottom: q.bottom };
+  const rows = [...document.querySelectorAll('.shep-dl-row')].map((row) => {
+    const path = row.querySelector('.shep-dl-facts .shep-dl-path');
+    return { id: row.id, box: at(rect(row.querySelector('[id^="dl_box_"] :is(input, textarea)'))),
+             check: at(rect(row.querySelector('[id^="dl_check_"]'))),
+             save: at(rect(row.querySelector('[id^="dl_save_"]'))),
+             create: at(rect(row.querySelector('[id^="dl_create_"]'))),
+             name: at(rect(row.querySelector('.shep-dl-left'))),
+             facts: at(rect(row.querySelector('.shep-dl-facts'))),
+             path: path && { lines: lines(path), left: rect(path).left } };
+  });
+  return { rows, body: at(rect(document.querySelector('#shep-dl-bd'))),
+           where: at(rect(document.querySelector('#dl_where summary'))) };
+}"""
+
+
+def _columns_problems(stop) -> list:
+    """**The rows share their columns** (the sweep's L7, C3): every row's box starts and ends
+    where the other rows' do, and its Check and Save start where theirs do; each Create starts
+    at its box's left edge (a line of its own under it) or where every other Create beside Save
+    starts. Facts that hold a path in effect are never narrower than the name beside them
+    (LOOK2-2: 288 px beside a name of 504 at 1550 x 830, the path 8 lines a row): beside it
+    or under it, where the path starts on the box's edge."""
+    problems, where = [], stop["size"]
+    rows = stop["extra"]["rows"]
+    for part in ("box", "check", "save"):
+        for edge in (("left", "right") if part == "box" else ("left",)):
+            xs = {row["id"]: round(row[part][edge]) for row in rows}
+            if max(xs.values()) - min(xs.values()) > 1:
+                problems.append(f"{where}: the rows' {part} {edge} edges differ: {xs}")
+    beside = {row["id"]: round(row["create"]["left"]) for row in rows
+              if row["create"] and row["create"]["top"] < row["box"]["bottom"]}
+    if beside and max(beside.values()) - min(beside.values()) > 1:
+        problems.append(f"{where}: Create beside Save starts at {beside}")
+    for row in rows:
+        if row["create"] and row["id"] not in beside and abs(row["create"]["left"] - row["box"]["left"]) > 1:
+            problems.append(f"{where} {row['id']}: Create under its box starts off its edge")
+        path, facts, name = row["path"], row["facts"], row["name"]
+        side = bool(path) and facts["left"] >= name["right"] and facts["top"] < name["bottom"]
+        if side and facts["right"] - facts["left"] < name["right"] - name["left"] - 0.5:
+            problems.append(f"{where} {row['id']}: the path's facts are narrower than the name beside "
+                            f"them ({path['lines']} lines)")
+        if path and not side and abs(path["left"] - row["box"]["left"]) > 1:
+            problems.append(f"{where} {row['id']}: the path under the name starts off the box's edge")
+    return problems
+
+
+def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path, monkeypatch):
+    """The sweep's L7 check (C3, a regression of a4dc77d): each row's Set-to box took what
+    Create and its suggestion left on its line, so at 1850 x 960 the four boxes ended at 425,
+    441, 457 and 845 px (nothing set) and the Import row's at 458 against 846 (configured), and
+    Check and Save stood at a different x in every row (d3040ca: one column). LOOK2-2: with a
+    path in effect, the facts beside the name got what the name's 56ch left: 159 px at 1550 x
+    830, the path 8 lines a row and two rows in view. For an operator, the results registry
+    set at start (a long path) and the other folders not set (Create offered), at the owner's
+    windows, a laptop and the display floor: the rows share their columns
+    (`_columns_problems`), and at the owner's window all four rows and "Where these are kept
+    ›" stay in the panel's body (SW-LK1)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, walk_ui
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
+    registry = tmp_path / "a-results-registry-folder-kept-on-the-server" / "for-the-cohort-versions" / "registry"
+    registry.mkdir(parents=True, mode=0o700)
+    monkeypatch.setenv(ENV["registry"], str(registry))
+    sizes = ([1850, 960], [1550, 830], [1366, 768], [1280, 720])
+    stops = [{"size": size, "page": "settings", "focus": False} for size in sizes]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = walk_ui(base[:-len("gradio_api")], tmp_path, stops, extra_js=_COLUMNS_JS)
+    problems = []
+    for stop in seen:
+        rows = stop["extra"]["rows"]
+        assert len(rows) == len(KEYS) and all(row["box"] and row["check"] for row in rows), stop
+        assert [row["id"] for row in rows if row["path"]] == ["dl_row_registry"], stop
+        assert [row["id"] for row in rows if row["create"]] == ["dl_row_workspaces_root", "dl_row_intake_dir"], stop
+        problems += _columns_problems(stop)
+        if stop["size"] == "1850x960":
+            body, last = stop["extra"]["body"], stop["extra"]["where"]
+            if last["bottom"] > body["bottom"] + 0.5:
+                problems.append(f"1850x960: Where these are kept › ends at {last['bottom']}, the body at "
+                                f"{body['bottom']}")
+    assert not problems, "\n".join(problems)
 
 
 def test_the_settings_help_texts_meet_the_text_budget():

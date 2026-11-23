@@ -434,7 +434,7 @@ def test_compare_never_puts_two_protocols_metrics_on_one_row_and_caps_at_five(
     six = (results * 6)[:6]
     capped = rs.compare_html(six, False, asked=6)
     assert len(re.findall(r'<th scope="col">', capped)) == 1 + rs.COMPARE_CAP
-    assert "6 were chosen; Compare shows 5 at a time" in _text(capped)
+    assert "6 were chosen. Compare shows 5 at a time" in _text(capped)
     # A field without a source: Unknown with why, never a number.
     ledger_only = next(row for row in results if row["report"] == "report not available")
     assert "Unknown" in _text(rs.compare_html([ledger_only], False))

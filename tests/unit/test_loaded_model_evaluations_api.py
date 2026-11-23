@@ -1789,7 +1789,7 @@ def test_a_mixed_ledger_lists_its_unreadable_record_the_same_way_in_every_reader
     row = f"3 #4 {bad['source_artifact_digest'][:12]} n_ranked: missing"
     for shown in (operator, readonly):
         said = _text(shown)
-        assert ("▲ 1 record for these weights cannot be read as a result; it is kept as "
+        assert ("▲ 1 record for these weights cannot be read as a result. It is kept as "
                 "written.") in said
         assert "Index Registration Report Reason " + row in said
         assert "server's log" not in said and "not shown:" not in said

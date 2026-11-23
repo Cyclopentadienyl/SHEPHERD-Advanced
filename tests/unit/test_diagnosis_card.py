@@ -67,6 +67,16 @@ NOW = datetime(2026, 10, 20, 10, 14, 5)
 pytestmark = pytest.mark.usefixtures("utc_clock")
 
 
+def _sub(line: str, *, title: str = "") -> str:
+    """The card's run line as drawn: its whole words in its title, each fact
+    of its " · " chain one unit (`renderers.chain_html`, L7 SW-LK7)."""
+    import html as html_lib
+
+    facts = html_lib.unescape(line).split(" · ")
+    return (f'<p class="shep-dx-line shep-dx-sub" title="{title or line}">'
+            f'{r.chain_html(*facts)}</p>')
+
+
 @pytest.fixture(scope="module")
 def demo_workspace(tmp_path_factory):
     from tests.fixtures.registered_cohort import write_demo_workspace
@@ -260,7 +270,10 @@ def test_a_read_only_request_opens_no_checkpoint_and_is_told_why(root, no_checkp
     state = _state(root, operator=False)
     assert state["facts"]["trained"]["state"] == "not_shown"
     body = card.body_html(state)
-    assert card.TRAINED_NOT_SHOWN in body
+    # Its two facts, each one unit of a chain (the sweep's L7 check, C5: the second broke
+    # inside itself, "reading the checkpoint is an / operator control").
+    assert r.chain_html(*card.TRAINED_NOT_SHOWN_PARTS) in body
+    assert card.TRAINED_NOT_SHOWN == " · ".join(card.TRAINED_NOT_SHOWN_PARTS)
     assert "not recorded" not in body
     # B4 (the skill's §3): a lock marks a refused control with its reason
     # beside it, the card's buttons; the fact not read here says why in its
@@ -270,9 +283,11 @@ def test_a_read_only_request_opens_no_checkpoint_and_is_told_why(root, no_checkp
     assert card.change_button(state)["value"].startswith("🔒 ")
     # The reason is visible text in two word groups: a line breaks between
     # them, never inside "request not local" (M5-3: "to M1" alone on a line).
+    # The shared reason line (the sweep's L7 check, C5): the lock in a column of its own.
     assert card.change_reason_html(state) == (
-        '<p class="shep-dx-why"><span class="shep-wg">🔒 Operator controls only:</span> '
-        '<span class="shep-wg">request not local</span></p>')
+        '<p class="shep-reason shep-dx-why"><span aria-hidden="true">🔒</span><span>'
+        '<span class="shep-wg">Operator controls only:</span> '
+        '<span class="shep-wg">request not local</span></span></p>')
 
 
 def test_the_timer_never_opens_a_checkpoint(root, no_checkpoint_opened):
@@ -507,8 +522,7 @@ def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
     body = card.body_html(_state(root))
     # The run under its task, its whole words in its title (one line when the card folds).
     run = "2026-10-17 09:15 · GATv2, recorded epoch 5"
-    assert ('<p class="shep-dx-name">Disease task model</p><p class="shep-dx-line shep-dx-sub" '
-            f'title="{run}">{run}</p>') in body
+    assert f'<p class="shep-dx-name">Disease task model</p>{_sub(run)}' in body
     assert f'>{root["shas"]["model-05.pt"][:12]}</code>' in body and "verified</span>" in body
     # A disease model uses no SP table, so it is not missing one.
     assert "synthetic data" in body and "no SP table" not in body
@@ -565,7 +579,49 @@ def test_no_model_loaded_turns_run_off_and_offers_a_load(root):
     assert "Not loaded" in card.body_html(state)
     button = card.change_button(state)
     assert button["value"] == "Load a model…" and button["variant"] == "primary"   # no lock
+    # L7 SW-LK8: the next step is the column's large action (it was small in
+    # the grey card under a large disabled Run Diagnosis); Change model… is not.
+    assert button["size"] == "lg"
+    assert card.change_button(_state(root))["size"] == "sm"
     assert not card.details_visible(state)
+
+
+def test_first_use_says_the_workspaces_notice_once_on_the_card_and_a_relation_in_the_drawer(root):
+    """L7 SW-LK8: at first use no line on Diagnosis pointed to Settings › Data
+    locations, though the Load drawer, the card's first action, lists nothing
+    without the workspaces folder (its notice was one click away, in the
+    drawer's empty list). The card says the folder's one notice with its go
+    link; the drawer's empty list says a relation to it
+    (``data-notice-rel``), never the notice again; Models' list, whose page
+    shows no card, still says the notice itself."""
+    from src.config.server_settings import ENV_WORKSPACES_ROOT
+    from src.webui.components import model_list as ml
+    from src.webui.components.workspaces import NOTICES, notice_view
+
+    notice = notice_view(NOTICES[ENV_WORKSPACES_ROOT])
+    state = {**_state(root, status={"initialized": False}), "workspaces_notice": notice}
+    body = card.body_html(state)
+    assert body.count('data-notice="workspaces_root"') == 1 and "data-shep-go" in body
+    assert "data-notice" not in card.body_html(_state(root, status={"initialized": False}))
+    # The sweep's L7 check, C1: the card said the state, the backend's lead and its Details ›,
+    # then the notice and a second Details › (252 px at 1550 x 830), and the inputs above it lost
+    # Options, Top-K and Explanations. The notice is the state's cause; the lead, the whole
+    # reason and the folder's rows are under the card's one Details ›.
+    never = {**_state(root, status=_nothing_served(
+        _not_serving("not_loaded", "Nothing has been loaded since the service started"),
+        NEVER_LOADED)), "workspaces_notice": notice}
+    body = card.body_html(never)
+    assert body.count("<summary>") == 1 and body.count('data-notice="workspaces_root"') == 1
+    shown, more = body.split("<summary>")
+    assert "Nothing has been loaded" not in shown and "Nothing has been loaded" in more
+    assert r.e(NEVER_LOADED) in more and r.notice_rows_html(notice) in more
+    assert shown.index("Not loaded") < shown.index('data-notice="workspaces_root"')
+    listing = {"notice": notice, "items": []}
+    drawer = ml._no_items_html(listing, None, ml.PRESETS["clinical"])
+    assert 'data-notice-rel="workspaces_root"' in drawer and "data-notice=" not in drawer
+    assert f"{notice['short']} (see Model in use)." in drawer
+    assert 'data-notice="workspaces_root"' in ml._no_items_html(listing, None,
+                                                               ml.PRESETS["research"])
 
 
 def test_a_status_naming_no_trained_model_is_not_shown_as_one(root):
@@ -752,15 +808,13 @@ def test_a_task_model_is_named_by_its_task_once(root, mode, name):
     assert card.served_task({"initialized": False}) is None
     body = card.body_html(_state(root, status=status))
     run = "run_bundle · GATv2 2026-10-21 09:00, recorded epoch 5"
-    assert (f'<p class="shep-dx-name">{name}</p><p class="shep-dx-line shep-dx-sub" '
-            f'title="{run}">{run}</p>') in body
+    assert f'<p class="shep-dx-name">{name}</p>{_sub(run)}' in body
     assert body.count("task model") == 1 and "Task:" not in body and "GATV2" not in body
     # Not in the served runs: the task still names it, the reason under it.
     lost = card.body_html(_state(root, status=_bundle_status(root, mode, served=False)))
     why = ("Checkpoint · recorded epoch 5 · the checkpoint in use is not in the serving "
            "workspace&#x27;s runs")
-    assert (f"<p class=\"shep-dx-name\">{name}</p><p class=\"shep-dx-line shep-dx-sub\" "
-            f"title=\"{why}\">{why}</p>") in lost
+    assert f'<p class="shep-dx-name">{name}</p>{_sub(why)}' in lost
 
 
 def test_one_file_reads_the_same_completed_epochs_on_every_page(root):
@@ -780,10 +834,10 @@ def test_one_file_reads_the_same_completed_epochs_on_every_page(root):
         status["checkpoint_meta"] = {**status["checkpoint_meta"], **meta}
         body = card.body_html(_state(root, status=status))
         line = f"run_bundle · GATv2 2026-10-21 09:00, {words}"
-        assert f'<p class="shep-dx-line shep-dx-sub" title="{line}">{line}</p>' in body
+        assert _sub(line) in body
         lost = _bundle_status(root, "disease_task", served=False)
         lost["checkpoint_meta"] = {**lost["checkpoint_meta"], **meta}
-        assert f"Checkpoint · {words} · " in card.body_html(_state(root, status=lost))
+        assert f'title="Checkpoint · {words} · ' in card.body_html(_state(root, status=lost))
         # The same file as the lists give it to the other pages.
         item = {"workspace": "demo", "architecture": "gatv2", "run": BUNDLE_RUN,
                 "filename": "last.pt", "sha256": "c" * 64, "checkpoint_kind": "training_state",
@@ -1052,7 +1106,7 @@ def test_no_model_loaded_is_said_once_on_the_card_with_its_one_action(root):
     assert len(re.findall(r"(?i)no model (is )?loaded", visible)) == 0
     assert visible.count("Not loaded") == 1
     assert out["change_btn"]["value"] == "Load a model…"
-    assert dp.RUN_DISABLED_NO_MODEL == "Disabled until a model is loaded."
+    assert dp.RUN_DISABLED_NO_MODEL == "Run Diagnosis disabled: load a model first."
     assert dp.RUN_DISABLED_NO_MODEL in out["run_reason"]
     assert out["results_body"].count("No result yet") == 1
     assert "No result yet" not in dp.results_header_html(None)

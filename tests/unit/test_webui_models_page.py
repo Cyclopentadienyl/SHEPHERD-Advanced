@@ -538,6 +538,8 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
     view = mp.shape(listing, data, ctl)
     assert view == {"task": "all", "note": mp.LOAD_NOTE, "shaped_for": "newest|all"}
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
+    from src.webui.style import CELL_WHOLE
+
     # The rows say what they were drawn for (the "Applying …" line compares it).
     assert html.endswith('<span class="shep-view-for" hidden data-for="newest|all"></span>')
     # Each run's summary row says what its files are (D04: a run's files share
@@ -548,9 +550,9 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
                       (_key(world, "broken.pt"), "Record not readable"),
                       (bundle_key("base"), "Base"), (bundle_key("gene"), "Gene")):
         run = key.rsplit("/", 1)[0]
-        assert f"<td>{kind}</td>" in _run_row(html, run), key
+        assert f'<td class="{CELL_WHOLE}">{kind}</td>' in _run_row(html, run), key
         assert ' hidden><td><div class="shep-tree-name shep-tree-leaf' in _file_row(html, key)
-    assert "Metadata not readable: the file cannot be read as a checkpoint; cannot be loaded" in (
+    assert "Metadata not readable: the file cannot be read as a checkpoint. It cannot be loaded." in (
         _file_row(html, _key(world, "broken.pt")))
     ctl = mp.controls(data, mp.NEWEST, "disease")
     assert mp.shape(listing, data, ctl) == {"task": "disease", "note": mp.LOAD_NOTE,
@@ -584,7 +586,7 @@ def test_a_record_of_another_or_no_mode_is_shown_as_recorded(world, monkeypatch)
         (section,) = _sections(raw)
         assert [key for key, _value in _rows(section)][:2] == ["Coverage", "Recorded metrics"]
         assert "shep-rec-tile" not in raw and "shep-rec-fold" not in raw
-        assert ">not described<" not in raw and "what they are is not described" in text
+        assert ">not described<" not in raw and "What they are is not described" in text
         for name, value in view["metrics"].items():          # every one, unrounded
             assert f"{name} {json.dumps(value)}" in _words(raw), name
         assert "The Trainer validation figure is not among these records' metrics." in text
@@ -862,7 +864,7 @@ def test_a_usage_row_lists_its_metrics_as_recorded_or_says_there_are_none():
     disease = mp.usage_entry_html({**base, "mode": "disease",
                                    "metrics": {"pooled_mrr": 0.45, "pooled_top10": 0.75}})
     assert "Disease pooled MRR 0.4500 over 8 ranked cases" in _text(disease)
-    assert "CUDA · deterministic; registration asked" in _text(disease)
+    assert "CUDA · deterministic, registration asked" in _text(disease)
     assert "Recorded metrics (2)" in disease and "pooled_top10 0.75" in _words(disease)
     for cell in re.findall(r"<div[^>]*>([^<]*)</div>", disease):
         assert cell.count(" · ") <= 1, cell
@@ -1071,10 +1073,10 @@ def test_a_records_investigation_notes_are_shown_on_models(world, monkeypatch):
 def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, monkeypatch):
     """K8-6e.1 (R3): model-05's ledger holds three records; one loses
     ``n_ranked`` by a hand edit. The segment counts the results and names the
-    rest with one " · " ("Recorded results · 2 (1 not readable; 1 where
+    rest with one " · " ("Recorded results · 2 (1 not readable, 1 where
     runs differ)"); the detail lists it by index, registration, report and
     reason under the amber sentence, never as a result and never pointing to
-    the server's log; the row reads "2 · 1 not readable; runs differ for 1".
+    the server's log; the row reads "2 · 1 not readable, runs differ for 1".
     HEAD: "Recorded test results · 3 (1 where runs differ)", "the server's log
     says why", and the row counted 3."""
     ledger_path = world["paths"]["model-05.pt"].parent / "evaluations.json"
@@ -1088,17 +1090,17 @@ def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, mon
     detail = mp.detail_parts(listing, page, _key(world, "model-05.pt"), NEWEST_CTL)
 
     assert detail["seg"][0] == (
-        "Recorded results · 2 (1 not readable; 1 where runs differ)", mp.RECORDS)
+        "Recorded results · 2 (1 not readable, 1 where runs differ)", mp.RECORDS)
     assert detail["seg"][0][0].count(" · ") == 1
     said = _words(detail["records"])
-    assert ("▲ 1 record for these weights cannot be read as a result; it is kept as "
+    assert ("▲ 1 record for these weights cannot be read as a result. It is kept as "
             "written.") in said
     assert (f"Index Registration Report Reason {index} #2 "
             f"{bad['source_artifact_digest'][:12]} n_ranked: missing") in said
     assert "registered #2" not in detail["records"]
     assert "server's log" not in said
     assert r.recorded_tests_text(ml._recorded(listing, _key(world, "model-05.pt"))) == (
-        "Recorded results: 2 · 1 not readable; runs differ for 1")
+        "Recorded results: 2 · 1 not readable, runs differ for 1")
 
 
 def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_apart():
@@ -1120,7 +1122,7 @@ def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_
     assert gap in css and ".shep-mp-recwrap + .shep-note" not in css
     html = mp.unreadable_html([{"index": 0, "sequence": None, "source_artifact_digest": None,
                                 "reason": "n_ranked: missing"}])
-    assert '<p class="shep-mp-p shep-mp-unread-p"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">1 record' in html
+    assert '<p class="shep-mp-p shep-mp-unread-p"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp">\u00a0</span><span class="shep-st-w">1 record' in html
     assert '<div class="shep-tbl-wrap shep-mp-recwrap shep-mp-unreadwrap">' in html
 
 
@@ -1158,7 +1160,7 @@ def test_a_records_r10_is_a_table_with_a_mark_on_each_overlap_and_no_stutter():
     assert set(cells["Training"]) == {"evidence", "Disease overlap", "Phenotype-set overlap"}
     disease = cells["Training"]["Disease overlap"]
     assert disease.startswith(r.status_mark("warn", "Overlap"))
-    assert cell_text(disease) == ("▲ Overlap 3 of 50 distinct test diseases; 5 test cases "
+    assert cell_text(disease) == ("▲ Overlap 3 of 50 distinct test diseases, 5 test cases "
                                   "with one of them")
     none = cells["Training"]["Phenotype-set overlap"]
     assert "shep-st" not in none and cell_text(none) == (
@@ -1449,8 +1451,8 @@ def test_the_ledgers_states_are_said_and_name_no_directory(world, monkeypatch):
     # no file named, never "ledger", and "· 0" nowhere.
     said = _text(none["records"])
     assert said.startswith("No recorded result yet") and "never evaluated" in said
-    assert said.endswith("Next: start a test of it with Register when the run ends checked; "
-                         "its result then appears here. Test this model ›")
+    assert said.endswith("Next: start a test of it with Register when the run ends checked. "
+                         "Its result then appears here. Test this model ›")
     assert "ledger" not in said.lower() and "evaluations.json" not in said
     assert [label for label, _value in none["seg"]] == ["Recorded results", "Usage history",
                                                        "Results"]
@@ -1741,7 +1743,7 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     # Run → Checkpoint pair, its 12 hex with the whole fingerprint one Copy away.
     pair = ml.pair_words({ml.item_key(i): i for i in listing["items"]})[bundle_key("base")]
     assert pair[1] in text and f"of run {pair[0]}" in text, (pair, text)
-    assert f"{shas['base'][:12]} Copy; listed here" in text
+    assert f"{shas['base'][:12]} Copy · listed here" in text
     assert f'data-copy="{shas["base"]}"' in said
     assert f"Family{mp.PARENT_FAMILY}Encoder" in text
     assert text.count(pair[0]) == 1
@@ -1765,7 +1767,7 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert "matches the reference recipe" in html and mp.REFERENCE_ANCHOR in _text(html)
     assert EVIL not in html and "in workspace <b>&lt;img" in html
     html = mp.identity_html(item, {"parent_state": "unavailable", "parent_problem": EVIL})
-    assert '▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">parent unavailable: &lt;img' in html
+    assert '▲</span><span class="shep-st-sp">\u00a0</span><span class="shep-st-w">parent unavailable: &lt;img' in html
     assert EVIL not in html and "Parent unavailable" not in html     # short: whole in its row
     # A reason the Parent row shortens is whole one "Details ›" away (the second
     # round's review: the first round's run panel was its only whole copy).
@@ -1792,7 +1794,7 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
                                "2026-10-24 17:39"), (legacy, legacy)):
         long = mp.identity_html({**item, "family_id": run, "parent_run": run},
                                 {"parent_state": "listed"})
-        assert f"<div>run {words}</div>" in long and "; listed here</div></dd>" in long, long
+        assert f"<div>run {words}</div>" in long and "· </span>listed here</div></dd>" in long, long
         assert f'Family</dt><dd class="shep-v">{r.e(mp.PARENT_FAMILY)}</dd>' in long, long
         assert "…" not in long
         # A family root other than the parent's run is named whole.
@@ -1863,7 +1865,7 @@ def test_a_task_records_coverage_reads_the_same_on_models_and_on_test(world, mon
     models = dict(_rows(mp.records_block_html([view], {})))["Coverage"]
     test = dict(_rows(tp._record_html(record, {}, {})))["Coverage"]
     assert models == test == ("8 of 10 import-eligible cases ranked by the model 13 source "
-                              "cases; 3 excluded at import: ground truth absent 3")
+                              "cases, 3 excluded at import: ground truth absent 3")
 
 
 def test_a_registered_task_record_shows_its_own_named_metrics(world, monkeypatch):
@@ -1953,23 +1955,27 @@ def test_read_only_shows_the_model_in_use_from_the_ledger_and_opens_no_checkpoin
 
 
 def _says_the_refusal_as_every_page_does(header, condition):
-    """The read-only list's reason in the words every page gives a control D8
-    refuses (`chips.operator_only`, after the lock), then why in plain words,
-    its codes in the one trailing Ref line (the WebUI skill's §5). At the T08
-    bare start it read "Listing opens checkpoint files, which SPEC_4 classes
-    as checkpoint inspection (C3), so the list is served only where the
-    operator controls are (D8)", "🔒 Checkpoint list: operator controls only
-    (D8 · SPEC_4 C3)" and "Operator controls need this deployment set to M1,
-    …" (`scratchpad/t08pre/shots/s7-xff-07-models.png`)."""
+    """The read-only list's reason: after the lock, one lead in plain words
+    (why there is no list, who may list it), then D8's conditions and the
+    codes under "Details ›" (the message shape; the WebUI skill's §5). This
+    request's own condition ("Operator controls only: forwarded by a proxy.")
+    is not said here: the gated Load says it, and the header chip (the
+    independent check of the UI sweep, C3: it was said three times on one
+    screen). At the T08 bare start it read "Listing opens checkpoint files,
+    which SPEC_4 classes as checkpoint inspection (C3), …"
+    (`scratchpad/t08pre/shots/s7-xff-07-models.png`); at the sweep, a 4-line
+    paragraph and a Ref line of four codes in the flow."""
     from src.webui.components.chips import LOCK, operator_only
 
     words = _visible_words(header)
-    lead = f"{LOCK} {operator_only(condition)}."
+    lead = f"{LOCK} {mp.LIST_NOT_SHOWN}"
     assert words.startswith("Checkpoints ") and lead in words, words
-    plain, ref = words.split(lead, 1)[1].split("Ref:", 1)
-    assert not re.search(r"\bD8\b|SPEC_4|\bC3\b|\bM1\b|SHEPHERD_", plain), plain
-    assert plain.count(" · ") == 0 and ref.strip().startswith("D8") and "SPEC_4 C3" in ref
-    assert header.rstrip().endswith(f'{e(mp.LIST_REFUSED_REF)}</p></div>'), header
+    assert operator_only(condition) not in words, words
+    plain, more = header.split('<details class="shep-more">', 1)
+    assert not re.search(r"\bD8\b|SPEC_4|\bC3\b|\bM1\b|SHEPHERD_", _visible_words(plain))
+    assert e(mp.D8_CONDITIONS) in more and ">Ref<" in more
+    ref = _visible_words(more).split("Ref", 1)[1]
+    assert ref.strip().startswith("D8") and "SPEC_4 C3" in ref and ";" not in ref
 
 
 def test_the_list_panel_is_titled_by_its_content_and_count(world, monkeypatch):
@@ -2899,7 +2905,7 @@ def test_runs_that_differ_are_flagged_only_in_a_deterministic_group(world, monke
     listing, data = _read(world, monkeypatch)
     flagged = mp.detail_parts(listing, data, _key(world, "model-40.pt"), NEWEST_CTL)["records"]
     assert mp.r.warn_chip("runs differ #1") in flagged
-    assert ('<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">runs '
+    assert ('<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp">\u00a0</span><span class="shep-st-w">runs '
             "under these conditions differ — investigate: ") in flagged
     assert "Deterministic algorithms were on, so they were expected to agree." in flagged
 
@@ -2920,7 +2926,7 @@ def test_runs_that_differ_are_flagged_only_in_a_deterministic_group(world, monke
                                mode="disease", deterministic=deterministic) == (
             '<div class="shep-mp-delta shep-muted">runs under these conditions differ</div>')
     assert mp.contest_html(state, mode="disease", deterministic=True) == (
-        '<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp"> </span><span class="shep-st-w">runs under '
+        '<div class="shep-mp-delta"><span class="shep-st shep-st-warn"><span class="shep-st-shape" aria-hidden="true">▲</span><span class="shep-st-sp">\u00a0</span><span class="shep-st-w">runs under '
         "these conditions differ — investigate: pooled_mrr. Deterministic algorithms were on, "
         "so they were expected to agree.</span></span></div>")
 
@@ -3008,7 +3014,7 @@ def test_records_whose_run_cannot_be_told_are_listed_with_the_boundary_reason(wo
     assert f'<div class="shep-sub">from run {named["run_id"]}</div>' in html
     assert "from run not recorded" not in html
     said = _words(html)
-    assert "▲ 1 record for these weights cannot be read as a result;" in said
+    assert "▲ 1 record for these weights cannot be read as a result." in said
     assert ("0 #1 " + named["source_artifact_digest"][:12] + " whether it names its run cannot "
             "be told: the file's run-identity boundary (run_identity_from_sequence) cannot be "
             "read (it is missing while the file holds 2 records)") in said
@@ -3051,13 +3057,18 @@ def test_one_screen_says_each_fingerprint_and_the_dataset_once(world, monkeypatc
     with its Copy); its whole value is one "Details ›" away. Its run is its
     row's and its title's words (a list and the detail it opens), never its
     directory, which is in the detail's provenance."""
+    from src.webui.style import COL_TWIN
+
     listing, data = _read(world, monkeypatch)
     key = _key(world, "model-05.pt")
     item = ml.find_item(listing, key)
     view = mp.shape(listing, data, NEWEST_CTL)
     table = ml.list_html(listing, key, ml.PRESETS["research"], view=view)
     detail = mp.detail_parts(listing, data, key, NEWEST_CTL)
-    screen = _visible_words(mp.ml.workspace_line_html(listing) + table + detail["header"]
+    # The line of a file's dropped columns (`style.COL_TWIN`) is drawn only while its columns
+    # are not (the narrow tree), so one screen shows the column or the line, never both.
+    shown = re.sub(rf'<div class="{COL_TWIN}[^"]*">.*?</div>', "", table)
+    screen = _visible_words(mp.ml.workspace_line_html(listing) + shown + detail["header"]
                             + detail["top"])
     sha = item["sha256"]
     dataset = next(w["dataset_fingerprint"] for w in listing["workspaces"]
@@ -3164,7 +3175,7 @@ const ROWS = '#shep-models-research-rows';
   await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') === 'side');
   out.mid = await tree();
   // The narrow layout: the shell stacks the page two frames after a resize.
-  await page.setViewportSize({ width: 760, height: 1000 });
+  await page.setViewportSize({ width: 1280, height: 1280 });
   await page.waitForFunction(() => document.documentElement.getAttribute('data-shep-layout') !== 'side');
   await frames();
   out.narrow = await tree();
@@ -3240,7 +3251,7 @@ def test_the_tree_folds_searches_filters_and_keeps_the_selection_in_a_browser(
     assert any(f["selected"] for f in chosen) and all(f["shown"] for f in chosen)
     # The table fits its frame, side by side and stacked, and no word is cut
     # over two lines (it was 48 px wider than its frame at 1850 x 960, and
-    # "Disease" broke as "Dise/ase" at 760 x 1000; at 1280 x 900, with a lineage
+    # "Disease" broke as "Dise/ase" at 1280 x 1280; at 1280 x 900, with a lineage
     # two runs deep under a long run name, 125 px wider, its Fingerprint cut).
     for size in ("selected", "mid", "narrow"):
         assert seen[size]["fit"]["over"] <= 0 and seen[size]["fit"]["split"] == [], (size, seen[size]["fit"])
@@ -3349,7 +3360,7 @@ def test_an_entry_it_could_not_list_is_no_choice_in_a_browser(tmp_path, world, m
 
 #: Models served whole: a file with no recorded result chosen, its "Test this
 #: model ›" clicked; the Test page as it opens (the page shown, the Run and
-#: Checkpoint selects as drawn). Screens of both, at 1850 x 960 and 390 x 844.
+#: Checkpoint selects as drawn). Screens of both, at 1850 x 960 and the display floor's 1280 x 720.
 _TEST_THIS_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
@@ -3358,7 +3369,7 @@ const ROWS = '#shep-models-research-rows';
   const [base, shots] = process.argv.slice(2);
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [390, 844]]) {
+  for (const [w, h] of [[1850, 960], [1280, 720]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h },
                                                    deviceScaleFactor: 1 })).newPage();
     await page.addInitScript(QUEUE_JS);
@@ -3415,7 +3426,7 @@ const ROWS = '#shep-models-research-rows';
 def test_test_this_model_opens_the_test_page_with_it_chosen_in_a_browser(
         tmp_path, world, monkeypatch):
     """R-68 in a real browser (skipped without Node and Playwright), Models
-    served whole at 1850 x 960 and 390 x 844: model-30.pt, with no recorded
+    served whole at 1850 x 960 and the display floor's 1280 x 720: model-30.pt, with no recorded
     result, chosen; its empty state's "Test this model ›" clicked; the Test
     page is the page shown, with that workspace, run and checkpoint chosen
     (the options the Test page draws for it). Fails on 6a2d52e: there was no
@@ -3516,7 +3527,7 @@ const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[390, 844], [960, 1080], [1850, 960]]) {
+  for (const [w, h] of [[1280, 720], [1440, 1600], [1850, 960]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.goto(process.argv[2]);
     await page.click('#shep-tab-research-button');
@@ -3548,7 +3559,10 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
     the reason beside Load this model was an 84 px column eight lines tall,
     its left edge inside the button's box: the foot is one grid row (load,
     reason, note) at every width. On a phone's column each takes a row of
-    its own; wider, the reason stays beside the button. Fails on fcc3dea."""
+    its own. Fails on fcc3dea. The sweep's L7: beside the button a reason is
+    one line or none (the layout rules' "beside"); the read-only reason
+    took two lines beside it, so it stands under the button wherever it
+    cannot be one line beside it."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -3562,10 +3576,11 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
         load, reason = at["load"], at["reason"]
         apart = reason["left"] >= load["right"] or reason["top"] >= load["bottom"]
         assert apart and reason["width"] >= 200 and at["lines"] <= 3, (size, at)
-    phone = seen["390x844"]
+    phone = seen["1280x720"]
     assert phone["reason"]["top"] >= phone["load"]["bottom"], phone
-    for size in ("960x1080", "1850x960"):
-        assert seen[size]["reason"]["left"] >= seen[size]["load"]["right"], seen[size]
+    for size, at in seen.items():
+        beside = at["reason"]["top"] < at["load"]["bottom"]
+        assert not beside or at["lines"] == 1, (size, at)
 
 
 # --------------------------------------------------------------------------- the UI sweep of 2026-11-22
@@ -3681,17 +3696,17 @@ def test_the_load_note_is_a_row_under_load_and_results_actions_follow_their_fiel
     """The layout rules' "beside" (a message never shares a row with a button):
     what Load does (the view's note, two sentences) stood beside Load this
     model in the foot's one row; it is a row of its own under Load and its
-    reason, at the panel's edge, the reason (one line) beside the button. A
-    phone's column stacks all three, measured on the list's own width (a
-    container query, never the window's). In Models › Results (the L0 check's
+    reason, at the panel's edge. Since the sweep's L7 the reason is a row of
+    its own under Load at every width too (it took two lines beside Load at
+    1550, 1366 and 1280, and a reason beside its button is one line or
+    none), so no width needs a query of its own. In Models › Results (the L0 check's
     item 5) Export and Read again were stretched to the row's far end, under
     the choices' line: its rows are the shared rows of fields (a button as
     wide as its words, on the boxes' bottom line) and Export's two choices as
     wide as their options, so the button follows them."""
     css = mp.PAGE_CSS
-    assert 'grid-template-areas: "detail detail" "load reason" "note note";' in css
-    assert "@media" not in css and "@container shep-mp-list (max-width: 36rem)" in css
-    assert "container: shep-mp-list / inline-size;" in css
+    assert 'grid-template-areas: "detail" "load" "reason" "note";' in css
+    assert "@media" not in css and "@container" not in css
     assert ".shep-rs-row > .form:has(> fieldset.block) { flex: 0 1 auto !important;" in css
     from src.webui.components import results_segment as rs
 
@@ -3739,7 +3754,7 @@ const QUEUE_JS = __QUEUE_JS__;
   }, null, { timeout: 30000 });
   await idle();
   const out = {};
-  for (const [w, h] of [[1536, 864], [1366, 768], [1280, 720], [390, 844]]) {
+  for (const [w, h] of [[1536, 864], [1366, 768], [1280, 720]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     out[`${w}x${h}`] = await page.evaluate(() => {
@@ -3814,17 +3829,41 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.waitForSelector('#shep-models-research-rows table.shep-mtree', { timeout: 60000 });
   await idle();
   const out = {};
-  for (const [w, h] of [[1366, 768], [1440, 1600]]) {
+  for (const [w, h] of [[1850, 960], [1550, 830], [1366, 768], [1440, 1600]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     out[`${w}x${h}`] = await page.evaluate(() => {
       const table = document.querySelector('#shep-models-research-rows table.shep-mtree'), wrap = table.parentElement;
       const rows = document.querySelector('#shep-models-research-rows');
       const opt = [...table.querySelectorAll('thead th')].filter((th) => th.classList.contains('shep-col-opt'));
+      const list = document.querySelector('#shep-page-models .shep-model-main'), detail = document.querySelector('#shep-mp-detail');
       return { layout: document.documentElement.getAttribute('data-shep-layout'),
+               list: list.getBoundingClientRect().width, detail: detail.getBoundingClientRect().width,
                sideways: Math.max(wrap.scrollWidth - wrap.clientWidth, rows.scrollWidth - rows.clientWidth),
                optional: opt.map((th) => th.textContent), drawn: opt.filter((th) => th.getClientRects().length).length,
                heads: [...table.querySelectorAll('thead th')].filter((th) => th.getClientRects().length).map((th) => th.textContent) };
+    });
+  }
+  // A row chosen: its details are what the page shows (the sweep's L7 check, D1).
+  await page.setViewportSize({ width: 1850, height: 960 });
+  await page.click('#shep-models-research-rows tr[data-key]:not([hidden])');
+  await page.waitForSelector('#shep-mp-detail-hd h2[data-key]');
+  await idle();
+  for (const [w, h] of [[1850, 960], [1550, 830]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out[`chosen ${w}x${h}`] = await page.evaluate(() => {
+      const table = document.querySelector('#shep-models-research-rows table.shep-mtree'), wrap = table.parentElement;
+      const rows = document.querySelector('#shep-models-research-rows');
+      const opt = [...table.querySelectorAll('thead th')].filter((th) => th.classList.contains('shep-col-opt'));
+      const body = document.querySelector('#shep-mp-detail-bd'), b = body.getBoundingClientRect();
+      const seg = [...body.querySelectorAll('.shep-seg')].filter((e) => e.getClientRects().length).pop();
+      const list = document.querySelector('#shep-page-models .shep-model-main'), detail = document.querySelector('#shep-mp-detail');
+      return { list: list.getBoundingClientRect().width, detail: detail.getBoundingClientRect().width,
+               fits: body.scrollHeight <= body.clientHeight + 1,
+               seg: seg ? seg.getBoundingClientRect().bottom <= b.top + body.clientHeight + 1 : null,
+               sideways: Math.max(wrap.scrollWidth - wrap.clientWidth, rows.scrollWidth - rows.clientWidth),
+               drawn: opt.filter((th) => th.getClientRects().length).length };
     });
   }
   console.log(JSON.stringify(out));
@@ -3842,7 +3881,19 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     (the selected model's details say each): the table drops them while it does
     not fit, so nothing scrolls sideways and Model, Task and Operation stay;
     where the whole table fits (a tall window's single column), every column is
-    drawn. Fails before the sweep's L4 lane."""
+    drawn. Fails before the sweep's L4 lane.
+    The sweep's L7 (SW-LK4): the list took 46 parts of 100 beside an empty
+    details panel wider than it, so at the owner's window (1850 x 960) the
+    tree dropped its Epochs, Files and Fingerprint (file rows a name and empty
+    cells, no fingerprint for "Name or fingerprint"). Side by side, the list,
+    the page's main region, is now at least as wide as the details, and at the
+    owner's windows the whole tree is drawn, nothing sideways.
+    The sweep's L7 check (D1): once a row is chosen its details are what the
+    page shows, yet they kept the empty panel's third, so at the owner's
+    windows their recorded results fell under the region's edge. Chosen, the
+    details are wider than empty, whole at the owner's largest window with the
+    list's whole tree beside them, and their records segment in view at the
+    smaller."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -3857,10 +3908,20 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
         seen = run_node(_OPTIONAL_COLUMNS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
     laptop, column = seen["1366x768"], seen["1440x1600"]
+    for size in ("1850x960", "1550x830"):
+        owner = seen[size]
+        assert owner["layout"] == "side" and owner["drawn"] == 3 and owner["sideways"] <= 0, (size, owner)
+    for size in ("1850x960", "1550x830", "1366x768"):
+        assert seen[size]["list"] >= seen[size]["detail"], (size, seen[size])
     assert laptop["optional"] == ["Epochs", "Files", "Fingerprint"] == column["optional"], seen
     assert laptop["layout"] == "side" and laptop["sideways"] <= 0, laptop
     assert laptop["drawn"] == 0 and laptop["heads"] == ["Model", "Task", "Operation"], laptop
     assert column["layout"] == "stack" and column["drawn"] == 3 and column["sideways"] <= 0, column
+    wide, mid = seen["chosen 1850x960"], seen["chosen 1550x830"]
+    assert wide["fits"] and wide["drawn"] == 3 and wide["sideways"] <= 0, wide
+    for size, chosen in (("1850x960", wide), ("1550x830", mid)):
+        assert chosen["detail"] > seen[size]["detail"] and chosen["sideways"] <= 0, (size, chosen, seen[size])
+    assert mid["seg"] in (True, None), mid
 
 
 # --------------------------------------------------------------------------- the family graph (G/I)
@@ -4586,7 +4647,12 @@ const ROWS = '#shep-models-research-rows';
   await page.keyboard.press(' ');
   await selectedIs(RUN.top); await idle();
   out.keys.spaceSelect = { joins: joins.filter(Boolean), state: await state(page), active: await activeRun() };
-  // ---- A deep subtree: unfolded twice down, folded at the top, unfolded again (I9).
+  // ---- A deep subtree: unfolded twice down, folded at the top, unfolded again (I9). In a window
+  // whose list region is as wide as the owner's was when the list took 46 parts of 100 (it takes
+  // two thirds since the sweep's L7, SW-LK4), so the unfolded chain runs past it.
+  await page.setViewportSize({ width: 1292, height: 960 });
+  await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'h');
+  await idle();
   const press = async (run) => { await page.hover(node(run) + ' .shep-fam-body'); await page.click(node(run) + ' .shep-fam-tog'); await idle(); };
   // Unfolded past the region's width left to right: the graph keeps its orientation and the
   // arrow stays under the pointer (I5, I10); the region, never the page, pans to what it shows.
@@ -4695,25 +4761,30 @@ const ROWS = '#shep-models-research-rows';
   // ---- A pick decides no orientation again (I10): top to bottom for a narrower region with
   // the chain unfolded, then the chain folded (it would fit left to right) and a body picked.
   await press(RUN.disease);                                        // the chain unfolded again
-  await page.setViewportSize({ width: 1848, height: 960 });
+  // A narrower window, still side by side: the list's region about as wide as at 1848 px when the
+  // list took 46 parts of 100 (it takes two thirds since the sweep's L7, SW-LK4).
+  await page.setViewportSize({ width: 1290, height: 960 });
   await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'v');
   await press(RUN.disease);                                        // fold the chain again
   const vFolded = (await state(page)).orient;
   await page.click(node(RUN.base) + ' .shep-fam-body');
   await selectedIs(RUN.base); await idle();
   out.repick = { vFolded, state: await state(page) };
-  // ---- Both orientations and the switch between them (the selection and the folds kept).
+  // ---- Both orientations and the switch between them (the selection and the folds kept). The
+  // chain unfolded again (a fold decides no orientation): at the display floor's width, the
+  // narrowest region at or above it, the unfolded graph runs top to bottom.
+  await press(RUN.disease);
   await page.setViewportSize({ width: 1849, height: 960 });
   await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'h');
   const wide = await state(page);
-  await page.setViewportSize({ width: 600, height: 900 });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'v');
   const narrow = await state(page);
   await page.setViewportSize({ width: 1850, height: 960 });
   await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'h');
   out.switch = { wide, narrow, back: await state(page) };
   // In the narrow layout, the arrow area under the body: the node grows down, its top and text kept.
-  await page.setViewportSize({ width: 600, height: 900 });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForFunction(() => document.querySelector('[data-fam-orient]').getAttribute('data-fam-orient') === 'v');
   await page.mouse.move(2, 2);
   await page.$eval(node(RUN.base), (n) => n.scrollIntoView({ block: 'center' }));
@@ -4723,11 +4794,12 @@ const ROWS = '#shep-models-research-rows';
   await page.waitForFunction((sel) => document.querySelector(sel + ' > .shep-fam-act').getBoundingClientRect().height > 0, node(RUN.base));
   out.vertical = { before: vBefore, after: await look(page, RUN.base), next: nextBefore, nextAfter: await look(page, RUN.branch) };
   await page.mouse.move(2, 2);
-  // ---- Larger type: the page at 150 % (its CSS pixels a third fewer). The body reached by
+  // ---- Larger type: the page at 150 % (its CSS pixels a third fewer; a 2560 x 1440 window, so
+  // the area stays above the display floor). The body reached by
   // the keyboard (a focus set by the page after a pointer is no keyboard focus): from it Tab
   // onto its arrow, Shift+Tab back. Its ring read where it is drawn (2 px inside the body's
   // edge, `outline-offset: -3px`): what is there on each side is the body.
-  await page.setViewportSize({ width: 1233, height: 640 });
+  await page.setViewportSize({ width: 1707, height: 960 });
   await page.waitForTimeout(0);
   await page.focus(node(RUN.base) + ' .shep-fam-body');
   await page.keyboard.press('Tab');

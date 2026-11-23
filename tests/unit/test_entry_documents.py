@@ -417,8 +417,8 @@ def test_the_playbook_s_safety_net_is_the_load_s_refusal_in_the_code_s_words(
     assert "refused before any model is built" in text
     assert all(f"`{name}`" in text for name in GRAPH_ARTIFACTS.values()), GRAPH_ARTIFACTS
     assert "Startup failed" in inspect.getsource(service.lifespan)
-    assert "Not reloaded; the model in use is unchanged." in text
-    assert "Not reloaded; the model in use is unchanged." in inspect.getsource(model_list)
+    assert "Not reloaded. The model in use is unchanged." in text
+    assert "Not reloaded. The model in use is unchanged." in inspect.getsource(model_list)
 
     # Troubleshooting sends a rebuild's old checkpoint to that refusal, not to
     # the fingerprint's warnings.

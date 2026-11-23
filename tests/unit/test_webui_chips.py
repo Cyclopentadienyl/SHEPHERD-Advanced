@@ -125,10 +125,10 @@ def test_this_services_inference_is_named_as_such_with_where_to_stop_it():
     start lines repeat the words with the pointer (`busy_words`)."""
     chip = c.gpu_chip_from(None, _inference_holder(os.getpid()), operator=False)
     assert (chip.kind, chip.text) == ("busy", "GPU: inference (this service)")
-    assert chip.remedy == c.STOP_INFERENCE_HERE
+    assert chip.remedy == c.STOP_INFERENCE_STEP
     assert "Stop inference on Diagnosis" in chip.detail and "POST /api/v1/pipeline/stop" in chip.detail
     assert "server-host-name" not in chip.detail and c.GPU_SCOPE in chip.detail
-    assert c.busy_words(chip) == ("GPU: inference (this service); stop it with Stop inference "
+    assert c.busy_words(chip) == ("GPU: inference (this service). Stop it with Stop inference "
                                   "on Diagnosis")
     html = c.chip_html(chip, which="gpu")
     assert "GPU: inference (this service)" in html and "server-host-name" not in html
@@ -167,10 +167,10 @@ def test_the_chip_and_the_research_starts_read_this_services_real_holding(monkey
     try:
         assert c.read_gpu_chip(Idle(), operator=False).text == c.GPU_INFERENCE
         line = tc._gpu_line(None, lock_state(), None, operator=True)
-        assert line == {"text": f"{c.GPU_INFERENCE}; {c.STOP_INFERENCE_HERE}", "test": False,
+        assert line == {"text": f"{c.GPU_INFERENCE}. {c.STOP_INFERENCE_STEP}", "test": False,
                         "unset": False, "notice": None}
         kind, words = tp.gpu_line(manager=Idle(), operator=True)
-        assert (kind, words) == ("busy", f"{c.GPU_INFERENCE}; {c.STOP_INFERENCE_HERE}")
+        assert (kind, words) == ("busy", f"{c.GPU_INFERENCE}. {c.STOP_INFERENCE_STEP}")
     finally:
         held.release()
     assert c.read_gpu_chip(Idle(), operator=True).text == "GPU jobs: none"
@@ -228,7 +228,7 @@ def test_a_lock_not_configured_says_so_and_that_jobs_are_refused(monkeypatch):
         assert "GPU jobs are refused until a workspaces folder is set." in chip.detail
         assert "Choose one in Settings › Data locations." in chip.detail
         assert "GPU lock: .shepherd-gpu.lock in the workspaces folder" in chip.detail
-        assert "Ref: SHEPHERD_WORKSPACES_ROOT; deployment guide §4.11" in chip.detail
+        assert "Ref: SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11" in chip.detail
         assert read_gpu_chip_now(operator) == chip
 
 
@@ -507,12 +507,11 @@ def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
     assert "M1" in on[-1].text and "SHEPHERD_DEPLOYMENT_MODE" in on[-1].text
     unset = c.gpu_chip_from(None, {**LOCK_FREE, "unset": True}, operator=True).detail
     assert unset.splitlines()[-1] == (
-        "Ref: SHEPHERD_WORKSPACES_ROOT; deployment guide §4.11; the formal scripts "
-        "train_model.py, measure_scorer.py")
+        "Ref: SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11")
     refused = c.d8_chip(OperatorAccess(False, "not_loopback", "why")).detail
     assert refused.startswith(f"{c.D8_READONLY_LEAD}\n{c.D8_SCOPE}\n\nFor this request: why")
     assert c.gpu_chip_from(None, lock_broken, operator=True).detail.startswith(
-        "The GPU lock cannot be used, so every managed job is refused until it is corrected.\n"
+        "The GPU lock cannot be used: managed jobs are refused until it is fixed.\n"
         "the folder is read-only")
 
 
@@ -570,6 +569,8 @@ justify-content: flex-end; padding: 12px; }} {h.HELP_CSS}</style>{h.HELP_HEAD}</
             which, classes)
     assert seen["gpu"][0]["text"] == "GPU jobs are refused until a workspaces folder is set."
     assert seen["gpu"][-1]["text"].startswith("Ref: SHEPHERD_WORKSPACES_ROOT")
-    assert "train_model.py" in seen["gpu"][-1]["text"]
-    assert not any("train_model.py" in part["text"] for part in seen["gpu"][:-1])
+    # The state's own references alone (the sweep's L7 check, C9: with the scope's scripts the
+    # line took three lines of the bubble); a script's name is never in the body.
+    assert seen["gpu"][-1]["text"] == f"Ref: {c.GPU_NOT_CONFIGURED_REF}"
+    assert not any("train_model.py" in part["text"] for part in seen["gpu"])
     assert not any("M1" in part["text"] for part in seen["d8"][:-1])

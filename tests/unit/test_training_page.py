@@ -666,11 +666,13 @@ def test_first_use_is_one_notice_under_the_bar_and_one_relation_beside_start(mon
     view = _view(ws=ws, gpu=gpu)
     assert (view["start"], view["cont"]) == (False, False)
     assert view["reason"] == ""                                   # no reason line of its own
-    assert view["why"] == r.see_above("Start unavailable", gpu["notice"])
-    assert ">Start unavailable: GPU jobs need a workspaces folder.<" in view["why"]
-    assert "(see above)." in view["drawer_reason"] and "Continue Training unavailable" in view[
+    assert view["why"] == r.see_above("Start", gpu["notice"])
+    assert ">Start disabled: GPU jobs need a workspaces folder.<" in view["why"]
+    assert "(see above)." in view["drawer_reason"] and "Continue Training disabled" in view[
         "drawer_reason"]
-    note = tc.note_html(view)
+    # The notice is said before the bar (`setup_html`, L7 SW-LK5), the bar's note nothing.
+    assert tc.note_html(view) == ""
+    note = tc.setup_html(view)
     assert note.count('data-notice="workspaces_root"') == 1 and 'data-notice-also="gpu_lock"' in note
     assert note.count("No workspaces folder is set.") == 1
     assert 'data-shep-go="settings"' in note and "Details ›" in note
@@ -689,19 +691,20 @@ def test_first_use_is_one_notice_under_the_bar_and_one_relation_beside_start(mon
     refused = _view(ws=ws, gpu=tc._gpu_line(None, unset, None, operator=False),
                     access=_Access(False, "not_loopback"))
     assert "Operator controls only" in refused["reason"] and refused["why"] == ""
-    assert 'data-notice="workspaces_root"' in tc.note_html(refused)
+    assert 'data-notice="workspaces_root"' in tc.setup_html(refused)
+    assert "data-notice" not in tc.note_html(refused)
     # A lock that cannot be used for another reason, the folder set: its own notice, its
     # problem a Details row for an operator only, never in the words of the line.
     problem = {"configured": True, "problem": "/srv/workspaces/.shepherd-gpu.lock is a directory"}
     for operator in (True, False):
         line = tc._gpu_line(None, problem, None, operator=operator)
         seen = _view(gpu=line)
-        drawn = tc.note_html(seen)
-        assert "The GPU lock cannot be used." in drawn and seen["why"].count("unavailable") == 1
+        drawn = tc.setup_html(seen)
+        assert "The GPU lock cannot be used." in drawn and seen["why"].count("disabled") == 1
         assert ("/srv/workspaces" in drawn) is operator
         assert "/srv" not in seen["why"]
     # Nothing to say: no note, so its row takes no room.
-    assert tc.note_html(_view()) == ""
+    assert tc.note_html(_view()) == "" and tc.setup_html(_view()) == ""
     assert lock_notice({"configured": True, "problem": None}) is None
 
 
@@ -2976,7 +2979,7 @@ def test_the_chosen_checkpoints_details_say_what_its_option_does_not():
     for words in ("File", "last.pt", "Kind", "Base", "Holds", "training state", "Continuing",
                   "extends it by the Extra epochs you enter", "Validation",
                   "LP accuracy (Trainer) 0.8123", "Model fingerprint", "cccccccccccc",
-                  'data-copy="' + "c" * 64, "gatv2/20261024-163856_run_559817"):
+                  'data-copy="' + "c" * 64, r.token_html("gatv2/20261024-163856_run_559817")):
         assert words in html, words
     # Never a test result: the figure says it is the Trainer's selection
     # metric on val, as every details list's Validation row does (B0c).
@@ -3063,7 +3066,8 @@ def test_every_device_field_is_the_one_field_with_the_hosts_note(monkeypatch):
         return [by_id[key] for key in ("device", "continue_device", "ft_device")]
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    assert tc.DEVICE_NOTE == "No CUDA device here: auto and cuda are refused; choose cpu."
+    assert tc.DEVICE_NOTE == "No CUDA device here: auto and cuda are refused. Choose cpu."
+    assert ";" not in tc.DEVICE_NOTE                      # the text brief's §2: no semicolons
     for field in fields():
         assert isinstance(field, gr.Radio) and field.label == "Device"
         assert [c[1] for c in field.choices] == ["auto", "cuda", "cpu"] and field.value == "auto"
@@ -3258,7 +3262,7 @@ def test_the_continue_drawer_fits_and_says_the_plan_once():
                          "new target 180)", "sha256": "c" * 64, "inherited": {}}
     check = tc._check_html(preview, tc.CONTINUE_FROM_LIST)
     assert check.count("Extend training by 30 epochs") == 1
-    assert r.status_mark("ok", "Checkpoint read; it can continue on this workspace.") in check
+    assert r.status_mark("ok", "Checkpoint read: it can continue on this workspace.") in check
 
 
 def test_the_drawers_refusals_lead_with_the_shared_status_mark():
@@ -3279,7 +3283,7 @@ def test_the_drawers_refusals_lead_with_the_shared_status_mark():
                "action": "Resume the original training (1/2 done, 1 left)", "sha256": "c" * 64,
                "inherited": {}}
     differs = tc._check_html(preview, tc.CONTINUE_FROM_LIST, differs=True)
-    assert r.status_mark("error", "Checkpoint read; cannot continue on the current dataset.") \
+    assert r.status_mark("error", "Checkpoint read: it cannot continue on the current dataset.") \
         in differs
     ws = {"name": "demo", "row": {"name": "demo", "dataset_fingerprint": "a" * 64}, "listed": []}
     compare = tc.compare_html({"chosen": True, "fingerprint": "e" * 64}, ws)
@@ -3441,7 +3445,7 @@ def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
     assert "#shep-train-page { container: shep-train-page / size; }" in wide
     short = css.split(f"@container shep-train-page (max-height: {tc.RUN_VIEW_ONE_ROW}px) {{", 1)[1].split("\n}", 1)[0]
     assert "#shep-train-runview { overflow-y: auto !important; }" in short
-    assert "#shep-train-runview > #shep-train-charts { flex: none !important; }" in short
+    assert "#shep-train-runview > #shep-train-charts { flex: 1 0 auto !important; }" in short
     assert "#shep-train-charts .shep-charts-body { flex: none; overflow-y: visible; }" in short
     assert "sticky" not in short and tc.RUN_VIEW_ONE_ROW >= tc.PLOT_MIN_HEIGHT + tc.PLOT_AXIS_ROOM
     assert "#shep-train-charts .shep-charts-bar { flex: none; min-height: 34px; padding-bottom: 4px; }" in wide
@@ -3475,7 +3479,7 @@ const { chromium } = require('playwright');
   const base = process.argv[2];
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [960, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h },
                                                    deviceScaleFactor: 1 })).newPage();
     // The page's State keeps its heartbeat stream open: wait for what is drawn.
@@ -3560,7 +3564,7 @@ def test_the_details_popovers_stay_as_the_reader_left_them_across_redraws(tmp_pa
     element's attributes to the new HTML's, which draws each popover closed,
     and the popover's open state was kept in those attributes only. In a real
     browser (skipped without Node and Playwright), at 1850 x 960 and
-    960 x 1080, both with the page's own ``js_on_load`` and drawn by their
+    1440 x 1600, both with the page's own ``js_on_load`` and drawn by their
     own renderers, the server pushing each next drawing as a running job's
     render does (the header's relation and state words, the chip's "in use
     by the running job" coming and going): a popover the reader opened stays
@@ -3658,7 +3662,7 @@ const { chromium } = require('playwright');
   const [base, shots] = [process.argv[2], process.argv[3]];
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [960, 1080], [1920, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600], [1920, 1080]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h },
                                                    deviceScaleFactor: 1 })).newPage();
     await page.goto(base, { waitUntil: 'load' });
@@ -3711,7 +3715,7 @@ def test_a_failed_runs_output_tail_starts_by_the_window_and_keeps_the_readers_ch
     reader's choice over it while the banner names the same failed job. In
     a real browser (skipped without Node and Playwright), with the
     dashboard's head deciding the layout: run A's tail drawn by its default
-    at 1850 x 960 (side by side, short: closed), 960 x 1080 (stacked: open)
+    at 1850 x 960 (side by side, short: closed), 1440 x 1600 (stacked: open)
     and 1920 x 1080 (side by side, tall: open); the reader opens or closes
     it, and the same failure drawn again keeps that; run B's tail starts at
     the default again. Fails on d8d1828, where run B's tail took run A's
@@ -3740,7 +3744,7 @@ def test_a_failed_runs_output_tail_starts_by_the_window_and_keeps_the_readers_ch
     shots.mkdir()
     with served(page, **mount_options()) as base:
         seen = run_node(_BANNER_TAIL_JS, tmp_path, base[:-len("gradio_api")], str(shots))
-    for size, default in (("1850x960", False), ("960x1080", True), ("1920x1080", True)):
+    for size, default in (("1850x960", False), ("1440x1600", True), ("1920x1080", True)):
         got = seen[size]
         assert got["drawn"]["open"] is default, (size, got)
         assert got["chosen"]["open"] is not default, (size, got)
@@ -3749,7 +3753,7 @@ def test_a_failed_runs_output_tail_starts_by_the_window_and_keeps_the_readers_ch
         # Each failure's tail is its own disclosure: its block names its job.
         assert got["drawn"]["of"] == "TRAIN-a" and got["next"]["of"] == "TRAIN-b", (size, got)
     assert seen["1850x960"]["drawn"]["layout"] == "side"
-    assert seen["960x1080"]["drawn"]["layout"] == "stack"
+    assert seen["1440x1600"]["drawn"]["layout"] == "stack"
 
 
 #: A failed run's banner whose HTML holds the failure when it mounts (its tab
@@ -3762,7 +3766,7 @@ const { chromium } = require('playwright');
   const [base, shots] = [process.argv[2], process.argv[3]];
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [960, 1080], [1920, 1080]]) {
+  for (const [w, h] of [[1850, 960], [1440, 1600], [1920, 1080]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h },
                                                    deviceScaleFactor: 1 })).newPage();
     await page.goto(base, { waitUntil: 'load' });
@@ -3791,7 +3795,7 @@ def test_a_failed_runs_output_tail_drawn_as_the_banner_mounts_starts_by_the_wind
     after the failure) was drawn as its HTML says, open, whatever the
     window. Now the keeper's first pass runs after the region's own script:
     the tail starts at the banner's default, closed at 1850 x 960 (side by
-    side, short) and open at 960 x 1080 and 1920 x 1080. In a real browser
+    side, short) and open at 1440 x 1600 and 1920 x 1080. In a real browser
     (skipped without Node and Playwright), the dashboard's head deciding the
     layout. Fails on e1dda3e (open at 1850 x 960); d8d1828's banner applied
     its default by a script of its own, which 5d8e6d5 retired."""
@@ -3814,10 +3818,10 @@ def test_a_failed_runs_output_tail_drawn_as_the_banner_mounts_starts_by_the_wind
     shots.mkdir()
     with served(page, **mount_options()) as base:
         seen = run_node(_BANNER_MOUNT_JS, tmp_path, base[:-len("gradio_api")], str(shots))
-    for size, default in (("1850x960", False), ("960x1080", True), ("1920x1080", True)):
+    for size, default in (("1850x960", False), ("1440x1600", True), ("1920x1080", True)):
         assert seen[size]["unmounted"], (size, seen)
         assert seen[size]["open"] is default, (size, seen)
-    assert seen["1850x960"]["layout"] == "side" and seen["960x1080"]["layout"] == "stack"
+    assert seen["1850x960"]["layout"] == "side" and seen["1440x1600"]["layout"] == "stack"
 
 
 #: The Training page as the service mounts it: four settings typed, so the
@@ -3905,7 +3909,7 @@ const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = {};
-  for (const [w, h] of [[1850, 960], [1366, 768], [960, 1080], [390, 844]]) {
+  for (const [w, h] of [[1850, 960], [1366, 768], [1440, 1600], [1280, 720]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
     await page.addInitScript(QUEUE_JS);
     await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
@@ -3987,8 +3991,10 @@ const QUEUE_JS = __QUEUE_JS__;
         return { el: el.id || el.className.toString().slice(0, 30), hit: el === at || el.contains(at) };
       });
       window.scrollTo(0, 0);
+      const setup = document.querySelector('#shep-train-setup');
       return { bar: inner, groups, actions, act: box(act.getBoundingClientRect()),
         note: note && shown(note) ? box(note.getBoundingClientRect()) : null, lines, beside,
+        setup: setup && shown(setup) ? box(setup.getBoundingClientRect()) : null,
         why: whyText ? { box: box(whyText.getBoundingClientRect()), text: whyText.querySelector('.shep-nb-text').textContent.trim(),
                          lh: parseFloat(getComputedStyle(whyText).lineHeight) } : null,
         start: start && shown(start) ? box(start.getBoundingClientRect()) : null,
@@ -4011,7 +4017,7 @@ LONG_NAME = "hospital_a_rare_disease_cohort_2026_11_16_reimport_v3"
 #: What each case waits for (`_RUNBAR_JS`'s second argument): the setup notice
 #: under the bar at first use, the dataset's identity with a dataset chosen,
 #: the reason line for a workspace that cannot be trained.
-_RUNBAR_SHOWN = {"first_use": '#shep-train-reason [data-notice="workspaces_root"]',
+_RUNBAR_SHOWN = {"first_use": '#shep-train-setup [data-notice="workspaces_root"]',
                  "configured": "#shep-train-chip .shep-fpv",
                  "long_name": "#shep-train-reason .shep-rb-why"}
 
@@ -4032,11 +4038,14 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
 
     For an operator at first use (no workspaces folder), with a dataset and
     no run yet, and with a workspace of a long name that cannot be trained,
-    at 1850 x 960, 1366 x 768, 960 x 1080 and 390 x 844, measured relative to
+    at 1850 x 960, 1366 x 768, 1440 x 1600 (stacked) and the display floor's 1280 x 720
+    (390 x 844 and 960 x 1080 are below the floor, drawn as at it), measured relative to
     what is drawn: every group of the bar holds its controls on one line;
-    the actions (Start and Continue…) on one line, their group at the bar's
-    end (with a dataset chosen, at 1850 x 960, on the one line of every
-    group: R-38); every control inside the bar's padding; the note, when it says
+    the actions (Start and Continue…) on one line, their group at the end
+    of a line it shares, and starting a line it has alone, on the bar's
+    edge (the sweep's L7, SW-LK5; with a dataset chosen, at 1850 x 960, on
+    the one line of every group: R-38); every control inside the bar's padding; at first use the
+    setup notice before every control, from the bar's edge (L7 SW-LK5); the note, when it says
     something, under every control, from the bar's edge, each line inside
     the bar; no text of the run bar beside a
     control but the dataset's identity, the job's state and the relation
@@ -4064,7 +4073,7 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_RUNBAR_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")], _RUNBAR_SHOWN[case])
-    assert set(seen) == {"1850x960", "1366x768", "960x1080", "390x844"}, seen
+    assert set(seen) == {"1850x960", "1366x768", "1440x1600", "1280x720"}, seen
     for size, drawn in seen.items():
         left, _top, right, _bottom = drawn["bar"]
         where = (case, size, drawn)
@@ -4074,15 +4083,39 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
         actions = drawn["actions"]
         assert len(actions) >= 2, where
         assert max(a[1] for a in actions) < min(a[3] for a in actions), where
-        assert abs(drawn["act"][2] - right) <= 2, where
+        # The actions' group at the end of a line it shares with another group; alone on its
+        # line, it starts the line on the bar's edge (the sweep's L7, SW-LK5: pushed to the end
+        # alone, it left 459 to 810 px of the line's start empty at 1366 x 768).
+        # The job's state is a group of its own after them (L7 SW-LK5), so the actions and it
+        # end the line they share with another group.
+        act = drawn["act"]
+        on_line = [g for g in drawn["groups"] if g["box"][1] < act[3] and g["box"][3] > act[1]]
+        after = [g for g in on_line if g["box"][0] >= act[2] - 1]
+        shared = [g for g in on_line if g["box"][2] <= act[0] + 1]
+        if shared:
+            assert abs(max([act[2]] + [g["box"][2] for g in after]) - right) <= 2, where
+        else:
+            assert abs(act[0] - left) <= 2, where
+        state = [g for g in drawn["groups"] if g["cls"] == "shep-rb-state"]
+        assert len(state) == 1, where
         if case == "configured" and size == "1850x960":
-            # R-38: at the owner's window, a dataset chosen, the bar is one row.
-            assert len({group["box"][1] for group in drawn["groups"]}) == 1, where
+            # R-38: at the owner's window, a dataset chosen, the bar is one row: every group
+            # shares one line (the job state stands on the line's centre, not its top, since
+            # 289e51b, so the groups' tops differ by design).
+            boxes = [group["box"] for group in drawn["groups"]]
+            assert max(b[1] for b in boxes) < min(b[3] for b in boxes), where
         controls = [p for group in drawn["groups"] for p in group["parts"]]
         # Every control inside the bar's padding (a select's floor against its whole field,
         # label and ⓘ beside it, pushed the Dataset box 14 px past it at 390 x 844).
         assert all(c[0] >= left - 1 and c[2] <= right + 1 for c in controls), where
-        if case in ("first_use", "long_name"):
+        if case == "first_use":
+            # The setup notice before every control of the bar, from its edge (L7 SW-LK5:
+            # it was the bar's note, after the actions once the bar wrapped); the note says
+            # nothing then.
+            setup = drawn["setup"]
+            assert setup is not None and setup[3] <= min(c[1] for c in controls) + 1, where
+            assert abs(setup[0] - left) <= 2 and drawn["note"] is None, where
+        elif case == "long_name":
             note = drawn["note"]
             assert note is not None and note[1] >= max(c[3] for c in controls) - 1, where
             assert abs(note[0] - left) <= 2, where
@@ -4093,7 +4126,7 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
         assert drawn["beside"] == [], where
         why = drawn["why"]
         if case == "first_use":
-            assert why["text"] == "Start unavailable: GPU jobs need a workspaces folder.", where
+            assert why["text"] == "Start disabled: GPU jobs need a workspaces folder.", where
             start = drawn["start"]
             level = min(start[3], why["box"][3]) - max(start[1], why["box"][1])
             if level > 0.5 * (start[3] - start[1]):

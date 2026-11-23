@@ -17,8 +17,8 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   Settings when it is selected (one look for level 1's selected item, which no
   other level has, R-20).
 - **Level 2** (``#shep-research-nav``, inside Research): Datasets · Training ·
-  Fine-tune · Test · Models, 32 px tabs in one row, which wraps only when
-  the tabs alone do not fit. The selected page has a 3 px accent underline,
+  Fine-tune · Test · Models, 32 px tabs in one row (at the display floor's
+  width they fit with room to spare). The selected page has a 3 px accent underline,
   the accent text and the strong weight; a tab under the pointer has a grey
   fill and darker text and never an underline, so only the selected tab ever
   reads as selected. The default inner page is Training.
@@ -62,7 +62,12 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   every style sheet keys its side-by-side and stacked rules off it
   (`src/webui/style.py`'s ``SIDE`` and ``STACK``; no media query on the
   window's size anywhere). The browser's usable area, the window's inner
-  size, decides: no wider than tall, ``stack``; wider, ``side`` when the page
+  size raised to the floor of the arrangement the window takes (no wider
+  than tall, the stacked arrangement's, ``style.STACK_FLOOR_WIDTH``; wider,
+  the display floor, ``style.FLOOR_WIDTH`` x ``style.FLOOR_HEIGHT``; below
+  it the frame keeps the floor's width and the document scrolls, so every
+  mark is the floor's), decides: no wider than
+  tall, ``stack``; wider, ``side`` when the page
   shown fits by its panels' own minimum widths (each panel's
   ``--shep-panel-min`` in its page's style sheet, read from the panels as
   drawn: the shown ``.shep-page`` row's shown children, under any wrapper
@@ -253,8 +258,9 @@ import gradio as gr
 from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
 from src.webui.components.help import HelpRegistry, as_json_for_script
 from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
-from src.webui.style import (FIT, FIT_WIDE, FOLD, FOLD_FLOOR, FOLD_ROOM, FOLDED_ATTR, LAYOUT_ATTR,
-                              NARROW_ATTR, SHORT_ATTR, SHORT_BELOW)
+from src.webui.style import (FADE_VAR, FIT, FIT_WIDE, FLOOR_HEIGHT, FLOOR_VAR, FLOOR_WIDTH, FOLD, FOLD_FLOOR,
+                              FOLD_ROOM, FOLDED_ATTR, LAYOUT_ATTR, NARROW_ATTR, SEG_WHOLE, SHORT_ATTR, SHORT_BELOW,
+                              STACK_FLOOR_WIDTH)
 
 BRAND = "SHEPHERD-Advanced"
 
@@ -311,15 +317,12 @@ RESEARCH_TABLIST_LABEL = _research_tablist_label()
 #: not the stages (`STAGES`: Datasets is still Prepare), no tab moves, and the
 #: tab order, the tablist's name and the stage hint are unchanged. The first
 #: tab of each later group keeps a gap before it (`TAB_GROUP_GAP`), in which a
-#: decorative line is drawn while the tabs sit on one line (`TAB_GROUP_CSS`).
+#: decorative line is drawn (`TAB_GROUP_CSS`). At or above the display floor
+#: (`style.FLOOR_WIDTH`) the tabs sit on one line, and below it the row is
+#: drawn as at the floor, so a line never starts with a separator.
 TAB_GROUPS = ((DATASETS,), (TRAINING, FINETUNE), (TEST, MODELS))
 #: The gap before a later group's first tab (the style token it reads).
 TAB_GROUP_GAP = "var(--shep-tabgroup-gap)"
-#: Set on ``#shep-research-nav`` by the head script's layout pass while its
-#: tabs take more than one line: the separators are not drawn then (a line
-#: never starts with one); the gaps stay, so the mark changes nothing the
-#: pass measures.
-TABS_WRAPPED_ATTR = "data-shep-tabs-wrapped"
 
 
 def _tab_group_css() -> str:
@@ -328,7 +331,7 @@ def _tab_group_css() -> str:
     first tab, and its separator, an empty ``::before`` (no node of the
     tablist, no role, no focus stop, no text: nothing a screen reader or the
     keyboard meets), drawn in the gap's middle, never over the tab's hit
-    target, and not drawn while the tabs wrap (`TABS_WRAPPED_ATTR`)."""
+    target."""
     rules = []
     for group in TAB_GROUPS[1:]:
         tab = f"#shep-research-nav > .tab-wrapper > .tab-container > #{page_elem_id(group[0])}-button"
@@ -336,8 +339,6 @@ def _tab_group_css() -> str:
         rules.append(f"{tab}::before {{ content: \"\"; position: absolute; top: 8px; bottom: 8px; "
                      f"inset-inline-start: calc({TAB_GROUP_GAP} / -2 - 0.5px); width: 1px; "
                      "background: var(--shep-border-2); pointer-events: none; }")
-        rules.append(f"#shep-research-nav[{TABS_WRAPPED_ATTR}] > .tab-wrapper > .tab-container > "
-                     f"#{page_elem_id(group[0])}-button::before {{ display: none; }}")
     return "\n".join(rules) + "\n"
 
 
@@ -860,10 +861,10 @@ _SHELL_JS = r"""
     if (hint.hidden !== !want) { hint.hidden = !want; }
   }
   // Row 1 holds the brand, the area switch, the chips and Settings. When they
-  // do not fit on one row, the chips and Settings move onto a line of their
-  // own, under the area switch however many lines it takes (at 480 px its
-  // two tabs take two): the chips sit where that line starts, measured, so
-  // they never cover a tab.
+  // do not fit on one row (at the display floor's width, a GPU chip naming a
+  // long holder), the chips and Settings move onto a line of their own, under
+  // the area switch: the chips sit where that line starts, measured, so they
+  // never cover a tab.
   // **The one layout decision** (the layout rule, module docstring): the
   // window's inner size first (no wider than tall: stacked), then whether the
   // page shown fits side by side by its panels' own minimum widths. Read from
@@ -871,6 +872,18 @@ _SHELL_JS = r"""
   // from the state it sets, so a pass never undoes the one before it; a
   // scrollbar the stacked page shows is counted back (side by side has none).
   var LAYOUT = '__LAYOUT__', SHORT = '__SHORT__', SHORT_BELOW = __SHORT_BELOW__;
+  // **The display floor** (style.FLOOR_WIDTH x FLOOR_HEIGHT) and **the stacked arrangement's**
+  // (style.STACK_FLOOR_WIDTH): the usable area every mark is decided on is the window's inner size
+  // raised to the floor of the arrangement the window takes. No wider than tall, the stacked one,
+  // its floor STACK_FLOOR_W in both axes (the narrowest window no wider than tall); wider, the
+  // display floor. Below its floor the frame keeps the floor's width (FLOOR_VAR, written here for
+  // style.py's frame) and the document scrolls, so each mark is the floor's.
+  var FLOOR_W = __FLOOR_W__, FLOOR_H = __FLOOR_H__, STACK_FLOOR_W = __STACK_FLOOR_W__, FLOOR_VAR = '__FLOOR_VAR__';
+  function area() {
+    var w = window.innerWidth, h = window.innerHeight, tall = w <= h;
+    var fw = tall ? STACK_FLOOR_W : FLOOR_W, fh = tall ? STACK_FLOOR_W : FLOOR_H;
+    return {w: Math.max(w, fw), h: Math.max(h, fh), floor: fw};
+  }
   function shownTab() {
     var outer = selected('shep-nav') || 'clinical';
     if (outer === RESEARCH) {
@@ -903,14 +916,16 @@ _SHELL_JS = r"""
       if (min > 0) { need += min; n += 1; }
     }
     if (n > 1) { need += (n - 1) * (parseFloat(s.columnGap) || 0); }
+    // The frame's width (the floor's at least) and the room the window's own scrollbar takes.
     var bar = window.innerWidth - document.documentElement.clientWidth;
     return need <= box.getBoundingClientRect().width + bar + 0.5;
   }
   function orientation() {
-    var root = document.documentElement, w = window.innerWidth, h = window.innerHeight;
-    var want = w > h && sideFits(shownTab()) ? 'side' : 'stack';
+    var root = document.documentElement, a = area();
+    if (root.style.getPropertyValue(FLOOR_VAR) !== a.floor + 'px') { root.style.setProperty(FLOOR_VAR, a.floor + 'px'); }
+    var want = a.w > a.h && sideFits(shownTab()) ? 'side' : 'stack';
     if (root.getAttribute(LAYOUT) !== want) { root.setAttribute(LAYOUT, want); }
-    if (root.hasAttribute(SHORT) !== (h < SHORT_BELOW)) { root.toggleAttribute(SHORT, h < SHORT_BELOW); }
+    if (root.hasAttribute(SHORT) !== (a.h < SHORT_BELOW)) { root.toggleAttribute(SHORT, a.h < SHORT_BELOW); }
   }
   // **A wide form only while it fits** (the layout rule's fit, module
   // docstring): each box of class FIT drawn shows its wide form (FIT_WIDE)
@@ -927,14 +942,28 @@ _SHELL_JS = r"""
   var ON_ONE_LINE = 'flex-wrap:nowrap !important;flex-direction:row !important;'
     + 'width:max-content !important;max-width:none !important;';
   // **A choice group whole or one per line** (style.py's M3): a radio or checkbox group (a
-  // fieldset block, not a segmented control) whose options do not fit one line of its room is
-  // marked NARROW, and its options stand one per line, never one alone under the others.
-  var CHOICE = 'fieldset.block:not(.shep-seg)';
+  // fieldset block, not a segmented control, or a segmented control whose labels stay whole,
+  // SEG_WHOLE) whose options do not fit one line of its room is marked NARROW, and its options
+  // stand one per line, never one alone under the others.
+  var CHOICE = 'fieldset.block:not(.shep-seg), fieldset.block.__SEG_WHOLE__';
+  // The scroll positions of `el`'s ancestors are held across the measure and put back: drawn
+  // out of flow at its narrowest, `el` no longer fills a box that scrolls around it, and reading
+  // its width clamps that box's scroll (a FIT table's sideways scroll went back to 0 on every
+  // pass, the page near its end jumped to its top, a focused control left the view).
   function measured(el, extra, read) {
+    var held = [];
+    for (var a = el.parentElement; a; a = a.parentElement) {
+      if (a.scrollLeft || a.scrollTop) { held.push([a, a.scrollLeft, a.scrollTop]); }
+    }
     var kept = el.getAttribute('style');
     el.setAttribute('style', (kept ? kept + ';' : '') + extra);
     var value = read(el);
     if (kept === null) { el.removeAttribute('style'); } else { el.setAttribute('style', kept); }
+    for (var i = 0; i < held.length; i++) {
+      var h = held[i];
+      if (h[0].scrollLeft !== h[1]) { h[0].scrollLeft = h[1]; }
+      if (h[0].scrollTop !== h[2]) { h[0].scrollTop = h[2]; }
+    }
     return value;
   }
   function roomOf(box) {
@@ -971,20 +1000,6 @@ _SHELL_JS = r"""
       } else if (!options || !drawn(group)) { continue; }
       if (group.hasAttribute(NARROW) !== stack) { group.toggleAttribute(NARROW, stack); }
     }
-  }
-  // **The tab groups' separators only while the research tabs sit on one line** (TAB_GROUPS):
-  // the pass marks the research tabs' row when its tabs take more than one line, from the
-  // tabs' own tops; the gaps before each group stay in both states, so the mark moves nothing.
-  var TABS_WRAPPED = '__TABS_WRAPPED__';
-  function tabLines() {
-    var nav = document.getElementById('shep-research-nav');
-    if (!nav || !drawn(nav)) { return; }
-    var tabs = nav.querySelectorAll(':scope > .tab-wrapper > .tab-container > button[role="tab"]'), tops = {};
-    for (var i = 0; i < tabs.length; i++) {
-      if (drawn(tabs[i])) { tops[Math.round(tabs[i].offsetTop / 4)] = true; }
-    }
-    var wrapped = Object.keys(tops).length > 1;
-    if (nav.hasAttribute(TABS_WRAPPED) !== wrapped) { nav.toggleAttribute(TABS_WRAPPED, wrapped); }
   }
   // **A box whole only while its column has the room** (the layout rule's
   // fold, module docstring): side by side, each box of class FOLD drawn is
@@ -1026,22 +1041,187 @@ _SHELL_JS = r"""
       if (box.hasAttribute(FOLDED) !== fold) { box.toggleAttribute(FOLDED, fold); }
     }
   }
-  // The scroll cue (`style.py`'s .shep-scroll-cue): a region with more below says so.
+  // **The scroll cue on every region that scrolls** (R-73; the sweep's L7, SW-LK1..8): an element
+  // whose own overflow scrolls (auto or scroll) and whose content runs past its foot keeps
+  // MORE while more lies below, and MORE_X while more lies past its right edge, which
+  // `style.py` draws as a fade at that edge; at its end the words are drawn whole again. No page
+  // names its regions (a region a page forgot scrolled with no cue: Settings, Fine-tune's form,
+  // Training's charts, the Diagnosis fields). Not a region: a field's own box, a select's open
+  // list, the help bubble, and a box that draws its own sideways cue (Compare's, CUED).
+  var MORE = 'data-shep-more', MORE_X = 'data-shep-more-x';
+  var NOT_REGION = 'textarea, select, input, ul.option-list, #shep-help-bubble, #shep-help-bubble *, '
+    + '.shep-rs-top, .shep-rs-wrap';
+  function scrolls(v) { return v === 'auto' || v === 'scroll'; }
+  // **The fade reaches what is drawn** (the sweep's L7 check, C1): a fade over the gap between
+  // two fields reads as nothing (Diagnosis' fields at 1550 x 830 faded the gap under Patient ID,
+  // Options and Top-K unseen under it), so the bottom fade starts above the nearest thing the
+  // region draws over its edge (a line of words, a control, a graphic): FADE_VAR, its length,
+  // read by the style sheet's mask. Read along the region's start and middle, up from its edge.
+  var FADE_VAR = '__FADE_VAR__', FADE = 28, DRAWN = 'input, textarea, select, button, svg, canvas, img';
+  function shows(hit) {
+    if (hit.matches(DRAWN) || hit.closest('svg')) { return true; }
+    for (var n = hit.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 3 && n.data.trim()) { return true; }
+    }
+    return false;
+  }
+  function fadeOf(el) {
+    var r = el.getBoundingClientRect(), edge = r.top + el.clientTop + el.clientHeight;
+    var xs = [r.left + el.clientLeft + 20, r.left + el.clientLeft + el.clientWidth / 2];
+    for (var d = 2; d < el.clientHeight / 2; d += 4) {
+      for (var i = 0; i < xs.length; i++) {
+        var hit = document.elementFromPoint(xs[i], edge - d), q = hit && hit.getBoundingClientRect();
+        // Drawn over the edge by a quarter of its own height or more (a row only touching it is
+        // not seen under a fade either).
+        if (hit && hit !== el && el.contains(hit) && shows(hit) && edge - q.top >= q.height / 4 + 1) {
+          return Math.max(FADE, d + 20);
+        }
+      }
+    }
+    return FADE;
+  }
   function cue(el) {
-    var more = el.scrollHeight - el.scrollTop - el.clientHeight > 1;
-    if (el.hasAttribute('data-shep-more') !== more) { el.toggleAttribute('data-shep-more', more); }
+    var s = getComputedStyle(el);
+    var more = scrolls(s.overflowY) && el.scrollHeight - el.scrollTop - el.clientHeight > 1;
+    var side = scrolls(s.overflowX) && el.scrollWidth - el.scrollLeft - el.clientWidth > 1;
+    var fade = more ? fadeOf(el) + 'px' : '';
+    if (el.style.getPropertyValue(FADE_VAR) !== fade) {
+      if (fade) { el.style.setProperty(FADE_VAR, fade); } else { el.style.removeProperty(FADE_VAR); }
+    }
+    if (el.hasAttribute(MORE) !== more) { el.toggleAttribute(MORE, more); }
+    if (el.hasAttribute(MORE_X) !== side) { el.toggleAttribute(MORE_X, side); }
+    // Its content may change size with no change this pass listens to (a chart drawn again at
+    // its new width): a region marked once is watched for that too.
+    if ((more || side) && ro && !watched.has(el)) {
+      watched.add(el);
+      for (var k = el.firstElementChild; k; k = k.nextElementSibling) { ro.observe(k); }
+    }
+  }
+  var watched = typeof WeakSet !== 'undefined' ? new WeakSet() : { has: function () { return true; } };
+  // Every element that holds more than its box (a cheap read first; most hold none), and every
+  // element still marked (its content shrank), is looked at again on each pass.
+  function cues() {
+    var all = document.body ? document.body.getElementsByTagName('*') : [];
+    for (var i = 0; i < all.length; i++) {
+      var e = all[i];
+      if ((e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1
+           || e.hasAttribute(MORE) || e.hasAttribute(MORE_X)) && !e.matches(NOT_REGION)) { cue(e); }
+    }
   }
   document.addEventListener('scroll', function (e) {
     var t = e.target;
-    if (t && t.classList && t.classList.contains('shep-scroll-cue')) { cue(t); }
+    if (t && t.nodeType === 1 && !t.matches(NOT_REGION)) { cue(t); }
   }, true);
+  // **A separator never ends a line either** (`renderers.SEP`; the sweep's L7, SW-LK2 and
+  // SW-LK7): SEP joins its "·" to the fact before it, so no line starts with one; where the line
+  // breaks after it (the fact after it starts the next line), the pass marks it SEP_END and the
+  // style sheet does not draw it. Only its visibility changes, never its box, so the mark never
+  // changes what it measured.
+  var SEP_END = 'data-shep-end';
+  function blockOf(el) {
+    var b = el.parentElement;
+    while (b && /^(inline|contents)/.test(getComputedStyle(b).display)) { b = b.parentElement; }
+    return b;
+  }
+  // The box of the first character drawn after `sep` in its block.
+  function nextGlyph(sep) {
+    var block = blockOf(sep);
+    if (!block) { return null; }
+    var walk = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    walk.currentNode = sep;
+    for (var n = walk.nextNode(); n; n = walk.nextNode()) {
+      if (sep.contains(n)) { continue; }
+      var at = n.data.search(/\S/);
+      if (at < 0) { continue; }
+      var range = document.createRange();
+      range.setStart(n, at); range.setEnd(n, at + 1);
+      var boxes = range.getClientRects();
+      for (var k = 0; k < boxes.length; k++) { if (boxes[k].width > 0.1) { return boxes[k]; } }
+    }
+    return null;
+  }
+  function seps() {
+    var all = document.querySelectorAll('.shep-sep');
+    for (var i = 0; i < all.length; i++) {
+      var sep = all[i], end = false;
+      if (drawn(sep)) {
+        var own = sep.getClientRects(), last = own[own.length - 1], next = nextGlyph(sep);
+        end = !!next && next.top >= last.bottom - last.height / 2;
+      }
+      if (sep.hasAttribute(SEP_END) !== end) { sep.toggleAttribute(SEP_END, end); }
+    }
+  }
+  // **An end group alone on its line starts it** (style.py's ``shep-grp-end``): a bar's end group
+  // the bar wrapped onto a line of its own (its top under the previous group's line) is marked
+  // ALONE, and drawn from the bar's edge. Its auto margin takes no part in line breaking, so the
+  // mark never changes which line it is on, nor what this pass measured.
+  var ALONE = 'data-shep-alone';
+  function ends() {
+    var all = document.querySelectorAll('.shep-bar > .shep-grp-end');
+    for (var i = 0; i < all.length; i++) {
+      var g = all[i], alone = false;
+      if (drawn(g)) {
+        var prev = g.previousElementSibling;
+        while (prev && (!drawn(prev) || prev.getBoundingClientRect().height < 1
+                        || /^(absolute|fixed)$/.test(getComputedStyle(prev).position))) {
+          prev = prev.previousElementSibling;
+        }
+        alone = !!prev && g.getBoundingClientRect().top >= prev.getBoundingClientRect().bottom - 1;
+      }
+      if (g.hasAttribute(ALONE) !== alone) { g.toggleAttribute(ALONE, alone); }
+    }
+  }
+  // **Words beside a control only while they are one line** (style.py's ``shep-beside-row``):
+  // the words of such a row (``shep-beside``) that stand beside its control on two lines or more
+  // (a sentence capped at the measure in a wide row: Training's "Set by you" line at 2560 px) are
+  // marked OWN_LINE and take the row's next line, from its start. Each is measured with its mark
+  // off (put back before anything is painted), so the mark never changes what it measured.
+  var OWN_LINE = 'data-shep-own-line';
+  // The lines an element's words are drawn on: its text's own boxes, top to bottom.
+  function lines(el) {
+    var boxes = [], walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (var t = walk.nextNode(); t; t = walk.nextNode()) {
+      if (!t.data.trim()) { continue; }
+      var range = document.createRange();
+      range.selectNodeContents(t);
+      var rects = range.getClientRects();
+      for (var j = 0; j < rects.length; j++) { if (rects[j].width > 0.5 && rects[j].height > 0.5) { boxes.push(rects[j]); } }
+    }
+    boxes.sort(function (a, b) { return a.top - b.top; });
+    var n = 0, bottom = -Infinity;
+    for (var i = 0; i < boxes.length; i++) {
+      var q = boxes[i];
+      if (q.top > bottom - q.height / 2) { n += 1; bottom = q.bottom; } else { bottom = Math.max(bottom, q.bottom); }
+    }
+    return n;
+  }
+  function besides() {
+    var all = document.querySelectorAll('.shep-beside-row > .shep-beside');
+    for (var i = 0; i < all.length; i++) {
+      var box = all[i], own = false;
+      if (drawn(box)) {
+        var was = box.hasAttribute(OWN_LINE);
+        if (was) { box.removeAttribute(OWN_LINE); }
+        var b = box.getBoundingClientRect(), beside = false;
+        for (var k = box.parentElement.firstElementChild; k; k = k.nextElementSibling) {
+          if (k === box || !drawn(k)) { continue; }
+          var q = k.getBoundingClientRect();
+          if (q.height >= 1 && q.top < b.bottom - 1 && q.bottom > b.top + 1) { beside = true; }
+        }
+        own = beside && lines(box) > 1;
+        if (was) { box.setAttribute(OWN_LINE, ''); }
+      }
+      if (box.hasAttribute(OWN_LINE) !== own) { box.toggleAttribute(OWN_LINE, own); }
+    }
+  }
   function layout() {
     orientation();
     fits();
     folds();
-    tabLines();
-    var cues = document.querySelectorAll('.shep-scroll-cue');
-    for (var c = 0; c < cues.length; c++) { cue(cues[c]); }
+    cues();
+    seps();
+    ends();
+    besides();
     var shell = document.getElementById('shep-shell');
     var row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
     var chips = document.querySelector('#shep-chips .shep-chips');
@@ -1167,11 +1347,13 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__STAGE_WORD__", as_json_for_script(STAGE_WORD))
               .replace("__LAYOUT__", LAYOUT_ATTR).replace("__SHORT__", SHORT_ATTR)
               .replace("__SHORT_BELOW__", str(SHORT_BELOW))
+              .replace("__FLOOR_W__", str(FLOOR_WIDTH)).replace("__FLOOR_H__", str(FLOOR_HEIGHT))
+              .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR)
               .replace("__FIT__", FIT).replace("__FIT_WIDE__", FIT_WIDE)
-              .replace("__NARROW__", NARROW_ATTR)
+              .replace("__NARROW__", NARROW_ATTR).replace("__SEG_WHOLE__", SEG_WHOLE)
               .replace("__FOLD__", FOLD).replace("__FOLD_ROOM__", FOLD_ROOM)
               .replace("__FOLD_FLOOR__", FOLD_FLOOR).replace("__FOLDED__", FOLDED_ATTR)
-              .replace("__TABS_WRAPPED__", TABS_WRAPPED_ATTR)
+              .replace("__FADE_VAR__", FADE_VAR)
               .replace("__GO__", as_json_for_script({k: list(v) for k, v in GO_TARGETS.items()}))
               + "</script>")
 
@@ -1196,7 +1378,6 @@ __all__ = [
     "SHELL_HEAD",
     "STAGES",
     "STAGE_WORD",
-    "TABS_WRAPPED_ATTR",
     "TAB_GROUPS",
     "TAB_GROUP_CSS",
     "TEST",
