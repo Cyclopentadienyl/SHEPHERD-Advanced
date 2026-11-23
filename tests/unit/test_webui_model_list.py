@@ -770,7 +770,7 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
     assert (result.state, result.count, result.contested, result.unchecked) == (
         "records", 4, 2, 1)
     assert r.recorded_tests_text(result) == (
-        "Recorded results: 4 · runs differ for 2; comparison incomplete for 1")
+        "Recorded results: 4 · runs differ for 2, comparison incomplete for 1")
     states["2" * 64] = "cannot_be_checked"
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
     assert (result.count, result.contested, result.unchecked) == (4, 2, 2)
@@ -786,7 +786,7 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
     assert (result.count, result.contested, result.unchecked, result.unreadable) == (3, 1, 1, 1)
     assert r.recorded_tests_text(result) == (
-        "Recorded results: 3 · 1 not readable; runs differ for 1; comparison incomplete for 1")
+        "Recorded results: 3 · 1 not readable, runs differ for 1, comparison incomplete for 1")
 
 
 # --------------------------------------------------------------------------- the Load

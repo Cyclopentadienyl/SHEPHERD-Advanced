@@ -1673,8 +1673,8 @@ def test_the_stop_question_takes_the_card_actions_place_and_leaves_the_inputs_us
             assert not got["actions"], (where, got)
             words = " ".join(got["words"].split())
             assert f"Stop inference of model {CHECKPOINT_SHA[:12]}?" in words, (where, words)
-            for fact in ("Diagnoses already accepted finish;",
-                         "new ones are refused until a model is loaded.",
+            for fact in ("Diagnoses already accepted finish.",
+                         "New ones are refused until a model is loaded.",
                          "Nothing reloads one by itself."):
                 assert fact in words, (where, fact, words)
             assert got["column"]["content"] <= got["column"]["h"] + 0.5, (where, got["column"])
@@ -3983,7 +3983,7 @@ def test_stop_inference_asks_first_naming_and_binding_the_model_shown():
     assert (f'<code class="shep-fpv" title="{_SERVED_SHA}">{_SERVED_SHA[:12]}</code>'
             in asked["stop_text"])
     # What the stop does, each fact said (OPS-RECHECK-N1S tightened the words, not the facts).
-    for fact in ("Diagnoses already accepted finish;", "new ones are refused until a model is loaded.",
+    for fact in ("Diagnoses already accepted finish.", "New ones are refused until a model is loaded.",
                  "Nothing reloads one by itself."):
         assert fact in asked["stop_text"], fact
     assert asked["stop_asked"]["sha256"] == _SERVED_SHA

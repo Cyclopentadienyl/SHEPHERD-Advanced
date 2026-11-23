@@ -586,7 +586,7 @@ def test_a_record_of_another_or_no_mode_is_shown_as_recorded(world, monkeypatch)
         (section,) = _sections(raw)
         assert [key for key, _value in _rows(section)][:2] == ["Coverage", "Recorded metrics"]
         assert "shep-rec-tile" not in raw and "shep-rec-fold" not in raw
-        assert ">not described<" not in raw and "what they are is not described" in text
+        assert ">not described<" not in raw and "What they are is not described" in text
         for name, value in view["metrics"].items():          # every one, unrounded
             assert f"{name} {json.dumps(value)}" in _words(raw), name
         assert "The Trainer validation figure is not among these records' metrics." in text
@@ -1073,10 +1073,10 @@ def test_a_records_investigation_notes_are_shown_on_models(world, monkeypatch):
 def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, monkeypatch):
     """K8-6e.1 (R3): model-05's ledger holds three records; one loses
     ``n_ranked`` by a hand edit. The segment counts the results and names the
-    rest with one " · " ("Recorded results · 2 (1 not readable; 1 where
+    rest with one " · " ("Recorded results · 2 (1 not readable, 1 where
     runs differ)"); the detail lists it by index, registration, report and
     reason under the amber sentence, never as a result and never pointing to
-    the server's log; the row reads "2 · 1 not readable; runs differ for 1".
+    the server's log; the row reads "2 · 1 not readable, runs differ for 1".
     HEAD: "Recorded test results · 3 (1 where runs differ)", "the server's log
     says why", and the row counted 3."""
     ledger_path = world["paths"]["model-05.pt"].parent / "evaluations.json"
@@ -1090,7 +1090,7 @@ def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, mon
     detail = mp.detail_parts(listing, page, _key(world, "model-05.pt"), NEWEST_CTL)
 
     assert detail["seg"][0] == (
-        "Recorded results · 2 (1 not readable; 1 where runs differ)", mp.RECORDS)
+        "Recorded results · 2 (1 not readable, 1 where runs differ)", mp.RECORDS)
     assert detail["seg"][0][0].count(" · ") == 1
     said = _words(detail["records"])
     assert ("▲ 1 record for these weights cannot be read as a result. It is kept as "
@@ -1100,7 +1100,7 @@ def test_a_record_that_cannot_be_read_is_named_apart_from_the_results(world, mon
     assert "registered #2" not in detail["records"]
     assert "server's log" not in said
     assert r.recorded_tests_text(ml._recorded(listing, _key(world, "model-05.pt"))) == (
-        "Recorded results: 2 · 1 not readable; runs differ for 1")
+        "Recorded results: 2 · 1 not readable, runs differ for 1")
 
 
 def test_the_pages_amber_sentences_are_amber_and_the_note_after_the_list_stands_apart():
@@ -1743,7 +1743,7 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     # Run → Checkpoint pair, its 12 hex with the whole fingerprint one Copy away.
     pair = ml.pair_words({ml.item_key(i): i for i in listing["items"]})[bundle_key("base")]
     assert pair[1] in text and f"of run {pair[0]}" in text, (pair, text)
-    assert f"{shas['base'][:12]} Copy; listed here" in text
+    assert f"{shas['base'][:12]} Copy · listed here" in text
     assert f'data-copy="{shas["base"]}"' in said
     assert f"Family{mp.PARENT_FAMILY}Encoder" in text
     assert text.count(pair[0]) == 1
@@ -1794,7 +1794,7 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
                                "2026-10-24 17:39"), (legacy, legacy)):
         long = mp.identity_html({**item, "family_id": run, "parent_run": run},
                                 {"parent_state": "listed"})
-        assert f"<div>run {words}</div>" in long and "; listed here</div></dd>" in long, long
+        assert f"<div>run {words}</div>" in long and "· </span>listed here</div></dd>" in long, long
         assert f'Family</dt><dd class="shep-v">{r.e(mp.PARENT_FAMILY)}</dd>' in long, long
         assert "…" not in long
         # A family root other than the parent's run is named whole.
@@ -1865,7 +1865,7 @@ def test_a_task_records_coverage_reads_the_same_on_models_and_on_test(world, mon
     models = dict(_rows(mp.records_block_html([view], {})))["Coverage"]
     test = dict(_rows(tp._record_html(record, {}, {})))["Coverage"]
     assert models == test == ("8 of 10 import-eligible cases ranked by the model 13 source "
-                              "cases; 3 excluded at import: ground truth absent 3")
+                              "cases, 3 excluded at import: ground truth absent 3")
 
 
 def test_a_registered_task_record_shows_its_own_named_metrics(world, monkeypatch):
@@ -3014,7 +3014,7 @@ def test_records_whose_run_cannot_be_told_are_listed_with_the_boundary_reason(wo
     assert f'<div class="shep-sub">from run {named["run_id"]}</div>' in html
     assert "from run not recorded" not in html
     said = _words(html)
-    assert "▲ 1 record for these weights cannot be read as a result;" in said
+    assert "▲ 1 record for these weights cannot be read as a result." in said
     assert ("0 #1 " + named["source_artifact_digest"][:12] + " whether it names its run cannot "
             "be told: the file's run-identity boundary (run_identity_from_sequence) cannot be "
             "read (it is missing while the file holds 2 records)") in said
