@@ -1023,7 +1023,7 @@ def _keys(notices: Iterable[Mapping[str, Any]]) -> str:
 
 
 def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterable[Any] = (),
-                 steps: Iterable[str] = (), go: bool = True) -> str:
+                 steps: Iterable[str] = (), go: bool = True, details: bool = True) -> str:
     """**The one notice** (a setting's state, said once per screen where it
     empties a region; the text brief's §1 and §10): one line, its status mark
     in a column of its own, the state (`summary`), what it means here
@@ -1035,7 +1035,10 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     (``data-notice-also``). `steps`: further steps, the action then step 1
     of a numbered list (each step's tokens in code style). Every value is
     escaped. ``data-notice`` names the key, so a screen can count each
-    notice once."""
+    notice once. `details` off: its "Details ›" is said by the region that
+    draws it, in that region's one disclosure (`notice_rows_html`: a card
+    whose own reason has a Details › of its own, two "Details ›" a line
+    apart; the sweep's L7, C1)."""
     found = _as_notice(notice)
     if found is None:
         return ""
@@ -1056,7 +1059,19 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     ol = (f'<ol class="shep-nb-steps">{f"<li>{act}</li>" if act else ""}{listed}</ol>'
           if steps else "")
     return (f'<div class="shep-nb shep-nb-{kind}"{keys}>'
-            f'{_marked(kind, inner, "shep-nb-line")}{ol}{_details([found, *extra])}</div>')
+            f'{_marked(kind, inner, "shep-nb-line")}{ol}'
+            f'{_details([found, *extra]) if details else ""}</div>')
+
+
+def notice_rows_html(notice: Any) -> str:
+    """**A notice's Details, for a region's own disclosure** (`notice_block`
+    with ``details=False``): its term rows as one summary list and its Ref
+    line, as its own "Details ›" holds them; "" for no notice or no row."""
+    found = _as_notice(notice)
+    if found is None:
+        return ""
+    kv, ref = _detail_rows([found])
+    return f"{kv}{ref}" if kv else ""
 
 
 def notices_block(notices: Iterable[Any], *, consequence: Optional[str] = None,
@@ -1573,6 +1588,16 @@ def model_name_line(item: Any, *, fit: bool = True) -> str:
     one " · ": "ui-live-stop-02 · GATv2 2026-10-24 17:39, 6 epochs
     completed"."""
     return " · ".join(model_name_facts(item, fit=fit))
+
+
+def model_name_html(item: Any, *, fit: bool = True) -> str:
+    """`model_name_line` drawn as HTML: each of its facts one unit
+    (`chain_html`), so a line breaks between them, never inside "GATv2
+    2026-10-02 00:00, 1 epoch completed" where a line holds it (the sweep's
+    L7 check, C2: Models' details title broke inside the date at 1550,
+    1366 and 1280). Every page that draws the name in HTML uses this; plain
+    text (a title attribute, an export) keeps `model_name_line`."""
+    return chain_html(*model_name_facts(item, fit=fit))
 
 
 def model_name_facts(item: Any, *, fit: bool = True) -> Tuple[str, ...]:
@@ -3387,6 +3412,7 @@ __all__ = [
     "marked_line",
     "name_pieces_html",
     "notice_block",
+    "notice_rows_html",
     "notices_block",
     "relation_words",
     "see_above",
@@ -3488,6 +3514,7 @@ __all__ = [
     "entry_place",
     "RUN_OPERATION_WORDS",
     "model_spec_html",
+    "model_name_html",
     "model_name_line",
     "model_name_facts",
     "chain_html",

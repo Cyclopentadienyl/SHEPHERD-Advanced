@@ -598,6 +598,19 @@ def test_first_use_says_the_workspaces_notice_once_on_the_card_and_a_relation_in
     body = card.body_html(state)
     assert body.count('data-notice="workspaces_root"') == 1 and "data-shep-go" in body
     assert "data-notice" not in card.body_html(_state(root, status={"initialized": False}))
+    # The sweep's L7 check, C1: the card said the state, the backend's lead and its Details ›,
+    # then the notice and a second Details › (252 px at 1550 x 830), and the inputs above it lost
+    # Options, Top-K and Explanations. The notice is the state's cause; the lead, the whole
+    # reason and the folder's rows are under the card's one Details ›.
+    never = {**_state(root, status=_nothing_served(
+        _not_serving("not_loaded", "Nothing has been loaded since the service started"),
+        NEVER_LOADED)), "workspaces_notice": notice}
+    body = card.body_html(never)
+    assert body.count("<summary>") == 1 and body.count('data-notice="workspaces_root"') == 1
+    shown, more = body.split("<summary>")
+    assert "Nothing has been loaded" not in shown and "Nothing has been loaded" in more
+    assert r.e(NEVER_LOADED) in more and r.notice_rows_html(notice) in more
+    assert shown.index("Not loaded") < shown.index('data-notice="workspaces_root"')
     listing = {"notice": notice, "items": []}
     drawer = ml._no_items_html(listing, None, ml.PRESETS["clinical"])
     assert 'data-notice-rel="workspaces_root"' in drawer and "data-notice=" not in drawer

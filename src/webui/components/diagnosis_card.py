@@ -810,7 +810,8 @@ _STATE_MARK = {SERVING: ("ok", False), LOADING: ("running", False),
 BACK_TO_RESEARCH = "Back to research ›"
 
 
-def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "") -> str:
+def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "",
+                  notice: Any = None) -> str:
     """The serving state in the backend's words (`serving_state`; a load
     while a model serves beside it, `loading_too`; when a stop or a refusal
     was recorded beside it, `not_serving_when`; `beside`, the served data's
@@ -820,7 +821,12 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "") ->
     one click away ("Details ›", ``not_serving_reason``: the load hint, the
     start-up settings), and after a stop the way back to research. Grey
     while the card is not current: the last known state. Nothing here names
-    a path: the backend's words name none."""
+    a path: the backend's words name none. `notice` (the workspaces folder's
+    at first use, where nothing is served): said under the state as the
+    card's cause, its go link the next step, and the backend's lead and
+    whole reason join its rows under the card's one "Details ›" (the sweep's
+    L7, C1: the lead, its own Details ›, the notice and its Details › took
+    the room of the inputs above them at the owner's 1550 x 830 window)."""
     state, words = serving_state(status)
     if state == "unknown":
         return ""
@@ -841,17 +847,24 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "") ->
         return line
     lead = not_serving_lead(status)
     reason = status.get("not_serving_reason")
-    if lead:
-        line += f'<p class="shep-dx-line shep-dx-reason">{r.e(lead)}</p>'
+    lead_html = f'<p class="shep-dx-line shep-dx-reason">{r.e(lead)}</p>' if lead else ""
     # The whole reason only where nothing is served (a stop's model still has
     # the card's own Details ›), one level, never inside another disclosure.
-    if state != STOPPING and isinstance(reason, str) and reason:
+    reason_html = (f'<p class="shep-dx-line">{r.e(reason)}</p>'
+                   if state != STOPPING and isinstance(reason, str) and reason else "")
+    notice_html = r.notice_block(notice, details=False) if notice else ""
+    if notice_html:
+        line += notice_html
+        more = lead_html + reason_html + r.notice_rows_html(notice)
+    else:
+        line += lead_html
+        more = reason_html
+    if more:
         # Named by the state and when it began: the poll's next drawing keeps
         # it as the reader left it while it is the same (`r.KEEP_OPEN_JS`).
         line += (f'<details class="shep-more shep-dx-why-more"'
                  f'{r.keep_as(f"{state} at {when}" if when else state)}>'
-                 '<summary>Details ›</summary>'
-                 f'<p class="shep-dx-line">{r.e(reason)}</p></details>')
+                 f'<summary>Details ›</summary>{more}</details>')
     if state == STOPPED and not grey:
         line += ('<p class="shep-dx-line"><button type="button" class="shep-dx-link '
                  'shep-dx-back" data-key="research" aria-label="Back to research: open '
@@ -925,7 +938,7 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None, *,
         # The state in its own words, the backend's lead and its reason one
         # click away (stopped, a load or the start-up refused, nothing loaded,
         # a load running): said once, here, with the card's one action.
-        lines.append(_serving_html(status, grey=grey))
+        lines.append(_serving_html(status, grey=grey, notice=state.get("workspaces_notice")))
     elif kind == "model":
         item = facts.get("item")
         sha = served_checkpoint_sha(status)
@@ -967,9 +980,11 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None, *,
         lines.append('<p class="shep-dx-line shep-dx-tail">' + " ".join(tail) + "</p>")
     # The workspaces folder's notice, said once on the screen where its first
     # action is (L7 SW-LK8; the text brief's §10): the Load drawer lists
-    # nothing without it, and its empty list says a relation to this. Its two
-    # lines under "Not loaded" and over "Load a model…" say what it means here.
-    lines.append(r.notice_block(state.get("workspaces_notice")))
+    # nothing without it, and its empty list says a relation to this. Where
+    # nothing is served it is the state's cause, under it (`_serving_html`);
+    # beside a served model (a start-up pipeline needs no folder), after it.
+    if kind != "no_model" or not _serving_html(status, grey=grey):
+        lines.append(r.notice_block(state.get("workspaces_notice")))
     classes = "shep-dx-card-bd shep-dx-card-grey" if grey else "shep-dx-card-bd"
     return f'<div class="{classes}">' + "".join(parts + lines) + "</div>"
 
