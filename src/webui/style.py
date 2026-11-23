@@ -838,6 +838,11 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .shep-bar > .shep-grp-grow { flex: 1 1 var(--shep-grp-basis, 20rem) !important; }
 .shep-bar > .shep-grp-end { margin-inline-start: auto !important; }
+/* An end group that the bar wrapped onto a line of its own starts that line, on the bar's edge
+   (the shell's layout pass marks it; an auto margin takes no part in line breaking, so the mark
+   never moves it to another line): pushed to the end alone, it left the line's start empty (the
+   sweep's L7, SW-LK5: Training's actions 643 px in from the run bar's edge at 1550 x 830). */
+.shep-bar > .shep-grp-end[data-shep-alone] { margin-inline-start: 0 !important; }
 .shep-bar > .shep-grp-wrap { flex-wrap: wrap !important; }
 .shep-bar > .shep-bar-note { flex: 1 1 100% !important; min-width: 0 !important; }
 .shep-bar > .shep-bar-note:not(:has(> .html-container > :not(:empty), .prose > *)) { display: none !important; }
@@ -858,14 +863,16 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
    wraps them as the row would, or lays them in the grid's columns (it drew them as one line of
    equal shares, every floor and basis ignored). */
 .shep-fields {
-  display: flex !important; flex-wrap: wrap !important; align-items: flex-end !important;
+  display: flex !important; flex-wrap: wrap !important; align-items: flex-start !important;
   gap: var(--shep-space-2) var(--shep-space-4) !important;
 }
 .shep-fields > :is(.block, .form), .shep-fields > .form > .block:not(fieldset) {
   flex: 1 1 var(--shep-field-basis, 12rem) !important; min-width: min(var(--shep-field-min, 10rem), 100%) !important;
 }
+/* A row's fields share their labels' top line (the sweep's L7, SW-LK2: aligned by their bottoms,
+   a field with an info line under its label lifted that label 23 px above its neighbour's). */
 .shep-fields > .form {
-  flex-wrap: wrap !important; align-items: flex-end !important; gap: var(--shep-space-2) var(--shep-space-4) !important;
+  flex-wrap: wrap !important; align-items: flex-start !important; gap: var(--shep-space-2) var(--shep-space-4) !important;
 }
 .shep-field-grid, .shep-field-grid > .form {
   display: grid !important; gap: var(--shep-space-2) var(--shep-space-4) !important;
@@ -889,6 +896,18 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   flex: 0 1 auto !important; width: max-content !important;
 }
 .gradio-container fieldset.block:not(.shep-seg) > .wrap:has(> label) > label > span { white-space: nowrap; }
+/* A choice group's line under its label (Gradio's ``info=``) wraps inside the options' width and
+   never sets the group's width (Fine-tune's Device was the width of its note on one line, 388 px
+   for options of 254, and pushed Run name off its row; the sweep's L7, SW-LK2); in a row of
+   fields a group with such a line grows into the row's free room, so the line stays one line
+   where there is room. */
+.gradio-container fieldset.block:has(input[type=radio], input[type=checkbox]):not(.shep-seg) > .info-text {
+  inline-size: 0; min-inline-size: 100%;
+}
+.gradio-container :is(.row, .shep-fields, .shep-field-row) > fieldset.block:has(> .info-text):has(input[type=radio], input[type=checkbox]):not(.shep-seg),
+.gradio-container :is(.row, .shep-fields, .shep-field-row) > .form > fieldset.block:has(> .info-text):has(input[type=radio], input[type=checkbox]):not(.shep-seg) {
+  flex-grow: 1 !important;
+}
 .gradio-container fieldset.block[__NARROW__]:not(.shep-seg) > .wrap:has(> label) {
   flex-direction: column !important; align-items: flex-start !important;
 }

@@ -1118,6 +1118,26 @@ _SHELL_JS = r"""
       if (sep.hasAttribute(SEP_END) !== end) { sep.toggleAttribute(SEP_END, end); }
     }
   }
+  // **An end group alone on its line starts it** (style.py's ``shep-grp-end``): a bar's end group
+  // the bar wrapped onto a line of its own (its top under the previous group's line) is marked
+  // ALONE, and drawn from the bar's edge. Its auto margin takes no part in line breaking, so the
+  // mark never changes which line it is on, nor what this pass measured.
+  var ALONE = 'data-shep-alone';
+  function ends() {
+    var all = document.querySelectorAll('.shep-bar > .shep-grp-end');
+    for (var i = 0; i < all.length; i++) {
+      var g = all[i], alone = false;
+      if (drawn(g)) {
+        var prev = g.previousElementSibling;
+        while (prev && (!drawn(prev) || prev.getBoundingClientRect().height < 1
+                        || /^(absolute|fixed)$/.test(getComputedStyle(prev).position))) {
+          prev = prev.previousElementSibling;
+        }
+        alone = !!prev && g.getBoundingClientRect().top >= prev.getBoundingClientRect().bottom - 1;
+      }
+      if (g.hasAttribute(ALONE) !== alone) { g.toggleAttribute(ALONE, alone); }
+    }
+  }
   function layout() {
     orientation();
     fits();
@@ -1125,6 +1145,7 @@ _SHELL_JS = r"""
     tabLines();
     cues();
     seps();
+    ends();
     var shell = document.getElementById('shep-shell');
     var row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
     var chips = document.querySelector('#shep-chips .shep-chips');

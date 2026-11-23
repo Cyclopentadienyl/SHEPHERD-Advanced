@@ -3662,6 +3662,22 @@ def _pieces_page():
                 gr.Textbox(label="Name", elem_id="pc-frow-name")
                 gr.Radio(["Trained", "Frozen"], label="Graph backbone", elem_id="pc-frow-choice")
             ctx.help.field("pc-frow-choice", "Graph backbone", "What the base's graph layers do here.")
+            # A row of fields whose choice group has a line under its label (Gradio's ``info=``),
+            # a line wider than its options and than the row's room beside its neighbour.
+            with gr.Row(elem_id="pc-irow", elem_classes=["shep-fields"]):
+                gr.Textbox(label="Run name", elem_id="pc-irow-name")
+                gr.Radio(["Auto", "CPU"], label="Device", elem_id="pc-irow-choice",
+                         info="Where the run computes: the one graphics card this machine has, or "
+                              "its processor when no card is free")
+            # Two bars whose end group the bar wraps onto a line of its own, and holds on one line.
+            for bar, wide in (("pc-endbar", 560), ("pc-endbar-one", 120)):
+                with gr.Row(elem_id=bar, elem_classes=["shep-bar"]):
+                    with gr.Row(elem_classes=["shep-grp"]):
+                        shell.plain_html(f'<div style="width: {wide}px">Facts of the run</div>',
+                                         elem_id=f"{bar}-facts")
+                    with gr.Row(elem_id=f"{bar}-end", elem_classes=["shep-grp", "shep-grp-end"]):
+                        gr.Button("Start", scale=0, min_width=0)
+                        gr.Button("Stop", scale=0, min_width=0)
             shell.plain_html(tree, elem_id="pc-tree-box")
             shell.plain_html(f'<div id="pc-c12">{seps}<div style="width: 320px"><table class="shep-tbl" '
                              f'id="pc-whole"><tbody><tr><td class="{CELL_WHOLE}">Record not readable</td>'
@@ -3733,6 +3749,21 @@ const QUEUE_JS = __QUEUE_JS__;
       grid: { floor: 12 * rem, boxes: [...document.querySelectorAll('#pc-grid .block:has(input, textarea)')]
         .map((e) => ({ width: box(e).width, left: Math.round(box(e).left) })), row: box(q('#pc-grid')).width },
       choice: { title: box(title), info: box(info) },
+      // The row of fields with a choice group's info line: each label's top, each field's top,
+      // the info line's lines and box, and its group's and options' boxes.
+      irow: (() => {
+        const name = q('#pc-irow-name'), group = q('#pc-irow-choice'), note = q('#pc-irow-choice .info-text');
+        const label = (e) => box(e.querySelector('[data-testid="block-info"], label > span, legend')).top;
+        return { labels: [label(name), label(group)], tops: [box(name).top, box(group).top],
+                 noteLines: new Set(ink(note).map((x) => Math.round(x.top))).size,
+                 note: box(note), group: box(group), options: box(q('#pc-irow-choice .wrap')) };
+      })(),
+      // Each bar: its first group's and its end group's boxes and the bar's content edges.
+      ends: Object.fromEntries(['pc-endbar', 'pc-endbar-one'].map((id) => {
+        const bar = q(`#${id}`), first = bar.firstElementChild, end = q(`#${id}-end`), cs = getComputedStyle(bar);
+        return [id, { first: box(first), end: box(end), right: box(bar).right - parseFloat(cs.paddingRight)
+                                                                  - parseFloat(cs.borderRightWidth) }];
+      })),
       c12: (() => {
         // Each separator's "·" as drawn: where its line starts (its box's left) and whether the
         // fact after it starts the next line; the whole cell's and the prose cell's lines.
@@ -3863,6 +3894,31 @@ def test_a_choice_groups_title_and_its_help_stay_on_one_line_in_a_field_row(piec
     c = pieces_seen["choice"]
     assert c["info"]["top"] < c["title"]["bottom"] and c["info"]["bottom"] > c["title"]["top"], c
     assert c["info"]["left"] >= c["title"]["right"] - 1, c
+
+
+def test_a_choice_groups_info_line_wraps_in_its_row_and_the_rows_labels_share_a_top(pieces_seen):
+    """The sweep's L7 (SW-LK2): Fine-tune's Device group was as wide as its info line (Gradio's
+    ``info=``) on one line, wider than its options, and pushed Run name off its row; in a row
+    of fields (``shep-fields``), aligned by their bottoms, a field with such a line lifted its
+    label above its neighbour's. A choice group's info line wraps inside the group and never
+    sets its width, so a neighbour that fits beside its options stays on its line, and the
+    row's labels share one top line."""
+    i = pieces_seen["irow"]
+    assert abs(i["tops"][0] - i["tops"][1]) <= 1, i                      # one line of fields
+    assert abs(i["labels"][0] - i["labels"][1]) <= 1, i                  # labels on one top line
+    assert i["noteLines"] > 1 and i["note"]["right"] <= i["group"]["right"] + 1, i
+
+
+def test_an_end_group_the_bar_wraps_alone_starts_its_line_and_one_that_fits_ends_it(pieces_seen):
+    """The sweep's L7 (SW-LK5): Training's actions, the bar's end group (``shep-grp-end``), wrapped
+    onto a line of their own stood at its end, 643 px in from the bar's edge at 1550 x 830, the
+    line's start empty. An end group alone on its line starts it, on the bar's edge (as its first
+    group does); one the line holds beside the other groups still ends the line."""
+    alone, one = pieces_seen["ends"]["pc-endbar"], pieces_seen["ends"]["pc-endbar-one"]
+    assert alone["end"]["top"] >= alone["first"]["bottom"] - 1, alone               # wrapped
+    assert abs(alone["end"]["left"] - alone["first"]["left"]) <= 1, alone           # starts it
+    assert one["end"]["top"] < one["first"]["bottom"], one                          # one line
+    assert abs(one["end"]["right"] - one["right"]) <= 1, one                        # ends it
 
 
 def test_a_wrapped_names_fold_toggle_stands_on_its_first_line(pieces_seen):
