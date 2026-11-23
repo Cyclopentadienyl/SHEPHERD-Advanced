@@ -837,6 +837,12 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
    page's own or a <br><br>. Prose in a panel keeps the measure; at no specificity, so a page's
    own class (a table's, a summary list's) keeps its width. */
 :where(.shep-panel p, .shep-edge p) { max-width: var(--shep-measure); text-wrap: pretty; }
+/* The same measure for a field's line under its label (Gradio's ``info=``) and a muted sentence
+   on a line of its own after a break: Settings' torch.compile line ran to about 88 characters at
+   1850 and 106 at 2560, its Acceleration sentence to 67 (the sweep's L7 check, C12). The muted
+   line is a box only there, so a muted word inside a line still wraps with it. */
+:where(.gradio-container .info-text) { max-width: var(--shep-measure); }
+:where(br + .shep-muted) { display: inline-block; max-width: var(--shep-measure); }
 :where(.shep-panel h2, .shep-panel h3, .shep-edge h2, .shep-edge h3) { text-wrap: balance; }
 
 /* ---------------------------------------------------------------- bars and groups (M2) */

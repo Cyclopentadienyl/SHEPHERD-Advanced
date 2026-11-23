@@ -1857,3 +1857,18 @@ def test_a_line_never_parts_a_count_from_its_unit_or_a_date_from_its_time():
     assert pieces(said) == ["(Create suggested folder)"]
     from src.webui.style import SHELL_CSS
     assert ".shep-nowrap { white-space: nowrap; }" in SHELL_CSS
+
+
+
+def test_a_fields_line_and_a_muted_line_of_its_own_keep_the_prose_measure():
+    """The sweep's L7 check, C12: Settings' torch.compile line (Gradio's field info) ran to
+    about 88 characters at 1850 and 106 at 2560, and its Acceleration sentence (a muted line
+    after a break) to 67, while the panel's paragraphs held the text brief's measure. The one
+    measure (``--shep-measure``) covers both, as it covers a panel's paragraphs."""
+    from src.webui.style import SHELL_CSS
+
+    measure = "max-width: var(--shep-measure)"
+    for selector in (":where(.shep-panel p, .shep-edge p)", ":where(.gradio-container .info-text)",
+                     ":where(br + .shep-muted)"):
+        rule = SHELL_CSS[SHELL_CSS.index(selector + " {"):].split("}", 1)[0]
+        assert measure in rule, selector
