@@ -2082,6 +2082,7 @@ const QUEUE_JS = __QUEUE_JS__;
       const r = ta.getBoundingClientRect();
       const top = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2)[0];
       return { overlap, placed, region: region.id || region.className, foot, top: r.top, bottom: r.bottom,
+               page: !!region.closest('#shep-tab-settings') && region !== document.scrollingElement,
                focused: document.activeElement === ta,
                over: top === ta || ta.contains(top) ? 'itself' : (top.closest('[id]') || {}).id };
     }, [box, overlap]));
@@ -2103,7 +2104,10 @@ def test_a_box_partly_under_a_pages_region_foot_is_focused_whole_into_view(tmp_p
     browser, for an operator, the evidence folders box placed 6 to 30 px
     into the region's foot and focused is wholly inside the region, nothing
     over its centre. On the code before (5137694) it stays at 561-619 px,
-    under the runtime line at 588."""
+    under the runtime line at 588. Since the sweep's L7 (SW-LK1) each
+    Settings panel scrolls inside its own body, so the box's nearest scroll
+    region is its panel's body, a region of the page, not the page's tab
+    item."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.operator_access import DEPLOYMENT_MODE
@@ -2116,7 +2120,7 @@ def test_a_box_partly_under_a_pages_region_foot_is_focused_whole_into_view(tmp_p
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(script, tmp_path, base[:-len("gradio_api")])
     for s in seen:
-        assert s["region"] == "shep-tab-settings" and abs(s["placed"] - s["overlap"]) < 1, s
+        assert s["page"] and abs(s["placed"] - s["overlap"]) < 1, s
         assert s["focused"] and s["over"] == "itself", s
         assert s["bottom"] <= s["foot"] + 0.5, s
 
