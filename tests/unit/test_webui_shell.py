@@ -1176,8 +1176,8 @@ const QUEUE_JS = __QUEUE_JS__;
   out.windows = {};
   const LARGER = '#shep-research-nav > .tab-wrapper button[role="tab"], #shep-research-nav > .tab-wrapper > .shep-stage,'
     + ' #shep-research-nav > .tab-wrapper > .shep-stage > * { font-size: 24px !important; letter-spacing: 0.12em !important; }';
-  for (const [name, w, h, dpr, css] of [['owner', 1850, 960, 1, ''], ['narrow', 420, 900, 1, ''],
-                                        ['zoom200', 925, 480, 2, ''], ['larger', 640, 900, 1, LARGER]]) {
+  for (const [name, w, h, dpr, css] of [['owner', 1850, 960, 1, ''], ['floor', 1280, 720, 1, ''],
+                                        ['zoom200', 1280, 720, 2, ''], ['larger', 1280, 900, 1, LARGER]]) {
     const p = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: dpr })).newPage();
     await ready(p);
     if (css) { await p.addStyleTag({ content: css }); }
@@ -1190,22 +1190,25 @@ const QUEUE_JS = __QUEUE_JS__;
     }
     await p.close();
   }
-  // The edge of the row's room, on each page: the window resized until the
-  // row's content ends 6 px short of what the tabs and the hint need side by
-  // side ('under'), then 6 px past it ('over').
+  // The edge of the row's room, on each page, at the display floor (no window under it narrows
+  // the row): the row's own right padding grown until its content ends 6 px short of what the
+  // tabs and the hint need side by side ('under'), then 6 px past it ('over').
   out.edges = {};
-  const e = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
+  const e = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
   await ready(e);
   await e.click(tab('shep-nav', 'research'));
+  const pad = (px) => e.evaluate((px) => document.querySelector('#shep-research-nav > .tab-wrapper')
+    .style.setProperty('padding-right', px + 'px', 'important'), px);
   for (const id of ['training', 'models']) {
-    await e.setViewportSize({ width: 1850, height: 960 });
+    await pad(0);
     await e.click(tab('shep-research-nav', id));
     await seen(e);
     out.edges[id] = {};
     for (const [side, by] of [['under', -6], ['over', 6]]) {
-      let f = await e.evaluate(rowFacts);
+      let f = await e.evaluate(rowFacts), room = 0;
       for (let i = 0; f && i < 5 && Math.abs(f.end - f.needed - by) > 1; i += 1) {
-        await e.setViewportSize({ width: Math.round(f.width - (f.end - f.needed - by)), height: 960 });
+        room = Math.max(0, Math.round(room + (f.end - f.needed - by)));
+        await pad(room);
         await seen(e);
         f = await e.evaluate(rowFacts);
       }
@@ -1358,14 +1361,17 @@ def _hint_placed_by_the_rows_room(facts):
     return own_line
 
 
-@pytest.mark.parametrize("window", ["owner", "narrow", "zoom200", "larger"])
+@pytest.mark.parametrize("window", ["owner", "floor", "zoom200", "larger"])
 def test_the_stage_hint_stays_inside_the_row_and_off_the_tabs_in_every_window(stage_hint_seen, window):
     """N6 (package row N05, its layout half; package §六: relative geometry,
     no window size decides), on Training and on Models: at the owner's
-    window, in a narrow one, at a browser zoom of 200 % of the owner's window
-    and in a narrow one with larger, wider text (the text alone, every box its
-    own size). In each the hint says its page's stage, is the first thing
-    drawn at its centre, is not cut, and the page does not scroll sideways;
+    window, at the display floor (1280 x 720), on a 2560 x 1440 screen at
+    200 % (1280 x 720 CSS px, 2 device pixels a px) and at the floor's width
+    with larger, wider text (the text alone, every box its own size). The
+    narrow windows it was walked at (420 and 640 px, 200 % of the owner's)
+    are below the floor, drawn as at it. In each the hint says its page's
+    stage, is the first thing drawn at its centre, is not cut, and the page
+    does not scroll sideways;
     it lies inside the research pages' row, over no tab, at the row's right,
     on the tabs' line after them where the row has room for both as drawn and
     on a line of its own where it has not (`_hint_placed_by_the_rows_room`).
@@ -1389,7 +1395,8 @@ def test_the_stage_hint_takes_a_line_of_its_own_exactly_when_the_row_has_no_room
     hint side by side, the hint is on a line of its own; 6 px past it, on the
     tabs' line after them. Both at the row's right, inside it, over no tab,
     uncut, with no sideways page scroll. The edge is found from the row as
-    drawn at the owner's window, never from a window size."""
+    drawn at the display floor, its room narrowed by its own padding (no
+    window under the floor narrows the row), never from a window size."""
     for page, words in (("training", "Stage: Prepare"), ("models", "Stage: Evaluate")):
         edge = stage_hint_seen["edges"][page]
         for side, own in (("under", True), ("over", False)):
@@ -1811,7 +1818,7 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
     await Promise.all(icon.getAnimations().map((a) => a.finished));   // its turn, finished
     return { open: true, transform: getComputedStyle(icon).transform }; });
   const frame = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-  await page.setViewportSize({ width: 420, height: 900 });
+  await page.setViewportSize({ width: 1280, height: 720 });
   await frame();
   out.narrow = await row();
   await page.setViewportSize({ width: 1850, height: 960 });
@@ -1823,7 +1830,7 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
 """
 
 #: What a read-only viewer's Settings and header draw (no deployment mode):
-#: the look at 1850 x 960; then at 1850 x 960 and 390 x 844, Runtime
+#: the look at 1850 x 960; then at 1850 x 960 and the display floor's 1280 x 720, Runtime
 #: settings' accordions open (the external review of 6a2d52e measured the
 #: reason 734 px from the buttons so), where D8's reason and the fields'
 #: line are, and each locked action brought into view as a reader brings it
@@ -1835,7 +1842,7 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__;
 (async () => {
   const browser = await chromium.launch();
   const out = { sizes: {} };
-  for (const [w, h] of [[1850, 960], [390, 844]]) {
+  for (const [w, h] of [[1850, 960], [1280, 720]]) {
     const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
     await page.addInitScript(QUEUE_JS);
     await page.addInitScript(LOOK_JS);
@@ -1998,7 +2005,8 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     actions it turns off, by the one gated-button rule: the actions' row's
     line just above Apply Settings, Restart Backend and Stop service, each
     within 120 px under it and both wholly on screen when the action is
-    brought into view, at 1850 x 960 and 390 x 844 with the accordions open;
+    brought into view, at 1850 x 960 and the display floor's 1280 x 720 with
+    the accordions open;
     next to the fields, between the facts and the allocator select, a short
     relation to it (`FIELDS_LOCKED`). Fails on 6a2d52e: the reason was that
     body line, 734 px above the buttons at 1850 x 960."""
@@ -2050,7 +2058,7 @@ const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
 (async () => {
   const browser = await chromium.launch();
-  const page = await (await browser.newContext({ viewport: { width: 1366, height: 620 } })).newPage();
+  const page = await (await browser.newContext({ viewport: { width: 1366, height: 768 } })).newPage();
   await page.addInitScript(QUEUE_JS);
   await page.goto(process.argv[2], { waitUntil: 'load' });
   await page.waitForSelector('#shep-chips .shep-chip', { timeout: 60000 });
@@ -2089,7 +2097,8 @@ const QUEUE_JS = __QUEUE_JS__;
 
 
 def test_a_box_partly_under_a_pages_region_foot_is_focused_whole_into_view(tmp_path, monkeypatch):
-    """The shared walk's open problem on Settings at 1366 x 620 (T06-D): side by
+    """The shared walk's open problem on Settings at 1366 x 620 (T06-D; walked at 1366 x 768
+    since the display floor, 620 being under it): side by
     side, Settings scrolls in its level-1 tab item, and a text box partly under
     that region's foot was focused by bringing its first line just into view,
     its centre left under the runtime line below ("focused
@@ -2334,7 +2343,7 @@ const { chromium } = require('playwright');
 const LOOK_JS = __LOOK_JS__;
 (async () => {
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 800, height: 400 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   await page.setContent(`<!doctype html><html><head><style>
     body { background: #fff; }
     button { outline: none; border: 1px solid #767676; background: #fff; width: 120px; height: 32px; }
