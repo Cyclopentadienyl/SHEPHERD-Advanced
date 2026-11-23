@@ -143,7 +143,7 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
     # Set-to bar's own width, where every row's box is one width (the sweep's L7, C3).
     assert not hasattr(dl, "DL_NARROW")
     assert re.findall(r"@container \(([^)]*)\)", css) == [f"min-width: {dl.SET_WIDE}"]
-    assert (f'.shep-dl-field > .block:not([id^="dl_lock_"]) {{ flex: 0 1 {dl.SET_BOX} '
+    assert (f'.shep-dl-field > .block {{ flex: 0 1 {dl.SET_BOX} '
             "!important; }") in css
     app = create_gradio_app()
     blocks = {getattr(b, "elem_id", None): b for b in app.blocks.values()}
@@ -151,6 +151,9 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
         check, save = blocks[f"dl_check_{key}"], blocks[f"dl_save_{key}"]
         group = check.parent
         assert group is save.parent and {"shep-dl-acts", "shep-grp"} <= set(group.elem_classes)
+        # A read-only row's short phrase is part of Check and Save's group, beside them (the
+        # sweep's L7 check, D6), never a line of the bar's own.
+        assert blocks[f"dl_lock_{key}"].parent is group
         bar = group.parent
         assert blocks[f"dl_box_{key}"].parent is bar      # the box beside the group
         create = blocks[f"dl_create_{key}"].parent
