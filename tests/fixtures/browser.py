@@ -375,8 +375,8 @@ LOOK_JS = r"""
      - empty: a panel with no visible words or control under its header;
      - help: a registered help text drawn on the page outside the bubble;
      - notices: each notice key (`data-notice`, `data-notice-also`) and how often it is drawn;
-     - tabs: the research tabs' lines, their order, and each separator drawn while the tabs wrap
-       or at a line's start, and anything in the tablist that is not a tab. */
+     - tabs: the research tabs' lines, their order, and each separator drawn at a line's start,
+       and anything in the tablist that is not a tab. */
   const INTERACTIVE = 'button, input:not([type=hidden]), textarea, select, a[href], [role=button], '
     + '[role=tab], [role=radio], [role=checkbox], [role=switch], summary';
   const SKIP = 'script, style, noscript, .sr-only, .shep-vh, [hidden], #shep-help-texts, '
@@ -1591,11 +1591,10 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
     - ``empty-region``: a panel with nothing under its header;
     - ``help-on-page``: a help text drawn outside the bubble;
     - ``notice-repeat``: a notice key drawn more than once on one screen;
-    - ``tab-groups``: a separator drawn at a line's start or while the research tabs wrap,
-      anything but a tab in the tablist, a focus stop that is not a tab, or the tabs out of
-      `RESEARCH_PAGES`' order (a group whose tabs the row's width wraps apart is the decided
-      design: the tabs wrap by width alone, no group is broken to a line of its own, the
-      sweep's decision 3);
+    - ``tab-groups``: the research tabs on more than one line (at or above the display floor
+      they sit on one; below it the row is drawn as at the floor), a separator drawn at a
+      line's start, anything but a tab in the tablist, a focus stop that is not a tab, or the
+      tabs out of `RESEARCH_PAGES`' order;
     - ``in-view`` (at every window at or above the display floor, `at_floor`): a control or a
       text line of the page drawn past the window's bottom or right edge that no scroll region in
       view holds;
@@ -1684,10 +1683,13 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
             order = [page for line in tabs["lines"] for page in line]
             if order != list(RESEARCH_PAGES):
                 problems.append(f"{where}: tab-groups: tabs in the order {order}")
+            if len(tabs["lines"]) > 1:
+                problems.append(f"{where}: tab-groups: the research tabs take {len(tabs['lines'])} lines "
+                                f"{tabs['lines']}")
             for sep in tabs["seps"]:
-                if len(tabs["lines"]) > 1 or sep["lineStart"]:
-                    problems.append(f"{where}: tab-groups: a separator before {sep['tab']} "
-                                    f"drawn while the tabs take {len(tabs['lines'])} lines")
+                if sep["lineStart"]:
+                    problems.append(f"{where}: tab-groups: a separator before {sep['tab']} drawn at a "
+                                    "line's start")
             for other in (*tabs["others"], *tabs["focusable"]):
                 problems.append(f"{where}: tab-groups: {other} in the tablist")
     return problems

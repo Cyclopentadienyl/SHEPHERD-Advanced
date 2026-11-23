@@ -17,8 +17,8 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   Settings when it is selected (one look for level 1's selected item, which no
   other level has, R-20).
 - **Level 2** (``#shep-research-nav``, inside Research): Datasets · Training ·
-  Fine-tune · Test · Models, 32 px tabs in one row, which wraps only when
-  the tabs alone do not fit. The selected page has a 3 px accent underline,
+  Fine-tune · Test · Models, 32 px tabs in one row (at the display floor's
+  width they fit with room to spare). The selected page has a 3 px accent underline,
   the accent text and the strong weight; a tab under the pointer has a grey
   fill and darker text and never an underline, so only the selected tab ever
   reads as selected. The default inner page is Training.
@@ -314,15 +314,12 @@ RESEARCH_TABLIST_LABEL = _research_tablist_label()
 #: not the stages (`STAGES`: Datasets is still Prepare), no tab moves, and the
 #: tab order, the tablist's name and the stage hint are unchanged. The first
 #: tab of each later group keeps a gap before it (`TAB_GROUP_GAP`), in which a
-#: decorative line is drawn while the tabs sit on one line (`TAB_GROUP_CSS`).
+#: decorative line is drawn (`TAB_GROUP_CSS`). At or above the display floor
+#: (`style.FLOOR_WIDTH`) the tabs sit on one line, and below it the row is
+#: drawn as at the floor, so a line never starts with a separator.
 TAB_GROUPS = ((DATASETS,), (TRAINING, FINETUNE), (TEST, MODELS))
 #: The gap before a later group's first tab (the style token it reads).
 TAB_GROUP_GAP = "var(--shep-tabgroup-gap)"
-#: Set on ``#shep-research-nav`` by the head script's layout pass while its
-#: tabs take more than one line: the separators are not drawn then (a line
-#: never starts with one); the gaps stay, so the mark changes nothing the
-#: pass measures.
-TABS_WRAPPED_ATTR = "data-shep-tabs-wrapped"
 
 
 def _tab_group_css() -> str:
@@ -331,7 +328,7 @@ def _tab_group_css() -> str:
     first tab, and its separator, an empty ``::before`` (no node of the
     tablist, no role, no focus stop, no text: nothing a screen reader or the
     keyboard meets), drawn in the gap's middle, never over the tab's hit
-    target, and not drawn while the tabs wrap (`TABS_WRAPPED_ATTR`)."""
+    target."""
     rules = []
     for group in TAB_GROUPS[1:]:
         tab = f"#shep-research-nav > .tab-wrapper > .tab-container > #{page_elem_id(group[0])}-button"
@@ -339,8 +336,6 @@ def _tab_group_css() -> str:
         rules.append(f"{tab}::before {{ content: \"\"; position: absolute; top: 8px; bottom: 8px; "
                      f"inset-inline-start: calc({TAB_GROUP_GAP} / -2 - 0.5px); width: 1px; "
                      "background: var(--shep-border-2); pointer-events: none; }")
-        rules.append(f"#shep-research-nav[{TABS_WRAPPED_ATTR}] > .tab-wrapper > .tab-container > "
-                     f"#{page_elem_id(group[0])}-button::before {{ display: none; }}")
     return "\n".join(rules) + "\n"
 
 
@@ -863,10 +858,10 @@ _SHELL_JS = r"""
     if (hint.hidden !== !want) { hint.hidden = !want; }
   }
   // Row 1 holds the brand, the area switch, the chips and Settings. When they
-  // do not fit on one row, the chips and Settings move onto a line of their
-  // own, under the area switch however many lines it takes (at 480 px its
-  // two tabs take two): the chips sit where that line starts, measured, so
-  // they never cover a tab.
+  // do not fit on one row (at the display floor's width, a GPU chip naming a
+  // long holder), the chips and Settings move onto a line of their own, under
+  // the area switch: the chips sit where that line starts, measured, so they
+  // never cover a tab.
   // **The one layout decision** (the layout rule, module docstring): the
   // window's inner size first (no wider than tall: stacked), then whether the
   // page shown fits side by side by its panels' own minimum widths. Read from
@@ -996,20 +991,6 @@ _SHELL_JS = r"""
       } else if (!options || !drawn(group)) { continue; }
       if (group.hasAttribute(NARROW) !== stack) { group.toggleAttribute(NARROW, stack); }
     }
-  }
-  // **The tab groups' separators only while the research tabs sit on one line** (TAB_GROUPS):
-  // the pass marks the research tabs' row when its tabs take more than one line, from the
-  // tabs' own tops; the gaps before each group stay in both states, so the mark moves nothing.
-  var TABS_WRAPPED = '__TABS_WRAPPED__';
-  function tabLines() {
-    var nav = document.getElementById('shep-research-nav');
-    if (!nav || !drawn(nav)) { return; }
-    var tabs = nav.querySelectorAll(':scope > .tab-wrapper > .tab-container > button[role="tab"]'), tops = {};
-    for (var i = 0; i < tabs.length; i++) {
-      if (drawn(tabs[i])) { tops[Math.round(tabs[i].offsetTop / 4)] = true; }
-    }
-    var wrapped = Object.keys(tops).length > 1;
-    if (nav.hasAttribute(TABS_WRAPPED) !== wrapped) { nav.toggleAttribute(TABS_WRAPPED, wrapped); }
   }
   // **A box whole only while its column has the room** (the layout rule's
   // fold, module docstring): side by side, each box of class FOLD drawn is
@@ -1153,7 +1134,6 @@ _SHELL_JS = r"""
     orientation();
     fits();
     folds();
-    tabLines();
     cues();
     seps();
     ends();
@@ -1171,17 +1151,7 @@ _SHELL_JS = r"""
     var settings = settingsTab ? settingsTab.offsetWidth : right.offsetWidth;
     var need = 16 + (brand ? brand.offsetWidth : 180) + 24 + left + 24 + chips.scrollWidth + 16 + settings + 16;
     shell.style.setProperty('--shep-settings-w', settings + 'px');
-    var wrapped = need > shell.clientWidth;
-    shell.classList.toggle('shep-nav-wrapped', wrapped);
-    // Wrapped, the chips stand beside the Settings tab while the widest of them is whole there;
-    // else they take a line of their own (style.py's shep-chips-line). Each chip's whole width
-    // is read from its words' own width, so the mark never changes what it measured.
-    var widest = 0, all = chips.querySelectorAll('.shep-chip');
-    for (var c = 0; c < all.length; c++) {
-      var text = all[c].querySelector('.shep-chip-text');
-      widest = Math.max(widest, all[c].offsetWidth + (text ? text.scrollWidth - text.clientWidth : 0));
-    }
-    shell.classList.toggle('shep-chips-line', wrapped && widest > shell.clientWidth - settings - 48);
+    shell.classList.toggle('shep-nav-wrapped', need > shell.clientWidth);
     shell.style.setProperty('--shep-chips-h', chips.offsetHeight + 'px');
     var line = Math.round(right.getBoundingClientRect().top - shell.getBoundingClientRect().top);
     shell.style.setProperty('--shep-chips-top', line + 'px');
@@ -1297,7 +1267,6 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__NARROW__", NARROW_ATTR).replace("__SEG_WHOLE__", SEG_WHOLE)
               .replace("__FOLD__", FOLD).replace("__FOLD_ROOM__", FOLD_ROOM)
               .replace("__FOLD_FLOOR__", FOLD_FLOOR).replace("__FOLDED__", FOLDED_ATTR)
-              .replace("__TABS_WRAPPED__", TABS_WRAPPED_ATTR)
               .replace("__GO__", as_json_for_script({k: list(v) for k, v in GO_TARGETS.items()}))
               + "</script>")
 
@@ -1322,7 +1291,6 @@ __all__ = [
     "SHELL_HEAD",
     "STAGES",
     "STAGE_WORD",
-    "TABS_WRAPPED_ATTR",
     "TAB_GROUPS",
     "TAB_GROUP_CSS",
     "TEST",

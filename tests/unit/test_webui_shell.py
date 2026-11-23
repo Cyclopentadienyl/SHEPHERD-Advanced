@@ -770,13 +770,13 @@ def test_a_panels_header_sticks_to_the_top_of_the_region_that_scrolls():
 
 
 def test_the_wrapped_chips_sit_on_their_own_line_under_the_area_switch():
-    """B5 (leftover b): at 480 px the area switch's two tabs take two lines,
-    and the chips, placed one header row down, covered the Research tab
-    (measured with ``document.elementsFromPoint``). The header script now
-    measures where the chips' and Settings' own line starts (the right tab
-    group's top) and the wrapped chips sit there, however many lines the
-    switch takes. This pins that wiring; what the browser draws is
-    `test_no_header_element_covers_a_tab_at_any_width`'s."""
+    """B5 (leftover b): wrapped, the chips, placed one header row down,
+    covered the Research tab (measured with ``document.elementsFromPoint``).
+    The header script measures where the chips' and Settings' own line
+    starts (the right tab group's top) and the wrapped chips sit there. This
+    pins that wiring; what the browser draws is
+    `test_no_header_element_covers_a_tab_at_any_width`'s (at the display
+    floor, with a GPU chip at its cap)."""
     from src.webui.style import SHELL_CSS
 
     head = shell.SHELL_HEAD
@@ -787,20 +787,22 @@ def test_the_wrapped_chips_sit_on_their_own_line_under_the_area_switch():
     assert "top: var(--shep-chips-top, var(--shep-row1-h));" in wrapped
 
 
-#: Opens the dashboard at 480 px, then 360, 420, 760, 1100 and 1850 (a resize
-#: runs the header's layout, as a load does), and reports for each area tab
-#: what ``document.elementsFromPoint`` finds on top at its centre and four
-#: inset corners: the tab itself or something inside it, or what covers it;
-#: and each header chip's left and right edges.
+#: Opens the dashboard with its GPU chip as wide as its cap (a long holder record: the lock's
+#: command, pid and start end in the chip's titled ellipsis), at 1850, 1366, the display floor's
+#: 1280 and 1024 below it (a resize runs the header's layout, as a load does), and reports for
+#: each area tab what ``document.elementsFromPoint`` finds on top at its centre and four inset
+#: corners: the tab itself or something inside it, or what covers it; each header chip's edges
+#: and words; and the frame's width.
 _HEADER_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch();
-  const page = await (await browser.newContext({ viewport: { width: 480, height: 800 } })).newPage();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 } })).newPage();
   await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#shep-chips .shep-chips', { timeout: 60000 });
+  await page.addStyleTag({ content: '#shep-chips .shep-chip-gpu .shep-chip-text { width: 100vw; }' });
   const out = {};
-  for (const width of [480, 360, 390, 420, 760, 1100, 1850]) {
+  for (const width of [1850, 1366, 1280, 1024]) {
     await page.setViewportSize({ width, height: 800 });
     await page.waitForTimeout(800);
     out[width] = await page.evaluate(() => {
@@ -824,14 +826,12 @@ const { chromium } = require('playwright');
                chips: document.querySelector('#shep-chips .shep-chips').childElementCount, tabs,
                edges: [...document.querySelectorAll('#shep-chips .shep-chip')].map((c) => {
                  const r = c.getBoundingClientRect(); return [r.left, r.right]; }),
-               // Each chip: where it starts and its line, its words whole or not, and its whole
-               // width (its words' own width, as an ellipsis does not draw them).
+               // Each chip: its line, and its words whole or ended at the chip's own cap.
                chipWords: [...document.querySelectorAll('#shep-chips .shep-chip')].map((c) => {
                  const r = c.getBoundingClientRect(), t = c.querySelector('.shep-chip-text');
-                 return { left: r.left, top: r.top, whole: !t || t.scrollWidth <= t.clientWidth + 1,
-                          natural: r.width + (t ? t.scrollWidth - t.clientWidth : 0) }; }),
-               row: document.getElementById('shep-shell').clientWidth - 32,
-               width: document.documentElement.clientWidth };
+                 return { top: Math.round(r.top), whole: !t || t.scrollWidth <= t.clientWidth + 1,
+                          capped: !!t && t.clientWidth >= parseFloat(getComputedStyle(t).maxWidth) - 1 }; }),
+               frame: document.querySelector('gradio-app').getBoundingClientRect().width };
     });
   }
   console.log(JSON.stringify(out));
@@ -843,18 +843,16 @@ const { chromium } = require('playwright');
 def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
     """B5 review: the chips' line was pinned only as source text. In a real
     browser (Node and Playwright, skipped without), the dashboard mounted as
-    the service mounts it (`app.mount_options`: its CSS and head script): at
-    360, 420, 480, 760, 1100 and 1850 px each area tab is what
+    the service mounts it (`app.mount_options`: its CSS and head script), its
+    GPU chip as wide as its cap (a long holder record): at 1850 px the
+    header is one line; at the display floor's 1280 (and 1366) the chips and
+    Settings go onto a second line; below the floor (1024) the header is
+    drawn as at the floor. At each, each area tab is what
     ``document.elementsFromPoint`` finds first at its centre and corners, the
-    chips never over it; at 480 the header has wrapped onto its second line;
-    every chip is inside the window (UI-02: at 360 px the D8 chip's left edge
-    was at -41 px; its words now end in a titled ellipsis inside the room).
-    The sweep's L7 (SW-LK9, SW-LK3): at 390 px "Operator controls: on (this
-    machine)" ended in an ellipsis beside Settings though a line of the header
-    holds it, and the GPU chip, wrapped, floated mid-box. A chip's words are
-    whole wherever a header line holds the chip whole (the ellipsis only for a
-    chip wider than a line), and chips on more than one line start on one
-    left edge."""
+    chips never over it; every chip is inside the frame and on one line, its
+    words whole or ended at its own cap (the titled ellipsis). The chips'
+    line of their own and their wrapping among themselves served windows
+    under 480 px only and are retired with the floor."""
     import subprocess
 
     from src.webui.app import create_gradio_app, mount_options
@@ -873,20 +871,17 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
                                 text=True, timeout=180)
     assert result.returncode == 0, result.stderr
     seen = json.loads(result.stdout)
-    assert seen["480"]["wrapped"] is True and seen["1850"]["wrapped"] is False
+    assert seen["1280"]["wrapped"] is True and seen["1850"]["wrapped"] is False
+    assert seen["1024"] == seen["1280"], (seen["1024"], seen["1280"])
     for width, facts in seen.items():
         assert facts["chips"] > 0, width
         for tab, covered in facts["tabs"].items():
             assert covered == [], (width, tab, covered)
         for left, right in facts["edges"]:
-            assert 0 <= left and right <= facts["width"], (width, facts["edges"])
+            assert 0 <= left and right <= facts["frame"], (width, facts["edges"])
+        assert len({chip["top"] for chip in facts["chipWords"]}) == 1, (width, facts["chipWords"])
         for chip in facts["chipWords"]:
-            assert chip["whole"] or chip["natural"] > facts["row"], (width, chip, facts["row"])
-        tops = {round(chip["top"]) for chip in facts["chipWords"]}
-        if len(tops) > 1:
-            lefts = [chip["left"] for chip in facts["chipWords"]]
-            assert max(lefts) - min(lefts) <= 1, (width, facts["chipWords"])
-
+            assert chip["whole"] or chip["capped"], (width, chip)
 
 
 # --------------------------------------------------------------------------- a reload
@@ -3298,9 +3293,10 @@ def test_the_tab_groups_flatten_to_the_research_pages_and_their_style_is_generat
     the tablist's name are unchanged) and never a node of the tablist: each
     later group's first tab keeps a gap (`TAB_GROUP_GAP`) in whose middle an
     empty ``::before`` draws the separator, through the documented
-    ``<elem_id>-button`` ids only; no role, tab stop or text is added. Not
-    drawn while the tabs wrap (`TABS_WRAPPED_ATTR`, the head script's mark);
-    the gap stays, so the mark changes nothing the pass measures."""
+    ``<elem_id>-button`` ids only; no role, tab stop or text is added. At or
+    above the display floor the tabs sit on one line, so the separators are
+    always drawn: the mark that hid them while the tabs wrapped (below the
+    floor only) is retired with its pass."""
     from src.webui.app import dashboard_head
 
     assert tuple(page for group in shell.TAB_GROUPS for page in group) == shell.RESEARCH_PAGES
@@ -3312,16 +3308,9 @@ def test_the_tab_groups_flatten_to_the_research_pages_and_their_style_is_generat
         assert f"{tab} {{ position: relative; margin-inline-start: var(--shep-tabgroup-gap) !important; }}" in css
         sep = _rule(css, f"{tab}::before")
         assert 'content: ""' in sep and "pointer-events: none" in sep and "width: 1px" in sep
-        assert (f"#shep-research-nav[{shell.TABS_WRAPPED_ATTR}] > .tab-wrapper > .tab-container > "
-                f"#shep-page-{first}-button::before {{ display: none; }}") in css
     assert "#shep-page-datasets-button" not in css and "#shep-page-finetune-button" not in css
     assert not re.search(r"role|tabindex|content: \"[^\"]", css)
-    head = shell.SHELL_HEAD
-    lines = head[head.index("function tabLines()"):head.index("var FOLD = ")]
-    # The pass reads the tabs' own tops and writes only the mark, which no rule of a tab's box reads.
-    assert "offsetTop" in lines and "toggleAttribute(TABS_WRAPPED, wrapped)" in lines
-    assert "style" not in lines and "margin" not in lines
-    assert "    tabLines();" in head[head.index("function layout()"):]
+    assert "display: none" not in css and "tabs-wrapped" not in shell.SHELL_HEAD + css
 
 
 def test_the_fit_pass_measures_each_box_with_its_own_mark_off():
@@ -3332,7 +3321,7 @@ def test_the_fit_pass_measures_each_box_with_its_own_mark_off():
     is a fieldset block that is not a segmented control, its options on one
     line for the measure alone."""
     head = shell.SHELL_HEAD
-    fits = head[head.index("function fits()"):head.index("var TABS_WRAPPED")]
+    fits = head[head.index("function fits()"):head.index("var FOLD = ")]
     assert fits.count("removeAttribute(NARROW)") == 2 and fits.count("setAttribute(NARROW, '')") == 2
     for block in fits.split("var groups")[0], fits.split("var groups")[1]:
         off, measure, back = (block.index("removeAttribute(NARROW)"), block.index("measured("),
@@ -3417,17 +3406,16 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.waitForSelector('#groups-notice .shep-nb');
   const row = () => page.evaluate(() => {
     const list = document.querySelector('#shep-research-nav > .tab-wrapper > .tab-container');
-    const tabs = [...list.children];
+    const tabs = [...list.children], x0 = list.getBoundingClientRect().left, y0 = list.getBoundingClientRect().top;
     return { kids: tabs.map((t) => [t.tagName, t.getAttribute('role'), t.getAttribute('data-tab-id')]),
-             wrapped: document.getElementById('shep-research-nav').hasAttribute('data-shep-tabs-wrapped'),
              tabs: tabs.map((t) => { const r = t.getBoundingClientRect(), s = getComputedStyle(t, '::before');
                const drawn = s.content !== 'none' && s.content !== 'normal' && s.display !== 'none';
-               return { id: t.getAttribute('data-tab-id'), left: r.left, right: r.right, top: Math.round(r.top),
-                        sep: drawn ? { x: r.left + parseFloat(s.left), content: s.content, top: parseFloat(s.top),
+               return { id: t.getAttribute('data-tab-id'), left: r.left - x0, right: r.right - x0, top: Math.round(r.top - y0),
+                        sep: drawn ? { x: r.left - x0 + parseFloat(s.left), content: s.content, top: parseFloat(s.top),
                                        bottom: parseFloat(s.bottom), width: parseFloat(s.width) } : null }; }) };
   });
   const out = {};
-  for (const [name, w, h] of [['wide', 1850, 960], ['narrow', 390, 844], ['back', 1850, 960]]) {
+  for (const [name, w, h] of [['wide', 1850, 960], ['floor', 1280, 720], ['below', 1024, 640], ['back', 1850, 960]]) {
     await page.setViewportSize({ width: w, height: h });
     await frame(); await frame();
     out[name] = await row();
@@ -3489,9 +3477,13 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
     - at the owner's window the tabs are on one line, a separator drawn in
       the gap before Training and before Test (between the tabs, never over
       one, empty, 1 px), none before Datasets or the second tab of a group;
-    - at a phone's width the tabs wrap: the row is marked and no separator
-      is drawn (a line never starts with one); back at the owner's window,
-      as before;
+    - at the display floor (1280 x 720) the same, one line, both
+      separators drawn; below it (1024 x 640) the row is drawn as at the
+      floor, every tab and separator where the floor draws it in the row
+      (positions read from the tablist's own edge: this stand-in page is no
+      full-width mount, so Gradio centres its column) (the tabs
+      wrapped and their separators were hidden at a phone's width before the
+      owner's floor of 2026-11-23); back at the owner's window, as before;
     - the tablist holds the five tabs only, in `RESEARCH_PAGES`' order; the
       keyboard's Tab moves from tab to tab, meeting no separator;
     - the notice's link opens Settings and moves the focus to the Data
@@ -3516,7 +3508,7 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
                         base[:-len("gradio_api")])
     wide = seen["wide"]
     assert wide["kids"] == [["BUTTON", "tab", page] for page in shell.RESEARCH_PAGES], wide
-    assert not wide["wrapped"] and len({t["top"] for t in wide["tabs"]}) == 1, wide
+    assert len({t["top"] for t in wide["tabs"]}) == 1, wide
     drawn = {t["id"]: t["sep"] for t in wide["tabs"] if t["sep"]}
     assert set(drawn) == {"training", "test"}, wide
     by = {t["id"]: t for t in wide["tabs"]}
@@ -3524,9 +3516,10 @@ def test_the_tab_groups_and_a_notices_link_in_a_browser(tmp_path):
         sep = drawn[first]
         assert sep["content"] == '""' and sep["width"] == 1, sep
         assert by[before]["right"] < sep["x"] < by[first]["left"], (sep, by[before], by[first])
-    narrow = seen["narrow"]
-    assert narrow["wrapped"] and len({t["top"] for t in narrow["tabs"]}) > 1, narrow
-    assert not any(t["sep"] for t in narrow["tabs"]), narrow
+    floor = seen["floor"]
+    assert len({t["top"] for t in floor["tabs"]}) == 1, floor
+    assert {t["id"] for t in floor["tabs"] if t["sep"]} == {"training", "test"}, floor
+    assert seen["below"] == floor
     assert seen["back"] == wide
     assert seen["keys"] == ["training", "finetune", "test", "models"], seen["keys"]
     assert seen["evil"] == "research"
@@ -3597,10 +3590,9 @@ def _state_walk_holds_the_shells_rules(seen, gpu_words):
 
     assert {s["page"] for s in seen} == set(UI_PAGES)
     for s in seen:
-        width = int(s["size"].split("x")[0])
         assert s["extra"]["gpu"] == gpu_words, s["extra"]
-        if width >= 1280:                                 # one header line from a laptop's width
-            assert not s["extra"]["wrapped"], (s["page"], s["size"])
+        # One header line at the display floor and above, and below it (drawn as at the floor).
+        assert not s["extra"]["wrapped"], (s["page"], s["size"])
         assert "layout" in s["check"] and s["check"]["layout"]["tabs"] is not None \
             or s["page"] in ("clinical", "settings"), (s["page"], s["size"])
     assert layout_problems(seen, rules=("tab-groups", "help-on-page", "notice-repeat")) == []
@@ -3624,10 +3616,11 @@ def test_at_first_use_trainings_resources_line_ends_its_run_view(ui_walk_first_u
 def test_at_first_use_the_header_and_tab_groups_hold_on_every_page_and_size(ui_walk_first_use):
     """B-11 and the owner's tab groups, at first use (no workspaces folder, no
     registry; the state of the owner's six screenshots): the GPU chip says
-    "GPU jobs: not set up" and the header is one line from 1280 px wide up
-    (it wrapped at 1280 on "GPU jobs: refused, no workspaces folder"); the
-    research tabs keep their order, a separator is never drawn at a line's
-    start or while they wrap, nothing but a tab is in the tablist; no help
+    "GPU jobs: not set up" and the header is one line at every layout size
+    (it wrapped at 1280 on "GPU jobs: refused, no workspaces folder"; below
+    the display floor it is drawn as at the floor); the research tabs sit on
+    one line in their order, a separator is never drawn at a line's start,
+    nothing but a tab is in the tablist; no help
     text is drawn on the page and no notice twice on a screen. The page
     rules (`browser.layout_problems`: beside, narrow-box, orphan, edge, …)
     are held at zero by `test_every_page_of_every_state_has_no_layout_finding`."""
@@ -4297,10 +4290,10 @@ def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_
     """``in-view`` is held at every window at or above the display floor (`browser.at_floor`;
     the owner's decision of 2026-11-23), not only at the owner's two: a laptop's 1366 x 768 and
     the floor's 1280 x 720 are found as the owner's are; below the floor the document scrolls to
-    what lies past the window, so it is not. ``tab-groups`` does not count a tab group the row's
-    width wraps apart (SW-LK9: Models alone on the second line at 390 px): the tabs wrap by width
-    alone and no group is broken to a line of its own, the sweep's decision 3 (the integrator's,
-    2026-11-22; the owner may reopen it). It still finds a separator drawn while the tabs wrap."""
+    what lies past the window, so it is not. ``tab-groups`` finds the research tabs on more than
+    one line: the sweep's decision 3 (the tabs wrapped by width at 390 px, a group split apart,
+    5111be8) is not applicable since the floor, which no window under it narrows; and a
+    separator drawn at a line's start."""
     from tests.fixtures.browser import floor_size, layout_problems
 
     def stop(size, inview=(), lines=None):
@@ -4314,79 +4307,17 @@ def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_
     below = [f"{fw - 1}x{fh}", f"{fw}x{fh - 1}", "1024x640"]
     found = layout_problems([stop(size, cut) for size in held + below], rules=("in-view",))
     assert found == [f"{size} settings: in-view: {cut[0]}" for size in held], found
-    split = layout_problems([stop("390x844", lines=[["datasets", "training", "finetune", "test"], ["models"]])],
+    one = layout_problems([stop(f"{fw}x{fh}", lines=[["datasets", "training", "finetune", "test", "models"]])],
+                          rules=("tab-groups",))
+    assert one == [], one
+    split = layout_problems([stop(f"{fw}x{fh}", lines=[["datasets", "training", "finetune", "test"], ["models"]])],
                             rules=("tab-groups",))
-    assert split == [], split
-    whole = layout_problems([stop("390x844", lines=[["datasets", "training", "finetune"], ["test", "models"]])],
+    assert len(split) == 1 and "the research tabs take 2 lines" in split[0], split
+    seps = {"lines": [["datasets", "training", "finetune", "test", "models"]],
+            "seps": [{"tab": "test", "lineStart": True}], "others": [], "focusable": []}
+    drawn = layout_problems([{"size": f"{fw}x{fh}", "page": "settings", "check": {"layout": {"tabs": seps}}}],
                             rules=("tab-groups",))
-    assert whole == [], whole
-    seps = {"lines": [["datasets", "training", "finetune", "test"], ["models"]],
-            "seps": [{"tab": "test", "lineStart": False}], "others": [], "focusable": []}
-    drawn = layout_problems([{"size": "390x844", "page": "settings", "check": {"layout": {"tabs": seps}}}],
-                            rules=("tab-groups",))
-    assert drawn and all("a separator before test" in p for p in drawn), drawn
-
-
-def test_the_floor_rule_finds_a_layout_shrunk_below_the_floor_and_a_frame_that_scrolls_at_it():
-    """``floor`` (the owner's decision of 2026-11-23; `browser.layout_problems`): below the
-    floor a stop is compared with the stop at the floor of the same page and drawer in the walk.
-    It finds marks that differ from the floor's (the side-by-side decision, the short flag, a
-    box marked narrow), a frame drawn smaller than the floor's, a document that does not scroll
-    in an axis the window is under the floor (the layout shrank to the window), and a below-floor
-    stop with no floor stop to compare. At or above the floor it finds a document that scrolls
-    sideways, and side by side one that scrolls at all (the frame scrolls); a stacked page
-    scrolls. A stop drawn as at the floor, its document scrolling, passes."""
-    from tests.fixtures.browser import floor_size, layout_problems
-
-    fw, fh = floor_size()
-
-    def stop(size, *, layout="side", short=True, marked=(), frame=(fw, fh), scroll=(0, 0), page="models",
-             open_=None):
-        facts = {"layout": layout, "short": short, "header": ["shep-x"], "marked": list(marked),
-                 "frame": list(frame), "scroll": list(scroll)}
-        return {"size": size, "page": page, **({"open": open_} if open_ else {}),
-                "check": {"layout": {}, "floor": facts}}
-
-    floor = f"{fw}x{fh}"
-    good = [stop(floor, marked=["#t data-shep-narrow"]),
-            stop("1024x640", marked=["#t data-shep-narrow"], scroll=(256, 80)),
-            stop(f"{fw}x600", marked=["#t data-shep-narrow"], scroll=(0, 120)),
-            stop("1440x1600", layout="stack", short=False, frame=(1440, 3000), scroll=(0, 1400))]
-    assert layout_problems(good, rules=("floor",)) == []
-    shrunk = layout_problems([good[0], stop("1024x640", layout="stack", marked=[], frame=(1024, 640),
-                                            scroll=(0, 0))], rules=("floor",))
-    assert any("layout stack where the floor's is side" in p for p in shrunk), shrunk
-    assert any("marked [] where the floor's is ['#t data-shep-narrow']" in p for p in shrunk), shrunk
-    assert any("the frame drawn [1024, 640]" in p for p in shrunk), shrunk
-    assert any("narrower than the floor and the document does not scroll" in p for p in shrunk), shrunk
-    assert any("shorter than the floor and the document does not scroll" in p for p in shrunk), shrunk
-    alone = layout_problems([stop("1024x640", scroll=(256, 80), open_="#drawer")], rules=("floor",))
-    assert alone and "no stop at the floor" in alone[0], alone
-    scrolled = layout_problems([stop(floor, scroll=(12, 30)), stop("1850x960", frame=(1850, 960), short=False,
-                                                                   scroll=(0, 4))], rules=("floor",))
-    assert f"{floor} models: floor: the document scrolls sideways by 12 px" in scrolled, scrolled
-    assert any(p.startswith("1850x960 models: floor: side by side, the document scrolls by 4 px") for p in scrolled), \
-        scrolled
-    assert len(scrolled) == 3, scrolled
-
-
-def test_the_sideways_rule_finds_a_region_wider_than_its_frame_a_mask_or_not(l7_rules_seen):
-    """``sideways-scroll`` (the owner's decision of 2026-11-23; fixer A's item 6 of the sweep's
-    L7): the shell's automatic sideways mask satisfied ``scroll-cue``, so a table wider than its
-    frame went unseen. At or above the floor a region whose content runs past its right edge is
-    found, masked (``#side-masked``) or not (``#side-bad``); one that says so in words just
-    before it (Compare's drawn ``shep-rs-cue``, ``#side-good``) and one whose content fits
-    (``#side-fits``) pass. Below the floor it is not held (`browser.at_floor`)."""
-    from tests.fixtures.browser import layout_problems
-
-    found = l7_rules_seen
-    assert _hits(found, "sideways", "#side-bad scrolls") and _hits(found, "sideways", "#side-masked scrolls"), \
-        found["sideways"]
-    assert not _hits(found, "sideways", "#side-good") and not _hits(found, "sideways", "#side-fits"), \
-        found["sideways"]
-    stops = [{"size": size, "page": "x", "check": {"layout": {"sideways": ["#t scrolls sideways"]}}}
-             for size in ("1280x720", "1024x640")]
-    assert layout_problems(stops, rules=("sideways-scroll",)) == ["1280x720 x: sideways-scroll: #t scrolls sideways"]
+    assert drawn == [f"{fw}x{fh} settings: tab-groups: a separator before test drawn at a line's start"], drawn
 
 
 @pytest.mark.parametrize("state", ["first_use", "empty", "configured"])
