@@ -170,7 +170,8 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     parents = fp._on_finetune_bases(operator, {"name": "demo"}, None)[0]
     item = parents[f"gatv2/{BASE_RUN}/model-03-0.8300.pt"]
     html = fp._on_base_chosen(f"gatv2/{BASE_RUN}/model-03-0.8300.pt", parents)
-    for words in ("Run", f"<code>gatv2/{BASE_RUN}</code>", "model-03-0.8300.pt", "Configuration",
+    for words in ("Run", r.token_html(f"gatv2/{BASE_RUN}"), r.token_html("model-03-0.8300.pt"),
+                  "Configuration",
                   "GATv2 · recipe changed in", '<summary>Details ›</summary>',
                   "Holds", "Validation", "LP accuracy (Trainer)",
                   "0.8300", "Selection", "Trained on", "not recorded", "Split seed",

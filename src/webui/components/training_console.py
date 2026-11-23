@@ -3756,7 +3756,8 @@ def parent_details_html(item: Optional[Mapping[str, Any]], operation: str = CONT
     rows.append(("Selection", r.e(r.selection_value(item))))
     rows.append(("Model fingerprint", r.fingerprint_value(item["sha256"],
                                                           what="model fingerprint")))
-    rows.append(("Run", f"<code>{r.e(_run_label(item))}</code>"))
+    # A token, broken only before its own separators (L7 SW-LK7).
+    rows.append(("Run", r.token_html(_run_label(item))))
     return f'<div class="shep-ckpt">{r.summary_list(rows)}</div>'
 
 

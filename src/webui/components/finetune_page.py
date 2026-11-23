@@ -609,8 +609,10 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
              if seed is not None else r.NOT_RECORDED.lower())
     kind = item.get("checkpoint_kind")
     rows = [
-        ("Run", f"<code>{r.e(item.get('architecture'))}/{r.e(item.get('run'))}</code>"),
-        ("File", f"<code>{r.e(item.get('filename'))}</code>"),
+        # Tokens break only before their own separators (L7 SW-LK7: the run
+        # ended a line at a hyphen at 390 px, reading hyphenated).
+        ("Run", r.token_html(f"{item.get('architecture')}/{item.get('run')}")),
+        ("File", r.token_html(item.get("filename"))),
         ("Configuration", r.e(r.configuration_text(item)) + r.model_spec_html(item.get("spec"))[1]),
         ("Holds", r.e(tc.CHECKPOINT_KINDS.get(kind or "", "not recorded"))),
         ("Validation", r.e(r.validation_value(r.validation_figure(item),

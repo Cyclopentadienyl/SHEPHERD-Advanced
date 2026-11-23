@@ -2976,7 +2976,7 @@ def test_the_chosen_checkpoints_details_say_what_its_option_does_not():
     for words in ("File", "last.pt", "Kind", "Base", "Holds", "training state", "Continuing",
                   "extends it by the Extra epochs you enter", "Validation",
                   "LP accuracy (Trainer) 0.8123", "Model fingerprint", "cccccccccccc",
-                  'data-copy="' + "c" * 64, "gatv2/20261024-163856_run_559817"):
+                  'data-copy="' + "c" * 64, r.token_html("gatv2/20261024-163856_run_559817")):
         assert words in html, words
     # Never a test result: the figure says it is the Trainer's selection
     # metric on val, as every details list's Validation row does (B0c).
