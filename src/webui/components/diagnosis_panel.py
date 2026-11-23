@@ -4285,8 +4285,12 @@ DRAWER_TREE_ROOM = f"calc(100cqw - {DRAWER_FACTS_MIN + DRAWER_GAP}px)"
 #: nothing to fold (no model loaded; a read-only viewer's reason line), still
 #: leaves less, the region takes what is left and stays the one scroll region,
 #: Run Diagnosis in view (a minimum height there put a second scroll region
-#: around the fields and Run out of view; the review of 90c375e).
-FIELDS_FLOOR = 166
+#: around the fields and Run out of view; the review of 90c375e). Since the
+#: sweep's L7 check (C1), the floor also holds the next field's label under the
+#: region's cue (206 px: Patient ID's label starts 182 px down): at 166 the
+#: edge fell in the gap under the HPO box, so the cue faded nothing drawn and
+#: Patient ID read as absent (configured, 1280 x 720, the card unfolded).
+FIELDS_FLOOR = 206
 #: **The input column's width** (``--dx-in-w``; B-14): a quarter of the page's
 #: row, never under the HPO field's floor (300 px: its label, info line and
 #: box, and the card's lines) nor over 26rem (wider adds only blank beside
