@@ -2337,6 +2337,10 @@ PAGE_CSS = f"""
   /* Back to the list stays on the title's first line when the title wraps (centred on a title of
      three lines it stood between them, apart from the words it follows). */
   {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; align-self: flex-start; }}
+  /* After the header's aside (the model in use, `.shep-panel-right`, itself pushed to the end), Back
+     follows it at the gap: two pushed ends split the line's room, and on a wrapped header's second
+     line the aside stood mid-line, on no edge. */
+  {_PAGE} .shep-panel-right + .shep-mp-back {{ margin-left: 0; }}
 }}
 """
 
