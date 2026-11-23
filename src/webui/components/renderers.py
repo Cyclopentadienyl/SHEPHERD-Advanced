@@ -873,6 +873,15 @@ def _marked(kind: str, inner: str, classes: str, attrs: str = "") -> str:
     return f'<p class="{classes}"{attrs}>{mark}<span class="shep-nb-text">{inner}</span></p>'
 
 
+def marked_line(kind: str, words: Any) -> str:
+    """**A state said as a sentence** (more than a state's word: "Nothing is
+    set yet. …"): a reason line (``shep-reason``, at the measure) led by the
+    state's mark in a column of its own (`_marked`), so a long sentence wraps
+    at the measure, its lines on its words' edge; `status_mark` is for a
+    state's word in a line of other words. `words` escaped."""
+    return _marked(kind, e(words), "shep-reason")
+
+
 def _go(notice: Mapping[str, Any], go: bool) -> str:
     """A notice's next step: a link-styled button to its place in the GUI
     (``data-shep-go``: the page; ``data-shep-focus``: the element whose
@@ -3243,6 +3252,7 @@ __all__ = [
     "CURRENT_DATASET",
     "DETAILS_WORD",
     "literal_html",
+    "marked_line",
     "notice_block",
     "notices_block",
     "see_above",

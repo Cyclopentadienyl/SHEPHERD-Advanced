@@ -294,7 +294,7 @@ def notice_html(view: DeploymentView, access: Any) -> str:
                 f'{r.status_mark("warn", f"Saved, not in effect yet: {names}")}'
                 f'<p class="shep-sub">{r.e(view.pending_reason)}</p></div>')
     if view.nothing_set:
-        return f'<div class="shep-dl-notice">{r.status_mark("neutral", NOTHING_SET)}</div>'
+        return f'<div class="shep-dl-notice">{r.marked_line("neutral", NOTHING_SET)}</div>'
     return ""
 
 

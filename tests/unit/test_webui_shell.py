@@ -3897,3 +3897,25 @@ def test_prose_in_a_region_on_a_panels_edge_keeps_the_measure_and_a_reason_draws
     assert "shep-edge" in (by_id["shep-mp-detail"].elem_classes or [])
     grey = _rule(SHELL_CSS, ".shep-reason-grey")
     assert not re.search(r"\b(border|background|padding)\b", grey), grey
+
+
+def test_a_state_said_as_a_sentence_and_a_note_in_a_span_keep_the_measure():
+    """The independent check of the UI sweep (C7): Settings' first-use line
+    ("Nothing is set yet. Each folder is needed only by what its row names,
+    …", 118 characters) was a status mark, an inline span the measure never
+    reached: one line 816 px wide at 1550 x 830, where every go link lands.
+    Datasets' note beside Use for training was an inline span too, its
+    max-width ignored (493 px). A state said as a sentence is a reason line
+    led by its mark (`renderers.marked_line`: a block at the measure, the mark
+    in a column of its own); a note in a span is an inline box that keeps the
+    measure (both 470 px, measured)."""
+    from src.webui.components import data_locations as dl
+    from src.webui.components import renderers as r
+    from src.webui.style import SHELL_CSS
+
+    line = r.marked_line("neutral", dl.NOTHING_SET)
+    assert line.startswith('<p class="shep-reason">') and 'aria-hidden="true">○' in line
+    assert r.e(dl.NOTHING_SET) in line
+    assert "display: inline-block" in _rule(SHELL_CSS, "span.shep-note")
+    assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-note")
+    assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-reason")

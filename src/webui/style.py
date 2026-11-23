@@ -490,6 +490,8 @@ body .gradio-container .wrap:has(> .wrap-inner input:disabled):hover {
 /* ---------------------------------------------------------------- shared pieces */
 .shep-muted { color: var(--shep-muted); }
 .shep-note { font-size: 14px; color: var(--shep-muted); max-width: var(--shep-measure); }
+/* A note in a span (beside a button) keeps the measure too: as an inline box it took none. */
+span.shep-note { display: inline-block; }
 .shep-note p { font-size: 14px; }
 .shep-sep { color: var(--shep-border-2); }
 .shep-nowrap { white-space: nowrap; }
