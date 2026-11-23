@@ -1982,20 +1982,31 @@ def load_button(listing: Mapping[str, Any], item: Optional[Mapping[str, Any]]) -
     return gated(LOAD_LABEL, not listing.get("refused"), interactive=can_load(item))
 
 
+#: Load's cause while no model is chosen (the sweep's L7, SW-LK6: Load stood
+#: disabled with nothing said; the skill's §9).
+CHOOSE_A_MODEL = "choose a model in the list first."
+
+
 def load_reason_html(item: Optional[Mapping[str, Any]],
                      listing: Optional[Mapping[str, Any]] = None) -> str:
     """Beside the Load button, why it is off: for a listing D8 refused, its
-    reason with the lock (`chips.operator_only`, the skill's §3); for the
+    reason with the lock (`chips.operator_only`, the skill's §3); with no
+    model chosen, its relation to the listing's notice when the list is empty
+    for want of a setting (`renderers.see_above`: the notice is the list's,
+    said once), else that a model is to be chosen (`CHOOSE_A_MODEL`); for the
     selected row, when its record is never loaded (`load_refusal`) or its
     file was not read (its state, `renderers.unreadable_words`); nothing
-    otherwise."""
+    otherwise. Every disabled Load says why, in the shared form."""
     if (listing or {}).get("refused"):
         from src.webui.components.chips import LOCK
 
         return (f'<div class="shep-reason shep-reason-grey">{LOCK} '
                 f'{r.e(refused_line(listing or {}))}</div>')
     if item is None:
-        return ""
+        notice = (listing or {}).get("notice")
+        if notice and not (listing or {}).get("items"):
+            return r.see_above(LOAD_LABEL, notice)
+        return r.marked_line("neutral", r.disabled_words(LOAD_LABEL, CHOOSE_A_MODEL))
     if not loadable(item):
         # A file not read, or whose read failed: its state, as its row says
         # it; why is in its details (`facts_html`, Models' detail).
@@ -4028,6 +4039,7 @@ __all__ = [
     "load_closed_js",
     "load_guard",
     "load_reason_html",
+    "CHOOSE_A_MODEL",
     "load_refusal",
     "loadable",
     "loading_buttons",

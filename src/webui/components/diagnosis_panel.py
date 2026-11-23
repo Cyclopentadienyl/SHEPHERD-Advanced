@@ -4547,6 +4547,9 @@ PAGE_CSS = f"""
    Models says it (a message never shares a row with a button: it stood beside Load). */
 {_TAB} #shep-dx-change .shep-model-foot > :not(#shep-dx-change-note) {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
 {_TAB} #shep-dx-change .shep-model-foot > #shep-dx-change-note {{ flex: 1 1 100% !important; min-width: 0 !important; order: 1; }}
+/* Load's reason (`model_list.load_reason_html`: every disabled Load says why) wraps in the foot
+   where a narrow drawer cannot hold it beside Load on one line (390 x 844). */
+{_TAB} #shep-dx-change .shep-model-foot > #shep-models-clinical-reason {{ flex: 0 1 auto !important; max-width: 100%; }}
 {_TAB} #shep-dx-change-note .shep-note {{ display: block; max-width: var(--shep-measure); font-size: 14px; }}
 {_TAB} #shep-dx-change .shep-model-confirm-box > .row > button {{ flex: 0 0 auto !important; white-space: nowrap; }}
 {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-foot {{ display: none !important; }}

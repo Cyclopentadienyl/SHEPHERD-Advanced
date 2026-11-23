@@ -489,7 +489,8 @@ def test_the_reason_beside_use_for_training_is_escaped_and_names_no_path(root, m
                       "manifest": "read", "dataset_fingerprint": "a" * 64}]}
     note = dsp.use_note_html(data, "<b>x")
     assert "<b>" not in note and "<i>" not in note and "&lt;b&gt;x" in note
-    assert "Select a dataset" in dsp.use_note_html(data, None)
+    # Disabled with no row chosen: said in the shared form (the sweep's L7, SW-LK6).
+    assert "Use for training disabled: select a workspace in the list first." in dsp.use_note_html(data, None)
 
 
 def test_the_build_line_is_one_quiet_paragraph_drawn_only_under_a_listed_table():
@@ -593,7 +594,8 @@ def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch
     assert dsp.NO_WORKSPACE_YET in said and r.e(dsp.BUILD_STEP) in said
     assert dsp.commands_html() in said
     assert "data-notice" not in said and said.startswith('<div class="shep-ds-empty">')
-    assert "No workspace is listed" in dsp.use_note_html(empty, None)
+    assert "Use for training disabled: no workspace is listed yet." in dsp.use_note_html(empty, None)
+    assert 'class="shep-reason"' in dsp.use_note_html(empty, None)
     # A folder set and not usable: its notice alone (the folder comes first, no build step).
     refused = {**data["notice"], "kind": "error", "summary": "The workspaces folder cannot be used."}
     assert "shep-nb-steps" not in dsp.table_html({"rows": [], "notice": refused}, None, None)

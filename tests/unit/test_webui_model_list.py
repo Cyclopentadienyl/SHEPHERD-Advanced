@@ -3338,3 +3338,23 @@ def test_the_lists_empty_state_says_each_cause_once_in_the_flow(monkeypatch, tmp
     assert ml.list_html(none_listed, None, research).startswith(
         f'<p class="shep-empty">{ml.NO_CHECKPOINT}</p>')
 
+
+def test_load_says_why_it_is_off_with_no_model_chosen():
+    """The sweep's L7 (SW-LK6; the skill's §9: a refusal stays visible next
+    to what it disables): "Load this model" stood disabled with nothing said
+    at first use, its list empty for want of a workspaces folder, and with
+    nothing chosen. With the list's notice and no item, Load says its
+    relation to that notice (the notice is the list's, said once; a relation
+    is no repeat); with no model chosen, that a model is to be chosen; both in
+    the shared reason form, led by the neutral mark."""
+    from src.webui.components import workspaces as w
+    from src.webui.components import renderers as r
+
+    notice = w.notice_view(w.NOTICES[w.ENV_WORKSPACES_ROOT])
+    first_use = ml.load_reason_html(None, {"notice": notice, "items": []})
+    assert f'data-notice-rel="{notice["key"]}"' in first_use and 'class="shep-reason' in first_use
+    assert r.relation_words(ml.LOAD_LABEL, notice) in first_use
+    assert notice["summary"] not in first_use                       # the notice is not said again
+    nothing = ml.load_reason_html(None, {"items": [{"key": "x"}]})
+    assert r.disabled_words(ml.LOAD_LABEL, ml.CHOOSE_A_MODEL) in nothing
+    assert 'class="shep-reason' in nothing and "data-notice-rel" not in nothing

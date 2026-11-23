@@ -153,9 +153,11 @@ def use_note_html(data: Mapping[str, Any], name: Optional[str]) -> str:
     if not rows and data.get("notice"):
         return r.see_above(USE_FOR_TRAINING, data["notice"])
     if not rows:
-        return '<span class="shep-note">No workspace is listed to use yet.</span>'
+        return r.marked_line("neutral", r.disabled_words(USE_FOR_TRAINING,
+                                                         "no workspace is listed yet."))
     if row is None:
-        return '<span class="shep-note">Select a dataset to use it for training.</span>'
+        return r.marked_line("neutral", r.disabled_words(USE_FOR_TRAINING,
+                                                         "select a workspace in the list first."))
     if not row.get("trainable"):
         why = row.get("not_trainable") or "not trainable"
         words = r.disabled_words(USE_FOR_TRAINING, f"{row['name']} is not trainable: "
