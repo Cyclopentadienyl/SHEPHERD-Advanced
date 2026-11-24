@@ -5410,16 +5410,30 @@ def test_a_state_said_as_a_sentence_and_a_note_in_a_span_keep_the_measure():
     reached: one line 816 px wide at 1550 x 830, where every go link lands.
     Datasets' note beside Use for training was an inline span too, its
     max-width ignored (493 px). A state said as a sentence is a reason line
-    led by its mark (`renderers.marked_line`: a block at the measure, the mark
-    in a column of its own); a note in a span is an inline box that keeps the
-    measure (both 470 px, measured)."""
+    led by its mark in a column of its own, a block at the measure; a note in a
+    span is an inline box that keeps the measure (both 470 px, measured).
+    Settings says its first start as the one notice since L8 (M2; the L8
+    close retargets this test at what Settings draws, `data_locations.notice_html`,
+    no longer `renderers.marked_line`, which it does not draw): a block
+    (``shep-nb``) at the measure, its state in the line's words column, the
+    mark in a column of its own."""
+    from types import SimpleNamespace
+
     from src.webui.components import data_locations as dl
     from src.webui.components import renderers as r
     from src.webui.style import SHELL_CSS
 
-    line = r.marked_line("neutral", dl.NOTHING_SET)
-    assert line.startswith('<p class="shep-reason">') and 'aria-hidden="true">○' in line
-    assert r.e(dl.NOTHING_SET) in line
+    view = SimpleNamespace(file=SimpleNamespace(problem=None, repairable=False), applicable=(),
+                           nothing_set=True)
+    notice = dl.notice_html(view, SimpleNamespace(allowed=True))
+    block = re.search(r'<div class="shep-nb\b[^"]*"[^>]*>\s*<div class="shep-nb-line">'
+                      r'<span class="shep-nb-mark\b[^"]*"[^>]*>○.*?</span></span>'
+                      r'<span class="shep-nb-text">(.*?)</span>', notice, re.S)
+    assert block, notice
+    assert r.e(dl.NOTHING_SET) in block.group(1), notice
+    assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-nb")
+    assert "grid-template-columns: var(--shep-nb-mark-w, 1em) minmax(0, 1fr)" in _rule(
+        SHELL_CSS, ".shep-nb-line, .shep-nb-rel")
     assert "display: inline-block" in _rule(SHELL_CSS, "span.shep-note")
     assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-note")
     assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-reason")
