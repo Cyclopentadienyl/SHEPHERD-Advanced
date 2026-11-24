@@ -979,16 +979,32 @@ def _as_notice(notice: Any) -> Optional[Dict[str, Any]]:
     return found
 
 
-def _marked(kind: str, inner: str, classes: str, attrs: str = "") -> str:
+def _marked(kind: str, inner: str, classes: str, attrs: str = "", *, tag: str = "p") -> str:
     """A line led by a status mark in a column of its own, so its wrapped
     lines align with its words, never under the mark (the text brief's §4):
     the mark's shape (hidden from a screen reader, which reads the words),
     then the words, coloured by the state's token as `status_mark` colours
-    them. Its text reads shape, space, words (`MARK_SPACE`)."""
+    them. Its text reads shape, space, words (`MARK_SPACE`). `tag` "div" for
+    a line that holds a disclosure (a ``<details>`` is no content of a
+    ``<p>``: `_with_details`)."""
     shape, token = STATUS_MARKS[kind]
     mark = (f'<span class="shep-nb-mark shep-st-{token}" aria-hidden="true">'
             f'{shape or ""}{MARK_SPACE}</span>')
-    return f'<p class="{classes}"{attrs}>{mark}<span class="shep-nb-text">{inner}</span></p>'
+    return (f'<{tag} class="{classes}"{attrs}>{mark}<span class="shep-nb-text">{inner}</span>'
+            f'</{tag}>')
+
+
+def _with_details(kind: str, inner: str, classes: str, more: str) -> str:
+    """**R-DETAILS: a notice's line with its "Details ›" on its last line**
+    (the owner's C of 2026-11-24: "Details ›" stood on a line of its own
+    under a one-line notice): the disclosure closes the line's words, so its
+    summary sits after them where the line has room (it is one unit, moved
+    to the next line whole where it has none), and its rows open under the
+    line, on the words' edge (the words' column). Shared by every notice
+    (`notice_block`, `notices_block`); without rows, the plain line."""
+    if not more:
+        return _marked(kind, inner, classes)
+    return _marked(kind, f"{inner} {more}", classes, tag="div")
 
 
 def marked_line(kind: str, words: Any) -> str:
@@ -1127,9 +1143,9 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     listed = "".join(f"<li>{literal_html(step)}</li>" for step in steps)
     ol = (f'<ol class="shep-nb-steps">{f"<li>{act}</li>" if act else ""}{listed}</ol>'
           if steps else "")
+    more = _details([found, *extra]) if details else ""
     return (f'<div class="shep-nb shep-nb-{kind}"{keys}>'
-            f'{_marked(kind, inner, "shep-nb-line")}{ol}'
-            f'{_details([found, *extra]) if details else ""}</div>')
+            f'{_with_details(kind, inner, "shep-nb-line", more)}{ol}</div>')
 
 
 def notice_rows_html(notice: Any) -> str:
@@ -1166,10 +1182,24 @@ def notices_block(notices: Iterable[Any], *, consequence: Optional[str] = None,
     after = " ".join(part for part in (
         f'<span class="shep-nb-then">{e(consequence)}</span>' if consequence else "",
         _go(shared, go) if shared else "") if part)
-    next_line = f'<p class="shep-nb-next">{after}</p>' if after else ""
+    more = _details(found, grouped=True)
+    # R-DETAILS: "Details ›" closes the block's last line (the next step's, else the last
+    # notice's), its rows opening under that line.
+    if after:
+        tag = "div" if more else "p"
+        next_line = f'<{tag} class="shep-nb-next">{" ".join(p for p in (after, more) if p)}</{tag}>'
+    else:
+        next_line = ""
+        if more:
+            last = found[-1]
+            inner = (f'<span class="shep-st-w shep-st-{STATUS_MARKS[last["kind"]][1]}">'
+                     f'{e(last["summary"])}</span>')
+            if shared is None and _go(last, go):
+                inner += f" {_go(last, go)}"
+            lines[-1] = _with_details(last["kind"], inner, "shep-nb-line", more)
     kind = "error" if any(n["kind"] == "error" for n in found) else "neutral"
     return (f'<div class="shep-nb shep-nb-{kind}" data-notice="{e(_keys(found))}">'
-            f'{"".join(lines)}{next_line}{_details(found, grouped=True)}</div>')
+            f'{"".join(lines)}{next_line}</div>')
 
 
 #: **The mark a dimmed control's reason leads with** where its page sets the

@@ -3779,6 +3779,8 @@ def _pieces_page():
             # R-WHY: a dimmed button with a phrase keyed to the D8 chip, one keyed to a
             # notice, and that notice drawn on the screen.
             shell.plain_html(r.notice_block(notice), elem_id="pc-why-notice")
+            # R-DETAILS: a notice whose lead line has room for its "Details ›".
+            shell.plain_html(r.notice_block({**notice, "action": ""}), elem_id="pc-details-notice")
             gr.Button("Start", interactive=False, elem_id="pc-why-btn")
             shell.plain_html(r.phrase_line("d8", control="pc-why-btn", lock=True), elem_id="pc-why-d8")
             shell.plain_html(r.phrase_line(notice, control="pc-why-btn2"), elem_id="pc-why-ws")
@@ -3956,6 +3958,24 @@ const QUEUE_JS = __QUEUE_JS__;
   });
   await page.setViewportSize({ width: 1279, height: 1280 }); await frames(2);
   await page.setViewportSize({ width: 1280, height: 1280 }); await frames(4);
+  // R-DETAILS: the notice's "Details ›" on its lead's last line (the line's last row of words,
+  // the next step's link), and, opened, its rows under the line on the words' edge.
+  await page.setViewportSize({ width: 1280, height: 1280 }); await frames(2);
+  const details = async () => page.evaluate(() => {
+    const n = document.querySelector('#pc-details-notice .shep-nb'), sum = n.querySelector('.shep-nb-more > summary');
+    const words = n.querySelector('.shep-nb-line .shep-nb-text'), lead = document.createRange();
+    lead.setStart(words, 0); lead.setEndBefore(n.querySelector('.shep-nb-more'));
+    const rows = [...lead.getClientRects()].filter((x) => x.width > 0), last = rows[rows.length - 1];
+    const s = sum.getBoundingClientRect();
+    const kv = n.querySelector('.shep-nb-kv'), k = kv ? kv.getBoundingClientRect() : null;
+    const r = document.createRange(); r.selectNodeContents(words.querySelector('.shep-st-w'));
+    return { sum: [s.left, s.top, s.right, s.bottom], last: [last.left, last.top, last.right, last.bottom],
+             wordsLeft: r.getClientRects()[0].left, kv: k && k.height ? [k.left, k.top, k.right, k.bottom] : null };
+  });
+  out.details = { closed: await details() };
+  await page.click('#pc-details-notice .shep-nb-more > summary'); await frames(2);
+  out.details.open = await details();
+  await page.click('#pc-details-notice .shep-nb-more > summary'); await frames(2);
   // R-WHY: the dimmed button is described by its phrase; the phrase keyed to the D8 chip opens
   // the one bubble with the chip's text as it is now; the one keyed to a notice focuses its link.
   await page.setViewportSize({ width: 1280, height: 1280 }); await frames(2);
@@ -4022,6 +4042,20 @@ def pieces_seen(tmp_path_factory):
                         .replace("__CELL_ROOMY__", CELL_ROOMY).replace("__ROOMY__", ROOMY_ATTR)
                         .replace("__NARROW__", NARROW_ATTR),
                         tmp_path_factory.mktemp("pieces"), base[:-len("gradio_api")])
+
+
+def test_a_notices_details_sits_on_its_lead_line_and_opens_under_it(pieces_seen):
+    """R-DETAILS (the owner's C of 2026-11-24): a one-line notice drew its "Details ›" alone on
+    a line under it. Where the lead's last line has room, its summary now lies in that line box,
+    after the words, and its rows open under the line, on the words' edge."""
+    closed, opened = pieces_seen["details"]["closed"], pieces_seen["details"]["open"]
+    s, last = closed["sum"], closed["last"]
+    mid = (s[1] + s[3]) / 2
+    assert last[1] <= mid <= last[3] and s[0] >= last[2], closed
+    assert closed["kv"] is None, closed
+    kv = opened["kv"]
+    assert kv is not None and kv[1] >= opened["last"][3] - 1, opened
+    assert abs(kv[0] - opened["wordsLeft"]) <= 1, opened
 
 
 def test_a_dimmed_controls_phrase_opens_or_locates_its_one_reason(pieces_seen):

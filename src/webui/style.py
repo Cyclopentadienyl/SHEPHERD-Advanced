@@ -896,6 +896,18 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .gradio-container button.shep-why {
   display: inline; margin: 0; padding: 0; border: 0; background: none; font: inherit;
   color: var(--shep-accent-text); text-align: start; cursor: pointer; white-space: nowrap;
+/* **R-DETAILS** (`renderers._with_details`): a notice's "Details ›" closes its last line, after
+   the words where the line has room (one unit, moved to the next line whole where it has none);
+   opened, its rows go under the line on the words' edge. The summary reads at the line's size. */
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more { display: inline !important; margin: 0; }
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more > summary {
+  display: inline !important; white-space: nowrap; min-height: 0; line-height: inherit; font-size: inherit;
+  margin: 0 0 0 0.25em;
+}
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more::details-content { display: none; }
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open]::details-content { display: block; }
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open] > :not(summary):first-of-type,
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open] > summary + * { margin-top: var(--shep-space-item); }
   text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
 }
 .gradio-container button.shep-why:hover, .gradio-container button.shep-why[aria-expanded="true"] {

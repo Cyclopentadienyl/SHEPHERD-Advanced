@@ -2049,3 +2049,29 @@ def test_text_that_wraps_leaves_no_word_alone_and_keeps_a_place_whole(tmp_path):
     assert all(p["bare"] == [] for p in seen["place"]), [p for p in seen["place"] if p["bare"]][:2]
     assert seen["hover"]["place"] == seen["hover"]["link"], seen["hover"]
     assert all(s["below"] and s["edge"] for s in seen["source"]), seen["source"]
+
+
+def test_a_notices_details_closes_its_lead_line():
+    """R-DETAILS (the owner's C of 2026-11-24: at 1850 x 960 the run bar's notice said its one
+    line and then "Details ›" on a line of its own under it). A notice's "Details ›" now closes
+    its lead's line: the disclosure is inside the line's words (after the next step's link), so
+    its summary sits on the line's last row where it has room and its rows open under the line,
+    on the words' edge. A line holding a disclosure is a ``div`` (a ``<details>`` is no content of
+    a ``<p>``). Shared: one notice (`notice_block`) and several (`notices_block`)."""
+    ws, _gpu, registry = _notices()
+    one = r.notice_block(ws)
+    line = re.search(r'<div class="shep-nb-line">(.*)</div></div>$', one, re.S)
+    assert line, one
+    words = re.search(r'<span class="shep-nb-text">(.*)</span>$', line.group(1), re.S).group(1)
+    assert words.index("data-shep-go") < words.index('<details class="shep-more shep-nb-more">'), words
+    assert one.count("<details") == 1 and "<p class=\"shep-nb-line\"" not in one
+    # With no rows there is no disclosure, and the line stays a paragraph.
+    bare = r.notice_block({**ws, "details": (), "ref": ()})
+    assert "<details" not in bare and '<p class="shep-nb-line">' in bare
+    # Several notices: "Details ›" closes the block's last line (its next step's).
+    both = r.notices_block([registry, ws], consequence="Testing waits for both.")
+    last = re.search(r'<div class="shep-nb-next">(.*)</div></div>$', both, re.S)
+    assert last and "Testing waits for both." in last.group(1) and "<details" in last.group(1)
+    assert both.count("<details") == 1
+    from src.webui.style import SHELL_CSS
+    assert ":is(.shep-nb-line, .shep-nb-next) .shep-nb-more { display: inline;" in SHELL_CSS
