@@ -263,7 +263,7 @@ import gradio as gr
 from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
 from src.webui.components.help import HelpRegistry, as_json_for_script
 from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
-from src.webui.style import (FADE_VAR, FIT, FIT_WIDE, FLOOR_HEIGHT, FLOOR_VAR, FLOOR_WIDTH, FOLD, FOLD_FLOOR,
+from src.webui.style import (FADE_VAR, FIT, FIT_LEAST, FIT_WIDE, FLOOR_HEIGHT, FLOOR_VAR, FLOOR_WIDTH, FOLD, FOLD_FLOOR,
                               FOLD_ROOM, FOLDED_ATTR, LAYOUT_ATTR, NARROW_ATTR, ROOMY_ATTR, SEG_WHOLE, SHORT_ATTR,
                               SHORT_BELOW, STACK_FLOOR_WIDTH)
 
@@ -941,6 +941,7 @@ _SHELL_JS = r"""
   // anything is painted; a style change is no mutation this pass listens
   // to), so the measure never depends on the state it sets.
   var FIT = '__FIT__', FIT_WIDE = '__FIT_WIDE__', NARROW = '__NARROW__', ROOMY = '__ROOMY__';
+  var FIT_LEAST = '__FIT_LEAST__';
   var AT_NARROWEST = 'position:absolute !important;visibility:hidden !important;'
     + 'width:min-content !important;min-width:0 !important;max-width:none !important;';
   // A choice group's options laid out on one line, for the measure alone.
@@ -979,6 +980,25 @@ _SHELL_JS = r"""
   // Each box is measured with its own mark taken off (put back before anything is painted; an
   // attribute this pass does not listen to), so what it measures never depends on the state it
   // sets: a table whose optional columns the mark hides, a group the mark stacks.
+  // **What a box's narrow form needs** (FIT_LEAST): that form at its narrowest (measured with
+  // the box's marks set so, put back before anything is painted), plus what the panel holding
+  // the box draws around it, written on the panel's row for a page whose panel shares move
+  // (style.py's FIT_LEAST). It reads no width the shares give, so it never depends on itself.
+  function least(box, wide, at, room) {
+    var panel = null;
+    for (var a = box.parentElement; a && !panel; a = a.parentElement) {
+      if (lengthPx(a, '--shep-panel-min') > 0) { panel = a; }
+    }
+    if (!panel || !panel.parentElement) { return; }
+    var narrow = box.hasAttribute(NARROW), roomy = box.hasAttribute(ROOMY);
+    if (!narrow) { box.setAttribute(NARROW, ''); }
+    if (roomy) { box.removeAttribute(ROOMY); }
+    var need = measured(wide, at, width) + panel.getBoundingClientRect().width - room;
+    if (!narrow) { box.removeAttribute(NARROW); }
+    if (roomy) { box.setAttribute(ROOMY, ''); }
+    var value = Math.ceil(need) + 'px', row = panel.parentElement;
+    if (row.style.getPropertyValue(FIT_LEAST) !== value) { row.style.setProperty(FIT_LEAST, value); }
+  }
   function fits() {
     var boxes = document.querySelectorAll('.' + FIT);
     for (var i = 0; i < boxes.length; i++) {
@@ -1003,6 +1023,7 @@ _SHELL_JS = r"""
       if (roomy) { box.setAttribute(ROOMY, ''); }
       if (box.hasAttribute(NARROW) !== narrow) { box.toggleAttribute(NARROW, narrow); }
       if (box.hasAttribute(ROOMY) !== whole) { box.toggleAttribute(ROOMY, whole); }
+      least(box, wide, at, room);
     }
     var groups = document.querySelectorAll(CHOICE);
     for (var g = 0; g < groups.length; g++) {
@@ -1367,7 +1388,7 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR)
               .replace("__FIT__", FIT).replace("__FIT_WIDE__", FIT_WIDE)
               .replace("__NARROW__", NARROW_ATTR).replace("__SEG_WHOLE__", SEG_WHOLE)
-              .replace("__ROOMY__", ROOMY_ATTR)
+              .replace("__ROOMY__", ROOMY_ATTR).replace("__FIT_LEAST__", FIT_LEAST)
               .replace("__FOLD__", FOLD).replace("__FOLD_ROOM__", FOLD_ROOM)
               .replace("__FOLD_FLOOR__", FOLD_FLOOR).replace("__FOLDED__", FOLDED_ATTR)
               .replace("__FADE_VAR__", FADE_VAR)

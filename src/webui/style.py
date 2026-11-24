@@ -138,6 +138,14 @@ NARROW_ATTR = "data-shep-narrow"
 #: while the Model column had room; bound always, the tree dropped its Epochs at 1550 x 830).
 CELL_ROOMY = "shep-cell-roomy"
 ROOMY_ATTR = "data-shep-roomy"
+#: **The width a `FIT` box's narrow form needs** (a custom property, in px): the layout pass
+#: measures that form at its narrowest, adds what the panel holding the box draws around it (the
+#: nearest ancestor with a ``--shep-panel-min``) and writes the sum on that panel's row, so a
+#: page whose panel shares move (Models with a row chosen) leaves the panel at least that wide
+#: where it can, from the type drawn and the names listed, never a width fitted to one world (the
+#: sweep's L7 check, K2: the chosen details left the list its fixed minimum, 2.6 px under the
+#: narrow form beside a 52-character run name, and the rows scrolled sideways at 1366 x 768).
+FIT_LEAST = "--shep-fit-least"
 #: **A box drawn whole while its column has the room** (OPS-FIX-N1; the layout
 #: pass's fold, `src/webui/shell.py`): side by side, a box of class `FOLD`
 #: shares a column with a region of class `FOLD_ROOM` (the column: the box's

@@ -3862,7 +3862,7 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.click('#shep-models-research-rows tr[data-key]:not([hidden])');
   await page.waitForSelector('#shep-mp-detail-hd h2[data-key]');
   await idle();
-  for (const [w, h] of [[1850, 960], [1550, 830]]) {
+  for (const [w, h] of [[1850, 960], [1550, 830], [1366, 768], [1280, 720]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     out[`chosen ${w}x${h}`] = await page.evaluate(() => {
@@ -3872,7 +3872,11 @@ const QUEUE_JS = __QUEUE_JS__;
       const body = document.querySelector('#shep-mp-detail-bd'), b = body.getBoundingClientRect();
       const seg = [...body.querySelectorAll('.shep-seg')].filter((e) => e.getClientRects().length).pop();
       const list = document.querySelector('#shep-page-models .shep-model-main'), detail = document.querySelector('#shep-mp-detail');
+      const foot = document.querySelector('#shep-page-models .shep-model-foot');
       return { list: list.getBoundingClientRect().width, detail: detail.getBoundingClientRect().width,
+               foot: foot.getBoundingClientRect().width,
+               footMin: parseFloat(getComputedStyle(foot).getPropertyValue('--shep-panel-min')),
+               layout: document.documentElement.getAttribute('data-shep-layout'),
                fits: body.scrollHeight <= body.clientHeight + 1,
                seg: seg ? seg.getBoundingClientRect().bottom <= b.top + body.clientHeight + 1 : null,
                sideways: Math.max(wrap.scrollWidth - wrap.clientWidth, rows.scrollWidth - rows.clientWidth),
@@ -3920,6 +3924,9 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     shas = _add_bundles(world)
     _add_child(world, "20261005-000000_disease-fine-tune-of-the-long-named-family_ffffff",
                shas["disease"], BUNDLES["disease"][0])
+    # A name longer still (K2): its narrow form is wider than the list's fixed minimum.
+    _add_child(world, "20261006-000000_disease-fine-tune-of-the-long-named-family-with-a-longer-tail_eeeeee",
+               shas["disease"], BUNDLES["disease"][0])
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_OPTIONAL_COLUMNS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
@@ -3942,6 +3949,14 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     for size, chosen in (("1850x960", wide), ("1550x830", mid)):
         assert chosen["detail"] > seen[size]["detail"] and chosen["sideways"] <= 0, (size, chosen, seen[size])
     assert mid["seg"] in (True, None), mid
+    # The sweep's L7 check (K2): chosen, the details took all but the list's fixed minimum, which
+    # was under its table's narrow form beside a long run name, and the rows scrolled sideways at
+    # 1366 x 768 and 1280 x 720. Side by side, the details give the list the width its narrow form
+    # needs unless that would take them under their own minimum.
+    for size in ("1366x768", "1280x720"):
+        chosen = seen[f"chosen {size}"]
+        assert chosen["layout"] == "side" and chosen["footMin"] > 0, (size, chosen)
+        assert chosen["sideways"] <= 0 or chosen["foot"] <= chosen["footMin"] + 0.5, (size, chosen)
 
 
 # --------------------------------------------------------------------------- the family graph (G/I)
