@@ -967,17 +967,29 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
    text, Material's supporting text): Gradio draws a field's ``info=`` line between its label and
    its control, so in a row of fields the control of the one field with a note stood a line under
    its neighbours' (Fine-tune's Device beside Run name, 16 to 35 px). The box that holds the label,
-   the note and the control lays them out as label line, then control, then note, each a line of
-   its own (``order``; the empty ``::after`` breaks the line after the label and its ⓘ). The label
-   line keeps its baseline alignment and a plain label's room under it (Gradio gives a label with a
-   note under it less: ``span.has-info``), so its height and the control's top are a plain field's;
-   the note sits an item's space under the control. Only the order drawn changes: the note keeps its
-   place in the page and its ``aria-describedby``.
+   the note and the control (a text box's, a number's, a select's) is drawn as a table whose
+   caption, at its foot, is the note: its label and ⓘ stay one line of text as before (their own
+   line box, wrapping as they did), its control follows, and the note comes last; a caption never
+   sets its table's width beyond its longest word. A choice group's fieldset cannot be drawn as a
+   table, so it lays the same order out as flex lines: its label line (with the strut a line of
+   text has, ``::before``), a break (``::after``), its options, its note; its title is short and
+   stays one line. Either way the note never sets its field's width (``width: 0`` in the flex
+   form: a choice group stays its options' width, the sweep's L7, SW-LK2). The label keeps a plain label's room under it (Gradio gives a label with a
+   note under it less: ``span.has-info``), so the control's top is a plain field's; the note sits
+   an item's space under the control. Only the order drawn changes: the note keeps its place in the
+   page and its ``aria-describedby``.
    A note already after its control (a checkbox's) is not matched. */
-.gradio-container :has(> .info-text + *) { display: flex !important; flex-wrap: wrap; align-items: baseline; }
-.gradio-container :has(> .info-text + *)::after { content: ""; order: 1; flex: 1 0 100%; height: 0; }
-.gradio-container :has(> .info-text + *) > .info-text ~ * { order: 2; flex: 1 1 100%; }
-.gradio-container :has(> .info-text + *) > .info-text { order: 3; flex: 1 0 100%; margin: var(--shep-space-item) 0 0; }
+.gradio-container :not(fieldset):has(> .info-text + *) { display: table !important; width: 100%; }
+.gradio-container :not(fieldset):has(> .info-text + *) > .info-text {
+  display: table-caption; caption-side: bottom; margin: var(--shep-space-item) 0 0;
+}
+.gradio-container fieldset:has(> .info-text + *) { display: flex !important; flex-wrap: wrap; align-items: baseline; }
+.gradio-container fieldset:has(> .info-text + *)::before { content: "\\200b"; flex: 0 0 0; }
+.gradio-container fieldset:has(> .info-text + *)::after { content: ""; order: 1; flex: 1 0 100%; height: 0; }
+.gradio-container fieldset:has(> .info-text + *) > .info-text ~ * { order: 2; flex: 1 1 100%; }
+.gradio-container fieldset:has(> .info-text + *) > .info-text {
+  order: 3; flex: 1 1 100%; width: 0; margin: var(--shep-space-item) 0 0;
+}
 .gradio-container :has(> .info-text + *) > [data-testid="block-info"] { margin-bottom: var(--spacing-lg); }
 :where(br + .shep-muted) { display: inline-block; max-width: var(--shep-measure); }
 :where(.shep-panel h2, .shep-panel h3, .shep-edge h2, .shep-edge h3) { text-wrap: balance; }
