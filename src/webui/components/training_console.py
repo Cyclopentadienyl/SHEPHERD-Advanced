@@ -232,7 +232,7 @@ from src.utils.gpu_lock import lock_state
 from src.webui.components import charts
 from src.webui.components import renderers as r
 from src.webui.components.chips import busy_words, chips_on_change, gated, gpu_chip_from
-from src.webui.components.help import REF_PREFIX
+from src.webui.components.help import HIT_TARGET, REF_PREFIX
 from src.webui.components.workspaces import (
     lock_notice,
     manifest_facts,
@@ -335,6 +335,8 @@ BASE_FIELDS: Tuple[str, ...] = (
     "max_grad_norm", "gradient_accumulation_steps", "use_amp", "amp_dtype",
     "early_stopping_patience", "eval_every_n_epochs", "save_top_k")
 BASE_SHOWN = 5
+#: The common settings' longest label, in characters (`NUMBER_GRID`'s label line).
+NUMBER_GRID_LABEL = max(len(r.SETTING_LABELS[name]) for name in BASE_FIELDS[:BASE_SHOWN])
 
 
 def _rule_bound_words(name: str) -> str:
@@ -426,6 +428,15 @@ def text_field(kind: str, value: Any) -> bool:
 NUMBER_ROLE = "shep-w-num"
 NAME_ROLE = "shep-w-name"
 PATH_ROLE = "shep-w-path"
+#: **A grid of number fields** (the parameters' common settings, each a number by its
+#: role): its columns are as narrow as a number field, its box (`NUMBER_ROLE`'s width) or
+#: its label line, the longest label of the grid (`NUMBER_GRID_LABEL`, in ``ch``: a digit's
+#: width, wider than a label's average letter) and its ⓘ, whichever is wider. So the fields
+#: share lines wherever the panel has the room, never a column floor wider than the fields
+#: (240 px left one per line at the display floor and Device's label alone at the parameters'
+#: scroll edge: the owner's D4 and D12), never one narrower than a label line (the box's width
+#: alone put Learning rate's ⓘ under its label, its box 22 px under its row's: R-ALIGN).
+NUMBER_GRID = "shep-train-grid-num"
 
 
 def value_field(kind: str, label: str, value: Any, *, elem_id: str,
@@ -4853,7 +4864,10 @@ def create_training_tab(ctx: Any) -> None:
                     references, _sources = base_references()
                     unread = not_read_by_rules(references)
                     fields: Dict[str, Any] = {}
-                    with gr.Group(elem_classes=["shep-train-grid"]):
+                    # The common settings are short numbers: their grid's columns are a
+                    # number's width (`NUMBER_GRID`), so they share lines where the panel
+                    # has the room and Device follows them in view (D4, D12).
+                    with gr.Group(elem_classes=["shep-train-grid", NUMBER_GRID]):
                         for name in BASE_FIELDS[:BASE_SHOWN]:
                             fields[name] = setting_field(name, references[name], elem_id=name)
                         device = device_field("device")
@@ -5608,6 +5622,12 @@ PAGE_CSS = charts.CHART_CSS + f"""
    the panel). */
 {_PAGE} #shep-train-params-bd .gr-group, {_PAGE} #shep-train-params-bd .gr-group > .styler, {_PAGE} #shep-train-params-bd .gr-group .styler > .form, {_PAGE} #shep-train-branch .gr-group, {_PAGE} #shep-train-branch .gr-group > .styler, {_PAGE} #shep-train-branch .gr-group .styler > .form {{ background: transparent !important; border: 0 !important; box-shadow: none !important; }}
 {_PAGE} #shep-train-params-bd .gr-group .styler > .form, {_PAGE} #shep-train-branch .gr-group .styler > .form {{ display: grid !important; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px 16px !important; border: 0 !important; }}
+/* A grid of number fields (`NUMBER_GRID`): columns of a number field's width, its box (its
+   role's) or its label line (the grid's longest label and its ⓘ, `help.HIT_TARGET` and its 4 px
+   margin), whichever is wider, so the common settings share lines where the panel has the room
+   (D12: a main field hidden under the scroll edge while the space beside a short field stands
+   empty) and each label keeps its ⓘ on its line (R-ALIGN). */
+{_PAGE} #shep-train-params-bd .{NUMBER_GRID} .styler > .form {{ grid-template-columns: repeat(auto-fill, minmax(max(calc(var(--shep-w-num) + 2 * var(--input-padding, 10px) + 2 * var(--input-border-width, 1px)), calc({NUMBER_GRID_LABEL}ch + {HIT_TARGET}px + 4px)), 1fr)); }}
 {_PAGE} #shep-train-branch {{ gap: 4px !important; }}
 {_PAGE} #shep-train-branch-hd .shep-note {{ margin: 2px 0 0; font-size: 14px; color: var(--shep-text-2); }}
 /* Device's three choices on one line: the row is its own. */

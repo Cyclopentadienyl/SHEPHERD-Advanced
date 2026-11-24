@@ -52,6 +52,7 @@ gr = pytest.importorskip("gradio")
 from src.webui import shell  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import renderers as r  # noqa: E402
+from src.webui.components.help import HIT_TARGET  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 from tests.fixtures.served_page import ServedSession, served  # noqa: E402
@@ -167,6 +168,34 @@ def test_the_run_name_and_the_typed_path_take_their_roles_width():
     names = [b for sel, b in _rules(tc.PAGE_CSS, ".shep-rb-name")
              if sel == f"{tc._PAGE} .shep-rb-name"]
     assert names and not any("max-width" in b for b in names), names
+
+
+def test_the_common_settings_are_a_grid_of_number_fields_as_narrow_as_one():
+    """The owner's D4 and D12 of 2026-11-24 (L8 §4 D4): the parameters' grid
+    took columns of at least 240 px, so at the display floor (a 338 px body)
+    the five common settings, each a number of a number's width (R-WIDTH),
+    stood one per line with the space beside them empty, and the body's
+    scroll edge fell under Device's label with its radios under it (E1's
+    edge-heading at 1280 x 720 in every state). The common settings' grid now
+    takes columns of a number field's width (its role's token, never a page's
+    px figure), so they share lines wherever the panel has the room; the
+    other grids (More training settings, Model, Branch) keep their floor.
+    A column is never narrower than a label line either: the box's width alone
+    put Learning rate's ⓘ under its label at 1080 x 1920, its box 22 px under
+    its row's (E1's row-control-top); the floor is the wider of the two, the
+    label line the grid's longest label (in ``ch``, as the role is) and its ⓘ."""
+    _demo, _ctx, by_id = _page()
+    grid = by_id["num_epochs"].parent
+    while grid is not None and not isinstance(grid, gr.Group):
+        grid = getattr(grid, "parent", None)
+    assert grid is not None and tc.NUMBER_GRID in grid.elem_classes
+    for name in tc.BASE_FIELDS[:tc.BASE_SHOWN]:
+        assert tc.NUMBER_ROLE in by_id[name].elem_classes, name
+    (rule,) = [b for sel, b in _rules(tc.PAGE_CSS, f".{tc.NUMBER_GRID}")]
+    floor = re.search(r"minmax\((.*), 1fr\)", rule).group(1)
+    assert "var(--shep-w-num)" in floor and "240px" not in floor, rule
+    longest = max(len(r.SETTING_LABELS[name]) for name in tc.BASE_FIELDS[:tc.BASE_SHOWN])
+    assert floor.startswith("max(") and f"{longest}ch + {HIT_TARGET}px" in floor, rule
 
 
 def test_the_form_is_what_a_new_base_takes_common_settings_first():
