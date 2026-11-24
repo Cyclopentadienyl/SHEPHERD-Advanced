@@ -4180,13 +4180,24 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.keyboard.press('Escape'); await frames(2);
   await page.evaluate(() => document.querySelector('#pc-why-field-d8 button.shep-why').remove()); await frames(4);
   out.why.field.after = await fieldBy();
-  await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight)); await frames(2);
-  await page.click('#pc-why-ws button.shep-why'); await frames(4);
-  out.why.notice = await page.evaluate(() => {
+  // The notice keyed by the phrase is drawn out of view first (the L8 S1 check, S1C-10): a gap
+  // taller than the window between the notice and the phrase, the phrase scrolled to the
+  // window's foot, so activating the phrase must bring the notice into view as well as focus it.
+  const noticeSeen = () => page.evaluate(() => {
     const a = document.activeElement, n = document.querySelector('#pc-why-notice .shep-nb'), r = n.getBoundingClientRect();
     return { go: !!a && a.matches('button.shep-nb-go') && n.contains(a),
              inView: r.top >= 0 && r.bottom <= document.documentElement.clientHeight };
   });
+  await page.evaluate(() => {
+    const gap = document.createElement('div');
+    gap.id = 'pc-why-gap'; gap.style.height = `${2 * document.documentElement.clientHeight}px`;
+    document.getElementById('pc-why-ws').before(gap);
+    document.querySelector('#pc-why-ws button.shep-why').scrollIntoView({ block: 'end' });
+  }); await frames(2);
+  const whyBefore = await noticeSeen();
+  await page.click('#pc-why-ws button.shep-why'); await frames(4);
+  out.why.notice = { before: whyBefore.inView, ...(await noticeSeen()) };
+  await page.evaluate(() => document.getElementById('pc-why-gap').remove()); await frames(2);
   out.roomy = await page.evaluate(() => Object.fromEntries(['pc-roomy-a', 'pc-roomy-b'].map((id) => {
     const b = document.getElementById(id), span = b.querySelector('.__CELL_ROOMY__');
     const r = document.createRange(); r.selectNodeContents(span);
@@ -4297,7 +4308,9 @@ def test_a_dimmed_controls_phrase_opens_or_locates_its_one_reason(pieces_seen):
     assert chip["bubble"] and chip["bubble"] == chip["chip"], chip
     assert chip["title"] == "Operator controls" and chip["expanded"] == "true", chip
     assert chip["bubbles"] == 1, chip
-    assert why["notice"] == {"go": True, "inView": True}, why
+    # The notice was out of view when its phrase was activated: it came into view, its link
+    # focused.
+    assert why["notice"] == {"before": False, "go": True, "inView": True}, why
 
 
 def test_a_dimmed_fields_description_keeps_its_note_its_help_and_its_phrase(pieces_seen):
