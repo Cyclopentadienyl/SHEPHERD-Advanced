@@ -4986,6 +4986,8 @@ const LOOK_JS = __LOOK_JS__;
         <p id="ptr-above">○ Start disabled (see above).</p>
         <p id="ptr-with">Read-only for this request: the reason is with the actions below.</p>
         <p id="ptr-plain">The plots above show the latest run.</p>
+        <p id="ptr-paren">○ Start test: no checkpoint to test (see Run).</p>
+        <p id="ptr-seen">Kept (seen once on this server).</p>
       </div>
       <div class="shep-panel" id="p2" style="left: 470px; top: 40px; height: 300px">
         <div class="shep-grp"><button type="button" class="primary" id="dim-line" disabled>Start</button>
@@ -5042,13 +5044,15 @@ def test_the_reason_repeat_rule_finds_a_causes_reason_said_twice_on_one_screen(r
 
 def test_the_pointer_words_rule_finds_words_that_point_at_a_reason_elsewhere(reason_rules_seen):
     """R-WHY: the place a pointer names may have scrolled away or be in another region, so no
-    visible words say "see above", "see below" or "the reason is with" (Training's run view said
-    "(see above)" at first use, read-only Settings' Runtime "the reason is with the actions
-    below"). Words that only use "above" pass."""
+    visible words say "see above", "see below", "the reason is with" or a parenthesised
+    "(see <place>)" (Training's run view said "(see above)" at first use, read-only Settings'
+    Runtime "the reason is with the actions below", Test's Start "no checkpoint to test (see
+    Run)": the L8 S1 check, S1C-9). Words that only use "above", or "seen" in parentheses, pass."""
     found = reason_rules_seen
     assert _hits(found, "pointer", "#ptr-above") and _hits(found, "pointer", "#ptr-with"), found["pointer"]
-    assert not _hits(found, "pointer", "#ptr-plain"), found["pointer"]
-    assert len(found["pointer"]) == 2, found["pointer"]
+    assert _hits(found, "pointer", "#ptr-paren"), found["pointer"]
+    assert not _hits(found, "pointer", "#ptr-plain") and not _hits(found, "pointer", "#ptr-seen"), found["pointer"]
+    assert len(found["pointer"]) == 3, found["pointer"]
 
 
 def test_the_dimmed_words_rule_finds_disabled_said_beside_or_describing_a_dimmed_button(reason_rules_seen):

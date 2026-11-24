@@ -1351,7 +1351,7 @@ def test_a_version_whose_kept_file_changed_is_not_bound_and_start_says_why(site,
     assert tp.r.status_mark("error", tp.CHANGED_FILES.format(reason=reason)) in shown
     assert tp.start_state(page, models, "demo", LABEL, child, binding, ("none", ""),
                           protocol="disease") == (
-        False, "The data version's files changed after its import (see Data).")
+        False, "The data version's files changed after its import.")
 
 
 # --------------------------------------------------------------------------- the operator controls
@@ -3658,7 +3658,7 @@ def test_the_empty_run_and_checkpoint_selects_say_why_they_are_empty():
     said = tp.listing_why_html(first_use, none)
     assert 'data-notice-rel="workspaces_root"' in said and "data-notice=" not in said
     assert "Needs a workspaces folder" in _words_of(said) and 'data-why="workspaces_root"' in said
-    assert "No workspace yet (see Data)." in _words_of(
+    assert "No workspace yet." in _words_of(
         tp.listing_why_html(operator, none))
     assert "Choose a workspace in Data first." in tp.listing_why_html(
         {**operator, "workspaces": [{"name": "demo"}]}, none)
@@ -5319,7 +5319,7 @@ def test_at_first_use_the_screen_says_each_setting_once_and_each_control_its_rel
     html = "".join(screen.values())
     assert "data-notice" not in html and "registry: server setting" in screen["data"]
     assert tp.NO_WORKSPACE_YET in _plain(screen["data"])
-    assert why == "No workspace is listed (see Data)."
+    assert why == "No workspace is listed."
     assert "No workspace to import against." in _plain(screen["data"])
     assert tp.e(tp.REPORTS_NO_VERSION) in screen["reports"]
 

@@ -1066,7 +1066,7 @@ RUN_RELOAD_ID = "shep-test-model-reload"
 COMMIT_NO_PREVIEW = r.need_words("prepare a preview first")
 COMMIT_NO_CASES = r.need_words("the preview maps no case")
 RUN_CHOOSE_WORKSPACE = r.need_words("choose a workspace in Data first")
-RUN_NO_WORKSPACE = r.need_words("no workspace yet (see Data)")
+RUN_NO_WORKSPACE = r.need_words("no workspace yet")
 #: Register's cause while no report is chosen (`register_state`): a report to
 #: choose in the list, or none listed yet.
 REGISTER_CHOOSE = r.need_words("choose a kept report in the list first")
@@ -1453,7 +1453,7 @@ def _job_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
         if status == "failed" and job.get("exit_meaning"):
             how += f" ({job['exit_meaning']})"
         kept = ("no report kept" if outcome.get("kept") is False
-                else "whether a report was kept cannot be checked (see Run)")
+                else "whether a report was kept cannot be checked")
         when = utc_time(job.get("end_time")) or utc_time(job.get("start_time"))
         what = "ended " + when if when else "ended"
         # One fact a line (the owner's decision of 2026-11-23).
@@ -1931,7 +1931,7 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, r.reason_key(notice)
     off = r.need_words
     if page.get("registry_problem"):
-        return False, off("no registry is available (see Data)")
+        return False, off("no registry is available")
     kind, _words = gpu
     if kind == "busy":
         # Whatever holds the lock, a job or inference, Start waits for it:
@@ -1948,7 +1948,7 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
     if workspace_row is None:
         # An empty folder says so under the Workspace select (`NO_WORKSPACE_YET`).
         return False, off("choose a workspace" if page.get("workspaces")
-                          else "no workspace is listed (see Data)")
+                          else "no workspace is listed")
     version = find(page.get("versions") or [], "label", label)
     if version is None:
         return False, off("choose a data version")
@@ -1957,15 +1957,15 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
     bound = binding_state(version, binding)[0]
     if bound == "changed":
         # Its refusal, naming the file, is said beside the version (`CHANGED_FILES`).
-        return False, off("the data version's files changed after its import (see Data)")
+        return False, off("the data version's files changed after its import")
     if bound == "another":
         # Its refusal is said beside the version (`ANOTHER_GRAPH`), once.
-        return False, off("the data version is mapped against another graph (see Data)")
+        return False, off("the data version is mapped against another graph")
     item = find_model(models, key)
     if item is None:
         # Its empty state or its problem is said under the selects (`model_html`).
         return False, (CHOOSE_A_CHECKPOINT if models.get("items")
-                       else off("no checkpoint to test (see Run)"))
+                       else off("no checkpoint to test"))
     if item.get("problem") or not r.is_digest(item.get("sha256")):
         return False, off("this checkpoint's metadata is not readable")
     refusal = measure_refusal(item, version, protocol)
