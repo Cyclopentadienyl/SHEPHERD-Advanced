@@ -4241,7 +4241,10 @@ const QUEUE_JS = __QUEUE_JS__;
   await frames(4);
   out.scroll.after = await page.evaluate(() => ({ fit: document.getElementById('pc-fit').scrollLeft, page: window.scrollY }));
   // R-HELP: the tall bubble of a phrase with controls on one side and none on the other, both
-  // sides in the window: where it opens, and every control it lies over.
+  // sides in the window: where it opens, and every control it lies over. A window 900 px tall,
+  // so the phrase's bubble (its chip's answer, within the bubble's budget since the L8 close)
+  // is tall in it.
+  await page.setViewportSize({ width: 1280, height: 900 }); await frames(2);
   await page.click('#shep-page-training-button');
   await page.waitForSelector('#pc-place-row button.shep-why');
   await page.evaluate(() => { window.scrollTo(0, 0); document.getElementById('pc-place-row').scrollIntoView({ block: 'start' }); });
@@ -4260,6 +4263,40 @@ const QUEUE_JS = __QUEUE_JS__;
              covers: controls.filter((c) => over(q(c))).map((c) => c.id || c.className || c.tagName) };
   });
   await page.keyboard.press('Escape'); await frames(2);
+  // R-HELP's slide (the L8 close): the same phrase near the window's right edge, its bubble's
+  // height measured above, a control in each of the two alignments beside it and one above and
+  // below it; the page itself hidden, so only this scene's controls count.
+  await page.setViewportSize({ width: 1280, height: 1280 }); await frames(2);
+  out.slide = await page.evaluate(async (h) => {
+    const frames = (n) => new Promise((r) => { const f = (k) => k ? requestAnimationFrame(() => f(k - 1)) : r(); f(n); });
+    document.querySelector('gradio-app').style.visibility = 'hidden';
+    const vw = document.documentElement.clientWidth, cy = 640, w = 320;
+    const scene = document.createElement('div'); scene.id = 'pc-slide'; document.body.appendChild(scene);
+    const put = (html, css) => { const d = document.createElement('div'); d.innerHTML = html;
+      d.style.cssText = `position: fixed; visibility: visible; ${css}`; scene.appendChild(d); return d; };
+    const phrase = document.querySelector('#pc-place-row button.shep-why').cloneNode(true);
+    phrase.removeAttribute('id'); phrase.setAttribute('data-for', 'pc-slide-btn');
+    const line = put('', `left: ${vw - 200}px; top: ${cy - 12}px; width: 180px`);
+    line.appendChild(phrase);
+    line.insertAdjacentHTML('beforeend', '<button type="button" id="pc-slide-btn" disabled>Start</button>');
+    await frames(2);
+    const g = line.getBoundingClientRect(), left = g.left - 10 - w + 40;
+    put('<button type="button" id="pc-slide-a">A</button>', `left: ${left}px; top: ${cy + h / 2 + 40}px`);
+    put('<button type="button" id="pc-slide-b">B</button>', `left: ${left}px; top: ${cy - h / 2 - 70}px`);
+    put(`<button type="button" id="pc-slide-c" style="width: ${g.width}px">C</button>`, `left: ${g.left}px; top: ${g.top - 60}px`);
+    put(`<button type="button" id="pc-slide-d" style="width: ${g.width}px">D</button>`, `left: ${g.left}px; top: ${g.bottom + 40}px`);
+    await frames(2);
+    phrase.click(); await frames(8);
+    const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+    const bubble = document.getElementById('shep-help-bubble'), b = q(bubble);
+    const over = (r) => r[0] < b[2] && b[0] < r[2] && r[1] < b[3] && b[1] < r[3];
+    const out = { bubble: b, phrase: q(phrase), line: q(line), shown: !bubble.hidden,
+                  covers: [...scene.querySelectorAll('button')].filter((c) => c !== phrase && over(q(c))).map((c) => c.id) };
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await frames(2);
+    scene.remove(); document.querySelector('gradio-app').style.visibility = '';
+    return out;
+  }, out.place.height);
+  await frames(2);
   // R-WIDTH's button rule: each footer's actions, their widths and their words' widths, and the
   // footer's content box.
   await page.click('#shep-page-finetune-button');
@@ -4399,6 +4436,24 @@ def test_a_tall_bubble_opens_on_the_side_that_covers_no_control(pieces_seen):
     assert not overlap(bubble, place["side"]), place
     assert not overlap(bubble, place["phrase"]) and not overlap(bubble, place["control"]), place
     assert bubble[2] <= place["phrase"][0], place                    # beside it, on the free side
+
+
+def test_a_bubble_slides_along_its_side_to_a_place_that_covers_no_control(pieces_seen):
+    """R-HELP (the owner's C9 of 2026-11-24; the L8 close): with the D8 phrase's bubble in its
+    budget, 8 of 28 read-only phrase bubbles still lay over a control, because each side was
+    tried only aligned from the phrase or ending at it, and in a 720 px window both alignments
+    of every side met a control while a place between them was clear. A phrase near the
+    window's right edge, a control in each alignment on its left and one above and one below
+    it: the bubble slides along its left side to the place between, beside the phrase, over no
+    control (the phrase and the control it explains still clear)."""
+    slide = pieces_seen["slide"]
+
+    def overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    assert slide["shown"] and slide["covers"] == [], slide
+    assert slide["bubble"][2] <= slide["line"][0], slide             # beside it, on its left
+    assert not overlap(slide["bubble"], slide["line"]), slide
 
 
 def test_a_button_spans_only_the_one_action_area_no_wider_than_its_fields(pieces_seen):

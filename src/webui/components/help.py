@@ -684,10 +684,12 @@ _HELP_JS = r"""
     function y(top, h) { return Math.min(Math.max(EDGE, top), vh - h - EDGE); }
     // A side, its bubble aligned from the ⓘ (its start) or ending at it (`end`, Floating UI's
     // "-end" alignment): beside, it runs down from the ⓘ or ends under it; above or below, it
-    // runs right from the ⓘ or ends past it.
-    function at(side, w, h, g, end) {
+    // runs right from the ⓘ or ends past it. `slide` (0 to 1) places it between the two along
+    // its side (Floating UI's `shift`), the ⓘ still within its edge: 0 its start, 1 its end.
+    function at(side, w, h, g, end, slide) {
       g = g || f;
-      var top = end ? y(cy + 24 - h, h) : y(cy - 24, h), left = end ? x(cx + 24 - w, w) : x(cx - 24, w);
+      var t = slide === undefined ? (end ? 1 : 0) : slide;
+      var top = y(cy - 24 + t * (48 - h), h), left = x(cx - 24 + t * (48 - w), w);
       if (side === 'right') { return {side: side, left: g.right + GAP, top: top, w: w, h: h}; }
       if (side === 'left') { return {side: side, left: g.left - GAP - w, top: top, w: w, h: h}; }
       if (side === 'above') { return {side: side, left: left, top: g.top - GAP - h, w: w, h: h}; }
@@ -699,13 +701,15 @@ _HELP_JS = r"""
         !overlaps({left: p.left, top: p.top, right: p.left + p.w, bottom: p.top + p.h}, g);
     }
     // Beside the field, then above it, then below it, each aligned from the
-    // ⓘ, then ending at it: of the places that fit the window and leave the
-    // field uncovered, the one that lies over the fewest drawn controls
-    // (R-HELP: a bubble covers no control), the first in that order among
-    // equals, the place it stands in now kept while no other covers fewer
-    // (no flip while the page scrolls); a region's ⓘ tries the whole region
-    // first.
-    var sides = ['right', 'left', 'above', 'below'], chosen = null, fitting = [];
+    // ⓘ, then ending at it, then slid between the two along its side (SLIDES
+    // steps, the ⓘ still within the bubble's edge): of the places that fit the
+    // window and leave the field uncovered, the one that lies over the fewest
+    // drawn controls (R-HELP: a bubble covers no control), the first in that
+    // order among equals, the place it stands in now kept while no other
+    // covers fewer (no flip while the page scrolls); a region's ⓘ tries the
+    // whole region first. The L8 close: in a 720 px window the two alignments
+    // of every side lay over a control while a place between them was clear.
+    var sides = ['right', 'left', 'above', 'below'], chosen = null, fitting = [], SLIDES = 12;
     var guards = region ? [region, f] : [f];
     for (var k = 0; k < guards.length; k++) {
       for (var i = 0; i < sides.length; i++) {
@@ -713,6 +717,13 @@ _HELP_JS = r"""
           var p = at(sides[i], bw, bh, guards[k], e === 1);
           p.place = sides[i] + (e ? '-end' : '');
           if (fits(p, guards[k])) { fitting.push(p); }
+        }
+      }
+      for (var si = 0; si < sides.length; si++) {
+        for (var n = 1; n < SLIDES; n++) {
+          var q = at(sides[si], bw, bh, guards[k], false, n / SLIDES);
+          q.place = sides[si] + '~' + n;
+          if (fits(q, guards[k])) { fitting.push(q); }
         }
       }
     }
