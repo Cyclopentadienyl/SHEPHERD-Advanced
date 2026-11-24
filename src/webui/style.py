@@ -1451,10 +1451,13 @@ html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
    drawn over the blank; the region's foot draws one shared cue that says nothing of its content, a
    hairline and a soft shadow inside its edge (Material's scrolled-under state, Apple's scroll edge
    effect), while more lies below (``data-shep-more-edge``, kept by the same pass). A fade sideways
-   stays. */
+   stays. The cue is drawn on whatever region ``fadeOf`` marks, whatever else styles it: a
+   ``gr.HTML`` block's container rule (Gradio's ``.hide-container…:not(.fullscreen)``, three classes)
+   clears every block's shadow, so the cue's shadow is ``!important`` (it was never drawn on a
+   ``gr.HTML`` region: the Diagnosis Load drawer's facts, the L8 close). */
 [data-shep-more][data-shep-more-edge] {
   -webkit-mask-image: none; mask-image: none;
-  box-shadow: inset 0 -1px 0 var(--shep-border-2), inset 0 -16px 12px -12px rgba(20, 24, 40, .16);
+  box-shadow: inset 0 -1px 0 var(--shep-border-2), inset 0 -16px 12px -12px rgba(20, 24, 40, .16) !important;
 }
 [data-shep-more][data-shep-more-edge][data-shep-more-x] {
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);

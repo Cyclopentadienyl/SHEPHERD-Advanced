@@ -3313,6 +3313,7 @@ const { chromium } = require('playwright');
   await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body>
     <div id="cue" style="height: 200px; overflow: auto;">${lines}</div>
     <div id="gap" style="height: 200px; overflow: auto;"><p style="margin: 0">A first line, then blank.</p><div style="height: 900px"></div></div>
+    <div id="gapgr" class="block hide-container __GR_HIDE__" style="height: 200px; overflow: auto !important;"><p style="margin: 0">A first line, then blank.</p><div style="height: 900px"></div></div>
     <div id="cuex" style="width: 200px; overflow-x: auto; overflow-y: hidden;"><div style="width: 900px; height: 20px"></div></div>
     <div id="fits" style="height: 200px; overflow: auto;"><div style="height: 100px"></div></div>
     <div id="shep-page-models"><div id="shep-mp-detail" style="height: 600px; display: flex; flex-direction: column;">
@@ -3327,9 +3328,11 @@ const { chromium } = require('playwright');
     return { more: e.hasAttribute('data-shep-more'), mask: getComputedStyle(e).maskImage !== 'none' }; });
   const out = { top: await cue() };
   // R-CUE: where the edge falls in a gap a fade may not reach, the edge cue, never a fade over blank.
-  out.gap = await page.evaluate(() => { const e = document.getElementById('gap'), s = getComputedStyle(e);
+  const gapOf = (id) => page.evaluate((id) => { const e = document.getElementById(id), s = getComputedStyle(e);
     return { more: e.hasAttribute('data-shep-more'), mask: s.maskImage !== 'none',
-             edge: e.hasAttribute('data-shep-more-edge') && /inset/.test(s.boxShadow) }; });
+             edge: e.hasAttribute('data-shep-more-edge') && /inset/.test(s.boxShadow) }; }, id);
+  out.gap = await gapOf('gap');
+  out.gapgr = await gapOf('gapgr');
   out.sideways = await page.evaluate(() => { const e = document.getElementById('cuex');
     return { more: e.hasAttribute('data-shep-more-x'), mask: getComputedStyle(e).maskImage !== 'none' }; });
   out.fits = await page.evaluate(() => { const e = document.getElementById('fits');
@@ -3369,7 +3372,9 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     and the Diagnosis fields scrolled with no cue because their pages had not).
     R-CUE (the owner's D4 of 2026-11-24): the fade lies over lines of text; a region whose edge
     falls in a gap no fade may reach (``#gap``) draws the one edge cue instead, never a fade over
-    the blank.
+    the blank; a ``gr.HTML`` block's region (``#gapgr``: Gradio's own container rule, read from its
+    style sheet, clears every block's shadow) draws it too (the L8 close: the Diagnosis Load
+    drawer's facts never drew it).
     B72-C3: Compare, 12,342 px tall, had its sideways scrollbar at its foot,
     out of reach mid-table; it is now a box no taller than the region it is
     read in, so its scrollbar is in view whenever the box is. Both measured
@@ -3383,7 +3388,14 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
         pytest.skip("Node with Playwright is not installed")
     assert "shep-scroll-cue" not in Path(test_page.__file__).read_text()
     css_path, js_path = tmp_path / "page.css", tmp_path / "head.js"
-    css_path.write_text(SHELL_CSS + models_page.PAGE_CSS, encoding="utf-8")
+    # A gr.HTML block's container rule, as Gradio's own style sheet writes it (its scoped class).
+    assets = Path(gr.__file__).parent / "templates" / "frontend" / "assets"
+    found = [m for css in sorted(assets.glob("*.css")) for m in re.finditer(
+        r"\.hide-container\.(svelte-\w+):not\(\.fullscreen\)\{[^}]*box-shadow:none[^}]*\}",
+        css.read_text(encoding="utf-8"))]
+    assert found, "Gradio's .hide-container rule is not in its style sheet"
+    hide = found[0].group(1)
+    css_path.write_text(SHELL_CSS + models_page.PAGE_CSS + found[0].group(0), encoding="utf-8")
     js_path.write_text(shell._SHELL_JS.replace("__TITLES__", "{}").replace("__RESEARCH_LABEL__", '""')
                        .replace("__STAGES__", "{}").replace("__STAGE_WORD__", '""')
                        .replace("__LAYOUT__", "data-shep-layout").replace("__SHORT__", "data-shep-short")
@@ -3392,9 +3404,10 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
                        .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR)
                        .replace("__DESCRIBED_BY__", DESCRIBED_BY_JS),
                        encoding="utf-8")
-    seen = run_node(_CUE_JS, tmp_path, str(css_path), str(js_path))
+    seen = run_node(_CUE_JS.replace("__GR_HIDE__", hide), tmp_path, str(css_path), str(js_path))
     assert seen["top"] == {"more": True, "mask": True}, seen
     assert seen["gap"] == {"more": True, "mask": False, "edge": True}, seen
+    assert seen["gapgr"] == {"more": True, "mask": False, "edge": True}, seen
     assert seen["end"] == {"more": False, "mask": False}, seen
     assert seen["sideways"] == {"more": True, "mask": True}, seen
     assert seen["fits"] == {"more": False, "mask": False}, seen
