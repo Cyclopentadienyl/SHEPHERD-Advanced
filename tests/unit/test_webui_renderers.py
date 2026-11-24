@@ -2131,3 +2131,22 @@ def test_every_notices_action_ends_with_its_targets_place_and_the_link_binds_it(
                           ("Choose one in Settings › Runtime", target),
                           (f"Choose one in {place}", "settings#elsewhere")):
         assert "shep-unit" not in r._go({"action": action, "target": where}, True), (action, where)
+
+
+def test_a_notice_drawn_in_the_bar_of_the_controls_it_dims_names_them():
+    """R-WHY's same-bar rule (amendment 2; the L8 S1 check, S1C-10: no caller and no unit test,
+    only the walk's static page read it): where a cause's own notice is drawn in the same bar as
+    the controls it dims, no phrase is added beside them; the notice names them (``data-for``,
+    space-separated, escaped), the shell's head script points their ``aria-describedby`` at it.
+    Its key and its merged notices' keys stay, and a notice drawn elsewhere names no control."""
+    ws, gpu, _registry = _notices()
+    both = r.notice_block(ws, also=(gpu,), describes="shep-train-start shep-train-continue")
+    head = both[:both.index(">") + 1]
+    assert head == ('<div class="shep-nb shep-nb-neutral" data-notice="workspaces_root" '
+                    'data-notice-also="gpu_lock" data-for="shep-train-start shep-train-continue">'), head
+    assert both.count("data-for=") == 1 and "shep-why" not in both
+    assert "data-for" not in r.notice_block(ws, also=(gpu,))
+    hostile = r.notice_block(ws, describes='a" onclick="x')
+    assert 'data-for="a&quot; onclick=&quot;x"' in hostile and 'onclick="x"' not in hostile
+    # The phrase a control would otherwise carry is the notice's own cause: never both.
+    assert r.reason_key(ws) == "workspaces_root"
