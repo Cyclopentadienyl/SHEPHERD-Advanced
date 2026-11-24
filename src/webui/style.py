@@ -146,6 +146,15 @@ ROOMY_ATTR = "data-shep-roomy"
 #: sweep's L7 check, K2: the chosen details left the list its fixed minimum, 2.6 px under the
 #: narrow form beside a 52-character run name, and the rows scrolled sideways at 1366 x 768).
 FIT_LEAST = "--shep-fit-least"
+#: **The width a `FIT` box's wide form needs, given to its panel** (a custom property, in px, on
+#: the panel holding the box, the nearest ancestor with a ``--shep-panel-min``): the layout pass
+#: measures the wide form at its narrowest and adds what the panel draws around it, and writes
+#: that where the panels beside it keep their own minimums, else 0px, before it judges the box,
+#: so a page whose panels share the row (Datasets) can give the box's panel that width from the
+#: panel beside, never a width fitted to one world (the sweep's L7 check, K3: bound whole, a mark
+#: made the workspaces table 5 px too wide for its share at 1366 x 768; its narrow form then moved
+#: two facts into the details beside, which scrolled, where the details could spare the 5 px).
+FIT_WANT = "--shep-fit-want"
 #: **A box drawn whole while its column has the room** (OPS-FIX-N1; the layout
 #: pass's fold, `src/webui/shell.py`): side by side, a box of class `FOLD`
 #: shares a column with a region of class `FOLD_ROOM` (the column: the box's
@@ -1405,6 +1414,6 @@ __STACK__ {
     .replace("__FLOOR_VAR__", FLOOR_VAR)
 
 
-__all__ = ["BRAND_WIDTH", "CELL_ROOMY", "CELL_WHOLE", "COL_OPT", "COL_TWIN", "FADE_VAR", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
+__all__ = ["BRAND_WIDTH", "CELL_ROOMY", "CELL_WHOLE", "COL_OPT", "COL_TWIN", "FADE_VAR", "FIT", "FIT_LEAST", "FIT_WANT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
            "FLOOR_HEIGHT", "FLOOR_VAR", "FLOOR_WIDTH", "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT",
            "SHORT_ATTR", "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK", "STACK_FLOOR_WIDTH", "ROOMY_ATTR"]

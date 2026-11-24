@@ -94,7 +94,7 @@ from src.webui.components.workspaces import (
     workspace_binding,
 )
 from src.webui.shell import page_elem_id, plain_html
-from src.webui.style import CELL_ROOMY, COL_OPT, FIT, FIT_WIDE, NARROW_ATTR, SIDE
+from src.webui.style import CELL_ROOMY, COL_OPT, FIT, FIT_WANT, FIT_WIDE, NARROW_ATTR, SIDE
 
 logger = logging.getLogger(__name__)
 
@@ -705,7 +705,12 @@ PAGE_CSS = f"""
 {_PAGE} .shep-panel.shep-ds-main {{ --shep-panel-basis: 40rem; --shep-panel-grow: 3; --shep-panel-min: 32rem; }}
 {_PAGE} .shep-panel.shep-ds-main:has(table.shep-dstbl) {{ --shep-panel-min: 40rem; }}
 {_PAGE} .shep-panel.shep-ds-details {{ --shep-panel-basis: 31rem; --shep-panel-grow: 1; --shep-panel-min: 31rem; }}
+/* Side by side, the list's panel is at least as wide as its table's wide form needs (the layout
+   pass's `style.FIT_WANT`) wherever the details beside it keep their minimum: bound whole, the
+   serving mark made the table 5 px too wide for the list's share at 1366 x 768, and its narrow
+   form moved Built and Sources into the details, which then scrolled (the sweep's L7 check, K3). */
 {SIDE} {{
+  {_PAGE} .shep-panel.shep-ds-main {{ min-width: max(var(--shep-panel-min), var({FIT_WANT}, 0px)) !important; }}
   {_PAGE} #shep-ds-table {{ flex: 0 1 auto !important; overflow: auto !important; }}
   {_PAGE} #shep-ds-table .shep-tbl-wrap {{ overflow: visible; }}
   {_PAGE} #shep-ds-details {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; }}

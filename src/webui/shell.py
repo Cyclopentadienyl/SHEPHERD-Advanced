@@ -263,7 +263,7 @@ import gradio as gr
 from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
 from src.webui.components.help import HelpRegistry, as_json_for_script
 from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
-from src.webui.style import (FADE_VAR, FIT, FIT_LEAST, FIT_WIDE, FLOOR_HEIGHT, FLOOR_VAR, FLOOR_WIDTH, FOLD, FOLD_FLOOR,
+from src.webui.style import (FADE_VAR, FIT, FIT_LEAST, FIT_WANT, FIT_WIDE, FLOOR_HEIGHT, FLOOR_VAR, FLOOR_WIDTH, FOLD, FOLD_FLOOR,
                               FOLD_ROOM, FOLDED_ATTR, LAYOUT_ATTR, NARROW_ATTR, ROOMY_ATTR, SEG_WHOLE, SHORT_ATTR,
                               SHORT_BELOW, STACK_FLOOR_WIDTH)
 
@@ -941,7 +941,7 @@ _SHELL_JS = r"""
   // anything is painted; a style change is no mutation this pass listens
   // to), so the measure never depends on the state it sets.
   var FIT = '__FIT__', FIT_WIDE = '__FIT_WIDE__', NARROW = '__NARROW__', ROOMY = '__ROOMY__';
-  var FIT_LEAST = '__FIT_LEAST__';
+  var FIT_LEAST = '__FIT_LEAST__', FIT_WANT = '__FIT_WANT__';
   var AT_NARROWEST = 'position:absolute !important;visibility:hidden !important;'
     + 'width:min-content !important;min-width:0 !important;max-width:none !important;';
   // A choice group's options laid out on one line, for the measure alone.
@@ -984,12 +984,15 @@ _SHELL_JS = r"""
   // the box's marks set so, put back before anything is painted), plus what the panel holding
   // the box draws around it, written on the panel's row for a page whose panel shares move
   // (style.py's FIT_LEAST). It reads no width the shares give, so it never depends on itself.
-  function least(box, wide, at, room) {
-    var panel = null;
-    for (var a = box.parentElement; a && !panel; a = a.parentElement) {
-      if (lengthPx(a, '--shep-panel-min') > 0) { panel = a; }
+  function panelOf(box) {
+    for (var a = box.parentElement; a; a = a.parentElement) {
+      if (lengthPx(a, '--shep-panel-min') > 0) { return a.parentElement ? a : null; }
     }
-    if (!panel || !panel.parentElement) { return; }
+    return null;
+  }
+  function least(box, wide, at, room) {
+    var panel = panelOf(box);
+    if (!panel) { return; }
     var narrow = box.hasAttribute(NARROW), roomy = box.hasAttribute(ROOMY);
     if (!narrow) { box.setAttribute(NARROW, ''); }
     if (roomy) { box.removeAttribute(ROOMY); }
@@ -998,6 +1001,26 @@ _SHELL_JS = r"""
     if (roomy) { box.setAttribute(ROOMY, ''); }
     var value = Math.ceil(need) + 'px', row = panel.parentElement;
     if (row.style.getPropertyValue(FIT_LEAST) !== value) { row.style.setProperty(FIT_LEAST, value); }
+  }
+  // **What a box's wide form needs, given to its panel** (FIT_WANT): that form at its narrowest
+  // plus what the panel draws around it, written on the panel where the row still holds the
+  // panels beside it at their own minimums (else 0px), before the box is judged, so a page that
+  // gives its panel that width judges the box in it (style.py's FIT_WANT). Neither the need nor
+  // the row's width depends on the width the panel then takes.
+  function want(box, need) {
+    var panel = panelOf(box);
+    if (!panel) { return; }
+    var row = panel.parentElement, s = getComputedStyle(row), n = 0;
+    var spare = row.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
+    var kids = Array.prototype.filter.call(row.children, drawn);
+    for (var j = 0; j < kids.length; j++) {
+      var min = kids[j] === panel ? 0 : lengthPx(kids[j], '--shep-panel-min');
+      if (min > 0) { spare -= min; n += 1; }
+    }
+    spare -= n * (parseFloat(s.columnGap) || 0);
+    var value = Math.ceil(need + panel.getBoundingClientRect().width - roomOf(box));
+    var v = (value <= spare ? value : 0) + 'px';
+    if (panel.style.getPropertyValue(FIT_WANT) !== v) { panel.style.setProperty(FIT_WANT, v); }
   }
   function fits() {
     var boxes = document.querySelectorAll('.' + FIT);
@@ -1009,6 +1032,7 @@ _SHELL_JS = r"""
       if (roomy) { box.removeAttribute(ROOMY); }
       var at = AT_NARROWEST + 'display:' + (wide.tagName === 'TABLE' ? 'table' : 'block') + ' !important;';
       var need = measured(wide, at, width);
+      want(box, need);
       var room = roomOf(box);
       var narrow = need > room + 0.5;
       // Its cells whose words read as one while the room allows (CELL_ROOMY), measured whole
@@ -1389,6 +1413,7 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__FIT__", FIT).replace("__FIT_WIDE__", FIT_WIDE)
               .replace("__NARROW__", NARROW_ATTR).replace("__SEG_WHOLE__", SEG_WHOLE)
               .replace("__ROOMY__", ROOMY_ATTR).replace("__FIT_LEAST__", FIT_LEAST)
+              .replace("__FIT_WANT__", FIT_WANT)
               .replace("__FOLD__", FOLD).replace("__FOLD_ROOM__", FOLD_ROOM)
               .replace("__FOLD_FLOOR__", FOLD_FLOOR).replace("__FOLDED__", FOLDED_ATTR)
               .replace("__FADE_VAR__", FADE_VAR)
