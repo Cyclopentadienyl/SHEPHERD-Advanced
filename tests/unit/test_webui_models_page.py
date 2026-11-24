@@ -1613,6 +1613,18 @@ def test_test_this_model_is_in_view_with_a_row_chosen_at_1550(tmp_path, family):
         assert at["onTop"], (size, at)
 
 
+def test_a_read_only_view_says_who_loads_once_by_the_phrase_beside_load():
+    """The owner's D6 and D1 (optional trim): a read-only Models said "Load is an operator
+    control." at the end of its validation line, while the phrase beside 🔒 Load says who can
+    act ("Operator controls only", R-WHY). The validation line keeps its own fact (no
+    validation figures without the checkpoint files) and leaves Load to its phrase. Fails
+    before: the line named Load."""
+    parts = mp.readonly_parts({"answer": {"state": "no_model", "checkpoint_sha256": None},
+                               "served_sha": None})
+    assert mp.NO_LOAD_HERE in parts["records"]
+    assert "Load" not in mp.NO_LOAD_HERE and "checkpoint files" in mp.NO_LOAD_HERE
+
+
 def test_the_empty_records_next_step_opens_test_with_this_model_chosen(world, monkeypatch):
     """R-68: the empty state's next step was words ("Next: on the Test page,
     choose this model and …"), a dead end for the reader. It is one action,

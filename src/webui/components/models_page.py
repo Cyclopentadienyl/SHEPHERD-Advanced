@@ -221,8 +221,9 @@ D8_CONDITIONS = ("Operator controls need a service started on this machine and a
                  "that arrives on its loopback, directly or through an SSH forward, with no "
                  "forwarding header.")
 LIST_REFUSED_REF = "D8, SPEC_4 C3 (checkpoint inspection), deployment mode M1 (SHEPHERD_DEPLOYMENT_MODE)"
-NO_LOAD_HERE = ("No validation figures here: they need the checkpoint files. Load is an "
-                "operator control.")
+#: The read-only view's validation line: its own fact only; who may Load is said by the
+#: phrase beside 🔒 Load (R-WHY), never again here (the owner's D6 and D1, round L8).
+NO_LOAD_HERE = "No validation figures here: they need the checkpoint files."
 RECORDS_MODEL_CHANGED = ("The model in use changed while its recorded results were read. Open "
                          "the page again.")
 
