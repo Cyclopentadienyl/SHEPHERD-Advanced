@@ -642,16 +642,18 @@ def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
                                     elem_id=f"dl_box_{key}")
                                 # Check and Save, one group (`shep-grp`): they move to
                                 # the next line together, never Save alone.
-                                # Read-only: why the box and the buttons are locked (`ROW_LOCKED`),
-                                # beside Check and Save in their group (the owner's decision of
-                                # 2026-11-19), so it moves with them and adds no line of its own.
                                 with gr.Row(elem_classes=["shep-dl-acts", "shep-grp"]):
                                     row["check"] = gr.Button(CHECK_LABEL, interactive=False,
                                                              scale=0, elem_id=f"dl_check_{key}")
                                     row["save"] = gr.Button(SAVE_LABEL, interactive=False,
                                                             scale=0, elem_id=f"dl_save_{key}")
-                                    row["lock"] = plain_html("", elem_id=f"dl_lock_{key}",
-                                                             elem_classes=["shep-dl-lock"])
+                                # Read-only: why the box and the buttons are locked (`ROW_LOCKED`),
+                                # a whole group of the bar after Check and Save (the owner's
+                                # decision of 2026-11-19: beside each row's buttons): on their
+                                # line where it holds them, else a line of its own on the box's
+                                # edge, never taking Check and Save off the box's line.
+                                row["lock"] = plain_html("", elem_id=f"dl_lock_{key}",
+                                                         elem_classes=["shep-dl-lock"])
                                 # Create and its suggestion, one more whole group of the bar:
                                 # after Check and Save on their line, or a line of its own.
                                 with gr.Row(elem_classes=["shep-dl-create", "shep-grp"]):
@@ -727,10 +729,15 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: is retired with it). The evidence folders' box, a path per line, takes its whole line there: its
 #: hint ("One folder path on the server per line", 250.5 px in the dashboard's
 #: type) is longer than 16em. A read-only row's short reason (`ROW_LOCKED`)
-#: stands beside Check and Save, in their group (the owner's decision of
-#: 2026-11-19), so it adds no line of its own (the sweep's L7 check, D6: as the
-#: bar's note under them it made each read-only row a line taller and the
-#: panel's last line fell under its body's edge at 1850 x 960); Create then
+#: is a whole group of the bar after Check and Save (the owner's decision of
+#: 2026-11-19: beside each row's buttons): beside Save where the line holds
+#: it, so it adds no line there (the sweep's L7 check, D6: as the bar's note
+#: under them it made each read-only row a line taller and the panel's last
+#: line fell under its body's edge at 1850 x 960), else a line of its own on
+#: the box's edge (K4: bound into Check and Save's group, it took them off the
+#: box's line wherever the three did not fit beside the box, from 1550 x 830
+#: down, each read-only row 17 px taller than before and shaped unlike an
+#: operator's); Create then
 #: takes a line of its own on the box's edge: the bar's buttons, Create
 #: included, are off for the reason in their bar (C5: Create's lock had no
 #: reason beside or under it).
@@ -785,7 +792,7 @@ PAGE_CSS = f"""
 }}
 {_PAGE} .shep-dl-create > [id^="dl_suggest_"] {{ flex: 1 1 max-content !important; min-width: 0 !important; }}
 {_PAGE} .shep-dl-create:not(:has(button:not([hidden]))) {{ display: none !important; }}
-{_PAGE} .shep-dl-acts > .block[id^="dl_lock_"] {{ flex: none !important; width: auto !important; min-width: max-content !important; align-self: center; }}
+{_PAGE} .shep-dl-field > .block[id^="dl_lock_"] {{ flex: none !important; width: auto !important; min-width: max-content !important; align-self: center; }}
 {_PAGE} .shep-dl-field:has([id^="dl_lock_"] .shep-reason) > .shep-dl-create {{ flex: 1 1 100% !important; }}
 {_PAGE} [id^="dl_lock_"] .shep-reason {{ white-space: nowrap; }}
 {_PAGE} .shep-dl-kv {{ gap: 4px 12px; }}

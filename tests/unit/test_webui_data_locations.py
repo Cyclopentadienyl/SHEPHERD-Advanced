@@ -151,10 +151,12 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
         check, save = blocks[f"dl_check_{key}"], blocks[f"dl_save_{key}"]
         group = check.parent
         assert group is save.parent and {"shep-dl-acts", "shep-grp"} <= set(group.elem_classes)
-        # A read-only row's short phrase is part of Check and Save's group, beside them (the
-        # sweep's L7 check, D6), never a line of the bar's own.
-        assert blocks[f"dl_lock_{key}"].parent is group
+        # A read-only row's short phrase is a whole group of the bar after Check and Save's,
+        # beside them where the line holds it (the sweep's L7 check, D6), never inside their
+        # group, which it would take off the box's line (K4).
         bar = group.parent
+        lock = blocks[f"dl_lock_{key}"]
+        assert lock.parent is bar and bar.children.index(lock) == bar.children.index(group) + 1
         assert blocks[f"dl_box_{key}"].parent is bar      # the box beside the group
         create = blocks[f"dl_create_{key}"].parent
         assert create.parent is bar and {"shep-dl-create", "shep-grp"} <= set(create.elem_classes)
@@ -806,10 +808,23 @@ const QUEUE_JS = __QUEUE_JS__;
       // and on the line next to it (no more than the button's own height between them).
       const gaps = (a, b) => { const p = box(a), q = words(b);
         const dy = Math.max(0, p.top - q.bottom, q.top - p.bottom);
+        const bar = a.closest('.shep-bar'), s = getComputedStyle(bar);
+        const start = box(bar).left + bar.clientLeft + parseFloat(s.paddingLeft);
         return { column: q.left < p.right && q.right > p.left, nextLine: dy <= p.height,
                  line: q.top < p.bottom && q.bottom > p.top, after: q.left >= p.right - 1,
-                 group: !!a.closest('.shep-grp') && a.closest('.shep-grp') === b.closest('.shep-grp'),
+                 bar: bar.contains(b), edge: Math.abs(q.left - start) <= 1 || Math.abs(box(b).left - start) <= 1,
                  dy: Math.round(dy) }; };
+      // Whether a row's box and its Check and Save share a line, and whether the bar holds the
+      // box at its least width with both buttons beside it.
+      const besideBox = (key) => { const bx = document.getElementById(`dl_box_${key}`);
+        const c = document.getElementById(`dl_check_${key}`), v = document.getElementById(`dl_save_${key}`);
+        const bar = c.closest('.shep-bar'), s = getComputedStyle(bar), gap = parseFloat(s.columnGap) || 0;
+        const room = bar.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight);
+        const least = parseFloat(getComputedStyle(bx).minWidth) || 0;
+        const acts = c.closest('.shep-grp'), ag = parseFloat(getComputedStyle(acts).columnGap) || 0;
+        const need = least + gap + box(c).width + ag + box(v).width;
+        const p = box(bx), q = box(c);
+        return { fits: need <= room + 0.5, line: q.top < p.bottom && q.bottom > p.top }; };
       const rowOf = (e) => e.closest('.shep-dl-row');
       const panel = document.getElementById('shep-dl');
       // The lines that say why: the lock mark, then words, in no button.
@@ -829,7 +844,8 @@ const QUEUE_JS = __QUEUE_JS__;
             .sort((x, y) => x[0].dy - y[0].dy)[0];
           rows[key][part] = { text: T(b), disabled: b.disabled, ...(near ? near[0] : {}),
                               sameRow: own.length > 0, reason: near ? T(near[1]) : null,
-                              whole: whole(b), reasonWhole: near ? whole(near[1]) : false };
+                              whole: whole(b), reasonWhole: near ? whole(near[1]) : false,
+                              ...(part === 'check' ? { box: besideBox(key) } : {}) };
         }
       }
       const said = (words) => (document.body.innerText.split(words).length - 1);
@@ -860,12 +876,15 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
     laid each row out top to bottom, so the panel scrolls at 1850 x 960 and
     a button brought only as far as the view's edge left its phrase under
     it out of view); the panel's long reason is said once on the
-    page; beside Check and Save, in their group and on their line after
-    Save (the sweep's L7 check, D6: as a line of its own under them it made
+    page; beside Check and Save, a group of their bar on their line after
+    Save where the line holds it, else the line under them on the bar's edge
+    (the sweep's L7 check, D6: as a line of its own under them it made
     each read-only row a line taller than an operator's, and the panel's
     last line fell under its body's edge at 1850 x 960; the UI sweep's
     shared reason grid had once put it under the label column, 500 px from
-    them). An operator sees
+    them); Check and Save on the box's line wherever the bar holds the box
+    at its least width and both beside it (K4: bound into their group, the
+    phrase took them off it from 1550 x 830 down). An operator sees
     no lock and no phrase. Fails on d7ebfc3. The
     recheck of d4209c4 read Create 30 px from its row's phrase at 390 x 844
     on its host: Create was centred against a suggestion that wrapped to
@@ -902,13 +921,20 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
                 assert button["reason"] == f"🔒 {phrase}", (size, key, part, button)
                 assert button["sameRow"] and button["nextLine"], (size, key, part, button)
                 if part in ("check", "save"):
-                    # Beside Check and Save (the owner's word, 2026-11-19): in their group, so
-                    # it moves with them, on their line after them (the sweep's L7 check, D6:
+                    # Beside Check and Save (the owner's word, 2026-11-19): a group of their
+                    # bar, on their line after them where it holds it (the sweep's L7 check, D6:
                     # a line of its own under them made each read-only row a line taller, and
-                    # "Where these are kept ›" fell under the body's edge at 1850 x 960).
-                    assert button["group"] and button["line"], (size, key, part, button)
-                    if part == "save":
-                        assert button["after"], (size, key, part, button)
+                    # "Where these are kept ›" fell under the body's edge at 1850 x 960), else
+                    # the line under them, on the bar's start edge.
+                    assert button["bar"], (size, key, part, button)
+                    assert (button["line"] and (part == "check" or button["after"])) or (
+                        button["edge"] and button["nextLine"]), (size, key, part, button)
+                if part == "check":
+                    # Check and Save stand on the box's line wherever the bar holds the box at its
+                    # least width and both beside it, as an operator's do: the phrase never takes
+                    # them off it (K4: bound into their group, it did from 1550 x 830 down).
+                    beside = button["box"]
+                    assert beside["line"] or not beside["fits"], (size, key, part, button)
                 assert button["whole"] and button["reasonWhole"], (size, key, part, button)
 
 
