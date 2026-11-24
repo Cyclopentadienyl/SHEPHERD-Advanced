@@ -195,7 +195,7 @@ from src.evaluation.caveats import (
 )
 from src.webui.components import renderers as r
 from src.webui.components.chips import LOCK, chips_on_change, gated
-from src.webui.components.help import help_button, sentence_lines
+from src.webui.components.help import help_button, sentence_items
 from src.webui.components import model_list as ml
 from src.webui.components.model_list import item_key
 from src.webui.components.workspaces import (
@@ -368,7 +368,8 @@ FIELD_HELP = {
 }
 #: Help a rendered ⓘ names. A described measurement's result note is the
 #: governed caveat's own text (`caveats.mode_note`, shown on Models and
-#: Results too), each sentence a line (`sentence_lines`), never reworded here.
+#: Results too), laid out by `sentence_items` (its first sentence the lead),
+#: never reworded here.
 TOPIC_HELP = {
     "test-preview-id": (
         "Preview id",
@@ -378,7 +379,7 @@ TOPIC_HELP = {
         "- Commit: prepares again from the same inputs, refused unless the id matches\n"
         "- So: what is committed is what was previewed",
     ),
-    **{_MODE_HELP[mode]: (f"{words} result", sentence_lines(mode_note(mode)))
+    **{_MODE_HELP[mode]: (f"{words} result", sentence_items(mode_note(mode)))
        for mode, words in _RESULT_WORDS.items()},
     "test-batch": (
         "Batch size",
@@ -1065,7 +1066,7 @@ RUN_RELOAD_ID = "shep-test-model-reload"
 COMMIT_NO_PREVIEW = r.need_words("prepare a preview first")
 COMMIT_NO_CASES = r.need_words("the preview maps no case")
 RUN_CHOOSE_WORKSPACE = r.need_words("choose a workspace in Data first")
-RUN_NO_WORKSPACE = r.need_words("no workspace yet (see Data)")
+RUN_NO_WORKSPACE = r.need_words("no workspace yet")
 #: Register's cause while no report is chosen (`register_state`): a report to
 #: choose in the list, or none listed yet.
 REGISTER_CHOOSE = r.need_words("choose a kept report in the list first")
@@ -1452,7 +1453,7 @@ def _job_row(job: Mapping[str, Any], label: Any, run_ids: Sequence[str],
         if status == "failed" and job.get("exit_meaning"):
             how += f" ({job['exit_meaning']})"
         kept = ("no report kept" if outcome.get("kept") is False
-                else "whether a report was kept cannot be checked (see Run)")
+                else "whether a report was kept cannot be checked")
         when = utc_time(job.get("end_time")) or utc_time(job.get("start_time"))
         what = "ended " + when if when else "ended"
         # One fact a line (the owner's decision of 2026-11-23).
@@ -1930,20 +1931,24 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, r.reason_key(notice)
     off = r.need_words
     if page.get("registry_problem"):
-        return False, off("no registry is available (see Data)")
+        return False, off("no registry is available")
     kind, _words = gpu
     if kind == "busy":
         # Whatever holds the lock, a job or inference, Start waits for it:
         # the GPU chip says the holder and where to stop this service's
         # inference when that holds it, once (R-WHY's ``gpu_busy``).
         return False, "gpu_busy"
-    if kind == "unread":
+    from src.webui.components.chips import LOCK_UNUSABLE
+
+    if kind in LOCK_UNUSABLE:
+        # Not set up, could not be read or not usable (R-STATE: by its kind,
+        # never its words): no managed job can take the lock now.
         return False, "gpu_problem"
     workspace_row = find(page.get("workspaces") or [], "name", workspace)
     if workspace_row is None:
         # An empty folder says so under the Workspace select (`NO_WORKSPACE_YET`).
         return False, off("choose a workspace" if page.get("workspaces")
-                          else "no workspace is listed (see Data)")
+                          else "no workspace is listed")
     version = find(page.get("versions") or [], "label", label)
     if version is None:
         return False, off("choose a data version")
@@ -1952,15 +1957,15 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
     bound = binding_state(version, binding)[0]
     if bound == "changed":
         # Its refusal, naming the file, is said beside the version (`CHANGED_FILES`).
-        return False, off("the data version's files changed after its import (see Data)")
+        return False, off("the data version's files changed after its import")
     if bound == "another":
         # Its refusal is said beside the version (`ANOTHER_GRAPH`), once.
-        return False, off("the data version is mapped against another graph (see Data)")
+        return False, off("the data version is mapped against another graph")
     item = find_model(models, key)
     if item is None:
         # Its empty state or its problem is said under the selects (`model_html`).
         return False, (CHOOSE_A_CHECKPOINT if models.get("items")
-                       else off("no checkpoint to test (see Run)"))
+                       else off("no checkpoint to test"))
     if item.get("problem") or not r.is_digest(item.get("sha256")):
         return False, off("this checkpoint's metadata is not readable")
     refusal = measure_refusal(item, version, protocol)
@@ -3939,7 +3944,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-pad {{ padding: var(--shep-space-3) var(--shep-inset); display: flex; flex-direction: column; gap: 10px; }}
 {_PAGE} .shep-test-reason {{ margin: 2px 0; }}
 {_PAGE} .shep-test-actions {{ gap: 10px !important; align-items: center !important; flex-wrap: wrap !important; }}
-{_PAGE} .shep-test-actions > button {{ flex: none !important; }}
 {_PAGE} .shep-test-ident {{ font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-ident > div {{ margin: 1px 0; }}
 {_PAGE} #shep-test-model-why:not(:has(.shep-reason)) {{ display: none !important; }}
@@ -3988,7 +3992,6 @@ PAGE_CSS = f"""
 {_PAGE} #shep-test-import-close {{ flex: none !important; width: auto !important; min-width: max-content !important; white-space: nowrap; }}
 {_PAGE} .shep-test-form {{ gap: 10px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-form > * {{ min-width: min(11.25rem, 100%) !important; }}
-{_PAGE} #shep-test-start {{ width: 100%; }}
 {_PAGE} .shep-test-runft {{ padding: 10px 16px 12px !important; gap: 10px !important; border-top: 1px solid var(--shep-border); }}
 {_PAGE} .shep-test-select input {{ padding-right: 26px !important; }}
 {_PAGE} .shep-test-rep-old, {_PAGE} .shep-test-more-fewer {{ display: none !important; }}
@@ -3997,7 +4000,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-all .shep-test-more-all {{ display: none !important; }}
 {_PAGE} .shep-test-more {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0 0; }}
 {_PAGE} .shep-test-more button {{ font: inherit; font-size: 15px; color: var(--shep-accent-text); background: none; border: 0; padding: 2px 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }}
-{_PAGE} .shep-panel-ft > button, {_PAGE} .shep-test-actions > button {{ white-space: nowrap; flex: none !important; }}
 {_PAGE} .shep-panel-ft > .block:not(.shep-beside):not(.shep-bar-note) {{ flex: 1 1 200px !important; min-width: 0 !important; }}
 {_PAGE} #shep-test-cohort {{ --shep-panel-basis: 22rem; --shep-panel-grow: 1; --shep-panel-min: 19.7rem; }}
 {_PAGE} #shep-test-run {{ --shep-panel-basis: 24rem; --shep-panel-grow: 1; --shep-panel-min: 22.5rem; }}

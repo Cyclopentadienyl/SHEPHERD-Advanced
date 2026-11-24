@@ -887,6 +887,69 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
             assert chip["whole"] or chip["capped"], (width, chip)
 
 
+#: The served dashboard at each window the test names: once the header's layout pass has run,
+#: where the brand, each chip, the Settings tab and the header row's content box are.
+_WRAPPED_HEADER_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of JSON.parse(process.argv[3])) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#shep-chips .shep-chips .shep-chip', { timeout: 60000 });
+    await page.waitForFunction(() => document.getElementById('shep-shell').style.getPropertyValue('--shep-chips-top'),
+                               null, { timeout: 30000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const box = (el) => { const r = el.getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+      const row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
+      const s = getComputedStyle(row);
+      return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
+               brand: box(document.querySelector('#shep-brand .shep-brand')),
+               chips: [...document.querySelectorAll('#shep-chips .shep-chip')].map(box),
+               settings: box(document.getElementById('shep-tab-settings-button')),
+               area: box(document.getElementById('shep-tab-research-button')),
+               end: row.getBoundingClientRect().right - parseFloat(s.paddingRight) - parseFloat(s.borderRightWidth) };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_wrapped_headers_states_start_at_the_left_and_settings_ends_it(tmp_path):
+    """D10 (the owner, 2026-11-24): two header lines are fine; on the wrapped second line the
+    states start at the left, on the brand's edge, and Settings stays at the right. They sat
+    together at the right (the chips from 488 px at 1080 wide), leaving the line's start empty
+    under the brand. In the served dashboard, at a portrait window (1080 x 1920) and a
+    landscape one that stacks (1100 x 1050): the header wraps; the first chip's left is the
+    brand's left and Settings' right the header row's content right (within a pixel); the chips
+    and Settings share the second line, under the area switch, and never overlap."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    sizes = [[1080, 1920], [1100, 1050]]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_WRAPPED_HEADER_JS, tmp_path, base[:-len("gradio_api")], json.dumps(sizes),
+                        timeout=300)
+    for size, facts in seen.items():
+        assert facts["wrapped"] is True, size
+        chips, settings = facts["chips"], facts["settings"]
+        assert abs(chips[0]["left"] - facts["brand"]["left"]) <= 1, (size, chips[0], facts["brand"])
+        assert abs(settings["right"] - facts["end"]) <= 1, (size, settings, facts["end"])
+        for chip in chips:
+            assert chip["top"] < settings["bottom"] and settings["top"] < chip["bottom"], (size, chip)
+            assert chip["top"] >= facts["area"]["bottom"], (size, chip, facts["area"])
+        assert chips[-1]["right"] < settings["left"], (size, chips[-1], settings)
+
+
 # --------------------------------------------------------------------------- a reload
 def _where_page():
     """The shell with stand-in pages: Models holds a button that answers the
@@ -3868,21 +3931,73 @@ def _pieces_page():
                              f'id="pc-whole"><tbody><tr><td class="{CELL_WHOLE}">Record not readable</td>'
                              f'<td>{prose}</td></tr></tbody></table></div></div>', elem_id="pc-c12-box")
             # Two fit boxes with a cell whose words read as one while the room allows
-            # (`style.CELL_ROOMY`): one with the room, one (sized by `_PIECES_JS`) that holds
+            # (`style.CELL_ROOMY`) beside a column of prose, both sized by `_PIECES_JS` from the
+            # measured table: one with the room for the wide form with those words whole (and
+            # too little for the table's widest, where unmarked they would wrap), one that holds
             # the table only with those words wrapped.
             roomy = (f'<table class="shep-tbl {FIT_WIDE}"><tbody><tr><td class="shep-nowrap">a cell '
                      f'that never breaks</td><td class="shep-num"><span class="shep-muted {CELL_ROOMY}">'
-                     f'recorded epoch 9</span></td></tr></tbody></table>')
-            shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-roomy-a" style="width: 640px">'
-                             f'{roomy}</div><div class="shep-tbl-wrap {FIT}" id="pc-roomy-b">{roomy}</div>',
+                     f'recorded epoch 9</span></td><td>a note in plain words that wraps as prose '
+                     f'does wherever its column is narrow</td></tr></tbody></table>')
+            shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-roomy-a">{roomy}</div>'
+                             f'<div class="shep-tbl-wrap {FIT}" id="pc-roomy-b">{roomy}</div>',
                              elem_id="pc-roomy-box")
             shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-fit"><table class="shep-tbl {FIT_WIDE}">'
                              f'<tbody><tr>{cells}</tr></tbody></table></div>'
                              '<div style="height: 2400px"></div>', elem_id="pc-fit-box")
 
+    def placement(ctx):
+        # R-HELP (a bubble covers no control): a phrase keyed to the D8 chip (a tall bubble), the
+        # button it explains under it, room on both sides of them, a column of controls on the
+        # right side and none on the left.
+        side = "".join(f'<button type="button" id="pc-place-c{i}">Control {i}</button>' for i in range(8))
+        shell.plain_html(
+            '<div id="pc-place-row" style="display: flex; align-items: flex-start; gap: 24px; '
+            'padding: 48px 0 640px">'
+            '<div id="pc-place-free" style="width: 420px; height: 520px"></div>'
+            f'<div id="pc-place-mid" style="width: 220px">{r.phrase_line("d8", control="pc-place-btn", lock=True)}'
+            '<button type="button" id="pc-place-btn" disabled>Start</button></div>'
+            f'<div id="pc-place-side" style="display: flex; flex-direction: column; gap: 12px">{side}</div>'
+            '</div>', elem_id="pc-place")
+
+    def actions(ctx):
+        # R-WIDTH's button rule: a narrow panel whose footer holds one action, the same with two
+        # actions, and a wide panel whose fields stand side by side, its footer one action.
+        with gr.Row(elem_id="pc-span-row"):
+            with gr.Column(elem_id="pc-span-a", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-a-field")
+                with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-a-ft"):
+                    gr.Button("Save", elem_id="pc-span-a-btn")
+            with gr.Column(elem_id="pc-span-b", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-b-field")
+                with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-b-ft"):
+                    gr.Button("Check", elem_id="pc-span-b-check")
+                    gr.Button("Save", elem_id="pc-span-b-btn")
+            # One action beside a field in its row, and one action beside its words in a footer.
+            with gr.Column(elem_id="pc-span-d", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-d-name")
+                with gr.Row(elem_id="pc-span-d-ft"):
+                    gr.Dropdown(["cpu"], value="cpu", label="Device", elem_id="pc-span-d-field")
+                    gr.Button("Refresh", elem_id="pc-span-d-btn")
+            with gr.Column(elem_id="pc-span-e", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-e-field")
+                with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-e-ft"):
+                    gr.Button("Load", elem_id="pc-span-e-btn")
+                    gr.HTML("<span>Not loaded yet</span>", elem_id="pc-span-e-words")
+        # An icon-only action beside a field (a field row's square, ``shep-icon-btn``).
+        with gr.Row(elem_classes=["shep-field-row"], elem_id="pc-span-icon-row"):
+            gr.Dropdown(["a"], value="a", label="Run", elem_id="pc-span-icon-field")
+            gr.Button("↻", elem_classes=["shep-icon-btn"], elem_id="pc-span-icon")
+        with gr.Column(elem_id="pc-span-c", elem_classes=["shep-panel"], min_width=0):
+            with gr.Row():
+                gr.Textbox(label="First", elem_id="pc-span-c-f1")
+                gr.Textbox(label="Second", elem_id="pc-span-c-f2")
+            with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-c-ft"):
+                gr.Button("Start", elem_id="pc-span-c-btn")
+
     pages = {**{page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS,
                                                        shell.CLINICAL)},
-             shell.DATASETS: datasets}
+             shell.DATASETS: datasets, shell.TRAINING: placement, shell.FINETUNE: actions}
     with gr.Blocks() as demo:
         ctx = shell.build_shell(demo, pages)
         shell.help_texts(ctx.help)
@@ -3981,16 +4096,34 @@ const QUEUE_JS = __QUEUE_JS__;
               fold: { top: fold.top, bottom: fold.bottom } },
     };
   });
-  // The roomy boxes: the second one as wide as its table at its narrowest with the roomy words
-  // wrapped (measured apart, beside the box, outside any fit box), then a resize so the layout
-  // pass measures it.
-  await page.evaluate(() => {
-    const b = document.getElementById('pc-roomy-b'), t = b.querySelector('table').cloneNode(true);
-    t.style.cssText = 'position: absolute; visibility: hidden; width: min-content';
-    b.parentElement.appendChild(t);
-    const wrapped = t.getBoundingClientRect().width, s = getComputedStyle(b);
-    t.remove();
-    b.style.width = (wrapped + parseFloat(s.borderLeftWidth) + parseFloat(s.borderRightWidth) + 2) + 'px';
+  // The roomy boxes, sized from the measured table (K6, never a fixed width): the first as wide
+  // as the table at its narrowest with the roomy words whole (a copy in a box marked roomy, as
+  // the layout pass measures it), the second as wide as it at its narrowest with them wrapped
+  // (a copy in a box not marked), each measured apart beside the boxes; then, at the first
+  // one's width, how many lines those words take in a copy of its box not marked roomy (they
+  // wrap there: the mark is what keeps them on one line); then a resize so the layout pass
+  // measures the boxes.
+  out.roomyBox = await page.evaluate(() => {
+    const a = document.getElementById('pc-roomy-a'), b = document.getElementById('pc-roomy-b');
+    const s = getComputedStyle(a), edges = parseFloat(s.borderLeftWidth) + parseFloat(s.borderRightWidth);
+    const copy = (marked, width) => {
+      const c = a.cloneNode(true);
+      c.removeAttribute('id'); c.removeAttribute('__NARROW__'); c.removeAttribute('__ROOMY__');
+      if (marked) { c.setAttribute('__ROOMY__', ''); }
+      c.style.cssText = 'position: absolute; visibility: hidden; left: 0; top: 0; width: ' + width;
+      a.parentElement.appendChild(c);
+      return c;
+    };
+    const narrowest = (marked) => { const c = copy(marked, 'auto'), t = c.querySelector('table');
+      t.style.width = 'min-content'; const w = t.getBoundingClientRect().width; c.remove(); return w; };
+    const whole = narrowest(true), wrapped = narrowest(false);
+    const widthA = whole + edges + 2, widthB = wrapped + edges + 2;
+    a.style.width = widthA + 'px'; b.style.width = widthB + 'px';
+    const c = copy(false, widthA + 'px'), r = document.createRange();
+    r.selectNodeContents(c.querySelector('.__CELL_ROOMY__'));
+    const unmarked = new Set([...r.getClientRects()].filter((q) => q.width > 0).map((q) => Math.round(q.top))).size;
+    c.remove();
+    return { whole, wrapped, widthA, widthB, unmarked };
   });
   await page.setViewportSize({ width: 1279, height: 1280 }); await frames(2);
   await page.setViewportSize({ width: 1280, height: 1280 }); await frames(4);
@@ -4051,13 +4184,24 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.keyboard.press('Escape'); await frames(2);
   await page.evaluate(() => document.querySelector('#pc-why-field-d8 button.shep-why').remove()); await frames(4);
   out.why.field.after = await fieldBy();
-  await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight)); await frames(2);
-  await page.click('#pc-why-ws button.shep-why'); await frames(4);
-  out.why.notice = await page.evaluate(() => {
+  // The notice keyed by the phrase is drawn out of view first (the L8 S1 check, S1C-10): a gap
+  // taller than the window between the notice and the phrase, the phrase scrolled to the
+  // window's foot, so activating the phrase must bring the notice into view as well as focus it.
+  const noticeSeen = () => page.evaluate(() => {
     const a = document.activeElement, n = document.querySelector('#pc-why-notice .shep-nb'), r = n.getBoundingClientRect();
     return { go: !!a && a.matches('button.shep-nb-go') && n.contains(a),
              inView: r.top >= 0 && r.bottom <= document.documentElement.clientHeight };
   });
+  await page.evaluate(() => {
+    const gap = document.createElement('div');
+    gap.id = 'pc-why-gap'; gap.style.height = `${2 * document.documentElement.clientHeight}px`;
+    document.getElementById('pc-why-ws').before(gap);
+    document.querySelector('#pc-why-ws button.shep-why').scrollIntoView({ block: 'end' });
+  }); await frames(2);
+  const whyBefore = await noticeSeen();
+  await page.click('#pc-why-ws button.shep-why'); await frames(4);
+  out.why.notice = { before: whyBefore.inView, ...(await noticeSeen()) };
+  await page.evaluate(() => document.getElementById('pc-why-gap').remove()); await frames(2);
   out.roomy = await page.evaluate(() => Object.fromEntries(['pc-roomy-a', 'pc-roomy-b'].map((id) => {
     const b = document.getElementById(id), span = b.querySelector('.__CELL_ROOMY__');
     const r = document.createRange(); r.selectNodeContents(span);
@@ -4075,6 +4219,51 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.evaluate(() => document.body.appendChild(document.createElement('div')));
   await frames(4);
   out.scroll.after = await page.evaluate(() => ({ fit: document.getElementById('pc-fit').scrollLeft, page: window.scrollY }));
+  // R-HELP: the tall bubble of a phrase with controls on one side and none on the other, both
+  // sides in the window: where it opens, and every control it lies over.
+  await page.click('#shep-page-training-button');
+  await page.waitForSelector('#pc-place-row button.shep-why');
+  await page.evaluate(() => { window.scrollTo(0, 0); document.getElementById('pc-place-row').scrollIntoView({ block: 'start' }); });
+  await frames(4);
+  await page.click('#pc-place-row button.shep-why');
+  await page.waitForSelector('#shep-help-bubble:not([hidden])'); await frames(4);
+  out.place = await page.evaluate(() => {
+    const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+    const bubble = document.getElementById('shep-help-bubble'), b = q(bubble);
+    const over = (r) => r[0] < b[2] && b[0] < r[2] && r[1] < b[3] && b[1] < r[3];
+    const controls = [...document.querySelectorAll('button, input:not([type=hidden]), select, textarea, [role=radio], [role=checkbox]')]
+      .filter((c) => !bubble.contains(c) && c.getClientRects().length && getComputedStyle(c).visibility !== 'hidden');
+    return { bubble: b, height: b[3] - b[1], window: [document.documentElement.clientWidth, document.documentElement.clientHeight],
+             phrase: q(document.querySelector('#pc-place-row button.shep-why')), control: q(document.getElementById('pc-place-btn')),
+             side: q(document.getElementById('pc-place-side')), free: q(document.getElementById('pc-place-free')),
+             covers: controls.filter((c) => over(q(c))).map((c) => c.id || c.className || c.tagName) };
+  });
+  await page.keyboard.press('Escape'); await frames(2);
+  // R-WIDTH's button rule: each footer's actions, their widths and their words' widths, and the
+  // footer's content box.
+  await page.click('#shep-page-finetune-button');
+  await page.waitForSelector('#pc-span-c-btn');
+  await page.addStyleTag({ content: `
+    #pc-span-a, #pc-span-b, #pc-span-d, #pc-span-e { flex: none !important; width: 300px !important; }
+    #pc-span-c { flex: none !important; width: 900px !important; }` });
+  await page.setViewportSize({ width: 1279, height: 1280 }); await frames(2);
+  await page.setViewportSize({ width: 1280, height: 1280 }); await frames(4);
+  out.span = await page.evaluate(() => Object.fromEntries(['a', 'b', 'c', 'd', 'e'].map((k) => {
+    const ft = document.getElementById(`pc-span-${k}-ft`), s = getComputedStyle(ft), r = ft.getBoundingClientRect();
+    const room = [r.left + ft.clientLeft + parseFloat(s.paddingLeft), r.right - ft.clientLeft - parseFloat(s.paddingRight)];
+    const buttons = [...ft.querySelectorAll('button')].map((b) => {
+      const c = b.cloneNode(true); c.removeAttribute('id');
+      c.style.cssText = 'position: absolute; visibility: hidden; width: max-content; min-width: 0; flex: none';
+      document.body.appendChild(c); const words = c.getBoundingClientRect().width; c.remove();
+      const q = b.getBoundingClientRect();
+      return { id: b.id, left: q.left, right: q.right, width: q.width, words };
+    });
+    return [k, { span: ft.hasAttribute('data-shep-span'), room, buttons }];
+  })));
+  out.span.icon = await page.evaluate(() => {
+    const q = document.getElementById('pc-span-icon').getBoundingClientRect();
+    return { width: q.width, height: q.height };
+  });
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -4127,7 +4316,9 @@ def test_a_dimmed_controls_phrase_opens_or_locates_its_one_reason(pieces_seen):
     assert chip["bubble"] and chip["bubble"] == chip["chip"], chip
     assert chip["title"] == "Operator controls" and chip["expanded"] == "true", chip
     assert chip["bubbles"] == 1, chip
-    assert why["notice"] == {"go": True, "inView": True}, why
+    # The notice was out of view when its phrase was activated: it came into view, its link
+    # focused.
+    assert why["notice"] == {"before": False, "go": True, "inView": True}, why
 
 
 def test_a_dimmed_fields_description_keeps_its_note_its_help_and_its_phrase(pieces_seen):
@@ -4158,6 +4349,54 @@ def test_a_phrases_bubble_leaves_the_control_it_explains_and_the_phrase_uncovere
     assert not overlap(row["bubble"], row["phrase"]), row
 
 
+def test_a_tall_bubble_opens_on_the_side_that_covers_no_control(pieces_seen):
+    """R-HELP (the owner's C9 of 2026-11-24: a bubble covers no control; the L8 S1 fix pass: 20
+    of 24 read-only phrase bubbles still lay over a nearby field or button). The one placement
+    tries beside, then above, then below, and took the first side that fitted the window and
+    kept the field (here the phrase and the button it explains) clear, though it lay over other
+    controls. Among the sides it tries it now prefers one that covers no drawn control: a tall
+    bubble beside a phrase with a column of controls on its right and none on its left opens
+    on the left, beside the phrase, and lies over no control (its field still clear)."""
+    place = pieces_seen["place"]
+
+    def overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    bubble = place["bubble"]
+    assert place["height"] > place["window"][1] / 3, place          # a tall bubble
+    assert bubble[0] >= 0 and bubble[2] <= place["window"][0], place
+    assert place["covers"] == [], place
+    assert not overlap(bubble, place["side"]), place
+    assert not overlap(bubble, place["phrase"]) and not overlap(bubble, place["control"]), place
+    assert bubble[2] <= place["phrase"][0], place                    # beside it, on the free side
+
+
+def test_a_button_spans_only_the_one_action_area_no_wider_than_its_fields(pieces_seen):
+    """R-WIDTH's button rule (the owner's D12 of 2026-11-24: "whether a button is full width
+    depends on its action area"; the L8 S1 check, S1C-4: never built): Gradio grows a button with
+    its row and stretches it in a column, so a footer's actions took its whole width whatever it
+    held. A button is its words' width, full width only as the single action of an area no wider
+    than its fields (the layout pass's mark, ``data-shep-span``): a narrow panel's one action
+    spans its footer; two actions in the same footer, or one action under a wide row of fields,
+    keep their words' width, and so does one action beside a field or beside its words on its
+    line (the L8 S2 survey: Fine-tune's Refresh beside Device, Models' Load beside its state)."""
+    span = pieces_seen["span"]
+    one, two, wide, field, words = (span[k] for k in "abcde")
+    assert [len(box["buttons"]) for box in (one, two, wide, field, words)] == [1, 2, 1, 1, 1], span
+    # Two actions, one action under a wide row of fields, or one action beside a field or its
+    # words: each its words' width.
+    for button in two["buttons"] + wide["buttons"] + field["buttons"] + words["buttons"]:
+        assert button["width"] <= button["words"] + 1, span
+    # One action in a footer no wider than the panel's field: it spans the footer.
+    (button,) = one["buttons"]
+    assert abs(button["left"] - one["room"][0]) <= 1 and abs(button["right"] - one["room"][1]) <= 1, one
+    assert one["span"] and not any(box["span"] for box in (two, wide, field, words)), span
+    # A role's own size stays (the rule is the least specific): an icon-only button beside a
+    # field is a square (Test's Run ↻ became a narrow sliver under the first rule).
+    icon = span["icon"]
+    assert abs(icon["width"] - icon["height"]) <= 1, icon
+
+
 def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_seen):
     """The sweep's L7 check (D13): the Models tree's "recorded epoch 9" stood on two lines in
     every older run's row at 1850 x 960 while the Model column had room; bound always, the tree
@@ -4165,8 +4404,13 @@ def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_see
     `style.CELL_ROOMY` reads as one line while its fit box holds the wide form with it whole
     (the layout pass's second measure, `style.ROOMY_ATTR`); in a box that holds the wide form
     only with those words wrapped, they wrap and the wide form stays, nothing sideways."""
-    roomy = pieces_seen["roomy"]
+    roomy, box = pieces_seen["roomy"], pieces_seen["roomyBox"]
     wide, tight = roomy["pc-roomy-a"], roomy["pc-roomy-b"]
+    # K6 (the owner, 2026-11-24: tests must catch the old problem): the boxes come from the
+    # measured table, not a fixed width. The first is wider than the table's narrowest with the
+    # words wrapped and too narrow for them whole unmarked (they take two lines there), so only
+    # the roomy mark keeps them on one line: without the layout pass's second measure they wrap.
+    assert box["wrapped"] < box["whole"] and box["unmarked"] > 1, box
     assert wide["roomy"] and not wide["narrow"] and wide["lines"] == 1, roomy
     assert not tight["roomy"] and not tight["narrow"] and tight["lines"] > 1, roomy
     assert wide["sideways"] <= 0 and tight["sideways"] <= 0, roomy
@@ -4767,6 +5011,8 @@ const LOOK_JS = __LOOK_JS__;
         <p id="ptr-above">○ Start disabled (see above).</p>
         <p id="ptr-with">Read-only for this request: the reason is with the actions below.</p>
         <p id="ptr-plain">The plots above show the latest run.</p>
+        <p id="ptr-paren">○ Start test: no checkpoint to test (see Run).</p>
+        <p id="ptr-seen">Kept (seen once on this server).</p>
       </div>
       <div class="shep-panel" id="p2" style="left: 470px; top: 40px; height: 300px">
         <div class="shep-grp"><button type="button" class="primary" id="dim-line" disabled>Start</button>
@@ -4823,13 +5069,15 @@ def test_the_reason_repeat_rule_finds_a_causes_reason_said_twice_on_one_screen(r
 
 def test_the_pointer_words_rule_finds_words_that_point_at_a_reason_elsewhere(reason_rules_seen):
     """R-WHY: the place a pointer names may have scrolled away or be in another region, so no
-    visible words say "see above", "see below" or "the reason is with" (Training's run view said
-    "(see above)" at first use, read-only Settings' Runtime "the reason is with the actions
-    below"). Words that only use "above" pass."""
+    visible words say "see above", "see below", "the reason is with" or a parenthesised
+    "(see <place>)" (Training's run view said "(see above)" at first use, read-only Settings'
+    Runtime "the reason is with the actions below", Test's Start "no checkpoint to test (see
+    Run)": the L8 S1 check, S1C-9). Words that only use "above", or "seen" in parentheses, pass."""
     found = reason_rules_seen
     assert _hits(found, "pointer", "#ptr-above") and _hits(found, "pointer", "#ptr-with"), found["pointer"]
-    assert not _hits(found, "pointer", "#ptr-plain"), found["pointer"]
-    assert len(found["pointer"]) == 2, found["pointer"]
+    assert _hits(found, "pointer", "#ptr-paren"), found["pointer"]
+    assert not _hits(found, "pointer", "#ptr-plain") and not _hits(found, "pointer", "#ptr-seen"), found["pointer"]
+    assert len(found["pointer"]) == 3, found["pointer"]
 
 
 def test_the_dimmed_words_rule_finds_disabled_said_beside_or_describing_a_dimmed_button(reason_rules_seen):

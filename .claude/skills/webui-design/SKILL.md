@@ -66,9 +66,10 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
   `--shep-panel-min`, in rem or em), not by `scale=` shares fitted to one window.
 - **Charts are never squeezed.** Each plot keeps a floor (`PLOT_MIN_HEIGHT`, 170 px of plot area; about 200 px
   at the owner's window, where the four plots measure 198 px each, the shared epoch axis labelled once under them),
-  2 × 2 when the chart area is about 1000 px wide or more, one column below; when the floor does not fit, the chart
-  region scrolls. Lines meet 3:1 against the plot; series differ by more than colour, and the legend and tooltip
-  swatches draw each series' own dash pattern.
+  judged by the chart's container, never the window: stacked, 2 × 2 from a figure of `charts.TWO_COLUMNS_FROM`,
+  one column below; side by side, always 2 × 2, each plot at its floor, or the chart region scrolls. Lines
+  meet 3:1 against the plot; series differ by more than colour, and the legend and tooltip swatches draw each
+  series' own dash pattern.
 
 ### Text layout
 

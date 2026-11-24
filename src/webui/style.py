@@ -322,10 +322,14 @@ gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%))
 .shep-chips { display: flex; align-items: center; gap: 10px; }
 /* The header's chips (R-21; the WebUI skill's §6, normal states are quiet): a
    normal state ("Operator controls: on", "GPU jobs: none") is plain text with
-   its mark, no box; only a state to watch is a lozenge: read-only amber with
-   the lock, a GPU job running in the info colour, a state not read grey. The
-   marks are the status tokens: on a filled green dot, none and not read a
-   hollow grey ring, a job the info colour. */
+   its mark, no box, and so is a chip not read yet (``pending``: grey words, no
+   mark); only a state to watch is a lozenge: read-only amber with the lock, a
+   GPU job running in the info colour, a missing setting (``unset``) and a read
+   that failed (``unreadable``) grey with their own words, a lock that refuses
+   every managed job (``blocked``) red with the cross (R-STATE: four states,
+   never one ``unread``). The marks are the status tokens: on a filled green
+   dot, none, not set up and could not be read a hollow grey ring, a job the
+   info colour, the lock problem the error's cross. */
 .shep-chip {
   display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 2px; border-radius: 999px;
   font-size: 14px; line-height: 1; white-space: nowrap; border: 1px solid transparent;
@@ -337,9 +341,13 @@ gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%))
 #shep-chips > div, #shep-chips > div > div { min-width: 0; max-width: 100%; }
 .shep-chip button.shep-i { margin: 0 -3px 0 -1px; color: inherit; }
 .shep-chip button.shep-i::before { inset: 3px; border-color: currentColor; background: transparent; }
-.shep-chip-readonly, .shep-chip-unread, .shep-chip-busy { padding: 0 4px 0 10px; }
+.shep-chip-readonly, .shep-chip-unset, .shep-chip-unreadable, .shep-chip-blocked, .shep-chip-busy { padding: 0 4px 0 10px; }
 .shep-chip-readonly { background: var(--shep-amber-50); border-color: var(--shep-amber-300); color: var(--shep-amber-800); }
-.shep-chip-unread { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-grey-800); }
+.shep-chip-unset { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-status-neutral); }
+.shep-chip-pending { color: var(--shep-status-neutral); }
+.shep-chip-unreadable { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-status-neutral); }
+.shep-chip-blocked { background: var(--shep-red-50); border-color: var(--shep-red-200); color: var(--shep-status-error); }
+.shep-chip-mark { flex: none; line-height: 1; }
 .shep-chip-busy { background: var(--shep-accent-50); border-color: var(--shep-accent-100); color: var(--shep-accent-text); }
 .shep-dot {
   width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; flex: none;
@@ -389,13 +397,17 @@ gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%))
   outline: 2px solid var(--shep-focus-ring) !important; outline-offset: 2px; box-shadow: none;
 }
 #shep-research-nav > .tab-wrapper button[role="tab"]:focus-visible { outline-offset: -2px; }
-/* Not enough room for one row: the chips and Settings go onto a second line. */
+/* Not enough room for one row: the chips and Settings go onto a second line (D10, the owner of
+   2026-11-24): the states start at the line's left, on the brand's edge (the layout pass's
+   ``--shep-chips-left``), and Settings ends it at the right; the chips never reach Settings. */
 #shep-shell.shep-nav-wrapped #shep-nav > .tab-wrapper > .tab-container { row-gap: 10px; padding-bottom: 0; }
 #shep-shell.shep-nav-wrapped #shep-nav > .tab-wrapper .right-tab-group {
   flex-basis: 100%; justify-content: flex-end; min-height: max(44px, calc(var(--shep-chips-h, 28px) + 12px));
 }
 #shep-shell.shep-nav-wrapped #shep-chips {
   top: var(--shep-chips-top, var(--shep-row1-h)); height: max(44px, calc(var(--shep-chips-h, 28px) + 12px));
+  left: var(--shep-chips-left, 16px); right: auto; justify-content: flex-start;
+  max-width: calc(100% - var(--shep-chips-left, 16px) - var(--shep-settings-w, 120px) - 32px);
 }
 
 /* ---------------------------------------------------------------- row 2: the research pages, the stage hint */
@@ -786,6 +798,24 @@ span.shep-note { display: inline-block; }
    measure that caps it, in a row wide enough to hold the measure and the control: 2560 px) take
    the row's next line: the shell's layout pass marks them (``data-shep-own-line``). */
 .shep-beside-row > .shep-beside[data-shep-own-line] { flex-basis: 100% !important; }
+/* **R-WIDTH: a button is its words' width, full width only as the single action of an area no
+   wider than its fields** (the owner's D12 of 2026-11-24: "whether a button is full width depends
+   on its action area"): in a row (a panel's footer, a bar and a bar's group are rows) or a column,
+   an action never takes the room its area has left (Gradio grows a button with its row and
+   stretches it in a column), and its words stay on one line (the row wraps whole actions). The
+   area the shell's layout pass marks (``data-shep-span``: one action with nothing beside it and
+   no field in the area, no wider than its panel's widest field; never a group) is spanned by its
+   action, as a form's one action under its fields is. The default is the least specific rule
+   (``:where``), so a role's own size still applies (an icon-only button's square,
+   ``shep-icon-btn``; a field row's button). */
+.gradio-container :where(.row, .column, .shep-panel-ft, .shep-bar, .shep-grp) > :where(button.lg, button.md, button.sm) {
+  flex: none !important; width: auto !important; min-width: max-content !important; white-space: nowrap;
+}
+.gradio-container :where(.column:not(.row)) > :where(button.lg, button.md, button.sm) { align-self: flex-start; }
+.gradio-container [data-shep-span] > :is(button.lg, button.md, button.sm),
+.gradio-container [data-shep-span] > .column > :is(button.lg, button.md, button.sm) {
+  flex: 1 1 auto !important; width: 100% !important; min-width: max-content !important; align-self: stretch;
+}
 .shep-intro { padding: 12px 16px 0; margin: 0; font-size: 14px; color: var(--shep-text-2); }
 .shep-card { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
 .shep-card-hd .shep-muted { font-weight: 400; font-size: 14px; }

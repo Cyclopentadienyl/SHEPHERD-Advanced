@@ -26,6 +26,7 @@ Module: src/webui/components/renderers.py
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import math
 import re
@@ -1027,7 +1028,7 @@ def _go(notice: Mapping[str, Any], go: bool) -> str:
         return ""
     target = str(notice.get("target") or "")
     page, _, focus = target.partition("#")
-    words = _place_bound(action, PLACE_NAMES.get(target))
+    words = _place_bound(action, target)
     if not go or not page:
         return f'<span class="shep-nb-act">{words}.</span>'
     focus_attr = f' data-shep-focus="{e(focus)}"' if focus else ""
@@ -1035,15 +1036,18 @@ def _go(notice: Mapping[str, Any], go: bool) -> str:
             f'{focus_attr}>{words}</button>')
 
 
-def _place_bound(action: str, place: Optional[str]) -> str:
-    """`action` escaped, the GUI place it names (`server_settings.PLACE_NAMES`, the part the
-    action is built from) drawn as one unit (``shep-unit``): a line breaks the step before the
-    place, never inside it (the sweep's L7: "Choose one in Settings ›" / "Data locations" in
-    Diagnosis' card at 1280 x 720)."""
-    if not place or place not in action:
+def _place_bound(action: str, target: str) -> str:
+    """`action` escaped, the GUI place it leads to drawn as one unit (``shep-unit``): a line
+    breaks the step before the place, never inside it (the sweep's L7: "Choose one in Settings
+    ›" / "Data locations" in Diagnosis' card at 1280 x 720). **The place is the action's tail,
+    given by the notice's target** (`server_settings.PLACE_NAMES[target]`, role data: every
+    action to a place is built ending in its name), never found in the words by a search (K6,
+    the owner of 2026-11-24): an action that does not end with its target's place is drawn
+    unbound (`test_webui_renderers` holds every notice's action to its place)."""
+    place = PLACE_NAMES.get(target)
+    if not place or not action.endswith(place):
         return e(action)
-    before, _, after = action.partition(place)
-    return f'{e(before)}<span class="shep-unit">{e(place)}</span>{e(after)}'
+    return f'{e(action[:-len(place)])}<span class="shep-unit">{e(place)}</span>'
 
 
 def _detail_rows(notices: Sequence[Mapping[str, Any]]) -> Tuple[str, str]:
@@ -1299,6 +1303,23 @@ def why_id(control: str) -> str:
     return f"shep-why-{control}"
 
 
+def _phrase_key(key: str, cause: Any, control: Optional[str]) -> str:
+    """**A chip phrase's bubble key** (``data-help``, which the one help
+    bubble re-anchors by after a redraw), one per phrase (the L8 S1 check,
+    S1C-8: every phrase that named no control had one constant key, so the
+    bubble moved to the first of them): ``why-<cause>-`` and the first control
+    the phrase explains (its element id, unique on the page); with no control
+    named, a stable id of the phrase itself, a short digest of its cause as
+    given (a key as it is, or a notice by its key, kind, cause and words), so
+    the same phrase drawn again keeps its key and two phrases of two causes
+    never share one."""
+    if control:
+        return f"why-{key}-{control.split()[0]}"
+    found = {"key": cause} if isinstance(cause, str) else (_as_notice(cause) or {})
+    parts = "\x1f".join(str(found.get(part) or "") for part in ("key", "kind", "cause", "summary", "short"))
+    return f"why-{key}-{hashlib.sha1(parts.encode('utf-8')).hexdigest()[:10]}"
+
+
 def reason_phrase(cause: Any, *, control: Optional[str] = None) -> str:
     """**R-WHY: the phrase beside a dimmed control** (`REASONS`): its cause's
     phrase of five words at most, as a focusable link-styled button
@@ -1334,7 +1355,7 @@ def reason_phrase(cause: Any, *, control: Optional[str] = None) -> str:
     if control:
         attrs += [f'id="{e(why_id(control.split()[0]))}"', f'data-for="{e(control)}"']
     if reason.source == "chip":
-        attrs += [f'data-help="why-{e(key)}-{e((control or "here").split()[0])}"',
+        attrs += [f'data-help="{e(_phrase_key(key, cause, control))}"',
                   f'data-help-title="{e(reason.title)}"', 'aria-expanded="false"',
                   f'aria-describedby="{e(reason.ref)}"']
     else:

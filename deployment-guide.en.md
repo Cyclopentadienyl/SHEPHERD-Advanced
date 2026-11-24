@@ -3776,7 +3776,7 @@ trains in a run directory of its own. The drawer has
 its own **Device** (auto, cuda or cpu), which starts from the
 parameters' Device each time it opens and is what Check checkpoint and the start use. On a host
 with no CUDA device every Device field (the parameters', the drawer's, Fine-tune's) says so under
-its label, "No CUDA device here: auto and cuda are refused; choose cpu.", and the refusal itself,
+its label, "No CUDA device here: auto and cuda are refused. Choose cpu.", and the refusal itself,
 from Check checkpoint or any start, is said in the page's words: "Device auto needs CUDA, which
 is not available here; choose cpu for development. Nothing was started." (the training process's
 own sentence names its `--device` flag; R-32).
@@ -4353,7 +4353,7 @@ only: <reason>" beside them.
 driver and CUDA libraries." (a ✕ in red when a capability is gone, such as "GNN scoring cannot
 run: torch is not importable (…)"); with no problem it reads "Runtime: every checked module
 imports.". The versions (torch, CUDA, PyG, the native extensions, Voyager) are one click away
-under **Versions ›**. `GET /api/v1/system/runtime` returns the same issues in the same words.
+under **Versions ›**. `GET /api/v1/system/runtime` also returns these sentences, in its `issues` list.
 
 ## 4.15 PyTorch Geometric's version (since Batch 1, 2026-10-26)
 

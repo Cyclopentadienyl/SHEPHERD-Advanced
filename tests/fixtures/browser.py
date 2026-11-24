@@ -382,9 +382,10 @@ LOOK_JS = r"""
      - tabs: the research tabs' lines, their order, and each separator drawn at a line's start,
        and anything in the tablist that is not a tab. */
   // D8's conditions in its own short words (`chips.D8_SHORT`), and words that point at a reason
-  // drawn elsewhere (R-WHY: never "see above", "see below" or "the reason is with").
+  // drawn elsewhere (R-WHY: never "see above", "see below", "the reason is with" or a
+  // parenthesised "(see <place>)").
   const D8_WORDS = __D8_WORDS__;
-  const POINTER = /\bsee (above|below)\b|\bthe reason is with\b/i;
+  const POINTER = /\bsee (above|below)\b|\bthe reason is with\b|\(see [^)]+\)/i;
   const INTERACTIVE = 'button, input:not([type=hidden]), textarea, select, a[href], [role=button], '
     + '[role=tab], [role=radio], [role=checkbox], [role=switch], summary';
   const SKIP = 'script, style, noscript, .sr-only, .shep-vh, [hidden], #shep-help-texts, '
@@ -679,7 +680,8 @@ LOOK_JS = r"""
       out.reasons.d8 = 1 + saying((t) => t.toLowerCase().includes(d8words.toLowerCase())).length;
     }
     // pointer: words that point at a reason elsewhere ("see above", "see below", "the reason is
-    // with"): the place pointed at may have scrolled away or be in another region (R-WHY).
+    // with", "(see Data)"): the place pointed at may have scrolled away or be in another region
+    // (R-WHY).
     for (const blk of saying((t) => POINTER.test(t))) {
       out.pointer.push(`${named(blk)} "${clip((blk.innerText.match(POINTER) || [''])[0], 30)}" in "${clip(blk.innerText, 60)}"`);
     }
@@ -1803,7 +1805,7 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       a notice by its key, D8's refusal by the header chip (``data-reason="d8"``) and every block
       of the page holding the chip's condition in D8's short words (`chips.D8_SHORT`);
     - ``pointer-words`` (R-WHY): visible words that point at a reason drawn elsewhere: "see
-      above", "see below" or "the reason is with";
+      above", "see below", "the reason is with" or a parenthesised "(see <place>)";
     - ``dimmed-words`` (SW-C11; it extends ``disabled-reason``): a disabled button whose
       describing words (``aria-describedby``) or reason beside it say "disabled"; a phrase
       (``shep-why``) is a reason beside it, and so is its cause's own notice in the same bar

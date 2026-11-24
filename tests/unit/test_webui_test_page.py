@@ -70,7 +70,7 @@ from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import renderers  # noqa: E402
 from src.webui.components import test_page as tp  # noqa: E402
-from src.webui.components.help import sentence_lines  # noqa: E402
+from src.webui.components.help import help_lines, sentence_items  # noqa: E402
 from tests.fixtures.capabilities import described  # noqa: E402
 from tests.fixtures.operator_access import (  # noqa: E402
     OPERATOR_BASE_URL,
@@ -1351,7 +1351,7 @@ def test_a_version_whose_kept_file_changed_is_not_bound_and_start_says_why(site,
     assert tp.r.status_mark("error", tp.CHANGED_FILES.format(reason=reason)) in shown
     assert tp.start_state(page, models, "demo", LABEL, child, binding, ("none", ""),
                           protocol="disease") == (
-        False, "The data version's files changed after its import (see Data).")
+        False, "The data version's files changed after its import.")
 
 
 # --------------------------------------------------------------------------- the operator controls
@@ -3236,8 +3236,9 @@ def test_a_busy_gpu_is_the_start_reason_before_any_choice(site, monkeypatch):
     for ws, label, key in ((None, None, None), ("demo", LABEL, None)):
         allowed, why = tp.start_state(page, models, ws, label, key, None, busy)
         assert allowed is False and why == "gpu_busy"
-    allowed, why = tp.start_state(page, models, "demo", LABEL, None, None, ("unread", ""))
-    assert why == "gpu_problem"
+    for kind in ("unset", "unreadable", "blocked"):
+        allowed, why = tp.start_state(page, models, "demo", LABEL, None, None, (kind, ""))
+        assert why == "gpu_problem", kind
 
 
 def _runs(n):
@@ -3657,7 +3658,7 @@ def test_the_empty_run_and_checkpoint_selects_say_why_they_are_empty():
     said = tp.listing_why_html(first_use, none)
     assert 'data-notice-rel="workspaces_root"' in said and "data-notice=" not in said
     assert "Needs a workspaces folder" in _words_of(said) and 'data-why="workspaces_root"' in said
-    assert "No workspace yet (see Data)." in _words_of(
+    assert "No workspace yet." in _words_of(
         tp.listing_why_html(operator, none))
     assert "Choose a workspace in Data first." in tp.listing_why_html(
         {**operator, "workspaces": [{"name": "demo"}]}, none)
@@ -4406,10 +4407,11 @@ def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
     assert shown and not any(k in pooled for k in shown)
     assert all(f"k={k} " in pooled for k in (1, 3, 10) if f"k={k} " not in shown)
     assert f'data-help="test-mode-{mode}"' in raw
-    # The governed note in its own words, a sentence a line (its lead first).
+    # The governed note in its own words, laid out by the shared helper (its lead first).
     assert tp.TOPIC_HELP[f"test-mode-{mode}"] == (f"{TASK_NAMES[mode]} task result",
-                                                  sentence_lines(mode_note(mode)))
-    assert tp.TOPIC_HELP[f"test-mode-{mode}"][1].replace("\n", " ") == mode_note(mode)
+                                                  sentence_items(mode_note(mode)))
+    assert " ".join(line.text for line in help_lines(tp.TOPIC_HELP[f"test-mode-{mode}"][1])) == (
+        mode_note(mode))
     assert HOSTILE not in raw and html_lib.escape(HOSTILE, quote=False) in raw
 
 
@@ -4652,7 +4654,7 @@ def test_a_kg_link_prediction_result_has_its_measurement_note():
     label = label[:label.index("</div>")]
     assert 'data-help="test-mode-kg_link_prediction"' in label
     assert tp.TOPIC_HELP["test-mode-kg_link_prediction"] == (
-        "KG link prediction result", sentence_lines(KG_LINK_PREDICTION_NOTE))
+        "KG link prediction result", sentence_items(KG_LINK_PREDICTION_NOTE))
     assert mode_label("kg_link_prediction") in _result_text(raw)
     assert "shep-rec-tile-l" not in raw
 
@@ -5224,7 +5226,7 @@ def test_with_no_kg_edge_set_the_data_panel_names_the_import_command(site, monke
     assert tp.version_html({**page, "registry_problem": "unset"}, LABEL, None) == ""
 
 
-def _first_use_screen(page, gpu=("unread", "GPU jobs: not set up")):
+def _first_use_screen(page, gpu=("unset", "GPU jobs: not set up")):
     """What the Test page draws for `page` with nothing chosen (an operator):
     Data, Run (its fields' details, Start's reason) and Reports, as the page
     open writes them; `gpu` the GPU chip's line (not set up while no
@@ -5317,7 +5319,7 @@ def test_at_first_use_the_screen_says_each_setting_once_and_each_control_its_rel
     html = "".join(screen.values())
     assert "data-notice" not in html and "registry: server setting" in screen["data"]
     assert tp.NO_WORKSPACE_YET in _plain(screen["data"])
-    assert why == "No workspace is listed (see Data)."
+    assert why == "No workspace is listed."
     assert "No workspace to import against." in _plain(screen["data"])
     assert tp.e(tp.REPORTS_NO_VERSION) in screen["reports"]
 
@@ -5427,8 +5429,8 @@ def test_the_pages_help_texts_meet_the_text_budget():
     lines, then none or two to four items of one form, each two lines at most,
     80 words at most, Ref last, plain words. Before: 14 of 21 over. A
     described measurement's result note is the governed caveat's own text
-    (`caveats.mode_note`, shown on Models and Results too), each sentence a
-    line: it is kept as written, never reworded here."""
+    (`caveats.mode_note`, shown on Models and Results too), laid out by
+    `help.sentence_items`: it is kept as written, never reworded here."""
     from src.evaluation.caveats import mode_note
     from src.webui.components.help import TEXT_BUDGET, budget_notes, budget_problems
 
@@ -5437,7 +5439,7 @@ def test_the_pages_help_texts_meet_the_text_budget():
     governed = {tp._MODE_HELP[mode]: mode for mode in tp._RESULT_WORDS}
     for key, text in texts.items():
         if key in governed:
-            assert text == sentence_lines(mode_note(governed[key])), key
+            assert text == sentence_items(mode_note(governed[key])), key
             continue
         assert budget_problems(text, TEXT_BUDGET) == (), (key, budget_problems(text, TEXT_BUDGET))
         assert budget_notes(text, TEXT_BUDGET) == (), key
