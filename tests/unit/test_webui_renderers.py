@@ -1757,8 +1757,8 @@ def test_a_dimmed_controls_words_never_say_disabled_or_see_above(monkeypatch):
     test_import = tp.import_reason_html({"access": {"allowed": True}, "workspaces": []}, None)
     datasets = dsp.use_note_html({"rows": [{"name": "w", "trainable": False,
                                             "manifest": "absent"}]}, "w")
-    lines = {"Training": training["reason"], "Training drawer": training["drawer_reason"],
-             "Training chosen": chosen["reason"], "Training locked": locked["reason"],
+    lines = {"Training": training["facts"], "Training drawer": training["drawer_reason"],
+             "Training chosen": chosen["facts"], "Training locked": locked["phrase"],
              "Fine-tune": finetune["reason"], "Test start": test_start,
              "Test import": test_import, "Test run": tp.listing_why_html(first_use, {}),
              "Datasets": datasets, "phrase": r.phrase_line(ws, control="b")}
@@ -1773,11 +1773,11 @@ def test_a_dimmed_controls_words_never_say_disabled_or_see_above(monkeypatch):
             LOCK)
         assert marks == 1, (where, html)
     # A local cause is a sentence led by the need, never the control's name.
-    assert re.sub(r"<[^>]+>", "", chosen["reason"]).endswith("Choose a dataset to start.")
-    assert "Start" not in re.sub(r"<[^>]+>", "", chosen["reason"])
+    assert re.sub(r"<[^>]+>", "", chosen["facts"]).endswith("Choose a dataset to start.")
+    assert "Start" not in re.sub(r"<[^>]+>", "", chosen["facts"])
     # A keyed cause is its phrase, a link keyed to its one source.
     assert 'data-why="workspaces_root"' in lines["Test run"]
-    assert 'data-why="d8"' in locked["reason"] and 'data-for="shep-train-start' in locked["reason"]
+    assert 'data-why="d8"' in locked["phrase"] and 'data-for="shep-train-start' in locked["phrase"]
 
 
 def test_a_reason_phrase_is_five_words_at_most_keyed_and_focusable():
