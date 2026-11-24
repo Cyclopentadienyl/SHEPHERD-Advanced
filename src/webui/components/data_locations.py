@@ -101,9 +101,11 @@ from src.webui.shell import plain_html, tab_elem_id
 #: The panel's intro: where these folders are.
 INTRO = ("These are folders on the server machine: this computer when SHEPHERD-Advanced was "
          "started from its desktop.")
-#: A first start: nothing is set, and nothing is blocked by it.
-NOTHING_SET = ("Nothing is set yet. Each folder is needed only by what its row names, and "
-               "Settings and every other page open as usual.")
+#: A first start: nothing is set (the notice's state), what that means here (its line), and that
+#: nothing else is blocked by it (one click away, under its "Details ›": the spec's B, R-LOAD).
+NOTHING_SET = "Nothing is set yet."
+NOTHING_SET_THEN = "Each folder is needed only by what its row names."
+NOTHING_SET_DETAILS = ("Pages: Settings and every other page open as usual",)
 #: Each source in plain words (`server_settings.SOURCE_*`).
 SOURCE_WORDS = {
     server_settings.SOURCE_SAVED: "Saved in Settings",
@@ -327,7 +329,9 @@ def notice_html(view: DeploymentView, access: Any) -> str:
                 f'{r.status_mark("warn", f"Saved, not in effect yet: {names}")}'
                 f'<p class="shep-sub">{r.e(view.pending_reason)}</p></div>')
     if view.nothing_set:
-        return f'<div class="shep-dl-notice">{r.marked_line("neutral", NOTHING_SET)}</div>'
+        first = {"kind": "neutral", "summary": NOTHING_SET, "details": NOTHING_SET_DETAILS}
+        return (f'<div class="shep-dl-notice">'
+                f'{r.notice_block(first, consequence=NOTHING_SET_THEN)}</div>')
     return ""
 
 
@@ -980,7 +984,8 @@ PAGE_CSS = f"""
 
 
 __all__ = ["APPLY_LABEL", "CANCEL_LABEL", "CHANGE_JS", "CHANGE_KEY", "CHANGE_LABEL",
-           "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET", "SET_KEY",
+           "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET", "NOTHING_SET_DETAILS",
+           "NOTHING_SET_THEN", "SET_KEY",
            "OVERRIDDEN",
            "PAGE_CSS", "PANEL_PARTS", "PATH_HIDDEN", "PRIVATE_KEYS", "REPAIR_LABEL",
            "NAME_LEAST", "NAME_MOST",

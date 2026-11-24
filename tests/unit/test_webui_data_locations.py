@@ -196,6 +196,26 @@ def test_a_first_start_says_nothing_is_set_and_offers_the_suggested_folders(dl, 
                 or os.path.exists(os.path.join(os.environ["HOME"], "SHEPHERD-data")))
 
 
+def test_the_first_start_notice_says_its_state_and_keeps_the_rest_one_click_away(dl, monkeypatch):
+    """The spec's B (R-LOAD: adjacent text without a control between it stays within 3 lines at
+    the measure). Settings' first-use intro and notice took 4 lines (39 words): the notice's
+    line added "and Settings and every other page open as usual". The notice is the one notice
+    (`renderers.notice_block`): its line says the state and what it means here, and that rest
+    is one click away under its "Details ›", at the end of the line. Fails on eb2d64e: the
+    clause is on the line, and there is no Details."""
+    _rows, panel = _parts(dl, dl._on_locations_open(operator_request(monkeypatch)))
+    notice = panel["notice"]["value"]
+    line = re.search(r'<div class="shep-nb-line">(.*?)<details', notice, re.S)
+    assert line, notice
+    words = " ".join(re.sub(r"<[^>]+>", " ", line.group(1)).split())
+    assert words == f"○ {dl.NOTHING_SET} {dl.NOTHING_SET_THEN}", words
+    assert "every other page" not in words
+    more = re.search(r'<details class="[^"]*shep-nb-more[^"]*">(.*?)</details>', notice, re.S)
+    assert more, notice
+    said = " ".join(re.sub(r"<[^>]+>", " ", more.group(1)).split())
+    assert said.startswith("Details ›") and "every other page open as usual" in said, said
+
+
 def test_the_not_set_words_name_the_folder_settings_suggests(dl, monkeypatch):
     """T08 (first run): the pages that need a workspaces folder said "for
     example this repository's data/workspaces" while Settings offered Create
