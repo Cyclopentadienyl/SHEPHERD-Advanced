@@ -3117,12 +3117,14 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 - The browser tab's title says where you are, for example `Training · Research —
   SHEPHERD-Advanced`. Reloading the page comes back on the page shown, with its stage: this
   browser tab keeps which page it showed (the address does not keep the location).
-- In a window at least 1400 × 760 CSS pixels the page itself does not scroll; a region too long
-  for its space scrolls inside its own panel. Narrower, or in portrait, the regions stack and
-  the page scrolls. Since 2026-11-23 the layout shrinks no further than a display floor of
-  1280 × 720 CSS pixels (864 pixels in both directions for a window no wider than tall): in a
-  smaller window it is drawn as at the floor and the browser scrolls the whole page. The theme's
-  smallest text is 14 px.
+- A window wider than tall shows a page side by side when the page's panels fit beside one
+  another at their own minimum widths (every page's fit at the display floor's 1280 px): the
+  page itself does not scroll, and a region too long for its space scrolls inside its own panel.
+  In a window no wider than tall, or where the panels do not fit, the regions stack and the page
+  scrolls. No fixed window size decides it. Since 2026-11-23 the layout shrinks no further than
+  a display floor of 1280 × 720 CSS pixels, or 864 × 864 for a window no wider than tall: a
+  window smaller in either direction is drawn as at its floor in that direction, and the browser
+  scrolls the whole page. The theme's smallest text is 14 px.
 - The dashboard is always drawn in its light colours, whatever dark mode the system or the
   browser asks for (its colours have no dark version, and Gradio's dark mode left its text
   unreadable on the page); the address gains `?__theme=light`. Gradio's own footer (its API
@@ -3186,9 +3188,9 @@ ops-wiring round's B5).
 
 The first screen, in three panels: the patient's phenotypes, the ranked candidates, and the
 selected candidate's details (Evidence · Explanation · Matching phenotypes · Paths). Selecting a
-row (a click, or Enter on a focused row) shows that candidate in the details panel. In a window
-at least 1400 × 760 CSS pixels each panel scrolls inside itself; narrower, or in portrait, the
-three panels stack and the page scrolls.
+row (a click, or Enter on a focused row) shows that candidate in the details panel. Side by side
+(the layout rule under Navigation above) each panel scrolls inside itself; in a window no wider
+than tall the three panels stack and the page scrolls.
 
 **Patient ID** left blank is sent as no id: the server gives the result its own (`patient_…`), so
 results from different browsers never share one (before M5-2 a blank field was sent as
@@ -3816,9 +3818,8 @@ checkpoint while it runs), the checkpoint's model fingerprint (12 hex digits; Co
 and the dataset it used: "same as the run bar" when it is, else its fingerprint with Copy; its
 workspace when it is not the run bar's.
 Below the header, one figure of four charts sharing the epoch axis, labelled once under them
-("Epoch (shared axis)"): 2 × 2 in a window of at least
-1400 × 760, and in a smaller one 2 × 2 from about 1000 px of the figure's own width, one column
-below: Loss (train, and validation dashed: a logged `val_loss` or
+("Epoch (shared axis)"): 2 × 2 side by side, and stacked 2 × 2
+from 960 px of the figure's own width, one column below: Loss (train, and validation dashed: a logged `val_loss` or
 `val_lp_loss`, whatever the run), the run's validation figure and its companions, and the
 learning rate on a log axis ("Learning rate (log scale)"; a 0 or a missing value is a gap). A
 chart of one series has no legend key, and its title names the series: a run that logs only its
@@ -4056,9 +4057,10 @@ problems listed by case index (at most 10), never by case id; the command-line p
 (`scripts/import_cohort.py`) lists each one with its case id. **Commit as version …**
 prepares again from the same inputs and commits under the preview id shown: a form changed
 since the preview, or a source or graph changed since, is refused. One preview or commit runs
-at a time; after a commit the drawer closes and the new version is chosen. Below 1400 × 760 the
-drawer is an overlay at the right that scrolls inside, and the keyboard focus moves to its
-title.
+at a time; after a commit the drawer closes and the new version is chosen. Side by side the
+drawer lies over Run and Result inside the page; stacked (in a window no wider than tall: the
+layout rule under Navigation), it is an overlay at the window's right edge. Either way it
+scrolls inside, and when it opens the keyboard focus moves to its title.
 
 A **read-only browser** sees the versions, their reports and states, the job and the results:
 every control is disabled with "Operator controls only: <reason>" (the note's Who and What
@@ -4308,8 +4310,9 @@ writes nothing to a usage history. The page is read when it is shown, when the w
 and after every Load, including one that changed nothing served (a refused reload, the model in
 use loaded again), so what changed meanwhile is shown; nothing on it runs on a timer.
 
-**Narrow** (below 1400 × 760, where the regions stack under one another), choosing a row scrolls
-to its detail and moves the keyboard focus there; **↑ Back to the list** in the detail's header
+**Stacked** (in a window no wider than tall, where the regions stack under one another: the
+layout rule under Navigation), choosing a row scrolls to its detail and moves the keyboard focus
+there; **↑ Back to the list** in the detail's header
 returns to the row.
 
 ### ⚙ Settings and the runtime line
