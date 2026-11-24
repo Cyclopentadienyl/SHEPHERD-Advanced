@@ -1460,10 +1460,24 @@ _SHELL_JS = r"""
     queued = true;
     requestAnimationFrame(function () { queued = false; title(); labels(); stage(); layout(); titles(); });
   }
+  // Gradio's status tracker (each output's progress overlay, hidden for a hidden progress)
+  // changes on every event sent, a timer's poll included: its own nodes lay nothing out, so a
+  // change inside one never lays the page out again (the L8 close: every timer poll laid the
+  // whole page out, a frame grew to 200 ms once every page was drawn, and the page never rested).
+  var TRACKER = '[data-testid="status-tracker"]';
+  function laysOut(records) {
+    for (var i = 0; i < records.length; i++) {
+      var t = records[i].target;
+      var el = t && t.nodeType === 1 ? t : (t ? t.parentElement : null);
+      if (!el || !el.closest(TRACKER)) { return true; }
+    }
+    return false;
+  }
   // A page shown, a panel shown or hidden (a drawer; Gradio's hidden class),
   // the page's own class that changes its panels: each lays the page out again.
-  new MutationObserver(update).observe(document.documentElement,
-    {childList: true, subtree: true, attributes: true, attributeFilter: ['aria-selected', 'class']});
+  new MutationObserver(function (records) { if (laysOut(records)) { update(); } })
+    .observe(document.documentElement,
+      {childList: true, subtree: true, attributes: true, attributeFilter: ['aria-selected', 'class']});
   window.addEventListener('resize', update);
   // A font arriving redraws text in its own widths: the fit is measured again.
   if (document.fonts && document.fonts.addEventListener) {
@@ -1553,8 +1567,8 @@ __DESCRIBED_BY__
     }
   }
   var whyPending = false;
-  new MutationObserver(function () {
-    if (whyPending) { return; }
+  new MutationObserver(function (records) {
+    if (whyPending || !laysOut(records)) { return; }
     whyPending = true;
     requestAnimationFrame(function () { whyPending = false; describeDimmed(); });
   }).observe(document.documentElement, {childList: true, subtree: true});

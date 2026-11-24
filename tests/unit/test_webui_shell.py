@@ -5410,6 +5410,70 @@ def test_every_page_of_every_state_has_no_layout_finding(state, request):
     assert layout_problems(seen) == []
 
 
+#: The L8 close, item 6: how many layout passes a change queues (the shell's script, as the
+#: dashboard's head carries it, counted by the frames it asks for), a change inside Gradio's
+#: status tracker and a change of a block's own content
+#: (`test_a_status_trackers_change_lays_nothing_out_again`).
+_TRACKER_PASS_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const head = require('fs').readFileSync(process.argv[2], 'utf8');
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
+  await page.setContent(`<!doctype html><html><head></head><body>
+    <div class="block" id="out">
+      <div class="wrap center hidden hide" data-testid="status-tracker"><span class="progress-text">0.1s</span></div>
+      <div id="content">A value</div>
+    </div>
+    <script>
+      window.__passes = 0;
+      const frame = window.requestAnimationFrame.bind(window);
+      window.requestAnimationFrame = (f) => { window.__passes += 1; return frame(f); };
+    </script>
+    ${head}</body></html>`);
+  const rest = () => page.evaluate(() => new Promise((done) => setTimeout(done, 400)));
+  const queued = async (change) => {
+    await rest();
+    await page.evaluate(() => { window.__passes = 0; });
+    await page.evaluate(change);
+    await rest();
+    return page.evaluate(() => window.__passes);
+  };
+  const out = {
+    tracker: await queued(() => {
+      const t = document.querySelector('[data-testid="status-tracker"]');
+      t.querySelector('.progress-text').textContent = '0.2s';
+      t.appendChild(document.createElement('span'));
+      t.classList.toggle('hide');
+    }),
+    content: await queued(() => { document.getElementById('content').textContent = 'Another value'; }),
+  };
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_status_trackers_change_lays_nothing_out_again(tmp_path):
+    """The L8 close, item 6 (why E1's walk never rested at the Diagnosis Load drawer): Gradio's
+    status tracker (``data-testid="status-tracker"``, each output's progress overlay, hidden for
+    a hidden progress) changes on every event sent, every timer's poll included, and each change
+    laid the whole page out again. Once every page was drawn (3,186 elements) a pass took about
+    200 ms, the trackers changed about 40 times a second, and a frame never came within the
+    walk's ten quiet frames of the next poll (the walk's sample at stop 74 of 79: 13 frames in
+    3 s, no request open). A change inside a tracker queues no layout pass; a change of a block's
+    own content still queues one."""
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    head = tmp_path / "head.html"
+    head.write_text(shell.SHELL_HEAD, encoding="utf-8")
+    seen = run_node(_TRACKER_PASS_JS, tmp_path, str(head), timeout=120)
+    assert seen["content"] >= 1, seen
+    assert seen["tracker"] == 0, seen
+
+
 def _walk_coverage(seen: list, state: str) -> list:
     """**What a layout walk of `state` must have measured** (E1's coverage), as the
     problems found: every page at every layout size; every drawer the state opens (none for a
