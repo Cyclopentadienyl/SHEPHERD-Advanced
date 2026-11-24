@@ -3946,9 +3946,23 @@ def _pieces_page():
                              f'<tbody><tr>{cells}</tr></tbody></table></div>'
                              '<div style="height: 2400px"></div>', elem_id="pc-fit-box")
 
+    def placement(ctx):
+        # R-HELP (a bubble covers no control): a phrase keyed to the D8 chip (a tall bubble), the
+        # button it explains under it, room on both sides of them, a column of controls on the
+        # right side and none on the left.
+        side = "".join(f'<button type="button" id="pc-place-c{i}">Control {i}</button>' for i in range(8))
+        shell.plain_html(
+            '<div id="pc-place-row" style="display: flex; align-items: flex-start; gap: 24px; '
+            'padding: 48px 0 640px">'
+            '<div id="pc-place-free" style="width: 420px; height: 520px"></div>'
+            f'<div id="pc-place-mid" style="width: 220px">{r.phrase_line("d8", control="pc-place-btn", lock=True)}'
+            '<button type="button" id="pc-place-btn" disabled>Start</button></div>'
+            f'<div id="pc-place-side" style="display: flex; flex-direction: column; gap: 12px">{side}</div>'
+            '</div>', elem_id="pc-place")
+
     pages = {**{page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS,
                                                        shell.CLINICAL)},
-             shell.DATASETS: datasets}
+             shell.DATASETS: datasets, shell.TRAINING: placement}
     with gr.Blocks() as demo:
         ctx = shell.build_shell(demo, pages)
         shell.help_texts(ctx.help)
@@ -4159,6 +4173,26 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.evaluate(() => document.body.appendChild(document.createElement('div')));
   await frames(4);
   out.scroll.after = await page.evaluate(() => ({ fit: document.getElementById('pc-fit').scrollLeft, page: window.scrollY }));
+  // R-HELP: the tall bubble of a phrase with controls on one side and none on the other, both
+  // sides in the window: where it opens, and every control it lies over.
+  await page.click('#shep-page-training-button');
+  await page.waitForSelector('#pc-place-row button.shep-why');
+  await page.evaluate(() => { window.scrollTo(0, 0); document.getElementById('pc-place-row').scrollIntoView({ block: 'start' }); });
+  await frames(4);
+  await page.click('#pc-place-row button.shep-why');
+  await page.waitForSelector('#shep-help-bubble:not([hidden])'); await frames(4);
+  out.place = await page.evaluate(() => {
+    const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+    const bubble = document.getElementById('shep-help-bubble'), b = q(bubble);
+    const over = (r) => r[0] < b[2] && b[0] < r[2] && r[1] < b[3] && b[1] < r[3];
+    const controls = [...document.querySelectorAll('button, input:not([type=hidden]), select, textarea, [role=radio], [role=checkbox]')]
+      .filter((c) => !bubble.contains(c) && c.getClientRects().length && getComputedStyle(c).visibility !== 'hidden');
+    return { bubble: b, height: b[3] - b[1], window: [document.documentElement.clientWidth, document.documentElement.clientHeight],
+             phrase: q(document.querySelector('#pc-place-row button.shep-why')), control: q(document.getElementById('pc-place-btn')),
+             side: q(document.getElementById('pc-place-side')), free: q(document.getElementById('pc-place-free')),
+             covers: controls.filter((c) => over(q(c))).map((c) => c.id || c.className || c.tagName) };
+  });
+  await page.keyboard.press('Escape'); await frames(2);
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -4240,6 +4274,28 @@ def test_a_phrases_bubble_leaves_the_control_it_explains_and_the_phrase_uncovere
 
     assert not overlap(row["bubble"], row["control"]), row
     assert not overlap(row["bubble"], row["phrase"]), row
+
+
+def test_a_tall_bubble_opens_on_the_side_that_covers_no_control(pieces_seen):
+    """R-HELP (the owner's C9 of 2026-11-24: a bubble covers no control; the L8 S1 fix pass: 20
+    of 24 read-only phrase bubbles still lay over a nearby field or button). The one placement
+    tries beside, then above, then below, and took the first side that fitted the window and
+    kept the field (here the phrase and the button it explains) clear, though it lay over other
+    controls. Among the sides it tries it now prefers one that covers no drawn control: a tall
+    bubble beside a phrase with a column of controls on its right and none on its left opens
+    on the left, beside the phrase, and lies over no control (its field still clear)."""
+    place = pieces_seen["place"]
+
+    def overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    bubble = place["bubble"]
+    assert place["height"] > place["window"][1] / 3, place          # a tall bubble
+    assert bubble[0] >= 0 and bubble[2] <= place["window"][0], place
+    assert place["covers"] == [], place
+    assert not overlap(bubble, place["side"]), place
+    assert not overlap(bubble, place["phrase"]) and not overlap(bubble, place["control"]), place
+    assert bubble[2] <= place["phrase"][0], place                    # beside it, on the free side
 
 
 def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_seen):

@@ -62,8 +62,9 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   the page: focus returns to a ⓘ with ``preventScroll``;
 - places it so it **never covers the field it explains** (the field's
   component, by its ``elem_id``; else the table row, the key-value row's key
-  and value, or the line the ⓘ sits in): beside that field, then above it, then below it, the first that fits
-  the window without overlapping it; failing all, narrower beside it, or on
+  and value, or the line the ⓘ sits in): beside that field, then above it, then below it; of the sides
+  that fit the window without overlapping it, the one that lies over the fewest drawn controls (R-HELP:
+  a bubble covers no control), the first in that order among equals; failing all, narrower beside it, or on
   the side with more room with its height capped (a long text scrolls
   inside); at most 320 px wide (`BUBBLE_MAX_WIDTH`), the ⓘ's hit target at
   least 24 × 24 px;
@@ -599,6 +600,30 @@ _HELP_JS = r"""
   function overlaps(a, b) {
     return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
   }
+  // **How many drawn controls each placement would lie over** (R-HELP: a bubble covers no
+  // control): every button, field, select, link and choice in view (not inside the bubble,
+  // not its ⓘ, not hidden, not scrolled out of its region), by its box, a pixel's slack at
+  // each edge so a placement that only meets a control's edge is no cover.
+  var CONTROLS = 'button, input:not([type=hidden]), select, textarea, a[href], [role=radio], [role=checkbox]';
+  var lastSide = null;
+  function coveredCounts(places) {
+    var counts = places.map(function () { return 0; });
+    var all = document.querySelectorAll(CONTROLS);
+    for (var i = 0; i < all.length; i++) {
+      var c = all[i];
+      if (c === anchor || (bubble && bubble.contains(c))) { continue; }
+      var r = c.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) { continue; }
+      var q = {left: r.left + 1, top: r.top + 1, right: r.right - 1, bottom: r.bottom - 1}, hit = [];
+      for (var k = 0; k < places.length; k++) {
+        var p = places[k];
+        if (overlaps(q, {left: p.left, top: p.top, right: p.left + p.w, bottom: p.top + p.h})) { hit.push(k); }
+      }
+      if (!hit.length || getComputedStyle(c).visibility === 'hidden' || outOfView(c)) { continue; }
+      for (var h = 0; h < hit.length; h++) { counts[hit[h]] += 1; }
+    }
+    return counts;
+  }
   // Whether a ⓘ is out of view: not drawn, or wholly outside the window or
   // the visible part of a region it scrolls in (an ancestor that clips its
   // overflow; one that does not hold an absolutely or fixed positioned box
@@ -657,28 +682,47 @@ _HELP_JS = r"""
     var cx = a.left + a.width / 2, cy = a.top + a.height / 2;
     function x(left, w) { return Math.min(Math.max(EDGE, left), vw - w - EDGE); }
     function y(top, h) { return Math.min(Math.max(EDGE, top), vh - h - EDGE); }
-    function at(side, w, h, g) {
+    // A side, its bubble aligned from the ⓘ (its start) or ending at it (`end`, Floating UI's
+    // "-end" alignment): beside, it runs down from the ⓘ or ends under it; above or below, it
+    // runs right from the ⓘ or ends past it.
+    function at(side, w, h, g, end) {
       g = g || f;
-      if (side === 'right') { return {side: side, left: g.right + GAP, top: y(cy - 24, h), w: w, h: h}; }
-      if (side === 'left') { return {side: side, left: g.left - GAP - w, top: y(cy - 24, h), w: w, h: h}; }
-      if (side === 'above') { return {side: side, left: x(cx - 24, w), top: g.top - GAP - h, w: w, h: h}; }
-      return {side: side, left: x(cx - 24, w), top: g.bottom + GAP, w: w, h: h};
+      var top = end ? y(cy + 24 - h, h) : y(cy - 24, h), left = end ? x(cx + 24 - w, w) : x(cx - 24, w);
+      if (side === 'right') { return {side: side, left: g.right + GAP, top: top, w: w, h: h}; }
+      if (side === 'left') { return {side: side, left: g.left - GAP - w, top: top, w: w, h: h}; }
+      if (side === 'above') { return {side: side, left: left, top: g.top - GAP - h, w: w, h: h}; }
+      return {side: side, left: left, top: g.bottom + GAP, w: w, h: h};
     }
     function fits(p, g) {
       return p.left >= EDGE && p.top >= EDGE && p.left + p.w <= vw - EDGE &&
         p.top + p.h <= vh - EDGE &&
         !overlaps({left: p.left, top: p.top, right: p.left + p.w, bottom: p.top + p.h}, g);
     }
-    // Beside the field, then above it, then below it: the first that fits
-    // the window and leaves the field uncovered; a region's ⓘ tries the
-    // whole region first.
-    var sides = ['right', 'left', 'above', 'below'], chosen = null;
+    // Beside the field, then above it, then below it, each aligned from the
+    // ⓘ, then ending at it: of the places that fit the window and leave the
+    // field uncovered, the one that lies over the fewest drawn controls
+    // (R-HELP: a bubble covers no control), the first in that order among
+    // equals, the place it stands in now kept while no other covers fewer
+    // (no flip while the page scrolls); a region's ⓘ tries the whole region
+    // first.
+    var sides = ['right', 'left', 'above', 'below'], chosen = null, fitting = [];
     var guards = region ? [region, f] : [f];
-    for (var k = 0; k < guards.length && !chosen; k++) {
-      for (var i = 0; i < sides.length && !chosen; i++) {
-        var p = at(sides[i], bw, bh, guards[k]);
-        if (fits(p, guards[k])) { chosen = p; }
+    for (var k = 0; k < guards.length; k++) {
+      for (var i = 0; i < sides.length; i++) {
+        for (var e = 0; e < 2; e++) {
+          var p = at(sides[i], bw, bh, guards[k], e === 1);
+          p.place = sides[i] + (e ? '-end' : '');
+          if (fits(p, guards[k])) { fitting.push(p); }
+        }
       }
+    }
+    if (fitting.length) {
+      var counts = coveredCounts(fitting), best = 0;
+      for (var j = 1; j < fitting.length; j++) {
+        if (counts[j] < counts[best] || (counts[j] === counts[best] && fitting[j].place === lastSide &&
+            fitting[best].place !== lastSide)) { best = j; }
+      }
+      chosen = fitting[best];
     }
     if (!chosen) {
       // Narrower beside it, on the side with room for 220 px or more.
@@ -698,6 +742,7 @@ _HELP_JS = r"""
       bubble.style.maxHeight = Math.max(48, up ? roomAbove : roomBelow) + 'px';
       chosen = at(up ? 'above' : 'below', bubble.offsetWidth, bubble.offsetHeight);
     }
+    lastSide = chosen.place || chosen.side;
     bubble.style.left = chosen.left + 'px';
     bubble.style.top = Math.max(EDGE, chosen.top) + 'px';
     bubble.classList.toggle('shep-up', chosen.side === 'above');
@@ -752,6 +797,7 @@ _HELP_JS = r"""
     clearTimeout(openTimer); previewFor = null;
     if (anchor !== btn || !bubble || bubble.hidden) { byPointer = false; yielded = false; }
     if (anchor && anchor !== btn) { anchor.setAttribute('aria-expanded', 'false'); pinned = false; }
+    if (anchor !== btn) { lastSide = null; }
     anchor = btn; anchorKey = btn.getAttribute('data-help');
     pinned = pin ? true : pinned;
     byPointer = byPointer || !!viaPointer;
@@ -784,7 +830,7 @@ _HELP_JS = r"""
       bubble.contains(document.activeElement) ? anchor : null;
     if (bubble) { bubble.hidden = true; bubble.style.visibility = ''; }
     if (anchor) { anchor.setAttribute('aria-expanded', 'false'); }
-    anchor = null; anchorKey = null; pinned = false; byPointer = false; yielded = false;
+    anchor = null; anchorKey = null; pinned = false; byPointer = false; yielded = false; lastSide = null;
     setRole();
     claim();
     if (back) { returning = back; back.focus({preventScroll: true}); returning = null; }

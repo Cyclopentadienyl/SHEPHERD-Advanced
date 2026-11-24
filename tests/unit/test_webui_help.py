@@ -973,8 +973,19 @@ def test_a_focus_preview_lets_the_click_through_to_the_control_under_it(tmp_path
     registry.field("epochs", "Epochs", "How many passes over the training pairs.")
     registry.field("seed", "Seed", "The random seed of the weights' start and the sampling.\n"
                    "Reference: 33. A provisional default from the source.\n- Default: 42.")
-    radio = ('<label style="display: block; padding: 6px 0"><input type="radio" name="bb" '
-             'value="{v}"{c}> {t}</label>')
+    # The Seed field stands among the Graph backbone's radios on every side (a 3 x 3 grid,
+    # Seed in its middle cell, Seed first in the page's order so Tab from Epochs meets its ⓘ):
+    # wherever the one placement puts the preview (R-HELP: the side over the fewest controls),
+    # it lies over a radio, the scene T08 met.
+    choices = [("keep", " checked", "Trained"), ("graph_side", "", "Frozen"),
+               ("encoder", "", "Encoder only"), ("head", "", "Head only"),
+               ("off_a", "", "Option A"), ("off_b", "", "Option B"), ("off_c", "", "Option C"),
+               ("off_d", "", "Option D")]
+    cells = ["1 / 1", "1 / 2", "1 / 3", "2 / 1", "2 / 3", "3 / 1", "3 / 2", "3 / 3"]
+    radios = "".join(
+        f'<label style="grid-area: {cell}; display: flex; align-items: center; justify-content: '
+        f'center; border: 1px dashed #ccc"><input type="radio" name="bb" value="{v}"{c}> {t}</label>'
+        for (v, c, t), cell in zip(choices, cells))
     page = tmp_path / "through.html"
     page.write_text(
         f"""<!doctype html><html><head><meta charset="utf-8">
@@ -982,13 +993,11 @@ def test_a_focus_preview_lets_the_click_through_to_the_control_under_it(tmp_path
 <div style="padding: 20px 40px">
 <div class="block" id="epochs" style="width: 300px; padding: 12px; border: 1px solid #ccc">
 <label class="block" style="display: block"><span data-testid="block-info">Epochs</span><input id="ep"></label></div>
-<div style="display: flex; flex-wrap: wrap; gap: 24px; margin-top: 16px; align-items: flex-start">
-<div class="block" id="seed" style="width: 300px; padding: 12px; border: 1px solid #ccc">
+<div id="backbone" role="radiogroup" aria-label="Graph backbone" style="display: grid; margin-top: 16px;
+grid-template-columns: 360px 300px 360px; grid-template-rows: 280px auto 280px; gap: 8px">
+<div class="block" id="seed" style="grid-area: 2 / 2; padding: 12px; border: 1px solid #ccc">
 <label class="block" style="display: block"><span data-testid="block-info">Seed</span><input id="sd"></label></div>
-<fieldset id="backbone" style="width: 300px; margin: 0; padding: 8px 12px; border: 1px solid #ccc">
-<legend>Graph backbone</legend>{radio.format(v="keep", c=" checked", t="Trained")}
-{radio.format(v="graph_side", c="", t="Frozen")}{radio.format(v="encoder", c="", t="Encoder only")}
-{radio.format(v="head", c="", t="Head only")}</fieldset></div></div>
+{radios}</div></div>
 {registry.texts_html()}</body></html>""", encoding="utf-8")
     script = tmp_path / "through.cjs"
     script.write_text(_THROUGH_JS, encoding="utf-8")
