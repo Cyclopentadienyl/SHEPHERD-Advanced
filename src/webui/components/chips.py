@@ -193,6 +193,13 @@ _LOCK_SVG = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"
 #: (`renderers.reason_phrase`, R-WHY).
 D8_TEXT_ID = "shep-chip-d8-text"
 GPU_TEXT_ID = "shep-chip-gpu-text"
+#: **What the D8 chip's phrase opens** (R-WHY's ``d8`` phrase; R-HELP, the owner's C9 of
+#: 2026-11-24, the L8 close): the hidden part of the same chip that answers the phrase's
+#: question, why this control is off for this request (`Chip.why`), apart from the chip's
+#: whole ⓘ, whose list of every operator control the header's ⓘ keeps. The whole ⓘ in a
+#: phrase's bubble was 320 x 507 px, over the bubble's budget, and covered controls in every
+#: place it could open at 1280 x 720.
+D8_WHY_ID = "shep-chip-d8-why"
 #: Each chip's ⓘ title, its bubble's title wherever it opens.
 CHIP_TITLES = {"d8": "Operator controls", "gpu": "GPU jobs"}
 
@@ -221,6 +228,10 @@ class Chip(NamedTuple):
     #: The cause a dimmed control's phrase names this chip's reason by
     #: (``data-reason``: `renderers.REASONS`, R-WHY), "" for none.
     reason: str = ""
+    #: What that phrase opens, when it is not the whole ⓘ (`D8_WHY_ID`): the state and
+    #: this request's own reason, never the list of what the chip covers; "" for the
+    #: whole ⓘ.
+    why: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -231,14 +242,19 @@ def d8_chip(access: OperatorAccess) -> Chip:
     need (`D8_HOW`). Refused: the controls, then this request's own reason,
     D8's words (also the API's refusal): what failed and what to do, its
     codes in the bubble's one trailing Ref line (`reason_parts`), so the
-    general conditions are not said again beside the one that failed."""
+    general conditions are not said again beside the one that failed.
+    **What a refused control's phrase opens** (`Chip.why`, `D8_WHY_ID`): the
+    state as its lead, then D8's own reason for this request (what failed,
+    then the next step) and the same Ref line; the list of controls stays in
+    the chip's ⓘ."""
     if access.allowed:
         return Chip("on", D8_ON, f"{D8_ON_LEAD}\n{D8_SCOPE}\n\n{D8_HOW}")
     short = D8_SHORT.get(access.condition, "request not readable")
     text, ref = reason_parts(access.reason)
+    ref_line = f"{REF_PREFIX} {ref or D8_HOW.rpartition(REF_PREFIX)[2].strip()}"
     return Chip("readonly", f"Read-only: {short}",
-                f"{D8_READONLY_LEAD}\n{D8_SCOPE}\n\nFor this request: {text}\n"
-                f"{REF_PREFIX} {ref or D8_HOW.rpartition(REF_PREFIX)[2].strip()}", reason="d8")
+                f"{D8_READONLY_LEAD}\n{D8_SCOPE}\n\nFor this request: {text}\n{ref_line}",
+                reason="d8", why=f"{D8_READONLY_LEAD.rstrip(':')}.\n{text}\n{ref_line}")
 
 
 # ---------------------------------------------------------------------------
@@ -389,12 +405,16 @@ def chip_html(chip: Chip, *, which: str) -> str:
         lead = '<span class="shep-dot" aria-hidden="true"></span>'
     words = html.escape(chip.text)
     reason = f' data-reason="{html.escape(chip.reason)}"' if chip.reason else ""
+    # The D8 chip always carries what its phrase opens (a phrase drawn by a page's answer may
+    # meet a chip read on another tick): its `why`, or its whole ⓘ while nothing is refused.
+    why = (f'<span id="{D8_WHY_ID}" hidden>{html.escape(chip.why or chip.detail)}</span>'
+           if which == "d8" else "")
     return (
         f'<span class="shep-chip shep-chip-{which} shep-chip-{chip.kind}" '
         f'data-state="{chip.kind}"{reason}>{lead}'
         f'<span class="shep-chip-text" title="{words}">{words}</span>'
         f'{help_button(f"chip-{which}", title, describedby=text_id, extra_class="shep-i-chip")}'
-        f'<span id="{text_id}" hidden>{html.escape(chip.detail)}</span></span>'
+        f'<span id="{text_id}" hidden>{html.escape(chip.detail)}</span>{why}</span>'
     )
 
 
@@ -444,6 +464,7 @@ __all__ = [
     "CHIPS_PLACEHOLDER",
     "Chip",
     "D8_HOW",
+    "D8_WHY_ID",
     "D8_ON",
     "D8_SCOPE",
     "D8_SHORT",

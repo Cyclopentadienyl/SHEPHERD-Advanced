@@ -4173,7 +4173,7 @@ const QUEUE_JS = __QUEUE_JS__;
     const flat = (t) => (t || '').replace(/\s+/g, '');
     const bubble = document.getElementById('shep-help-bubble'), p = document.querySelector('#pc-why-d8 button.shep-why');
     return { bubble: flat(bubble.querySelector('.shep-bubble-bd').textContent),
-             chip: flat(document.getElementById('shep-chip-d8-text').textContent),
+             chip: flat(document.querySelector('#shep-chips #shep-chip-d8-why').textContent),
              title: bubble.querySelector('.shep-bubble-title').textContent, expanded: p.getAttribute('aria-expanded'),
              bubbles: document.querySelectorAll('.shep-bubble').length };
   });
@@ -4319,7 +4319,8 @@ def test_a_dimmed_controls_phrase_opens_or_locates_its_one_reason(pieces_seen):
     """R-WHY (the owner's D6 of 2026-11-24): "see above" pointed at a reason that may have
     scrolled away or sit in another region, and the full reason was repeated beside each
     button. A phrase keyed to the D8 chip opens the one help bubble at the phrase with the
-    chip's hidden text as it is now (no copy, no second tooltip); one keyed to a notice brings
+    chip's hidden text as it is now (no copy, no second tooltip; the part of it that answers the
+    phrase, `chips.D8_WHY_ID`, the L8 close's C9); one keyed to a notice brings
     the notice into view and moves the focus to its link; the dimmed button is described by
     its phrase (``aria-describedby``, set by the shell's head script from ``data-for``)."""
     why = pieces_seen["why"]

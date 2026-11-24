@@ -66,7 +66,7 @@ from src.evaluation.caveats import (
 )
 from src.utils.run_environment import native_identity_lines
 from src.utils.run_plan import recorded_frozen_parts
-from src.webui.components.chips import CHIP_TITLES, D8_TEXT_ID, GPU_TEXT_ID, LOCK, OPERATOR_ONLY
+from src.webui.components.chips import CHIP_TITLES, D8_WHY_ID, GPU_TEXT_ID, LOCK, OPERATOR_ONLY
 from src.webui.components.help import copy_button, help_button
 
 #: Hex digits of a digest shown by default.
@@ -1238,7 +1238,8 @@ class Reason(NamedTuple):
     2026-11-24): its `phrase` (five words at most, beside each control it
     dims: the need or who can act, never "disabled"), and where its whole
     reason is drawn once per screen, its `source`: ``"chip"``, a header
-    chip's hidden ⓘ text (`ref`, its document id; `title`, the bubble's
+    chip's hidden text (`ref`, its document id: the chip's ⓘ, or the part of
+    it that answers the phrase, `chips.D8_WHY_ID`; `title`, the bubble's
     title), or ``"notice"``, the setting's notice (`ref`, its key: the
     page's ``data-notice``)."""
 
@@ -1253,7 +1254,7 @@ class Reason(NamedTuple):
 #: usable is a cause of its own (``*_unusable``), apart from the same
 #: setting unset.
 REASONS: Dict[str, Reason] = {
-    "d8": Reason(OPERATOR_ONLY, "chip", D8_TEXT_ID, CHIP_TITLES["d8"]),
+    "d8": Reason(OPERATOR_ONLY, "chip", D8_WHY_ID, CHIP_TITLES["d8"]),
     "workspaces_root": Reason("Needs a workspaces folder", "notice", WORKSPACES_ROOT_NOTICE.key),
     "registry": Reason("Needs a results registry", "notice", REGISTRY_NOTICE.key),
     "intake": Reason("Needs an import folder", "notice", INTAKE_DIR_NOTICE.key),

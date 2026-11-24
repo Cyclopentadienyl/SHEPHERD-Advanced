@@ -395,6 +395,7 @@ def test_both_chips_render_with_their_i_and_its_hidden_text():
     assert html.count('class="shep-i shep-i-chip"') == 2
     assert 'aria-describedby="shep-chip-d8-text"' in html
     assert '<span id="shep-chip-d8-text" hidden>' in html
+    assert '<span id="shep-chip-d8-why" hidden>' in html          # what its phrase opens
     assert 'role="status"' in html
     assert "free" not in html.lower()
 
@@ -554,6 +555,51 @@ def test_every_chip_bubble_is_within_the_help_budget(state, chip):
     # words. A read-only chip's reason is D8's own refusal, the API's words, which may not.
     if not state.startswith("read-only"):
         assert h.budget_problems(chip.detail, h.TEXT_BUDGET) == (), (state, chip.detail)
+
+
+#: The rows a bubble draws after its lead (the WebUI skill's §7: "none or 2-4 items or term
+#: rows of one form"): its list items and its term rows, each a row of the bubble.
+def _rows(text: str) -> int:
+    from src.webui.components import help as h
+
+    return sum(line.kind == "item" or (line.kind == "para" and line.term is not None)
+               for line in h.help_lines(text))
+
+
+@pytest.mark.parametrize("state, chip", [(n, ch) for n, ch in _every_chip() if ch.reason],
+                         ids=[n for n, ch in _every_chip() if ch.reason])
+def test_what_a_chips_phrase_opens_answers_it_within_the_bubbles_budget(state, chip):
+    """C9 / R-74 (R-HELP, the owner's C9 of 2026-11-24; the L8 close): a dimmed control's phrase
+    ("Operator controls only", "GPU in use", …) opens its chip's reason in the one bubble, read
+    from the chip's HTML by the id `renderers.REASONS` names. The D8 phrase opened the chip's
+    whole ⓘ: its lead, the four rows of every operator control and the request's reason, five
+    term rows, a bubble of 320 x 507 px that covered controls wherever it could open at 1280 x 720
+    and 1850 x 960 (17 of 28 phrases in the read-only probe). What a phrase opens is now within
+    the bubble's budget (a lead, at most four rows, `help.TEXT_BUDGET`), leads with the state,
+    keeps the request's own reason word for word and ends in the chip's Ref line, so the full
+    reference stays reachable; the list of controls stays in the chip's ⓘ."""
+    import html
+    import re
+
+    from src.webui.components import help as h
+    from src.webui.components import renderers as r
+
+    reason = r.REASONS[chip.reason]
+    which = "d8" if chip.reason == "d8" else "gpu"
+    drawn = re.search(rf'<span id="{re.escape(reason.ref)}" hidden>(.*?)</span>',
+                      c.chip_html(chip, which=which), re.S)
+    assert drawn, (state, reason.ref)
+    opened = html.unescape(drawn.group(1))
+    assert h.budget_problems(opened, h.TEXT_BUDGET) == (), (state, opened)
+    assert _rows(opened) <= h.TEXT_BUDGET.items, (state, _rows(opened), opened)
+    lines = h.help_lines(opened)
+    assert lines[-1].kind == "ref" and lines[-1].text == h.help_lines(chip.detail)[-1].text, state
+    if chip.reason == "d8":
+        from src.utils.operator_access import reason_parts
+
+        assert lines[0].text == "This request may not use the operator controls.", lines[0]
+        said = reason_parts(chip.detail.split("For this request: ", 1)[1].split("\nRef:")[0])[0]
+        assert said in opened, (state, said)
 
 
 def test_the_gpu_chips_ref_line_names_the_states_and_the_scopes_references():

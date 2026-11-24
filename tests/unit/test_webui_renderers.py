@@ -1803,7 +1803,7 @@ def test_a_reason_phrase_is_five_words_at_most_keyed_and_focusable():
     assert d8.startswith('<button type="button" class="shep-why" ')
     assert 'disabled' not in d8 and 'tabindex="-1"' not in d8
     for attr in ('data-why="d8"', f'id="{r.why_id("shep-train-start")}"',
-                 'data-for="shep-train-start"', f'aria-describedby="{chips.D8_TEXT_ID}"',
+                 'data-for="shep-train-start"', f'aria-describedby="{chips.D8_WHY_ID}"',
                  f'data-help-title="{chips.CHIP_TITLES["d8"]}"'):
         assert attr in d8, (attr, d8)
     assert re.sub(r"<[^>]+>", "", d8) == "Operator controls only"
