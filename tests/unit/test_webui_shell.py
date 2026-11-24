@@ -3317,6 +3317,7 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     read in, so its scrollbar is in view whenever the box is. Both measured
     in a browser on a page of their own (Node and Playwright, skipped without)."""
     from src.webui.components import models_page, test_page
+    from src.webui.components.help import DESCRIBED_BY_JS
     from src.webui.style import FLOOR_VAR, SHELL_CSS, STACK_FLOOR_WIDTH
     from tests.fixtures.browser import node_with_playwright, run_node
 
@@ -3330,7 +3331,8 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
                        .replace("__LAYOUT__", "data-shep-layout").replace("__SHORT__", "data-shep-short")
                        .replace("__SHORT_BELOW__", "900").replace("__GO__", "{}")
                        .replace("__FLOOR_W__", "1280").replace("__FLOOR_H__", "720")
-                       .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR),
+                       .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR)
+                       .replace("__DESCRIBED_BY__", DESCRIBED_BY_JS),
                        encoding="utf-8")
     seen = run_node(_CUE_JS, tmp_path, str(css_path), str(js_path))
     assert seen["top"] == {"more": True, "mask": True}, seen
