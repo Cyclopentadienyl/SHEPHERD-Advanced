@@ -3246,8 +3246,10 @@ const { chromium } = require('playwright');
   const browser = await chromium.launch();
   const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
   const rows = Array.from({ length: 300 }, (_, i) => `<tr><th scope="row">Field ${i}</th><td>${i}</td><td>${i}</td></tr>`).join('');
+  const lines = Array.from({ length: 60 }, (_, i) => `<p style="margin: 0">Line ${i} of a region taller than its box.</p>`).join('');
   await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body>
-    <div id="cue" style="height: 200px; overflow: auto;"><div style="height: 900px"></div></div>
+    <div id="cue" style="height: 200px; overflow: auto;">${lines}</div>
+    <div id="gap" style="height: 200px; overflow: auto;"><p style="margin: 0">A first line, then blank.</p><div style="height: 900px"></div></div>
     <div id="cuex" style="width: 200px; overflow-x: auto; overflow-y: hidden;"><div style="width: 900px; height: 20px"></div></div>
     <div id="fits" style="height: 200px; overflow: auto;"><div style="height: 100px"></div></div>
     <div id="shep-page-models"><div id="shep-mp-detail" style="height: 600px; display: flex; flex-direction: column;">
@@ -3261,6 +3263,10 @@ const { chromium } = require('playwright');
   const cue = () => page.evaluate(() => { const e = document.getElementById('cue');
     return { more: e.hasAttribute('data-shep-more'), mask: getComputedStyle(e).maskImage !== 'none' }; });
   const out = { top: await cue() };
+  // R-CUE: where the edge falls in a gap a fade may not reach, the edge cue, never a fade over blank.
+  out.gap = await page.evaluate(() => { const e = document.getElementById('gap'), s = getComputedStyle(e);
+    return { more: e.hasAttribute('data-shep-more'), mask: s.maskImage !== 'none',
+             edge: e.hasAttribute('data-shep-more-edge') && /inset/.test(s.boxShadow) }; });
   out.sideways = await page.evaluate(() => { const e = document.getElementById('cuex');
     return { more: e.hasAttribute('data-shep-more-x'), mask: getComputedStyle(e).maskImage !== 'none' }; });
   out.fits = await page.evaluate(() => { const e = document.getElementById('fits');
@@ -3298,6 +3304,9 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     ``data-shep-more-x``); a region that holds its content draws no cue. No
     page opts in (the sweep's L7: Settings, Fine-tune's form, Training's charts
     and the Diagnosis fields scrolled with no cue because their pages had not).
+    R-CUE (the owner's D4 of 2026-11-24): the fade lies over lines of text; a region whose edge
+    falls in a gap no fade may reach (``#gap``) draws the one edge cue instead, never a fade over
+    the blank.
     B72-C3: Compare, 12,342 px tall, had its sideways scrollbar at its foot,
     out of reach mid-table; it is now a box no taller than the region it is
     read in, so its scrollbar is in view whenever the box is. Both measured
@@ -3320,6 +3329,7 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
                        encoding="utf-8")
     seen = run_node(_CUE_JS, tmp_path, str(css_path), str(js_path))
     assert seen["top"] == {"more": True, "mask": True}, seen
+    assert seen["gap"] == {"more": True, "mask": False, "edge": True}, seen
     assert seen["end"] == {"more": False, "mask": False}, seen
     assert seen["sideways"] == {"more": True, "mask": True}, seen
     assert seen["fits"] == {"more": False, "mask": False}, seen
@@ -4416,6 +4426,13 @@ const LOOK_JS = __LOOK_JS__;
         <button type="button" id="dis-sec" disabled>Refresh</button>
         <button type="button" class="primary" id="dis-prim" disabled style="margin-left: 120px">Load this model</button>
       </div>
+      <div class="shep-panel" id="p7" style="left: 460px; top: 700px; height: 180px">
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-boxonly" style="height: 70px"><p>A first line.</p>
+          <input type="text" style="display: block; height: 36px"><div style="height: 40px"></div><p>The next field.</p></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-lonehead" style="height: 60px"><p>A first line.</p>
+          <div style="height: 16px"></div><div class="block"><span data-testid="block-info" style="display: block; margin-bottom: 10px">Split seed</span>
+          <input type="text" style="display: block; height: 36px"></div></div>
+      </div>
       <div class="shep-panel" id="p6" style="left: 920px; top: 500px; height: 180px">
         <div class="sw" id="rh-bad"><table style="width: 520px; table-layout: fixed"><colgroup><col style="width: 150px"><col style="width: 150px"><col style="width: 220px"></colgroup>
           <tr id="rh-bad-row"><td>demo</td><td>3f56</td><td>${long}</td></tr></table></div>
@@ -4465,7 +4482,10 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     region whose overflow is only its padding), and a box whose table runs past its right edge with
     no sideways cue (and passes one with Compare's drawn cue before it). A box drawn as no box
     (``display: contents``, Gradio's blocks around Diagnosis' Top-K) hides and scrolls nothing:
-    words in one are judged, not taken as hidden for a screen reader or held by a region."""
+    words in one are judged, not taken as hidden for a screen reader or held by a region. Since
+    R-CUE (the owner's D4 of 2026-11-24) a fade is a cue only over a line of text (``#cue-boxonly``:
+    over a box's lower border and a gap, it was seen), and a region whose last line in view is a
+    field's label with its control under the edge is found (``#cue-lonehead``, ``edge-heading``)."""
     found = l7_rules_seen
     assert _hits(found, "inview", "#iv-out") and _hits(found, "inview", "#iv-nobox"), found["inview"]
     assert not _hits(found, "inview", "#iv-in"), found["inview"]
@@ -4485,8 +4505,16 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     # it); C4: a box whose overflow style scrolls but whose content fits it cuts nothing, so the
     # lines its region cuts are that region's (Fine-tune's Device radios were judged by their
     # own block's, which never scrolls).
-    assert _hits(found, "cue", "#cue-gap fades its last 28 px over nothing drawn"), found["cue"]
+    assert _hits(found, "cue", "#cue-gap fades its last 28 px over no line of text"), found["cue"]
     assert _hits(found, "cue", "#cue-inner holds"), found["cue"]
+    # R-CUE (the owner's D4 of 2026-11-24): a fade over a box's lower border and the gap under it
+    # is no cue (a control's border no longer counts, only a line of text or a field's value
+    # line), and a region whose last line in view is a field's label, its control all under the
+    # edge, seems to end at a title (Training's parameters at 1280 x 720).
+    assert _hits(found, "cue", "#cue-boxonly fades its last 28 px over no line of text"), found["cue"]
+    assert _hits(found, "edgeHead", '#cue-lonehead ends in view at the label "Split seed"'), found["edgeHead"]
+    assert not _hits(found, "cue", "#cue-lonehead"), found["cue"]
+    assert not _hits(found, "edgeHead", "#cue-good") and not _hits(found, "edgeHead", "#cue-boxonly"), found["edgeHead"]
 
 
 def test_the_clipped_rule_finds_words_a_box_cuts(l7_rules_seen):

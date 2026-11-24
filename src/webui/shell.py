@@ -1125,43 +1125,74 @@ _SHELL_JS = r"""
   var NOT_REGION = 'textarea, select, input, ul.option-list, #shep-help-bubble, #shep-help-bubble *, '
     + '.shep-rs-top, .shep-rs-wrap';
   function scrolls(v) { return v === 'auto' || v === 'scroll'; }
-  // **The fade reaches what is drawn** (the sweep's L7 check, C1): a fade over the gap between
-  // two fields reads as nothing (Diagnosis' fields at 1550 x 830 faded the gap under Patient ID,
-  // Options and Top-K unseen under it), so the bottom fade starts above the nearest thing the
-  // region draws over its edge (a line of words, a control, a graphic): FADE_VAR, its length,
-  // read by the style sheet's mask. Read along the region's start and middle, up from its edge.
-  var FADE_VAR = '__FADE_VAR__', FADE = 28, DRAWN = 'input, textarea, select, button, svg, canvas, img';
-  function shows(hit) {
-    if (hit.matches(DRAWN) || hit.closest('svg')) { return true; }
-    for (var n = hit.firstChild; n; n = n.nextSibling) {
-      if (n.nodeType === 3 && n.data.trim()) { return true; }
-    }
-    return false;
+  // **The cue reaches the last line read, and stays a cue** (R-CUE, the owner's D4 of
+  // 2026-11-24; the sweep's L7 check, C1, before it): a fade over the gap between two fields, or
+  // over a box's lower border, reads as nothing (Diagnosis' fields at 1550 x 830; Training's
+  // parameters and charts at 1280 x 720 ended in a gap and read as complete). The bottom fade
+  // reaches over the last text line the region draws above its edge (a label, a value, a field's
+  // value or placeholder line), by at least a quarter of that line: FADE_VAR, its length, read by
+  // the style sheet's mask. It stays a cue: at most about one and a half of the region's text
+  // lines (its line height), never a whole group. Where the edge falls in a gap taller than that
+  // (no text line within reach: a field's empty box, a chart's plot), no fade is drawn over the
+  // blank: the region keeps EDGE, the one content-independent edge cue the style sheet draws at
+  // its foot (Material's scrolled-under state, Apple's scroll edge effect).
+  var FADE_VAR = '__FADE_VAR__', FADE = 28, EDGE = 'data-shep-more-edge';
+  var VALUES = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=range])'
+    + ':not([type=file]), textarea, select';
+  function seenEl(e) {
+    return e.getClientRects().length > 0
+      && (!e.checkVisibility || e.checkVisibility({opacityProperty: true, visibilityProperty: true}));
   }
-  function fadeOf(el) {
-    var r = el.getBoundingClientRect(), edge = r.top + el.clientTop + el.clientHeight;
-    var xs = [r.left + el.clientLeft + 20, r.left + el.clientLeft + el.clientWidth / 2];
-    for (var d = 2; d < el.clientHeight / 2; d += 4) {
-      for (var i = 0; i < xs.length; i++) {
-        var hit = document.elementFromPoint(xs[i], edge - d), q = hit && hit.getBoundingClientRect();
-        // Drawn over the edge by a quarter of its own height or more (a row only touching it is
-        // not seen under a fade either).
-        if (hit && hit !== el && el.contains(hit) && shows(hit) && edge - q.top >= q.height / 4 + 1) {
-          return Math.max(FADE, d + 20);
-        }
-      }
+  // The lowest text line box drawn in `el` that starts above its edge by a quarter of its height
+  // or more, among the lines that end no higher than `reach` above the edge; null for none.
+  function lastLine(el, top, edge, reach) {
+    var last = null;
+    function take(q) {
+      if (q.width < 1 || q.height < 1 || q.bottom <= top || q.bottom <= edge - reach
+          || q.top > edge - q.height / 4) { return; }
+      if (!last || q.bottom > last.bottom) { last = q; }
     }
-    return FADE;
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), range = document.createRange();
+    for (var n = walker.nextNode(); n; n = walker.nextNode()) {
+      var p = n.parentElement;
+      if (!p || !n.data.trim()) { continue; }
+      var pr = p.getBoundingClientRect();
+      if (pr.bottom <= edge - reach || pr.top > edge || !seenEl(p)) { continue; }
+      range.selectNodeContents(n);
+      var rs = range.getClientRects();
+      for (var i = 0; i < rs.length; i++) { take(rs[i]); }
+    }
+    var fields = el.querySelectorAll(VALUES);
+    for (var j = 0; j < fields.length; j++) {
+      var f = fields[j];
+      if (!(f.value || f.placeholder)) { continue; }
+      var r = f.getBoundingClientRect();
+      if (r.bottom <= edge - reach || r.top > edge || !seenEl(f)) { continue; }
+      var fs = getComputedStyle(f);
+      var above = (parseFloat(fs.paddingTop) || 0) + (parseFloat(fs.borderTopWidth) || 0);
+      var below = (parseFloat(fs.paddingBottom) || 0) + (parseFloat(fs.borderBottomWidth) || 0);
+      take({top: r.top + above, bottom: r.bottom - below, width: r.width, height: r.height - above - below});
+    }
+    return last;
+  }
+  // The fade's length in px, or 0 where the edge falls in a gap (EDGE is drawn instead).
+  function fadeOf(el) {
+    var r = el.getBoundingClientRect(), top = r.top + el.clientTop, edge = top + el.clientHeight;
+    var s = getComputedStyle(el), lh = parseFloat(s.lineHeight) || 1.45 * (parseFloat(s.fontSize) || 15);
+    var most = Math.max(1.5 * lh, FADE), line = lastLine(el, top, edge, most);
+    if (!line || edge - line.bottom + line.height / 4 > most) { return 0; }
+    return Math.min(most, Math.max(FADE, Math.ceil(edge - line.bottom + line.height / 2)));
   }
   function cue(el) {
     var s = getComputedStyle(el);
     var more = scrolls(s.overflowY) && el.scrollHeight - el.scrollTop - el.clientHeight > 1;
     var side = scrolls(s.overflowX) && el.scrollWidth - el.scrollLeft - el.clientWidth > 1;
-    var fade = more ? fadeOf(el) + 'px' : '';
+    var length = more ? fadeOf(el) : 0, fade = length ? length + 'px' : '';
     if (el.style.getPropertyValue(FADE_VAR) !== fade) {
       if (fade) { el.style.setProperty(FADE_VAR, fade); } else { el.style.removeProperty(FADE_VAR); }
     }
     if (el.hasAttribute(MORE) !== more) { el.toggleAttribute(MORE, more); }
+    if (el.hasAttribute(EDGE) !== (more && !length)) { el.toggleAttribute(EDGE, more && !length); }
     if (el.hasAttribute(MORE_X) !== side) { el.toggleAttribute(MORE_X, side); }
     // Its content may change size with no change this pass listens to (a chart drawn again at
     // its new width): a region marked once is watched for that too.

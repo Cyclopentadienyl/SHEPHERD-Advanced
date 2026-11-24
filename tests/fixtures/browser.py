@@ -483,7 +483,7 @@ LOOK_JS = r"""
     const scope = tab || document.body, out = { beside: [], narrow: [], overlap: [], orphan: [], centred: [],
       split: [], edge: [], clipped: [], empty: [], help: [], notices: {}, tabs: null, inview: [], cue: [],
       wrapEnd: [], disabled: [], token: [], sepEnd: [], chain: [], rowTop: [], rowCtl: [], rowHeight: [],
-      sideways: [] };
+      sideways: [], edgeHead: [] };
     const panelOf = (e) => panels.findIndex((p) => p.contains(e));
     /* A text's region for `beside`: its panel, else the outermost bar it is in (Training's run
        bar is no panel), else none (-1 on a page with no panels). */
@@ -689,9 +689,13 @@ LOOK_JS = r"""
        the document scrolls down to what is under the window, never sideways;
      - cue: a scroll region (the page's own tab item included, never the document) whose drawn
        content runs past its edge, below it with no scroll cue (the shared R-73 cue,
-       ``shep-scroll-cue``: a mask drawn while more is below), sideways with no sideways cue (a
-       mask, or the drawn cue just before it, Compare's ``shep-rs-cue``); what runs past a
-       nested region is that region's own;
+       ``shep-scroll-cue``: a mask drawn while more is below, or R-CUE's edge cue,
+       ``data-shep-more-edge``, where the edge falls in a gap), or with a fade that lies over no
+       line of text (a gap, a box's border, a graphic's blank: R-CUE, the owner's D4 of
+       2026-11-24), sideways with no sideways cue (a mask, or the drawn cue just before it,
+       Compare's ``shep-rs-cue``); what runs past a nested region is that region's own;
+     - edgeHead (R-CUE): a scroll region whose last line in view is a heading or a field's label
+       while all of its controls lie under the edge;
      - clipped (text): a text line cut by an ancestor that hides its overflow in that axis (no
        scroll region of that axis between them), a cut to an ellipsis included unless the whole
        words are its ``title``;
@@ -750,6 +754,23 @@ LOOK_JS = r"""
       quiet.set(e, found);
       return found;
     };
+    // The lines of text a page draws (each line box of its words, and a field's value or
+    // placeholder line: its content box), with the element each belongs to (R-CUE).
+    const valueLine = (c) => {
+      if (!c.matches('input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]), textarea, select')
+          || !(c.value || c.placeholder)) { return null; }
+      const r = c.getBoundingClientRect(), s = getComputedStyle(c);
+      const above = parseFloat(s.paddingTop) + parseFloat(s.borderTopWidth), under = parseFloat(s.paddingBottom) + parseFloat(s.borderBottomWidth);
+      return { left: r.left, right: r.right, width: r.width, top: r.top + above, bottom: r.bottom - under, height: r.height - above - under };
+    };
+    const lines = [...texts.flatMap((x) => x.rects.map((r) => ({ el: x.el, r, t: x.t }))),
+                   ...ctl.map((c) => ({ el: c, r: valueLine(c), t: say(c) })).filter((it) => it.r)]
+      .filter((it) => it.r.width > 0.5 && it.r.height > 0.5 && !unseen(it.el));
+    // The edge cue the shell draws where a region's edge falls in a gap (R-CUE): its mark and the
+    // style sheet's inset shadow, drawn.
+    const edgeCue = (e) => e.hasAttribute('data-shep-more-edge') && /inset/.test(getComputedStyle(e).boxShadow);
+    // A heading or a field's label (what a region must not end at alone, R-CUE).
+    const HEADS = 'h1, h2, h3, h4, h5, h6, [role=heading], legend, [data-testid="block-info"]';
     // What a page draws, each line of text and each control, with the element it belongs to.
     const items = [...texts.flatMap((x) => x.rects.map((r) => ({ el: x.el, r, t: x.t }))),
                    ...ctl.map((c) => ({ el: c, r: c.getBoundingClientRect(), t: say(c) }))]
@@ -822,29 +843,50 @@ LOOK_JS = r"""
       const box = pad(g), mine = items.filter((it) => g.contains(it.el));
       const below = sy ? mine.filter((it) => scroller(it.el, 'y') === g && it.r.bottom > box.bottom + past(it.r))
         .sort((a, b) => a.r.top - b.r.top) : [];
-      if (sy && !masked(g)) {
+      if (sy && below.length && edgeCue(g)) {
+        // R-CUE's gap case: the region's foot draws the one content-independent edge cue.
+      } else if (sy && !masked(g)) {
         if (below.length) {
           out.cue.push(`${named(g)} holds ${Math.round(Math.max(...below.map((it) => it.r.bottom)) - box.bottom)} px `
             + `of content under its edge with no scroll cue (first: "${clip(below[0].t, 30)}")`);
         }
       } else if (below.length) {
-        // A cue is seen only where it fades something drawn: the fade (its length read from the
-        // region's own mask) over a gap between fields reads as nothing, the next field under the
-        // edge unseen (the sweep's L7 check, C1: Diagnosis' fields at 1550 x 830 faded the 22 px
-        // gap under Patient ID, Options and Top-K hidden under it). A line or control of the
-        // region drawn in the fade by a quarter of its own height or more shows it, and so does a
-        // drawn graphic (a chart's plot: an svg, a canvas or an image) by a quarter of the fade.
+        // A cue is seen only where it fades a text line (R-CUE, the owner's D4 of 2026-11-24; the
+        // sweep's L7 check, C1, before it): the fade (its length read from the region's own mask)
+        // over a gap between fields, a box's lower border or a graphic's blank reads as nothing,
+        // the next field under the edge unseen. A line of words or a field's value line drawn in
+        // the fade by a quarter of its own height or more shows it.
         const m = /calc\(100% - ([\d.]+)px\)/.exec(String(getComputedStyle(g).maskImage || getComputedStyle(g).webkitMaskImage));
         const fade = m ? parseFloat(m[1]) : 0, top = box.bottom - fade;
         const into = (r) => Math.min(r.bottom, box.bottom) - Math.max(r.top, top);
-        const seen = mine.some((it) => scroller(it.el, 'y') === g && into(it.r) >= past(it.r))
-          || [...g.querySelectorAll('svg, canvas, img')].some((x) => drawn(x) && visible(x)
-            && x.getBoundingClientRect().width > 1 && scroller(x, 'y') === g
-            && into(x.getBoundingClientRect()) >= fade / 4);
+        const seen = lines.some((it) => g.contains(it.el) && scroller(it.el, 'y') === g && into(it.r) >= past(it.r));
         if (fade > 0 && !seen) {
-          out.cue.push(`${named(g)} fades its last ${Math.round(fade)} px over nothing drawn: what lies under `
+          out.cue.push(`${named(g)} fades its last ${Math.round(fade)} px over no line of text: what lies under `
             + `its edge starts ${Math.round(below[0].r.top - box.bottom)} px below it, no cue seen (first: `
             + `"${clip(below[0].t, 30)}")`);
+        }
+      }
+      // edgeHead (R-CUE): the last line in view is a heading or a field's label while everything
+      // it heads (its controls: a field's own, a heading's up to the next heading) lies under the
+      // edge, so the region seems to end at a title.
+      if (sy && below.length) {
+        const shownLines = lines.filter((it) => g.contains(it.el) && scroller(it.el, 'y') === g
+          && it.r.top < box.bottom - past(it.r) && it.r.bottom > box.top);
+        const lastShown = shownLines.reduce((a, b) => (!a || b.r.top > a.r.top ? b : a), null);
+        const head = lastShown && lastShown.el.closest(HEADS);
+        if (head && g.contains(head)) {
+          const field = head.matches('[data-testid="block-info"]') ? head.closest('.block') : null;
+          const next = field ? null : [...g.querySelectorAll(HEADS)].find((h) => h !== head
+            && !h.matches('[data-testid="block-info"]')
+            && (head.compareDocumentPosition(h) & Node.DOCUMENT_POSITION_FOLLOWING));
+          const own = ctl.filter((c) => !c.matches('.shep-i, .shep-copy, .shep-help, button.shep-why')
+            && (field ? field.contains(c) : ((head.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING)
+              && !head.contains(c) && (!next || (c.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING)))));
+          if (own.length && own.every((c) => c.getBoundingClientRect().top >= box.bottom - 1)) {
+            out.edgeHead.push(`${named(g)} ends in view at ${field ? 'the label' : 'the heading'} "${clip(lastShown.t, 30)}" `
+              + `(${named(head)}), its ${own.length} control${own.length > 1 ? 's' : ''} all under the edge `
+              + `(first: ${named(own[0])})`);
+          }
         }
       }
       const before = g.previousElementSibling;
@@ -1620,13 +1662,13 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
 LAYOUT_RULES = ("beside", "narrow-box", "overlap", "orphan", "centred", "split-group", "edge",
                 "clipped", "empty-region", "help-on-page", "notice-repeat", "tab-groups", "in-view",
                 "scroll-cue", "wrap-end", "disabled-reason", "token-break", "sep-end", "chain-break",
-                "row-top", "row-control-top", "row-height", "sideways-scroll", "floor")
+                "row-top", "row-control-top", "row-height", "sideways-scroll", "floor", "edge-heading")
 _LAYOUT_KEYS = {"beside": "beside", "narrow-box": "narrow", "overlap": "overlap", "orphan": "orphan",
                 "centred": "centred", "split-group": "split", "edge": "edge", "clipped": "clipped",
                 "empty-region": "empty", "help-on-page": "help", "scroll-cue": "cue",
                 "wrap-end": "wrapEnd", "disabled-reason": "disabled", "token-break": "token",
                 "sep-end": "sepEnd", "chain-break": "chain", "row-top": "rowTop",
-                "row-control-top": "rowCtl", "row-height": "rowHeight"}
+                "row-control-top": "rowCtl", "row-height": "rowHeight", "edge-heading": "edgeHead"}
 #: The rules held only at or above the display floor (`at_floor`): below it the layout is the
 #: floor's and the document scrolls, so what lies past the window is reached by that scroll.
 _AT_FLOOR_KEYS = {"in-view": "inview", "sideways-scroll": "sideways"}
@@ -1699,8 +1741,12 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       text line of the page drawn past the window's bottom or right edge that no scroll region in
       view holds;
     - ``scroll-cue``: a scroll region whose drawn content runs past its edge with no cue: below
-      it, no R-73 scroll cue (``shep-scroll-cue``'s mask); sideways, no mask and no drawn cue
-      just before it (Compare's ``shep-rs-cue``): a table wider than its panel, its cells cut;
+      it, no R-73 scroll cue (``shep-scroll-cue``'s mask, or R-CUE's edge cue where the edge
+      falls in a gap) or a fade over no line of text (a gap, a box's border, a graphic's blank);
+      sideways, no mask and no drawn cue just before it (Compare's ``shep-rs-cue``): a table
+      wider than its panel, its cells cut;
+    - ``edge-heading`` (R-CUE, the owner's D4 of 2026-11-24): a scroll region whose last line in
+      view is a heading or a field's label while all of its controls lie under the edge;
     - ``clipped`` also holds a text line cut by an ancestor that hides its overflow in that axis,
       a cut to an ellipsis included unless its whole words are its ``title``;
     - ``wrap-end``: a later line of a bar's groups that does not start on the bar's start edge;

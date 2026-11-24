@@ -181,9 +181,11 @@ FIT_WANT = "--shep-fit-want"
 #: and no window size decides it: the box's own height, the column's and the
 #: region's floor do.
 #: **The bottom scroll cue's fade length** (a custom property, px): the shell's layout pass sets
-#: it on a region with more below so the fade reaches back over the nearest thing the region
-#: draws at its edge (28 px at least; the sweep's L7 check, C1: a fade over the gap between two
-#: fields reads as nothing).
+#: it on a region with more below so the fade reaches back over the last text line the region
+#: draws above its edge (28 px at least; the sweep's L7 check, C1: a fade over the gap between two
+#: fields reads as nothing), and at most about one and a half text lines (R-CUE, the owner's D4 of
+#: 2026-11-24). Where no line is in that reach, the region's edge cue (``data-shep-more-edge``) is
+#: drawn instead of a fade.
 FADE_VAR = "--shep-more-fade"
 FOLD = "shep-fold"
 FOLD_ROOM = "shep-fold-room"
@@ -1399,6 +1401,20 @@ html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
     linear-gradient(to right, #000 calc(100% - 28px), transparent);
   -webkit-mask-composite: source-in;
   mask-composite: intersect;
+}
+/* **The edge cue** (R-CUE, the owner's D4 of 2026-11-24): where a region's edge falls in a gap
+   taller than a fade may reach (the shell's ``fadeOf``: about one and a half text lines), no fade is
+   drawn over the blank; the region's foot draws one shared cue that says nothing of its content, a
+   hairline and a soft shadow inside its edge (Material's scrolled-under state, Apple's scroll edge
+   effect), while more lies below (``data-shep-more-edge``, kept by the same pass). A fade sideways
+   stays. */
+[data-shep-more][data-shep-more-edge] {
+  -webkit-mask-image: none; mask-image: none;
+  box-shadow: inset 0 -1px 0 var(--shep-border-2), inset 0 -16px 12px -12px rgba(20, 24, 40, .16);
+}
+[data-shep-more][data-shep-more-edge][data-shep-more-x] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
 }
 /* **A box folded** (`FOLD`, OPS-FIX-N1): its column has not the room for it whole beside the region
    at its floor (`FOLD_FLOOR`), so its long parts are not drawn; the box's own details hold them. */
