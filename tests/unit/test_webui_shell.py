@@ -3722,14 +3722,16 @@ _HEADER_FACTS_JS = r"""() => {
   const words = (s) => { const e = document.querySelector(s); if (!e || !e.getClientRects().length) { return null; }
     const r = document.createRange(); r.selectNodeContents(e);
     const q = [...r.getClientRects()].filter((x) => x.width > 1 && x.height > 1);
-    return q.length ? { top: q[0].top, mid: (q[0].top + q[0].bottom) / 2 } : null; };
+    return q.length ? { top: q[0].top, mid: (q[0].top + q[0].bottom) / 2, left: q[0].left } : null; };
   const start = box('#shep-train-start');
   return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
            gpu: ((document.querySelector('#shep-chips .shep-chip-gpu .shep-chip-text') || {}).textContent || '').trim(),
            runview: res && foot !== null && view.scrollHeight <= view.clientHeight + 1
              ? { resBottom: res.bottom, foot } : null,
-           runbar: start ? { start: { top: start.top, bottom: start.bottom, mid: (start.top + start.bottom) / 2 },
-                             state: words('#shep-train-pill .shep-st-w'), why: words('#shep-train-why'),
+           runbar: start ? { start: { top: start.top, bottom: start.bottom, mid: (start.top + start.bottom) / 2,
+                                      left: start.left },
+                             state: words('#shep-train-pill .shep-st-w'), mark: words('#shep-train-pill'),
+                             why: words('#shep-train-why'),
                              facts: words('#shep-train-chip .shep-nb-text') } : null };
 }"""
 @pytest.fixture(scope="module")
@@ -3802,11 +3804,12 @@ def test_at_first_use_the_job_state_stands_on_the_run_bars_line(ui_walk_first_us
     the line of Start and its relation but stood about 5 px higher, top-aligned with the
     40 px buttons. Since L8 §2 (the owner's C and SW-LK5 of 2026-11-24) the run bar is two
     groups: the cause is said once in the facts slot under Dataset and nothing stands beside
-    the actions; the job state stands under them. Wherever the state shares the facts' line,
-    its words' middle is the facts' words' middle, as it was Start's (the walk's layout
-    sizes). The words are the mark's words (``.shep-st-w``), not its shape, whose glyph box
-    is the font's own (the portrait stop at 1080 x 1920 read the ring's box, 1.25 px over
-    the line's middle, the words 0.75)."""
+    the actions; the job state stands under them, on their left edge (§2.2: the state slot
+    "sits under the actions, on their left edge"; the L8 close adds the edge, which lane T's
+    rewrite did not hold). Wherever the state shares the facts' line, its words' middle is the
+    facts' words' middle, as it was Start's (the walk's layout sizes). The words are the mark's
+    words (``.shep-st-w``), not its shape, whose glyph box is the font's own (the portrait stop
+    at 1080 x 1920 read the ring's box, 1.25 px over the line's middle, the words 0.75)."""
     stops = [s for s in ui_walk_first_use if s["page"] == "training" and not s.get("open")]
     shared = 0
     for stop in stops:
@@ -3814,6 +3817,7 @@ def test_at_first_use_the_job_state_stands_on_the_run_bars_line(ui_walk_first_us
         assert bar and bar["state"] and bar["facts"] and bar["why"] is None, (stop["size"], bar)
         start = bar["start"]
         assert bar["state"]["top"] >= start["bottom"] - 1, (stop["size"], bar)
+        assert abs(bar["mark"]["left"] - start["left"]) <= 1, (stop["size"], bar)
         if abs(bar["state"]["top"] - bar["facts"]["top"]) > start["bottom"] - start["top"]:
             continue                                  # the state on a line of its own
         shared += 1
