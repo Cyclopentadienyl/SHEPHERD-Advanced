@@ -1116,15 +1116,16 @@ def test_start_and_stop_follow_the_training_run_bars_states():
     other = fp.actions_view({"status": "running"}, access=_Access(True), gpu=None,
                             confirming=False)
     assert (other["start"], other["stop"], other["stop_shown"]) == (False, False, False)
-    assert r.need_words("a training job is running (Research › Training)") in other["reason"]
+    assert r.need_words("a training job is running: Research › Training shows it") in (
+        other["reason"])
     stopping = fp.actions_view({"status": "stopping"}, access=_Access(True), gpu=None,
                                confirming=False)
-    assert "Stopping" in stopping["reason"] and not stopping["start"]
-    assert stopping["stop_shown"] is False
+    assert r.need_words("a training job is stopping") in stopping["reason"]
+    assert not stopping["start"] and stopping["stop_shown"] is False
     child_stopping = fp.actions_view({**_status(child), "status": "stopping"},
                                      access=_Access(True), gpu=None, confirming=False)
     assert child_stopping["stop_shown"] is True and child_stopping["stop"] is False
-    assert "Stopping: the job is ending." in child_stopping["stop_reason"]
+    assert r.need_words("this Fine-tune job is stopping") in child_stopping["stop_reason"]
     held = fp.actions_view({"status": "idle"}, access=_Access(True),
                            gpu={"text": f"GPU job: test run {TAG}"}, confirming=False)
     assert held["start"] is False and "<img" not in held["reason"]
@@ -1133,6 +1134,56 @@ def test_start_and_stop_follow_the_training_run_bars_states():
 def _words(html):
     """What a reader reads of `html`: its text, spaces collapsed."""
     return " ".join(re.sub(r"<[^>]+>", " ", html).split())
+
+
+def test_starts_reason_is_its_causes_phrase_or_one_need_line():
+    """R-WHY and SW-C11 (the owner's D6 of 2026-11-24, the lead's amendment 2): in every state
+    that dims Start, the reason beside it is either its cause's keyed phrase (D8, the GPU lock's
+    notice, the GPU held elsewhere: `renderers.reason_phrase`, naming Start in ``data-for``, so
+    its ``aria-describedby`` points at it; the setup notice it locates is not in Start's bar) or
+    one line in the page's words led by the need (`renderers.need_words`: a sentence, no
+    control's name, never "disabled", no pointer and no parenthesis); with a dimmed Stop drawn,
+    its reason the same. Fails on 9adb3c4: stopping said "Stopping: the job is ending. Start
+    waits for it." (Start named, not led by the need), and another page's running job "(Research
+    › Training)" in a parenthesis."""
+    from src.webui.components.workspaces import lock_notice
+
+    child = _child("disease", "running", "r")
+    unset = {"text": "the GPU lock cannot be used", "test": False, "unset": True,
+             "notice": lock_notice({"problem": "x", "unset": True})}
+    broken = {"text": "the GPU lock cannot be used", "test": False, "unset": False,
+              "notice": lock_notice({"problem": "x is a directory"}, operator=True)}
+    idle = {"status": "idle"}
+    states = {
+        "read-only": (idle, _Access(False, "deployment_mode"), None, "d8"),
+        "no workspaces folder": (idle, _Access(True), unset, "workspaces_root"),
+        "GPU lock not usable": (idle, _Access(True), broken, "gpu_problem"),
+        "GPU held elsewhere": (idle, _Access(True), {"text": "GPU job: test run"}, "gpu_busy"),
+        "this start's child running": (_status(child), _Access(True), None, None),
+        "another page's job running": ({"status": "running"}, _Access(True), None, None),
+        "a job stopping": ({"status": "stopping"}, _Access(True), None, None),
+        "this start's child stopping": ({**_status(child), "status": "stopping"}, _Access(True),
+                                        None, None),
+    }
+    for name, (status, access, gpu, key) in states.items():
+        view = fp.actions_view(status, access=access, gpu=gpu, confirming=False)
+        assert view["start"] is False, name
+        lines = [("Start", view["reason"], fp.START_ID)]
+        if view["stop_shown"] and not view["stop"]:
+            lines.append(("Stop", view["stop_reason"], fp.STOP_ID))
+        for control, html, control_id in lines:
+            words = _words(html).lstrip("○🔒 ").strip()
+            phrase = re.search(r'<button type="button" class="shep-why" data-why="([^"]+)"[^>]*'
+                               r'data-for="([^"]+)"', html)
+            if phrase:
+                # The cause's keyed phrase, naming its control, and nothing else beside it.
+                assert phrase.group(1) == key and phrase.group(2) == control_id, (name, control)
+                assert words == r.REASON_PHRASES[key], (name, control, words)
+            else:
+                assert key is None, (name, control, html)
+                assert words == r.need_words(words), (name, control, words)
+                assert not re.search(r"\bStart\b|\bStop\b|disabled|\bsee\b|[()]", words), (
+                    name, control, words)
 
 
 def test_at_first_use_the_form_says_the_missing_folder_once(monkeypatch, operator):

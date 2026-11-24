@@ -969,7 +969,14 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
     in the states the Training run bar uses (`training_console.run_bar_view`):
     D8, a training job running or stopping, the GPU slot held elsewhere.
     ``reason`` is beside Start; ``stop_reason`` is beside Stop, which is in
-    the job panel under the card. **Stop is drawn only while a child of this
+    the job panel under the card. **A dimmed control's reason is its cause's
+    phrase or one line in the page's words** (R-WHY, SW-C11): a cause with a
+    key of its own (D8, the GPU lock's notice, the GPU held elsewhere) by its
+    phrase (`renderers.reason_phrase`, keyed to the one place its whole
+    reason is drawn: the header chip, or the form's setup notice, which is
+    not in Start's bar, so the phrase stands beside Start); a local cause (a
+    job running or stopping) by one line led by the need
+    (`renderers.need_words`: no control's name, no pointer). **Stop is drawn only while a child of this
     page's Fine-tune start runs or is stopping** (``stop_shown``, the run
     bar's rule, `training_console.stop_shown`; NEW-training-finetune-7: an
     idle panel showed a disabled Stop with no reason): drawn, it says D8's
@@ -993,15 +1000,15 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
         view["reason"] = _why(tc.LOCK_ICON, phrase=operator_only(control=START_ID))
         view["stop_reason"] = _why(tc.LOCK_ICON, phrase=operator_only(control=STOP_ID)) if shown else ""
     elif s == "stopping":
-        view["reason"] = _why(r.DISABLED_MARK, "Stopping: the job is ending. Start waits for it.")
+        view["reason"] = _why(r.DISABLED_MARK, r.need_words("a training job is stopping"))
         if shown:
-            view["stop_reason"] = _why(r.DISABLED_MARK, "Stopping: the job is ending.")
+            view["stop_reason"] = _why(r.DISABLED_MARK, r.need_words("this Fine-tune job is stopping"))
     elif child_running:
         view["stop"] = not confirming
         view["reason"] = _why(r.DISABLED_MARK, r.need_words("this Fine-tune job is running"))
     elif s == "running":
-        view["reason"] = _why(r.DISABLED_MARK, r.need_words("a training job is running "
-                                                            "(Research › Training)"))
+        view["reason"] = _why(r.DISABLED_MARK, r.need_words(
+            "a training job is running: Research › Training shows it"))
     elif gpu and gpu.get("notice"):
         view["reason"] = r.phrase_line(gpu["notice"], control=START_ID)
     elif gpu:
