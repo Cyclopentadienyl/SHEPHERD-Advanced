@@ -971,9 +971,9 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
    caption, at its foot, is the note: its label and ⓘ stay one line of text as before (their own
    line box, wrapping as they did), its control follows, and the note comes last; a caption never
    sets its table's width beyond its longest word. A choice group's fieldset cannot be drawn as a
-   table, so it lays the same order out as flex lines: its label line (with the strut a line of
-   text has, ``::before``), a break (``::after``), its options, its note; its title is short and
-   stays one line. Either way the note never sets its field's width (``width: 0`` in the flex
+   table, so it lays the same order out as flex lines with no gap (Gradio gives the fieldset one,
+   unused while it is a block): its label line (with the strut a line of text has, ``::before``),
+   a break (``::after``), its options, its note; its title is short and stays one line. Either way the note never sets its field's width (``width: 0`` in the flex
    form: a choice group stays its options' width, the sweep's L7, SW-LK2). The label keeps a plain label's room under it (Gradio gives a label with a
    note under it less: ``span.has-info``), so the control's top is a plain field's; the note sits
    an item's space under the control. Only the order drawn changes: the note keeps its place in the
@@ -983,7 +983,7 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .gradio-container :not(fieldset):has(> .info-text + *) > .info-text {
   display: table-caption; caption-side: bottom; margin: var(--shep-space-item) 0 0;
 }
-.gradio-container fieldset:has(> .info-text + *) { display: flex !important; flex-wrap: wrap; align-items: baseline; }
+.gradio-container fieldset:has(> .info-text + *) { display: flex !important; flex-wrap: wrap; align-items: baseline; gap: 0 !important; }
 .gradio-container fieldset:has(> .info-text + *)::before { content: "\\200b"; flex: 0 0 0; }
 .gradio-container fieldset:has(> .info-text + *)::after { content: ""; order: 1; flex: 1 0 100%; height: 0; }
 .gradio-container fieldset:has(> .info-text + *) > .info-text ~ * { order: 2; flex: 1 1 100%; }
