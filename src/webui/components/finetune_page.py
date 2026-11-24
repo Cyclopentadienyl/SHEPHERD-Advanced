@@ -1572,8 +1572,12 @@ def create_finetune_page(ctx: Any) -> None:
                                               elem_id="ft_reset")
                         with gr.Row(elem_classes=["shep-ft-settings", "shep-fields"]):
                             device = tc.device_field("ft_device")
+                            # A name's width by its role (R-WIDTH, the owner's D12 of
+                            # 2026-11-24: the shared ``shep-w-name``, `style.py`), not
+                            # the row's share.
                             run_name = gr.Textbox(label="Run name", value="", max_lines=1,
-                                                  elem_id="ft_run_name")
+                                                  elem_id="ft_run_name",
+                                                  elem_classes=["shep-w-name"])
             with gr.Column(elem_id="ft_start_ft", elem_classes=["shep-panel-ft"]):
                 # Start and why it is off, a bar (the skill's §2 and §9): its
                 # reason a one-line relation beside it, on Start's first line

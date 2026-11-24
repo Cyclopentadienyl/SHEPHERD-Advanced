@@ -1416,6 +1416,19 @@ def test_opening_the_page_answers_starts_gate_before_reading_the_bases():
     assert chain[1:4] == ["_on_finetune_bases", "_on_base_chosen", "_on_task_view"], chain
 
 
+def test_run_name_takes_the_name_role_and_the_numbers_theirs():
+    """R-WIDTH (the owner's D12 of 2026-11-24): a field's width comes from its role, never the
+    page's share of a row. Run name is a name (the shared ``shep-w-name``: its box at most a
+    name's token wide, white space beside it in a wide cell); Epochs and Seed are numbers
+    (``shep-w-num``, given by `training_console.setting_field`). Fails on 9adb3c4: Run name
+    had no role and took the whole of its cell (305 px at 1850 x 960 against the role's
+    274)."""
+    _demo, _ctx, by_id = _page()
+    assert "shep-w-name" in (by_id["ft_run_name"].elem_classes or []), by_id["ft_run_name"]
+    for name in ("num_epochs", "seed"):
+        assert tc.NUMBER_ROLE in (by_id[f"ft_{name}"].elem_classes or []), name
+
+
 def test_the_page_follows_the_contract():
     from src.webui.app import PAGE_CSS, PAGES, mount_options
 
