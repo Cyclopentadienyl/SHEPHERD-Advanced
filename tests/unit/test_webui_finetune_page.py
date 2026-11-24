@@ -122,7 +122,9 @@ def test_only_listed_bases_are_offered_as_parents(root, operator):
     assert all(item["learning_stage"] == "base" for item in parents.values())
     assert runs["value"] == f"gatv2/{BASE_RUN}" and checkpoints["value"] == (
         f"gatv2/{BASE_RUN}/last.pt")
-    assert "3 base checkpoints in 2 runs" in note
+    # A list that holds bases says nothing of its own under the selects: its count is a fact of
+    # the chosen base's Details (D3/D8, `listed_words`), never a line to read past.
+    assert note == "" and fp.listed_words(parents) == "3 base checkpoints in 2 runs, latest first"
     # Each select checked on its own: the Run options are the identity label
     # (`renderers.run_words`, shared with the Continue drawer), unique; the
     # checkpoint options follow §8; each value is the listing's key.
@@ -180,19 +182,28 @@ def test_an_empty_list_says_why(root, operator):
     assert "&lt;img" in fp.bases_note_html({}, TAG) and "<img" not in fp.bases_note_html({}, TAG)
 
 
+def _outside_and_inside(html):
+    """The summary's markup outside its one "Details ›" and inside it."""
+    start = html.index('<details class="shep-more"')
+    end = html.rindex("</details>") + len("</details>")
+    return html[:start] + html[end:], html[start:end]
+
+
 def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     parents = fp._on_finetune_bases(operator, {"name": "demo"}, None)[0]
     item = parents[f"gatv2/{BASE_RUN}/model-03-0.8300.pt"]
     html = fp._on_base_chosen(f"gatv2/{BASE_RUN}/model-03-0.8300.pt", parents)
+    outside, inside = _outside_and_inside(html)
+    # On the line: the model fingerprint Start sends, copyable, and how its dataset stands.
+    for words in ("model fingerprint", item["sha256"][:12], f'data-copy="{item["sha256"]}"',
+                  r.status_mark(*fp.TRAINED_ON_TAGS[None])):
+        assert words in outside, words
+    # Behind its one Details: what the selects above do not say, and the list's count.
     for words in ("Run", r.token_html(f"gatv2/{BASE_RUN}"), r.token_html("model-03-0.8300.pt"),
-                  "Configuration",
-                  r.chain_html(*r.configuration_facts(item),
-                               tail=r.model_spec_html(item["spec"])[1]),
-                  '<summary>Details ›</summary>',
-                  "Holds", "Validation", "LP accuracy (Trainer)",
-                  "0.8300", "Selection", "Trained on", "not recorded", "Split seed",
-                  "Model fingerprint", item["sha256"][:12], f'data-copy="{item["sha256"]}"'):
-        assert words in html, words
+                  "Configuration", r.model_spec_html(item["spec"])[0],
+                  "Holds", "Validation", "LP accuracy (Trainer)", "0.8300", "Selection",
+                  "Split seed", "Server list", fp.listed_words(parents)):
+        assert words in inside, words
     # The run is named by its directory, a fact the Run select above does not
     # give; never its option's words again (the WebUI skill §1.2).
     assert r.run_words("gatv2", BASE_RUN) not in html
@@ -200,13 +211,62 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     odd = fp.base_summary_html({**item, "filename": TAG, "trained_on_this_dataset": False})
     assert "<img" not in odd and "&lt;img" in odd and "another dataset" in odd
     same = fp.base_summary_html({**item, "trained_on_this_dataset": True})
-    assert "the dataset selected" in same
     # Each state by the shared status mark (colour, shape and word; B2's
-    # leftover: no ✓ of the page's own).
-    assert r.status_mark("ok", "the dataset selected") in same
-    assert r.status_mark("warn", "another dataset than the one selected (the start refuses a "
-                                 "parent of another knowledge graph)") in odd
-    assert r.status_mark("neutral", "not recorded") in html
+    # leftover: no ✓ of the page's own), a self-naming tag.
+    assert r.status_mark("ok", "same dataset") in same
+    assert r.status_mark("warn", "another dataset: Start refuses it if its graph differs") in odd
+    assert r.status_mark("neutral", "dataset not recorded") in html
+
+
+def test_the_parents_visible_facts_are_the_declared_stage_facts(root, operator):
+    """D3, D8 and R2 (the owner's decisions of 2026-11-24: one glance tells whether the chosen
+    parent is right; the rest, about nine rows, behind the existing Details): the facts the
+    base's summary draws outside its one "Details ›" are exactly the declared stage facts
+    (`PARENT_STAGE_FACTS`, by their ``data-fact`` keys, in that order), the name and the save
+    left to the Run and Checkpoint selects over the line; every other fact (run, file,
+    configuration, holds, validation, selection, split seed, the list's count) is inside the
+    one Details, with no disclosure inside it (the skill's §1.5); a parent of another dataset,
+    or of none recorded, and a record or spec this build cannot read, say their warning outside
+    it. Fails on 9adb3c4: nine rows drawn, the configuration's own nested Details, the list's
+    line under the selects."""
+    parents = fp._on_finetune_bases(operator, {"name": "demo"}, None)[0]
+    item = parents[f"gatv2/{BASE_RUN}/last.pt"]
+
+    def facts(markup):
+        return re.findall(r'data-fact="([^"]+)"', markup)
+
+    for case in ({}, {"trained_on_this_dataset": True}, {"trained_on_this_dataset": False},
+                 {"record": "refused"}, {"spec": {"encoder": TAG}}):
+        shown = {**item, **case}
+        html = fp.base_summary_html(shown, parents)
+        outside, inside = _outside_and_inside(html)
+        drawn = facts(outside)
+        assert drawn == [key for key in fp.PARENT_STAGE_FACTS if key in drawn], (case, drawn)
+        assert drawn[:2] == ["fingerprint", "trained_on"], (case, drawn)
+        # Outside the Details, no other fact: no key-value row, no list line.
+        assert "<dl" not in outside and "<dt" not in outside, case
+        assert "Server list" not in outside and "Split seed" not in outside, case
+        # Inside it, every other fact, as one summary list, and no second disclosure.
+        keys = re.findall(r'<dt class="shep-k[^"]*"[^>]*>([^<]+)', inside)
+        assert keys == ["Run", "File", "Configuration", "Holds", "Validation", "Selection",
+                        "Split seed", "Server list"], (case, keys)
+        assert inside.count("<details") == 1 and inside.count("<summary>") == 1, case
+        assert html.count("<details") == 1, case
+        # A warning that changes the choice is outside the Details.
+        warnings = fp.parent_warnings(shown)
+        assert ("warnings" in drawn) == bool(warnings), (case, warnings)
+        for words in warnings:
+            assert r.status_mark("warn", words) in outside, (case, words)
+    assert fp.parent_warnings({**item, "record": "refused"}) == ["record not readable"]
+    assert fp.parent_warnings({**item, "spec": {"encoder": TAG}}) == ["model spec not readable"]
+    assert fp.parent_warnings(item) == []
+    # Another dataset, or none recorded, says its relation outside the Details too.
+    for trained in (False, None):
+        outside, _inside = _outside_and_inside(
+            fp.base_summary_html({**item, "trained_on_this_dataset": trained}, parents))
+        assert r.status_mark(*fp.TRAINED_ON_TAGS[trained]) in outside, trained
+    # The list's line says only what is to act on (an empty list, a list not read).
+    assert fp.bases_note_html(parents, None) == ""
 
 
 def test_the_bases_split_seed_and_model_are_facts_of_its_summary_never_fields(root, operator):
@@ -224,22 +284,16 @@ def test_the_bases_split_seed_and_model_are_facts_of_its_summary_never_fields(ro
     seeded = fp.base_summary_html({**item, "split_seed": 7})
     assert "7 (every child trains on this split)" in seeded
     assert seeded.count("Split seed") == 1 and "Configuration" in seeded
-    # Its model: the one configuration line, and beside it the whole spec
-    # under its Details by the one renderer of a recorded spec, read from the
+    # Its model: the one renderer of a recorded spec's words, read from the
     # list's spec (`record.listed_spec`, without the recipe's notes), each
     # field that differs with the reference's value, the encoder's layers the
-    # hop list must fit among them (review of B2).
-    # Its "Details ›" ends the unit of the fact it opens, so the two move to
-    # a line together (L7 SW-LK7: drawn under "recipe changed in 5 fields"
-    # though one line held both).
+    # hop list must fit among them (review of B2), drawn in the Configuration
+    # row itself: no disclosure inside the summary's one Details (D3/D8, the
+    # skill's §1.5).
     words, details = r.model_spec_html(item["spec"])
     assert "Unknown" not in words and details
-    *before, last = r.configuration_facts(item)
-    assert before and (f"<dt class=\"shep-k\">Configuration</dt><dd class=\"shep-v\">"
-                       f"{r.chain_html(*before)}{r.SEP}"
-                       f'<span class="shep-fact">{r.bound_html(last)} {details}</span></dd>') in seeded
-    assert ('<dt class="shep-k" title="encoder.layers">Encoder › Layers</dt>'
-            '<dd class="shep-v">1 (reference 3)</dd>') in details
+    assert (f'<dt class="shep-k">Configuration</dt><dd class="shep-v">{words}</dd>') in seeded
+    assert "Encoder › Layers 1 (3)" in words
     for tasks in ([], ["disease"], ["gene"], ["disease", "gene", "patients_like_me"]):
         assert not set(fp.offered_settings(tasks)) & {"split_seed", "model_spec"}
     assert not set(fp.FINETUNE_FIELDS) & fp.BASE_FACTS
@@ -1584,6 +1638,74 @@ def test_at_first_use_start_stands_on_its_bar_and_the_notice_is_said_once(tmp_pa
                 at, facts)
         else:
             assert first["left"] < start["right"], (at, facts)        # under Start, not beside
+
+
+#: **The main flow's windows** (D3/D8/R2, the owner's decisions of 2026-11-24): the owner's two
+#: windows, a laptop and the display floor.
+MAIN_FLOW_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720))
+
+#: What the main-flow walk reads at each stop: the form's scroll region (its box clipped by the
+#: window, its scroll, and the fade its cue draws over its foot while more lies under it), each
+#: Tasks option's box, and each parent select's chosen option (its whole text, and whether the
+#: box shows it whole: the shell's titled-ellipsis measure).
+_MAIN_FLOW_JS = r"""() => {
+  const body = document.querySelector('#ft_form_bd');
+  const b = body.getBoundingClientRect();
+  const masked = body.hasAttribute('data-shep-more') && !body.hasAttribute('data-shep-more-edge');
+  const fade = masked ? parseFloat(getComputedStyle(body).getPropertyValue('--shep-more-fade')) || 0 : 0;
+  const view = { top: Math.max(b.top, 0), bottom: Math.min(b.bottom, innerHeight) - fade,
+                 left: Math.max(b.left, 0), right: Math.min(b.right, innerWidth) };
+  const tasks = [...document.querySelectorAll('#ft_tasks input[type=checkbox]')].map((input) => {
+    const r = (input.closest('label') || input).getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, left: r.left, right: r.right,
+             text: (input.closest('label') || input).innerText.trim() };
+  });
+  const select = (id) => {
+    const input = document.querySelector(`#${id} input[role="combobox"]`);
+    return input ? { value: input.value, whole: input.scrollWidth <= input.clientWidth + 1 } : null;
+  };
+  return { scrollTop: body.scrollTop, view, tasks, run: select('ft_run'),
+           checkpoint: select('ft_checkpoint'),
+           facts: [...document.querySelectorAll('#ft_base [data-fact]')].map((e) => e.getAttribute('data-fact')) };
+}"""
+
+
+def test_tasks_are_in_view_with_a_parent_chosen_at_the_owner_windows_and_the_floor(root, tmp_path):
+    """**The main flow** (D3, D8 and R2, the owner's decisions of 2026-11-24: choose the data and
+    the parent, a compact parent summary, then Tasks, then the settings; the owner asked for a
+    check that Tasks can be found, not a blank-space rule). The service itself, configured on the
+    demo workspace with its listed bases, an operator, the page opened with its default parent
+    chosen, at 1850 x 960, 1550 x 830, 1366 x 768 and 1280 x 720: the parent's stage facts are
+    drawn, and every Tasks option lies inside the form's scroll region as it is shown, its
+    scroll at the top (inside its box clipped by the window, above the fade its cue draws while
+    more lies under it). Fails on 9adb3c4 at 1366 x 768 and 1280 x 720, where the parent's nine
+    rows and the list's line put the Tasks under the region's edge."""
+    from tests.fixtures.browser import (layout_stops, node_with_playwright, state_settings,
+                                        walk_ui)
+    from tests.fixtures.served_page import served_service
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    settings = {**state_settings("first_use", tmp_path / "data"),
+                "SHEPHERD_WORKSPACES_ROOT": str(root)}
+    with served_service(tmp_path / "service", settings) as page:
+        seen = walk_ui(page, tmp_path, layout_stops(("finetune",), MAIN_FLOW_SIZES),
+                       extra_js=_MAIN_FLOW_JS)
+    assert [stop["size"] for stop in seen] == [f"{w}x{h}" for w, h in MAIN_FLOW_SIZES]
+    # Every Tasks option in view, at every window (each one out of view named).
+    out = [(stop["size"], box["text"], box, stop["extra"]["view"])
+           for stop in seen for box in stop["extra"]["tasks"]
+           if not (stop["extra"]["view"]["top"] <= box["top"]
+                   and box["bottom"] <= stop["extra"]["view"]["bottom"]
+                   and stop["extra"]["view"]["left"] <= box["left"]
+                   and box["right"] <= stop["extra"]["view"]["right"])]
+    assert out == [], out
+    for stop in seen:
+        at, facts = stop["size"], stop["extra"]
+        assert len(facts["tasks"]) == len(fp.TASKS) and facts["scrollTop"] == 0, (at, facts)
+        # The default parent is chosen and its stage facts are drawn.
+        assert facts["run"]["value"] and facts["checkpoint"]["value"], (at, facts)
+        assert facts["facts"][:2] == ["fingerprint", "trained_on"], (at, facts)
 
 
 #: The Fine-tune page served whole (the shell's layout and style sheets), the
