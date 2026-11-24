@@ -3944,7 +3944,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-pad {{ padding: var(--shep-space-3) var(--shep-inset); display: flex; flex-direction: column; gap: 10px; }}
 {_PAGE} .shep-test-reason {{ margin: 2px 0; }}
 {_PAGE} .shep-test-actions {{ gap: 10px !important; align-items: center !important; flex-wrap: wrap !important; }}
-{_PAGE} .shep-test-actions > button {{ flex: none !important; }}
 {_PAGE} .shep-test-ident {{ font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-ident > div {{ margin: 1px 0; }}
 {_PAGE} #shep-test-model-why:not(:has(.shep-reason)) {{ display: none !important; }}
@@ -3993,7 +3992,6 @@ PAGE_CSS = f"""
 {_PAGE} #shep-test-import-close {{ flex: none !important; width: auto !important; min-width: max-content !important; white-space: nowrap; }}
 {_PAGE} .shep-test-form {{ gap: 10px !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-test-form > * {{ min-width: min(11.25rem, 100%) !important; }}
-{_PAGE} #shep-test-start {{ width: 100%; }}
 {_PAGE} .shep-test-runft {{ padding: 10px 16px 12px !important; gap: 10px !important; border-top: 1px solid var(--shep-border); }}
 {_PAGE} .shep-test-select input {{ padding-right: 26px !important; }}
 {_PAGE} .shep-test-rep-old, {_PAGE} .shep-test-more-fewer {{ display: none !important; }}
@@ -4002,7 +4000,6 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-all .shep-test-more-all {{ display: none !important; }}
 {_PAGE} .shep-test-more {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0 0; }}
 {_PAGE} .shep-test-more button {{ font: inherit; font-size: 15px; color: var(--shep-accent-text); background: none; border: 0; padding: 2px 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }}
-{_PAGE} .shep-panel-ft > button, {_PAGE} .shep-test-actions > button {{ white-space: nowrap; flex: none !important; }}
 {_PAGE} .shep-panel-ft > .block:not(.shep-beside):not(.shep-bar-note) {{ flex: 1 1 200px !important; min-width: 0 !important; }}
 {_PAGE} #shep-test-cohort {{ --shep-panel-basis: 22rem; --shep-panel-grow: 1; --shep-panel-min: 19.7rem; }}
 {_PAGE} #shep-test-run {{ --shep-panel-basis: 24rem; --shep-panel-grow: 1; --shep-panel-min: 22.5rem; }}

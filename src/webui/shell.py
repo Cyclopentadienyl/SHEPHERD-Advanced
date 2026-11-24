@@ -1318,6 +1318,74 @@ _SHELL_JS = r"""
       if (box.hasAttribute(OWN_LINE) !== own) { box.toggleAttribute(OWN_LINE, own); }
     }
   }
+  // **R-WIDTH: a button is full width only as the single action of an area no wider than its
+  // fields** (the owner's D12 of 2026-11-24: "whether a button is full width depends on its
+  // action area"; style.py: every action is its words' width): an action area (a column, a
+  // panel's footer or a bar the layout sizes, never a group sized by what it holds) that holds
+  // one drawn action and no field, nothing beside that action (a row or a bar: nothing else
+  // drawn in it, whether or not it wrapped; a column: nothing else on the action's line), and is
+  // no wider than the widest field of its panel, is marked SPAN, and its action spans it (a
+  // form's one action under a column of fields). The area is the action's parent, or, where that
+  // is a column that only wraps the action inside a row of actions, that row. Each is measured
+  // with its mark off (put back before anything is painted), so the mark never changes what it
+  // measured.
+  var SPAN = 'data-shep-span', ACTION = 'button.lg, button.md, button.sm';
+  var ACTION_AREA = ':is(.row, .column, .shep-panel-ft, .shep-bar) > :is(' + ACTION + ')';
+  var FIELD = '.block:has(textarea, select, input:not([type=hidden]):not([type=radio]):not([type=checkbox]))';
+  // An area's drawn actions, each with the child of the area it stands in.
+  function actionsOf(area) {
+    var out = [];
+    for (var c = area.firstElementChild; c; c = c.nextElementSibling) {
+      if (!drawn(c)) { continue; }
+      if (c.matches(ACTION)) { out.push([c, c]); }
+      else if (c.matches('.column') && !c.querySelector(FIELD)) {
+        for (var k = c.firstElementChild; k; k = k.nextElementSibling) { if (drawn(k) && k.matches(ACTION)) { out.push([k, c]); } }
+      }
+    }
+    return out;
+  }
+  function areaOf(button) {
+    var area = button.parentElement, up = area.parentElement;
+    if (area.matches('.column') && up && up.matches('.row') && !area.querySelector(FIELD)) { return up; }
+    return area;
+  }
+  function spanned(box) {
+    if (box.matches('.shep-grp') || box.querySelector(FIELD)) { return false; }
+    var acts = actionsOf(box);
+    if (acts.length !== 1) { return false; }
+    var a = acts[0][0].getBoundingClientRect(), across = box.matches('.row, .shep-bar');
+    for (var c = box.firstElementChild; c; c = c.nextElementSibling) {
+      if (c === acts[0][1] || !drawn(c)) { continue; }
+      var q = c.getBoundingClientRect();
+      if (q.width < 1 || q.height < 1) { continue; }
+      if (across || (q.top < a.bottom - 1 && q.bottom > a.top + 1)) { return false; }
+    }
+    var panel = box.closest('.shep-panel') || box.parentElement, widest = 0;
+    var fields = panel ? panel.querySelectorAll(FIELD) : [];
+    for (var f = 0; f < fields.length; f++) {
+      if (drawn(fields[f])) { widest = Math.max(widest, fields[f].getBoundingClientRect().width); }
+    }
+    var s = getComputedStyle(box);
+    var room = box.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
+    return widest > 0 && room <= widest + 1;
+  }
+  function spans() {
+    var areas = [], all = document.querySelectorAll(ACTION_AREA);
+    for (var i = 0; i < all.length; i++) {
+      if (!drawn(all[i])) { continue; }
+      var area = areaOf(all[i]);
+      if (areas.indexOf(area) < 0) { areas.push(area); }
+    }
+    for (var a = 0; a < areas.length; a++) {
+      var box = areas[a], was = box.hasAttribute(SPAN);
+      if (was) { box.removeAttribute(SPAN); }
+      var span = spanned(box);
+      if (was) { box.setAttribute(SPAN, ''); }
+      if (box.hasAttribute(SPAN) !== span) { box.toggleAttribute(SPAN, span); }
+    }
+    var marked = document.querySelectorAll('[' + SPAN + ']');
+    for (var m = 0; m < marked.length; m++) { if (areas.indexOf(marked[m]) < 0) { marked[m].removeAttribute(SPAN); } }
+  }
   function layout() {
     orientation();
     fits();
@@ -1326,6 +1394,7 @@ _SHELL_JS = r"""
     seps();
     ends();
     besides();
+    spans();
     var shell = document.getElementById('shep-shell');
     var row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
     var chips = document.querySelector('#shep-chips .shep-chips');

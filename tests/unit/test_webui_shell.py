@@ -3960,9 +3960,40 @@ def _pieces_page():
             f'<div id="pc-place-side" style="display: flex; flex-direction: column; gap: 12px">{side}</div>'
             '</div>', elem_id="pc-place")
 
+    def actions(ctx):
+        # R-WIDTH's button rule: a narrow panel whose footer holds one action, the same with two
+        # actions, and a wide panel whose fields stand side by side, its footer one action.
+        with gr.Row(elem_id="pc-span-row"):
+            with gr.Column(elem_id="pc-span-a", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-a-field")
+                with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-a-ft"):
+                    gr.Button("Save", elem_id="pc-span-a-btn")
+            with gr.Column(elem_id="pc-span-b", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-b-field")
+                with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-b-ft"):
+                    gr.Button("Check", elem_id="pc-span-b-check")
+                    gr.Button("Save", elem_id="pc-span-b-btn")
+            # One action beside a field in its row, and one action beside its words in a footer.
+            with gr.Column(elem_id="pc-span-d", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-d-name")
+                with gr.Row(elem_id="pc-span-d-ft"):
+                    gr.Dropdown(["cpu"], value="cpu", label="Device", elem_id="pc-span-d-field")
+                    gr.Button("Refresh", elem_id="pc-span-d-btn")
+            with gr.Column(elem_id="pc-span-e", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-e-field")
+                with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-e-ft"):
+                    gr.Button("Load", elem_id="pc-span-e-btn")
+                    gr.HTML("<span>Not loaded yet</span>", elem_id="pc-span-e-words")
+        with gr.Column(elem_id="pc-span-c", elem_classes=["shep-panel"], min_width=0):
+            with gr.Row():
+                gr.Textbox(label="First", elem_id="pc-span-c-f1")
+                gr.Textbox(label="Second", elem_id="pc-span-c-f2")
+            with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-c-ft"):
+                gr.Button("Start", elem_id="pc-span-c-btn")
+
     pages = {**{page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS,
                                                        shell.CLINICAL)},
-             shell.DATASETS: datasets, shell.TRAINING: placement}
+             shell.DATASETS: datasets, shell.TRAINING: placement, shell.FINETUNE: actions}
     with gr.Blocks() as demo:
         ctx = shell.build_shell(demo, pages)
         shell.help_texts(ctx.help)
@@ -4193,6 +4224,27 @@ const QUEUE_JS = __QUEUE_JS__;
              covers: controls.filter((c) => over(q(c))).map((c) => c.id || c.className || c.tagName) };
   });
   await page.keyboard.press('Escape'); await frames(2);
+  // R-WIDTH's button rule: each footer's actions, their widths and their words' widths, and the
+  // footer's content box.
+  await page.click('#shep-page-finetune-button');
+  await page.waitForSelector('#pc-span-c-btn');
+  await page.addStyleTag({ content: `
+    #pc-span-a, #pc-span-b, #pc-span-d, #pc-span-e { flex: none !important; width: 300px !important; }
+    #pc-span-c { flex: none !important; width: 900px !important; }` });
+  await page.setViewportSize({ width: 1279, height: 1280 }); await frames(2);
+  await page.setViewportSize({ width: 1280, height: 1280 }); await frames(4);
+  out.span = await page.evaluate(() => Object.fromEntries(['a', 'b', 'c', 'd', 'e'].map((k) => {
+    const ft = document.getElementById(`pc-span-${k}-ft`), s = getComputedStyle(ft), r = ft.getBoundingClientRect();
+    const room = [r.left + ft.clientLeft + parseFloat(s.paddingLeft), r.right - ft.clientLeft - parseFloat(s.paddingRight)];
+    const buttons = [...ft.querySelectorAll('button')].map((b) => {
+      const c = b.cloneNode(true); c.removeAttribute('id');
+      c.style.cssText = 'position: absolute; visibility: hidden; width: max-content; min-width: 0; flex: none';
+      document.body.appendChild(c); const words = c.getBoundingClientRect().width; c.remove();
+      const q = b.getBoundingClientRect();
+      return { id: b.id, left: q.left, right: q.right, width: q.width, words };
+    });
+    return [k, { span: ft.hasAttribute('data-shep-span'), room, buttons }];
+  })));
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -4296,6 +4348,28 @@ def test_a_tall_bubble_opens_on_the_side_that_covers_no_control(pieces_seen):
     assert not overlap(bubble, place["side"]), place
     assert not overlap(bubble, place["phrase"]) and not overlap(bubble, place["control"]), place
     assert bubble[2] <= place["phrase"][0], place                    # beside it, on the free side
+
+
+def test_a_button_spans_only_the_one_action_area_no_wider_than_its_fields(pieces_seen):
+    """R-WIDTH's button rule (the owner's D12 of 2026-11-24: "whether a button is full width
+    depends on its action area"; the L8 S1 check, S1C-4: never built): Gradio grows a button with
+    its row and stretches it in a column, so a footer's actions took its whole width whatever it
+    held. A button is its words' width, full width only as the single action of an area no wider
+    than its fields (the layout pass's mark, ``data-shep-span``): a narrow panel's one action
+    spans its footer; two actions in the same footer, or one action under a wide row of fields,
+    keep their words' width, and so does one action beside a field or beside its words on its
+    line (the L8 S2 survey: Fine-tune's Refresh beside Device, Models' Load beside its state)."""
+    span = pieces_seen["span"]
+    one, two, wide, field, words = (span[k] for k in "abcde")
+    assert [len(box["buttons"]) for box in (one, two, wide, field, words)] == [1, 2, 1, 1, 1], span
+    # Two actions, one action under a wide row of fields, or one action beside a field or its
+    # words: each its words' width.
+    for button in two["buttons"] + wide["buttons"] + field["buttons"] + words["buttons"]:
+        assert button["width"] <= button["words"] + 1, span
+    # One action in a footer no wider than the panel's field: it spans the footer.
+    (button,) = one["buttons"]
+    assert abs(button["left"] - one["room"][0]) <= 1 and abs(button["right"] - one["room"][1]) <= 1, one
+    assert one["span"] and not any(box["span"] for box in (two, wide, field, words)), span
 
 
 def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_seen):

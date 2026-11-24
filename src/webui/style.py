@@ -798,6 +798,22 @@ span.shep-note { display: inline-block; }
    measure that caps it, in a row wide enough to hold the measure and the control: 2560 px) take
    the row's next line: the shell's layout pass marks them (``data-shep-own-line``). */
 .shep-beside-row > .shep-beside[data-shep-own-line] { flex-basis: 100% !important; }
+/* **R-WIDTH: a button is its words' width, full width only as the single action of an area no
+   wider than its fields** (the owner's D12 of 2026-11-24: "whether a button is full width depends
+   on its action area"): in a row (a panel's footer, a bar and a bar's group are rows) or a column,
+   an action never takes the room its area has left (Gradio grows a button with its row and
+   stretches it in a column), and its words stay on one line (the row wraps whole actions). The
+   area the shell's layout pass marks (``data-shep-span``: one action with nothing beside it and
+   no field in the area, no wider than its panel's widest field; never a group) is spanned by its
+   action, as a form's one action under its fields is. */
+.gradio-container :is(.row, .column, .shep-panel-ft, .shep-bar, .shep-grp) > :is(button.lg, button.md, button.sm) {
+  flex: none !important; width: auto !important; min-width: max-content !important; white-space: nowrap;
+}
+.gradio-container .column:not(.row) > :is(button.lg, button.md, button.sm) { align-self: flex-start; }
+.gradio-container [data-shep-span] > :is(button.lg, button.md, button.sm),
+.gradio-container [data-shep-span] > .column > :is(button.lg, button.md, button.sm) {
+  flex: 1 1 auto !important; width: 100% !important; min-width: max-content !important; align-self: stretch;
+}
 .shep-intro { padding: 12px 16px 0; margin: 0; font-size: 14px; color: var(--shep-text-2); }
 .shep-card { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
 .shep-card-hd .shep-muted { font-weight: 400; font-size: 14px; }
