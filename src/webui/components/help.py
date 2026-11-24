@@ -104,6 +104,27 @@ _KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 #: The prefix of a help text's element id (``aria-describedby`` names it).
 TEXT_ID_PREFIX = "shep-help-text-"
 
+#: **One description, several writers** (R-WHY beside the field help): a control's
+#: ``aria-describedby`` is written by this script (a field's info line and its help
+#: text, ``describe``) and by the shell's (a dimmed control's phrase or notice,
+#: ``describeDimmed``). Each writer records the ids it put there in an attribute of
+#: its own (`mark`) and adds or takes back only those, every other id kept in its
+#: place: a writer that replaced the whole attribute dropped the other's ids (the
+#: last one to run won). Both scripts include this one function.
+DESCRIBED_BY_JS = r"""
+  function describedBy(el, mark, want) {
+    var had = (el.getAttribute(mark) || '').split(/\s+/).filter(Boolean);
+    var next = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (x) {
+      return x && (had.indexOf(x) < 0 || want.indexOf(x) >= 0);
+    });
+    for (var i = 0; i < want.length; i++) { if (next.indexOf(want[i]) < 0) { next.push(want[i]); } }
+    var ids = next.join(' '), mine = want.join(' ');
+    if (!ids) { el.removeAttribute('aria-describedby'); }
+    else if (el.getAttribute('aria-describedby') !== ids) { el.setAttribute('aria-describedby', ids); }
+    if (!mine) { el.removeAttribute(mark); } else if (el.getAttribute(mark) !== mine) { el.setAttribute(mark, mine); }
+  }
+"""
+
 #: The bubble's widest (CSS px; the WebUI skill's §7 budget), the delay before
 #: a hover opens its preview (ms), and the ⓘ's smallest hit target (CSS px,
 #: the skill's §10 floor).
@@ -836,7 +857,9 @@ _HELP_JS = r"""
   // A field's description: its visible info= line first (Gradio's
   // .info-text, set when it is built or at runtime, which Gradio may draw
   // again), then its help text, so a screen reader reads what the page shows
-  // under the field as well as the bubble's text. Kept on every pass.
+  // under the field as well as the bubble's text. Kept on every pass, merged
+  // with what the shell describes the same control by (`DESCRIBED_BY_JS`).
+__DESCRIBED_BY__
   function describe(target, key, textId) {
     var input = target.querySelector('textarea, input:not([type=radio]):not([type=hidden])');
     if (!input) { return; }
@@ -846,8 +869,7 @@ _HELP_JS = r"""
       ids.push(info.id);
     }
     ids.push(textId);
-    var want = ids.join(' ');
-    if (input.getAttribute('aria-describedby') !== want) { input.setAttribute('aria-describedby', want); }
+    describedBy(input, 'data-shep-help-by', ids);
   }
   // A field drawn as its key, its ⓘ and its control (in a container marked
   // KEY_FIRST) keeps its control after its ⓘ in the page as well, so focus
@@ -933,7 +955,8 @@ HELP_HEAD = "<script>" + (_HELP_JS.replace("__I_ICON__", _I_ICON.replace("'", "\
                           .replace("__KEY_FIRST__", KEY_FIRST_CLASS)
                           .replace("__BULLET__", json.dumps(BULLET))
                           .replace("__REF__", json.dumps(REF_PREFIX))
-                          .replace("__TERM__", json.dumps(TERM_PATTERN))) + "</script>"
+                          .replace("__TERM__", json.dumps(TERM_PATTERN))
+                          .replace("__DESCRIBED_BY__", DESCRIBED_BY_JS)) + "</script>"
 
 
 #: The look of the ⓘ and its bubble (part of the dashboard's CSS). The ⓘ's
@@ -1020,6 +1043,7 @@ def as_json_for_script(value: object) -> str:
 
 
 __all__ = [
+    "DESCRIBED_BY_JS",
     "HELP_CSS",
     "HELP_HEAD",
     "BULLET",

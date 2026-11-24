@@ -268,7 +268,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 import gradio as gr
 
 from src.webui.components.chips import CHIPS_PLACEHOLDER, read_chips
-from src.webui.components.help import HelpRegistry, as_json_for_script
+from src.webui.components.help import DESCRIBED_BY_JS, HelpRegistry, as_json_for_script
 from src.webui.components.renderers import KEEP_OPEN_JS, RENDERER_HELP
 from src.webui.style import (FADE_VAR, FIT, FIT_LEAST, FIT_WANT, FIT_WIDE, FLOOR_HEIGHT, FLOOR_VAR, FLOOR_WIDTH, FOLD, FOLD_FLOOR,
                               FOLD_ROOM, FOLDED_ATTR, LAYOUT_ATTR, NARROW_ATTR, ROOMY_ATTR, SEG_WHOLE, SHORT_ATTR,
@@ -1440,9 +1440,13 @@ _SHELL_JS = r"""
   // controls are dimmed names them by id (data-for: a phrase beside them, or the cause's own
   // notice in the same bar); each such control is described by it (aria-describedby), by every
   // element that names it, and a description whose element is gone is taken back.
+  // Its ids are merged with the field help's (`help.DESCRIBED_BY_JS`): each script adds and
+  // takes back only its own, so a dimmed field with a ⓘ keeps its info line, its help text and
+  // its phrase.
+__DESCRIBED_BY__
   var BY = 'data-shep-why-by', WHY_FOR = 'button.shep-why[data-for], .shep-nb[data-for]';
   function describeDimmed() {
-    var want = {};
+    var want = {}, done = [];
     var els = document.querySelectorAll(WHY_FOR);
     for (var i = 0; i < els.length; i++) {
       var el = els[i], ids = (el.getAttribute('data-for') || '').split(/\s+/).filter(Boolean);
@@ -1453,16 +1457,16 @@ _SHELL_JS = r"""
     Object.keys(want).forEach(function (id) {
       var c = document.getElementById(id);
       if (!c) { return; }
-      var b = c.matches('button, input, textarea, select') ? c : (c.querySelector('button, input, textarea') || c);
-      var ids = want[id].join(' ');
-      if (b.getAttribute('aria-describedby') !== ids) { b.setAttribute('aria-describedby', ids); }
-      if (b.getAttribute(BY) !== ids) { b.setAttribute(BY, ids); }
+      // A field's block: its own control, never the help's ⓘ drawn in its label.
+      var b = c.matches('button, input, textarea, select') ? c
+        : (c.querySelector('input:not([type=hidden]), textarea, select') || c.querySelector('button:not(.shep-i)') || c);
+      describedBy(b, BY, want[id]);
+      done.push(b);
     });
+    // A control no element names any more: its own ids taken back, every other kept.
     var stale = document.querySelectorAll('[' + BY + ']');
     for (var k = 0; k < stale.length; k++) {
-      var s = stale[k], left = (s.getAttribute(BY) || '').split(/\s+/).filter(function (x) { return document.getElementById(x); });
-      if (left.length) { continue; }
-      s.removeAttribute(BY); s.removeAttribute('aria-describedby');
+      if (done.indexOf(stale[k]) < 0) { describedBy(stale[k], BY, []); }
     }
   }
   var whyPending = false;
@@ -1527,6 +1531,7 @@ SHELL_HEAD = ("<script>" + _SHELL_JS
               .replace("__FOLD_FLOOR__", FOLD_FLOOR).replace("__FOLDED__", FOLDED_ATTR)
               .replace("__FADE_VAR__", FADE_VAR)
               .replace("__GO__", as_json_for_script({k: list(v) for k, v in GO_TARGETS.items()}))
+              .replace("__DESCRIBED_BY__", DESCRIBED_BY_JS)
               + "</script>")
 
 

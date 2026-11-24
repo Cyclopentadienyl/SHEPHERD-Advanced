@@ -3808,6 +3808,12 @@ def _pieces_page():
             gr.Button("Start", interactive=False, elem_id="pc-why-btn")
             shell.plain_html(r.phrase_line("d8", control="pc-why-btn", lock=True), elem_id="pc-why-d8")
             shell.plain_html(r.phrase_line(notice, control="pc-why-btn2"), elem_id="pc-why-ws")
+            # R-WHY beside the field help (the L8 S1 check, S1C-2): a dimmed field with its note
+            # (``info=``) and its ⓘ, named by a phrase.
+            gr.Textbox(label="Run", info="The run whose saves are listed.", interactive=False,
+                       elem_id="pc-why-field")
+            ctx.help.field("pc-why-field", "Run", "Which run the saves come from.")
+            shell.plain_html(r.phrase_line("d8", control="pc-why-field", lock=True), elem_id="pc-why-field-d8")
             shell.plain_html(r.phrase_line(notice, control="pc-rel-btn"), elem_id="pc-rel")
             shell.plain_html(r.phrase_line(notice, control="pc-rel-end-btn").replace(
                 'class="shep-reason', 'style="justify-content: end; max-width: none" class="shep-reason', 1),
@@ -4020,6 +4026,16 @@ const QUEUE_JS = __QUEUE_JS__;
              bubbles: document.querySelectorAll('.shep-bubble').length };
   });
   await page.keyboard.press('Escape'); await frames(2);
+  // A dimmed field's description: its note, its help text and its phrase; with the phrase gone,
+  // only the phrase's id goes.
+  const fieldBy = () => page.evaluate(() => {
+    const f = document.querySelector('#pc-why-field textarea, #pc-why-field input');
+    return (f.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+  });
+  out.why.field = { ids: await fieldBy(),
+                    phrase: await page.evaluate(() => document.querySelector('#pc-why-field-d8 button.shep-why').id) };
+  await page.evaluate(() => document.querySelector('#pc-why-field-d8 button.shep-why').remove()); await frames(4);
+  out.why.field.after = await fieldBy();
   await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight)); await frames(2);
   await page.click('#pc-why-ws button.shep-why'); await frames(4);
   out.why.notice = await page.evaluate(() => {
@@ -4097,6 +4113,20 @@ def test_a_dimmed_controls_phrase_opens_or_locates_its_one_reason(pieces_seen):
     assert chip["title"] == "Operator controls" and chip["expanded"] == "true", chip
     assert chip["bubbles"] == 1, chip
     assert why["notice"] == {"go": True, "inView": True}, why
+
+
+def test_a_dimmed_fields_description_keeps_its_note_its_help_and_its_phrase(pieces_seen):
+    """The L8 S1 check (S1C-2): two head scripts wrote a dimmed field's ``aria-describedby``, the
+    field help's (its note and its help text) and the shell's (R-WHY's phrase), and each replaced
+    the whole attribute, so the last to run dropped the other's ids (Test's Run select and
+    Fine-tune's Run kept only their help text, or only their phrase). Each now adds and takes
+    back only its own ids (`help.DESCRIBED_BY_JS`): the field is described by its note, its help
+    text and its phrase, and with the phrase gone its note and its help text stay."""
+    field = pieces_seen["why"]["field"]
+    note, text = "shep-info-pc-why-field", "shep-help-text-pc-why-field"
+    assert {note, text, field["phrase"]} <= set(field["ids"]), field
+    assert field["ids"].index(note) < field["ids"].index(text), field
+    assert field["phrase"] not in field["after"] and {note, text} <= set(field["after"]), field
 
 
 def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_seen):
