@@ -5464,6 +5464,57 @@ def test_a_state_said_as_a_sentence_and_a_note_in_a_span_keep_the_measure():
     assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-reason")
 
 
+#: R-WIDTH's growing roles in their containers, on a page of the shell's style sheet alone: a
+#: search box with its role beside the same in the shared list's search row, and a path box with
+#: its role in a row and in a column (Gradio's row, column and the form it wraps a row's fields
+#: in, whose direction is its parent's).
+_ROLE_BOX_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const css = require('fs').readFileSync(process.argv[2], 'utf8');
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+  const field = (id, role) => `<div class="block ${role}" id="${id}"><label>Box</label><input type="text"></div>`;
+  await page.setContent(`<!doctype html><html><head><style>${css}
+    .row { display: flex; flex-direction: row; width: 900px; } .column { display: flex; flex-direction: column; width: 900px; height: 600px; }
+    .form { display: flex; flex-direction: inherit; }</style></head><body><div class="gradio-container">
+    <div class="row">${field('s-plain', 'shep-w-search')}</div>
+    <div class="row shep-search-row shep-grp"><span class="shep-search-lbl">Search</span>${field('s-row', 'shep-w-search')}<button>Clear</button></div>
+    <div class="row"><div class="form">${field('p-row', 'shep-w-path')}</div></div>
+    <div class="column"><div class="form">${field('p-col', 'shep-w-path')}</div></div>
+  </div></body></html>`);
+  const out = await page.evaluate(() => Object.fromEntries(['s-plain', 's-row', 'p-row', 'p-col'].map((id) => {
+    const e = document.getElementById(id), s = getComputedStyle(e), r = e.getBoundingClientRect();
+    return [id, { minWidth: s.minWidth, flex: s.flex, height: r.height }];
+  })));
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.fixture(scope="module")
+def role_boxes(tmp_path_factory):
+    from src.webui.style import SHELL_CSS
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    root = tmp_path_factory.mktemp("role-boxes")
+    (root / "page.css").write_text(SHELL_CSS, encoding="utf-8")
+    return run_node(_ROLE_BOX_JS, root, str(root / "page.css"), timeout=120)
+
+
+def test_a_search_box_takes_its_roles_width_in_the_search_row(role_boxes):
+    """R-WIDTH (m1-result's "Needs from shared" 2; the L8 close): the shared list's search row
+    gave its box a width of its own (``.shep-search-row > :not(:first-child):not(button)``, 0,2,1)
+    that overrode the box's role (``.shep-w-search``, 0,1,0), both !important, so the role was
+    inert there. The row's rule is a default (the least specific, as the button rule's is, S2's
+    d0c9ba6): the box grows and keeps its floor as its role says, in the row as anywhere."""
+    plain, row = role_boxes["s-plain"], role_boxes["s-row"]
+    assert (row["minWidth"], row["flex"]) == (plain["minWidth"], plain["flex"]), role_boxes
+
+
 #: R-WIDTH at a wide window, Fine-tune at first use: Epochs' input box and its content width,
 #: one ``ch`` of its font, the "More settings" title's words and its mark, and what lies under
 #: the title's words (`test_fields_take_their_roles_width_and_an_accordions_mark_stays_by_its_title`).

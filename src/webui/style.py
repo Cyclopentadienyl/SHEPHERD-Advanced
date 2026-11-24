@@ -741,6 +741,11 @@ span.shep-note { display: inline-block; }
   max-width: calc(var(--shep-w-name) + 2 * var(--input-padding, 10px) + 2 * var(--input-border-width, 1px));
 }
 .shep-w-path, .shep-w-search { flex: 1 1 var(--shep-w-grow-min) !important; min-width: min(var(--shep-w-grow-min), 100%) !important; }
+/* Their grow is along a row's line (a row, a bar, a bar's group, or the form Gradio wraps a row's
+   fields in, whose direction is its row's): in a column a flex basis is a height, and a path box
+   stood 24ch tall (the L8 close; lane T put its path in a row to avoid it). The container part
+   counts for nothing (``:where``), so the role keeps its weight against a row's own rules. */
+
 
 /* **A field row** (D03, the WebUI ledger's UI-03): labelled fields with an action beside them
    (Fine-tune's base picker, Training's Continue drawer, Test's Run, the Diagnosis load drawer's
@@ -1054,7 +1059,10 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .shep-bar > .shep-bar-note { flex: 1 1 100% !important; min-width: 0 !important; }
 .shep-bar > .shep-bar-note:not(:has(> .html-container > :not(:empty), .prose > *)) { display: none !important; }
 .shep-grp :is(input[type=text], input[type=search], textarea):not([role=combobox]) { min-width: var(--shep-input-floor); }
-.shep-grp > :is(.block, .form):has(input[type=text]:not([role=combobox]), textarea) {
+/* A group's text box grows from 18ch over its floor: a default, the least specific rule
+   (``:where``), so a box that carries its width role (``shep-w-search``, ``shep-w-path``) takes
+   the role's (the L8 close: this rule, 0,3,1, overrode every role in a group). */
+:where(.shep-grp) > :where(.block, .form):where(:has(input[type=text]:not([role=combobox]), textarea)) {
   flex: 1 1 18ch !important; min-width: calc(var(--shep-input-floor) + 24px) !important;
 }
 .shep-grp > button { flex: none !important; width: auto !important; min-width: max-content !important; white-space: nowrap; }
@@ -1366,8 +1374,11 @@ button.shep-row {
 .shep-search-row > :first-child, .shep-search-row > button { flex: none !important; width: auto !important; min-width: max-content !important; }
 /* The box is a group's text box (M2): it takes the line's room and never goes under its floor;
    where the row has not that room its parent wraps it whole (a bar) or it scrolls in its region,
-   never a 22 px box with Clear over it (B-03: every child here was allowed to shrink to 0). */
-.shep-search-row > :not(:first-child):not(button) {
+   never a 22 px box with Clear over it (B-03: every child here was allowed to shrink to 0). A
+   default, so the least specific rule (``:where``, as the button rule's default): a box that
+   carries its width role (``shep-w-search``) takes the role's width (the L8 close: this rule,
+   0,2,1, overrode the role's, 0,1,0, both !important). */
+:where(.shep-search-row) > :where(:not(:first-child):not(button)) {
   flex: 1 1 18ch !important; min-width: calc(var(--shep-input-floor) + 24px) !important;
 }
 /* In a bar (whose groups stand on one bottom line) "Search" and Clear stay on the box's middle
