@@ -420,8 +420,12 @@ def text_field(kind: str, value: Any) -> bool:
     return kind == "list[int]" or (value is None and kind in ("int", "float"))
 
 
-#: The width role of a number field (R-WIDTH: `style.py`'s ``--shep-w-num``).
+#: The width role of a number field (R-WIDTH: `style.py`'s ``--shep-w-num``), of a
+#: name (``--shep-w-name``: the run's name) and of a path (grows with its row from
+#: ``--shep-w-grow-min``: a typed checkpoint path).
 NUMBER_ROLE = "shep-w-num"
+NAME_ROLE = "shep-w-name"
+PATH_ROLE = "shep-w-path"
 
 
 def value_field(kind: str, label: str, value: Any, *, elem_id: str,
@@ -4786,9 +4790,10 @@ def create_training_tab(ctx: Any) -> None:
                         chip = plain_html(chip_html(None), elem_id="shep-train-chip",
                                           js_on_load=_POPOVER_JS)
                         with gr.Row(elem_classes=["shep-grp", "shep-rb-grp", "shep-rb-name"]):
+                            # A name's width by its role (R-WIDTH, the owner's D12).
                             run_name = gr.Textbox(label="Run name", value="", max_lines=1,
                                                   elem_id="run_name", scale=0, min_width=0,
-                                                  container=False)
+                                                  container=False, elem_classes=[NAME_ROLE])
                     with gr.Column(elem_classes=["shep-rb-run"], scale=0, min_width=0):
                         with gr.Row(elem_classes=["shep-grp", "shep-grp-wrap", "shep-rb-grp",
                                                   "shep-rb-act"]):
@@ -4925,16 +4930,21 @@ def create_training_tab(ctx: Any) -> None:
                     # run, epoch, file, kind and fingerprint, read as a wall of text):
                     # the run, then its checkpoint, each in a few words; the chosen
                     # file's details in a table under them.
+                    # The parent's source field: the run list's Run with its Refresh, or the
+                    # typed path, a path's width by its role (R-WIDTH, the owner's D12: it
+                    # grows with its row from its floor), in the row the source shows.
                     with gr.Row(elem_classes=["shep-train-parent-row", "shep-field-row"]):
                         continue_run = gr.Dropdown(label=STEP_RUN, choices=[], value=None,
                                                    elem_id="continue_run")
                         refresh_ckpt_btn = gr.Button("Refresh", size="sm", scale=0,
                                                      elem_id="shep-train-refresh")
+                        manual_checkpoint = gr.Textbox(label="Checkpoint path", value="",
+                                                       max_lines=1, visible=False,
+                                                       elem_id="manual_checkpoint",
+                                                       elem_classes=[PATH_ROLE])
                     checkpoint_dropdown = gr.Dropdown(label=STEP_CHECKPOINT, choices=[],
                                                       value=None, elem_id="checkpoint_dropdown")
                     parent_details = plain_html("", elem_id="shep-train-parent-details")
-                    manual_checkpoint = gr.Textbox(label="Checkpoint path", value="", max_lines=1,
-                                                   visible=False, elem_id="manual_checkpoint")
                     # The chosen parent's dataset against the run bar's, one
                     # line under its details (R-48).
                     compare = plain_html("", elem_id="shep-train-compare")
@@ -5324,9 +5334,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-notice:not(:has(.shep-notice-t)) {{ display: none !important; }}
 {_PAGE} .shep-rb-chip .shep-ds-built, {_PAGE} .shep-rb-chip .shep-ds-built + .shep-sep {{ display: none; }}
 /* The dataset's group keeps the select floor; the run's name takes what its row leaves from its
-   basis (its label and a box past the input floor), up to 20rem. */
+   basis (its label and a box past the input floor), up to a name's width (its role, R-WIDTH). */
 {_PAGE} .shep-rb-data {{ --shep-grp-min: 20rem; }}
-{_PAGE} .shep-rb-name {{ flex: 1 1 14rem !important; max-width: 20rem; }}
+{_PAGE} .shep-rb-name {{ flex: 1 1 14rem !important; }}
 {_PAGE} #shep-train-dataset {{ flex: 0 1 auto !important; min-width: 0 !important; }}
 {_PAGE} #run_name {{ flex: 1 1 auto !important; min-width: min-content !important; }}
 {_PAGE} #shep-train-view-run {{ flex: 0 1 auto !important; min-width: 0 !important; max-width: 100%; }}

@@ -143,6 +143,32 @@ def test_the_page_is_the_run_bar_the_parameters_the_drawer_and_the_run_view():
         assert not hasattr(tc, name), name
 
 
+def test_the_run_name_and_the_typed_path_take_their_roles_width():
+    """R-WIDTH (the owner's D12 of 2026-11-24; L8 §4 D12): a field's width comes
+    from its role, never from a page: the run's name is a name (at most
+    ``--shep-w-name``), the Continue drawer's typed checkpoint path a path,
+    which grows with its row from its floor; so it stands in the row the
+    parent's source shows (the run list's Run and Refresh), where the role's
+    width is the row's axis (in the drawer's column a path's basis would be
+    its height). The Run name group keeps no width cap of its own."""
+    _demo, _ctx, by_id = _page()
+    assert tc.NAME_ROLE in by_id["run_name"].elem_classes
+    path = by_id["manual_checkpoint"]
+    assert tc.PATH_ROLE in path.elem_classes
+
+    def row_of(block):
+        while block is not None and not isinstance(block, gr.Row):
+            block = getattr(block, "parent", None)
+        return block
+
+    row = row_of(path)
+    assert row is not None and "shep-train-parent-row" in row.elem_classes
+    assert row_of(by_id["continue_run"]) is row
+    names = [b for sel, b in _rules(tc.PAGE_CSS, ".shep-rb-name")
+             if sel == f"{tc._PAGE} .shep-rb-name"]
+    assert names and not any("max-width" in b for b in names), names
+
+
 def test_the_form_is_what_a_new_base_takes_common_settings_first():
     """Ops-wiring round, decisions S1, S3, S5: the Parameters are what a new
     base takes (`run_plan.new_run_settings("base")`), each starting at the
