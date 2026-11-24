@@ -2010,12 +2010,10 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     within 120 px under it and both wholly on screen when the action is
     brought into view, at 1850 x 960 and the display floor's 1280 x 720 with
     the accordions open;
-    next to the fields, between the facts and the allocator select, a short
-    relation to it (`FIELDS_LOCKED`). Fails on 6a2d52e: the reason was that
-    body line, 734 px above the buttons at 1850 x 960."""
+    no line next to the fields points at it (the owner's D6 of 2026-11-24). Fails on 6a2d52e:
+    the reason was that body line, 734 px above the buttons at 1850 x 960."""
     from src.webui import style
     from src.webui.app import create_gradio_app, mount_options
-    from src.webui.components import runtime_settings as rs
     from tests.fixtures.browser import LOOK_JS, QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.operator_access import DEPLOYMENT_MODE
     from tests.fixtures.served_page import served
@@ -2046,11 +2044,8 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
             assert action["text"].startswith("🔒 ") and action["disabled"], (size, name, action)
             assert 0 <= action["below"] <= 120, (size, name, action)
             assert action["whole"] and action["reasonWhole"], (size, name, action)
-        # Next to the fields: the relation, between the facts and the select.
-        fields, allocator = at["fieldsAt"], at["allocator"]
-        assert at["fields"] == f"🔒 {rs.FIELDS_LOCKED}", (size, at)
-        assert at["facts"]["bottom"] <= fields["top"] + 0.5, (size, at)
-        assert fields["bottom"] <= allocator["top"] + 0.5 <= fields["bottom"] + 24, (size, at)
+        # Next to the fields: no line pointing at the reason (D6).
+        assert at["fields"] is None, (size, at)
 
 
 #: Settings' scroll region (its level-1 tab item, side by side) with the

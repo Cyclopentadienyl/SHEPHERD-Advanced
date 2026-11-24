@@ -1087,7 +1087,7 @@ const QUEUE_JS = __QUEUE_JS__;
       }
       const said = (words) => (document.body.innerText.split(words).length - 1);
       return { rows, locks: (T(panel).match(/🔒/g) || []).length, reasons: reasons.map(T),
-               longSaid: said('Folder paths are shown to operator controls only.'),
+               longSaid: said(__NOTICE__),
                sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth };
     });
     await page.close();
@@ -1141,7 +1141,8 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
         monkeypatch.delenv(DEPLOYMENT_MODE, raising=False)
     monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
     with served(create_gradio_app(), **mount_options()) as base:
-        seen = run_node(_ROW_LOCKS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+        seen = run_node(_ROW_LOCKS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+                        .replace("__NOTICE__", json.dumps(dl.PATHS_OPERATOR_ONLY)), tmp_path,
                         base[:-len("gradio_api")])
     phrase = "Operator controls only"
     for size, at in seen.items():

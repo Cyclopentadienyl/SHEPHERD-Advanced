@@ -113,9 +113,9 @@ SOURCE_WORDS = {
 OVERRIDDEN = "Saved, applies when the start-up setting is removed"
 #: A path a read-only viewer is not shown.
 PATH_HIDDEN = "Set (path hidden)"
-#: The read-only notice's consequence (D8's whole reason is the header
-#: chip's, which each row's phrase opens, R-WHY).
-PATHS_OPERATOR_ONLY = "Folder paths are shown to operator controls only."
+#: The read-only notice: its consequence in plain words (the owner's D6 of 2026-11-24). Who can
+#: act is the header chip's whole reason, which each row's phrase opens (R-WHY), never here.
+PATHS_OPERATOR_ONLY = "Folder paths are hidden in this read-only view."
 #: Each row's short reason beside its locked box and buttons, for a request
 #: D8 refuses: R-WHY's ``d8`` phrase (`chips.OPERATOR_ONLY`, drawn by
 #: `chips.operator_only`), which opens the D8 chip's whole reason.
@@ -298,8 +298,8 @@ def reason_line(text: str = "", *, phrase: str = "") -> str:
     """**A refusal's line beside what it turns off** on Settings (the lock
     before it): in this panel the notice's consequence once, above its rows,
     and each row's ``d8`` phrase (`ROW_LOCKED`, `chips.operator_only`)
-    beside Check and Save; in Runtime settings the phrase beside its
-    actions, where the line above its two fields says where it is. `text`:
+    beside its locked Change… or its Check and Save; in Runtime settings the
+    phrase beside its actions. `text`:
     words (escaped); `phrase`: a dimmed control's phrase (R-WHY, HTML)."""
     words = " ".join(part for part in (r.e(text) if text else "", phrase) if part)
     return (f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
