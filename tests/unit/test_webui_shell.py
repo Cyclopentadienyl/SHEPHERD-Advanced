@@ -3984,6 +3984,10 @@ def _pieces_page():
                 with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-e-ft"):
                     gr.Button("Load", elem_id="pc-span-e-btn")
                     gr.HTML("<span>Not loaded yet</span>", elem_id="pc-span-e-words")
+        # An icon-only action beside a field (a field row's square, ``shep-icon-btn``).
+        with gr.Row(elem_classes=["shep-field-row"], elem_id="pc-span-icon-row"):
+            gr.Dropdown(["a"], value="a", label="Run", elem_id="pc-span-icon-field")
+            gr.Button("↻", elem_classes=["shep-icon-btn"], elem_id="pc-span-icon")
         with gr.Column(elem_id="pc-span-c", elem_classes=["shep-panel"], min_width=0):
             with gr.Row():
                 gr.Textbox(label="First", elem_id="pc-span-c-f1")
@@ -4256,6 +4260,10 @@ const QUEUE_JS = __QUEUE_JS__;
     });
     return [k, { span: ft.hasAttribute('data-shep-span'), room, buttons }];
   })));
+  out.span.icon = await page.evaluate(() => {
+    const q = document.getElementById('pc-span-icon').getBoundingClientRect();
+    return { width: q.width, height: q.height };
+  });
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -4383,6 +4391,10 @@ def test_a_button_spans_only_the_one_action_area_no_wider_than_its_fields(pieces
     (button,) = one["buttons"]
     assert abs(button["left"] - one["room"][0]) <= 1 and abs(button["right"] - one["room"][1]) <= 1, one
     assert one["span"] and not any(box["span"] for box in (two, wide, field, words)), span
+    # A role's own size stays (the rule is the least specific): an icon-only button beside a
+    # field is a square (Test's Run ↻ became a narrow sliver under the first rule).
+    icon = span["icon"]
+    assert abs(icon["width"] - icon["height"]) <= 1, icon
 
 
 def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_seen):

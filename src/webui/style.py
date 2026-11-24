@@ -805,11 +805,13 @@ span.shep-note { display: inline-block; }
    stretches it in a column), and its words stay on one line (the row wraps whole actions). The
    area the shell's layout pass marks (``data-shep-span``: one action with nothing beside it and
    no field in the area, no wider than its panel's widest field; never a group) is spanned by its
-   action, as a form's one action under its fields is. */
-.gradio-container :is(.row, .column, .shep-panel-ft, .shep-bar, .shep-grp) > :is(button.lg, button.md, button.sm) {
+   action, as a form's one action under its fields is. The default is the least specific rule
+   (``:where``), so a role's own size still applies (an icon-only button's square,
+   ``shep-icon-btn``; a field row's button). */
+.gradio-container :where(.row, .column, .shep-panel-ft, .shep-bar, .shep-grp) > :where(button.lg, button.md, button.sm) {
   flex: none !important; width: auto !important; min-width: max-content !important; white-space: nowrap;
 }
-.gradio-container .column:not(.row) > :is(button.lg, button.md, button.sm) { align-self: flex-start; }
+.gradio-container :where(.column:not(.row)) > :where(button.lg, button.md, button.sm) { align-self: flex-start; }
 .gradio-container [data-shep-span] > :is(button.lg, button.md, button.sm),
 .gradio-container [data-shep-span] > .column > :is(button.lg, button.md, button.sm) {
   flex: 1 1 auto !important; width: 100% !important; min-width: max-content !important; align-self: stretch;
