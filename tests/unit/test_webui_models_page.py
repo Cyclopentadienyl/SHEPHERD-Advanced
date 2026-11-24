@@ -3704,8 +3704,14 @@ const { chromium } = require('playwright');
       const foot = document.querySelector('#shep-models-research-load').closest('.shep-model-foot');
       const end = foot.getBoundingClientRect().bottom - parseFloat(getComputedStyle(foot).borderBottomWidth);
       const pad = parseFloat(getComputedStyle(document.getElementById('shep-mp-detail-bd')).paddingBottom);
+      // R-WHY: the phrase names the dimmed Load, and the Load is described by it.
+      const phrase = document.querySelector('#shep-models-research-reason button.shep-why');
+      const load = document.getElementById('shep-models-research-load');
       return { load: box('#shep-models-research-load'), reason: box('#shep-models-research-reason'), lines,
-               under: end - range.getBoundingClientRect().bottom, pad };
+               under: end - range.getBoundingClientRect().bottom, pad,
+               phraseFor: phrase && phrase.getAttribute('data-for'), phraseId: phrase && phrase.id,
+               describedBy: (load.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean),
+               dimmed: load.disabled };
     });
     await page.close();
   }
@@ -3727,7 +3733,8 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
     cannot be one line beside it. The sweep's L7 (LOOK3): the reason, the
     foot's last line, stood 3-6 px from the panel's bottom border, where
     every other panel's last line keeps the panel's padding: it keeps the
-    detail body's padding under it."""
+    detail body's padding under it. Round L8 (R-WHY, S1C-7): the phrase
+    names the dimmed Load and the Load is described by it."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -3747,6 +3754,12 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
         beside = at["reason"]["top"] < at["load"]["bottom"]
         assert not beside or at["lines"] == 1, (size, at)
         assert at["under"] >= at["pad"] - 0.5, (size, at)
+    # R-WHY (the owner's D6; S1C-7): the phrase beside 🔒 Load names it (``data-for``) and the
+    # dimmed Load is described by the phrase (``aria-describedby``, set by the shell's head
+    # script). Fails before: the phrase had no data-for and the Load no description.
+    for size, at in seen.items():
+        assert at["dimmed"] and at["phraseFor"] == "shep-models-research-load", (size, at)
+        assert at["phraseId"] and at["phraseId"] in at["describedBy"], (size, at)
 
 
 # --------------------------------------------------------------------------- the UI sweep of 2026-11-22

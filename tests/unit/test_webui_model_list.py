@@ -1846,6 +1846,32 @@ def test_a_draw_that_fails_changes_nothing_drawn(root, serving, monkeypatch, cap
     assert "could not be drawn" in caplog.text
 
 
+@pytest.mark.parametrize("preset", ["clinical", "research"])
+def test_a_dimmed_loads_phrase_names_the_load_it_explains_in_both_presets(preset):
+    """R-WHY (the owner's D6 of 2026-11-24; S1's leftover, S1C-7): beside a dimmed Load the
+    list drew its phrase ("Operator controls only" for a request D8 refuses, the notice's
+    phrase beside an empty list's Load) with no ``data-for``: the list did not know which
+    element it explained, so the dimmed Load had no ``aria-describedby``. Each instance names
+    its own Load by its element id (the instance that draws it: Diagnosis' Load drawer and
+    Models, never a page's name), so the shell's head script describes the Load by it. Fails
+    before: no ``data-for``."""
+    from src.config.server_settings import ENV_WORKSPACES_ROOT
+    from src.webui.components import renderers as r
+    from src.webui.components.workspaces import NOTICES, notice_view
+
+    demo, _ctx, handle, _ = _component(preset)
+    load_id = handle.load_button.elem_id
+    assert load_id == f"shep-models-{preset}-load"
+    refused = {**ml.empty_listing(), "refused": True, "condition": "forwarding_header"}
+    notice = notice_view(NOTICES[ENV_WORKSPACES_ROOT])
+    for listing, phrase in ((refused, r.REASON_PHRASES["d8"]),
+                            ({**ml.empty_listing(), "notice": notice, "items": []},
+                             r.REASON_PHRASES["workspaces_root"])):
+        reason = _drawn(demo, handle, listing)[id(handle.reason)]
+        assert f'>{phrase}</button>' in reason, reason
+        assert f'data-for="{load_id}"' in reason and f'id="{r.why_id(load_id)}"' in reason, reason
+
+
 def test_the_research_load_is_off_for_a_base_or_refused_row_with_its_reason(
         root, serving, monkeypatch):
     """Research › Models lists every row; a base or a refused record selected

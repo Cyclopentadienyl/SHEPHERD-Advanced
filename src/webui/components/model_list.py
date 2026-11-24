@@ -2012,7 +2012,8 @@ CHOOSE_A_MODEL = r.need_words("choose a model in the list first")
 
 
 def load_reason_html(item: Optional[Mapping[str, Any]],
-                     listing: Optional[Mapping[str, Any]] = None) -> str:
+                     listing: Optional[Mapping[str, Any]] = None, *,
+                     control: Optional[str] = None) -> str:
     """Beside the Load button, why it is off: for a listing D8 refused, its
     reason with the lock and its phrase (`chips.operator_only`, the skill's
     §3); with no model chosen, the listing's notice's phrase when the list is
@@ -2021,16 +2022,18 @@ def load_reason_html(item: Optional[Mapping[str, Any]],
     (`CHOOSE_A_MODEL`); for the selected row, when its record is never
     loaded (`load_refusal`) or its file was not read (its state,
     `renderers.unreadable_words`); nothing otherwise. Every dimmed Load says
-    why, in the shared form."""
+    why, in the shared form. `control`: the element id of the Load it
+    explains, the instance's own (`create_model_list`): a phrase names it
+    (R-WHY's ``data-for``), so the dimmed Load is described by its phrase."""
     if (listing or {}).get("refused"):
         from src.webui.components.chips import LOCK
 
         return (f'<div class="shep-reason shep-reason-grey">{LOCK} '
-                f'{refused_line(listing or {})}</div>')
+                f'{refused_line(listing or {}, control=control)}</div>')
     if item is None:
         notice = (listing or {}).get("notice")
         if notice and not (listing or {}).get("items"):
-            return r.phrase_line(notice)
+            return r.phrase_line(notice, control=control)
         return r.marked_line("neutral", CHOOSE_A_MODEL)
     if not loadable(item):
         # A file not read, or whose read failed: its state, as its row says
@@ -2113,7 +2116,8 @@ class ListDrawing(NamedTuple):
 
 def list_drawing(listing: Mapping[str, Any], key: Any, preset: Preset, *,
                  show_older: Any = False, view: Any = None, search: Any = "",
-                 fold: Any = None, said: Any = None) -> ListDrawing:
+                 fold: Any = None, said: Any = None,
+                 load_id: Optional[str] = None) -> ListDrawing:
     """**Everything the list shows, from one state** (G07; the review of
     00258f4, SL-R1): the rows, the count, and what describes the selection
     (the facts, Load, its reason, the note), all from the same listing,
@@ -2125,14 +2129,15 @@ def list_drawing(listing: Mapping[str, Any], key: Any, preset: Preset, *,
     of the Load, the status read again): its words are Load's reason while
     the selection drawn is the one it was said for, else the selection's own
     (`load_reason_html`); a search, a fold or "Show older runs" keeps them
-    (the review of 5171661)."""
+    (the review of 5171661). `load_id`: the element id of this instance's
+    Load, which its reason's phrase names (R-WHY)."""
     view = view_for_listing(view, listing, listing)
     fold = fold if isinstance(fold, Mapping) else {}
     item = find_item(listing, key)
     key = key if item is not None else None
     older, search = bool(show_older), search or ""
     reason = (str(said.get("html") or "") if isinstance(said, Mapping)
-              and said.get("key") == key else load_reason_html(item, listing))
+              and said.get("key") == key else load_reason_html(item, listing, control=load_id))
     return ListDrawing(
         list_html(listing, key, preset, show_older=older, view=view, search=search, fold=fold),
         count_line(listing, preset, older, view, search=search, fold=fold),
@@ -3898,7 +3903,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         session = session if isinstance(session, ListClock) else ListClock()
         try:
             drawing = list_drawing(data, key, chosen, show_older=older, view=current_view,
-                                   search=query, fold=session.folds(fold_state), said=said_now)
+                                   search=query, fold=session.folds(fold_state), said=said_now,
+                                   load_id=load.elem_id)
         except Exception:  # noqa: BLE001 - the next change draws the list again
             logger.exception("The model list could not be drawn")
             return (gr.update(),) * 6
