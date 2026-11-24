@@ -802,7 +802,7 @@ const { chromium } = require('playwright');
   await page.waitForSelector('#shep-chips .shep-chips', { timeout: 60000 });
   await page.addStyleTag({ content: '#shep-chips .shep-chip-gpu .shep-chip-text { width: 100vw; }' });
   const out = {};
-  for (const width of [1850, 1366, 1280, 1024]) {
+  for (const width of [1850, 1366, 1280, 1024, 864, 800]) {
     await page.setViewportSize({ width, height: 800 });
     await page.waitForTimeout(800);
     out[width] = await page.evaluate(() => {
@@ -846,8 +846,10 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
     the service mounts it (`app.mount_options`: its CSS and head script), its
     GPU chip as wide as its cap (a long holder record): at 1850 px the
     header is one line; at the display floor's 1280 (and 1366) the chips and
-    Settings go onto a second line; below the floor (1024) the header is
-    drawn as at the floor. At each, each area tab is what
+    Settings go onto a second line; a landscape window under the display
+    floor's width stacks at its own width (1024; R-ARR, the owner's D11 of
+    2026-11-24), and one under the stacked floor's (800) is drawn as at that
+    floor (864). At each, each area tab is what
     ``document.elementsFromPoint`` finds first at its centre and corners, the
     chips never over it; every chip is inside the frame and on one line, its
     words whole or ended at its own cap (the titled ellipsis). The chips'
@@ -872,7 +874,8 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
     assert result.returncode == 0, result.stderr
     seen = json.loads(result.stdout)
     assert seen["1280"]["wrapped"] is True and seen["1850"]["wrapped"] is False
-    assert seen["1024"] == seen["1280"], (seen["1024"], seen["1280"])
+    assert seen["800"] == seen["864"], (seen["800"], seen["864"])
+    assert seen["1024"]["frame"] <= 1024 < seen["1280"]["frame"], (seen["1024"], seen["1280"])
     for width, facts in seen.items():
         assert facts["chips"] > 0, width
         for tab, covered in facts["tabs"].items():
@@ -2136,9 +2139,10 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
     ``(min-width: 1400px) and (min-height: 760px)``, written in 13 media
     queries and 2 ``matchMedia`` calls over 8 modules, so 1280 x 900 and
     1920 x 700 stacked and 1440 x 1600 (portrait) did not. The shell's layout
-    pass now makes one decision (the window's shape, then whether the page's
-    panels fit by their own ``--shep-panel-min``) and writes it on the root
-    element; every style sheet and the two scripts read that attribute. No
+    pass now makes one decision (R-ARR, the owner's D11 of 2026-11-24: a
+    window wider than tall and at least the display floor's width, then
+    whether the page's panels fit by their own ``--shep-panel-min``; else
+    stacked) and writes it on the root element; every style sheet and the two scripts read that attribute. No
     media query or ``matchMedia`` on the window's size decides it any more
     (the media queries left are content breakpoints and reduced motion).
     What the browser does with it is
@@ -2156,7 +2160,8 @@ def test_one_layout_decision_keys_every_style_sheet_and_no_window_size_gate_is_l
     assert "document.documentElement.getAttribute('data-shep-layout') === 'side'" in training_console._BANNER_JS
     js = shell.SHELL_HEAD
     assert f"var LAYOUT = '{LAYOUT_ATTR}'" in js and f"SHORT_BELOW = {SHORT_BELOW}" in js
-    assert "var want = a.w > a.h && sideFits(shownTab()) ? 'side' : 'stack';" in js
+    assert "var side = w > h && w >= FLOOR_W && sideFits(shownTab());" in js
+    assert "want = a.side ? 'side' : 'stack';" in js
     assert "root.toggleAttribute(SHORT, a.h < SHORT_BELOW)" in js
     # Each panel's minimum read in px whatever unit its page writes (M4, the UI sweep of
     # 2026-11-22): the property is registered as a length, and where a browser has no @property
