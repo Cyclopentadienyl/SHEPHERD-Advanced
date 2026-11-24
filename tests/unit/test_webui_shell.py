@@ -2035,7 +2035,8 @@ def test_a_read_only_viewer_sees_disabled_fields_and_the_read_only_lozenge(tmp_p
     assert look["chip"]["background"] == _rgb(tokens["--shep-amber-50"])
     assert look["chip"]["color"] == _rgb(tokens["--shep-amber-800"])
     assert any(f["disabled"] for f in look["fields"])
-    reason = ["🔒", *"Operator controls only: deployment mode not set to M1.".split()]
+    # R-WHY: who can act, the d8 phrase (the D8 chip it opens says the condition, once).
+    reason = ["🔒", *"Operator controls only".split()]
     for size, at in seen["sizes"].items():
         assert at["reason"].split() == reason and at["inFooter"] and at["said"] == 1, (size, at)
         for name, action in at["actions"].items():

@@ -5356,7 +5356,11 @@ PAGE_CSS = charts.CHART_CSS + f"""
    (`renderers.phrase_line`, one line) and the job's state with its progress, which go under the
    buttons, whole, where the line has no room for them, on the buttons' edge. */
 {_PAGE} .shep-rb-act {{ gap: 4px 8px !important; }}
-{_PAGE} :is(#shep-train-why, #shep-train-pill) {{ flex: 0 1 auto !important; min-width: min(12rem, 100%) !important; }}
+{_PAGE} #shep-train-pill {{ flex: 0 1 auto !important; min-width: min(12rem, 100%) !important; }}
+/* Start's reason is a phrase (R-WHY, `renderers.phrase_line`: one unit, five words at most): its
+   floor is its own width, never a fixed one wider than it (a 12rem floor over a 189 px phrase
+   wrapped it under Start at 1850 x 960). */
+{_PAGE} #shep-train-why {{ flex: 0 1 auto !important; min-width: min-content !important; }}
 {_PAGE} #shep-train-why:not(:has(.shep-reason)) {{ display: none !important; }}
 {_PAGE} #shep-train-setup:not(:has(.shep-nb)) {{ display: none !important; }}
 {_PAGE} #shep-train-pill .html-container > div {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }}
