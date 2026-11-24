@@ -1679,7 +1679,9 @@ def test_tasks_are_in_view_with_a_parent_chosen_at_the_owner_windows_and_the_flo
     drawn, and every Tasks option lies inside the form's scroll region as it is shown, its
     scroll at the top (inside its box clipped by the window, above the fade its cue draws while
     more lies under it). Fails on 9adb3c4 at 1366 x 768 and 1280 x 720, where the parent's nine
-    rows and the list's line put the Tasks under the region's edge."""
+    rows and the list's line put the Tasks under the region's edge. **One glance** (the lead's
+    amendment 5): the Run and Checkpoint selects each show their whole chosen option at those
+    windows, since the summary's line leaves the name and the save to them."""
     from tests.fixtures.browser import (layout_stops, node_with_playwright, state_settings,
                                         walk_ui)
     from tests.fixtures.served_page import served_service
@@ -1706,6 +1708,12 @@ def test_tasks_are_in_view_with_a_parent_chosen_at_the_owner_windows_and_the_flo
         # The default parent is chosen and its stage facts are drawn.
         assert facts["run"]["value"] and facts["checkpoint"]["value"], (at, facts)
         assert facts["facts"][:2] == ["fingerprint", "trained_on"], (at, facts)
+    # One glance (the lead's amendment 5): the line leaves the parent's name and its save to the
+    # Run and Checkpoint selects over it, so each shows its whole chosen option at every window
+    # (never cut to the shell's titled ellipsis).
+    cut = [(stop["size"], name, stop["extra"][name]) for stop in seen
+           for name in ("run", "checkpoint") if not stop["extra"][name]["whole"]]
+    assert cut == [], cut
 
 
 #: The Fine-tune page served whole (the shell's layout and style sheets), the
