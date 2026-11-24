@@ -1770,7 +1770,7 @@ def create_models_page(ctx: Any) -> None:
         # and the "Applying …" line are the bar's notes, rows of their own.
         with gr.Row(elem_id="shep-mp-controls", elem_classes=["shep-grp", "shep-mp-controls",
                                                              "shep-mp-order-row"]):
-            plain_html('<span class="shep-mp-lbl">Order</span>', elem_id="shep-mp-order-lbl")
+            plain_html('<span class="shep-bar-lbl">Order</span>', elem_id="shep-mp-order-lbl")
             parts["order"] = gr.Radio(choices=ORDER_CHOICES, value=NEWEST, label="Order",
                                       show_label=False, interactive=False,
                                       elem_id="shep-mp-order", elem_classes=["shep-seg"],
@@ -2135,7 +2135,6 @@ PAGE_CSS = f"""
 {_PAGE} #shep-mp-detail-hd .shep-panel-hd h2, {_PAGE} #shep-mp-hd .shep-panel-hd h2 {{ overflow-wrap: anywhere; }}
 {_PAGE} #shep-mp-controls.shep-mp-order-row {{ align-items: center !important; gap: 8px !important; flex-wrap: nowrap !important; }}
 {_PAGE} .shep-mp-order-row > * {{ flex: 0 0 auto !important; min-width: 0 !important; width: auto !important; }}
-{_PAGE} .shep-mp-lbl {{ font-size: 15px; color: var(--shep-text-2); white-space: nowrap; }}
 {_PAGE} .shep-mp-back {{ display: none; }}
 {_PAGE} .shep-mp-hd-end {{ margin-left: auto; display: inline-flex; flex-wrap: wrap; justify-content: flex-end;
   align-items: center; gap: 10px; }}

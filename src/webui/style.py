@@ -1343,7 +1343,9 @@ button.shep-row {
 /* In a bar (whose groups stand on one bottom line) "Search" and Clear stay on the box's middle
    line: a label beside its box is no label above it. */
 .shep-bar > .shep-grp.shep-search-row { align-items: center !important; }
-.shep-search-lbl { font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); white-space: nowrap; }
+/* **A bar's label** (D14): a search row's "Search" and any other group's label in the same bar
+   ("Order" on Models) read as one label style, every field label's tokens. */
+.shep-search-lbl, .shep-bar-lbl { font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); white-space: nowrap; }
 .shep-list-outside { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 8px; font-size: 14px; color: var(--shep-text-2); }
 .shep-facts-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
 /* Its "↑ Back to the list" (`model_list.BACK_TO_LIST`), shown stacked only, at the title's end. */

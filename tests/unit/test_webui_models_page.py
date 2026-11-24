@@ -3661,6 +3661,27 @@ def test_order_is_a_group_of_the_lists_tools_bar_after_the_search():
     assert "flex: 0 1 var(--shep-select-floor)" in css
 
 
+def test_order_and_search_labels_take_the_one_bar_label_rule():
+    """The L8 S1 check (S1C-5, D14): the search row's "Search" took the label tokens while
+    "Order" beside it in the same bar kept the page's own style (15 px, regular, the secondary
+    colour), so the two labels of one toolbar line differed. Both labels take the one shared
+    bar-label rule (the label tokens), and the page sets no type of its own on either."""
+    import re
+
+    from src.webui.style import SHELL_CSS
+
+    demo, _ctx = _page()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    order = re.search(r'class="([^"]+)"', by_id["shep-mp-order-lbl"].value).group(1).split()
+    rule = re.search(r"([^{}]*\.shep-search-lbl\b[^{}]*)\{([^}]*)\}", SHELL_CSS)
+    assert any(re.search(rf"\.{cls}\b", rule.group(1)) for cls in order), (order, rule.group(1))
+    for token in ("--shep-label-size", "--shep-label-weight", "--shep-label-color"):
+        assert f"var({token})" in rule.group(2), token
+    for cls in order:
+        for own in re.findall(rf"\.{cls}\b[^{{}}]*\{{([^}}]*)\}}", mp.PAGE_CSS):
+            assert not re.search(r"font-(size|weight)|(^|[;\s])color", own), (cls, own)
+
+
 def test_the_order_note_and_the_details_empty_state_follow_what_is_listed():
     """GB10-UI-03 and the skill's §9: "Not ordered…" says why By family could
     not order a list, so it is said only where there is a list (first use and

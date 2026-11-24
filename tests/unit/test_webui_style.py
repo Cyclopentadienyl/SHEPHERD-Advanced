@@ -35,7 +35,7 @@ def test_each_role_has_its_width_token_and_its_class():
     for cls in ROLES:
         assert re.search(rf"\.{cls}\b[^{{]*\{{[^}}]*(max|min)-width", SHELL_CSS), cls
     # The search label reads as every field label (amendment 6): the label tokens.
-    rule = SHELL_CSS[SHELL_CSS.index(".shep-search-lbl {"):].split("}", 1)[0]
+    rule = SHELL_CSS[SHELL_CSS.index(".shep-search-lbl, .shep-bar-lbl {"):].split("}", 1)[0]
     for token in ("--shep-label-size", "--shep-label-weight", "--shep-label-color"):
         assert f"var({token})" in rule, token
 
