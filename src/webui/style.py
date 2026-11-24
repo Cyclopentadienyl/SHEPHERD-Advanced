@@ -347,7 +347,7 @@ gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%))
 .shep-chip-pending { color: var(--shep-status-neutral); }
 .shep-chip-unreadable { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-status-neutral); }
 .shep-chip-blocked { background: var(--shep-red-50); border-color: var(--shep-red-200); color: var(--shep-status-error); }
-.shep-chip-mark { flex: none; font-size: 13px; line-height: 1; }
+.shep-chip-mark { flex: none; line-height: 1; }
 .shep-chip-busy { background: var(--shep-accent-50); border-color: var(--shep-accent-100); color: var(--shep-accent-text); }
 .shep-dot {
   width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; flex: none;
