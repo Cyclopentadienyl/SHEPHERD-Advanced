@@ -57,6 +57,7 @@ gr = pytest.importorskip("gradio")
 from src.utils.fingerprint import file_sha256  # noqa: E402
 from src.webui import style  # noqa: E402
 from src.webui.components import datasets_page as dsp  # noqa: E402
+from src.webui.components import renderers as r  # noqa: E402
 
 ODD = "<b>odd&name"
 
@@ -473,7 +474,7 @@ def test_the_page_refreshes_when_opened_and_rows_select_their_details(root, monk
     why = next(x for x in data["rows"] if x["name"] == "scratch_ws")["not_trainable"]
     assert "The manifest was not read" in details and details.count(why) == 1
     # Disabled, with the reason beside it as visible text (M5-3).
-    assert "Use for training disabled: scratch_ws is not trainable: no split manifest." in note
+    assert r.need_words("not trainable: no split manifest") in note
     assert dsp.USE_NOTE not in note
 
     class Forged:
@@ -488,9 +489,9 @@ def test_the_reason_beside_use_for_training_is_escaped_and_names_no_path(root, m
                       "not_trainable": "files <i>its</i> manifest binds are missing",
                       "manifest": "read", "dataset_fingerprint": "a" * 64}]}
     note = dsp.use_note_html(data, "<b>x")
-    assert "<b>" not in note and "<i>" not in note and "&lt;b&gt;x" in note
+    assert "<b>" not in note and "<i>" not in note and "&lt;i&gt;its" in note
     # Disabled with no row chosen: said in the shared form (the sweep's L7, SW-LK6).
-    assert "Use for training disabled: select a workspace in the list first." in dsp.use_note_html(data, None)
+    assert r.need_words("choose a workspace in the list first") in dsp.use_note_html(data, None)
 
 
 def test_the_build_line_is_one_quiet_paragraph_drawn_only_under_a_listed_table():
@@ -584,7 +585,7 @@ def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch
               + dsp.use_note_html(data, None))
     assert screen.count("data-notice=") == 1 and screen.count("No workspaces folder is set.") == 1
     note = dsp.use_note_html(data, None)
-    assert note == r.see_above(dsp.USE_FOR_TRAINING, data["notice"])
+    assert note == r.phrase_line(data["notice"], control=dsp.USE_ID)
     assert 'data-notice-rel="workspaces_root"' in note
     assert dsp.DETAILS_NONE in dsp.details_html(data, None)
     assert dsp.DETAILS_SELECT not in dsp.details_html(data, None)
@@ -594,7 +595,7 @@ def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch
     assert dsp.NO_WORKSPACE_YET in said and r.e(dsp.BUILD_STEP) in said
     assert dsp.commands_html() in said
     assert "data-notice" not in said and said.startswith('<div class="shep-ds-empty">')
-    assert "Use for training disabled: no workspace is listed yet." in dsp.use_note_html(empty, None)
+    assert r.need_words("no workspace is listed yet") in dsp.use_note_html(empty, None)
     assert 'class="shep-reason"' in dsp.use_note_html(empty, None)
     # A folder set and not usable: its notice alone (the folder comes first, no build step).
     refused = {**data["notice"], "kind": "error", "summary": "The workspaces folder cannot be used."}

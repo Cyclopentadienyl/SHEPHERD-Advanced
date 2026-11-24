@@ -132,7 +132,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from src.core.types import SCORING_MODE_TASKS
 from src.evaluation.caveats import TASK_NAMES
 from src.webui.components import renderers as r
-from src.webui.components.chips import D8_SHORT, LOCK, OPERATOR_ONLY, gated
+from src.webui.components.chips import LOCK, gated, operator_only
 from src.webui.components.served_status import (
     STATUS_NOT_READ,
     read_status,
@@ -1007,17 +1007,22 @@ def change_button(state: Mapping[str, Any]) -> Dict[str, Any]:
             "size": "lg" if no_model else "sm"}
 
 
+#: The card's operator controls a read-only request dims (R-WHY's ``data-for``).
+CHANGE_CONTROLS = "shep-dx-change-btn shep-dx-stop-btn"
+
+
 def change_reason_html(state: Mapping[str, Any]) -> str:
-    """Why Change model… is off, as visible text (D8's short words)."""
+    """Why Change model… (and Stop inference) is off, as visible text: the
+    lock and R-WHY's ``d8`` phrase (`chips.operator_only`: "Operator controls
+    only", which opens the D8 chip's whole reason, its condition said there
+    once)."""
     if state.get("operator") or state.get("ok") is None:
         return ""
-    short = state.get("d8_short") or D8_SHORT["unreadable_request"]
     # The shared reason line (`shep-reason`: the lock in a column of its own; the sweep's L7
     # check, C5: a page's own line, so the walk read Change model… and Stop inference as off
-    # with no reason), its words in two groups, so a line breaks between them and never leaves
-    # "to M1" alone on the second line (M5-3).
+    # with no reason).
     return (f'<p class="shep-reason shep-dx-why"><span aria-hidden="true">{LOCK}</span>'
-            f'<span>{r.word_groups(OPERATOR_ONLY, short)}</span></p>')
+            f'<span>{operator_only(control=CHANGE_CONTROLS)}</span></p>')
 
 
 def details_visible(state: Mapping[str, Any]) -> bool:

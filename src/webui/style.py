@@ -648,7 +648,7 @@ span.shep-note { display: inline-block; }
    columns (M5: as a flex box its text and each element in it were columns of their own), at the
    measure, start-aligned. Led by a mark hidden from a screen reader (a lock, a status shape), the
    mark keeps a column of its own and every line of the words starts on one edge: the mark and
-   one element of words after it (`data_locations.reason_line`, `renderers.see_above`), as every
+   one element of words after it (`data_locations.reason_line`, `renderers.phrase_line`), as every
    producer draws it. Both columns are as wide as what they hold (the words' at most the line): an
    ``auto`` mark column took the room the words left, so on a line wider than them the words
    started far from their mark (74 px on Fine-tune, 209 px on Test), and a page's own
@@ -847,7 +847,7 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .shep-digest .shep-dl { grid-column: 1 / -1; font-size: 14px; font-weight: 600; color: var(--shep-text-2); }
 
 /* ---------------------------------------------------------------- the notice (M1) */
-/* **The one notice** (`renderers.notice_block`, `notices_block`, `see_above`; the text brief's
+/* **The one notice** (`renderers.notice_block`, `notices_block`, `phrase_line`; the text brief's
    §1): one line at the body size, its status mark in a column of its own so a wrapped line
    starts under the words; the page's consequence and the next step, a link to its place, in the
    same flow; the why and how under "Details ›" at 14 px, its references muted. Prose at the

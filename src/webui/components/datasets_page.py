@@ -135,11 +135,14 @@ PAGE_HELP = {
 }
 
 
-#: The control the line beside "Use for training ›" names while it is
-#: disabled (`renderers.disabled_words`): with no workspace listed, its
-#: relation to the workspaces folder's notice (`renderers.see_above`; the
-#: notice is the table's, in view of the button: one line beside it).
+#: The control the line beside "Use for training ›" explains while it is
+#: dimmed: with no workspace listed for want of the workspaces folder, its
+#: phrase (R-WHY, `renderers.phrase_line`; the notice is the table's, in view
+#: of the button), else the page's words led by the need
+#: (`renderers.need_words`).
 USE_FOR_TRAINING = "Use for training"
+#: Its element id, which a reason beside it names (R-WHY's ``data-for``).
+USE_ID = "shep-ds-use"
 
 
 def use_note_html(data: Mapping[str, Any], name: Optional[str]) -> str:
@@ -151,17 +154,14 @@ def use_note_html(data: Mapping[str, Any], name: Optional[str]) -> str:
     rows = data.get("rows") or []
     row = next((x for x in rows if x["name"] == name), None)
     if not rows and data.get("notice"):
-        return r.see_above(USE_FOR_TRAINING, data["notice"])
+        return r.phrase_line(data["notice"], control=USE_ID)
     if not rows:
-        return r.marked_line("neutral", r.disabled_words(USE_FOR_TRAINING,
-                                                         "no workspace is listed yet."))
+        return r.marked_line("neutral", r.need_words("no workspace is listed yet"))
     if row is None:
-        return r.marked_line("neutral", r.disabled_words(USE_FOR_TRAINING,
-                                                         "select a workspace in the list first."))
+        return r.marked_line("neutral", r.need_words("choose a workspace in the list first"))
     if not row.get("trainable"):
         why = row.get("not_trainable") or "not trainable"
-        words = r.disabled_words(USE_FOR_TRAINING, f"{row['name']} is not trainable: "
-                                                   f"{r.not_trainable_short(row, 120)}.")
+        words = r.need_words(f"not trainable: {r.not_trainable_short(row, 120)}")
         return (f'<p class="shep-reason" title="{r.e(why)}">{r.DISABLED_MARK}'
                 f'<span>{r.e(words)}</span></p>')
     return f'<span class="shep-note">{USE_NOTE}</span>'
@@ -591,7 +591,7 @@ def create_datasets_page(ctx: Any) -> None:
             details = plain_html(details_html({}, None), elem_id="shep-ds-details")
             with gr.Row(elem_classes=["shep-panel-ft"]):
                 use = gr.Button("Use for training ›", variant="primary", interactive=False,
-                                elem_id="shep-ds-use", scale=0)
+                                elem_id=USE_ID, scale=0)
                 use_note = plain_html(use_note_html({}, None), elem_id="shep-ds-use-note")
 
     def _refresh(current, run_bar):

@@ -2508,9 +2508,9 @@ def test_run_is_greyed_with_a_bubble_and_a_reason_when_no_model_is_loaded():
     assert dp.RUN_DISABLED_NO_MODEL in run["run_reason"]
     # B4: one reason, whoever reads it: the card says why, and who can load
     # one (its gated action). L7 SW-LK8: in the shared form every page says a
-    # disabled control in (`renderers.disabled_words`, the neutral mark in a
+    # dimmed control's local cause in (`renderers.need_words`, the neutral mark in a
     # column of its own), never a ⊖ and words of this page's own.
-    assert dp.RUN_DISABLED_NO_MODEL == "Run Diagnosis disabled: load a model first."
+    assert dp.RUN_DISABLED_NO_MODEL == r.need_words("load a model first")
     assert run["run_reason"] == r.marked_line("neutral", dp.RUN_DISABLED_NO_MODEL)
     assert "⊖" not in run["run_reason"] and 'class="shep-reason"' in run["run_reason"]
     read_only = dp.run_controls(_card(_no_model_status(), operator=False), "idle")

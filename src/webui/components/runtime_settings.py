@@ -415,6 +415,8 @@ RESTART_LABEL = "Restart Backend"
 #: to the reason, which is said once, beside the actions it turns off
 #: (`_refresh_restart_lock`). The reason was this line, 734 px above Apply,
 #: Restart Backend and Stop service at 1850 x 960 with the accordions open.
+#: The actions a read-only request dims, which their phrase names (R-WHY's ``data-for``).
+RUNTIME_ACTIONS = "runtime_apply runtime_restart runtime_stop"
 FIELDS_LOCKED = "Read-only for this request: the reason is with the actions below."
 
 
@@ -434,7 +436,7 @@ def _refresh_restart_lock(request: gr.Request):
     access = operator_access(request)
     idle = not restart_applies(os.environ, load_runtime_settings())
     reason = "" if access.allowed else data_locations.reason_line(
-        f"{operator_only(access.condition)}.")
+        phrase=operator_only(control=RUNTIME_ACTIONS))
     fields = "" if access.allowed else data_locations.reason_line(FIELDS_LOCKED)
     why = RESTART_BUSY if locked else RESTART_IDLE if idle and access.allowed else None
     return (

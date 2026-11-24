@@ -30,7 +30,7 @@ results registry or the import folder: unset, a normal setup step; set but refus
 short words and where to see why), `lock_notice` (the GPU lock: unset, which
 follows from the workspaces folder; another problem, said to an operator) and
 `read_workspaces`' ``notice``, from the read it already makes. Each is plain
-data for `renderers.notice_block`, `notices_block` and `see_above`.
+data for `renderers.notice_block`, `notices_block` and `phrase_line`.
 
 It also holds the one way a page says whether a registered cohort version was
 mapped against a workspace's graph (`workspace_binding`, `binding_state`,

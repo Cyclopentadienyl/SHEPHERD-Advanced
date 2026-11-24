@@ -150,12 +150,12 @@ def test_listing_the_bases_is_an_operator_control(root, monkeypatch):
     assert parents == {} and runs == checkpoints == gr.update(choices=[], value=None)
     # The one gated-button rule (the closing browser check: Refresh stayed
     # enabled, with no lock, for a read-only request): disabled, the lock, and
-    # "Operator controls only: …" beside it, as Start's reason line says it.
+    # "Operator controls only" (R-WHY's d8 phrase) beside it, as Start's reason line says it.
     from src.webui.components.chips import LOCK, operator_only
     from src.webui.operator_access import operator_access
 
     assert refresh == gr.update(value=f"{LOCK} Refresh", interactive=False)
-    assert r.e(operator_only(operator_access(READ_ONLY).condition)) in note
+    assert operator_only(operator_access(READ_ONLY).condition, control="ft_refresh") in note
     assert "listing the bases opens them" in note
 
 
@@ -173,8 +173,8 @@ def test_an_empty_list_says_why(root, operator):
 
     notice = notice_view(NOTICES[ENV_WORKSPACES_ROOT])
     why = fp._on_finetune_bases(operator, {**listed, "notice": notice}, None)[3]
-    assert why == r.see_above("Run", notice, where="above")
-    assert "Run disabled: no workspaces folder is set (see above)." in _words_of(why)
+    assert why == r.phrase_line(notice, control="ft_run")
+    assert "Needs a workspaces folder" in _words_of(why)
     assert 'data-notice-rel="workspaces_root"' in why and "data-notice=" not in why
     assert "train one on Research › Training" in fp.bases_note_html({}, None)
     assert "&lt;img" in fp.bases_note_html({}, TAG) and "<img" not in fp.bases_note_html({}, TAG)
@@ -1052,7 +1052,8 @@ def test_start_and_stop_follow_the_training_run_bars_states():
     refused_running = fp.actions_view(_status(child), access=_Access(False, "deployment_mode"),
                                       gpu=None, confirming=False)
     assert refused_running["stop_shown"] is True
-    assert refused_running["stop_reason"] == refused_running["reason"]
+    assert "Operator controls only</button>" in refused_running["stop_reason"]
+    assert 'data-for="ft_stop"' in refused_running["stop_reason"]
     running = fp.actions_view(_status(child), access=_Access(True), gpu=None, confirming=False)
     assert (running["start"], running["stop"]) == (False, True) and running["stop_reason"] == ""
     assert running["stop_shown"] is True
@@ -1061,7 +1062,7 @@ def test_start_and_stop_follow_the_training_run_bars_states():
     other = fp.actions_view({"status": "running"}, access=_Access(True), gpu=None,
                             confirming=False)
     assert (other["start"], other["stop"], other["stop_shown"]) == (False, False, False)
-    assert "a training job is running" in other["reason"]
+    assert r.need_words("a training job is running (Research › Training)") in other["reason"]
     stopping = fp.actions_view({"status": "stopping"}, access=_Access(True), gpu=None,
                                confirming=False)
     assert "Stopping" in stopping["reason"] and not stopping["start"]
@@ -1110,7 +1111,7 @@ def test_at_first_use_the_form_says_the_missing_folder_once(monkeypatch, operato
     # The empty Run and Checkpoint say their relation to it (the sweep's L7 check, C7: two
     # empty boxes that said nothing), never the notice again.
     assert 'data-notice-rel="workspaces_root"' in bases_note and "data-notice=" not in bases_note
-    assert "Run disabled: no workspaces folder is set (see above)." in _words(bases_note)
+    assert "Needs a workspaces folder" in _words(bases_note)
     # The notice: the state, the link, the why one click away. What it means
     # for Start is said once, by Start's relation (it said "Start is disabled
     # until one is chosen." too, the relation beside Start a line under it).
@@ -1118,10 +1119,10 @@ def test_at_first_use_the_form_says_the_missing_folder_once(monkeypatch, operato
     assert "Details ›" in setup
     # No long server sentence anywhere on the form.
     assert WORKSPACES_ROOT_NOT_SET not in screen and GPU_LOCK_NOT_CONFIGURED not in screen
-    # Start's reason: a relation to the notice, on one line beside Start.
-    assert 'data-notice-rel="gpu_lock"' in reason and "Details" not in reason
-    assert "Start disabled: GPU jobs need a workspaces folder (see above)." in _words(reason)
-    assert len(_words(reason)) < 100 and _words(screen).lower().count("disabled") == 2
+    # Start's reason: the notice's phrase (R-WHY), on one line beside Start.
+    assert 'data-why="workspaces_root"' in reason and "Details" not in reason
+    assert _words(reason).endswith("Needs a workspaces folder")
+    assert len(_words(reason)) < 100 and "disabled" not in _words(screen).lower()
     # A usable folder holding no workspace: no notice; the identity line says
     # what to do in its own words.
     assert fp.setup_html(None, None) == "" and fp.identity_html({"choices": []}) == (
@@ -1142,20 +1143,23 @@ def test_starts_gpu_reason_is_one_line_relation_never_the_notice_again():
              "notice": lock_notice({"problem": "x", "unset": True})}
     above = fp.actions_view({"status": "idle"}, access=_Access(True), gpu=unset,
                             confirming=False, said_above=True)
-    assert above["start"] is False and 'data-notice-rel="gpu_lock"' in above["reason"]
-    assert _words(above["reason"]).endswith(
-        "Start disabled: GPU jobs need a workspaces folder (see above).")
-    assert "<details" not in above["reason"]
+    assert above["start"] is False and 'data-why="workspaces_root"' in above["reason"]
+    assert _words(above["reason"]).endswith("Needs a workspaces folder")
+    assert "<details" not in above["reason"] and "see above" not in above["reason"]
+    # Said elsewhere or not: the same phrase (R-WHY: it brings the notice into view, or opens
+    # its place in Settings when the screen does not draw it), never the notice again.
     apart = fp.actions_view({"status": "idle"}, access=_Access(True), gpu=unset,
                             confirming=False)
-    assert "(see above)" not in apart["reason"] and "<details" in apart["reason"]
-    assert "Start disabled: GPU jobs need a workspaces folder." in _words(apart["reason"])
+    assert apart["reason"] == above["reason"]
     broken = {"text": "the GPU lock cannot be used", "test": False, "unset": False,
               "notice": lock_notice({"problem": f"{TAG} is a directory"}, operator=True)}
     said = fp.actions_view({"status": "idle"}, access=_Access(True), gpu=broken,
                            confirming=False)
-    assert "Start disabled: the GPU lock cannot be used." in _words(said["reason"])
-    assert "<img" not in said["reason"] and "&lt;img" in said["reason"]
+    # Set and not usable: its own cause, the GPU chip's reason (an operator reads the
+    # problem there), never the problem's words beside Start.
+    assert 'data-why="gpu_problem"' in said["reason"]
+    assert _words(said["reason"]).endswith("GPU lock not usable")
+    assert "<img" not in said["reason"] and "&lt;img" not in said["reason"]
     # The setup notice merges the lock's only while it follows from the folder's.
     folder = {"key": "workspaces_root", "kind": "neutral", "summary": "No workspaces folder.",
               "short": "no folder", "action": "", "target": "", "details": (), "ref": ()}
@@ -1183,7 +1187,7 @@ def test_start_and_stop_are_labelled_by_the_one_gated_rule(monkeypatch):
     assert (start["value"], start["interactive"]) == (f"🔒 {fp.START_LABEL}", False)
     assert (stop["value"], stop["interactive"]) == (f"🔒 {fp.STOP_LABEL}", False)
     for line in (reason, stop_reason):
-        assert "Operator controls only: deployment mode not set to M1" in line, line
+        assert "Operator controls only</button>" in line, line
 
 
 def test_a_failed_childs_printed_line_names_no_server_path_for_any_request(monkeypatch,

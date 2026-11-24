@@ -1360,6 +1360,10 @@ def dataset_choices_update(ws: Mapping[str, Any], *, interactive: bool = True) -
 
 
 # --------------------------------------------------------------------------- the chip
+#: The controls the run bar's reason explains (R-WHY's ``data-for``): Start and Continue…, and
+#: the Continue drawer's start.
+RUN_BAR_ACTIONS = "shep-train-start shep-train-continue"
+DRAWER_START = "shep-train-resume"
 LOCK_ICON = ('<svg class="shep-lock" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" '
          'focusable="false"><rect x="3" y="7" width="10" height="7.5" rx="1.6" '
          'fill="currentColor"/><path d="M5.2 7V5.2a2.8 2.8 0 0 1 5.6 0V7" fill="none" '
@@ -1586,7 +1590,7 @@ def _gpu_line(active: Optional[Mapping[str, Any]], lock: Optional[Mapping[str, A
     runner on the same lock; or a lock that cannot be used): ``{"text",
     "test", "unset", "notice"}`` or None. ``unset``: the lock cannot be used
     because no workspaces folder is set; ``notice``: the lock's notice
-    (`workspaces.lock_notice`, for `renderers.notice_block` and `see_above`),
+    (`workspaces.lock_notice`, for `renderers.notice_block` and `phrase_line`),
     None while the lock is not the reason. ``text`` keeps its words."""
     if active and active.get("job_type") == "test":
         inputs = (test or {}).get("inputs") or {}
@@ -1676,8 +1680,8 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
     and Stop has nothing to stop, R-39), ``reason`` (the run bar's note,
     escaped HTML, a row of its own under the controls: empty when nothing is
     disabled that is drawn), ``why`` (the one-line relation beside Start to
-    the setup notice, `renderers.see_above`: "Start disabled: GPU jobs
-    need a workspaces folder."), ``notice`` and ``also`` (the setup notice the
+    the setup notice, its phrase, `renderers.phrase_line`: "Needs a
+    workspaces folder"), ``notice`` and ``also`` (the setup notice the
     note draws once, `renderers.notice_block`, and the notices that follow
     from it: the workspaces folder's whenever the server says one, the GPU
     lock's while it is the reason), ``drawer_reason`` (the drawer footer's,
@@ -1712,22 +1716,24 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
     if s == "running" and isinstance(epoch, int) and isinstance(total, int) and total > 0:
         view["progress"] = max(0.0, min(1.0, epoch / total))
 
-    def line(icon: str, text: str, extra: str = "") -> str:
-        return f'<span class="shep-rb-why">{icon}<span>{r.e(text)}</span>{extra}</span>'
+    def line(icon: str, text: str = "", phrase: str = "") -> str:
+        """A reason line: its mark, then the page's words (escaped) or a phrase (R-WHY)."""
+        return f'<span class="shep-rb-why">{icon}<span>{phrase or r.e(text)}</span></span>'
 
     def disabled(cause: str) -> None:
-        """One cause, said for the run bar's actions and the drawer's start."""
-        view["reason"] = line(r.DISABLED_MARK, r.disabled_words("Start and Continue…", cause))
-        view["drawer_reason"] = line(r.DISABLED_MARK, r.disabled_words(action, cause))
+        """One local cause, said for the run bar's actions and the drawer's start, in the
+        page's words led by the need (`renderers.need_words`)."""
+        view["reason"] = line(r.DISABLED_MARK, r.need_words(cause))
+        view["drawer_reason"] = view["reason"]
 
     if not access.allowed:
-        view["reason"] = line(LOCK_ICON, operator_only(access.condition))
-        view["drawer_reason"] = view["reason"]
+        view["reason"] = line(LOCK_ICON, phrase=operator_only(control=RUN_BAR_ACTIONS))
+        view["drawer_reason"] = line(LOCK_ICON, phrase=operator_only(control=DRAWER_START))
         return view
     if training_busy:
         view["stop"] = s == "running" and not confirming(status, mode)
         if s == "running":
-            disabled("a training job is running.")
+            disabled("a training job is running")
         else:
             view["reason"] = line(r.DISABLED_MARK, "Stopping: Start and Continue… wait for the "
                                                      "job to end.")
@@ -1743,28 +1749,26 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
             view["also"] = [gpu["notice"]]
         else:
             view["notice"] = gpu["notice"]
-        view["why"] = r.see_above("Start", gpu["notice"])
-        view["drawer_reason"] = r.see_above(action, gpu["notice"],
-                                            where="above")
+        view["why"] = r.phrase_line(gpu["notice"], control=RUN_BAR_ACTIONS)
+        view["drawer_reason"] = r.phrase_line(gpu["notice"], control=DRAWER_START)
         return view
     if gpu:
         open_test = ('<button type="button" class="shep-link" data-act="open-test">Open Test ›</button>'
                      if gpu.get("test") else "")
-        tag = '<span class="shep-tag shep-tag-accent">GPU</span>'
-        # The sentence ends with its period, or with "· Open Test ›" instead
-        # (the run bar's link; the drawer's reason ends with its period).
-        view["reason"] = (f'<span class="shep-rb-why">{tag}'
-                          f'<span>Start and Continue… disabled — {r.e(gpu["text"])}'
-                          f'{" · " + open_test if open_test else "."}</span></span>')
-        view["drawer_reason"] = (f'<span class="shep-rb-why">{tag}<span>{r.e(action)} '
-                                 f'disabled — {r.e(gpu["text"])}.</span></span>')
+        # The GPU chip's reason, one activation away (R-WHY: "GPU in use"), then "· Open
+        # Test ›" for a test run (the run bar's link).
+        view["reason"] = line(r.DISABLED_MARK, phrase=(
+            r.reason_phrase("gpu_busy", control=RUN_BAR_ACTIONS)
+            + (f" · {open_test}" if open_test else "")))
+        view["drawer_reason"] = line(r.DISABLED_MARK,
+                                     phrase=r.reason_phrase("gpu_busy", control=DRAWER_START))
         return view
     if not row:
         # Its cause, said beside the select (the chip): none chosen, or none listed yet.
-        disabled("select a dataset." if ws.get("choices") else "no dataset is listed yet.")
+        disabled("choose a dataset to start" if ws.get("choices") else "no dataset is listed yet")
         return view
     if not row.get("trainable"):
-        disabled(f"{row.get('name')} is not trainable: {r.not_trainable_short(row)}.")
+        disabled(f"not trainable: {r.not_trainable_short(row)}")
         return view
     if not drawer:
         # Nothing drawn is disabled: Stop is not drawn while no job runs.
@@ -1774,7 +1778,7 @@ def _run_bar_actions(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Map
     why = continue_refusal(mode.get("parent") or {}, ws, operation=operation_of(mode))
     view["resume"] = why is None
     if why:
-        view["drawer_reason"] = line(r.DISABLED_MARK, r.disabled_words(action, why))
+        view["drawer_reason"] = line(r.DISABLED_MARK, r.need_words(why))
     return view
 
 
@@ -5340,7 +5344,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-pop .shep-v {{ overflow-wrap: anywhere; }}
 {_PAGE} .shep-pop .shep-link {{ align-self: flex-start; }}
 /* The actions at the bar's end: the buttons, then the relation beside Start
-   (`renderers.see_above`, one line) and the job's state with its progress, which go under the
+   (`renderers.phrase_line`, one line) and the job's state with its progress, which go under the
    buttons, whole, where the line has no room for them, on the buttons' edge. */
 {_PAGE} .shep-rb-act {{ gap: 4px 8px !important; }}
 {_PAGE} :is(#shep-train-why, #shep-train-pill) {{ flex: 0 1 auto !important; min-width: min(12rem, 100%) !important; }}

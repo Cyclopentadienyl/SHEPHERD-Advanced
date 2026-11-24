@@ -281,13 +281,14 @@ def test_a_read_only_request_opens_no_checkpoint_and_is_told_why(root, no_checkp
     assert "🔒" not in body
     assert card.change_button(state)["interactive"] is False
     assert card.change_button(state)["value"].startswith("🔒 ")
-    # The reason is visible text in two word groups: a line breaks between
-    # them, never inside "request not local" (M5-3: "to M1" alone on a line).
-    # The shared reason line (the sweep's L7 check, C5): the lock in a column of its own.
+    # The shared reason line (the sweep's L7 check, C5): the lock in a column of its own,
+    # then R-WHY's d8 phrase for the controls it dims (the D8 chip says the condition, once).
+    from src.webui.components.chips import operator_only
+
     assert card.change_reason_html(state) == (
         '<p class="shep-reason shep-dx-why"><span aria-hidden="true">🔒</span><span>'
-        '<span class="shep-wg">Operator controls only:</span> '
-        '<span class="shep-wg">request not local</span></span></p>')
+        f'{operator_only(control=card.CHANGE_CONTROLS)}</span></p>')
+    assert "request not local" not in card.change_reason_html(state)
 
 
 def test_the_timer_never_opens_a_checkpoint(root, no_checkpoint_opened):
@@ -1106,7 +1107,7 @@ def test_no_model_loaded_is_said_once_on_the_card_with_its_one_action(root):
     assert len(re.findall(r"(?i)no model (is )?loaded", visible)) == 0
     assert visible.count("Not loaded") == 1
     assert out["change_btn"]["value"] == "Load a model…"
-    assert dp.RUN_DISABLED_NO_MODEL == "Run Diagnosis disabled: load a model first."
+    assert dp.RUN_DISABLED_NO_MODEL == r.need_words("load a model first")
     assert dp.RUN_DISABLED_NO_MODEL in out["run_reason"]
     assert out["results_body"].count("No result yet") == 1
     assert "No result yet" not in dp.results_header_html(None)

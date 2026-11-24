@@ -104,12 +104,13 @@ SOURCE_WORDS = {
 OVERRIDDEN = "Saved, applies when the start-up setting is removed"
 #: A path a read-only viewer is not shown.
 PATH_HIDDEN = "Set (path hidden)"
-#: The read-only reason's second half (the first is D8's, `operator_only`).
+#: The read-only notice's consequence (D8's whole reason is the header
+#: chip's, which each row's phrase opens, R-WHY).
 PATHS_OPERATOR_ONLY = "Folder paths are shown to operator controls only."
 #: Each row's short reason beside its locked box and buttons, for a request
-#: D8 refuses: the lead of D8's words (`chips.OPERATOR_ONLY`); the whole
-#: reason is the panel's line (`notice_html`).
-ROW_LOCKED = OPERATOR_ONLY.rstrip(":")
+#: D8 refuses: R-WHY's ``d8`` phrase (`chips.OPERATOR_ONLY`, drawn by
+#: `chips.operator_only`), which opens the D8 chip's whole reason.
+ROW_LOCKED = OPERATOR_ONLY
 #: The unreadable file's notice (Save is off until it is replaced: said here once).
 UNREADABLE = ("Settings file cannot be read: the folders saved in it are unknown and not used. "
               "Save is off until the file is replaced. Folders set when the service started "
@@ -276,14 +277,16 @@ def where_html(view: DeploymentView, *, shown: bool) -> str:
 # ---------------------------------------------------------------------------
 # The panel as one read draws it
 # ---------------------------------------------------------------------------
-def reason_line(text: str) -> str:
-    """**A refusal's line beside what it turns off** on Settings (D8's
-    reason, the lock before it): in this panel the whole reason once, above
-    its rows, and each row's short `ROW_LOCKED` beside Check and Save;
-    in Runtime settings beside its actions, where the line above its two
-    fields says where it is."""
+def reason_line(text: str = "", *, phrase: str = "") -> str:
+    """**A refusal's line beside what it turns off** on Settings (the lock
+    before it): in this panel the notice's consequence once, above its rows,
+    and each row's ``d8`` phrase (`ROW_LOCKED`, `chips.operator_only`)
+    beside Check and Save; in Runtime settings the phrase beside its
+    actions, where the line above its two fields says where it is. `text`:
+    words (escaped); `phrase`: a dimmed control's phrase (R-WHY, HTML)."""
+    words = " ".join(part for part in (r.e(text) if text else "", phrase) if part)
     return (f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
-            f"<span>{r.e(text)}</span></div>")
+            f"<span>{words}</span></div>")
 
 
 def notice_html(view: DeploymentView, access: Any) -> str:
@@ -291,7 +294,7 @@ def notice_html(view: DeploymentView, access: Any) -> str:
     a pending change and why, or a first start; nothing otherwise."""
     shown = access.allowed
     if not shown:
-        return reason_line(f"{operator_only(access.condition)}. {PATHS_OPERATOR_ONLY}")
+        return reason_line(PATHS_OPERATOR_ONLY)
     if view.file.problem:
         then = (REPAIR_THEN if view.file.repairable else
                 "It cannot be opened: correct its permissions or the disk where it is. It is "
@@ -345,7 +348,7 @@ def _row_updates(item: FieldView, view: DeploymentView, access: Any,
         gr.update(**box),
         gr.update(**gated(CHECK_LABEL, allowed)),
         gr.update(**gated(SAVE_LABEL, allowed, interactive=readable)),
-        gr.update(value="" if allowed else reason_line(ROW_LOCKED)),
+        gr.update(value="" if allowed else reason_line(phrase=operator_only())),
         gr.update(visible=creatable, **gated(CREATE_LABEL, allowed)),
         gr.update(value=(f'<span{_title(suggestion, shown)}>'
                          f'{r.token_html(_tilde(suggestion), classes="shep-dl-path")}</span>')

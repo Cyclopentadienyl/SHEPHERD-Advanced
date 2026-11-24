@@ -175,9 +175,11 @@ def test_read_only_settings_lock_apply_and_restart_with_the_reason(monkeypatch, 
     assert (apply["value"], apply["interactive"]) == (f"🔒 {rs.APPLY_LABEL}", False)
     assert (button["value"], button["interactive"]) == (f"🔒 {rs.RESTART_LABEL}", False)
     assert (stop["value"], stop["interactive"]) == (f"🔒 {rs.STOP_LABEL}", False)
+    from src.webui.components.chips import operator_only
+
     assert reason["visible"] is True and reason["value"] == (
-        '<div class="shep-reason"><span aria-hidden="true">🔒</span><span>Operator controls '
-        "only: deployment mode not set to M1.</span></div>")
+        '<div class="shep-reason"><span aria-hidden="true">🔒</span><span>'
+        f"{operator_only(control=rs.RUNTIME_ACTIONS)}</span></div>")
     # Above the fields, a short relation to that reason, not a second copy.
     assert fields["visible"] is True and rs.FIELDS_LOCKED in fields["value"]
     assert "Operator controls only" not in fields["value"]

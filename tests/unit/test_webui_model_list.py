@@ -200,7 +200,7 @@ def test_a_read_only_request_lists_nothing_and_opens_nothing(root, serving, monk
     assert listing["refused"] is True and "did not arrive on this machine" in listing["problem"]
     # A listing is no act (M5-3 review UI-6): the short line every page uses.
     shown = ml.list_html(listing, None, ml.PRESETS["clinical"])
-    assert "Operator controls only: request not local." in shown
+    assert "Operator controls only</button>" in shown and 'data-why="d8"' in shown
     assert "Refused" not in shown and "Nothing was done" not in shown
 
 
@@ -2363,7 +2363,7 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     # workspace choice; the draw, the rows, the count, the facts, from that
     # session's listing.
     refused = call("http://192.0.2.10")
-    assert "Operator controls only: request not local." in json.dumps(refused)
+    assert "Operator controls only</button>" in json.dumps(refused)
     assert "disease_8c2e7a" not in json.dumps(refused)
     (_listing, _selected, workspace, *_states), (rows, count, *_rest) = call(OPERATOR_BASE_URL)
     assert workspace["value"] == "demo"
@@ -3380,8 +3380,9 @@ def test_load_says_why_it_is_off_with_no_model_chosen():
     notice = w.notice_view(w.NOTICES[w.ENV_WORKSPACES_ROOT])
     first_use = ml.load_reason_html(None, {"notice": notice, "items": []})
     assert f'data-notice-rel="{notice["key"]}"' in first_use and 'class="shep-reason' in first_use
-    assert r.relation_words(ml.LOAD_LABEL, notice) in first_use
+    assert r.REASON_PHRASES["workspaces_root"] in first_use and "disabled" not in first_use
     assert notice["summary"] not in first_use                       # the notice is not said again
     nothing = ml.load_reason_html(None, {"items": [{"key": "x"}]})
-    assert r.disabled_words(ml.LOAD_LABEL, ml.CHOOSE_A_MODEL) in nothing
+    assert ml.CHOOSE_A_MODEL == r.need_words("choose a model in the list first")
+    assert ml.CHOOSE_A_MODEL in nothing
     assert 'class="shep-reason' in nothing and "data-notice-rel" not in nothing

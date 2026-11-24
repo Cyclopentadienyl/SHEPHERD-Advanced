@@ -16,8 +16,8 @@ Module: src/webui/components/finetune_page.py
   at the top of the form it empties (`setup_html`: its state, what it means
   for Start, its next step a link to Settings › Data locations, the rest
   under "Details ›"), the GPU lock's merged into it; the identity, base and
-  task lines then say nothing of it and Start's reason is a one-line
-  relation to it (`renderers.see_above`).
+  task lines then say nothing of it and Start's reason is its phrase
+  (R-WHY, `renderers.phrase_line`).
 - **Dataset**: its own select over the server's workspace list
   (`workspaces.read_workspaces`, the shared option label), starting from the
   Training run bar's selection the first time the page opens and never
@@ -534,10 +534,8 @@ def identity_html(ws: Mapping[str, Any]) -> str:
             "</div>")
 
 
-#: The control Start's relation to the notice names (`renderers.see_above`,
-#: `actions_view`): "Start disabled: …", the one place the screen says what
-#: the notice means for Start (the notice says no consequence of its own).
-START = "Start"
+#: The element ids of Start and Stop, which a dimmed one's reason names (R-WHY's ``data-for``).
+START_ID, STOP_ID = "ft_start", "ft_stop"
 
 
 def _said_above(ws_notice: Any, gpu: Optional[Mapping[str, Any]]) -> bool:
@@ -877,11 +875,13 @@ def refused_html(tasks: Any, values: Mapping[str, Any], touched: Any, *,
             + r.status_mark("error" if tried else "warn", words) + "</span>")
 
 
-def _why(icon: str, text: str) -> str:
+def _why(icon: str, text: str = "", *, phrase: str = "") -> str:
     """A reason in the shared form (`shep-reason`: its mark, hidden from a screen reader, in a
     column of its own; the sweep's L7 check, C5: a page's own form, so the walk read Start and
-    Refresh as off with no reason for a read-only viewer)."""
-    return f'<span class="shep-reason shep-ft-reason">{icon}<span>{r.e(text)}</span></span>'
+    Refresh as off with no reason for a read-only viewer): the page's words (escaped), then a
+    dimmed control's phrase (R-WHY, `renderers.reason_phrase`), either or both."""
+    words = " ".join(part for part in (r.e(text), phrase) if part)
+    return f'<span class="shep-reason shep-ft-reason">{icon}<span>{words}</span></span>'
 
 
 def running_child(status: Mapping[str, Any]) -> Optional[str]:
@@ -924,36 +924,32 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
     beside it.
 
     **The GPU lock's reason is one line** (the text brief's §12): with its
-    notice (`gpu`'s ``notice``), Start's relation to it
-    (`renderers.see_above`: "Start disabled: GPU jobs need a workspaces
-    folder (see above)."), the notice itself said once, in the form's setup
-    notice, while `said_above` (`_said_above`); else its own short words with
-    its why under "Details ›" (an operator's only). A GPU job of the runner's
-    own is said in the lock line's words."""
+    notice (`gpu`'s ``notice``), its phrase beside Start (R-WHY,
+    `renderers.phrase_line`: "Needs a workspaces folder", which brings the
+    notice into view), the notice itself said once, in the form's setup
+    notice; a GPU holder, the GPU chip's phrase ("GPU in use", which opens
+    the chip's reason)."""
     s = status.get("status") or "idle"
     child_running = running_child(status) is not None
     shown = tc.stop_shown(status, child_job)
     view = {"start": False, "stop": False, "stop_reason": "", "stop_shown": shown}
     if not access.allowed:
-        view["reason"] = _why(tc.LOCK_ICON, operator_only(access.condition))
-        view["stop_reason"] = view["reason"] if shown else ""
+        view["reason"] = _why(tc.LOCK_ICON, phrase=operator_only(control=START_ID))
+        view["stop_reason"] = _why(tc.LOCK_ICON, phrase=operator_only(control=STOP_ID)) if shown else ""
     elif s == "stopping":
         view["reason"] = _why(r.DISABLED_MARK, "Stopping: the job is ending. Start waits for it.")
         if shown:
             view["stop_reason"] = _why(r.DISABLED_MARK, "Stopping: the job is ending.")
     elif child_running:
         view["stop"] = not confirming
-        view["reason"] = _why(r.DISABLED_MARK, r.disabled_words(START, "this Fine-tune job is "
-                                                                       "running."))
+        view["reason"] = _why(r.DISABLED_MARK, r.need_words("this Fine-tune job is running"))
     elif s == "running":
-        view["reason"] = _why(r.DISABLED_MARK, r.disabled_words(START, "a training job is running "
-                                                                       "(Research › Training)."))
+        view["reason"] = _why(r.DISABLED_MARK, r.need_words("a training job is running "
+                                                            "(Research › Training)"))
     elif gpu and gpu.get("notice"):
-        view["reason"] = r.see_above(START, gpu["notice"],
-                                     where="above" if said_above else None,
-                                     details=not said_above)
+        view["reason"] = r.phrase_line(gpu["notice"], control=START_ID)
     elif gpu:
-        view["reason"] = _why(r.DISABLED_MARK, f"Start {r.DISABLED} — {gpu['text']}.")
+        view["reason"] = _why(r.DISABLED_MARK, phrase=r.reason_phrase("gpu_busy", control=START_ID))
     else:
         view["start"] = True
         view["reason"] = ""
@@ -1073,19 +1069,19 @@ def _on_finetune_bases(request: gr.Request, ws, current):
     empty = gr.update(choices=[], value=None)
     refresh = gr.update(**gated(REFRESH_LABEL, access.allowed))
     if not access.allowed:
-        why = _why(tc.LOCK_ICON, f"Not listed: listing the bases opens them. "
-                                 f"{operator_only(access.condition)}")
+        why = _why(tc.LOCK_ICON, "Not listed: listing the bases opens them.",
+                   phrase=operator_only(control="ft_refresh"))
         return {}, empty, empty, f'<div class="shep-ft-reasons">{why}</div>', refresh
     name = (ws or {}).get("name")
     if not name:
         # With no dataset listed the setup notice says why, once, above
         # (`setup_html`); the empty Run and Checkpoint say their relation to it
-        # (`renderers.see_above`, as Test's do: the sweep's L7 check, C7: they
+        # (its phrase, `renderers.phrase_line`, as Test's do: the sweep's L7 check, C7: they
         # were two empty boxes that said nothing; the skill's §9), else ask
         # for a choice.
         notice = (ws or {}).get("notice")
         if notice:
-            return {}, empty, empty, r.see_above("Run", notice, where="above"), refresh
+            return {}, empty, empty, r.phrase_line(notice, control="ft_run"), refresh
         listed = (ws or {}).get("choices")
         note = bases_note_html({}, "Select a dataset first.") if listed else ""
         return {}, empty, empty, note, refresh

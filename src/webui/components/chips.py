@@ -14,8 +14,8 @@ repeats no header value). It is a display: each control checks its own request.
 
 **Gated buttons** follow one rule (`gated`; the WebUI skill's §3, a lock means
 refused): no lock while D8 allows the request; disabled, with the lock and
-the visible "Operator controls only: …" reason beside it (`operator_only`),
-while D8 refuses it.
+the visible "Operator controls only" phrase beside it (`operator_only`, which
+opens this chip's whole reason), while D8 refuses it.
 
 **The GPU chip** says what holds the one GPU slot, from the job runner
 (`training_manager.active_job`) and, for a holder outside the runner, the GPU
@@ -72,16 +72,23 @@ D8_ON = "Operator controls: on (this machine)"
 #: **The lock means "refused"** (the WebUI skill's §3): a gated control shows
 #: it only while D8 refuses the request it was drawn for (`gated`).
 LOCK = "🔒"
-#: The visible reason's lead beside a control D8 refuses (`operator_only`).
-OPERATOR_ONLY = "Operator controls only:"
+#: Who can act, beside a control D8 refuses (`operator_only`; R-WHY's ``d8``
+#: phrase, `renderers.REASON_PHRASES`).
+OPERATOR_ONLY = "Operator controls only"
 
 
-def operator_only(condition: Optional[str]) -> str:
-    """**The visible reason beside a gated control D8 refuses** for this
-    request, in D8's short words: "Operator controls only: request not
-    local" (the header chip's ⓘ gives D8's whole reason). Every page says it
-    in these words, beside the control it turns off."""
-    return f"{OPERATOR_ONLY} {D8_SHORT.get(condition or '', D8_SHORT['unreadable_request'])}"
+def operator_only(condition: Optional[str] = None, *, control: Optional[str] = None) -> str:
+    """**The phrase beside a gated control D8 refuses** for this request
+    (R-WHY, `renderers.reason_phrase`): "Operator controls only", a
+    focusable link that opens the D8 chip's whole reason in the one help
+    bubble (the condition D8 named is the chip's, said there once, so
+    `condition` changes nothing here). `control`: the element id of the
+    control it explains. Every page says it so, beside the control it turns
+    off, after the lock."""
+    from src.webui.components.renderers import reason_phrase
+
+    del condition
+    return reason_phrase("d8", control=control)
 
 
 def gated(label: str, allowed: bool, *, interactive: bool = True) -> Dict[str, Any]:

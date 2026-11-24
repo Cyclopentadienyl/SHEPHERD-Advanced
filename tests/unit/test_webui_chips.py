@@ -20,6 +20,7 @@ Module: tests/unit/test_webui_chips.py
 from __future__ import annotations
 
 import os
+import re
 import socket
 from datetime import datetime, timezone
 
@@ -374,14 +375,19 @@ def test_a_gated_button_shows_no_lock_while_allowed_and_the_lock_and_reason_when
     while D8 allows the request, the button's words as they are, with no
     lock, usable when the page's own condition holds; while D8 refuses it,
     disabled whatever the page's condition, with the lock before its words,
-    and the visible reason beside it in D8's short words."""
+    and beside it R-WHY's ``d8`` phrase, "Operator controls only", whatever
+    the condition (the D8 chip it opens says the condition, once)."""
     for interactive in (True, False):
         assert c.gated("▸ Start", True, interactive=interactive) == {
             "value": "▸ Start", "interactive": interactive}
         assert c.gated("▸ Start", False, interactive=interactive) == {
             "value": "🔒 ▸ Start", "interactive": False}
-    assert c.operator_only(condition) == f"Operator controls only: {c.D8_SHORT[condition]}"
-    assert c.operator_only(None) == "Operator controls only: request not readable"
+    from src.webui.components import renderers as r
+
+    assert c.operator_only(condition) == c.operator_only(None) == r.reason_phrase("d8")
+    assert re.sub(r"<[^>]+>", "", c.operator_only(condition)) == "Operator controls only"
+    assert c.D8_SHORT[condition] not in c.operator_only(condition, control="b")
+    assert 'data-for="b"' in c.operator_only(condition, control="b")
 
 
 def test_every_gated_page_labels_its_buttons_by_the_one_rule():
@@ -405,12 +411,13 @@ def test_every_gated_page_labels_its_buttons_by_the_one_rule():
         load = card.change_button(state)
         assert load["value"] == ("Load a model…" if operator else "🔒 Load a model…")
         reason = card.change_reason_html(state)
-        assert ("Operator controls only:" in reason) is not operator
+        assert ("Operator controls only<" in reason) is not operator
         listing = {"refused": not operator, "condition": "not_loopback", "items": []}
         assert ml.load_button(listing, None)["value"] == (
             "Load this model" if operator else "🔒 Load this model")
         beside = ml.load_reason_html(None, listing)
-        assert ("🔒 Operator controls only: request not local." in beside) is not operator
+        said = re.sub(r"<[^>]+>", "", beside)
+        assert ("🔒 Operator controls only" in said) is not operator
 
 
 def _every_chip() -> list:

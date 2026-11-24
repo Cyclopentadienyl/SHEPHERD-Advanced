@@ -3782,8 +3782,8 @@ def _pieces_page():
             gr.Button("Start", interactive=False, elem_id="pc-why-btn")
             shell.plain_html(r.phrase_line("d8", control="pc-why-btn", lock=True), elem_id="pc-why-d8")
             shell.plain_html(r.phrase_line(notice, control="pc-why-btn2"), elem_id="pc-why-ws")
-            shell.plain_html(r.see_above("Start", notice), elem_id="pc-rel")
-            shell.plain_html(r.see_above("Import", notice).replace(
+            shell.plain_html(r.phrase_line(notice, control="pc-rel-btn"), elem_id="pc-rel")
+            shell.plain_html(r.phrase_line(notice, control="pc-rel-end-btn").replace(
                 'class="shep-reason', 'style="justify-content: end; max-width: none" class="shep-reason', 1),
                 elem_id="pc-rel-end")
             with gr.Row(elem_id="pc-bar", elem_classes=["shep-bar"]):
@@ -4079,7 +4079,7 @@ def test_a_separator_never_starts_a_line_and_a_whole_cell_keeps_its_line(pieces_
 
 def test_a_relations_words_start_beside_its_mark_and_its_page_still_places_it(pieces_seen):
     """S1 of the sweep's integration (the lanes' L2 R-a, L3 R1, L5 R2): a relation led by a mark
-    (`renderers.see_above`) in a box wider than its words starts its words one column gap after
+    (`renderers.phrase_line`) in a box wider than its words starts its words one column gap after
     its mark (the mark's ``auto`` column took the room the words left: 74 px on Fine-tune, 209 px
     on Test), and a page that places it at its line's end (``justify-content``) still does."""
     rel, end = pieces_seen["rel"], pieces_seen["relEnd"]

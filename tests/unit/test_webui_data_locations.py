@@ -431,7 +431,6 @@ def test_a_read_only_request_sees_no_path_and_every_control_locked(dl, monkeypat
     said = json.dumps(outputs, ensure_ascii=False)
     assert str(tmp_path) not in said and "secret" not in said
     rows, panel = _parts(dl, outputs)
-    assert "Operator controls only: request not local." in panel["notice"]["value"]
     assert dl.PATHS_OPERATOR_ONLY in panel["notice"]["value"]
     assert dl.PATH_HIDDEN in rows["workspaces_root"]["state"]["value"]
     assert "Saved in Settings" in rows["workspaces_root"]["state"]["value"]
@@ -441,7 +440,7 @@ def test_a_read_only_request_sees_no_path_and_every_control_locked(dl, monkeypat
         assert row["box"]["interactive"] is False and row["box"]["value"] == ""
         for part, label in (("check", dl.CHECK_LABEL), ("save", dl.SAVE_LABEL)):
             assert (row[part]["value"], row[part]["interactive"]) == (f"🔒 {label}", False)
-        assert row["lock"]["value"] == dl.reason_line("Operator controls only"), key
+        assert row["lock"]["value"] == dl.reason_line(phrase=dl.operator_only()), key
     assert rows["intake_dir"]["create"]["value"] == f"🔒 {dl.CREATE_LABEL}"
     # Each act checks its own request: refused, nothing read or written.
     before = _saved_file()

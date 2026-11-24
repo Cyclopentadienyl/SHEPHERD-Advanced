@@ -829,13 +829,15 @@ def generation_marker(listing: Mapping[str, Any]) -> str:
     return f'<span class="shep-list-gen" hidden data-gen="{generation}"></span>'
 
 
-def refused_line(listing: Mapping[str, Any]) -> str:
+def refused_line(listing: Mapping[str, Any], *, control: Optional[str] = None) -> str:
     """Why a refused listing lists nothing, as every page says an operator
-    control that is off for this request (`chips.operator_only`): "Operator
-    controls only: <the condition D8 named, in short words>."."""
+    control that is off for this request (`chips.operator_only`, R-WHY's
+    ``d8`` phrase, HTML): "Operator controls only", which opens the D8
+    chip's whole reason (the condition D8 named is said there, once).
+    `control`: the element id of the control it explains."""
     from src.webui.components.chips import operator_only
 
-    return f"{operator_only(listing.get('condition'))}."
+    return operator_only(listing.get("condition"), control=control)
 
 
 #: Said beside Load when the list read again no longer lists the checkpoint
@@ -947,7 +949,7 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
     if listing.get("refused"):
         # A listing is no act: the short line every page uses for an operator
         # control off for this request, not "Refused … Nothing was done."
-        return f'<div class="shep-reason shep-reason-grey">{r.e(refused_line(listing))}</div>'
+        return f'<div class="shep-reason shep-reason-grey">{refused_line(listing)}</div>'
     return (_list_body(listing, selected, preset, show_older=show_older, view=view,
                        search=search, fold=fold) + view_marker(view)
             + generation_marker(listing))
@@ -2004,30 +2006,32 @@ def load_button(listing: Mapping[str, Any], item: Optional[Mapping[str, Any]]) -
 
 
 #: Load's cause while no model is chosen (the sweep's L7, SW-LK6: Load stood
-#: disabled with nothing said; the skill's §9).
-CHOOSE_A_MODEL = "choose a model in the list first."
+#: dimmed with nothing said; the skill's §9), led by the need
+#: (`renderers.need_words`).
+CHOOSE_A_MODEL = r.need_words("choose a model in the list first")
 
 
 def load_reason_html(item: Optional[Mapping[str, Any]],
                      listing: Optional[Mapping[str, Any]] = None) -> str:
     """Beside the Load button, why it is off: for a listing D8 refused, its
-    reason with the lock (`chips.operator_only`, the skill's §3); with no
-    model chosen, its relation to the listing's notice when the list is empty
-    for want of a setting (`renderers.see_above`: the notice is the list's,
-    said once), else that a model is to be chosen (`CHOOSE_A_MODEL`); for the
-    selected row, when its record is never loaded (`load_refusal`) or its
-    file was not read (its state, `renderers.unreadable_words`); nothing
-    otherwise. Every disabled Load says why, in the shared form."""
+    reason with the lock and its phrase (`chips.operator_only`, the skill's
+    §3); with no model chosen, the listing's notice's phrase when the list is
+    empty for want of a setting (`renderers.phrase_line`: the notice is the
+    list's, said once), else that a model is to be chosen
+    (`CHOOSE_A_MODEL`); for the selected row, when its record is never
+    loaded (`load_refusal`) or its file was not read (its state,
+    `renderers.unreadable_words`); nothing otherwise. Every dimmed Load says
+    why, in the shared form."""
     if (listing or {}).get("refused"):
         from src.webui.components.chips import LOCK
 
         return (f'<div class="shep-reason shep-reason-grey">{LOCK} '
-                f'{r.e(refused_line(listing or {}))}</div>')
+                f'{refused_line(listing or {})}</div>')
     if item is None:
         notice = (listing or {}).get("notice")
         if notice and not (listing or {}).get("items"):
-            return r.see_above(LOAD_LABEL, notice)
-        return r.marked_line("neutral", r.disabled_words(LOAD_LABEL, CHOOSE_A_MODEL))
+            return r.phrase_line(notice)
+        return r.marked_line("neutral", CHOOSE_A_MODEL)
     if not loadable(item):
         # A file not read, or whose read failed: its state, as its row says
         # it; why is in its details (`facts_html`, Models' detail).

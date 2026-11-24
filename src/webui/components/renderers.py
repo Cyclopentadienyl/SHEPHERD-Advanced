@@ -65,7 +65,7 @@ from src.evaluation.caveats import (
 )
 from src.utils.run_environment import native_identity_lines
 from src.utils.run_plan import recorded_frozen_parts
-from src.webui.components.chips import CHIP_TITLES, D8_TEXT_ID, GPU_TEXT_ID, LOCK
+from src.webui.components.chips import CHIP_TITLES, D8_TEXT_ID, GPU_TEXT_ID, LOCK, OPERATOR_ONLY
 from src.webui.components.help import copy_button, help_button
 
 #: Hex digits of a digest shown by default.
@@ -320,8 +320,8 @@ def bound_html(words: Any) -> str:
     (``shep-unit``: moved to the next line whole, wrapped inside only when it
     is wider than its box), so a line breaks at any other space: a narrow cell reads
     "GATv2 2026-10-02 00:00," / "1 epoch completed", never "1" / "epoch
-    completed". Every fact of a chain (`chain_html`), a relation's words
-    (`see_above`) and a notice's sentences (`literal_html`) are drawn so; a
+    completed". Every fact of a chain (`chain_html`) and a notice's
+    sentences (`literal_html`) are drawn so; a
     status mark's words are a state or a sentence, which wrap as prose."""
     text, out, at = "" if words is None else str(words), [], 0
     for found in _BOUND.finditer(text):
@@ -1172,55 +1172,28 @@ def notices_block(notices: Iterable[Any], *, consequence: Optional[str] = None,
             f'{"".join(lines)}{next_line}{_details(found, grouped=True)}</div>')
 
 
-#: **A disabled control's state, said one way on every page**: the control's
-#: name, this word, then why ("Start disabled: no workspaces folder is set.",
-#: `disabled_words`), never "unavailable" on one page and "disabled" on the
-#: next; a reason line a page draws itself leads with `DISABLED_MARK`, the mark
-#: a relation to a setting not yet set leads with (`see_above`).
-DISABLED = "disabled"
-#: The mark a disabled control's reason leads with where its page sets the
-#: mark in a column of its own: the neutral mark (grey, the skill's §6), its
-#: shape and colour as `_marked` draws them, never a page's own glyph.
+#: **The mark a dimmed control's reason leads with** where its page sets the
+#: mark in a column of its own (a phrase's line, `phrase_line`, and a line in
+#: the page's own words, `need_words`): the neutral mark (grey, the skill's
+#: §6), its shape and colour as `_marked` draws them, never a page's own glyph.
 DISABLED_MARK = (f'<span class="shep-nb-mark shep-st-{STATUS_MARKS["neutral"][1]}" '
                  f'aria-hidden="true">{STATUS_MARKS["neutral"][0]}</span>')
 
 
-def disabled_words(control: str, cause: str) -> str:
-    """"<control> disabled: <cause>": a disabled control's state and why,
-    the one form every page says it in (`DISABLED`)."""
-    return f"{control} {DISABLED}: {cause}"
-
-
-def relation_words(control: str, notice: Any, *, where: Optional[str] = None) -> str:
-    """`see_above`'s words as plain text, for a reason a page gives as text:
-    the control disabled, the notice's short words, and where the notice is
-    ("Start disabled: no results registry is set (see Data).")."""
-    found = _as_notice(notice)
-    if found is None:
+def need_words(cause: str) -> str:
+    """**SW-C11: a dimmed control's local cause in its page's words**, led by
+    what it needs ("Choose a dataset to start.", "Load a model first.", "A
+    training job is running."): a sentence, its first letter capitalised and
+    a full stop at its end, with no control's name (the control's
+    ``aria-describedby`` and the line's place beside it say which) and never
+    "disabled" (the dimmed look says the control cannot be used; Apple's
+    style guide). A cause with a key of its own (D8, a setting, the GPU) is
+    said by its phrase (`reason_phrase`), never here. "" for none."""
+    text = " ".join(str(cause or "").split())
+    if not text:
         return ""
-    return disabled_words(control, found["short"]) + (f" (see {where})" if where else "") + "."
-
-
-def see_above(control: str, notice: Any, *, where: Optional[str] = None,
-              details: bool = False) -> str:
-    """**A control's relation to the notice its screen shows** (said once,
-    `notice_block`): one line beside the control it explains, its status
-    mark, the control disabled and the notice's short words ("Start
-    disabled: no workspaces folder is set.", `relation_words`), with where
-    the notice is when it is not in view of the control (`where`: "see
-    above", "see Data"). With `details`, the notice's "Details ›" under it
-    (where the screen shows the notice's line elsewhere but not its
-    details). ``data-notice-rel`` names the notice: a relation is not the
-    notice said again."""
-    found = _as_notice(notice)
-    if found is None:
-        return ""
-    words = relation_words(control, found, where=where)
-    rel = f' data-notice-rel="{e(found["key"])}"' if found.get("key") else ""
-    inner = (f'<span class="shep-st-w shep-st-{STATUS_MARKS[found["kind"]][1]}">'
-             f'{bound_html(words)}</span>')
-    line = _marked(found["kind"], inner, "shep-reason shep-nb-rel", rel)
-    return line + (_details([found]) if details else "")
+    text = text[:1].upper() + text[1:]
+    return text if text[-1] in ".!?" else f"{text}."
 
 
 # ---------------------------------------------------------------------------
@@ -1246,7 +1219,7 @@ class Reason(NamedTuple):
 #: usable is a cause of its own (``*_unusable``), apart from the same
 #: setting unset.
 REASONS: Dict[str, Reason] = {
-    "d8": Reason("Operator controls only", "chip", D8_TEXT_ID, CHIP_TITLES["d8"]),
+    "d8": Reason(OPERATOR_ONLY, "chip", D8_TEXT_ID, CHIP_TITLES["d8"]),
     "workspaces_root": Reason("Needs a workspaces folder", "notice", WORKSPACES_ROOT_NOTICE.key),
     "registry": Reason("Needs a results registry", "notice", REGISTRY_NOTICE.key),
     "intake": Reason("Needs an import folder", "notice", INTAKE_DIR_NOTICE.key),
@@ -1350,14 +1323,19 @@ def reason_phrase(cause: Any, *, control: Optional[str] = None) -> str:
 
 def phrase_line(cause: Any, *, control: Optional[str] = None, lock: bool = False) -> str:
     """**A dimmed control's phrase as a line of its own** (`reason_phrase` in
-    a ``shep-reason`` line): led by the neutral mark (`DISABLED_MARK`), or,
+    a ``shep-reason`` line, the relation line's form, ``shep-nb-rel``: its
+    mark in a column of its own, `_marked`): led by the neutral mark, or,
     with `lock` (a request D8 refuses), by the lock, as a gated control's
     reason is (the skill's §3); "" for no known cause."""
     phrase = reason_phrase(cause, control=control)
     if not phrase:
         return ""
-    mark = f'<span aria-hidden="true">{LOCK}</span>' if lock else DISABLED_MARK
-    return f'<p class="shep-reason shep-why-line">{mark}<span>{phrase}</span></p>'
+    reason = REASONS[reason_key(cause)]
+    rel = f' data-notice-rel="{e(reason.ref)}"' if reason.source == "notice" else ""
+    if lock:
+        return (f'<p class="shep-reason shep-why-line"{rel}><span aria-hidden="true">{LOCK}</span>'
+                f'<span class="shep-nb-text">{phrase}</span></p>')
+    return _marked("neutral", phrase, "shep-reason shep-nb-rel shep-why-line", rel)
 
 
 #: Why a workspace without a readable manifest is not trainable, in short words:
@@ -3614,20 +3592,17 @@ def model_facts_html(facts: ModelFacts, *, focus: Optional[str] = None,
 __all__ = [
     "CURRENT_DATASET",
     "DETAILS_WORD",
-    "DISABLED",
     "DISABLED_MARK",
     "SEP",
     "whole_words",
-    "disabled_words",
     "literal_html",
     "marked_line",
     "name_pieces_html",
     "notice_block",
     "notice_rows_html",
     "notices_block",
-    "relation_words",
-    "see_above",
     "REASONS",
+    "need_words",
     "REASON_PHRASES",
     "Reason",
     "phrase_line",

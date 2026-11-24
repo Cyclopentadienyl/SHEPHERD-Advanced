@@ -527,7 +527,8 @@ def test_the_run_bars_actions_and_their_one_reason():
 
     running = _view({"status": "running", "current_epoch": 3, "total_epochs": 12})
     assert (running["start"], running["cont"], running["stop"]) == (False, False, True)
-    assert "a training job is running" in running["reason"] and running["progress"] == 0.25
+    assert r.need_words("a training job is running") in running["reason"]
+    assert running["progress"] == 0.25
     confirming = _view({"status": "running", "job_id": "j1"}, mode={"confirm": "j1"})
     assert confirming["stop"] is False
     # A confirmation asked for an earlier job is not this job's.
@@ -536,26 +537,31 @@ def test_the_run_bars_actions_and_their_one_reason():
 
     read_only = _view(access=_Access(False, "not_loopback"))
     assert not any(read_only[k] for k in ("start", "cont", "stop", "resume"))
-    assert "Operator controls only: request not local" in read_only["reason"]
+    # R-WHY: who can act, a phrase that opens the D8 chip's whole reason (said there, once).
+    assert "Operator controls only</button>" in read_only["reason"]
+    assert 'data-why="d8"' in read_only["reason"] and "request not local" not in read_only["reason"]
 
+    # A GPU holder: the GPU chip's phrase (the chip says the holder, once), then the run
+    # bar's link to a test run.
     test_run = _view(gpu={"text": "GPU job: test run (mygene2-2026-09 · 00:01:42)", "test": True})
     assert test_run["start"] is False and test_run["cont"] is False
-    assert "GPU job: test run (mygene2-2026-09 · 00:01:42)" in test_run["reason"]
+    assert 'data-why="gpu_busy"' in test_run["reason"] and "GPU in use" in test_run["reason"]
+    assert "mygene2-2026-09" not in test_run["reason"]
     assert 'data-act="open-test"' in test_run["reason"]
     cli = _view(gpu={"text": "GPU job: train_model.py (pid 41822, since 09:58 UTC)",
                      "test": False})
-    assert "train_model.py (pid 41822" in cli["reason"] and "open-test" not in cli["reason"]
+    assert 'data-why="gpu_busy"' in cli["reason"] and "open-test" not in cli["reason"]
 
     none = _view(ws={"row": None, "choices": [["demo", "demo"]]})
-    assert none["start"] is False and "select a dataset" in none["reason"]
-    # None listed yet (an empty workspaces folder): nothing to select, so it says so.
+    assert none["start"] is False and r.need_words("choose a dataset to start") in none["reason"]
+    # None listed yet (an empty workspaces folder): nothing to choose, so it says so.
     unlisted = _view(ws={"row": None, "choices": []})
-    assert unlisted["start"] is False and "select" not in unlisted["reason"]
-    assert "Start and Continue… disabled: no dataset is listed yet." in unlisted["reason"]
+    assert unlisted["start"] is False and "choose" not in unlisted["reason"].lower()
+    assert r.need_words("no dataset is listed yet") in unlisted["reason"]
     assert "The server lists no dataset yet." in tc.chip_html({"choices": []})
     untrainable = _view(ws={"row": {"name": "scratch_ws", "trainable": False,
                                     "not_trainable": "x", "manifest": "absent"}})
-    assert "scratch_ws is not trainable: no split manifest" in untrainable["reason"]
+    assert r.need_words("not trainable: no split manifest") in untrainable["reason"]
 
 
 def test_with_the_drawer_open_continue_training_follows_the_chosen_parent():
@@ -568,15 +574,15 @@ def test_with_the_drawer_open_continue_training_follows_the_chosen_parent():
     nothing = _view(ws=ws, mode={"drawer": True, "parent": {}})
     assert nothing["start"] is False and nothing["resume"] is False
     assert nothing["reason"] == ""
-    assert "Continue Training disabled: choose a checkpoint first." in nothing["drawer_reason"]
+    assert r.need_words("choose a checkpoint first") in nothing["drawer_reason"]
     same = _view(ws=ws, mode={"drawer": True, "parent": {"chosen": True, "fingerprint": "a" * 64}})
     assert same["resume"] is True and same["drawer_reason"] == ""
     differs = _view(ws=ws, mode={"drawer": True,
                                  "parent": {"chosen": True, "fingerprint": "e" * 64}})
     assert differs["resume"] is False
     assert "the parent’s dataset" not in differs["reason"]            # not in the run bar
-    assert ("Continue Training disabled: the parent’s dataset is not this workspace’s current "
-            "one.") in differs["drawer_reason"]
+    assert r.need_words("the parent’s dataset is not this workspace’s current "
+                        "one") in differs["drawer_reason"]
     assert "run bar above" not in differs["drawer_reason"]
     # A refused check, by what it refused and what to do (the B1c review: one
     # sentence blamed the checkpoint for every refusal).
@@ -586,28 +592,28 @@ def test_with_the_drawer_open_continue_training_follows_the_chosen_parent():
     assert "cannot be continued" in refused["drawer_reason"]
     branch = _view(ws=ws, mode={"drawer": True, "operation": "branch",
                                 "parent": {"chosen": True, "refused": tc.REFUSED_PARENT}})
-    assert ("Start branch disabled: the check says this checkpoint cannot be branched."
+    assert (r.need_words("the check says this checkpoint cannot be branched")
             in branch["drawer_reason"])
     edited = _view(ws=ws, mode={"drawer": True, "operation": "branch",
                                 "parent": {"chosen": True, "refused": tc.REFUSED_SETTINGS}})
     assert edited["resume"] is False
-    assert ("Start branch disabled: the check refuses a setting you edited. Change it, then "
-            "check again.") in edited["drawer_reason"]
+    assert r.need_words("the check refuses a setting you edited. Change it, then "
+                        "check again.") in edited["drawer_reason"]
     for source, action in ((tc.CONTINUE_FROM_LIST, "Refresh the list, then check it again."),
                            (tc.CONTINUE_FROM_PATH,
                             "Click Check checkpoint to read the file there now.")):
         changed = _view(ws=ws, mode={"drawer": True, "parent": {
             "chosen": True, "source": source, "refused": tc.REFUSED_CHANGED}})
         assert changed["resume"] is False
-        assert (f"Continue Training disabled: the checkpoint changed since it was chosen. "
-                f"{action}") in changed["drawer_reason"]
+        assert r.need_words(f"the checkpoint changed since it was chosen. "
+                            f"{action}") in changed["drawer_reason"]
     # A cause before the drawer's own names the drawer's start too.
     busy = _view({"status": "running"}, ws=ws, mode={"drawer": True, "operation": "branch"})
-    assert "Start branch disabled: a training job is running." in busy["drawer_reason"]
+    assert r.need_words("a training job is running") in busy["drawer_reason"]
     assert busy["reason"] == ""
     # Closed, the run bar says it again.
     closed = _view({"status": "running"}, ws=ws, mode={})
-    assert "Start and Continue… disabled: a training job is running." in closed["reason"]
+    assert r.need_words("a training job is running") in closed["reason"]
 
 
 def test_the_gpu_line_comes_from_the_runner_and_the_lock_holder():
@@ -666,10 +672,9 @@ def test_first_use_is_one_notice_under_the_bar_and_one_relation_beside_start(mon
     view = _view(ws=ws, gpu=gpu)
     assert (view["start"], view["cont"]) == (False, False)
     assert view["reason"] == ""                                   # no reason line of its own
-    assert view["why"] == r.see_above("Start", gpu["notice"])
-    assert ">Start disabled: GPU jobs need a workspaces folder.<" in view["why"]
-    assert "(see above)." in view["drawer_reason"] and "Continue Training disabled" in view[
-        "drawer_reason"]
+    assert view["why"] == r.phrase_line(gpu["notice"], control=tc.RUN_BAR_ACTIONS)
+    assert ">Needs a workspaces folder<" in view["why"]
+    assert view["drawer_reason"] == r.phrase_line(gpu["notice"], control=tc.DRAWER_START)
     # The notice is said before the bar (`setup_html`, L7 SW-LK5), the bar's note nothing.
     assert tc.note_html(view) == ""
     note = tc.setup_html(view)
@@ -700,7 +705,8 @@ def test_first_use_is_one_notice_under_the_bar_and_one_relation_beside_start(mon
         line = tc._gpu_line(None, problem, None, operator=operator)
         seen = _view(gpu=line)
         drawn = tc.setup_html(seen)
-        assert "The GPU lock cannot be used." in drawn and seen["why"].count("disabled") == 1
+        assert "The GPU lock cannot be used." in drawn and "disabled" not in seen["why"]
+        assert 'data-why="gpu_problem"' in seen["why"]
         assert ("/srv/workspaces" in drawn) is operator
         assert "/srv" not in seen["why"]
     # Nothing to say: no note, so its row takes no room.
@@ -2094,7 +2100,7 @@ def test_a_read_only_request_sees_every_action_disabled_and_no_checkpoint(root, 
     # (the one gated-button rule, the WebUI skill §3).
     for key, label in tc.ACTION_LABELS.items():
         assert pieces[key] == {"value": f"🔒 {label}", "interactive": False}, key
-    assert "Operator controls only: deployment mode not set to M1" in pieces["reason"]
+    assert "Operator controls only</button>" in pieces["reason"]
     assert "dataset not shown · operator control" in pieces["head"]
     # The run's folder is a listing's fact (R-41: named once, in Details); its
     # checkpoint and model fingerprint are an operator's.
@@ -2694,10 +2700,10 @@ def test_a_live_run_reads_its_checkpoint_once_for_the_fingerprint(root, monkeypa
 def test_the_reason_lines_sentence_ends_once():
     test_run = _view(gpu={"text": "GPU job: test run (mygene2-2026-09 · 00:00:25)", "test": True})
     text = re.sub(r"<[^>]+>", "", test_run["reason"])
-    assert text.endswith("(mygene2-2026-09 · 00:00:25) · Open Test ›") and ")." not in text
+    assert text.endswith("GPU in use · Open Test ›") and "." not in text
     cli = _view(gpu={"text": "GPU job: train_model.py (pid 41822, since 09:58 UTC)",
                      "test": False})
-    assert re.sub(r"<[^>]+>", "", cli["reason"]).endswith("since 09:58 UTC).")
+    assert re.sub(r"<[^>]+>", "", cli["reason"]).endswith("GPU in use")
 
 
 def _option_rules(labels, choices=None, values=None):
@@ -3409,8 +3415,8 @@ def test_the_drawers_start_sits_in_its_footer_beside_its_reason():
     ws = {"row": {"name": "demo", "trainable": True, "dataset_fingerprint": "a" * 64}}
     refused = _view(ws=ws, mode={"drawer": True, "parent": {"chosen": True, "refused": True}})
     assert refused["reason"] == ""
-    assert ("<span>Continue Training disabled: the check says this checkpoint cannot be "
-            "continued.</span>") in refused["drawer_reason"]
+    assert (f"<span>{r.need_words('the check says this checkpoint cannot be continued')}"
+            "</span>") in refused["drawer_reason"]
 
 
 def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
@@ -4126,7 +4132,7 @@ def test_the_run_bar_is_whole_groups_with_its_note_under_them_at_any_window(
         assert drawn["beside"] == [], where
         why = drawn["why"]
         if case == "first_use":
-            assert why["text"] == "Start disabled: GPU jobs need a workspaces folder.", where
+            assert why["text"] == r.REASON_PHRASES["workspaces_root"], where
             start = drawn["start"]
             level = min(start[3], why["box"][3]) - max(start[1], why["box"][1])
             if level > 0.5 * (start[3] - start[1]):
