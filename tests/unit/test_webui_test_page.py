@@ -3236,8 +3236,9 @@ def test_a_busy_gpu_is_the_start_reason_before_any_choice(site, monkeypatch):
     for ws, label, key in ((None, None, None), ("demo", LABEL, None)):
         allowed, why = tp.start_state(page, models, ws, label, key, None, busy)
         assert allowed is False and why == "gpu_busy"
-    allowed, why = tp.start_state(page, models, "demo", LABEL, None, None, ("unread", ""))
-    assert why == "gpu_problem"
+    for kind in ("unset", "unreadable", "blocked"):
+        allowed, why = tp.start_state(page, models, "demo", LABEL, None, None, (kind, ""))
+        assert why == "gpu_problem", kind
 
 
 def _runs(n):
@@ -5224,7 +5225,7 @@ def test_with_no_kg_edge_set_the_data_panel_names_the_import_command(site, monke
     assert tp.version_html({**page, "registry_problem": "unset"}, LABEL, None) == ""
 
 
-def _first_use_screen(page, gpu=("unread", "GPU jobs: not set up")):
+def _first_use_screen(page, gpu=("unset", "GPU jobs: not set up")):
     """What the Test page draws for `page` with nothing chosen (an operator):
     Data, Run (its fields' details, Start's reason) and Reports, as the page
     open writes them; `gpu` the GPU chip's line (not set up while no

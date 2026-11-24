@@ -10,7 +10,8 @@ The header's chips (M5-2, UI-A): operator controls and GPU jobs.
 - **the GPU chip** from the job runner and the lock's holder record: none,
   training or test run (job runner), a CLI holder with pid and start time, a
   holder that exited, a lock not configured, a lock that cannot be used, and
-  grey "not read" when anything fails. Never "free"; no exception text; a
+  grey "could not be read" when anything fails (R-STATE: four states that are
+  no holder, each its own kind and words). Never "free"; no exception text; a
   server path only for a request D8 allows; a holder record's text escaped;
 - **wired as the page contract says**: read on load, on the shell's slow
   timer and after a gated act, each with no queue, for the triggering request.
@@ -222,7 +223,7 @@ def test_a_lock_not_configured_says_so_and_that_jobs_are_refused(monkeypatch):
     assert lock["unset"] is True and lock["configured"] is False and lock["problem"]
     for operator in (True, False):
         chip = c.gpu_chip_from(None, lock, operator=operator)
-        assert (chip.kind, chip.text) == ("unread", "GPU jobs: not set up")
+        assert (chip.kind, chip.text) == ("unset", "GPU jobs: not set up")
         # Plain words that point to where a clinician sets it (UI-06, item 9);
         # the variable only as a trailing "Ref:" for the command line.
         assert chip.detail.startswith(f"{GPU_LOCK_NOTICE.summary}\n{GPU_LOCK_NOTICE.action}.\n")
@@ -254,7 +255,7 @@ def test_the_chip_reads_the_lock_s_one_status_reader(monkeypatch, tmp_path):
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "missing"))
     for operator in (True, False):
         chip = read_gpu_chip_now(operator)
-        assert (chip.kind, chip.text) == ("unread", "GPU jobs: not read")
+        assert (chip.kind, chip.text) == ("blocked", "GPU jobs: lock not usable")
         assert ("The GPU lock under it cannot be used either" in chip.detail) is operator
 
 
@@ -263,7 +264,7 @@ def test_a_lock_that_cannot_be_used_names_its_path_only_to_an_operator():
             "problem": "SHEPHERD_WORKSPACES_ROOT='/srv/secret/x' is not usable"}
     for operator in (True, False):
         chip = c.gpu_chip_from(None, lock, operator=operator)
-        assert (chip.kind, chip.text) == ("unread", "GPU jobs: not read")
+        assert (chip.kind, chip.text) == ("blocked", "GPU jobs: lock not usable")
         assert ("/srv/secret/x" in chip.detail) is operator
         # T06: the request that may not read the problem is told where an
         # operator reads it, Settings › Data locations, never the variable.
@@ -287,14 +288,75 @@ def test_the_lock_path_goes_only_to_a_request_d8_allows(monkeypatch):
     assert seen == [True, False, False]
 
 
-def test_a_runner_that_raises_reads_not_read_with_no_exception_text():
+def test_a_runner_that_raises_reads_could_not_be_read_with_no_exception_text():
     class Broken:
         def active_job(self):
             raise RuntimeError("boom: /srv/secret")
 
     chip = c.read_gpu_chip(Broken(), operator=True, lock_reader=lambda: LOCK_FREE)
-    assert (chip.kind, chip.text) == ("unread", "GPU jobs: not read")
+    assert (chip.kind, chip.text) == ("unreadable", "GPU jobs: could not be read")
     assert "boom" not in chip.detail and "RuntimeError" not in chip.detail
+
+
+def test_each_unread_like_state_has_its_own_kind_and_words():
+    """R-STATE (the owner's "unread" of 2026-11-24): "not set up" (no
+    workspaces folder), "not read yet" (before the first read), "could not be
+    read" (the read raised) and "lock not usable" (a lock problem) are four
+    states. They shared the kind ``unread`` (class ``shep-chip-unread``,
+    ``data-state``) and two of them the words "not read". Each now has its
+    own kind, its own state words and its own look in the status tokens (no
+    new hex): a missing setting and a read that failed grey with the hollow
+    mark, the placeholder grey with no mark, the lock problem red with the
+    cross (it refuses every managed job, the skill's §6)."""
+    from src.webui import style
+    from src.webui.components.renderers import STATUS_MARKS
+
+    class Broken:
+        def active_job(self):
+            raise RuntimeError("boom")
+
+    placeholder = dict(re.findall(r'class="shep-chip shep-chip-(d8|gpu) shep-chip-[a-z]+" '
+                                  r'data-state="([a-z]+)"', c.CHIPS_PLACEHOLDER))
+    words = dict(re.findall(r'class="shep-chip shep-chip-(d8|gpu) .*?'
+                            r'<span class="shep-chip-text" title="([^"]*)"', c.CHIPS_PLACEHOLDER))
+    states = {
+        "unset": c.gpu_chip_from(None, {**LOCK_FREE, "configured": False, "unset": True,
+                                        "path": None, "problem": "x"}, operator=True),
+        "pending": c.Chip(placeholder["gpu"], words["gpu"], ""),
+        "unreadable": c.read_gpu_chip(Broken(), operator=True, lock_reader=lambda: LOCK_FREE),
+        "blocked": c.gpu_chip_from(None, {**LOCK_FREE, "problem": "the folder is read-only"},
+                                   operator=True),
+    }
+    assert {name: chip.kind for name, chip in states.items()} == {
+        name: name for name in states}, states
+    assert placeholder == {"d8": "pending", "gpu": "pending"}
+    # Each state's own words after "GPU jobs: ": four, none a part of another.
+    said = {name: chip.text.split(": ", 1)[1] for name, chip in states.items()}
+    assert said == {"unset": "not set up", "pending": "not read yet",
+                    "unreadable": "could not be read", "blocked": "lock not usable"}
+    assert all(a == b or a not in b for a in said.values() for b in said.values()), said
+    assert words["d8"] == "Operator controls: not read yet"
+    # No chip draws the merged kind; each kind has its own look in the status tokens.
+    drawn = [c.chip_html(chip, which="gpu") for chip in states.values()] + [c.CHIPS_PLACEHOLDER]
+    merged = re.compile(r"shep-chip-unread(?![\w-])")
+    assert not any(merged.search(html_) for html_ in drawn)
+    assert not merged.search(style.SHELL_CSS)
+    rules = {kind: " ".join(re.findall(rf"\.shep-chip-{kind}\b[^{{]*\{{([^}}]*)\}}", style.SHELL_CSS))
+             for kind in states}
+    for kind, body in rules.items():
+        assert body and "var(--shep-" in body, kind
+        assert not re.search(r"#[0-9a-fA-F]{3,6}\b", body), (kind, body)
+    assert "var(--shep-status-error)" in rules["blocked"]
+    assert "var(--shep-status-neutral)" in rules["unset"] + rules["unreadable"]
+    # The marks: hollow for the missing setting and the failed read, none before the read,
+    # the error cross for the lock problem (the status table's own shape).
+    gpu = {name: c.chip_html(chip, which="gpu") for name, chip in states.items()}
+    assert 'class="shep-dot"' in gpu["unset"] and 'class="shep-dot"' in gpu["unreadable"]
+    assert 'class="shep-dot"' not in gpu["pending"] and 'class="shep-dot"' not in gpu["blocked"]
+    assert f'aria-hidden="true">{STATUS_MARKS["error"][0]}</span>' in gpu["blocked"]
+    assert 'data-reason="gpu_problem"' in gpu["blocked"]
+    # A start refused by the lock reads each refusing state by kind, never by its words.
+    assert set(c.LOCK_UNUSABLE) == {"unset", "unreadable", "blocked"}
 
 
 def test_a_holder_records_text_is_escaped_in_the_chip():
@@ -466,7 +528,7 @@ def _every_chip() -> list:
     }
     for which, text in re.findall(r'<span id="shep-chip-(d8|gpu)-text" hidden>(.*?)</span>',
                                   c.CHIPS_PLACEHOLDER, re.S):
-        states[f"placeholder {which}"] = c.Chip("unread", "", html.unescape(text))
+        states[f"placeholder {which}"] = c.Chip("pending", "", html.unescape(text))
     return list(states.items())
 
 

@@ -23,19 +23,28 @@ lock's descriptive holder record (`src/utils/gpu_lock.py`): "GPU jobs: none",
 "GPU job: training (job runner)", "GPU job: test run (job runner)", "GPU:
 inference (this service)" (this process's CUDA inference, which holds the lock
 while a model is loaded on CUDA, the ops round's I2; with where it is stopped),
-"GPU: inference (pid …, since …)" (another process's), "GPU job:
+"GPU: inference (pid …, since …)" (another process's) or "GPU job:
 train_model.py (pid …, since …)" (what the holder record says: its command, pid
-and start; never "CLI", which the record does not say), or grey "GPU jobs: not
-read". It never says "free": the lock is cooperative (a GPU process that does
-not take it is not stopped by it), and inference on the CPU takes no lock,
-which its ⓘ says. The research start controls repeat its words, with where to
-stop this service's inference (`busy_words`); the job runner's refusal stays
-the authority.
+and start; never "CLI", which the record does not say). It never says "free":
+the lock is cooperative (a GPU process that does not take it is not stopped by
+it), and inference on the CPU takes no lock, which its ⓘ says. The research
+start controls repeat its words, with where to stop this service's inference
+(`busy_words`); the job runner's refusal stays the authority.
+
+**Four states that are no holder, each its own** (R-STATE, the owner's
+"unread" of 2026-11-24: they shared one kind and two of them "not read"):
+"GPU jobs: not set up" (no workspaces folder, so no lock: ``unset``, grey and
+hollow, a missing setting), "… not read yet" (before the first read after a
+page load: ``pending``, grey with no mark), "GPU jobs: could not be read" (the
+read raised: ``unreadable``, grey and hollow, cannot be verified) and "GPU
+jobs: lock not usable" (a lock problem, which refuses every managed job:
+``blocked``, the red cross). Each is its chip's kind, its ``data-state`` and
+its class (`style.py`, the status tokens).
 
 **Nothing here raises and no exception text is shown**: a read that fails is the
-grey "not read" state with a fixed sentence. Every value from a file or a
-request is escaped. A server path (the lock file's, in a lock problem) is named
-only to a request D8 allows.
+grey "could not be read" state with a fixed sentence. Every value from a file
+or a request is escaped. A server path (the lock file's, in a lock problem) is
+named only to a request D8 allows.
 
 Module: src/webui/components/chips.py
 """
@@ -143,7 +152,13 @@ GPU_INFERENCE = "GPU: inference (this service)"
 STOP_INFERENCE_HERE = "stop it with Stop inference on Diagnosis"
 #: The same step as its own sentence, after the chip's words (`busy_words`).
 STOP_INFERENCE_STEP = "Stop it with Stop inference on Diagnosis"
-GPU_NOT_READ = "GPU jobs: not read"
+#: **The states that are no holder** (R-STATE): before the first read, a read
+#: that raised, and a lock that cannot be used; with no workspaces folder,
+#: `GPU_NOT_CONFIGURED`. Each its own words, never "not read" for two of them.
+GPU_PENDING = "GPU jobs: not read yet"
+D8_PENDING = "Operator controls: not read yet"
+GPU_UNREADABLE = "GPU jobs: could not be read"
+GPU_BLOCKED = "GPU jobs: lock not usable"
 #: **No workspaces folder, so no GPU lock** (review of 8242b47, P2-4; the UI
 #: sweep of 2026-11-22): a missing setting in its own short words, grey, the
 #: header on one line at a laptop's width ("GPU jobs: refused, no workspaces
@@ -180,8 +195,17 @@ CHIP_TITLES = {"d8": "Operator controls", "gpu": "GPU jobs"}
 _COMMAND_LIMIT = 40
 
 
+#: **The kinds in which the GPU lock cannot be taken now** (R-STATE): not set
+#: up, could not be read, not usable. A start the lock refuses reads them by
+#: kind (the Test page's `start_state`), never by the chip's words; a holder
+#: is ``busy``, nothing held ``none``, before the first read ``pending``.
+LOCK_UNUSABLE = ("unset", "unreadable", "blocked")
+
+
 class Chip(NamedTuple):
-    """One chip: its look (`kind`, a CSS modifier), its words, its ⓘ text and,
+    """One chip: its state (`kind`: its ``data-state`` and its CSS modifier,
+    ``on``, ``readonly``, ``none``, ``busy``, ``unset``, ``pending``,
+    ``unreadable`` or ``blocked``), its words, its ⓘ text and,
     for a holder an operator here can end (this service's inference), where
     to end it (`remedy`, "" otherwise)."""
 
@@ -269,14 +293,14 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
             text += " · stopping"
         return Chip("busy", text, gpu_detail(f"Held by the job runner's {noun}."), reason="gpu_busy")
     if lock.get("unset"):
-        return Chip("unread", GPU_NOT_CONFIGURED,
+        return Chip("unset", GPU_NOT_CONFIGURED,
                     gpu_detail(GPU_NOT_CONFIGURED_DETAIL, GPU_NOT_CONFIGURED_REF))
     if lock.get("problem"):
         detail = "The GPU lock cannot be used: managed jobs are refused until it is fixed."
         # An operator reads the problem itself (it says where to correct it);
         # anyone else, where an operator sees why, never the value's words.
         detail += f"\n{lock['problem']}" if operator else f"\n{GPU_LOCK_WHY_HIDDEN}"
-        return Chip("unread", GPU_NOT_READ, gpu_detail(detail), reason="gpu_problem")
+        return Chip("blocked", GPU_BLOCKED, gpu_detail(detail), reason="gpu_problem")
     description = str(lock.get("held_by") or "")
     if not description:
         return Chip("none", GPU_NONE, gpu_detail(GPU_FREE_LEAD))
@@ -322,12 +346,13 @@ def busy_words(chip: Chip) -> str:
 
 def read_gpu_chip(manager: Any, *, operator: bool,
                   lock_reader: Callable[[], dict] = lock_state) -> Chip:
-    """The GPU chip, read now; the grey "not read" state when anything fails."""
+    """The GPU chip, read now; the grey "could not be read" state when
+    anything fails."""
     try:
         return gpu_chip_from(manager.active_job(), lock_reader(), operator=operator)
     except Exception:  # noqa: BLE001 - a chip that raises would hide the page's state
         logger.exception("The GPU chip could not be read")
-        return Chip("unread", GPU_NOT_READ,
+        return Chip("unreadable", GPU_UNREADABLE,
                     gpu_detail("The job runner or the GPU lock could not be read just now."))
 
 
@@ -340,9 +365,21 @@ def chip_html(chip: Chip, *, which: str) -> str:
     text_id = D8_TEXT_ID if which == "d8" else GPU_TEXT_ID
     title = CHIP_TITLES[which]
     # A lock means "refused" (the WebUI skill's §3): only a read-only D8 chip
-    # leads with it; the others with the dot.
-    lead = (_LOCK_SVG if which == "d8" and chip.kind == "readonly"
-            else '<span class="shep-dot" aria-hidden="true"></span>')
+    # leads with it; a lock that refuses every managed job with the error's
+    # cross (the skill's §6); a chip not read yet with no mark; the others
+    # with the dot.
+    if which == "d8" and chip.kind == "readonly":
+        lead = _LOCK_SVG
+    elif chip.kind == "blocked":
+        # The status table's own shape (read here, not at import: the
+        # renderers read this module's ids as they load).
+        from src.webui.components.renderers import STATUS_MARKS
+
+        lead = f'<span class="shep-chip-mark" aria-hidden="true">{STATUS_MARKS["error"][0]}</span>'
+    elif chip.kind == "pending":
+        lead = ""
+    else:
+        lead = '<span class="shep-dot" aria-hidden="true"></span>'
     words = html.escape(chip.text)
     reason = f' data-reason="{html.escape(chip.reason)}"' if chip.reason else ""
     return (
@@ -363,9 +400,8 @@ def chips_html(d8: Chip, gpu: Chip) -> str:
 #: Shown until the first read after a page load (the app is built before the
 #: server serves, so nothing is read at build time).
 CHIPS_PLACEHOLDER = chips_html(
-    Chip("unread", "Operator controls: not read yet",
-         f"{NOT_READ_YET} Operator controls:\n{D8_SCOPE}\n\n{D8_HOW}"),
-    Chip("unread", GPU_NOT_READ, gpu_detail(NOT_READ_YET)))
+    Chip("pending", D8_PENDING, f"{NOT_READ_YET} Operator controls:\n{D8_SCOPE}\n\n{D8_HOW}"),
+    Chip("pending", GPU_PENDING, gpu_detail(NOT_READ_YET)))
 
 
 def chips_on_change(seen: Any, now: Any, request: Any) -> Any:
@@ -407,11 +443,15 @@ __all__ = [
     "GPU_INFERENCE",
     "GPU_NONE",
     "GPU_LOCK_WHY_HIDDEN",
-    "GPU_NOT_READ",
+    "D8_PENDING",
+    "GPU_BLOCKED",
     "GPU_NOT_CONFIGURED",
+    "GPU_PENDING",
+    "GPU_UNREADABLE",
     "GPU_SCOPE",
     "GPU_SCOPE_REF",
     "LOCK",
+    "LOCK_UNUSABLE",
     "OPERATOR_ONLY",
     "STOP_INFERENCE_HERE",
     "busy_words",

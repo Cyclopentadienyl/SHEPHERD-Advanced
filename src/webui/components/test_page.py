@@ -1937,7 +1937,11 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         # the GPU chip says the holder and where to stop this service's
         # inference when that holds it, once (R-WHY's ``gpu_busy``).
         return False, "gpu_busy"
-    if kind == "unread":
+    from src.webui.components.chips import LOCK_UNUSABLE
+
+    if kind in LOCK_UNUSABLE:
+        # Not set up, could not be read or not usable (R-STATE: by its kind,
+        # never its words): no managed job can take the lock now.
         return False, "gpu_problem"
     workspace_row = find(page.get("workspaces") or [], "name", workspace)
     if workspace_row is None:

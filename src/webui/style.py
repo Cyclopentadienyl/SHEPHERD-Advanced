@@ -322,10 +322,14 @@ gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%))
 .shep-chips { display: flex; align-items: center; gap: 10px; }
 /* The header's chips (R-21; the WebUI skill's §6, normal states are quiet): a
    normal state ("Operator controls: on", "GPU jobs: none") is plain text with
-   its mark, no box; only a state to watch is a lozenge: read-only amber with
-   the lock, a GPU job running in the info colour, a state not read grey. The
-   marks are the status tokens: on a filled green dot, none and not read a
-   hollow grey ring, a job the info colour. */
+   its mark, no box, and so is a chip not read yet (``pending``: grey words, no
+   mark); only a state to watch is a lozenge: read-only amber with the lock, a
+   GPU job running in the info colour, a missing setting (``unset``) and a read
+   that failed (``unreadable``) grey with their own words, a lock that refuses
+   every managed job (``blocked``) red with the cross (R-STATE: four states,
+   never one ``unread``). The marks are the status tokens: on a filled green
+   dot, none, not set up and could not be read a hollow grey ring, a job the
+   info colour, the lock problem the error's cross. */
 .shep-chip {
   display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 2px; border-radius: 999px;
   font-size: 14px; line-height: 1; white-space: nowrap; border: 1px solid transparent;
@@ -337,9 +341,13 @@ gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%))
 #shep-chips > div, #shep-chips > div > div { min-width: 0; max-width: 100%; }
 .shep-chip button.shep-i { margin: 0 -3px 0 -1px; color: inherit; }
 .shep-chip button.shep-i::before { inset: 3px; border-color: currentColor; background: transparent; }
-.shep-chip-readonly, .shep-chip-unread, .shep-chip-busy { padding: 0 4px 0 10px; }
+.shep-chip-readonly, .shep-chip-unset, .shep-chip-unreadable, .shep-chip-blocked, .shep-chip-busy { padding: 0 4px 0 10px; }
 .shep-chip-readonly { background: var(--shep-amber-50); border-color: var(--shep-amber-300); color: var(--shep-amber-800); }
-.shep-chip-unread { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-grey-800); }
+.shep-chip-unset { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-status-neutral); }
+.shep-chip-pending { color: var(--shep-status-neutral); }
+.shep-chip-unreadable { background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-status-neutral); }
+.shep-chip-blocked { background: var(--shep-red-50); border-color: var(--shep-red-200); color: var(--shep-status-error); }
+.shep-chip-mark { flex: none; font-size: 13px; line-height: 1; }
 .shep-chip-busy { background: var(--shep-accent-50); border-color: var(--shep-accent-100); color: var(--shep-accent-text); }
 .shep-dot {
   width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; flex: none;
