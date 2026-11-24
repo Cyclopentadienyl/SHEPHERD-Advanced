@@ -299,9 +299,10 @@ class Preset:
     #: The words of the "In use" mark.
     in_use_label: str
     #: How the list's own pieces are placed (the tree is drawn alike in
-    #: both): ``drawer`` (Diagnosis: its head and search a field row each,
-    #: the chosen model's facts beside the rows) or ``page`` (Models: its page
-    #: lays the head out in its grid and shows its own detail).
+    #: both, and so are its search and count, one tools bar, D14): ``drawer``
+    #: (Diagnosis: its head a field row, the chosen model's facts beside the
+    #: rows) or ``page`` (Models: its page lays the head out in its grid and
+    #: shows its own detail).
     layout: str = "drawer"
     #: The rows this preset ever shows (a `TASK_FILTERS` name), whatever the
     #: view asks: the drawer lists models finetuned for a task only, so a view
@@ -312,7 +313,8 @@ class Preset:
     #: Where its page says the workspaces folder's notice itself (None: the
     #: list's empty state says it): Diagnosis' card, "Model in use", where the
     #: screen's first action is (L7 SW-LK8); the drawer's empty list then says
-    #: a relation to it, never the notice again.
+    #: its state and the notice's phrase (R-WHY, `NO_MODEL_TO_LIST`), never
+    #: the notice again and never a pointer to its place.
     notice_where: Optional[str] = None
 
 
@@ -894,6 +896,9 @@ def runs_unread(listing: Mapping[str, Any], show_older: bool) -> int:
 #: folder not set (or not usable) is its notice instead (`_no_items_html`).
 NO_WORKSPACE = "No workspace in the workspaces folder yet. Build a dataset first (Research › Datasets)."
 NO_CHECKPOINT = "No checkpoint is listed in this workspace."
+#: The list's state where its page says the workspaces folder's notice elsewhere
+#: (`Preset.notice_where`): followed by that notice's phrase (`renderers.reason_phrase`).
+NO_MODEL_TO_LIST = "No model to list."
 
 
 def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Preset],
@@ -919,12 +924,14 @@ def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Prese
                if unread else f"No {what} is listed in this workspace.")
     elif listing.get("notice") and not listing.get("items"):
         notice = listing["notice"]
-        if preset is not None and preset.notice_where and notice.get("short"):
+        phrase = r.reason_phrase(notice) if preset is not None and preset.notice_where else ""
+        if phrase:
             # Said once on the screen, where the preset's page says it: here
-            # its relation, in the notice's own short words.
-            words = f"No model to list: {notice['short']} (see {preset.notice_where})."
+            # the list's state and the notice's own phrase (R-WHY), which
+            # brings that notice into view and focuses its link, never a
+            # pointer to a place that may have scrolled away (the owner's D6).
             return (f'<p class="shep-empty" data-notice-rel="{r.e(notice.get("key") or "")}">'
-                    f'{r.e(words)}</p>')
+                    f'{r.e(NO_MODEL_TO_LIST)} {phrase}</p>')
         return r.notice_block(notice)
     elif listing.get("problem"):
         why = listing["problem"]
@@ -2012,7 +2019,8 @@ CHOOSE_A_MODEL = r.need_words("choose a model in the list first")
 
 
 def load_reason_html(item: Optional[Mapping[str, Any]],
-                     listing: Optional[Mapping[str, Any]] = None) -> str:
+                     listing: Optional[Mapping[str, Any]] = None, *,
+                     control: Optional[str] = None) -> str:
     """Beside the Load button, why it is off: for a listing D8 refused, its
     reason with the lock and its phrase (`chips.operator_only`, the skill's
     §3); with no model chosen, the listing's notice's phrase when the list is
@@ -2021,16 +2029,18 @@ def load_reason_html(item: Optional[Mapping[str, Any]],
     (`CHOOSE_A_MODEL`); for the selected row, when its record is never
     loaded (`load_refusal`) or its file was not read (its state,
     `renderers.unreadable_words`); nothing otherwise. Every dimmed Load says
-    why, in the shared form."""
+    why, in the shared form. `control`: the element id of the Load it
+    explains, the instance's own (`create_model_list`): a phrase names it
+    (R-WHY's ``data-for``), so the dimmed Load is described by its phrase."""
     if (listing or {}).get("refused"):
         from src.webui.components.chips import LOCK
 
         return (f'<div class="shep-reason shep-reason-grey">{LOCK} '
-                f'{refused_line(listing or {})}</div>')
+                f'{refused_line(listing or {}, control=control)}</div>')
     if item is None:
         notice = (listing or {}).get("notice")
         if notice and not (listing or {}).get("items"):
-            return r.phrase_line(notice)
+            return r.phrase_line(notice, control=control)
         return r.marked_line("neutral", CHOOSE_A_MODEL)
     if not loadable(item):
         # A file not read, or whose read failed: its state, as its row says
@@ -2113,7 +2123,8 @@ class ListDrawing(NamedTuple):
 
 def list_drawing(listing: Mapping[str, Any], key: Any, preset: Preset, *,
                  show_older: Any = False, view: Any = None, search: Any = "",
-                 fold: Any = None, said: Any = None) -> ListDrawing:
+                 fold: Any = None, said: Any = None,
+                 load_id: Optional[str] = None) -> ListDrawing:
     """**Everything the list shows, from one state** (G07; the review of
     00258f4, SL-R1): the rows, the count, and what describes the selection
     (the facts, Load, its reason, the note), all from the same listing,
@@ -2125,14 +2136,15 @@ def list_drawing(listing: Mapping[str, Any], key: Any, preset: Preset, *,
     of the Load, the status read again): its words are Load's reason while
     the selection drawn is the one it was said for, else the selection's own
     (`load_reason_html`); a search, a fold or "Show older runs" keeps them
-    (the review of 5171661)."""
+    (the review of 5171661). `load_id`: the element id of this instance's
+    Load, which its reason's phrase names (R-WHY)."""
     view = view_for_listing(view, listing, listing)
     fold = fold if isinstance(fold, Mapping) else {}
     item = find_item(listing, key)
     key = key if item is not None else None
     older, search = bool(show_older), search or ""
     reason = (str(said.get("html") or "") if isinstance(said, Mapping)
-              and said.get("key") == key else load_reason_html(item, listing))
+              and said.get("key") == key else load_reason_html(item, listing, control=load_id))
     return ListDrawing(
         list_html(listing, key, preset, show_older=older, view=view, search=search, fold=fold),
         count_line(listing, preset, older, view, search=search, fold=fold),
@@ -3552,7 +3564,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     Order, a ``.shep-grp``) shares the line while both fit and moves under
     it whole when they do not; a message the page adds there, and the count
     line, are the bar's notes (``.shep-bar-note``), each a row of its own
-    under the groups. The drawer layout keeps its field row (no tools).
+    under the groups. Both layouts draw that one bar (D14); the drawer has no
+    page group in it.
     `on_loading` (``{"fn", "inputs", "outputs"}``) adds the page's own outputs
     to the step "Reload with …" runs before the reload, in the same answer (so
     they show before the reload holds the server): ``fn(plan, *inputs)``
@@ -3610,27 +3623,30 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                                         scale=3)
                 head_extra = head() if head is not None else None
             # The search and what the list shows, on a line of their own under
-            # the head (R-27: the count line never wraps beside a select).
-            drawer = chosen.layout == "drawer"
-            tools_classes = ["shep-model-tools"] + (["shep-field-row"] if drawer else ["shep-bar"])
-            with gr.Row(elem_classes=tools_classes):
+            # the head (R-27: the count line never wraps beside a select): one
+            # toolbar, the same bar in both presets (D14, the owner's decision
+            # of 2026-11-24: Models and the Load drawer use one mechanism).
+            with gr.Row(elem_classes=["shep-model-tools", "shep-bar"]):
                 # "Search" said beside its box, as "Order" is (no line of its
-                # own above it), its Clear after it: one group of the bar.
+                # own above it), its Clear after it: one group of the bar, the
+                # one that takes the line's free width; the box a search's
+                # width role (R-WIDTH, ``shep-w-search``).
                 with gr.Row(elem_id=f"{elem_id}-searchrow",
-                            elem_classes=["shep-search-row"] + (
-                                [] if drawer else ["shep-grp", "shep-grp-grow"])):
+                            elem_classes=["shep-search-row", "shep-grp", "shep-grp-grow"]):
                     plain_html('<span class="shep-search-lbl">Search</span>',
                                elem_id=f"{elem_id}-search-lbl")
                     search = gr.Textbox(label="Search", show_label=False, container=False,
                                         placeholder="Name or fingerprint",
                                         elem_id=f"{elem_id}-search", lines=1, max_lines=1,
-                                        scale=1, min_width=96, autoscroll=False)
+                                        scale=1, min_width=96, autoscroll=False,
+                                        elem_classes=["shep-w-search"])
                     clear = gr.Button("Clear", size="sm", scale=0, min_width=0,
                                       elem_id=f"{elem_id}-search-clear")
                 if tools is not None:
                     tools()
-                count = plain_html("", elem_id=f"{elem_id}-count",
-                                   elem_classes=["shep-field-aside" if drawer else "shep-bar-note"])
+                # What the list shows is a message, never a group: the bar's
+                # note, a row of its own under the groups.
+                count = plain_html("", elem_id=f"{elem_id}-count", elem_classes=["shep-bar-note"])
             with gr.Row(elem_classes=["shep-model-body"]):
                 # Two areas, each its own region where it scrolls (UI-07; the
                 # shared UI check's ``shep-area``): the rows and the facts.
@@ -3898,7 +3914,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         session = session if isinstance(session, ListClock) else ListClock()
         try:
             drawing = list_drawing(data, key, chosen, show_older=older, view=current_view,
-                                   search=query, fold=session.folds(fold_state), said=said_now)
+                                   search=query, fold=session.folds(fold_state), said=said_now,
+                                   load_id=load.elem_id)
         except Exception:  # noqa: BLE001 - the next change draws the list again
             logger.exception("The model list could not be drawn")
             return (gr.update(),) * 6
