@@ -1393,6 +1393,72 @@ _SHELL_JS = r"""
     restoring = false;
     goTo(page, focusId, 120);
   });
+  // **R-WHY, a dimmed control's reason** (`renderers.reason_phrase`): an element that says why
+  // controls are dimmed names them by id (data-for: a phrase beside them, or the cause's own
+  // notice in the same bar); each such control is described by it (aria-describedby), by every
+  // element that names it, and a description whose element is gone is taken back.
+  var BY = 'data-shep-why-by', WHY_FOR = 'button.shep-why[data-for], .shep-nb[data-for]';
+  function describeDimmed() {
+    var want = {};
+    var els = document.querySelectorAll(WHY_FOR);
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i], ids = (el.getAttribute('data-for') || '').split(/\s+/).filter(Boolean);
+      if (!ids.length) { continue; }
+      if (!el.id) { el.id = 'shep-why-' + ids[0]; }
+      for (var j = 0; j < ids.length; j++) { (want[ids[j]] = want[ids[j]] || []).push(el.id); }
+    }
+    Object.keys(want).forEach(function (id) {
+      var c = document.getElementById(id);
+      if (!c) { return; }
+      var b = c.matches('button, input, textarea, select') ? c : (c.querySelector('button, input, textarea') || c);
+      var ids = want[id].join(' ');
+      if (b.getAttribute('aria-describedby') !== ids) { b.setAttribute('aria-describedby', ids); }
+      if (b.getAttribute(BY) !== ids) { b.setAttribute(BY, ids); }
+    });
+    var stale = document.querySelectorAll('[' + BY + ']');
+    for (var k = 0; k < stale.length; k++) {
+      var s = stale[k], left = (s.getAttribute(BY) || '').split(/\s+/).filter(function (x) { return document.getElementById(x); });
+      if (left.length) { continue; }
+      s.removeAttribute(BY); s.removeAttribute('aria-describedby');
+    }
+  }
+  var whyPending = false;
+  new MutationObserver(function () {
+    if (whyPending) { return; }
+    whyPending = true;
+    requestAnimationFrame(function () { whyPending = false; describeDimmed(); });
+  }).observe(document.documentElement, {childList: true, subtree: true});
+  // A phrase whose reason is a notice: the notice drawn on this screen (its key, or one it is
+  // drawn with: data-why-notice) comes into view at its nearest edge and its link takes the
+  // focus; with none drawn, the notice's place in the GUI opens (data-why-go), as its link does.
+  function drawnNotice(keys) {
+    var all = document.querySelectorAll('.shep-nb[data-notice], .shep-nb[data-notice-also]');
+    for (var i = 0; i < all.length; i++) {
+      var n = all[i];
+      var has = ((n.getAttribute('data-notice') || '') + ' ' + (n.getAttribute('data-notice-also') || ''))
+        .split(/\s+/);
+      if (keys.some(function (k) { return k && has.indexOf(k) >= 0; }) && drawn(n)) { return n; }
+    }
+    return null;
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('button.shep-why[data-why-notice]') : null;
+    if (!b) { return; }
+    e.preventDefault();
+    var notice = drawnNotice((b.getAttribute('data-why-notice') || '').split(/\s+/));
+    if (notice) {
+      notice.scrollIntoView({block: 'nearest', inline: 'nearest'});
+      var link = notice.querySelector('button.shep-nb-go, .shep-nb-more > summary');
+      if (!link) { link = notice; if (!link.hasAttribute('tabindex')) { link.setAttribute('tabindex', '-1'); } }
+      link.focus({preventScroll: true});
+      return;
+    }
+    var page = b.getAttribute('data-why-go') || '', focusId = b.getAttribute('data-why-focus') || '';
+    if (!Object.prototype.hasOwnProperty.call(GO, page)) { return; }
+    if (GO[page].indexOf(focusId) < 0) { focusId = ''; }
+    restoring = false;
+    goTo(page, focusId, 120);
+  });
   window.ShepShell = {update: update, title: title, titles: titles, kept: kept, sent: sent, go: goTo,
                      restored: function () { restoring = false; update(); }};
 })();

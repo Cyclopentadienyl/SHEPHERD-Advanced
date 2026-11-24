@@ -161,9 +161,13 @@ _LOCK_SVG = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"
              '<path d="M5.2 7V5.2a2.8 2.8 0 0 1 5.6 0V7" fill="none" stroke="currentColor" '
              'stroke-width="1.6"/></svg>')
 
-#: The ids of the hidden elements holding each chip's ⓘ text.
+#: The ids of the hidden elements holding each chip's ⓘ text: the one source of
+#: a reason a chip says, which a dimmed control's phrase opens by id
+#: (`renderers.reason_phrase`, R-WHY).
 D8_TEXT_ID = "shep-chip-d8-text"
 GPU_TEXT_ID = "shep-chip-gpu-text"
+#: Each chip's ⓘ title, its bubble's title wherever it opens.
+CHIP_TITLES = {"d8": "Operator controls", "gpu": "GPU jobs"}
 
 #: How much of a holder record's command the chip repeats.
 _COMMAND_LIMIT = 40
@@ -178,6 +182,9 @@ class Chip(NamedTuple):
     text: str
     detail: str
     remedy: str = ""
+    #: The cause a dimmed control's phrase names this chip's reason by
+    #: (``data-reason``: `renderers.REASONS`, R-WHY), "" for none.
+    reason: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +202,7 @@ def d8_chip(access: OperatorAccess) -> Chip:
     text, ref = reason_parts(access.reason)
     return Chip("readonly", f"Read-only: {short}",
                 f"{D8_READONLY_LEAD}\n{D8_SCOPE}\n\nFor this request: {text}\n"
-                f"{REF_PREFIX} {ref or D8_HOW.rpartition(REF_PREFIX)[2].strip()}")
+                f"{REF_PREFIX} {ref or D8_HOW.rpartition(REF_PREFIX)[2].strip()}", reason="d8")
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +260,7 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         text = f"GPU job: {noun} (job runner)"
         if active.get("status") == "stopping":
             text += " · stopping"
-        return Chip("busy", text, gpu_detail(f"Held by the job runner's {noun}."))
+        return Chip("busy", text, gpu_detail(f"Held by the job runner's {noun}."), reason="gpu_busy")
     if lock.get("unset"):
         return Chip("unread", GPU_NOT_CONFIGURED,
                     gpu_detail(GPU_NOT_CONFIGURED_DETAIL, GPU_NOT_CONFIGURED_REF))
@@ -262,7 +269,7 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         # An operator reads the problem itself (it says where to correct it);
         # anyone else, where an operator sees why, never the value's words.
         detail += f"\n{lock['problem']}" if operator else f"\n{GPU_LOCK_WHY_HIDDEN}"
-        return Chip("unread", GPU_NOT_READ, gpu_detail(detail))
+        return Chip("unread", GPU_NOT_READ, gpu_detail(detail), reason="gpu_problem")
     description = str(lock.get("held_by") or "")
     if not description:
         return Chip("none", GPU_NONE, gpu_detail(GPU_FREE_LEAD))
@@ -276,7 +283,7 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
                     gpu_detail("Held by this service's inference: a model is loaded on CUDA.\n"
                                f"To start a training or a test run, {STOP_INFERENCE_HERE} "
                                "(Model in use).", "POST /api/v1/pipeline/stop"),
-                    remedy=STOP_INFERENCE_STEP)
+                    remedy=STOP_INFERENCE_STEP, reason="gpu_busy")
     if alive:
         # What the holder record says, and only that: its command, pid and
         # start. A formal CLI run and another server's job runner write the
@@ -295,7 +302,7 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         text = what + (f" ({', '.join(parts)})" if parts else "")
     else:
         text = "GPU job: lock held, holder not described"
-    return Chip("busy", text, gpu_detail(f"Held by {description}."))
+    return Chip("busy", text, gpu_detail(f"Held by {description}."), reason="gpu_busy")
 
 
 def busy_words(chip: Chip) -> str:
@@ -324,15 +331,16 @@ def chip_html(chip: Chip, *, which: str) -> str:
     """One chip as HTML: its words (with ``title``, since a long one may end in a
     titled ellipsis), its ⓘ and the ⓘ's hidden text, all escaped."""
     text_id = D8_TEXT_ID if which == "d8" else GPU_TEXT_ID
-    title = "Operator controls" if which == "d8" else "GPU jobs"
+    title = CHIP_TITLES[which]
     # A lock means "refused" (the WebUI skill's §3): only a read-only D8 chip
     # leads with it; the others with the dot.
     lead = (_LOCK_SVG if which == "d8" and chip.kind == "readonly"
             else '<span class="shep-dot" aria-hidden="true"></span>')
     words = html.escape(chip.text)
+    reason = f' data-reason="{html.escape(chip.reason)}"' if chip.reason else ""
     return (
         f'<span class="shep-chip shep-chip-{which} shep-chip-{chip.kind}" '
-        f'data-state="{chip.kind}">{lead}'
+        f'data-state="{chip.kind}"{reason}>{lead}'
         f'<span class="shep-chip-text" title="{words}">{words}</span>'
         f'{help_button(f"chip-{which}", title, describedby=text_id, extra_class="shep-i-chip")}'
         f'<span id="{text_id}" hidden>{html.escape(chip.detail)}</span></span>'

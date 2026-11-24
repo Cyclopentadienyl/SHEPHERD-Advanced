@@ -407,7 +407,15 @@ def registered_keys_in(rendered: str) -> Tuple[str, ...]:
 _HELP_JS = r"""
 (function () {
   if (window.ShepHelp) { return; }
-  var SEL = 'button.shep-i';
+  // The bubble's anchors: every ⓘ, and a dimmed control's phrase whose reason a
+  // header chip holds (`renderers.reason_phrase`, R-WHY: the one bubble, its text
+  // read by the chip text's document id, never a copy and never a second tooltip).
+  var SEL = 'button.shep-i, button.shep-why[data-help]';
+  function anchorByKey(key) {
+    var all = document.querySelectorAll(SEL);
+    for (var i = 0; i < all.length; i++) { if (all[i].getAttribute('data-help') === key) { return all[i]; } }
+    return null;
+  }
   var MAX_W = __MAX_W__, HOVER_MS = __HOVER_MS__, GAP = 10, EDGE = 8;
   var REGION = '__REGION__', KEY_FIRST = '__KEY_FIRST__';
   var BULLET = __BULLET__, REF = __REF__, TERM = new RegExp(__TERM__);
@@ -582,7 +590,7 @@ _HELP_JS = r"""
   function place() {
     if (!bubble || bubble.hidden || !anchor) { return; }
     if (!anchor.isConnected) {
-      var again = anchorKey && document.querySelector(SEL + '[data-help="' + anchorKey + '"]');
+      var again = anchorKey && anchorByKey(anchorKey);
       if (!again) { close(false); return; }
       // A drawing replaced the ⓘ the reader's focus was on: focus goes to
       // the new one, unscrolled, as the shared disclosure keeper does
@@ -858,7 +866,7 @@ _HELP_JS = r"""
     for (var i = 0; i < texts.length; i++) {
       var t = texts[i], target = document.getElementById(t.getAttribute('data-help-target'));
       if (!target) { continue; }
-      var key = t.getAttribute('data-help-key'), known = target.querySelector(SEL + '[data-help="' + key + '"]');
+      var key = t.getAttribute('data-help-key'), known = target.querySelector('button.shep-i[data-help="' + key + '"]');
       if (known) {
         keyFirst(target, known); keepLabel(target, key); describe(target, key, t.id); continue;
       }

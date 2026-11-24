@@ -1779,6 +1779,64 @@ def test_a_disabled_control_is_said_one_way_and_marked_one_way_on_every_page(mon
         assert "<svg" not in html, (where, html)
 
 
+def test_a_reason_phrase_is_five_words_at_most_keyed_and_focusable():
+    """R-WHY (the owner's D6 of 2026-11-24): a read-only Settings said D8's reason in 8 places
+    (50 words), and a dimmed Start said its cause again beside it ("Start disabled: …", "(see
+    above)"). Beside each dimmed control now stands one phrase of five words at most from one
+    table, one per cause (two causes never one phrase), a focusable link-styled button keyed to
+    its one reason source (``data-why``): a chip's hidden text by its document id (the one help
+    bubble reads it), or a notice by its keys. It names the control it explains (``data-for``,
+    which the shell's head script turns into the control's ``aria-describedby``)."""
+    from src.config import server_settings as ss
+    from src.webui.components import chips
+    from src.webui.components import workspaces as w
+
+    phrases = list(r.REASON_PHRASES.values())
+    assert len(set(phrases)) == len(phrases), phrases
+    for key, phrase in r.REASON_PHRASES.items():
+        assert 1 <= len(phrase.split()) <= 5 and phrase[0].isupper(), (key, phrase)
+        assert not re.search(r"\bdisabled\b|\bsee (above|below)\b", phrase, re.I), phrase
+    assert {"d8", "workspaces_root", "registry", "intake", "gpu_busy", "gpu_problem"} <= set(
+        r.REASON_PHRASES)
+    d8 = r.reason_phrase("d8", control="shep-train-start")
+    assert d8.startswith('<button type="button" class="shep-why" ')
+    assert 'disabled' not in d8 and 'tabindex="-1"' not in d8
+    for attr in ('data-why="d8"', f'id="{r.why_id("shep-train-start")}"',
+                 'data-for="shep-train-start"', f'aria-describedby="{chips.D8_TEXT_ID}"',
+                 f'data-help-title="{chips.CHIP_TITLES["d8"]}"'):
+        assert attr in d8, (attr, d8)
+    assert re.sub(r"<[^>]+>", "", d8) == "Operator controls only"
+    # A notice's cause: keyed to the notice the screen draws (its own key and the one it
+    # follows from), with its place in the GUI for a screen that does not draw it.
+    ws = w.setting_notice(ss.workspaces_root({}))
+    lock = w.lock_notice({"problem": "x", "unset": True})
+    for notice in (ws, lock):
+        html = r.reason_phrase(notice, control="b")
+        assert 'data-why="workspaces_root"' in html and "Needs a workspaces folder" in html
+        assert "workspaces_root" in re.search(r'data-why-notice="([^"]*)"', html).group(1)
+        assert 'data-why-go="settings"' in html and "aria-describedby" not in html
+    assert 'data-why-notice="gpu_lock workspaces_root"' in r.reason_phrase(lock)
+    # Set and not usable is a cause of its own, never the unset one's phrase.
+    assert r.reason_key(w.lock_notice({"problem": "x", "unset": False})) == "gpu_problem"
+    broken = w.setting_notice(ss.cohort_registry({"SHEPHERD_REGISTRY": "relative"}))
+    assert r.reason_key(broken) == "registry_unusable"
+    assert r.reason_key(w.setting_notice(ss.cohort_registry({}))) == "registry"
+    assert r.reason_phrase(None) == "" and r.reason_key("nothing") is None
+    # The line form: the neutral mark, or the lock for a request D8 refuses.
+    assert r.DISABLED_MARK in r.phrase_line("gpu_busy")
+    assert chips.LOCK in r.phrase_line("d8", lock=True)
+    # The chips carry the cause their reason is (``data-reason``), the phrase's source.
+    assert 'data-reason="d8"' in chips.chip_html(chips.d8_chip(type("A", (), {
+        "allowed": False, "condition": "not_loopback", "reason": "x"})()), which="d8")
+    # The phrase reads 4.5:1: the accent text on the page's white.
+    from src.webui.style import SHELL_CSS
+    from tests.unit.test_webui_button_contrast import contrast
+    rule = SHELL_CSS[SHELL_CSS.index(".gradio-container button.shep-why {"):].split("}", 1)[0]
+    assert "color: var(--shep-accent-text)" in rule
+    accent = re.search(r"--shep-accent-text: (#[0-9a-f]{6})", SHELL_CSS).group(1)
+    assert contrast(accent, "#ffffff") >= 4.5
+
+
 PAYLOAD = "<img src=x onerror=alert(1)>"
 
 

@@ -889,6 +889,18 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
 }
 .gradio-container button.shep-nb-go:hover { text-decoration-thickness: 2px; }
+/* **R-WHY: a dimmed control's phrase** (`renderers.reason_phrase`): five words at most beside the
+   control, a link in the accent text (4.5:1 on the page's ground), focusable, one unit on its
+   line; activated, its whole reason comes into view (a notice) or opens in the one help bubble
+   (a header chip's). The words say the need or who can act, never "disabled". */
+.gradio-container button.shep-why {
+  display: inline; margin: 0; padding: 0; border: 0; background: none; font: inherit;
+  color: var(--shep-accent-text); text-align: start; cursor: pointer; white-space: nowrap;
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+}
+.gradio-container button.shep-why:hover, .gradio-container button.shep-why[aria-expanded="true"] {
+  text-decoration-thickness: 2px;
+}
 /* A literal token in a sentence (`renderers.token_html`): breaks only at its <wbr>, no hyphen. */
 .gradio-container code.shep-tok { hyphens: none; white-space: normal; overflow-wrap: normal; }
 .gradio-container code.shep-tok > span { white-space: nowrap; }

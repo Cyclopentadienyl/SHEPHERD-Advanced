@@ -36,7 +36,15 @@ from typing import (Any, Callable, Dict, Hashable, Iterable, List, Mapping, Name
                     Optional, Sequence, Tuple)
 
 from src.config.recipe import FROZEN_PARTS, unread_settings
-from src.config.server_settings import PLACE_ACTIONS, PLACE_NAMES, SEVERAL_ACTIONS
+from src.config.server_settings import (
+    GPU_LOCK_NOTICE,
+    INTAKE_DIR_NOTICE,
+    PLACE_ACTIONS,
+    PLACE_NAMES,
+    REGISTRY_NOTICE,
+    SEVERAL_ACTIONS,
+    WORKSPACES_ROOT_NOTICE,
+)
 from src.evaluation.caveats import (
     EXPOSURE_EVIDENCE,
     EXPOSURE_NEGATIVES,
@@ -57,6 +65,7 @@ from src.evaluation.caveats import (
 )
 from src.utils.run_environment import native_identity_lines
 from src.utils.run_plan import recorded_frozen_parts
+from src.webui.components.chips import CHIP_TITLES, D8_TEXT_ID, GPU_TEXT_ID, LOCK
 from src.webui.components.help import copy_button, help_button
 
 #: Hex digits of a digest shown by default.
@@ -1076,7 +1085,8 @@ def _keys(notices: Iterable[Mapping[str, Any]]) -> str:
 
 
 def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterable[Any] = (),
-                 steps: Iterable[str] = (), go: bool = True, details: bool = True) -> str:
+                 steps: Iterable[str] = (), go: bool = True, details: bool = True,
+                 describes: str = "") -> str:
     """**The one notice** (a setting's state, said once per screen where it
     empties a region; the text brief's §1 and §10): one line, its status mark
     in a column of its own, the state (`summary`), what it means here
@@ -1091,7 +1101,11 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     notice once. `details` off: its "Details ›" is said by the region that
     draws it, in that region's one disclosure (`notice_rows_html`: a card
     whose own reason has a Details › of its own, two "Details ›" a line
-    apart; the sweep's L7, C1)."""
+    apart; the sweep's L7, C1). `describes`: the element ids of the controls
+    this notice dims where it is drawn in the same bar as them (R-WHY, the
+    cause said once there: no phrase beside them), space-separated
+    (``data-for``); the shell's head script points their
+    ``aria-describedby`` at it."""
     found = _as_notice(notice)
     if found is None:
         return ""
@@ -1108,6 +1122,8 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     also_keys = _keys(extra)
     if also_keys:
         keys += f' data-notice-also="{e(also_keys)}"'
+    if describes:
+        keys += f' data-for="{e(describes)}"'
     listed = "".join(f"<li>{literal_html(step)}</li>" for step in steps)
     ol = (f'<ol class="shep-nb-steps">{f"<li>{act}</li>" if act else ""}{listed}</ol>'
           if steps else "")
@@ -1205,6 +1221,143 @@ def see_above(control: str, notice: Any, *, where: Optional[str] = None,
              f'{bound_html(words)}</span>')
     line = _marked(found["kind"], inner, "shep-reason shep-nb-rel", rel)
     return line + (_details([found]) if details else "")
+
+
+# ---------------------------------------------------------------------------
+# R-WHY: why a control is dimmed, a phrase beside it keyed to the one reason
+# ---------------------------------------------------------------------------
+class Reason(NamedTuple):
+    """**One cause a control can be dimmed for** (R-WHY, the owner's D6 of
+    2026-11-24): its `phrase` (five words at most, beside each control it
+    dims: the need or who can act, never "disabled"), and where its whole
+    reason is drawn once per screen, its `source`: ``"chip"``, a header
+    chip's hidden ⓘ text (`ref`, its document id; `title`, the bubble's
+    title), or ``"notice"``, the setting's notice (`ref`, its key: the
+    page's ``data-notice``)."""
+
+    phrase: str
+    source: str
+    ref: str
+    title: str = ""
+
+
+#: **Every cause's phrase and source, the one table** (R-WHY): two causes are
+#: always two phrases, never one merged to save words. A setting set and not
+#: usable is a cause of its own (``*_unusable``), apart from the same
+#: setting unset.
+REASONS: Dict[str, Reason] = {
+    "d8": Reason("Operator controls only", "chip", D8_TEXT_ID, CHIP_TITLES["d8"]),
+    "workspaces_root": Reason("Needs a workspaces folder", "notice", WORKSPACES_ROOT_NOTICE.key),
+    "registry": Reason("Needs a results registry", "notice", REGISTRY_NOTICE.key),
+    "intake": Reason("Needs an import folder", "notice", INTAKE_DIR_NOTICE.key),
+    "workspaces_root_unusable": Reason("Workspaces folder not usable", "notice",
+                                       WORKSPACES_ROOT_NOTICE.key),
+    "registry_unusable": Reason("Results registry not usable", "notice", REGISTRY_NOTICE.key),
+    "intake_unusable": Reason("Import folder not usable", "notice", INTAKE_DIR_NOTICE.key),
+    "gpu_busy": Reason("GPU in use", "chip", GPU_TEXT_ID, CHIP_TITLES["gpu"]),
+    "gpu_problem": Reason("GPU lock not usable", "chip", GPU_TEXT_ID, CHIP_TITLES["gpu"]),
+}
+#: The phrases alone, by cause key.
+REASON_PHRASES: Dict[str, str] = {key: reason.phrase for key, reason in REASONS.items()}
+#: A notice's key as a cause key (``intake_dir`` is the cause ``intake``).
+_NOTICE_CAUSE = {WORKSPACES_ROOT_NOTICE.key: "workspaces_root", REGISTRY_NOTICE.key: "registry",
+                 INTAKE_DIR_NOTICE.key: "intake"}
+#: Where each notice's next step is in the GUI, for a phrase whose notice the
+#: screen does not draw.
+_NOTICE_TARGET = {n.key: n.target for n in (WORKSPACES_ROOT_NOTICE, REGISTRY_NOTICE,
+                                            INTAKE_DIR_NOTICE, GPU_LOCK_NOTICE)}
+
+
+def reason_key(cause: Any) -> Optional[str]:
+    """**The cause key of `cause`**: a key of `REASONS` as it is, or a
+    notice (`_as_notice`) by its key and kind, never by its words: a setting
+    unset is its own cause; set and not usable (kind ``error``), its
+    ``*_unusable`` cause; the GPU lock's notice, the cause it follows from (no
+    workspaces folder) or, set and not usable, ``gpu_problem``. None for no
+    known cause."""
+    if isinstance(cause, str) and cause in REASONS:
+        return cause
+    found = _as_notice(cause)
+    if found is None:
+        return None
+    key = str(found.get("key") or "")
+    unusable = found.get("kind") == "error"
+    if key == GPU_LOCK_NOTICE.key:
+        return "gpu_problem" if unusable else _NOTICE_CAUSE.get(str(found.get("cause") or ""))
+    base = _NOTICE_CAUSE.get(key)
+    if base is None:
+        return None
+    return f"{base}_unusable" if unusable else base
+
+
+def why_id(control: str) -> str:
+    """The id of the phrase beside `control` (its element id), which the
+    control's ``aria-describedby`` names (the shell's head script)."""
+    return f"shep-why-{control}"
+
+
+def reason_phrase(cause: Any, *, control: Optional[str] = None) -> str:
+    """**R-WHY: the phrase beside a dimmed control** (`REASONS`): its cause's
+    phrase of five words at most, as a focusable link-styled button
+    (``shep-why``, the accent text, 4.5:1), keyed to its one reason source
+    (``data-why``: the cause key). The whole reason is drawn once per screen
+    by its source; the phrase never repeats it and never says "disabled",
+    "see above" or "see below" (the source may have scrolled away or be in
+    another region). Activated, by its source's kind (data, never geometry):
+
+    - a chip's reason: the one help bubble (`help.py`) opens anchored at the
+      phrase and reads the chip's hidden text by its document id
+      (``aria-describedby``), so it always shows the current reason, never
+      a copy;
+    - a notice: the shell's head script brings the notice drawn on the screen
+      into view (the nearest edge) and focuses its link (``data-why-notice``:
+      the keys it may be drawn under); with none drawn, it opens the notice's
+      place in the GUI (``data-why-go``).
+
+    `control`: the element id of the control it explains (``data-for``,
+    several ids space-separated); the shell's head script sets that
+    control's ``aria-describedby`` to the phrase (`why_id`). **One cause
+    said in the same bar**: where the cause's own notice is drawn in the
+    same bar as the dimmed control (the bar's facts slot, the adjacent row of
+    the same component), no phrase is added; the notice names the controls
+    instead (`notice_block`'s ``describes``) and their ``aria-describedby``
+    points at it. Everywhere else a dimmed control has its phrase or a line
+    in its page's words (`need_words`) beside it. "" for no known cause."""
+    key = reason_key(cause)
+    if key is None:
+        return ""
+    reason = REASONS[key]
+    attrs = [f'data-why="{e(key)}"']
+    if control:
+        attrs += [f'id="{e(why_id(control.split()[0]))}"', f'data-for="{e(control)}"']
+    if reason.source == "chip":
+        attrs += [f'data-help="why-{e(key)}-{e((control or "here").split()[0])}"',
+                  f'data-help-title="{e(reason.title)}"', 'aria-expanded="false"',
+                  f'aria-describedby="{e(reason.ref)}"']
+    else:
+        found = _as_notice(cause) if not isinstance(cause, str) else None
+        keys = [reason.ref]
+        if found and found.get("key") and found["key"] not in keys:
+            keys.insert(0, str(found["key"]))
+        if found and found.get("cause") and found["cause"] not in keys:
+            keys.append(str(found["cause"]))
+        page, _, focus = _NOTICE_TARGET.get(keys[0], _NOTICE_TARGET[reason.ref]).partition("#")
+        attrs += [f'data-why-notice="{e(" ".join(keys))}"', f'data-why-go="{e(page)}"',
+                  f'data-why-focus="{e(focus)}"']
+    return (f'<button type="button" class="shep-why" {" ".join(attrs)}>'
+            f'{e(reason.phrase)}</button>')
+
+
+def phrase_line(cause: Any, *, control: Optional[str] = None, lock: bool = False) -> str:
+    """**A dimmed control's phrase as a line of its own** (`reason_phrase` in
+    a ``shep-reason`` line): led by the neutral mark (`DISABLED_MARK`), or,
+    with `lock` (a request D8 refuses), by the lock, as a gated control's
+    reason is (the skill's §3); "" for no known cause."""
+    phrase = reason_phrase(cause, control=control)
+    if not phrase:
+        return ""
+    mark = f'<span aria-hidden="true">{LOCK}</span>' if lock else DISABLED_MARK
+    return f'<p class="shep-reason shep-why-line">{mark}<span>{phrase}</span></p>'
 
 
 #: Why a workspace without a readable manifest is not trainable, in short words:
@@ -3474,6 +3627,13 @@ __all__ = [
     "notices_block",
     "relation_words",
     "see_above",
+    "REASONS",
+    "REASON_PHRASES",
+    "Reason",
+    "phrase_line",
+    "reason_key",
+    "reason_phrase",
+    "why_id",
     "token_html",
     "LP_MODE",
     "lp_metric_names",

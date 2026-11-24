@@ -3776,6 +3776,12 @@ def _pieces_page():
     def datasets(ctx):
         with gr.Column(elem_id="pc-panel", elem_classes=["shep-panel"]):
             shell.plain_html('<div class="shep-panel-hd"><h2>Shared pieces</h2></div>')
+            # R-WHY: a dimmed button with a phrase keyed to the D8 chip, one keyed to a
+            # notice, and that notice drawn on the screen.
+            shell.plain_html(r.notice_block(notice), elem_id="pc-why-notice")
+            gr.Button("Start", interactive=False, elem_id="pc-why-btn")
+            shell.plain_html(r.phrase_line("d8", control="pc-why-btn", lock=True), elem_id="pc-why-d8")
+            shell.plain_html(r.phrase_line(notice, control="pc-why-btn2"), elem_id="pc-why-ws")
             shell.plain_html(r.see_above("Start", notice), elem_id="pc-rel")
             shell.plain_html(r.see_above("Import", notice).replace(
                 'class="shep-reason', 'style="justify-content: end; max-width: none" class="shep-reason', 1),
@@ -3950,6 +3956,33 @@ const QUEUE_JS = __QUEUE_JS__;
   });
   await page.setViewportSize({ width: 1279, height: 1280 }); await frames(2);
   await page.setViewportSize({ width: 1280, height: 1280 }); await frames(4);
+  // R-WHY: the dimmed button is described by its phrase; the phrase keyed to the D8 chip opens
+  // the one bubble with the chip's text as it is now; the one keyed to a notice focuses its link.
+  await page.setViewportSize({ width: 1280, height: 1280 }); await frames(2);
+  out.why = { described: await page.evaluate(() => {
+    const b = document.getElementById('pc-why-btn'), btn = b.matches('button') ? b : b.querySelector('button');
+    const p = document.querySelector('#pc-why-d8 button.shep-why');
+    return { describedby: btn.getAttribute('aria-describedby'), phrase: p.id, focusable: p.tabIndex >= 0 && !p.disabled,
+             tag: p.tagName };
+  }) };
+  await page.click('#pc-why-d8 button.shep-why');
+  await page.waitForSelector('#shep-help-bubble:not([hidden])');
+  out.why.chip = await page.evaluate(() => {
+    const flat = (t) => (t || '').replace(/\s+/g, '');
+    const bubble = document.getElementById('shep-help-bubble'), p = document.querySelector('#pc-why-d8 button.shep-why');
+    return { bubble: flat(bubble.querySelector('.shep-bubble-bd').textContent),
+             chip: flat(document.getElementById('shep-chip-d8-text').textContent),
+             title: bubble.querySelector('.shep-bubble-title').textContent, expanded: p.getAttribute('aria-expanded'),
+             bubbles: document.querySelectorAll('.shep-bubble').length };
+  });
+  await page.keyboard.press('Escape'); await frames(2);
+  await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight)); await frames(2);
+  await page.click('#pc-why-ws button.shep-why'); await frames(4);
+  out.why.notice = await page.evaluate(() => {
+    const a = document.activeElement, n = document.querySelector('#pc-why-notice .shep-nb'), r = n.getBoundingClientRect();
+    return { go: !!a && a.matches('button.shep-nb-go') && n.contains(a),
+             inView: r.top >= 0 && r.bottom <= document.documentElement.clientHeight };
+  });
   out.roomy = await page.evaluate(() => Object.fromEntries(['pc-roomy-a', 'pc-roomy-b'].map((id) => {
     const b = document.getElementById(id), span = b.querySelector('.__CELL_ROOMY__');
     const r = document.createRange(); r.selectNodeContents(span);
@@ -3989,6 +4022,23 @@ def pieces_seen(tmp_path_factory):
                         .replace("__CELL_ROOMY__", CELL_ROOMY).replace("__ROOMY__", ROOMY_ATTR)
                         .replace("__NARROW__", NARROW_ATTR),
                         tmp_path_factory.mktemp("pieces"), base[:-len("gradio_api")])
+
+
+def test_a_dimmed_controls_phrase_opens_or_locates_its_one_reason(pieces_seen):
+    """R-WHY (the owner's D6 of 2026-11-24): "see above" pointed at a reason that may have
+    scrolled away or sit in another region, and the full reason was repeated beside each
+    button. A phrase keyed to the D8 chip opens the one help bubble at the phrase with the
+    chip's hidden text as it is now (no copy, no second tooltip); one keyed to a notice brings
+    the notice into view and moves the focus to its link; the dimmed button is described by
+    its phrase (``aria-describedby``, set by the shell's head script from ``data-for``)."""
+    why = pieces_seen["why"]
+    assert why["described"]["describedby"] == why["described"]["phrase"], why
+    assert why["described"]["tag"] == "BUTTON" and why["described"]["focusable"], why
+    chip = why["chip"]
+    assert chip["bubble"] and chip["bubble"] == chip["chip"], chip
+    assert chip["title"] == "Operator controls" and chip["expanded"] == "true", chip
+    assert chip["bubbles"] == 1, chip
+    assert why["notice"] == {"go": True, "inView": True}, why
 
 
 def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_seen):
