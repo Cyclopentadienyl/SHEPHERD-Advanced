@@ -579,7 +579,9 @@ def test_at_first_use_the_list_says_its_cause_once_as_numbered_steps(monkeypatch
     assert 'data-shep-go="settings" data-shep-focus="shep-dl"' in first
     assert second == r.e(dsp.BUILD_STEP) and "shep-tok" not in second
     lead = table.split('<ol class="shep-nb-steps">')[0]
-    assert "SHEPHERD_" not in re.sub(r"<[^>]+>", "", lead)                 # only under Details
+    # Only under Details (R-DETAILS: its "Details ›" closes the lead's line, its rows under it).
+    assert "<details" in lead
+    assert "SHEPHERD_" not in re.sub(r"<details.*?</details>|<[^>]+>", "", lead, flags=re.S)
     # Said once: the details and the button relate to it.
     screen = (dsp.header_html(data) + table + dsp.details_html(data, None)
               + dsp.use_note_html(data, None))

@@ -2074,4 +2074,4 @@ def test_a_notices_details_closes_its_lead_line():
     assert last and "Testing waits for both." in last.group(1) and "<details" in last.group(1)
     assert both.count("<details") == 1
     from src.webui.style import SHELL_CSS
-    assert ":is(.shep-nb-line, .shep-nb-next) .shep-nb-more { display: inline;" in SHELL_CSS
+    assert ":is(.shep-nb-line, .shep-nb-next) .shep-nb-more { display: inline !important;" in SHELL_CSS
