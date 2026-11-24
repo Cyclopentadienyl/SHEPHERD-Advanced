@@ -482,7 +482,8 @@ LOOK_JS = r"""
       : shownNow.panels.filter((p) => !p.matches('[data-testid="status-tracker"]'));
     const scope = tab || document.body, out = { beside: [], narrow: [], overlap: [], orphan: [], centred: [],
       split: [], edge: [], clipped: [], empty: [], help: [], notices: {}, tabs: null, inview: [], cue: [],
-      wrapEnd: [], disabled: [], token: [], sepEnd: [], chain: [], rowTop: [], rowHeight: [], sideways: [] };
+      wrapEnd: [], disabled: [], token: [], sepEnd: [], chain: [], rowTop: [], rowCtl: [], rowHeight: [],
+      sideways: [] };
     const panelOf = (e) => panels.findIndex((p) => p.contains(e));
     /* A text's region for `beside`: its panel, else the outermost bar it is in (Training's run
        bar is no panel), else none (-1 on a page with no panels). */
@@ -710,6 +711,9 @@ LOOK_JS = r"""
      - rowTop: two labelled fields side by side in one row of fields (their nearest shared box
        a row; each the one labelled field of its branch) whose labels do not share a top line
        (a quarter of the label's height apart or more);
+     - rowCtl (R-ALIGN): the same pairs, each label on one line, whose first controls' tops are
+       more than 2 px apart (a note between one field's label and its control); bottoms are never
+       compared, so a note after a control or a taller control passes;
      - rowHeight: a table row inside a sideways scroll box whose height is set by a cell out of
        the box's view (its words over one and a half times as tall as every cell in view, the
        row at least that tall);
@@ -1086,6 +1090,15 @@ LOOK_JS = r"""
         .find((l) => l.closest('.block') === f && visible(l) && l.getBoundingClientRect().height > 4)])
       .filter(([, l]) => l);
     const layer = (c) => { let e = c; while (e && getComputedStyle(e).display === 'contents') { e = e.parentElement; } return e; };
+    // A field's first control as drawn: its box (a select's frame, a choice's option), never the
+    // dot of a radio or the borderless input inside a select.
+    const firstControl = (f) => {
+      const c = [...f.querySelectorAll('textarea, input:not([type=hidden]), select, [role=combobox]')]
+        .find((x) => visible(x) && !x.closest(SKIP));
+      if (!c) { return null; }
+      return c.closest('.wrap:has(> .wrap-inner)')
+        || (c.matches('input[type=radio], input[type=checkbox]') ? c.closest('label') || c : c);
+    };
     for (let i = 0; i < fieldsDrawn.length; i++) {
       for (let j = i + 1; j < fieldsDrawn.length; j++) {
         const [a, la] = fieldsDrawn[i], [b, lb] = fieldsDrawn[j];
@@ -1104,6 +1117,16 @@ LOOK_JS = r"""
         if (dy >= 0.25 * Math.min(pa.height, pb.height)) {
           out.rowTop.push(`${named(a)} "${clip(la.textContent, 20)}" and ${named(b)} "${clip(lb.textContent, 20)}": `
             + `labels ${Math.round(dy)} px apart in one row (${named(c)})`);
+        }
+        // rowCtl (R-ALIGN): the same pair, each label on one line (a wrapped label is a width
+        // matter), its first controls' tops within 2 px; bottoms are never compared.
+        const ca = firstControl(a), cb = firstControl(b);
+        if (ca && cb && linesOf(la) === 1 && linesOf(lb) === 1) {
+          const ta = ca.getBoundingClientRect().top, tb = cb.getBoundingClientRect().top;
+          if (Math.abs(ta - tb) > 2) {
+            out.rowCtl.push(`${named(a)} "${clip(la.textContent, 20)}" and ${named(b)} "${clip(lb.textContent, 20)}": `
+              + `first controls ${Math.round(Math.abs(ta - tb))} px apart in one row (${named(c)})`);
+          }
         }
       }
     }
@@ -1597,13 +1620,13 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
 LAYOUT_RULES = ("beside", "narrow-box", "overlap", "orphan", "centred", "split-group", "edge",
                 "clipped", "empty-region", "help-on-page", "notice-repeat", "tab-groups", "in-view",
                 "scroll-cue", "wrap-end", "disabled-reason", "token-break", "sep-end", "chain-break",
-                "row-top", "row-height", "sideways-scroll", "floor")
+                "row-top", "row-control-top", "row-height", "sideways-scroll", "floor")
 _LAYOUT_KEYS = {"beside": "beside", "narrow-box": "narrow", "overlap": "overlap", "orphan": "orphan",
                 "centred": "centred", "split-group": "split", "edge": "edge", "clipped": "clipped",
                 "empty-region": "empty", "help-on-page": "help", "scroll-cue": "cue",
                 "wrap-end": "wrapEnd", "disabled-reason": "disabled", "token-break": "token",
                 "sep-end": "sepEnd", "chain-break": "chain", "row-top": "rowTop",
-                "row-height": "rowHeight"}
+                "row-control-top": "rowCtl", "row-height": "rowHeight"}
 #: The rules held only at or above the display floor (`at_floor`): below it the layout is the
 #: floor's and the document scrolls, so what lies past the window is reached by that scroll.
 _AT_FLOOR_KEYS = {"in-view": "inview", "sideways-scroll": "sideways"}
@@ -1692,6 +1715,9 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       line of its own (a key split from its value, two chips of one fact apart);
     - ``row-top``: two labelled fields side by side in one row whose labels do not share a top
       line (a quarter of the label's height apart or more);
+    - ``row-control-top`` (R-ALIGN, the owner's A of 2026-11-24): the same pairs, each label on
+      one line, whose first controls' tops are more than 2 px apart (a note drawn between one
+      field's label and its control); a wrapped label is exempt and bottoms are never compared;
     - ``row-height``: a table row in a sideways scroll box whose height a cell out of the box's
       view sets (an empty band across the cells in view);
     - ``sideways-scroll`` (at or above the floor): a region whose content runs past its right

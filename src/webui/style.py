@@ -961,6 +961,20 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
    1850 and 106 at 2560, its Acceleration sentence to 67 (the sweep's L7 check, C12). The muted
    line is a box only there, so a muted word inside a line still wraps with it. */
 :where(.gradio-container .info-text) { max-width: var(--shep-measure); }
+/* **A field's note follows its control** (R-ALIGN, the owner's A of 2026-11-24; Carbon's helper
+   text, Material's supporting text): Gradio draws a field's ``info=`` line between its label and
+   its control, so in a row of fields the control of the one field with a note stood a line under
+   its neighbours' (Fine-tune's Device beside Run name, 16 to 35 px). The box that holds the label,
+   the note and the control lays them out as label line, then control, then note, each a line of
+   its own (``order``; the empty ``::after`` breaks the line after the label and its ⓘ). The label
+   line keeps its baseline alignment, so its height and the control's top are a plain field's; the
+   note sits an item's space under the control. Only the order drawn changes: the note keeps its
+   place in the page and its ``aria-describedby``.
+   A note already after its control (a checkbox's) is not matched. */
+.gradio-container :has(> .info-text + *) { display: flex !important; flex-wrap: wrap; align-items: baseline; }
+.gradio-container :has(> .info-text + *)::after { content: ""; order: 1; flex: 1 0 100%; height: 0; }
+.gradio-container :has(> .info-text + *) > .info-text ~ * { order: 2; flex: 1 1 100%; }
+.gradio-container :has(> .info-text + *) > .info-text { order: 3; flex: 1 0 100%; margin: var(--shep-space-item) 0 0; }
 :where(br + .shep-muted) { display: inline-block; max-width: var(--shep-measure); }
 :where(.shep-panel h2, .shep-panel h3, .shep-edge h2, .shep-edge h3) { text-wrap: balance; }
 

@@ -4561,6 +4561,88 @@ def test_the_row_rules_find_labels_off_one_line_and_a_row_a_hidden_cell_sets(l7_
     assert not [b for b in found["beside"] if "#area-words" in b], found["beside"]
 
 
+#: A static page for R-ALIGN (`browser.LOOK_JS`'s ``rowCtl``): fields drawn as Gradio 6.30 draws
+#: them (a text box's label holding its title, its ``info=`` line and its box; a radio group's
+#: fieldset holding its title, its line and its options), each beside a plain field in a row of
+#: fields, measured as drawn and again with the shell's style sheet (`style.SHELL_CSS`).
+_ROW_CONTROL_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__, SHELL_CSS = __SHELL_CSS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const plain = (id) => `<div class="block" id="${id}"><label class="container"><span data-testid="block-info">Run name</span>`
+    + '<div class="input-container"><input type="text"></div></label></div>';
+  await page.setContent(`<!doctype html><html data-shep-layout="side"><head><style>
+    body { margin: 0; font: 15px sans-serif; background: #fff; }
+    label.container { display: block; }
+    span[data-testid="block-info"] { display: inline-block; font-size: 14px; line-height: 19.6px; margin-bottom: 4px; }
+    .info-text { font-size: 14px; line-height: 19.6px; margin-bottom: 6px; }
+    input[type=text] { font: inherit; height: 35px; box-sizing: border-box; width: 100%; }
+    .wrap { display: flex; gap: 8px; } .wrap > label { display: flex; align-items: center; height: 32px; }
+    fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+    .row { display: flex; gap: 16px; margin-bottom: 16px; } .row > .block { width: 220px; }
+    .shep-panel { position: absolute; left: 0; top: 40px; width: 900px; }
+  </style></head><body>
+    <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
+    <div id="shep-tab-x" class="gradio-container"><div class="shep-page"><div class="shep-panel" id="p1">
+      <div class="row" id="r-text">
+        <div class="block" id="f-note"><label class="container"><span data-testid="block-info">Patient ID</span>
+          <div class="info-text">Optional. Left blank, the server names it.</div>
+          <div class="input-container"><input type="text"></div></label></div>
+        ${plain('f-plain')}</div>
+      <div class="row" id="r-radio">
+        <fieldset class="block" id="f-radio"><span data-testid="block-info">Device</span>
+          <div class="info-text">No CUDA device here: auto and cuda are refused.</div>
+          <div class="wrap"><label><input type="radio" name="d">auto</label><label><input type="radio" name="d">cpu</label></div></fieldset>
+        ${plain('f-plain2')}</div>
+      <div class="row" id="r-wrap">
+        <div class="block" id="f-wrapped" style="width: 90px"><label class="container"><span data-testid="block-info">Gradient accumulation steps</span>
+          <div class="info-text">Batches per step.</div>
+          <div class="input-container"><input type="text"></div></label></div>
+        ${plain('f-plain3')}</div>
+      <div class="row" id="r-after">
+        <div class="block" id="f-after"><label class="container"><span data-testid="block-info">Split seed</span>
+          <div class="input-container"><input type="text"></div></label>
+          <div class="info-text">Read from the dataset's split manifest.</div></div>
+        ${plain('f-plain4')}</div>
+    </div></div></div></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  const before = await page.evaluate(() => window.__shepLook.check().layout);
+  await page.addStyleTag({ content: SHELL_CSS });
+  const after = await page.evaluate(() => window.__shepLook.check().layout);
+  // The note, read by a screen reader as before: the page's order is not changed.
+  const order = await page.evaluate(() => [...document.querySelector('#f-note label').children].map((e) => e.className || e.tagName));
+  console.log(JSON.stringify({ before, after, order }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_row_rules_find_a_note_between_a_label_and_its_control(tmp_path):
+    """R-ALIGN (the owner's A of 2026-11-24; the audit's A1: Fine-tune's Device, its note between
+    its label and its radios, beside Run name, its control 16 to 35 px under Run name's box):
+    ``row-control-top`` finds two labelled fields side by side whose first controls' tops are more
+    than 2 px apart, a text box's note and a radio group's note between label and control, and
+    passes a wrapped label (a width matter) and a note after its control (ragged bottoms are never
+    compared). With the shell's one rule (`style.SHELL_CSS`: a field's note follows its control)
+    the same fields pass, their labels still on one top line, and the page's order is unchanged
+    (the note keeps its ``aria-describedby`` place)."""
+    from src.webui.style import SHELL_CSS
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    seen = run_node(_ROW_CONTROL_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS))
+                    .replace("__SHELL_CSS__", json.dumps(SHELL_CSS)), tmp_path, timeout=120)
+    before, after = seen["before"], seen["after"]
+    assert _hits(before, "rowCtl", "#f-note") and _hits(before, "rowCtl", "#f-radio"), before["rowCtl"]
+    assert not _hits(before, "rowCtl", "#f-wrapped") and not _hits(before, "rowCtl", "#f-after"), before["rowCtl"]
+    assert after["rowCtl"] == [], after["rowCtl"]
+    assert after["rowTop"] == [], after["rowTop"]
+    assert seen["order"][1:] == ["info-text", "input-container"], seen["order"]
+
+
 def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_whole():
     """``in-view`` is held at every window at or above the display floor (`browser.at_floor`;
     the owner's decision of 2026-11-23), not only at the owner's two: a laptop's 1366 x 768 and
