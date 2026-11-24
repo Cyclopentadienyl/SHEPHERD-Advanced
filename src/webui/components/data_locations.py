@@ -16,7 +16,10 @@ it shows escaped:
   ("Saved in Settings", "Set when the service started"); *Saved* only when it
   differs from what is in effect (pending, or overridden); a path box with
   **Check** (the same rule a job's read applies, the resolved path and what it
-  holds: "2 workspaces") and **Save**; for a required folder that is not set,
+  holds: "2 workspaces") and **Save**, open on a row with nothing in effect
+  (the next step) and behind **Change…** on a set row, which opens it in its
+  place with **Cancel** (the owner's "Set to / Change to" decision of
+  2026-11-24, `key_html`); for a required folder that is not set,
   **Create suggested folder**, naming it (``~/SHEPHERD-data/workspaces``:
   `deployment_settings.suggested_folder`, the one suggestion the not-set
   words name too), created only on that click (0700 for the registry and the
@@ -26,7 +29,9 @@ it shows escaped:
 - **A box is the reader's**: it is set when the panel first opens and when
   its own row's Save succeeds (`box_value`: the evidence folders' saved list,
   else empty); every other act and answer, another row's Check or Save, a
-  refusal, Settings shown again, leaves what the reader typed (OPS-C-R5).
+  refusal, Settings shown again, leaves what the reader typed (OPS-C-R5), and
+  a box Change… opened stays open with it. Cancel (or Escape) closes the box
+  and sets it back (`_on_cancel`), and a Save that changes the row closes it.
 - **Overridden** (Syncthing's form): a row the environment sets keeps its box
   and Save, which change the saved value only; its Saved line says it applies
   once the start-up setting is removed, and the page never calls it in effect.
@@ -46,10 +51,13 @@ it shows escaped:
   hidden)" or ○ Not set (sources stay), a refused value's problem is said in
   fixed words that never quote the value (`deployment_view.problem_words`),
   every other text is redacted by the one redaction, every box and button is
-  disabled with the lock, one reason line in D8's words says why, once, above
-  the rows (`chips.operator_only`), and each row says the short `ROW_LOCKED`
-  ("🔒 Operator controls only") beside its Check and Save, in their group
-  (the owner's decision of 2026-11-19), its Create on a line of its own.
+  disabled with the lock, one notice above the rows says the consequence
+  (`PATHS_OPERATOR_ONLY`; D8's whole reason is the header chip's), and each
+  row says R-WHY's d8 phrase (`ROW_LOCKED`, "🔒 Operator controls only")
+  once: beside its locked Change… on a set row, else beside its Check and
+  Save, in their bar (the owner's decision of 2026-11-19), its Create on a
+  line of its own; the phrase names every control of its row it dims
+  (`row_controls`), so each is described by it.
 
 These are folders on the server machine; the page says so. Nothing here
 blocks another page: a page that needs a folder that is not set says so in
@@ -65,6 +73,7 @@ Module: src/webui/components/data_locations.py
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
@@ -130,6 +139,14 @@ PRIVATE_KEYS = (KEY_REGISTRY, KEY_INTAKE_DIR)
 #: The buttons' words, shown with no lock while D8 allows the request.
 CHECK_LABEL = "Check"
 SAVE_LABEL = "Save"
+#: **A set row's control in its box's place** (the owner's "Set to / Change to" decision of
+#: 2026-11-24): it opens the row's box there, and Cancel closes it (`key_html`).
+CHANGE_LABEL = "Change…"
+CANCEL_LABEL = "Cancel"
+#: The key before a row's box: nothing set yet, or a value to change (a set row opened by
+#: Change…, or a value set and not usable, whose box stays open).
+SET_KEY = "Set to"
+CHANGE_KEY = "Change to"
 CREATE_LABEL = "Create suggested folder"
 APPLY_LABEL = "Apply"
 REPAIR_LABEL = "Replace the unreadable file (a copy is kept)"
@@ -138,8 +155,8 @@ REPAIR_THEN = ("Replace renames it beside itself and keeps it. Then choose the f
                "again.")
 
 #: The order of the per-row outputs (`_panel`).
-ROW_PARTS = ("state", "key", "box", "check", "save", "lock", "create", "suggest", "result",
-             "adv")
+ROW_PARTS = ("state", "key", "box", "check", "save", "cancel", "lock", "create", "suggest",
+             "result", "adv")
 PANEL_PARTS = ("notice", "repair", "apply", "status", "where")
 
 
@@ -314,6 +331,94 @@ def notice_html(view: DeploymentView, access: Any) -> str:
     return ""
 
 
+def changeable(item: FieldView) -> bool:
+    """**Whether a row shows "Change…" in its box's place** (the owner's "Set to / Change to"
+    decision of 2026-11-24): a row with a value in effect, its box opened only to change it. A
+    row with nothing in effect keeps its box open, the next step: nothing set, a value set and
+    not usable, or one the unreadable settings file would hold. The evidence folders' box
+    replaces their whole list (`box_value`, `_value_of`), so a set list follows the same rule."""
+    return item.value is not None
+
+
+def row_controls(key: str, *, change: bool, create: bool) -> str:
+    """**The controls of a row a read-only request dims**, as element ids, which its one phrase
+    names (R-WHY's ``data-for``, so each is described by it): its box, Check and Save, then its
+    Change… on a set row (`changeable`) or its Create where it is offered."""
+    ids = [f"dl_box_{key}", f"dl_check_{key}", f"dl_save_{key}"]
+    ids += [f"dl_change_{key}"] if change else []
+    ids += [f"dl_create_{key}"] if create else []
+    return " ".join(ids)
+
+
+def _drawn_as(item: FieldView) -> str:
+    """What a set row's Change… is drawn for (`renderers.keep_as`): the row's values, so the
+    shared keeper (`renderers.KEEP_OPEN_JS`) keeps its box open across the panel's redraws only
+    while the row says the same, and a Save that changes them closes it."""
+    facts = repr((item.value, item.configured, item.saved, item.source, item.pending,
+                  item.overridden))
+    return hashlib.sha256(facts.encode("utf-8")).hexdigest()[:12]
+
+
+def key_html(item: FieldView, *, allowed: bool) -> str:
+    """**What stands before a row's box** (the owner's "Set to / Change to" decision of
+    2026-11-24). A row with nothing in effect: its key ("Set to", or "Change to" for a value
+    set and not usable), its box open beside it. A set row (`changeable`): "Change…" in its
+    box's place, a button whose ``aria-expanded`` and ``aria-controls`` name the "Change to"
+    key it shows (its own HTML: the shared keeper holds it open across the panel's redraws
+    while the row says the same, `_drawn_as`); its script (`CHANGE_JS`) opens the box there,
+    the focus in it, and Cancel or Escape closes it. For a request D8 refuses, a set row's
+    Change… is locked (`chips.gated`'s lock) and its phrase beside it names what it dims."""
+    key = item.key
+    if not changeable(item):
+        words = SET_KEY if item.configured is None else CHANGE_KEY
+        return f'<span class="shep-dl-key">{r.e(words)}</span>'
+    if not allowed:
+        phrase = operator_only(control=row_controls(key, change=True, create=False))
+        return (f'<div class="shep-dl-chg"><button type="button" class="shep-dl-change" '
+                f'id="dl_change_{key}" disabled>{LOCK} {r.e(CHANGE_LABEL)}'
+                f"</button>{reason_line(phrase=phrase)}</div>")
+    return (f'<div class="shep-dl-chg"{r.keep_as(_drawn_as(item))}>'
+            f'<span class="shep-dl-key" id="dl_changing_{key}" hidden>{r.e(CHANGE_KEY)}</span>'
+            f'<button type="button" class="shep-dl-change" id="dl_change_{key}" '
+            f'aria-expanded="false" aria-controls="dl_changing_{key}">{r.e(CHANGE_LABEL)}'
+            "</button></div>")
+
+
+#: **Change… and Cancel, element-scoped** (the key's own HTML, after the shared keeper,
+#: `shell.plain_html`): Change… opens the row's box in its place (the row's style sheet draws
+#: the box and its buttons while it is expanded) with the focus in the box; Cancel, and Escape
+#: in the box (which presses Cancel, so its handler empties the box), close it and give the
+#: focus back to Change…. The keeper holds the reader's choice across the panel's redraws.
+CHANGE_JS = r"""
+function changer() { return element.querySelector('button.shep-dl-change[aria-controls]'); }
+function rowOf() { return element.closest('.shep-dl-row'); }
+function setOpen(open) {
+  var b = changer();
+  if (!b) { return; }
+  var k = document.getElementById(b.getAttribute('aria-controls'));
+  if (k && element.contains(k)) { k.hidden = !open; }
+  b.setAttribute('aria-expanded', open ? 'true' : 'false');
+  var row = rowOf(), box = open && row ? row.querySelector('.shep-dl-field :is(input, textarea)') : null;
+  if (open) { if (box) { box.focus(); } } else { b.focus(); }
+}
+element.addEventListener('click', function (e) {
+  var b = e.target.closest ? e.target.closest('button.shep-dl-change[aria-controls]') : null;
+  if (b && !b.disabled && b.getAttribute('aria-expanded') !== 'true') { setOpen(true); }
+});
+document.addEventListener('click', function (e) {
+  var row = rowOf(), c = e.target.closest ? e.target.closest('button[id^="dl_cancel_"]') : null;
+  if (c && row && row.contains(c) && changer()) { setOpen(false); }
+});
+document.addEventListener('keydown', function (e) {
+  var row = rowOf(), b = changer();
+  if (e.key !== 'Escape' || !row || !b || b.getAttribute('aria-expanded') !== 'true') { return; }
+  if (!e.target.closest || !e.target.closest('.shep-dl-field') || !row.contains(e.target)) { return; }
+  var c = row.querySelector('button[id^="dl_cancel_"]');
+  if (c) { e.preventDefault(); e.stopPropagation(); c.click(); }
+});
+"""
+
+
 def box_value(item: FieldView) -> str:
     """**What a row's box holds when the panel sets it** (`_panel`'s `fill`):
     the evidence folders' saved list, one per line (the list is edited as a
@@ -334,9 +439,11 @@ def _row_updates(item: FieldView, view: DeploymentView, access: Any,
     suggestion = suggested_folder(item.key)
     creatable = (suggestion is not None and item.unset and readable
                  and view.file.path is not None)
-    key_words = "Set to" if item.value is None and item.configured is None else "Change to"
-    if item.key == KEY_TRAINING_EVIDENCE_DIRS:
-        key_words = "Set to"
+    change = changeable(item)
+    # A read-only row's one phrase: beside its locked Change… on a set row (`key_html`), else
+    # beside its locked Check and Save, naming every control of the row it dims.
+    lock = "" if allowed or change else reason_line(
+        phrase=operator_only(control=row_controls(item.key, change=False, create=creatable)))
     box: Dict[str, Any] = {"interactive": allowed}
     if not allowed:
         box["value"] = ""
@@ -344,11 +451,12 @@ def _row_updates(item: FieldView, view: DeploymentView, access: Any,
         box["value"] = box_value(item)
     return [
         gr.update(value=state_html(item, view, shown=shown)),
-        gr.update(value=f'<span class="shep-dl-key">{r.e(key_words)}</span>'),
+        gr.update(value=key_html(item, allowed=allowed)),
         gr.update(**box),
         gr.update(**gated(CHECK_LABEL, allowed)),
         gr.update(**gated(SAVE_LABEL, allowed, interactive=readable)),
-        gr.update(value="" if allowed else reason_line(phrase=operator_only())),
+        gr.update(visible=allowed and change),
+        gr.update(value=lock),
         gr.update(visible=creatable, **gated(CREATE_LABEL, allowed)),
         gr.update(value=(f'<span{_title(suggestion, shown)}>'
                          f'{r.token_html(_tilde(suggestion), classes="shep-dl-path")}</span>')
@@ -533,6 +641,17 @@ def _on_save(key: str, text: Any, request: gr.Request):
                   fill=(key,) if done.save.saved else ())
 
 
+def _on_cancel(key: str, request: gr.Request):
+    """Cancel, or Escape in the box, on a row Change… opened (`CHANGE_JS` closes it): the box
+    back to what the panel sets in it (`box_value`: empty, or the evidence folders' saved list),
+    so a draft never waits behind Change…, and the row's outcome line emptied (a Check of that
+    draft said nothing of the value in effect). It changes nothing; a request D8 refuses gets an
+    empty box, no path."""
+    item = data_locations.view().field(key)
+    value = box_value(item) if operator_access(request).allowed else ""
+    return gr.update(value=value), gr.update(value="")
+
+
 def create_folder(key: str) -> Tuple[Optional[Path], str]:
     """Create `key`'s suggested folder (`deployment_settings.suggested_folder`), 0700 for a
     patient-level one and for ``~/SHEPHERD-data`` itself when this creates it;
@@ -630,8 +749,10 @@ def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
                             row["adv"] = plain_html("", elem_id=f"dl_adv_{key}")
                     with gr.Column(elem_classes=["shep-dl-main"]):
                         with gr.Row(elem_classes=["shep-dl-set"]):
-                            row["key"] = plain_html('<span class="shep-dl-key">Set to</span>',
-                                                    elem_classes=["shep-dl-keycell"])
+                            # Its key, or a set row's Change… in its box's place (`key_html`).
+                            row["key"] = plain_html(f'<span class="shep-dl-key">{SET_KEY}</span>',
+                                                    elem_classes=["shep-dl-keycell"],
+                                                    js_on_load=CHANGE_JS)
                             # The box and its buttons: their own bar (`shep-bar`), so a group
                             # that wraps starts on the box's edge, never under the key, and the
                             # bar's note (a read-only row's lock) says why its buttons are off.
@@ -650,6 +771,9 @@ def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
                                                              scale=0, elem_id=f"dl_check_{key}")
                                     row["save"] = gr.Button(SAVE_LABEL, interactive=False,
                                                             scale=0, elem_id=f"dl_save_{key}")
+                                    # A set row opened by Change…: closes it (`_on_cancel`).
+                                    row["cancel"] = gr.Button(CANCEL_LABEL, visible=False,
+                                                              scale=0, elem_id=f"dl_cancel_{key}")
                                 # Read-only: why the box and the buttons are locked (`ROW_LOCKED`),
                                 # a whole group of the bar after Check and Save (the owner's
                                 # decision of 2026-11-19: beside each row's buttons): on their
@@ -686,6 +810,8 @@ def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
                           show_progress="hidden").then(**ctx.chip_refresh)
         row["create"].click(fn=_on_create, inputs=[key_state], outputs=outputs,
                             show_progress="hidden").then(**ctx.chip_refresh)
+        row["cancel"].click(fn=_on_cancel, inputs=[key_state], outputs=[row["box"], row["result"]],
+                            queue=False, show_progress="hidden")
     parts["apply"].click(fn=_on_apply_saved, outputs=outputs,
                          show_progress="hidden").then(**ctx.chip_refresh)
     parts["repair"].click(fn=_on_replace_unreadable, outputs=outputs,
@@ -755,6 +881,12 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: 768). A path is a token (`renderers.token_html`): it breaks only before its
 #: own separators, never after a hyphen (SW-LK7: an in-effect path read
 #: hyphenated at every size).
+#: **A set row's Change…** (the owner's "Set to / Change to" decision of 2026-11-24): while it
+#: is not expanded the row's Set-to bar is not drawn and its key cell takes the line, Change… on
+#: the boxes' column (past the keys' 8em column and the gap), a text button as the panel's
+#: other disclosures are ("Advanced: source ›"), so a set row is shorter than an open one;
+#: expanded, the bar is an unset row's, "Change to" its key and Cancel after Save. A read-only
+#: set row draws its locked Change… and its phrase there.
 #: A Set-to box's width where its bar holds it and its buttons (`SET_WIDE`): one for every row.
 SET_BOX = "30em"
 #: The Set-to bar's width (its container's) from which every box is `SET_BOX` wide: the box and
@@ -781,6 +913,14 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-main {{ gap: 6px !important; }}
 {_PAGE} .shep-dl-set {{ gap: 8px 12px !important; align-items: baseline; flex-wrap: wrap; }}
 {_PAGE} .shep-dl-key {{ font-size: 14px; color: var(--shep-text-2); }}
+{_PAGE} .shep-dl-set:has(.shep-dl-change:not([aria-expanded="true"])) > .shep-dl-field {{ display: none !important; }}
+{_PAGE} .shep-dl-set:has(.shep-dl-change:not([aria-expanded="true"])) > .block.shep-dl-keycell {{ flex: 1 1 100% !important; }}
+{_PAGE} .shep-dl-chg {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding-inline-start: calc(8em + 12px); }}
+{_PAGE} .shep-dl-chg:has(> .shep-dl-change[aria-expanded="true"]) {{ padding-inline-start: 0; }}
+{_PAGE} button.shep-dl-change {{ flex: none; display: inline-flex; align-items: center; min-height: 24px; margin: 0; padding: 0; border: 0; background: none; font: inherit; font-size: 15px; color: var(--shep-accent-text); cursor: pointer; white-space: nowrap; }}
+{_PAGE} button.shep-dl-change:hover {{ text-decoration: underline; }}
+{_PAGE} button.shep-dl-change[aria-expanded="true"] {{ display: none; }}
+{_PAGE} button.shep-dl-change:disabled {{ color: var(--shep-disabled-text); cursor: default; text-decoration: none; }}
 {_PAGE} .shep-dl-set > .block.shep-dl-keycell {{ flex: 0 0 8em !important; min-width: 8em !important; font-size: 14px; }}
 {_PAGE} .shep-dl-set > .shep-dl-field {{ flex: 1 1 16em !important; min-width: min(16em, 100%) !important; gap: 8px !important; align-items: flex-start !important; flex-wrap: wrap; container-type: inline-size; }}
 {_PAGE} .shep-dl-field > .block {{ flex: 1 1 16em !important; min-width: min(16em, 100%) !important; margin-inline: 0 !important; }}
@@ -813,11 +953,13 @@ PAGE_CSS = f"""
 """
 
 
-__all__ = ["APPLY_LABEL", "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET",
+__all__ = ["APPLY_LABEL", "CANCEL_LABEL", "CHANGE_JS", "CHANGE_KEY", "CHANGE_LABEL",
+           "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET", "SET_KEY",
            "OVERRIDDEN",
            "PAGE_CSS", "PANEL_PARTS", "PATH_HIDDEN", "PRIVATE_KEYS", "REPAIR_LABEL",
            "ROW_LOCKED", "ROW_PARTS", "SAVE_LABEL", "SET_BOX", "SET_WIDE", "SOURCE_WORDS",
            "UNKNOWN", "UNREADABLE",
-           "box_value", "check_words", "create_data_locations_panel", "create_folder",
+           "box_value", "changeable", "check_words", "create_data_locations_panel", "create_folder",
+           "key_html", "row_controls",
            "effect_html", "holds_words", "name_html", "notice_html", "reason_line", "state_html",
            "where_html"]
