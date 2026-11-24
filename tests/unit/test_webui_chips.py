@@ -556,6 +556,30 @@ def test_every_chip_bubble_is_within_the_help_budget(state, chip):
         assert h.budget_problems(chip.detail, h.TEXT_BUDGET) == (), (state, chip.detail)
 
 
+def test_the_gpu_chips_ref_line_names_the_states_and_the_scopes_references():
+    """R-HELP (the owner's C9 of 2026-11-24: the full reference stays
+    reachable): every GPU chip state's bubble ends in one Ref line that names
+    the references its words lean on, the state's own (the workspaces folder's
+    variable and guide section, inference's stop route) and the scope's (the
+    formal scripts `GPU_SCOPE` names in words). L7's C9 kept only the state's
+    own where it had them, to hold the line to two bubble lines: with no
+    workspaces folder (every first start) the scripts were named nowhere."""
+    from src.webui.components import help as h
+
+    own = {"unset": c.GPU_NOT_CONFIGURED_REF, "inference here": "POST /api/v1/pipeline/stop"}
+    gpu = [(name, chip) for name, chip in _every_chip()
+           if not name.startswith(("on", "read-only", "placeholder d8"))]
+    assert len(gpu) >= 12, [name for name, _ in gpu]
+    for name, chip in gpu:
+        ref = h.help_lines(chip.detail)[-1]
+        assert ref.kind == "ref" and ref.term == h.REF_PREFIX[:-1], name
+        named = [part.strip() for part in ref.text.split(",")]
+        assert all(script in named for script in c.GPU_SCOPE_REF.split(", ")), (name, ref.text)
+        if name in own:
+            assert ref.text.startswith(own[name]), (name, ref.text)
+        assert len(named) == len(set(named)), (name, ref.text)
+
+
 def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
     """R-9: the chips' ⓘ texts go through the one bubble, whose first line is
     its bold lead (`help.help_lines`): each chip state leads with a short
@@ -576,7 +600,7 @@ def test_every_chip_bubble_leads_with_a_short_line_then_its_lists():
     assert "M1" in on[-1].text and "SHEPHERD_DEPLOYMENT_MODE" in on[-1].text
     unset = c.gpu_chip_from(None, {**LOCK_FREE, "unset": True}, operator=True).detail
     assert unset.splitlines()[-1] == (
-        "Ref: SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11")
+        f"Ref: SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11, {c.GPU_SCOPE_REF}")
     refused = c.d8_chip(OperatorAccess(False, "not_loopback", "why")).detail
     assert refused.startswith(f"{c.D8_READONLY_LEAD}\n{c.D8_SCOPE}\n\nFor this request: why")
     assert c.gpu_chip_from(None, lock_broken, operator=True).detail.startswith(
@@ -638,8 +662,9 @@ justify-content: flex-end; padding: 12px; }} {h.HELP_CSS}</style>{h.HELP_HEAD}</
             which, classes)
     assert seen["gpu"][0]["text"] == "GPU jobs are refused until a workspaces folder is set."
     assert seen["gpu"][-1]["text"].startswith("Ref: SHEPHERD_WORKSPACES_ROOT")
-    # The state's own references alone (the sweep's L7 check, C9: with the scope's scripts the
-    # line took three lines of the bubble); a script's name is never in the body.
-    assert seen["gpu"][-1]["text"] == f"Ref: {c.GPU_NOT_CONFIGURED_REF}"
-    assert not any("train_model.py" in part["text"] for part in seen["gpu"])
+    # The state's own references, then the scope's (R-HELP, the owner's C9 of 2026-11-24: the
+    # full reference stays reachable; L7's C9 had kept the state's alone); a script's name is
+    # never in the body.
+    assert seen["gpu"][-1]["text"] == f"Ref: {c.GPU_NOT_CONFIGURED_REF}, {c.GPU_SCOPE_REF}"
+    assert not any("train_model.py" in part["text"] for part in seen["gpu"][:-1])
     assert not any("M1" in part["text"] for part in seen["d8"][:-1])

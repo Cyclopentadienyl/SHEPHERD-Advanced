@@ -278,6 +278,47 @@ def test_every_registered_help_text_meets_the_text_budget_but_its_verbatim_sourc
     assert all(k.startswith("test-mode-") or _FIELD_KEY.fullmatch(k) for k in exempt), sorted(exempt)
 
 
+#: A setup step a general user cannot take from the dashboard: an SSH forward or a server
+#: variable (R-HELP). The GUI's own place for a setting, or the desktop start, comes first.
+_SETUP_STEP = re.compile(r"\bSSH\b|\bssh\b|SHEPHERD_[A-Z_]+")
+
+
+def test_setup_topics_name_the_gui_and_the_desktop_start_before_variables_and_ssh(monkeypatch):
+    """R-HELP (the owner's C9 of 2026-11-24): for general users the GUI entry and the desktop
+    start come before environment variables and SSH. Every registered text, and every header
+    chip state (composed per request), that names SSH or a ``SHEPHERD_`` variable outside its
+    Ref line names a GUI place (`server_settings.PLACE_NAMES`) or the desktop entry before it.
+    The operator controls' bubble said "Arrives on this machine's loopback, directly or through
+    an SSH forward" with no desktop start at all. D8's refusal for a request is the API's own
+    words, which the WebUI may not change; it is read apart (it says "on the machine itself"
+    before any SSH forward)."""
+    from src.config.server_settings import PLACE_NAMES
+    from src.utils.operator_access import reason_parts
+    from tests.unit.test_operator_access import every_refusal
+    from tests.unit.test_webui_chips import _every_chip
+
+    first = re.compile("|".join(["desktop entry", *map(re.escape, PLACE_NAMES.values())]))
+    refusals = [part for decision in every_refusal().values()
+                for part in reason_parts(decision.reason) if part]
+    texts = {**_dashboard_help(monkeypatch),
+             **{f"chip {name}": chip.detail for name, chip in _every_chip()}}
+    late, setup = {}, []
+    for key, text in texts.items():
+        body = "\n".join(f"{line.term}: {line.text}" if line.term else line.text
+                         for line in h.help_lines(text) if line.kind != "ref")
+        for refusal in refusals:
+            body = body.replace(refusal, "")
+        step = _SETUP_STEP.search(body)
+        if step is None:
+            continue
+        setup.append(key)
+        gui = first.search(body)
+        if gui is None or gui.start() > step.start():
+            late[key] = body[:step.end()][-90:]
+    assert "chip on" in setup and "chip placeholder d8" in setup, setup
+    assert late == {}, late
+
+
 def test_the_budget_names_what_a_text_runs_over():
     assert h.budget_problems("A short lead.\n- one\n- two\nRef: D5; SHEPHERD_DEVICE") == ()
     long_lead = h.budget_problems("x" * 101)
@@ -1835,25 +1876,18 @@ def _bubble_part_exemption(key: str, kind: str, words: str):
     return None
 
 
-def test_every_registered_help_texts_parts_are_two_lines_at_most_in_the_bubble(tmp_path):
-    """The independent check of the UI sweep (C9): the budget's 76 characters
-    an item let an item wrap to three lines of the 320 px bubble ("Same
-    dataset as served: another workspace with the same full fingerprint.",
-    "Names and stray punctuation are ignored. Only HP:####### ids are
-    used.", Gene's "SP similarity: …", Candidate details' "Evidence, …"),
-    against the text brief's §14 #9 (each item two lines at most). L7 FX-3:
-    it held only the items, and leads (Continue's Device, Diagnosis'
-    phenotypes, similarity and no-cohort run), paragraphs (Diagnosis' score,
-    Extend's learning rate, Fine-tune's "Offered with one task …") and Run
-    name's Ref line took three or four lines. Every registered text is opened
-    in the served dashboard's one bubble, as drawn: its lead, each paragraph,
-    its Ref line and each item are two lines at most, but the parts kept
-    verbatim from their source (`_bubble_part_exemption`, each with its
-    reason, its words held to that source). The sweep's L7 check (C9): the header chips'
-    bubbles, composed per request and named by a hidden element of their own, were never
-    opened (the operator controls' Ref took 5 lines, the GPU chip's 3); every chip state
-    (`test_webui_chips._every_chip`) is drawn in the same bubble and held to the same lines,
-    but D8's refusal, the API's own words."""
+def test_every_registered_help_texts_parts_are_listed_by_their_lines_in_the_bubble(tmp_path):
+    """**A note, not a gate** (R-HELP, the owner's C9 of 2026-11-24: "two lines in the fixed
+    bubble" is a reminder, not an acceptance rule, since fonts and zoom change line counts; the
+    budget test, `help.TEXT_BUDGET`, stays the gate). Every registered text and every header
+    chip state (`test_webui_chips._every_chip`, composed per request) is opened in the served
+    dashboard's one bubble, as drawn, and each part's line count is listed in the test's
+    output: the parts over two lines, each with the reason its words are kept from a source
+    when they are (`_bubble_part_exemption`), so a reviewer reads them. What it asserts is what
+    the bubble must do for every text: it opens, leads with its lead, and a part kept from a
+    source holds that source's words. History: the independent check of the UI sweep (C9) and
+    L7's FX-3 held every lead, paragraph, item and Ref line to two lines; the L7 check (C9)
+    added the chips' bubbles."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import run_node
     from tests.fixtures.served_page import served
@@ -1870,12 +1904,16 @@ def test_every_registered_help_texts_parts_are_two_lines_at_most_in_the_bubble(t
     assert {key[len("chip "):] for key in seen if key.startswith("chip ")} == {
         name for name, _chip in _every_chip()}
     assert all(parts and parts[0][0] == "lead" for parts in seen.values()), seen
-    over = {}
-    for key, parts in seen.items():
+    note = []
+    for key, parts in sorted(seen.items()):
         for kind, words, n in parts:
-            why = _bubble_part_exemption(key, kind, words) if n > 2 else ("", "two lines")
-            if why is None:
-                over.setdefault(key, []).append((kind, words, n))
-            else:
+            if n <= 2:
+                continue
+            why = _bubble_part_exemption(key, kind, words)
+            if why is not None:
                 assert why[1], (key, kind, words, why[0])  # its words are its source's
-    assert over == {}, over
+            note.append(f"{n} lines  {key}  {kind}: {words[:60]}"
+                        + (f"  (kept: {why[0]})" if why else ""))
+    print(f"Bubble parts over two lines at 1850 x 960: {len(note)} of "
+          f"{sum(len(parts) for parts in seen.values())} parts in {len(seen)} texts")
+    print("\n".join(note))

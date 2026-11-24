@@ -119,13 +119,18 @@ D8_SCOPE = (
     "Training: training start and stop\n"
     "Service: saving settings and data locations, restart, stopping the service"
 )
-#: How to reach them; the start-up script, the codes and the SSH command in
-#: the trailing Ref line (each D8 chip's ⓘ ends with it, `d8_chip`).
+#: How to reach them (R-HELP, the owner's C9 of 2026-11-24: for general users
+#: the desktop start comes before SSH and the variables): the service started
+#: from its desktop entry on this computer, in the product's own words
+#: (`server_settings.MODE_NOT_SET_WHY`, the Settings page's Stop service), then
+#: what the request needs, the SSH forward among them; the start-up script,
+#: the variable and the SSH command in the trailing Ref line (each D8 chip's ⓘ
+#: ends with it, `d8_chip`).
 D8_HOW = (
-    "They need a service started here and a request that:\n"
-    "- Arrives on this machine's loopback, directly or through an SSH forward\n"
+    "They need the service started from its desktop entry, and a request that:\n"
+    "- Opens it as localhost here, or through an SSH forward\n"
     "- Has no forwarding header (no reverse proxy), from this dashboard\n"
-    "Ref: SHEPHERD_DEPLOYMENT_MODE=M1, ssh -L 8264:localhost:8264"
+    "Ref: launch_shepherd.sh or SHEPHERD_DEPLOYMENT_MODE=M1, ssh -L 8264:localhost:8264"
 )
 #: Each D8 chip's lead (the bubble's first line, `help.help_lines`), which
 #: the list of controls (`D8_SCOPE`) follows.
@@ -242,13 +247,15 @@ def d8_chip(access: OperatorAccess) -> Chip:
 def gpu_detail(text: str, *refs: str) -> str:
     """**A GPU chip's ⓘ text, the one way every state composes it**: the
     state's own words, then what the lock covers (`GPU_SCOPE`), then one
-    trailing Ref line: the state's own references where it has them, else the
-    scope's (`GPU_SCOPE_REF`), so the line is two lines at most in the bubble (the
-    sweep's L7 check, C9: with both it took three).
-    The bubble shows a "Ref:" line as the muted reference line, the last
-    (`help.help_lines`, the WebUI skill's §7); a state's own Ref line placed before
-    the scope stood mid-bubble (T06 review)."""
-    return f"{text}\n\n{GPU_SCOPE}\nRef: {', '.join(refs or (GPU_SCOPE_REF,))}"
+    trailing Ref line that names every reference the bubble's words lean on:
+    the state's own, then the scope's (`GPU_SCOPE_REF`), each once (R-HELP,
+    the owner's C9 of 2026-11-24: the full reference stays reachable; L7's C9
+    had dropped the scope's to keep the line to two bubble lines, a reminder,
+    not a rule). The bubble shows a "Ref:" line as the muted reference line,
+    the last (`help.help_lines`, the WebUI skill's §7); a state's own Ref line
+    placed before the scope stood mid-bubble (T06 review)."""
+    named = list(dict.fromkeys((*refs, GPU_SCOPE_REF)))
+    return f"{text}\n\n{GPU_SCOPE}\nRef: {', '.join(named)}"
 
 
 def _since(started_at: Any) -> Optional[str]:
