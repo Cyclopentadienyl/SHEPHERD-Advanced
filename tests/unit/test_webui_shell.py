@@ -3357,7 +3357,7 @@ def test_the_training_parameters_fold_when_stacked_and_show_side_by_side():
     from src.webui.components import training_console as tc
 
     assert 'aria-expanded="false" aria-controls="shep-train-params-bd"' in Path(tc.__file__).read_text()
-    assert "b.setAttribute('aria-expanded', open ? 'true' : 'false');" in tc.FOLD_JS
+    assert "b.setAttribute('aria-expanded', want);" in tc.FOLD_JS     # D9: show(b, open)
     assert ('#shep-train-params:has(.shep-train-fold[aria-expanded="false"]) > #shep-train-params-bd '
             "{ display: none !important; }") in stack(tc.PAGE_CSS)
     assert ".shep-train-fold { display: none; }" in side(tc.PAGE_CSS)
