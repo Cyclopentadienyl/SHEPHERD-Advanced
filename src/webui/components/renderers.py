@@ -26,6 +26,7 @@ Module: src/webui/components/renderers.py
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import math
 import re
@@ -1302,6 +1303,23 @@ def why_id(control: str) -> str:
     return f"shep-why-{control}"
 
 
+def _phrase_key(key: str, cause: Any, control: Optional[str]) -> str:
+    """**A chip phrase's bubble key** (``data-help``, which the one help
+    bubble re-anchors by after a redraw), one per phrase (the L8 S1 check,
+    S1C-8: every phrase that named no control had one constant key, so the
+    bubble moved to the first of them): ``why-<cause>-`` and the first control
+    the phrase explains (its element id, unique on the page); with no control
+    named, a stable id of the phrase itself, a short digest of its cause as
+    given (a key as it is, or a notice by its key, kind, cause and words), so
+    the same phrase drawn again keeps its key and two phrases of two causes
+    never share one."""
+    if control:
+        return f"why-{key}-{control.split()[0]}"
+    found = {"key": cause} if isinstance(cause, str) else (_as_notice(cause) or {})
+    parts = "\x1f".join(str(found.get(part) or "") for part in ("key", "kind", "cause", "summary", "short"))
+    return f"why-{key}-{hashlib.sha1(parts.encode('utf-8')).hexdigest()[:10]}"
+
+
 def reason_phrase(cause: Any, *, control: Optional[str] = None) -> str:
     """**R-WHY: the phrase beside a dimmed control** (`REASONS`): its cause's
     phrase of five words at most, as a focusable link-styled button
@@ -1337,7 +1355,7 @@ def reason_phrase(cause: Any, *, control: Optional[str] = None) -> str:
     if control:
         attrs += [f'id="{e(why_id(control.split()[0]))}"', f'data-for="{e(control)}"']
     if reason.source == "chip":
-        attrs += [f'data-help="why-{e(key)}-{e((control or "here").split()[0])}"',
+        attrs += [f'data-help="{e(_phrase_key(key, cause, control))}"',
                   f'data-help-title="{e(reason.title)}"', 'aria-expanded="false"',
                   f'aria-describedby="{e(reason.ref)}"']
     else:

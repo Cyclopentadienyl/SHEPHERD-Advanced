@@ -2150,3 +2150,31 @@ def test_a_notice_drawn_in_the_bar_of_the_controls_it_dims_names_them():
     assert 'data-for="a&quot; onclick=&quot;x"' in hostile and 'onclick="x"' not in hostile
     # The phrase a control would otherwise carry is the notice's own cause: never both.
     assert r.reason_key(ws) == "workspaces_root"
+
+
+def test_each_chip_phrase_has_its_own_bubble_key_and_keeps_it_when_redrawn():
+    """R-WHY's chip phrase opens the one help bubble, which re-anchors by the phrase's
+    ``data-help`` key after a redraw (`help.py`'s ``anchorByKey``). The L8 S1 check (S1C-8):
+    every phrase that named no control had one constant key ("why-d8-here"), so after a redraw
+    the bubble moved to the first such phrase on the screen. A phrase's key is its own: the first
+    control it explains when one is named; else a stable id of the phrase itself, so two phrases
+    of two causes without a control never share a key, and the same phrase drawn again keeps
+    its key."""
+    from src.webui.components import workspaces as w
+
+    def key(phrase):
+        found = re.findall(r'data-help="([^"]+)"', phrase)
+        assert len(found) == 1, phrase
+        return found[0]
+
+    lock = w.lock_notice({"problem": "x", "unset": False})
+    assert r.reason_key(lock) == r.reason_key("gpu_problem") == "gpu_problem"
+    plain, noticed = key(r.reason_phrase("gpu_problem")), key(r.reason_phrase(lock))
+    assert plain != noticed, (plain, noticed)
+    assert key(r.reason_phrase("gpu_problem")) == plain and key(r.reason_phrase(lock)) == noticed
+    alone = {key(r.reason_phrase(cause)) for cause in ("d8", "gpu_busy", "gpu_problem", lock)}
+    assert len(alone) == 4, alone
+    # A named control keys the phrase by its element id, the first of several.
+    assert key(r.reason_phrase("d8", control="shep-a shep-b")) == "why-d8-shep-a"
+    assert key(r.reason_phrase(lock, control="shep-a")) == "why-gpu_problem-shep-a"
+    assert not alone & {key(r.reason_phrase(c, control="shep-a")) for c in ("d8", "gpu_busy", lock)}
