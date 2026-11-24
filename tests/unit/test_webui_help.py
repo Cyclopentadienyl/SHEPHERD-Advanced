@@ -239,8 +239,9 @@ def _exempt_source(key: str, text: str):
     from src.evaluation import caveats
 
     if key.startswith("test-mode-"):
+        # The note's words as the bubble reads them: its lead, then its items or paragraphs.
         mode = key[len("test-mode-"):]
-        return " ".join(text.split("\n")), caveats.MODE_RESULT_NOTES.get(mode)
+        return " ".join(line.text for line in h.help_lines(text)), caveats.MODE_RESULT_NOTES.get(mode)
     found = _FIELD_KEY.fullmatch(key)
     spec = {f.name: f for f in tf.FIELDS}.get(found.group("name")) if found else None
     lead = h.help_lines(text)[0].text
@@ -256,10 +257,26 @@ def test_every_registered_help_text_meets_the_text_budget_but_its_verbatim_sourc
     The one exemption is words the WebUI may not change: a lead that is its field's API wording
     (`FieldSpec.description`, equal to it exactly; the rest of its text, its source line and
     term rows, meets the budget) and a governed measurement note (`caveats.MODE_RESULT_NOTES`,
-    the whole text equal to it, a sentence a line). A lead over 78 characters (three bubble
-    lines) stays a note (`help.budget_notes`), not a failure."""
+    the whole text equal to it). A lead over 78 characters (three bubble lines) stays a note
+    (`help.budget_notes`), not a failure. **A governed note's layout** (MODE_RESULT_NOTES, the
+    owner of 2026-11-24: keep its meaning and limits, adjust the layout first): its first
+    sentence is the lead; two to four further sentences are the bubble's items, one further
+    sentence a paragraph (`help.sentence_items`), each its own words; they were all paragraphs,
+    a sentence a line."""
+    from src.evaluation import caveats
+
     texts = _dashboard_help(monkeypatch)
     assert len(texts) >= 140, len(texts)
+    modes = {key[len("test-mode-"):]: text for key, text in texts.items()
+             if key.startswith("test-mode-")}
+    assert modes and set(modes) <= set(caveats.MODE_RESULT_NOTES), sorted(modes)
+    for mode, text in modes.items():
+        lines = h.help_lines(text)
+        further = len(re.split(r"(?<=[.!?])\s+", caveats.MODE_RESULT_NOTES[mode].strip())) - 1
+        form = ["item"] * further if 2 <= further <= 4 else ["para"] * further
+        assert [line.kind for line in lines] == ["lead", *form], (mode, text)
+        assert " ".join(line.text for line in lines) == caveats.MODE_RESULT_NOTES[mode], mode
+    assert any(len(h.help_lines(text)) > 2 for text in modes.values()), modes
     exempt, over = {}, {}
     for key, text in texts.items():
         problems = h.budget_problems(text, h.TEXT_BUDGET)
@@ -333,9 +350,12 @@ def test_the_budget_names_what_a_text_runs_over():
                    for p in h.budget_problems(f"Lead.\nIt names {code} here.")), code
     assert any("'•' bullet" in p for p in h.budget_problems("Lead.\n• old bullet"))
     assert any("not the last line" in p for p in h.budget_problems("Lead.\nRef: x\nmore"))
-    # A governed note shown elsewhere as one line keeps its words, a sentence a line.
-    assert h.sentence_lines("One. Two words? Three!") == "One.\nTwo words?\nThree!"
-    assert h.sentence_lines(None) is None
+    # A governed note shown elsewhere as one line keeps its words: its first sentence the lead,
+    # two to four further sentences the list, one further sentence a paragraph.
+    assert h.sentence_items("One. Two words? Three!") == "One.\n- Two words?\n- Three!"
+    assert h.sentence_items("One. Two words?") == "One.\nTwo words?"
+    assert h.sentence_items("One. A. B. C. D. E.") == "One.\nA.\nB.\nC.\nD.\nE."
+    assert h.sentence_items(None) is None
 
 
 # --------------------------------------------------------------------------- in a real browser

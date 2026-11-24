@@ -195,7 +195,7 @@ from src.evaluation.caveats import (
 )
 from src.webui.components import renderers as r
 from src.webui.components.chips import LOCK, chips_on_change, gated
-from src.webui.components.help import help_button, sentence_lines
+from src.webui.components.help import help_button, sentence_items
 from src.webui.components import model_list as ml
 from src.webui.components.model_list import item_key
 from src.webui.components.workspaces import (
@@ -368,7 +368,8 @@ FIELD_HELP = {
 }
 #: Help a rendered ⓘ names. A described measurement's result note is the
 #: governed caveat's own text (`caveats.mode_note`, shown on Models and
-#: Results too), each sentence a line (`sentence_lines`), never reworded here.
+#: Results too), laid out by `sentence_items` (its first sentence the lead),
+#: never reworded here.
 TOPIC_HELP = {
     "test-preview-id": (
         "Preview id",
@@ -378,7 +379,7 @@ TOPIC_HELP = {
         "- Commit: prepares again from the same inputs, refused unless the id matches\n"
         "- So: what is committed is what was previewed",
     ),
-    **{_MODE_HELP[mode]: (f"{words} result", sentence_lines(mode_note(mode)))
+    **{_MODE_HELP[mode]: (f"{words} result", sentence_items(mode_note(mode)))
        for mode, words in _RESULT_WORDS.items()},
     "test-batch": (
         "Batch size",

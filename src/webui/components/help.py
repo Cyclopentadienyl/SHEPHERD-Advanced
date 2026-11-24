@@ -186,13 +186,21 @@ def help_lines(text: str) -> Tuple[HelpLine, ...]:
     return tuple(out)
 
 
-def sentence_lines(text: Optional[str]) -> Optional[str]:
-    """A text written as one paragraph (a governed note shown elsewhere as a
-    line) with each sentence on a line of its own, so the bubble's lead is its
-    first sentence; its words are unchanged. None stays None."""
+def sentence_items(text: Optional[str]) -> Optional[str]:
+    """**A governed note laid out for the bubble, its words unchanged**
+    (MODE_RESULT_NOTES; the owner of 2026-11-24: keep its meaning and limits,
+    adjust its layout first): a text written as one paragraph (a note shown
+    elsewhere as a line), its first sentence the lead; two to four further
+    sentences the bubble's one list (`BULLET` items, the budget's 2-4), one
+    further sentence a paragraph under the lead, and more than the list holds
+    a sentence a line. Each sentence keeps its words and its full stop. None
+    stays None."""
     if text is None:
         return None
-    return "\n".join(part for part in _SENTENCE_END.split(text.strip()) if part)
+    lead, *rest = [part for part in _SENTENCE_END.split(text.strip()) if part] or [""]
+    if 2 <= len(rest) <= TEXT_BUDGET.items:
+        rest = [f"{BULLET}{part}" for part in rest]
+    return "\n".join([lead, *rest])
 
 
 @dataclass(frozen=True)
@@ -1078,7 +1086,7 @@ __all__ = [
     "copy_button",
     "help_button",
     "help_lines",
-    "sentence_lines",
+    "sentence_items",
     "registered_keys_in",
     "text_id",
 ]

@@ -70,7 +70,7 @@ from src.config.model_types import WRITTEN_BEFORE_SPEC  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import renderers  # noqa: E402
 from src.webui.components import test_page as tp  # noqa: E402
-from src.webui.components.help import sentence_lines  # noqa: E402
+from src.webui.components.help import help_lines, sentence_items  # noqa: E402
 from tests.fixtures.capabilities import described  # noqa: E402
 from tests.fixtures.operator_access import (  # noqa: E402
     OPERATOR_BASE_URL,
@@ -4407,10 +4407,11 @@ def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
     assert shown and not any(k in pooled for k in shown)
     assert all(f"k={k} " in pooled for k in (1, 3, 10) if f"k={k} " not in shown)
     assert f'data-help="test-mode-{mode}"' in raw
-    # The governed note in its own words, a sentence a line (its lead first).
+    # The governed note in its own words, laid out by the shared helper (its lead first).
     assert tp.TOPIC_HELP[f"test-mode-{mode}"] == (f"{TASK_NAMES[mode]} task result",
-                                                  sentence_lines(mode_note(mode)))
-    assert tp.TOPIC_HELP[f"test-mode-{mode}"][1].replace("\n", " ") == mode_note(mode)
+                                                  sentence_items(mode_note(mode)))
+    assert " ".join(line.text for line in help_lines(tp.TOPIC_HELP[f"test-mode-{mode}"][1])) == (
+        mode_note(mode))
     assert HOSTILE not in raw and html_lib.escape(HOSTILE, quote=False) in raw
 
 
@@ -4653,7 +4654,7 @@ def test_a_kg_link_prediction_result_has_its_measurement_note():
     label = label[:label.index("</div>")]
     assert 'data-help="test-mode-kg_link_prediction"' in label
     assert tp.TOPIC_HELP["test-mode-kg_link_prediction"] == (
-        "KG link prediction result", sentence_lines(KG_LINK_PREDICTION_NOTE))
+        "KG link prediction result", sentence_items(KG_LINK_PREDICTION_NOTE))
     assert mode_label("kg_link_prediction") in _result_text(raw)
     assert "shep-rec-tile-l" not in raw
 
@@ -5428,8 +5429,8 @@ def test_the_pages_help_texts_meet_the_text_budget():
     lines, then none or two to four items of one form, each two lines at most,
     80 words at most, Ref last, plain words. Before: 14 of 21 over. A
     described measurement's result note is the governed caveat's own text
-    (`caveats.mode_note`, shown on Models and Results too), each sentence a
-    line: it is kept as written, never reworded here."""
+    (`caveats.mode_note`, shown on Models and Results too), laid out by
+    `help.sentence_items`: it is kept as written, never reworded here."""
     from src.evaluation.caveats import mode_note
     from src.webui.components.help import TEXT_BUDGET, budget_notes, budget_problems
 
@@ -5438,7 +5439,7 @@ def test_the_pages_help_texts_meet_the_text_budget():
     governed = {tp._MODE_HELP[mode]: mode for mode in tp._RESULT_WORDS}
     for key, text in texts.items():
         if key in governed:
-            assert text == sentence_lines(mode_note(governed[key])), key
+            assert text == sentence_items(mode_note(governed[key])), key
             continue
         assert budget_problems(text, TEXT_BUDGET) == (), (key, budget_problems(text, TEXT_BUDGET))
         assert budget_notes(text, TEXT_BUDGET) == (), key
