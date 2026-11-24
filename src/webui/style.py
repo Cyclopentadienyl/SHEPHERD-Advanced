@@ -904,6 +904,11 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   display: inline !important; white-space: nowrap; min-height: 0; line-height: inherit; font-size: inherit;
   margin: 0 0 0 0.25em;
 }
+/* The measure is the words' (prose, 56ch); a line that closes with "Details ›" keeps room for the
+   control after them, so a one-line notice says its Details on that line (the owner's C: at 1850
+   wide the run bar's notice drew "Details ›" alone on a second line). */
+.shep-nb:has(> :is(.shep-nb-line, .shep-nb-next) > .shep-nb-text > .shep-nb-more),
+.shep-nb:has(> .shep-nb-next > .shep-nb-more) { max-width: calc(var(--shep-measure) + 6em); }
 :is(.shep-nb-line, .shep-nb-next) .shep-nb-more::details-content { display: none; }
 :is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open]::details-content { display: block; }
 :is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open] > :not(summary):first-of-type,
