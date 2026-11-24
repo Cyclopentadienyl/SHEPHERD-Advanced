@@ -4263,7 +4263,7 @@ const QUEUE_JS = __QUEUE_JS__;
     b.setAttribute('aria-expanded', was);
     return { layout: document.documentElement.getAttribute('data-shep-layout'), expanded: b.getAttribute('aria-expanded'),
              words: b.textContent.trim(), shown: body.getClientRects().length > 0, end: se.scrollHeight, endShown,
-             height: innerHeight, more: !!document.querySelector('#shep-train-more.open, #shep-train-model.open') };
+             height: innerHeight, more: !!document.querySelector('#shep-train-more > button.label-wrap.open, #shep-train-model > button.label-wrap.open') };
   });
   const settle = (page) => page.evaluate(async () => {
     let last = null;
@@ -4287,6 +4287,10 @@ const QUEUE_JS = __QUEUE_JS__;
     await settle(page);
     out[`${w}x${h}`] = await read(page);
     if (w === sizes[0][0] && h === sizes[0][1]) {
+      await page.click('#shep-train-more > button.label-wrap');
+      await page.click('#shep-train-model > button.label-wrap');
+      await settle(page);
+      out.opened = await read(page);
       await page.click('.shep-train-fold');
       out.folded = await read(page);
       await page.waitForTimeout(12000);
@@ -4316,10 +4320,15 @@ def test_stacked_the_parameters_show_where_the_page_holds_them_and_a_users_fold_
     window (the main parameters only: "More training settings" and "Model"
     stay closed), else folded, by that measure, never by a window size; and
     a fold the reader made holds through the shell's timers and a page
-    switch (no timer, poll or redraw reopens it). At 1080 x 1920 the body is
-    shown and the page ends within the window; at 1050 x 1100 with a
-    dataset (the charts under the parameters) the page with the body shown
-    does not end within the window, and the body is folded."""
+    switch (no timer, poll or redraw reopens it), and so does the body the
+    reader works in: opening "More training settings" in it at 1080 x 1920
+    grew the page past the window, and the measure folded the body under
+    the reader (the help test's Tab walk lost Mixed precision). At 1080 x
+    1920 the body is shown and the page ends within the window, and stays
+    shown once the reader opens "More training settings" and "Model" in it,
+    the page now past the window; at 900 x 950 with a dataset (the charts
+    under the parameters) the page with the body shown does not end within
+    the window, and the body is folded."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
 
@@ -4332,7 +4341,7 @@ def test_stacked_the_parameters_show_where_the_page_holds_them_and_a_users_fold_
     else:
         shutil.copytree(built[0], tmp_path / "root" / "demo")
         monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
-        sizes = [[1080, 1920], [1050, 1100]]
+        sizes = [[1080, 1920], [900, 950]]
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_FOLD_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")], json.dumps(sizes))
@@ -4347,7 +4356,11 @@ def test_stacked_the_parameters_show_where_the_page_holds_them_and_a_users_fold_
     portrait = seen["1080x1920"]
     assert portrait["shown"] and portrait["end"] <= portrait["height"], portrait
     if case == "configured":
-        assert not seen["1050x1100"]["shown"], seen["1050x1100"]
+        assert not seen["900x950"]["shown"], seen["900x950"]
+    # The reader works in the body: it stays shown, though the page now ends past the window.
+    opened = seen["opened"]
+    assert opened["more"] and opened["end"] > opened["height"], opened
+    assert opened["shown"] and opened["expanded"] == "true" and opened["words"] == "Hide", opened
     # The reader's fold holds through 12 s of the shell's timers and a page switch.
     assert seen["folded"]["shown"] is False and seen["folded"]["words"] == "Show", seen
     assert seen["after"]["shown"] is False and seen["after"]["expanded"] == "false", seen

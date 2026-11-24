@@ -5284,10 +5284,17 @@ def create_training_tab(ctx: Any) -> None:
 #: window's height. It is decided only when what it hangs on changes: the arrangement (the
 #: layout pass's mark), the page's size (its width, its content) and the fonts; never by a
 #: timer or a poll, and only while Training is shown. **A fold the reader made is kept**:
-#: once they used the button nothing decides for them again.
+#: once they used the button, or worked in the body (a press or a key in it: opening "More
+#: training settings" there grew the page past the window, and the measure folded the body
+#: they were working in), nothing decides for them again.
 FOLD_JS = r"""
 var mine = false;
 function fold() { return element.querySelector('.shep-train-fold'); }
+function used(e) {
+  if (e.target && e.target.closest && e.target.closest('#shep-train-params-bd')) { mine = true; }
+}
+document.addEventListener('pointerdown', used, true);
+document.addEventListener('keydown', used, true);
 function show(b, open) {
   var want = open ? 'true' : 'false';
   if (b.getAttribute('aria-expanded') !== want) { b.setAttribute('aria-expanded', want); }
