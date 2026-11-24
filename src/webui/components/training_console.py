@@ -414,6 +414,10 @@ def text_field(kind: str, value: Any) -> bool:
     return kind == "list[int]" or (value is None and kind in ("int", "float"))
 
 
+#: The width role of a number field (R-WIDTH: `style.py`'s ``--shep-w-num``).
+NUMBER_ROLE = "shep-w-num"
+
+
 def value_field(kind: str, label: str, value: Any, *, elem_id: str,
                 choices: Optional[Sequence[Tuple[str, Any]]] = None,
                 info: Optional[str] = None, visible: bool = True) -> Any:
@@ -426,8 +430,13 @@ def value_field(kind: str, label: str, value: Any, *, elem_id: str,
     encoder's relation edge dimension) is a text box reading "off", a state
     the browser keeps: a number box shows None as 0 once mounted and sends 0
     after any edit. `info` is its format, unit or "off", said under it
-    (`FIELD_FORMATS`); what it is stays behind its ⓘ."""
+    (`FIELD_FORMATS`); what it is stays behind its ⓘ. **Its width by its
+    role** (R-WIDTH, the owner's D12): a number, a switch's or a few choices'
+    excepted, takes the short number's width (``shep-w-num``) from its kind,
+    never from a page; white space beside it is fine."""
     common = {"label": label, "elem_id": elem_id, "info": info, "visible": visible}
+    if kind in ("int", "float") and not choices:
+        common["elem_classes"] = [NUMBER_ROLE]
     if text_field(kind, value):
         return gr.Textbox(value=form_value(value), max_lines=1, **common)
     if kind == "bool":

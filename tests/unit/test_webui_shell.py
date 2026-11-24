@@ -4806,3 +4806,47 @@ def test_a_state_said_as_a_sentence_and_a_note_in_a_span_keep_the_measure():
     assert "display: inline-block" in _rule(SHELL_CSS, "span.shep-note")
     assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-note")
     assert "max-width: var(--shep-measure)" in _rule(SHELL_CSS, ".shep-reason")
+
+
+#: R-WIDTH at a wide window, Fine-tune at first use: Epochs' input box and its content width,
+#: one ``ch`` of its font, the "More settings" title's words and its mark, and what lies under
+#: the title's words (`test_fields_take_their_roles_width_and_an_accordions_mark_stays_by_its_title`).
+_ROLE_WIDTH_JS = r"""() => {
+  const input = document.querySelector('#ft_num_epochs input');
+  const s = getComputedStyle(input), r = input.getBoundingClientRect();
+  const probe = document.createElement('span');
+  probe.style.cssText = `position:absolute;visibility:hidden;font:${s.font};letter-spacing:${s.letterSpacing}`;
+  probe.textContent = '0'.repeat(100); document.body.appendChild(probe);
+  const ch = probe.getBoundingClientRect().width / 100; probe.remove();
+  const content = r.width - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight)
+    - parseFloat(s.borderLeftWidth) - parseFloat(s.borderRightWidth);
+  const tokens = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--shep-w-num'));
+  const head = document.querySelector('#ft_more button.label-wrap');
+  const label = [...head.children].find((e) => !e.classList.contains('icon')) || head;
+  const range = document.createRange(); range.selectNodeContents(label);
+  const words = [...range.getClientRects()].filter((x) => x.width > 0);
+  const last = words[words.length - 1], icon = head.querySelector('.icon').getBoundingClientRect();
+  const em = parseFloat(getComputedStyle(head).fontSize);
+  const hit = document.elementFromPoint(words[0].left + 2, (words[0].top + words[0].bottom) / 2);
+  return { content, ch, tokens, inputWidth: r.width, gap: icon.left - last.right, em,
+           hitIsToggle: !!hit && hit.closest('button.label-wrap') === head };
+}"""
+
+
+def test_fields_take_their_roles_width_and_an_accordions_mark_stays_by_its_title(tmp_path):
+    """R-WIDTH (the owner's D12 of 2026-11-24): at 2560 x 1440 Fine-tune's Epochs box was about
+    440 px wide for a two-digit number, and "More settings"' mark stood about 1100 px from its
+    title. A number field now takes the short number's width (``--shep-w-num`` of its own font,
+    in ``ch``), white space beside it allowed, and an accordion's mark lies within 1em after its
+    title's words, the whole title row still the one toggle."""
+    from tests.fixtures.browser import node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    stops = [{"size": [2560, 1440], "page": "finetune", "focus": False}]
+    seen = walk_state("first_use", tmp_path, stops, extra_js=_ROLE_WIDTH_JS)
+    got = seen[0]["extra"]
+    assert got["tokens"] and got["tokens"] > 0, got
+    assert got["content"] <= got["tokens"] * got["ch"] + 1, got
+    assert 0 <= got["gap"] <= got["em"], got
+    assert got["hitIsToggle"], got

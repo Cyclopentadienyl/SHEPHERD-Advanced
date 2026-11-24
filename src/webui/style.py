@@ -219,6 +219,10 @@ SHELL_CSS = """
   --shep-title-size: 20px; --shep-body-size: 15px; --shep-key-size: 14px;
   --shep-weight-strong: 600;
   --shep-label-size: 14px; --shep-label-weight: 600; --shep-label-color: var(--shep-text);
+  /* **A field's width by its role** (R-WIDTH, the owner's D12 of 2026-11-24), in ``ch`` of each
+     field's own type: a short number modest, a name wider, a path and a search growing from a
+     floor with their container. A choice keeps its longest option (``OPTION_CHARS``). */
+  --shep-w-num: 10ch; --shep-w-name: 28ch; --shep-w-grow-min: 24ch;
   /* A field row's two measures (D03, `.shep-field-row`): a select's or text box's box, 39 px and
      its 1 px border each side, and the room Gradio's padded block leaves under it. */
   --shep-field-box-h: 41px; --shep-field-pad-b: 10px;
@@ -702,6 +706,22 @@ span.shep-note { display: inline-block; }
    accordion: the turn is set here over Gradio's inline one. */
 .gradio-container button.label-wrap > .icon { transform: rotate(-90deg) !important; }
 .gradio-container button.label-wrap.open > .icon { transform: none !important; }
+/* Its mark by its title (R-WIDTH, the owner's D12): within 1em after the words, as "Details ›"
+   reads, never across the panel; the whole title row stays the one button that toggles it. One
+   choice for the app. */
+.gradio-container button.label-wrap { justify-content: flex-start !important; gap: 8px !important; }
+
+/* **Widths by role** (R-WIDTH): the class on a field's block sets its box's width by what it
+   holds; the block keeps its cell, so white space beside a short field is fine. A number is at
+   most its token wide (and its padding and border); a name at most its token; a path and a search
+   grow with their container from their floor (a floor never wider than the container). */
+.shep-w-num :is(input[type=number], input[type=text]) {
+  max-width: calc(var(--shep-w-num) + 2 * var(--input-padding, 10px) + 2 * var(--input-border-width, 1px));
+}
+.shep-w-name :is(input[type=text], textarea) {
+  max-width: calc(var(--shep-w-name) + 2 * var(--input-padding, 10px) + 2 * var(--input-border-width, 1px));
+}
+.shep-w-path, .shep-w-search { flex: 1 1 var(--shep-w-grow-min) !important; min-width: min(var(--shep-w-grow-min), 100%) !important; }
 
 /* **A field row** (D03, the WebUI ledger's UI-03): labelled fields with an action beside them
    (Fine-tune's base picker, Training's Continue drawer, Test's Run, the Diagnosis load drawer's
@@ -876,6 +896,18 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .shep-nb-steps > li::marker { color: var(--shep-muted); }
 .shep-nb-more { font-size: 14px; line-height: var(--shep-lh-prose); }
 .shep-nb-more[open] > summary { margin-bottom: var(--shep-space-item); }
+/* **R-DETAILS** (`renderers._with_details`): a notice's "Details ›" closes its last line, after
+   the words where the line has room (one unit, moved to the next line whole where it has none);
+   opened, its rows go under the line on the words' edge. The summary reads at the line's size. */
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more { display: inline !important; margin: 0; }
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more > summary {
+  display: inline !important; white-space: nowrap; min-height: 0; line-height: inherit; font-size: inherit;
+  margin: 0 0 0 0.25em;
+}
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more::details-content { display: none; }
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open]::details-content { display: block; }
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open] > :not(summary):first-of-type,
+:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open] > summary + * { margin-top: var(--shep-space-item); }
 .shep-nb .shep-nb-kv { gap: var(--shep-space-item) 12px; font-size: 14px; }
 .shep-nb .shep-nb-kv > .shep-v { font-size: 14px; overflow-wrap: break-word; }
 .shep-nb .shep-nb-ref { margin: var(--shep-space-item) 0 0; font-size: 14px; color: var(--shep-muted); }
@@ -896,18 +928,6 @@ __STACK__ .shep-rec-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .gradio-container button.shep-why {
   display: inline; margin: 0; padding: 0; border: 0; background: none; font: inherit;
   color: var(--shep-accent-text); text-align: start; cursor: pointer; white-space: nowrap;
-/* **R-DETAILS** (`renderers._with_details`): a notice's "Details ›" closes its last line, after
-   the words where the line has room (one unit, moved to the next line whole where it has none);
-   opened, its rows go under the line on the words' edge. The summary reads at the line's size. */
-:is(.shep-nb-line, .shep-nb-next) .shep-nb-more { display: inline !important; margin: 0; }
-:is(.shep-nb-line, .shep-nb-next) .shep-nb-more > summary {
-  display: inline !important; white-space: nowrap; min-height: 0; line-height: inherit; font-size: inherit;
-  margin: 0 0 0 0.25em;
-}
-:is(.shep-nb-line, .shep-nb-next) .shep-nb-more::details-content { display: none; }
-:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open]::details-content { display: block; }
-:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open] > :not(summary):first-of-type,
-:is(.shep-nb-line, .shep-nb-next) .shep-nb-more[open] > summary + * { margin-top: var(--shep-space-item); }
   text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
 }
 .gradio-container button.shep-why:hover, .gradio-container button.shep-why[aria-expanded="true"] {
@@ -1283,7 +1303,7 @@ button.shep-row {
 /* In a bar (whose groups stand on one bottom line) "Search" and Clear stay on the box's middle
    line: a label beside its box is no label above it. */
 .shep-bar > .shep-grp.shep-search-row { align-items: center !important; }
-.shep-search-lbl { font-size: 15px; color: var(--shep-text-2); white-space: nowrap; }
+.shep-search-lbl { font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); white-space: nowrap; }
 .shep-list-outside { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 8px; font-size: 14px; color: var(--shep-text-2); }
 .shep-facts-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
 /* Its "↑ Back to the list" (`model_list.BACK_TO_LIST`), shown stacked only, at the title's end. */
