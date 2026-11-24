@@ -1846,6 +1846,36 @@ def test_a_draw_that_fails_changes_nothing_drawn(root, serving, monkeypatch, cap
     assert "could not be drawn" in caplog.text
 
 
+@pytest.mark.parametrize("kind", ["neutral", "error"])
+def test_the_drawers_empty_list_says_its_state_and_the_notices_phrase_never_a_pointer(kind):
+    """The owner's D6 of 2026-11-24 (S1's check, S1C-9): the Load drawer's empty list said
+    "No model to list: no workspaces folder is set (see Model in use).", a pointer to a place
+    that may have scrolled away or be in another region. It says its state and the notice's own
+    phrase (R-WHY: "Needs a workspaces folder", a set folder not usable its own phrase), which
+    brings the notice the screen draws into view and focuses its link, or opens its place; the
+    notice itself is still the card's, said once (a relation here, ``data-notice-rel``).
+    Models' list, whose page shows no card, says the notice itself. Fails before: the pointer."""
+    from src.config.server_settings import ENV_WORKSPACES_ROOT
+    from src.webui.components import renderers as r
+    from src.webui.components.workspaces import NOTICES, notice_view
+
+    notice = {**notice_view(NOTICES[ENV_WORKSPACES_ROOT], kind)}
+    if kind == "error":
+        notice = {**notice, "summary": "The workspaces folder cannot be used.",
+                  "short": "the workspaces folder cannot be used"}
+    listing = {"notice": notice, "items": []}
+    drawer = ml._no_items_html(listing, None, ml.PRESETS["clinical"])
+    words = re.sub(r"<[^>]+>", " ", drawer)
+    assert not re.search(r"\(see\b|\bsee (above|below)\b", words), words
+    assert 'data-notice-rel="workspaces_root"' in drawer and "data-notice=" not in drawer
+    key = r.reason_key(notice)
+    assert key == ("workspaces_root" if kind == "neutral" else "workspaces_root_unusable")
+    assert f'>{r.REASON_PHRASES[key]}</button>' in drawer and f'data-why="{key}"' in drawer
+    assert " ".join(words.split()).startswith(ml.NO_MODEL_TO_LIST), words
+    assert 'data-notice="workspaces_root"' in ml._no_items_html(listing, None,
+                                                               ml.PRESETS["research"])
+
+
 @pytest.mark.parametrize("preset", ["clinical", "research"])
 def test_a_dimmed_loads_phrase_names_the_load_it_explains_in_both_presets(preset):
     """R-WHY (the owner's D6 of 2026-11-24; S1's leftover, S1C-7): beside a dimmed Load the

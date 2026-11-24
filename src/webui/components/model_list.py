@@ -312,7 +312,8 @@ class Preset:
     #: Where its page says the workspaces folder's notice itself (None: the
     #: list's empty state says it): Diagnosis' card, "Model in use", where the
     #: screen's first action is (L7 SW-LK8); the drawer's empty list then says
-    #: a relation to it, never the notice again.
+    #: its state and the notice's phrase (R-WHY, `NO_MODEL_TO_LIST`), never
+    #: the notice again and never a pointer to its place.
     notice_where: Optional[str] = None
 
 
@@ -894,6 +895,9 @@ def runs_unread(listing: Mapping[str, Any], show_older: bool) -> int:
 #: folder not set (or not usable) is its notice instead (`_no_items_html`).
 NO_WORKSPACE = "No workspace in the workspaces folder yet. Build a dataset first (Research › Datasets)."
 NO_CHECKPOINT = "No checkpoint is listed in this workspace."
+#: The list's state where its page says the workspaces folder's notice elsewhere
+#: (`Preset.notice_where`): followed by that notice's phrase (`renderers.reason_phrase`).
+NO_MODEL_TO_LIST = "No model to list."
 
 
 def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Preset],
@@ -919,12 +923,14 @@ def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Prese
                if unread else f"No {what} is listed in this workspace.")
     elif listing.get("notice") and not listing.get("items"):
         notice = listing["notice"]
-        if preset is not None and preset.notice_where and notice.get("short"):
+        phrase = r.reason_phrase(notice) if preset is not None and preset.notice_where else ""
+        if phrase:
             # Said once on the screen, where the preset's page says it: here
-            # its relation, in the notice's own short words.
-            words = f"No model to list: {notice['short']} (see {preset.notice_where})."
+            # the list's state and the notice's own phrase (R-WHY), which
+            # brings that notice into view and focuses its link, never a
+            # pointer to a place that may have scrolled away (the owner's D6).
             return (f'<p class="shep-empty" data-notice-rel="{r.e(notice.get("key") or "")}">'
-                    f'{r.e(words)}</p>')
+                    f'{r.e(NO_MODEL_TO_LIST)} {phrase}</p>')
         return r.notice_block(notice)
     elif listing.get("problem"):
         why = listing["problem"]

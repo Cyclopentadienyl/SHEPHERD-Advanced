@@ -620,7 +620,7 @@ def test_first_use_says_the_workspaces_notice_once_on_the_card_and_a_relation_in
     listing = {"notice": notice, "items": []}
     drawer = ml._no_items_html(listing, None, ml.PRESETS["clinical"])
     assert 'data-notice-rel="workspaces_root"' in drawer and "data-notice=" not in drawer
-    assert f"{notice['short']} (see Model in use)." in drawer
+    assert "(see " not in drawer and r.REASON_PHRASES["workspaces_root"] in drawer
     assert 'data-notice="workspaces_root"' in ml._no_items_html(listing, None,
                                                                ml.PRESETS["research"])
 
