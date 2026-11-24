@@ -73,7 +73,7 @@ Module: src/webui/components/datasets_page.py
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Tuple
 
 import gradio as gr
 
@@ -236,7 +236,9 @@ def _bound_versions(row: Mapping[str, Any], versions: List[Mapping[str, Any]],
             "problem": None}
 
 
-def _marks(row: Mapping[str, Any], data: Mapping[str, Any], run_bar: Optional[str]) -> str:
+def _marks(row: Mapping[str, Any], data: Mapping[str, Any], run_bar: Optional[str]) -> List[str]:
+    """The In use column's facts for `row`, each one mark (the column's role holds each whole
+    while the table has the room, `COLUMNS`); a dash alone when nothing uses it."""
     marks = []
     serving_row = next((x for x in data.get("rows") or [] if x["name"] == data.get("serving")),
                        None)
@@ -246,10 +248,10 @@ def _marks(row: Mapping[str, Any], data: Mapping[str, Any], run_bar: Optional[st
           and row.get("dataset_fingerprint") == serving_row.get("dataset_fingerprint")):
         marks.append('<span class="shep-sub">same dataset as served</span>')
     if run_bar and row["name"] == run_bar:
-        marks.append(f'<span class="{CELL_ROOMY}">{r.status_mark("ok", "in your Training run bar")}</span>')
+        marks.append(r.status_mark("ok", "in your Training run bar"))
     if not row.get("trainable"):
         marks.append(r.not_trainable_chip(row))
-    return " ".join(marks) or f'<span class="shep-muted">{r.NO_VALUE}</span>'
+    return marks or [f'<span class="shep-muted">{r.NO_VALUE}</span>']
 
 
 def _fingerprint_missing(row: Mapping[str, Any]) -> str:
@@ -296,15 +298,79 @@ def commands_html() -> str:
                            for key, command, what in COMMANDS], classes="shep-ds-cmds")
 
 
-#: The columns a narrow table drops (the shell's fit, `style.FIT`), their
-#: facts then said by the selected row's details (`optional_html`).
-_OPT = f' class="{COL_OPT}"'
+class Column(NamedTuple):
+    """**One column of the workspaces table, declared by its role** (K6, roles never strings:
+    the owner's decision of 2026-11-24). `role` says how its words hold together, in its header
+    and in every cell alike (`ROLES`); `optional`: a narrow table drops it (`style.COL_OPT`);
+    `num`: figures, end-aligned; `help`: its header's ⓘ (key, title); `classes`: its cells' own
+    classes (the page's style sheet: a column's least width, tabular figures)."""
+
+    head: str
+    role: str
+    optional: bool = False
+    num: bool = False
+    help: Optional[Tuple[str, str]] = None
+    classes: str = ""
+
+
+#: **How each role's words hold together**: a name breaks only before its own separators
+#: (`renderers.name_pieces_html`); sources are prose that wraps; a fact is short words, each
+#: fact read as one while the table has the room and wrapping only where keeping it whole
+#: would cost the table a column (`style.CELL_ROOMY`, the layout pass's second measure); a
+#: number (figures, a time, a fingerprint and its Copy) is whole always (``shep-nowrap``). A
+#: fact's or a number's header is words held whole while the table has the room.
+ROLES = ("name", "sources", "fact", "number")
+#: **The workspaces table's columns, each by its role** (the header and the cells read them
+#: alike; no list of headers decides a mark). Built, the fingerprint and Train / val are
+#: numbers: whole always, as their cells were (read as facts, at 1366 x 768 configured the
+#: wide form wrapped "20 /" over "5" and the fingerprint's Copy under it).
+COLUMNS = (
+    Column("Name", "name", classes="shep-ds-name shep-w600"),
+    Column("Built (UTC)", "number", optional=True, classes="shep-ds-date"),
+    Column("Dataset fingerprint", "number", help=("dataset-fingerprint", "Dataset fingerprint")),
+    Column("Sources", "sources", optional=True, classes="shep-ds-src"),
+    Column("Train / val", "number", num=True),
+    Column("In use", "fact", help=("datasets-in-use", "In use"), classes="shep-ds-use"),
+)
+#: The roles whose header is words held whole while the table has the room.
+_HELD_HEADS = ("fact", "number")
+
+
+def _classes(column: Column, *, head: bool) -> str:
+    """A column's header or cell classes, from its declaration."""
+    names = [] if head else column.classes.split()
+    names += ["shep-num"] if column.num else []
+    names += ["shep-nowrap"] if column.role == "number" and not head else []
+    names += [COL_OPT] if column.optional else []
+    return f' class="{" ".join(names)}"' if names else ""
+
+
+def _held(column: Column, inner: Any, *, head: bool = False) -> str:
+    """A header's or a cell's content as its role holds it (`ROLES`): a fact's or a number's
+    header, and each of a fact column's facts (one, or several marks: In use), whole while
+    the table has the room (`style.CELL_ROOMY`), the cell breaking only between them."""
+    facts = [inner] if isinstance(inner, str) else list(inner)
+    if column.role in (_HELD_HEADS if head else ("fact",)):
+        facts = [f'<span class="{CELL_ROOMY}">{fact}</span>' for fact in facts]
+    return " ".join(facts)
+
+
+def head_html(column: Column) -> str:
+    """A column's header, by its role (`COLUMNS`)."""
+    words = r.e(column.head) + (help_button(*column.help) if column.help else "")
+    return f'<th scope="col"{_classes(column, head=True)}>{_held(column, words, head=True)}</th>'
+
+
+def cell_html(column: Column, inner: Any) -> str:
+    """A cell of a column, by its role (`COLUMNS`)."""
+    return f"<td{_classes(column, head=False)}>{_held(column, inner)}</td>"
 
 
 def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Optional[str]) -> str:
-    """The workspaces table; each row selects its details. A fit box
-    (`style.FIT`): while the whole table does not fit its panel, its optional
-    columns (Built, Sources) are not drawn (`style.NARROW_ATTR`)."""
+    """The workspaces table; each row selects its details, its header and cells drawn by
+    each column's declared role (`COLUMNS`). A fit box (`style.FIT`): while the whole table
+    does not fit its panel, its optional columns (Built, Sources) are not drawn
+    (`style.NARROW_ATTR`)."""
     rows = data.get("rows") or []
     if not rows:
         return empty_html(data)
@@ -318,29 +384,21 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
                                        digits=digits)
                    if r.is_digest(fingerprint) else _fingerprint_missing(row))
         on = name == selected
+        cells = (r.name_pieces_html(name), r.e(built) if built else r.NOT_RECORDED.lower(),
+                 fp_cell, r.sources_html(row),
+                 r.e(r.pair_text(row.get("train_samples"), row.get("val_samples"))),
+                 _marks(row, data, run_bar))
         body.append(
             # A plain table's selected row is `aria-current` (the skill's §8).
             f'<tr class="{"shep-on" if on else ""}" data-key="{r.e(name)}" tabindex="0"'
             f'{CURRENT if on else ""}>'
-            f'<td class="shep-ds-name shep-w600">{r.name_pieces_html(name)}</td>'
-            f'<td class="shep-nowrap shep-ds-date {COL_OPT}">'
-            f'{r.e(built) if built else r.NOT_RECORDED.lower()}</td>'
-            f'<td class="shep-nowrap">{fp_cell}</td>'
-            f'<td class="shep-ds-src {COL_OPT}">{r.sources_html(row)}</td>'
-            f'<td class="shep-num shep-nowrap">'
-            f'{r.e(r.pair_text(row.get("train_samples"), row.get("val_samples")))}</td>'
-            f'<td class="shep-ds-use">{_marks(row, data, run_bar)}</td></tr>')
+            + "".join(cell_html(column, inner) for column, inner in zip(COLUMNS, cells))
+            + "</tr>")
     return (
         f'<div class="shep-tbl-wrap {FIT}"><table class="shep-tbl shep-dstbl {FIT_WIDE}" '
         'aria-label="Workspaces">'
-        f'<thead><tr><th scope="col">Name</th><th scope="col"{_OPT}>Built (UTC)</th>'
-        f'<th scope="col"><span class="{CELL_ROOMY}">Dataset fingerprint'
-        f'{help_button("dataset-fingerprint", "Dataset fingerprint")}</span></th>'
-        f'<th scope="col"{_OPT}>Sources</th>'
-        f'<th scope="col" class="shep-num"><span class="{CELL_ROOMY}">Train / val</span></th>'
-        f'<th scope="col"><span class="{CELL_ROOMY}">In use'
-        f'{help_button("datasets-in-use", "In use")}</span></th>'
-        f'</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
+        f'<thead><tr>{"".join(head_html(column) for column in COLUMNS)}</tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table></div>')
 
 
 def build_line_html() -> str:
