@@ -2274,7 +2274,7 @@ _LAYOUT_FACTS_JS = r"""() => {
                prompt: at(document.getElementById('shep-train-check-prompt')),
                actions: ['shep-train-start', 'shep-train-continue', 'shep-train-stop']
                  .filter((i) => at(document.getElementById(i))),
-               reason: words(document.getElementById('shep-train-reason')),
+               reason: words(document.getElementById('shep-train-why')),
                closers: [...dr.querySelectorAll('button')].filter((b) => at(b)
                  && /^(close|cancel)$/i.test((b.getAttribute('aria-label') || b.textContent).trim())).length };
   }
@@ -3646,7 +3646,8 @@ _HEADER_FACTS_JS = r"""() => {
   const view = document.getElementById('shep-train-runview'), res = box('#shep-train-runview > #resource_display');
   const foot = view && res ? view.getBoundingClientRect().bottom - (parseFloat(getComputedStyle(view).borderBottomWidth) || 0)
                               - (parseFloat(getComputedStyle(view).paddingBottom) || 0) : null;
-  // Training's run bar: the middle of the job state's words and of Start, and Start's relation's.
+  // Training's run bar: the middle of the job state's words and of Start, the facts slot's
+  // cause's words, and the phrase beside the actions.
   const words = (s) => { const e = document.querySelector(s); if (!e || !e.getClientRects().length) { return null; }
     const r = document.createRange(); r.selectNodeContents(e);
     const q = [...r.getClientRects()].filter((x) => x.width > 1 && x.height > 1);
@@ -3657,7 +3658,8 @@ _HEADER_FACTS_JS = r"""() => {
            runview: res && foot !== null && view.scrollHeight <= view.clientHeight + 1
              ? { resBottom: res.bottom, foot } : null,
            runbar: start ? { start: { top: start.top, bottom: start.bottom, mid: (start.top + start.bottom) / 2 },
-                             state: words('#shep-train-pill .shep-st-w'), why: words('#shep-train-why') } : null };
+                             state: words('#shep-train-pill .shep-st-w'), why: words('#shep-train-why'),
+                             facts: words('#shep-train-chip .shep-nb-text') } : null };
 }"""
 @pytest.fixture(scope="module")
 def ui_walk_first_use(tmp_path_factory):
@@ -3727,21 +3729,24 @@ def test_at_first_use_trainings_resources_line_ends_its_run_view(ui_walk_first_u
 def test_at_first_use_the_job_state_stands_on_the_run_bars_line(ui_walk_first_use):
     """LOOK2 (SW-LK5, partly): at 1850 x 960 at first use the job state ("○ Idle · …") shared
     the line of Start and its relation but stood about 5 px higher, top-aligned with the
-    40 px buttons. Wherever the state shares Start's line, its words' middle is the line's
-    middle, as Start's relation's is (the walk's layout sizes). The words are the mark's words
-    (``.shep-st-w``), not its shape, whose glyph box is the font's own (the portrait stop at
-    1080 x 1920 read the ring's box, 1.25 px over the line's middle, the words 0.75)."""
+    40 px buttons. Since L8 §2 (the owner's C and SW-LK5 of 2026-11-24) the run bar is two
+    groups: the cause is said once in the facts slot under Dataset and nothing stands beside
+    the actions; the job state stands under them. Wherever the state shares the facts' line,
+    its words' middle is the facts' words' middle, as it was Start's (the walk's layout
+    sizes). The words are the mark's words (``.shep-st-w``), not its shape, whose glyph box
+    is the font's own (the portrait stop at 1080 x 1920 read the ring's box, 1.25 px over
+    the line's middle, the words 0.75)."""
     stops = [s for s in ui_walk_first_use if s["page"] == "training" and not s.get("open")]
     shared = 0
     for stop in stops:
         bar = stop["extra"]["runbar"]
-        assert bar and bar["state"] and bar["why"], (stop["size"], bar)
+        assert bar and bar["state"] and bar["facts"] and bar["why"] is None, (stop["size"], bar)
         start = bar["start"]
-        if not (start["top"] <= bar["state"]["mid"] <= start["bottom"]):
+        assert bar["state"]["top"] >= start["bottom"] - 1, (stop["size"], bar)
+        if abs(bar["state"]["top"] - bar["facts"]["top"]) > start["bottom"] - start["top"]:
             continue                                  # the state on a line of its own
         shared += 1
-        assert abs(bar["state"]["mid"] - start["mid"]) <= 1, (stop["size"], bar)
-        assert abs(bar["why"]["mid"] - start["mid"]) <= 1, (stop["size"], bar)
+        assert abs(bar["state"]["mid"] - bar["facts"]["mid"]) <= 1, (stop["size"], bar)
     assert shared, [s["size"] for s in stops]
 
 
