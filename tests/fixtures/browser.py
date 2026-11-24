@@ -121,7 +121,7 @@ def node_with_playwright() -> tuple[str, dict[str, str]] | None:
 #: ``page.addInitScript`` before the page loads.
 QUEUE_JS = r"""
 (() => {
-  const q = window.__shepQueue = {joins: [], done: {}, inflight: 0, direct: 0};
+  const q = window.__shepQueue = {joins: [], done: {}, inflight: 0, direct: 0, directs: [], took: {}};
   /* The listener `fnIndex`'s joins, and how many of them were answered. */
   q.count = (fnIndex) => q.joins.filter((j) => j.fn_index === fnIndex).length;
   q.answered = (fnIndex) => q.joins.filter((j) => j.fn_index === fnIndex && j.event_id !== null
@@ -137,8 +137,18 @@ QUEUE_JS = r"""
     const url = typeof input === 'string' ? input : (input && input.url) || String(input);
     const sent = original.apply(this, arguments);
     if (url.includes('/run/predict')) {
+      /* Its listener kept while unanswered (`directs`), for a walk that names what it waited on. */
+      let fn = null;
+      try { fn = JSON.parse((init && init.body) || '{}').fn_index; } catch (e) { fn = null; }
+      const entry = {fn_index: fn, t0: performance.now()};
       q.direct += 1;
-      sent.finally(() => { q.direct -= 1; }).catch(() => {});
+      q.directs.push(entry);
+      sent.finally(() => {
+        q.direct -= 1; q.directs.splice(q.directs.indexOf(entry), 1);
+        /* How long its last answers took (ms), for the same report. */
+        (q.took[fn] = q.took[fn] || []).push(Math.round(performance.now() - entry.t0));
+        if (q.took[fn].length > 5) { q.took[fn].shift(); }
+      }).catch(() => {});
       return sent;
     }
     if (url.includes('/queue/join')) {
@@ -1461,13 +1471,46 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
   // `.then`, each joined a moment after the one before is answered) is idle for an instant
   // between two of its events, and a stop measured there missed what its last event drew (the
   // L7 rules: Fine-tune's reason beside its disabled Start, drawn late in the chain).
+  // A wait that runs out names where the walk was (`at`: the stop, its page and size, and the
+  // step) and what the page still had unanswered (each listener by its fn_index), so a walk
+  // that fails says which part of it failed, never only that it timed out.
+  let at = 'the page load';
   const idle = async () => {
     await page.evaluate(() => { window.__shepQuiet = 0; });
-    await page.waitForFunction(() => {
-      if (!(window.__shepQueue && window.__shepQueue.idle())) { window.__shepQuiet = 0; return false; }
-      window.__shepQuiet += 1;
-      return window.__shepQuiet >= 10;
-    }, null, { timeout: 60000, polling: 'raf' });
+    try {
+      await page.waitForFunction(() => {
+        if (!(window.__shepQueue && window.__shepQueue.idle())) { window.__shepQuiet = 0; return false; }
+        window.__shepQuiet += 1;
+        return window.__shepQuiet >= 10;
+      }, null, { timeout: 60000, polling: 'raf' });
+    } catch (e) {
+      const q = await page.evaluate(() => { const Q = window.__shepQueue;
+        const now = performance.now();
+        return Q && { inflight: Q.inflight, fonts: document.fonts.status,
+                      direct: Q.directs.map((d) => [d.fn_index, Math.round(now - d.t0), Q.took[d.fn_index] || []]),
+                      joins: Q.joins.filter((j) => j.event_id === null || !(j.event_id in Q.done))
+                        .map((j) => [j.fn_index, j.event_id === null ? 'not joined' : 'not answered']) }; })
+        .catch(() => null);
+      // And how the page runs then, over 3 s: its frames' gaps, how many of them had nothing
+      // unanswered, and how many elements it holds (a frame never drawn is a busy main thread).
+      const run = await page.evaluate(() => new Promise((done) => {
+        // What changes in the page meanwhile, most changed first (a mark set over and over).
+        const seen = {}, mo = new MutationObserver((records) => { for (const r of records) {
+          const t = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+          const key = `${(t && (t.id || String(t.className).slice(0, 40))) || '?'}:${r.attributeName || r.type}`;
+          seen[key] = (seen[key] || 0) + 1; } });
+        mo.observe(document.documentElement, { subtree: true, attributes: true, childList: true, characterData: true });
+        const gaps = []; let quiet = 0, last = performance.now(); const start = last;
+        const f = (t) => { gaps.push(t - last); last = t;
+          if (window.__shepQueue && window.__shepQueue.idle()) { quiet += 1; }
+          if (t - start < 3000) { requestAnimationFrame(f); } else {
+            gaps.sort((a, b) => a - b); mo.disconnect();
+            done({ frames: gaps.length, quiet, p50: Math.round(gaps[gaps.length >> 1]), max: Math.round(gaps[gaps.length - 1]),
+                   elements: document.getElementsByTagName('*').length,
+                   changed: Object.entries(seen).sort((a, b) => b[1] - a[1]).slice(0, 8) }); } };
+        requestAnimationFrame(f); })).catch(() => null);
+      throw new Error(`${e.message} at ${at}, unanswered: ${JSON.stringify(q)}, running: ${JSON.stringify(run)}`);
+    }
   };
   const settle = () => page.evaluate(async () => {
     const sign = () => { const { panels } = window.__shepLook.shownPage(), se = document.scrollingElement;
@@ -1558,8 +1601,11 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
   const shots = process.argv[4] || null;
   const out = [];
   let shown = null;
-  for (const stop of stops) {
+  for (const [i, stop] of stops.entries()) {
     const [w, h] = stop.size;
+    at = `stop ${i + 1} of ${stops.length} (${stop.page} at ${w}x${h}${stop.open ? ', ' + stop.open.shown + ' open' : ''})`;
+    // Where the walk is, as it goes: a walk stopped at its time limit names the stop it was at.
+    process.stderr.write(`walk: ${at}\n`);
     await page.setViewportSize({ width: w, height: h });
     if (stop.page !== shown) { await open(stop.page); shown = stop.page; }
     await page.evaluate(() => window.scrollTo(0, 0));
@@ -1599,9 +1645,25 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
 """
 
 
+#: **A walk's time limit, derived from what it walks** (the L8 close, item 6: E1[configured]
+#: needed 2,060 s alone against a fixed 1,500 s for every walk, 94 stops at 14 s each on
+#: average, the drawer stops 4 to 22 s, measured): a start (the browser, the page and its first
+#: answers) and a budget per stop, about twice the slowest stop measured. Each wait inside a
+#: stop has its own bound (`UI_WALK_JS`: 60 s for the page's requests to be answered, naming the
+#: stop and what was unanswered), so a hang fails at its stop, and the walk's limit only stops a
+#: walk slow everywhere; it grows with the stops, so adding stops never needs a new limit.
+WALK_START_SECONDS = 120
+WALK_STOP_SECONDS = 45
+
+
+def walk_limit(stops: list[dict[str, Any]]) -> int:
+    """The time limit of a walk through `stops`, in seconds (`WALK_STOP_SECONDS` each)."""
+    return WALK_START_SECONDS + WALK_STOP_SECONDS * len(stops)
+
+
 def walk_ui(page_url: str, tmp_path: Path, stops: list[dict[str, Any]], *,
             extra_js: str | None = None, shots: Path | None = None,
-            timeout: int = 1500, headers: dict[str, str] | None = None,
+            timeout: int | None = None, headers: dict[str, str] | None = None,
             device_scale: float = 1) -> list[dict[str, Any]]:
     """Walk the dashboard at `page_url` through `stops` (each ``{"size":
     [w, h], "page": id}``, with ``"check": false``, ``"options": true`` or
@@ -1611,7 +1673,8 @@ def walk_ui(page_url: str, tmp_path: Path, stops: list[dict[str, Any]], *,
     the stop's ``extra``); `shots`, a directory for a screenshot of each
     checked stop (``<page>_<w>x<h>.png``); `headers`, sent with every
     request the walk's browser makes (`READ_ONLY_HEADERS`); `device_scale`,
-    the device pixels per CSS pixel (2: a high-DPI screen)."""
+    the device pixels per CSS pixel (2: a high-DPI screen); `timeout`, the
+    walk's limit in seconds, by default its stops' (`walk_limit`)."""
     script = (UI_WALK_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
               .replace("__LOOK_JS__", json.dumps(LOOK_JS))
               .replace("__EXTRA_JS__", extra_js or "null")
@@ -1620,7 +1683,7 @@ def walk_ui(page_url: str, tmp_path: Path, stops: list[dict[str, Any]], *,
     plan = tmp_path / "stops.json"
     plan.write_text(json.dumps(stops), encoding="utf-8")
     args = [page_url, str(plan)] + ([str(shots)] if shots else [])
-    return run_node(script, tmp_path, *args, timeout=timeout)
+    return run_node(script, tmp_path, *args, timeout=timeout or walk_limit(stops))
 
 
 #: **The stage hint each research page shows** (`shell.STAGES`, pinned here
@@ -1966,7 +2029,7 @@ def layout_stops(pages: tuple[str, ...] = UI_PAGES, sizes: tuple[tuple[int, int]
 
 def walk_state(state: str, tmp_path: Path, stops: list[dict[str, Any]], *,
                shots: Path | None = None, extra_js: str | None = None,
-               timeout: int = 1500) -> list[dict[str, Any]]:
+               timeout: int | None = None) -> list[dict[str, Any]]:
     """**Serve the dashboard in a walk state and walk it** (`WALK_STATES`,
     `state_settings`; `served_page.served_service`, `walk_ui`): what each stop
     recorded. A page's lane measures its own pages at first use with
@@ -2049,6 +2112,14 @@ def repeat_problems(seen: list[dict[str, Any]], allowed: dict[str, int] | None =
     return problems
 
 
+def _said(stderr: str) -> str:
+    """A script's error output with a walk's progress lines (``walk: …``) down to the last."""
+    lines = (stderr or "").splitlines()
+    progress = [line for line in lines if line.startswith("walk: ")]
+    rest = [line for line in lines if not line.startswith("walk: ")]
+    return "\n".join(progress[-1:] + rest)
+
+
 def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any:
     """Run a Node script (Playwright resolvable, `node_with_playwright`; the
     caller skips without it) and return the JSON it prints."""
@@ -2057,13 +2128,18 @@ def run_node(script: str, tmp_path: Path, *args: str, timeout: int = 400) -> Any
     node, env = found
     path = tmp_path / "page.cjs"
     path.write_text(script, encoding="utf-8")
-    result = subprocess.run([node, str(path), *args], env=env, capture_output=True, text=True,
-                            timeout=timeout)
-    assert result.returncode == 0, result.stderr
+    try:
+        result = subprocess.run([node, str(path), *args], env=env, capture_output=True, text=True,
+                                timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        # Stopped at its limit: where it was (a walk names each stop as it reaches it).
+        said = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr or ""
+        raise AssertionError(f"the script ran past its {timeout} s; {_said(said)}") from exc
+    assert result.returncode == 0, _said(result.stderr)
     return json.loads(result.stdout)
 
 
 __all__ = ["LAYOUT_RULES", "LAYOUT_SIZES", "LOOK_JS", "PTR_SIZES", "QUEUE_JS", "READ_ONLY_HEADERS",
            "STAGE_HINTS", "TREE_JS", "TYPE_SIZES", "TYPE_WEIGHTS", "UI_PAGES", "UI_SIZES", "UI_WALK_JS",
-           "WALK_STATES", "at_floor", "effective_size", "floor_size", "layout_problems", "layout_stops", "node_with_playwright", "repeat_problems",
-           "run_node", "state_settings", "ui_problems", "walk_state", "walk_ui"]
+           "WALK_START_SECONDS", "WALK_STATES", "WALK_STOP_SECONDS", "at_floor", "effective_size", "floor_size", "layout_problems", "layout_stops", "node_with_playwright", "repeat_problems",
+           "run_node", "state_settings", "ui_problems", "walk_limit", "walk_state", "walk_ui"]

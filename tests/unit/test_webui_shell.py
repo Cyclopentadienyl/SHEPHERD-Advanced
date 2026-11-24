@@ -5438,6 +5438,30 @@ def _walk_coverage(seen: list, state: str) -> list:
     return problems
 
 
+def test_a_walk_that_runs_past_its_limit_names_the_stop_it_was_at(tmp_path):
+    """The L8 close, item 6 (E1's time budget): a walk stopped at its limit raised
+    ``TimeoutExpired`` with nothing of where it was (E1[configured] at 1,500 s, S1C-3), and the
+    limit was one number for every walk. A walk names each stop as it reaches it, and one stopped
+    at its limit says the stop it was at; the limit is derived from the walk's stops
+    (`browser.walk_limit`), so the configured layout walk's has room for what it walks."""
+    from tests.fixtures.browser import (WALK_START_SECONDS, WALK_STOP_SECONDS, node_with_playwright,
+                                        run_node, walk_limit)
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    script = r"""
+for (const n of [1, 2, 3]) { process.stderr.write(`walk: stop ${n} of 5 (x at 1x1)\n`); }
+setTimeout(() => {}, 60000);
+"""
+    with pytest.raises(AssertionError) as caught:
+        run_node(script, tmp_path, timeout=3)
+    said = str(caught.value)
+    assert "ran past its 3 s" in said and "walk: stop 3 of 5" in said and "stop 2 of 5" not in said, said
+    stops = _layout_walk_stops(True)
+    assert walk_limit(stops) == WALK_START_SECONDS + WALK_STOP_SECONDS * len(stops)
+    assert walk_limit(stops + stops[:10]) > walk_limit(stops)
+
+
 def test_the_walks_coverage_names_a_row_chosen_stop_that_did_not_run():
     """FX-2 (the sweep's L7): E1 checked which drawers opened, not that the configured
     walk's row-chosen Load drawer stops ran; with them removed it still passed. The coverage
