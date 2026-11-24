@@ -4563,7 +4563,8 @@ def test_the_row_rules_find_labels_off_one_line_and_a_row_a_hidden_cell_sets(l7_
 
 #: A static page for R-ALIGN (`browser.LOOK_JS`'s ``rowCtl``): fields drawn as Gradio 6.30 draws
 #: them (a text box's label holding its title, its ``info=`` line and its box; a radio group's
-#: fieldset holding its title, its line and its options), each beside a plain field in a row of
+#: fieldset holding its title, its line and its options; a title with a line under it,
+#: ``has-info``, with less room under it than a plain one), each beside a plain field in a row of
 #: fields, measured as drawn and again with the shell's style sheet (`style.SHELL_CSS`).
 _ROW_CONTROL_PAGE_JS = r"""
 const { chromium } = require('playwright');
@@ -4574,9 +4575,12 @@ const LOOK_JS = __LOOK_JS__, SHELL_CSS = __SHELL_CSS__;
   const plain = (id) => `<div class="block" id="${id}"><label class="container"><span data-testid="block-info">Run name</span>`
     + '<div class="input-container"><input type="text"></div></label></div>';
   await page.setContent(`<!doctype html><html data-shep-layout="side"><head><style>
+    :root { --spacing-xs: 4px; --spacing-lg: 8px; }
     body { margin: 0; font: 15px sans-serif; background: #fff; }
     label.container { display: block; }
-    span[data-testid="block-info"] { display: inline-block; font-size: 14px; line-height: 19.6px; margin-bottom: 4px; }
+    span[data-testid="block-info"] { display: inline-block; font-size: 14px; line-height: 19.6px; }
+    span[data-testid="block-info"]:not(.has-info) { margin-bottom: var(--spacing-lg); }
+    span[data-testid="block-info"].has-info { margin-bottom: var(--spacing-xs); }
     .info-text { font-size: 14px; line-height: 19.6px; margin-bottom: 6px; }
     input[type=text] { font: inherit; height: 35px; box-sizing: border-box; width: 100%; }
     .wrap { display: flex; gap: 8px; } .wrap > label { display: flex; align-items: center; height: 32px; }
@@ -4587,17 +4591,17 @@ const LOOK_JS = __LOOK_JS__, SHELL_CSS = __SHELL_CSS__;
     <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
     <div id="shep-tab-x" class="gradio-container"><div class="shep-page"><div class="shep-panel" id="p1">
       <div class="row" id="r-text">
-        <div class="block" id="f-note"><label class="container"><span data-testid="block-info">Patient ID</span>
+        <div class="block" id="f-note"><label class="container"><span data-testid="block-info" class="has-info">Patient ID</span>
           <div class="info-text">Optional. Left blank, the server names it.</div>
           <div class="input-container"><input type="text"></div></label></div>
         ${plain('f-plain')}</div>
       <div class="row" id="r-radio">
-        <fieldset class="block" id="f-radio"><span data-testid="block-info">Device</span>
+        <fieldset class="block" id="f-radio"><span data-testid="block-info" class="has-info">Device</span>
           <div class="info-text">No CUDA device here: auto and cuda are refused.</div>
           <div class="wrap"><label><input type="radio" name="d">auto</label><label><input type="radio" name="d">cpu</label></div></fieldset>
         ${plain('f-plain2')}</div>
       <div class="row" id="r-wrap">
-        <div class="block" id="f-wrapped" style="width: 90px"><label class="container"><span data-testid="block-info">Gradient accumulation steps</span>
+        <div class="block" id="f-wrapped" style="width: 90px"><label class="container"><span data-testid="block-info" class="has-info">Gradient accumulation steps</span>
           <div class="info-text">Batches per step.</div>
           <div class="input-container"><input type="text"></div></label></div>
         ${plain('f-plain3')}</div>
