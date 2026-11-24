@@ -4192,3 +4192,114 @@ def test_the_run_bar_is_inputs_and_actions_over_facts_and_state_at_the_owner_win
         assert msg["whole"][3] > msg["whole"][1] and msg["seen"] == msg["whole"], where
         assert drawn["covered"] == [], where
         assert drawn["scroll"] <= drawn["width"], where
+
+
+#: Training stacked, for an operator: at each window, once the page's
+#: requests are answered and its boxes hold still, the parameters' fold (the
+#: button's ``aria-expanded`` and words, the body drawn or not), the page's
+#: end and the window's height, and the page's end with the body drawn shown
+#: (for the measure alone, put back at once). Then, at the first window, the
+#: reader folds the body ("Hide"), the shell's timers run for 12 s, the
+#: reader opens Datasets and Training again, and the fold is read again.
+_FOLD_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  const read = (page) => page.evaluate(() => {
+    const b = document.querySelector('.shep-train-fold'), body = document.getElementById('shep-train-params-bd');
+    const se = document.scrollingElement, was = b.getAttribute('aria-expanded');
+    b.setAttribute('aria-expanded', 'true');
+    const endShown = se.scrollHeight;
+    b.setAttribute('aria-expanded', was);
+    return { layout: document.documentElement.getAttribute('data-shep-layout'), expanded: b.getAttribute('aria-expanded'),
+             words: b.textContent.trim(), shown: body.getClientRects().length > 0, end: se.scrollHeight, endShown,
+             height: innerHeight, more: !!document.querySelector('#shep-train-more.open, #shep-train-model.open') };
+  });
+  const settle = (page) => page.evaluate(async () => {
+    let last = null;
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const now = document.scrollingElement.scrollHeight + ':' + document.querySelector('.shep-train-fold').getAttribute('aria-expanded');
+      if (now === last) { return; }
+      last = now;
+    }
+  });
+  const sizes = JSON.parse(process.argv[3]);
+  for (const [w, h] of sizes) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.click('#shep-tab-research-button', { timeout: 60000 });
+    await page.waitForFunction(() => {
+      const msg = document.querySelector('#shep-train-charts .shep-charts-msg, #shep-train-charts .shep-chart');
+      return msg && window.__shepQueue.idle() && document.fonts.status === 'loaded';
+    }, null, { timeout: 60000 });
+    await settle(page);
+    out[`${w}x${h}`] = await read(page);
+    if (w === sizes[0][0] && h === sizes[0][1]) {
+      await page.click('.shep-train-fold');
+      out.folded = await read(page);
+      await page.waitForTimeout(12000);
+      await page.click('#shep-page-datasets-button');
+      await page.waitForTimeout(1500);
+      await page.click('#shep-page-training-button');
+      await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+      await settle(page);
+      out.after = await read(page);
+    }
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.parametrize("case", ["first_use", "configured"])
+def test_stacked_the_parameters_show_where_the_page_holds_them_and_a_users_fold_holds(
+        case, built, monkeypatch, tmp_path):
+    """The owner's D9 of 2026-11-24 (L8 §4 D9): stacked, the Parameters body
+    started folded at every window, so a portrait 1080 x 1920 showed its run
+    bar and title and 1222 px (first use) or 705 px (configured) of nothing
+    under the page. Now, while the reader has not used "Show" / "Hide", the
+    body starts shown wherever the stacked page with it shown ends within the
+    window (the main parameters only: "More training settings" and "Model"
+    stay closed), else folded, by that measure, never by a window size; and
+    a fold the reader made holds through the shell's timers and a page
+    switch (no timer, poll or redraw reopens it). At 1080 x 1920 the body is
+    shown and the page ends within the window; at 1050 x 1100 with a
+    dataset (the charts under the parameters) the page with the body shown
+    does not end within the window, and the body is folded."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    if case == "first_use":
+        monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+        sizes = [[1080, 1920]]
+    else:
+        shutil.copytree(built[0], tmp_path / "root" / "demo")
+        monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
+        sizes = [[1080, 1920], [1050, 1100]]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_FOLD_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps(sizes))
+    for w, h in sizes:
+        drawn = seen[f"{w}x{h}"]
+        where = (case, w, h, drawn)
+        assert drawn["layout"] == "stack" and drawn["more"] is False, where
+        # Shown exactly where the page with the body shown ends within the window.
+        assert drawn["shown"] == (drawn["endShown"] <= drawn["height"]), where
+        assert drawn["shown"] == (drawn["expanded"] == "true"), where
+        assert drawn["words"] == ("Hide" if drawn["shown"] else "Show"), where
+    portrait = seen["1080x1920"]
+    assert portrait["shown"] and portrait["end"] <= portrait["height"], portrait
+    if case == "configured":
+        assert not seen["1050x1100"]["shown"], seen["1050x1100"]
+    # The reader's fold holds through 12 s of the shell's timers and a page switch.
+    assert seen["folded"]["shown"] is False and seen["folded"]["words"] == "Show", seen
+    assert seen["after"]["shown"] is False and seen["after"]["expanded"] == "false", seen

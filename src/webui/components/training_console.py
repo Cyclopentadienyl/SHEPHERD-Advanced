@@ -4834,8 +4834,9 @@ def create_training_tab(ctx: Any) -> None:
             # to one window.
             with gr.Column(elem_id="shep-train-params", elem_classes=["shep-panel", "shep-sized"],
                            min_width=0):
-                # Stacked, the parameters start folded under their title, so the
-                # run view's charts follow the run bar on the first screen (R-60);
+                # Stacked, the parameters start shown where the page then still ends
+                # within the window, else folded under their title, so the run view's
+                # charts follow the run bar on the first screen (R-60, D9: `FOLD_JS`);
                 # side by side the body is always shown and the toggle is not.
                 plain_html('<div class="shep-panel-hd"><h2>Parameters</h2>'
                            '<span class="shep-panel-right">for the next base run</span>'
@@ -5257,16 +5258,54 @@ def create_training_tab(ctx: Any) -> None:
 
 
 
-#: The parameters' fold, stacked (R-60): "Show" opens the body, "Hide" folds it again; the
-#: state is the button's own ``aria-expanded``, which the style sheet reads.
+#: **The parameters' fold, stacked** (R-60; the owner's D9 of 2026-11-24, L8 §4 D9): "Show"
+#: opens the body, "Hide" folds it again; the state is the button's own ``aria-expanded``,
+#: which the style sheet reads (side by side the body is always shown and the button is not).
+#: **Its default by room**: while the reader has not used the button, the body is shown
+#: whenever the stacked page, with the body shown, ends within the window's height (the
+#: main parameters in view where there is room: "More training settings" and "Model" stay
+#: closed), else folded, so the run view's charts follow the run bar on the first screen.
+#: It is measured, never read from a window size: the body is drawn shown for the measure
+#: alone (put back before anything is painted), and the page's end compared with the
+#: window's height. It is decided only when what it hangs on changes: the arrangement (the
+#: layout pass's mark), the page's size (its width, its content) and the fonts; never by a
+#: timer or a poll, and only while Training is shown. **A fold the reader made is kept**:
+#: once they used the button nothing decides for them again.
 FOLD_JS = r"""
+var mine = false;
+function fold() { return element.querySelector('.shep-train-fold'); }
+function show(b, open) {
+  var want = open ? 'true' : 'false';
+  if (b.getAttribute('aria-expanded') !== want) { b.setAttribute('aria-expanded', want); }
+  var words = open ? 'Hide' : 'Show';
+  if (b.textContent !== words) { b.textContent = words; }
+}
 element.addEventListener('click', function (e) {
   var b = e.target.closest ? e.target.closest('.shep-train-fold') : null;
   if (!b) { return; }
-  var open = b.getAttribute('aria-expanded') !== 'true';
-  b.setAttribute('aria-expanded', open ? 'true' : 'false');
-  b.textContent = open ? 'Hide' : 'Show';
+  mine = true;
+  show(b, b.getAttribute('aria-expanded') !== 'true');
 });
+function byRoom() {
+  var b = fold();
+  if (mine || !b || !element.getClientRects().length
+      || document.documentElement.getAttribute('data-shep-layout') !== 'stack') { return; }
+  var se = document.scrollingElement || document.documentElement;
+  show(b, true);
+  show(b, se.scrollHeight <= window.innerHeight + 0.5);
+}
+var pending = false;
+function later() {
+  if (pending) { return; }
+  pending = true;
+  requestAnimationFrame(function () { pending = false; byRoom(); });
+}
+new MutationObserver(later).observe(document.documentElement,
+  {attributes: true, attributeFilter: ['data-shep-layout']});
+var shell = document.getElementById('shep-shell') || document.body;
+if (window.ResizeObserver) { new ResizeObserver(later).observe(shell); }
+if (document.fonts && document.fonts.ready) { document.fonts.ready.then(later); }
+later();
 """
 
 #: This page's element id (`shell.page_elem_id`), the scope of `PAGE_CSS`.
