@@ -246,9 +246,14 @@ def test_the_parents_visible_facts_are_the_declared_stage_facts(root, operator):
         # Outside the Details, no other fact: no key-value row, no list line.
         assert "<dl" not in outside and "<dt" not in outside, case
         assert "Server list" not in outside and "Split seed" not in outside, case
-        # Inside it, every other fact, as one summary list, and no second disclosure.
+        # Inside it, every other fact, as one summary list, and no second disclosure: the
+        # configuration in its rows form (`renderers.model_spec_rows`), one row per field the
+        # spec differs in, right under its "Configuration" row.
         keys = re.findall(r'<dt class="shep-k[^"]*"[^>]*>([^<]+)', inside)
-        assert keys == ["Run", "File", "Configuration", "Holds", "Validation", "Selection",
+        spec_keys = [label for label, _value in r.model_spec_rows(shown.get("spec"),
+                                                                   "Configuration")[0]]
+        assert spec_keys[0] == "Configuration", (case, spec_keys)
+        assert keys == ["Run", "File", *spec_keys, "Holds", "Validation", "Selection",
                         "Split seed", "Server list"], (case, keys)
         assert inside.count("<details") == 1 and inside.count("<summary>") == 1, case
         assert html.count("<details") == 1, case
