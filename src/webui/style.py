@@ -249,10 +249,12 @@ body { color: var(--shep-text); }
 .gradio-container { font-size: 15px; color: var(--shep-text); }
 /* **Every text that wraps breaks prettily** (the text brief's §4; the sweep's L7 check, D13): the
    wrap style is inherited, so one rule at the dashboard's root reaches every paragraph, reason,
-   table cell, summary value and link, and a line never ends a text with one short word alone
-   ("only", "server", "better" stood alone on a last line in cells and values the page rules did
-   not reach). Chromium honours it; Firefox ignores ``pretty`` and keeps its greedy breaks, so
-   nothing there may depend on it. A ``white-space: nowrap`` text keeps its one line; a heading
+   table cell, summary value and link, and the browser may rebalance a text's last lines so one
+   short word is less often left alone ("only", "server", "better" stood alone on a last line in
+   cells and values the page rules did not reach). It is a preference, not a guarantee: Chromium
+   leaves some two-line texts with a word alone (the sweep's L7 check, K7: "Supplied cohort" /
+   "version" in a narrow cell), and Firefox ignores ``pretty`` and keeps its greedy breaks, so
+   nothing may depend on it. A ``white-space: nowrap`` text keeps its one line; a heading
    or a lead keeps its own ``balance``. */
 .gradio-container { text-wrap-style: pretty; }
 /* The header runs edge to edge; each page pads itself. */
