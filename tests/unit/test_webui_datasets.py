@@ -1046,8 +1046,22 @@ const QUEUE_JS = __QUEUE_JS__;
     const drawn = (e) => !!e && e.getClientRects().length > 0;
     const wrap = document.querySelector('#shep-ds-table .shep-tbl-wrap');
     const main = document.querySelector('.shep-ds-main').getBoundingClientRect();
-    const det = document.querySelector('.shep-ds-details').getBoundingClientRect();
-    return { w, layout: document.documentElement.getAttribute('data-shep-layout'),
+    const details = document.querySelector('.shep-ds-details'), det = details.getBoundingClientRect();
+    // The table's wide form at its narrowest (its marks taken off for the measure, as the shell's
+    // fit measures it), the room its box gives, and the width the details hold beyond their own
+    // minimum (what they could give the list).
+    const table = wrap.querySelector('table'), marks = ['data-shep-narrow', 'data-shep-roomy'].filter((a) => wrap.hasAttribute(a));
+    marks.forEach((a) => wrap.removeAttribute(a));
+    const kept = table.getAttribute('style');
+    table.setAttribute('style', 'position:absolute !important;visibility:hidden !important;width:min-content !important;'
+      + 'min-width:0 !important;max-width:none !important;display:table !important;');
+    const need = table.getBoundingClientRect().width;
+    if (kept === null) { table.removeAttribute('style'); } else { table.setAttribute('style', kept); }
+    marks.forEach((a) => wrap.setAttribute(a, ''));
+    const ws = getComputedStyle(wrap), room = wrap.clientWidth - parseFloat(ws.paddingLeft) - parseFloat(ws.paddingRight);
+    const spare = det.width - parseFloat(getComputedStyle(details).getPropertyValue('--shep-panel-min'));
+    return { w, layout: document.documentElement.getAttribute('data-shep-layout'), need, room, spare,
+             mark: [...wrap.querySelectorAll('.shep-mark')].filter(drawn).map((m) => m.getClientRects().length),
              over: wrap.scrollWidth - wrap.clientWidth, narrow: wrap.hasAttribute('data-shep-narrow'),
              optional: [...wrap.querySelectorAll('.shep-col-opt')].filter(drawn).length,
              optkv: drawn(document.querySelector('#shep-ds-details .shep-ds-optkv')),
@@ -1096,7 +1110,13 @@ def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
     optional columns the details say them and while it draws them they do
     not; the page is side by side at windows where the whole table does not
     fit (so from the narrow table's minimum); and there a row still opens
-    its details."""
+    its details.
+    The sweep's L7 check (K3): bound whole, the served workspace's mark made
+    the whole table 5 px too wide for the list's share at 1366 x 768; it
+    dropped Built and Sources into the details beside, which then scrolled,
+    though the details held more than their minimum. With that mark drawn
+    (on one line), the table drops its optional columns only where its whole
+    form would not fit even with the details at their minimum."""
     from src.webui.app import create_gradio_app, mount_options
     from src.webui.style import FLOOR_WIDTH
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
@@ -1104,7 +1124,7 @@ def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
-    _serving(monkeypatch, None)
+    _serving(monkeypatch, str(root / "demo"))
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_SWITCH_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
                         .replace("__FLOOR_W__", str(FLOOR_WIDTH)), tmp_path,
@@ -1119,6 +1139,10 @@ def test_in_a_browser_the_page_sits_side_by_side_from_the_narrow_tables_minimum(
         assert (s["optional"] == 0) == s["narrow"] and s["optkv"] == s["narrow"], s
     assert any(s["narrow"] for s in side), side                 # side by side from the narrow table
     assert any(not s["narrow"] for s in side), side             # and whole where it fits
+    # K3: the served mark is drawn, on one line; the table is narrow only where its whole form
+    # would not fit even with the details at their minimum.
+    assert all(s["mark"] == [1] for s in side), [(s["w"], s["mark"]) for s in side]
+    assert [s for s in side if s["narrow"] and s["need"] <= s["room"] + s["spare"] + 0.5] == [], side
     picked = seen["picked"]
     assert picked["head"].startswith(dsp.DETAILS_TITLE) and picked["fingerprint"], picked
     assert picked["layout"] == "side" and picked["over"] == 0, picked
@@ -1224,6 +1248,17 @@ def test_the_panels_are_sized_by_what_they_hold_and_the_table_drops_optional_col
     assert optional == ["Built (UTC)", "Sources"]
     for row in re.findall(r"<tr[^>]*data-key=.*?</tr>", html, re.S):
         assert row.count("shep-col-opt") == 2
+    # The sweep's L7 check (D5): at 1550 x 830 "● in your" / "Training run bar", "Dataset
+    # fingerprint" / "ⓘ" and "Train /" / "val" broke while Built (UTC) had room. The headers
+    # and the run bar's fact read as one while the table has the room (`style.CELL_ROOMY`,
+    # the layout pass's second measure), and wrap only where it would cost the table a column.
+    from src.webui.style import CELL_ROOMY
+
+    roomy = [re.sub(r"<[^>]+>", "", text).strip() for attrs, text in heads if CELL_ROOMY in text]
+    assert [x[:len(name)] for x, name in zip(roomy, ("Dataset fingerprint", "Train / val", "In use"))] == [
+        "Dataset fingerprint", "Train / val", "In use"] and len(roomy) == 3, roomy
+    marked = dsp.table_html(dsp.read_datasets(), "demo", "demo")
+    assert f'<span class="{CELL_ROOMY}"><span class="shep-st shep-st-ok">' in marked
 
 
 #: At first use, as drawn: the notice's and the title's left edges, how many

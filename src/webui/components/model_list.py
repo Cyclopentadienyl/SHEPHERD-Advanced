@@ -245,7 +245,7 @@ from src.webui.components.served_status import (
 )
 from src.webui.operator_access import operator_access
 from src.webui.shell import picked, plain_html
-from src.webui.style import CELL_WHOLE, COL_OPT, COL_TWIN, FIT, FIT_WIDE
+from src.webui.style import CELL_ROOMY, CELL_WHOLE, COL_OPT, COL_TWIN, FIT, FIT_WIDE
 
 logger = logging.getLogger(__name__)
 
@@ -1237,13 +1237,15 @@ def _run_summary(listing: Mapping[str, Any], run: TreeRun) -> Mapping[str, Any]:
 def _epochs_cell(items: Sequence[Mapping[str, Any]]) -> str:
     """How far a run (or one file) trained: the most epochs a file records
     completed (`completed_epochs`), else the words its file says
-    (`renderers.epoch_words`: "recorded epoch 3", "epochs not recorded")."""
+    (`renderers.epoch_words`: "recorded epoch 3", "epochs not recorded"),
+    on one line while the table has the room (`style.CELL_ROOMY`)."""
     counts = [i.get("completed_epochs") for i in items
               if isinstance(i.get("completed_epochs"), int)
               and not isinstance(i.get("completed_epochs"), bool)]
     if counts:
         return str(max(counts))
-    return f'<span class="shep-muted">{r.bound_html(r.epoch_words(items[0] if items else {}))}</span>'
+    return (f'<span class="shep-muted {CELL_ROOMY}">'
+            f'{r.bound_html(r.epoch_words(items[0] if items else {}))}</span>')
 
 
 def _file_names(items: Mapping[str, Any], keys: Sequence[str]) -> Dict[str, str]:

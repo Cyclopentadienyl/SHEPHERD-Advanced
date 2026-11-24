@@ -3543,7 +3543,12 @@ const { chromium } = require('playwright');
       const words = document.querySelector('#shep-models-research-reason .shep-reason, #shep-models-research-reason');
       const range = document.createRange(); range.selectNodeContents(words);
       const lines = new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
-      return { load: box('#shep-models-research-load'), reason: box('#shep-models-research-reason'), lines };
+      // The foot's last line against its bottom border, and the panel's own padding there.
+      const foot = document.querySelector('#shep-models-research-load').closest('.shep-model-foot');
+      const end = foot.getBoundingClientRect().bottom - parseFloat(getComputedStyle(foot).borderBottomWidth);
+      const pad = parseFloat(getComputedStyle(document.getElementById('shep-mp-detail-bd')).paddingBottom);
+      return { load: box('#shep-models-research-load'), reason: box('#shep-models-research-reason'), lines,
+               under: end - range.getBoundingClientRect().bottom, pad };
     });
     await page.close();
   }
@@ -3562,7 +3567,10 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
     its own. Fails on fcc3dea. The sweep's L7: beside the button a reason is
     one line or none (the layout rules' "beside"); the read-only reason
     took two lines beside it, so it stands under the button wherever it
-    cannot be one line beside it."""
+    cannot be one line beside it. The sweep's L7 (LOOK3): the reason, the
+    foot's last line, stood 3-6 px from the panel's bottom border, where
+    every other panel's last line keeps the panel's padding: it keeps the
+    detail body's padding under it."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -3581,6 +3589,7 @@ def test_the_load_reason_has_room_beside_or_under_its_button_at_every_window(
     for size, at in seen.items():
         beside = at["reason"]["top"] < at["load"]["bottom"]
         assert not beside or at["lines"] == 1, (size, at)
+        assert at["under"] >= at["pad"] - 0.5, (size, at)
 
 
 # --------------------------------------------------------------------------- the UI sweep of 2026-11-22
@@ -3841,7 +3850,11 @@ const QUEUE_JS = __QUEUE_JS__;
                list: list.getBoundingClientRect().width, detail: detail.getBoundingClientRect().width,
                sideways: Math.max(wrap.scrollWidth - wrap.clientWidth, rows.scrollWidth - rows.clientWidth),
                optional: opt.map((th) => th.textContent), drawn: opt.filter((th) => th.getClientRects().length).length,
-               heads: [...table.querySelectorAll('thead th')].filter((th) => th.getClientRects().length).map((th) => th.textContent) };
+               heads: [...table.querySelectorAll('thead th')].filter((th) => th.getClientRects().length).map((th) => th.textContent),
+               // The lines of each drawn count's words in its place ("recorded epoch 4").
+               epochs: [...table.querySelectorAll('tbody td.shep-num .shep-muted')].filter((e) => e.getClientRects().length)
+                 .map((e) => { const r = document.createRange(); r.selectNodeContents(e);
+                   return new Set([...r.getClientRects()].filter((q) => q.width > 0).map((q) => Math.round(q.top))).size; }) };
     });
   }
   // A row chosen: its details are what the page shows (the sweep's L7 check, D1).
@@ -3849,7 +3862,7 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.click('#shep-models-research-rows tr[data-key]:not([hidden])');
   await page.waitForSelector('#shep-mp-detail-hd h2[data-key]');
   await idle();
-  for (const [w, h] of [[1850, 960], [1550, 830]]) {
+  for (const [w, h] of [[1850, 960], [1550, 830], [1366, 768], [1280, 720]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     out[`chosen ${w}x${h}`] = await page.evaluate(() => {
@@ -3859,7 +3872,11 @@ const QUEUE_JS = __QUEUE_JS__;
       const body = document.querySelector('#shep-mp-detail-bd'), b = body.getBoundingClientRect();
       const seg = [...body.querySelectorAll('.shep-seg')].filter((e) => e.getClientRects().length).pop();
       const list = document.querySelector('#shep-page-models .shep-model-main'), detail = document.querySelector('#shep-mp-detail');
+      const foot = document.querySelector('#shep-page-models .shep-model-foot');
       return { list: list.getBoundingClientRect().width, detail: detail.getBoundingClientRect().width,
+               foot: foot.getBoundingClientRect().width,
+               footMin: parseFloat(getComputedStyle(foot).getPropertyValue('--shep-panel-min')),
+               layout: document.documentElement.getAttribute('data-shep-layout'),
                fits: body.scrollHeight <= body.clientHeight + 1,
                seg: seg ? seg.getBoundingClientRect().bottom <= b.top + body.clientHeight + 1 : null,
                sideways: Math.max(wrap.scrollWidth - wrap.clientWidth, rows.scrollWidth - rows.clientWidth),
@@ -3893,7 +3910,10 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     windows their recorded results fell under the region's edge. Chosen, the
     details are wider than empty, whole at the owner's largest window with the
     list's whole tree beside them, and their records segment in view at the
-    smaller."""
+    smaller. The sweep's L7 check (D13): at 1850 x 960 every older run's
+    "recorded epoch" words stood on two lines, doubling its row, while the
+    Model column had room; they read as one line where the whole tree still
+    fits with them so (`style.CELL_ROOMY`), and wrap where it would not."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
     from tests.fixtures.served_page import served
@@ -3904,6 +3924,9 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     shas = _add_bundles(world)
     _add_child(world, "20261005-000000_disease-fine-tune-of-the-long-named-family_ffffff",
                shas["disease"], BUNDLES["disease"][0])
+    # A name longer still (K2): its narrow form is wider than the list's fixed minimum.
+    _add_child(world, "20261006-000000_disease-fine-tune-of-the-long-named-family-with-a-longer-tail_eeeeee",
+               shas["disease"], BUNDLES["disease"][0])
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_OPTIONAL_COLUMNS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")])
@@ -3911,6 +3934,10 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     for size in ("1850x960", "1550x830"):
         owner = seen[size]
         assert owner["layout"] == "side" and owner["drawn"] == 3 and owner["sideways"] <= 0, (size, owner)
+    # The sweep's L7 check (D13): at the owner's largest window a count's words in its place
+    # read as one line ("recorded" / "epoch 4" doubled the row while Model had room); where
+    # they would cost the table its columns (1550 x 830) they wrap and every column stays.
+    assert seen["1850x960"]["epochs"] and set(seen["1850x960"]["epochs"]) == {1}, seen["1850x960"]
     for size in ("1850x960", "1550x830", "1366x768"):
         assert seen[size]["list"] >= seen[size]["detail"], (size, seen[size])
     assert laptop["optional"] == ["Epochs", "Files", "Fingerprint"] == column["optional"], seen
@@ -3922,6 +3949,14 @@ def test_the_tree_drops_its_optional_columns_before_it_scrolls_sideways_in_a_bro
     for size, chosen in (("1850x960", wide), ("1550x830", mid)):
         assert chosen["detail"] > seen[size]["detail"] and chosen["sideways"] <= 0, (size, chosen, seen[size])
     assert mid["seg"] in (True, None), mid
+    # The sweep's L7 check (K2): chosen, the details took all but the list's fixed minimum, which
+    # was under its table's narrow form beside a long run name, and the rows scrolled sideways at
+    # 1366 x 768 and 1280 x 720. Side by side, the details give the list the width its narrow form
+    # needs unless that would take them under their own minimum.
+    for size in ("1366x768", "1280x720"):
+        chosen = seen[f"chosen {size}"]
+        assert chosen["layout"] == "side" and chosen["footMin"] > 0, (size, chosen)
+        assert chosen["sideways"] <= 0 or chosen["foot"] <= chosen["footMin"] + 0.5, (size, chosen)
 
 
 # --------------------------------------------------------------------------- the family graph (G/I)

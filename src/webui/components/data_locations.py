@@ -48,8 +48,8 @@ it shows escaped:
   every other text is redacted by the one redaction, every box and button is
   disabled with the lock, one reason line in D8's words says why, once, above
   the rows (`chips.operator_only`), and each row says the short `ROW_LOCKED`
-  ("🔒 Operator controls only") on the line under its box, Check and Save,
-  just above its Create (the owner's decision of 2026-11-19).
+  ("🔒 Operator controls only") beside its Check and Save, in their group
+  (the owner's decision of 2026-11-19), its Create on a line of its own.
 
 These are folders on the server machine; the page says so. Nothing here
 blocks another page: a page that needs a folder that is not set says so in
@@ -164,6 +164,18 @@ def _value_html(value: Any) -> str:
     return "<br>".join(r.token_html(v, classes="shep-dl-path") for v in values)
 
 
+def effect_html(effect: str, source: str, *, path: bool) -> str:
+    """**In effect's value and its source, two facts**: after a path (`path`) the
+    source starts a line of its own, so it never runs on after the path's
+    last line (the sweep's L7, D13: "…/registry Set when the service
+    started" at 1080 x 1920); after words ("Set (path hidden)") it follows
+    on their line. Both HTML strings, already escaped."""
+    value = f'<span class="shep-dl-v">{effect}</span>'
+    if not source:
+        return value
+    return f"{value}{'<br>' if path else ' '}{source}"
+
+
 def _source_html(item: FieldView) -> str:
     words = SOURCE_WORDS.get(item.source)
     return f'<span class="shep-dl-src">{r.e(words)}</span>' if words else ""
@@ -184,9 +196,11 @@ def state_html(item: FieldView, view: DeploymentView, *, shown: bool) -> str:
     # The saved file cannot be read and nothing else sets this: the notice
     # says why, once; the row says only that its value is unknown.
     unknown = view.file.problem is not None and item.configured is None
+    path = False
     if item.value is not None:
-        effect = _value_html(item.value) if shown else r.e(PATH_HIDDEN)
+        effect, path = (_value_html(item.value), True) if shown else (r.e(PATH_HIDDEN), False)
     elif item.configured is not None and item.problem:
+        path = shown
         effect = (r.status_mark("error", "Not usable") + " "
                   + (_value_html(item.configured) if shown else r.e(PATH_HIDDEN)))
     elif item.optional and item.problem is None:
@@ -198,8 +212,7 @@ def state_html(item: FieldView, view: DeploymentView, *, shown: bool) -> str:
     # The value and its source are two facts in the text too, not only on
     # screen (T08 flow: "…/ws-rootSaved in Settings" to a copy, find-in-page
     # and a screen reader, the gap being the value's margin alone).
-    rows.append(("In effect", " ".join(part for part in (
-        f'<span class="shep-dl-v">{effect}</span>', _source_html(item)) if part)))
+    rows.append(("In effect", effect_html(effect, _source_html(item), path=path)))
     differs = item.saved is not None and (item.pending or item.overridden
                                           or item.saved != item.configured)
     if differs:
@@ -266,7 +279,7 @@ def where_html(view: DeploymentView, *, shown: bool) -> str:
 def reason_line(text: str) -> str:
     """**A refusal's line beside what it turns off** on Settings (D8's
     reason, the lock before it): in this panel the whole reason once, above
-    its rows, and each row's short `ROW_LOCKED` under its box and buttons;
+    its rows, and each row's short `ROW_LOCKED` beside Check and Save;
     in Runtime settings beside its actions, where the line above its two
     fields says where it is."""
     return (f'<div class="shep-reason"><span aria-hidden="true">{LOCK}</span>'
@@ -635,9 +648,12 @@ def create_data_locations_panel(ctx: Any) -> Dict[str, Any]:
                                     row["save"] = gr.Button(SAVE_LABEL, interactive=False,
                                                             scale=0, elem_id=f"dl_save_{key}")
                                 # Read-only: why the box and the buttons are locked (`ROW_LOCKED`),
-                                # a line of the bar's own under Check and Save, above Create.
+                                # a whole group of the bar after Check and Save (the owner's
+                                # decision of 2026-11-19: beside each row's buttons): on their
+                                # line where it holds them, else a line of its own on the box's
+                                # edge, never taking Check and Save off the box's line.
                                 row["lock"] = plain_html("", elem_id=f"dl_lock_{key}",
-                                                         elem_classes=["shep-bar-note"])
+                                                         elem_classes=["shep-dl-lock"])
                                 # Create and its suggestion, one more whole group of the bar:
                                 # after Check and Save on their line, or a line of its own.
                                 with gr.Row(elem_classes=["shep-dl-create", "shep-grp"]):
@@ -712,9 +728,18 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: box (the query that put it above its box served windows under the floor and
 #: is retired with it). The evidence folders' box, a path per line, takes its whole line there: its
 #: hint ("One folder path on the server per line", 250.5 px in the dashboard's
-#: type) is longer than 16em. A read-only row's short reason (`ROW_LOCKED`) is
-#: the bar's note under Check and Save (from Check's edge where every box is
-#: `SET_BOX` wide, else at their end), above Create: the bar's buttons, Create
+#: type) is longer than 16em. A read-only row's short reason (`ROW_LOCKED`)
+#: is a whole group of the bar after Check and Save (the owner's decision of
+#: 2026-11-19: beside each row's buttons): beside Save where the line holds
+#: it, so it adds no line there (the sweep's L7 check, D6: as the bar's note
+#: under them it made each read-only row a line taller and the panel's last
+#: line fell under its body's edge at 1850 x 960), else a line of its own on
+#: the box's edge (K4: bound into Check and Save's group, it took them off the
+#: box's line wherever the three did not fit beside the box, from 1550 x 830
+#: down, each read-only row 17 px taller than before and shaped unlike an
+#: operator's), its words on the buttons' baseline beside a box of two lines
+#: too; Create then
+#: takes a line of its own on the box's edge: the bar's buttons, Create
 #: included, are off for the reason in their bar (C5: Create's lock had no
 #: reason beside or under it).
 #: Create and its suggestion share their first baseline (a suggestion that
@@ -763,15 +788,15 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-acts > button, {_PAGE} .shep-dl-create > button {{ flex: none !important; min-width: max-content !important; }}
 {_PAGE} .shep-dl-field > .shep-dl-create {{ flex: 1 1 100% !important; width: auto !important; min-width: auto !important; max-width: 100%; gap: 8px !important; align-items: baseline !important; flex-wrap: wrap !important; }}
 @container (min-width: {SET_WIDE}) {{
-  {_PAGE} .shep-dl-field > .block:not([id^="dl_lock_"]) {{ flex: 0 1 {SET_BOX} !important; }}
+  {_PAGE} .shep-dl-field > .block {{ flex: 0 1 {SET_BOX} !important; }}
   {_PAGE} .shep-dl-field > .shep-dl-create {{ flex: 1 1 0% !important; }}
-  {_PAGE} .shep-dl-field > .block[id^="dl_lock_"] {{ padding-inline-start: calc({SET_BOX} + 8px) !important; }}
-  {_PAGE} .shep-dl-field > [id^="dl_lock_"] .shep-reason {{ margin-inline-start: 0; }}
 }}
 {_PAGE} .shep-dl-create > [id^="dl_suggest_"] {{ flex: 1 1 max-content !important; min-width: 0 !important; }}
 {_PAGE} .shep-dl-create:not(:has(button:not([hidden]))) {{ display: none !important; }}
-{_PAGE} .shep-dl-field > .block[id^="dl_lock_"] {{ flex: 1 1 100% !important; }}
-{_PAGE} [id^="dl_lock_"] .shep-reason {{ width: fit-content; margin-inline-start: auto; }}
+{_PAGE} .shep-dl-field > .block[id^="dl_lock_"] {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
+{_PAGE} .shep-dl-field > :is(.shep-dl-acts, .block[id^="dl_lock_"]) {{ align-self: baseline !important; }}
+{_PAGE} .shep-dl-field:has([id^="dl_lock_"] .shep-reason) > .shep-dl-create {{ flex: 1 1 100% !important; }}
+{_PAGE} [id^="dl_lock_"] .shep-reason {{ white-space: nowrap; }}
 {_PAGE} .shep-dl-kv {{ gap: 4px 12px; }}
 {_PAGE} .shep-dl-kv > dt {{ width: 8em; }}
 {_PAGE} .shep-dl-v {{ margin-right: 8px; }}
@@ -791,4 +816,5 @@ __all__ = ["APPLY_LABEL", "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET",
            "ROW_LOCKED", "ROW_PARTS", "SAVE_LABEL", "SET_BOX", "SET_WIDE", "SOURCE_WORDS",
            "UNKNOWN", "UNREADABLE",
            "box_value", "check_words", "create_data_locations_panel", "create_folder",
-           "holds_words", "name_html", "notice_html", "reason_line", "state_html", "where_html"]
+           "effect_html", "holds_words", "name_html", "notice_html", "reason_line", "state_html",
+           "where_html"]

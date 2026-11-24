@@ -1630,8 +1630,11 @@ def test_a_notice_is_one_line_its_link_and_details_one_click_away():
     assert '<span class="shep-nb-mark shep-st-neutral" aria-hidden="true">○' in line
     assert ">No workspaces folder is set.</span>" in line
     assert '<span class="shep-nb-then">Start is unavailable until one is chosen.</span>' in line
+    # The place the step names, one unit (`server_settings.PLACE_NAMES`): a narrow line breaks
+    # the link before it, never inside it (the sweep's L7, D13).
     assert ('<button type="button" class="shep-link shep-nb-go" data-shep-go="settings" '
-            'data-shep-focus="shep-dl">Choose one in Settings › Data locations</button>') in line
+            'data-shep-focus="shep-dl">Choose one in <span class="shep-unit">Settings › Data '
+            'locations</span></button>') in line
     assert "GPU jobs are refused" not in html                    # merged: its details only
     more = html.split('<details class="shep-more shep-nb-more"><summary>Details ›</summary>')[1]
     for term in ("Workspaces", "Unset", "Suggested", "Default", "GPU lock", "Taken by", "GPU jobs"):
@@ -1645,8 +1648,8 @@ def test_a_notice_is_one_line_its_link_and_details_one_click_away():
     old = r.notice_block("Something is off.")
     assert "Something is off." in old and "data-shep-go" not in old and "<details" not in old
     # No link where the page asks for none: the step is a sentence.
-    assert '<span class="shep-nb-act">Choose one in Settings › Data locations.</span>' in \
-        r.notice_block(ws, go=False)
+    assert ('<span class="shep-nb-act">Choose one in <span class="shep-unit">Settings › Data '
+            'locations</span>.</span>') in r.notice_block(ws, go=False)
 
 
 def test_a_notice_with_steps_numbers_them_with_its_action_first():
@@ -1695,9 +1698,11 @@ def test_several_notices_share_one_step_in_the_sources_words_and_group_their_det
 
     ws, _gpu, registry = _notices()
     html = r.notices_block([registry, ws], consequence="Testing waits for both.")
-    links = re.findall(r'<button[^>]*data-shep-go="settings"[^>]*>([^<]*)</button>', html)
+    # A link's words as read (its place is one unit inside it, `server_settings.PLACE_NAMES`).
+    words = lambda found: [re.sub(r"<[^>]+>", "", x) for x in found]  # noqa: E731
+    links = words(re.findall(r'<button[^>]*data-shep-go="settings"[^>]*>(.*?)</button>', html))
     assert links == [r.e(ss.CHOOSE_THEM_IN_DATA_LOCATIONS)], links
-    assert ss.CHOOSE_IN_DATA_LOCATIONS not in html
+    assert ss.CHOOSE_IN_DATA_LOCATIONS not in re.sub(r"<[^>]+>", "", html)
     details = html.split("<details", 1)[1]
     subs = re.findall(r'<p class="shep-nb-sub">([^<]*)</p>', details)
     assert subs == [ss.RESULTS_REGISTRY, ss.WORKSPACES_FOLDER], subs
@@ -1708,11 +1713,11 @@ def test_several_notices_share_one_step_in_the_sources_words_and_group_their_det
     assert details.count("Ref:") == 1
     refused = w.setting_notice(ss.cohort_registry({"SHEPHERD_REGISTRY": "relative"}))
     mixed = r.notices_block([refused, ws])
-    assert re.findall(r"data-shep-go[^>]*>([^<]*)</button>", mixed) == [r.e(ss.OPEN_DATA_LOCATIONS)]
+    assert words(re.findall(r"data-shep-go[^>]*>(.*?)</button>", mixed)) == [r.e(ss.OPEN_DATA_LOCATIONS)]
     both = r.notices_block([refused, w.setting_notice(ss.workspaces_root({"SHEPHERD_WORKSPACES_ROOT": "x"}))])
-    assert re.findall(r"data-shep-go[^>]*>([^<]*)</button>", both) == [r.e(w.SEE_WHY)]
+    assert words(re.findall(r"data-shep-go[^>]*>(.*?)</button>", both)) == [r.e(w.SEE_WHY)]
     # One notice keeps its own words.
-    assert r.e(ss.CHOOSE_IN_DATA_LOCATIONS) in r.notices_block([ws])
+    assert r.e(ss.CHOOSE_IN_DATA_LOCATIONS) in re.sub(r"<[^>]+>", "", r.notices_block([ws]))
 
 
 def test_a_relation_says_the_notice_short_and_is_not_the_notice_again():
@@ -1871,3 +1876,120 @@ def test_a_fields_line_and_a_muted_line_of_its_own_keep_the_prose_measure():
                      ":where(br + .shep-muted)"):
         rule = SHELL_CSS[SHELL_CSS.index(selector + " {"):].split("}", 1)[0]
         assert measure in rule, selector
+
+
+#: A page of wrapping text under the shell's style sheet, inside the dashboard's root
+#: (``gradio-container``): for each box width, the lines of a summary value (a state said as a
+#: sentence), the lines of a notice's link to its place, and a data location's path and its
+#: source; and, with the root's wrap style set back to the greedy one, the summary value's lines.
+_WRAP_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  await page.goto(process.argv[2]);
+  const out = await page.evaluate(() => {
+    const lines = (el) => { const words = []; const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        for (const m of n.data.matchAll(/\S+/g)) { const g = document.createRange();
+          g.setStart(n, m.index); g.setEnd(n, m.index + m[0].length);
+          const q = [...g.getClientRects()].find((x) => x.width > 0);
+          if (q) { words.push({ w: m[0], top: Math.round(q.top), left: q.left, bottom: q.bottom }); } } }
+      const by = {}; for (const x of words) { (by[x.top] = by[x.top] || []).push(x); }
+      return Object.keys(by).map(Number).sort((a, b) => a - b).map((t) => by[t]); };
+    const root = document.querySelector('.gradio-container');
+    const res = { pretty: [], greedy: [], place: [], source: [] };
+    for (let w = 160; w <= 520; w += 4) {
+      document.querySelectorAll('.box').forEach((b) => { b.style.width = w + 'px'; });
+      root.style.textWrapStyle = '';
+      const value = lines(document.querySelector('#value'));
+      // A word alone: the last line holds one word and the line before it more than one.
+      const alone = (ls) => ls.length > 1 && ls[ls.length - 1].length === 1 && ls[ls.length - 2].length > 1;
+      res.pretty.push({ w, last: value[value.length - 1].map((x) => x.w), alone: alone(value) });
+      root.style.textWrapStyle = 'auto';
+      const greedy = lines(document.querySelector('#value'));
+      res.greedy.push({ w, last: greedy[greedy.length - 1].map((x) => x.w), alone: alone(greedy) });
+      root.style.textWrapStyle = '';
+      const go = document.querySelector('#notice .shep-nb-go');
+      const link = lines(go);
+      const place = link.filter((ln) => ln.some((x) => ['Settings', '›', 'Data', 'locations'].includes(x.w)));
+      // Whether the place fits the link's line at all (one line, as wide as its words).
+      const m = go.cloneNode(true); m.style.cssText = 'position: absolute; visibility: hidden; white-space: nowrap';
+      go.parentElement.appendChild(m);
+      const one = m.querySelector('.shep-unit').getBoundingClientRect().width; m.remove();
+      // Each word of the link draws the link's line: no decoration is drawn into an inline block,
+      // so a word inside one is underlined only by that box's own decoration.
+      const bare = [], walk = document.createTreeWalker(go, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        let box = null;
+        for (let a = n.parentElement; a && a !== go; a = a.parentElement) {
+          if (getComputedStyle(a).display !== 'inline') { box = a; break; } }
+        if (n.data.trim() && box && getComputedStyle(box).textDecorationLine !== getComputedStyle(go).textDecorationLine) {
+          bare.push(n.data.trim()); } }
+      res.place.push({ w, lines: link.map((ln) => ln.map((x) => x.w).join(' ')), placeLines: place.length,
+                       fits: one <= go.parentElement.getBoundingClientRect().width, bare });
+      const path = lines(document.querySelector('#state .shep-dl-path'));
+      const src = document.querySelector('#state .shep-dl-src').getBoundingClientRect();
+      const last = path[path.length - 1];
+      res.source.push({ w, below: src.top >= Math.max(...last.map((x) => x.bottom)) - 1,
+                        edge: Math.abs(src.left - path[0][0].left) <= 1 });
+    }
+    return res;
+  });
+  // Under the pointer the link's line thickens, its place's with it.
+  await page.hover('#notice .shep-nb-go');
+  out.hover = await page.evaluate(() => {
+    const go = document.querySelector('#notice .shep-nb-go'), unit = go.querySelector('.shep-unit');
+    return { link: getComputedStyle(go).textDecorationThickness, place: getComputedStyle(unit).textDecorationThickness };
+  });
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_text_that_wraps_leaves_no_word_alone_and_keeps_a_place_whole(tmp_path):
+    """The sweep's L7 check (D13, SW-LK7): a state said as a sentence left "only" alone on its
+    last line (Settings at 1850 x 960), as did R10's "server" (Test at 1280 x 720) and the
+    Continue drawer's "better": the text brief's ``text-wrap: pretty`` reached only paragraphs and
+    notices, never a summary value or a cell. Diagnosis' card broke a notice's link inside its
+    place ("Choose one in Settings ›" / "Data locations"), and a data location's source ran on
+    after its path's last line ("…/registry Set when the service started"). Under the shell's
+    style sheet, in a box from 160 to 520 px wide: the shared rule at the dashboard's root
+    breaks the summary value so its last line never holds one word under a line of more
+    (where every line holds one word, there is nothing to balance), as the greedy breaks did
+    at some of those widths; the link's place ("Settings › Data locations",
+    `server_settings.PLACE_NAMES`) stands on one line; the source starts the line under the
+    path's last line, on the path's edge. Chromium only: Firefox ignores ``pretty``.
+    The sweep's L7 check (K1): the link's underline stopped where its place began, as no
+    decoration is drawn into an inline block; every word of the link draws the link's line, a
+    thicker one under the pointer."""
+    from src.config import server_settings
+    from src.webui.components import data_locations as dl
+    from src.webui.style import SHELL_CSS
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    value = r.summary_list([("In effect", r.status_mark("neutral", dl.EVIDENCE_NONE))])
+    notice = r.notice_block(_notices()[0])
+    path = "/srv/shepherd/a-results-registry-folder/kept-on-the-server/registry"
+    state = dl.effect_html(dl._value_html(path), f'<span class="shep-dl-src">'
+                           f'{dl.SOURCE_WORDS[server_settings.SOURCE_ENVIRONMENT]}</span>', path=True)
+    css = SHELL_CSS + dl.PAGE_CSS.replace(dl._PAGE + " ", "")
+    page = tmp_path / "wrap.html"
+    page.write_text(f'<!doctype html><html><head><meta charset="utf-8"><style>{css}</style></head>'
+                    f'<body><div class="gradio-container">'
+                    f'<div class="box" id="value">{value}</div>'
+                    f'<div class="box" id="notice">{notice}</div>'
+                    f'<div class="box" id="state">{state}</div></div></body></html>', encoding="utf-8")
+    seen = run_node(_WRAP_JS, tmp_path, page.as_uri())
+    alone = [g["w"] for g in seen["greedy"] if g["alone"]]
+    assert alone, seen["greedy"]                       # the greedy breaks leave a word alone
+    assert [p for p in seen["pretty"] if p["alone"]] == [], alone
+    assert any(p["fits"] for p in seen["place"]), seen["place"]
+    assert all(p["placeLines"] == 1 for p in seen["place"] if p["fits"]), seen["place"]
+    # The sweep's L7 check (K1): the place, drawn as one unit, is underlined as the link is.
+    assert all(p["bare"] == [] for p in seen["place"]), [p for p in seen["place"] if p["bare"]][:2]
+    assert seen["hover"]["place"] == seen["hover"]["link"], seen["hover"]
+    assert all(s["below"] and s["edge"] for s in seen["source"]), seen["source"]

@@ -94,7 +94,7 @@ from src.webui.components.workspaces import (
     workspace_binding,
 )
 from src.webui.shell import page_elem_id, plain_html
-from src.webui.style import COL_OPT, FIT, FIT_WIDE, NARROW_ATTR, SIDE
+from src.webui.style import CELL_ROOMY, COL_OPT, FIT, FIT_WANT, FIT_WIDE, NARROW_ATTR, SIDE
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +246,7 @@ def _marks(row: Mapping[str, Any], data: Mapping[str, Any], run_bar: Optional[st
           and row.get("dataset_fingerprint") == serving_row.get("dataset_fingerprint")):
         marks.append('<span class="shep-sub">same dataset as served</span>')
     if run_bar and row["name"] == run_bar:
-        marks.append(r.status_mark("ok", "in your Training run bar"))
+        marks.append(f'<span class="{CELL_ROOMY}">{r.status_mark("ok", "in your Training run bar")}</span>')
     if not row.get("trainable"):
         marks.append(r.not_trainable_chip(row))
     return " ".join(marks) or f'<span class="shep-muted">{r.NO_VALUE}</span>'
@@ -334,10 +334,12 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
         f'<div class="shep-tbl-wrap {FIT}"><table class="shep-tbl shep-dstbl {FIT_WIDE}" '
         'aria-label="Workspaces">'
         f'<thead><tr><th scope="col">Name</th><th scope="col"{_OPT}>Built (UTC)</th>'
-        '<th scope="col">Dataset fingerprint'
-        f'{help_button("dataset-fingerprint", "Dataset fingerprint")}</th>'
-        f'<th scope="col"{_OPT}>Sources</th><th scope="col" class="shep-num">Train / val</th>'
-        f'<th scope="col">In use{help_button("datasets-in-use", "In use")}</th>'
+        f'<th scope="col"><span class="{CELL_ROOMY}">Dataset fingerprint'
+        f'{help_button("dataset-fingerprint", "Dataset fingerprint")}</span></th>'
+        f'<th scope="col"{_OPT}>Sources</th>'
+        f'<th scope="col" class="shep-num"><span class="{CELL_ROOMY}">Train / val</span></th>'
+        f'<th scope="col"><span class="{CELL_ROOMY}">In use'
+        f'{help_button("datasets-in-use", "In use")}</span></th>'
         f'</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
 
 
@@ -703,7 +705,12 @@ PAGE_CSS = f"""
 {_PAGE} .shep-panel.shep-ds-main {{ --shep-panel-basis: 40rem; --shep-panel-grow: 3; --shep-panel-min: 32rem; }}
 {_PAGE} .shep-panel.shep-ds-main:has(table.shep-dstbl) {{ --shep-panel-min: 40rem; }}
 {_PAGE} .shep-panel.shep-ds-details {{ --shep-panel-basis: 31rem; --shep-panel-grow: 1; --shep-panel-min: 31rem; }}
+/* Side by side, the list's panel is at least as wide as its table's wide form needs (the layout
+   pass's `style.FIT_WANT`) wherever the details beside it keep their minimum: bound whole, the
+   serving mark made the table 5 px too wide for the list's share at 1366 x 768, and its narrow
+   form moved Built and Sources into the details, which then scrolled (the sweep's L7 check, K3). */
 {SIDE} {{
+  {_PAGE} .shep-panel.shep-ds-main {{ min-width: max(var(--shep-panel-min), var({FIT_WANT}, 0px)) !important; }}
   {_PAGE} #shep-ds-table {{ flex: 0 1 auto !important; overflow: auto !important; }}
   {_PAGE} #shep-ds-table .shep-tbl-wrap {{ overflow: visible; }}
   {_PAGE} #shep-ds-details {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; }}

@@ -155,7 +155,7 @@ from src.webui.components.help import copy_button, help_button
 from src.webui.components.served_status import read_status, served_checkpoint_sha
 from src.webui.operator_access import operator_access
 from src.webui.shell import page_elem_id, picked, plain_html
-from src.webui.style import SIDE, STACK
+from src.webui.style import FIT_LEAST, SIDE, STACK
 
 logger = logging.getLogger(__name__)
 
@@ -2107,14 +2107,18 @@ PAGE_CSS = f"""
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto auto auto;
   grid-template-areas: "detail" "load" "reason" "note";
-  align-items: center; gap: 0 !important; padding: 0 !important;
+  align-items: center; gap: 0 !important; padding: 0 0 12px !important;
   background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px;
 }}
+/* The foot's last line, whichever it is (Load, its reason or the note), keeps the panel's padding
+   from the bottom border: the foot pads its end, its lines only their tops (the sweep's L7 LOOK3:
+   the reason line sat 3-6 px from the border, the note alone padded under itself). */
 {_PAGE} {_LIST} > .shep-model-foot > #shep-mp-detail {{ grid-area: detail; align-self: stretch; min-height: 0; gap: 0 !important; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ grid-area: load; justify-self: start; margin: 12px 0 12px 16px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-load {{ grid-area: load; justify-self: start; margin: 12px 0 0 16px; }}
 {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason {{ grid-area: reason; padding: 0 16px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-reason:has(.shep-reason) {{ padding-top: 8px; }}
 {_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note {{ grid-area: note; padding: 0 16px; }}
-{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note:has(.shep-note) {{ padding: 4px 16px 12px; }}
+{_PAGE} {_LIST} > .shep-model-foot > #shep-models-research-note:has(.shep-note) {{ padding-top: 4px; }}
 {_PAGE} #shep-models-research-note .shep-note {{ display: block; max-width: var(--shep-measure); font-size: 14px; }}
 {_PAGE} {_LIST} > .shep-model-foot::after {{
   content: ""; grid-row: 2; grid-column: 1 / -1; border-top: 1px solid var(--shep-border);
@@ -2289,7 +2293,11 @@ PAGE_CSS = f"""
    world's fit), as far as the list's minimum leaves; the list keeps the rest, its whole tree
    where that still fits (the sweep's L7 check, D1: at 1850 x 960 and 1550 x 830 the chosen
    model's details kept the empty panel's share, about 500 to 600 px, and their recorded results
-   and next step fell under the region's edge, where d3040ca drew them whole). By family keeps
+   and next step fell under the region's edge, where d3040ca drew them whole). The list's minimum
+   there is the larger of its own and what its table's narrow form needs as drawn (the layout
+   pass's `style.FIT_LEAST`): the fixed one was 2.6 px under the narrow form beside a
+   52-character run name, and with a row chosen the rows scrolled sideways at 1366 x 768 and
+   1280 x 720 (the sweep's L7 check, K2); the details still never go under theirs. By family keeps
    its shares: a body pick never re-orients the graph (the skill's §13), and a narrower region
    would. */
 {_PAGE} {_LIST} {{ --shep-mp-list-min: 46.5rem; --shep-mp-detail-min: 30rem; --shep-mp-detail-read: 47rem; }}
@@ -2299,7 +2307,8 @@ PAGE_CSS = f"""
   {_PAGE} {_LIST} {{ grid-template-columns: minmax(var(--shep-mp-list-min), 2fr) minmax(var(--shep-mp-detail-min), 1fr); }}
   {_PAGE} {_LIST}:has(#shep-mp-detail-hd h2[data-key]):not(:has(.shep-mp-ro)):not(:has(.shep-fam)) {{
     grid-template-columns: minmax(var(--shep-mp-list-min), 2fr)
-      minmax(max(var(--shep-mp-detail-min), min(var(--shep-mp-detail-read), 100% - var(--shep-mp-list-min) - 16px)), 1fr);
+      minmax(max(var(--shep-mp-detail-min), min(var(--shep-mp-detail-read),
+        100% - max(var(--shep-mp-list-min), var({FIT_LEAST}, 0px)) - 16px)), 1fr);
   }}
   {_PAGE} > .column {{ height: 100%; }}
   {_PAGE} .shep-models {{ height: 100%; min-height: 0; }}

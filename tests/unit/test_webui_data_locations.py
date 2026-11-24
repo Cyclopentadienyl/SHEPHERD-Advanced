@@ -143,7 +143,7 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
     # Set-to bar's own width, where every row's box is one width (the sweep's L7, C3).
     assert not hasattr(dl, "DL_NARROW")
     assert re.findall(r"@container \(([^)]*)\)", css) == [f"min-width: {dl.SET_WIDE}"]
-    assert (f'.shep-dl-field > .block:not([id^="dl_lock_"]) {{ flex: 0 1 {dl.SET_BOX} '
+    assert (f'.shep-dl-field > .block {{ flex: 0 1 {dl.SET_BOX} '
             "!important; }") in css
     app = create_gradio_app()
     blocks = {getattr(b, "elem_id", None): b for b in app.blocks.values()}
@@ -151,7 +151,12 @@ def test_a_row_reads_top_to_bottom_and_check_and_save_move_together(dl):
         check, save = blocks[f"dl_check_{key}"], blocks[f"dl_save_{key}"]
         group = check.parent
         assert group is save.parent and {"shep-dl-acts", "shep-grp"} <= set(group.elem_classes)
+        # A read-only row's short phrase is a whole group of the bar after Check and Save's,
+        # beside them where the line holds it (the sweep's L7 check, D6), never inside their
+        # group, which it would take off the box's line (K4).
         bar = group.parent
+        lock = blocks[f"dl_lock_{key}"]
+        assert lock.parent is bar and bar.children.index(lock) == bar.children.index(group) + 1
         assert blocks[f"dl_box_{key}"].parent is bar      # the box beside the group
         create = blocks[f"dl_create_{key}"].parent
         assert create.parent is bar and {"shep-dl-create", "shep-grp"} <= set(create.elem_classes)
@@ -508,12 +513,14 @@ def test_the_value_in_effect_and_its_source_read_as_two_facts(dl, monkeypatch, t
     rows, _ = _parts(dl, dl._on_locations_open(request))
     cells = {key: _cells_text(rows[key]["state"]["value"]) for key in KEYS}
     saved, started = "Saved in Settings", "Set when the service started"
-    assert cells["workspaces_root"]["In effect"] == f"{root.resolve()} {saved}"
-    assert cells["registry"]["In effect"] == f"{registry.resolve()} {started}"
+    # After a path its source starts a line of its own (the sweep's L7, D13: it ran on after the
+    # path's last line at 1080 x 1920); after words it follows on their line.
+    assert cells["workspaces_root"]["In effect"] == f"{root.resolve()}\n{saved}"
+    assert cells["registry"]["In effect"] == f"{registry.resolve()}\n{started}"
     assert cells["registry"]["Saved"] == f"{chosen}\n{dl.OVERRIDDEN}"
-    assert cells["intake_dir"]["In effect"].endswith(f"Not usable {tmp_path / 'gone'} {started}")
+    assert cells["intake_dir"]["In effect"].endswith(f"Not usable {tmp_path / 'gone'}\n{started}")
     assert cells["training_evidence_dirs"]["In effect"] == (
-        f"{evidence[0].resolve()}\n{evidence[1].resolve()} {started}")
+        f"{evidence[0].resolve()}\n{evidence[1].resolve()}\n{started}")
     hidden = _parts(dl, dl._on_locations_open(gradio_request(server=("192.0.2.10", 8264))))[0]
     assert _cells_text(hidden["workspaces_root"]["state"]["value"])["In effect"] == (
         f"{dl.PATH_HIDDEN} {saved}")
@@ -801,8 +808,23 @@ const QUEUE_JS = __QUEUE_JS__;
       // and on the line next to it (no more than the button's own height between them).
       const gaps = (a, b) => { const p = box(a), q = words(b);
         const dy = Math.max(0, p.top - q.bottom, q.top - p.bottom);
+        const bar = a.closest('.shep-bar'), s = getComputedStyle(bar);
+        const start = box(bar).left + bar.clientLeft + parseFloat(s.paddingLeft);
         return { column: q.left < p.right && q.right > p.left, nextLine: dy <= p.height,
+                 line: q.top < p.bottom && q.bottom > p.top, after: q.left >= p.right - 1,
+                 bar: bar.contains(b), edge: Math.abs(q.left - start) <= 1 || Math.abs(box(b).left - start) <= 1,
                  dy: Math.round(dy) }; };
+      // Whether a row's box and its Check and Save share a line, and whether the bar holds the
+      // box at its least width with both buttons beside it.
+      const besideBox = (key) => { const bx = document.getElementById(`dl_box_${key}`);
+        const c = document.getElementById(`dl_check_${key}`), v = document.getElementById(`dl_save_${key}`);
+        const bar = c.closest('.shep-bar'), s = getComputedStyle(bar), gap = parseFloat(s.columnGap) || 0;
+        const room = bar.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight);
+        const least = parseFloat(getComputedStyle(bx).minWidth) || 0;
+        const acts = c.closest('.shep-grp'), ag = parseFloat(getComputedStyle(acts).columnGap) || 0;
+        const need = least + gap + box(c).width + ag + box(v).width;
+        const p = box(bx), q = box(c);
+        return { fits: need <= room + 0.5, line: q.top < p.bottom && q.bottom > p.top }; };
       const rowOf = (e) => e.closest('.shep-dl-row');
       const panel = document.getElementById('shep-dl');
       // The lines that say why: the lock mark, then words, in no button.
@@ -822,7 +844,8 @@ const QUEUE_JS = __QUEUE_JS__;
             .sort((x, y) => x[0].dy - y[0].dy)[0];
           rows[key][part] = { text: T(b), disabled: b.disabled, ...(near ? near[0] : {}),
                               sameRow: own.length > 0, reason: near ? T(near[1]) : null,
-                              whole: whole(b), reasonWhole: near ? whole(near[1]) : false };
+                              whole: whole(b), reasonWhole: near ? whole(near[1]) : false,
+                              ...(part === 'check' ? { box: besideBox(key) } : {}) };
         }
       }
       const said = (words) => (document.body.innerText.split(words).length - 1);
@@ -853,9 +876,15 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
     laid each row out top to bottom, so the panel scrolls at 1850 x 960 and
     a button brought only as far as the view's edge left its phrase under
     it out of view); the panel's long reason is said once on the
-    page; in Check's and Save's column too (its words overlap each one's
-    span across: the UI sweep's shared reason grid filled the row, so the
-    phrase sat under the label column, 500 px from them). An operator sees
+    page; beside Check and Save, a group of their bar on their line after
+    Save where the line holds it, else the line under them on the bar's edge
+    (the sweep's L7 check, D6: as a line of its own under them it made
+    each read-only row a line taller than an operator's, and the panel's
+    last line fell under its body's edge at 1850 x 960; the UI sweep's
+    shared reason grid had once put it under the label column, 500 px from
+    them); Check and Save on the box's line wherever the bar holds the box
+    at its least width and both beside it (K4: bound into their group, the
+    phrase took them off it from 1550 x 830 down). An operator sees
     no lock and no phrase. Fails on d7ebfc3. The
     recheck of d4209c4 read Create 30 px from its row's phrase at 390 x 844
     on its host: Create was centred against a suggestion that wrapped to
@@ -892,7 +921,20 @@ def test_each_rows_locked_buttons_say_why_beside_them(dl, tmp_path, monkeypatch,
                 assert button["reason"] == f"🔒 {phrase}", (size, key, part, button)
                 assert button["sameRow"] and button["nextLine"], (size, key, part, button)
                 if part in ("check", "save"):
-                    assert button["column"], (size, key, part, button)
+                    # Beside Check and Save (the owner's word, 2026-11-19): a group of their
+                    # bar, on their line after them where it holds it (the sweep's L7 check, D6:
+                    # a line of its own under them made each read-only row a line taller, and
+                    # "Where these are kept ›" fell under the body's edge at 1850 x 960), else
+                    # the line under them, on the bar's start edge.
+                    assert button["bar"], (size, key, part, button)
+                    assert (button["line"] and (part == "check" or button["after"])) or (
+                        button["edge"] and button["nextLine"]), (size, key, part, button)
+                if part == "check":
+                    # Check and Save stand on the box's line wherever the bar holds the box at its
+                    # least width and both beside it, as an operator's do: the phrase never takes
+                    # them off it (K4: bound into their group, it did from 1550 x 830 down).
+                    beside = button["box"]
+                    assert beside["line"] or not beside["fits"], (size, key, part, button)
                 assert button["whole"] and button["reasonWhole"], (size, key, part, button)
 
 
@@ -1153,7 +1195,9 @@ def _columns_problems(stop) -> list:
     return problems
 
 
-def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path, monkeypatch):
+@pytest.mark.parametrize("operator", [True, False], ids=["operator", "read-only"])
+def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path, monkeypatch,
+                                                                    operator):
     """The sweep's L7 check (C3, a regression of a4dc77d): each row's Set-to box took what
     Create and its suggestion left on its line, so at 1850 x 960 the four boxes ended at 425,
     441, 457 and 845 px (nothing set) and the Import row's at 458 against 846 (configured), and
@@ -1163,15 +1207,20 @@ def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path
     set at start (a long path) and the other folders not set (Create offered), at the owner's
     windows, a laptop and the display floor: the rows share their columns
     (`_columns_problems`), and at the owner's window all four rows and "Where these are kept
-    ›" stay in the panel's body (SW-LK1)."""
+    ›" stay in the panel's body (SW-LK1). The same for a read-only viewer, whose paths are
+    hidden and whose rows say why they are locked (the sweep's L7 check, D6: each row's lock
+    line under its buttons made the body 28 px taller than its room at 1850 x 960)."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import node_with_playwright, walk_ui
-    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.operator_access import DEPLOYMENT_MODE, operator_mode
     from tests.fixtures.served_page import served
 
     if node_with_playwright() is None:
         pytest.skip("Node with Playwright is not installed")
-    operator_mode(monkeypatch)
+    if operator:
+        operator_mode(monkeypatch)
+    else:
+        monkeypatch.delenv(DEPLOYMENT_MODE, raising=False)
     monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
     registry = tmp_path / "a-results-registry-folder-kept-on-the-server" / "for-the-cohort-versions" / "registry"
     registry.mkdir(parents=True, mode=0o700)
@@ -1184,7 +1233,8 @@ def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path
     for stop in seen:
         rows = stop["extra"]["rows"]
         assert len(rows) == len(KEYS) and all(row["box"] and row["check"] for row in rows), stop
-        assert [row["id"] for row in rows if row["path"]] == ["dl_row_registry"], stop
+        assert [row["id"] for row in rows if row["path"]] == (["dl_row_registry"] if operator
+                                                              else []), stop
         assert [row["id"] for row in rows if row["create"]] == ["dl_row_workspaces_root", "dl_row_intake_dir"], stop
         problems += _columns_problems(stop)
         if stop["size"] == "1850x960":

@@ -129,6 +129,32 @@ COL_TWIN = "shep-col-twin"
 #: its optional columns, then scrolls in its frame (`FIT`).
 CELL_WHOLE = "shep-cell-whole"
 NARROW_ATTR = "data-shep-narrow"
+#: **A table cell whose words read as one while their table has the room** (a count's words in
+#: its place: "recorded epoch 9", `renderers.epoch_words`): the layout pass measures a `FIT` box's
+#: wide form once more with these cells whole and, when that still fits, marks the box
+#: `ROOMY_ATTR`, and the cells keep their words on one line; otherwise they wrap as words do, so
+#: binding them never makes a table drop its optional columns or scroll where it fitted (the
+#: sweep's L7 check, D13: "recorded" / "epoch 9" doubled every older run's row at 1850 x 960
+#: while the Model column had room; bound always, the tree dropped its Epochs at 1550 x 830).
+CELL_ROOMY = "shep-cell-roomy"
+ROOMY_ATTR = "data-shep-roomy"
+#: **The width a `FIT` box's narrow form needs** (a custom property, in px): the layout pass
+#: measures that form at its narrowest, adds what the panel holding the box draws around it (the
+#: nearest ancestor with a ``--shep-panel-min``) and writes the sum on that panel's row, so a
+#: page whose panel shares move (Models with a row chosen) leaves the panel at least that wide
+#: where it can, from the type drawn and the names listed, never a width fitted to one world (the
+#: sweep's L7 check, K2: the chosen details left the list its fixed minimum, 2.6 px under the
+#: narrow form beside a 52-character run name, and the rows scrolled sideways at 1366 x 768).
+FIT_LEAST = "--shep-fit-least"
+#: **The width a `FIT` box's wide form needs, given to its panel** (a custom property, in px, on
+#: the panel holding the box, the nearest ancestor with a ``--shep-panel-min``): the layout pass
+#: measures the wide form at its narrowest and adds what the panel draws around it, and writes
+#: that where the panels beside it keep their own minimums, else 0px, before it judges the box,
+#: so a page whose panels share the row (Datasets) can give the box's panel that width from the
+#: panel beside, never a width fitted to one world (the sweep's L7 check, K3: bound whole, a mark
+#: made the workspaces table 5 px too wide for its share at 1366 x 768; its narrow form then moved
+#: two facts into the details beside, which scrolled, where the details could spare the 5 px).
+FIT_WANT = "--shep-fit-want"
 #: **A box drawn whole while its column has the room** (OPS-FIX-N1; the layout
 #: pass's fold, `src/webui/shell.py`): side by side, a box of class `FOLD`
 #: shares a column with a region of class `FOLD_ROOM` (the column: the box's
@@ -230,6 +256,16 @@ SHELL_CSS = """
 body, gradio-app, .gradio-container { background: var(--shep-bg) !important; }
 body { color: var(--shep-text); }
 .gradio-container { font-size: 15px; color: var(--shep-text); }
+/* **Every text that wraps breaks prettily** (the text brief's §4; the sweep's L7 check, D13): the
+   wrap style is inherited, so one rule at the dashboard's root reaches every paragraph, reason,
+   table cell, summary value and link, and the browser may rebalance a text's last lines so one
+   short word is less often left alone ("only", "server", "better" stood alone on a last line in
+   cells and values the page rules did not reach). It is a preference, not a guarantee: Chromium
+   leaves some two-line texts with a word alone (the sweep's L7 check, K7: "Supplied cohort" /
+   "version" in a narrow cell), and Firefox ignores ``pretty`` and keeps its greedy breaks, so
+   nothing may depend on it. A ``white-space: nowrap`` text keeps its one line; a heading
+   or a lead keeps its own ``balance``. */
+.gradio-container { text-wrap-style: pretty; }
 /* The header runs edge to edge; each page pads itself. */
 .gradio-container > .main { padding: 0 !important; }
 .gradio-container > .main > .wrap, .gradio-container .contain { padding: 0 !important; max-width: none !important; }
@@ -554,6 +590,11 @@ span.shep-note { display: inline-block; }
 /* What a line never parts (`renderers.bound_html`: a count and its unit, a date and its time, a
    short parenthesis): one unit the same way, so a narrow box never cuts or overflows it. */
 .shep-unit { display: inline-block; max-width: 100%; }
+/* A unit draws the line its text is decorated with: no decoration is drawn into an inline block,
+   so a link's underline stopped where its place began ("Choose one in" underlined, "Settings ›
+   Data locations" not; the sweep's L7 check, K1). It takes the decoration of the element it
+   stands in, a link's hover thickness included. */
+.shep-fact, .shep-unit { text-decoration: inherit; }
 /* A separator the line breaks after is not drawn (the shell's layout pass marks it; its box stays,
    so nothing moves): a line neither starts nor ends with " · " (the sweep's L7, SW-LK2, SW-LK7). */
 .shep-sep[data-shep-end] { visibility: hidden; }
@@ -1063,8 +1104,10 @@ button.shep-row {
 .shep-mtree tr.shep-tree-run { cursor: pointer; }
 .shep-mtree tr.shep-tree-run:hover td { background: var(--shep-panel-2); }
 .shep-mtree td.shep-num { white-space: nowrap; }
-/* A count is one figure; words in its place ("epochs not recorded") wrap as words do. */
+/* A count is one figure; words in its place ("epochs not recorded") wrap as words do, and read
+   as one line while their table has the room (``__CELL_ROOMY__``). */
 .shep-mtree td.shep-num .shep-muted { white-space: normal; }
+.__FIT_BOX__[__ROOMY__] .shep-tbl :is(td, th) .__CELL_ROOMY__ { white-space: nowrap; }
 /* A saved file's name, then its In-use chip, under it when the column is narrow. */
 .shep-mtree .shep-tree-leaf { flex-wrap: wrap; column-gap: 6px; }
 /* **The family graph** (Models' By family, `model_list._graph_html`; G1-G9, I1-I10): each
@@ -1366,11 +1409,11 @@ __STACK__ {
 """.replace("__BRAND__", str(BRAND_WIDTH)).replace("__SIDE__", SIDE).replace("__STACK__", STACK) \
     .replace("__FOLDED__", FOLDED_ATTR).replace("__FOLD_PART__", FOLD_PART) \
     .replace("__NARROW__", NARROW_ATTR).replace("__COL_OPT__", COL_OPT).replace("__COL_TWIN__", COL_TWIN).replace("__FIT_BOX__", FIT).replace("__SEG_WHOLE__", SEG_WHOLE) \
-    .replace("__CELL_WHOLE__", CELL_WHOLE) \
+    .replace("__CELL_WHOLE__", CELL_WHOLE).replace("__CELL_ROOMY__", CELL_ROOMY).replace("__ROOMY__", ROOMY_ATTR) \
     .replace("__FLOOR_W__", str(FLOOR_WIDTH)).replace("__FLOOR_H__", str(FLOOR_HEIGHT)) \
     .replace("__FLOOR_VAR__", FLOOR_VAR)
 
 
-__all__ = ["BRAND_WIDTH", "CELL_WHOLE", "COL_OPT", "COL_TWIN", "FADE_VAR", "FIT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
+__all__ = ["BRAND_WIDTH", "CELL_ROOMY", "CELL_WHOLE", "COL_OPT", "COL_TWIN", "FADE_VAR", "FIT", "FIT_LEAST", "FIT_WANT", "FIT_WIDE", "SEG_WHOLE", "FOLD", "FOLD_FLOOR", "FOLD_PART", "FOLD_ROOM",
            "FLOOR_HEIGHT", "FLOOR_VAR", "FLOOR_WIDTH", "FOLDED_ATTR", "LAYOUT_ATTR", "NARROW_ATTR", "SHELL_CSS", "SHORT",
-           "SHORT_ATTR", "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK", "STACK_FLOOR_WIDTH"]
+           "SHORT_ATTR", "SHORT_BELOW", "SIDE", "SIDE_SHORT", "STACK", "STACK_FLOOR_WIDTH", "ROOMY_ATTR"]

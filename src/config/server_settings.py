@@ -224,6 +224,7 @@ __all__ = [
     "OPEN_DATA_LOCATIONS",
     "OUTSIDE_REPOSITORY",
     "PLACE_ACTIONS",
+    "PLACE_NAMES",
     "MODE_OFF_STATE",
     "OPERATOR_DEPLOYMENT_MODE",
     "REGISTRY_NOTICE",
@@ -721,6 +722,10 @@ CHOOSE_THEM_IN_DATA_LOCATIONS = f"Choose them in {DATA_LOCATIONS}"
 OPEN_DATA_LOCATIONS = f"Open {DATA_LOCATIONS}"
 SEVERAL_ACTIONS = {CHOOSE_IN_DATA_LOCATIONS: CHOOSE_THEM_IN_DATA_LOCATIONS}
 PLACE_ACTIONS = {DATA_LOCATIONS_TARGET: OPEN_DATA_LOCATIONS}
+#: **Each place's name in the GUI**, by target, as every action to it names it (the actions above
+#: are built from it): the WebUI draws it as one unit in its link, so a narrow line breaks the
+#: link before the place, never inside it ("Settings ›" / "Data locations", the sweep's L7).
+PLACE_NAMES = {DATA_LOCATIONS_TARGET: DATA_LOCATIONS}
 
 
 def _relation(state: str) -> str:
