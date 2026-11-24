@@ -4562,9 +4562,8 @@ PAGE_CSS = f"""
    (`renderers.summary_list`: a digest's long label on a line of its own). */
 {_TAB} #shep-dx-change-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
 {_TAB} #shep-dx-change .shep-model-head {{ gap: 8px 14px !important; }}
-/* The search and what the list shows, on a line of their own under the head (R-27). */
-{_TAB} #shep-dx-change .shep-model-tools {{ gap: 8px 14px !important; }}
-{_TAB} #shep-models-clinical-count {{ flex: 1 1 12em !important; }}
+/* The search and what the list shows, on a line of their own under the head (R-27): the shared
+   list's one tools bar (D14), as Models draws it, with nothing of this page's own. */
 /* The head is a field row (D03): the workspace select keeps its own minimum width (Gradio's
    min(160px, 100%)), so a drawer too narrow for the row wraps it rather than squeezing the box
    (at 1280 x 900 it drew 26 px, its label cut to "W"); only the words beside it may shrink. */

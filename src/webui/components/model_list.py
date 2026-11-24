@@ -299,9 +299,10 @@ class Preset:
     #: The words of the "In use" mark.
     in_use_label: str
     #: How the list's own pieces are placed (the tree is drawn alike in
-    #: both): ``drawer`` (Diagnosis: its head and search a field row each,
-    #: the chosen model's facts beside the rows) or ``page`` (Models: its page
-    #: lays the head out in its grid and shows its own detail).
+    #: both, and so are its search and count, one tools bar, D14): ``drawer``
+    #: (Diagnosis: its head a field row, the chosen model's facts beside the
+    #: rows) or ``page`` (Models: its page lays the head out in its grid and
+    #: shows its own detail).
     layout: str = "drawer"
     #: The rows this preset ever shows (a `TASK_FILTERS` name), whatever the
     #: view asks: the drawer lists models finetuned for a task only, so a view
@@ -3563,7 +3564,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     Order, a ``.shep-grp``) shares the line while both fit and moves under
     it whole when they do not; a message the page adds there, and the count
     line, are the bar's notes (``.shep-bar-note``), each a row of its own
-    under the groups. The drawer layout keeps its field row (no tools).
+    under the groups. Both layouts draw that one bar (D14); the drawer has no
+    page group in it.
     `on_loading` (``{"fn", "inputs", "outputs"}``) adds the page's own outputs
     to the step "Reload with …" runs before the reload, in the same answer (so
     they show before the reload holds the server): ``fn(plan, *inputs)``
@@ -3621,27 +3623,30 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                                         scale=3)
                 head_extra = head() if head is not None else None
             # The search and what the list shows, on a line of their own under
-            # the head (R-27: the count line never wraps beside a select).
-            drawer = chosen.layout == "drawer"
-            tools_classes = ["shep-model-tools"] + (["shep-field-row"] if drawer else ["shep-bar"])
-            with gr.Row(elem_classes=tools_classes):
+            # the head (R-27: the count line never wraps beside a select): one
+            # toolbar, the same bar in both presets (D14, the owner's decision
+            # of 2026-11-24: Models and the Load drawer use one mechanism).
+            with gr.Row(elem_classes=["shep-model-tools", "shep-bar"]):
                 # "Search" said beside its box, as "Order" is (no line of its
-                # own above it), its Clear after it: one group of the bar.
+                # own above it), its Clear after it: one group of the bar, the
+                # one that takes the line's free width; the box a search's
+                # width role (R-WIDTH, ``shep-w-search``).
                 with gr.Row(elem_id=f"{elem_id}-searchrow",
-                            elem_classes=["shep-search-row"] + (
-                                [] if drawer else ["shep-grp", "shep-grp-grow"])):
+                            elem_classes=["shep-search-row", "shep-grp", "shep-grp-grow"]):
                     plain_html('<span class="shep-search-lbl">Search</span>',
                                elem_id=f"{elem_id}-search-lbl")
                     search = gr.Textbox(label="Search", show_label=False, container=False,
                                         placeholder="Name or fingerprint",
                                         elem_id=f"{elem_id}-search", lines=1, max_lines=1,
-                                        scale=1, min_width=96, autoscroll=False)
+                                        scale=1, min_width=96, autoscroll=False,
+                                        elem_classes=["shep-w-search"])
                     clear = gr.Button("Clear", size="sm", scale=0, min_width=0,
                                       elem_id=f"{elem_id}-search-clear")
                 if tools is not None:
                     tools()
-                count = plain_html("", elem_id=f"{elem_id}-count",
-                                   elem_classes=["shep-field-aside" if drawer else "shep-bar-note"])
+                # What the list shows is a message, never a group: the bar's
+                # note, a row of its own under the groups.
+                count = plain_html("", elem_id=f"{elem_id}-count", elem_classes=["shep-bar-note"])
             with gr.Row(elem_classes=["shep-model-body"]):
                 # Two areas, each its own region where it scrolls (UI-07; the
                 # shared UI check's ``shep-area``): the rows and the facts.
