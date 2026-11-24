@@ -1809,9 +1809,11 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-hops {{ margin: 0; font-size: 14px; overflow-wrap: anywhere; }}
 /* Start and Stop (`shep-bar`): the reason beside each on the button's first line (baselines
    aligned, so the button stands at the bar's top whatever follows), under it when the row cannot
-   hold both; a note (what Start would refuse, a refusal) the bar's width under them. */
+   hold both; a note (what Start would refuse, a refusal) the bar's width under them. Each button is
+   its words' width by the shared rule (`style.py`; a bar with a reason slot beside its action is never
+   spanned, `shell.py`'s ``spans``), so it keeps one width whether or not its reason shows. */
 {_PAGE} .shep-ft-start-row, {_PAGE} .shep-ft-stop-row {{ align-items: baseline !important; }}
-{_PAGE} .shep-ft-start-row > button, {_PAGE} .shep-ft-stop-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; }}
+{_PAGE} .shep-ft-start-row > button, {_PAGE} .shep-ft-stop-row > button {{ padding: 0 14px !important; height: 40px; }}
 /* Each reason beside its button only while it is one line (the shared `shep-beside`). */
 {_PAGE} .shep-ft-start-why, {_PAGE} #ft_stop_reason {{ gap: var(--shep-space-1) !important; }}
 {_PAGE} .shep-ft-start-why:not(:has(.shep-ft-reason, .shep-nb-rel, .shep-ft-hops-warn)) {{ display: none !important; }}

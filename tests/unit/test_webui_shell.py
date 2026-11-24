@@ -3997,6 +3997,14 @@ def _pieces_page():
                 with gr.Row(elem_classes=["shep-panel-ft"], elem_id="pc-span-e-ft"):
                     gr.Button("Load", elem_id="pc-span-e-btn")
                     gr.HTML("<span>Not loaded yet</span>", elem_id="pc-span-e-words")
+            # One action and its reason slot (`shep-beside`), not drawn while it is empty:
+            # Fine-tune's Start bar (its `.shep-ft-start-why` column).
+            with gr.Column(elem_id="pc-span-f", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-f-field")
+                with gr.Row(elem_classes=["shep-bar"], elem_id="pc-span-f-ft"):
+                    gr.Button("Start", elem_id="pc-span-f-btn")
+                    with gr.Column(elem_classes=["shep-beside"], elem_id="pc-span-f-slot", min_width=0):
+                        gr.HTML("", elem_id="pc-span-f-why")
         # An icon-only action beside a field (a field row's square, ``shep-icon-btn``).
         with gr.Row(elem_classes=["shep-field-row"], elem_id="pc-span-icon-row"):
             gr.Dropdown(["a"], value="a", label="Run", elem_id="pc-span-icon-field")
@@ -4257,11 +4265,12 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.click('#shep-page-finetune-button');
   await page.waitForSelector('#pc-span-c-btn');
   await page.addStyleTag({ content: `
-    #pc-span-a, #pc-span-b, #pc-span-d, #pc-span-e { flex: none !important; width: 300px !important; }
+    #pc-span-a, #pc-span-b, #pc-span-d, #pc-span-e, #pc-span-f { flex: none !important; width: 300px !important; }
+    #pc-span-f-slot:not(:has(.shep-reason)) { display: none !important; }
     #pc-span-c { flex: none !important; width: 900px !important; }` });
   await page.setViewportSize({ width: 1279, height: 1280 }); await frames(2);
   await page.setViewportSize({ width: 1280, height: 1280 }); await frames(4);
-  out.span = await page.evaluate(() => Object.fromEntries(['a', 'b', 'c', 'd', 'e'].map((k) => {
+  const spanOf = () => page.evaluate(() => Object.fromEntries(['a', 'b', 'c', 'd', 'e', 'f'].map((k) => {
     const ft = document.getElementById(`pc-span-${k}-ft`), s = getComputedStyle(ft), r = ft.getBoundingClientRect();
     const room = [r.left + ft.clientLeft + parseFloat(s.paddingLeft), r.right - ft.clientLeft - parseFloat(s.paddingRight)];
     const buttons = [...ft.querySelectorAll('button')].map((b) => {
@@ -4273,6 +4282,13 @@ const QUEUE_JS = __QUEUE_JS__;
     });
     return [k, { span: ft.hasAttribute('data-shep-span'), room, buttons }];
   })));
+  out.span = await spanOf();
+  // Its reason drawn in the slot beside the one action (`f`): the bar measured again.
+  await page.evaluate(() => { const w = document.getElementById('pc-span-f-why');
+    const at = w.querySelector('.html-container > *') || w.querySelector('.html-container') || w;
+    at.innerHTML = '<span class="shep-reason">Needs a dataset</span>'; });
+  await frames(4);
+  out.span.fDrawn = (await spanOf()).f;
   out.span.icon = await page.evaluate(() => {
     const q = document.getElementById('pc-span-icon').getBoundingClientRect();
     return { width: q.width, height: q.height };
@@ -4393,7 +4409,10 @@ def test_a_button_spans_only_the_one_action_area_no_wider_than_its_fields(pieces
     than its fields (the layout pass's mark, ``data-shep-span``): a narrow panel's one action
     spans its footer; two actions in the same footer, or one action under a wide row of fields,
     keep their words' width, and so does one action beside a field or beside its words on its
-    line (the L8 S2 survey: Fine-tune's Refresh beside Device, Models' Load beside its state)."""
+    line (the L8 S2 survey: Fine-tune's Refresh beside Device, Models' Load beside its state), and
+    one action beside a reason slot (``shep-beside``), drawn or empty: Fine-tune's Start spanned
+    its bar while its reason slot was empty (the L8 close; S2's open item 6), and kept its words'
+    width only by a page copy of the button rule."""
     span = pieces_seen["span"]
     one, two, wide, field, words = (span[k] for k in "abcde")
     assert [len(box["buttons"]) for box in (one, two, wide, field, words)] == [1, 2, 1, 1, 1], span
@@ -4405,6 +4424,12 @@ def test_a_button_spans_only_the_one_action_area_no_wider_than_its_fields(pieces
     (button,) = one["buttons"]
     assert abs(button["left"] - one["room"][0]) <= 1 and abs(button["right"] - one["room"][1]) <= 1, one
     assert one["span"] and not any(box["span"] for box in (two, wide, field, words)), span
+    # One action with a reason slot beside it (Fine-tune's Start; the L8 close): never spanned,
+    # its words' width with the slot empty and with its reason drawn, one width in both.
+    empty, drawn = span["f"], span["fDrawn"]
+    assert not empty["span"] and not drawn["span"], span
+    (before,), (after,) = empty["buttons"], drawn["buttons"]
+    assert before["width"] <= before["words"] + 1 and abs(before["width"] - after["width"]) <= 1, (empty, drawn)
     # A role's own size stays (the rule is the least specific): an icon-only button beside a
     # field is a square (Test's Run ↻ became a narrow sliver under the first rule).
     icon = span["icon"]

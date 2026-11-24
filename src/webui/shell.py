@@ -1328,7 +1328,11 @@ _SHELL_JS = r"""
   // form's one action under a column of fields). The area is the action's parent, or, where that
   // is a column that only wraps the action inside a row of actions, that row. Each is measured
   // with its mark off (put back before anything is painted), so the mark never changes what it
-  // measured.
+  // measured. **A row or bar that holds words beside its action is no one-action area** (the L8
+  // close, S2's open item 6): a reason or phrase slot of the shared kind (``shep-beside``), drawn
+  // or not, so the action keeps one width whether or not its reason shows (Fine-tune's Start
+  // spanned its bar while its reason slot was empty, and kept its words' width only by a page
+  // copy of the button rule).
   var SPAN = 'data-shep-span', ACTION = 'button.lg, button.md, button.sm';
   var ACTION_AREA = ':is(.row, .column, .shep-panel-ft, .shep-bar) > :is(' + ACTION + ')';
   var FIELD = '.block:has(textarea, select, input:not([type=hidden]):not([type=radio]):not([type=checkbox]))';
@@ -1349,8 +1353,15 @@ _SHELL_JS = r"""
     if (area.matches('.column') && up && up.matches('.row') && !area.querySelector(FIELD)) { return up; }
     return area;
   }
+  function holdsWords(box) {
+    if (!box.matches('.row, .shep-bar')) { return false; }
+    for (var c = box.firstElementChild; c; c = c.nextElementSibling) {
+      if (c.matches('.shep-beside')) { return true; }
+    }
+    return false;
+  }
   function spanned(box) {
-    if (box.matches('.shep-grp') || box.querySelector(FIELD)) { return false; }
+    if (box.matches('.shep-grp') || box.querySelector(FIELD) || holdsWords(box)) { return false; }
     var acts = actionsOf(box);
     if (acts.length !== 1) { return false; }
     var a = acts[0][0].getBoundingClientRect(), across = box.matches('.row, .shep-bar');
