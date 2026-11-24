@@ -3931,13 +3931,16 @@ def _pieces_page():
                              f'id="pc-whole"><tbody><tr><td class="{CELL_WHOLE}">Record not readable</td>'
                              f'<td>{prose}</td></tr></tbody></table></div></div>', elem_id="pc-c12-box")
             # Two fit boxes with a cell whose words read as one while the room allows
-            # (`style.CELL_ROOMY`): one with the room, one (sized by `_PIECES_JS`) that holds
+            # (`style.CELL_ROOMY`) beside a column of prose, both sized by `_PIECES_JS` from the
+            # measured table: one with the room for the wide form with those words whole (and
+            # too little for the table's widest, where unmarked they would wrap), one that holds
             # the table only with those words wrapped.
             roomy = (f'<table class="shep-tbl {FIT_WIDE}"><tbody><tr><td class="shep-nowrap">a cell '
                      f'that never breaks</td><td class="shep-num"><span class="shep-muted {CELL_ROOMY}">'
-                     f'recorded epoch 9</span></td></tr></tbody></table>')
-            shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-roomy-a" style="width: 640px">'
-                             f'{roomy}</div><div class="shep-tbl-wrap {FIT}" id="pc-roomy-b">{roomy}</div>',
+                     f'recorded epoch 9</span></td><td>a note in plain words that wraps as prose '
+                     f'does wherever its column is narrow</td></tr></tbody></table>')
+            shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-roomy-a">{roomy}</div>'
+                             f'<div class="shep-tbl-wrap {FIT}" id="pc-roomy-b">{roomy}</div>',
                              elem_id="pc-roomy-box")
             shell.plain_html(f'<div class="shep-tbl-wrap {FIT}" id="pc-fit"><table class="shep-tbl {FIT_WIDE}">'
                              f'<tbody><tr>{cells}</tr></tbody></table></div>'
@@ -4044,16 +4047,34 @@ const QUEUE_JS = __QUEUE_JS__;
               fold: { top: fold.top, bottom: fold.bottom } },
     };
   });
-  // The roomy boxes: the second one as wide as its table at its narrowest with the roomy words
-  // wrapped (measured apart, beside the box, outside any fit box), then a resize so the layout
-  // pass measures it.
-  await page.evaluate(() => {
-    const b = document.getElementById('pc-roomy-b'), t = b.querySelector('table').cloneNode(true);
-    t.style.cssText = 'position: absolute; visibility: hidden; width: min-content';
-    b.parentElement.appendChild(t);
-    const wrapped = t.getBoundingClientRect().width, s = getComputedStyle(b);
-    t.remove();
-    b.style.width = (wrapped + parseFloat(s.borderLeftWidth) + parseFloat(s.borderRightWidth) + 2) + 'px';
+  // The roomy boxes, sized from the measured table (K6, never a fixed width): the first as wide
+  // as the table at its narrowest with the roomy words whole (a copy in a box marked roomy, as
+  // the layout pass measures it), the second as wide as it at its narrowest with them wrapped
+  // (a copy in a box not marked), each measured apart beside the boxes; then, at the first
+  // one's width, how many lines those words take in a copy of its box not marked roomy (they
+  // wrap there: the mark is what keeps them on one line); then a resize so the layout pass
+  // measures the boxes.
+  out.roomyBox = await page.evaluate(() => {
+    const a = document.getElementById('pc-roomy-a'), b = document.getElementById('pc-roomy-b');
+    const s = getComputedStyle(a), edges = parseFloat(s.borderLeftWidth) + parseFloat(s.borderRightWidth);
+    const copy = (marked, width) => {
+      const c = a.cloneNode(true);
+      c.removeAttribute('id'); c.removeAttribute('__NARROW__'); c.removeAttribute('__ROOMY__');
+      if (marked) { c.setAttribute('__ROOMY__', ''); }
+      c.style.cssText = 'position: absolute; visibility: hidden; left: 0; top: 0; width: ' + width;
+      a.parentElement.appendChild(c);
+      return c;
+    };
+    const narrowest = (marked) => { const c = copy(marked, 'auto'), t = c.querySelector('table');
+      t.style.width = 'min-content'; const w = t.getBoundingClientRect().width; c.remove(); return w; };
+    const whole = narrowest(true), wrapped = narrowest(false);
+    const widthA = whole + edges + 2, widthB = wrapped + edges + 2;
+    a.style.width = widthA + 'px'; b.style.width = widthB + 'px';
+    const c = copy(false, widthA + 'px'), r = document.createRange();
+    r.selectNodeContents(c.querySelector('.__CELL_ROOMY__'));
+    const unmarked = new Set([...r.getClientRects()].filter((q) => q.width > 0).map((q) => Math.round(q.top))).size;
+    c.remove();
+    return { whole, wrapped, widthA, widthB, unmarked };
   });
   await page.setViewportSize({ width: 1279, height: 1280 }); await frames(2);
   await page.setViewportSize({ width: 1280, height: 1280 }); await frames(4);
@@ -4228,8 +4249,13 @@ def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_see
     `style.CELL_ROOMY` reads as one line while its fit box holds the wide form with it whole
     (the layout pass's second measure, `style.ROOMY_ATTR`); in a box that holds the wide form
     only with those words wrapped, they wrap and the wide form stays, nothing sideways."""
-    roomy = pieces_seen["roomy"]
+    roomy, box = pieces_seen["roomy"], pieces_seen["roomyBox"]
     wide, tight = roomy["pc-roomy-a"], roomy["pc-roomy-b"]
+    # K6 (the owner, 2026-11-24: tests must catch the old problem): the boxes come from the
+    # measured table, not a fixed width. The first is wider than the table's narrowest with the
+    # words wrapped and too narrow for them whole unmarked (they take two lines there), so only
+    # the roomy mark keeps them on one line: without the layout pass's second measure they wrap.
+    assert box["wrapped"] < box["whole"] and box["unmarked"] > 1, box
     assert wide["roomy"] and not wide["narrow"] and wide["lines"] == 1, roomy
     assert not tight["roomy"] and not tight["narrow"] and tight["lines"] > 1, roomy
     assert wide["sideways"] <= 0 and tight["sideways"] <= 0, roomy

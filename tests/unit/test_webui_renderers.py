@@ -2075,3 +2075,59 @@ def test_a_notices_details_closes_its_lead_line():
     assert both.count("<details") == 1
     from src.webui.style import SHELL_CSS
     assert ":is(.shep-nb-line, .shep-nb-next) .shep-nb-more { display: inline !important;" in SHELL_CSS
+
+
+def _every_notice():
+    """**Every notice a page can draw, by name** (K6 part 3): each `server_settings.Notice`, each
+    setting set and not usable (`workspaces.setting_notice`'s ``_not_usable`` variant), the GPU
+    lock's problem for an operator and for anyone else (`workspaces.lock_notice`), and the one
+    step several notices share (`renderers._shared_step`: their one action, else their place's)."""
+    from types import SimpleNamespace
+
+    from src.config import server_settings as ss
+    from src.webui.components import workspaces as ws
+
+    found = {name: ws.notice_view(value) for name, value in vars(ss).items()
+             if isinstance(value, ss.Notice)}
+    for variable, base in ws.NOTICES.items():
+        unusable = SimpleNamespace(variable=variable, available=False, unset=False, problem="x")
+        found[f"{base.key} not usable"] = ws.setting_notice(unusable)
+    for operator in (True, False):
+        found[f"gpu lock problem operator={operator}"] = ws.lock_notice(
+            {"problem": "the folder is read-only", "unset": False}, operator=operator)
+    keyed = [ws.notice_view(n) for n in (ss.WORKSPACES_ROOT_NOTICE, ss.REGISTRY_NOTICE)]
+    found["several, one action"] = r._shared_step(keyed)
+    found["several, one place"] = r._shared_step(
+        [keyed[0], found["registry not usable"]])
+    return found
+
+
+def test_every_notices_action_ends_with_its_targets_place_and_the_link_binds_it():
+    """K6 part 3 (the owner's K6 of 2026-11-24: by content role, never by matching a sentence):
+    a notice's link draws its GUI place as one unit, so a narrow line breaks the link before the
+    place, never inside it. The place is the action's tail, given by the notice's target
+    (`server_settings.PLACE_NAMES[target]`, role data); `_place_bound` found it by a substring
+    search, so a notice whose action lacked its place was drawn silently unbound, and a place
+    named mid-sentence was bound there. Every notice and every not-usable variant: its target
+    has a place, its action ends with it, and its link draws exactly that tail as the unit."""
+    from src.config.server_settings import PLACE_NAMES
+
+    notices = _every_notice()
+    assert len(notices) >= 10 and all(notices.values()), notices
+    for name, notice in notices.items():
+        place = PLACE_NAMES.get(notice["target"])
+        assert place, (name, notice["target"])
+        assert notice["action"].endswith(place), (name, notice["action"], place)
+        link = r._go(notice, True)
+        head = notice["action"][:-len(place)]
+        assert link.endswith(f'>{r.e(head)}<span class="shep-unit">{r.e(place)}</span></button>'), (
+            name, link)
+        assert link.count("shep-unit") == 1, (name, link)
+    # The place is bound by the target, as the tail: never found in the words. A place named
+    # mid-sentence, or an action for another place, is not drawn as this target's unit.
+    target = next(iter(PLACE_NAMES))
+    place = PLACE_NAMES[target]
+    for action, where in ((f"{place}, then Save", target),
+                          ("Choose one in Settings › Runtime", target),
+                          (f"Choose one in {place}", "settings#elsewhere")):
+        assert "shep-unit" not in r._go({"action": action, "target": where}, True), (action, where)
