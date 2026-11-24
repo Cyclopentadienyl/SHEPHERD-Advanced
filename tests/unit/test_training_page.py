@@ -3433,10 +3433,13 @@ def test_the_details_popover_is_drawn_over_the_parameter_labels():
     popover, which sits in the chip (z-index 20). The chip is never narrower
     than its widest part (D08: stacked at 960 and 1440 px wide its box shrank
     to 242 px under the 292 px fingerprint line, whose Copy and ⓘ ran past it,
-    so the ⓘ's bubble, placed beside the box, covered the ⓘ)."""
+    so the ⓘ's bubble, placed beside the box, covered the ⓘ). L8 §2: the chip
+    is the run bar's facts slot, under the inputs as wide as they are (in the
+    one-line form its own width); that every part of the identity stays
+    inside it is measured where it is drawn, in the run bar's browser test
+    (`test_the_run_bar_is_inputs_and_actions_over_facts_and_state_at_the_owner_windows_and_the_floor`)."""
     assert tc.CHIP_Z_INDEX > 40
-    assert (f"#shep-train-chip {{ flex: 0 1 auto !important; min-width: min-content !important; "
-            f"position: relative; z-index: {tc.CHIP_Z_INDEX}; }}") in tc.PAGE_CSS
+    assert f"#shep-train-chip {{ position: relative; z-index: {tc.CHIP_Z_INDEX}; }}" in tc.PAGE_CSS
 
 
 def test_the_drawers_start_sits_in_its_footer_beside_its_reason():
@@ -4061,8 +4064,23 @@ const QUEUE_JS = __QUEUE_JS__;
         return { el: el.id || el.className.toString().slice(0, 30), hit: el === at2 || el.contains(at2) };
       });
       window.scrollTo(0, 0);
+      // The identity's parts past the facts slot's box (D08: the fingerprint's Copy and ⓘ ran
+      // past a box narrower than their line): each text line and button drawn in it.
+      const chip = document.querySelector('#shep-train-chip');
+      const partsOut = [];
+      if (chip && shown(chip)) {
+        const c = chip.getBoundingClientRect();
+        const parts = [...chip.querySelectorAll('button')].filter(shown).map((e) => e.getBoundingClientRect());
+        const texts = document.createTreeWalker(chip, NodeFilter.SHOW_TEXT);
+        for (let n = texts.nextNode(); n; n = texts.nextNode()) {
+          if (!n.textContent.trim() || !n.parentElement || !shown(n.parentElement)) { continue; }
+          const range = document.createRange(); range.selectNodeContents(n);
+          parts.push(...[...range.getClientRects()].filter((q) => q.width > 0.5));
+        }
+        partsOut.push(...parts.filter((q) => q.left < c.left - 1 || q.right > c.right + 1).map(box));
+      }
       const why = document.querySelector('#shep-train-why');
-      return { bar: inner, groups, actions, act: at('.shep-rb-act'),
+      return { bar: inner, groups, actions, act: at('.shep-rb-act'), partsOut,
         dataset: at('#shep-train-dataset .wrap:has(> .wrap-inner)'), name: at('#run_name input'),
         start: at('#shep-train-start'), cont: at('#shep-train-continue'), facts: at('#shep-train-chip'),
         state: at('#shep-train-pill .shep-pill'), details: at('#shep-train-chip .shep-nb-more > summary'), leadLines,
@@ -4126,7 +4144,8 @@ def test_the_run_bar_is_inputs_and_actions_over_facts_and_state_at_the_owner_win
     the facts slot (the GPU lock's merged into it), its "Details ›" in its
     lead's last line box, Start described by it and nothing beside the
     actions; every group holds its controls on one line, every control
-    inside the bar's padding and the first thing at its centre; no long text
+    inside the bar's padding and the first thing at its centre; every part of
+    the facts (each text line and button) inside the slot's box; no long text
     of the bar beside a control but the identity, the phrase and the state;
     the charts' empty sentence drawn whole, in its own words; and the page
     never scrolls sideways."""
@@ -4186,7 +4205,7 @@ def test_the_run_bar_is_inputs_and_actions_over_facts_and_state_at_the_owner_win
             assert "shep-why-shep-train-start" in (drawn["startBy"] or ""), where
         else:
             assert drawn["why"] is None and drawn["notices"] == [], where
-        assert drawn["beside"] == [], where
+        assert drawn["beside"] == [] and drawn["partsOut"] == [], where
         msg = drawn["msg"]
         assert msg is not None and msg["text"] == sentence, where
         assert msg["whole"][3] > msg["whole"][1] and msg["seen"] == msg["whole"], where
