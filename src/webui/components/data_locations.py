@@ -887,6 +887,18 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: other disclosures are ("Advanced: source ›"), so a set row is shorter than an open one;
 #: expanded, the bar is an unset row's, "Change to" its key and Cancel after Save. A read-only
 #: set row draws its locked Change… and its phrase there.
+#: **The name column's width** (the row's name and what needs it): it grows from `NAME_LEAST` to
+#: its measure, `NAME_MOST`, as the head's facts beside it take the rest. Whether the facts go
+#: beside the name or under it is judged from the least width (a basis of the most made the
+#: facts' two short lines, "In effect ○ Not set" and "Advanced: source ›", drop under the name
+#: at 1366 x 768 and at the display floor for want of 29 px, each row two lines taller and
+#: the panel's edge falling under the "Import folder" heading: E1 at the head 9adb3c4). The
+#: least is about 45 characters of its 14 px words a line, the measure's floor. The facts are
+#: never narrower than what they cannot break ("Set when the service started" is one unit: the
+#: value column's least is its words' least, `min-content`), so where that does not fit beside
+#: the name they go under it (read-only at 1280 x 720 they ran 9 px past the panel's edge).
+NAME_LEAST = "40ch"
+NAME_MOST = "50ch"
 #: A Set-to box's width where its bar holds it and its buttons (`SET_WIDE`): one for every row.
 SET_BOX = "30em"
 #: The Set-to bar's width (its container's) from which every box is `SET_BOX` wide: the box and
@@ -905,8 +917,8 @@ PAGE_CSS = f"""
 {_PAGE} #shep-dl-top + .shep-dl-row, {_PAGE} .shep-dl-row:first-of-type {{ border-top: 0; }}
 {_PAGE} .shep-dl-row > :is(.shep-dl-head, .shep-dl-main) {{ flex: 1 1 100% !important; min-width: 0 !important; }}
 {_PAGE} .shep-dl-head {{ gap: 6px 24px !important; flex-wrap: wrap; align-items: flex-start; }}
-{_PAGE} .shep-dl-head > .shep-dl-left {{ flex: 0 1 50ch !important; min-width: min(16em, 100%) !important; }}
-{_PAGE} .shep-dl-head > .shep-dl-facts {{ flex: 1 1 18em !important; min-width: 0 !important; gap: 4px !important; }}
+{_PAGE} .shep-dl-head > .shep-dl-left {{ flex: 1 1 {NAME_LEAST} !important; max-width: {NAME_MOST} !important; min-width: min(16em, 100%) !important; }}
+{_PAGE} .shep-dl-head > .shep-dl-facts {{ flex: 1 1 18em !important; min-width: min-content !important; gap: 4px !important; }}
 {_PAGE} #shep-dl-bd:has(.shep-dl-facts .shep-dl-path) .shep-dl-head > .shep-dl-facts {{ min-width: min(28em, 100%) !important; }}
 {_PAGE} .shep-dl-name h3 {{ margin: 0 0 var(--shep-space-head-below); font-size: 15px; font-weight: 600; }}
 {_PAGE} .shep-dl-name p {{ margin: 0; }}
@@ -940,7 +952,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-field > :is(.shep-dl-acts, .block[id^="dl_lock_"]) {{ align-self: baseline !important; }}
 {_PAGE} .shep-dl-field:has([id^="dl_lock_"] .shep-reason) > .shep-dl-create {{ flex: 1 1 100% !important; }}
 {_PAGE} [id^="dl_lock_"] .shep-reason {{ white-space: nowrap; }}
-{_PAGE} .shep-dl-kv {{ gap: 4px 12px; }}
+{_PAGE} .shep-dl-kv {{ gap: 4px 12px; grid-template-columns: max-content minmax(min-content, 1fr); }}
 {_PAGE} .shep-dl-kv > dt {{ width: 8em; }}
 {_PAGE} .shep-dl-v {{ margin-right: 8px; }}
 {_PAGE} .shep-dl-src {{ font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }}
@@ -957,6 +969,7 @@ __all__ = ["APPLY_LABEL", "CANCEL_LABEL", "CHANGE_JS", "CHANGE_KEY", "CHANGE_LAB
            "CHECK_LABEL", "CREATE_LABEL", "INTRO", "NOTHING_SET", "SET_KEY",
            "OVERRIDDEN",
            "PAGE_CSS", "PANEL_PARTS", "PATH_HIDDEN", "PRIVATE_KEYS", "REPAIR_LABEL",
+           "NAME_LEAST", "NAME_MOST",
            "ROW_LOCKED", "ROW_PARTS", "SAVE_LABEL", "SET_BOX", "SET_WIDE", "SOURCE_WORDS",
            "UNKNOWN", "UNREADABLE",
            "box_value", "changeable", "check_words", "create_data_locations_panel", "create_folder",
