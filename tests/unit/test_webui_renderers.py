@@ -1917,8 +1917,17 @@ const { chromium } = require('playwright');
       const m = go.cloneNode(true); m.style.cssText = 'position: absolute; visibility: hidden; white-space: nowrap';
       go.parentElement.appendChild(m);
       const one = m.querySelector('.shep-unit').getBoundingClientRect().width; m.remove();
+      // Each word of the link draws the link's line: no decoration is drawn into an inline block,
+      // so a word inside one is underlined only by that box's own decoration.
+      const bare = [], walk = document.createTreeWalker(go, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        let box = null;
+        for (let a = n.parentElement; a && a !== go; a = a.parentElement) {
+          if (getComputedStyle(a).display !== 'inline') { box = a; break; } }
+        if (n.data.trim() && box && getComputedStyle(box).textDecorationLine !== getComputedStyle(go).textDecorationLine) {
+          bare.push(n.data.trim()); } }
       res.place.push({ w, lines: link.map((ln) => ln.map((x) => x.w).join(' ')), placeLines: place.length,
-                       fits: one <= go.parentElement.getBoundingClientRect().width });
+                       fits: one <= go.parentElement.getBoundingClientRect().width, bare });
       const path = lines(document.querySelector('#state .shep-dl-path'));
       const src = document.querySelector('#state .shep-dl-src').getBoundingClientRect();
       const last = path[path.length - 1];
@@ -1926,6 +1935,12 @@ const { chromium } = require('playwright');
                         edge: Math.abs(src.left - path[0][0].left) <= 1 });
     }
     return res;
+  });
+  // Under the pointer the link's line thickens, its place's with it.
+  await page.hover('#notice .shep-nb-go');
+  out.hover = await page.evaluate(() => {
+    const go = document.querySelector('#notice .shep-nb-go'), unit = go.querySelector('.shep-unit');
+    return { link: getComputedStyle(go).textDecorationThickness, place: getComputedStyle(unit).textDecorationThickness };
   });
   console.log(JSON.stringify(out));
   await browser.close();
@@ -1945,7 +1960,10 @@ def test_text_that_wraps_leaves_no_word_alone_and_keeps_a_place_whole(tmp_path):
     (where every line holds one word, there is nothing to balance), as the greedy breaks did
     at some of those widths; the link's place ("Settings › Data locations",
     `server_settings.PLACE_NAMES`) stands on one line; the source starts the line under the
-    path's last line, on the path's edge. Chromium only: Firefox ignores ``pretty``."""
+    path's last line, on the path's edge. Chromium only: Firefox ignores ``pretty``.
+    The sweep's L7 check (K1): the link's underline stopped where its place began, as no
+    decoration is drawn into an inline block; every word of the link draws the link's line, a
+    thicker one under the pointer."""
     from src.config import server_settings
     from src.webui.components import data_locations as dl
     from src.webui.style import SHELL_CSS
@@ -1971,4 +1989,7 @@ def test_text_that_wraps_leaves_no_word_alone_and_keeps_a_place_whole(tmp_path):
     assert [p for p in seen["pretty"] if p["alone"]] == [], alone
     assert any(p["fits"] for p in seen["place"]), seen["place"]
     assert all(p["placeLines"] == 1 for p in seen["place"] if p["fits"]), seen["place"]
+    # The sweep's L7 check (K1): the place, drawn as one unit, is underlined as the link is.
+    assert all(p["bare"] == [] for p in seen["place"]), [p for p in seen["place"] if p["bare"]][:2]
+    assert seen["hover"]["place"] == seen["hover"]["link"], seen["hover"]
     assert all(s["below"] and s["edge"] for s in seen["source"]), seen["source"]

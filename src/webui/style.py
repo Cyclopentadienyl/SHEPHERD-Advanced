@@ -571,6 +571,11 @@ span.shep-note { display: inline-block; }
 /* What a line never parts (`renderers.bound_html`: a count and its unit, a date and its time, a
    short parenthesis): one unit the same way, so a narrow box never cuts or overflows it. */
 .shep-unit { display: inline-block; max-width: 100%; }
+/* A unit draws the line its text is decorated with: no decoration is drawn into an inline block,
+   so a link's underline stopped where its place began ("Choose one in" underlined, "Settings ›
+   Data locations" not; the sweep's L7 check, K1). It takes the decoration of the element it
+   stands in, a link's hover thickness included. */
+.shep-fact, .shep-unit { text-decoration: inherit; }
 /* A separator the line breaks after is not drawn (the shell's layout pass marks it; its box stays,
    so nothing moves): a line neither starts nor ends with " · " (the sweep's L7, SW-LK2, SW-LK7). */
 .shep-sep[data-shep-end] { visibility: hidden; }
