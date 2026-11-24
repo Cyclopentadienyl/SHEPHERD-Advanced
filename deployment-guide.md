@@ -3694,7 +3694,7 @@ gatv2/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑�
 Branch 時則是「Needed to change a setting: it shows them and the plan. Without it, the branch keeps
 the parent’s settings.」（要修改的設定只在檢查之後出現），在 1850 x 960
 下抽屜打開時第 3 步就在畫面中。主機沒有 CUDA 裝置時，每個 Device 欄位（參數、抽屜、Fine-tune）
-都在標籤下說明「No CUDA device here: auto and cuda are refused; choose cpu.」，Check checkpoint 或
+都在標籤下說明「No CUDA device here: auto and cuda are refused. Choose cpu.」，Check checkpoint 或
 任何啟動的拒絕都用頁面的用語：「Device auto needs CUDA, which is not available here; choose cpu
 for development. Nothing was started.」（訓練行程自己的句子才寫 `--device`；R-32）。抽屜打開期間若 run
 bar 的資料集改變（手動選擇、從 Datasets 的「Use for training ›」，或跟隨在另一個資料集上啟動的
@@ -4134,7 +4134,7 @@ in Settings.」）。再從桌面項目或 `launch_shepherd.sh` 啟動它。對�
 training is unavailable. torch is built for CUDA 13.0. Check the driver and CUDA libraries.」（失去某項
 能力時為紅色 ✕，例如「GNN scoring cannot run: torch is not importable (…)」）；沒有問題時寫
 「Runtime: every checked module imports.」。版本（torch、CUDA、PyG、原生擴充、Voyager）在
-**Versions ›** 下，點一下即可看到。`GET /api/v1/system/runtime` 以相同的文字回傳相同的問題。
+**Versions ›** 下，點一下即可看到。`GET /api/v1/system/runtime` 也在其 `issues` 清單中回傳這些句子。
 
 ## 4.15 PyTorch Geometric 的版本（自 Batch 1 起，2026-10-26）
 
