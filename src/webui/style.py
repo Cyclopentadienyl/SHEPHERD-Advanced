@@ -13,17 +13,19 @@ shell's head script (`src/webui/shell.py`, its layout pass) writes
 ``data-shep-layout="side"`` or ``"stack"`` on the root element, and every
 style sheet keys its side-by-side and stacked rules off it, through `SIDE`
 and `STACK` (``SIDE + " { … }"``, the rules nested inside), never a media
-query on the window's size. The browser's usable area (the window's inner
-size, raised to the floor of the arrangement the window takes: no wider than
-tall, `STACK_FLOOR_WIDTH`; wider, the display floor, `FLOOR_WIDTH` x `FLOOR_HEIGHT`)
-decides it: no wider than it is tall, stacked; wider, side by side when
-the page shown fits by its panels' own minimum widths (each panel's
-``--shep-panel-min``, set in its page's style sheet; side by side, a panel is
-never narrower), else stacked. A short window (`SHORT`, under
-`SHORT_BELOW` px tall) is density only: it never stacks, shrinks text or
-squeezes a chart. Before the first pass nothing is written, which reads as
-stacked. Below the floor the frame keeps the floor's size and the document
-scrolls, so every mark is the floor's.
+query on the window's size. The arrangement is chosen by width (R-ARR, the
+owner's D11 of 2026-11-24): a window wider than tall tries side by side
+first, which needs `FLOOR_WIDTH` and the page shown to fit by its panels' own
+minimum widths (each panel's ``--shep-panel-min``, set in its page's style
+sheet; side by side, a panel is never narrower); otherwise stacked, with the
+stacked floor `STACK_FLOOR_WIDTH`; only when neither fits does the page
+scroll. A short window (`SHORT`, under `SHORT_BELOW` px tall) is density
+only: height never changes the arrangement, shrinks text or squeezes a
+chart. Before the first pass nothing is written, which reads as stacked. The
+usable area is the window's inner size raised to the floor of the
+arrangement chosen (side by side, `FLOOR_WIDTH` x `FLOOR_HEIGHT`; stacked,
+the width `STACK_FLOOR_WIDTH` and no height floor): below it the frame keeps
+the floor's width and the document scrolls, so every mark is the floor's.
 
 This style sheet goes into the page's head as a ``<style>`` element, with the
 shared ⓘ's and each page's own ``PAGE_CSS`` (`src/webui/app.py`,
@@ -79,24 +81,28 @@ SHORT_BELOW = 900
 #: the dashboard is drawn for, in CSS px (a 1080p screen at 150 % gives about 1280 wide). At or
 #: above it in both axes the interface is whole: side by side the frame never scrolls (the
 #: area's one region scrolls inside, with its cue), nothing scrolls sideways and nothing is
-#: compressed to fit. Below it in either axis the layout is drawn as at the floor and shrinks no
-#: further: the app's frame keeps the floor's size in that axis (`SHELL_CSS`: its ``min-width``,
-#: and side by side its height) and the document scrolls as a whole. The shell's layout pass
-#: decides every mark on the window's size raised to the floor in each axis (`shell.py`'s
-#: ``area()``), so below the floor each mark is the floor's. One pair, read by those two only:
-#: no media query on the window's size, no page's own copy.
+#: compressed to fit. It is the side-by-side arrangement's floor: a window wider than tall tries
+#: side by side only at or above this width (R-ARR, the owner's D11 of 2026-11-24), and a window
+#: narrower than it takes the stacked arrangement (`STACK_FLOOR_WIDTH`). Side by side, under its
+#: height the layout is drawn as at the floor and shrinks no further: the app's frame keeps the
+#: floor's height (`SHELL_CSS`, `SIDE`) and the document scrolls down. The shell's layout pass
+#: decides every mark on the window's size raised to the floor of the arrangement chosen
+#: (`shell.py`'s ``area()``), so below the floor each mark is the floor's. One pair, read by
+#: those two only: no media query on the window's size, no page's own copy.
 FLOOR_WIDTH, FLOOR_HEIGHT = 1280, 720
 #: **The stacked arrangement's floor** (the owner's decision of 2026-11-23 on portrait windows): a
-#: window no wider than tall takes the stacked arrangement, and this is its floor, a 1080p screen
-#: turned upright at 125 % (1080 at 100 %). Measured stacked, every page in both states with every
-#: drawer holds every shared rule with nothing compressed at 1080, 1024, 960 and 864 px wide; at
-#: 720 (the same screen at 150 %) Models' tree in its narrow form runs past its panel, and at 800
-#: it has a few px to spare. The display floor above is the side-by-side arrangement's; the layout
-#: pass raises the window to the floor of the arrangement the window takes (`shell.py`'s
-#: ``area()``: no wider than tall, this width in both axes, the narrowest window no wider than
-#: tall; wider, `FLOOR_WIDTH` x `FLOOR_HEIGHT`) and writes that floor's width (`FLOOR_VAR`) for the
-#: frame's ``min-width`` (`SHELL_CSS`), so a portrait window at or above it never scrolls sideways,
-#: and one below it is drawn as at it, the document scrolling.
+#: window no wider than tall takes the stacked arrangement, and so does a window wider than tall
+#: where side by side does not fit (R-ARR, the owner's D11 of 2026-11-24: under `FLOOR_WIDTH`, or
+#: the page's panels wider than the window); this is its floor, a 1080p screen turned upright at
+#: 125 % (1080 at 100 %). Measured stacked, every page in both states with every drawer holds
+#: every shared rule with nothing compressed at 1080, 1024, 960 and 864 px wide; at 720 (the same
+#: screen at 150 %) Models' tree in its narrow form runs past its panel, and at 800 it has a few px
+#: to spare. The display floor above is the side-by-side arrangement's; the layout pass raises the
+#: window to the floor of the arrangement chosen (`shell.py`'s ``area()``: stacked, this width and
+#: no height floor, a stacked page flowing; side by side, `FLOOR_WIDTH` x `FLOOR_HEIGHT`) and
+#: writes that floor's width (`FLOOR_VAR`) for the frame's ``min-width`` (`SHELL_CSS`), so a
+#: stacked window at or above it never scrolls sideways, and one below it is drawn as at it, the
+#: document scrolling.
 STACK_FLOOR_WIDTH = 864
 #: The width of the floor the window's arrangement takes, in px (a custom property on the root
 #: element the layout pass writes): the frame's ``min-width``.
@@ -286,13 +292,12 @@ body { color: var(--shep-text); }
    strong weight, never the browser's 700. */
 .gradio-container b, .gradio-container strong, .gradio-container th { font-weight: var(--shep-weight-strong); }
 #shep-shell { position: relative; gap: 0 !important; background: var(--shep-bg); }
-/* **The display floor** (`FLOOR_WIDTH`, `FLOOR_HEIGHT`; a window no wider than tall, the stacked
-   arrangement's, `STACK_FLOOR_WIDTH`): the app's frame is never narrower than the floor of the
-   arrangement the window takes (`FLOOR_VAR`, the layout pass's; the display floor's before its first
-   pass), less the room the window's own scrollbar takes (``100vw - 100%``: a stacked page's), so a
-   window at the floor never scrolls sideways and one below it scrolls as a whole, its layout drawn
-   as at the floor. Side by side its height is the window's and never under the floor's (`SIDE`,
-   below). */
+/* **The display floor** (`FLOOR_WIDTH`, `FLOOR_HEIGHT`; stacked, `STACK_FLOOR_WIDTH`, R-ARR): the
+   app's frame is never narrower than the floor of the arrangement chosen (`FLOOR_VAR`, the layout
+   pass's; the display floor's before its first pass), less the room the window's own scrollbar
+   takes (``100vw - 100%``: a stacked page's), so a window at the floor never scrolls sideways and
+   one below it scrolls as a whole, its layout drawn as at the floor. Side by side its height is the
+   window's and never under the floor's (`SIDE`, below); stacked it has no height floor. */
 gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%)); }
 
 /* ---------------------------------------------------------------- row 1: brand, area switch, chips, Settings */

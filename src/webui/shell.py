@@ -61,24 +61,31 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   script's layout pass writes ``data-shep-layout`` on the root element, and
   every style sheet keys its side-by-side and stacked rules off it
   (`src/webui/style.py`'s ``SIDE`` and ``STACK``; no media query on the
-  window's size anywhere). The browser's usable area, the window's inner
-  size raised to the floor of the arrangement the window takes (no wider
-  than tall, the stacked arrangement's, ``style.STACK_FLOOR_WIDTH``; wider,
-  the display floor, ``style.FLOOR_WIDTH`` x ``style.FLOOR_HEIGHT``; below
-  it the frame keeps the floor's width and the document scrolls, so every
-  mark is the floor's), decides: no wider than
-  tall, ``stack``; wider, ``side`` when the page
-  shown fits by its panels' own minimum widths (each panel's
+  window's size anywhere). **The arrangement is chosen by width** (R-ARR,
+  the owner's D11 of 2026-11-24): a window wider than tall tries side by
+  side first, which needs the display floor's width (``style.FLOOR_WIDTH``)
+  and the page shown to fit by its panels' own minimum widths (each panel's
   ``--shep-panel-min`` in its page's style sheet, read from the panels as
   drawn: the shown ``.shep-page`` row's shown children, under any wrapper
-  that holds one alone, with the gaps between them), else ``stack``. Side by
+  that holds one alone, with the gaps between them); ``side`` then.
+  Otherwise, a window no wider than tall included, ``stack``: the existing
+  stacked arrangement with its readable floor. Only when neither fits (a
+  window under ``style.STACK_FLOOR_WIDTH``) is the page drawn at the
+  stacked floor and scrolled. Height never changes the arrangement. The
+  browser's usable area is the window's inner size raised to the floor of
+  the arrangement chosen: side by side, the display floor,
+  ``style.FLOOR_WIDTH`` x ``style.FLOOR_HEIGHT`` (a window under its height
+  is drawn at it, the document scrolling down); stacked, the width
+  ``style.STACK_FLOOR_WIDTH`` and no height floor (a stacked page flows).
+  Below it the frame keeps the floor's width and the document scrolls, so
+  every mark is the floor's. Side by
   side the page never scrolls, the selected page fills the space under the
   header and a region too long scrolls inside its own panel; stacked,
   everything flows and the page scrolls, with no region scrolling inside
   (a table wider than its panel scrolls sideways in its own box). A short
   window (``data-shep-short``, under ``style.SHORT_BELOW`` px tall) only
   makes headers denser: height never stacks a page. A page with no
-  ``.shep-page`` row (Settings) is decided by the window's shape alone.
+  ``.shep-page`` row (Settings) fits side by side at the floor's width.
 - **A wide form only while it fits** (OPS-FIX-R2): the same pass measures
   each box of class ``style.FIT`` (the Fine-tune job card): its wide form
   (``style.FIT_WIDE``, a table) laid out at its own narrowest, its
@@ -870,24 +877,30 @@ _SHELL_JS = r"""
   // long holder), the chips and Settings move onto a line of their own, under
   // the area switch: the chips sit where that line starts, measured, so they
   // never cover a tab.
-  // **The one layout decision** (the layout rule, module docstring): the
-  // window's inner size first (no wider than tall: stacked), then whether the
-  // page shown fits side by side by its panels' own minimum widths. Read from
-  // the style sheets (each panel's --shep-panel-min) and the window, never
-  // from the state it sets, so a pass never undoes the one before it; a
-  // scrollbar the stacked page shows is counted back (side by side has none).
+  // **The one layout decision** (the layout rule, R-ARR, module docstring): the arrangement is
+  // chosen by width. A window wider than tall tries side by side first: at least the display
+  // floor's width, and the page shown fits by its panels' own minimum widths. Otherwise the page
+  // takes the stacked arrangement. Height never changes the arrangement. Read from the style
+  // sheets (each panel's --shep-panel-min) and the window, never from the state it sets, so a
+  // pass never undoes the one before it; a scrollbar the stacked page shows is counted back
+  // (side by side has none).
   var LAYOUT = '__LAYOUT__', SHORT = '__SHORT__', SHORT_BELOW = __SHORT_BELOW__;
   // **The display floor** (style.FLOOR_WIDTH x FLOOR_HEIGHT) and **the stacked arrangement's**
   // (style.STACK_FLOOR_WIDTH): the usable area every mark is decided on is the window's inner size
-  // raised to the floor of the arrangement the window takes. No wider than tall, the stacked one,
-  // its floor STACK_FLOOR_W in both axes (the narrowest window no wider than tall); wider, the
-  // display floor. Below its floor the frame keeps the floor's width (FLOOR_VAR, written here for
-  // style.py's frame) and the document scrolls, so each mark is the floor's.
+  // raised to the floor of the arrangement chosen. Side by side, the display floor in both axes
+  // (a window under its height is drawn at it and the document scrolls down). Stacked, the width
+  // STACK_FLOOR_W and no height floor: a stacked page flows. Below its floor the frame keeps the
+  // floor's width (FLOOR_VAR, written here for style.py's frame) and the document scrolls, so
+  // each mark is the floor's.
   var FLOOR_W = __FLOOR_W__, FLOOR_H = __FLOOR_H__, STACK_FLOOR_W = __STACK_FLOOR_W__, FLOOR_VAR = '__FLOOR_VAR__';
+  // The arrangement is decided here too: side by side is tried at or above its floor's width
+  // only, where the frame is the window's own width whatever FLOOR_VAR holds, so the fit never
+  // reads the floor this pass writes.
   function area() {
-    var w = window.innerWidth, h = window.innerHeight, tall = w <= h;
-    var fw = tall ? STACK_FLOOR_W : FLOOR_W, fh = tall ? STACK_FLOOR_W : FLOOR_H;
-    return {w: Math.max(w, fw), h: Math.max(h, fh), floor: fw};
+    var w = window.innerWidth, h = window.innerHeight;
+    var side = w > h && w >= FLOOR_W && sideFits(shownTab());
+    return side ? {side: true, w: Math.max(w, FLOOR_W), h: Math.max(h, FLOOR_H), floor: FLOOR_W}
+      : {side: false, w: Math.max(w, STACK_FLOOR_W), h: h, floor: STACK_FLOOR_W};
   }
   function shownTab() {
     var outer = selected('shep-nav') || 'clinical';
@@ -926,9 +939,8 @@ _SHELL_JS = r"""
     return need <= box.getBoundingClientRect().width + bar + 0.5;
   }
   function orientation() {
-    var root = document.documentElement, a = area();
+    var root = document.documentElement, a = area(), want = a.side ? 'side' : 'stack';
     if (root.style.getPropertyValue(FLOOR_VAR) !== a.floor + 'px') { root.style.setProperty(FLOOR_VAR, a.floor + 'px'); }
-    var want = a.w > a.h && sideFits(shownTab()) ? 'side' : 'stack';
     if (root.getAttribute(LAYOUT) !== want) { root.setAttribute(LAYOUT, want); }
     if (root.hasAttribute(SHORT) !== (a.h < SHORT_BELOW)) { root.toggleAttribute(SHORT, a.h < SHORT_BELOW); }
   }

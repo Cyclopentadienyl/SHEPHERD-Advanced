@@ -2183,10 +2183,12 @@ def test_one_display_floor_is_read_by_the_layout_pass_and_the_frame_alone():
     `style.FLOOR_WIDTH` and `style.FLOOR_HEIGHT`, and since the owner's decision on portrait
     windows the stacked arrangement's, `style.STACK_FLOOR_WIDTH`, read by the shell's layout pass
     and the frame's style only. The pass decides every mark on the window's inner size raised to
-    the floor of the arrangement the window takes (``area()``: the only place it reads the
-    window's size, beside the scrollbar's room `sideFits` counts back; no wider than tall, the
-    stacked floor in both axes, so a 1080p screen turned upright is no longer raised to 1280 and
-    scrolled sideways), and the frame keeps that floor's width below it (its ``min-width``, from
+    the floor of the arrangement chosen (``area()``: the only place it reads the window's size,
+    beside the scrollbar's room `sideFits` counts back; R-ARR, the owner's D11 of 2026-11-24: a
+    window wider than tall is side by side at the display floor's width or more where the page
+    fits, the display floor in both axes; any other window stacks, the stacked floor's width and
+    no height floor, so neither a 1080p screen turned upright nor a landscape window under 1280
+    is raised to 1280 and scrolled sideways), and the frame keeps that floor's width below it (its ``min-width``, from
     the width the pass writes; side by side its height, never under the floor's) while the document
     scrolls (side by side the root scrolls, so a frame larger than the window can be reached).
     No page names the floor, and no media query on the window's size decides anything. What
@@ -2198,16 +2200,17 @@ def test_one_display_floor_is_read_by_the_layout_pass_and_the_frame_alone():
     js = shell.SHELL_HEAD
     assert (f"var FLOOR_W = {FLOOR_WIDTH}, FLOOR_H = {FLOOR_HEIGHT}, STACK_FLOOR_W = {STACK_FLOOR_WIDTH}, "
             f"FLOOR_VAR = '{FLOOR_VAR}';") in js
-    # The floor of the arrangement the window takes (the owner's decision of 2026-11-23 on
-    # portrait windows): no wider than tall, the stacked one's in both axes; wider, the display
-    # floor. The layout pass writes its width for the frame.
-    assert "var w = window.innerWidth, h = window.innerHeight, tall = w <= h;" in js
-    assert "var fw = tall ? STACK_FLOOR_W : FLOOR_W, fh = tall ? STACK_FLOOR_W : FLOOR_H;" in js
-    assert "return {w: Math.max(w, fw), h: Math.max(h, fh), floor: fw};" in js
+    # The floor of the arrangement chosen (R-ARR): side by side is tried only by a window wider
+    # than tall at the display floor's width or more, where the page fits; else stacked, the
+    # stacked floor's width and no height floor. The layout pass writes its width for the frame.
+    assert "var w = window.innerWidth, h = window.innerHeight;" in js
+    assert "var side = w > h && w >= FLOOR_W && sideFits(shownTab());" in js
+    assert "return side ? {side: true, w: Math.max(w, FLOOR_W), h: Math.max(h, FLOOR_H), floor: FLOOR_W}" in js
+    assert ": {side: false, w: Math.max(w, STACK_FLOOR_W), h: h, floor: STACK_FLOOR_W};" in js
     assert "root.style.setProperty(FLOOR_VAR, a.floor + 'px')" in js
     # The window's size is read in area() and, for the scrollbar's room, in sideFits only.
     assert js.count("window.innerWidth") == 2 and js.count("window.innerHeight") == 1, js.count("window.inner")
-    assert "var root = document.documentElement, a = area();" in js
+    assert "var root = document.documentElement, a = area(), want = a.side ? 'side' : 'stack';" in js
     assert f"gradio-app {{ min-width: calc(var({FLOOR_VAR}, {FLOOR_WIDTH}px) - (100vw - 100%)); }}" in SHELL_CSS
     assert STACK_FLOOR_WIDTH <= 1080 < FLOOR_WIDTH        # a 1080p screen turned upright needs no sideways scroll
     frame = side(SHELL_CSS)
@@ -2296,10 +2299,11 @@ _LAYOUT_FACTS_JS = r"""() => {
 #: `FLOOR_HEIGHT`, the owner's decision of 2026-11-23): the shared check's representative sizes
 #: (`UI_SIZES`), checked, a large screen laid out only, 1536 x 760 (short, the owner's laptop),
 #: checked too, one window below the floor (laid out only: drawn as at the floor, the document
-#: scrolling), and the owner's again.
+#: scrolling down; 1280 x 640, R-ARR: a window wider than tall that tries side by side), and the
+#: owner's again.
 _WALK_SIZES = ((1850, 960, True), (1280, 900, True), (1920, 720, True), (1440, 1600, True),
                (2560, 1440, False), (1536, 760, True), (1366, 768, True), (1280, 720, True),
-               (1024, 640, False), (1850, 960, False))
+               (1280, 640, False), (1850, 960, False))
 
 #: The Diagnosis load drawer, opened at a stop of the walk (`browser.UI_WALK_JS`), a
 #: row of its list chosen (the served model's, unfolded and located), so its
@@ -2320,9 +2324,10 @@ _LOAD_DRAWER = {"click": "#shep-dx-change-btn", "shown": "#shep-dx-change",
 _IMPORT_DRAWER = {"click": "#shep-test-import-open", "shown": "#shep-test-import",
                   "close": "#shep-test-import-close"}
 #: The windows a drawer is opened at in a layout walk: the owner's, a laptop, the display floor,
-#: one window below it (drawn as at the floor: its marks compared with the floor's) and the two
-#: portrait windows (stacked: the owner's decision of 2026-11-23 on portrait windows).
-_DRAWER_SIZES = ((1850, 960), (1366, 768), (1280, 720), (1024, 640), (1080, 1920), (1440, 2560))
+#: one window below it (drawn as at the floor: its marks compared with the floor's; the layout
+#: sizes' 1280 x 640, R-ARR) and the two portrait windows (stacked: the owner's decision of
+#: 2026-11-23 on portrait windows).
+_DRAWER_SIZES = ((1850, 960), (1366, 768), (1280, 720), (1280, 640), (1080, 1920), (1440, 2560))
 
 
 #: The windows the configured walk opens the Load drawer at with a row chosen (its Model Facts
@@ -2508,33 +2513,36 @@ def test_one_layout_decision_at_every_size_and_back(ui_walk):
 
     - no wider than tall (1440 x 1600): every page stacked, its panels one
       under the other;
-    - wider: side by side exactly when the page's panels fit by their own
-      minimum widths; a short window (under ``style.SHORT_BELOW``) only
-      denser, ``data-shep-short``; side by side, the panels on one line and
-      none narrower than its minimum, and the page itself never scrolls;
+    - wider (R-ARR, the owner's D11 of 2026-11-24): side by side exactly when
+      the window is at least the display floor's width and the page's panels
+      fit by their own minimum widths, else stacked; a short window (under
+      ``style.SHORT_BELOW``) only denser, ``data-shep-short``; side by side,
+      the panels on one line and none narrower than its minimum, and the page
+      itself never scrolls;
     - at or above the floor, never a horizontal page scroll;
-    - below the floor (1024 x 640): the decision and the short flag are the
-      floor's (1280 x 720) and the document scrolls both ways, the layout
-      drawn as at the floor, never shrunk to the window;
+    - below the floor (1280 x 640): the decision and the short flag are the
+      floor's (1280 x 720) and the document scrolls down, the layout drawn as
+      at the floor, never shrunk to the window;
     - back at 1850 x 960, the same as the first time; there the Training run
       bar is one row (R-38).
     Nothing covering a focused control, at every size, is the shared check's
     (`test_every_page_at_every_size_passes_the_ui_measurement_check`)."""
-    from tests.fixtures.browser import at_floor, floor_size
+    from tests.fixtures.browser import at_floor, effective_size, floor_size
 
     fw, fh = floor_size()
-    portrait = {"1440x1600"}
     floors = {s["page"]: s["extra"] for s in ui_walk if s["size"] == f"{fw}x{fh}" and not s.get("open")}
     for s in ui_walk:
         where, facts = (s["size"], s["page"]), s["extra"]
         w, h = (int(n) for n in s["size"].split("x"))
-        assert facts["short"] == (max(h, fh) < 900), (where, facts)
-        want = "stack" if s["size"] in portrait or facts["need"] > facts["width"] + 0.5 else "side"
+        ew, eh = effective_size(s["size"])
+        assert facts["short"] == (eh < 900), (where, facts)
+        want = "side" if w > h and w >= fw and facts["need"] <= facts["width"] + 0.5 else "stack"
         assert facts["layout"] == want, (where, facts)
         if not at_floor(s["size"]):
             floor = floors[s["page"]]
             assert (facts["layout"], facts["short"]) == (floor["layout"], floor["short"]), (where, facts, floor)
-            assert facts["overX"] > 0 and (facts["overY"] > 0 or facts["layout"] == "stack"), (where, facts)
+            assert (facts["overX"] > 0) == (w < ew), (where, facts)
+            assert h >= eh or facts["overY"] > 0 or facts["layout"] == "stack", (where, facts)
             continue
         assert facts["overX"] == 0, (where, facts)
         if want == "side":
@@ -4573,10 +4581,13 @@ def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_
     fw, fh = floor_size()
     cut = ["#x \"Apply\" drawn 40 px under the window"]
     # A window no wider than tall is held at or above the stacked arrangement's floor (the
-    # owner's decision of 2026-11-23 on portrait windows), not the side-by-side floor's width.
+    # owner's decision of 2026-11-23 on portrait windows), not the side-by-side floor's width;
+    # so is a window wider than tall under the side-by-side floor's width (R-ARR, D11 of
+    # 2026-11-24: it stacks, at its own size, with no height floor).
     held = [f"{w}x{h}" for w, h in ((1850, 960), (1550, 830), (1366, 768), (fw, fh), (2560, 1440),
-                                    (1080, 1920), (1440, 2560), (sw, sw))]
-    below = [f"{fw - 1}x{fh}", f"{fw}x{fh - 1}", "1024x640", f"{sw - 1}x{2 * sw}"]
+                                    (1080, 1920), (1440, 2560), (sw, sw), (1100, 1050), (1024, 640),
+                                    (fw - 1, fh))]
+    below = [f"{fw}x{fh - 1}", f"{fw}x640", f"{sw - 1}x{2 * sw}", "800x600"]
     found = layout_problems([stop(size, cut) for size in held + below], rules=("in-view",))
     assert found == [f"{size} settings: in-view: {cut[0]}" for size in held], found
     one = layout_problems([stop(f"{fw}x{fh}", lines=[["datasets", "training", "finetune", "test", "models"]])],
@@ -4608,9 +4619,14 @@ def test_the_floor_rule_compares_a_window_below_its_floor_with_the_area_it_is_dr
     from tests.fixtures.browser import effective_size, floor_size, layout_problems
 
     fw, fh = floor_size()
-    assert effective_size("1024x640") == (fw, fh) and effective_size(f"{fw}x{fh}") == (fw, fh)
+    assert effective_size(f"{fw}x640") == (fw, fh) and effective_size(f"{fw}x{fh}") == (fw, fh)
     assert effective_size(f"{sw - 64}x{2 * sw}") == (sw, 2 * sw) and effective_size("1080x1920")[1] == 1920
-    assert effective_size(f"{sw}x{sw}") == (sw, sw) and effective_size(f"{sw - 1}x{sw - 1}") == (sw, sw)
+    assert effective_size(f"{sw}x{sw}") == (sw, sw) and effective_size(f"{sw - 1}x{sw - 1}") == (sw, sw - 1)
+    # R-ARR (D11 of 2026-11-24): a window wider than tall under the side-by-side floor's width
+    # stacks at its own width, with no height floor; under the stacked floor's width it is drawn
+    # at that width.
+    assert effective_size("1100x1050") == (1100, 1050) and effective_size("1233x640") == (1233, 640)
+    assert effective_size("1024x640") == (1024, 640) and effective_size("800x600") == (sw, 600)
 
     def stop(size, *, layout="side", short=True, marked=(), frame=(fw, fh), scroll=(0, 0), page="models",
              open_=None):
@@ -4622,21 +4638,32 @@ def test_the_floor_rule_compares_a_window_below_its_floor_with_the_area_it_is_dr
     floor, tall, under = f"{fw}x{fh}", f"{sw}x{2 * sw}", f"{sw - 64}x{2 * sw}"
     stacked = {"layout": "stack", "short": False, "marked": ["#t data-shep-narrow"], "frame": (sw, 3 * sw)}
     good = [stop(floor, marked=["#t data-shep-narrow"]),
-            stop("1024x640", marked=["#t data-shep-narrow"], scroll=(256, 80)),
+            stop(f"{fw}x640", marked=["#t data-shep-narrow"], scroll=(0, 80)),
             stop(f"{fw}x600", marked=["#t data-shep-narrow"], scroll=(0, 120)),
             stop("1440x1600", layout="stack", short=False, frame=(1440, 3000), scroll=(0, 1400)),
             # C6: a portrait window takes the stacked arrangement at or above its own floor.
             stop("1080x1920", layout="stack", short=False, frame=(1080, 3000), scroll=(0, 1080)),
             stop(tall, **stacked, scroll=(0, sw)),
-            stop(under, **stacked, scroll=(64, sw))]
+            stop(under, **stacked, scroll=(64, sw)),
+            # R-ARR: a window wider than tall under the side-by-side floor's width stacks at its
+            # own size (at its floor), and under the stacked floor's width it is drawn at it.
+            stop("1100x1050", layout="stack", short=False, frame=(1100, 2000), scroll=(0, 950)),
+            stop(f"{sw}x600", layout="stack", frame=(sw, 2000), scroll=(0, 1400)),
+            stop("800x600", layout="stack", frame=(sw, 2000), scroll=(64, 1400))]
     assert layout_problems(good, rules=("floor",)) == []
-    shrunk = layout_problems([good[0], stop("1024x640", layout="stack", marked=[], frame=(1024, 640),
+    shrunk = layout_problems([good[0], stop(f"{fw}x640", layout="stack", marked=[], frame=(fw, 640),
                                             scroll=(0, 0))], rules=("floor",))
     assert any(f"layout stack where {floor}'s is side" in p for p in shrunk), shrunk
     assert any(f"marked [] where {floor}'s is ['#t data-shep-narrow']" in p for p in shrunk), shrunk
-    assert any("the frame drawn [1024, 640]" in p for p in shrunk), shrunk
-    assert any("narrower than its floor and the document does not scroll" in p for p in shrunk), shrunk
+    assert any(f"the frame drawn [{fw}, 640]" in p for p in shrunk), shrunk
     assert any("shorter than its floor and the document does not scroll" in p for p in shrunk), shrunk
+    squeezed = layout_problems([good[8], stop("800x600", layout="stack", frame=(800, 2000), scroll=(0, 1400))],
+                               rules=("floor",))
+    assert any("narrower than its floor and the document does not scroll" in p for p in squeezed), squeezed
+    assert any(f"the frame drawn [800, 2000] where {sw}x600's" in p for p in squeezed), squeezed
+    sideways = layout_problems([stop("1100x1050", layout="stack", short=False, frame=(fw, 2000),
+                                     scroll=(180, 950))], rules=("floor",))
+    assert sideways == ["1100x1050 models: floor: the document scrolls sideways by 180 px"], sideways
     # Below the stacked floor a portrait window is the stacked floor's, never the side-by-side one's.
     narrow = layout_problems([good[0], good[5], stop(under, layout="stack", short=False, marked=[],
                                                      frame=(sw - 64, 3 * sw), scroll=(0, sw))],
@@ -4645,7 +4672,7 @@ def test_the_floor_rule_compares_a_window_below_its_floor_with_the_area_it_is_dr
     assert any(f"the frame drawn [{sw - 64}, {3 * sw}] where {tall}'s" in p for p in narrow), narrow
     assert any("narrower than its floor" in p for p in narrow), narrow
     assert not any(floor in p.split(": ", 1)[1] for p in narrow), narrow
-    alone = layout_problems([stop("1024x640", scroll=(256, 80), open_="#drawer"), good[0],
+    alone = layout_problems([stop(f"{fw}x640", scroll=(0, 80), open_="#drawer"), good[0],
                              stop(under, **stacked, scroll=(64, sw))], rules=("floor",))
     assert len(alone) == 2 and all("no stop at the area it is drawn at" in p for p in alone), alone
     assert any(f"({fw}x{fh})" in p for p in alone) and any(f"({tall})" in p for p in alone), alone
@@ -4677,9 +4704,49 @@ def test_the_sideways_rule_finds_a_region_wider_than_its_frame_a_mask_or_not(l7_
     assert not _hits(found, "sideways", "#side-good") and not _hits(found, "sideways", "#side-fits"), \
         found["sideways"]
     stops = [{"size": size, "page": "x", "check": {"layout": {"sideways": ["#t scrolls sideways"]}}}
-             for size in ("1280x720", "1024x640", "1080x1920", f"{sw - 1}x{2 * sw}")]
+             for size in ("1280x720", "1280x640", "1100x1050", "1080x1920", f"{sw - 1}x{2 * sw}")]
     assert layout_problems(stops, rules=("sideways-scroll",)) == [
-        "1280x720 x: sideways-scroll: #t scrolls sideways", "1080x1920 x: sideways-scroll: #t scrolls sideways"]
+        "1280x720 x: sideways-scroll: #t scrolls sideways", "1100x1050 x: sideways-scroll: #t scrolls sideways",
+        "1080x1920 x: sideways-scroll: #t scrolls sideways"]
+
+
+#: R-ARR's windows and what each takes (the owner's D11 of 2026-11-24, the spec's table): the
+#: arrangement, and whether the frame is drawn at the stacked floor's width (a window under it).
+_ARR_WINDOWS = (((1850, 960), "side"), ((1280, 720), "side"), ((1280, 640), "side"), ((1233, 640), "stack"),
+                ((1100, 1050), "stack"), ((1050, 1100), "stack"), ((800, 600), "stack"))
+#: What a window draws: the arrangement, the frame's width and how far the document scrolls sideways.
+_ARR_JS = r"""() => {
+  const se = document.scrollingElement, app = document.querySelector('gradio-app');
+  return { layout: document.documentElement.getAttribute('data-shep-layout'),
+           frame: app.getBoundingClientRect().width, overX: se.scrollWidth - se.clientWidth };
+}"""
+
+
+def test_a_window_wider_than_tall_stacks_where_side_by_side_does_not_fit(tmp_path):
+    """R-ARR (the owner's D11 of 2026-11-24, the user's relayed request): wider than tall only
+    means "try side by side first". At ``4a29637`` a landscape window under the display floor's
+    width (1100 x 1050) was raised to that floor before the fit decision, drawn side by side and
+    scrolled 180 px sideways, where its portrait twin (1050 x 1100) stacked with no sideways
+    scroll. Now a window wider than tall is side by side only at the display floor's width or
+    more and where the page fits; else it takes the stacked arrangement at its own width, with
+    no sideways scroll, and only a window under the stacked floor's width (800 x 600) is drawn at
+    that floor and scrolled sideways by what it lacks. Height never changes the arrangement
+    (1280 x 640 is side by side, drawn at the floor's height). Settings at first use."""
+    from src.webui.style import STACK_FLOOR_WIDTH
+    from tests.fixtures.browser import node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    stops = [{"size": list(size), "page": "settings", "check": False} for size, _ in _ARR_WINDOWS]
+    seen = walk_state("first_use", tmp_path, stops, extra_js=_ARR_JS)
+    for ((w, h), want), stop in zip(_ARR_WINDOWS, seen):
+        got = stop["extra"]
+        assert got["layout"] == want, (stop["size"], got)
+        if w >= STACK_FLOOR_WIDTH:
+            assert got["overX"] <= 0 and abs(got["frame"] - w) <= 1, (stop["size"], got)
+        else:
+            assert abs(got["frame"] - STACK_FLOOR_WIDTH) <= 1, (stop["size"], got)
+            assert abs(got["overX"] - (STACK_FLOOR_WIDTH - w)) <= 1, (stop["size"], got)
 
 
 @pytest.mark.parametrize("state", ["first_use", "empty", "configured", "read_only"])

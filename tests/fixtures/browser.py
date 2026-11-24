@@ -79,11 +79,13 @@ the layout windows (`layout_stops`, `LAYOUT_SIZES`); a stop measures once the
 page's requests have been answered for ten frames in a row (a page's opening
 chain is idle for an instant between two of its events). **The display
 floor** (`floor_size`, `effective_size`, `at_floor`; the owner's decisions of
-2026-11-23): the floor of the arrangement a window takes, the display floor
-side by side and `style.STACK_FLOOR_WIDTH` no wider than tall; the walk's
-windows are at or above it but one, which is drawn as at the floor
-(``check``'s ``floor``: the layout pass's marks, the frame, the document's
-scroll), and ``in-view`` and ``sideways-scroll`` hold at or above it.
+2026-11-23 and R-ARR, D11 of 2026-11-24): the floor of the arrangement a
+window takes, the display floor where a window wider than tall tries side by
+side (at least `style.FLOOR_WIDTH` wide) and `style.STACK_FLOOR_WIDTH` wide
+with no height floor where it stacks; the walk's windows are at or above it
+but one, which is drawn as at the floor (``check``'s ``floor``: the layout
+pass's marks, the frame, the document's scroll), and ``in-view`` and
+``sideways-scroll`` hold at or above it.
 
 Module: tests/fixtures/browser.py
 """
@@ -1617,14 +1619,21 @@ def floor_size() -> tuple[int, int]:
 
 def effective_size(size: str) -> tuple[int, int]:
     """**The area a stop's window is drawn at** (``"<w>x<h>"``; the shell's layout pass,
-    ``area()``): the window raised to the floor of the arrangement it takes. No wider than
-    tall, the stacked arrangement's (`style.STACK_FLOOR_WIDTH` in both axes, the owner's
-    decision of 2026-11-23 on portrait windows); wider, the display floor (`floor_size`)."""
+    ``area()``): the window raised to the floor of the arrangement it takes (R-ARR, the owner's
+    D11 of 2026-11-24: the arrangement is chosen by width). A window wider than tall and at
+    least the display floor's width tries side by side: the display floor in both axes
+    (`floor_size`; under its height it is drawn at it). Any other window stacks: the stacked
+    arrangement's width (`style.STACK_FLOOR_WIDTH`) and no height floor (a stacked page flows).
+    Side by side also needs the page's panels to fit, which reads the width alone: a page that
+    stacks instead at such a window stacks at the side floor's stop of the same width too, so a
+    stop is compared with a stop of its own arrangement either way."""
     from src.webui.style import STACK_FLOOR_WIDTH
 
     w, h = (int(n) for n in size.split("x"))
-    fw, fh = (STACK_FLOOR_WIDTH, STACK_FLOOR_WIDTH) if w <= h else floor_size()
-    return max(w, fw), max(h, fh)
+    fw, fh = floor_size()
+    if w > h and w >= fw:
+        return max(w, fw), max(h, fh)
+    return max(w, STACK_FLOOR_WIDTH), h
 
 
 def at_floor(size: str) -> bool:
@@ -1690,9 +1699,10 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       table wider than its frame), unless it says so in words just before it (a drawn
       ``shep-rs-cue``: Compare, a column per result);
     - ``floor`` (the floor of the arrangement the window takes, `effective_size`: the display
-      floor, `floor_size`, side by side; `style.STACK_FLOOR_WIDTH` no wider than tall): at or
-      above it, the document never scrolls sideways and, side by side, never at all (the frame
-      never scrolls); below it in either axis, the layout pass's marks (side or stack, short, the
+      floor, `floor_size`, where a window wider than tall tries side by side; elsewhere
+      `style.STACK_FLOOR_WIDTH` wide, with no height floor): at or above it, the document never
+      scrolls sideways and, side by side, never at all (the frame never scrolls); below it in
+      either axis, the layout pass's marks (side or stack, short, the
       header's classes, each box marked narrow, folded or alone) and the frame are those of the
       stop of the same page and drawer at the area the window is drawn at (raised to its
       arrangement's floor), and the document scrolls in each axis the window is under that
@@ -1794,15 +1804,17 @@ def state_settings(state: str, root: Path) -> dict[str, str]:
     raise ValueError(f"no walk state {state!r}")
 
 
-#: The layout measure's windows (the owner's decisions of 2026-11-23): the owner's two windows
-#: (1850 x 960, 1550 x 830), a laptop (1366 x 768), the display floor (1280 x 720), a large
-#: screen (2560 x 1440: nothing stretched past readability), one window below the floor
-#: (1024 x 640: drawn as at the floor, the document scrolls), two portrait windows (a 1080p and a
+#: The layout measure's windows (the owner's decisions of 2026-11-23 and R-ARR, D11 of
+#: 2026-11-24): the owner's two windows (1850 x 960, 1550 x 830), a laptop (1366 x 768), the
+#: display floor (1280 x 720), a large screen (2560 x 1440: nothing stretched past readability),
+#: one window below the floor (1280 x 640, 150 % of 1920 x 960: side by side, drawn as at the
+#: floor, the document scrolls down), a window wider than tall that stacks (1100 x 1050: under
+#: the side-by-side floor's width, never scrolled sideways), two portrait windows (a 1080p and a
 #: 1440p screen turned upright, 1080 x 1920 and 1440 x 2560: the stacked arrangement, at or above
 #: its floor, `style.STACK_FLOOR_WIDTH`), then the owner's again (back from below the floor and
 #: from stacked).
-LAYOUT_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720), (2560, 1440), (1024, 640),
-                (1080, 1920), (1440, 2560), (1850, 960))
+LAYOUT_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720), (2560, 1440), (1280, 640),
+                (1100, 1050), (1080, 1920), (1440, 2560), (1850, 960))
 
 
 def layout_stops(pages: tuple[str, ...] = UI_PAGES, sizes: tuple[tuple[int, int], ...] = LAYOUT_SIZES,

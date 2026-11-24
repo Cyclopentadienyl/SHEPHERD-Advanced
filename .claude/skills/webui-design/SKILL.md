@@ -25,9 +25,12 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
    `FLOOR_HEIGHT`): at or above it in both axes the interface is whole and tidy, the frame never scrolls (the area's one
    region scrolls inside, with its cue), nothing scrolls sideways and nothing is compressed to fit. Below it in either
    axis the layout is drawn as at the floor and shrinks no further: the frame keeps the floor's size and the browser
-   scrolls the page as a whole. Nothing is built for a window under the floor. A portrait window (no wider than tall)
-   takes the stacked arrangement, whose floor is `style.STACK_FLOOR_WIDTH` (864 px, a 1080p screen turned upright at
-   125 %): at or above it every page holds every rule as side by side does, nothing overlapping, covering or cut.
+   scrolls the page as a whole. Nothing is built for a window under the floor. **The arrangement is chosen by width**
+   (R-ARR, the owner's D11 of 2026-11-24, as Apple's and Google's size classes are): a window wider than tall tries side
+   by side first, which needs the display floor's width and the page's panels to fit; otherwise, a portrait window
+   included, it takes the stacked arrangement, whose floor is `style.STACK_FLOOR_WIDTH` (864 px, a 1080p screen turned
+   upright at 125 %) and which has no height floor: at or above it every page holds every rule as side by side does,
+   nothing overlapping, covering or cut. Only a window under it scrolls sideways. Height never changes the arrangement.
 2. **Each fact once on a screen.** A fingerprint, a name, a state or a number appears in one place, where it reads
    naturally and stands out. Elsewhere it is referred to by a short relation ("same dataset as the run bar"). Repeat
    it only where the two places can differ (a result's own identity against what is selected).
