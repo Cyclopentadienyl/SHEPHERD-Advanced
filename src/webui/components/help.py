@@ -561,20 +561,32 @@ _HELP_JS = r"""
     var region = btn.closest('.' + REGION);
     return region ? box(region.getBoundingClientRect()) : null;
   }
+  function join(a, b) {
+    return {left: Math.min(a.left, b.left), top: Math.min(a.top, b.top),
+            right: Math.max(a.right, b.right), bottom: Math.max(a.bottom, b.bottom)};
+  }
+  // A dimmed control's phrase (R-WHY) explains the controls it names (data-for): they are
+  // kept uncovered with the phrase's own line, as a field is for its ⓘ (the phrase's line
+  // alone let the bubble fall on the button it explains).
+  function explained(btn, r) {
+    var ids = (btn.getAttribute('data-for') || '').split(/\s+/).filter(Boolean);
+    for (var i = 0; i < ids.length; i++) {
+      var c = document.getElementById(ids[i]), q = c && rectOf(c);
+      if (q && q.right > q.left && q.bottom > q.top) { r = join(r, q); }
+    }
+    return r;
+  }
   function fieldRect(btn) {
     var el = ownField(btn) || btn.closest('tr');
     if (!el) {
       var key = btn.closest('.shep-k');
       if (key) {
         var k = box(key.getBoundingClientRect()), next = key.nextElementSibling;
-        if (!next) { return k; }
-        var v = next.getBoundingClientRect();
-        return {left: Math.min(k.left, v.left), top: Math.min(k.top, v.top),
-                right: Math.max(k.right, v.right), bottom: Math.max(k.bottom, v.bottom)};
+        return next ? join(k, next.getBoundingClientRect()) : k;
       }
       el = btn.closest('.shep-chip, li, p, dt, dd, h1, h2, h3, h4, label, div') || btn;
     }
-    return rectOf(el);
+    return explained(btn, rectOf(el));
   }
   function overlaps(a, b) {
     return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;

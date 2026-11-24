@@ -3808,12 +3808,16 @@ def _pieces_page():
             gr.Button("Start", interactive=False, elem_id="pc-why-btn")
             shell.plain_html(r.phrase_line("d8", control="pc-why-btn", lock=True), elem_id="pc-why-d8")
             shell.plain_html(r.phrase_line(notice, control="pc-why-btn2"), elem_id="pc-why-ws")
-            # R-WHY beside the field help (the L8 S1 check, S1C-2): a dimmed field with its note
-            # (``info=``) and its ⓘ, named by a phrase.
+            # R-WHY beside the field help (the L8 S1 check, S1C-1 and S1C-2): a dimmed field with
+            # its note (``info=``) and its ⓘ, named by a phrase; and a phrase drawn before the
+            # button it explains, in one row.
             gr.Textbox(label="Run", info="The run whose saves are listed.", interactive=False,
                        elem_id="pc-why-field")
             ctx.help.field("pc-why-field", "Run", "Which run the saves come from.")
             shell.plain_html(r.phrase_line("d8", control="pc-why-field", lock=True), elem_id="pc-why-field-d8")
+            with gr.Row(elem_id="pc-why-row"):
+                shell.plain_html(r.phrase_line("d8", control="pc-why-row-btn", lock=True), elem_id="pc-why-row-d8")
+                gr.Button("Register", interactive=False, elem_id="pc-why-row-btn", scale=0, min_width=0)
             shell.plain_html(r.phrase_line(notice, control="pc-rel-btn"), elem_id="pc-rel")
             shell.plain_html(r.phrase_line(notice, control="pc-rel-end-btn").replace(
                 'class="shep-reason', 'style="justify-content: end; max-width: none" class="shep-reason', 1),
@@ -4027,13 +4031,22 @@ const QUEUE_JS = __QUEUE_JS__;
   });
   await page.keyboard.press('Escape'); await frames(2);
   // A dimmed field's description: its note, its help text and its phrase; with the phrase gone,
-  // only the phrase's id goes.
+  // only the phrase's id goes. A phrase drawn before the button it explains: its bubble leaves
+  // that button and the phrase uncovered.
   const fieldBy = () => page.evaluate(() => {
     const f = document.querySelector('#pc-why-field textarea, #pc-why-field input');
     return (f.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
   });
   out.why.field = { ids: await fieldBy(),
                     phrase: await page.evaluate(() => document.querySelector('#pc-why-field-d8 button.shep-why').id) };
+  await page.click('#pc-why-row-d8 button.shep-why');
+  await page.waitForSelector('#shep-help-bubble:not([hidden])'); await frames(2);
+  out.why.row = await page.evaluate(() => {
+    const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+    return { bubble: q(document.getElementById('shep-help-bubble')), control: q(document.getElementById('pc-why-row-btn')),
+             phrase: q(document.querySelector('#pc-why-row-d8 button.shep-why')) };
+  });
+  await page.keyboard.press('Escape'); await frames(2);
   await page.evaluate(() => document.querySelector('#pc-why-field-d8 button.shep-why').remove()); await frames(4);
   out.why.field.after = await fieldBy();
   await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight)); await frames(2);
@@ -4127,6 +4140,20 @@ def test_a_dimmed_fields_description_keeps_its_note_its_help_and_its_phrase(piec
     assert {note, text, field["phrase"]} <= set(field["ids"]), field
     assert field["ids"].index(note) < field["ids"].index(text), field
     assert field["phrase"] not in field["after"] and {note, text} <= set(field["after"]), field
+
+
+def test_a_phrases_bubble_leaves_the_control_it_explains_and_the_phrase_uncovered(pieces_seen):
+    """The L8 S1 check (S1C-1): a phrase keyed to the D8 chip opens the one help bubble, which
+    kept uncovered only the phrase's own line, so the tall bubble fell on the button the phrase
+    explains (Test's Start test and Register, Models' Reload). The controls a phrase names
+    (``data-for``) are kept uncovered with its line, as a field is for its ⓘ (R-HELP)."""
+    row = pieces_seen["why"]["row"]
+
+    def overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    assert not overlap(row["bubble"], row["control"]), row
+    assert not overlap(row["bubble"], row["phrase"]), row
 
 
 def test_a_counts_words_read_as_one_only_while_the_table_has_the_room(pieces_seen):
