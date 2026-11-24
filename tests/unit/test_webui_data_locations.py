@@ -635,6 +635,54 @@ def test_the_value_in_effect_and_its_source_read_as_two_facts(dl, monkeypatch, t
         f"{dl.PATH_HIDDEN} {saved}")
 
 
+def test_a_checked_empty_folder_says_its_state_then_where_its_contents_appear(dl, tmp_path):
+    """The owner's decision of 2026-11-24 on "(no workspace yet…)": Check's answer for an empty
+    folder put its state in a parenthesis after the path ("(no workspace yet: Datasets lists
+    each one built in it)"). Now the answer's first line says the folder is usable, and a line
+    of its own says what it holds, then, while it holds nothing, where its contents will
+    appear: no parenthesis, a state and a next step, the same shape for the registry and the
+    import folder; "built" names no builder (the GUI builds no graph). A folder that holds
+    something says how much, with no next step. Fails on 9adb3c4: the parenthesis."""
+    from html.parser import HTMLParser
+
+    class Lines(HTMLParser):
+        """The answer's block elements, as their words."""
+
+        def __init__(self):
+            super().__init__()
+            self.lines, self.depth = [], 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("p", "div"):
+                self.lines.append({"class": dict(attrs).get("class", ""), "text": ""})
+
+        def handle_data(self, data):
+            if self.lines:
+                self.lines[-1]["text"] += data
+
+    places = {"workspaces_root": "Datasets", "registry": "Research › Test",
+              "intake_dir": "Test › Import"}
+    for key, place in places.items():
+        folder = tmp_path / f"empty-{key}"
+        folder.mkdir(mode=0o700)
+        said = dl.check_words(key, str(folder))
+        parser = Lines()
+        parser.feed(said)
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", said))
+        assert "(" not in text and ")" not in text, (key, text)
+        assert [" ".join(line["text"].split()) for line in parser.lines][:1] == [
+            f"● Usable {folder}"], (key, parser.lines)
+        holds = [line for line in parser.lines if "shep-dl-holds" in line["class"]]
+        assert len(holds) == 1, (key, parser.lines)
+        state, _, step = " ".join(holds[0]["text"].split()).partition(". ")
+        assert state.startswith("Holds no ") and step.endswith(f"appears in {place}."), (key, holds)
+        assert not re.search(r"\b(builds|build it|you build|we build)\b", text, re.I), (key, text)
+    (tmp_path / "full" / "demo").mkdir(parents=True)
+    said = dl.check_words("workspaces_root", str(tmp_path / "full"))
+    holds = re.findall(r'<p class="shep-dl-holds">(.*?)</p>', said)
+    assert holds == ["Holds 1 workspace."], said
+
+
 def test_every_value_the_panel_shows_is_escaped(dl, monkeypatch, tmp_path):
     hostile = "<img src=x onerror=alert(1)>"
     folder = tmp_path / hostile.replace("/", "")

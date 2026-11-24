@@ -512,30 +512,39 @@ def _count(number: int, one: str, many: str) -> str:
     return f"{number} {one if number == 1 else many}"
 
 
-def holds_words(key: str, resolved: Any) -> str:
-    """What a checked folder holds, read by the server's own lists with that
-    folder alone (an explicit mapping: no saved file is read)."""
+#: **What each folder holds, by the server's own list** (`holds_words`): the list, the item's
+#: name (one, many), and, while it holds none, the next step: where its contents will appear.
+#: "Built" names no builder: the dashboard builds no graph (the owner's decision of
+#: 2026-11-24 on "(no workspace yet…)").
+HOLDS = {
+    KEY_WORKSPACES_ROOT: ("list_workspaces", "workspace", "workspaces",
+                          "Each workspace built in it appears in Datasets."),
+    KEY_REGISTRY: ("list_cohort_versions", "cohort version", "cohort versions",
+                   "Each one imported into it appears in Research\u00a0› Test."),
+    KEY_INTAKE_DIR: ("list_intake_files", "import file", "import files",
+                     "Each case file placed in it appears in Test\u00a0› Import."),
+}
+
+
+def holds_words(key: str, resolved: Any) -> Tuple[str, Optional[str]]:
+    """**What a checked folder holds, then the next step** (the owner's decision of 2026-11-24
+    on "(no workspace yet…)": a short state and the next step, apart, never in a
+    parenthesis): read by the server's own lists with that folder alone (an explicit mapping:
+    no saved file is read). The state ("Holds 2 workspaces.", "Holds no workspace yet."),
+    and while it holds none, where its contents will appear (`HOLDS`); None for no step. A
+    list that cannot be read says so, with its reason, and no step."""
     from src.api.services import server_lists
 
     if key == KEY_TRAINING_EVIDENCE_DIRS:
-        return _count(len(resolved), "folder", "folders")
-    variable = server_settings.SAVED_VARIABLES[key]
-    environ = {variable: str(resolved)}
-    if key == KEY_WORKSPACES_ROOT:
-        listing = server_lists.list_workspaces(environ=environ)
-        what = (_count(len(listing.items), "workspace", "workspaces") if listing.items else
-                "no workspace yet: Datasets lists each one built in it")
-    elif key == KEY_REGISTRY:
-        listing = server_lists.list_cohort_versions(environ=environ)
-        what = (_count(len(listing.items), "cohort version", "cohort versions")
-                if listing.items else "no cohort version yet")
-    else:
-        listing = server_lists.list_intake_files(environ=environ)
-        what = (_count(len(listing.items), "import file", "import files") if listing.items
-                else "no import file yet")
-    if listing.problem and not listing.items:
-        return f"{what} ({listing.problem})"
-    return what
+        return f"{_count(len(resolved), 'folder', 'folders')} listed.", None
+    reader, one, many, step = HOLDS[key]
+    environ = {server_settings.SAVED_VARIABLES[key]: str(resolved)}
+    listing = getattr(server_lists, reader)(environ=environ)
+    if listing.items:
+        return f"Holds {_count(len(listing.items), one, many)}.", None
+    if listing.problem:
+        return f"Its contents cannot be listed: {listing.problem.rstrip('.')}.", None
+    return f"Holds no {one} yet.", step
 
 
 def _value_of(key: str, text: Any) -> Any:
@@ -550,7 +559,9 @@ def _value_of(key: str, text: Any) -> Any:
 
 def check_words(key: str, text: Any) -> str:
     """Check: the box's value by the rule its setting is read by
-    (`server_settings.check_data_location`), as one status line."""
+    (`server_settings.check_data_location`): "Usable" and the resolved path, then a line of
+    its own saying what the folder holds and, while it holds nothing, the next step
+    (`holds_words`), and a note under them where the rule has one."""
     value = _value_of(key, text)
     if value is None:
         return r.status_mark("neutral", "Nothing to check: type a folder path first")
@@ -560,10 +571,12 @@ def check_words(key: str, text: Any) -> str:
         return r.status_mark("error", f"Not usable: {exc}")
     shown = (", ".join(str(p) for p in resolved) if isinstance(resolved, tuple)
              else str(resolved))
-    said = r.status_mark("ok", "Usable") + f" <code>{r.e(shown)}</code>"
-    said += f' <span class="shep-muted">({r.e(holds_words(key, resolved))})</span>'
+    state, step = holds_words(key, resolved)
+    holds = " ".join(r.e(words) for words in (state, step) if words)
+    said = (f'<div>{r.status_mark("ok", "Usable")} <code>{r.e(shown)}</code></div>'
+            f'<p class="shep-dl-holds">{holds}</p>')
     if note:
-        said += "<br>" + r.status_mark("warn", note)
+        said += f'<div>{r.status_mark("warn", note)}</div>'
     return said
 
 
@@ -958,6 +971,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-dl-src {{ font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }}
 {_PAGE} .shep-dl-problem {{ color: var(--shep-text-2); font-size: 14px; }}
 {_PAGE} .shep-dl-adv {{ font-size: 14px; margin-top: 2px; }}
+{_PAGE} .shep-dl-holds {{ margin: 2px 0 0; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} [id^="dl_result_"]:has(.shep-html:empty), {_PAGE} #dl_status:has(.shep-html:empty),
 {_PAGE} [id^="dl_suggest_"]:has(.shep-html:empty),
 {_PAGE} [id^="dl_lock_"]:has(.shep-html:empty) {{ display: none !important; }}
@@ -971,7 +985,7 @@ __all__ = ["APPLY_LABEL", "CANCEL_LABEL", "CHANGE_JS", "CHANGE_KEY", "CHANGE_LAB
            "PAGE_CSS", "PANEL_PARTS", "PATH_HIDDEN", "PRIVATE_KEYS", "REPAIR_LABEL",
            "NAME_LEAST", "NAME_MOST",
            "ROW_LOCKED", "ROW_PARTS", "SAVE_LABEL", "SET_BOX", "SET_WIDE", "SOURCE_WORDS",
-           "UNKNOWN", "UNREADABLE",
+           "HOLDS", "UNKNOWN", "UNREADABLE",
            "box_value", "changeable", "check_words", "create_data_locations_panel", "create_folder",
            "key_html", "row_controls",
            "effect_html", "holds_words", "name_html", "notice_html", "reason_line", "state_html",
