@@ -5515,6 +5515,17 @@ def test_a_search_box_takes_its_roles_width_in_the_search_row(role_boxes):
     assert (row["minWidth"], row["flex"]) == (plain["minWidth"], plain["flex"]), role_boxes
 
 
+def test_a_path_box_grows_along_a_row_and_keeps_its_height_in_a_column(role_boxes):
+    """R-WIDTH (t-result's "Needs from shared" 2; the L8 close): the path and search roles grew
+    by a flex basis (``flex: 1 1 var(--shep-w-grow-min)``) wherever they stood, and in a column a
+    basis is a height: a path box stood 24ch tall (lane T moved Training's typed path into a row to
+    avoid it). The basis is scoped to row containers (a row, a bar, a group, the form Gradio wraps
+    a row's fields in): in a column the box is as tall as in a row, and in a row it still grows."""
+    in_row, in_column = role_boxes["p-row"], role_boxes["p-col"]
+    assert abs(in_column["height"] - in_row["height"]) <= 1, role_boxes
+    assert in_row["flex"].startswith("1 1 "), role_boxes
+
+
 #: R-WIDTH at a wide window, Fine-tune at first use: Epochs' input box and its content width,
 #: one ``ch`` of its font, the "More settings" title's words and its mark, and what lies under
 #: the title's words (`test_fields_take_their_roles_width_and_an_accordions_mark_stays_by_its_title`).

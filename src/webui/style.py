@@ -740,12 +740,14 @@ span.shep-note { display: inline-block; }
 .shep-w-name :is(input[type=text], textarea) {
   max-width: calc(var(--shep-w-name) + 2 * var(--input-padding, 10px) + 2 * var(--input-border-width, 1px));
 }
-.shep-w-path, .shep-w-search { flex: 1 1 var(--shep-w-grow-min) !important; min-width: min(var(--shep-w-grow-min), 100%) !important; }
+.shep-w-path, .shep-w-search { min-width: min(var(--shep-w-grow-min), 100%) !important; }
 /* Their grow is along a row's line (a row, a bar, a bar's group, or the form Gradio wraps a row's
    fields in, whose direction is its row's): in a column a flex basis is a height, and a path box
    stood 24ch tall (the L8 close; lane T put its path in a row to avoid it). The container part
    counts for nothing (``:where``), so the role keeps its weight against a row's own rules. */
-
+:where(.row, .shep-bar, .shep-grp, :is(.row, .shep-bar, .shep-grp) > .form) > :is(.shep-w-path, .shep-w-search) {
+  flex: 1 1 var(--shep-w-grow-min) !important;
+}
 
 /* **A field row** (D03, the WebUI ledger's UI-03): labelled fields with an action beside them
    (Fine-tune's base picker, Training's Continue drawer, Test's Run, the Diagnosis load drawer's
