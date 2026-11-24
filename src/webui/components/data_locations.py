@@ -737,7 +737,8 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: the box's edge (K4: bound into Check and Save's group, it took them off the
 #: box's line wherever the three did not fit beside the box, from 1550 x 830
 #: down, each read-only row 17 px taller than before and shaped unlike an
-#: operator's); Create then
+#: operator's), its words on the buttons' baseline beside a box of two lines
+#: too; Create then
 #: takes a line of its own on the box's edge: the bar's buttons, Create
 #: included, are off for the reason in their bar (C5: Create's lock had no
 #: reason beside or under it).
@@ -792,7 +793,8 @@ PAGE_CSS = f"""
 }}
 {_PAGE} .shep-dl-create > [id^="dl_suggest_"] {{ flex: 1 1 max-content !important; min-width: 0 !important; }}
 {_PAGE} .shep-dl-create:not(:has(button:not([hidden]))) {{ display: none !important; }}
-{_PAGE} .shep-dl-field > .block[id^="dl_lock_"] {{ flex: none !important; width: auto !important; min-width: max-content !important; align-self: center; }}
+{_PAGE} .shep-dl-field > .block[id^="dl_lock_"] {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
+{_PAGE} .shep-dl-field > :is(.shep-dl-acts, .block[id^="dl_lock_"]) {{ align-self: baseline !important; }}
 {_PAGE} .shep-dl-field:has([id^="dl_lock_"] .shep-reason) > .shep-dl-create {{ flex: 1 1 100% !important; }}
 {_PAGE} [id^="dl_lock_"] .shep-reason {{ white-space: nowrap; }}
 {_PAGE} .shep-dl-kv {{ gap: 4px 12px; }}
