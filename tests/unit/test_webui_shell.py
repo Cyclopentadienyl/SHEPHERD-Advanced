@@ -887,6 +887,69 @@ def test_no_header_element_covers_a_tab_at_any_width(tmp_path):
             assert chip["whole"] or chip["capped"], (width, chip)
 
 
+#: The served dashboard at each window the test names: once the header's layout pass has run,
+#: where the brand, each chip, the Settings tab and the header row's content box are.
+_WRAPPED_HEADER_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of JSON.parse(process.argv[3])) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#shep-chips .shep-chips .shep-chip', { timeout: 60000 });
+    await page.waitForFunction(() => document.getElementById('shep-shell').style.getPropertyValue('--shep-chips-top'),
+                               null, { timeout: 30000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const box = (el) => { const r = el.getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+      const row = document.querySelector('#shep-nav > .tab-wrapper > .tab-container');
+      const s = getComputedStyle(row);
+      return { wrapped: document.getElementById('shep-shell').classList.contains('shep-nav-wrapped'),
+               brand: box(document.querySelector('#shep-brand .shep-brand')),
+               chips: [...document.querySelectorAll('#shep-chips .shep-chip')].map(box),
+               settings: box(document.getElementById('shep-tab-settings-button')),
+               area: box(document.getElementById('shep-tab-research-button')),
+               end: row.getBoundingClientRect().right - parseFloat(s.paddingRight) - parseFloat(s.borderRightWidth) };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_wrapped_headers_states_start_at_the_left_and_settings_ends_it(tmp_path):
+    """D10 (the owner, 2026-11-24): two header lines are fine; on the wrapped second line the
+    states start at the left, on the brand's edge, and Settings stays at the right. They sat
+    together at the right (the chips from 488 px at 1080 wide), leaving the line's start empty
+    under the brand. In the served dashboard, at a portrait window (1080 x 1920) and a
+    landscape one that stacks (1100 x 1050): the header wraps; the first chip's left is the
+    brand's left and Settings' right the header row's content right (within a pixel); the chips
+    and Settings share the second line, under the area switch, and never overlap."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, run_node
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    sizes = [[1080, 1920], [1100, 1050]]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_WRAPPED_HEADER_JS, tmp_path, base[:-len("gradio_api")], json.dumps(sizes),
+                        timeout=300)
+    for size, facts in seen.items():
+        assert facts["wrapped"] is True, size
+        chips, settings = facts["chips"], facts["settings"]
+        assert abs(chips[0]["left"] - facts["brand"]["left"]) <= 1, (size, chips[0], facts["brand"])
+        assert abs(settings["right"] - facts["end"]) <= 1, (size, settings, facts["end"])
+        for chip in chips:
+            assert chip["top"] < settings["bottom"] and settings["top"] < chip["bottom"], (size, chip)
+            assert chip["top"] >= facts["area"]["bottom"], (size, chip, facts["area"])
+        assert chips[-1]["right"] < settings["left"], (size, chips[-1], settings)
+
+
 # --------------------------------------------------------------------------- a reload
 def _where_page():
     """The shell with stand-in pages: Models holds a button that answers the

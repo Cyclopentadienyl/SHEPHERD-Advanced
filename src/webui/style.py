@@ -397,13 +397,17 @@ gradio-app { min-width: calc(var(__FLOOR_VAR__, __FLOOR_W__px) - (100vw - 100%))
   outline: 2px solid var(--shep-focus-ring) !important; outline-offset: 2px; box-shadow: none;
 }
 #shep-research-nav > .tab-wrapper button[role="tab"]:focus-visible { outline-offset: -2px; }
-/* Not enough room for one row: the chips and Settings go onto a second line. */
+/* Not enough room for one row: the chips and Settings go onto a second line (D10, the owner of
+   2026-11-24): the states start at the line's left, on the brand's edge (the layout pass's
+   ``--shep-chips-left``), and Settings ends it at the right; the chips never reach Settings. */
 #shep-shell.shep-nav-wrapped #shep-nav > .tab-wrapper > .tab-container { row-gap: 10px; padding-bottom: 0; }
 #shep-shell.shep-nav-wrapped #shep-nav > .tab-wrapper .right-tab-group {
   flex-basis: 100%; justify-content: flex-end; min-height: max(44px, calc(var(--shep-chips-h, 28px) + 12px));
 }
 #shep-shell.shep-nav-wrapped #shep-chips {
   top: var(--shep-chips-top, var(--shep-row1-h)); height: max(44px, calc(var(--shep-chips-h, 28px) + 12px));
+  left: var(--shep-chips-left, 16px); right: auto; justify-content: flex-start;
+  max-width: calc(100% - var(--shep-chips-left, 16px) - var(--shep-settings-w, 120px) - 32px);
 }
 
 /* ---------------------------------------------------------------- row 2: the research pages, the stage hint */

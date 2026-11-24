@@ -1344,6 +1344,9 @@ _SHELL_JS = r"""
     shell.style.setProperty('--shep-chips-h', chips.offsetHeight + 'px');
     var line = Math.round(right.getBoundingClientRect().top - shell.getBoundingClientRect().top);
     shell.style.setProperty('--shep-chips-top', line + 'px');
+    // D10: on the wrapped second line the states start on the brand's edge (Settings ends it).
+    var edge = brand ? Math.round(brand.getBoundingClientRect().left - shell.getBoundingClientRect().left) : 16;
+    shell.style.setProperty('--shep-chips-left', edge + 'px');
   }
   // The layout rule's titled ellipsis, on every page: a select's value or a
   // segmented control's label cut to an ellipsis has its whole text as its
