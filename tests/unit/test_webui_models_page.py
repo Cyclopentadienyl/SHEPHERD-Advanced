@@ -1446,16 +1446,171 @@ def test_the_ledgers_states_are_said_and_name_no_directory(world, monkeypatch):
             in _text(detail["records"]))
     assert str(world["root"]) not in detail["records"] + detail["top"]
     none = mp.detail_parts(listing, data, _key(world, "model-30.pt"), ctl)
-    # R-68: a titled state, what it means and one next step (its action,
+    # R-68 and the owner's D1: a state, what it means and how a result gets here behind its
+    # Details, and one next step (its action,
     # `test_the_empty_records_next_step_opens_test_with_this_model_chosen`);
     # no file named, never "ledger", and "· 0" nowhere.
+    shown, folded, _acts, _lines = _shown_and_folded(none["records"])
+    assert shown == ["No recorded result yet", "Details ›", "Test this model ›"], shown
+    assert "never evaluated" in folded and mp.RECORDS_NEXT in folded
     said = _text(none["records"])
-    assert said.startswith("No recorded result yet") and "never evaluated" in said
-    assert said.endswith("Next: start a test of it with Register when the run ends checked. "
-                         "Its result then appears here. Test this model ›")
     assert "ledger" not in said.lower() and "evaluations.json" not in said
     assert [label for label, _value in none["seg"]] == ["Recorded results", "Usage history",
                                                        "Results"]
+
+
+def _shown_and_folded(markup):
+    """What a reader sees of `markup` before opening anything, and what one
+    click on a "Details ›" shows: the visible words (a mark hidden from a
+    screen reader left out), each block's words apart, and the folded words
+    (a ``<details>``'s body, its summary excepted); plus each visible action's
+    ``data-act`` and the words of the block a ``<details>``'s summary shares
+    its line with."""
+    from html.parser import HTMLParser
+
+    class Reader(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.stack, self.shown, self.folded, self.acts, self.lines = [], [], [], [], []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag in ("br", "wbr"):
+                return
+            self.stack.append((tag, attrs))
+            if tag == "button" and "data-act" in attrs and not self._in("details"):
+                self.acts.append(attrs["data-act"])
+            if tag in ("p", "div", "dd", "dt", "summary", "details"):
+                self.shown.append("|")
+
+        def handle_endtag(self, tag):
+            while self.stack:
+                if self.stack.pop()[0] == tag:
+                    break
+
+        def _in(self, tag):
+            return any(t == tag for t, _ in self.stack)
+
+        def handle_data(self, data):
+            if any(a.get("aria-hidden") == "true" for _, a in self.stack):
+                return
+            inside = self._in("details") and not self._in("summary")
+            (self.folded if inside else self.shown).append(data)
+            if self._in("summary"):
+                line = next((a.get("class", "") for t, a in reversed(self.stack)
+                             if "shep-nb-line" in a.get("class", "").split()), None)
+                self.lines.append(line)
+
+    reader = Reader()
+    reader.feed(markup)
+    shown = [" ".join(part.split()) for part in "".join(reader.shown).split("|")]
+    return ([s for s in shown if s], " ".join("".join(reader.folded).split()), reader.acts,
+            reader.lines)
+
+
+@pytest.mark.parametrize("cause", ["no_ledger", "none"])
+def test_the_empty_records_say_one_state_and_one_action_and_keep_the_caveat_behind_details(
+        cause):
+    """The owner's D1 of 2026-11-24 (Models, a row chosen, at 1550): the
+    empty records said a title, a 28-word paragraph and a two-line next step
+    (50 words in 6 lines, the densest prose block in the configured app), so
+    "Test this model ›" was under the detail's edge. They say one state line
+    with its "Details ›" on that line (R-DETAILS) and one action: why it is
+    empty (its governed caveat, `RECORDS_NOT_EVALUATED`, verbatim) and how a
+    result gets here (`RECORDS_NEXT`) are behind that Details, the action is
+    outside it. A read-only request sees who can act instead of the action,
+    the caveat still one click away. Fails before: three paragraphs, no
+    Details."""
+    title, why = mp.RECORDS_EMPTY[cause]
+    shown, folded, acts, lines = _shown_and_folded(mp.records_empty_html(cause))
+    assert shown == [title, "Details ›", mp.TEST_THIS], shown
+    assert acts == [mp.TEST_ACT]
+    assert lines and all(lines), lines                   # the summary closes the state's line
+    assert f"{why} {mp.RECORDS_NOT_EVALUATED}" in folded and mp.RECORDS_NEXT in folded
+    shown, folded, acts, _lines = _shown_and_folded(mp.records_empty_html(cause, readonly=True))
+    assert shown == [title, "Details ›", mp.RECORDS_NEXT_READONLY], shown
+    assert acts == [] and mp.RECORDS_NOT_EVALUATED in folded and mp.RECORDS_NEXT not in folded
+
+
+def test_the_load_note_is_one_sentence_and_the_confirmation_keeps_what_results_keep():
+    """The owner's D1: Load's purpose stays beside Load in one sentence; its
+    second fact (results already made keep the model they were made with)
+    is said where the change is confirmed, the confirmation every Load shows
+    (`model_list.REPLACES_NOTE`), never beside Load as well and never in an
+    ⓘ. Fails before: the note said both."""
+    assert mp.LOAD_NOTE == "Serves this model for diagnosis once you confirm."
+    assert "keep their own identity" in ml.REPLACES_NOTE
+    assert "keep" not in mp.LOAD_NOTE
+    assert all("keep the model" not in text for _title, text in mp.PAGE_HELP.values())
+
+
+#: Models with the model in use chosen (a fine-tune with its parent, family and recorded
+#: settings: every identity row drawn), its records empty: where "Test this model ›" stands
+#: against the detail body's visible rect, the body unscrolled.
+_TEST_IN_VIEW_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+const [base, key, shots] = process.argv.slice(2);
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of [[1550, 830], [1850, 960]]) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h },
+                                                   deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    const idle = () => page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 30000 });
+    await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await page.click('#shep-tab-research-button', { timeout: 60000 });
+    await page.click('#shep-page-models-button');
+    const row = page.locator(`#shep-models-research-rows tr[data-key="${key}"]`);
+    await row.waitFor({ state: 'visible', timeout: 30000 });
+    await idle();
+    await row.click();
+    await page.waitForFunction(() => document.querySelector('#shep-mp-records').innerText
+      .includes('No recorded result yet'), null, { timeout: 30000 });
+    await idle();
+    await page.screenshot({ path: `${shots}/models_test_in_view_${w}x${h}.png` });
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      const bd = document.getElementById('shep-mp-detail-bd'), b = bd.getBoundingClientRect();
+      const act = document.querySelector('#shep-mp-records button[data-act="test"]');
+      const a = act.getBoundingClientRect();
+      const top = document.elementFromPoint(a.left + a.width / 2, a.top + a.height / 2);
+      return { body: { top: b.top + bd.clientTop, bottom: b.top + bd.clientTop + bd.clientHeight },
+               scrolled: bd.scrollTop, act: { top: a.top, bottom: a.bottom }, onTop: act.contains(top) };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_test_this_model_is_in_view_with_a_row_chosen_at_1550(tmp_path, family):
+    """The owner's D1 in a real browser (skipped without Node and Playwright):
+    Models at the owner's 1550 x 830 with the model in use chosen (a disease
+    fine-tune: its parent, family and recorded settings each a row) and no
+    recorded result: "Test this model ›" lies inside the detail body's
+    visible rect with the body unscrolled, nothing over it; at 1850 x 960 too.
+    Fails before: the empty records took six lines and the action stood under
+    the body's edge (713 against 675 in the configured world)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.family_world import file_key
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    shots = tmp_path / "shots"
+    shots.mkdir()
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_TEST_IN_VIEW_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], file_key("alpha-disease"), str(shots))
+    for size, at in seen.items():
+        assert at["scrolled"] == 0, (size, at)
+        assert at["body"]["top"] <= at["act"]["top"] and at["act"]["bottom"] <= at["body"]["bottom"], (
+            size, at)
+        assert at["onTop"], (size, at)
 
 
 def test_the_empty_records_next_step_opens_test_with_this_model_chosen(world, monkeypatch):
@@ -3465,7 +3620,9 @@ def test_test_this_model_opens_the_test_page_with_it_chosen_in_a_browser(
         seen = run_node(_TEST_THIS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
                         base[:-len("gradio_api")], str(shots))
     for size, at in seen.items():
-        assert at["said"].startswith("No recorded result yet"), (size, at)
+        # The state is the first line (its grey mark a column of its own), the action the last.
+        lines = [line.strip(" ○\xa0") for line in at["said"].split("\n")]
+        assert [line for line in lines if line][0].startswith("No recorded result yet"), (size, at)
         assert at["said"].endswith("Test this model ›"), (size, at)
         assert at["testShown"] == "true", (size, at)
         assert (at["workspace"], at["run"], at["checkpoint"]) == labels, (size, at)
