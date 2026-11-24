@@ -381,6 +381,10 @@ LOOK_JS = r"""
      - notices: each notice key (`data-notice`, `data-notice-also`) and how often it is drawn;
      - tabs: the research tabs' lines, their order, and each separator drawn at a line's start,
        and anything in the tablist that is not a tab. */
+  // D8's conditions in its own short words (`chips.D8_SHORT`), and words that point at a reason
+  // drawn elsewhere (R-WHY: never "see above", "see below" or "the reason is with").
+  const D8_WORDS = __D8_WORDS__;
+  const POINTER = /\bsee (above|below)\b|\bthe reason is with\b/i;
   const INTERACTIVE = 'button, input:not([type=hidden]), textarea, select, a[href], [role=button], '
     + '[role=tab], [role=radio], [role=checkbox], [role=switch], summary';
   const SKIP = 'script, style, noscript, .sr-only, .shep-vh, [hidden], #shep-help-texts, '
@@ -483,7 +487,7 @@ LOOK_JS = r"""
     const scope = tab || document.body, out = { beside: [], narrow: [], overlap: [], orphan: [], centred: [],
       split: [], edge: [], clipped: [], empty: [], help: [], notices: {}, tabs: null, inview: [], cue: [],
       wrapEnd: [], disabled: [], token: [], sepEnd: [], chain: [], rowTop: [], rowCtl: [], rowHeight: [],
-      sideways: [], edgeHead: [] };
+      sideways: [], edgeHead: [], reasons: {}, pointer: [], dimmed: [] };
     const panelOf = (e) => panels.findIndex((p) => p.contains(e));
     /* A text's region for `beside`: its panel, else the outermost bar it is in (Training's run
        bar is no panel), else none (-1 on a page with no panels). */
@@ -656,6 +660,28 @@ LOOK_JS = r"""
       for (const key of `${e.getAttribute('data-notice') || ''} ${e.getAttribute('data-notice-also') || ''}`.split(/\s+/)) {
         if (key) { out.notices[key] = (out.notices[key] || 0) + 1; }
       }
+    }
+    // reasons (R-WHY's one source per cause, the owner's D6 of 2026-11-24): each cause's whole
+    // reason drawn on this screen, how often. A notice by its key (as ``notices``); D8's refusal
+    // by the header chip that carries it (``data-reason="d8"``) and every block of the page that
+    // says the chip's condition in D8's own short words (`chips.D8_SHORT`).
+    Object.assign(out.reasons, out.notices);
+    const d8 = [...document.querySelectorAll('[data-reason="d8"]')].find((c) => visible(c));
+    const d8words = d8 ? D8_WORDS.find((w) => (d8.textContent || '').toLowerCase().includes(w.toLowerCase())) : null;
+    // The innermost blocks of the page whose words hold `re` (a block holding another that does
+    // is not counted again).
+    const saying = (test) => {
+      const found = [...new Set(texts.map((x) => blockOf(x.el)))].filter((blk) => blk && scope.contains(blk)
+        && !blk.closest('[data-reason]') && test(blk.innerText || ''));
+      return found.filter((blk) => !found.some((o) => o !== blk && blk.contains(o)));
+    };
+    if (d8words) {
+      out.reasons.d8 = 1 + saying((t) => t.toLowerCase().includes(d8words.toLowerCase())).length;
+    }
+    // pointer: words that point at a reason elsewhere ("see above", "see below", "the reason is
+    // with"): the place pointed at may have scrolled away or be in another region (R-WHY).
+    for (const blk of saying((t) => POINTER.test(t))) {
+      out.pointer.push(`${named(blk)} "${clip((blk.innerText.match(POINTER) || [''])[0], 30)}" in "${clip(blk.innerText, 60)}"`);
     }
     // the research tabs
     const list = document.querySelector('#shep-research-nav > .tab-wrapper > .tab-container');
@@ -974,7 +1000,7 @@ LOOK_JS = r"""
     // disabled
     // The shared reason forms: a reason line, a relation to the notice, a bar's note under its
     // group (the skill's §2), each drawn with words.
-    const reasons = [...scope.querySelectorAll('.shep-reason, [data-notice-rel], .shep-bar-note')]
+    const reasons = [...scope.querySelectorAll('.shep-reason, [data-notice-rel], .shep-bar-note, button.shep-why')]
       .filter((e) => visible(e) && drawn(e) && !e.closest(SKIP) && /[A-Za-z0-9]/.test(e.innerText || ''));
     const outermost = (e, sel) => { let found = null;
       for (let b = e.closest(sel); b; b = b.parentElement && b.parentElement.closest(sel)) { found = b; } return found; };
@@ -987,9 +1013,21 @@ LOOK_JS = r"""
       const r = b.getBoundingClientRect();
       if (r.width < 2 || r.height < 2) { continue; }
       const k = regionOf(b), grp = b.closest('.shep-grp'), bar = outermost(b, '.shep-bar');
-      const near = reasons.some((q) => ((grp && grp.contains(q)) || (bar && bar.contains(q)))
+      const nearBy = reasons.filter((q) => ((grp && grp.contains(q)) || (bar && bar.contains(q)))
         || (regionOf(q) === k && besideOrUnder(q.getBoundingClientRect(), r)));
-      if (near) { continue; }
+      // R-WHY's same-bar rule, read from data: the cause's own notice drawn in the same bar names
+      // the controls it dims (``data-for``), and no phrase is added beside them.
+      const sameBar = bar ? [...bar.querySelectorAll('[data-notice][data-for], .shep-nb[data-for]')]
+        .filter((n) => visible(n) && (n.getAttribute('data-for') || '').split(/\s+/).includes(b.id)) : [];
+      // dimmed: the words that describe it (``aria-describedby``) or stand beside it as its
+      // reason never say "disabled" (SW-C11: the dimmed look says it; the words say its need).
+      const described = (b.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+        .map((id) => document.getElementById(id)).filter(Boolean);
+      const said11 = [...described, ...nearBy, ...sameBar].find((q) => /\bdisabled\b/i.test(q.textContent || ''));
+      if (said11) {
+        out.dimmed.push(`${named(b)} "${say(b)}" said "disabled" by ${named(said11)} ("${clip(said11.textContent || '', 40)}")`);
+      }
+      if (nearBy.length || sameBar.length) { continue; }
       const region = typeof k === 'number' ? (k >= 0 ? panels[k] : null) : k;
       const said = !!region && [...region.querySelectorAll('[data-notice], [data-notice-rel]')].some((n) => visible(n) && drawn(n));
       if (said && !b.matches('.primary')) { continue; }
@@ -1347,6 +1385,17 @@ LOOK_JS = r"""
 """
 
 
+def _d8_words() -> str:
+    """D8's conditions in its own short words (`chips.D8_SHORT`, the header chip's), for
+    `LOOK_JS`'s ``reason-repeat``: read from the chips' one table, never written here again."""
+    from src.webui.components.chips import D8_SHORT
+
+    return json.dumps(sorted(D8_SHORT.values()))
+
+
+LOOK_JS = LOOK_JS.replace("__D8_WORDS__", _d8_words())
+
+
 #: The representative windows (D08), all at or above the display floor
 #: (`style.FLOOR_WIDTH` x `FLOOR_HEIGHT`, the owner's decision of 2026-11-23;
 #: a window below it is drawn as at the floor, the layout walk's ``floor``):
@@ -1662,13 +1711,15 @@ def ui_problems(seen: list[dict[str, Any]]) -> list[str]:
 LAYOUT_RULES = ("beside", "narrow-box", "overlap", "orphan", "centred", "split-group", "edge",
                 "clipped", "empty-region", "help-on-page", "notice-repeat", "tab-groups", "in-view",
                 "scroll-cue", "wrap-end", "disabled-reason", "token-break", "sep-end", "chain-break",
-                "row-top", "row-control-top", "row-height", "sideways-scroll", "floor", "edge-heading")
+                "row-top", "row-control-top", "row-height", "sideways-scroll", "floor", "edge-heading",
+                "reason-repeat", "pointer-words", "dimmed-words")
 _LAYOUT_KEYS = {"beside": "beside", "narrow-box": "narrow", "overlap": "overlap", "orphan": "orphan",
                 "centred": "centred", "split-group": "split", "edge": "edge", "clipped": "clipped",
                 "empty-region": "empty", "help-on-page": "help", "scroll-cue": "cue",
                 "wrap-end": "wrapEnd", "disabled-reason": "disabled", "token-break": "token",
                 "sep-end": "sepEnd", "chain-break": "chain", "row-top": "rowTop",
-                "row-control-top": "rowCtl", "row-height": "rowHeight", "edge-heading": "edgeHead"}
+                "row-control-top": "rowCtl", "row-height": "rowHeight", "edge-heading": "edgeHead",
+                "pointer-words": "pointer", "dimmed-words": "dimmed"}
 #: The rules held only at or above the display floor (`at_floor`): below it the layout is the
 #: floor's and the document scrolls, so what lies past the window is reached by that scroll.
 _AT_FLOOR_KEYS = {"in-view": "inview", "sideways-scroll": "sideways"}
@@ -1747,6 +1798,16 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       wider than its panel, its cells cut;
     - ``edge-heading`` (R-CUE, the owner's D4 of 2026-11-24): a scroll region whose last line in
       view is a heading or a field's label while all of its controls lie under the edge;
+    - ``reason-repeat`` (R-WHY, the owner's D6 of 2026-11-24; it extends ``notice-repeat``, which
+      it reports when both are asked): a cause's whole reason said more than once on one screen,
+      a notice by its key, D8's refusal by the header chip (``data-reason="d8"``) and every block
+      of the page holding the chip's condition in D8's short words (`chips.D8_SHORT`);
+    - ``pointer-words`` (R-WHY): visible words that point at a reason drawn elsewhere: "see
+      above", "see below" or "the reason is with";
+    - ``dimmed-words`` (SW-C11; it extends ``disabled-reason``): a disabled button whose
+      describing words (``aria-describedby``) or reason beside it say "disabled"; a phrase
+      (``shep-why``) is a reason beside it, and so is its cause's own notice in the same bar
+      when that notice names it (``data-for``: R-WHY's same-bar rule, read from data);
     - ``clipped`` also holds a text line cut by an ancestor that hides its overflow in that axis,
       a cut to an ellipsis included unless its whole words are its ``title``;
     - ``wrap-end``: a later line of a bar's groups that does not start on the bar's start edge;
@@ -1829,7 +1890,11 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
                     if short and facts["scroll"][axis] <= 0:
                         problems.append(f"{where}: floor: {room} than its floor and the document does not "
                                         "scroll that way (the layout shrank to the window)")
-        if "notice-repeat" in rules:
+        if "reason-repeat" in rules:
+            for key, times in found.get("reasons", {}).items():
+                if times > 1:
+                    problems.append(f"{where}: reason-repeat: {key} said {times} times")
+        elif "notice-repeat" in rules:
             for key, times in found.get("notices", {}).items():
                 if times > 1:
                     problems.append(f"{where}: notice-repeat: {key} drawn {times} times")

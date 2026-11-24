@@ -4675,6 +4675,115 @@ def test_the_row_rules_find_a_note_between_a_label_and_its_control(tmp_path):
     assert seen["order"][1:] == ["info-text", "input-container"], seen["order"]
 
 
+#: A static page for R-WHY's walk rules (`browser.LOOK_JS`: ``reasons``, ``pointer``, ``dimmed``):
+#: a header D8 chip refusing a forwarded request, then one page in panels, each rule's bad case
+#: beside its good one (each named in its test).
+_REASON_RULES_PAGE_JS = r"""
+const { chromium } = require('playwright');
+const LOOK_JS = __LOOK_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  await page.setContent(`<!doctype html><html data-shep-layout="side"><head><style>
+    body { margin: 0; font: 15px sans-serif; background: #fff; }
+    p { margin: 0 0 8px; } button { font: inherit; height: 32px; }
+    .shep-panel { position: absolute; width: 440px; border: 1px solid #ccc; padding: 8px; }
+    .shep-bar, .shep-grp { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .shep-chip-text { font-size: 14px; }
+  </style></head><body>
+    <div id="shep-chips"><span class="shep-chip shep-chip-d8 shep-chip-readonly" data-state="readonly" data-reason="d8">
+      <span class="shep-chip-text" title="Read-only: forwarded by a proxy">Read-only: forwarded by a proxy</span>
+      <span id="shep-chip-d8-text" hidden>For this request: the request was forwarded by a proxy.</span></span></div>
+    <div id="shep-nav"><div class="tab-wrapper"><button role="tab" aria-selected="true" data-tab-id="x">X</button></div></div>
+    <div id="shep-tab-x"><div class="shep-page">
+      <div class="shep-panel" id="p1" style="left: 0; top: 40px; height: 300px">
+        <div data-notice="workspaces_root" id="nt-one">No workspaces folder is set. Choose one in Settings.</div>
+        <div data-notice="workspaces_root" id="nt-two">No workspaces folder is set. Choose one in Settings.</div>
+        <p id="d8-again">🔒 Operator controls only: forwarded by a proxy. Folder paths are shown to operator controls only.</p>
+        <p id="ptr-above">○ Start disabled (see above).</p>
+        <p id="ptr-with">Read-only for this request: the reason is with the actions below.</p>
+        <p id="ptr-plain">The plots above show the latest run.</p>
+      </div>
+      <div class="shep-panel" id="p2" style="left: 470px; top: 40px; height: 300px">
+        <div class="shep-grp"><button type="button" class="primary" id="dim-line" disabled>Start</button>
+          <p class="shep-reason">○ Start disabled: no dataset is listed yet.</p></div>
+        <div class="shep-grp"><button type="button" id="dim-desc" disabled aria-describedby="dim-desc-why">Load</button>
+          <button type="button" class="shep-why" data-why="d8" id="dim-desc-phrase">Operator controls only</button>
+          <span id="dim-desc-why" hidden>Load disabled while a job runs.</span></div>
+        <div class="shep-grp"><button type="button" class="primary" id="dim-phrase" disabled aria-describedby="dim-phrase-why">Check</button>
+          <button type="button" class="shep-why" data-why="d8" id="dim-phrase-why">Operator controls only</button></div>
+        <div class="shep-bar" id="bar-same"><div class="shep-nb" data-notice="registry" data-for="dim-same" id="nb-same">○ No results registry is set. Choose one in Settings.</div>
+          <div class="shep-grp"><button type="button" class="primary" id="dim-same" disabled aria-describedby="nb-same">Register</button></div></div>
+        <div class="shep-bar" id="bar-other"><div class="shep-nb" data-notice="intake_dir" data-for="someone-else">○ No import folder is set.</div>
+          <div class="shep-grp" style="margin-top: 60px"><button type="button" class="primary" id="dim-other" disabled>Import</button></div></div>
+      </div>
+    </div></div></body></html>`);
+  await page.addScriptTag({ content: LOOK_JS });
+  console.log(JSON.stringify(await page.evaluate(() => window.__shepLook.check().layout)));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.fixture(scope="module")
+def reason_rules_seen(tmp_path_factory):
+    """The layout rules' findings on `_REASON_RULES_PAGE_JS`, once for the module."""
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    return run_node(_REASON_RULES_PAGE_JS.replace("__LOOK_JS__", json.dumps(LOOK_JS)),
+                    tmp_path_factory.mktemp("reason-rules"), timeout=120)
+
+
+def test_the_reason_repeat_rule_finds_a_causes_reason_said_twice_on_one_screen(reason_rules_seen):
+    """R-WHY (the owner's D6 of 2026-11-24): the full reason of a cause is said once per screen.
+    ``reason-repeat`` extends ``notice-repeat``: a notice drawn twice is found by its key, and
+    D8's refusal is found where the header chip that carries it (``data-reason="d8"``) and a
+    block of the page both say its condition in D8's short words (read-only Settings said
+    "forwarded by a proxy" three times: the chip, the notice and the runtime foot). A notice drawn
+    once (``registry``) passes. Asked with ``notice-repeat``, a notice is said once, by
+    ``reason-repeat``."""
+    from tests.fixtures.browser import layout_problems
+
+    found = reason_rules_seen
+    assert found["reasons"].get("workspaces_root") == 2 and found["reasons"].get("d8") == 2, found["reasons"]
+    assert found["reasons"].get("registry") == 1, found["reasons"]
+    stop = [{"size": "1850x960", "page": "settings", "check": {"layout": found}}]
+    assert sorted(layout_problems(stop, rules=("notice-repeat", "reason-repeat"))) == [
+        "1850x960 settings: reason-repeat: d8 said 2 times",
+        "1850x960 settings: reason-repeat: workspaces_root said 2 times"]
+    assert layout_problems(stop, rules=("notice-repeat",)) == [
+        "1850x960 settings: notice-repeat: workspaces_root drawn 2 times"]
+
+
+def test_the_pointer_words_rule_finds_words_that_point_at_a_reason_elsewhere(reason_rules_seen):
+    """R-WHY: the place a pointer names may have scrolled away or be in another region, so no
+    visible words say "see above", "see below" or "the reason is with" (Training's run view said
+    "(see above)" at first use, read-only Settings' Runtime "the reason is with the actions
+    below"). Words that only use "above" pass."""
+    found = reason_rules_seen
+    assert _hits(found, "pointer", "#ptr-above") and _hits(found, "pointer", "#ptr-with"), found["pointer"]
+    assert not _hits(found, "pointer", "#ptr-plain"), found["pointer"]
+    assert len(found["pointer"]) == 2, found["pointer"]
+
+
+def test_the_dimmed_words_rule_finds_disabled_said_beside_or_describing_a_dimmed_button(reason_rules_seen):
+    """SW-C11 (the owner's D6 of 2026-11-24): the dimmed look says a control cannot be used; the
+    words say what it needs. ``dimmed-words`` extends ``disabled-reason``: a disabled button whose
+    reason beside it (``#dim-line``) or whose describing words (``aria-describedby``,
+    ``#dim-desc``) say "disabled" is found; one beside its R-WHY phrase (``#dim-phrase``) passes,
+    and the phrase is a reason beside it for ``disabled-reason`` too. R-WHY's same-bar rule is
+    read from data: the cause's own notice in the same bar that names the button (``data-for``)
+    is its reason (``#dim-same``); a notice in the bar that names another control is not
+    (``#dim-other``)."""
+    found = reason_rules_seen
+    assert _hits(found, "dimmed", "#dim-line") and _hits(found, "dimmed", "#dim-desc"), found["dimmed"]
+    assert not _hits(found, "dimmed", "#dim-phrase") and not _hits(found, "dimmed", "#dim-same"), found["dimmed"]
+    assert not _hits(found, "disabled", "#dim-phrase") and not _hits(found, "disabled", "#dim-same"), found["disabled"]
+    assert _hits(found, "disabled", "#dim-other"), found["disabled"]
+
+
 def test_the_layout_problems_hold_in_view_at_and_above_the_floor_and_tab_groups_whole():
     """``in-view`` is held at every window at or above the display floor (`browser.at_floor`;
     the owner's decision of 2026-11-23), not only at the owner's two: a laptop's 1366 x 768 and
