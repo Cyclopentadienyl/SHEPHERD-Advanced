@@ -200,7 +200,7 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
         assert words in outside, words
     # Behind its one Details: what the selects above do not say, and the list's count.
     for words in ("Run", r.token_html(f"gatv2/{BASE_RUN}"), r.token_html("model-03-0.8300.pt"),
-                  "Configuration", r.model_spec_html(item["spec"])[0],
+                  "Configuration", r.model_spec_rows(item["spec"], "Configuration")[0][0][1],
                   "Holds", "Validation", "LP accuracy (Trainer)", "0.8300", "Selection",
                   "Split seed", "Server list", fp.listed_words(parents)):
         assert words in inside, words
@@ -269,6 +269,28 @@ def test_the_parents_visible_facts_are_the_declared_stage_facts(root, operator):
     assert fp.bases_note_html(parents, None) == ""
 
 
+def test_every_field_the_parents_spec_differs_in_is_reachable_in_its_details():
+    """The L8 close (f-result's "Needs from shared" 1): the parent's one Details could hold only
+    the spec's words (`renderers.model_spec_html`), which name four differences and count the
+    rest ("and 1 more"), and a disclosure inside it would be a second level: a base differing in
+    five fields lost one. Its configuration is now the shared renderer's rows form
+    (`renderers.model_spec_rows`): a base differing in more fields than the words name shows every
+    one, each with the reference's value, and the summary keeps its one Details."""
+    from src.models.bundle.spec import reference_spec
+
+    spec = reference_spec("base", None).to_dict()
+    spec["encoder"].update(layers=2, hidden=64, heads=2, output=32)
+    spec["input"]["dim"] = 8
+    assert r.model_spec_html(spec)[0].endswith(" and 1 more")       # the words name four
+    html = fp.base_summary_html({"key": "gatv2/x/last.pt", "sha256": "a" * 64, "spec": spec})
+    assert html.count("<details") == 1
+    for path in ("encoder.layers", "encoder.hidden", "encoder.heads", "encoder.output", "input.dim"):
+        assert f'title="{path}"' in html, path
+    assert ('<dt class="shep-k">Configuration</dt><dd class="shep-v">Differs from the reference '
+            'GATv2 spec in 5 fields</dd>') in html
+    assert '<dd class="shep-v">8 (reference 2048)</dd>' in html
+
+
 def test_the_bases_split_seed_and_model_are_facts_of_its_summary_never_fields(root, operator):
     """B2 (decision S4): a finetune trains on its base's split and keeps its
     base's graph side, so the split seed and the model spec are never fields
@@ -284,16 +306,19 @@ def test_the_bases_split_seed_and_model_are_facts_of_its_summary_never_fields(ro
     seeded = fp.base_summary_html({**item, "split_seed": 7})
     assert "7 (every child trains on this split)" in seeded
     assert seeded.count("Split seed") == 1 and "Configuration" in seeded
-    # Its model: the one renderer of a recorded spec's words, read from the
-    # list's spec (`record.listed_spec`, without the recipe's notes), each
-    # field that differs with the reference's value, the encoder's layers the
-    # hop list must fit among them (review of B2), drawn in the Configuration
-    # row itself: no disclosure inside the summary's one Details (D3/D8, the
-    # skill's §1.5).
-    words, details = r.model_spec_html(item["spec"])
-    assert "Unknown" not in words and details
-    assert (f'<dt class="shep-k">Configuration</dt><dd class="shep-v">{words}</dd>') in seeded
-    assert "Encoder › Layers 1 (3)" in words
+    # Its model: the one renderer of a recorded spec in its rows form, read
+    # from the list's spec (`record.listed_spec`, without the recipe's notes),
+    # each field that differs a row with the reference's value, the encoder's
+    # layers the hop list must fit among them (review of B2), every one in the
+    # summary's one Details with no disclosure inside it (D3/D8, the skill's
+    # §1.5; the L8 close: the words named four and counted the rest away).
+    rows, _titles = r.model_spec_rows(item["spec"], "Configuration")
+    head = rows[0][1]
+    assert "Unknown" not in head and len(rows) > 1
+    assert (f'<dt class="shep-k">Configuration</dt><dd class="shep-v">{head}</dd>') in seeded
+    assert ('<dt class="shep-k" title="encoder.layers">Encoder › Layers</dt>'
+            '<dd class="shep-v">1 (reference 3)</dd>') in seeded
+    assert seeded.count("<details") == 1
     for tasks in ([], ["disease"], ["gene"], ["disease", "gene", "patients_like_me"]):
         assert not set(fp.offered_settings(tasks)) & {"split_seed", "model_spec"}
     assert not set(fp.FINETUNE_FIELDS) & fp.BASE_FACTS

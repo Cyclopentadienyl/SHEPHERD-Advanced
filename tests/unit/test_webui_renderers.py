@@ -1303,6 +1303,30 @@ def test_a_model_spec_is_said_by_its_differences_its_whole_one_click_away():
 _REPR = re.compile(r"(?<!\w)'[^'\n]*'(?!\w)|\bNone\b|\bTrue\b|\bFalse\b")
 
 
+def test_a_model_specs_rows_form_names_every_difference_with_no_disclosure():
+    """The L8 close (f-result's "Needs from shared" 1): a list that is itself one click away
+    (Fine-tune's parent Details) could hold only the spec's words, four differences named and the
+    rest counted. The rows form (`model_spec_rows`) says the spec by its relation to its reference
+    in `label`'s row, then every field that differs on a row of its own with the reference's
+    value (its dotted path the title), and draws no disclosure; a spec at its reference or one not
+    read is its one row, in `model_spec_html`'s words."""
+    data = _spec(encoder__layers=2, encoder__hidden=64, encoder__heads=2, encoder__output=32,
+                 input__dim=8)
+    assert r.model_spec_html(data)[0].endswith(" and 1 more")
+    rows, titles = r.model_spec_rows(data, "Configuration")
+    assert rows[0] == ("Configuration", "Differs from the reference GATv2 spec in 5 fields")
+    named = dict(rows[1:])
+    assert len(named) == 5 and set(titles) == set(named), rows
+    assert set(titles.values()) == {"encoder.layers", "encoder.hidden", "encoder.heads",
+                                    "encoder.output", "input.dim"}
+    assert named["Encoder › Layers"] == "2 (reference 3)"
+    assert "<details" not in r.summary_list(rows, titles=titles)
+    assert r.model_spec_rows(_spec(), "C") == ([("C", r.model_spec_html(_spec())[0])], {})
+    assert r.model_spec_rows(None, "C") == ([("C", r.model_spec_html(None)[0])], {})
+    unread = r.model_spec_rows(_spec(encoder__kind=HOSTILE), "C")[0][0][1]
+    assert HOSTILE not in unread and "Unknown: not read as a model spec" in unread
+
+
 def _bordered_classes(css: str) -> set:
     """The classes a rule draws a border around (``border:`` not 0/none),
     by the last compound of each selector."""

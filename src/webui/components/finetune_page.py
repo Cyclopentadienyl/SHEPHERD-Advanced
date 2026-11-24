@@ -641,8 +641,9 @@ def base_summary_html(item: Optional[Mapping[str, Any]],
     it (the skill's §1.5): its run's directory (the Run select gives its name,
     architecture and time), file, configuration (its model, a fact the
     children keep, never a field, `BASE_FACTS`: the one renderer of a recorded
-    spec's words, `renderers.model_spec_html`, each field that differs from
-    the reference base spec with the reference's value), what it holds, its
+    spec in its rows form, `renderers.model_spec_rows`, each field that
+    differs from the reference base spec a row with the reference's value,
+    none counted away), what it holds, its
     Trainer validation figure, what its run's saves were ranked by
     (`renderers.selection_value`), the split seed its record names, which
     every child trains on (a fact too), and how many bases the server lists
@@ -661,12 +662,16 @@ def base_summary_html(item: Optional[Mapping[str, Any]],
     }
     tags = "".join(f'<span class="shep-ft-tag" data-fact="{key}">{facts[key]}</span>'
                    for key in PARENT_STAGE_FACTS if facts[key])
+    # Its configuration as rows (`renderers.model_spec_rows`): every field that
+    # differs from the reference on a row of its own, none counted away and no
+    # disclosure inside this one.
+    spec_rows, spec_titles = r.model_spec_rows(item.get("spec"), "Configuration")
     rows = [
         # Tokens break only before their own separators (L7 SW-LK7: the run
         # ended a line at a hyphen at 390 px, reading hyphenated).
         ("Run", r.token_html(f"{item.get('architecture')}/{item.get('run')}")),
         ("File", r.token_html(item.get("filename"))),
-        ("Configuration", r.model_spec_html(item.get("spec"))[0]),
+        *spec_rows,
         ("Holds", r.e(tc.CHECKPOINT_KINDS.get(kind or "", "not recorded"))),
         ("Validation", r.e(r.validation_value(r.validation_figure(item),
                                               read=r.record_read(item)))),
@@ -675,7 +680,7 @@ def base_summary_html(item: Optional[Mapping[str, Any]],
     ]
     if parents:
         rows.append(("Server list", r.e(listed_words(parents))))
-    details = r.details_list(rows, of=item.get("key") or item.get("sha256"))
+    details = r.details_list(rows, of=item.get("key") or item.get("sha256"), titles=spec_titles)
     return (f'<div class="shep-ft-base"><div class="shep-ft-tags">{tags}{details}</div>'
             "</div>")
 

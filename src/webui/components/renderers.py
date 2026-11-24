@@ -2765,22 +2765,11 @@ def model_spec_html(data: Any) -> Tuple[str, str]:
     (`_SPEC_PARTS`), "not taken by a base" or by its task. `data` is a
     recorded spec, with its reference notes or as a list holds it without
     them (`listed_record`'s `spec`), read by the one reader of a listed spec
-    (`record.listed_spec`)."""
-    from src.models.bundle.record import listed_spec
-    from src.models.bundle.spec import SpecError
-
-    if not isinstance(data, Mapping):
-        return (status_mark("neutral", f"{UNKNOWN}: the record holds no model spec"), "")
-    spec, problem = listed_spec(data)
-    differences: Dict[str, Any] = {}
-    if spec is not None:
-        try:
-            differences = spec.differences_from_reference()
-        except (SpecError, TypeError, ValueError, KeyError) as exc:
-            spec, problem = None, str(exc)
+    (`record.listed_spec`). A list that is itself one click away takes its
+    rows form instead (`model_spec_rows`)."""
+    spec, differences, unknown = _read_spec(data)
     if spec is None:
-        return (status_mark("neutral", f"{UNKNOWN}: not read as a model spec "
-                                       f"({short_reason(problem, 120)})"), "")
+        return (unknown, "")
     name = f"reference {architecture_label(spec.encoder.kind)} spec"
     if differences:
         words = f"Differs from the {name}: " + named_words(
@@ -2801,6 +2790,58 @@ def model_spec_html(data: Any) -> Tuple[str, str]:
         rows.append((key, shown))
         titles[key] = path
     return e(words), details_list(rows, titles=titles, classes="shep-kv-spec")
+
+
+def _read_spec(data: Any) -> Tuple[Any, Dict[str, Any], str]:
+    """A recorded spec as `model_spec_html` and `model_spec_rows` read it:
+    ``(spec, differences, "")``, each field that differs from its stage's
+    reference by its dotted path, ``(reference, mine)``; or ``(None, {},
+    words)``, the escaped words of a spec this build cannot read."""
+    from src.models.bundle.record import listed_spec
+    from src.models.bundle.spec import SpecError
+
+    if not isinstance(data, Mapping):
+        return None, {}, status_mark("neutral", f"{UNKNOWN}: the record holds no model spec")
+    spec, problem = listed_spec(data)
+    differences: Dict[str, Any] = {}
+    if spec is not None:
+        try:
+            differences = spec.differences_from_reference()
+        except (SpecError, TypeError, ValueError, KeyError) as exc:
+            spec, problem = None, str(exc)
+    if spec is None:
+        return None, {}, status_mark("neutral", f"{UNKNOWN}: not read as a model spec "
+                                                f"({short_reason(problem, 120)})")
+    return spec, differences, ""
+
+
+def model_spec_rows(data: Any, label: str) -> Tuple[List[Tuple[str, str]], Dict[str, str]]:
+    """**A recorded model spec as summary-list rows, every difference on a row
+    of its own** (the L8 close; Fine-tune's parent Details, f-result's
+    "Needs from shared" 1): for a list that is itself one click away, where a
+    disclosure inside would be a second level (the skill's §1.5) and the
+    words alone name `_SPEC_WORDS_SHOWN` differences and count the rest away.
+    ``(rows, titles)`` for `summary_list` or `details_list`: `label`'s row
+    says the spec by its relation to its stage's reference ("Reference GATv2
+    spec", "Differs from the reference GATv2 spec in 5 fields", or why it
+    cannot be read), then each field that differs, named in words
+    (`field_path_words`, its dotted path the title) with its value and the
+    reference's, as `model_spec_html`'s details give them. Escaped."""
+    spec, differences, unknown = _read_spec(data)
+    if spec is None:
+        return [(label, unknown)], {}
+    name = f"reference {architecture_label(spec.encoder.kind)} spec"
+    if not differences:
+        return [(label, e(name[:1].upper() + name[1:]))], {}
+    count = len(differences)
+    rows = [(label, e(f"Differs from the {name} in {count} field{'s' if count != 1 else ''}"))]
+    titles = {}
+    for path, (reference, mine) in differences.items():
+        key = field_path_words(path)
+        rows.append((key, f"{_spec_value_html(path, mine)} (reference "
+                          f"{_spec_value_html(path, reference)})"))
+        titles[key] = path
+    return rows, titles
 
 
 def recorded_count_text(value: Any) -> str:
@@ -3759,6 +3800,7 @@ __all__ = [
     "entry_place",
     "RUN_OPERATION_WORDS",
     "model_spec_html",
+    "model_spec_rows",
     "model_name_html",
     "model_name_line",
     "model_name_facts",
