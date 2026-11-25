@@ -4358,10 +4358,10 @@ const QUEUE_JS = __QUEUE_JS__;
   await frames(4);
   out.scroll.after = await page.evaluate(() => ({ fit: document.getElementById('pc-fit').scrollLeft, page: window.scrollY }));
   // R-HELP: the tall bubble of a phrase with controls on one side and none on the other, both
-  // sides in the window: where it opens, and every control it lies over. A window 900 px tall,
-  // so the phrase's bubble (its chip's answer, within the bubble's budget since the L8 close)
-  // is tall in it.
-  await page.setViewportSize({ width: 1280, height: 900 }); await frames(2);
+  // sides in the window: where it opens, and every control it lies over. A window 840 px tall,
+  // so the phrase's bubble (its chip's answer, within the bubble's budget since the L8 close,
+  // and 44 px shorter since its "Esc to close" row went to the head, about 300 px) is tall in it.
+  await page.setViewportSize({ width: 1280, height: 840 }); await frames(2);
   await page.click('#shep-page-training-button');
   await page.waitForSelector('#pc-place-row button.shep-why');
   await page.evaluate(() => { window.scrollTo(0, 0); document.getElementById('pc-place-row').scrollIntoView({ block: 'start' }); });
@@ -4406,7 +4406,10 @@ const QUEUE_JS = __QUEUE_JS__;
     phrase.click(); await frames(8);
     const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
     const bubble = document.getElementById('shep-help-bubble'), b = q(bubble);
-    const over = (r) => r[0] < b[2] && b[0] < r[2] && r[1] < b[3] && b[1] < r[3];
+    // A cover as the placement counts one (help.py's controlBoxes): a control's box less a pixel
+    // at each edge, so a place that only meets its edge is none. The slide steps put the chosen
+    // place's edge anywhere in the step above A, the last pixel included.
+    const over = (r) => r[0] + 1 < b[2] && b[0] < r[2] - 1 && r[1] + 1 < b[3] && b[1] < r[3] - 1;
     const out = { bubble: b, phrase: q(phrase), line: q(line), shown: !bubble.hidden,
                   covers: [...scene.querySelectorAll('button')].filter((c) => c !== phrase && over(q(c))).map((c) => c.id) };
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await frames(2);
@@ -4602,7 +4605,10 @@ def test_a_bubble_slides_along_its_side_to_a_place_that_covers_no_control(pieces
     of every side met a control while a place between them was clear. A phrase near the
     window's right edge, a control in each alignment on its left and one above and one below
     it: the bubble slides along its left side to the place between, beside the phrase, over no
-    control (the phrase and the control it explains still clear)."""
+    control (the phrase and the control it explains still clear). A cover is read as the
+    placement counts one, a control's box less a pixel at each edge: with the bubble 44 px
+    shorter (its "Esc to close" row gone, 2026-11-25) the chosen step's bottom met A's top by
+    0.55 px, an edge the placement rightly counts as no cover."""
     slide = pieces_seen["slide"]
 
     def overlap(a, b):
