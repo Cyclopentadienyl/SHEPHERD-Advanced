@@ -1463,7 +1463,10 @@ html, .shep-panel *, #shep-nav > .tabitem, #shep-research-nav > .tabitem {
    taller than a fade may reach (the shell's ``fadeOf``: about one and a half text lines), no fade is
    drawn over the blank; the region's foot draws one shared cue that says nothing of its content, a
    hairline and a soft shadow inside its edge (Material's scrolled-under state, Apple's scroll edge
-   effect), while more lies below (``data-shep-more-edge``, kept by the same pass). A fade sideways
+   effect), while more lies below (``data-shep-more-edge``, kept by the same pass). A region whose
+   last line in view would be a lone title (a heading or a field's label, every control it heads
+   under the edge) ends in the gap above it instead (``data-shep-more-cut``: the shell's ``recut``
+   gives its foot that much, a footer after it staying put) and draws this cue. A fade sideways
    stays. The cue is drawn on whatever region ``fadeOf`` marks, whatever else styles it: a
    ``gr.HTML`` block's container rule (Gradio's ``.hide-container…:not(.fullscreen)``, three classes)
    clears every block's shadow, so the cue's shadow is ``!important`` (it was never drawn on a

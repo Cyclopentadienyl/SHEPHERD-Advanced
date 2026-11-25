@@ -1105,7 +1105,10 @@ _SHELL_JS = r"""
           var s = getComputedStyle(k);
           if (!drawn(k) || s.position === 'absolute' || s.position === 'fixed') { continue; }
           kids += 1;
-          need += px(s.marginTop) + px(s.marginBottom) + (k === room ? 0 : k.getBoundingClientRect().height);
+          // A region's foot given way to a lone title (`recut`, CUT) is not counted: the measure
+          // never depends on the state the cue pass sets.
+          need += px(s.marginTop) + px(s.marginBottom) - (parseFloat(k.getAttribute('data-shep-more-cut')) || 0)
+            + (k === room ? 0 : k.getBoundingClientRect().height);
         }
         need += Math.max(kids - 1, 0) * px(c.rowGap);
         if (was) { box.setAttribute(FOLDED, ''); }
@@ -1183,11 +1186,131 @@ _SHELL_JS = r"""
     if (!line || edge - line.bottom + line.height / 4 > most) { return 0; }
     return Math.min(most, Math.max(FADE, Math.ceil(edge - line.bottom + line.height / 2)));
   }
+  // **A region never ends at a lone title** (R-CUE, the owner's D4 of 2026-11-24: "never show
+  // only a section title with every control under the edge"; the L8 close: Fine-tune's form
+  // ended at its Device and Run name labels, Settings' Data locations at its Import folder
+  // heading, each faded over its title with every control under the edge). Where the region's
+  // last line in view is a heading or a field's label (HEADS) and every control it heads (a
+  // field's own, a heading's up to the next heading) lies under the edge, the region ends in the
+  // gap above that title instead: its foot gives way by CUT px (a bottom margin, so a footer
+  // after it stays where it was), the title goes under the edge with its controls, and the cue
+  // (`fadeOf`) is drawn over the lines above it or, in a gap, as the edge cue. Never a fade over
+  // the title, and never more than half the region. It is measured with the region read whole
+  // at its top (its content never moves with the region's height), so the cut never depends on
+  // the state it sets; scrolled, the region keeps its height (no jump under the reader's hand).
+  var CUT = 'data-shep-more-cut';
+  var HEADS = 'h1, h2, h3, h4, h5, h6, [role=heading], legend, [data-testid="block-info"]';
+  var LABEL = '[data-testid="block-info"]';
+  var CONTROLS = 'button, input:not([type=hidden]), textarea, select, a[href], [role=button], '
+    + '[role=tab], [role=radio], [role=checkbox], [role=switch], summary';
+  var NOT_OWN = '.shep-i, .shep-copy, .shep-help, button.shep-why';
+  var UNSAID = 'script, style, noscript, .sr-only, .shep-vh, [hidden], #shep-help-texts, '
+    + '#shep-help-bubble, ul.option-list';
+  // `p` is drawn in `el`'s own scroll, no region between them scrolling it.
+  function ownScroll(p, el) {
+    for (var a = p; a && a !== el; a = a.parentElement) {
+      if (scrolls(getComputedStyle(a).overflowY) && a.scrollHeight > a.clientHeight + 1) { return false; }
+    }
+    return true;
+  }
+  // The lowest line drawn in `el` that shows above `edge` (by a quarter of its height or more):
+  // a line box of its words or a field's value line, with its element; null for none.
+  function lowestLine(el, top, edge) {
+    var low = null;
+    function take(q, p) {
+      if (q.width < 1 || q.height < 1 || q.bottom <= top || q.top >= edge - Math.max(1, q.height / 4)
+          || (low && q.top <= low.r.top) || !ownScroll(p, el)) { return; }
+      low = {r: q, el: p};
+    }
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), range = document.createRange();
+    for (var n = walker.nextNode(); n; n = walker.nextNode()) {
+      var p = n.parentElement;
+      if (!p || !n.data.trim() || p.closest(UNSAID) || !seenEl(p)) { continue; }
+      var pr = p.getBoundingClientRect();
+      if (pr.bottom <= top || pr.top >= edge) { continue; }
+      range.selectNodeContents(n);
+      var rs = range.getClientRects();
+      for (var i = 0; i < rs.length; i++) { take(rs[i], p); }
+    }
+    var fields = el.querySelectorAll(VALUES);
+    for (var j = 0; j < fields.length; j++) {
+      var f = fields[j];
+      if (!(f.value || f.placeholder) || !seenEl(f)) { continue; }
+      var r = f.getBoundingClientRect(), fs = getComputedStyle(f);
+      var above = (parseFloat(fs.paddingTop) || 0) + (parseFloat(fs.borderTopWidth) || 0);
+      var below = (parseFloat(fs.paddingBottom) || 0) + (parseFloat(fs.borderBottomWidth) || 0);
+      take({top: r.top + above, bottom: r.bottom - below, width: r.width, height: r.height - above - below}, f);
+    }
+    return low;
+  }
+  // The top of the title `el` would end at alone over `edge` (its last line in view a heading
+  // or a field's label, every control it heads under the edge); null where it ends otherwise.
+  function loneTitle(el, top, edge) {
+    var low = lowestLine(el, top, edge), head = low && low.el.closest(HEADS);
+    if (!head || !el.contains(head)) { return null; }
+    var field = head.matches(LABEL) ? head.closest('.block') : null, own = [];
+    function counts(c) { return !c.matches(NOT_OWN) && !c.closest(UNSAID) && seenEl(c); }
+    if (field) {
+      own = [].filter.call(field.querySelectorAll(CONTROLS), counts);
+    } else {
+      var all = el.querySelectorAll(CONTROLS + ', ' + HEADS), after = false;
+      for (var i = 0; i < all.length; i++) {
+        var x = all[i];
+        if (x === head) { after = true; continue; }
+        if (!after || head.contains(x)) { continue; }
+        if (x.matches(HEADS) && !x.matches(LABEL)) { break; }
+        if (x.matches(CONTROLS) && counts(x)) { own.push(x); }
+      }
+    }
+    if (!own.length) { return null; }
+    for (var k = 0; k < own.length; k++) {
+      if (own[k].getBoundingClientRect().top < edge - 1) { return null; }
+    }
+    return Math.min(head.getBoundingClientRect().top, low.r.top);
+  }
+  // How far `el`'s foot gives way (px) for it to end in the gap above a lone title, read whole
+  // (its current cut added back): 0 for none.
+  function cutOf(el) {
+    var s = getComputedStyle(el), had = parseFloat(el.getAttribute(CUT)) || 0;
+    if (!scrolls(s.overflowY) || el.scrollHeight - el.clientHeight - had <= 1) { return 0; }
+    var r = el.getBoundingClientRect(), top = r.top + el.clientTop, edge = top + el.clientHeight + had;
+    var at = edge;
+    for (var i = 0; i < 3; i++) {   // a title under a title (a section's heading, then its label)
+      var head = loneTitle(el, top, at);
+      if (head === null) { break; }
+      at = head;
+    }
+    if (at < edge) {
+      // A field's box that starts in that gap (under every line still shown) goes under the edge
+      // whole: no box's top is left over it (a block's own background hid the edge cue's shadow).
+      var low = lowestLine(el, top, at), floor = low ? low.r.bottom : top;
+      var boxes = el.querySelectorAll('.block');
+      for (var b = 0; b < boxes.length; b++) {
+        var q = boxes[b].getBoundingClientRect();
+        if (q.top >= floor && q.top < at && q.bottom > at) { at = q.top; }
+      }
+    }
+    var cut = Math.ceil(edge - at);
+    return cut > 0 && cut <= (el.clientHeight + had) / 2 ? cut : 0;
+  }
+  function recut(el) {
+    var had = parseFloat(el.getAttribute(CUT)) || 0, cut = cutOf(el);
+    if (cut === had) { return; }
+    var base = (parseFloat(getComputedStyle(el).marginBottom) || 0) - had, height = el.clientHeight + had;
+    if (had) { el.style.removeProperty('margin-bottom'); el.removeAttribute(CUT); }
+    if (!cut) { return; }
+    el.style.setProperty('margin-bottom', (base + cut) + 'px', 'important');
+    // A region whose height is not its column's to give (its own height or maximum) keeps it.
+    if (height - el.clientHeight < cut - 1) { el.style.removeProperty('margin-bottom'); return; }
+    el.setAttribute(CUT, String(cut));
+  }
   function cue(el) {
+    if (el.scrollTop <= 1) { recut(el); }
     var s = getComputedStyle(el);
     var more = scrolls(s.overflowY) && el.scrollHeight - el.scrollTop - el.clientHeight > 1;
     var side = scrolls(s.overflowX) && el.scrollWidth - el.scrollLeft - el.clientWidth > 1;
-    var length = more ? fadeOf(el) : 0, fade = length ? length + 'px' : '';
+    // A foot given way to a lone title (CUT) ends in a gap: its cue is the edge cue.
+    var length = more && !el.hasAttribute(CUT) ? fadeOf(el) : 0, fade = length ? length + 'px' : '';
     if (el.style.getPropertyValue(FADE_VAR) !== fade) {
       if (fade) { el.style.setProperty(FADE_VAR, fade); } else { el.style.removeProperty(FADE_VAR); }
     }
@@ -1209,7 +1332,8 @@ _SHELL_JS = r"""
     for (var i = 0; i < all.length; i++) {
       var e = all[i];
       if ((e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1
-           || e.hasAttribute(MORE) || e.hasAttribute(MORE_X)) && !e.matches(NOT_REGION)) { cue(e); }
+           || e.hasAttribute(MORE) || e.hasAttribute(MORE_X) || e.hasAttribute(CUT))
+          && !e.matches(NOT_REGION)) { cue(e); }
     }
   }
   document.addEventListener('scroll', function (e) {

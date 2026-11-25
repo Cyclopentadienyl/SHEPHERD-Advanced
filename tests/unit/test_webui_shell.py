@@ -3362,6 +3362,21 @@ const { chromium } = require('playwright');
 """
 
 
+def _page_shell_js():
+    """The shell's head script (`shell._SHELL_JS`) for a test page of its own: no pages, no
+    stages, the display floor's numbers."""
+    from src.webui.components.help import DESCRIBED_BY_JS
+    from src.webui.style import FLOOR_VAR, STACK_FLOOR_WIDTH
+
+    return (shell._SHELL_JS.replace("__TITLES__", "{}").replace("__RESEARCH_LABEL__", '""')
+            .replace("__STAGES__", "{}").replace("__STAGE_WORD__", '""')
+            .replace("__LAYOUT__", "data-shep-layout").replace("__SHORT__", "data-shep-short")
+            .replace("__SHORT_BELOW__", "900").replace("__GO__", "{}")
+            .replace("__FLOOR_W__", "1280").replace("__FLOOR_H__", "720")
+            .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR)
+            .replace("__DESCRIBED_BY__", DESCRIBED_BY_JS))
+
+
 def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp_path):
     """R-73: Test's Result body scrolled with no cue (overlay scrollbars draw
     nothing at rest). Every region that scrolls fades its last lines while
@@ -3380,8 +3395,7 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     read in, so its scrollbar is in view whenever the box is. Both measured
     in a browser on a page of their own (Node and Playwright, skipped without)."""
     from src.webui.components import models_page, test_page
-    from src.webui.components.help import DESCRIBED_BY_JS
-    from src.webui.style import FLOOR_VAR, SHELL_CSS, STACK_FLOOR_WIDTH
+    from src.webui.style import SHELL_CSS
     from tests.fixtures.browser import node_with_playwright, run_node
 
     if node_with_playwright() is None:
@@ -3396,14 +3410,7 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     assert found, "Gradio's .hide-container rule is not in its style sheet"
     hide = found[0].group(1)
     css_path.write_text(SHELL_CSS + models_page.PAGE_CSS + found[0].group(0), encoding="utf-8")
-    js_path.write_text(shell._SHELL_JS.replace("__TITLES__", "{}").replace("__RESEARCH_LABEL__", '""')
-                       .replace("__STAGES__", "{}").replace("__STAGE_WORD__", '""')
-                       .replace("__LAYOUT__", "data-shep-layout").replace("__SHORT__", "data-shep-short")
-                       .replace("__SHORT_BELOW__", "900").replace("__GO__", "{}")
-                       .replace("__FLOOR_W__", "1280").replace("__FLOOR_H__", "720")
-                       .replace("__STACK_FLOOR_W__", str(STACK_FLOOR_WIDTH)).replace("__FLOOR_VAR__", FLOOR_VAR)
-                       .replace("__DESCRIBED_BY__", DESCRIBED_BY_JS),
-                       encoding="utf-8")
+    js_path.write_text(_page_shell_js(), encoding="utf-8")
     seen = run_node(_CUE_JS.replace("__GR_HIDE__", hide), tmp_path, str(css_path), str(js_path))
     assert seen["top"] == {"more": True, "mask": True}, seen
     assert seen["gap"] == {"more": True, "mask": False, "edge": True}, seen
@@ -3416,6 +3423,100 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
         assert box["sideways"] and box["barInView"], (layout, box)
         assert box["wrapH"] <= 900, (layout, box)
     assert seen["side"]["wrapH"] <= seen["side"]["bodyH"], seen
+
+
+#: R-CUE's lone title (the L8 close): panels of a fixed height, each a scroll region over a
+#: footer, whose edge falls under a title with every control it heads under the edge: a field's
+#: label (``lt-label``), a heading over two buttons (``lt-head``), a heading over a field
+#: (``lt-nested``); and a region of its own fixed height (``lt-fixed``), whose height is not
+#: its column's to give.
+_LONE_TITLE_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const [css, js, look] = [process.argv[2], process.argv[3], process.argv[4]].map((p) => require('fs').readFileSync(p, 'utf8'));
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
+  const lines = (n) => Array.from({ length: n }, (_, i) => `<p class="lt-line" style="margin: 0; line-height: 20px">Line ${i} of the form.</p>`).join('');
+  const panel = (id, left, top, body, footer = true) => `
+    <div class="lt-panel" id="${id}-panel" style="position: absolute; left: ${left}px; top: ${top}px; width: 520px; height: 300px; display: flex; flex-direction: column; background: #fff">
+      <div class="lt-bd" id="${id}" style="${footer ? 'flex: 1 1 auto; min-height: 0' : 'flex: 0 0 auto; height: 239px'}; overflow: auto; padding: 0 16px">${body}</div>
+      <div class="lt-ft" id="${id}-ft" style="flex: 0 0 auto; height: 60px; border-top: 1px solid #ccc"><button type="button">Start</button></div></div>`;
+  const field = (label) => `<div class="block" style="margin-top: 16px; background: #fff"><span data-testid="block-info" class="lt-title" style="display: block; margin-bottom: 10px; line-height: 20px">${label}</span><input type="text" style="display: block; height: 36px"></div>`;
+  await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="font: 15px/20px sans-serif">
+    ${panel('lt-label', 20, 20, lines(10) + field('Device') + lines(10))}
+    ${panel('lt-head', 600, 20, lines(9) + '<h3 class="lt-title" style="margin: 20px 0 0; line-height: 24px">Import folder</h3><div style="margin-top: 16px"><button type="button">Change…</button> <button type="button">Check</button></div>' + lines(10))}
+    ${panel('lt-nested', 20, 360, lines(8) + '<h3 style="margin: 20px 0 0; line-height: 24px">Run</h3>' + field('Run name') + lines(10))}
+    ${panel('lt-fixed', 600, 360, lines(10) + field('Seed') + lines(10), false)}
+    <script>${js}</script></body></html>`);
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const pass = async () => { await page.evaluate(() => window.ShepShell.update()); await frames(); await frames(); };
+  await pass();
+  const read = (id) => page.evaluate((id) => {
+    const el = document.getElementById(id), r = el.getBoundingClientRect(), s = getComputedStyle(el);
+    const edge = r.top + el.clientTop + el.clientHeight;
+    const title = [...el.querySelectorAll('.lt-title, h3')].pop();
+    const titles = [...el.querySelectorAll('.lt-title, h3, .block')].filter((t) => t.getBoundingClientRect().top < edge + 60);
+    const before = [...el.querySelectorAll('.lt-line')].filter((p) => p.getBoundingClientRect().top < title.getBoundingClientRect().top).pop();
+    const panel = document.getElementById(id + '-panel').getBoundingClientRect(), ft = document.getElementById(id + '-ft').getBoundingClientRect();
+    return { more: el.hasAttribute('data-shep-more'), edgeCue: el.hasAttribute('data-shep-more-edge') && /inset/.test(s.boxShadow),
+             mask: s.maskImage !== 'none', height: el.clientHeight, margin: s.marginBottom,
+             titlesUnder: titles.every((t) => t.getBoundingClientRect().top >= edge - 0.5),
+             titleAbove: titles.some((t) => t.getBoundingClientRect().top < edge - 0.5),
+             lineAbove: before.getBoundingClientRect().bottom <= edge + 0.5,
+             footDocked: Math.abs(ft.bottom - panel.bottom) <= 1 };
+  }, id);
+  const ids = ['lt-label', 'lt-head', 'lt-nested', 'lt-fixed'], out = {};
+  for (const id of ids) { out[id] = await read(id); }
+  // Scrolled, the region keeps its height; back at its top, the same.
+  for (const id of ids) {
+    await page.evaluate((id) => { document.getElementById(id).scrollTop = 25; }, id);
+    await pass();
+    out[id].scrolledHeight = (await read(id)).height;
+    await page.evaluate((id) => { document.getElementById(id).scrollTop = 0; }, id);
+    await pass();
+    out[id].backHeight = (await read(id)).height;
+  }
+  await page.addScriptTag({ content: look });
+  out.layout = await page.evaluate(() => { const l = window.__shepLook.check().layout; return { edgeHead: l.edgeHead, cue: l.cue }; });
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its_edge(tmp_path):
+    """**R-CUE: a region never ends at a lone title** (the owner's D4 of 2026-11-24: "never show
+    only a section title with every control under the edge"; the L8 close's suite: E1 found
+    Fine-tune's form ending at its Device and Run name labels at 1366 x 768 and 1280 x 720, and
+    Settings' Data locations at its Import folder heading at 1280 x 720, each title faded with
+    its controls under the edge). The shell's cue pass ends such a region in the gap above the
+    title: the title (and a field's box) lies under the edge with its controls, the line before
+    it stays in view, the region draws the edge cue (no fade over the gap), the footer under it
+    stays at its panel's foot, and the walk's ``edge-heading`` and ``scroll-cue`` rules find
+    nothing. A heading whose only control is a field under it goes under the edge with that
+    field's label. Scrolled, the region keeps its height. A region of its own fixed height (its
+    height is not its column's to give) is left as it is. Measured in a browser on a page of its
+    own (Node and Playwright, skipped without)."""
+    from src.webui.style import SHELL_CSS
+    from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    css_path, js_path, look_path = tmp_path / "page.css", tmp_path / "head.js", tmp_path / "look.js"
+    css_path.write_text(SHELL_CSS, encoding="utf-8")
+    js_path.write_text(_page_shell_js(), encoding="utf-8")
+    look_path.write_text(LOOK_JS, encoding="utf-8")
+    seen = run_node(_LONE_TITLE_JS, tmp_path, str(css_path), str(js_path), str(look_path))
+    for region in ("lt-label", "lt-head", "lt-nested"):
+        got = seen[region]
+        assert got["more"] and got["titlesUnder"] and got["lineAbove"], (region, got)
+        assert got["edgeCue"] and not got["mask"], (region, got)
+        assert got["footDocked"], (region, got)
+        assert got["scrolledHeight"] == got["height"] == got["backHeight"], (region, got)
+        assert not [f for f in seen["layout"]["edgeHead"] + seen["layout"]["cue"] if f"#{region} " in f], seen["layout"]
+    fixed = seen["lt-fixed"]
+    assert fixed["margin"] == "0px" and fixed["titleAbove"], fixed
+    assert fixed["scrolledHeight"] == fixed["height"] == fixed["backHeight"], fixed
 
 
 def test_the_training_parameters_fold_when_stacked_and_show_side_by_side():
