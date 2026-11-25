@@ -3195,8 +3195,13 @@ Runtime Settings are now behind a ⓘ after the field's name. Point at it (the b
 short pause, so a pointer passing over opens nothing), reach it with Tab, or click it: the help
 appears in a bubble you can move the pointer into. A click (or Enter or Space) pins it open as a
 dialog; Esc or a click elsewhere closes it. A click on the field's name still puts the cursor in
-the field. The bubble opens beside the field it explains, else above it, else below it, and never
-covers the field; it is never taller than the window: a long text scrolls inside it. What must
+the field. The bubble opens beside the field it explains, above it or below it, sliding along a
+side where that helps, and never covers that field (a reason's phrase: the controls it
+explains). Of the places that fit, it takes one that covers no other control; where none holds
+the whole bubble, it opens shorter in the tallest place that covers none and still shows its
+lead and two lines, its text scrolling inside it under the scroll cue; only where no such place
+exists does it take the place over the fewest controls (since 2026-11-24). It is never taller
+than the window: a long text scrolls inside it. What must
 stay visible is still printed: a refusal's reason, a job's state, the synthetic marker, an
 unverified source, and the Training Console's AMP refusal for HGT ("Disabled: HGT requires full
 float32 …"). A screen reader reads a field's printed line under it, then its help (since the
