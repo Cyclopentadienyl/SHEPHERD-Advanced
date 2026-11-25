@@ -3215,7 +3215,9 @@ side where that helps, and never covers that field (a reason's phrase: the contr
 explains). Of the places that fit, it takes one that covers no other control; where none holds
 the whole bubble, it opens shorter in the tallest place that covers none and still shows its
 lead and two lines, its text scrolling inside it under the scroll cue; only where no such place
-exists does it take the place over the fewest controls (since 2026-11-24). It is never taller
+exists does it take the place over the fewest controls (since 2026-11-24). That least height is kept, never
+compressed further, so that the text stays readable (the owner's decision of 2026-11-25): one bubble is open
+at a time, and the scroll cue says there is more to read. It is never taller
 than the window: a long text scrolls inside it. What must
 stay visible is still printed: a refusal's reason, a job's state, the synthetic marker, an
 unverified source, and the Training Console's AMP refusal for HGT ("Disabled: HGT requires full
