@@ -4247,12 +4247,15 @@ the Parent row shortens it); any warning, with ▲; and three segments:
   these weights cannot be read as a result; it is kept as written." and a small table, Index ·
   Registration · Report · Reason (a sequence or report digest it does not carry readably reads
   "not readable"); the segment then reads "Recorded results · 3 (1 not readable)". With no record
-  the segment says so per cause and gives the next step, naming no file ("No recorded result
-  yet": none is registered beside this checkpoint, which does not mean these weights were never
-  evaluated; "Next: start a test of it with Register when the run ends checked; its result then
-  appears here." and the action "Test this model ›", which opens the Test page with this
-  workspace and checkpoint chosen; the read-only view says recording a result is an operator
-  control, with no action), and a segment with nothing to count shows no "· 0". The read-only view lists the same items, from the route, the
+  the segment says its state on one line with **Details ›** and gives one action, naming no file
+  (since 2026-11-24): "○ No recorded result yet" (or "No recorded result for these weights" when
+  the results beside this checkpoint are of other weights), then "Test this model ›", which opens
+  the Test page with this workspace and checkpoint chosen. Its Details holds the why (none is
+  registered beside this checkpoint, which does not mean these weights were never evaluated: a
+  result registered beside another copy of them is not shown here) and the next step ("Start a
+  test of it with Register when the run ends checked. Its result then appears here."). The
+  read-only view says in view that recording a result is an operator control, with no action. A
+  segment with nothing to count shows no "· 0". The read-only view lists the same items, from the route, the
   group's notes included (`contest.notes`, `contest.notes_readable` in its answer);
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history, newest first: test runs and registrations, and any model load kept from before
@@ -4338,8 +4341,8 @@ the Parent row shortens it); any warning, with ▲; and three segments:
 it covers the detail while it is open, its buttons stay in view under its table however short
 the window, and Close returns to the detail with the same checkpoint still selected). Beside it,
 once a row it can serve is selected, a note says what it does in plain words ("Serves this model
-for diagnosis once you confirm the change. Results already recorded keep the model they were
-made with."); nothing before a selection. It is off,
+for diagnosis once you confirm."; the confirmation says that results already produced keep
+their own identity); nothing before a selection. It is off,
 with the reason beside it, for a base and for a file whose record cannot be read, before anything
 is read ("Record not readable: written before the model spec: not readable by this build; start
 a new run." for a file without a model spec). A Load

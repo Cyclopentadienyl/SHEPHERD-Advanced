@@ -4057,11 +4057,13 @@ parent 無法取得的原因時，也在此完整列出）；任何警告以 ▲
   K8-6e.1 起）絕不顯示為結果、也不算作結果：紀錄下方是 "▲ 1 record for these weights cannot be read
   as a result; it is kept as written." 與一張小表 Index · Registration · Report · Reason（它未以可讀
   形式帶有的序號或報告 digest 顯示為 "not readable"）；此時分頁標籤為 "Recorded results · 3 (1 not
-  readable)"。沒有紀錄時，分段依原因說明並給出下一步，不指出任何檔案（「No recorded result yet」：
-  此 checkpoint 旁沒有登錄任何結果，這不代表這組權重從未評估過；「Next: start a test of it with Register
-  when the run ends checked; its result then appears here.」與動作「Test this model ›」，它會開啟 Test
-  頁並選好此 workspace 與 checkpoint；唯讀檢視則說明記錄結果是操作者控制項，沒有動作），沒有
-  東西可計數的分段名稱不顯示「· 0」。唯讀檢視列出同樣的項目，取自該 route，包括群組的註記（其回答中
+  readable)"。沒有紀錄時，分段以一行說明狀態並附 **Details ›**，只給一個動作，不指出任何檔案（自 2026-11-24
+  起）：「○ No recorded result yet」（此 checkpoint 旁登錄的結果屬於其他權重時是「No recorded result for
+  these weights」），接著是「Test this model ›」，它會開啟 Test 頁並選好此 workspace 與 checkpoint。
+  Details 中是原因（此 checkpoint 旁沒有登錄任何結果，這不代表這組權重從未評估過：登錄在同一組權重另一份
+  副本旁的結果不會顯示在這裡）與下一步（「Start a test of it with Register when the run ends checked. Its
+  result then appears here.」）。唯讀檢視則直接說明記錄結果是操作者控制項，沒有動作。沒有東西可計數的
+  分段名稱不顯示「· 0」。唯讀檢視列出同樣的項目，取自該 route，包括群組的註記（其回答中
   的 `contest.notes`、`contest.notes_readable`）；
 - **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目，最新的在前：
   測試執行與登錄，以及 K8-6d 之前留下的模型載入，依其記錄內容顯示（「ordered by」加上它記錄的指標名稱，
@@ -4120,8 +4122,7 @@ parent 無法取得的原因時，也在此完整列出）；任何警告以 ▲
 **Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
 細節區，不論視窗多矮，它的按鈕都留在表格下方的可見範圍內；按 Close 回到細節區，且仍選取同一個
 checkpoint）。選取了它可以提供服務的一列之後，旁邊會以白話說明它的作用（「Serves this model for
-diagnosis once you confirm the change. Results already recorded keep the model they were made
-with.」）；選取之前什麼也不寫。對 base 以及紀錄無法讀取的檔案，它在讀取任何東西之前就是停用的，原因寫在旁邊（沒有
+diagnosis once you confirm.」；已產生的結果保留自己的身分，由確認畫面說明）；選取之前什麼也不寫。對 base 以及紀錄無法讀取的檔案，它在讀取任何東西之前就是停用的，原因寫在旁邊（沒有
 model spec 的檔案為「Record not readable: written before the model spec: not readable by this
 build; start a new run.」）。Load 不會寫入任何使用紀錄。頁面在顯示時、更換 workspace 時以及
 每一次 Load 之後讀取，
