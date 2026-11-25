@@ -11,7 +11,8 @@ guidance, except the 14 px floor and the WCAG values.
   `60ch` at 15 px = 540 px, about 78 per line (max 82); `56ch` = 504 px, about 73 (max 78). Plex digits are equal width.
 - 64 literal help texts: 22 leads over 78 characters (3 bubble lines), 2 over 90; 58 of 116 items over 76 characters
   (3+ lines). `help.budget_problems` then allowed a 100-character lead and 4 items; the sweep held every registered
-  text to §11's budget, and since 2026-11-23 every drawn part of a bubble to two lines (§14, check 9).
+  text to §11's budget, and since 2026-11-23 every drawn part of a bubble to two lines (§14, check 9); since
+  2026-11-24 that count is a note, not a gate (skill §7, R-HELP).
 - The owner's screenshots of 2026-11-22: 9–12-line refusals right-aligned in a narrow column beside Start; an env var,
   a lock file and a guide section inside sentences; one cause in 3 places; `.shepherd-gpu.lock` broken at its hyphen;
   text left of its label.
@@ -23,9 +24,10 @@ guidance, except the 14 px floor and the WCAG values.
 - **Errors and refusals:** what happened, why (only if known and short), what to do; never invent a cause. No "please",
   "sorry", "oops", "invalid", "an error occurred", "we", "Note:", "Warning:" (the status mark says it).
 - **Build each message whole:** never glue a sentence from fragments around a variable; a variable fills a row value.
-- **Placement:** a refusal stays inline beside what it disables (skill §3, §9), but only its one-line lead sits beside a
-  button; anything longer takes the full width under the group it explains, from the group's left edge, capped by the
-  measure. Never a narrow text column between fields.
+- **Placement:** a refusal stays inline beside what it dims (skill §3, §9), but beside the control stands only its
+  cause's phrase (five words at most, opening the one place its whole reason is said) or one line in the page's words
+  led by the need (R-WHY); anything longer takes the full width under the group it explains, from the group's left
+  edge, capped by the measure. Never a narrow text column between fields.
 
 ## 2. Paragraphs and sentences
 - One idea per paragraph, at most 3 sentences (skill §5). Running prose past 2 rendered lines at its measure gets
@@ -102,9 +104,10 @@ guidance, except the 14 px floor and the WCAG values.
 ## 10. Empty states and first use
 - Every empty region says what will appear and the next step in 1–2 sentences, own words per cause, at most one action
   (skill §9); never blank. First use: each cause once per screen through the one notice, where it empties a region, its
-  GUI path as the link ("Choose one in Settings › Data locations."); elsewhere on that screen a short relation ("Start
-  disabled: no workspaces folder is set.", the skill's §2 and `renderers.disabled_words`); no env vars, file names or
-  defaults.
+  GUI path as the link ("Choose one in Settings › Data locations."); elsewhere on that screen each control it dims has
+  the notice's phrase ("Needs a workspaces folder", `renderers.reason_phrase`), or nothing where the notice stands in
+  the same bar and names them; a dimmed control's own cause is one line led by the need ("Choose a dataset to start.",
+  `renderers.need_words`), never "disabled" (skill §9); no env vars, file names or defaults.
 
 ## 11. Help bubbles (ⓘ)
 Grammar as skill §7 (`help_lines`): line 1 the lead (bold); `- ` items; `Term: ` rows; other lines paragraphs; `Ref:` last.
@@ -112,7 +115,7 @@ Grammar as skill §7 (`help_lines`): line 1 the lead (bold); `- ` items; `Term: 
 | Part | Rule |
 |---|---|
 | Lead | Answers the question at the ⓘ (what it is, what it changes); starts with the answer or a verb; no repeat of title or label. ≤ 90 characters (skill ceiling); aim ≤ 78 = 2 lines at 320 px. |
-| Body | 2–4 parallel, front-loaded items or term rows, each ≤ 2 lines (76 characters), ideally 1 (38); or one paragraph of ≤ 2 sentences instead. |
+| Body | 2–4 parallel, front-loaded items or term rows, each ≤ 2 lines (76 characters), ideally 1 (38); or one paragraph of ≤ 2 sentences instead. Four items where the facts need them: never merge two facts to reach three, never pad to two. |
 | Ref | Last, muted, 14 px: only codes, file names, env vars, guide sections, sources. |
 | Total | 60–80 words without Ref; never truncated; no nesting; nothing must-know (formats, units, refusals, states stay visible). |
 
@@ -122,7 +125,8 @@ Restructuring a long text, in order:
    to Ref; mechanism the reader cannot act on to Details or the guide (say so in the delivery).
 3. One fact per item: ";", two colons, a parenthesis or "and" between two facts makes two items or a term row. One
    form for all items (all term rows, all fragments, or all sentences).
-4. Run `budget_problems`, then look at the bubble at 320 px: lead and every item 2 lines or fewer.
+4. Run `budget_problems`, then look at the bubble at 320 px: lead and every item 2 lines or fewer, as a reminder. It is
+   accepted when it covers no control, reads at 4.5:1 and keeps every fact reachable (skill §7, R-HELP).
 
 Example `finetune-best-save` (illustrative; check each fact against the code). Before: 91-character lead, items of 2–3
 lines with colons and a parenthesis:
@@ -138,17 +142,21 @@ After: 63-character lead, one form (term rows), 43 words; only the parenthesis (
 > - Ties: several saved files can share it
 > - Shown: to the operator once the child has ended
 
-## 12. Worked example: the refusal beside Start (the owner's screenshot, Fine-tune and Training)
+## 12. Worked example: the refusal beside Start (the owner's screenshot, Training and Fine-tune)
 Before: 64 words beside the button; the cause also under Dataset and in the header chip.
 > Start disabled — the GPU lock cannot be used (No workspaces folder is set, so the GPU lock is not configured and every
 > managed GPU job is refused rather than run without excluding the others. Choose the folder in Settings › Data locations:
 > the lock is .shepherd-gpu.lock in it, the one file every process that uses the folder takes (deployment guide §4.11).
 > Ref: SHEPHERD_WORKSPACES_ROOT).
 
-After: the screen's one first-use line: "No workspaces folder is set. Choose one in Settings › Data locations." Beside
-Start, one line with the shared status mark: "Start disabled: no workspaces folder is set." and `Details ›`. In Details,
-rows: "GPU lock: `.shepherd-gpu.lock` in the workspaces folder", "Why: every managed GPU job takes this lock, so none
-runs without it", "Ref: `SHEPHERD_WORKSPACES_ROOT` · deployment guide §4.11".
+After (since 2026-11-24, R-WHY and R-DETAILS): the screen's one first-use statement, in Training's run bar under
+Dataset and Run name, in the notice's form: "○ No workspaces folder is set. Training needs one. Choose one in
+Settings › Data locations" with `Details ›` closing the line. Its Details holds the folder's rows and, merged, the GPU
+lock's ("GPU lock: `.shepherd-gpu.lock` in the workspaces folder", "Taken by: every process that uses the folder",
+"GPU jobs: refused while it is unset, never run without the lock"), then one Ref line (`SHEPHERD_WORKSPACES_ROOT` ·
+deployment guide §4.11). Beside Start, nothing: the notice is in the same bar and names Start and Continue…, so it is
+their description. On Fine-tune the notice stands at the top of the form, away from Start, so Start has the phrase
+"Needs a workspaces folder", which brings the notice into view with the focus on its link.
 
 ## 13. Do not
 - First-line indents, `<br><br>` spacing, justified text, centred or right-aligned text that wraps, fixed text heights;
@@ -160,8 +168,8 @@ runs without it", "Ref: `SHEPHERD_WORKSPACES_ROOT` · deployment guide §4.11".
 
 ## 14. Checks (judgement first, then the scan; folded into `ui_problems`, `layout_problems`, `repeat_problems`, `budget_problems`)
 Reviewer, before any script: blur a screenshot, then read only the leads of each panel and bubble; if the leads alone do
-not say what is true and what to do next, the text is not done. Then the scan: 1–5, 7, 9, 12 pass or fail for text the
-change touches; 6, 8's "> 78" note, 10, 11 list findings for the delivery. Findings outside the task are recorded, not
+not say what is true and what to do next, the text is not done. Then the scan: 1–5, 7, 12 pass or fail for text the
+change touches; 6, 8's "> 78" note, 9, 10, 11 list findings for the delivery. Findings outside the task are recorded, not
 fixed. No new gate.
 
 | # | Check | Measured by | Pass |
@@ -174,7 +182,7 @@ fixed. No new gate.
 | 6 | Paragraph size | sentences and rendered lines per paragraph or reason | ≤ 3 sentences; prose ≤ 2 lines, else structured (skill §4); sentences ≤ 25 words |
 | 7 | Tokens in prose | prose outside Ref, Details, `code`, key-value rows: `SHEPHERD_\w+`, `§\d`, `[\w.-]+\.(lock\|json\|pt)\b`, `/\w+/`; mono size; `word-break` | none; mono ≥ 14 px; no `break-all` on mixed text |
 | 8 | Bubble strings | `help_lines` over every registered text (`budget_problems`) | lead ≤ 90 (note > 78); 0 or 2–4 items, each ≤ 76; ≤ 80 words; one item form; Ref last |
-| 9 | Bubble render | every registered text and every header chip's bubble at 320 px (`test_webui_help.py`, since 2026-11-23) | the lead, each paragraph, the Ref line and each item ≤ 2 lines, parts kept verbatim from a source or governed named as exempt; nothing clipped |
+| 9 | Bubble render | every registered text and every header chip's bubble at 320 px (`test_webui_help.py`, since 2026-11-23; a note since 2026-11-24, R-HELP) | listed, not asserted: the lead, each paragraph, the Ref line and each item ≤ 2 lines, parts kept verbatim from a source or governed named as exempt; nothing clipped |
 | 10 | Repeats | normalised sentences of 6+ words in one screen's visible text | each once |
 | 11 | Words | regex over UI strings | no `please\|sorry\|oops\|invalid\|an error occurred\|\bwe\b`; no `;` |
 | 12 | Figures | computed `font-variant-numeric` of numeric cells, tiles, counters | includes `tabular-nums` |
