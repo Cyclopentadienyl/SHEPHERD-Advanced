@@ -2802,7 +2802,8 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 沒有生效值的列保持路徑框打開（「Set to」）：那就是下一步。已設定的列在路徑框的位置顯示它的值與
 **Change…**（自 2026-11-24 起），按下後在原處打開路徑框（「Change to」），焦點移入框內，並在 Check
 與 Save 旁附上 **Cancel**；Cancel 或 Esc 會關閉它並清除輸入的文字，一次改變了該列的 Save 也會關閉它。
-路徑框附帶：
+已設定的列，其生效的值與來源位於名稱旁時，Change… 就在它們結束的那一行，與「Advanced: source ›」
+同一行，不另占一行（自 2026-11-25 起）。路徑框附帶：
 
 - **Check**：以工作讀取時相同的規則檢查這個值（絕對路徑、已存在的目錄、兩個病人層級的位置須在
   repository 之外），顯示「● Usable」與解析後的路徑，再於自己的一行說明伺服器自己的清單在其中找到
@@ -2854,7 +2855,8 @@ yet …」）並提供 **Apply**，下次啟動時也會套用。所以工作看
 **對唯讀的瀏覽器**，每個路徑都顯示「Set (path hidden)」，來源照樣顯示，每個路徑框與按鈕都上鎖。
 各列上方的一則通知說明這代表什麼：「🔒 Folder paths are hidden in this read-only view.」（自 2026-11-24
 起；D8 的完整原因由頁首 chip 說明），每一列則說一次短語「🔒 Operator controls only」：已設定的列在
-上鎖的「🔒 Change…」旁，其他列在 Check 與 Save 旁。這個短語會打開 D8 的原因，該列每個因它變暗的控制項
+上鎖的「🔒 Change…」旁，兩者永遠在同一行（名稱欄放得下兩者時就在「Advanced: source ›」那一行，否則在
+生效的值與來源下方的一行），其他列在 Check 與 Save 旁。這個短語會打開 D8 的原因，該列每個因它變暗的控制項
 都把它讀作自己的說明。一個已設定但被拒絕的值顯示為「<Folder> set when the service
 started（或 saved in Settings）is refused: an operator sees why in Settings › Data locations」，
 絕不顯示拒絕原因本身的文字，因為它會照原樣重複輸入的值（相對路徑或 `~` 路徑不會被路徑遮蔽處理隱藏）。
@@ -3239,7 +3241,8 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 以前印在 Diagnosis、Training Console 與 Runtime Settings 各欄位下方的說明，現在放在欄位名稱
 後面的 ⓘ 裡。把滑鼠指向它（短暫停留後泡泡才打開，滑鼠只是經過不會打開）、用 Tab 移到它，或點擊
 它：說明會出現在一個泡泡中，滑鼠可以移進泡泡閱讀。點擊（或 Enter、Space）會把它固定打開，成為一個
-對話框；按 Esc 或點擊其他地方會關閉它。點擊欄位名稱仍會把游標放進欄位。泡泡會在它所說明的欄位
+對話框，標題列的 × 旁有加框的 Esc 鍵，兩者是同一個關閉按鈕（自 2026-11-25 起，取代內文下方的
+「Esc to close」一列）；按 Esc、這個按鈕或點擊其他地方會關閉它。點擊欄位名稱仍會把游標放進欄位。泡泡會在它所說明的欄位
 旁邊、上方或下方打開，必要時沿著那一側滑動，永遠不會蓋住該欄位（原因短語的泡泡則不蓋住短語所說明的
 控制項）。在放得下的位置中，它選一個不蓋住其他控制項的位置；沒有任何這樣的位置放得下整個泡泡時，它在
 不蓋住控制項、仍能顯示開頭一句與其後兩行的最高位置以較矮的高度打開，文字在泡泡內捲動並帶捲動提示；
@@ -3301,7 +3304,8 @@ HPO terms 欄位（標籤、格式說明與輸入框，166 px）；在較矮的�
   "✕ Load refused" 或 "○ Not loaded"（服務啟動後從未載入任何模型），停止或拒絕發生的時間寫在狀態
   旁邊（"○ Stopped at 10:15:00 UTC"）。不接受診斷時，下方是伺服器的開頭說明（"By an operator"，
   或載入被拒絕的原因，並指名持有 GPU 鎖者），完整
-  原因在 "Details ›" 之下，點一下即可看到（如何載入模型、啟動設定）。載入只由這個狀態表達，不論是
+  原因在 "Details ›" 之下，點一下即可看到（如何載入模型、啟動設定）；第一次使用、沒有設定 workspaces
+  資料夾時，兩者都在狀態那一行的 "Details ›" 之下（見下表）。載入只由這個狀態表達，不論是
   哪個頁面或用戶端發起的；
 - **■ Stop inference**，在有模型服務時出現（操作者控制項，§4.13；唯讀瀏覽器看到上鎖的按鈕）。它
   會先詢問："Stop inference of model <12 hex>? Diagnoses already accepted finish; new ones are
@@ -3323,7 +3327,7 @@ HPO terms 欄位（標籤、格式說明與輸入框，166 px）；在較矮的�
 | "Model changed at HH:MM — was <舊>, now <新>"，附 × | 這次讀取發現的模型（或所服務內容的其他部分）與這個瀏覽器上一次讀取的不同（例如另一個瀏覽器做了 Change model），且目前有服務內容。× 可關閉它。停止不會產生這個通知：由狀態說一次，先前的通知也會消失 |
 | 灰色："cannot check · <原因> · Retry"、"last known HH:MM:SS · not current" | 無法讀取目前服務的內容："status not read"（完整原因寫在標記下方那一行與 Details 中）或 "timed out (5 s)"。顯示的是最後已知的狀態，沒有 ✓，標籤為灰色虛線 |
 | 灰色："read HH:MM:SS · older than this result" | 最後一次成功的讀取早於畫面上的結果 |
-| "○ Not loaded"、"Nothing has been loaded since the service started"、"Details ›" 與 "Load a model…" | 沒有服務任何模型，而且自啟動以來從未服務過（什麼都沒設定；自 K7 起，圖從不單獨服務）。「沒有服務」只在這裡說一次，附這唯一的動作：Run Diagnosis 呈灰色且無法點擊，下方寫著 "Load a model first."（滑鼠指向它，或以 Tab 移到它，會說明原因）。API 用戶端此時提出請求，會得到附完整原因的 503（§4.7） |
+| "○ Not loaded"、"Nothing has been loaded since the service started"、"Details ›" 與 "Load a model…" | 沒有服務任何模型，而且自啟動以來從未服務過（什麼都沒設定；自 K7 起，圖從不單獨服務）。「沒有服務」只在這裡說一次，附這唯一的動作：Run Diagnosis 呈灰色且無法點擊，下方寫著 "Load a model first."（滑鼠指向它，或以 Tab 移到它，會說明原因）。API 用戶端此時提出請求，會得到附完整原因的 503（§4.7）。沒有設定 workspaces 資料夾時（第一次使用），狀態、原因與下一步是同一行："○ Not loaded: no workspaces folder is set. Choose one in Settings › Data locations"，由 "Details ›" 結束這一行，其中有 "Nothing has been loaded since the service started"、完整原因與資料夾的各列（自 2026-11-25 起；之前是一個灰色的 "Not loaded" 標籤疊在資料夾自己的提示之上） |
 | "○ Stopped at HH:MM:SS UTC"、"By an operator"、"Back to research ›" | 推論已停止（由操作者、為了 Restart Backend，或在服務關閉時）；"Details ›" 有伺服器的完整原因。Run Diagnosis 顯示 "Load a model first." |
 | "✕ Load refused at HH:MM:SS UTC" 與原因 | 在沒有服務任何模型時，一次載入（或啟動時的載入）被拒絕，例如 "CUDA inference is refused: the GPU is in use by <持有者>…" |
 | "▲ Stopping · N in flight" | 操作者停止了推論：已接受的 N 個診斷會跑完，新的診斷被拒絕（Run Diagnosis 下方寫著 "Load a model first."；API 用戶端得到 503）。之後卡片顯示 "Stopped" |

@@ -2685,7 +2685,9 @@ folder, Training evidence folders): what needs it, what is in effect and where i
 effect keeps its box open ("Set to"): that is the next step. A set row shows its value with
 **Change…** in the box's place (since 2026-11-24), which opens the box there ("Change to"), the
 focus in it, with **Cancel** beside Check and Save; Cancel or Escape closes it and clears what
-was typed, and a Save that changes the row closes it. With the box:
+was typed, and a Save that changes the row closes it. Where a set row's facts stand beside its
+name, Change… sits on the line they end on, level with their "Advanced: source ›", and takes no
+line of its own (since 2026-11-25). With the box:
 
 - **Check**: the value by the same rule a job's read applies (absolute, an existing directory,
   outside the repository for the two patient-level ones), "● Usable" with the resolved path,
@@ -2745,8 +2747,9 @@ opened (permissions, the disk) is fixed where it is and never renamed.
 **For a read-only browser** every path reads "Set (path hidden)", the sources stay, and every box
 and button is locked. One notice above the rows says what that means, "🔒 Folder paths are hidden
 in this read-only view." (since 2026-11-24; D8's whole reason is the header chip's), and each row
-says the phrase "🔒 Operator controls only" once: beside its locked "🔒 Change…" on a set row, else
-beside its Check and Save. The phrase opens D8's reason, and each control of its row it dims
+says the phrase "🔒 Operator controls only" once: on a set row beside its locked "🔒 Change…", the
+two always on one line (that of "Advanced: source ›" where the name's column holds both, otherwise
+the line under the row's facts); on any other row beside its Check and Save. The phrase opens D8's reason, and each control of its row it dims
 reads it as its description.
 A value that is set and refused
 reads "<Folder> set when the service started (or saved in Settings) is refused: an operator sees
@@ -3204,7 +3207,9 @@ The explanations that were printed under each field of Diagnosis, the Training C
 Runtime Settings are now behind a ⓘ after the field's name. Point at it (the bubble opens after a
 short pause, so a pointer passing over opens nothing), reach it with Tab, or click it: the help
 appears in a bubble you can move the pointer into. A click (or Enter or Space) pins it open as a
-dialog; Esc or a click elsewhere closes it. A click on the field's name still puts the cursor in
+dialog, whose head shows the framed Esc key beside its ×, the two one close button (since
+2026-11-25, in place of an "Esc to close" row under the text); Esc, that button or a click
+elsewhere closes it. A click on the field's name still puts the cursor in
 the field. The bubble opens beside the field it explains, above it or below it, sliding along a
 side where that helps, and never covers that field (a reason's phrase: the controls it
 explains). Of the places that fit, it takes one that covers no other control; where none holds
@@ -3283,7 +3288,8 @@ Run Diagnosis stays in view. It shows:
   ("○ Stopped at 10:15:00 UTC"). When no diagnosis is admitted, the server's lead is under it
   ("By an operator", or why a load was refused, naming the GPU lock's holder) and its whole
   reason one click away under "Details ›" (how to load a model, the
-  start-up settings). A load is said by this state alone, whichever page or client started it;
+  start-up settings); at first use, with no workspaces folder set, both are under the state's one
+  line's "Details ›" (the table below). A load is said by this state alone, whichever page or client started it;
 - **■ Stop inference**, while a model serves (an operator control, §4.13; locked for a read-only
   browser). It asks first: "Stop inference of model <12 hex>? Diagnoses already accepted finish;
   new ones are refused until a model is loaded. Nothing reloads one by itself." with
@@ -3308,7 +3314,7 @@ Run Diagnosis stays in view. It shows:
 | "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example), and something is served now. × dismisses it. A stop raises none: the state says it, once, and a notice raised earlier goes |
 | grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read: "status not read" (the full reason is in the badge's line and in Details) or "timed out (5 s)". The lines shown are the last known state, without ✓, with grey dashed chips |
 | grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
-| "○ Not loaded", "Nothing has been loaded since the service started", "Details ›" and "Load a model…" | No model is served and none has been since the start (none configured; since K7 a graph is never served on its own). Nothing served is said here once, with this one action: Run Diagnosis is greyed out and cannot be clicked, "Load a model first." under it (pointing at it, or reaching it with Tab, shows why). An API client asking now gets 503 with the whole reason (§4.7) |
+| "○ Not loaded", "Nothing has been loaded since the service started", "Details ›" and "Load a model…" | No model is served and none has been since the start (none configured; since K7 a graph is never served on its own). Nothing served is said here once, with this one action: Run Diagnosis is greyed out and cannot be clicked, "Load a model first." under it (pointing at it, or reaching it with Tab, shows why). An API client asking now gets 503 with the whole reason (§4.7). With no workspaces folder set (first use) the state, its cause and the next step are one line, "○ Not loaded: no workspaces folder is set. Choose one in Settings › Data locations", closed by "Details ›", which holds "Nothing has been loaded since the service started", the whole reason and the folder's rows (since 2026-11-25; before, a grey "Not loaded" tag stood over the folder's own notice) |
 | "○ Stopped at HH:MM:SS UTC", "By an operator", "Back to research ›" | Inference was stopped (by an operator, for Restart Backend, or as the service shut down); "Details ›" has the server's whole reason. Run Diagnosis says "Load a model first." |
 | "✕ Load refused at HH:MM:SS UTC" and why | A load (or the start-up's) was refused while nothing was served, for example "CUDA inference is refused: the GPU is in use by <holder>…" |
 | "▲ Stopping · N in flight" | An operator stopped inference: the N diagnoses already accepted finish, and new ones are refused ("Load a model first." under Run Diagnosis; 503 for an API client). Then the card reads "Stopped" |
