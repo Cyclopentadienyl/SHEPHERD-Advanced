@@ -583,6 +583,9 @@ def create_runtime_settings_tab(ctx: Any) -> None:
         # Data locations (UI-06) on the left; Runtime settings and Display (this browser's own
         # choices) share the column beside it (`PAGE_CSS`: side by side where that column has
         # the room, else Display under Runtime settings); narrow, one panel above the other.
+        # The column is one box of the page's row and holds two panels, so each is marked as
+        # its own area (the shared UI check's ``shep-area``): under Runtime settings, Display's
+        # body and Runtime settings' each scroll in their own panel, one region per area.
         data_locations.create_data_locations_panel(ctx)
         with gr.Column(elem_id="shep-settings-side", min_width=0):
             with gr.Column(elem_id="shep-settings-pair", min_width=0):
@@ -597,7 +600,8 @@ def _display_panel(ctx: Any) -> None:
     choice the head script read (`display.READ_PARAMS_JS`), and the reader's pick is saved in
     the browser and applied to the open page at once (`display.WRITE_PARAMS_JS`). Never gated:
     it changes only this reader's page, so a read-only viewer may change it too."""
-    with gr.Column(elem_classes=["shep-panel", "shep-display"], elem_id="shep-display", min_width=0):
+    with gr.Column(elem_classes=["shep-panel", "shep-display", "shep-area"],
+                   elem_id="shep-display", min_width=0):
         plain_html('<div class="shep-panel-hd"><h2>Display</h2>'
                    f'<span class="shep-panel-right">{r.chain_html(*DISPLAY_NOTE)}</span></div>',
                    elem_id="shep-display-hd")
@@ -612,7 +616,8 @@ def _display_panel(ctx: Any) -> None:
 def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
                    saved_compile: bool) -> tuple:
     """The Runtime settings panel's components (`create_runtime_settings_tab`)."""
-    with gr.Column(elem_classes=["shep-panel", "shep-settings"], elem_id="shep-settings"):
+    with gr.Column(elem_classes=["shep-panel", "shep-settings", "shep-area"],
+                   elem_id="shep-settings"):
         plain_html('<div class="shep-panel-hd"><h2>Runtime settings</h2>'
                    '<span class="shep-panel-right">this server’s hardware</span></div>'
                    '<p class="shep-intro">How computation runs on this server: memory and '
