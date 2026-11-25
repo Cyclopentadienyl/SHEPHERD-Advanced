@@ -1561,8 +1561,11 @@ def test_in_a_browser_the_rows_share_their_columns_and_a_path_reads(dl, tmp_path
 
 
 #: Each Data locations row as drawn: its Change… and its "Advanced: source ›" (each line's first
-#: glyph box and its baseline: the box's top plus its font's ascent), the name, what is in
-#: effect, the line Change… stands in, and the bottom of the row's content.
+#: glyph box and its baseline: the box's top plus its font's ascent), a read-only row's phrase
+#: beside "🔒 Change…", the name, what is in effect, the line Change… stands in, the bottom of
+#: the row's content, and the row's height as drawn and, for a marked row, as drawn without
+#: its mark (`__BESIDE__`, `data_locations.BESIDE`, put back before anything is painted): the
+#: head, then Change… on a line of its own.
 _SHARED_LINE_JS = """() => {
   const pen = document.createElement('canvas').getContext('2d');
   const rect = (e) => e && e.getClientRects().length ? e.getBoundingClientRect() : null;
@@ -1574,33 +1577,59 @@ _SHARED_LINE_JS = """() => {
     return { ...at(q), text: glyph.top, base: glyph.top + pen.measureText('Hg').fontBoundingBoxAscent }; };
   return [...document.querySelectorAll('.shep-dl-row')].map((row) => {
     const s = getComputedStyle(row);
-    return { id: row.id, change: line(row.querySelector('button.shep-dl-change')),
-             adv: line(row.querySelector('[id^="dl_adv_"] summary')),
-             advBlock: at(rect(row.querySelector('[id^="dl_adv_"]'))),
-             name: at(rect(row.querySelector('.shep-dl-head > .shep-dl-left'))),
-             state: at(rect(row.querySelector('[id^="dl_state_"]'))),
-             set: at(rect(row.querySelector('.shep-dl-set'))),
-             end: rect(row).bottom - parseFloat(s.paddingBottom) - parseFloat(s.borderBottomWidth) };
+    const seen = { id: row.id, change: line(row.querySelector('button.shep-dl-change')),
+                   phrase: at(rect(row.querySelector('.shep-dl-chg .shep-reason'))),
+                   adv: line(row.querySelector('[id^="dl_adv_"] summary')),
+                   advBlock: at(rect(row.querySelector('[id^="dl_adv_"]'))),
+                   name: at(rect(row.querySelector('.shep-dl-head > .shep-dl-left'))),
+                   state: at(rect(row.querySelector('[id^="dl_state_"]'))),
+                   set: at(rect(row.querySelector('.shep-dl-set'))),
+                   end: rect(row).bottom - parseFloat(s.paddingBottom) - parseFloat(s.borderBottomWidth),
+                   height: rect(row).height };
+    if (row.hasAttribute('__BESIDE__')) {
+      row.removeAttribute('__BESIDE__');
+      seen.unmarked = rect(row).height;
+      row.setAttribute('__BESIDE__', '');
+    }
+    return seen;
   });
 }"""
 
 
 def _shared_line_problems(stop) -> list:
     """**A set row's actions share the line its facts end on** (the owner's request of
-    2026-11-25): where the facts stand beside the name, Change… (on the boxes' column, one x in
-    every row) and "Advanced: source ›" stand on one line (tops within 2 px, one baseline) under
-    both parts above them, and that line is the row's last; where the facts go under the name,
-    Change… stays under "Advanced: source ›", as before."""
+    2026-11-25): where the facts stand beside the name and the name column holds Change… (a
+    read-only row's "🔒 Change…" with its phrase) on one line, Change… (on the boxes' column, one
+    x in every row) and "Advanced: source ›" stand on one line (tops within 2 px, one baseline)
+    under both parts above them, and that line is the row's last; elsewhere (the facts under
+    the name, or a name column too narrow for Change… and its phrase) Change… stays under
+    "Advanced: source ›", as before. In every row "🔒 Change…" and its phrase share a line, and
+    no row is taller than it is drawn without the shared line (DL-1: from 1280 to 1350 wide a
+    read-only row's phrase went under "🔒 Change…" in the name column, each row 15 to 24 px
+    taller, and at 1340 x 800 the panel's last line fell out of view)."""
     problems, where = [], stop["size"]
     rows = [row for row in stop["extra"] if row["change"]]
     lefts = {row["id"]: round(row["change"]["left"]) for row in rows}
     if len(set(lefts.values())) > 1:
         problems.append(f"{where}: Change… starts at {lefts}")
     for row in rows:
-        change, adv, name, state = row["change"], row["adv"], row["name"], row["state"]
-        if not (state["left"] >= name["right"] - 1 and state["top"] < name["bottom"] - 1):
+        change, adv, name, state, phrase = (row["change"], row["adv"], row["name"], row["state"],
+                                            row["phrase"])
+        if row.get("unmarked") is not None and row["height"] > row["unmarked"] + 0.5:
+            problems.append(f"{where} {row['id']}: {row['height']:.0f} px tall, "
+                            f"{row['unmarked']:.0f} px without the shared line")
+        if phrase and not (phrase["top"] < change["bottom"] - 0.5
+                           and change["top"] < phrase["bottom"] - 0.5):
+            problems.append(f"{where} {row['id']}: its phrase (top {phrase['top']:.1f}) is not on "
+                            f"the line of 🔒 Change… (top {change['top']:.1f})")
+            continue
+        # The name column holds Change… and its phrase: they end within its right edge.
+        holds = max(change["right"], phrase["right"] if phrase else 0) <= name["right"] + 0.5
+        beside = state["left"] >= name["right"] - 1 and state["top"] < name["bottom"] - 1
+        if not (beside and holds):
             if change["top"] < adv["bottom"] - 0.5:
-                problems.append(f"{where} {row['id']}: stacked, Change… is not under Advanced")
+                problems.append(f"{where} {row['id']}: drawn as before, Change… is not under "
+                                "Advanced")
             continue
         if abs(change["text"] - adv["text"]) > 2 or abs(change["base"] - adv["base"]) > 1:
             problems.append(f"{where} {row['id']}: Change… (top {change['text']:.1f}, baseline "
@@ -1620,10 +1649,14 @@ def test_a_set_rows_change_shares_the_line_its_facts_end_on(dl, tmp_path, monkey
     source ›" on the right, the last line of each part, so each set row took a line more than it
     needed. Every row set (the workspaces folder and the registry when the service started, the
     import and evidence folders saved here), for an operator and a read-only viewer ("🔒
-    Change…" with its phrase), at the owner's window, his Firefox width and the display floor:
-    beside, the two stand on one line under both parts and end the row; stacked (configured at
-    the floor, two read-only rows there), Change… stays under "Advanced: source ›"
-    (`_shared_line_problems`). Fails on 19785e1: Change… a line (29 px) under Advanced."""
+    Change…" with its phrase), at the owner's window, his Firefox width, 1340 x 800 (a read-only
+    name column too narrow for "🔒 Change…" and its phrase) and the display floor: beside, the
+    two stand on one line under both parts and end the row; stacked (configured at 1340 and at
+    the floor, two read-only rows there) or where the name column cannot hold Change… and its
+    phrase, Change… stays under "Advanced: source ›" (`_shared_line_problems`). Fails on
+    19785e1, which has no shared line (Change… a line, 29 px, under Advanced), and on 12d60bc
+    (DL-1): at 1340 x 800 and 1280 x 720 the read-only phrase went under "🔒 Change…", each such
+    row 15 to 24 px taller than without the shared line."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import node_with_playwright, walk_ui
     from tests.fixtures.operator_access import DEPLOYMENT_MODE
@@ -1642,14 +1675,15 @@ def test_a_set_rows_change_shares_the_line_its_facts_end_on(dl, tmp_path, monkey
         _parts(dl, dl._on_save(key, str(folders[key]), request))
     if not operator:
         monkeypatch.delenv(DEPLOYMENT_MODE)
-    sizes = ([1850, 960], [1550, 830], [1280, 720])
+    sizes = ([1850, 960], [1550, 830], [1340, 800], [1280, 720])
     stops = [{"size": size, "page": "settings", "focus": False} for size in sizes]
     with served(create_gradio_app(), **mount_options()) as base:
-        seen = walk_ui(base[:-len("gradio_api")], tmp_path, stops, extra_js=_SHARED_LINE_JS)
+        seen = walk_ui(base[:-len("gradio_api")], tmp_path, stops,
+                       extra_js=_SHARED_LINE_JS.replace("__BESIDE__", dl.BESIDE))
     problems = []
     for stop in seen:
         assert [row["id"] for row in stop["extra"] if row["change"]] == [f"dl_row_{k}" for k in KEYS], stop
-        if stop["size"] != "1280x720":
+        if stop["size"] in ("1850x960", "1550x830"):
             # The owner's window and his Firefox width: every row's facts beside its name.
             assert all(row["state"]["top"] < row["name"]["bottom"] for row in stop["extra"]), stop
         problems += _shared_line_problems(stop)

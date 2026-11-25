@@ -397,8 +397,12 @@ def key_html(item: FieldView, *, allowed: bool) -> str:
 #: 2026-11-25): the row's head wraps by what each side holds, so only the boxes it draws say so.
 #: Each time the row or its facts change size, the head is measured as it wraps (the mark off,
 #: put back before anything is painted, so the mark never changes what it measured) and the row
-#: is marked with its name column's width (`NAME_WIDTH`); the style sheet then gives a set row's
-#: actions the line its facts end on (`PAGE_CSS`). A key no longer in the page stops measuring.
+#: is marked with its name column's width (`NAME_WIDTH`) where its facts stand beside its name
+#: and that column holds its Change… on one line (its indent to the boxes' column, Change… and a
+#: read-only row's phrase, as they stand on the row's own line with the mark off: DL-1, from
+#: 1280 to 1350 wide a read-only phrase went under "🔒 Change…" in that column, each row 15 to 24
+#: px taller); the style sheet then gives a set row's actions the line its facts end on
+#: (`PAGE_CSS`). A key no longer in the page stops measuring.
 BESIDE = "data-dl-beside"
 NAME_WIDTH = "--dl-name"
 CHANGE_JS = r"""
@@ -429,6 +433,17 @@ document.addEventListener('keydown', function (e) {
   if (c) { e.preventDefault(); e.stopPropagation(); c.click(); }
 });
 var queued = false, sizes = null;
+function asks(group) {
+  var s = getComputedStyle(group), gap = parseFloat(s.columnGap) || 0;
+  var need = parseFloat(s.paddingInlineStart) || 0, parts = 0;
+  for (var i = 0; i < group.children.length; i++) {
+    var part = group.children[i];
+    if (!part.getClientRects().length) { continue; }
+    need += part.getBoundingClientRect().width + (parts ? gap : 0);
+    parts += 1;
+  }
+  return need;
+}
 function arrange() {
   queued = false;
   if (!element.isConnected) { if (sizes) { sizes.disconnect(); } return; }
@@ -436,12 +451,13 @@ function arrange() {
   if (!row) { return; }
   var name = row.querySelector('.shep-dl-head > .shep-dl-left');
   var facts = row.querySelector('.shep-dl-head > .shep-dl-facts');
+  var group = element.querySelector('.shep-dl-chg');
   var was = row.hasAttribute('__BESIDE__');
   if (was) { row.removeAttribute('__BESIDE__'); }
   var beside = false, width = '';
   if (name && facts && name.getClientRects().length && facts.getClientRects().length) {
     var n = name.getBoundingClientRect(), f = facts.getBoundingClientRect();
-    beside = f.left >= n.right - 1 && f.top < n.bottom - 1;
+    beside = f.left >= n.right - 1 && f.top < n.bottom - 1 && (!group || asks(group) <= n.width);
     width = n.width + 'px';
   }
   if (beside && row.style.getPropertyValue('__NAME_WIDTH__') !== width) {
@@ -946,10 +962,13 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: by `CHANGE_JS` as the head wraps) and its Change… is closed, the row is one grid of the head's
 #: two columns (the name column as wide as the head drew it, `NAME_WIDTH`, and the gap): the
 #: name beside what is in effect, then one line for both parts' last lines, Change… (with a
-#: read-only row's phrase, under it on the box's edge where the column cannot hold both) on
-#: the boxes' column and "Advanced: source ›" on the facts' edge, on one baseline, under
-#: whichever part above them is taller; the outcome line under both. Where the facts go under
-#: the name, and while Change… is open, the row is drawn as before.
+#: read-only row's phrase beside it) on the boxes' column and "Advanced: source ›" on the facts'
+#: edge, on one baseline, under whichever part above them is taller; the outcome line under
+#: both. The row is marked only where the name column holds Change… and its phrase on one line
+#: (DL-1: read-only from 1280 to 1350 wide the phrase went under "🔒 Change…" there, each row 15
+#: to 24 px taller and at 1340 x 800 the panel's last line out of view), so the shared line
+#: never makes a row taller. Where the facts go under the name, where the name column cannot
+#: hold Change… and its phrase, and while Change… is open, the row is drawn as before.
 #: **The name column's width** (the row's name and what needs it): it grows from `NAME_LEAST` to
 #: its measure, `NAME_MOST`, as the head's facts beside it take the rest. Whether the facts go
 #: beside the name or under it is judged from the least width (a basis of the most made the
@@ -967,7 +986,8 @@ SET_BOX = "30em"
 #: The Set-to bar's width (its container's) from which every box is `SET_BOX` wide: the box and
 #: Check and Save (about 11em) on one line; under it each box takes what its buttons leave.
 SET_WIDE = "42em"
-#: A set row with Change… closed while its facts stand beside its name: its one grid.
+#: A set row with Change… closed while its facts stand beside its name and its name column holds
+#: its Change… (`BESIDE`): its one grid.
 _SHARED = f'{_PAGE} .shep-dl-row[{BESIDE}]:has(.shep-dl-change:not([aria-expanded="true"]))'
 PAGE_CSS = f"""
 {_PAGE} #shep-dl-bd {{ padding: 4px 16px 12px !important; gap: 0 !important; }}
