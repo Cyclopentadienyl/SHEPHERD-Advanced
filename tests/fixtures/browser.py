@@ -734,7 +734,7 @@ LOOK_JS = r"""
        Compare's ``shep-rs-cue``); what runs past a nested region is that region's own;
      - edgeHead (R-CUE): a scroll region whose last line in view is a heading or a field's label
        while all of its controls lie under the edge (a control seen by its value line where it
-       holds one, else by its box, a quarter of it above the edge);
+       holds one, else by its box, half of it above the edge);
      - clipped (text): a text line cut by an ancestor that hides its overflow in that axis (no
        scroll region of that axis between them), a cut to an ellipsis included unless the whole
        words are its ``title``;
@@ -909,8 +909,10 @@ LOOK_JS = r"""
       // it heads (its controls: a field's own, a heading's up to the next heading) lies under the
       // edge, so the region seems to end at a title.
       if (sy && below.length) {
+        // A field's value line is shown by half of it, as a control is seen (`seenAt`).
         const shownLines = lines.filter((it) => g.contains(it.el) && scroller(it.el, 'y') === g
-          && it.r.top < box.bottom - past(it.r) && it.r.bottom > box.top);
+          && it.r.top < box.bottom - (ctl.includes(it.el) ? Math.max(1, it.r.height / 2) : past(it.r))
+          && it.r.bottom > box.top);
         const lastShown = shownLines.reduce((a, b) => (!a || b.r.top > a.r.top ? b : a), null);
         const head = lastShown && lastShown.el.closest(HEADS);
         if (head && g.contains(head)) {
@@ -922,10 +924,10 @@ LOOK_JS = r"""
             && (field ? field.contains(c) : ((head.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING)
               && !head.contains(c) && (!next || (c.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING)))));
           // A control is seen by its value line where it holds one (its content box), else by
-          // its box, a quarter of it above the edge (the L8 close, CK8-2: Top-K's box showed its
-          // top border under the fade, its value and its label under the edge).
+          // its box, half of it above the edge (the L8 close, CK8-2: Top-K's box showed its top
+          // border under the fade, its value and its label under the edge).
           const seenAt = (c) => { const q = valueLine(c) || c.getBoundingClientRect();
-            return q.top < box.bottom - past(q); };
+            return q.top < box.bottom - Math.max(1, q.height / 2); };
           if (own.length && !own.some(seenAt)) {
             out.edgeHead.push(`${named(g)} ends in view at ${field ? 'the label' : 'the heading'} "${clip(lastShown.t, 30)}" `
               + `(${named(head)}), its ${own.length} control${own.length > 1 ? 's' : ''} all under the edge `
@@ -1869,8 +1871,8 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       wider than its panel, its cells cut;
     - ``edge-heading`` (R-CUE, the owner's D4 of 2026-11-24): a scroll region whose last line in
       view is a heading or a field's label while all of its controls lie under the edge (a
-      control seen by its value line where it holds one, else by its box, a quarter of it above
-      the edge: a box's top border under the fade is no control seen);
+      control seen by its value line where it holds one, else by its box, half of it above the
+      edge: a box's top border under the fade is no control seen);
     - ``reason-repeat`` (R-WHY, the owner's D6 of 2026-11-24; it extends ``notice-repeat``, which
       it reports when both are asked): a cause's whole reason said more than once on one screen,
       a notice by its key, D8's refusal by the header chip (``data-reason="d8"``) and every block

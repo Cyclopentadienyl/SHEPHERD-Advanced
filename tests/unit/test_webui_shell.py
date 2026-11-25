@@ -3447,7 +3447,7 @@ const { chromium } = require('playwright');
     ${panel('lt-head', 600, 20, lines(9) + '<h3 class="lt-title" style="margin: 20px 0 0; line-height: 24px">Import folder</h3><div style="margin-top: 16px"><button type="button">Change…</button> <button type="button">Check</button></div>' + lines(10))}
     ${panel('lt-nested', 20, 360, lines(8) + '<h3 style="margin: 20px 0 0; line-height: 24px">Run</h3>' + field('Run name') + lines(10))}
     ${panel('lt-fixed', 600, 360, lines(10) + field('Seed') + lines(10), false)}
-    ${panel('lt-boxtop', 20, 680, lines(9) + '<h3 style="margin: 20px 0 0; line-height: 24px">Options</h3><input type="number" value="10" style="display: block; margin-top: 5px; box-sizing: border-box; height: 34px; padding: 4px 8px; border: 1px solid #999">' + lines(10))}
+    ${panel('lt-boxtop', 20, 680, lines(9) + '<h3 style="margin: 20px 0 0; line-height: 24px">Options</h3><input type="number" value="10" style="display: block; margin-top: 3px; box-sizing: border-box; height: 34px; padding: 4px 8px; border: 1px solid #999">' + lines(10))}
     <script>${js}</script></body></html>`);
   const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const pass = async () => { await page.evaluate(() => window.ShepShell.update()); await frames(); await frames(); };
@@ -3495,8 +3495,8 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
     it stays in view, the region draws the edge cue (no fade over the gap), the footer under it
     stays at its panel's foot, and the walk's ``edge-heading`` and ``scroll-cue`` rules find
     nothing. A heading whose only control is a field under it goes under the edge with that
-    field's label. A heading whose field shows only its box's top border over the edge (its value
-    line under it) is a lone title too (the L8 close, CK8-2: Diagnosis' Options over Top-K at
+    field's label. A heading whose field shows only its box's top 12 px over the edge (under half
+    its value line) is a lone title too (the L8 close, CK8-2: Diagnosis' Options over Top-K at
     1280 x 720). Scrolled, the region keeps its height. A region of its own fixed height (its
     height is not its column's to give) is left as it is. Measured in a browser on a page of its
     own (Node and Playwright, skipped without)."""
@@ -5024,7 +5024,7 @@ const LOOK_JS = __LOOK_JS__;
         <div class="rg shep-scroll-cue" data-shep-more id="cue-lonehead" style="height: 60px"><p>A first line.</p>
           <div style="height: 16px"></div><div class="block"><span data-testid="block-info" style="display: block; margin-bottom: 10px">Split seed</span>
           <input type="text" style="display: block; height: 36px"></div></div>
-        <div class="rg shep-scroll-cue" data-shep-more id="cue-headtop" style="height: 58px"><p style="margin: 0; line-height: 20px">A first line.</p>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-headtop" style="height: 60px"><p style="margin: 0; line-height: 20px">A first line.</p>
           <h3 style="margin: 4px 0; line-height: 20px; font-size: 15px">Options</h3>
           <input type="number" value="10" style="display: block; box-sizing: border-box; height: 34px; padding: 4px 8px; border: 1px solid #999"></div>
       </div>
@@ -5081,7 +5081,7 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     R-CUE (the owner's D4 of 2026-11-24) a fade is a cue only over a line of text (``#cue-boxonly``:
     over a box's lower border and a gap, it was seen), and a region whose last line in view is a
     field's label with its control under the edge is found (``#cue-lonehead``, ``edge-heading``),
-    and so is one whose last line is a heading over a field that shows only its box's top border
+    and so is one whose last line is a heading over a field that shows only its box's top 12 px
     (``#cue-headtop``; the L8 close, CK8-2)."""
     found = l7_rules_seen
     assert _hits(found, "inview", "#iv-out") and _hits(found, "inview", "#iv-nobox"), found["inview"]
@@ -5112,9 +5112,9 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     assert _hits(found, "edgeHead", '#cue-lonehead ends in view at the label "Split seed"'), found["edgeHead"]
     assert not _hits(found, "cue", "#cue-lonehead"), found["cue"]
     assert not _hits(found, "edgeHead", "#cue-good") and not _hits(found, "edgeHead", "#cue-boxonly"), found["edgeHead"]
-    # The L8 close (CK8-2): a heading whose one field shows only its box's top border under the
-    # edge (its value line under it) ends the region at a title too (Diagnosis' Options over
-    # Top-K at 1280 x 720).
+    # The L8 close (CK8-2): a heading whose one field shows only its box's top 12 px over the
+    # edge (a sliver of its value line, under half of it) ends the region at a title too
+    # (Diagnosis' Options over Top-K at 1280 x 720).
     assert _hits(found, "edgeHead", '#cue-headtop ends in view at the heading "Options"'), found["edgeHead"]
 
 
@@ -5606,8 +5606,8 @@ def test_every_page_of_every_state_has_no_layout_finding(state, request):
 
 
 #: The L8 close (CK8-2): Diagnosis' Options title, its scroll region's edge, and whether the title
-#: and each of its controls (Top-K's value line, Explanations' box) shows above that edge by a
-#: quarter of its height.
+#: shows above that edge by a quarter of its height, and each of its controls (Top-K's value line,
+#: Explanations' box) by half of its height.
 _OPTIONS_EDGE_JS = r"""() => {
   const title = document.querySelector('#shep-dx-options-label .shep-dx-opt');
   if (!title || !title.getClientRects().length) { return null; }
@@ -5618,7 +5618,7 @@ _OPTIONS_EDGE_JS = r"""() => {
   const r = g.getBoundingClientRect(), edge = r.top + g.clientTop + g.clientHeight;
   const range = document.createRange(); range.selectNodeContents(title);
   const t = [...range.getClientRects()].filter((q) => q.width > 0).pop();
-  const shown = (q) => q.top < edge - Math.max(1, q.height / 4);
+  const shown = (q) => q.top < edge - Math.max(1, q.height / 4), seen = (q) => q.top < edge - Math.max(1, q.height / 2);
   const line = (c) => {
     const q = c.getBoundingClientRect();
     if (c.type !== 'number' && c.type !== 'text') { return q; }
@@ -5629,7 +5629,7 @@ _OPTIONS_EDGE_JS = r"""() => {
   const controls = ['#dx_top_k input', '#dx_explanations input'].map((sel) => document.querySelector(sel))
     .filter((c) => c && c.getClientRects().length && c.getBoundingClientRect().width > 0);
   return { region: g.id || g.className, edge, title: [t.top, t.bottom], titleShown: shown(t),
-           controls: controls.map((c) => ({ id: c.closest('[id]').id, shown: shown(line(c)) })) };
+           controls: controls.map((c) => ({ id: c.closest('[id]').id, shown: seen(line(c)) })) };
 }"""
 
 
@@ -5641,7 +5641,7 @@ def test_diagnosis_options_title_never_ends_its_column_alone(tmp_path):
     shell's recut saw it: the title was a bare span, not a heading. Drawn as a heading, the
     column ends in the gap above it. At first use at 1366 x 768, 1280 x 720 and 1280 x 640 the
     Options title is never shown above its column's edge while every one of its controls lies
-    under it (a control seen by its value line, a quarter of it above the edge)."""
+    under it (a control seen by its value line, half of it above the edge)."""
     from tests.fixtures.browser import layout_stops, node_with_playwright, walk_state
 
     if node_with_playwright() is None:

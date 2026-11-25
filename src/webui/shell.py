@@ -1239,7 +1239,9 @@ _SHELL_JS = r"""
       var r = f.getBoundingClientRect(), fs = getComputedStyle(f);
       var above = (parseFloat(fs.paddingTop) || 0) + (parseFloat(fs.borderTopWidth) || 0);
       var below = (parseFloat(fs.paddingBottom) || 0) + (parseFloat(fs.borderBottomWidth) || 0);
-      take({top: r.top + above, bottom: r.bottom - below, width: r.width, height: r.height - above - below}, f);
+      var line = {top: r.top + above, bottom: r.bottom - below, width: r.width, height: r.height - above - below};
+      // A field's value is shown by half its line, as a control is seen (`lineOf`).
+      if (line.top < edge - Math.max(1, line.height / 2)) { take(line, f); }
     }
     return low;
   }
@@ -1265,14 +1267,14 @@ _SHELL_JS = r"""
     if (!own.length) { return null; }
     for (var k = 0; k < own.length; k++) {
       var q = lineOf(own[k]);
-      if (q.top < edge - Math.max(1, q.height / 4)) { return null; }
+      if (q.top < edge - Math.max(1, q.height / 2)) { return null; }
     }
     return Math.min(head.getBoundingClientRect().top, low.r.top);
   }
   // What of a control must show for it to be seen (the L8 close, CK8-2: Diagnosis' Top-K box
-  // showed its top border, 10 px, under the fade, its value and its label under the edge, and
+  // showed its top border, 12 px, under the fade, its value and its label under the edge, and
   // counted as in view): a field's value line where it holds a value or a placeholder (its
-  // content box), else its box, by a quarter of its height, as a line of words is.
+  // content box), else its box, by half its height (its words readable, not a sliver of them).
   function lineOf(c) {
     var r = c.getBoundingClientRect();
     if (!c.matches(VALUES) || !(c.value || c.placeholder)) { return r; }
