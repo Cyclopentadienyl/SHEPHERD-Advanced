@@ -3588,8 +3588,9 @@ steps 計，final learning-rate ratio 的「more than 0 with onecycle」）。�
 太窄、兩個面板無法並排的視窗），Parameters 標題旁的 **Hide** 與 **Show** 會收合與展開它們，一開始
 的樣子由你在 ⚙ Settings › Display 選擇（自 2026-11-25 起）：**Shown**，預設，展開，頁面捲動；
 **Folded**，收合；或 **Automatic**，除非收合能讓更多 run 的圖表進入第一個畫面，否則展開，在頁面
-第一次的回應畫出後決定，視窗改變時再決定一次（第一次決定前，圖表區在原位隱藏等待，最多幾秒，所以
-不會跳動）。你自己按的 Hide 或 Show 會保持到頁面重新載入為止。並排時它們一律展開。**Start 送出你
+第一次的回應畫出後決定，之後只在視窗改變（大小或排列）時再決定，頁面顯示的內容改變（在「Viewing」
+選另一個 run、開始一個 run）不會再決定。第一次決定前，圖表區在原位隱藏等待，最多幾秒；超過時就以
+Parameters 當時的樣子顯示，之後才到的回應不再改變它，所以不會跳動。你自己按的 Hide 或 Show 會保持到頁面重新載入為止。並排時它們一律展開。**Start 送出你
 動過的欄位**：你編輯過的欄位一定送出，即使等於參考值，並記錄為你的設定；清空欄位也算編輯（全選後按
 Backspace 或 Delete、剪下、貼上：每一種編輯都算，即使清空後立刻按 Start），因此 run 需要值的欄位留空
 會被拒絕（「Neighbours per hop needs at least 1 item(s).」、「Epochs must be set.」），什麼都不會啟動，而 Early stopping
@@ -4154,9 +4155,10 @@ build; start a new run.」）。Load 不會寫入任何使用紀錄。頁面在�
 
 **Settings** 自 2026-11-16 起有兩個面板：左邊（窄版時在上方）的 **Data locations**，在這裡選擇、
 檢查、儲存並套用 workspaces 資料夾、結果 registry、匯入資料夾與訓練證據資料夾（§4.12）；右邊的
-**Runtime settings**。自 2026-11-25 起有第三個面板 **Display**（「this browser」；它們那一欄夠寬時
-在 Runtime settings 旁邊，例如 1850 x 960 的視窗，否則在它下方；上下堆疊時在最後），
-放這個瀏覽器自己的選擇：**Training parameters**，Training 把兩個面板上下堆疊時 Parameters 一開始的
+**Runtime settings**。自 2026-11-25 起有第三個面板 **Display**（「this browser only · any viewer can
+change it」；它們那一欄夠寬時在 Runtime settings 旁邊，例如 1850 x 960 的視窗，否則在它下方，並先讓出
+空間，最少保留標題與選項，讓 Runtime settings 保有它的空間；上下堆疊時在最後），
+放這個瀏覽器自己的選擇：**Training's Parameters**，Training 把兩個面板上下堆疊時 Parameters 一開始的
 樣子（Shown，預設；Folded；Automatic；見 Training 頁面）。這個選擇只存在這個瀏覽器（它的 local
 storage；瀏覽器拒絕儲存時，它保持到頁面重新載入為止），並立即生效：已經開著的 Training 頁面（除非你在
 那裡按過 Hide 或 Show）以及這個瀏覽器之後開啟的每個頁面。它完全不經過伺服器，所以沒有 Apply、沒有鎖，

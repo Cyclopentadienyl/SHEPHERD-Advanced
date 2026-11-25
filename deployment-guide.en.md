@@ -3637,9 +3637,11 @@ panels side by side), **Hide** and **Show** beside the Parameters' title fold an
 how they start is your choice in ⚙ Settings › Display (since 2026-11-25): **Shown**, the
 default, the page scrolling; **Folded**; or **Automatic**, shown unless folding them brings more
 of the run's charts into the first screen, decided once the page's first answers are drawn and
-again when the window changes (until the first decision the charts' area waits invisible in its
-place, a few seconds at most, so it never jumps). Your own Hide or Show holds until the page is
-loaded again. Side by side they are always shown. **Start sends what you touched**: a
+again only when the window changes (its size or the arrangement), never by what the page shows (a
+run picked in "Viewing", a run starting). Until the first decision the charts' area waits
+invisible in its place, a few seconds at most; past that it is shown with the Parameters as they
+stand, and answers that come later change nothing, so it never jumps. Your own Hide or Show holds
+until the page is loaded again. Side by side they are always shown. **Start sends what you touched**: a
 field you edited is sent, even at its reference value, and recorded as yours; a field you emptied
 counts as edited (select all and Backspace or Delete, a cut, a paste: every edit, even with Start
 clicked straight after it), so an empty value the run needs is refused ("Neighbours per hop needs
@@ -4385,10 +4387,12 @@ returns to the row.
 **Settings** has two panels since 2026-11-16: **Data locations** on the left (above at a narrow
 width), where the workspaces folder, the results registry, the import folder and the training
 evidence folders are chosen, checked, saved and applied (§4.12), and **Runtime settings** on the
-right. Since 2026-11-25 a third, **Display** ("this browser"; beside Runtime settings where their
-column has the room, as in a 1850 x 960 window, else under it; the last one stacked), holds this
-browser's own choices: **Training parameters**, how Training's Parameters start where Training
-stacks its two panels (Shown, the default; Folded; Automatic; see the Training page). The choice
+right. Since 2026-11-25 a third, **Display** ("this browser only · any viewer can change it";
+beside Runtime settings where their column has the room, as in a 1850 x 960 window, else under it,
+where it gives way first, down to its title and its choice, so that Runtime settings keeps its
+room; the last one stacked), holds this browser's own choices: **Training's Parameters**, how
+Training's Parameters start where Training stacks its two panels (Shown, the default; Folded;
+Automatic; see the Training page). The choice
 is saved in this browser only (its local storage; where the browser refuses it, it holds until
 the page is loaded again) and applies at once: to the Training page already open, unless you used
 Hide or Show there, and to every later page in this browser. Nothing of it reaches the server, so
