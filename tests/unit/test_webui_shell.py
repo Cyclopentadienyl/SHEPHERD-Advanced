@@ -5975,8 +5975,9 @@ def test_a_page_that_never_holds_still_is_a_walk_finding_by_its_page_and_size():
     read as still) and, had it never held still, measured it anyway. A stop that never held
     still (``frames`` -1) is the ``settle`` finding of its size and page, with what kept moving
     and the marks set most; a stop that held still is none. 1050 x 1100 is a layout size.
-    Since the owner's D9 of 2026-11-25 only the reader folds Training's Parameters, so the
-    example's marks are the layout pass's own (the "Set by you" line's and the run bar's)."""
+    Since the owner's D9 of 2026-11-25 Training's Parameters are shown by default (Automatic
+    folds them by the room only when chosen in ⚙ Settings › Display), so the example's marks
+    are the layout pass's own (the "Set by you" line's and the run bar's)."""
     from tests.fixtures.browser import LAYOUT_RULES, LAYOUT_SIZES, layout_problems
 
     restless = {"moved": ["document height", "#shep-train-runview"],

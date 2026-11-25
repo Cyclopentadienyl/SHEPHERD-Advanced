@@ -59,14 +59,6 @@ PARAMS_DEFAULT = SHOWN
 PARAMS_CHOICES = [("Shown", SHOWN), ("Folded", FOLDED), ("Automatic", AUTO)]
 
 
-def when_params(mode: str) -> str:
-    """The selector a style sheet nests its rules for one choice in (as `style.STACK`
-    nests the stacked arrangement's): no specificity added."""
-    if mode not in PARAMS_MODES:
-        raise ValueError(f"no Parameters choice {mode!r}")
-    return f':where(html[{PARAMS_ATTR}="{mode}"])'
-
-
 _DISPLAY_JS = r"""
 (function () {
   if (window.ShepDisplay) { return; }
@@ -107,4 +99,4 @@ WRITE_PARAMS_JS = "(v) => { if (window.ShepDisplay) { window.ShepDisplay.setPara
 
 __all__ = ["AUTO", "DISPLAY_HEAD", "FOLDED", "PARAMS_ATTR", "PARAMS_CHOICES", "PARAMS_DEFAULT",
            "PARAMS_EVENT", "PARAMS_KEY", "PARAMS_MODES", "READ_PARAMS_JS", "SHOWN",
-           "WRITE_PARAMS_JS", "when_params"]
+           "WRITE_PARAMS_JS"]
