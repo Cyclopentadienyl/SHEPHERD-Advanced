@@ -52,10 +52,11 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
   control; a status line is a row of its own (the run view: header, charts, resources).
 - **A region that scrolls ends in a cue over words** (R-CUE, the owner's D4 of 2026-11-24; `shell.py` `fadeAt()`,
   `recut`): its fade, at most about one and a half of the region's lines, is drawn only where it draws the last text
-  or value line out (the edge cuts the line, or the line's foot lies in the fade's lower half); anywhere else, the
-  edge in a gap, the region draws the one shared edge cue (a hairline and an inset shadow, `data-shep-more-edge`),
-  never a fade over blank space, and a field's box that starts in that gap goes under the edge whole, so its ground
-  never hides the cue. Words kept for a screen reader are no line. Where its last line in view would be a title (a
+  or value line out (the edge cuts the line, or the line's foot lies in the fade's lower half), a line shown by half
+  its height or more above the edge (`shows`: never a sliver of a line's tops in the fade's faintest part); anywhere
+  else, the edge in a gap, the region draws the one shared edge cue (a hairline and an inset shadow,
+  `data-shep-more-edge`), never a fade over blank space, and a field's box or a control's that starts in that gap goes
+  under the edge whole, so its ground never hides the cue. Words kept for a screen reader are no line. Where its last line in view would be a title (a
   heading or a field's label) with every control it heads under the edge, the region ends in the gap above that
   title, with the edge cue. A group title is drawn as a heading so that rule can see it.
 - **A message never shares a row with fields or buttons.** Beside a dimmed control stands only its reason's short
@@ -208,8 +209,9 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry the same colours.
 - **Placement never covers the field it explains**, nor, for a reason's phrase, the controls the phrase names
   (`data-for`). `help.py`'s `place()` tries beside, above and below, sliding along each side, and takes a place that
   covers no other control; where none holds the whole bubble, it opens shorter in the tallest place that covers none
-  and still shows its head, its lead and two lines, its text scrolling inside under the shared cue; only where no such
-  place exists does it take the place over the fewest controls. A reason's phrase opens this same bubble, anchored at
+  and still shows its head, its lead and two lines, its text scrolling inside under the shared cue, and where no place
+  of its width is clear, the same at a narrower width (220 px at the least); only where no such place exists does it
+  take, of the places tried, the one over the fewest controls. A reason's phrase opens this same bubble, anchored at
   the phrase and reading its source's hidden text by id.
 - **One bubble, extended only when needed.** Today's bubble (`src/webui/components/help.py`) reads every text by one
   small grammar, defined there once (`BULLET`, `TERM_PATTERN`, `REF_PREFIX`, read in Python by `help_lines`) and given
