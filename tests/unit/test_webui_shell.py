@@ -4402,6 +4402,43 @@ const QUEUE_JS = __QUEUE_JS__;
     return out;
   }, out.place.height);
   await frames(2);
+  // R-HELP's shorter place (the L8 close, CK8-1): the same phrase at the window's left edge, a
+  // control down the window on its right (past a bubble's width), one above it and one under it lower than the bubble's
+  // head, lead and two lines but higher than its whole height: no place of its whole height is
+  // clear, a shorter one under the phrase is.
+  out.cap = await page.evaluate(async (h) => {
+    const frames = (n) => new Promise((r) => { const f = (k) => k ? requestAnimationFrame(() => f(k - 1)) : r(); f(n); });
+    document.querySelector('gradio-app').style.visibility = 'hidden';
+    const vh = document.documentElement.clientHeight, cy = 300;
+    const scene = document.createElement('div'); scene.id = 'pc-cap'; document.body.appendChild(scene);
+    const put = (html, css) => { const d = document.createElement('div'); d.innerHTML = html;
+      d.style.cssText = `position: fixed; visibility: visible; ${css}`; scene.appendChild(d); return d; };
+    const phrase = document.querySelector('#pc-place-row button.shep-why').cloneNode(true);
+    phrase.removeAttribute('id'); phrase.setAttribute('data-for', 'pc-cap-btn');
+    const line = put('', `left: 16px; top: ${cy - 12}px; width: 180px`);
+    line.appendChild(phrase);
+    line.insertAdjacentHTML('beforeend', '<button type="button" id="pc-cap-btn" disabled>Start</button>');
+    await frames(2);
+    const g = line.getBoundingClientRect();
+    put(`<button type="button" id="pc-cap-r" style="width: 40px; height: ${vh - 16}px">R</button>`, `left: ${g.left + 400}px; top: 8px`);
+    put(`<button type="button" id="pc-cap-a" style="width: ${g.width}px">A</button>`, `left: ${g.left}px; top: ${g.top - 60}px`);
+    put('<button type="button" id="pc-cap-b" style="width: 320px">B</button>', `left: ${g.left}px; top: ${g.bottom + 10 + 0.8 * h}px`);
+    await frames(2);
+    phrase.click(); await frames(8);
+    const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+    const bubble = document.getElementById('shep-help-bubble'), b = q(bubble), bd = bubble.querySelector('.shep-bubble-bd');
+    const over = (r) => r[0] < b[2] && b[0] < r[2] && r[1] < b[3] && b[1] < r[3];
+    const out = { bubble: b, height: b[3] - b[1], whole: h, line: q(line), shown: !bubble.hidden,
+                  covers: [...scene.querySelectorAll('button')].filter((c) => c !== phrase && over(q(c))).map((c) => c.id),
+                  text: q(bd), lead: q(bd.firstElementChild), cue: bd.hasAttribute('data-shep-more') };
+    // Scrolled to its end, its last part (the Ref line) is read whole and the cue is gone.
+    bd.scrollTop = bd.scrollHeight; await frames(4);
+    out.end = { text: q(bd), last: q(bd.lastElementChild), cue: bd.hasAttribute('data-shep-more'), top: bd.scrollTop };
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await frames(2);
+    scene.remove(); document.querySelector('gradio-app').style.visibility = '';
+    return out;
+  }, out.place.height);
+  await frames(2);
   // R-WIDTH's button rule: each footer's actions, their widths and their words' widths, and the
   // footer's content box.
   await page.click('#shep-page-finetune-button');
@@ -4559,6 +4596,29 @@ def test_a_bubble_slides_along_its_side_to_a_place_that_covers_no_control(pieces
     assert slide["shown"] and slide["covers"] == [], slide
     assert slide["bubble"][2] <= slide["line"][0], slide             # beside it, on its left
     assert not overlap(slide["bubble"], slide["line"]), slide
+
+
+def test_a_bubble_no_place_of_whose_height_is_clear_opens_shorter_where_it_covers_no_control(pieces_seen):
+    """R-HELP (the owner's C9 of 2026-11-24: "covers no control, readable, the full reference
+    reachable"; the L8 close, CK8-1): a read-only phrase's answer, about 300 px tall, still lay
+    over a control in 17 of 56 openings from 1850 x 960 to 1280 x 720 (Fine-tune's whole Device
+    field at 1550 x 830), because where every place of its whole height met a control the
+    placement took the one over the fewest. A phrase at the window's left edge, a control along
+    its right, one above it and one under it closer than the bubble's height: the bubble opens
+    under the phrase, shorter than its whole height, over no control, its lead read whole and
+    its text under the scroll cue; scrolled to its end, its last line (the Ref line) is read whole
+    and the cue is gone."""
+    cap = pieces_seen["cap"]
+
+    def overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    assert cap["shown"] and cap["covers"] == [], cap
+    assert not overlap(cap["bubble"], cap["line"]) and cap["bubble"][1] >= cap["line"][3], cap   # under it
+    assert cap["height"] < cap["whole"], cap                                       # shorter than whole
+    assert cap["lead"][3] <= cap["text"][3] and cap["cue"], cap                     # its lead whole, the cue
+    end = cap["end"]
+    assert end["top"] > 0 and end["last"][3] <= end["text"][3] + 1 and not end["cue"], cap
 
 
 def test_a_button_spans_only_the_one_action_area_no_wider_than_its_fields(pieces_seen):

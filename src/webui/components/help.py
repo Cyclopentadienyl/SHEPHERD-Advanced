@@ -64,9 +64,11 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   component, by its ``elem_id``; else the table row, the key-value row's key
   and value, or the line the ⓘ sits in): beside that field, then above it, then below it; of the sides
   that fit the window without overlapping it, the one that lies over the fewest drawn controls (R-HELP:
-  a bubble covers no control), the first in that order among equals; failing all, narrower beside it, or on
-  the side with more room with its height capped (a long text scrolls
-  inside); at most 320 px wide (`BUBBLE_MAX_WIDTH`), the ⓘ's hit target at
+  a bubble covers no control), the first in that order among equals; where each of those lies over a
+  control, the tallest place that lies over none with its height capped there (never shorter than its
+  head, its lead and two lines after it; Floating UI's ``size``); failing all, narrower beside it, or on
+  the side with more room with its height capped; a capped text scrolls
+  inside under the scroll cue (``data-shep-more``); at most 320 px wide (`BUBBLE_MAX_WIDTH`), the ⓘ's hit target at
   least 24 × 24 px;
 - fills the bubble by the help text's grammar (`help_lines`, the WebUI
   skill's §7): its first line is the lead, shown bold; a line that starts
@@ -606,20 +608,29 @@ _HELP_JS = r"""
   // each edge so a placement that only meets a control's edge is no cover.
   var CONTROLS = 'button, input:not([type=hidden]), select, textarea, a[href], [role=radio], [role=checkbox]';
   var lastSide = null;
-  function coveredCounts(places) {
-    var counts = places.map(function () { return 0; });
-    var all = document.querySelectorAll(CONTROLS);
+  // The drawn controls' boxes, read once a placement (`seen` read when a place meets one).
+  function controlBoxes() {
+    var out = [], all = document.querySelectorAll(CONTROLS);
     for (var i = 0; i < all.length; i++) {
       var c = all[i];
       if (c === anchor || (bubble && bubble.contains(c))) { continue; }
       var r = c.getBoundingClientRect();
       if (r.width < 1 || r.height < 1) { continue; }
-      var q = {left: r.left + 1, top: r.top + 1, right: r.right - 1, bottom: r.bottom - 1}, hit = [];
+      out.push({el: c, q: {left: r.left + 1, top: r.top + 1, right: r.right - 1, bottom: r.bottom - 1}, seen: null});
+    }
+    return out;
+  }
+  function coveredCounts(places, boxes) {
+    var counts = places.map(function () { return 0; });
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i], hit = [];
       for (var k = 0; k < places.length; k++) {
         var p = places[k];
-        if (overlaps(q, {left: p.left, top: p.top, right: p.left + p.w, bottom: p.top + p.h})) { hit.push(k); }
+        if (overlaps(b.q, {left: p.left, top: p.top, right: p.left + p.w, bottom: p.top + p.h})) { hit.push(k); }
       }
-      if (!hit.length || getComputedStyle(c).visibility === 'hidden' || outOfView(c)) { continue; }
+      if (!hit.length) { continue; }
+      if (b.seen === null) { b.seen = getComputedStyle(b.el).visibility !== 'hidden' && !outOfView(b.el); }
+      if (!b.seen) { continue; }
       for (var h = 0; h < hit.length; h++) { counts[hit[h]] += 1; }
     }
     return counts;
@@ -677,8 +688,13 @@ _HELP_JS = r"""
     var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
     var width = Math.max(220, Math.min(MAX_W, vw - 2 * EDGE));
     bubble.style.maxWidth = width + 'px';
-    bubble.style.maxHeight = '';
-    var bw = bubble.offsetWidth, bh = bubble.offsetHeight;
+    // Its whole height read with its cap kept (`whole`): lifting the cap to measure it scrolled a
+    // capped text back to its top on every scroll of it.
+    var text = bubble.querySelector('.shep-bubble-bd');
+    function whole() {
+      return Math.min(bubble.offsetHeight - text.clientHeight + text.scrollHeight, vh - 2 * EDGE);
+    }
+    var bw = bubble.offsetWidth, bh = whole();
     var cx = a.left + a.width / 2, cy = a.top + a.height / 2;
     function x(left, w) { return Math.min(Math.max(EDGE, left), vw - w - EDGE); }
     function y(top, h) { return Math.min(Math.max(EDGE, top), vh - h - EDGE); }
@@ -709,31 +725,65 @@ _HELP_JS = r"""
     // covers fewer (no flip while the page scrolls); a region's ⓘ tries the
     // whole region first. The L8 close: in a 720 px window the two alignments
     // of every side lay over a control while a place between them was clear.
-    var sides = ['right', 'left', 'above', 'below'], chosen = null, fitting = [], SLIDES = 12;
+    var sides = ['right', 'left', 'above', 'below'], chosen = null, SLIDES = 12;
     var guards = region ? [region, f] : [f];
-    for (var k = 0; k < guards.length; k++) {
-      for (var i = 0; i < sides.length; i++) {
-        for (var e = 0; e < 2; e++) {
-          var p = at(sides[i], bw, bh, guards[k], e === 1);
-          p.place = sides[i] + (e ? '-end' : '');
-          if (fits(p, guards[k])) { fitting.push(p); }
+    function places(h) {
+      var fitting = [];
+      for (var k = 0; k < guards.length; k++) {
+        for (var i = 0; i < sides.length; i++) {
+          for (var e = 0; e < 2; e++) {
+            var p = at(sides[i], bw, h, guards[k], e === 1);
+            p.place = sides[i] + (e ? '-end' : '');
+            if (fits(p, guards[k])) { fitting.push(p); }
+          }
+        }
+        for (var si = 0; si < sides.length; si++) {
+          for (var n = 1; n < SLIDES; n++) {
+            var q = at(sides[si], bw, h, guards[k], false, n / SLIDES);
+            q.place = sides[si] + '~' + n;
+            if (fits(q, guards[k])) { fitting.push(q); }
+          }
         }
       }
-      for (var si = 0; si < sides.length; si++) {
-        for (var n = 1; n < SLIDES; n++) {
-          var q = at(sides[si], bw, bh, guards[k], false, n / SLIDES);
-          q.place = sides[si] + '~' + n;
-          if (fits(q, guards[k])) { fitting.push(q); }
-        }
-      }
+      return fitting;
     }
-    if (fitting.length) {
-      var counts = coveredCounts(fitting), best = 0;
+    // Of `fitting`, the one over the fewest controls, the place it stands in now kept among equals.
+    function fewest(fitting, counts) {
+      var best = 0;
       for (var j = 1; j < fitting.length; j++) {
         if (counts[j] < counts[best] || (counts[j] === counts[best] && fitting[j].place === lastSide &&
             fitting[best].place !== lastSide)) { best = j; }
       }
+      return best;
+    }
+    var boxes = controlBoxes(), fitting = places(bh);
+    if (fitting.length) {
+      var counts = coveredCounts(fitting, boxes), best = fewest(fitting, counts);
       chosen = fitting[best];
+      if (counts[best] > 0) { chosen = shorter(boxes) || chosen; }
+    }
+    // **Shorter where no place of its height is clear** (R-HELP, the owner's C9 of 2026-11-24:
+    // "covers no control, readable, the full reference reachable"; the L8 close, CK8-1: a
+    // read-only phrase's answer, about 300 px tall, lay over a control in 17 of 56 openings from
+    // 1850 x 960 to 1280 x 720, Fine-tune's whole Device field at 1550 x 830, while a shorter
+    // place beside the phrase was clear). Where every place of its whole height lies over a
+    // control, the bubble takes the tallest place that lies over none, its height capped there
+    // (Floating UI's `size`), its text scrolling inside under the scroll cue; never shorter than
+    // its head, its lead and two lines after it, so the answer reads whole and more is seen to
+    // follow. None that tall: the place over the fewest, as before.
+    function shorter(boxes) {
+      var lead = text.firstElementChild;
+      if (!lead || !lead.nextElementSibling) { return null; }
+      var lh = parseFloat(getComputedStyle(text).lineHeight) || 22;
+      var least = Math.ceil(bh - text.scrollHeight + lead.offsetTop + lead.offsetHeight - text.offsetTop + 2 * lh);
+      if (least >= bh) { return null; }
+      for (var h = bh - lh; h > least - lh; h -= lh) {
+        var cap = Math.max(least, Math.floor(h)), shown = places(cap);
+        if (!shown.length) { continue; }
+        var counts = coveredCounts(shown, boxes), best = fewest(shown, counts);
+        if (counts[best] === 0) { shown[best].cap = cap; return shown[best]; }
+      }
+      return null;
     }
     if (!chosen) {
       // Narrower beside it, on the side with room for 220 px or more.
@@ -741,18 +791,20 @@ _HELP_JS = r"""
       var room = Math.max(roomR, roomL);
       if (room >= 220) {
         bubble.style.maxWidth = Math.min(width, room) + 'px';
-        if (bubble.offsetHeight > vh - 2 * EDGE) { bubble.style.maxHeight = (vh - 2 * EDGE) + 'px'; }
-        chosen = at(roomR >= roomL ? 'right' : 'left', bubble.offsetWidth, bubble.offsetHeight);
+        chosen = at(roomR >= roomL ? 'right' : 'left', bubble.offsetWidth, whole());
       }
     }
     if (!chosen) {
       // Above or below, on the side with more room, its height capped to
       // that room (its text then scrolls inside).
       var roomAbove = f.top - GAP - EDGE, roomBelow = vh - EDGE - f.bottom - GAP;
-      var up = roomAbove > roomBelow;
-      bubble.style.maxHeight = Math.max(48, up ? roomAbove : roomBelow) + 'px';
-      chosen = at(up ? 'above' : 'below', bubble.offsetWidth, bubble.offsetHeight);
+      var up = roomAbove > roomBelow, room2 = Math.max(48, up ? roomAbove : roomBelow), tall = whole();
+      chosen = at(up ? 'above' : 'below', bubble.offsetWidth, Math.min(tall, room2));
+      if (tall > room2) { chosen.cap = room2; }
     }
+    // Its cap set only when it changes (bubble.style.maxHeight), so a text scrolled inside it stays.
+    var cap = chosen.cap ? chosen.cap + 'px' : '';
+    if (bubble.style.maxHeight !== cap) { bubble.style.maxHeight = cap; }
     lastSide = chosen.place || chosen.side;
     bubble.style.left = chosen.left + 'px';
     bubble.style.top = Math.max(EDGE, chosen.top) + 'px';
@@ -761,6 +813,10 @@ _HELP_JS = r"""
     bubble.classList.toggle('shep-at-left', chosen.side === 'left');
     bubble.style.setProperty('--shep-ax', Math.max(10, Math.min(chosen.w - 22, cx - chosen.left - 6)) + 'px');
     bubble.style.setProperty('--shep-ay', Math.max(10, Math.min(chosen.h - 22, cy - chosen.top - 6)) + 'px');
+    // Its text capped (above, or by the room it has), the scroll cue every region that scrolls
+    // has (R-73, the shell's MORE, drawn by the style sheet) while more lies below.
+    var more = text.scrollHeight - text.scrollTop - text.clientHeight > 1;
+    if (text.hasAttribute('data-shep-more') !== more) { text.toggleAttribute('data-shep-more', more); }
   }
   // Pinned, the bubble is a dialog named by its title; a preview (hover or
   // focus) is a tooltip.
