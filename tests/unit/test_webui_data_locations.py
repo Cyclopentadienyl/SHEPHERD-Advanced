@@ -91,7 +91,10 @@ def _saved_file():
 def test_the_settings_page_has_the_data_locations_panel_beside_runtime_settings():
     """The page Settings is: Data locations on the left, Runtime settings on
     the right, in one row; each row's box, Check and Save; one Apply and one
-    Replace for the panel; the panel read when Settings is shown."""
+    Replace for the panel; the panel read when Settings is shown. Since the
+    owner's revision of D9 (2026-11-25) a third panel shares Runtime settings'
+    column: Display, this browser's own choices (`runtime_settings._display_panel`),
+    so Data locations keeps its share of the row."""
     from src.webui.app import create_gradio_app
 
     app = create_gradio_app()
@@ -103,7 +106,9 @@ def test_the_settings_page_has_the_data_locations_panel_beside_runtime_settings(
             "dl_apply", "dl_repair", "dl_notice", "runtime_stop"} <= ids
     cols = next(b for b in app.blocks.values() if getattr(b, "elem_id", None) == "shep-settings-cols")
     shown = [child.elem_id for child in cols.children if not isinstance(child, gr.State)]
-    assert shown == ["shep-dl", "shep-settings"]
+    assert shown == ["shep-dl", "shep-settings-side"]
+    pair = next(b for b in app.blocks.values() if getattr(b, "elem_id", None) == "shep-settings-pair")
+    assert [child.elem_id for child in pair.children] == ["shep-settings", "shep-display"]
     tab = next(b for b in app.blocks.values()
                if isinstance(b, gr.Tab) and b.elem_id == "shep-tab-settings")
     opens = [fn for fn in app.fns.values() if (tab._id, "select") in fn.targets

@@ -10,10 +10,15 @@ repeated who can act ("Folder paths are shown to operator controls only"),
 and Runtime settings drew "Read-only for this request: the reason is with the
 actions below." between its facts and its fields.
 
+And ⚙ Settings › Display (the owner's revision of D9, 2026-11-25): this
+browser's choice of how Training's Parameters start, stacked, read before the
+page is painted, kept in the browser alone and offered to every viewer.
+
 Module: tests/unit/test_webui_runtime_settings.py
 """
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -62,3 +67,309 @@ def test_read_only_settings_say_each_lock_where_it_is_and_point_nowhere(monkeypa
             "torch_compile"} <= set(phrases[0].split()), phrases
     notice = _text([locations[len(dl.KEYS) * len(dl.ROW_PARTS)]])
     assert "hidden" in notice and "operator controls" not in notice.lower(), notice
+
+
+#: The display choices' head script (`display.DISPLAY_HEAD`) on a page of its own (``argv[2]``:
+#: the head): for each case (``argv[3]``: ``[name, saved, blocked]``, a value saved before the
+#: page loads or none, and whether the browser's storage throws on every read and write), the
+#: root element's mark as a script right after the head script reads it (before the body
+#: exists), the choice the page reads, then a pick of Folded (what it returns, what the page
+#: hears, what the browser keeps, the mark) and a pick of an unknown value.
+_DISPLAY_HEAD_JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const [KEY, ATTR, EVENT] = [__KEY__, __ATTR__, __EVENT__];
+  const html = '<!doctype html><html><head>' + JSON.parse(process.argv[2])
+    + '<script>window.__beforeBody = [document.documentElement.getAttribute(' + JSON.stringify(ATTR)
+    + '), !!document.body];</script></head><body><p>page</p></body></html>';
+  const out = {};
+  for (const [name, saved, blocked] of JSON.parse(process.argv[3])) {
+    const page = await (await browser.newContext()).newPage();
+    await page.route('http://display.test/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: html }));
+    if (saved !== null) {
+      await page.addInitScript(([k, v]) => { window.localStorage.setItem(k, v); }, [KEY, saved]);
+    }
+    if (blocked) {
+      await page.addInitScript(() => {
+        Storage.prototype.getItem = () => { throw new Error('blocked'); };
+        Storage.prototype.setItem = () => { throw new Error('blocked'); };
+      });
+    }
+    await page.goto('http://display.test/');
+    out[name] = await page.evaluate(([k, a, ev]) => {
+      const kept = () => { try { return window.localStorage.getItem(k); } catch (e) { return 'unreadable'; } };
+      const [first, early] = window.__beforeBody, read = window.ShepDisplay.params();
+      let heard = null;
+      document.addEventListener(ev, (e) => { heard = e.detail; });
+      const picked = window.ShepDisplay.setParams('folded');
+      const after = { picked, heard, kept: kept(), mark: document.documentElement.getAttribute(a) };
+      const odd = window.ShepDisplay.setParams('sideways');
+      return { first, early, read, after, odd, oddMark: document.documentElement.getAttribute(a), oddKept: kept() };
+    }, [KEY, ATTR, EVENT]);
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_the_display_choice_is_read_before_the_page_is_drawn_and_a_missing_unreadable_or_unknown_one_is_shown(
+        tmp_path):
+    """The owner's revision of D9 (2026-11-25): how Training's Parameters start, stacked, is
+    each reader's choice, kept in their browser (``localStorage``, every access wrapped): a
+    missing, unreadable or unknown value means Shown. The head script (`display.DISPLAY_HEAD`,
+    in the mount's head) writes the choice on the root element before the body exists, so
+    the first frame any page paints is already in it: Shown, Folded and Automatic read as
+    saved; nothing saved, a value no choice has, and storage that throws read Shown. A pick
+    is kept in the browser, written on the root element and announced to the open page
+    (`display.PARAMS_EVENT`), and holds for the page session where storage throws; an
+    unknown pick is Shown. Fails at bb258d1: no such script."""
+    from src.webui.components import display
+    from tests.fixtures.browser import node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    cases = [["missing", None, False], ["shown", "shown", False], ["folded", "folded", False],
+             ["auto", "auto", False], ["unknown", "sideways", False], ["cased", "Folded", False],
+             ["unreadable", "folded", True]]
+    script = (_DISPLAY_HEAD_JS.replace("__KEY__", json.dumps(display.PARAMS_KEY))
+              .replace("__ATTR__", json.dumps(display.PARAMS_ATTR))
+              .replace("__EVENT__", json.dumps(display.PARAMS_EVENT)))
+    seen = run_node(script, tmp_path, json.dumps(display.DISPLAY_HEAD), json.dumps(cases))
+    read = {"missing": "shown", "shown": "shown", "folded": "folded", "auto": "auto",
+            "unknown": "shown", "cased": "shown", "unreadable": "shown"}
+    assert display.PARAMS_DEFAULT == display.SHOWN and set(display.PARAMS_MODES) == {"shown", "folded", "auto"}
+    for name, want in read.items():
+        got = seen[name]
+        assert got["first"] == got["read"] == want and got["early"] is False, (name, got)
+        blocked = name == "unreadable"
+        assert got["after"] == {"picked": "folded", "heard": "folded", "mark": "folded",
+                                "kept": "unreadable" if blocked else "folded"}, (name, got)
+        assert got["odd"] == got["oddMark"] == "shown", (name, got)
+        assert got["oddKept"] == ("unreadable" if blocked else "shown"), (name, got)
+
+
+def test_the_display_choice_never_reaches_the_server():
+    """⚙ Settings › Display is the browser's alone (the owner's revision of D9, 2026-11-25): no
+    server setting, no settings-file key, no API, no operator lock. Its one field's events run
+    in the browser only (no function on the server): the page load shows the choice the head
+    script read, and the reader's pick saves it; no handler outputs to it (nothing dims it for
+    a read-only viewer); its words follow the skill (one field, a one-line note under it
+    saying where it applies, three short options). The review of 36c0592 (P3): the note in its
+    head, two short facts (it was two sentences, 23 words, five lines in the 240 px panel at
+    1850 x 960, and "this page's layout" was unclear on Settings); a label that names the
+    panel it sets ("Training parameters" read as training hyperparameters); the line under it
+    and the bubble's lead front-loaded, the bubble within the budget."""
+    import gradio as gr
+
+    import src.webui.components.runtime_settings as rs
+    from src.webui.app import create_gradio_app
+    from src.webui.components import display
+    from src.webui.components.help import TEXT_BUDGET, budget_problems
+
+    app = create_gradio_app()
+    radio = next(b for b in app.blocks.values() if getattr(b, "elem_id", None) == rs.DISPLAY_PARAMS)
+    assert isinstance(radio, gr.Radio) and radio.interactive is not False
+    assert radio.label == rs.DISPLAY_PARAMS_LABEL == "Training's Parameters"
+    assert radio.info == rs.FIELD_INFO[rs.DISPLAY_PARAMS] == (
+        "Stacked windows only (portrait or narrow). Side by side it is always shown.")
+    title, text = rs.FIELD_HELP[rs.DISPLAY_PARAMS]
+    assert title == rs.DISPLAY_PARAMS_LABEL and text.startswith("Parameters panel, stacked: ")
+    assert budget_problems(text, TEXT_BUDGET) == () and text.count("\n- ") == 4
+    assert [label for label, _value in display.PARAMS_CHOICES] == ["Shown", "Folded", "Automatic"]
+    assert radio.value == display.PARAMS_DEFAULT
+    mine = [fn for fn in app.fns.values()
+            if any(t[0] == radio._id for t in fn.targets) or radio in fn.outputs]
+    assert sorted((fn.targets[0][1], fn.fn is None, fn.js) for fn in mine) == [
+        ("input", True, display.WRITE_PARAMS_JS), ("load", True, display.READ_PARAMS_JS)], mine
+    panel = next(b for b in app.blocks.values() if getattr(b, "elem_id", None) == "shep-display-hd")
+    assert rs.DISPLAY_NOTE == ("this browser only", "any viewer can change it")
+    assert "<h2>Display</h2>" in panel.value and all(part in panel.value for part in rs.DISPLAY_NOTE)
+    assert panel.value.count('class="shep-sep"') == 1 and "shep-intro" not in panel.value
+
+
+#: ⚙ Settings at the owner's window (1850 x 960), the Parameters choice ``argv[3]`` saved in
+#: the browser: from the click on Settings, at each painted frame of its Display panel, the
+#: option its radio shows checked; once the page is answered and still, whether every option
+#: can be used, the page's own scroll and each panel body's (its content's height against its
+#: box's), then a pick of ``argv[4]`` and what the browser keeps and the root element's mark.
+_SETTINGS_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1850, height: 960 }, deviceScaleFactor: 1 })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.addInitScript(([k, v]) => { try { window.localStorage.setItem(k, v); } catch (e) {} }, [__KEY__, process.argv[3]]);
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#shep-tab-settings-button', { timeout: 60000 });
+  await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+  await page.evaluate(() => {
+    const seen = window.__checked = [], after = new MessageChannel();
+    after.port1.onmessage = () => {
+      const radio = document.getElementById('shep-display-params');
+      if (!radio || !radio.getClientRects().length) { return; }
+      const on = radio.querySelector('input[type=radio]:checked'), now = on ? on.value : 'none';
+      if (seen[seen.length - 1] !== now) { seen.push(now); }
+    };
+    const tick = () => { after.port2.postMessage(0); if (!window.__done) { requestAnimationFrame(tick); } };
+    requestAnimationFrame(tick);
+  });
+  await page.$eval('#shep-tab-settings-button', (el) => el.click());
+  await page.waitForSelector('#shep-display-params label', { state: 'visible', timeout: 60000 });
+  await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+  await page.waitForTimeout(1500);
+  const read = await page.evaluate(() => {
+    window.__done = true;
+    const body = (id) => { const e = document.getElementById(id); return [e.scrollHeight, e.clientHeight]; };
+    const se = document.scrollingElement;
+    return { checked: window.__checked,
+             usable: [...document.querySelectorAll('#shep-display-params input[type=radio]')].map((i) => !i.disabled),
+             page: [se.scrollHeight, se.clientHeight, se.scrollWidth, se.clientWidth],
+             bodies: { dl: body('shep-dl-bd'), runtime: body('shep-settings-bd'), display: body('shep-display-bd') },
+             layout: document.documentElement.getAttribute('data-shep-layout') };
+  });
+  await page.click(`#shep-display-params label:has(input[value="${process.argv[4]}"])`);
+  await page.waitForTimeout(300);
+  const picked = await page.evaluate(([k, a]) => ({ kept: window.localStorage.getItem(k),
+                                                     mark: document.documentElement.getAttribute(a) }),
+                                     [__KEY__, __ATTR__]);
+  console.log(JSON.stringify({ ...read, picked }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.parametrize("who,state", [("operator", "first_use"), ("operator", "configured"),
+                                       ("read-only", "configured")])
+def test_settings_offers_the_display_choice_to_every_viewer_within_the_owners_window(
+        who, state, monkeypatch, tmp_path):
+    """⚙ Settings › Display (the owner's revision of D9, 2026-11-25): one choice of how
+    Training's Parameters start, stacked, in a small panel of its own ("this browser"),
+    offered to every viewer: it changes only the viewer's own page, so a read-only viewer may
+    change it too. At the owner's window (1850 x 960), for an operator at first use and
+    configured and for a read-only viewer: from the first painted frame of Settings the radio
+    shows the choice saved in the browser (Automatic here), never the build's default first;
+    every option can be used; the three panels sit side by side and nothing scrolls, the page
+    nor any panel's body (the skill's one screen); a pick (Folded) is kept in the browser and
+    marked on the page at once. Fails at bb258d1: no Display panel."""
+    from src.webui.app import create_gradio_app, mount_options
+    from src.webui.components import display
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.registered_cohort import write_demo_workspace
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    if who == "operator":
+        operator_mode(monkeypatch)
+    else:
+        monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
+    monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    if state == "configured":
+        write_demo_workspace(tmp_path / "root" / "demo")
+        monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
+    script = (_SETTINGS_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS))
+              .replace("__KEY__", json.dumps(display.PARAMS_KEY))
+              .replace("__ATTR__", json.dumps(display.PARAMS_ATTR)))
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(script, tmp_path, base[:-len("gradio_api")], display.AUTO, display.FOLDED)
+    assert seen["checked"] == [display.AUTO], seen
+    assert seen["usable"] == [True, True, True], seen
+    assert seen["layout"] == "side", seen
+    height, view, width, wide = seen["page"]
+    assert height <= view and width <= wide, seen
+    for name, (content, box) in seen["bodies"].items():
+        assert content <= box, (name, seen)
+    assert seen["picked"] == {"kept": display.FOLDED, "mark": display.FOLDED}, seen
+
+
+#: ⚙ Settings for an operator at each window of ``argv[3]`` (``[[w, h], ...]``), its page
+#: answered and still: the arrangement, the page's own scroll, whether Display stands under
+#: Runtime settings, and against each panel body's box in view (its top and its height in view,
+#: after the shell's cut above a lone label): the bottom of Runtime settings' facts and of its
+#: first field's control (Memory allocator's box), and the bottom of Display's options.
+_UNDER_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of JSON.parse(process.argv[3])) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#shep-tab-settings-button', { timeout: 60000 });
+    await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+    await page.$eval('#shep-tab-settings-button', (el) => el.click());
+    await page.waitForSelector('#shep-display-params label', { state: 'visible', timeout: 60000 });
+    await page.waitForFunction(() => window.__shepQueue.idle() && document.fonts.status === 'loaded', null, { timeout: 60000 });
+    await page.waitForTimeout(1500);
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      // A field's control: its box (Gradio's own wrap, not the field's status tracker, which covers it whole).
+      const CONTROL = (field) => `${field} .wrap:not([data-testid="status-tracker"])`;
+      const box = (el) => el.getBoundingClientRect();
+      const seen = (bodyId, el) => {
+        const b = document.getElementById(bodyId), r = box(b), e = box(el);
+        return { bottom: Math.round(e.bottom - r.top), view: b.clientHeight };
+      };
+      const se = document.scrollingElement;
+      const runtime = box(document.getElementById('shep-settings')), shown = box(document.getElementById('shep-display'));
+      return { layout: document.documentElement.getAttribute('data-shep-layout'),
+               page: [se.scrollHeight, se.clientHeight, se.scrollWidth, se.clientWidth],
+               under: shown.top >= runtime.bottom && Math.abs(shown.left - runtime.left) < 1,
+               facts: seen('shep-settings-bd', document.getElementById('runtime_facts')),
+               allocator: seen('shep-settings-bd', document.querySelector(CONTROL('#allocator_preset'))),
+               options: seen('shep-display-bd', document.querySelector(CONTROL('#shep-display-params'))) };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_settings_display_gives_way_first_under_runtime_settings(monkeypatch, tmp_path):
+    """The review of 36c0592 (P2): side by side in a window under about 1740 px Display stands
+    under Runtime settings, and drawn whole (240 to 259 px) it left Runtime settings' body 156
+    of its 588 px at the display floor (1280 x 720), neither of its fields in view, where
+    bb258d1 had shown 431 px with Memory allocator; 223 px at 1366 x 768. A choice kept in
+    the browser, with no Apply, pushed out the operator's server settings. Display now gives
+    way first, down to its head and its choice (the label and the three options), and
+    Runtime settings' body takes the rest. For an operator with a workspace, side by side,
+    Display under Runtime settings, the page not scrolling: at 1366 x 768 Runtime settings'
+    facts and its first field's control (Memory allocator's box) are in its body's view, and
+    Display's options in its; at 1280 x 720, where both cannot be whole (Runtime settings' head,
+    foot, facts and first field and Display's head and choice need 656 px of the column's
+    609), Display's options and Runtime settings' facts are in view, the first field under the
+    edge with its cue. Fails on 36c0592 (the facts cut at 156 px, the allocator under the edge
+    at 1366 x 768)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.registered_cohort import write_demo_workspace
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    write_demo_workspace(tmp_path / "root" / "demo")
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
+    sizes = [[1366, 768], [1280, 720]]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_UNDER_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps(sizes))
+    for w, h in sizes:
+        got = seen[f"{w}x{h}"]
+        where = (w, h, got)
+        height, view, width, wide = got["page"]
+        assert got["layout"] == "side" and got["under"], where
+        assert height <= view and width <= wide, where
+        assert got["options"]["bottom"] <= got["options"]["view"], where       # Display's choice
+        assert got["facts"]["bottom"] <= got["facts"]["view"], where           # Runtime's facts
+        if [w, h] == [1366, 768]:
+            assert got["allocator"]["bottom"] <= got["allocator"]["view"], where

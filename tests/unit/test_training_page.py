@@ -53,6 +53,7 @@ from src.webui import shell  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import renderers as r  # noqa: E402
 from src.webui.components.help import HIT_TARGET  # noqa: E402
+from src.webui.components import display  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 from tests.fixtures.served_page import ServedSession, served  # noqa: E402
@@ -4242,24 +4243,273 @@ def test_the_run_bar_is_inputs_and_actions_over_facts_and_state_at_the_owner_win
         assert drawn["scroll"] <= drawn["width"], where
 
 
-#: Training stacked, for an operator: at each window, the parameters' fold
-#: (``aria-expanded``) at every frame from the click on Research until the page
-#: holds still (``loaded``: the states it went through, in order), then, once
-#: the page's requests are answered and its boxes hold still (``settled``: false
-#: if they never did), the fold (the button's ``aria-expanded`` and words, the
-#: body drawn or not), the page's end, the window's height, the run view's plot
-#: cards and how much of them (their union's height) lies in the first screen
-#: with the body drawn folded and with it drawn shown and laid out by the
-#: shell's layout pass (``ShepShell.layOut``; for the measure alone, put back at
-#: once). Then, at the first window, the reader folds the body ("Hide"), the
-#: shell's timers run for 12 s, the reader opens Datasets and Training again,
-#: and the fold is read again. With a third argument, a list of window heights:
-#: a fresh page opened at the first window's width and the first height, then
-#: made each height after it with the width kept (the window's height alone),
-#: read at each.
-_FOLD_JS = r"""
+#: A reader's earlier choice of how the Parameters start (⚙ Settings › Display, `display`),
+#: put in a test's browser as their earlier visit left it: saved in ``localStorage`` by an init
+#: script before the page loads (``save(page, choice)``: nothing saved for an empty choice).
+_SAVE_JS = r"""
+const save = (page, choice) => (choice ? page.addInitScript(([key, value]) => {
+  try { window.localStorage.setItem(key, value); } catch (e) { /* storage blocked */ }
+}, [__KEY__, choice]) : Promise.resolve());
+""".replace("__KEY__", json.dumps(display.PARAMS_KEY))
+
+
+#: Training for an operator, opened afresh at each window (``[w, h]``), with the
+#: Parameters choice of ``process.argv[4]`` saved (none: the default): from the
+#: click on Research (Training is its default page) each frame that draws
+#: Training's panels is read after its rendering (in a task posted from the
+#: frame's callback: what the frame painted, not a state that a callback later
+#: in the same frame, the shell's layout pass among them, changes before the
+#: paint), and kept where it differs from the reading before (``frames``: each
+#: with its time in ms after the first): the arrangement, the parameters' fold
+#: button (its ``aria-expanded`` and words, or ``none`` where it is not drawn),
+#: whether the body is drawn, the run view's top below the page's panels' top
+#: less the "Set by you" line's row (its own line or beside Reset, the shell's
+#: layout pass's mark), and, for the record, the run view's top in the document,
+#: the panels' top (under the run bar) and that row's height; then whether the
+#: run view is visible. Read until the page's requests are answered, its
+#: boxes hold still for 30 frames (``settled``: false if they never did, within
+#: 10 s) and 1.5 s more with no input; ``charts``: the run view's plot cards
+#: drawn then.
+_SHOWN_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
+__SAVE_JS__
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of JSON.parse(process.argv[3])) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    await save(page, process.argv[4] || '');
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+    await page.evaluate(() => {
+      const frames = window.__trainFrames = [], after = new MessageChannel();
+      after.port1.onmessage = () => {
+        const panels = document.getElementById('shep-train-page');
+        if (!panels || !panels.getClientRects().length) { return; }
+        const b = document.querySelector('.shep-train-fold'), body = document.getElementById('shep-train-params-bd');
+        const top = (el) => Math.round(el.getBoundingClientRect().top + scrollY);
+        const view = document.getElementById('shep-train-runview');
+        const line = document.querySelector('#shep-train-params-bd .shep-train-setby-row');
+        const lineHeight = line ? Math.round(line.getBoundingClientRect().height) : 0;
+        const now = [document.documentElement.getAttribute('data-shep-layout'),
+                     b && b.getClientRects().length ? `${b.getAttribute('aria-expanded')} ${b.textContent.trim()}` : 'none',
+                     body.getClientRects().length > 0, top(view) - top(panels) - lineHeight, top(view),
+                     top(panels), lineHeight, getComputedStyle(view).visibility].join('|');
+        const t = performance.now();
+        if (!frames.length) { window.__trainFirst = t; }
+        if (!frames.length || frames[frames.length - 1][0] !== now) {
+          frames.push([now, Math.round(t - window.__trainFirst)]);
+        }
+      };
+      const tick = () => {
+        after.port2.postMessage(0);
+        if (!window.__trainDone) { requestAnimationFrame(tick); }
+      };
+      requestAnimationFrame(tick);
+    });
+    // A click with no pointer moved: nothing is hovered while the page is read.
+    await page.$eval('#shep-tab-research-button', (el) => el.click());
+    await page.waitForFunction(() => {
+      const msg = document.querySelector('#shep-train-charts .shep-charts-msg, #shep-train-charts .shep-chart');
+      return msg && window.__shepQueue.idle() && document.fonts.status === 'loaded';
+    }, null, { timeout: 60000 });
+    const settled = await page.evaluate(async () => {
+      const sign = () => [document.scrollingElement.scrollHeight,
+                          Math.round(document.getElementById('shep-train-page').getBoundingClientRect().bottom),
+                          document.querySelector('.shep-train-fold').getAttribute('aria-expanded'),
+                          getComputedStyle(document.getElementById('shep-train-runview')).visibility].join(':');
+      let last = null, still = 0;
+      const t0 = performance.now();
+      while (performance.now() - t0 < 10000) {
+        await new Promise((r) => requestAnimationFrame(r));
+        const now = sign();
+        still = now === last ? still + 1 : 0;
+        last = now;
+        if (still >= 30) { return true; }
+      }
+      return false;
+    });
+    await page.waitForTimeout(1500);
+    out[`${w}x${h}`] = await page.evaluate((settled) => {
+      window.__trainDone = true;
+      return { settled, frames: window.__trainFrames,
+               charts: document.querySelectorAll('#shep-train-runview .shep-chart').length };
+    }, settled);
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+""".replace("__SAVE_JS__", _SAVE_JS)
+
+#: The stacked windows of the owner's D9 (2026-11-25): portrait, the D11 examples, a small one
+#: and the owner's 1850 x 960 at 150 % (1233 x 640); and a side-by-side one, the owner's window.
+_STACKED = [[1080, 1920], [1100, 1050], [1050, 1100], [900, 950], [1233, 640]]
+_SIDE = [[1850, 960]]
+
+
+def _with_a_run(built, tmp_path, monkeypatch):
+    """The demo workspace under a workspaces folder, with one base run whose log draws
+    the run view's charts (the configured service as the reader has it day to day)."""
+    shutil.copytree(built[0], tmp_path / "root" / "demo")
+    run = tmp_path / "root" / "demo" / "runs" / "gatv2" / "20261018-142000_run_d41f8b"
+    (run / "logs").mkdir(parents=True)
+    (run / "checkpoints").mkdir()
+    (run / "logs" / "train_20261018_142000.json").write_text(json.dumps(_metrics(6)))
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
+
+
+def _first_frames(case, built, monkeypatch, tmp_path, choice=""):
+    """`_SHOWN_JS` at every stacked window and the owner's side-by-side one, for an operator at
+    first use or with a run's charts, the Parameters choice `choice` saved (none: the default);
+    each window's reading by ``"<w>x<h>"``, each frame split into its fields."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    if case == "first_use":
+        monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    else:
+        _with_a_run(built, tmp_path, monkeypatch)
+    sizes = [*_STACKED, *_SIDE]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_SHOWN_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps(sizes), choice, timeout=600)
+    assert set(seen) == {f"{w}x{h}" for w, h in sizes}, seen
+    for drawn in seen.values():
+        drawn["states"] = [now.split("|") for now, _ms in drawn["frames"]]
+    return seen
+
+
+@pytest.mark.parametrize("case", ["first_use", "configured"])
+def test_stacked_the_parameters_are_shown_from_trainings_first_frame_and_never_fold_by_themselves(
+        case, built, monkeypatch, tmp_path):
+    """The owner's D9 of 2026-11-25: in every stacked window (portrait, or
+    landscape too narrow for Training's two panels side by side) the
+    Parameters body is shown by default and the page never folds or opens it
+    by itself; the page scrolls. It replaced the fold by the room (the D9 of
+    2026-11-24: shown unless folding brought more of the run view's charts
+    into the first screen, `FOLD_JS`), which at c14e5b8 drew the body folded
+    on Training's first frames and opened it 0.6 to 2.4 s later, the run view
+    jumping 416 px (the final check's F2, the fold review's R1), at first use
+    at each of these windows and with a run's charts at 1080 x 1920, and kept
+    it folded with a run's charts at 1100 x 1050, 1050 x 1100, 900 x 950 and
+    1233 x 640. Now, at first use and with a run's charts, from Training's
+    first painted frame until the page has held still for 1.5 s: the body is
+    drawn, the button reads "Hide" (``aria-expanded="true"``), and the run
+    view's place in the page's panels never moves; side by side (the owner's
+    1850 x 960) no fold button is drawn and the body is shown, as before.
+    Since the owner's revision of the same day this is the Shown choice of
+    ⚙ Settings › Display, the default: here nothing is saved in the browser,
+    and the run view is visible in every frame."""
+    seen = _first_frames(case, built, monkeypatch, tmp_path)
+    for w, h in [*_STACKED, *_SIDE]:
+        drawn = seen[f"{w}x{h}"]
+        where = (case, w, h, drawn)
+        assert drawn["settled"], where
+        assert (drawn["charts"] > 0) is (case == "configured"), where
+        states = drawn["states"]
+        assert states and drawn["frames"][0][1] == 0, where
+        arrangement = "stack" if [w, h] in _STACKED else "side"
+        # Every frame from Training's first: the arrangement, the button (stacked "Hide",
+        # side by side none) and the body drawn.
+        assert {tuple(s[:3]) for s in states} == {
+            (arrangement, "true Hide" if arrangement == "stack" else "none", "true")}, where
+        # The run view's place in the page's panels never moves: nothing above it opens or
+        # folds. (The "Set by you" line's own-line mark and the run bar above the panels are
+        # the shell's layout pass's, which can mark a page a frame or more after it is first
+        # painted; they move the run view as they did before D9, and are read apart.)
+        assert len({s[3] for s in states}) == 1, where
+        assert {s[7] for s in states} == {"visible"}, where
+
+
+@pytest.mark.parametrize("case", ["first_use", "configured"])
+def test_stacked_a_saved_folded_choice_draws_the_parameters_folded_from_trainings_first_frame(
+        case, built, monkeypatch, tmp_path):
+    """The owner's revision of D9 (2026-11-25): each reader chooses in ⚙ Settings › Display
+    how the Parameters start. **Folded**: built folded, never opened by the page. With
+    Folded saved in the browser, at first use and with a run's charts, at every stacked
+    window from Training's first painted frame until the page has held still for 1.5 s:
+    the button reads "Show" (``aria-expanded="false"``), the body is not drawn, the run view
+    is visible and its place in the page's panels never moves; side by side no fold button
+    is drawn and the body is shown. At bb258d1 (no choice: shown) every stacked frame drew
+    the body and "Hide"."""
+    seen = _first_frames(case, built, monkeypatch, tmp_path, display.FOLDED)
+    for w, h in [*_STACKED, *_SIDE]:
+        drawn = seen[f"{w}x{h}"]
+        where = (case, w, h, drawn)
+        assert drawn["settled"], where
+        assert (drawn["charts"] > 0) is (case == "configured"), where
+        states = drawn["states"]
+        assert states and drawn["frames"][0][1] == 0, where
+        want = (("stack", "false Show", "false", "visible") if [w, h] in _STACKED
+                else ("side", "none", "true", "visible"))
+        assert {(*s[:3], s[7]) for s in states} == {want}, where
+        assert len({s[3] for s in states}) == 1, where
+
+
+@pytest.mark.parametrize("case", ["first_use", "configured"])
+def test_stacked_the_automatic_choice_holds_the_run_view_in_its_place_until_the_fold_decides(
+        case, built, monkeypatch, tmp_path):
+    """The owner's revision of D9 (2026-11-25): **Automatic** is c14e5b8's fold by the room
+    (shown unless folding brings more of the run view's charts into the first screen,
+    decided after the page's first answers), with the owner's F2 choice (c): until it has
+    decided, the run view is kept invisible in its place, then shown in its final place, so
+    nothing jumps (at c14e5b8 the body opened 0.6 to 2.4 s after Training appeared, the run
+    view moving 416 px down where it was already seen). With Automatic saved, at first use
+    and with a run's charts, at every stacked window: Training's first painted frame draws
+    the body folded ("Show") and the run view invisible; the run view stays invisible until
+    the fold has decided (before `training_console.HOLD_MOST_MS`), and from its first
+    visible frame on nothing changes: the button, the body and the run view's place in the
+    page's panels. The decision is c14e5b8's: shown at first use (no chart to bring up),
+    with a run's charts shown at 1080 x 1920 and folded at 1100 x 1050, 1050 x 1100,
+    900 x 950 and 1233 x 640. Side by side nothing is held: no fold button, the body and the
+    run view shown in every frame. At bb258d1 (no choice) the first frame drew the body
+    shown and the run view visible."""
+    seen = _first_frames(case, built, monkeypatch, tmp_path, display.AUTO)
+    for w, h in [*_STACKED, *_SIDE]:
+        drawn = seen[f"{w}x{h}"]
+        where = (case, w, h, drawn)
+        assert drawn["settled"], where
+        assert (drawn["charts"] > 0) is (case == "configured"), where
+        states, frames = drawn["states"], drawn["frames"]
+        assert states and frames[0][1] == 0, where
+        if [w, h] in _SIDE:
+            assert {(*s[:3], s[7]) for s in states} == {("side", "none", "true", "visible")}, where
+            assert len({s[3] for s in states}) == 1, where
+            continue
+        assert (*states[0][:3], states[0][7]) == ("stack", "false Show", "false", "hidden"), where
+        seen_at = next(i for i, s in enumerate(states) if s[7] == "visible")
+        assert frames[seen_at][1] < tc.HOLD_MOST_MS, where
+        # Once seen, the run view stays where it is, and so do the button and the body.
+        assert len({(s[1], s[2], s[3], s[7]) for s in states[seen_at:]}) == 1, where
+        opened = case == "first_use" or [w, h] == [1080, 1920]
+        assert states[-1][1:3] == (["true Hide", "true"] if opened else ["false Show", "false"]), where
+
+
+#: Training stacked, for an operator, under the Automatic choice (saved in the browser): at
+#: each window, the parameters' fold (``aria-expanded``) at every frame from the click on
+#: Research until the page holds still (``loaded``: the states it went through, in order),
+#: then, once the page's requests are answered and its boxes hold still (``settled``: false
+#: if they never did), the fold (the button's ``aria-expanded`` and words, the body drawn or
+#: not), the page's end, the window's height, the run view's plot cards and how much of them
+#: (their union's height) lies in the first screen with the body drawn folded and with it
+#: drawn shown and laid out by the shell's layout pass (``ShepShell.layOut``; for the
+#: measure alone, put back at once). Then, at the first window, the reader opens "More
+#: training settings" and "Model" in the body, folds the body ("Hide"), the shell's timers
+#: run for 12 s, the reader opens Datasets and Training again, and the fold is read again.
+#: With a fifth argument, a list of window heights: a fresh page opened at the first
+#: window's width and the first height, then made each height after it with the width kept
+#: (the window's height alone), read at each. (c14e5b8's test of the fold by the room, its
+#: choice now saved.)
+_ROOM_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+__SAVE_JS__
 (async () => {
   const browser = await chromium.launch();
   const out = {};
@@ -4286,6 +4536,7 @@ const QUEUE_JS = __QUEUE_JS__;
     return { layout: document.documentElement.getAttribute('data-shep-layout'), expanded: b.getAttribute('aria-expanded'),
              words: b.textContent.trim(), shown: body.getClientRects().length > 0, end: se.scrollHeight,
              height: innerHeight, charts: cards().length, chartsFolded, chartsShown,
+             visible: getComputedStyle(document.getElementById('shep-train-runview')).visibility === 'visible',
              more: !!document.querySelector('#shep-train-more > button.label-wrap.open, #shep-train-model > button.label-wrap.open') };
   });
   // Held still: the page's end, its panels' end and the fold the same over 30 frames in a row
@@ -4311,6 +4562,7 @@ const QUEUE_JS = __QUEUE_JS__;
   const open = async (w, h) => {
     const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
     await page.addInitScript(QUEUE_JS);
+    await save(page, process.argv[4]);
     await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
     await page.evaluate(() => {
@@ -4353,8 +4605,8 @@ const QUEUE_JS = __QUEUE_JS__;
     }
     await page.close();
   }
-  if (process.argv[4]) {
-    const heights = JSON.parse(process.argv[4]), w = sizes[0][0];
+  if (process.argv[5]) {
+    const heights = JSON.parse(process.argv[5]), w = sizes[0][0];
     const { page } = await open(w, heights[0]);
     out.heights = [];
     for (const h of heights) {
@@ -4367,41 +4619,40 @@ const QUEUE_JS = __QUEUE_JS__;
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
-"""
+""".replace("__SAVE_JS__", _SAVE_JS)
 
 
 @pytest.mark.parametrize("case", ["first_use", "configured", "with_run"])
-def test_stacked_the_parameters_show_unless_folding_brings_more_charts_and_a_users_fold_holds(
+def test_stacked_the_automatic_choice_shows_unless_folding_brings_more_charts_and_a_users_fold_holds(
         case, built, monkeypatch, tmp_path):
-    """The owner's D9 of 2026-11-24 (L8 §4 D9): stacked, the Parameters body
-    started folded at every window, so a portrait 1080 x 1920 showed its run
-    bar and title and 1222 px (first use) or 705 px (configured) of nothing
-    under the page. Now, while the reader has not used "Show" / "Hide", the
-    body is shown unless folding it brings more of the run view's charts (its
-    plot cards) into the first screen than showing it leaves there (measured
-    with the body drawn folded and drawn shown and laid out, `FOLD_JS`), never
-    by a window size; only the main parameters ("More training settings" and
-    "Model" stay closed). The L8 LOOK5's L8-3 and its review (R2): at first use
-    the body was folded at 1100 x 1050 with a third of the window blank under
-    the page, and, once the measure read the page's panels, again at 1100 x
-    1040 (329 px blank, 87 px of scroll if shown): with no chart to bring up,
-    folding gains nothing, so the body is shown at first use and with a
-    dataset that has no run, at any height; with a run's charts it is shown at
-    1080 x 1920 (they fit under it) and folded at 900 x 950 and both of the
-    owner's D11 examples. The review's R1: configured, the body was shown on
-    the page as first drawn (no chart yet) and folded 1.2 s later when the
-    charts came, the run view jumping 416 px: the fold now waits for the
-    page's first answers, and from the click on Research until the page holds
-    still it never goes from shown to folded (with a run at the D11 examples
-    it is never drawn shown). The review's R3: a window made taller or
-    shorter without a change of width kept the decision of the height before
-    (1080 x 1000 folded, made 1080 x 1920: folded over 1209 px of blank); with
-    a run, the window's height alone now folds and shows it again. A fold the
-    reader made holds through the shell's timers and a page switch (no timer,
-    poll or redraw reopens it), and so does the body the reader works in:
-    opening "More training settings" in it at 1080 x 1920 grew the page past
-    the window, and the measure folded the body under the reader (the help
-    test's Tab walk lost Mixed precision)."""
+    """c14e5b8's test of the fold by the room (the owner's D9 of 2026-11-24, L8 §4 D9),
+    kept for the Automatic choice of ⚙ Settings › Display (the owner's revision of D9,
+    2026-11-25: the automatic fold kept, each reader choosing their default), saved here in
+    the browser. Stacked, the body started folded at every window, so a portrait 1080 x 1920
+    showed its run bar and title and 1222 px (first use) or 705 px (configured) of nothing
+    under the page. Under Automatic, while the reader has not used "Show" / "Hide", the body
+    is shown unless folding it brings more of the run view's charts (its plot cards) into the
+    first screen than showing it leaves there (measured with the body drawn folded and drawn
+    shown and laid out, `FOLD_JS`), never by a window size; only the main parameters ("More
+    training settings" and "Model" stay closed). The L8 LOOK5's L8-3 and its review (R2): at
+    first use the body was folded at 1100 x 1050 with a third of the window blank under the
+    page, and, once the measure read the page's panels, again at 1100 x 1040: with no chart
+    to bring up, folding gains nothing, so the body is shown at first use and with a dataset
+    that has no run, at any height; with a run's charts it is shown at 1080 x 1920 (they fit
+    under it) and folded at 900 x 950 and both of the owner's D11 examples. The review's R1:
+    configured, the body was shown on the page as first drawn (no chart yet) and folded
+    1.2 s later when the charts came, the run view jumping 416 px: the fold waits for the
+    page's first answers, and from the click on Research until the page holds still it never
+    goes from shown to folded (with a run at the D11 examples it is never drawn shown). The
+    review's R3: a window made taller or shorter without a change of width kept the decision
+    of the height before; with a run, the window's height alone folds and shows it again. A
+    fold the reader made holds through the shell's timers and a page switch (no timer, poll
+    or redraw reopens it), and so does the body the reader works in: opening "More training
+    settings" in it at 1080 x 1920 grew the page past the window, and the measure folded the
+    body under the reader (the help test's Tab walk lost Mixed precision). Each decision is
+    read with the run view visible (F2's hold over). At bb258d1 (no automatic fold) the body
+    was shown at 900 x 950 and both D11 examples with a run's charts, and at 1080 x 1000 by
+    a change of height."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
 
@@ -4425,13 +4676,13 @@ def test_stacked_the_parameters_show_unless_folding_brings_more_charts_and_a_use
         sizes = [*sizes, *d11]
         heights = [1920, 1000, 1920]
     with served(create_gradio_app(), **mount_options()) as base:
-        seen = run_node(_FOLD_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
-                        base[:-len("gradio_api")], json.dumps(sizes),
-                        *([json.dumps(heights)] if heights else []))
+        seen = run_node(_ROOM_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps(sizes), display.AUTO,
+                        *([json.dumps(heights)] if heights else []), timeout=600)
     for w, h in sizes:
         drawn = seen[f"{w}x{h}"]
         where = (case, w, h, drawn)
-        assert drawn["settled"], where
+        assert drawn["settled"] and drawn["visible"], where
         assert drawn["layout"] == "stack" and drawn["more"] is False, where
         # Shown unless folding brings more of the charts into the first screen.
         assert drawn["shown"] == (drawn["chartsFolded"] <= drawn["chartsShown"]), where
@@ -4462,7 +4713,563 @@ def test_stacked_the_parameters_show_unless_folding_brings_more_charts_and_a_use
     assert seen["after"]["shown"] is False and seen["after"]["expanded"] == "false", seen
 
 
-#: Training at first use, stacked, for an operator, as the reader arrives: each
+#: Training for an operator at ``process.argv[3]`` (``[w, h]``) under the Automatic choice
+#: (saved), its page's first answers never coming: once the dashboard is loaded and idle,
+#: no event the page sends to the queue is ever answered (``queue/join``: the opening's own
+#: requests among them). From the click on Research, each painted frame of Training's
+#: panels (as `_SHOWN_JS` reads them): the button, the body drawn, the run view's
+#: visibility and its place in the page's panels, with their times; read for
+#: ``process.argv[5]`` ms and 3 s more; then whether the page's panels were ever marked as
+#: answered. With ``process.argv[6]``, the answers come late instead: each event the page
+#: sends to the queue then is answered that many ms after it was sent (a slow host), and the
+#: frames are read until the page is marked as answered, its charts drawn, and 3 s more.
+_UNANSWERED_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+__SAVE_JS__
+(async () => {
+  const browser = await chromium.launch();
+  const [w, h] = JSON.parse(process.argv[3]);
+  const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await save(page, process.argv[4]);
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+  await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+  const late = process.argv[6] ? Number(process.argv[6]) : null;
+  if (late === null) {
+    // Never answered (a refused request reads as a lost connection, and Gradio loads the page again).
+    await page.route('**/queue/join**', () => { /* the page waits */ });
+  } else {
+    await page.route('**/queue/join**', async (route) => {
+      await new Promise((r) => setTimeout(r, late));
+      try { await route.continue(); } catch (e) { /* the page has gone */ }
+    });
+  }
+  await page.evaluate(() => {
+    const frames = window.__trainFrames = [], after = new MessageChannel();
+    after.port1.onmessage = () => {
+      const panels = document.getElementById('shep-train-page');
+      if (!panels || !panels.getClientRects().length) { return; }
+      const b = document.querySelector('.shep-train-fold'), body = document.getElementById('shep-train-params-bd');
+      const view = document.getElementById('shep-train-runview');
+      const now = [b && b.getClientRects().length ? `${b.getAttribute('aria-expanded')} ${b.textContent.trim()}` : 'none',
+                   body.getClientRects().length > 0, getComputedStyle(view).visibility,
+                   Math.round(view.getBoundingClientRect().top - panels.getBoundingClientRect().top)].join('|');
+      const t = performance.now();
+      if (!frames.length) { window.__trainFirst = t; }
+      if (!frames.length || frames[frames.length - 1][0] !== now) {
+        frames.push([now, Math.round(t - window.__trainFirst)]);
+      }
+    };
+    const tick = () => { after.port2.postMessage(0); if (!window.__trainDone) { requestAnimationFrame(tick); } };
+    requestAnimationFrame(tick);
+  });
+  await page.$eval('#shep-tab-research-button', (el) => el.click());
+  if (late === null) {
+    await page.waitForTimeout(Number(process.argv[5]) + 3000);
+  } else {
+    await page.waitForFunction(() => document.getElementById('shep-train-page').hasAttribute('data-shep-answered')
+                               && document.querySelector('#shep-train-charts .shep-chart'), null, { timeout: 90000 });
+    await page.waitForTimeout(3000);
+  }
+  const out = await page.evaluate(() => {
+    window.__trainDone = true;
+    return { frames: window.__trainFrames,
+             answered: document.getElementById('shep-train-page').hasAttribute('data-shep-answered') };
+  });
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+""".replace("__SAVE_JS__", _SAVE_JS)
+
+
+def test_the_automatic_choice_shows_the_run_view_anyway_when_the_first_answers_never_come(
+        built, monkeypatch, tmp_path):
+    """The owner's F2 choice (c), for the Automatic choice (2026-11-25): the run view is kept
+    invisible in its place until the fold has decided, with a fallback: if the decision has
+    not come within a few seconds (the page's first answers never arrive, or an error), the
+    run view is shown anyway (`training_console.HOLD_MOST_MS`; the mockup of (c) held it for
+    good). With a run's charts at 1100 x 1050 and no event of the page answered once it is
+    loaded: Training's first painted frame draws the body folded and the run view invisible;
+    no answer ever marks the page and nothing opens the body; the run view is shown at
+    `HOLD_MOST_MS` after Training appears (within 1.5 s more), the body still folded. At
+    bb258d1 (no choice, no hold) the body was drawn shown and the run view visible from the
+    first frame."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    _with_a_run(built, tmp_path, monkeypatch)
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_UNANSWERED_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps([1100, 1050]), display.AUTO,
+                        str(tc.HOLD_MOST_MS))
+    frames = seen["frames"]
+    assert not seen["answered"], seen
+    states = [now.split("|") for now, _ms in frames]
+    assert frames and frames[0][1] == 0 and states[0][:3] == ["false Show", "false", "hidden"], seen
+    assert [state[:3] for state in states] == [["false Show", "false", "hidden"],
+                                               ["false Show", "false", "visible"]], seen
+    assert len({state[3] for state in states}) == 1, seen            # held in its place
+    assert tc.HOLD_MOST_MS - 100 <= frames[1][1] <= tc.HOLD_MOST_MS + 1500, seen
+
+
+def test_the_automatic_choice_keeps_the_run_view_still_when_the_first_answers_come_after_the_hold(
+        built, monkeypatch, tmp_path):
+    """The review of 36c0592 (P2): under Automatic the fallback could still make F2's jump that
+    option (c) exists to prevent. Where the page's first answers came late rather than never
+    (a slow host, a large workspace, a reconnect), the run view was shown at
+    `training_console.HOLD_MOST_MS` with the body folded, and when the answers came the fold
+    still made its first decision: at 1080 x 1920 with a run's charts, every queue event
+    answered 3.5 s late, the body opened at 11.8 s and the run view, visible since 5.0 s, moved
+    416 px down. The fallback is the page session's first decision: answers that come after it
+    change nothing (only a later change of the window, or the reader, may). Here: Training's
+    first painted frame draws the body folded and the run view invisible; the run view is
+    shown at the hold's end, folded; the answers then come (the page marked as answered, its
+    charts drawn), and from the run view's first visible frame on nothing changes: the
+    button, the body and the run view's place in the page's panels. Fails on 36c0592 (the
+    body opened under the visible run view)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    _with_a_run(built, tmp_path, monkeypatch)
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_UNANSWERED_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps([1080, 1920]), display.AUTO,
+                        str(tc.HOLD_MOST_MS), "3500", timeout=300)
+    frames = seen["frames"]
+    assert seen["answered"], seen
+    states = [now.split("|") for now, _ms in frames]
+    assert frames[0][1] == 0 and states[0][:3] == ["false Show", "false", "hidden"], seen
+    seen_at = next(i for i, state in enumerate(states) if state[2] == "visible")
+    assert tc.HOLD_MOST_MS - 100 <= frames[seen_at][1] <= tc.HOLD_MOST_MS + 1500, seen
+    assert all(state[2] == "hidden" for state in states[:seen_at]), seen
+    # Once seen, the run view stays where it is, and so do the button and the body.
+    assert {tuple(state) for state in states[seen_at:]} == {tuple(states[seen_at])}, seen
+    assert states[seen_at][:2] == ["false Show", "false"], seen
+
+
+#: Training for an operator at ``process.argv[3]`` (``[w, h]``) with the Parameters choice of
+#: ``process.argv[4]`` saved, a workspace with two runs: opened, its page answered and still,
+#: then the reader picks the other run in the run view's "Viewing" select. From just before
+#: the pick, each painted frame of Training's panels: the button, the body drawn, the run
+#: view's visibility, its place in the page's panels, and the select's top in the window;
+#: read until the page's requests are answered, it holds still, and 1.5 s more. Also the
+#: options listed, the run viewed before and after, and the run view's plot cards drawn
+#: (with a height) before and after.
+_VIEW_PICK_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+__SAVE_JS__
+(async () => {
+  const browser = await chromium.launch();
+  const [w, h] = JSON.parse(process.argv[3]);
+  const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await save(page, process.argv[4] || '');
+  await page.addInitScript(() => {
+    const frames = window.__pickFrames = [], after = new MessageChannel();
+    after.port1.onmessage = () => {
+      const panels = document.getElementById('shep-train-page');
+      if (!window.__pickOn || !panels || !panels.getClientRects().length) { return; }
+      const b = document.querySelector('.shep-train-fold'), body = document.getElementById('shep-train-params-bd');
+      const view = document.getElementById('shep-train-runview'), pick = document.getElementById('shep-train-view-run');
+      const now = [`${b.getAttribute('aria-expanded')} ${b.textContent.trim()}`, body.getClientRects().length > 0,
+                   getComputedStyle(view).visibility,
+                   Math.round(view.getBoundingClientRect().top - panels.getBoundingClientRect().top),
+                   Math.round(pick.getBoundingClientRect().top)].join('|');
+      if (!frames.length || frames[frames.length - 1] !== now) { frames.push(now); }
+    };
+    const tick = () => { after.port2.postMessage(0); requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  });
+  const still = () => page.evaluate(async () => {
+    const sign = () => [document.scrollingElement.scrollHeight,
+                        Math.round(document.getElementById('shep-train-page').getBoundingClientRect().bottom),
+                        document.querySelector('.shep-train-fold').getAttribute('aria-expanded')].join(':');
+    let last = null, n = 0;
+    const t0 = performance.now();
+    while (performance.now() - t0 < 10000) {
+      await new Promise((r) => requestAnimationFrame(r));
+      const now = sign();
+      n = now === last ? n + 1 : 0;
+      last = now;
+      if (n >= 30) { return true; }
+    }
+    return false;
+  });
+  const viewed = () => page.evaluate(() => ({
+    run: (document.querySelector('#shep-train-view-run input') || {}).value || null,
+    charts: [...document.querySelectorAll('#shep-train-runview .shep-chart')]
+      .filter((c) => c.getBoundingClientRect().height > 0).length }));
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+  await page.$eval('#shep-tab-research-button', (el) => el.click());
+  await page.waitForSelector('#shep-train-charts .shep-chart', { timeout: 60000 });
+  await page.waitForFunction(() => window.__shepQueue.idle() && document.fonts.status === 'loaded', null, { timeout: 60000 });
+  const settled = await still();
+  await page.waitForTimeout(1500);
+  const before = await viewed();
+  await page.evaluate(() => { window.__pickOn = true; });
+  await page.click('#shep-train-view-run input');
+  await page.waitForSelector('ul[role="listbox"] li', { timeout: 10000 });
+  const options = await page.$$eval('ul[role="listbox"] li', (els) => els.map((e) => e.textContent.trim()));
+  const items = await page.$$('ul[role="listbox"] li');
+  await items[items.length - 1].click();
+  await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+  const after = { settled: await still() };
+  await page.waitForTimeout(1500);
+  Object.assign(after, await viewed());
+  console.log(JSON.stringify({ settled, before, after, options, frames: await page.evaluate(() => window.__pickFrames.slice()) }));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+""".replace("__SAVE_JS__", _SAVE_JS)
+
+
+def test_the_automatic_choice_never_decides_again_on_the_readers_pick_of_a_run(
+        built, monkeypatch, tmp_path):
+    """The review of 36c0592 (P2): after its first decision, Automatic decided again on any
+    change of the page's content or answers, not only on a change of the window, so the
+    reader's own work in the run view moved the run view under them. At 900 x 950, Automatic
+    saved, a workspace with two runs, the older one with no curves: Training decided folded
+    (the newer run's charts come into the first screen folded); the reader picked the older
+    run in "Viewing", and about 0.6 s later, with no input on the fold, the body opened and
+    the run view, the select just used among it, moved from y 412 to y 828. After the first
+    decision only a change of the window (its size or the arrangement) decides again. Here,
+    from just before the pick until the page holds still after it: the run viewed changes and
+    its charts go (none drawn with a height after it), and every painted frame has the body
+    folded ("Show"), the run view visible in one place and the select at one height. Fails on
+    36c0592 (the body opened after the pick)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    _with_a_run(built, tmp_path, monkeypatch)
+    older = tmp_path / "root" / "demo" / "runs" / "gatv2" / "20261017-090000_run_a11c0e"
+    (older / "logs").mkdir(parents=True)
+    (older / "checkpoints").mkdir()
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_VIEW_PICK_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps([900, 950]), display.AUTO, timeout=300)
+    before, after, frames = seen["before"], seen["after"], seen["frames"]
+    assert seen["settled"] and after["settled"] and len(seen["options"]) == 2, seen
+    assert before["run"] != after["run"] and before["charts"] > 0 and after["charts"] == 0, seen
+    assert len(frames) == 1, seen                       # nothing moved, from the pick on
+    assert frames[0].split("|")[:3] == ["false Show", "false", "visible"], seen
+
+
+#: Training for an operator, opened at the first window of ``process.argv[3]`` with the
+#: Parameters choice of ``process.argv[4]`` saved (none: the default): the parameters' fold
+#: read (``start``: the arrangement, the button drawn or not, its ``aria-expanded`` and
+#: words, the body drawn) once the page's requests are answered and it holds still; then the
+#: reader's steps, each read the same way once the page holds still again: ``["click"]`` the
+#: fold button, ``["key", name]`` that key on it (focused), ``["size", w, h]`` the window made
+#: that size, ``["wait", ms]`` the shell's timers left to run, ``["away"]`` Datasets opened
+#: and then Training again.
+_HELD_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+__SAVE_JS__
+(async () => {
+  const browser = await chromium.launch();
+  const [[w, h], ...steps] = JSON.parse(process.argv[3]);
+  const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await save(page, process.argv[4] || '');
+  await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+  await page.click('#shep-tab-research-button', { timeout: 60000 });
+  const read = async () => {
+    await page.waitForFunction(() => window.__shepQueue.idle() && document.fonts.status === 'loaded',
+                               null, { timeout: 60000 });
+    const settled = await page.evaluate(async () => {
+      const sign = () => [document.scrollingElement.scrollHeight,
+                          Math.round(document.getElementById('shep-train-page').getBoundingClientRect().bottom),
+                          document.querySelector('.shep-train-fold').getAttribute('aria-expanded')].join(':');
+      let last = null, still = 0;
+      const t0 = performance.now();
+      while (performance.now() - t0 < 10000) {
+        await new Promise((r) => requestAnimationFrame(r));
+        const now = sign();
+        still = now === last ? still + 1 : 0;
+        last = now;
+        if (still >= 30) { return true; }
+      }
+      return false;
+    });
+    return page.evaluate((settled) => {
+      const b = document.querySelector('.shep-train-fold'), body = document.getElementById('shep-train-params-bd');
+      return { settled, layout: document.documentElement.getAttribute('data-shep-layout'),
+               button: b.getClientRects().length > 0, expanded: b.getAttribute('aria-expanded'),
+               words: b.textContent.trim(), shown: body.getClientRects().length > 0,
+               visible: getComputedStyle(document.getElementById('shep-train-runview')).visibility === 'visible' };
+    }, settled);
+  };
+  await page.waitForSelector('#shep-train-charts .shep-chart, #shep-train-charts .shep-charts-msg', { timeout: 60000 });
+  const out = { start: await read(), steps: [] };
+  for (const step of steps) {
+    if (step[0] === 'click') { await page.click('.shep-train-fold'); }
+    if (step[0] === 'key') { await page.focus('.shep-train-fold'); await page.keyboard.press(step[1]); }
+    if (step[0] === 'size') { await page.setViewportSize({ width: step[1], height: step[2] }); }
+    if (step[0] === 'wait') { await page.waitForTimeout(step[1]); }
+    if (step[0] === 'away') {
+      await page.click('#shep-page-datasets-button');
+      await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+      await page.click('#shep-page-training-button');
+    }
+    out.steps.push({ step: step.join(' '), ...(await read()) });
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+""".replace("__SAVE_JS__", _SAVE_JS)
+
+
+@pytest.mark.parametrize("choice", ["", display.FOLDED, display.AUTO], ids=["shown", "folded", "auto"])
+def test_stacked_a_readers_hide_and_show_hold_across_resizes_and_side_by_side_draws_no_fold(
+        choice, built, monkeypatch, tmp_path):
+    """The owner's D9 of 2026-11-25: folding is the reader's choice, and it
+    holds. With a run's charts at 1100 x 1050 (where the fold by the room
+    folded the body by itself until 1cea46e) the body starts shown ("Hide");
+    the reader's Hide folds it and it stays folded through other stacked
+    windows (portrait among them, where the room rule showed it), a
+    side-by-side one, 12 s of the shell's timers and a page switch; their
+    Show, by keyboard (Enter), opens it and it stays shown through the
+    stacked windows where the room rule folded it and a side-by-side one;
+    Space folds it again. Side by side (1850 x 960) no fold button is drawn
+    and the body is shown whatever the reader chose stacked.
+    The owner's revision of the same day: whatever the reader chose in ⚙ Settings › Display,
+    their own Hide or Show wins for the page session. Shown (nothing saved) starts shown;
+    Folded starts folded; Automatic starts as its rule decides at 1100 x 1050 with a run's
+    charts, folded, the run view shown. Then each press toggles the body, and nothing opens
+    or folds it again: not the windows where Automatic would decide otherwise (1080 x 1920
+    shows, 900 x 950 folds), not a side-by-side window, the timers or a page switch. The
+    folded and auto cases fail at bb258d1 (no choice: shown at the start)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    _with_a_run(built, tmp_path, monkeypatch)
+    steps = [[1100, 1050], ["click"], ["size", 1080, 1920], ["size", 1850, 960], ["size", 1050, 1100],
+             ["wait", 12000], ["away"], ["key", "Enter"], ["size", 900, 950], ["size", 1850, 960],
+             ["size", 1233, 640], ["size", 1100, 1050], ["key", "Space"]]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_HELD_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps(steps), choice)
+    chosen = not choice                     # Shown starts shown; Folded and Automatic here folded
+    start = seen["start"]
+    assert start == {"settled": True, "layout": "stack", "button": True,
+                     "expanded": "true" if chosen else "false", "words": "Hide" if chosen else "Show",
+                     "shown": chosen, "visible": True}, seen
+    for got in seen["steps"]:
+        if got["step"] in ("click", "key Enter", "key Space"):
+            chosen = not chosen             # the reader's press: the body toggles
+        side = got["step"] == "size 1850 960"
+        where = (got, seen)
+        assert got["settled"] and got["visible"] and got["layout"] == ("side" if side else "stack"), where
+        assert got["expanded"] == ("true" if chosen else "false"), where
+        if side:
+            assert not got["button"] and got["shown"], where
+        else:
+            assert got["button"] and got["shown"] is chosen, where
+            assert got["words"] == ("Hide" if chosen else "Show"), where
+    assert seen["steps"][-1]["step"] == "key Space" and chosen is bool(choice), seen
+
+
+#: A read-only viewer at 1080 x 1920 with nothing saved: Training and ⚙ Settings opened in turn,
+#: the Parameters choice changed in Settings' Display panel while Training's page is open
+#: (``process.argv[3]``: the steps). ``["training"]`` opens Research (Training) and records
+#: each painted frame of Training's panels from the click (the button, the body drawn, the run
+#: view's visibility and its place in the panels less the "Set by you" line's row) until the
+#: page holds still; ``["settings"]`` opens Settings and reads its radio (the option checked,
+#: whether it can be used); ``["pick", value]`` picks that option there and reads what the
+#: browser keeps (``localStorage``) and the root element's mark; ``["fold"]`` presses
+#: Training's Hide or Show; ``["reload"]`` loads the dashboard again in the same tab (the shell
+#: brings back the page shown); ``["size", w, h]`` makes the window that size.
+_CHOICE_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1080, height: 1920 }, deviceScaleFactor: 1 })).newPage();
+  await page.addInitScript(QUEUE_JS);
+  await page.addInitScript(() => {
+    const frames = window.__trainFrames = [], after = new MessageChannel();
+    after.port1.onmessage = () => {
+      const panels = document.getElementById('shep-train-page');
+      if (!window.__trainOn || !panels || !panels.getClientRects().length) { return; }
+      const b = document.querySelector('.shep-train-fold'), body = document.getElementById('shep-train-params-bd');
+      const view = document.getElementById('shep-train-runview');
+      const line = document.querySelector('#shep-train-params-bd .shep-train-setby-row');
+      const lineHeight = line ? Math.round(line.getBoundingClientRect().height) : 0;
+      const now = [`${b.getAttribute('aria-expanded')} ${b.textContent.trim()}`, body.getClientRects().length > 0,
+                   getComputedStyle(view).visibility,
+                   Math.round(view.getBoundingClientRect().top - panels.getBoundingClientRect().top) - lineHeight].join('|');
+      if (!frames.length || frames[frames.length - 1] !== now) { frames.push(now); }
+    };
+    const tick = () => { after.port2.postMessage(0); requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  });
+  const KEY = __KEY__, ATTR = __ATTR__;
+  const load = async () => {
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
+    await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+  };
+  const still = () => page.evaluate(async () => {
+    let last = null, n = 0;
+    const t0 = performance.now();
+    while (performance.now() - t0 < 10000) {
+      await new Promise((r) => requestAnimationFrame(r));
+      const now = (window.__trainFrames || []).length + ':' + document.scrollingElement.scrollHeight;
+      n = now === last ? n + 1 : 0;
+      last = now;
+      if (n >= 30) { return true; }
+    }
+    return false;
+  });
+  await load();
+  const out = [];
+  for (const step of JSON.parse(process.argv[3])) {
+    if (step[0] === 'training') {
+      await page.evaluate(() => { window.__trainFrames.length = 0; window.__trainOn = true; });
+      await page.$eval('#shep-tab-research-button', (el) => el.click());
+      await page.waitForSelector('#shep-train-charts .shep-chart', { timeout: 60000 });
+      await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+      const settled = await still();
+      out.push({ step: step[0], settled, frames: await page.evaluate(() => window.__trainFrames.slice()) });
+    }
+    if (step[0] === 'settings') {
+      await page.evaluate(() => { window.__trainOn = false; });
+      await page.$eval('#shep-tab-settings-button', (el) => el.click());
+      await page.waitForSelector('#shep-display-params label', { state: 'visible', timeout: 60000 });
+      await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+      out.push({ step: step[0], ...(await page.evaluate(() => {
+        const on = document.querySelector('#shep-display-params input[type=radio]:checked');
+        return { checked: on ? on.value : null,
+                 usable: [...document.querySelectorAll('#shep-display-params input[type=radio]')].every((i) => !i.disabled) };
+      })) });
+    }
+    if (step[0] === 'pick') {
+      await page.click(`#shep-display-params label:has(input[value="${step[1]}"])`);
+      await page.waitForFunction((v) => document.documentElement.getAttribute(__ATTR__) === v, step[1], { timeout: 10000 });
+      out.push({ step: step.join(' '), ...(await page.evaluate(([k, a]) => ({
+        kept: window.localStorage.getItem(k), mark: document.documentElement.getAttribute(a),
+        checked: (document.querySelector('#shep-display-params input[type=radio]:checked') || {}).value || null }), [KEY, ATTR])) });
+    }
+    if (step[0] === 'fold') {
+      await page.click('.shep-train-fold');
+      await still();
+      out.push({ step: step[0], frames: await page.evaluate(() => window.__trainFrames.slice(-1)) });
+    }
+    if (step[0] === 'reload') {
+      await page.evaluate(() => { window.__trainOn = false; });
+      await load();
+      out.push({ step: step[0] });
+    }
+    if (step[0] === 'size') {
+      await page.setViewportSize({ width: Number(step[1]), height: Number(step[2]) });
+      await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+      out.push({ step: step.join(' ') });
+    }
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+""".replace("__KEY__", json.dumps(display.PARAMS_KEY)).replace("__ATTR__", json.dumps(display.PARAMS_ATTR))
+
+
+def test_a_choice_made_in_settings_applies_to_the_open_training_page_unless_its_reader_used_the_fold(
+        built, monkeypatch, tmp_path):
+    """The owner's revision of D9 (2026-11-25): a change of the Parameters choice in ⚙
+    Settings › Display applies at once to the Training page already open, unless its reader
+    used the fold there, and to every later page open in that browser; it changes only the
+    viewer's own page, so a read-only viewer may change it too. A read-only viewer (no
+    operator lock on it) at 1080 x 1920 with a run's charts, nothing saved: Training starts
+    shown; Settings offers Shown, checked and usable; Folded picked there is kept in the
+    browser and marked on the page, and Training, opened again, draws the body folded from
+    its first frame on; Automatic picked, Training's run view is invisible until the fold has
+    decided and then stays where it is first seen, the body shown (1080 x 1920 holds the
+    charts under it); Shown picked, shown. The reader then folds the body (Hide), and a pick
+    of Automatic (which would show it here) leaves it folded and the run view shown. Loaded
+    again (the shell brings Training back) and left for Settings as soon as the page is idle,
+    Settings shows Automatic, and Training, opened again, is held and then shown, never seen
+    folded first (or, where the fold decided before the reader left, shown where it was): its
+    first version shown the run view anyway when Training's first answers came after the
+    reader had left it (`HOLD_MOST_MS` ran out on Settings), so it jumped when the fold decided
+    on the way back. Every held frame is Automatic's start state (folded, "Show", the run view
+    invisible), and a choice picked while Training is hidden is held on the way back. The review of 36c0592 (P3): picked after Shown, Automatic
+    left the button as it was, so Training came back with the body shown and the run view
+    hidden for about 105 ms, then folded (1100 x 1050 with a run's charts, where Automatic
+    folds): Shown picked, the window made 1100 x 1050, Training shown; then Automatic picked,
+    Training is held folded and then shown folded, in one place. At bb258d1 there was no
+    Display panel."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)     # read-only: D8 refuses
+    _with_a_run(built, tmp_path, monkeypatch)
+    steps = [["training"], ["settings"], ["pick", display.FOLDED], ["training"],
+             ["settings"], ["pick", display.AUTO], ["training"],
+             ["settings"], ["pick", display.SHOWN], ["training"], ["fold"],
+             ["settings"], ["pick", display.AUTO], ["training"],
+             ["reload"], ["settings"], ["training"],
+             ["settings"], ["pick", display.SHOWN], ["size", "1100", "1050"], ["training"],
+             ["settings"], ["pick", display.AUTO], ["training"]]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_CHOICE_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps(steps), timeout=600)
+    assert [s["step"] for s in seen] == [" ".join(step) for step in steps], seen
+    shown, folded = "true Hide|true|visible", "false Show|false|visible"
+
+    def frames(i):
+        assert seen[i]["step"] == "training", seen[i]
+        return [f.rsplit("|", 1)[0] for f in seen[i]["frames"]]
+
+    def held_then_shown(i, final=shown, held=True):
+        """Automatic: from Training's first frame in its start state (folded, "Show", the run
+        view invisible) until the fold has decided, then shown where it stays: the run view's
+        place never changes once it is seen. `held`: the choice was picked while Training was
+        hidden, so its first frame back is held; else (a page loaded again) the fold may have
+        decided before the reader left, and no frame back is held."""
+        got = seen[i]["frames"]
+        first = next(k for k, f in enumerate(got) if f.split("|")[2] == "visible")
+        assert first > 0 or not held, got
+        assert all(f.startswith("false Show|false|hidden|") for f in got[:first]), got
+        assert len(set(got[first:])) == 1 and got[first].startswith(final), got
+
+    assert set(frames(0)) == {shown}, seen[0]
+    assert seen[1] == {"step": "settings", "checked": display.SHOWN, "usable": True}, seen
+    assert seen[2] == {"step": f"pick {display.FOLDED}", "kept": display.FOLDED, "mark": display.FOLDED,
+                       "checked": display.FOLDED}, seen
+    assert set(frames(3)) == {folded}, seen[3]
+    assert seen[5]["kept"] == seen[5]["mark"] == display.AUTO, seen
+    held_then_shown(6)
+    assert seen[8]["kept"] == display.SHOWN and set(frames(9)) == {shown}, seen
+    assert seen[10]["frames"][-1].rsplit("|", 1)[0] == folded, seen        # the reader's Hide
+    assert seen[12]["kept"] == display.AUTO and set(frames(13)) == {folded}, seen
+    assert seen[15] == {"step": "settings", "checked": display.AUTO, "usable": True}, seen
+    held_then_shown(16, held=False)
+    assert seen[18]["kept"] == display.SHOWN and seen[19] == {"step": "size 1100 1050"}, seen
+    assert set(frames(20)) == {shown}, seen[20]
+    assert seen[22]["kept"] == display.AUTO, seen
+    held_then_shown(23, folded)
+
+
+#: Training at first use, stacked, for an operator, as the reader arrives, with the Parameters
+#: choice of ``process.argv[4]`` saved (none: the default): each
 #: route (``[name, sizes]``) opens the dashboard at its first window and then
 #: Training, steps through the rest of its windows (its requests answered at
 #: each), lets it hold still (30 frames, at most 5 s), and then, with no input,
@@ -4474,6 +5281,7 @@ def test_stacked_the_parameters_show_unless_folding_brings_more_charts_and_a_use
 _FOLD_STILL_JS = r"""
 const { chromium } = require('playwright');
 const QUEUE_JS = __QUEUE_JS__;
+__SAVE_JS__
 (async () => {
   const browser = await chromium.launch();
   const out = {};
@@ -4485,6 +5293,7 @@ const QUEUE_JS = __QUEUE_JS__;
     const page = await (await browser.newContext({ viewport: { width: sizes[0][0], height: sizes[0][1] },
                                                    deviceScaleFactor: 1 })).newPage();
     await page.addInitScript(QUEUE_JS);
+    await save(page, process.argv[4] || '');
     await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#shep-tab-research-button', { timeout: 60000 });
     // A click with no pointer moved: nothing is hovered while the page is read.
@@ -4535,10 +5344,11 @@ const QUEUE_JS = __QUEUE_JS__;
   console.log(JSON.stringify(out));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
-"""
+""".replace("__SAVE_JS__", _SAVE_JS)
 
 
-def test_stacked_the_parameters_fold_holds_still_with_no_input(monkeypatch, tmp_path):
+@pytest.mark.parametrize("choice", ["", display.AUTO], ids=["shown", "auto"])
+def test_stacked_the_parameters_fold_holds_still_with_no_input(choice, monkeypatch, tmp_path):
     """The L8 LOOK5's L8-1 (severe): at first use, Training at 1050 x 1100 opened and closed its
     Parameters body about 24 times a second with no input (the button's ``aria-expanded`` and
     words, the "Set by you" line's own-line mark and a Gradio wrap's style flipping together,
@@ -4546,10 +5356,15 @@ def test_stacked_the_parameters_fold_holds_still_with_no_input(monkeypatch, tmp_
     fold's room measure drew the body shown but read the layout pass's marks as set with it
     folded: the "Set by you" line beside Reset (the page's end 1100 px, within the window), so
     the body opened; laid out shown, the line took its own line (1127 px, past it), so the body
-    folded, and the mark went with it. The measure now lays the shown body out first
-    (`shell.py`'s ``ShepShell.layOut``), so deciding never changes what it decides from. At
+    folded, and the mark went with it. The measure then laid the shown body out first
+    (`shell.py`'s ``ShepShell.layOut``), so deciding never changed what it decided from. At
     1050 x 1100 and 1100 x 1050, opened there or arrived at through four other windows, the
-    fold, the mark and the page's layout hold for 2.5 s of frames with no input."""
+    fold, the mark and the page's layout hold for 2.5 s of frames with no input.
+    Since the owner's D9 of 2026-11-25 the body is shown by default and only the reader folds
+    it; the owner's revision of the same day keeps the room measure as the Automatic choice
+    of ⚙ Settings › Display (``ShepShell.layOut`` with it). Both are read here: Shown (nothing
+    saved) and Automatic, each shown at the end of each route (no chart at first use), the
+    "Set by you" line's mark and the layout holding still."""
     from src.webui.app import create_gradio_app, mount_options
     from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
 
@@ -4563,9 +5378,9 @@ def test_stacked_the_parameters_fold_holds_still_with_no_input(monkeypatch, tmp_
               ["resized to 1100x1050", [[1850, 960], [1050, 1100], [1100, 1050]]]]
     with served(create_gradio_app(), **mount_options()) as base:
         seen = run_node(_FOLD_STILL_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
-                        base[:-len("gradio_api")], json.dumps(routes))
+                        base[:-len("gradio_api")], json.dumps(routes), choice)
     for name, _sizes in routes:
         still = seen[name]
-        assert still["first"].startswith("stack|"), (name, still)
+        assert still["first"].startswith("stack|true|true|"), (name, still)
         assert still["ms"] >= 2000 and still["frames"] >= 30, (name, still)
         assert still["changes"] == 0, (name, still)

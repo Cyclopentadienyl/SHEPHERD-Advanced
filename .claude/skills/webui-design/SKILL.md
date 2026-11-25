@@ -211,7 +211,10 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry the same colours.
   covers no other control; where none holds the whole bubble, it opens shorter in the tallest place that covers none
   and still shows its head, its lead and two lines, its text scrolling inside under the shared cue, and where no place
   of its width is clear, the same at a narrower width (220 px at the least); only where no such place exists does it
-  take, of the places tried, the one over the fewest controls. A reason's phrase opens this same bubble, anchored at
+  take, of the places tried, the one over the fewest controls. That least (its head, its lead and two lines) is the
+  floor, kept by the owner's F4 of 2026-11-25: a bubble is not compressed further, so that it stays readable; one
+  bubble is open at a time and the scroll cue says there is more to read, so the few places where it still lies over
+  another control are accepted. A reason's phrase opens this same bubble, anchored at
   the phrase and reading its source's hidden text by id.
 - **One bubble, extended only when needed.** Today's bubble (`src/webui/components/help.py`) reads every text by one
   small grammar, defined there once (`BULLET`, `TERM_PATTERN`, `REF_PREFIX`, read in Python by `help_lines`) and given
@@ -361,3 +364,12 @@ measurements until it is.
   then given back as scroll as far as the region has scrolled.
   Details' "Saved files" offers only the files the list draws. No run panel and nothing sticky: a panel under a tall
   graph is out of view after a click. A graph wider than its region pans inside the region, never the page.
+- **Decided (2026-11-25, the owner, revising D9 the same day):** a choice that changes only the viewer's own page is a
+  **display preference**, kept in that browser (⚙ Settings › Display, `components/display.py`: `localStorage`, every
+  access wrapped, a missing, unreadable or unknown value the default), with no Apply, no server setting and no
+  operator lock, so a read-only viewer may change it too. It is read in the head before anything is painted (a mark
+  on the root element that the style sheets and the page's scripts read), so no frame shows another state, and a
+  change applies at once to the open page unless its reader acted on that control there. The first one: stacked,
+  Training's Parameters start Shown (the default, the page scrolling), Folded, or Automatic (the fold by the room,
+  the run view kept invisible in its place until the fold has decided, a few seconds at most, so it never jumps);
+  the reader's own Hide or Show wins for the page session. Side by side nothing changes.

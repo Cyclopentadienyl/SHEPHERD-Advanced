@@ -22,7 +22,8 @@ Dependencies:
       takes its theme, CSS, head and JS from gr.mount_gradio_app(), not from
       gr.Blocks(); `mount_dashboard` is the one place that passes them
       (`mount_options`: the theme, the CSS, and the head: every style sheet and
-      the scripts of the shared ⓘ, the shell, the touch record,
+      the scripts of the display choices' early read, `display.DISPLAY_HEAD`,
+      the shared ⓘ, the shell, the touch record,
       `training_console.TOUCH_HEAD`, Diagnosis' inputs generation,
       `diagnosis_panel.INPUTS_HEAD`, and its card's focus keeper,
       `diagnosis_panel.STOP_FOCUS_HEAD`, and the downloads',
@@ -44,6 +45,7 @@ from src.webui import exports, shell
 from src.webui.components import (
     datasets_page,
     diagnosis_panel,
+    display,
     finetune_page,
     models_page,
     runtime_settings,
@@ -174,7 +176,9 @@ def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
       reach the page frame above ``.contain`` (the one-screen layout needs
       ``body`` and Gradio's containers), and it drops ``@supports`` and
       ``@container`` rules. A style element in the head is applied as written;
-    - **the head scripts**: the shared ⓘ (and Copy), the shell (always
+    - **the head scripts**: the display choices' early read (this browser's
+      saved choices written on the root element before anything is painted:
+      `display.DISPLAY_HEAD`), the shared ⓘ (and Copy), the shell (always
       light, title, header row), the touch record's (every edit of a
       field whose touches a form records is that field's input, an emptied
       text box included, and is in the form's record before a click made
@@ -190,7 +194,7 @@ def dashboard_head(page_css: tuple = PAGE_CSS) -> str:
       delegation.
     """
     return ("<style>" + HELP_CSS + SHELL_CSS + shell.TAB_GROUP_CSS + "".join(page_css) + "</style>"
-            + HELP_HEAD + shell.SHELL_HEAD + training_console.TOUCH_HEAD
+            + display.DISPLAY_HEAD + HELP_HEAD + shell.SHELL_HEAD + training_console.TOUCH_HEAD
             + diagnosis_panel.INPUTS_HEAD + diagnosis_panel.STOP_FOCUS_HEAD
             + exports.DOWNLOAD_HEAD)
 
@@ -292,7 +296,8 @@ def mount_options() -> dict[str, Any]:
     """Everything `gr.mount_gradio_app` is given besides the app, the Blocks and the path.
 
     The look and the page's scripts: theme, CSS and ``head``
-    (`DASHBOARD_HEAD`: every style sheet, and the scripts of the shared ⓘ,
+    (`DASHBOARD_HEAD`: every style sheet, and the scripts of the display
+    choices' early read, `display.DISPLAY_HEAD`, the shared ⓘ,
     the shell, the touch record, `training_console.TOUCH_HEAD`, Diagnosis'
     inputs generation, `diagnosis_panel.INPUTS_HEAD`, and its card's focus
     keeper, `diagnosis_panel.STOP_FOCUS_HEAD`, and the downloads',
