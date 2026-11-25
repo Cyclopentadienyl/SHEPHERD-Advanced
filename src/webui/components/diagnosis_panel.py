@@ -4440,7 +4440,7 @@ PAGE_CSS = f"""
 {_TAB} .shep-reason.shep-dx-why {{ justify-content: end; }}
 {_TAB} #shep-dx-run-why .shep-reason {{ margin: 0 16px 8px; }}
 {_TAB} .shep-dx-run {{ padding: 6px 16px !important; gap: 10px !important; flex-wrap: nowrap !important; align-items: stretch !important; }}
-{_TAB} #shep-dx-run-wrap {{ position: relative; gap: 0 !important; flex: 1 1 auto !important; }}
+{_TAB} #shep-dx-run-wrap {{ position: relative; gap: 0 !important; }}
 {_TAB} #shep-dx-clear {{ flex: 0 0 auto !important; min-width: 84px !important; padding: 0 18px !important; }}
 {_TAB} #shep-dx-run-cover {{ position: absolute !important; inset: 0; pointer-events: none; z-index: 3; }}
 {_TAB} #shep-dx-run-cover .html-container, {_TAB} #shep-dx-run-cover .prose {{ height: 100%; }}

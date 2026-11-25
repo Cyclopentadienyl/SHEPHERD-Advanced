@@ -1504,6 +1504,23 @@ _SHELL_JS = r"""
     var room = box.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
     return widest > 0 && room <= widest + 1;
   }
+  // **A column that only wraps an action is that action's own box** (WRAP; the L8 close, CK8-3):
+  // a column with no field, in a row, that holds one drawn action and nothing else in its flow (a
+  // cover laid over the action aside: Diagnosis' Run Diagnosis under its ⓘ's cover) is sized by
+  // its action, as the action is by its words, unless the row is spanned (its action then spans
+  // it, the column with it). It grew as any column does, and Run Diagnosis, its words' width,
+  // stood a 230 px hole away from Clear, its companion in the row.
+  var WRAP = 'data-shep-wrap';
+  function wrapsOne(col) {
+    var up = col.parentElement, one = 0;
+    if (!col.matches('.column') || !up || !up.matches('.row') || up.hasAttribute(SPAN)
+        || col.querySelector(FIELD)) { return false; }
+    for (var c = col.firstElementChild; c; c = c.nextElementSibling) {
+      if (!drawn(c) || /^(absolute|fixed)$/.test(getComputedStyle(c).position)) { continue; }
+      if (!c.matches(ACTION) || ++one > 1) { return false; }
+    }
+    return one === 1;
+  }
   function spans() {
     var areas = [], all = document.querySelectorAll(ACTION_AREA);
     for (var i = 0; i < all.length; i++) {
@@ -1520,6 +1537,14 @@ _SHELL_JS = r"""
     }
     var marked = document.querySelectorAll('[' + SPAN + ']');
     for (var m = 0; m < marked.length; m++) { if (areas.indexOf(marked[m]) < 0) { marked[m].removeAttribute(SPAN); } }
+    var wraps = [];
+    for (var w = 0; w < all.length; w++) {
+      var col = all[w].parentElement;
+      if (drawn(all[w]) && wraps.indexOf(col) < 0 && wrapsOne(col)) { wraps.push(col); }
+    }
+    for (var n = 0; n < wraps.length; n++) { if (!wraps[n].hasAttribute(WRAP)) { wraps[n].setAttribute(WRAP, ''); } }
+    var had = document.querySelectorAll('[' + WRAP + ']');
+    for (var h = 0; h < had.length; h++) { if (wraps.indexOf(had[h]) < 0) { had[h].removeAttribute(WRAP); } }
   }
   function layout() {
     orientation();

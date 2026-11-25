@@ -823,6 +823,10 @@ span.shep-note { display: inline-block; }
 .gradio-container [data-shep-span] > .column > :is(button.lg, button.md, button.sm) {
   flex: 1 1 auto !important; width: 100% !important; min-width: max-content !important; align-self: stretch;
 }
+/* A column in a row that only wraps one action (the layout pass's ``data-shep-wrap``: no field,
+   nothing else in its flow, the row not spanned) is its action's width, so the row's actions
+   stand together (the L8 close: Run Diagnosis stood a 230 px hole away from Clear). */
+.gradio-container .row > .column[data-shep-wrap] { flex: none !important; width: auto !important; }
 .shep-intro { padding: 12px 16px 0; margin: 0; font-size: 14px; color: var(--shep-text-2); }
 .shep-card { border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }
 .shep-card-hd .shep-muted { font-weight: 400; font-size: 14px; }

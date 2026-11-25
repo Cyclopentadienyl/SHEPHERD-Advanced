@@ -4110,6 +4110,15 @@ def _pieces_page():
                     gr.Button("Start", elem_id="pc-span-f-btn")
                     with gr.Column(elem_classes=["shep-beside"], elem_id="pc-span-f-slot", min_width=0):
                         gr.HTML("", elem_id="pc-span-f-why")
+            # Two actions in a row, the first in a column of its own with a cover laid over it
+            # (Diagnosis' Run Diagnosis and Clear; the L8 close, CK8-3).
+            with gr.Column(elem_id="pc-span-g", elem_classes=["shep-panel"], min_width=0):
+                gr.Textbox(label="Name", elem_id="pc-span-g-field")
+                with gr.Row(elem_id="pc-span-g-ft"):
+                    with gr.Column(elem_id="pc-span-g-wrap", min_width=0, scale=1):
+                        gr.Button("Run", variant="primary", size="lg", elem_id="pc-span-g-btn")
+                        gr.HTML("<span></span>", elem_id="pc-span-g-cover")
+                    gr.Button("Clear", size="lg", elem_id="pc-span-g-clear", scale=0, min_width=0)
         # An icon-only action beside a field (a field row's square, ``shep-icon-btn``).
         with gr.Row(elem_classes=["shep-field-row"], elem_id="pc-span-icon-row"):
             gr.Dropdown(["a"], value="a", label="Run", elem_id="pc-span-icon-field")
@@ -4446,10 +4455,13 @@ const QUEUE_JS = __QUEUE_JS__;
   await page.addStyleTag({ content: `
     #pc-span-a, #pc-span-b, #pc-span-d, #pc-span-e, #pc-span-f { flex: none !important; width: 300px !important; }
     #pc-span-f-slot:not(:has(.shep-reason)) { display: none !important; }
-    #pc-span-c { flex: none !important; width: 900px !important; }` });
+    #pc-span-c { flex: none !important; width: 900px !important; }
+    #pc-span-g { flex: none !important; width: 500px !important; }
+    #pc-span-g-wrap { position: relative; }
+    #pc-span-g-cover { position: absolute !important; inset: 0; pointer-events: none; }` });
   await page.setViewportSize({ width: 1279, height: 1280 }); await frames(2);
   await page.setViewportSize({ width: 1280, height: 1280 }); await frames(4);
-  const spanOf = () => page.evaluate(() => Object.fromEntries(['a', 'b', 'c', 'd', 'e', 'f'].map((k) => {
+  const spanOf = () => page.evaluate(() => Object.fromEntries(['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((k) => {
     const ft = document.getElementById(`pc-span-${k}-ft`), s = getComputedStyle(ft), r = ft.getBoundingClientRect();
     const room = [r.left + ft.clientLeft + parseFloat(s.paddingLeft), r.right - ft.clientLeft - parseFloat(s.paddingRight)];
     const buttons = [...ft.querySelectorAll('button')].map((b) => {
@@ -4459,7 +4471,7 @@ const QUEUE_JS = __QUEUE_JS__;
       const q = b.getBoundingClientRect();
       return { id: b.id, left: q.left, right: q.right, width: q.width, words };
     });
-    return [k, { span: ft.hasAttribute('data-shep-span'), room, buttons }];
+    return [k, { span: ft.hasAttribute('data-shep-span'), room, buttons, gap: parseFloat(s.columnGap) || 0 }];
   })));
   out.span = await spanOf();
   // Its reason drawn in the slot beside the one action (`f`): the bar measured again.
@@ -4632,7 +4644,9 @@ def test_a_button_spans_only_the_one_action_area_no_wider_than_its_fields(pieces
     line (the L8 S2 survey: Fine-tune's Refresh beside Device, Models' Load beside its state), and
     one action beside a reason slot (``shep-beside``), drawn or empty: Fine-tune's Start spanned
     its bar while its reason slot was empty (the L8 close; S2's open item 6), and kept its words'
-    width only by a page copy of the button rule."""
+    width only by a page copy of the button rule. Two actions in a row, the first in a column of
+    its own under a cover, stand together (the L8 close, CK8-3: Diagnosis' column grew, and Run
+    Diagnosis stood a 230 px hole away from Clear)."""
     span = pieces_seen["span"]
     one, two, wide, field, words = (span[k] for k in "abcde")
     assert [len(box["buttons"]) for box in (one, two, wide, field, words)] == [1, 2, 1, 1, 1], span
@@ -4650,6 +4664,14 @@ def test_a_button_spans_only_the_one_action_area_no_wider_than_its_fields(pieces
     assert not empty["span"] and not drawn["span"], span
     (before,), (after,) = empty["buttons"], drawn["buttons"]
     assert before["width"] <= before["words"] + 1 and abs(before["width"] - after["width"]) <= 1, (empty, drawn)
+    # Two actions in a row, the first in a column of its own under a cover (Diagnosis' Run
+    # Diagnosis and Clear; the L8 close, CK8-3): each its words' width, side by side, no more
+    # than the row's gap between them (its column grew, and a 230 px hole stood between them).
+    pair = span["g"]
+    assert len(pair["buttons"]) == 2 and not pair["span"], pair
+    first, second = pair["buttons"]
+    assert all(b["width"] <= b["words"] + 1 for b in pair["buttons"]), pair
+    assert 0 <= second["left"] - first["right"] <= pair["gap"] + 1, pair
     # A role's own size stays (the rule is the least specific): an icon-only button beside a
     # field is a square (Test's Run ↻ became a narrow sliver under the first rule).
     icon = span["icon"]
