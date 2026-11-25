@@ -1067,21 +1067,27 @@ def _detail_rows(notices: Sequence[Mapping[str, Any]]) -> Tuple[str, str]:
     return kv, ref
 
 
-def _details(notices: Sequence[Mapping[str, Any]], *, grouped: bool = False) -> str:
+def _details(notices: Sequence[Mapping[str, Any]], *, grouped: bool = False, lead: str = "",
+             keep: str = "") -> str:
     """The notices' "Details ›": their rows and one Ref line; none when they
     hold no row (a Ref line alone is not worth a disclosure: the notice's link
     leads to where its why is said). `grouped` (several notices said as one
     block): each notice's rows under its setting's name (the notice's
     `name`; its state is said once, on its line above), so a row is read as
-    the fact of the setting it explains; one Ref line under them all."""
+    the fact of the setting it explains; one Ref line under them all.
+    `lead`: the drawing region's own rows (HTML its caller built and
+    escaped), first in the same one disclosure; `keep`: what that region
+    shows (`keep_as`), so its next drawing keeps the disclosure as the
+    reader left it."""
     kv, ref = _detail_rows(notices)
-    if not kv:
+    if not kv and not lead:
         return ""
     if grouped and len(notices) > 1:
         kv = "".join((f'<p class="shep-nb-sub">{e(n["name"])}</p>' if n.get("name") else "") + rows
                      for n in notices for rows in [_detail_rows([n])[0]] if rows)
-    return (f'<details class="shep-more shep-nb-more"><summary>{e(DETAILS_WORD)}</summary>'
-            f'{kv}{ref}</details>')
+    kept = keep_as(keep) if keep else ""
+    return (f'<details class="shep-more shep-nb-more"{kept}><summary>{e(DETAILS_WORD)}</summary>'
+            f'{lead}{kv}{ref}</details>')
 
 
 def _shared_step(notices: Sequence[Mapping[str, Any]]) -> Optional[Dict[str, str]]:
@@ -1105,8 +1111,8 @@ def _keys(notices: Iterable[Mapping[str, Any]]) -> str:
 
 
 def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterable[Any] = (),
-                 steps: Iterable[str] = (), go: bool = True, details: bool = True,
-                 describes: str = "") -> str:
+                 steps: Iterable[str] = (), go: bool = True, state: str = "", more: str = "",
+                 keep: str = "", describes: str = "") -> str:
     """**The one notice** (a setting's state, said once per screen where it
     empties a region; the text brief's §1 and §10): one line, its status mark
     in a column of its own, the state (`summary`), what it means here
@@ -1118,10 +1124,21 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     (``data-notice-also``). `steps`: further steps, the action then step 1
     of a numbered list (each step's tokens in code style). Every value is
     escaped. ``data-notice`` names the key, so a screen can count each
-    notice once. `details` off: its "Details ›" is said by the region that
-    draws it, in that region's one disclosure (`notice_rows_html`: a card
-    whose own reason has a Details › of its own, two "Details ›" a line
-    apart; the sweep's L7, C1). `describes`: the element ids of the controls
+    notice once. `state`: **the state of the region this notice is the
+    cause of**, where both say one absence (the Diagnosis card's Not loaded,
+    `NOT_LOADED`, with the workspaces folder unset): said first on the
+    notice's line, the notice's cause after it in its relation words
+    (`short`): "○ Not loaded: no workspaces folder is set.", one line and
+    one mark, never a state's mark above the notice's (the owner, 2026-11-25:
+    the two read as overlapping). The caller says it only for an absence of
+    the notice's own kind; a state of another kind keeps its own mark.
+    `more`: the region's own rows (HTML its caller built and escaped) for
+    the notice's one "Details ›", before the notice's rows, so a region that
+    draws the notice as its state's cause has one disclosure, closing the
+    notice's last line (R-DETAILS), never a second "Details ›" or one alone
+    under it (the sweep's L7, C1; LOOK5); `keep`: what that region shows
+    (`keep_as`), so its next drawing keeps that disclosure as the reader
+    left it. `describes`: the element ids of the controls
     this notice dims where it is drawn in the same bar as them (R-WHY, the
     cause said once there: no phrase beside them), space-separated
     (``data-for``); the shell's head script points their
@@ -1133,7 +1150,10 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     kind = found["kind"]
     act = _go(found, go)
     steps = [str(step) for step in steps if step]
-    inner = f'<span class="shep-st-w shep-st-{STATUS_MARKS[kind][1]}">{e(found["summary"])}</span>'
+    said = found["summary"]
+    if state:
+        said = f'{state}: {str(found.get("short") or said).rstrip(".")}.'
+    inner = f'<span class="shep-st-w shep-st-{STATUS_MARKS[kind][1]}">{e(said)}</span>'
     if consequence:
         inner += f' <span class="shep-nb-then">{e(consequence)}</span>'
     if act and not steps:
@@ -1147,20 +1167,9 @@ def notice_block(notice: Any, *, consequence: Optional[str] = None, also: Iterab
     listed = "".join(f"<li>{literal_html(step)}</li>" for step in steps)
     ol = (f'<ol class="shep-nb-steps">{f"<li>{act}</li>" if act else ""}{listed}</ol>'
           if steps else "")
-    more = _details([found, *extra]) if details else ""
+    disclosure = _details([found, *extra], lead=more, keep=keep)
     return (f'<div class="shep-nb shep-nb-{kind}"{keys}>'
-            f'{_with_details(kind, inner, "shep-nb-line", more)}{ol}</div>')
-
-
-def notice_rows_html(notice: Any) -> str:
-    """**A notice's Details, for a region's own disclosure** (`notice_block`
-    with ``details=False``): its term rows as one summary list and its Ref
-    line, as its own "Details ›" holds them; "" for no notice or no row."""
-    found = _as_notice(notice)
-    if found is None:
-        return ""
-    kv, ref = _detail_rows([found])
-    return f"{kv}{ref}" if kv else ""
+            f'{_with_details(kind, inner, "shep-nb-line", disclosure)}{ol}</div>')
 
 
 def notices_block(notices: Iterable[Any], *, consequence: Optional[str] = None,
@@ -3692,7 +3701,6 @@ __all__ = [
     "marked_line",
     "name_pieces_html",
     "notice_block",
-    "notice_rows_html",
     "notices_block",
     "REASONS",
     "need_words",
