@@ -393,6 +393,18 @@ def key_html(item: FieldView, *, allowed: bool) -> str:
 #: the box and its buttons while it is expanded) with the focus in the box; Cancel, and Escape
 #: in the box (which presses Cancel, so its handler empties the box), close it and give the
 #: focus back to Change…. The keeper holds the reader's choice across the panel's redraws.
+#: **Whether the row's facts stand beside its name** (`BESIDE`, the owner's request of
+#: 2026-11-25): the row's head wraps by what each side holds, so only the boxes it draws say so.
+#: Each time the row or its facts change size, the head is measured as it wraps (the mark off,
+#: put back before anything is painted, so the mark never changes what it measured) and the row
+#: is marked with its name column's width (`NAME_WIDTH`) where its facts stand beside its name
+#: and that column holds its Change… on one line (its indent to the boxes' column, Change… and a
+#: read-only row's phrase, as they stand on the row's own line with the mark off: DL-1, from
+#: 1280 to 1350 wide a read-only phrase went under "🔒 Change…" in that column, each row 15 to 24
+#: px taller); the style sheet then gives a set row's actions the line its facts end on
+#: (`PAGE_CSS`). A key no longer in the page stops measuring.
+BESIDE = "data-dl-beside"
+NAME_WIDTH = "--dl-name"
 CHANGE_JS = r"""
 function changer() { return element.querySelector('button.shep-dl-change[aria-controls]'); }
 function rowOf() { return element.closest('.shep-dl-row'); }
@@ -420,7 +432,47 @@ document.addEventListener('keydown', function (e) {
   var c = row.querySelector('button[id^="dl_cancel_"]');
   if (c) { e.preventDefault(); e.stopPropagation(); c.click(); }
 });
-"""
+var queued = false, sizes = null;
+function asks(group) {
+  var s = getComputedStyle(group), gap = parseFloat(s.columnGap) || 0;
+  var need = parseFloat(s.paddingInlineStart) || 0, parts = 0;
+  for (var i = 0; i < group.children.length; i++) {
+    var part = group.children[i];
+    if (!part.getClientRects().length) { continue; }
+    need += part.getBoundingClientRect().width + (parts ? gap : 0);
+    parts += 1;
+  }
+  return need;
+}
+function arrange() {
+  queued = false;
+  if (!element.isConnected) { if (sizes) { sizes.disconnect(); } return; }
+  var row = rowOf();
+  if (!row) { return; }
+  var name = row.querySelector('.shep-dl-head > .shep-dl-left');
+  var facts = row.querySelector('.shep-dl-head > .shep-dl-facts');
+  var group = element.querySelector('.shep-dl-chg');
+  var was = row.hasAttribute('__BESIDE__');
+  if (was) { row.removeAttribute('__BESIDE__'); }
+  var beside = false, width = '';
+  if (name && facts && name.getClientRects().length && facts.getClientRects().length) {
+    var n = name.getBoundingClientRect(), f = facts.getBoundingClientRect();
+    beside = f.left >= n.right - 1 && f.top < n.bottom - 1 && (!group || asks(group) <= n.width);
+    width = n.width + 'px';
+  }
+  if (beside && row.style.getPropertyValue('__NAME_WIDTH__') !== width) {
+    row.style.setProperty('__NAME_WIDTH__', width);
+  }
+  if (beside) { row.setAttribute('__BESIDE__', ''); }
+}
+function later() { if (!queued) { queued = true; requestAnimationFrame(arrange); } }
+if (window.ResizeObserver && rowOf()) {
+  sizes = new ResizeObserver(later);
+  sizes.observe(rowOf());
+  var state = rowOf().querySelector('[id^="dl_state_"]');
+  if (state) { sizes.observe(state); }
+}
+""".replace("__BESIDE__", BESIDE).replace("__NAME_WIDTH__", NAME_WIDTH)
 
 
 def box_value(item: FieldView) -> str:
@@ -904,6 +956,19 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: other disclosures are ("Advanced: source ›"), so a set row is shorter than an open one;
 #: expanded, the bar is an unset row's, "Change to" its key and Cancel after Save. A read-only
 #: set row draws its locked Change… and its phrase there.
+#: **A set row's actions share the line its facts end on** (the owner's request of 2026-11-25:
+#: "Change…" on the left stood a line under "Advanced: source ›" on the right, though the two
+#: parts stand side by side): while the row's facts stand beside its name (`BESIDE`, measured
+#: by `CHANGE_JS` as the head wraps) and its Change… is closed, the row is one grid of the head's
+#: two columns (the name column as wide as the head drew it, `NAME_WIDTH`, and the gap): the
+#: name beside what is in effect, then one line for both parts' last lines, Change… (with a
+#: read-only row's phrase beside it) on the boxes' column and "Advanced: source ›" on the facts'
+#: edge, on one baseline, under whichever part above them is taller; the outcome line under
+#: both. The row is marked only where the name column holds Change… and its phrase on one line
+#: (DL-1: read-only from 1280 to 1350 wide the phrase went under "🔒 Change…" there, each row 15
+#: to 24 px taller and at 1340 x 800 the panel's last line out of view), so the shared line
+#: never makes a row taller. Where the facts go under the name, where the name column cannot
+#: hold Change… and its phrase, and while Change… is open, the row is drawn as before.
 #: **The name column's width** (the row's name and what needs it): it grows from `NAME_LEAST` to
 #: its measure, `NAME_MOST`, as the head's facts beside it take the rest. Whether the facts go
 #: beside the name or under it is judged from the least width (a basis of the most made the
@@ -921,6 +986,9 @@ SET_BOX = "30em"
 #: The Set-to bar's width (its container's) from which every box is `SET_BOX` wide: the box and
 #: Check and Save (about 11em) on one line; under it each box takes what its buttons leave.
 SET_WIDE = "42em"
+#: A set row with Change… closed while its facts stand beside its name and its name column holds
+#: its Change… (`BESIDE`): its one grid.
+_SHARED = f'{_PAGE} .shep-dl-row[{BESIDE}]:has(.shep-dl-change:not([aria-expanded="true"]))'
 PAGE_CSS = f"""
 {_PAGE} #shep-dl-bd {{ padding: 4px 16px 12px !important; gap: 0 !important; }}
 {_PAGE} #shep-dl-top {{ gap: 8px !important; align-items: center; flex-wrap: wrap; }}
@@ -939,6 +1007,13 @@ PAGE_CSS = f"""
 {_PAGE} #shep-dl-bd:has(.shep-dl-facts .shep-dl-path) .shep-dl-head > .shep-dl-facts {{ min-width: min(28em, 100%) !important; }}
 {_PAGE} .shep-dl-name h3 {{ margin: 0 0 var(--shep-space-head-below); font-size: 15px; font-weight: 600; }}
 {_PAGE} .shep-dl-name p {{ margin: 0; }}
+{_SHARED} {{ display: grid !important; grid-template-columns: var({NAME_WIDTH}) minmax(0, 1fr); gap: 4px 24px !important; align-items: start; }}
+{_SHARED} :is(.shep-dl-head, .shep-dl-facts, .shep-dl-main) {{ display: contents !important; }}
+{_SHARED} .shep-dl-head > .shep-dl-left {{ grid-area: 1 / 1; }}
+{_SHARED} [id^="dl_state_"] {{ grid-area: 1 / 2; }}
+{_SHARED} .shep-dl-set {{ grid-area: 2 / 1; align-self: baseline; }}
+{_SHARED} [id^="dl_adv_"] {{ grid-area: 2 / 2; align-self: baseline; }}
+{_SHARED} [id^="dl_result_"] {{ grid-area: 3 / 1 / auto / -1; margin-top: 2px; }}
 {_PAGE} .shep-dl-main {{ gap: 6px !important; }}
 {_PAGE} .shep-dl-set {{ gap: 8px 12px !important; align-items: baseline; flex-wrap: wrap; }}
 {_PAGE} .shep-dl-key {{ font-size: 14px; color: var(--shep-text-2); }}
@@ -990,7 +1065,7 @@ __all__ = ["APPLY_LABEL", "CANCEL_LABEL", "CHANGE_JS", "CHANGE_KEY", "CHANGE_LAB
            "PAGE_CSS", "PANEL_PARTS", "PATH_HIDDEN", "PRIVATE_KEYS", "REPAIR_LABEL",
            "NAME_LEAST", "NAME_MOST",
            "ROW_LOCKED", "ROW_PARTS", "SAVE_LABEL", "SET_BOX", "SET_WIDE", "SOURCE_WORDS",
-           "HOLDS", "UNKNOWN", "UNREADABLE",
+           "BESIDE", "HOLDS", "NAME_WIDTH", "UNKNOWN", "UNREADABLE",
            "box_value", "changeable", "check_words", "create_data_locations_panel", "create_folder",
            "key_html", "row_controls",
            "effect_html", "holds_words", "name_html", "notice_html", "reason_line", "state_html",
