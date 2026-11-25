@@ -3158,8 +3158,17 @@ Its ⓘ lists every operator control, how to reach them (the SSH forward of §4.
 read-only, the full reason D8 gives. It never repeats a header's value.
 
 **A lock means refused.** The lock leads only a read-only chip. A control behind D8 shows no
-lock while D8 allows this browser's requests; while D8 refuses them it is disabled, shows the
-lock before its words, and has "Operator controls only: <reason>" beside it.
+lock while D8 allows this browser's requests; while D8 refuses them it is dimmed, shows the lock
+before its words, and has the short phrase "Operator controls only" beside it (since
+2026-11-24). D8's whole reason is said once, by the chip. The phrase is a link-styled button:
+it opens, in a bubble beside it, the chip's answer for this request (the state, D8's reason
+and its Ref line), and a screen reader reads it as the control's description. A control dimmed
+for another cause has that cause's phrase the same way: a missing setting's "Needs a workspaces
+folder", "Needs a results registry" or "Needs an import folder" (for one set and not usable,
+"Workspaces folder not usable" and the like) brings the notice that says it into view and puts
+the focus on its link; "GPU in use" and "GPU lock not usable" open the GPU chip's reason. A
+cause of the page's own is one line in the page's words, led by what it needs ("Choose a
+dataset to start."). None of them says "disabled".
 
 **GPU jobs** says which managed job holds the one GPU slot (§4.11):
 
@@ -3167,7 +3176,7 @@ lock before its words, and has "Operator controls only: <reason>" beside it.
 |---|---|
 | `GPU jobs: none` | No managed training or evaluation job is running, and no model is served on CUDA. It never says "free": the lock is cooperative (a GPU process that does not take it is not stopped by it), and inference on the CPU takes no lock |
 | `GPU job: training (job runner)`, `GPU job: test run (job runner)` | A job this service started; `· stopping` while it stops |
-| `GPU: inference (this service)` | This service serves a model on CUDA, which holds the GPU lock until an operator stops inference (§4.11). The ⓘ says where: Stop inference on Diagnosis, or `POST /api/v1/pipeline/stop`. Research's Start controls say the same beside them ("…; stop it with Stop inference on Diagnosis") |
+| `GPU: inference (this service)` | This service serves a model on CUDA, which holds the GPU lock until an operator stops inference (§4.11). The ⓘ says where: Stop inference on Diagnosis, or `POST /api/v1/pipeline/stop`. Research's Start controls show the phrase "GPU in use" beside them, which opens this ⓘ |
 | `GPU: inference (pid 41822, since 09:58 UTC)` | Another service's CUDA inference holds the lock (another server on the same workspaces root) |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | A process this service did not start holds the GPU lock (a formal CLI, or another server's job runner on the same lock); the chip says what its holder record says: the command, the pid and the start |
 | `GPU job: lock held, holder not described` | The lock is held, but no running process is described as its holder |
@@ -3284,11 +3293,11 @@ Run Diagnosis stays in view. It shows:
 | "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example), and something is served now. × dismisses it. A stop raises none: the state says it, once, and a notice raised earlier goes |
 | grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read: "status not read" (the full reason is in the badge's line and in Details) or "timed out (5 s)". The lines shown are the last known state, without ✓, with grey dashed chips |
 | grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
-| "○ Not loaded", "Nothing has been loaded since the service started", "Details ›" and "Load a model…" | No model is served and none has been since the start (none configured; since K7 a graph is never served on its own). Nothing served is said here once, with this one action: Run Diagnosis is greyed out and cannot be clicked, "Disabled until a model is loaded." under it (pointing at it, or reaching it with Tab, shows why). An API client asking now gets 503 with the whole reason (§4.7) |
-| "○ Stopped at HH:MM:SS UTC", "By an operator", "Back to research ›" | Inference was stopped (by an operator, for Restart Backend, or as the service shut down); "Details ›" has the server's whole reason. Run Diagnosis says "Disabled until a model is loaded." |
+| "○ Not loaded", "Nothing has been loaded since the service started", "Details ›" and "Load a model…" | No model is served and none has been since the start (none configured; since K7 a graph is never served on its own). Nothing served is said here once, with this one action: Run Diagnosis is greyed out and cannot be clicked, "Load a model first." under it (pointing at it, or reaching it with Tab, shows why). An API client asking now gets 503 with the whole reason (§4.7) |
+| "○ Stopped at HH:MM:SS UTC", "By an operator", "Back to research ›" | Inference was stopped (by an operator, for Restart Backend, or as the service shut down); "Details ›" has the server's whole reason. Run Diagnosis says "Load a model first." |
 | "✕ Load refused at HH:MM:SS UTC" and why | A load (or the start-up's) was refused while nothing was served, for example "CUDA inference is refused: the GPU is in use by <holder>…" |
-| "▲ Stopping · N in flight" | An operator stopped inference: the N diagnoses already accepted finish, and new ones are refused ("Disabled until a model is loaded." under Run Diagnosis; 503 for an API client). Then the card reads "Stopped" |
-| "🔒 Change model…" greyed, "Operator controls only: <reason>" | A read-only browser (§4.13). It never sees the list of checkpoints |
+| "▲ Stopping · N in flight" | An operator stopped inference: the N diagnoses already accepted finish, and new ones are refused ("Load a model first." under Run Diagnosis; 503 for an API client). Then the card reads "Stopped" |
+| "🔒 Change model…" greyed, "Operator controls only" beside it | A read-only browser (§4.13); the phrase opens D8's reason. It never sees the list of checkpoints |
 
 **The badge** above the results (§4.7) compares the result's whole served identity with the card's
 last read, and the card is read again after each diagnosis; a read that failed, or one older than
@@ -3352,13 +3361,13 @@ is checked, as before. It replaces what every browser is served once the new mod
 and published; until then nothing changes (the model in use keeps answering every browser), and
 results already produced keep their own identity. While the confirmation is
 open the list's own footer is hidden, so the from → to rows and that sentence stay in view;
-"Keep <old>" drops the confirmation. While the confirmation is open, Run Diagnosis is disabled:
-"Disabled: finish or cancel the model change first." Once "Reload with <new>" is clicked, the
+"Keep <old>" drops the confirmation. While the confirmation is open, Run Diagnosis is dimmed:
+"Finish or cancel the model change first." Once "Reload with <new>" is clicked, the
 confirmation shows only this page's wait ("Reload sent; waiting for the server's answer… 00:00:42") and
 Close (closing does not stop it; after 180 s, Read again and Close), so a second reload cannot
 be asked for. The card says the load by the server's own state, "Loading", as it says a load
-any other page or client started, and Run Diagnosis says "Disabled until the model load started
-here answers." Cancel or × closes the drawer without reloading. While the reload runs, Close or
+any other page or client started, and Run Diagnosis says "The model load started here has not
+answered yet." Cancel or × closes the drawer without reloading. While the reload runs, Close or
 × closes the drawer at once and the reload goes on (it cannot be stopped): the card goes on
 reading the server's state, and when the reload answers, the card shows the model then in use
 and its outcome is not shown again; "Change model…" meanwhile opens the drawer again on the
@@ -3950,14 +3959,13 @@ it. Three panels:
   **Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
   workspace, version and checkpoint the server finds again in its lists, and **the full model
   fingerprint and version digest the page showed as the expected ones**: the run refuses before
-  measuring when the file or the version it reads holds other bytes. Start says why it is off:
-  what holds the GPU first, in the GPU chip's words as Training's and Fine-tune's starts say it
-  ("Disabled: GPU job: training (job runner).", "Disabled: GPU: inference (this service); stop
-  it with Stop inference on Diagnosis." while a model is served on CUDA), since no choice
-  enables it while that lasts,
-  then a choice missing or another
-  graph; with the workspace's checkpoints listed and none chosen, "Disabled: choose the run, then
-  the checkpoint to test.", the one place the page asks for that choice. A measurement's refusal
+  measuring when the file or the version it reads holds other bytes. Start says why it is off,
+  beside it: what holds the GPU first, by the phrase "GPU in use" as Training's and Fine-tune's
+  starts say it (it opens the GPU chip's reason: the holder, and where to stop this service's
+  inference when a model served on CUDA holds it; since 2026-11-24), since no choice enables it
+  while that lasts, then a choice missing or another graph, in the page's words led by what it
+  needs; with the workspace's checkpoints listed and none chosen, "Choose the run, then the
+  checkpoint to test.", the one place the page asks for that choice. A measurement's refusal
   names it by its words, its protocol name only in a trailing "Ref:" ("…which the
   patients-like-me measurement needs. Import a source that lists causal_genes. Ref:
   patients_like_me."). The job's title row shows its state (Running, Completed, Failed in red,
@@ -4072,8 +4080,8 @@ narrow for side by side: the layout rule under Navigation), it is an overlay at 
 scrolls inside, and when it opens the keyboard focus moves to its title.
 
 A **read-only browser** sees the versions, their reports and states, the job and the results:
-every control is disabled with "Operator controls only: <reason>" (the note's Who and What
-fields too), and the checkpoint list is not shown. Every control checks its own request in the
+every control (the note's Who and What fields too) is dimmed with the phrase "Operator controls
+only" beside it, which opens D8's reason, and the checkpoint list is not shown. Every control checks its own request in the
 backend (§4.13). No absolute server path is shown: a path under the registry, the workspaces
 root, the intake directory, an evidence directory or the repository is written under its name
 (`<registry>/versions/…`), any other as "a server path".
