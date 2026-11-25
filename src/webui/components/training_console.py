@@ -5289,11 +5289,14 @@ ANSWERED_JS = ("() => { var p = document.getElementById('shep-train-page'); "
 #: set it too.
 PLACED_ATTR = "data-shep-placed"
 #: The longest the Automatic choice keeps the run view invisible (ms after Training is first
-#: seen undecided): where the page's first answers never come (an error, a lost connection),
-#: the run view is shown anyway, the body as it stands, if Training is still shown stacked
-#: then (a reader who left before it, and comes back before the answers, waits again: shown
-#: anyway, the run view would have jumped when they came). The fold measured with them took
-#: 1.2 to 2.4 s from the click on a busy test host (the sweep's F2 recordings).
+#: seen undecided): where the page's first answers have not come by then (an error, a lost
+#: connection, a slow host), the run view is shown anyway, the body as it stands, if Training
+#: is still shown stacked then (a reader who left before it, and comes back before the
+#: answers, waits again: shown anyway, the run view would have jumped when they came). That
+#: is the page session's first decision: answers that come after it change nothing (opening
+#: the body then moved the run view 416 px under the reader, the review of 36c0592); only a
+#: later change of the window, or the reader, does. The fold measured with them took 1.2 to
+#: 2.4 s from the click on a busy test host (the sweep's F2 recordings).
 HOLD_MOST_MS = 5000
 
 #: **The parameters' fold, stacked** (R-60; the owner's D9 of 2026-11-25, revised the same
@@ -5321,20 +5324,31 @@ HOLD_MOST_MS = 5000
 #:   from (L8-1: the body opened and closed about 24 times a second). It waits for the page's
 #:   first answers (`ANSWERED_ATTR`, and the run view's figure not ``aria-busy``), the body
 #:   folded as built and the run view invisible in its place (`PLACED_ATTR`: F2's (c), so the
-#:   run view never jumps when the body opens), at most `HOLD_MOST_MS`. It is decided again
-#:   only when what it hangs on changes: the arrangement (the layout pass's mark), the page's
-#:   size, the window's size (its height alone included), the fonts, the page's answers and
-#:   Training shown again; never by a timer or a poll, and only while Training is shown. Once
-#:   the reader worked in the body (a press or a key in it: opening "More training settings"
-#:   grew the page past the window, and the measure folded the body they were working in),
-#:   nothing decides for them again.
+#:   run view never jumps when the body opens), at most `HOLD_MOST_MS`: past it the body
+#:   stays as it stands, and that is the first decision. **After its first decision it is
+#:   decided again only when the window changes**: its size (its height alone included) or
+#:   the arrangement (the layout pass's mark), one made while Training was hidden included,
+#:   read when Training is shown again. Never on a change of the page's content or answers
+#:   (the review of 36c0592: the reader's pick of another run in "Viewing", one with no
+#:   curves, opened the body 0.6 s later and moved the run view, the select they had just
+#:   used, 416 px down; a run started, or a live run's curves coming, did the same), never by
+#:   a timer or a poll, and only while Training is shown. Once the reader worked in the body
+#:   (a press or a key in it: opening "More training settings" grew the page past the
+#:   window, and the measure folded the body they were working in), nothing decides for them
+#:   again.
 #:
 #: **The reader's own Hide or Show wins** for the page session, whatever the choice, across
 #: resizes and page switches. A new choice made in Settings applies at once to this page
-#: (`display.PARAMS_EVENT`) unless its reader used the button here. "More training settings"
-#: and "Model" stay closed.
+#: (`display.PARAMS_EVENT`) unless its reader used the button here: in the choice's starting
+#: state (Automatic: folded, the run view held until it decides), as the page is next shown.
+#: "More training settings" and "Model" stay closed.
 FOLD_JS = r"""
-var pressed = false, worked = false, waiting = null;
+// decided: the window (its size and the arrangement) at Automatic's last decision; null before
+// this page session's first.
+var pressed = false, worked = false, waiting = null, decided = null;
+function here() {
+  return window.innerWidth + 'x' + window.innerHeight + ':' + document.documentElement.getAttribute('data-shep-layout');
+}
 function fold() { return element.querySelector('.shep-train-fold'); }
 function panels() { return element.closest('#shep-train-page') || document.getElementById('shep-train-page'); }
 function choice() { return window.ShepDisplay ? window.ShepDisplay.params() : '__SHOWN__'; }
@@ -5375,20 +5389,26 @@ function charts() {
   return Math.max(0, Math.min(bottom + window.scrollY, window.innerHeight) - Math.max(top + window.scrollY, 0));
 }
 // Automatic's hold at its longest: the run view shown anyway, the body as it stands, if
-// Training is still shown stacked; else nothing is placed, and its next showing waits again.
+// Training is still shown stacked, and that is the first decision (answers that come later
+// change nothing); else nothing is placed, and its next showing waits again.
 function atMost() {
   waiting = null;
-  if (element.getClientRects().length && document.documentElement.getAttribute('data-shep-layout') === 'stack') {
+  if (choice() === '__AUTO__' && decided === null && element.getClientRects().length
+      && document.documentElement.getAttribute('data-shep-layout') === 'stack') {
     placed();
+    decided = here();
   }
 }
-// Automatic: the fold by the room.
+// Automatic: the fold by the room. After the first decision, only a change of the window.
 function byRoom() {
   var b = fold(), page = panels();
   if (choice() !== '__AUTO__' || pressed || worked || !b || !page || !element.getClientRects().length
       || document.documentElement.getAttribute('data-shep-layout') !== 'stack') { return; }
+  if (decided !== null && decided === here()) { return; }
   if (!page.hasAttribute('__ANSWERED__')
       || document.querySelector('#shep-train-runview .shep-charts[aria-busy="true"]')) {
+    // Past the hold, unanswered: the body as it stands is this window's decision too.
+    if (decided !== null) { decided = here(); return; }
     if (waiting === null) { waiting = setTimeout(atMost, __HOLD_MOST__); }
     return;
   }
@@ -5400,6 +5420,7 @@ function byRoom() {
   show(b, open);
   if (!open) { layOut(); }
   placed();
+  decided = here();
 }
 var pending = false;
 function later() {
@@ -5407,21 +5428,27 @@ function later() {
   pending = true;
   requestAnimationFrame(function () { pending = false; byRoom(); });
 }
-// A new choice in Settings: applied at once unless the reader used the button here.
+// A new choice in Settings: applied at once unless the reader used the button here, in the
+// choice's starting state (Training is hidden then, so nothing seen changes): Automatic folded,
+// the run view held until it decides afresh.
 document.addEventListener('__EVENT__', function () {
   var b = fold();
   if (pressed || !b) { return; }
+  if (waiting !== null) { clearTimeout(waiting); waiting = null; }
   worked = false;
+  decided = null;
   if (choice() === '__AUTO__') {
+    show(b, false);
     var p = panels();
     if (p) { p.removeAttribute('__PLACED__'); }
-    if (waiting !== null) { clearTimeout(waiting); waiting = null; }
     later();
     return;
   }
   show(b, choice() === '__SHOWN__');
   placed();
 });
+// What asks for a decision: before the first, any of these; after it they still ask, and
+// byRoom acts only where the window has changed since (`here()`).
 new MutationObserver(later).observe(document.documentElement,
   {attributes: true, attributeFilter: ['data-shep-layout']});
 var page = panels();

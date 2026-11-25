@@ -20,9 +20,12 @@ body is always shown and nothing here applies.
 - **Folded** (`FOLDED`): built folded under its title; the page never opens it.
 - **Automatic** (`AUTO`): the fold by the room of c14e5b8 (`training_console.FOLD_JS`):
   shown unless folding it brings more of the run view's charts into the first
-  screen, decided after the page's first answers and again on a resize; until
-  that first decision the run view is kept invisible in its place, then shown
-  where it stays (F2's option (c)), or shown anyway after a few seconds.
+  screen, decided after the page's first answers and again only when the
+  window changes (its size or the arrangement), never on a change of the
+  page's content; until that first decision the run view is kept invisible in
+  its place, then shown where it stays (F2's option (c)), or shown anyway after
+  a few seconds, the body as it stands (then the first decision: answers that
+  come later change nothing).
 
 The reader's own Hide or Show on the page wins for that page session, whatever
 the choice. A missing, unreadable or unknown value is Shown.
