@@ -3459,8 +3459,8 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
 **run bar** 永遠不捲動：
 
 - **Dataset**：伺服器的 workspace 清單，與 Datasets 的相同；每個選項就是 workspace 的名稱
-  （無法訓練的另附原因），它的身分只由選單旁的 chip 說一次。選擇一個時會讀取它的 manifest 與
-  紀錄，chip 顯示建置時間、資料集指紋（Copy 會複製完整的 64 個）、`synthetic`、紀錄是否通過驗證，以及
+  （無法訓練的另附原因），它的身分只由 Dataset 與 Run name 下方的資料行說一次（只有整個 bar 排成
+  一行時才在選單旁，見下文）。選擇一個時會讀取它的 manifest 與紀錄，那一行顯示建置時間、資料集指紋（Copy 會複製完整的 64 個）、`synthetic`、紀錄是否通過驗證，以及
   **Details ›**（指紋、建置時間、來源、數量與種子，每列一項，manifest 的檔案與各自的 digest，
   **All datasets ›**）。頁面打開時選的是 Datasets 的 **Use for training ›** 所選的 workspace，
   否則是這個分頁先前的選擇，否則是執行中工作的，否則是 serving 讀取的那一個（它可訓練時），
@@ -3473,11 +3473,19 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   啟動或停止中是 ■，完成是綠色 ●，只有失敗才是紅色 ✕。失敗或停止的 run 永遠不會是綠色。閒置是
   正常狀態，所以它的狀態標籤是一般的淡色文字，不是膠囊。不論 run 檢視顯示哪個 run，狀態標籤永遠
   是訓練工作的。
-- **Run name**，接著是**一行原因**，說明畫出的某個動作為何停用：對唯讀瀏覽器顯示 D8 的原因（「Operator controls only: request not local」），或
-  占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (pid …,
-  since …)」，或在 CUDA 上服務模型時的「GPU: inference (this service); stop it with Stop
-  inference on Diagnosis」；無論哪種情況，job runner 都會自己拒絕啟動）。畫出的動作都沒有停用時，
-  沒有原因行。
+- **Run name**，在 Dataset 旁邊。自 2026-11-24 起，bar 分為兩組：要設定的（Dataset 與 Run name，
+  其下是資料行）與要執行的（Start、Continue… 與 Stop，其下是工作的狀態）。只有資料行是資料集的身分、
+  動作旁沒有任何說明，而且這一列放得下時（例如選了資料集的 1850 × 960），它才排成一行；較窄時，兩組
+  整組移動。**沒有選擇資料集時**，資料行以共用通知的形式說明原因，整個畫面只說一次，附下一步與
+  **Details ›**：第一次使用時是「○ No workspaces folder is set. Training needs one. Choose one in
+  Settings › Data locations」（GPU 鎖的各列在它的 Details 中），資料夾中沒有列出任何資料集時是「The
+  server lists no dataset yet.」與「Build one on the server with a command in Datasets ›」，已列出資料集
+  但尚未選擇時是「Choose a dataset to start.」；Start 與 Continue… 會變暗，旁邊不另加說明（那一行指名
+  它們，螢幕閱讀器也把它讀作它們的說明）。**動作本身的原因**是動作旁的一個短語：對唯讀瀏覽器是
+  「Operator controls only」（它會打開 D8 的原因），另一個工作或本服務的 CUDA 推論占用 GPU 時是「GPU in
+  use」（它會打開 GPU chip 的原因；測試執行時其後有 **Open Test ›**），或「GPU lock not usable」；無論
+  哪種情況，job runner 都會自己拒絕啟動。訓練工作執行中或停止中時，動作下方的工作狀態就是 Start 與
+  Continue… 變暗的原因。沒有任何東西變暗時，沒有短語。
 - **Start、Continue…、Stop。** Stop 只在訓練工作執行中或停止中才畫出。它會先詢問：「Stop training now? The job stops. The
   checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none
   yet, this run cannot be continued. Once it has stopped, the page says where it can be
@@ -3677,12 +3685,14 @@ resume 的一組仍寫明它開始時的下游權重（Models › Results 的 Co
 期間，run bar 不顯示它的任何動作（Start、Continue…、Stop），也不說原因（R-49），它的 **Run
 name** 仍在，為抽屜啟動的新 run（接續或分支）命名（如同 `--run-name` 與 `POST
 /api/v1/training/branch`）；抽屜唯一的關閉鈕是標題列的 **Close**。**4. Start** 是抽屜欄位下方
-的頁尾，放著 **Continue Training**（或 **Start branch**），旁邊是啟動的原因，說明
-擋住它的是什麼、該怎麼做：「Start branch disabled: the parent’s dataset is not this workspace’s
-current one.」、「… the check refuses a setting you edited; change it, then check again.」、「… the
-checkpoint changed since it was chosen. Refresh the list, then check it again.」、「… the typed
-path is not a checkpoint the run list holds. …」或「… the check says this checkpoint cannot be
-branched.」（原因寫在檢查中）。只說一次：被檢查拒絕的啟動（包括清單中沒有的路徑）不另加自己的
+的頁尾，放著 **Continue Training**（或 **Start branch**），旁邊是啟動的原因，以頁面
+自己的文字、從需要什麼說起，說明擋住它的是什麼、該怎麼做（自 2026-11-24 起）：「The parent’s dataset
+is not this workspace’s current one.」、「The check refuses a setting you edited. Change it, then check
+again.」、「The checkpoint changed since it was chosen. Refresh the list, then check it again.」、「The
+typed path is not a checkpoint the run list holds. …」或「The check says this checkpoint cannot be
+branched.」（原因寫在檢查中）；工作執行中或停止中時是「A training job is running.」或「The training job
+is stopping.」；有自己短語的原因就是那個短語（「Needs a workspaces folder」，它會移到 run bar 的通知、
+「GPU in use」、「Operator controls only」）。只說一次：被檢查拒絕的啟動（包括清單中沒有的路徑）不另加自己的
 通知，檢查之後被 job runner 拒絕的（之後 parent 已改變）則在那裡說明，以表示拒絕的紅色 ✕
 開頭。在寬的
 視窗中，抽屜內容捲動時頁尾仍留在畫面上；檢查之後，抽屜內容會捲動到顯示其結果的位置。從清單選的
@@ -3720,7 +3730,7 @@ bar 的資料集改變（手動選擇、從 Datasets 的「Use for training ›�
 run，最新的在前（頁面開著時每 10 秒重新列出一次，所以從 CLI 啟動的 run 在寫下第一個 checkpoint
 後就會出現），每個選項與 Run 選單的命名方式相同（「ui-live-stop-02 · GATv2 2026-10-24 17:39」）；
 選項的值是 run 的完整 id，所以文字永遠不會改變讀取哪個 run。選擇一個 run 會顯示它的曲線與 Export
-CSV，其他一概不變：run bar、它的狀態標籤、原因行、動作按鈕，以及失敗工作的橫幅，永遠顯示訓練工作。
+CSV，其他一概不變：run bar、它的狀態標籤、原因短語、動作按鈕，以及失敗工作的橫幅，永遠顯示訓練工作。
 沒有選擇時，檢視跟隨 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，跟隨 workspace 最新的
 run。只要 run bar 顯示的是做出選擇時的 workspace，而且之後沒有工作啟動，選擇就會保留（新工作一啟動
 就顯示它；中途改看另一個 workspace 不會結束選擇，回到原本的 workspace 時會再次顯示所選的 run）。選單旁的
@@ -3786,7 +3796,8 @@ has no curves: choose another run in Viewing.」，或該 run 沒有 run 目錄�
   圖區顯示「The charts could not be loaded. Trying again…」，每 3 秒重試一次，最多 20 次；已畫出的
   run 在重新要求較新 epoch 的期間保留它的圖表。
 
-**唯讀的瀏覽器**看到同一個頁面，每個動作都停用並附上 D8 的原因，而且不會為它開啟任何
+**唯讀的瀏覽器**看到同一個頁面，每個動作都變暗，旁邊是短語「Operator controls only」，它會打開
+D8 的原因，而且不會為它開啟任何
 checkpoint：run 標題的標籤顯示「dataset not shown · operator control」，狀態只給出 run 的
 狀態，也不顯示 parent 清單。Viewing 選單、metrics、圖表與資料集紀錄對它的讀取方式與對操作者
 相同。

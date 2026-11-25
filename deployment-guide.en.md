@@ -3472,8 +3472,9 @@ a run.
 **The run bar** never scrolls:
 
 - **Dataset**: the server's workspace list, the same as Datasets'; each option is the workspace's
-  name (one that cannot be trained also says why), its identity said once, by the chip beside the
-  select. Choosing one reads its manifest and record, and the chip shows when it was built, the
+  name (one that cannot be trained also says why), its identity said once, by the facts line
+  under Dataset and Run name (beside the select only while the whole bar stands on one line,
+  below). Choosing one reads its manifest and record, and that line shows when it was built, the
   dataset fingerprint
   (Copy gives all 64), `synthetic`, whether the record is verified and **Details ›** (the
   fingerprint, the build time, the sources, the counts and seeds, one a row, the manifest's files
@@ -3489,11 +3490,23 @@ a run.
   or stops, a green ● when it completed, the red ✕ only when it failed. A failed or stopped run is
   never green. Idle is the normal state, so its pill is plain muted text, not a lozenge. The pill
   is always the training job's, whatever run the run view shows.
-- **Run name**, then **one reason line** saying why an action drawn is disabled: D8's reason for
-  a read-only browser ("Operator controls only: request not local"), or the GPU job holding the slot ("GPU job: test run (…) · Open Test ›",
-  "GPU job: train_model.py (pid …, since …)", or "GPU: inference (this service); stop it with
-  Stop inference on Diagnosis" while a model is served on CUDA; the job runner refuses a start
-  itself either way). With nothing drawn disabled there is no reason line.
+- **Run name**, beside Dataset. Since 2026-11-24 the bar is two groups: what you set (Dataset and
+  Run name, the facts line under them) and what you do (Start, Continue… and Stop, the job's
+  state under them). It stands on one line only while the facts line is the dataset's identity
+  and nothing is said beside the actions, where the row holds it (1850 × 960 with a dataset
+  chosen, for example); narrower, the groups move whole. **With no dataset chosen** the facts
+  line says why, once on the screen, in the shared notice's form with its next step and
+  **Details ›**: at first use "○ No workspaces folder is set. Training needs one. Choose one in
+  Settings › Data locations" (the GPU lock's rows in its Details), with a folder that lists no
+  dataset "The server lists no dataset yet." with "Build one on the server with a command in
+  Datasets ›", with datasets listed and none chosen "Choose a dataset to start."; Start and
+  Continue… are dimmed with nothing of their own beside them (that line names them, and a
+  screen reader reads it as their description). **A cause of the actions' own** is a short
+  phrase beside them: "Operator controls only" for a read-only browser (it opens D8's reason),
+  "GPU in use" while another job or this service's CUDA inference holds the GPU (it opens the
+  GPU chip's reason; **Open Test ›** after it for a test run), or "GPU lock not usable"; the job
+  runner refuses a start itself either way. While a training job runs or stops, its state under
+  the actions is why Start and Continue… are dimmed. With nothing dimmed there is no phrase.
 - **Start, Continue…, Stop.** Stop is drawn only while a training job runs or stops. It asks first: "Stop training now? The job stops. The
   checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none yet,
   this run cannot be continued. Once it has stopped, the page says where it can be continued
@@ -3763,12 +3776,14 @@ reason (R-49), and its **Run name** stays, naming the new run the drawer starts,
 branched (as `--run-name` and `POST /api/v1/training/branch` name one); the drawer's one closer
 is **Close** in its header. **4.
 Start**, the drawer's footer under its fields, holds **Continue Training** (or **Start branch**),
-with the start's reason beside it, which says what stops it and what to do:
-"Start branch disabled: the parent’s dataset is not this workspace’s current one.", "… the check
-refuses a setting you edited; change it, then check again.", "… the checkpoint changed since it
-was chosen. Refresh the list, then check it again.", "… the typed path is not a checkpoint the
-run list holds. …" or "… the check says this checkpoint cannot be branched." (the check says
-why). It is said once: a start the check refuses, a path the list does not hold included, adds
+with the start's reason beside it, which says what stops it and what to do in the page's words,
+led by what it needs (since 2026-11-24): "The parent’s dataset is not this workspace’s current
+one.", "The check refuses a setting you edited. Change it, then check again.", "The checkpoint
+changed since it was chosen. Refresh the list, then check it again.", "The typed path is not a
+checkpoint the run list holds. …" or "The check says this checkpoint cannot be branched." (the
+check says why); "A training job is running." or "The training job is stopping." while one does;
+a cause with a phrase of its own is that phrase ("Needs a workspaces folder", which moves to the
+run bar's notice, "GPU in use", "Operator controls only"). It is said once: a start the check refuses, a path the list does not hold included, adds
 no notice of its own, and one the job runner refuses after the check (a parent changed since) says so there,
 led by the red ✕ of a refusal. In a wide window the footer stays in view while the drawer's body scrolls, and after a check the body scrolls to show its answer.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
@@ -3812,8 +3827,8 @@ select lists the run bar's workspace's runs, latest first (listed again every 10
 page is open, so a run started from the CLI appears once it writes its first checkpoint), each
 named as the Run select names a run ("ui-live-stop-02 · GATv2 2026-10-24 17:39"); the option's
 value is the run's full id, so the words never change which run is read. Choosing one shows that
-run's curves and Export CSV, and nothing else changes: the run bar, its status pill, its reason
-line, its actions and a failed job's banner always show the training job. Without a choice, the
+run's curves and Export CSV, and nothing else changes: the run bar, its status pill, its phrase,
+its actions and a failed job's banner always show the training job. Without a choice, the
 view follows the run the job runner started last or, before one since the server started, the
 workspace's latest run; a choice holds while the run bar shows the workspace it was made for and
 no job has started since (a new job is shown as it starts; another workspace shown in between does
@@ -3892,8 +3907,8 @@ directory, or is no longer listed. Under it, the resources line (GPU and memory)
   asks again every 3 s, up to 20 times; a run already drawn keeps its charts while its newer
   epochs are asked for again.
 
-**A read-only browser** sees the same page with every action disabled and D8's reason, and no
-checkpoint is opened for it: the run header's tag says "dataset not shown · operator control",
+**A read-only browser** sees the same page with every action dimmed and the phrase "Operator
+controls only" beside them, which opens D8's reason, and no checkpoint is opened for it: the run header's tag says "dataset not shown · operator control",
 its state gives only the run's state, and the parent list is not shown. The Viewing select, the
 metrics, the charts and the dataset records are read for it as for an operator.
 
