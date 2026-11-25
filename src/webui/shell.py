@@ -1135,10 +1135,14 @@ _SHELL_JS = r"""
   // reaches over the last text line the region draws above its edge (a label, a value, a field's
   // value or placeholder line), by at least a quarter of that line: FADE_VAR, its length, read by
   // the style sheet's mask. It stays a cue: at most about one and a half of the region's text
-  // lines (its line height), never a whole group. Where the edge falls in a gap taller than that
-  // (no text line within reach: a field's empty box, a chart's plot), no fade is drawn over the
-  // blank: the region keeps EDGE, the one content-independent edge cue the style sheet draws at
-  // its foot (Material's scrolled-under state, Apple's scroll edge effect).
+  // lines (its line height), never a whole group. It is drawn only where it fades words out:
+  // that line is cut by the edge or ends in the fade's lower half, drawn at half strength or less
+  // (LOOK5 of the L8 sweep, L8-2 and L8-4: a 32 px fade whose top 10 px met a title 22 px over
+  // the edge left the title whole and faded only blank, so Settings' Runtime settings and Test's
+  // Run at 1280 x 720 showed no cue over whole controls under the edge). Where the edge falls in
+  // a gap (no such line: a field's empty box, a chart's plot, the room between two groups), no
+  // fade is drawn over the blank: the region keeps EDGE, the one content-independent edge cue the
+  // style sheet draws at its foot (Material's scrolled-under state, Apple's scroll edge effect).
   var FADE_VAR = '__FADE_VAR__', FADE = 28, EDGE = 'data-shep-more-edge';
   var VALUES = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=range])'
     + ':not([type=file]), textarea, select';
@@ -1178,13 +1182,19 @@ _SHELL_JS = r"""
     }
     return last;
   }
-  // The fade's length in px, or 0 where the edge falls in a gap (EDGE is drawn instead).
-  function fadeOf(el) {
-    var r = el.getBoundingClientRect(), top = r.top + el.clientTop, edge = top + el.clientHeight;
+  // The fade's length in px over `edge` (`top` the top of the region's content), or 0 where the
+  // edge falls in a gap (EDGE is drawn instead).
+  function fadeAt(el, top, edge) {
     var s = getComputedStyle(el), lh = parseFloat(s.lineHeight) || 1.45 * (parseFloat(s.fontSize) || 15);
     var most = Math.max(1.5 * lh, FADE), line = lastLine(el, top, edge, most);
     if (!line || edge - line.bottom + line.height / 4 > most) { return 0; }
-    return Math.min(most, Math.max(FADE, Math.ceil(edge - line.bottom + line.height / 2)));
+    var length = Math.min(most, Math.max(FADE, Math.ceil(edge - line.bottom + line.height / 2)));
+    // Its words fade out: the line's foot lies in the fade's lower half, or under the edge.
+    return edge - line.bottom <= length / 2 ? length : 0;
+  }
+  function fadeOf(el) {
+    var r = el.getBoundingClientRect(), top = r.top + el.clientTop;
+    return fadeAt(el, top, top + el.clientHeight);
   }
   // **A region never ends at a lone title** (R-CUE, the owner's D4 of 2026-11-24: "never show
   // only a section title with every control under the edge"; the L8 close: Fine-tune's form
@@ -1283,8 +1293,9 @@ _SHELL_JS = r"""
     var below = (parseFloat(s.paddingBottom) || 0) + (parseFloat(s.borderBottomWidth) || 0);
     return {top: r.top + above, bottom: r.bottom - below, height: r.height - above - below};
   }
-  // How far `el`'s foot gives way (px) for it to end in the gap above a lone title, read whole
-  // (its current cut added back): 0 for none.
+  // How far `el`'s foot gives way (px) for it to end in the gap above a lone title, or above a
+  // field's box that starts in the gap its edge falls in, read whole (its current cut added
+  // back): 0 for none.
   function cutOf(el) {
     var s = getComputedStyle(el), had = parseFloat(el.getAttribute(CUT)) || 0;
     if (!scrolls(s.overflowY) || el.scrollHeight - el.clientHeight - had <= 1) { return 0; }
@@ -1295,9 +1306,12 @@ _SHELL_JS = r"""
       if (head === null) { break; }
       at = head;
     }
-    if (at < edge) {
+    if (at < edge || !fadeAt(el, top, edge)) {
       // A field's box that starts in that gap (under every line still shown) goes under the edge
       // whole: no box's top is left over it (a block's own background hid the edge cue's shadow).
+      // So too where the edge itself falls in a gap, no line faded out over it (`fadeAt`; LOOK5
+      // of the L8 sweep: Test's Deterministic box started 12 px over the Run region's edge at
+      // 1280 x 720 and hid half its edge cue).
       var low = lowestLine(el, top, at), floor = low ? low.r.bottom : top;
       var boxes = el.querySelectorAll('.block');
       for (var b = 0; b < boxes.length; b++) {
