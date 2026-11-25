@@ -4845,10 +4845,10 @@ def create_training_tab(ctx: Any) -> None:
             # to one window.
             with gr.Column(elem_id="shep-train-params", elem_classes=["shep-panel", "shep-sized"],
                            min_width=0):
-                # Stacked, the parameters start shown where the page then still ends
-                # within the window, else folded under their title, so the run view's
-                # charts follow the run bar on the first screen (R-60, D9: `FOLD_JS`);
-                # side by side the body is always shown and the toggle is not.
+                # Stacked, the parameters start folded under their title until the page's
+                # first answers are drawn, then shown unless folding them brings more of the
+                # run view's charts onto the first screen (R-60, D9: `FOLD_JS`); side by
+                # side the body is always shown and the toggle is not.
                 plain_html('<div class="shep-panel-hd"><h2>Parameters</h2>'
                            '<span class="shep-panel-right">for the next base run</span>'
                            '<button type="button" class="shep-link shep-train-fold" '
@@ -5088,11 +5088,13 @@ def create_training_tab(ctx: Any) -> None:
     # The fast poll's hand-off of a change it found (`_poll`).
     changed = gr.JSON(value=None, visible=False, elem_id=CHANGED_ID)
 
-    # The page shown: the list read again, then the run bar whole, in that order.
+    # The page shown: the list read again, then the run bar whole, in that order;
+    # then the page's panels marked as showing the session's selection (`ANSWERED_JS`:
+    # the parameters' fold waits for it, `FOLD_JS`).
     ctx.on_page_open(TRAINING, {
         "fn": _open, "inputs": [ws, ctx.training_workspace],
         "outputs": [ws, dataset, chip, ctx.training_workspace, cache, resources],
-        "show_progress": "hidden", **in_order}).then(**view_step)
+        "show_progress": "hidden", **in_order}).then(**view_step).then(None, js=ANSWERED_JS)
 
     # The shell's timers (outside gr.Tabs), read-only polls without the queue.
     # The fast one writes the chips, and hands every change of a piece (the
@@ -5272,18 +5274,42 @@ def create_training_tab(ctx: Any) -> None:
 
 
 
+#: The mark the render that follows the page's opening leaves on the page's panels
+#: (``#shep-train-page``) once it is drawn (`ANSWERED_JS`, the page open's last step): the page
+#: then shows the session's selection, not the build's placeholders (`FOLD_JS` waits for it).
+ANSWERED_ATTR = "data-shep-answered"
+ANSWERED_JS = ("() => { var p = document.getElementById('shep-train-page'); "
+               f"if (p) {{ p.setAttribute('{ANSWERED_ATTR}', ''); }} }}")
+
 #: **The parameters' fold, stacked** (R-60; the owner's D9 of 2026-11-24, L8 §4 D9): "Show"
 #: opens the body, "Hide" folds it again; the state is the button's own ``aria-expanded``,
 #: which the style sheet reads (side by side the body is always shown and the button is not).
-#: **Its default by room**: while the reader has not used the button, the body is shown
-#: whenever the stacked page, with the body shown, ends within the window's height (the
-#: main parameters in view where there is room: "More training settings" and "Model" stay
-#: closed), else folded, so the run view's charts follow the run bar on the first screen.
-#: It is measured, never read from a window size: the body is drawn shown for the measure
-#: alone (put back before anything is painted), and the page's end compared with the
-#: window's height. It is decided only when what it hangs on changes: the arrangement (the
-#: layout pass's mark), the page's size (its width, its content) and the fonts; never by a
-#: timer or a poll, and only while Training is shown. **A fold the reader made is kept**:
+#: **Its default**: while the reader has not used the button, the body is shown unless folding
+#: it brings more of the run view's charts (its plot cards) into the first screen (the
+#: window's height from the page's top) than showing it leaves there, which is what folding
+#: trades the main parameters for: the charts following the run bar. So it is shown wherever
+#: the page with it shown holds the charts, and whenever the run view draws no chart (no run
+#: to show: first use, a dataset with no run yet), where folding gains nothing but blank
+#: window (the L8 LOOK5's L8-3 and its review: at first use a page that ended a few pixels
+#: past the window folded the body over a third of the window blank, at 1100 x 1050 and,
+#: measured by the page's panels, again at 1100 x 1040). "More training settings" and "Model"
+#: stay closed. Both states are measured, never read from a window size: the body is drawn
+#: folded, then shown and laid out (`shell.py`'s ``ShepShell.layOut``: the marks of what it
+#: holds, the "Set by you" line's own line among them, are then those of the body shown), all
+#: before anything is painted, so deciding never changes what it decides from (L8-1: the
+#: measure read the marks set with the body folded, and at 1050 x 1100 the body opened and
+#: closed about 24 times a second).
+#: **It waits for the page's first answers**: until the render that follows the page's opening
+#: is drawn (`ANSWERED_ATTR`) and the run view waits for no run's curves (its figure's
+#: ``aria-busy``), the body stays as built, folded, and is never opened on what the page does
+#: not hold yet (the review's R1: on the page as first drawn the run view had no chart, so
+#: configured at 1100 x 1050 the body was shown from 0.2 to 1.5 s and folded when the charts
+#: came, the run view jumping 416 px).
+#: It is decided again only when what it hangs on changes: the arrangement (the layout pass's
+#: mark), the page's size (its content), the window's size (its height alone included: the
+#: review's R3, a window made taller or shorter kept the decision of the height before), the
+#: fonts and the page's answers; never by a timer or a poll, and only while Training is shown.
+#: **A fold the reader made is kept**:
 #: once they used the button, or worked in the body (a press or a key in it: opening "More
 #: training settings" there grew the page past the window, and the measure folded the body
 #: they were working in), nothing decides for them again.
@@ -5307,13 +5333,30 @@ element.addEventListener('click', function (e) {
   mine = true;
   show(b, b.getAttribute('aria-expanded') !== 'true');
 });
+function layOut() { if (window.ShepShell && window.ShepShell.layOut) { window.ShepShell.layOut(); } }
+// How much of the run view's charts (the union of its plot cards) lies in the first screen.
+function charts() {
+  var cards = document.querySelectorAll('#shep-train-runview .shep-chart'), top = Infinity, bottom = -Infinity;
+  for (var i = 0; i < cards.length; i++) {
+    var r = cards[i].getBoundingClientRect();
+    if (r.height > 0) { top = Math.min(top, r.top); bottom = Math.max(bottom, r.bottom); }
+  }
+  if (!(bottom > top)) { return 0; }
+  return Math.max(0, Math.min(bottom + window.scrollY, window.innerHeight) - Math.max(top + window.scrollY, 0));
+}
 function byRoom() {
-  var b = fold();
-  if (mine || !b || !element.getClientRects().length
+  var b = fold(), page = document.getElementById('shep-train-page');
+  if (mine || !b || !page || !element.getClientRects().length
       || document.documentElement.getAttribute('data-shep-layout') !== 'stack') { return; }
-  var se = document.scrollingElement || document.documentElement;
-  show(b, true);
-  show(b, se.scrollHeight <= window.innerHeight + 0.5);
+  if (!page.hasAttribute('__ANSWERED__')
+      || document.querySelector('#shep-train-runview .shep-charts[aria-busy="true"]')) { return; }
+  if (b.getAttribute('aria-expanded') !== 'false') { b.setAttribute('aria-expanded', 'false'); }
+  var folded = charts();
+  b.setAttribute('aria-expanded', 'true');
+  layOut();
+  var open = charts() + 0.5 >= folded;
+  show(b, open);
+  if (!open) { layOut(); }
 }
 var pending = false;
 function later() {
@@ -5323,11 +5366,17 @@ function later() {
 }
 new MutationObserver(later).observe(document.documentElement,
   {attributes: true, attributeFilter: ['data-shep-layout']});
+var panels = element.closest('#shep-train-page') || document.getElementById('shep-train-page');
+if (panels) {
+  new MutationObserver(later).observe(panels,
+    {attributes: true, subtree: true, attributeFilter: ['__ANSWERED__', 'aria-busy']});
+}
 var shell = document.getElementById('shep-shell') || document.body;
 if (window.ResizeObserver) { new ResizeObserver(later).observe(shell); }
+window.addEventListener('resize', later);
 if (document.fonts && document.fonts.ready) { document.fonts.ready.then(later); }
 later();
-"""
+""".replace("__ANSWERED__", ANSWERED_ATTR)
 
 #: This page's element id (`shell.page_elem_id`), the scope of `PAGE_CSS`.
 _PAGE = f"#shep-page-{TRAINING}"

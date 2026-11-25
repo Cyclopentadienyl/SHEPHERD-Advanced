@@ -5851,6 +5851,26 @@ def test_the_walks_coverage_names_a_row_chosen_stop_that_did_not_run():
     assert _walk_coverage([p for p in pages if p["page"] != "settings"], "read_only")
 
 
+def test_a_page_that_never_holds_still_is_a_walk_finding_by_its_page_and_size():
+    """The L8 LOOK5's L8-1: Training's fold opened and closed about 24 times a second at
+    1050 x 1100 with no input, and no walk could see it: 1050 x 1100 was in none, and the walk's
+    wait for the page to hold still read it every other frame (a page changing at every frame
+    read as still) and, had it never held still, measured it anyway. A stop that never held
+    still (``frames`` -1) is the ``settle`` finding of its size and page, with what kept moving
+    and the marks set most; a stop that held still is none. 1050 x 1100 is a layout size."""
+    from tests.fixtures.browser import LAYOUT_RULES, LAYOUT_SIZES, layout_problems
+
+    restless = {"moved": ["document height", "#shep-train-runview"],
+                "marks": [".shep-train-fold:aria-expanded x88", "#shep-train-setby:data-shep-own-line x88"]}
+    stops = [{"size": "1050x1100", "page": "training", "frames": -1, "restless": restless,
+              "check": {"layout": {}}},
+             {"size": "1100x1050", "page": "training", "frames": 3, "check": {"layout": {}}}]
+    found = layout_problems(stops, rules=("settle",))
+    assert len(found) == 1 and found[0].startswith("1050x1100 training: settle: "), found
+    assert "#shep-train-runview" in found[0] and "aria-expanded x88" in found[0], found
+    assert "settle" in LAYOUT_RULES and (1050, 1100) in LAYOUT_SIZES
+
+
 def test_prose_in_a_region_on_a_panels_edge_keeps_the_measure_and_a_reason_draws_no_box(built):
     """The independent check of the UI sweep (C3): Models' details column is
     a region on a panel's edge (`shep-edge`), not a `.shep-panel`, so the
