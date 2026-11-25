@@ -3159,7 +3159,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run，Epochs、Seed 與 Graph backbone（Trained，或凍結主幹對照的 Frozen）對每個子模型相同；每個所選任務都會讀取的其他設定在 More settings 下，只選一個任務時另有該任務自己的設定（見下文）；一張 job card 顯示這次啟動的 graph backbone、每個任務的狀態、Stop 與產出 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
 | **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文）；模型 family 或此 workspace 的結果，可比較與匯出（Results，自 research comparison Stage 8b 起） |
-| 頁首右側的 **⚙ Settings** | Runtime Settings：目前執行中與已儲存的記憶體配置器、記憶體配置器與 torch.compile 兩個欄位，接著是 Apply Settings 與 Restart Backend（見下文）。對唯讀的瀏覽器，這兩個欄位不能更改，這些按鈕（連同 Stop service）會變暗並顯示鎖，短語「Operator controls only」只寫一次，在按鈕所在的那一行；它也指名這兩個欄位，並會打開 D8 的原因（自 2026-11-24 起） |
+| 頁首右側的 **⚙ Settings** | Runtime Settings：目前執行中與已儲存的記憶體配置器、記憶體配置器與 torch.compile 兩個欄位，接著是 Apply Settings 與 Restart Backend（見下文）。對唯讀的瀏覽器，這兩個欄位不能更改，這些按鈕（連同 Stop service）會變暗並顯示鎖，短語「Operator controls only」只寫一次，在按鈕所在的那一行；它也指名這兩個欄位，並會打開 D8 的原因（自 2026-11-24 起）。Display：這個瀏覽器自己的選擇，決定 Training 把兩個面板上下堆疊時 Parameters 一開始的樣子，每位檢視者都能更改（自 2026-11-25 起） |
 
 - 選中的區域（Diagnosis 或 Research）以填色加粗體顯示，Settings 被選中時也一樣；選中的研究頁面
   以底線加粗體顯示，滑鼠停在其他研究頁面上時只加淺色底，不加底線，因此同一時間只有一個頁面看起來
@@ -3584,7 +3584,12 @@ steps 僅在 cosine scheduler 時、Final learning-rate ratio 僅在有 schedule
 dtype 僅在 Mixed precision 開啟時。Early stopping patience 關閉時（參考值）顯示「off」，填入整數即
 開啟。欄位的格式或單位寫在欄位下方（hop 清單以逗號分隔、「-1 takes all」，warmup 以 optimizer
 steps 計，final learning-rate ratio 的「more than 0 with onecycle」）。旁邊是預設收合的「Model」：
-架構（GATv2，本版本唯一實作的架構；有更多架構時才是選項）、參考 spec 的文字欄位以事實列出，以及可修改的 input、encoder 與 LP head 數值與開關。**Start 送出你
+架構（GATv2，本版本唯一實作的架構；有更多架構時才是選項）、參考 spec 的文字欄位以事實列出，以及可修改的 input、encoder 與 LP head 數值與開關。**上下堆疊時**（直立視窗，或橫向但
+太窄、兩個面板無法並排的視窗），Parameters 標題旁的 **Hide** 與 **Show** 會收合與展開它們，一開始
+的樣子由你在 ⚙ Settings › Display 選擇（自 2026-11-25 起）：**Shown**，預設，展開，頁面捲動；
+**Folded**，收合；或 **Automatic**，除非收合能讓更多 run 的圖表進入第一個畫面，否則展開，在頁面
+第一次的回應畫出後決定，視窗改變時再決定一次（第一次決定前，圖表區在原位隱藏等待，最多幾秒，所以
+不會跳動）。你自己按的 Hide 或 Show 會保持到頁面重新載入為止。並排時它們一律展開。**Start 送出你
 動過的欄位**：你編輯過的欄位一定送出，即使等於參考值，並記錄為你的設定；清空欄位也算編輯（全選後按
 Backspace 或 Delete、剪下、貼上：每一種編輯都算，即使清空後立刻按 Start），因此 run 需要值的欄位留空
 會被拒絕（「Neighbours per hop needs at least 1 item(s).」、「Epochs must be set.」），什麼都不會啟動，而 Early stopping
@@ -4149,7 +4154,13 @@ build; start a new run.」）。Load 不會寫入任何使用紀錄。頁面在�
 
 **Settings** 自 2026-11-16 起有兩個面板：左邊（窄版時在上方）的 **Data locations**，在這裡選擇、
 檢查、儲存並套用 workspaces 資料夾、結果 registry、匯入資料夾與訓練證據資料夾（§4.12）；右邊的
-**Runtime settings**。第一次啟動時寫「○ Nothing is set yet. Each folder is needed only by what its row names.」並附
+**Runtime settings**。自 2026-11-25 起有第三個面板 **Display**（「this browser」；它們那一欄夠寬時
+在 Runtime settings 旁邊，例如 1850 x 960 的視窗，否則在它下方；上下堆疊時在最後），
+放這個瀏覽器自己的選擇：**Training parameters**，Training 把兩個面板上下堆疊時 Parameters 一開始的
+樣子（Shown，預設；Folded；Automatic；見 Training 頁面）。這個選擇只存在這個瀏覽器（它的 local
+storage；瀏覽器拒絕儲存時，它保持到頁面重新載入為止），並立即生效：已經開著的 Training 頁面（除非你在
+那裡按過 Hide 或 Show）以及這個瀏覽器之後開啟的每個頁面。它完全不經過伺服器，所以沒有 Apply、沒有鎖，
+唯讀的檢視者也能更改。第一次啟動時寫「○ Nothing is set yet. Each folder is needed only by what its row names.」並附
 **Details ›**，並為每個必要的列提供建議資料夾；其他
 頁面照常開啟，需要某個資料夾的頁面會在自己的位置說明，並指向 Settings › Data locations。
 

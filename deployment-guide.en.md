@@ -3111,7 +3111,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, with Epochs, Seed and Graph backbone (Trained, or Frozen for the frozen-backbone control) for every child, the rest of what every chosen task reads under More settings and the task's own settings for one task (below), and a job card with the start's graph backbone, each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
 | **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below); the results of a model's family or the workspace, compared and exported (Results, since research comparison Stage 8b) |
-| **⚙ Settings**, at the right of the header | Runtime Settings: the memory allocator running against the one saved, the allocator and torch.compile, then Apply Settings and Restart Backend (below). For a read-only browser the two fields cannot be changed and the buttons (with Stop service) are dimmed with the lock, with the phrase "Operator controls only" once, beside them in their row; it names the two fields too and opens D8's reason (since 2026-11-24) |
+| **⚙ Settings**, at the right of the header | Runtime Settings: the memory allocator running against the one saved, the allocator and torch.compile, then Apply Settings and Restart Backend (below). For a read-only browser the two fields cannot be changed and the buttons (with Stop service) are dimmed with the lock, with the phrase "Operator controls only" once, beside them in their row; it names the two fields too and opens D8's reason (since 2026-11-24). Display: this browser's own choice of how Training's Parameters start where Training stacks its panels, open to every viewer (since 2026-11-25) |
 
 - The selected area (Diagnosis or Research) is filled and bold, and so is Settings when it is
   selected; the selected research page is underlined and bold, and a research page under the
@@ -3632,7 +3632,14 @@ field's format or unit is written under it (the hop list's commas and "-1 takes 
 optimizer steps, the final learning-rate ratio's "more than 0 with onecycle"). Beside them,
 "Model", closed: the architecture (GATv2, the one this build implements; a choice once there are
 more), the reference spec's text fields as facts, and its input, encoder and LP head numbers and
-switches to change. **Start sends what you touched**: a
+switches to change. **Stacked** (a portrait window, or a landscape one too narrow for the two
+panels side by side), **Hide** and **Show** beside the Parameters' title fold and open them, and
+how they start is your choice in ⚙ Settings › Display (since 2026-11-25): **Shown**, the
+default, the page scrolling; **Folded**; or **Automatic**, shown unless folding them brings more
+of the run's charts into the first screen, decided once the page's first answers are drawn and
+again when the window changes (until the first decision the charts' area waits invisible in its
+place, a few seconds at most, so it never jumps). Your own Hide or Show holds until the page is
+loaded again. Side by side they are always shown. **Start sends what you touched**: a
 field you edited is sent, even at its reference value, and recorded as yours; a field you emptied
 counts as edited (select all and Backspace or Delete, a cut, a paste: every edit, even with Start
 clicked straight after it), so an empty value the run needs is refused ("Neighbours per hop needs
@@ -4378,7 +4385,14 @@ returns to the row.
 **Settings** has two panels since 2026-11-16: **Data locations** on the left (above at a narrow
 width), where the workspaces folder, the results registry, the import folder and the training
 evidence folders are chosen, checked, saved and applied (§4.12), and **Runtime settings** on the
-right. A first start says "○ Nothing is set yet. Each folder is needed only by what its row names."
+right. Since 2026-11-25 a third, **Display** ("this browser"; beside Runtime settings where their
+column has the room, as in a 1850 x 960 window, else under it; the last one stacked), holds this
+browser's own choices: **Training parameters**, how Training's Parameters start where Training
+stacks its two panels (Shown, the default; Folded; Automatic; see the Training page). The choice
+is saved in this browser only (its local storage; where the browser refuses it, it holds until
+the page is loaded again) and applies at once: to the Training page already open, unless you used
+Hide or Show there, and to every later page in this browser. Nothing of it reaches the server, so
+it has no Apply and no lock, and a read-only viewer can change it too. A first start says "○ Nothing is set yet. Each folder is needed only by what its row names."
 with **Details ›** and offers a suggested folder for each required row; every other page opens as usual, and a page that needs a folder says so in its own
 place, pointing to Settings › Data locations.
 
