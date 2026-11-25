@@ -814,6 +814,13 @@ _STATE_MARK = {SERVING: ("ok", False), LOADING: ("running", False),
 BACK_TO_RESEARCH = "Back to research ›"
 
 
+def _absent(notice: Any) -> bool:
+    """Whether `notice` says an absence: a setting not set (its kind
+    neutral, `renderers.notice_block`'s default), never one set and refused."""
+    kind = notice.get("kind") if isinstance(notice, Mapping) else None
+    return (kind or "neutral") == "neutral"
+
+
 def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "",
                   notice: Any = None) -> str:
     """The serving state in the backend's words (`serving_state`; a load
@@ -826,11 +833,18 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "",
     start-up settings), and after a stop the way back to research. Grey
     while the card is not current: the last known state. Nothing here names
     a path: the backend's words name none. `notice` (the workspaces folder's
-    at first use, where nothing is served): said under the state as the
-    card's cause, its go link the next step, and the backend's lead and
-    whole reason join its rows under the card's one "Details ›" (the sweep's
-    L7, C1: the lead, its own Details ›, the notice and its Details › took
-    the room of the inputs above them at the owner's 1550 x 830 window)."""
+    at first use, where nothing is served): the state's cause, its go link
+    the next step, and the backend's lead and whole reason join its rows
+    under its one "Details ›", which closes the notice's last line
+    (`renderers.notice_block`'s `more`; R-DETAILS: it stood alone under the
+    notice. The sweep's L7, C1: the lead, its own Details ›, the notice and
+    its Details › took the room of the inputs above them at the owner's
+    1550 x 830 window). Not loaded for want of the folder is one absence,
+    said as one line with one mark: "○ Not loaded: no workspaces folder is
+    set." (the notice's `state`; the owner, 2026-11-25: the grey Not loaded
+    tag over the notice's own ○ read as two states). Any other state, a
+    grey card's last known one, or a cause that is no absence (a folder set
+    and refused) keeps its own mark above the notice."""
     state, words = serving_state(status)
     if state == "unknown":
         return ""
@@ -856,19 +870,20 @@ def _serving_html(status: Mapping[str, Any], *, grey: bool, beside: str = "",
     # the card's own Details ›), one level, never inside another disclosure.
     reason_html = (f'<p class="shep-dx-line">{r.e(reason)}</p>'
                    if state != STOPPING and isinstance(reason, str) and reason else "")
-    notice_html = r.notice_block(notice, details=False) if notice else ""
-    if notice_html:
-        line += notice_html
-        more = lead_html + reason_html + r.notice_rows_html(notice)
+    # Details › is named by the state and when it began: the poll's next drawing
+    # keeps it as the reader left it while it is the same (`r.KEEP_OPEN_JS`).
+    keep = f"{state} at {when}" if when else state
+    if notice:
+        one = state == NOT_LOADED and not grey and _absent(notice)
+        said = r.notice_block(notice, state=words if one else "", more=lead_html + reason_html,
+                              keep=keep)
+        line = (f'<div class="shep-dx-serving" data-state="{r.e(state)}">{said}</div>' if one
+                else line + said)
     else:
         line += lead_html
-        more = reason_html
-    if more:
-        # Named by the state and when it began: the poll's next drawing keeps
-        # it as the reader left it while it is the same (`r.KEEP_OPEN_JS`).
-        line += (f'<details class="shep-more shep-dx-why-more"'
-                 f'{r.keep_as(f"{state} at {when}" if when else state)}>'
-                 f'<summary>Details ›</summary>{more}</details>')
+        if reason_html:
+            line += (f'<details class="shep-more shep-dx-why-more"{r.keep_as(keep)}>'
+                     f'<summary>Details ›</summary>{reason_html}</details>')
     if state == STOPPED and not grey:
         line += ('<p class="shep-dx-line"><button type="button" class="shep-dx-link '
                  'shep-dx-back" data-key="research" aria-label="Back to research: open '

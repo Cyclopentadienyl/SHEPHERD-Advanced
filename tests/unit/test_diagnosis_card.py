@@ -615,14 +615,68 @@ def test_first_use_says_the_workspaces_notice_once_on_the_card_and_a_relation_in
     assert body.count("<summary>") == 1 and body.count('data-notice="workspaces_root"') == 1
     shown, more = body.split("<summary>")
     assert "Nothing has been loaded" not in shown and "Nothing has been loaded" in more
-    assert r.e(NEVER_LOADED) in more and r.notice_rows_html(notice) in more
-    assert shown.index("Not loaded") < shown.index('data-notice="workspaces_root"')
+    assert r.e(NEVER_LOADED) in more and "Ref: " in more
+    # The state leads the notice's line (one absence, one line: the next test).
+    assert shown.index('data-notice="workspaces_root"') < shown.index("Not loaded: no workspaces")
     listing = {"notice": notice, "items": []}
     drawer = ml._no_items_html(listing, None, ml.PRESETS["clinical"])
     assert 'data-notice-rel="workspaces_root"' in drawer and "data-notice=" not in drawer
     assert "(see " not in drawer and r.REASON_PHRASES["workspaces_root"] in drawer
     assert 'data-notice="workspaces_root"' in ml._no_items_html(listing, None,
                                                                ml.PRESETS["research"])
+
+
+def test_first_use_says_one_absence_on_one_line_with_one_mark_and_its_details_on_it(root):
+    """The owner (2026-11-25: "Not loaded" and "No workspaces folder" overlap): at first use the
+    card drew a grey "○ Not loaded" tag, then the workspaces folder's notice with a second ○,
+    then its "Details ›" alone on a line of its own at the mark's x (R-DETAILS, LOOK5): two
+    marks for one absence. The state word now leads the notice's line, the notice's cause after
+    it in the notice's own short words, then its next step and "Details ›" closing that line;
+    the Details hold the backend's lead, its whole reason and the folder's rows. The notice keeps
+    its key, its link and its rows. A state that is no absence, or a cause that is no absence
+    (a folder set and refused), keeps its own mark and line."""
+    from types import SimpleNamespace
+
+    from src.config.server_settings import ENV_WORKSPACES_ROOT
+    from src.webui.components.workspaces import NOTICES, notice_view, setting_notice
+
+    notice = notice_view(NOTICES[ENV_WORKSPACES_ROOT])
+    lead = "Nothing has been loaded since the service started"
+    first = {**_state(root, status=_nothing_served(_not_serving("not_loaded", lead),
+                                                   NEVER_LOADED)), "workspaces_notice": notice}
+    body = card.body_html(first)
+    # One mark, the state's word once, one notice, one disclosure.
+    assert body.count("○") == 1 and body.count(r.NOT_LOADED) == 1, body
+    assert body.count('data-notice="workspaces_root"') == 1 and body.count("<summary>") == 1
+    assert 'data-state="not_loaded"' in body and "shep-tag" not in body
+    # The state, its cause and the step are the words of one line...
+    line = re.search(r'<div class="shep-nb-line">(.*?)<details', body, re.S)
+    assert line, body
+    words = " ".join(re.sub(r"<[^>]+>", "", line.group(1)).replace(" ", " ").split())
+    assert words == ("○ Not loaded: no workspaces folder is set. "
+                     "Choose one in Settings › Data locations"), words
+    # ... and "Details ›" closes it: nothing is drawn after the disclosure.
+    assert re.search(r"</details>(?:</span>|</div>)+$", body), body
+    shown, more = body.split("<summary>")
+    assert "data-shep-go" in shown and lead not in shown
+    standalone = r.notice_block(notice)
+    rows = standalone.split("</summary>")[1].split("</details>")[0]
+    assert lead in more and r.e(NEVER_LOADED) in more and rows in more
+    assert r.keep_as("not_loaded") in body
+    # Stopped is its own state: its tag stays, and the notice's Details › closes the notice's line.
+    stopped = {**_state(root, status=_nothing_served(_not_serving(
+        "stopped", "By an operator", "2026-10-20T10:15:00+00:00"), "Inference was stopped.")),
+        "workspaces_notice": notice}
+    body = card.body_html(stopped)
+    assert r.status_mark("neutral", "Stopped", as_chip=True) in body
+    assert r.e(notice["summary"]) in body and body.count("<summary>") == 1
+    assert re.search(r"</details></span></div></div>", body), body
+    # A folder set and refused is an error, not this absence: its own mark and words.
+    refused = setting_notice(SimpleNamespace(variable=ENV_WORKSPACES_ROOT, available=False,
+                                             unset=False, problem="x"))
+    body = card.body_html({**first, "workspaces_notice": refused})
+    assert r.status_mark("neutral", r.NOT_LOADED, as_chip=True) in body
+    assert r.e(refused["summary"]) in body and "✕" in body
 
 
 def test_a_status_naming_no_trained_model_is_not_shown_as_one(root):

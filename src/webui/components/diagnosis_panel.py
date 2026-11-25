@@ -4406,11 +4406,12 @@ PAGE_CSS = f"""
 {_TAB} .shep-tag-dashed {{ border-style: dashed !important; }}
 {_TAB} .shep-dx-state {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 14px; color: var(--shep-grey-800); margin-bottom: 2px; }}
 {_TAB} .shep-dx-state .shep-dx-retry {{ height: 24px; padding: 0 6px; }}
-/* Nothing served: the backend's lead under the state, its whole reason one click away. */
+/* Nothing served: the backend's lead under the state, its whole reason one click away (the
+   card's own Details ›, or its cause notice's, `diagnosis_card._serving_html`). */
 {_TAB} .shep-dx-serving .shep-st + .shep-st {{ margin-left: 8px; }}
 {_TAB} .shep-dx-serving .shep-dx-when {{ white-space: nowrap; }}
 {_TAB} .shep-dx-why-more {{ font-size: 14px; }}
-{_TAB} .shep-dx-why-more > .shep-dx-line {{ margin-top: 2px; color: var(--shep-grey-800); }}
+{_TAB} :is(.shep-dx-why-more, .shep-nb-more) > .shep-dx-line {{ margin-top: 2px; color: var(--shep-grey-800); }}
 {_TAB} button.shep-dx-back {{ min-height: 24px; }}
 {_TAB} .shep-dx-change {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 2px; padding: 4px 8px; }}
 {_TAB} button.shep-dx-x {{ margin-left: auto; border: 0; background: none; color: var(--shep-amber-800); font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }}
