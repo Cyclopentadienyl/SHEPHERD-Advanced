@@ -402,7 +402,10 @@ def key_html(item: FieldView, *, allowed: bool) -> str:
 #: read-only row's phrase, as they stand on the row's own line with the mark off: DL-1, from
 #: 1280 to 1350 wide a read-only phrase went under "🔒 Change…" in that column, each row 15 to 24
 #: px taller); the style sheet then gives a set row's actions the line its facts end on
-#: (`PAGE_CSS`). A key no longer in the page stops measuring.
+#: (`PAGE_CSS`). A row not drawn (Settings hidden) keeps its mark until it is drawn and measured
+#: again, so each open of Settings paints the rows as they were last measured (DL-2: the mark,
+#: dropped while the page was hidden, came back a frame after each open, and the set rows' lower
+#: part jumped 30 px, 43 px read-only). A key no longer in the page stops measuring.
 BESIDE = "data-dl-beside"
 NAME_WIDTH = "--dl-name"
 CHANGE_JS = r"""
@@ -448,7 +451,8 @@ function arrange() {
   queued = false;
   if (!element.isConnected) { if (sizes) { sizes.disconnect(); } return; }
   var row = rowOf();
-  if (!row) { return; }
+  // Not drawn is not "not beside": the mark stays for the row's next frame.
+  if (!row || !row.getClientRects().length) { return; }
   var name = row.querySelector('.shep-dl-head > .shep-dl-left');
   var facts = row.querySelector('.shep-dl-head > .shep-dl-facts');
   var group = element.querySelector('.shep-dl-chg');

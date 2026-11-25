@@ -66,7 +66,9 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   that fit the window without overlapping it, the one that lies over the fewest drawn controls (R-HELP:
   a bubble covers no control), the first in that order among equals; where each of those lies over a
   control, the tallest place that lies over none with its height capped there (never shorter than its
-  head, its lead and two lines after it; Floating UI's ``size``); failing all, narrower beside it, or on
+  head, its lead and two lines after it; Floating UI's ``size``), then the same at a narrower width
+  (220 px at the least) where none of its width is clear, and where none is clear at any size, of
+  every place tried the one over the fewest controls; failing all, narrower beside it, or on
   the side with more room with its height capped; a capped text scrolls
   inside under the scroll cue (``data-shep-more``); at most 320 px wide (`BUBBLE_MAX_WIDTH`), the ⓘ's hit target at
   least 24 × 24 px;
@@ -451,7 +453,8 @@ _HELP_JS = r"""
     for (var i = 0; i < all.length; i++) { if (all[i].getAttribute('data-help') === key) { return all[i]; } }
     return null;
   }
-  var MAX_W = __MAX_W__, HOVER_MS = __HOVER_MS__, GAP = 10, EDGE = 8;
+  // The bubble's width: at most MAX_W, at least LEAST_W, narrowed by WIDTH_STEP (`place`).
+  var MAX_W = __MAX_W__, LEAST_W = 220, WIDTH_STEP = 20, HOVER_MS = __HOVER_MS__, GAP = 10, EDGE = 8;
   var REGION = '__REGION__', KEY_FIRST = '__KEY_FIRST__';
   var BULLET = __BULLET__, REF = __REF__, TERM = new RegExp(__TERM__);
   var bubble = null, anchor = null, anchorKey = null, pinned = false;
@@ -615,7 +618,7 @@ _HELP_JS = r"""
   // not its ⓘ, not hidden, not scrolled out of its region), by its box, a pixel's slack at
   // each edge so a placement that only meets a control's edge is no cover.
   var CONTROLS = 'button, input:not([type=hidden]), select, textarea, a[href], [role=radio], [role=checkbox]';
-  var lastSide = null;
+  var lastSide = null, lastWidth = null;
   // The drawn controls' boxes, read once a placement (`seen` read when a place meets one).
   function controlBoxes() {
     var out = [], all = document.querySelectorAll(CONTROLS);
@@ -694,7 +697,7 @@ _HELP_JS = r"""
     }
     var a = anchor.getBoundingClientRect(), f = fieldRect(anchor), region = regionRect(anchor);
     var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
-    var width = Math.max(220, Math.min(MAX_W, vw - 2 * EDGE));
+    var width = Math.max(LEAST_W, Math.min(MAX_W, vw - 2 * EDGE));
     bubble.style.maxWidth = width + 'px';
     // Its whole height read with its cap kept (`whole`): lifting the cap to measure it scrolled a
     // capped text back to its top on every scroll of it.
@@ -764,11 +767,25 @@ _HELP_JS = r"""
       }
       return best;
     }
-    var boxes = controlBoxes(), fitting = places(bh);
+    var boxes = controlBoxes(), fitting = places(bh), fewestSeen = null;
+    // Of the places tried, the one over the fewest controls, with the width it was tried at: among
+    // equals the place and width it stands in now (no flip while the page scrolls: a focus
+    // preview re-placed on each scroll took 220 and 320 px by turns, and each change of its size
+    // laid the page out again under a scrolled region), else the first tried.
+    function consider(p, count) {
+      var w = bubble.style.maxWidth, now = p.place === lastSide && w === lastWidth;
+      if (!fewestSeen || count < fewestSeen.count || (count === fewestSeen.count && now && !fewestSeen.now)) {
+        fewestSeen = {place: p, count: count, width: w, now: now};
+      }
+    }
     if (fitting.length) {
       var counts = coveredCounts(fitting, boxes), best = fewest(fitting, counts);
       chosen = fitting[best];
-      if (counts[best] > 0) { chosen = shorter(boxes) || chosen; }
+      if (counts[best] > 0) {
+        consider(chosen, counts[best]);
+        chosen = shorter(boxes) || narrower(boxes);
+        if (!chosen) { bubble.style.maxWidth = fewestSeen.width; chosen = fewestSeen.place; }
+      }
     }
     // **Shorter where no place of its height is clear** (R-HELP, the owner's C9 of 2026-11-24:
     // "covers no control, readable, the full reference reachable"; the L8 close, CK8-1: a
@@ -778,7 +795,7 @@ _HELP_JS = r"""
     // control, the bubble takes the tallest place that lies over none, its height capped there
     // (Floating UI's `size`), its text scrolling inside under the scroll cue; never shorter than
     // its head, its lead and two lines after it, so the answer reads whole and more is seen to
-    // follow. None that tall: the place over the fewest, as before.
+    // follow.
     function shorter(boxes) {
       var lead = text.firstElementChild;
       if (!lead || !lead.nextElementSibling) { return null; }
@@ -789,15 +806,40 @@ _HELP_JS = r"""
         var cap = Math.max(least, Math.floor(h)), shown = places(cap);
         if (!shown.length) { continue; }
         var counts = coveredCounts(shown, boxes), best = fewest(shown, counts);
-        if (counts[best] === 0) { shown[best].cap = cap; return shown[best]; }
+        shown[best].cap = cap;
+        if (counts[best] === 0) { return shown[best]; }
+        consider(shown[best], counts[best]);
       }
       return null;
     }
+    // **Then narrower** (the L8 close's final check, F4: configured at 1850 x 960 the pinned
+    // Dataset bubble lay over the run bar's fingerprint facts, Batch size and the Viewing select:
+    // beside a field in a dense bar every place of the bubble's width met a control at any height
+    // down to its least, while one narrower beside the field was clear). Where no place of its
+    // width is clear, the same search at a narrower width, LEAST_W at the least (Floating UI's
+    // `size` reads the width available too): the widest that has a place over no control, its
+    // whole height first, then shorter. None at any width or height: of every place tried, the
+    // one over the fewest controls (`fewestSeen`; at 1850 x 960 the Dataset bubble then lies over
+    // one ⓘ's top, not six controls), the first tried among equals.
+    function narrower(boxes) {
+      var full = bw, tall = bh;
+      for (var w = full - WIDTH_STEP; w > LEAST_W - WIDTH_STEP; w -= WIDTH_STEP) {
+        bubble.style.maxWidth = Math.max(w, LEAST_W) + 'px';
+        bw = bubble.offsetWidth; bh = whole();
+        var at = places(bh), counts = coveredCounts(at, boxes), best = at.length ? fewest(at, counts) : -1;
+        if (best >= 0 && counts[best] === 0) { return at[best]; }
+        if (best >= 0) { consider(at[best], counts[best]); }
+        var found = shorter(boxes);
+        if (found) { return found; }
+      }
+      bubble.style.maxWidth = width + 'px'; bw = full; bh = tall;
+      return null;
+    }
     if (!chosen) {
-      // Narrower beside it, on the side with room for 220 px or more.
+      // Narrower beside it, on the side with room for LEAST_W px or more.
       var roomR = vw - EDGE - f.right - GAP, roomL = f.left - GAP - EDGE;
       var room = Math.max(roomR, roomL);
-      if (room >= 220) {
+      if (room >= LEAST_W) {
         bubble.style.maxWidth = Math.min(width, room) + 'px';
         chosen = at(roomR >= roomL ? 'right' : 'left', bubble.offsetWidth, whole());
       }
@@ -814,6 +856,7 @@ _HELP_JS = r"""
     var cap = chosen.cap ? chosen.cap + 'px' : '';
     if (bubble.style.maxHeight !== cap) { bubble.style.maxHeight = cap; }
     lastSide = chosen.place || chosen.side;
+    lastWidth = bubble.style.maxWidth;
     bubble.style.left = chosen.left + 'px';
     bubble.style.top = Math.max(EDGE, chosen.top) + 'px';
     bubble.classList.toggle('shep-up', chosen.side === 'above');

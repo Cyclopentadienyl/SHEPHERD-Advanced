@@ -4484,6 +4484,45 @@ const QUEUE_JS = __QUEUE_JS__;
     return out;
   }, out.place.height);
   await frames(2);
+  // R-HELP's narrower place (the L8 close's final check, F4): the same phrase at the window's left
+  // edge, a control down the window on its right 250 px past it (closer than a whole bubble's
+  // width, farther than the least), one above it and one under it: no place of the bubble's
+  // width is clear at any height, a narrower one beside the phrase is.
+  out.narrow = await page.evaluate(async () => {
+    const frames = (n) => new Promise((r) => { const f = (k) => k ? requestAnimationFrame(() => f(k - 1)) : r(); f(n); });
+    document.querySelector('gradio-app').style.visibility = 'hidden';
+    const vh = document.documentElement.clientHeight, cy = 300;
+    const scene = document.createElement('div'); scene.id = 'pc-narrow'; document.body.appendChild(scene);
+    const put = (html, css) => { const d = document.createElement('div'); d.innerHTML = html;
+      d.style.cssText = `position: fixed; visibility: visible; ${css}`; scene.appendChild(d); return d; };
+    const phrase = document.querySelector('#pc-place-row button.shep-why').cloneNode(true);
+    phrase.removeAttribute('id'); phrase.setAttribute('data-for', 'pc-narrow-btn');
+    const line = put('', `left: 16px; top: ${cy - 12}px; width: 180px`);
+    line.appendChild(phrase);
+    line.insertAdjacentHTML('beforeend', '<button type="button" id="pc-narrow-btn" disabled>Start</button>');
+    await frames(2);
+    const g = line.getBoundingClientRect();
+    put(`<button type="button" id="pc-narrow-r" style="width: 40px; height: ${vh - 16}px">R</button>`, `left: ${g.right + 250}px; top: 8px`);
+    put(`<button type="button" id="pc-narrow-a" style="width: ${g.width}px">A</button>`, `left: ${g.left}px; top: ${g.top - 60}px`);
+    put(`<button type="button" id="pc-narrow-b" style="width: ${g.width}px">B</button>`, `left: ${g.left}px; top: ${g.bottom + 18}px`);
+    await frames(2);
+    phrase.click(); await frames(8);
+    const q = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+    const bubble = document.getElementById('shep-help-bubble'), b = q(bubble), bd = bubble.querySelector('.shep-bubble-bd');
+    const over = (r) => r[0] + 1 < b[2] && b[0] < r[2] - 1 && r[1] + 1 < b[3] && b[1] < r[3] - 1;
+    const out = { bubble: b, width: b[2] - b[0], line: q(line), shown: !bubble.hidden,
+                  covers: [...scene.querySelectorAll('button')].filter((c) => c !== phrase && over(q(c))).map((c) => c.id),
+                  text: q(bd), lead: q(bd.firstElementChild) };
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await frames(2);
+    // Opened again where a whole-width place is clear, it takes its whole width.
+    scene.querySelector('#pc-narrow-r').parentElement.remove(); await frames(2);
+    phrase.click(); await frames(8);
+    out.again = { width: bubble.getBoundingClientRect().width };
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await frames(2);
+    scene.remove(); document.querySelector('gradio-app').style.visibility = '';
+    return out;
+  });
+  await frames(2);
   // R-WIDTH's button rule: each footer's actions, their widths and their words' widths, and the
   // footer's content box.
   await page.click('#shep-page-finetune-button');
@@ -4670,6 +4709,27 @@ def test_a_bubble_no_place_of_whose_height_is_clear_opens_shorter_where_it_cover
     assert cap["lead"][3] <= cap["text"][3] and cap["cue"], cap                     # its lead whole, the cue
     end = cap["end"]
     assert end["top"] > 0 and end["last"][3] <= end["text"][3] + 1 and not end["cue"], cap
+
+
+def test_a_bubble_no_place_of_whose_width_is_clear_opens_narrower_where_it_covers_no_control(pieces_seen):
+    """R-HELP (the owner's C9 of 2026-11-24: "covers no control, readable, the full reference
+    reachable"; the L8 close's final check, F4): configured at 1850 x 960 the pinned Training
+    "Dataset" bubble lay over the run bar's fingerprint facts, the Batch size field and the
+    Viewing select, because beside a field in a dense bar every place of its width met a control
+    at any height down to its least, and the placement then took the place over the fewest. A
+    phrase at the window's left edge, a control down the window 250 px past it on its right, one
+    above it and one under it: the bubble opens beside the phrase, narrower than its whole width
+    (220 px at the least), over no control, its lead read whole; with that control gone it
+    opens at its whole width again."""
+    narrow = pieces_seen["narrow"]
+
+    def overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    assert narrow["shown"] and narrow["covers"] == [], narrow
+    assert not overlap(narrow["bubble"], narrow["line"]) and narrow["bubble"][0] >= narrow["line"][2], narrow
+    assert 220 - 0.5 <= narrow["width"] < narrow["again"]["width"] - 0.5, narrow
+    assert narrow["lead"][3] <= narrow["text"][3], narrow                          # its lead whole
 
 
 def test_a_button_spans_only_the_one_action_area_no_wider_than_its_fields(pieces_seen):
@@ -5061,6 +5121,11 @@ const LOOK_JS = __LOOK_JS__;
         <div class="rg shep-scroll-cue" data-shep-more id="cue-near" style="height: 82px; width: 200px">
           ${[1, 2, 3, 4, 5].map((i) => `<p style="line-height: 20px; margin-bottom: 9px">Key ${i}: its value</p>`).join('')}</div>
       </div>
+      <div class="shep-panel" id="p9" style="left: 920px; top: 700px; height: 90px; display: flex; gap: 16px">
+        ${[['sliver', 58], ['half', 50]].map(([k, at]) => `<div class="rg" data-shep-more id="cue-${k}" style="height: 64px; width: 200px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent)">
+          <p style="margin: 0; line-height: 20px">Import folder</p><div style="height: ${at - 20}px"></div>
+          <p style="margin: 0; line-height: 19px">Create suggested folder</p><p style="margin: 0; line-height: 19px">Training evidence folders</p></div>`).join('')}
+      </div>
       <div class="shep-panel" id="p7" style="left: 460px; top: 700px; height: 180px">
         <div class="rg shep-scroll-cue" data-shep-more id="cue-boxonly" style="height: 70px"><p>A first line.</p>
           <input type="text" style="display: block; height: 36px"><div style="height: 40px"></div><p>The next field.</p></div>
@@ -5129,7 +5194,10 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     that line whole in the fade's upper half and the blank under it faded, is no cue
     (``#cue-graze``; LOOK5 of the L8 sweep, L8-2 and L8-4: Settings' Runtime settings and Test's
     Run at 1280 x 720 hid whole controls under such a fade, and E1 passed), while a fade that
-    draws its last line out is (``#cue-near``)."""
+    draws its last line out is (``#cue-near``). Nor is a fade over a line the edge cuts that
+    shows less than half of itself above the edge (``#cue-sliver``; the L8 close's final check,
+    F3: first-use Data locations at 1366 x 768 faded the top 6 px of "Create suggested folder"),
+    while one over a line half above it is (``#cue-half``)."""
     found = l7_rules_seen
     assert _hits(found, "inview", "#iv-out") and _hits(found, "inview", "#iv-nobox"), found["inview"]
     assert not _hits(found, "inview", "#iv-in"), found["inview"]
@@ -5168,6 +5236,12 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     # fade that draws its last line out (its foot in the fade's lower half) is a cue.
     assert _hits(found, "cue", "#cue-graze fades its last 32 px over no line of text it fades out"), found["cue"]
     assert not _hits(found, "cue", "#cue-near"), found["cue"]
+    # The L8 close's final check (F3): a fade over a line the edge cuts with only its top 6 px
+    # above it (in the fade's faintest part) draws no words out, the region read as ended
+    # (first-use Data locations at 1366 x 768); with half of it above the edge it is read.
+    assert _hits(found, "cue", '#cue-sliver fades its last 28 px over no line of text it fades out (its last '
+                 'line, "Create suggested folder", shows '), found["cue"]
+    assert not _hits(found, "cue", "#cue-half"), found["cue"]
 
 
 def test_the_clipped_rule_finds_words_a_box_cuts(l7_rules_seen):
@@ -5723,6 +5797,7 @@ const { chromium } = require('playwright');
       <div class="wrap center hidden hide" data-testid="status-tracker"><span class="progress-text">0.1s</span></div>
       <div id="content">A value</div>
     </div>
+    <div id="shep-help-bubble" class="shep-bubble" style="position: fixed; left: 10px; top: 10px"><div class="shep-bubble-bd">Help</div></div>
     <script>
       window.__passes = 0;
       const frame = window.requestAnimationFrame.bind(window);
@@ -5745,6 +5820,11 @@ const { chromium } = require('playwright');
       t.classList.toggle('hide');
     }),
     content: await queued(() => { document.getElementById('content').textContent = 'Another value'; }),
+    bubble: await queued(() => {
+      const b = document.getElementById('shep-help-bubble');
+      b.classList.toggle('shep-at-right'); b.classList.toggle('shep-up');
+      b.querySelector('.shep-bubble-bd').textContent = 'Other help';
+    }),
   };
   console.log(JSON.stringify(out));
   await browser.close();
@@ -5760,7 +5840,10 @@ def test_a_status_trackers_change_lays_nothing_out_again(tmp_path):
     200 ms, the trackers changed about 40 times a second, and a frame never came within the
     walk's ten quiet frames of the next poll (the walk's sample at stop 74 of 79: 13 frames in
     3 s, no request open). A change inside a tracker queues no layout pass; a change of a block's
-    own content still queues one."""
+    own content still queues one. So too the help bubble, fixed over the page (the L8 close's
+    final fix): re-placed on each scroll, a change of its side (its class) laid the page out under
+    a region the reader had scrolled, and the region went back to its top (Training at 1366 x
+    768: "Reset to reference", focused, left under the edge)."""
     from tests.fixtures.browser import node_with_playwright, run_node
 
     if node_with_playwright() is None:
@@ -5770,6 +5853,7 @@ def test_a_status_trackers_change_lays_nothing_out_again(tmp_path):
     seen = run_node(_TRACKER_PASS_JS, tmp_path, str(head), timeout=120)
     assert seen["content"] >= 1, seen
     assert seen["tracker"] == 0, seen
+    assert seen["bubble"] == 0, seen
 
 
 def _walk_coverage(seen: list, state: str) -> list:

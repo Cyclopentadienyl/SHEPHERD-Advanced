@@ -1150,15 +1150,21 @@ _SHELL_JS = r"""
     return e.getClientRects().length > 0
       && (!e.checkVisibility || e.checkVisibility({opacityProperty: true, visibilityProperty: true}));
   }
-  // The lowest text line box drawn in `el` that starts above its edge by a quarter of its height
-  // or more, among the lines that end no higher than `reach` above the edge; null for none. Words
+  // **A line shows above an edge where half its height or more lies above it**: its words can
+  // be read, not a sliver of their tops (the L8 close's final check, F3: at first use at
+  // 1366 x 768 Data locations faded "Create suggested folder", 6 of its 19 px above the edge, in
+  // the fade's faintest part, so the region read as ended over the Training evidence row and
+  // "Where these are kept ›"). The same measure as a control seen (`lineOf`).
+  function shows(q, edge) { return q.top <= edge - Math.max(1, q.height / 2); }
+  // The lowest text line box drawn in `el` that shows above its edge (`shows`), among the lines
+  // that end no higher than `reach` above the edge; null for none. Words
   // kept for a screen reader are no line (UNSAID: LOOK5 of the L8 sweep, Data locations at
   // 1280 x 720, a text box's hidden label straddled the edge, and a fade lay over boxes' tops).
   function lastLine(el, top, edge, reach) {
     var last = null;
     function take(q) {
       if (q.width < 1 || q.height < 1 || q.bottom <= top || q.bottom <= edge - reach
-          || q.top > edge - q.height / 4) { return; }
+          || !shows(q, edge)) { return; }
       if (!last || q.bottom > last.bottom) { last = q; }
     }
     var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), range = document.createRange();
@@ -1225,12 +1231,12 @@ _SHELL_JS = r"""
     }
     return true;
   }
-  // The lowest line drawn in `el` that shows above `edge` (by a quarter of its height or more):
-  // a line box of its words or a field's value line, with its element; null for none.
+  // The lowest line drawn in `el` that shows above `edge` (`shows`): a line box of its words or a
+  // field's value line, with its element; null for none.
   function lowestLine(el, top, edge) {
     var low = null;
     function take(q, p) {
-      if (q.width < 1 || q.height < 1 || q.bottom <= top || q.top >= edge - Math.max(1, q.height / 4)
+      if (q.width < 1 || q.height < 1 || q.bottom <= top || !shows(q, edge)
           || (low && q.top <= low.r.top) || !ownScroll(p, el)) { return; }
       low = {r: q, el: p};
     }
@@ -1309,13 +1315,15 @@ _SHELL_JS = r"""
       at = head;
     }
     if (at < edge || !fadeAt(el, top, edge)) {
-      // A field's box that starts in that gap (under every line still shown) goes under the edge
-      // whole: no box's top is left over it (a block's own background hid the edge cue's shadow).
-      // So too where the edge itself falls in a gap, no line faded out over it (`fadeAt`; LOOK5
-      // of the L8 sweep: Test's Deterministic box started 12 px over the Run region's edge at
-      // 1280 x 720 and hid half its edge cue).
+      // A field's box, or a control's, that starts in that gap (under every line still shown)
+      // goes under the edge whole: no box's top is left over it (a block's own background hid the
+      // edge cue's shadow). So too where the edge itself falls in a gap, no line faded out over it
+      // (`fadeAt`; LOOK5 of the L8 sweep: Test's Deterministic box started 12 px over the Run
+      // region's edge at 1280 x 720 and hid half its edge cue; the L8 close's final check, F3:
+      // first-use Data locations at 1366 x 768 kept the top of "Create suggested folder", a
+      // button in a row, over its edge cue).
       var low = lowestLine(el, top, at), floor = low ? low.r.bottom : top;
-      var boxes = el.querySelectorAll('.block');
+      var boxes = el.querySelectorAll('.block, ' + CONTROLS);
       for (var b = 0; b < boxes.length; b++) {
         var q = boxes[b].getBoundingClientRect();
         if (q.top >= floor && q.top < at && q.bottom > at) { at = q.top; }
@@ -1644,12 +1652,16 @@ _SHELL_JS = r"""
   // changes on every event sent, a timer's poll included: its own nodes lay nothing out, so a
   // change inside one never lays the page out again (the L8 close: every timer poll laid the
   // whole page out, a frame grew to 200 ms once every page was drawn, and the page never rested).
-  var TRACKER = '[data-testid="status-tracker"]';
+  // So too the help bubble, fixed over the page: a change of its side (its class) laid the page
+  // out again under a region the reader had scrolled, and the region went back to its top (the
+  // L8 close's final fix: Training at 1366 x 768, a ⓘ's preview re-placed as Parameters scrolled
+  // to "Reset to reference", the focused Reset left under the edge).
+  var LAYS_NOTHING = '[data-testid="status-tracker"], #shep-help-bubble';
   function laysOut(records) {
     for (var i = 0; i < records.length; i++) {
       var t = records[i].target;
       var el = t && t.nodeType === 1 ? t : (t ? t.parentElement : null);
-      if (!el || !el.closest(TRACKER)) { return true; }
+      if (!el || !el.closest(LAYS_NOTHING)) { return true; }
     }
     return false;
   }

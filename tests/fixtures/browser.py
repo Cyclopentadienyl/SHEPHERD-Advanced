@@ -729,13 +729,14 @@ LOOK_JS = r"""
        content runs past its edge, below it with no scroll cue (the shared R-73 cue,
        ``shep-scroll-cue``: a mask drawn while more is below, or R-CUE's edge cue,
        ``data-shep-more-edge``, where the edge falls in a gap), or with a fade that lies over no
-       line of text it fades out (a gap, a box's border, a graphic's blank, or a line whose foot
-       lies in the fade's upper half, left whole: R-CUE, the owner's D4 of 2026-11-24), sideways
+       line of text it fades out (a gap, a box's border, a graphic's blank, a line whose foot
+       lies in the fade's upper half, left whole, or one cut by the edge with less than half its
+       height above it, a sliver: R-CUE, the owner's D4 of 2026-11-24), sideways
        with no sideways cue (a mask, or the drawn cue just before it,
        Compare's ``shep-rs-cue``); what runs past a nested region is that region's own;
-     - edgeHead (R-CUE): a scroll region whose last line in view is a heading or a field's label
-       while all of its controls lie under the edge (a control seen by its value line where it
-       holds one, else by its box, half of it above the edge);
+     - edgeHead (R-CUE): a scroll region whose last line in view (half of it above the edge) is a
+       heading or a field's label while all of its controls lie under the edge (a control seen by
+       its value line where it holds one, else by its box, half of it above the edge);
      - clipped (text): a text line cut by an ancestor that hides its overflow in that axis (no
        scroll region of that axis between them), a cut to an ellipsis included unless the whole
        words are its ``title``;
@@ -895,31 +896,38 @@ LOOK_JS = r"""
         // sweep's L7 check, C1, before it): the fade (its length read from the region's own mask)
         // over a gap between fields, a box's lower border or a graphic's blank reads as nothing,
         // the next field under the edge unseen. A line of words or a field's value line drawn in
-        // the fade by a quarter of its own height or more shows it, where the fade draws it out:
+        // the fade by a quarter of its own height or more, and shown above the edge by half of it
+        // (its words read, not a sliver of their tops), shows it, where the fade draws it out:
         // its foot in the fade's lower half or under the edge (LOOK5 of the L8 sweep, L8-2 and
         // L8-4: a 32 px fade whose top 10 px met a title 22 px over the edge left the title whole
-        // and faded only blank, Settings' torch.compile and Test's last rows hidden under it).
+        // and faded only blank, Settings' torch.compile and Test's last rows hidden under it; the
+        // L8 close's final check, F3: at first use at 1366 x 768 Data locations' 28 px fade lay
+        // over the top 6 px of "Create suggested folder", the region read as ended).
         const m = /calc\(100% - ([\d.]+)px\)/.exec(String(getComputedStyle(g).maskImage || getComputedStyle(g).webkitMaskImage));
         const fade = m ? parseFloat(m[1]) : 0, top = box.bottom - fade;
         const into = (r) => Math.min(r.bottom, box.bottom) - Math.max(r.top, top);
+        const shown = (r) => r.top <= box.bottom - Math.max(1, r.height / 2);
         const inFade = lines.filter((it) => g.contains(it.el) && scroller(it.el, 'y') === g && into(it.r) >= past(it.r));
-        const seen = inFade.some((it) => it.r.bottom >= box.bottom - fade / 2);
+        const seen = inFade.some((it) => shown(it.r) && it.r.bottom >= box.bottom - fade / 2);
         if (fade > 0 && !seen) {
           const last = inFade.reduce((a, b) => (!a || b.r.bottom > a.r.bottom ? b : a), null);
-          out.cue.push(`${named(g)} fades its last ${Math.round(fade)} px over no line of text${last
+          const why = !last ? '' : shown(last.r)
             ? ` it fades out (its last line ends ${Math.round(box.bottom - last.r.bottom)} px over the edge, in the `
-              + `fade's upper half)` : ''}: what lies under its edge starts ${Math.round(below[0].r.top - box.bottom)} px `
-            + `below it, no cue seen (first: "${clip(below[0].t, 30)}")`);
+              + `fade's upper half)`
+            : ` it fades out (its last line, "${clip(last.t, 30)}", shows ${Math.round(box.bottom - last.r.top)} of its `
+              + `${Math.round(last.r.height)} px above the edge)`;
+          out.cue.push(`${named(g)} fades its last ${Math.round(fade)} px over no line of text${why}: what lies `
+            + `under its edge starts ${Math.round(below[0].r.top - box.bottom)} px below it, no cue seen `
+            + `(first: "${clip(below[0].t, 30)}")`);
         }
       }
       // edgeHead (R-CUE): the last line in view is a heading or a field's label while everything
       // it heads (its controls: a field's own, a heading's up to the next heading) lies under the
       // edge, so the region seems to end at a title.
       if (sy && below.length) {
-        // A field's value line is shown by half of it, as a control is seen (`seenAt`).
+        // A line is shown by half of it, as a control is seen (`seenAt`; the shell's `shows`).
         const shownLines = lines.filter((it) => g.contains(it.el) && scroller(it.el, 'y') === g
-          && it.r.top < box.bottom - (ctl.includes(it.el) ? Math.max(1, it.r.height / 2) : past(it.r))
-          && it.r.bottom > box.top);
+          && it.r.top <= box.bottom - Math.max(1, it.r.height / 2) && it.r.bottom > box.top);
         const lastShown = shownLines.reduce((a, b) => (!a || b.r.top > a.r.top ? b : a), null);
         const head = lastShown && lastShown.el.closest(HEADS);
         if (head && g.contains(head)) {
@@ -1896,7 +1904,8 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
     - ``scroll-cue``: a scroll region whose drawn content runs past its edge with no cue: below
       it, no R-73 scroll cue (``shep-scroll-cue``'s mask, or R-CUE's edge cue where the edge
       falls in a gap) or a fade over no line of text it fades out (a gap, a box's border, a
-      graphic's blank, a line whose foot lies in the fade's upper half);
+      graphic's blank, a line whose foot lies in the fade's upper half, a line the edge cuts with
+      less than half of it above the edge);
       sideways, no mask and no drawn cue just before it (Compare's ``shep-rs-cue``): a table
       wider than its panel, its cells cut;
     - ``edge-heading`` (R-CUE, the owner's D4 of 2026-11-24): a scroll region whose last line in

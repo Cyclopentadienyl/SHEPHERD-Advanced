@@ -1690,6 +1690,83 @@ def test_a_set_rows_change_shares_the_line_its_facts_end_on(dl, tmp_path, monkey
     assert not problems, "\n".join(problems)
 
 
+#: Settings left for Diagnosis and opened again, each set row read as it stood before (settled)
+#: and at each of the first eight frames of the new open: drawn or not, its mark
+#: (`__BESIDE__`), its height and where its Change… stands in it.
+_REOPEN_JS = """async () => {
+  const read = () => [...document.querySelectorAll('.shep-dl-row')]
+    .filter((row) => row.querySelector('button.shep-dl-change'))
+    .map((row) => { const drawn = row.getClientRects().length > 0, r = row.getBoundingClientRect();
+      return { id: row.id, drawn, beside: row.hasAttribute('__BESIDE__'), height: drawn ? r.height : null,
+               change: drawn ? row.querySelector('button.shep-dl-change').getBoundingClientRect().top - r.top : null }; });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const before = read();
+  document.querySelector('#shep-tab-clinical-button').click();
+  for (let i = 0; i < 250 && document.querySelector('.shep-dl-row').getClientRects().length; i++) { await wait(20); }
+  await wait(600);
+  const hidden = read();
+  const frames = await new Promise((done) => {
+    const out = []; let n = 0;
+    const tick = () => { out.push(read()); if (++n < 8) { requestAnimationFrame(tick); } else { done(out); } };
+    document.querySelector('#shep-tab-settings-button').click();
+    requestAnimationFrame(tick);
+  });
+  return { before, hidden, frames };
+}"""
+
+
+@pytest.mark.parametrize("operator", [True, False], ids=["operator", "read-only"])
+def test_settings_opened_again_paints_the_set_rows_as_they_were_from_the_first_frame(
+        dl, tmp_path, monkeypatch, operator):
+    """DL-2 (the L8 close's final check, F1): while Settings was hidden each set row's mark (its
+    facts beside its name, its Change… on the line of "Advanced: source ›") was dropped, as a row
+    not drawn measured as not beside, and put back a frame after the row was drawn again, so on
+    every open of Settings the rows were painted twice in the stacked arrangement and then
+    jumped (30 px for an operator, 43 px read-only, at the owner's window). A row not drawn keeps
+    its mark: every frame of the new open shows each set row as it stood before Settings was
+    left (its mark, height and Change…'s place). Fails on bdc18b8: frames 0 and 1 unmarked."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import node_with_playwright, walk_ui
+    from tests.fixtures.operator_access import DEPLOYMENT_MODE
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    monkeypatch.setenv(ENV_SETTINGS_FILE, str(tmp_path / "settings.json"))
+    folders = {key: tmp_path / "data-locations" / key for key in KEYS}
+    for folder in folders.values():
+        folder.mkdir(parents=True, mode=0o700)
+    for key in ("workspaces_root", "registry"):
+        monkeypatch.setenv(ENV[key], str(folders[key]))
+    request = operator_request(monkeypatch)
+    for key in ("intake_dir", "training_evidence_dirs"):
+        _parts(dl, dl._on_save(key, str(folders[key]), request))
+    if not operator:
+        monkeypatch.delenv(DEPLOYMENT_MODE)
+    stops = [{"size": [1850, 960], "page": "settings", "focus": False}]
+    with served(create_gradio_app(), **mount_options()) as base:
+        (stop,) = walk_ui(base[:-len("gradio_api")], tmp_path, stops,
+                          extra_js=_REOPEN_JS.replace("__BESIDE__", dl.BESIDE))
+    seen = stop["extra"]
+    before = {row["id"]: row for row in seen["before"]}
+    # The owner's window: the set rows' facts beside their names, Change… on Advanced's line.
+    assert len(before) == len(KEYS) and any(row["beside"] for row in before.values()), seen["before"]
+    assert not any(row["drawn"] for row in seen["hidden"]), seen["hidden"]
+    problems = []
+    for n, frame in enumerate(seen["frames"]):
+        for row in frame:
+            if not row["drawn"]:
+                continue
+            was = before[row["id"]]
+            if (row["beside"] != was["beside"] or abs(row["height"] - was["height"]) > 0.5
+                    or abs(row["change"] - was["change"]) > 0.5):
+                problems.append(f"frame {n} {row['id']}: beside {row['beside']}, {row['height']:.0f} px tall, "
+                                f"Change… at {row['change']:.0f} (before: {was['beside']}, "
+                                f"{was['height']:.0f} px, {was['change']:.0f})")
+    assert any(row["drawn"] for frame in seen["frames"] for row in frame), seen["frames"]
+    assert not problems, "\n".join(problems)
+
+
 def test_the_settings_help_texts_meet_the_text_budget():
     """The UI sweep of 2026-11-22 (the text brief's §11): Settings' two help
     texts (Runtime settings' allocator and torch.compile) ran over the text
