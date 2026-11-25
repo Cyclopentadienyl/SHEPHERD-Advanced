@@ -1264,9 +1264,22 @@ _SHELL_JS = r"""
     }
     if (!own.length) { return null; }
     for (var k = 0; k < own.length; k++) {
-      if (own[k].getBoundingClientRect().top < edge - 1) { return null; }
+      var q = lineOf(own[k]);
+      if (q.top < edge - Math.max(1, q.height / 4)) { return null; }
     }
     return Math.min(head.getBoundingClientRect().top, low.r.top);
+  }
+  // What of a control must show for it to be seen (the L8 close, CK8-2: Diagnosis' Top-K box
+  // showed its top border, 10 px, under the fade, its value and its label under the edge, and
+  // counted as in view): a field's value line where it holds a value or a placeholder (its
+  // content box), else its box, by a quarter of its height, as a line of words is.
+  function lineOf(c) {
+    var r = c.getBoundingClientRect();
+    if (!c.matches(VALUES) || !(c.value || c.placeholder)) { return r; }
+    var s = getComputedStyle(c);
+    var above = (parseFloat(s.paddingTop) || 0) + (parseFloat(s.borderTopWidth) || 0);
+    var below = (parseFloat(s.paddingBottom) || 0) + (parseFloat(s.borderBottomWidth) || 0);
+    return {top: r.top + above, bottom: r.bottom - below, height: r.height - above - below};
   }
   // How far `el`'s foot gives way (px) for it to end in the gap above a lone title, read whole
   // (its current cut added back): 0 for none.

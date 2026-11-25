@@ -3435,7 +3435,7 @@ const { chromium } = require('playwright');
 (async () => {
   const [css, js, look] = [process.argv[2], process.argv[3], process.argv[4]].map((p) => require('fs').readFileSync(p, 'utf8'));
   const browser = await chromium.launch();
-  const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
+  const page = await (await browser.newContext({ viewport: { width: 1200, height: 1000 } })).newPage();
   const lines = (n) => Array.from({ length: n }, (_, i) => `<p class="lt-line" style="margin: 0; line-height: 20px">Line ${i} of the form.</p>`).join('');
   const panel = (id, left, top, body, footer = true) => `
     <div class="lt-panel" id="${id}-panel" style="position: absolute; left: ${left}px; top: ${top}px; width: 520px; height: 300px; display: flex; flex-direction: column; background: #fff">
@@ -3447,6 +3447,7 @@ const { chromium } = require('playwright');
     ${panel('lt-head', 600, 20, lines(9) + '<h3 class="lt-title" style="margin: 20px 0 0; line-height: 24px">Import folder</h3><div style="margin-top: 16px"><button type="button">Change…</button> <button type="button">Check</button></div>' + lines(10))}
     ${panel('lt-nested', 20, 360, lines(8) + '<h3 style="margin: 20px 0 0; line-height: 24px">Run</h3>' + field('Run name') + lines(10))}
     ${panel('lt-fixed', 600, 360, lines(10) + field('Seed') + lines(10), false)}
+    ${panel('lt-boxtop', 20, 680, lines(9) + '<h3 style="margin: 20px 0 0; line-height: 24px">Options</h3><input type="number" value="10" style="display: block; margin-top: 5px; box-sizing: border-box; height: 34px; padding: 4px 8px; border: 1px solid #999">' + lines(10))}
     <script>${js}</script></body></html>`);
   const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const pass = async () => { await page.evaluate(() => window.ShepShell.update()); await frames(); await frames(); };
@@ -3465,7 +3466,7 @@ const { chromium } = require('playwright');
              lineAbove: before.getBoundingClientRect().bottom <= edge + 0.5,
              footDocked: Math.abs(ft.bottom - panel.bottom) <= 1 };
   }, id);
-  const ids = ['lt-label', 'lt-head', 'lt-nested', 'lt-fixed'], out = {};
+  const ids = ['lt-label', 'lt-head', 'lt-nested', 'lt-fixed', 'lt-boxtop'], out = {};
   for (const id of ids) { out[id] = await read(id); }
   // Scrolled, the region keeps its height; back at its top, the same.
   for (const id of ids) {
@@ -3494,7 +3495,9 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
     it stays in view, the region draws the edge cue (no fade over the gap), the footer under it
     stays at its panel's foot, and the walk's ``edge-heading`` and ``scroll-cue`` rules find
     nothing. A heading whose only control is a field under it goes under the edge with that
-    field's label. Scrolled, the region keeps its height. A region of its own fixed height (its
+    field's label. A heading whose field shows only its box's top border over the edge (its value
+    line under it) is a lone title too (the L8 close, CK8-2: Diagnosis' Options over Top-K at
+    1280 x 720). Scrolled, the region keeps its height. A region of its own fixed height (its
     height is not its column's to give) is left as it is. Measured in a browser on a page of its
     own (Node and Playwright, skipped without)."""
     from src.webui.style import SHELL_CSS
@@ -3507,7 +3510,7 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
     js_path.write_text(_page_shell_js(), encoding="utf-8")
     look_path.write_text(LOOK_JS, encoding="utf-8")
     seen = run_node(_LONE_TITLE_JS, tmp_path, str(css_path), str(js_path), str(look_path))
-    for region in ("lt-label", "lt-head", "lt-nested"):
+    for region in ("lt-label", "lt-head", "lt-nested", "lt-boxtop"):
         got = seen[region]
         assert got["more"] and got["titlesUnder"] and got["lineAbove"], (region, got)
         assert got["edgeCue"] and not got["mask"], (region, got)
@@ -5021,6 +5024,9 @@ const LOOK_JS = __LOOK_JS__;
         <div class="rg shep-scroll-cue" data-shep-more id="cue-lonehead" style="height: 60px"><p>A first line.</p>
           <div style="height: 16px"></div><div class="block"><span data-testid="block-info" style="display: block; margin-bottom: 10px">Split seed</span>
           <input type="text" style="display: block; height: 36px"></div></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-headtop" style="height: 58px"><p style="margin: 0; line-height: 20px">A first line.</p>
+          <h3 style="margin: 4px 0; line-height: 20px; font-size: 15px">Options</h3>
+          <input type="number" value="10" style="display: block; box-sizing: border-box; height: 34px; padding: 4px 8px; border: 1px solid #999"></div>
       </div>
       <div class="shep-panel" id="p6" style="left: 920px; top: 500px; height: 180px">
         <div class="sw" id="rh-bad"><table style="width: 520px; table-layout: fixed"><colgroup><col style="width: 150px"><col style="width: 150px"><col style="width: 220px"></colgroup>
@@ -5074,7 +5080,9 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     words in one are judged, not taken as hidden for a screen reader or held by a region. Since
     R-CUE (the owner's D4 of 2026-11-24) a fade is a cue only over a line of text (``#cue-boxonly``:
     over a box's lower border and a gap, it was seen), and a region whose last line in view is a
-    field's label with its control under the edge is found (``#cue-lonehead``, ``edge-heading``)."""
+    field's label with its control under the edge is found (``#cue-lonehead``, ``edge-heading``),
+    and so is one whose last line is a heading over a field that shows only its box's top border
+    (``#cue-headtop``; the L8 close, CK8-2)."""
     found = l7_rules_seen
     assert _hits(found, "inview", "#iv-out") and _hits(found, "inview", "#iv-nobox"), found["inview"]
     assert not _hits(found, "inview", "#iv-in"), found["inview"]
@@ -5104,6 +5112,10 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     assert _hits(found, "edgeHead", '#cue-lonehead ends in view at the label "Split seed"'), found["edgeHead"]
     assert not _hits(found, "cue", "#cue-lonehead"), found["cue"]
     assert not _hits(found, "edgeHead", "#cue-good") and not _hits(found, "edgeHead", "#cue-boxonly"), found["edgeHead"]
+    # The L8 close (CK8-2): a heading whose one field shows only its box's top border under the
+    # edge (its value line under it) ends the region at a title too (Diagnosis' Options over
+    # Top-K at 1280 x 720).
+    assert _hits(found, "edgeHead", '#cue-headtop ends in view at the heading "Options"'), found["edgeHead"]
 
 
 def test_the_clipped_rule_finds_words_a_box_cuts(l7_rules_seen):
@@ -5591,6 +5603,57 @@ def test_every_page_of_every_state_has_no_layout_finding(state, request):
     # and (configured) the Load drawer with a row chosen at each of its sizes.
     assert _walk_coverage(seen, state) == []
     assert layout_problems(seen) == []
+
+
+#: The L8 close (CK8-2): Diagnosis' Options title, its scroll region's edge, and whether the title
+#: and each of its controls (Top-K's value line, Explanations' box) shows above that edge by a
+#: quarter of its height.
+_OPTIONS_EDGE_JS = r"""() => {
+  const title = document.querySelector('#shep-dx-options-label .shep-dx-opt');
+  if (!title || !title.getClientRects().length) { return null; }
+  let g = title.parentElement;
+  while (g && g !== document.body && !(/(auto|scroll)/.test(getComputedStyle(g).overflowY)
+         && g.scrollHeight > g.clientHeight + 1)) { g = g.parentElement; }
+  if (!g || g === document.body) { return { region: null }; }
+  const r = g.getBoundingClientRect(), edge = r.top + g.clientTop + g.clientHeight;
+  const range = document.createRange(); range.selectNodeContents(title);
+  const t = [...range.getClientRects()].filter((q) => q.width > 0).pop();
+  const shown = (q) => q.top < edge - Math.max(1, q.height / 4);
+  const line = (c) => {
+    const q = c.getBoundingClientRect();
+    if (c.type !== 'number' && c.type !== 'text') { return q; }
+    const s = getComputedStyle(c), a = parseFloat(s.paddingTop) + parseFloat(s.borderTopWidth);
+    const b = parseFloat(s.paddingBottom) + parseFloat(s.borderBottomWidth);
+    return { top: q.top + a, height: q.height - a - b };
+  };
+  const controls = ['#dx_top_k input', '#dx_explanations input'].map((sel) => document.querySelector(sel))
+    .filter((c) => c && c.getClientRects().length && c.getBoundingClientRect().width > 0);
+  return { region: g.id || g.className, edge, title: [t.top, t.bottom], titleShown: shown(t),
+           controls: controls.map((c) => ({ id: c.closest('[id]').id, shown: shown(line(c)) })) };
+}"""
+
+
+def test_diagnosis_options_title_never_ends_its_column_alone(tmp_path):
+    """**D4 on Diagnosis' Options** (the owner's D4 of 2026-11-24: "never show only a section
+    title with every control under the edge"; the L8 close, CK8-2): at first use at 1366 x 768
+    the Patient phenotypes column ended at its Options title, cut through its middle and faded,
+    Top-K and Explanations under the edge, and neither the walk's ``edge-heading`` rule nor the
+    shell's recut saw it: the title was a bare span, not a heading. Drawn as a heading, the
+    column ends in the gap above it. At first use at 1366 x 768, 1280 x 720 and 1280 x 640 the
+    Options title is never shown above its column's edge while every one of its controls lies
+    under it (a control seen by its value line, a quarter of it above the edge)."""
+    from tests.fixtures.browser import layout_stops, node_with_playwright, walk_state
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    sizes = ((1366, 768), (1280, 720), (1280, 640))
+    seen = walk_state("first_use", tmp_path, layout_stops(("clinical",), sizes), extra_js=_OPTIONS_EDGE_JS)
+    got = {stop["size"]: stop["extra"] for stop in seen}
+    assert got["1366x768"] and got["1366x768"]["region"], got            # the column scrolls there
+    for size, at in got.items():
+        if not at or not at["region"] or not at["controls"]:
+            continue
+        assert not (at["titleShown"] and not any(c["shown"] for c in at["controls"])), (size, at)
 
 
 #: The L8 close, item 6: how many layout passes a change queues (the shell's script, as the

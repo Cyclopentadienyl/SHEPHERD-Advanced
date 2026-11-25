@@ -3746,10 +3746,14 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                                       info=FIELD_INFO["dx_patient_id"],
                                                       max_lines=1, elem_id="dx_patient_id")
                         # Drawn as rows of key, ⓘ and control: the help keeps each
-                        # control after its ⓘ in the page (`help.KEY_FIRST_CLASS`).
+                        # control after its ⓘ in the page (`help.KEY_FIRST_CLASS`). Its
+                        # title is a heading, as every group's is, so a region never ends at
+                        # it alone (the shell's R-CUE reads titles by that role; the L8
+                        # close, CK8-2: drawn as a bare span, the column ended at it with
+                        # Top-K and Explanations under its edge).
                         with gr.Row(elem_id="shep-dx-options",
                                     elem_classes=["shep-dx-options", KEY_FIRST_CLASS]):
-                            plain_html('<span class="shep-dx-opt">Options</span>',
+                            plain_html('<h3 class="shep-dx-opt">Options</h3>',
                                        elem_id="shep-dx-options-label")
                             top_k_input = gr.Number(label="Top-K", value=10, minimum=1,
                                                     maximum=20, step=1, precision=0,
@@ -4369,7 +4373,8 @@ PAGE_CSS = f"""
 {_TAB} :is(#dx_top_k, #dx_explanations) label > :is(span, [data-testid="block-info"]) {{ grid-column: 1; grid-row: 1; margin: 0 !important; }}
 {_TAB} :is(#dx_top_k, #dx_explanations) label > button.shep-i {{ grid-column: 2; grid-row: 1; }}
 {_TAB} :is(#dx_top_k, #dx_explanations) label > input {{ grid-column: 3; grid-row: 1; justify-self: start; margin: 0; }}
-{_TAB} .shep-dx-opt {{ font-size: var(--shep-label-size); font-weight: var(--shep-label-weight); color: var(--shep-label-color); }}
+{_TAB} .shep-dx-opt {{ margin: 0 !important; font-size: var(--shep-label-size); font-weight: var(--shep-label-weight);
+  color: var(--shep-label-color); line-height: inherit; letter-spacing: inherit; }}
 /* Top-K's box holds a value of up to two digits with room to type it, as every text box does
    (the walk's floor: ten widths of "0" in its own type, `ch`), beside its spin arrows. */
 {_TAB} #dx_top_k input[type=number] {{ width: calc(11ch + 16px); }}

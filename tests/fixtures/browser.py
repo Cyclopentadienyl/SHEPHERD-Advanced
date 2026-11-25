@@ -733,7 +733,8 @@ LOOK_JS = r"""
        2026-11-24), sideways with no sideways cue (a mask, or the drawn cue just before it,
        Compare's ``shep-rs-cue``); what runs past a nested region is that region's own;
      - edgeHead (R-CUE): a scroll region whose last line in view is a heading or a field's label
-       while all of its controls lie under the edge;
+       while all of its controls lie under the edge (a control seen by its value line where it
+       holds one, else by its box, a quarter of it above the edge);
      - clipped (text): a text line cut by an ancestor that hides its overflow in that axis (no
        scroll region of that axis between them), a cut to an ellipsis included unless the whole
        words are its ``title``;
@@ -920,7 +921,12 @@ LOOK_JS = r"""
           const own = ctl.filter((c) => !c.matches('.shep-i, .shep-copy, .shep-help, button.shep-why')
             && (field ? field.contains(c) : ((head.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING)
               && !head.contains(c) && (!next || (c.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING)))));
-          if (own.length && own.every((c) => c.getBoundingClientRect().top >= box.bottom - 1)) {
+          // A control is seen by its value line where it holds one (its content box), else by
+          // its box, a quarter of it above the edge (the L8 close, CK8-2: Top-K's box showed its
+          // top border under the fade, its value and its label under the edge).
+          const seenAt = (c) => { const q = valueLine(c) || c.getBoundingClientRect();
+            return q.top < box.bottom - past(q); };
+          if (own.length && !own.some(seenAt)) {
             out.edgeHead.push(`${named(g)} ends in view at ${field ? 'the label' : 'the heading'} "${clip(lastShown.t, 30)}" `
               + `(${named(head)}), its ${own.length} control${own.length > 1 ? 's' : ''} all under the edge `
               + `(first: ${named(own[0])})`);
@@ -1862,7 +1868,9 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       sideways, no mask and no drawn cue just before it (Compare's ``shep-rs-cue``): a table
       wider than its panel, its cells cut;
     - ``edge-heading`` (R-CUE, the owner's D4 of 2026-11-24): a scroll region whose last line in
-      view is a heading or a field's label while all of its controls lie under the edge;
+      view is a heading or a field's label while all of its controls lie under the edge (a
+      control seen by its value line where it holds one, else by its box, a quarter of it above
+      the edge: a box's top border under the fade is no control seen);
     - ``reason-repeat`` (R-WHY, the owner's D6 of 2026-11-24; it extends ``notice-repeat``, which
       it reports when both are asked): a cause's whole reason said more than once on one screen,
       a notice by its key, D8's refusal by the header chip (``data-reason="d8"``) and every block
