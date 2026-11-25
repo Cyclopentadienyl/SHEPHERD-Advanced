@@ -86,7 +86,10 @@ into one hidden container (`HelpRegistry.texts_html`), and the one head script
   after its ⓘ in the page too (Gradio puts a checkbox's box before its
   words), so focus and a screen reader meet them in the order drawn (WCAG
   2.4.3, 1.3.2);
-- shows "Esc to close" only on a pinned bubble (a dialog); a preview has none.
+- closes by one control at the right end of its head, beside its title: the
+  ×, and on a pinned bubble (a dialog) the framed Esc keycap beside it, both
+  one button (``aria-keyshortcuts="Escape"``); a preview shows the × alone.
+  No row under the text says it: that room is the text's.
 
 The same script copies a full value from a ``button.shep-copy`` (``data-copy``)
 to the clipboard: the shared renderers show 12 hex digits and copy all 64.
@@ -516,15 +519,20 @@ _HELP_JS = r"""
     var hd = document.createElement('div'); hd.className = 'shep-bubble-hd';
     var title = document.createElement('span'); title.className = 'shep-bubble-title';
     title.id = 'shep-help-bubble-title';
+    // One close control at the head's right end (the owner, 2026-11-25): the framed Esc
+    // keycap (a pinned bubble's, `setRole`) beside the ×, both in one button, so a click on
+    // either part closes. The keycap is drawn, not read: the button's name says what it
+    // does and aria-keyshortcuts names its key.
     var x = document.createElement('button');
     x.type = 'button'; x.className = 'shep-bubble-x'; x.tabIndex = -1;
-    x.setAttribute('aria-label', 'Close help'); x.textContent = '×';
+    x.setAttribute('aria-label', 'Close help'); x.setAttribute('aria-keyshortcuts', 'Escape');
+    var kbd = document.createElement('span'); kbd.className = 'shep-kbd'; kbd.textContent = 'Esc';
+    kbd.setAttribute('aria-hidden', 'true');
+    var mark = document.createElement('span'); mark.className = 'shep-bubble-x-mark'; mark.textContent = '×';
+    x.appendChild(kbd); x.appendChild(mark);
     hd.appendChild(title); hd.appendChild(x);
     var bd = document.createElement('div'); bd.className = 'shep-bubble-bd';
-    var ft = document.createElement('div'); ft.className = 'shep-bubble-ft';
-    var kbd = document.createElement('span'); kbd.className = 'shep-kbd'; kbd.textContent = 'Esc';
-    ft.appendChild(kbd); ft.appendChild(document.createTextNode(' to close'));
-    bubble.appendChild(hd); bubble.appendChild(bd); bubble.appendChild(ft);
+    bubble.appendChild(hd); bubble.appendChild(bd);
     // The reader's pointer moving in the bubble keeps it (to read on). A
     // bubble that came under a resting pointer (it follows its ⓘ when the
     // page scrolls) gets a "mouseenter" from the browser but no "mousemove":
@@ -823,8 +831,8 @@ _HELP_JS = r"""
   function setRole() {
     if (!bubble) { return; }
     bubble.setAttribute('role', pinned ? 'dialog' : 'tooltip');
-    // "Esc to close" is a pinned bubble's: a preview closes as the pointer leaves.
-    bubble.querySelector('.shep-bubble-ft').hidden = !pinned;
+    // The Esc keycap beside the × is a pinned bubble's: a preview closes as the pointer leaves.
+    bubble.querySelector('.shep-bubble-x > .shep-kbd').hidden = !pinned;
     if (pinned) { bubble.setAttribute('aria-labelledby', 'shep-help-bubble-title'); }
     else { bubble.removeAttribute('aria-labelledby'); }
   }
@@ -1131,11 +1139,23 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
 .shep-bubble.shep-up::before { top: auto; bottom: -7px; transform: rotate(225deg); }
 .shep-bubble.shep-at-right::before { top: var(--shep-ay, 18px); left: -7px; transform: rotate(-45deg); }
 .shep-bubble.shep-at-left::before { top: var(--shep-ay, 18px); left: auto; right: -7px; transform: rotate(135deg); }
-.shep-bubble-hd { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 4px; }
+.shep-bubble-hd { display: flex; align-items: flex-start; gap: 8px; font-weight: 600; margin-bottom: 4px; flex: none; }
+/* The title wraps beside the close control, never under or behind it. */
+.shep-bubble-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+/* The one close control (the owner, 2026-11-25): the Esc keycap, pinned only, beside the ×,
+   one button. Its 26 px box is centred on the title's first line (a 15 px line of 1.45: its
+   margins give back the 2 px it stands over the line at each edge); the × keeps its 26 px
+   square, so a preview's control is the × alone as before. */
 .shep-bubble-x {
-  margin-left: auto; width: 26px; height: 26px; border: 0; background: none; color: var(--shep-muted);
-  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 20px; cursor: pointer;
+  flex: none; display: inline-flex; align-items: center; height: 26px; min-width: 26px; margin: -2px 0;
+  padding: 0; border: 0; border-radius: 6px; background: none; color: var(--shep-muted);
+  font-size: 20px; font-weight: 400; cursor: pointer;
 }
+.shep-bubble-x-mark { width: 26px; text-align: center; }
+.shep-bubble-x > .shep-kbd { margin-left: 4px; }
+.shep-bubble-x > .shep-kbd[hidden] { display: none; }
+.shep-bubble-x:hover { background: var(--shep-panel-2); color: var(--shep-text); }
+.shep-bubble-x:focus-visible { outline: 2px solid var(--shep-accent); outline-offset: 0; }
 .shep-bubble-bd { overflow-wrap: anywhere; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
 /* Every part starts at no margin (one weight with the rule below, which comes later, so the
    space between parts is the text tokens' and nothing else's). */
@@ -1151,9 +1171,7 @@ button.shep-i:focus-visible { outline: 2px solid var(--shep-accent); outline-off
 .shep-bubble-list > li::marker { color: var(--shep-muted); }
 .shep-bubble-list > li + li { margin-top: var(--shep-space-item, 4px); }
 .shep-bubble-bd > .shep-bubble-ref { font-size: 14px; color: var(--shep-muted); }
-.shep-bubble-hd, .shep-bubble-ft { flex: none; }
-.shep-bubble-ft[hidden] { display: none; }
-.shep-bubble-ft { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--shep-border); font-size: 14px; color: var(--shep-muted); }
+/* A keyboard key, framed (the close control's Esc). */
 .shep-kbd {
   display: inline-block; font-size: 14px; padding: 0 6px; border: 1px solid var(--shep-border-2);
   border-bottom-width: 2px; border-radius: 5px; background: var(--shep-panel-2); color: var(--shep-text-2); line-height: 20px;

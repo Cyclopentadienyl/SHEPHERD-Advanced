@@ -21,8 +21,10 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   ``textContent`` and is given to the mount's ``head`` (Gradio 6 drops a
   head given to ``gr.Blocks``); in a real headless browser (Node and
   Playwright, skipped without): a hover previews after a delay as a tooltip
-  without "Esc to close", a click pins a dialog named by its title with it,
-  the pinned bubble never covers the field it explains (beside, then above,
+  whose close control is its × alone, a click pins a dialog named by its
+  title whose close control holds the framed Esc keycap beside the × (one
+  button, a click on the keycap closes it) and no row under its text, the
+  title wrapping beside it, the pinned bubble never covers the field it explains (beside, then above,
   then below), a card heading's ⓘ never covers its card, at a wide window
   and the display floor, its width stays within the budget, the ⓘ's hit target is at
   least 24 × 24 px, the lead is bold, "- " lines are one list and a "Term:"
@@ -152,6 +154,9 @@ def test_the_bubble_is_a_tooltip_previewing_and_a_dialog_when_pinned():
     assert h.BUBBLE_MAX_WIDTH == 320 and "max-width: 320px" in h.HELP_CSS
     assert f"MAX_W = {h.BUBBLE_MAX_WIDTH}" in head
     assert h.HIT_TARGET >= 24 and "width: 24px; height: 24px" in h.HELP_CSS
+    # One close control in the head (the owner, 2026-11-25): no row under the text says "Esc".
+    assert "x.setAttribute('aria-keyshortcuts', 'Escape')" in head and "shep-bubble-ft" not in head + h.HELP_CSS
+    assert ".shep-bubble-x:focus-visible { outline: 2px solid" in h.HELP_CSS
     # Beside, then above, then below the field it explains, never over it.
     assert "['right', 'left', 'above', 'below']" in head and "overlaps(" in head
 
@@ -360,6 +365,7 @@ def test_the_budget_names_what_a_text_runs_over():
 
 # --------------------------------------------------------------------------- in a real browser
 HOSTILE = "<img src=x onerror=window.__pwned=true> & more"
+LONG_TITLE = "A help title long enough to wrap beside the close control"
 HOST = Path(__file__).resolve().parent.parent / "fixtures" / "help_host.cjs"
 
 
@@ -377,6 +383,10 @@ def _page(tmp_path: Path) -> Path:
     registry.topic("row-help", "A row", "What the row says.")
     registry.topic("card-help", "A card", "What the card shows.\n\n- Its state.\n- When it "
                    "is read.\n- Why it can be grey.")
+    # A title that wraps beside the close control, and a text taller than the window.
+    registry.topic("long-help", LONG_TITLE, "\n".join(
+        ["What a long text says first."] + [f"Paragraph {i} runs on for long enough that it takes "
+                                             "two lines of the bubble." for i in range(1, 19)]))
     page = f"""<!doctype html><html><head><meta charset="utf-8">
 <style>:root {{ --shep-accent: #5558e3; --shep-accent-50: #eef0ff; --shep-accent-text: #3a3dbd;
 --shep-border: #e1e4ea; --shep-border-2: #cdd2da; --shep-text: #1d2230; --shep-muted: #5b6270; }}
@@ -400,6 +410,7 @@ style="flex: 0 0 auto"><span>A card</span>{h.help_button("card-help", "A card")}
 <span style="margin-left: auto">read 12:00</span></div><p>Its state, read now, and long lines
 that fill the card's width so a bubble beside its title would cover them.</p>
 <p>More of the card.</p></div>
+<p id="long" style="margin: 24px 40px">A long one{h.help_button("long-help", LONG_TITLE)}</p>
 <div style="height: 1400px"></div>
 {registry.texts_html()}</body></html>"""
     path = tmp_path / "help.html"
@@ -417,8 +428,17 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
     field's (measured here, by the test's own rule) and is not under the
     field's centre (``document.elementsFromPoint``); a card heading's ⓘ (a
     region, R-10) never covers its card; it is at most 320 px wide; the ⓘ's
-    hit target is at least 24 × 24; "Esc to close" shows only pinned
-    (R-29); the field's text shows a bold lead, its "- " lines as one list,
+    hit target is at least 24 × 24. **Its one close control** (the owner,
+    2026-11-25: "Esc to close" under the text repeated the × above it, R-29):
+    pinned, the head holds the framed Esc keycap (14 px, a 2 px bottom edge,
+    hidden from the accessibility tree) beside the ×, both inside one button
+    named "Close help" with ``aria-keyshortcuts="Escape"``, at the head's right
+    end, centred on the title's first line; a preview's is the × alone; it is
+    at least `help.HIT_TARGET` square both ways; a click on the keycap closes
+    the bubble; focused after a key press it shows its ring; nothing lies
+    under the body, so a bubble whose text is taller than the window gives
+    the foot's old room to its text, and a title too long for one line wraps
+    beside the control, never under it. The field's text shows a bold lead, its "- " lines as one list,
     a bold "Term:" and a muted Ref line (R-9), a hostile text in each part is
     literal text and runs nothing; Esc closes it back to a tooltip. The parts
     are set apart by the text tokens (the UI sweep of 2026-11-22): a
@@ -433,14 +453,20 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
                             capture_output=True, text=True, timeout=240)
     assert result.returncode == 0, result.stderr
     sizes = json.loads(result.stdout)
-    assert set(sizes) == {"1850x960", "1280x720"}
+    long = sizes.pop("long")
+    assert set(sizes) == {"1850x960", "1280x720"} and set(long) == set(sizes)
     for size, targets in sizes.items():
         assert set(targets) == {"field", "grid", "kv", "row", "region"}
         for which, seen in targets.items():
             where = f"{size} {which}"
             assert seen["hit"]["width"] >= 24 and seen["hit"]["height"] >= 24, where
             assert seen["early"] is False and seen["hover"] == "tooltip", where
-            assert seen["hoverFooter"] is False and seen["pinnedFooter"] is True, where
+            # The Esc keycap beside the × only pinned; the close control a hit target both ways.
+            assert seen["hoverKey"]["key"] is False and seen["pinnedKey"]["key"] is True, where
+            for state in ("hoverKey", "pinnedKey"):
+                close = seen[state]["close"]
+                assert min(close["width"], close["height"]) >= h.HIT_TARGET, (where, state, close)
+            _assert_one_close_control(seen["head"], where)
             pinned = seen["pinned"]
             assert not pinned["hidden"] and pinned["role"] == "dialog", where
             assert pinned["labelledby"] and pinned["title"] in ("Epochs", "Top-K", "A key",
@@ -458,6 +484,11 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
             parts = pinned["parts"]
             assert parts[0]["tag"] == "p" and parts[0]["cls"] == "shep-bubble-lead", where
             assert int(parts[0]["weight"]) >= 600, where
+        # A click on the keycap closes the bubble (it is part of the one close control); the
+        # close control focused by a keyboard shows its ring.
+        assert targets["field"]["closedBy"] == "keycap", size
+        ring = targets["row"]["ring"]
+        assert ring["focused"] and ring["visible"] and ring["style"] == "solid" and ring["width"] >= 2, (size, ring)
         # The structured text, part by part: each hostile text literal in it.
         field = targets["field"]["pinned"]["parts"]
         assert [(p["tag"], p["cls"]) for p in field] == [
@@ -472,6 +503,40 @@ def test_the_pinned_bubble_never_covers_its_field_and_shows_text_as_text(tmp_pat
         assert [p["above"] for p in field] == [0, 8, 8, 8], size        # --shep-space-para
         assert field[1]["itemsAbove"] == [0, 4], size                    # --shep-space-item
         assert [p["tag"] for p in targets["region"]["pinned"]["parts"]] == ["p", "ul"]
+    # A long title wraps beside the close control; a text taller than the window is capped and
+    # scrolls, its body reaching the bubble's padding (the foot's old room is the text's).
+    for size, head in long.items():
+        _assert_one_close_control(head, f"{size} long")
+        assert head["titleLines"] >= 2 and head["capped"], (size, head)
+
+
+def _assert_one_close_control(head, where):
+    """A pinned bubble's head and body as `help_host.cjs`'s ``closeOf`` reads them: a head and a
+    body and nothing under it; one close control at the head's right end, its framed Esc keycap
+    beside its × inside it; the title beside it, the control centred on its first line."""
+    assert head["rows"] == ["shep-bubble-hd", "shep-bubble-bd"] and head["foot"] is False, (where, head)
+    assert head["label"] == "Close help" and head["keys"] == "Escape", (where, head)
+    assert head["keyHidden"] == "true" and head["keyText"] == "Esc" and head["markText"] == "×", (where, head)
+    assert head["keySize"] >= 14, (where, head)                                      # the text floor
+    style, top, bottom = head["keyFrame"]
+    assert style == "solid" and top >= 1 and bottom >= 2, (where, head)              # framed as a key
+    close, key, mark, title, hd = head["close"], head["key"], head["mark"], head["title"], head["head"]
+
+    def inside(a, b):
+        return a["left"] >= b["left"] - 0.5 and a["right"] <= b["right"] + 0.5 and \
+            a["top"] >= b["top"] - 0.5 and a["bottom"] <= b["bottom"] + 0.5
+
+    assert inside(key, close) and inside(mark, close), (where, head)
+    assert key["right"] <= mark["left"] + 0.5, (where, head)                        # beside it, before it
+    assert abs((key["top"] + key["bottom"]) - (mark["top"] + mark["bottom"])) <= 2, (where, head)
+    assert abs(close["right"] - hd["right"]) <= 0.5, (where, head)                  # at the head's end
+    assert min(close["right"] - close["left"], close["bottom"] - close["top"]) >= h.HIT_TARGET, (where, head)
+    assert title["right"] <= close["left"] + 0.5, (where, head)                     # never under it
+    line = head["firstLine"]
+    assert abs((close["top"] + close["bottom"]) - (line["top"] + line["bottom"])) / 2 <= 3, (where, head)
+    # Nothing under the body but the bubble's padding; the body right under the head.
+    assert abs(head["innerBottom"] - head["body"]["bottom"]) <= 1, (where, head)
+    assert abs(head["body"]["top"] - hd["bottom"] - head["headGap"]) <= 1, (where, head)
 
 
 _DESCRIBED_JS = r"""
