@@ -2798,11 +2798,17 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 （Settings › Stop service），再重新啟動。在執行中的那個做 Save 與 Apply，絕不會讓一次什麼都沒設定的
 啟動被拒絕。自 6a2d52e 的審查起；以前這樣的啟動會開啟正在執行的那個並回報成功）。**Data locations** 面板每個位置
 一列（Workspaces folder、Results registry、Import folder、Training evidence folders）：誰需要它、
-目前生效的值與來源（「Saved in Settings」、「Set when the service started」），以及一個路徑框，
-附帶：
+目前生效的值與來源（「Saved in Settings」、「Set when the service started」），以及一個路徑框。
+沒有生效值的列保持路徑框打開（「Set to」）：那就是下一步。已設定的列在路徑框的位置顯示它的值與
+**Change…**（自 2026-11-24 起），按下後在原處打開路徑框（「Change to」），焦點移入框內，並在 Check
+與 Save 旁附上 **Cancel**；Cancel 或 Esc 會關閉它並清除輸入的文字，一次改變了該列的 Save 也會關閉它。
+路徑框附帶：
 
 - **Check**：以工作讀取時相同的規則檢查這個值（絕對路徑、已存在的目錄、兩個病人層級的位置須在
-  repository 之外），顯示解析後的路徑，以及伺服器自己的清單在其中找到什麼（「1 workspace」）；
+  repository 之外），顯示「● Usable」與解析後的路徑，再於自己的一行說明伺服器自己的清單在其中找到
+  什麼（「Holds 1 workspace.」）；資料夾還是空的時，先說明這一點，再說明其內容會出現在哪裡（「Holds no
+  workspace yet. Each workspace built in it appears in Datasets.」，registry 則是「Holds no cohort version
+  yet. Each one imported into it appears in Research › Test.」）；
 - **Save**：儲存並立即套用（見下文）；被拒絕的值不會儲存任何東西，並說明原因；
 - **Create suggested folder**，用於尚未設定的必要資料夾：服務帳號 home 下的
   `~/SHEPHERD-data/workspaces`、`~/SHEPHERD-data/registry` 或 `~/SHEPHERD-data/import`，只在按下
@@ -2845,9 +2851,11 @@ yet …」）並提供 **Apply**，下次啟動時也會套用。所以工作看
 `deployment.json.unreadable-<UTC 時間>`；在那之前 Save 關閉。無法開啟的檔案（權限、磁碟）要在原處
 修正，絕不改名。
 
-**對唯讀的瀏覽器**，每個路徑都顯示「Set (path hidden)」，來源照樣顯示，每個路徑框與按鈕都上鎖：
-「Operator controls only: <原因>」在各列上方說一次，每一列則在其路徑框、Check 與 Save 正下方的一行
-寫著「🔒 Operator controls only」（2026-11-19 起）。一個已設定但被拒絕的值顯示為「<Folder> set when the service
+**對唯讀的瀏覽器**，每個路徑都顯示「Set (path hidden)」，來源照樣顯示，每個路徑框與按鈕都上鎖。
+各列上方的一則通知說明這代表什麼：「🔒 Folder paths are hidden in this read-only view.」（自 2026-11-24
+起；D8 的完整原因由頁首 chip 說明），每一列則說一次短語「🔒 Operator controls only」：已設定的列在
+上鎖的「🔒 Change…」旁，其他列在 Check 與 Save 旁。這個短語會打開 D8 的原因，該列每個因它變暗的控制項
+都把它讀作自己的說明。一個已設定但被拒絕的值顯示為「<Folder> set when the service
 started（或 saved in Settings）is refused: an operator sees why in Settings › Data locations」，
 絕不顯示拒絕原因本身的文字，因為它會照原樣重複輸入的值（相對路徑或 `~` 路徑不會被路徑遮蔽處理隱藏）。
 
@@ -3149,7 +3157,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run，Epochs、Seed 與 Graph backbone（Trained，或凍結主幹對照的 Frozen）對每個子模型相同；每個所選任務都會讀取的其他設定在 More settings 下，只選一個任務時另有該任務自己的設定（見下文）；一張 job card 顯示這次啟動的 graph backbone、每個任務的狀態、Stop 與產出 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
 | **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文）；模型 family 或此 workspace 的結果，可比較與匯出（Results，自 research comparison Stage 8b 起） |
-| 頁首右側的 **⚙ Settings** | Runtime Settings：目前執行中與已儲存的記憶體配置器、記憶體配置器與 torch.compile 兩個欄位，接著是 Apply Settings 與 Restart Backend（見下文）。對唯讀的瀏覽器，這兩個欄位不能更改，這些按鈕（連同 Stop service）會停用並顯示鎖，"Operator controls only: <原因>" 只寫一次，在按鈕正上方的那一行；兩個欄位上方的一行說明原因寫在下方的操作旁 |
+| 頁首右側的 **⚙ Settings** | Runtime Settings：目前執行中與已儲存的記憶體配置器、記憶體配置器與 torch.compile 兩個欄位，接著是 Apply Settings 與 Restart Backend（見下文）。對唯讀的瀏覽器，這兩個欄位不能更改，這些按鈕（連同 Stop service）會變暗並顯示鎖，短語「Operator controls only」只寫一次，在按鈕所在的那一行；它也指名這兩個欄位，並會打開 D8 的原因（自 2026-11-24 起） |
 
 - 選中的區域（Diagnosis 或 Research）以填色加粗體顯示，Settings 被選中時也一樣；選中的研究頁面
   以底線加粗體顯示，滑鼠停在其他研究頁面上時只加淺色底，不加底線，因此同一時間只有一個頁面看起來
@@ -4136,7 +4144,8 @@ build; start a new run.」）。Load 不會寫入任何使用紀錄。頁面在�
 
 **Settings** 自 2026-11-16 起有兩個面板：左邊（窄版時在上方）的 **Data locations**，在這裡選擇、
 檢查、儲存並套用 workspaces 資料夾、結果 registry、匯入資料夾與訓練證據資料夾（§4.12）；右邊的
-**Runtime settings**。第一次啟動時寫「○ Nothing is set yet …」，並為每個必要的列提供建議資料夾；其他
+**Runtime settings**。第一次啟動時寫「○ Nothing is set yet. Each folder is needed only by what its row names.」並附
+**Details ›**，並為每個必要的列提供建議資料夾；其他
 頁面照常開啟，需要某個資料夾的頁面會在自己的位置說明，並指向 Settings › Data locations。
 
 **Runtime settings**（自 ops-wiring 這一輪的 B5 起是一個面板）先說明正在執行的與已儲存的：**Allocator
@@ -4155,7 +4164,7 @@ rounded、Native no tuning；後端啟動時讀取一次）與 **Compile the mod
 一次（「Stop the service? …」，Stop service now 或 Cancel），GPU 工作執行時停用，然後經由後端有序的停止
 （SIGTERM 啟動的那一個）停止後端；記錄中會寫明（「Stopping the service (pid N): asked for by Stop service
 in Settings.」）。再從桌面項目或 `launch_shepherd.sh` 啟動它。對唯讀的瀏覽器，這兩個欄位不能更改，
-每個按鈕都會顯示鎖，"Operator controls only: <原因>" 寫在旁邊。
+每個按鈕都會顯示鎖，旁邊是短語「Operator controls only」，它會打開 D8 的原因。
 
 **執行環境那一行**在每個頁面的底部，先寫問題的後果，再寫原因：「▲ No CUDA device visible: GPU
 training is unavailable. torch is built for CUDA 13.0. Check the driver and CUDA libraries.」（失去某項

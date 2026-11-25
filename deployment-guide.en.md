@@ -2681,11 +2681,18 @@ sets nothing refuse. Since the review of 6a2d52e; before, such a start opened th
 and reported success). The
 **Data locations** panel has one row per location (Workspaces folder, Results registry, Import
 folder, Training evidence folders): what needs it, what is in effect and where it came from
-("Saved in Settings", "Set when the service started"), and a path box with:
+("Saved in Settings", "Set when the service started"), and a path box. A row with nothing in
+effect keeps its box open ("Set to"): that is the next step. A set row shows its value with
+**Change…** in the box's place (since 2026-11-24), which opens the box there ("Change to"), the
+focus in it, with **Cancel** beside Check and Save; Cancel or Escape closes it and clears what
+was typed, and a Save that changes the row closes it. With the box:
 
 - **Check**: the value by the same rule a job's read applies (absolute, an existing directory,
-  outside the repository for the two patient-level ones), the resolved path and what the
-  server's own lists find in it ("1 workspace");
+  outside the repository for the two patient-level ones), "● Usable" with the resolved path,
+  then on a line of its own what the server's own lists find in it ("Holds 1 workspace."); a
+  folder that holds none yet says so, then where its contents will appear ("Holds no workspace
+  yet. Each workspace built in it appears in Datasets.", or for the registry "Holds no cohort
+  version yet. Each one imported into it appears in Research › Test.");
 - **Save**: saves it and applies it at once (below); a refused value saves nothing and says why;
 - **Create suggested folder**, for a required folder that is not set: `~/SHEPHERD-data/workspaces`,
   `~/SHEPHERD-data/registry` or `~/SHEPHERD-data/import` under the service account's home,
@@ -2736,8 +2743,11 @@ notice with **Replace the unreadable file (a copy is kept)**, which renames it t
 opened (permissions, the disk) is fixed where it is and never renamed.
 
 **For a read-only browser** every path reads "Set (path hidden)", the sources stay, and every box
-and button is locked: "Operator controls only: <reason>" is said once, above the rows, and each row
-says "🔒 Operator controls only" on the line just under its box, Check and Save (since 2026-11-19).
+and button is locked. One notice above the rows says what that means, "🔒 Folder paths are hidden
+in this read-only view." (since 2026-11-24; D8's whole reason is the header chip's), and each row
+says the phrase "🔒 Operator controls only" once: beside its locked "🔒 Change…" on a set row, else
+beside its Check and Save. The phrase opens D8's reason, and each control of its row it dims
+reads it as its description.
 A value that is set and refused
 reads "<Folder> set when the service started (or saved in Settings) is refused: an operator sees
 why in Settings › Data locations", never the refusal's own words, which repeat the value as it
@@ -3098,7 +3108,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, with Epochs, Seed and Graph backbone (Trained, or Frozen for the frozen-backbone control) for every child, the rest of what every chosen task reads under More settings and the task's own settings for one task (below), and a job card with the start's graph backbone, each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
 | **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below); the results of a model's family or the workspace, compared and exported (Results, since research comparison Stage 8b) |
-| **⚙ Settings**, at the right of the header | Runtime Settings: the memory allocator running against the one saved, the allocator and torch.compile, then Apply Settings and Restart Backend (below). For a read-only browser the two fields cannot be changed and the buttons (with Stop service) are disabled with the lock, with "Operator controls only: <reason>" once, on the line just above them; the line above the two fields says the reason is beside the actions below |
+| **⚙ Settings**, at the right of the header | Runtime Settings: the memory allocator running against the one saved, the allocator and torch.compile, then Apply Settings and Restart Backend (below). For a read-only browser the two fields cannot be changed and the buttons (with Stop service) are dimmed with the lock, with the phrase "Operator controls only" once, beside them in their row; it names the two fields too and opens D8's reason (since 2026-11-24) |
 
 - The selected area (Diagnosis or Research) is filled and bold, and so is Settings when it is
   selected; the selected research page is underlined and bold, and a research page under the
@@ -4360,8 +4370,8 @@ returns to the row.
 **Settings** has two panels since 2026-11-16: **Data locations** on the left (above at a narrow
 width), where the workspaces folder, the results registry, the import folder and the training
 evidence folders are chosen, checked, saved and applied (§4.12), and **Runtime settings** on the
-right. A first start says "○ Nothing is set yet …" and offers a suggested folder for each
-required row; every other page opens as usual, and a page that needs a folder says so in its own
+right. A first start says "○ Nothing is set yet. Each folder is needed only by what its row names."
+with **Details ›** and offers a suggested folder for each required row; every other page opens as usual, and a page that needs a folder says so in its own
 place, pointing to Settings › Data locations.
 
 **Runtime settings** (one panel since the ops-wiring round's B5) says first what runs and what is
@@ -4385,8 +4395,8 @@ terminal to stop it from). Stop service asks once ("Stop the service? …", Stop
 Cancel), is off while a GPU job runs, and then stops the backend through its orderly stop, the
 one a SIGTERM starts; the log names it ("Stopping the service (pid N): asked for by Stop service in
 Settings."). Start it again from its desktop entry or `launch_shepherd.sh`. For a read-only
-browser the fields cannot be changed and every button shows the lock, with "Operator controls
-only: <reason>" beside them.
+browser the fields cannot be changed and every button shows the lock, with the phrase "Operator
+controls only" beside them, which opens D8's reason.
 
 **The runtime line** at the foot of every page leads with what a problem costs, then its cause:
 "▲ No CUDA device visible: GPU training is unavailable. torch is built for CUDA 13.0. Check the
