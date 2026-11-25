@@ -3112,7 +3112,8 @@ help control for every field. Nothing an operator sets changed; what moved is wh
   and Settings show none.
 - No tab is ever hidden in a menu. In a narrow window, or at a large zoom, the chips and
   Settings move onto a line of their own under Diagnosis and Research (however many lines
-  those two take), so no chip covers a tab; the stage goes onto a line of its own under the
+  those two take), the chips from the brand's left edge and Settings at the line's right end
+  (since 2026-11-24), so no chip covers a tab; the stage goes onto a line of its own under the
   research pages, still at the right, and the research pages wrap when they alone do not fit.
 - The browser tab's title says where you are, for example `Training · Research —
   SHEPHERD-Advanced`. Reloading the page comes back on the page shown, with its stage: this
