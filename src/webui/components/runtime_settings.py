@@ -634,12 +634,18 @@ def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
             # with nothing said beside or under them).
             access_note = plain_html("", visible=False, elem_id="runtime_access_reason",
                                      elem_classes=["shep-bar-note"])
-            apply_btn = gr.Button(APPLY_LABEL, variant="primary", interactive=False, scale=0,
-                                  elem_id="runtime_apply")
-            restart_btn = gr.Button(RESTART_LABEL, variant="secondary", interactive=False,
-                                    scale=0, elem_id="runtime_restart")
-            stop_btn = gr.Button(STOP_LABEL, variant="secondary", interactive=False, scale=0,
-                                 elem_id="runtime_stop")
+            # The bar's groups (a bar wraps groups whole, the skill's §2): Apply, then the
+            # service's two process actions. Since Display took a column beside it (2026-11-25)
+            # the panel can be narrower than its three buttons in a row; wrapped one by one in
+            # the bar, Apply stood on the middle of three lines, read-only (the walk's centred).
+            with gr.Row(elem_classes=["shep-grp"]):
+                apply_btn = gr.Button(APPLY_LABEL, variant="primary", interactive=False, scale=0,
+                                      elem_id="runtime_apply")
+            with gr.Row(elem_classes=["shep-grp"]):
+                restart_btn = gr.Button(RESTART_LABEL, variant="secondary", interactive=False,
+                                        scale=0, elem_id="runtime_restart")
+                stop_btn = gr.Button(STOP_LABEL, variant="secondary", interactive=False, scale=0,
+                                     elem_id="runtime_stop")
             # Why Restart and Stop are off (a GPU job runs, nothing to apply),
             # beside them.
             restart_lock_note = plain_html("", visible=False, elem_id="runtime_restart_lock")
@@ -728,7 +734,7 @@ PAGE_CSS = f"""
   {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) > * {{ flex-shrink: 0 !important; }}
 }}
 {_PAGE} :is(#shep-settings-bd, #shep-display-bd) {{ padding: 14px 16px !important; gap: 12px !important; }}
-{_PAGE} #shep-settings-ft > button {{ flex: none !important; min-width: max-content !important; white-space: nowrap; }}
+{_PAGE} #shep-settings-ft > .shep-grp > button {{ flex: none !important; min-width: max-content !important; white-space: nowrap; }}
 {_PAGE} #shep-settings-ft > .shep-html {{ flex: 1 1 240px !important; min-width: 0 !important; }}
 {_PAGE} #shep-settings-ft > #runtime_access_reason {{ flex-basis: 100% !important; }}
 {_PAGE} #shep-settings-out {{ padding: 0 16px 12px !important; gap: 6px !important; }}
