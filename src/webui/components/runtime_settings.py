@@ -24,11 +24,12 @@ skill's §2), every value it shows escaped:
 - **Acceleration**: no toggle; the area says "Not implemented yet"
   (`ACCELERATION`): new acceleration work is deferred, and each run's record
   keeps what it ran with.
-- **Display** (its own panel, "this browser"; the owner's D9 revision of
-  2026-11-25): how Training's Parameters start where Training stacks its two
-  panels, Shown (the default), Folded or Automatic (`display`), saved in this
-  browser only and applied at once (`DISPLAY_NOTE`). Nothing of it reaches
-  the server, so it has no Apply and no operator lock.
+- **Display** (its own panel, "this browser", in Runtime settings' column;
+  the owner's D9 revision of 2026-11-25): how Training's Parameters start
+  where Training stacks its two panels, Shown (the default), Folded or
+  Automatic (`display`), saved in this browser only and applied at once
+  (`DISPLAY_NOTE`). Nothing of it reaches the server, so it has no Apply and
+  no operator lock.
 - **Actions**: Apply Settings saves the fields to
   ``.shepherd_runtime_settings.json`` (`src.config.runtime_presets`), which the
   launcher reads at start-up (`scripts/launch/shep_launch.py`) and Restart
@@ -83,7 +84,7 @@ from src.webui.components.chips import gated, operator_only
 from src.webui.operator_access import operator_access
 from src.webui.shell import SETTINGS as SETTINGS_PAGE
 from src.webui.shell import plain_html, tab_elem_id
-from src.webui.style import SIDE
+from src.webui.style import SIDE, STACK
 
 #: Each allocator preset in plain words, its name beside them (the WebUI
 #: skill's §5: an internal name only beside a plain label). One entry per
@@ -578,11 +579,14 @@ def create_runtime_settings_tab(ctx: Any) -> None:
     saved_alloc, saved_compile = _saved(settings)
 
     with gr.Row(elem_id="shep-settings-cols", elem_classes=["shep-page"], equal_height=False):
-        # Data locations (UI-06) on the left, Runtime settings beside it, then
-        # Display (this browser's own choices); narrow, one above the other.
+        # Data locations (UI-06) on the left; Runtime settings and Display (this browser's own
+        # choices) share the column beside it (`PAGE_CSS`: side by side where that column has
+        # the room, else Display under Runtime settings); narrow, one panel above the other.
         data_locations.create_data_locations_panel(ctx)
-        controls = _runtime_panel(ctx, settings, saved_alloc, saved_compile)
-        _display_panel(ctx)
+        with gr.Column(elem_id="shep-settings-side", min_width=0):
+            with gr.Column(elem_id="shep-settings-pair", min_width=0):
+                controls = _runtime_panel(ctx, settings, saved_alloc, saved_compile)
+                _display_panel(ctx)
     _wire_runtime_panel(ctx, *controls)
 
 
@@ -592,7 +596,7 @@ def _display_panel(ctx: Any) -> None:
     choice the head script read (`display.READ_PARAMS_JS`), and the reader's pick is saved in
     the browser and applied to the open page at once (`display.WRITE_PARAMS_JS`). Never gated:
     it changes only this reader's page, so a read-only viewer may change it too."""
-    with gr.Column(elem_classes=["shep-panel", "shep-display", "shep-sized"], elem_id="shep-display"):
+    with gr.Column(elem_classes=["shep-panel", "shep-display"], elem_id="shep-display", min_width=0):
         plain_html('<div class="shep-panel-hd"><h2>Display</h2>'
                    '<span class="shep-panel-right">this browser</span></div>'
                    f'<p class="shep-intro">{r.e(DISPLAY_NOTE)}</p>', elem_id="shep-display-hd")
@@ -607,7 +611,7 @@ def _display_panel(ctx: Any) -> None:
 def _runtime_panel(ctx: Any, settings: Mapping[str, Any], saved_alloc: str,
                    saved_compile: bool) -> tuple:
     """The Runtime settings panel's components (`create_runtime_settings_tab`)."""
-    with gr.Column(elem_classes=["shep-panel", "shep-settings", "shep-sized"], elem_id="shep-settings"):
+    with gr.Column(elem_classes=["shep-panel", "shep-settings"], elem_id="shep-settings"):
         plain_html('<div class="shep-panel-hd"><h2>Runtime settings</h2>'
                    '<span class="shep-panel-right">this server’s hardware</span></div>'
                    '<p class="shep-intro">How computation runs on this server: memory and '
@@ -709,29 +713,49 @@ _PAGE = "#" + tab_elem_id(SETTINGS_PAGE)
 #: just above them).
 PAGE_CSS = f"""
 {_PAGE} #shep-settings-cols {{ gap: 16px !important; }}
-/* **The three panels, sized by what they hold** (M4, the shared `shep-sized`): Data locations
+/* **The two columns, sized by what they hold** (M4, as the shared `shep-sized`): Data locations
    grows a little faster; it keeps "Set to", a box of a path's room and Check and Save on one line
-   (30rem), Runtime settings its facts' keys beside their values (24rem), Display its one choice
-   (14rem). The shell's layout rule reads these minimums (`src/webui/shell.py`): side by side
-   from the display floor's width, else one panel above the other. Side by side each panel is as
-   tall as what it holds, at most the page's height; then its body scrolls inside it, its foot
-   (Apply Settings) in view, never the page (the skill's §1.1; the sweep's L7, SW-LK1: at
-   1366 x 768 the page itself scrolled and Apply Settings was out of view). Display's room is
-   Runtime settings': Data locations starts from the width its rows take whole at the owner's
-   window (58rem; with Display at the 40rem it had, its body scrolled at 1850 x 960 at first use
-   and read-only), and Runtime settings, whose lines are short, gives way first in a narrower
-   window. */
-{_PAGE} .shep-panel.shep-dl {{ --shep-panel-basis: 58rem; --shep-panel-grow: 11; --shep-panel-min: 30rem; }}
-{_PAGE} .shep-panel.shep-settings {{ --shep-panel-basis: 30rem; --shep-panel-grow: 9; --shep-panel-min: 24rem; }}
-{_PAGE} .shep-panel.shep-display {{ --shep-panel-basis: 15rem; --shep-panel-grow: 0; --shep-panel-min: 14rem; }}
-/* Side by side Runtime settings grows to a readable width at most; stacked, it is as wide as Data
-   locations above it, the two panels on one edge each side (a portrait window 1080 px wide drew it
-   8 px short of Data locations' right edge). */
+   (30rem), the column beside it Runtime settings' facts' keys beside their values (24rem). The
+   shell's layout rule reads these minimums (`src/webui/shell.py`; the row's two children): side
+   by side from the display floor's width, else one panel above the other. Side by side each panel is as tall as what it holds, at most the page's height; then
+   its body scrolls inside it, its foot (Apply Settings) in view, never the page (the skill's
+   §1.1; the sweep's L7, SW-LK1: at 1366 x 768 the page itself scrolled and Apply Settings was
+   out of view). */
+{_PAGE} .shep-panel.shep-dl {{ --shep-panel-basis: 40rem; --shep-panel-grow: 11; --shep-panel-min: 30rem; }}
+{_PAGE} #shep-settings-side {{ --shep-panel-min: 24rem; }}
+{_PAGE} :is(#shep-settings-side, #shep-settings-pair) {{ gap: 16px !important; }}
+/* **Runtime settings and Display share one column** (the owner's revision of D9, 2026-11-25):
+   the column takes the share Runtime settings had alone, so Data locations keeps its width in
+   every window (a third column of its own narrowed Data locations to 608 px at 1280 x 720, where
+   its rows' boxes no longer shared their edges). Where the column holds Runtime settings at 30rem
+   beside Display's one choice (15rem), the two stand side by side (the owner's window: nothing
+   scrolls, at first use and read-only too); else Display stands under Runtime settings, whose
+   body scrolls first. The column is a size container, side by side only (the query reads its
+   width, never what it holds). One above the other, the pair is as tall as what it holds, at most
+   the column's height, never stretched to it: a panel whose height a stretched or flexed box fixes
+   lets a field's `height: 100%` inside (Gradio's dropdown) resolve, and the allocator's note was
+   cut by 12 px at 1550 x 830. Beside each other the pair is the column's height, so each panel's
+   own limit (100%) reads it. */
 {SIDE} {{
-  {_PAGE} .shep-panel.shep-settings {{ max-width: 1040px; }}
   {_PAGE} #shep-settings-cols {{ align-items: flex-start !important; }}
+  {_PAGE} #shep-settings-side {{ flex: 9 1 30rem !important; min-width: var(--shep-panel-min) !important; max-width: calc(1040px + 16px + 15rem); align-self: stretch; min-height: 0; display: flex; flex-direction: row; align-items: flex-start; container: shep-settings-side / inline-size; }}
+  {_PAGE} #shep-settings-pair {{ flex: 1 1 auto !important; min-width: 0; min-height: 0; max-height: 100%; display: flex; flex-direction: column; }}
+  {_PAGE} #shep-settings-pair > .shep-panel {{ min-height: 0; display: flex; flex-direction: column; }}
+  {_PAGE} #shep-settings {{ flex: 0 1 auto !important; }}
+  {_PAGE} #shep-display {{ flex: none !important; }}
   {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) {{ flex: 0 1 auto !important; min-height: 0 !important; overflow: auto !important; }}
   {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) > * {{ flex-shrink: 0 !important; }}
+}}
+@container shep-settings-side (min-width: calc(30rem + 16px + 15rem)) {{
+  {_PAGE} #shep-settings-pair {{ flex-direction: row; align-self: stretch; align-items: flex-start; }}
+  {_PAGE} #shep-settings {{ flex: 1 1 30rem !important; max-width: 1040px; max-height: 100%; }}
+  {_PAGE} #shep-display {{ flex: 0 0 15rem !important; max-height: 100%; }}
+}}
+/* Stacked, the column and its two panels are as wide as Data locations above them, the panels
+   on one edge each side (a portrait window 1080 px wide drew Runtime settings 8 px short of Data
+   locations' right edge). */
+{STACK} {{
+  {_PAGE} #shep-settings-side, {_PAGE} #shep-settings-pair > .shep-panel {{ width: 100% !important; }}
 }}
 {_PAGE} :is(#shep-settings-bd, #shep-display-bd) {{ padding: 14px 16px !important; gap: 12px !important; }}
 {_PAGE} #shep-settings-ft > .shep-grp > button {{ flex: none !important; min-width: max-content !important; white-space: nowrap; }}
