@@ -3317,6 +3317,9 @@ const { chromium } = require('playwright');
     <div id="graze" style="height: 200px; overflow: auto; font-size: 15px; line-height: 22.5px">${Array.from({ length: 8 }, (_, i) => `<p style="margin: 0">Line ${i} of the settings.</p>`).join('')}
       <div style="height: 40px"></div><label><input type="checkbox"> Compile the model</label><div style="height: 300px"></div></div>
     <div id="near" style="height: 198px; overflow: auto; font-size: 15px; line-height: 20px">${Array.from({ length: 12 }, (_, i) => `<p style="margin: 0 0 9px">Key ${i} · its value</p>`).join('')}</div>
+    <div id="srgap" style="height: 200px; overflow: auto; font-size: 15px; line-height: 22.5px">${Array.from({ length: 6 }, (_, i) => `<p style="margin: 0">Line ${i} of the folders.</p>`).join('')}
+      <div style="height: 50px"></div><div style="position: relative; height: 40px"><span class="sr-only" style="position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">Import folder: folder path</span>
+      <input type="text" style="display: block; height: 36px; margin-top: 4px"></div><div style="height: 300px"></div></div>
     <div id="cuex" style="width: 200px; overflow-x: auto; overflow-y: hidden;"><div style="width: 900px; height: 20px"></div></div>
     <div id="fits" style="height: 200px; overflow: auto;"><div style="height: 100px"></div></div>
     <div id="shep-page-models"><div id="shep-mp-detail" style="height: 600px; display: flex; flex-direction: column;">
@@ -3338,6 +3341,7 @@ const { chromium } = require('playwright');
   out.gapgr = await gapOf('gapgr');
   out.graze = await gapOf('graze');
   out.near = await gapOf('near');
+  out.srgap = await gapOf('srgap');
   out.sideways = await page.evaluate(() => { const e = document.getElementById('cuex');
     return { more: e.hasAttribute('data-shep-more-x'), mask: getComputedStyle(e).maskImage !== 'none' }; });
   out.fits = await page.evaluate(() => { const e = document.getElementById('fits');
@@ -3395,7 +3399,9 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     the blank, and so does one whose last line ends in the upper half of the fade that would reach
     it (``#graze``, LOOK5 of the L8 sweep, L8-2 and L8-4: Settings' Runtime settings and Test's Run
     at 1280 x 720 ended 22 px under a whole title with a 32 px fade over the blank, whole controls
-    under it), while one whose edge falls just under a line keeps the fade over it (``#near``); a
+    under it), while one whose edge falls just under a line keeps the fade over it (``#near``), and
+    words kept for a screen reader are no line a fade may reach (``#srgap``: Data locations at
+    1280 x 720, a text box's hidden label over the edge, a fade over the boxes' tops); a
     ``gr.HTML`` block's region (``#gapgr``: Gradio's own container rule, read from its
     style sheet, clears every block's shadow) draws it too (the L8 close: the Diagnosis Load
     drawer's facts never drew it).
@@ -3429,6 +3435,9 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     # under a line of a list: the fade draws that line out, and stays.
     assert seen["graze"] == {"more": True, "mask": False, "edge": True}, seen
     assert seen["near"] == {"more": True, "mask": True, "edge": False}, seen
+    # A text box's label kept for a screen reader straddling the edge is no line to fade (Data
+    # locations at 1280 x 720 faded the boxes' tops under it): the edge falls in a gap.
+    assert seen["srgap"] == {"more": True, "mask": False, "edge": True}, seen
     assert seen["end"] == {"more": False, "mask": False}, seen
     assert seen["sideways"] == {"more": True, "mask": True}, seen
     assert seen["fits"] == {"more": False, "mask": False}, seen

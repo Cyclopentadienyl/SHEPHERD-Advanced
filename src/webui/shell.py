@@ -1151,7 +1151,9 @@ _SHELL_JS = r"""
       && (!e.checkVisibility || e.checkVisibility({opacityProperty: true, visibilityProperty: true}));
   }
   // The lowest text line box drawn in `el` that starts above its edge by a quarter of its height
-  // or more, among the lines that end no higher than `reach` above the edge; null for none.
+  // or more, among the lines that end no higher than `reach` above the edge; null for none. Words
+  // kept for a screen reader are no line (UNSAID: LOOK5 of the L8 sweep, Data locations at
+  // 1280 x 720, a text box's hidden label straddled the edge, and a fade lay over boxes' tops).
   function lastLine(el, top, edge, reach) {
     var last = null;
     function take(q) {
@@ -1162,7 +1164,7 @@ _SHELL_JS = r"""
     var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), range = document.createRange();
     for (var n = walker.nextNode(); n; n = walker.nextNode()) {
       var p = n.parentElement;
-      if (!p || !n.data.trim()) { continue; }
+      if (!p || !n.data.trim() || p.closest(UNSAID)) { continue; }
       var pr = p.getBoundingClientRect();
       if (pr.bottom <= edge - reach || pr.top > edge || !seenEl(p)) { continue; }
       range.selectNodeContents(n);
