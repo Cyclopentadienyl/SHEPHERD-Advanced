@@ -1445,7 +1445,7 @@ UI_PAGES = ("clinical", "datasets", "training", "finetune", "test", "models", "s
 #: ``"focus": false`` records no focus walk: a layout measure's own walks). A stop
 #: sets the window, opens its page if another is shown (a click, the tab
 #: selected, the page's requests answered), waits until what the page draws
-#: holds still for two frames and records the caller's `extra`; unless it
+#: holds still for three frames and records the caller's `extra`; unless it
 #: says ``"check": false`` it also records ``check()``, a screenshot (with a
 #: directory for them) and ``focusWalk()`` (after one Tab press, so focus is
 #: a keyboard's); a stop with ``options`` then opens each select drawn and
@@ -1520,18 +1520,38 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
       throw new Error(`${e.message} at ${at}, unanswered: ${JSON.stringify(q)}, running: ${JSON.stringify(run)}`);
     }
   };
+  // What the page draws holds still: the same at three frames in a row, read at every frame (a
+  // reading every other frame saw a page that changes at every frame as still: the L8 LOOK5's
+  // L8-1, Training's fold opening and closing with no input, passed every walk unseen). The
+  // frames waited (``frames``), or -1 when it never held still in 120, with what kept changing
+  // (`layout_problems`' ``settle``).
   const settle = () => page.evaluate(async () => {
     const sign = () => { const { panels } = window.__shepLook.shownPage(), se = document.scrollingElement;
-      return [document.documentElement.getAttribute('data-shep-layout'), se.scrollWidth, se.scrollHeight,
-              ...panels.map((p) => { const r = p.getBoundingClientRect(); return [r.left, r.top, r.width, r.height].join(','); })].join('|'); };
-    let last = null;
-    for (let i = 0; i < 60; i++) {
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return [['arrangement', document.documentElement.getAttribute('data-shep-layout')],
+              ['document width', se.scrollWidth], ['document height', se.scrollHeight],
+              ...panels.map((p) => { const r = p.getBoundingClientRect();
+                return [`#${p.id || p.className}`, [r.left, r.top, r.width, r.height].join(',')]; })]; };
+    const key = (s) => s.map((p) => p.join('=')).join('|');
+    let last = null, same = 0;
+    const moved = new Set();
+    for (let i = 0; i < 120; i++) {
+      await new Promise((r) => requestAnimationFrame(r));
       const now = sign();
-      if (now === last) { return i; }
+      same = last && key(now) === key(last) ? same + 1 : 0;
+      if (same >= 2) { return { frames: i }; }
+      if (last) { now.forEach((p, k) => { if (!last[k] || String(p[1]) !== String(last[k][1])) { moved.add(p[0]); } }); }
       last = now;
     }
-    return -1;
+    // The marks set over and over meanwhile, most set first (over one more second).
+    const seen = {}, mo = new MutationObserver((records) => { for (const r of records) {
+      const t = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+      const at = `${(t && (t.id ? '#' + t.id : String(t.className).slice(0, 40))) || '?'}:${r.attributeName || r.type}`;
+      seen[at] = (seen[at] || 0) + 1; } });
+    mo.observe(document.documentElement, { subtree: true, attributes: true, childList: true, characterData: true });
+    await new Promise((r) => setTimeout(r, 1000));
+    mo.disconnect();
+    return { frames: -1, moved: [...moved],
+             marks: Object.entries(seen).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([at, n]) => `${at} x${n}`) };
   });
   const button = (id) => (id === 'clinical' || id === 'settings' ? `#shep-tab-${id}-button` : `#shep-page-${id}-button`);
   // A stop's drawer (`stop.open`: its opener, the drawer and its close): opened
@@ -1619,7 +1639,9 @@ const QUEUE_JS = __QUEUE_JS__, LOOK_JS = __LOOK_JS__, EXTRA = __EXTRA_JS__, HEAD
     await page.evaluate(() => window.scrollTo(0, 0));
     if (stop.diagnose) { await diagnose(stop.diagnose); }
     if (stop.open) { await drawer(stop.open, true); }
-    const seen = { size: `${w}x${h}`, page: stop.page, frames: await settle() };
+    const held = await settle();
+    const seen = { size: `${w}x${h}`, page: stop.page, frames: held.frames };
+    if (held.frames < 0) { seen.restless = { moved: held.moved, marks: held.marks }; }
     if (stop.open) { seen.open = stop.open.shown; }
     // A drawer opened with a row chosen (`stop.open.pick`): the chosen model whose facts it drew,
     // so a walk can show that its row-chosen stops ran with their choice (the sweep's L7, FX-2).
@@ -1785,7 +1807,7 @@ LAYOUT_RULES = ("beside", "narrow-box", "overlap", "orphan", "centred", "split-g
                 "clipped", "empty-region", "help-on-page", "notice-repeat", "tab-groups", "in-view",
                 "scroll-cue", "wrap-end", "disabled-reason", "token-break", "sep-end", "chain-break",
                 "row-top", "row-control-top", "row-height", "sideways-scroll", "floor", "edge-heading",
-                "reason-repeat", "pointer-words", "dimmed-words")
+                "reason-repeat", "pointer-words", "dimmed-words", "settle")
 _LAYOUT_KEYS = {"beside": "beside", "narrow-box": "narrow", "overlap": "overlap", "orphan": "orphan",
                 "centred": "centred", "split-group": "split", "edge": "edge", "clipped": "clipped",
                 "empty-region": "empty", "help-on-page": "help", "scroll-cue": "cue",
@@ -1914,7 +1936,11 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
       header's classes, each box marked narrow, folded or alone) and the frame are those of the
       stop of the same page and drawer at the area the window is drawn at (raised to its
       arrangement's floor), and the document scrolls in each axis the window is under that
-      floor (drawn as at the floor, never shrunk)."""
+      floor (drawn as at the floor, never shrunk);
+    - ``settle`` (the L8 LOOK5's L8-1: Training's fold opened and closed about 24 times a second
+      at 1050 x 1100 with no input, and the walk measured it anyway): what the page draws (its
+      arrangement, the document's size, its panels' boxes) never held still over three frames in
+      the walk's 120, with what kept moving and the marks set most meanwhile."""
     from src.webui.shell import RESEARCH_PAGES
 
     problems: list[str] = []
@@ -1965,6 +1991,10 @@ def layout_problems(seen: list[dict[str, Any]], rules: tuple[str, ...] = LAYOUT_
                     if short and facts["scroll"][axis] <= 0:
                         problems.append(f"{where}: floor: {room} than its floor and the document does not "
                                         "scroll that way (the layout shrank to the window)")
+        if "settle" in rules and stop.get("frames", 0) < 0:
+            restless = stop.get("restless", {})
+            problems.append(f"{where}: settle: what the page draws never held still over three frames "
+                            f"(moving: {restless.get('moved')}; set most: {restless.get('marks')})")
         if "reason-repeat" in rules:
             for key, times in found.get("reasons", {}).items():
                 if times > 1:
@@ -2021,12 +2051,14 @@ def state_settings(state: str, root: Path) -> dict[str, str]:
 #: display floor (1280 x 720), a large screen (2560 x 1440: nothing stretched past readability),
 #: one window below the floor (1280 x 640, 150 % of 1920 x 960: side by side, drawn as at the
 #: floor, the document scrolls down), a window wider than tall that stacks (1100 x 1050: under
-#: the side-by-side floor's width, never scrolled sideways), two portrait windows (a 1080p and a
-#: 1440p screen turned upright, 1080 x 1920 and 1440 x 2560: the stacked arrangement, at or above
-#: its floor, `style.STACK_FLOOR_WIDTH`), then the owner's again (back from below the floor and
-#: from stacked).
+#: the side-by-side floor's width, never scrolled sideways) and its twin a little taller than
+#: wide (1050 x 1100: the owner's other D11 example; the L8 LOOK5's L8-1, Training's fold opening
+#: and closing there with no input, was in no walk), two portrait windows (a 1080p and a 1440p
+#: screen turned upright, 1080 x 1920 and 1440 x 2560: the stacked arrangement, at or above its
+#: floor, `style.STACK_FLOOR_WIDTH`), then the owner's again (back from below the floor and from
+#: stacked).
 LAYOUT_SIZES = ((1850, 960), (1550, 830), (1366, 768), (1280, 720), (2560, 1440), (1280, 640),
-                (1100, 1050), (1080, 1920), (1440, 2560), (1850, 960))
+                (1100, 1050), (1050, 1100), (1080, 1920), (1440, 2560), (1850, 960))
 
 
 def layout_stops(pages: tuple[str, ...] = UI_PAGES, sizes: tuple[tuple[int, int], ...] = LAYOUT_SIZES,
