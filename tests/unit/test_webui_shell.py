@@ -3552,17 +3552,28 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
     assert fixed["scrolledHeight"] == fixed["height"] == fixed["backHeight"], fixed
 
 
-def test_the_training_parameters_fold_when_stacked_and_show_side_by_side():
+def test_the_training_parameters_are_shown_and_only_the_reader_folds_them_when_stacked(built):
     """R-60: at 960 x 960 (stacked) the full Parameters panel pushed the run
     view's first plot below the fold (page scroll 1386 px). Stacked, the
-    parameters start folded under their title, "Show" opening them (its
+    parameters then started folded under their title, "Show" opening them (its
     ``aria-expanded``, which the style sheet reads); side by side the body is
     always shown and the toggle is not. Measured on the demo workspace at
-    960 x 960: the first plot at y 607-867, the page not scrolled."""
+    960 x 960: the first plot at y 607-867, the page not scrolled.
+    The owner's D9 of 2026-11-25: stacked, the body is built shown ("Hide",
+    ``aria-expanded="true"``) and only the reader folds it: the button's click
+    (Enter and Space on it) is the fold's one listener, so nothing measures the
+    room, waits for the page's answers or decides again on a resize. The style
+    sheet still folds the body on the button's ``aria-expanded`` stacked only, and
+    hides the button side by side (the browser tests are `test_training_page.py`'s)."""
     from src.webui.components import training_console as tc
 
-    assert 'aria-expanded="false" aria-controls="shep-train-params-bd"' in Path(tc.__file__).read_text()
-    assert "b.setAttribute('aria-expanded', want);" in tc.FOLD_JS     # D9: show(b, open)
+    demo, _ctx = built
+    head = next(b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-train-params-hd")
+    assert ('<button type="button" class="shep-link shep-train-fold" aria-expanded="true" '
+            'aria-controls="shep-train-params-bd">Hide</button>') in head.value
+    assert tc.FOLD_JS in head.js_on_load
+    assert re.findall(r"addEventListener\('(\w+)'", tc.FOLD_JS) == ["click"]
+    assert "b.setAttribute('aria-expanded', open ? 'true' : 'false');" in tc.FOLD_JS
     assert ('#shep-train-params:has(.shep-train-fold[aria-expanded="false"]) > #shep-train-params-bd '
             "{ display: none !important; }") in stack(tc.PAGE_CSS)
     assert ".shep-train-fold { display: none; }" in side(tc.PAGE_CSS)
@@ -5941,17 +5952,19 @@ def test_a_page_that_never_holds_still_is_a_walk_finding_by_its_page_and_size():
     wait for the page to hold still read it every other frame (a page changing at every frame
     read as still) and, had it never held still, measured it anyway. A stop that never held
     still (``frames`` -1) is the ``settle`` finding of its size and page, with what kept moving
-    and the marks set most; a stop that held still is none. 1050 x 1100 is a layout size."""
+    and the marks set most; a stop that held still is none. 1050 x 1100 is a layout size.
+    Since the owner's D9 of 2026-11-25 only the reader folds Training's Parameters, so the
+    example's marks are the layout pass's own (the "Set by you" line's and the run bar's)."""
     from tests.fixtures.browser import LAYOUT_RULES, LAYOUT_SIZES, layout_problems
 
     restless = {"moved": ["document height", "#shep-train-runview"],
-                "marks": [".shep-train-fold:aria-expanded x88", "#shep-train-setby:data-shep-own-line x88"]}
+                "marks": ["#shep-train-setby:data-shep-own-line x88", "#shep-train-runbar:data-shep-narrow x88"]}
     stops = [{"size": "1050x1100", "page": "training", "frames": -1, "restless": restless,
               "check": {"layout": {}}},
              {"size": "1100x1050", "page": "training", "frames": 3, "check": {"layout": {}}}]
     found = layout_problems(stops, rules=("settle",))
     assert len(found) == 1 and found[0].startswith("1050x1100 training: settle: "), found
-    assert "#shep-train-runview" in found[0] and "aria-expanded x88" in found[0], found
+    assert "#shep-train-runview" in found[0] and "data-shep-own-line x88" in found[0], found
     assert "settle" in LAYOUT_RULES and (1050, 1100) in LAYOUT_SIZES
 
 

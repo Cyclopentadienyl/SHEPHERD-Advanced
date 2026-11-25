@@ -1795,13 +1795,8 @@ __DESCRIBED_BY__
     restoring = false;
     goTo(page, focusId, 120);
   });
-  // ``layOut``: the layout pass now, no frame waited for, for a page that draws a part shown for
-  // a measure alone. The marks inside that part are then those of it shown, so the measure never
-  // reads a mark the pass set while the part was hidden (Training's fold, the L8 LOOK5's L8-1:
-  // the "Set by you" line's own line is measured only while drawn, and the fold read its own
-  // result back, opening and closing about 24 times a second).
-  window.ShepShell = {update: update, layOut: layout, title: title, titles: titles, kept: kept, sent: sent,
-                      go: goTo, restored: function () { restoring = false; update(); }};
+  window.ShepShell = {update: update, title: title, titles: titles, kept: kept, sent: sent, go: goTo,
+                     restored: function () { restoring = false; update(); }};
 })();
 """
 

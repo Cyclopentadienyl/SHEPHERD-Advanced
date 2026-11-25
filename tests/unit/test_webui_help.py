@@ -1227,10 +1227,8 @@ const QUEUE_JS = __QUEUE_JS__;
       // The page drawn: its panel shown and its own requests answered.
       await page.waitForSelector(panel, { state: 'visible' });
       await idle();
-      // Training's Parameters, folded on a narrow window, and every accordion.
-      for (const fold of await page.$$(panel + ' button.shep-train-fold[aria-expanded="false"]')) {
-        if (await fold.isVisible()) { await fold.click(); }
-      }
+      // Every accordion opened (Training's Parameters are shown as built at every window: only
+      // the reader folds them, the owner's D9 of 2026-11-25).
       for (const acc of await page.$$(panel + ' button.label-wrap:not(.open)')) {
         if (await acc.isVisible()) { await acc.click(); }
       }
