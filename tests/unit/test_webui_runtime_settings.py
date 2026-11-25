@@ -157,18 +157,27 @@ def test_the_display_choice_never_reaches_the_server():
     in the browser only (no function on the server): the page load shows the choice the head
     script read, and the reader's pick saves it; no handler outputs to it (nothing dims it for
     a read-only viewer); its words follow the skill (one field, a one-line note under it
-    saying where it applies, three short options)."""
+    saying where it applies, three short options). The review of 36c0592 (P3): the note in its
+    head, two short facts (it was two sentences, 23 words, five lines in the 240 px panel at
+    1850 x 960, and "this page's layout" was unclear on Settings); a label that names the
+    panel it sets ("Training parameters" read as training hyperparameters); the line under it
+    and the bubble's lead front-loaded, the bubble within the budget."""
     import gradio as gr
 
     import src.webui.components.runtime_settings as rs
     from src.webui.app import create_gradio_app
     from src.webui.components import display
+    from src.webui.components.help import TEXT_BUDGET, budget_problems
 
     app = create_gradio_app()
     radio = next(b for b in app.blocks.values() if getattr(b, "elem_id", None) == rs.DISPLAY_PARAMS)
     assert isinstance(radio, gr.Radio) and radio.interactive is not False
-    assert radio.label == rs.DISPLAY_PARAMS_LABEL == "Training parameters"
-    assert radio.info == rs.FIELD_INFO[rs.DISPLAY_PARAMS]
+    assert radio.label == rs.DISPLAY_PARAMS_LABEL == "Training's Parameters"
+    assert radio.info == rs.FIELD_INFO[rs.DISPLAY_PARAMS] == (
+        "Stacked windows only (portrait or narrow). Side by side it is always shown.")
+    title, text = rs.FIELD_HELP[rs.DISPLAY_PARAMS]
+    assert title == rs.DISPLAY_PARAMS_LABEL and text.startswith("Parameters panel, stacked: ")
+    assert budget_problems(text, TEXT_BUDGET) == () and text.count("\n- ") == 4
     assert [label for label, _value in display.PARAMS_CHOICES] == ["Shown", "Folded", "Automatic"]
     assert radio.value == display.PARAMS_DEFAULT
     mine = [fn for fn in app.fns.values()
@@ -176,8 +185,9 @@ def test_the_display_choice_never_reaches_the_server():
     assert sorted((fn.targets[0][1], fn.fn is None, fn.js) for fn in mine) == [
         ("input", True, display.WRITE_PARAMS_JS), ("load", True, display.READ_PARAMS_JS)], mine
     panel = next(b for b in app.blocks.values() if getattr(b, "elem_id", None) == "shep-display-hd")
-    assert "Display" in panel.value and rs.DISPLAY_NOTE.replace("'", "&#x27;") in panel.value
-    assert "read-only viewer can change it" in rs.DISPLAY_NOTE and "this browser only" in rs.DISPLAY_NOTE
+    assert rs.DISPLAY_NOTE == ("this browser only", "any viewer can change it")
+    assert "<h2>Display</h2>" in panel.value and all(part in panel.value for part in rs.DISPLAY_NOTE)
+    assert panel.value.count('class="shep-sep"') == 1 and "shep-intro" not in panel.value
 
 
 #: ⚙ Settings at the owner's window (1850 x 960), the Parameters choice ``argv[3]`` saved in
@@ -275,3 +285,91 @@ def test_settings_offers_the_display_choice_to_every_viewer_within_the_owners_wi
     for name, (content, box) in seen["bodies"].items():
         assert content <= box, (name, seen)
     assert seen["picked"] == {"kept": display.FOLDED, "mark": display.FOLDED}, seen
+
+
+#: ⚙ Settings for an operator at each window of ``argv[3]`` (``[[w, h], ...]``), its page
+#: answered and still: the arrangement, the page's own scroll, whether Display stands under
+#: Runtime settings, and against each panel body's box in view (its top and its height in view,
+#: after the shell's cut above a lone label): the bottom of Runtime settings' facts and of its
+#: first field's control (Memory allocator's box), and the bottom of Display's options.
+_UNDER_JS = r"""
+const { chromium } = require('playwright');
+const QUEUE_JS = __QUEUE_JS__;
+(async () => {
+  const browser = await chromium.launch();
+  const out = {};
+  for (const [w, h] of JSON.parse(process.argv[3])) {
+    const page = await (await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })).newPage();
+    await page.addInitScript(QUEUE_JS);
+    await page.goto(process.argv[2], { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#shep-tab-settings-button', { timeout: 60000 });
+    await page.waitForFunction(() => window.__shepQueue.idle(), null, { timeout: 60000 });
+    await page.$eval('#shep-tab-settings-button', (el) => el.click());
+    await page.waitForSelector('#shep-display-params label', { state: 'visible', timeout: 60000 });
+    await page.waitForFunction(() => window.__shepQueue.idle() && document.fonts.status === 'loaded', null, { timeout: 60000 });
+    await page.waitForTimeout(1500);
+    out[`${w}x${h}`] = await page.evaluate(() => {
+      // A field's control: its box (Gradio's own wrap, not the field's status tracker, which covers it whole).
+      const CONTROL = (field) => `${field} .wrap:not([data-testid="status-tracker"])`;
+      const box = (el) => el.getBoundingClientRect();
+      const seen = (bodyId, el) => {
+        const b = document.getElementById(bodyId), r = box(b), e = box(el);
+        return { bottom: Math.round(e.bottom - r.top), view: b.clientHeight };
+      };
+      const se = document.scrollingElement;
+      const runtime = box(document.getElementById('shep-settings')), shown = box(document.getElementById('shep-display'));
+      return { layout: document.documentElement.getAttribute('data-shep-layout'),
+               page: [se.scrollHeight, se.clientHeight, se.scrollWidth, se.clientWidth],
+               under: shown.top >= runtime.bottom && Math.abs(shown.left - runtime.left) < 1,
+               facts: seen('shep-settings-bd', document.getElementById('runtime_facts')),
+               allocator: seen('shep-settings-bd', document.querySelector(CONTROL('#allocator_preset'))),
+               options: seen('shep-display-bd', document.querySelector(CONTROL('#shep-display-params'))) };
+    });
+    await page.close();
+  }
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_settings_display_gives_way_first_under_runtime_settings(monkeypatch, tmp_path):
+    """The review of 36c0592 (P2): side by side in a window under about 1740 px Display stands
+    under Runtime settings, and drawn whole (240 to 259 px) it left Runtime settings' body 156
+    of its 588 px at the display floor (1280 x 720), neither of its fields in view, where
+    bb258d1 had shown 431 px with Memory allocator; 223 px at 1366 x 768. A choice kept in
+    the browser, with no Apply, pushed out the operator's server settings. Display now gives
+    way first, down to its head and its choice (the label and the three options), and
+    Runtime settings' body takes the rest. For an operator with a workspace, side by side,
+    Display under Runtime settings, the page not scrolling: at 1366 x 768 Runtime settings'
+    facts and its first field's control (Memory allocator's box) are in its body's view, and
+    Display's options in its; at 1280 x 720, where both cannot be whole (Runtime settings' head,
+    foot, facts and first field and Display's head and choice need 656 px of the column's
+    609), Display's options and Runtime settings' facts are in view, the first field under the
+    edge with its cue. Fails on 36c0592 (the facts cut at 156 px, the allocator under the edge
+    at 1366 x 768)."""
+    from src.webui.app import create_gradio_app, mount_options
+    from tests.fixtures.browser import QUEUE_JS, node_with_playwright, run_node
+    from tests.fixtures.operator_access import operator_mode
+    from tests.fixtures.registered_cohort import write_demo_workspace
+    from tests.fixtures.served_page import served
+
+    if node_with_playwright() is None:
+        pytest.skip("Node with Playwright is not installed")
+    operator_mode(monkeypatch)
+    write_demo_workspace(tmp_path / "root" / "demo")
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "root"))
+    sizes = [[1366, 768], [1280, 720]]
+    with served(create_gradio_app(), **mount_options()) as base:
+        seen = run_node(_UNDER_JS.replace("__QUEUE_JS__", json.dumps(QUEUE_JS)), tmp_path,
+                        base[:-len("gradio_api")], json.dumps(sizes))
+    for w, h in sizes:
+        got = seen[f"{w}x{h}"]
+        where = (w, h, got)
+        height, view, width, wide = got["page"]
+        assert got["layout"] == "side" and got["under"], where
+        assert height <= view and width <= wide, where
+        assert got["options"]["bottom"] <= got["options"]["view"], where       # Display's choice
+        assert got["facts"]["bottom"] <= got["facts"]["view"], where           # Runtime's facts
+        if [w, h] == [1366, 768]:
+            assert got["allocator"]["bottom"] <= got["allocator"]["view"], where

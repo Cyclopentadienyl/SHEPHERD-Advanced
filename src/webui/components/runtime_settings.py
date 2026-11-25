@@ -24,12 +24,12 @@ skill's §2), every value it shows escaped:
 - **Acceleration**: no toggle; the area says "Not implemented yet"
   (`ACCELERATION`): new acceleration work is deferred, and each run's record
   keeps what it ran with.
-- **Display** (its own panel, "this browser", in Runtime settings' column;
-  the owner's D9 revision of 2026-11-25): how Training's Parameters start
-  where Training stacks its two panels, Shown (the default), Folded or
-  Automatic (`display`), saved in this browser only and applied at once
-  (`DISPLAY_NOTE`). Nothing of it reaches the server, so it has no Apply and
-  no operator lock.
+- **Display** (its own panel, "this browser only", in Runtime settings'
+  column; the owner's D9 revision of 2026-11-25): how Training's Parameters
+  start where Training stacks its two panels, Shown (the default), Folded or
+  Automatic (`display`), saved in this browser only and applied at once, any
+  viewer able to change it (`DISPLAY_NOTE`). Nothing of it reaches the
+  server, so it has no Apply and no operator lock.
 - **Actions**: Apply Settings saves the fields to
   ``.shepherd_runtime_settings.json`` (`src.config.runtime_presets`), which the
   launcher reads at start-up (`scripts/launch/shep_launch.py`) and Restart
@@ -492,10 +492,12 @@ def _after_apply(question, request: gr.Request):
 #: layout choice, saved in the browser and applied at once (`display`), never on the server:
 #: no Apply, no operator lock, so a read-only viewer may change it too. Its one field is how
 #: Training's Parameters start where Training stacks its panels (`display.PARAMS_CHOICES`).
-DISPLAY_NOTE = ("Saved in this browser only and applied at once. It changes only this page's "
-                "layout, so a read-only viewer can change it too.")
+#: Its note is in its head, where the other panels say what they hold (one line where the
+#: panel has the room; under Runtime settings that keeps Display's least height down to its
+#: head and its choice, the review of 36c0592): two facts joined by the shared separator.
+DISPLAY_NOTE = ("this browser only", "any viewer can change it")
 DISPLAY_PARAMS = "shep-display-params"
-DISPLAY_PARAMS_LABEL = "Training parameters"
+DISPLAY_PARAMS_LABEL = "Training's Parameters"
 
 #: When each field applies, visible under it (its ``info=``: a fact that
 #: changes what happens, never only behind the ⓘ; the WebUI skill's §7).
@@ -504,8 +506,7 @@ FIELD_INFO = {
                         "change.",
     "torch_compile": f"{COMPILE_EXPERIMENTAL} {COMPILE_READ[:1].upper()}{COMPILE_READ[1:]}.",
     # Where the Display choice applies: stacked only (side by side the Parameters are always shown).
-    DISPLAY_PARAMS: "How they start where Training stacks its two panels: a portrait or narrow "
-                    "window.",
+    DISPLAY_PARAMS: "Stacked windows only (portrait or narrow). Side by side it is always shown.",
 }
 
 #: The fields' help, behind the shared ⓘ (M5-2): ``{elem_id: (title, text)}``.
@@ -526,10 +527,10 @@ FIELD_HELP = {
         "- Restart: none needed",
     ),
     DISPLAY_PARAMS: (
-        "Training parameters",
-        "How the Parameters start where Training stacks its two panels.\n\n"
-        "- Shown: the page scrolls, and it never folds them (the default)\n"
-        "- Folded: folded under their title, and the page never opens them\n"
+        DISPLAY_PARAMS_LABEL,
+        "Parameters panel, stacked: how it starts on Training.\n\n"
+        "- Shown: the page scrolls, and never folds it (the default)\n"
+        "- Folded: folded under its title, and the page never opens it\n"
         "- Automatic: shown unless folding brings more of a run's charts into view\n"
         "- Hide or Show on Training: holds there until the page is loaded again",
     ),
@@ -598,8 +599,8 @@ def _display_panel(ctx: Any) -> None:
     it changes only this reader's page, so a read-only viewer may change it too."""
     with gr.Column(elem_classes=["shep-panel", "shep-display"], elem_id="shep-display", min_width=0):
         plain_html('<div class="shep-panel-hd"><h2>Display</h2>'
-                   '<span class="shep-panel-right">this browser</span></div>'
-                   f'<p class="shep-intro">{r.e(DISPLAY_NOTE)}</p>', elem_id="shep-display-hd")
+                   f'<span class="shep-panel-right">{r.chain_html(*DISPLAY_NOTE)}</span></div>',
+                   elem_id="shep-display-hd")
         with gr.Column(elem_id="shep-display-bd"):
             params = gr.Radio(choices=display.PARAMS_CHOICES, value=display.PARAMS_DEFAULT,
                               label=DISPLAY_PARAMS_LABEL, info=FIELD_INFO[DISPLAY_PARAMS],
@@ -729,22 +730,41 @@ PAGE_CSS = f"""
    every window (a third column of its own narrowed Data locations to 608 px at 1280 x 720, where
    its rows' boxes no longer shared their edges). Where the column holds Runtime settings at 30rem
    beside Display's one choice (15rem), the two stand side by side (the owner's window: nothing
-   scrolls, at first use and read-only too); else Display stands under Runtime settings, whose
-   body scrolls first. The column is a size container, side by side only (the query reads its
-   width, never what it holds). One above the other, the pair is as tall as what it holds, at most
-   the column's height, never stretched to it: a panel whose height a stretched or flexed box fixes
-   lets a field's `height: 100%` inside (Gradio's dropdown) resolve, and the allocator's note was
-   cut by 12 px at 1550 x 830. Beside each other the pair is the column's height, so each panel's
-   own limit (100%) reads it. */
+   scrolls, at first use and read-only too); else Display stands under Runtime settings and gives
+   way first (below). Left (the review of 36c0592, P3): at 1850 x 960 Runtime settings is 531 px
+   wide, and with the Stop service or Restart Backend question open its body scrolls 57 px (it
+   needs 594 px); Data locations then could have at most 952 px, and read-only it needs 982 (its
+   rows' wide form), at first use 972, so the question, an operator's passing state, gives way.
+   The column is a size container, side by side only (the query reads its width, never what it
+   holds). One above the other, the pair is as tall as what it holds, at most the column's
+   height, never stretched to it: a panel whose height a stretched or flexed box fixes lets a
+   field's `height: 100%` inside (Gradio's dropdown) resolve, and the allocator's note was cut by
+   12 px at 1550 x 830. Beside each other the pair is the column's height, so each panel's own
+   limit (100%) reads it.
+   **Under Runtime settings, Display gives way first** (the review of 36c0592: drawn whole there,
+   240 to 259 px, it left Runtime settings' body 156 of 588 px at 1280 x 720, its two fields out
+   of view, where 431 px had shown the first): it shrinks before Runtime settings does (its share
+   of the shrink weighed 40 to 1), down to its head and its one choice's label and options, the
+   choice usable in view (9rem: its head's one line, 49 px, and its body's least, 5.75rem: the
+   body's top padding, the label and the options' row; a panel that hides its overflow has no
+   least height of its own in a flex column); past that its body scrolls inside, the line under
+   the options going under its edge with the shared cue, and Runtime settings' body takes the
+   rest. At 1366 x 768 that leaves Runtime settings' first field in view (an operator's: read-only,
+   its foot's reason line takes that room); at the display floor, 1280 x 720, its head and foot
+   (178 px), its facts and first field (318 px) and Display's head and choice (144 px) need
+   656 px of the column's 609, so its body shows its facts and ends above the first field's label
+   (233 px, 156 before), with the cue. */
 {SIDE} {{
   {_PAGE} #shep-settings-cols {{ align-items: flex-start !important; }}
   {_PAGE} #shep-settings-side {{ flex: 9 1 30rem !important; min-width: var(--shep-panel-min) !important; max-width: calc(1040px + 16px + 15rem); align-self: stretch; min-height: 0; display: flex; flex-direction: row; align-items: flex-start; container: shep-settings-side / inline-size; }}
   {_PAGE} #shep-settings-pair {{ flex: 1 1 auto !important; min-width: 0; min-height: 0; max-height: 100%; display: flex; flex-direction: column; }}
   {_PAGE} #shep-settings-pair > .shep-panel {{ min-height: 0; display: flex; flex-direction: column; }}
   {_PAGE} #shep-settings {{ flex: 0 1 auto !important; }}
-  {_PAGE} #shep-display {{ flex: none !important; }}
-  {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) {{ flex: 0 1 auto !important; min-height: 0 !important; overflow: auto !important; }}
-  {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) > * {{ flex-shrink: 0 !important; }}
+  {_PAGE} #shep-display {{ flex: 0 40 auto !important; min-height: 9rem !important; }}
+  {_PAGE} #shep-display-bd {{ min-height: 5.75rem !important; }}
+  {_PAGE} :is(#shep-dl-bd, #shep-settings-bd, #shep-display-bd) {{ flex: 0 1 auto !important; overflow: auto !important; }}
+  {_PAGE} :is(#shep-dl-bd, #shep-settings-bd) {{ min-height: 0 !important; }}
+  {_PAGE} :is(#shep-dl-bd, #shep-settings-bd, #shep-display-bd) > * {{ flex-shrink: 0 !important; }}
 }}
 @container shep-settings-side (min-width: calc(30rem + 16px + 15rem)) {{
   {_PAGE} #shep-settings-pair {{ flex-direction: row; align-self: stretch; align-items: flex-start; }}
