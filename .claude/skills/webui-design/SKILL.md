@@ -50,12 +50,14 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
 - **One scroll region per area.** Header and status rows are in flow, the content row takes `minmax(0, 1fr)` and is
   the only thing that scrolls. Nothing sticky or fixed may cover a chart's plot or axes, a table row or a focused
   control; a status line is a row of its own (the run view: header, charts, resources).
-- **A region that scrolls ends in a cue over words** (R-CUE, the owner's D4 of 2026-11-24; `shell.py` `fadeOf()`,
-  `recut`): its fade reaches the last text or value line above the edge and stays a cue, at most about one and a
-  half of the region's lines; where the edge falls in a gap the region draws the one shared edge cue (a hairline and
-  an inset shadow, `data-shep-more-edge`), never a fade over blank space; and where its last line in view would be a
-  title (a heading or a field's label) with every control it heads under the edge, the region ends in the gap above
-  that title, with the edge cue. A group title is drawn as a heading so that rule can see it.
+- **A region that scrolls ends in a cue over words** (R-CUE, the owner's D4 of 2026-11-24; `shell.py` `fadeAt()`,
+  `recut`): its fade, at most about one and a half of the region's lines, is drawn only where it draws the last text
+  or value line out (the edge cuts the line, or the line's foot lies in the fade's lower half); anywhere else, the
+  edge in a gap, the region draws the one shared edge cue (a hairline and an inset shadow, `data-shep-more-edge`),
+  never a fade over blank space, and a field's box that starts in that gap goes under the edge whole, so its ground
+  never hides the cue. Words kept for a screen reader are no line. Where its last line in view would be a title (a
+  heading or a field's label) with every control it heads under the edge, the region ends in the gap above that
+  title, with the edge cue. A group title is drawn as a heading so that rule can see it.
 - **A message never shares a row with fields or buttons.** Beside a dimmed control stands only its reason's short
   phrase or one line in the page's words (R-WHY, §9: "Needs a workspaces folder", "Choose a dataset to start.");
   anything longer is the full-width note under its group (`.shep-bar-note`), from the group's left edge, at the
@@ -297,7 +299,7 @@ checks that already passed for the same code.
 | A colour or theme token | the contrast test of the tokens it touches |
 | A widget or renderer (HTML, JS) | a unit or Node test of what it renders, escaping included; one look in the real app |
 | Layout or scrolling | geometry measured in the browser at the owner's window (about 1850 × 960) and the display floor (1280 × 720): no horizontal page scroll, one scroll region, nothing sticky over a chart axis or a focused control (`document.elementsFromPoint`), the same after floor → wide; a screenshot of each. Pass conditions are relative to what is drawn (inside its row, off its neighbours, the same control under the pointer), never a named window or a fixed pixel figure |
-| A broad layout change across pages | the above at the check sizes (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, one window below the floor, drawn as at the floor, a landscape window too narrow for side by side (1100 × 1050), stacked, and the portrait windows 1080 × 1920 and 1440 × 2560, stacked), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
+| A broad layout change across pages | the above at the check sizes (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, one window below the floor, drawn as at the floor, a landscape window too narrow for side by side (1100 × 1050) and the same window turned (1050 × 1100), stacked, and the portrait windows 1080 × 1920 and 1440 × 2560, stacked), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
 | A repeated fact (rule 1.2) | count the fingerprint, run id or name in one screen's visible text; more than one needs a reason |
 
 The layout, scrolling, type, border and focus rows are measured on every page at the representative sizes by one
@@ -307,11 +309,13 @@ shared check, which a layout, token or navigation change runs rather than a scri
 layout rules** (beside, narrow-box, overlap, orphan, centred, split-group, edge, clipped, empty-region,
 help-on-page, notice-repeat, tab-groups, in-view and sideways-scroll at every check size at or above the floor,
 scroll-cue, edge-heading, wrap-end, disabled-reason, dimmed-words, reason-repeat, pointer-words, token-break, sep-end,
-chain-break, row-top, row-control-top, row-height, and floor: below it the marks are the floor's and the page scrolls;
-`layout_problems`) are measured in the same walk and, with the
+chain-break, row-top, row-control-top, row-height, floor: below it the marks are the floor's and the page scrolls,
+and settle: a stop is measured once three frames in a row are the same, read at every frame, and one that never
+holds still is a finding; `layout_problems`) are measured in the same walk and, with the
 **first-use and empty-folder walks** (`walk_state("first_use" | "empty", …)`, `layout_stops`), held at zero on
 every page at `LAYOUT_SIZES` (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, 1280 × 640 under the
-floor, 1100 × 1050 a landscape window that stacks, 1080 × 1920, 1440 × 2560 and 1850 × 960 again) in all three
+floor, 1100 × 1050 a landscape window that stacks and 1050 × 1100 the same window turned, 1080 × 1920, 1440 × 2560
+and 1850 × 960 again) in all three
 states, first use, empty and configured, and configured as a read-only
 viewer (`test_every_page_of_every_state_has_no_layout_finding`); a page's change runs them on its own pages at first
 use and configured. The same
