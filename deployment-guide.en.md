@@ -3171,8 +3171,13 @@ lock before its words, and has "Operator controls only: <reason>" beside it.
 | `GPU: inference (pid 41822, since 09:58 UTC)` | Another service's CUDA inference holds the lock (another server on the same workspaces root) |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | A process this service did not start holds the GPU lock (a formal CLI, or another server's job runner on the same lock); the chip says what its holder record says: the command, the pid and the start |
 | `GPU job: lock held, holder not described` | The lock is held, but no running process is described as its holder |
-| `GPU jobs: refused, no workspaces folder` | No workspaces folder is set, so the GPU lock is not configured and every training and test run is refused until one is chosen in ⚙ Settings › Data locations (§4.11, §4.12). *Until 2026-11-16 it read "refused, lock not configured" and named `SHEPHERD_WORKSPACES_ROOT`* |
-| `GPU jobs: not read` (grey) | The state could not be read. When the lock setting cannot be used, the ⓘ says so, naming the path only to a browser D8 allows |
+| `GPU jobs: not set up` (grey ○) | No workspaces folder is set, so the GPU lock is not configured and every training and test run is refused until one is chosen in ⚙ Settings › Data locations (§4.11, §4.12); the ⓘ gives that step. *Until 2026-11-22 it read "refused, no workspaces folder", and until 2026-11-16 "refused, lock not configured", naming `SHEPHERD_WORKSPACES_ROOT`* |
+| `GPU jobs: not read yet` (grey, no mark) | The page has not read the state yet (just after it loads; the operator chip then says "Operator controls: not read yet") |
+| `GPU jobs: could not be read` (grey ○) | The read failed, so the state cannot be verified |
+| `GPU jobs: lock not usable` (red ✕) | The lock setting is set and cannot be used, so every managed GPU job is refused. The ⓘ says why, naming the path only to a browser D8 allows |
+
+Since 2026-11-24 each of these four states has its own words and look; before, "not read" stood
+for more than one of them.
 
 ### Help: the ⓘ buttons
 

@@ -3213,8 +3213,12 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | `GPU: inference (pid 41822, since 09:58 UTC)` | 另一個服務的 CUDA 推論持有這把鎖（同一個 workspaces root 上的另一台伺服器） |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | 某個不是本服務啟動的行程持有 GPU 鎖（正式的 CLI，或同一把鎖上另一台伺服器的 job runner）；chip 只顯示其持有者紀錄所寫的內容：指令、pid 與開始時間 |
 | `GPU job: lock held, holder not described` | 鎖被持有，但沒有任何仍在執行的行程被描述為持有者 |
-| `GPU jobs: refused, no workspaces folder` | 沒有設定 workspaces 資料夾，所以沒有 GPU 鎖，在 ⚙ Settings › Data locations 中選擇一個之前，每個訓練與測試執行都會被拒絕（§4.11、§4.12）。*2026-11-16 以前它寫作「refused, lock not configured」並指名 `SHEPHERD_WORKSPACES_ROOT`* |
-| `GPU jobs: not read`（灰色） | 無法讀取狀態。鎖的設定無法使用時，ⓘ 會說明，但只對 D8 允許的瀏覽器顯示路徑 |
+| `GPU jobs: not set up`（灰色 ○） | 沒有設定 workspaces 資料夾，所以沒有 GPU 鎖，在 ⚙ Settings › Data locations 中選擇一個之前，每個訓練與測試執行都會被拒絕（§4.11、§4.12）；ⓘ 寫出這一步。*2026-11-22 以前它寫作「refused, no workspaces folder」，2026-11-16 以前寫作「refused, lock not configured」並指名 `SHEPHERD_WORKSPACES_ROOT`* |
+| `GPU jobs: not read yet`（灰色，無標記） | 頁面還沒讀取狀態（剛載入時；此時操作者 chip 寫著「Operator controls: not read yet」） |
+| `GPU jobs: could not be read`（灰色 ○） | 讀取失敗，因此無法確認狀態 |
+| `GPU jobs: lock not usable`（紅色 ✕） | 鎖的設定已設定但無法使用，因此每個受管理的 GPU 工作都會被拒絕。ⓘ 會說明原因，但只對 D8 允許的瀏覽器顯示路徑 |
+
+自 2026-11-24 起，這四個狀態各有自己的文字與外觀；在那之前，「not read」代表其中不只一個狀態。
 
 ### 說明：ⓘ 按鈕
 
