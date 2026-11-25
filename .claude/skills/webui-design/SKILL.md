@@ -20,17 +20,18 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
 ## 1. The owner's principles
 
 1. **One screen, nothing expanded.** At the deployment window (about 1850 × 960 CSS px; landscape 1080p to 4K) a page's
-   main task fits without scrolling the page. When it cannot, one region scrolls inside, never the frame. **The display
-   floor** (the owner, 2026-11-23) is a usable browser area of 1280 × 720 CSS px (`style.FLOOR_WIDTH`,
-   `FLOOR_HEIGHT`): at or above it in both axes the interface is whole and tidy, the frame never scrolls (the area's one
-   region scrolls inside, with its cue), nothing scrolls sideways and nothing is compressed to fit. Below it in either
-   axis the layout is drawn as at the floor and shrinks no further: the frame keeps the floor's size and the browser
-   scrolls the page as a whole. Nothing is built for a window under the floor. **The arrangement is chosen by width**
-   (R-ARR, the owner's D11 of 2026-11-24, as Apple's and Google's size classes are): a window wider than tall tries side
-   by side first, which needs the display floor's width and the page's panels to fit; otherwise, a portrait window
-   included, it takes the stacked arrangement, whose floor is `style.STACK_FLOOR_WIDTH` (864 px, a 1080p screen turned
-   upright at 125 %) and which has no height floor: at or above it every page holds every rule as side by side does,
-   nothing overlapping, covering or cut. Only a window under it scrolls sideways. Height never changes the arrangement.
+   main task fits without scrolling the page. When it cannot, one region scrolls inside, never the frame. **The
+   arrangement is chosen by width** (R-ARR, the owner's D11 of 2026-11-24, as Apple's and Google's size classes are;
+   `shell.area()`): a window wider than tall tries side by side first, which needs the display floor's width and the
+   page's panels to fit (`sideFits()`); every other window, a portrait one or a landscape one too narrow for side
+   by side (1100 × 1050, 1233 × 640), stacks. Height never changes the arrangement. **The display floor** (the owner,
+   2026-11-23) is side by side's: a usable browser area of 1280 × 720 CSS px (`style.FLOOR_WIDTH`,
+   `FLOOR_HEIGHT`). At or above it the interface is whole and tidy, the frame never scrolls (the area's one region
+   scrolls inside, with its cue), nothing scrolls sideways and nothing is compressed to fit; a side-by-side window
+   under 720 px tall is drawn as at the floor, shrinks no further, and the browser scrolls the page as a whole. The stacked arrangement's floor is
+   `style.STACK_FLOOR_WIDTH` (864 px, a 1080p screen turned upright at 125 %), with no height floor: at or above it
+   every page holds every rule as side by side does, nothing overlapping, covering or cut; only a window under it is
+   drawn at it and scrolls sideways. Nothing is built for a window under a floor.
 2. **Each fact once on a screen.** A fingerprint, a name, a state or a number appears in one place, where it reads
    naturally and stands out. Elsewhere it is referred to by a short relation ("same dataset as the run bar"). Repeat
    it only where the two places can differ (a result's own identity against what is selected).
@@ -49,9 +50,20 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
 - **One scroll region per area.** Header and status rows are in flow, the content row takes `minmax(0, 1fr)` and is
   the only thing that scrolls. Nothing sticky or fixed may cover a chart's plot or axes, a table row or a focused
   control; a status line is a row of its own (the run view: header, charts, resources).
-- **A message never shares a row with fields or buttons.** Only a one-line relation (`renderers.see_above`:
-  "Start disabled: no workspaces folder is set.") sits beside the control it explains; anything longer is
-  the full-width note under its group (`.shep-bar-note`), from the group's left edge, at the measure.
+- **A region that scrolls ends in a cue over words** (R-CUE, the owner's D4 of 2026-11-24; `shell.py` `fadeOf()`,
+  `recut`): its fade reaches the last text or value line above the edge and stays a cue, at most about one and a
+  half of the region's lines; where the edge falls in a gap the region draws the one shared edge cue (a hairline and
+  an inset shadow, `data-shep-more-edge`), never a fade over blank space; and where its last line in view would be a
+  title (a heading or a field's label) with every control it heads under the edge, the region ends in the gap above
+  that title, with the edge cue. A group title is drawn as a heading so that rule can see it.
+- **A message never shares a row with fields or buttons.** Beside a dimmed control stands only its reason's short
+  phrase or one line in the page's words (R-WHY, §9: "Needs a workspaces folder", "Choose a dataset to start.");
+  anything longer is the full-width note under its group (`.shep-bar-note`), from the group's left edge, at the
+  measure.
+- **Side-by-side groups share their first lines and their first controls' tops** (R-ALIGN, the owner's A of
+  2026-11-24): a note one field alone has (its `info=`) follows its control, never between its label and its control,
+  and a title with a note keeps a plain label's room; bottoms may be ragged, with no spacer, `min-height` or stretched
+  box to even them.
 - **Bars wrap groups whole.** A bar (`.shep-bar`) is a wrapping row of groups (`.shep-grp`, `-grow`, `-end`); a
   group moves to the next line whole, and a text box keeps its floor (`--shep-input-floor`): its group wraps
   first, never a squeezed box. Choice groups are whole too: one line, or one option per line when a whole line
@@ -64,6 +76,12 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
   list text, a Details body, the words after a status mark (which keeps a column of its own).
 - **Panels sized by what they hold** (`.shep-sized`: `--shep-panel-basis`, `--shep-panel-grow`,
   `--shep-panel-min`, in rem or em), not by `scale=` shares fitted to one window.
+- **A field's width comes from its role** (R-WIDTH, the owner's D12 of 2026-11-24): a number `--shep-w-num` (10ch), a
+  name `--shep-w-name` (28ch), a path or a search growing along its row from `--shep-w-grow-min` (24ch), a choice its
+  longest option (`shep-w-num`, `-name`, `-path`, `-search`); white space beside a short field is fine. An accordion's
+  mark sits by its title and the whole title row toggles. A button is its words' width (the least specific default);
+  it spans only as the one drawn action of a fieldless area no wider than its panel's widest field, with nothing
+  beside it (`shell.spans()`), and a column that only wraps one action is that action's width.
 - **Charts are never squeezed.** Each plot keeps a floor (`PLOT_MIN_HEIGHT`, 170 px of plot area; about 200 px
   at the owner's window, where the four plots measure 198 px each, the shared epoch axis labelled once under them),
   judged by the chart's container, never the window: stacked, 2 × 2 from a figure of `charts.TWO_COLUMNS_FROM`,
@@ -79,8 +97,9 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
   4 px; line height 1.45 for text that wraps, 1.3 for one or two lines. Text that can wrap is start-aligned.
 - **Message shape** (reasons, refusals, notices, empty states): one lead of 20 words or fewer with the state
   and its consequence, then the next step or who can act, as a sentence or one link; why and how as term rows
-  under `Details ›`; environment variables, lock files, guide sections and codes only there or in Ref. No
-  semicolons, "please", "sorry", "oops", "invalid", "an error occurred" or "we".
+  under `Details ›`, which closes the lead's last line where the line has room and opens its rows under it, on the
+  words' edge (R-DETAILS, `renderers.notice_block`); environment variables, lock files, guide sections and codes only
+  there or in Ref. No semicolons, "please", "sorry", "oops", "invalid", "an error occurred" or "we".
 - **Literal tokens** (paths, variables, flags) in the monospace token (`code`, `.shep-mono`), at least 14 px,
   breaking only before their own separators (`renderers.token_html`), never `break-all` on words, never U+200B.
 
@@ -102,7 +121,8 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
 - **Labels are text, not chips.** Field labels are plain 14 px/600 text; a tinted pill reads as a tag or a button.
   Static headings get no background.
 - **A lock means "refused".** A gated button shows no lock while the operator may use it; when D8 refuses, the button
-  is disabled, shows the lock and the visible "Operator controls only: …" reason beside it.
+  is dimmed, shows the lock and has R-WHY's phrase "Operator controls only" beside it (§9), which opens the D8 chip's
+  answer for this request.
 
 ## 4. Choosing the form
 
@@ -118,7 +138,11 @@ floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
 | An explanation | One-sentence answer, then facts as key-value rows, the narrative collapsed | Evidence for a candidate |
 | A lineage (what was made from what) | Node-link tree drawn as DOM: one node per run, each edge from the exact parent file; nested lists, per node a body button (selects) and, with children, a sibling arrow button (folds only); an idle node is as large as its text, the arrow area shows on hover or keyboard focus and always on touch; details stay in the Details column | Models › By family |
 
-Text that runs past two lines gets structure: an answer-first lead, then bullets or key-value rows.
+Text that runs past two lines gets structure: an answer-first lead, then bullets or key-value rows. **Information
+load** (R-LOAD, the owner's B of 2026-11-24): adjacent text with no control or heading between stays within about
+three rendered lines, or it becomes key-value rows or goes behind `Details ›`; a summary shows the facts its stage
+needs, declared as data (Fine-tune's `PARENT_STAGE_FACTS`), the rest behind its one Details. A reviewer judges each
+cluster; no walk rule counts lines.
 
 ## 5. Words
 
@@ -156,6 +180,11 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry the same colours.
   only states to watch get a coloured lozenge.
 - No raw status hex outside the tokens. Environment warnings lead with the consequence ("No CUDA device visible: GPU
   training is unavailable"); versions sit behind a disclosure.
+- **A header chip that names no holder has four states, never one** (R-STATE, the owner's "unread" of 2026-11-24;
+  `chips.py`): not set up (a missing setting, "GPU jobs: not set up": grey ○), not read yet (before the first read,
+  "… not read yet": grey, no mark), could not be read (cannot be verified: grey ○) and lock not usable (it refuses
+  every managed job: red ✕). Each is its own kind, `data-state`, class and words; a page reads them by kind
+  (`chips.LOCK_UNUSABLE`), never by their words.
 
 ## 7. Help bubbles (ⓘ)
 
@@ -166,9 +195,20 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry the same colours.
   words in all; Ref last. `help.budget_problems(text, help.TEXT_BUDGET)` names what a text runs over. Every
   registered text is held to it (`test_webui_help.py`); the one exemption is words kept verbatim from their
   source: a lead that is its field's `FieldSpec.description` (API wording) and a governed note.
+- **A bubble is judged by four things** (R-HELP, the owner's C9 of 2026-11-24): it covers no control, it reads at
+  4.5:1, every trimmed fact stays reachable (Details or the Ref line), and its facts are complete: up to four items
+  when needed, different facts never merged to reach three, never padded to two. The two-line count in the 320 px
+  bubble is a note, not a gate (fonts and zoom change it); the budget above stays the gate. In a setup topic the GUI
+  path and the desktop start come before environment variables and SSH.
 - **Never the only place for must-know facts.** Formats, units, refusals and states that change what happens are
-  visible text (`info=` under the field, or the reason line). A bubble explains; it does not warn.
-- **Placement never covers the field it explains**: try beside, then above, then below (Floating UI's flip order).
+  visible text (`info=` under the field, or a dimmed control's phrase or need line). A bubble explains; it does not
+  warn.
+- **Placement never covers the field it explains**, nor, for a reason's phrase, the controls the phrase names
+  (`data-for`). `help.py`'s `place()` tries beside, above and below, sliding along each side, and takes a place that
+  covers no other control; where none holds the whole bubble, it opens shorter in the tallest place that covers none
+  and still shows its head, its lead and two lines, its text scrolling inside under the shared cue; only where no such
+  place exists does it take the place over the fewest controls. A reason's phrase opens this same bubble, anchored at
+  the phrase and reading its source's hidden text by id.
 - **One bubble, extended only when needed.** Today's bubble (`src/webui/components/help.py`) reads every text by one
   small grammar, defined there once (`BULLET`, `TERM_PATTERN`, `REF_PREFIX`, read in Python by `help_lines`) and given
   to its script as written: the first line is the lead, shown bold; "- " lines form one list; a line led by a short
@@ -201,9 +241,19 @@ first use, waiting for a job, filtered to nothing, not recorded, refused. **Firs
 results registry): each cause once per screen, where it empties a region, through the one notice
 (`renderers.notice_block` / `notices_block`, from `server_settings.Notice` via `workspaces.setting_notice` and
 `lock_notice`), its GUI path as the link ("Choose one in Settings › Data locations"), the rest under Details ›;
-every control that depends on it says a relation (`see_above`), never the notice again. An empty state is in
-the flow (`.shep-empty`), never an overlay. A refusal says who can act ("Operator
-controls only: request not local"). Refusals stay visible inline next to what they disable; nothing auto-dismisses.
+every control it dims has the notice's phrase beside it (R-WHY, below), never the notice again. An empty state is in
+the flow (`.shep-empty`), never an overlay. A refusal says who can act ("Operator controls only", D8's reason one
+activation away). Refusals stay visible inline next to what they disable; nothing auto-dismisses.
+
+**Why a control is dimmed** (R-WHY, the owner's D6 of 2026-11-24, and SW-C11): one reason source per cause
+(`renderers.REASONS`: a setting's notice, or a header chip's hidden text), its whole reason drawn once per screen.
+Beside each dimmed control stands either its cause's phrase, five words at most, a focusable link-styled button keyed
+to that source (`reason_phrase`: a notice's is brought into view with the focus on its link, a chip's opens the help
+bubble at the phrase), or, for a cause of the page's own, one line in the page's words led by the need
+(`need_words`: "Choose a dataset to start.", "Load a model first."). Where the cause's own notice is drawn in the same
+bar as the controls it dims, nothing is added beside them: the notice names them (`notice_block(describes=…)`). The
+control's `aria-describedby` names its phrase or notice. Two causes are never one phrase, and the words never say
+"disabled", "see above", "see below" or "(see <place>)": the dimmed look says the control cannot be used.
 
 ## 10. Accessibility floor
 
@@ -247,7 +297,7 @@ checks that already passed for the same code.
 | A colour or theme token | the contrast test of the tokens it touches |
 | A widget or renderer (HTML, JS) | a unit or Node test of what it renders, escaping included; one look in the real app |
 | Layout or scrolling | geometry measured in the browser at the owner's window (about 1850 × 960) and the display floor (1280 × 720): no horizontal page scroll, one scroll region, nothing sticky over a chart axis or a focused control (`document.elementsFromPoint`), the same after floor → wide; a screenshot of each. Pass conditions are relative to what is drawn (inside its row, off its neighbours, the same control under the pointer), never a named window or a fixed pixel figure |
-| A broad layout change across pages | the above at the check sizes (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, one window below the floor, drawn as at the floor, and the portrait windows 1080 × 1920 and 1440 × 2560, stacked), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
+| A broad layout change across pages | the above at the check sizes (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, one window below the floor, drawn as at the floor, a landscape window too narrow for side by side (1100 × 1050), stacked, and the portrait windows 1080 × 1920 and 1440 × 2560, stacked), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
 | A repeated fact (rule 1.2) | count the fingerprint, run id or name in one screen's visible text; more than one needs a reason |
 
 The layout, scrolling, type, border and focus rows are measured on every page at the representative sizes by one
@@ -256,11 +306,13 @@ shared check, which a layout, token or navigation change runs rather than a scri
 `ui_problems` in `tests/fixtures/browser.py`; its screenshots in the test's temporary `ui-walk*/shots`). **The
 layout rules** (beside, narrow-box, overlap, orphan, centred, split-group, edge, clipped, empty-region,
 help-on-page, notice-repeat, tab-groups, in-view and sideways-scroll at every check size at or above the floor,
-scroll-cue, wrap-end, disabled-reason, token-break, sep-end, chain-break, row-top, row-height, and floor: below it
-the marks are the floor's and the page scrolls; `layout_problems`) are measured in the same walk and, with the
+scroll-cue, edge-heading, wrap-end, disabled-reason, dimmed-words, reason-repeat, pointer-words, token-break, sep-end,
+chain-break, row-top, row-control-top, row-height, and floor: below it the marks are the floor's and the page scrolls;
+`layout_problems`) are measured in the same walk and, with the
 **first-use and empty-folder walks** (`walk_state("first_use" | "empty", …)`, `layout_stops`), held at zero on
-every page at `LAYOUT_SIZES` (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, 1024 × 640,
-1080 × 1920, 1440 × 2560 and 1850 × 960 again) in all three states, first use, empty and configured, and configured as a read-only
+every page at `LAYOUT_SIZES` (1850 × 960, 1550 × 830, 1366 × 768, 1280 × 720, 2560 × 1440, 1280 × 640 under the
+floor, 1100 × 1050 a landscape window that stacks, 1080 × 1920, 1440 × 2560 and 1850 × 960 again) in all three
+states, first use, empty and configured, and configured as a read-only
 viewer (`test_every_page_of_every_state_has_no_layout_finding`); a page's change runs them on its own pages at first
 use and configured. The same
 walk counts each fingerprint drawn in a screen's visible text (`repeat_problems`), and walks PLAN_TEST_RESULTS §6's
@@ -286,6 +338,13 @@ measurements until it is.
   Models" with decorative separators drawn only while the tabs sit on one line (§3); the Stage hint is unchanged.
   First use is said once per screen by the one notice, its GUI path as the link (§9); text follows the measure,
   the spacing tokens and the message shape (§2).
+- **Decided (2026-11-24, the owner, after the L7 package):** the arrangement is chosen by width (§1.1); a lock's
+  whole reason is said once, with a short phrase beside each control it dims (§9); not set up, not read yet, could
+  not be read and lock not usable never share one state or one vague word (§6); a help bubble is judged by covering no
+  control, readability and a reachable full reference, its two lines a reminder (§7); a region that must scroll has a
+  recognisable cue, never a lone title at its edge or a fade over blank space (§2); a path's source keeps a line of
+  its own; Firefox and Gradio are not patched for a single word's wrap. A screen that scrolls is judged by three
+  questions: can the reader see the next step, find all of the content and see the focus.
 - **Decided (2026-11-21):** Models › By family is a node-link family view drawn as DOM, with no graph library, because
   DOM nodes give this view real buttons, keyboard focus and a hierarchy that assistive technology reads, with no new
   dependency: a choice for this view, not a rule against a graph library later. The view data stays runs
