@@ -4845,8 +4845,8 @@ def create_training_tab(ctx: Any) -> None:
             # to one window.
             with gr.Column(elem_id="shep-train-params", elem_classes=["shep-panel", "shep-sized"],
                            min_width=0):
-                # Stacked, the parameters start shown where the page then still ends
-                # within the window, else folded under their title, so the run view's
+                # Stacked, the parameters start shown where the page's panels then still
+                # end within the window, else folded under their title, so the run view's
                 # charts follow the run bar on the first screen (R-60, D9: `FOLD_JS`);
                 # side by side the body is always shown and the toggle is not.
                 plain_html('<div class="shep-panel-hd"><h2>Parameters</h2>'
@@ -5276,14 +5276,22 @@ def create_training_tab(ctx: Any) -> None:
 #: opens the body, "Hide" folds it again; the state is the button's own ``aria-expanded``,
 #: which the style sheet reads (side by side the body is always shown and the button is not).
 #: **Its default by room**: while the reader has not used the button, the body is shown
-#: whenever the stacked page, with the body shown, ends within the window's height (the
-#: main parameters in view where there is room: "More training settings" and "Model" stay
+#: whenever the stacked page's panels (``#shep-train-page``: the parameters, the Continue
+#: drawer, the run view), with the body shown, end within the window's height (the main
+#: parameters in view where there is room: "More training settings" and "Model" stay
 #: closed), else folded, so the run view's charts follow the run bar on the first screen.
-#: It is measured, never read from a window size: the body is drawn shown for the measure
-#: alone (put back before anything is painted), and the page's end compared with the
-#: window's height. It is decided only when what it hangs on changes: the arrangement (the
-#: layout pass's mark), the page's size (its width, its content) and the fonts; never by a
-#: timer or a poll, and only while Training is shown. **A fold the reader made is kept**:
+#: The shell's footer, under every page and no panel of it, may then lie under the edge
+#: (the L8 LOOK5's L8-3: at 1100 x 1050 at first use the panels shown end at 1047 px and the
+#: footer at 1127, and the body was folded with a third of the window blank under the page).
+#: It is measured, never read from a window size: the body is drawn shown and laid out for
+#: the measure alone (`shell.py`'s ``ShepShell.layOut``: the marks of what it holds, the
+#: "Set by you" line's own line among them, are then those of the body shown; all put back
+#: before anything is painted), so the measure never depends on the fold's own state (L8-1:
+#: it read the marks the layout pass had set with the body folded, and at 1050 x 1100 the
+#: body opened and closed about 24 times a second). It is decided only when what it hangs on
+#: changes: the arrangement (the layout pass's mark), the page's size (its width, its
+#: content) and the fonts; never by a timer or a poll, and only while Training is shown.
+#: **A fold the reader made is kept**:
 #: once they used the button, or worked in the body (a press or a key in it: opening "More
 #: training settings" there grew the page past the window, and the measure folded the body
 #: they were working in), nothing decides for them again.
@@ -5307,13 +5315,18 @@ element.addEventListener('click', function (e) {
   mine = true;
   show(b, b.getAttribute('aria-expanded') !== 'true');
 });
+function layOut() { if (window.ShepShell && window.ShepShell.layOut) { window.ShepShell.layOut(); } }
 function byRoom() {
-  var b = fold();
-  if (mine || !b || !element.getClientRects().length
+  var b = fold(), page = document.getElementById('shep-train-page');
+  if (mine || !b || !page || !element.getClientRects().length
       || document.documentElement.getAttribute('data-shep-layout') !== 'stack') { return; }
-  var se = document.scrollingElement || document.documentElement;
-  show(b, true);
-  show(b, se.scrollHeight <= window.innerHeight + 0.5);
+  var was = b.getAttribute('aria-expanded');
+  if (was !== 'true') { b.setAttribute('aria-expanded', 'true'); }
+  layOut();
+  var open = page.getBoundingClientRect().bottom + window.scrollY <= window.innerHeight + 0.5;
+  if (was !== 'true') { b.setAttribute('aria-expanded', was); }
+  show(b, open);
+  if (!open) { layOut(); }
 }
 var pending = false;
 function later() {
