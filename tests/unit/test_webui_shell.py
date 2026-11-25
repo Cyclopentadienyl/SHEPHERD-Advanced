@@ -3314,6 +3314,12 @@ const { chromium } = require('playwright');
     <div id="cue" style="height: 200px; overflow: auto;">${lines}</div>
     <div id="gap" style="height: 200px; overflow: auto;"><p style="margin: 0">A first line, then blank.</p><div style="height: 900px"></div></div>
     <div id="gapgr" class="block hide-container __GR_HIDE__" style="height: 200px; overflow: auto !important;"><p style="margin: 0">A first line, then blank.</p><div style="height: 900px"></div></div>
+    <div id="graze" style="height: 200px; overflow: auto; font-size: 15px; line-height: 22.5px">${Array.from({ length: 8 }, (_, i) => `<p style="margin: 0">Line ${i} of the settings.</p>`).join('')}
+      <div style="height: 40px"></div><label><input type="checkbox"> Compile the model</label><div style="height: 300px"></div></div>
+    <div id="near" style="height: 198px; overflow: auto; font-size: 15px; line-height: 20px">${Array.from({ length: 12 }, (_, i) => `<p style="margin: 0 0 9px">Key ${i} · its value</p>`).join('')}</div>
+    <div id="srgap" style="height: 200px; overflow: auto; font-size: 15px; line-height: 22.5px">${Array.from({ length: 6 }, (_, i) => `<p style="margin: 0">Line ${i} of the folders.</p>`).join('')}
+      <div style="height: 50px"></div><div style="position: relative; height: 40px"><span class="sr-only" style="position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">Import folder: folder path</span>
+      <input type="text" style="display: block; height: 36px; margin-top: 4px"></div><div style="height: 300px"></div></div>
     <div id="cuex" style="width: 200px; overflow-x: auto; overflow-y: hidden;"><div style="width: 900px; height: 20px"></div></div>
     <div id="fits" style="height: 200px; overflow: auto;"><div style="height: 100px"></div></div>
     <div id="shep-page-models"><div id="shep-mp-detail" style="height: 600px; display: flex; flex-direction: column;">
@@ -3333,6 +3339,9 @@ const { chromium } = require('playwright');
              edge: e.hasAttribute('data-shep-more-edge') && /inset/.test(s.boxShadow) }; }, id);
   out.gap = await gapOf('gap');
   out.gapgr = await gapOf('gapgr');
+  out.graze = await gapOf('graze');
+  out.near = await gapOf('near');
+  out.srgap = await gapOf('srgap');
   out.sideways = await page.evaluate(() => { const e = document.getElementById('cuex');
     return { more: e.hasAttribute('data-shep-more-x'), mask: getComputedStyle(e).maskImage !== 'none' }; });
   out.fits = await page.evaluate(() => { const e = document.getElementById('fits');
@@ -3387,7 +3396,13 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     and the Diagnosis fields scrolled with no cue because their pages had not).
     R-CUE (the owner's D4 of 2026-11-24): the fade lies over lines of text; a region whose edge
     falls in a gap no fade may reach (``#gap``) draws the one edge cue instead, never a fade over
-    the blank; a ``gr.HTML`` block's region (``#gapgr``: Gradio's own container rule, read from its
+    the blank, and so does one whose last line ends in the upper half of the fade that would reach
+    it (``#graze``, LOOK5 of the L8 sweep, L8-2 and L8-4: Settings' Runtime settings and Test's Run
+    at 1280 x 720 ended 22 px under a whole title with a 32 px fade over the blank, whole controls
+    under it), while one whose edge falls just under a line keeps the fade over it (``#near``), and
+    words kept for a screen reader are no line a fade may reach (``#srgap``: Data locations at
+    1280 x 720, a text box's hidden label over the edge, a fade over the boxes' tops); a
+    ``gr.HTML`` block's region (``#gapgr``: Gradio's own container rule, read from its
     style sheet, clears every block's shadow) draws it too (the L8 close: the Diagnosis Load
     drawer's facts never drew it).
     B72-C3: Compare, 12,342 px tall, had its sideways scrollbar at its foot,
@@ -3415,6 +3430,14 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
     assert seen["top"] == {"more": True, "mask": True}, seen
     assert seen["gap"] == {"more": True, "mask": False, "edge": True}, seen
     assert seen["gapgr"] == {"more": True, "mask": False, "edge": True}, seen
+    # LOOK5 of the L8 sweep (L8-2, L8-4): the edge 22 px under the last line, whole controls under
+    # it: a fade within reach would only graze that line's foot, so the edge cue; the edge 5 px
+    # under a line of a list: the fade draws that line out, and stays.
+    assert seen["graze"] == {"more": True, "mask": False, "edge": True}, seen
+    assert seen["near"] == {"more": True, "mask": True, "edge": False}, seen
+    # A text box's label kept for a screen reader straddling the edge is no line to fade (Data
+    # locations at 1280 x 720 faded the boxes' tops under it): the edge falls in a gap.
+    assert seen["srgap"] == {"more": True, "mask": False, "edge": True}, seen
     assert seen["end"] == {"more": False, "mask": False}, seen
     assert seen["sideways"] == {"more": True, "mask": True}, seen
     assert seen["fits"] == {"more": False, "mask": False}, seen
@@ -3428,8 +3451,9 @@ def test_a_scroll_cue_while_more_is_below_and_compares_sideways_bar_in_reach(tmp
 #: R-CUE's lone title (the L8 close): panels of a fixed height, each a scroll region over a
 #: footer, whose edge falls under a title with every control it heads under the edge: a field's
 #: label (``lt-label``), a heading over two buttons (``lt-head``), a heading over a field
-#: (``lt-nested``); and a region of its own fixed height (``lt-fixed``), whose height is not
-#: its column's to give.
+#: (``lt-nested``); a field's box that starts in the gap the edge falls in, 22 px under the last
+#: line, its words under the edge (``lt-gapbox``); and a region of its own fixed height
+#: (``lt-fixed``), whose height is not its column's to give.
 _LONE_TITLE_JS = r"""
 const { chromium } = require('playwright');
 (async () => {
@@ -3448,6 +3472,7 @@ const { chromium } = require('playwright');
     ${panel('lt-nested', 20, 360, lines(8) + '<h3 style="margin: 20px 0 0; line-height: 24px">Run</h3>' + field('Run name') + lines(10))}
     ${panel('lt-fixed', 600, 360, lines(10) + field('Seed') + lines(10), false)}
     ${panel('lt-boxtop', 20, 680, lines(9) + '<h3 style="margin: 20px 0 0; line-height: 24px">Options</h3><input type="number" value="10" style="display: block; margin-top: 3px; box-sizing: border-box; height: 34px; padding: 4px 8px; border: 1px solid #999">' + lines(10))}
+    ${panel('lt-gapbox', 600, 680, lines(11) + '<div style="height: 7px"></div><div class="block" style="background: #fff; padding-top: 14px"><label class="lt-title" style="display: block; line-height: 20px"><input type="checkbox"> Deterministic execution</label></div>' + lines(10))}
     <script>${js}</script></body></html>`);
   const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const pass = async () => { await page.evaluate(() => window.ShepShell.update()); await frames(); await frames(); };
@@ -3466,7 +3491,7 @@ const { chromium } = require('playwright');
              lineAbove: before.getBoundingClientRect().bottom <= edge + 0.5,
              footDocked: Math.abs(ft.bottom - panel.bottom) <= 1 };
   }, id);
-  const ids = ['lt-label', 'lt-head', 'lt-nested', 'lt-fixed', 'lt-boxtop'], out = {};
+  const ids = ['lt-label', 'lt-head', 'lt-nested', 'lt-fixed', 'lt-boxtop', 'lt-gapbox'], out = {};
   for (const id of ids) { out[id] = await read(id); }
   // Scrolled, the region keeps its height; back at its top, the same.
   for (const id of ids) {
@@ -3497,8 +3522,13 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
     nothing. A heading whose only control is a field under it goes under the edge with that
     field's label. A heading whose field shows only its box's top 12 px over the edge (under half
     its value line) is a lone title too (the L8 close, CK8-2: Diagnosis' Options over Top-K at
-    1280 x 720). Scrolled, the region keeps its height. A region of its own fixed height (its
-    height is not its column's to give) is left as it is. Measured in a browser on a page of its
+    1280 x 720). Where the edge falls in a gap 22 px under the last line, a fade would only graze
+    that line's foot: the region draws the edge cue, and a field's box that starts in that gap goes
+    under the edge whole, its ground no longer over the cue (``lt-gapbox``; LOOK5 of the L8 sweep,
+    L8-4: Test's Run region at 1280 x 720 ended 22 px under "Register when the run ends", a fade
+    over the blank, its Deterministic box 12 px over the edge). Scrolled, the region keeps its
+    height. A region of its own fixed height (its height is not its column's to give) is left as
+    it is. Measured in a browser on a page of its
     own (Node and Playwright, skipped without)."""
     from src.webui.style import SHELL_CSS
     from tests.fixtures.browser import LOOK_JS, node_with_playwright, run_node
@@ -3510,7 +3540,7 @@ def test_a_region_ends_in_the_gap_above_a_title_whose_controls_are_all_under_its
     js_path.write_text(_page_shell_js(), encoding="utf-8")
     look_path.write_text(LOOK_JS, encoding="utf-8")
     seen = run_node(_LONE_TITLE_JS, tmp_path, str(css_path), str(js_path), str(look_path))
-    for region in ("lt-label", "lt-head", "lt-nested", "lt-boxtop"):
+    for region in ("lt-label", "lt-head", "lt-nested", "lt-boxtop", "lt-gapbox"):
         got = seen[region]
         assert got["more"] and got["titlesUnder"] and got["lineAbove"], (region, got)
         assert got["edgeCue"] and not got["mask"], (region, got)
@@ -5024,6 +5054,13 @@ const LOOK_JS = __LOOK_JS__;
         <button type="button" id="dis-sec" disabled>Refresh</button>
         <button type="button" class="primary" id="dis-prim" disabled style="margin-left: 120px">Load this model</button>
       </div>
+      <div class="shep-panel" id="p8" style="left: 0; top: 770px; height: 120px; display: flex; gap: 16px">
+        <div class="rg" data-shep-more id="cue-graze" style="height: 64px; width: 200px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent)">
+          <p style="line-height: 20px">Runtime settings.</p><p style="line-height: 20px">What each allocator does</p>
+          <div style="height: 40px"></div><label><input type="checkbox"> Compile the model</label> <button type="button">About</button></div>
+        <div class="rg shep-scroll-cue" data-shep-more id="cue-near" style="height: 82px; width: 200px">
+          ${[1, 2, 3, 4, 5].map((i) => `<p style="line-height: 20px; margin-bottom: 9px">Key ${i}: its value</p>`).join('')}</div>
+      </div>
       <div class="shep-panel" id="p7" style="left: 460px; top: 700px; height: 180px">
         <div class="rg shep-scroll-cue" data-shep-more id="cue-boxonly" style="height: 70px"><p>A first line.</p>
           <input type="text" style="display: block; height: 36px"><div style="height: 40px"></div><p>The next field.</p></div>
@@ -5088,7 +5125,11 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     over a box's lower border and a gap, it was seen), and a region whose last line in view is a
     field's label with its control under the edge is found (``#cue-lonehead``, ``edge-heading``),
     and so is one whose last line is a heading over a field that shows only its box's top 12 px
-    (``#cue-headtop``; the L8 close, CK8-2)."""
+    (``#cue-headtop``; the L8 close, CK8-2). A fade whose top only grazes the last line's foot,
+    that line whole in the fade's upper half and the blank under it faded, is no cue
+    (``#cue-graze``; LOOK5 of the L8 sweep, L8-2 and L8-4: Settings' Runtime settings and Test's
+    Run at 1280 x 720 hid whole controls under such a fade, and E1 passed), while a fade that
+    draws its last line out is (``#cue-near``)."""
     found = l7_rules_seen
     assert _hits(found, "inview", "#iv-out") and _hits(found, "inview", "#iv-nobox"), found["inview"]
     assert not _hits(found, "inview", "#iv-in"), found["inview"]
@@ -5122,6 +5163,11 @@ def test_the_in_view_and_scroll_cue_rules_find_a_page_cut_at_its_foot(l7_rules_s
     # edge (a sliver of its value line, under half of it) ends the region at a title too
     # (Diagnosis' Options over Top-K at 1280 x 720).
     assert _hits(found, "edgeHead", '#cue-headtop ends in view at the heading "Options"'), found["edgeHead"]
+    # LOOK5 of the L8 sweep (L8-2, L8-4): a fade whose top only grazes the last line's foot (that
+    # line whole, in the fade's upper half) fades blank, its controls under the edge unseen; a
+    # fade that draws its last line out (its foot in the fade's lower half) is a cue.
+    assert _hits(found, "cue", "#cue-graze fades its last 32 px over no line of text it fades out"), found["cue"]
+    assert not _hits(found, "cue", "#cue-near"), found["cue"]
 
 
 def test_the_clipped_rule_finds_words_a_box_cuts(l7_rules_seen):
